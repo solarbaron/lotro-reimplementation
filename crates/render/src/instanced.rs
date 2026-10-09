@@ -103,8 +103,28 @@ pub struct WorldSurface {
     pub gloss_from_normal_alpha: bool,
     /// Multiply *M* by the vertex colour (`lighting.md` §5.13).
     pub vertex_colors: bool,
-    /// Unlit: texture × *M* (× vertex colour), fogged (`lighting.md` §7, code 0x00).
+    /// Unlit: texture × *M* (× vertex colour) (`lighting.md` §7, code 0x00); fogged unless
+    /// the surface's [`WorldSurfaceOptions::fog`] is off.
     pub unlit: bool,
+}
+
+/// Per-surface switches of a [`WorldModel`] that [`WorldSurface`] does not carry, given to
+/// [`Renderer::upload_world_model_with`] (kept apart so the callers' `WorldSurface` literals
+/// stay valid). [`WorldSurfaceOptions::default`] is what [`Renderer::upload_world_model`]
+/// uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorldSurfaceOptions {
+    /// Apply distance fog to an unlit surface ([`WorldSurface::unlit`]; `lighting.md` §7
+    /// code 0x00: fog when the record's programs read the fog inputs), as
+    /// [`crate::LitSurface::fog`] does for lit meshes (`docs/specs/render.md` §4.1, §5.5).
+    /// A lit surface is always fogged (`lighting.md` §2.1), whatever this says. Default on.
+    pub fog: bool,
+}
+
+impl Default for WorldSurfaceOptions {
+    fn default() -> Self {
+        Self { fog: true }
+    }
 }
 
 impl Default for WorldSurface {
@@ -447,6 +467,22 @@ impl Renderer<'_> {
         data: &MeshData,
         surfaces: &[WorldSurface],
     ) -> Result<WorldModel> {
+        self.upload_world_model_with(data, surfaces, &[])
+    }
+
+    /// [`Renderer::upload_world_model`] with per-surface switches: `options[i]` applies to
+    /// `surfaces[i]`; surfaces without an entry (and the default surface of an empty list)
+    /// use [`WorldSurfaceOptions::default`]. Entries past the surfaces are ignored.
+    ///
+    /// # Errors
+    ///
+    /// As [`Renderer::upload_world_model`].
+    pub fn upload_world_model_with(
+        &mut self,
+        data: &MeshData,
+        surfaces: &[WorldSurface],
+        options: &[WorldSurfaceOptions],
+    ) -> Result<WorldModel> {
         if surfaces.len() > MAX_MODEL_SURFACES {
             return Err(RenderError::LimitExceeded {
                 what: "world model surfaces",
@@ -502,7 +538,8 @@ impl Renderer<'_> {
                 let white = up.textures.white();
                 let gpu_surfaces: Vec<SurfaceGpu> = list
                 .iter()
-                .map(|s| {
+                .enumerate()
+                .map(|(i, s)| {
                     for id in [s.base_texture, s.normal_texture] {
                         if up.textures.is_missing(id) && !warned {
                             tracing::warn!(
@@ -513,7 +550,13 @@ impl Renderer<'_> {
                         }
                     }
                     let set = [up.textures.get(s.base_texture), up.textures.get(s.normal_texture)];
-                    SurfaceGpu::new(device, &surface_layout, *s, has_tangents, set, &white)
+                    let opts = options.get(i).copied().unwrap_or_default();
+                    let desc = SurfaceDesc {
+                        surface: *s,
+                        options: opts,
+                        has_tangents,
+                    };
+                    SurfaceGpu::new(device, &surface_layout, desc, set, &white)
                 })
                 .collect();
                 let parts = prepared
@@ -609,6 +652,10 @@ pub(crate) mod sf {
     pub const GLOSS_NORMAL_ALPHA: u32 = 32;
     /// The base texture's alpha is the gloss, not an opacity: opacity 1.
     pub const OPACITY_ONE: u32 = 64;
+    /// An unlit surface without distance fog ([`super::WorldSurfaceOptions::fog`] off).
+    pub const NO_FOG: u32 = 128;
+    /// The output alpha is the opacity texel alone ([`super::AlphaMode::Fixed`]).
+    pub const FACTOR_OPACITY: u32 = 256;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
 }
@@ -619,7 +666,13 @@ fn finite_or(v: f32, d: f32) -> f32 {
 
 impl SurfaceUniform {
     /// `normal_resolved`: the normal texture resolved (else the normal-map switch is off).
-    fn new(s: &WorldSurface, has_tangents: bool, srgb: [bool; 2], normal_resolved: bool) -> Self {
+    fn new(
+        s: &WorldSurface,
+        options: WorldSurfaceOptions,
+        has_tangents: bool,
+        srgb: [bool; 2],
+        normal_resolved: bool,
+    ) -> Self {
         let color = s.base_color.map(|c| finite_or(c, 1.0));
         let (spec, power) = match s.specular {
             Some(sp) if finite_or(sp.shininess, 0.0) >= 0.5 => (
@@ -630,6 +683,8 @@ impl SurfaceUniform {
         };
         let cutoff = match s.alpha {
             AlphaMode::Mask { cutoff } | AlphaMode::TestBlend { cutoff } => finite_or(cutoff, 0.5),
+            // A fixed blend's alpha test (render.md R-D11, material.md §11.2).
+            AlphaMode::Fixed(b) => b.cutoff(),
             _ => -1.0,
         };
         let mut flags = 0;
@@ -641,6 +696,16 @@ impl SurfaceUniform {
         }
         if s.unlit {
             flags |= sf::UNLIT;
+            // The fog switch serves unlit surfaces only; the lit base pass always contains
+            // distance fog (lighting.md §2.1, §7 code 0x00).
+            if !options.fog {
+                flags |= sf::NO_FOG;
+            }
+        }
+        // material.md §11.3, rule for unlit records: the opacity a blend factor reads is the
+        // §11.2 opacity source, or 1 without one (not × M.alpha).
+        if matches!(s.alpha, AlphaMode::Fixed(_)) {
+            flags |= sf::FACTOR_OPACITY;
         }
         if s.gloss_from_base_alpha {
             // A gloss alpha never reaches the output alpha nor the alpha test (material.md
@@ -676,11 +741,19 @@ struct SurfaceBind {
     textures: [Option<TextureId>; 2],
 }
 
+/// What a surface's uniform is built from.
+#[derive(Debug, Clone, Copy)]
+struct SurfaceDesc {
+    surface: WorldSurface,
+    options: WorldSurfaceOptions,
+    /// The model's mesh has tangents.
+    has_tangents: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct SurfaceGpu {
     bind: Mutex<SurfaceBind>,
-    surface: WorldSurface,
-    has_tangents: bool,
+    desc: SurfaceDesc,
     pub kind: SurfaceKind,
     pub two_sided: bool,
 }
@@ -690,19 +763,18 @@ impl SurfaceGpu {
     fn new(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        s: WorldSurface,
-        has_tangents: bool,
+        desc: SurfaceDesc,
         set: [Option<ResolvedTexture>; 2],
         white: &ResolvedTexture,
     ) -> Self {
+        let s = desc.surface;
         let ids = [s.base_texture, s.normal_texture];
-        let bind = make_surface_bind(device, layout, &s, has_tangents, ids, &set, white);
+        let bind = make_surface_bind(device, layout, &desc, ids, &set, white);
         Self {
             bind: Mutex::new(bind),
             kind: SurfaceKind::from_alpha(s.alpha),
             two_sided: s.two_sided,
-            surface: s,
-            has_tangents,
+            desc,
         }
     }
 
@@ -724,15 +796,7 @@ impl SurfaceGpu {
             );
             let ids = b.textures;
             let set = ids.map(|id| id.and_then(|_| textures.get(id)));
-            *b = make_surface_bind(
-                device,
-                layout,
-                &self.surface,
-                self.has_tangents,
-                ids,
-                &set,
-                &textures.white(),
-            );
+            *b = make_surface_bind(device, layout, &self.desc, ids, &set, &textures.white());
         }
         b.bind_group.clone()
     }
@@ -741,15 +805,20 @@ impl SurfaceGpu {
 fn make_surface_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    s: &WorldSurface,
-    has_tangents: bool,
+    desc: &SurfaceDesc,
     ids: [Option<TextureId>; 2],
     set: &[Option<ResolvedTexture>; 2],
     white: &ResolvedTexture,
 ) -> SurfaceBind {
     let base = set[0].as_ref().unwrap_or(white);
     let normal = set[1].as_ref().unwrap_or(white);
-    let uniform = SurfaceUniform::new(s, has_tangents, [base.srgb, normal.srgb], set[1].is_some());
+    let uniform = SurfaceUniform::new(
+        &desc.surface,
+        desc.options,
+        desc.has_tangents,
+        [base.srgb, normal.srgb],
+        set[1].is_some(),
+    );
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("tessera-model-surface"),
         contents: bytemuck::bytes_of(&uniform),
@@ -947,8 +1016,11 @@ pub(crate) fn common_source() -> &'static str {
     INSTANCED_COMMON_WGSL
 }
 
-pub(crate) const MESH_VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4
+/// The mesh vertex (`GpuVertex`) with the stored binormal at location 13 (locations 7–12
+/// are the instance's).
+pub(crate) const MESH_VERTEX_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4,
+    13 => Snorm16x4
 ];
 
 pub(crate) fn mesh_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -1775,7 +1847,14 @@ mod tests {
             ..WorldSurface::default()
         };
         let flags = |s: &WorldSurface, resolved| {
-            SurfaceUniform::new(s, true, [false; 2], resolved).flags[0]
+            SurfaceUniform::new(
+                s,
+                WorldSurfaceOptions::default(),
+                true,
+                [false; 2],
+                resolved,
+            )
+            .flags[0]
         };
         assert_ne!(flags(&s, true) & sf::GLOSS_NORMAL_ALPHA, 0);
         assert_eq!(
@@ -1793,6 +1872,35 @@ mod tests {
             flags(&WorldSurface::default(), true) & sf::GLOSS_NORMAL_ALPHA,
             0
         );
+    }
+
+    /// The fog switch acts on unlit surfaces only; the factor-opacity flag marks fixed
+    /// blends only (material.md §11.3).
+    #[test]
+    fn surface_flags_for_fog_and_fixed_blends() {
+        let flags = |s: &WorldSurface, fog| {
+            SurfaceUniform::new(s, WorldSurfaceOptions { fog }, true, [false; 2], false).flags[0]
+        };
+        let unlit = WorldSurface {
+            unlit: true,
+            ..WorldSurface::default()
+        };
+        assert_ne!(flags(&unlit, false) & sf::NO_FOG, 0);
+        assert_eq!(flags(&unlit, true) & sf::NO_FOG, 0);
+        assert_eq!(flags(&WorldSurface::default(), false) & sf::NO_FOG, 0);
+        assert!(WorldSurfaceOptions::default().fog);
+        for (alpha, want) in [
+            (AlphaMode::Fixed(FixedBlend::ADDITIVE), true),
+            (AlphaMode::Additive, false),
+            (AlphaMode::Blend, false),
+            (AlphaMode::Opaque, false),
+        ] {
+            let s = WorldSurface {
+                alpha,
+                ..WorldSurface::default()
+            };
+            assert_eq!(flags(&s, true) & sf::FACTOR_OPACITY != 0, want, "{alpha:?}");
+        }
     }
 
     #[test]

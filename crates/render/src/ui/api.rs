@@ -482,7 +482,9 @@ pub(crate) fn scoped<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Opt
 mod tests {
     use std::path::Path;
 
-    use crate::material::{BlendFactor, BlendOp, FixedAlpha, FixedBlend, FixedPipeline, FogRule};
+    use crate::material::{
+        AlphaThreshold, BlendFactor, BlendOp, FixedAlpha, FixedBlend, FixedPipeline, FogRule,
+    };
 
     /// The blend states `Pass::premultiplied_alpha` relies on (render.md §6.10):
     /// alpha blended with `One`/`OneMinusSrcAlpha`.
@@ -548,12 +550,17 @@ mod tests {
                 for op in OPS {
                     assert!(listed_factor(src) && listed_factor(dst) && listed_op(op));
                     for depth_write in [false, true] {
-                        out.push(FixedBlend {
-                            src,
-                            dst,
-                            op,
-                            depth_write,
-                        });
+                        // The alpha test discards before the blend; it must not change
+                        // the R12 rule or the pipeline.
+                        for alpha_test in [None, Some(AlphaThreshold(0.5))] {
+                            out.push(FixedBlend {
+                                src,
+                                dst,
+                                op,
+                                depth_write,
+                                alpha_test,
+                            });
+                        }
                     }
                 }
             }
@@ -701,7 +708,8 @@ mod tests {
         let alphas = [0.0, 0.2, 0.5, 0.75, 1.0, 1.25];
         let samples = [0.0, 0.2, 0.5, 0.75, 1.0];
         let blends = every_fixed_blend();
-        assert_eq!(blends.len(), 1000);
+        // 10 × 10 factors, 5 operations, 2 depth writes, 2 alpha tests.
+        assert_eq!(blends.len(), 2000);
         let (mut over, mut opaque) = (0, 0);
         for b in blends {
             assert_eq!(b.alpha_rule(false), FixedAlpha::Keep, "{b:?}");
@@ -748,9 +756,9 @@ mod tests {
                 }
             }
         }
-        // SRCALPHA / INVSRCALPHA, ADD (both depth writes); four source factors with
-        // destination ZERO, ADD (both depth writes).
-        assert_eq!((over, opaque), (2, 8));
+        // SRCALPHA / INVSRCALPHA, ADD (both depth writes, with and without the alpha
+        // test); four source factors with destination ZERO, ADD (the same four variants).
+        assert_eq!((over, opaque), (4, 16));
     }
 
     fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {

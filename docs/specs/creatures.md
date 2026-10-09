@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (OPEN-closing revision of 2026-10-08, §15; narrow re-review of 2026-10-08 passed) |
-| **Last updated** | 2026-10-08 |
+| **Status** | Accepted (OPEN sweep of 2026-10-09 with its review fixes, §15; re-review of 2026-10-09 by a separate session passed) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author; second and third reviews by further separate sessions, none of them the author) |
-| **Review record** | Third review 2026-10-07 (separate session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). Revision of 2026-10-08: reviewed 2026-10-08 (separate session, not the author): **not passed**, changes requested (four items). Narrow re-review 2026-10-08 (separate session, not the author): **passed**, Accepted. Details in the review log. |
+| **Review record** | Third review 2026-10-07 (separate session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). Revision of 2026-10-08: reviewed 2026-10-08 (separate session, not the author): **not passed**, changes requested (four items). Narrow re-review 2026-10-08 (separate session, not the author): **passed**, Accepted. Details in the review log. OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §3.2.1, §5.3, §5.6, §5.7, §6.7 and §6.8 changed (rows C31–C34; the §6.5 field labels are answered in §5.3, §6.5 itself is unchanged; corrected 2026-10-09 per the review's non-blocking note); status Revised until a separate session reviews it. Review of the OPEN sweep 2026-10-09 (separate session, not the author): **not passed**, changes requested. Checked: no code or pseudo-code, no copied prose, no game text; every remaining OPEN is listed in the change log; C31–C34 re-measured read-only with a fresh probe over all records (no top-level name of the 38,651 sets matches two patterns; the eleven C32 labels, types, mappers and defaults as stated, the suffix rule finds exactly one label each; `Formation_Group` is an array of 685 bare follower DIDs, at most 10; 237 records with 6 `Conjunction_Role` arrays holding 9,954 contribution structs directly; 26,127 + 1,952 `OneOf` choices all with a weight, weight nowhere else, 1,976 repeats all with both bounds). No new BIN fact, so no M4 check was needed. Blocking items: (1) Decision D4a (§6.7) has no provenance entry: C21 lists D1, D2, D4–D8 but not D4a; add it (or fold D4a into D4 and say so). (2) §6.7 D4a says the carried repeat follows "the same innermost-wins rule as D3 rule 2.4", but D3 rule 2.4 makes only the placement innermost-wins; a `OneOf` repeat repeats the whole draw and an entry's own repeat multiplies within it (rule 2.2). Restate D4a so that it does not attribute an innermost-wins repeat rule to D3. Non-blocking: the sweep entry above names §6.5 as changed, while the diff and the change log change §5.3 (where the §6.5 labels are answered) and not §6.5; OBS4 sits between BIN2 and OBS3 in the sources table. Fixes for that review 2026-10-09 (spec writer, dirty room): (1) D4a added to provenance row C21; (2) §6.7 D4a restated: only the carried placement follows D3's innermost-wins rule (rule 2.4), the carried repeat is a display choice of D4a and the text states how D3 treats repeats (rules 2.2 and 2.4); non-blocking notes fixed (sweep entry above, OBS4 moved after OBS3). No new measurement, no new BIN fact. Waiting for a re-review. Re-review of the fixes and of the whole 2026-10-09 revision (separate session, neither the author nor the earlier reviewer), 2026-10-09: **passed**, Accepted. Checked against §5.3: no code or pseudo-code, no copied prose, no game text, assets, keys or hostnames; the property labels are interoperability identifiers read from the install; every new fact has a row (OBS4, C31–C34, D4a in C21, the `evaluate_profile` choices under D3 and C17a); blocking item (1) fixed (C21 names D4a); blocking item (2) fixed (D4a takes only the placement rule from D3 rule 2.4 and states that D3 treats repeats by rules 2.2 and 2.4); the four closed implementer OPENs are answered by a fact or a recorded decision; the counts agree with §6.5 and §6.6 (26,127 = 10,305 + 10,232 + 5,590; 1,976 = 16 + 1,952 + 8). Spot check (read-only, own fresh probe with the repository decoders over all records): 38,651 sets per class, no top-level name matches two mirror patterns (no name in the whole dictionary does); the C32 labels, types, mappers and defaults as stated; follower targets class 1723 in 668 and 1724 in 17; 26,127 + 1,952 `OneOf` choices, all with a weight; 1,976 repeats, all with both bounds. No new BIN fact, so no M4 check. Non-blocking: D4a says "the innermost repeat on its path" but its parenthesis names only the candidate's own `Entry` and the enclosing `OneOf`s, not a repeat on an enclosing `ProfileDefinition` entry; no such case occurs here (all 8 entry-level repeats are on `WSLEntity` entries), so a later revision may make the parenthesis complete. |
 | **Implements into** | A gameplay-data layer on `crates/props` and `crates/wstate` (template store, authored-subset extraction, AI and generator decoders; crate placement is the implementer's choice); `crates/world` (generator, spawn-point and patrol-path index per landblock); `crates/net` sandbox backend (spawning, §6.8); `apps/explorer` (creature card and spawn overlay, §10); `apps/dattool` (census commands) |
 | **Companion specs** | [`wstate.md`](wstate.md) (object records 0x70, bundles, link and available-property sections §6–§7); [`property-system.md`](property-system.md) (property sets, the +0x09000000 rule §6.2, enum and bitfield labels §7, DID maps §8); [`wlib.md`](wlib.md) (class library, ancestry); [`landblock.md`](landblock.md) §4.6 (links), §4.8 (weenie list), §5 (block maps); [`entity-descriptor.md`](entity-descriptor.md) §4 (static entities, instance property sets §4.5.2); [`setup.md`](setup.md) §4 (0x47 entity descriptors); [`appearance.md`](appearance.md) §7 (how NPC and creature figures are dressed); [`environment.md`](environment.md) §4 (region tables; the encounter table is decoded here, §7); [`coordinates.md`](coordinates.md) (map coordinates for overlays); [`string-table.md`](string-table.md) §9 (rendering `Name` and other StringInfo values) |
 
@@ -70,6 +70,7 @@ How sources are marked:
 | OBS2 | User install (Steam), observed 2026-10-08, read-only, data files unchanged since 2026-10-04. Throwaway probes in the dirty-room scratch area, using the project's decoders as tools, over: the object form (0x70 bundle) of all 38,651 templates, all 4,168 generator profiles, all 124 attitude records, the one classification-filter-list record (class 977) and the WEENIECONTENT entry `ClassificationControl`; every 0x79 property set of every 0x70 record, searched for DIDs of classes 1653 and 1654; the link-type enum mapper (0x230000BE, base 0x230001A9) and mapper 0x23000112; the `gameplayactivatables` UI layout record (0x22000012, searched for two element IDs); and the bytecode of the class library (0x56000000), disassembled with the rules of `wlib-bytecode.md` (an Accepted spec): the bodies of classes 884, 974, 975 and 976, class 1658's lookup functions, the class-1196 accessors and fill function, the class-434 function that calls class 884 for the harmful-interaction check (a second caller in class 434 was located, not read), and a search of the whole code for 32-bit pushes of the property IDs named in §5.3.1, §5 and §6. |
 | BIN2 | **M4 (decision 0011), second use, 2026-10-08.** Same client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file unchanged since 2026-10-04), headless decompiler and disassembler on a copy of the shared analysis project (deleted after use), single addresses and functions only. **Questions:** (1) which window owns the creature information panel of C9; (2) whether the executable reads `ForwardSource_Movement_SpeedMultiplier` or the property IDs of the AI action tables, attitude filter lists, colour-event tables, generator profiles, `Generator_ProfileDID` or `PatrolLink_Speed` directly; (3) where the client reads the 0x14 encounter records. **Why M1–M3 were not enough:** the data hold the panel's layout but not which code fills it; whether code reads a property is not visible in the data; no published source covers either; the running client (M3) shows the panel only when a skill opens it and shows nothing of property reads. **Read:** a byte search of the executable for those 32-bit IDs and the instructions or table entries around each of the 18 occurrences; the panel routine's caller and that caller's caller (a window method, not followed further); for (3), the cache-size setting and the DID-range registration of prefix 0x14 (the reader itself was not reached). Nothing from network, login, launcher or anti-tamper code was read. |
 | OBS3 | User install (Steam), observed 2026-10-08 (review fixes), read-only, data files unchanged since 2026-10-04. Fresh throwaway probes in the dirty-room scratch area, using the project's decoders as tools, over: every 0x79 property set of every one of the 383,332 0x70 records, searched for DIDs of classes 1653 and 1654 and counted per avatar record (references and distinct referrer records); the object form of all 4,168 generator profiles walked in parallel with their property sets, every attribute of every node compared with its property-set counterpart; all 549 filter exceptions against the species-to-genus table; all 351 stored `ClassificationFilter_Filter_Default` values; the EMAPPER entry of mapper 0x230000BE. |
+| OBS4 | User install (Steam), observed 2026-10-09 (OPEN sweep, spec writer), read-only; archives unchanged since 2026-10-04 (file times). A dump of **every** 0x70 record with its 0x79 set and of all 0x78 sets, made on 2026-10-07 with the repository's own decoders, walked at every nesting depth (struct fields, array elements, arrays inside arrays), plus the property dictionary for types, defaults and full labels. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -95,7 +96,7 @@ How sources are marked:
 | C18 | Patrol links and path graph (§6.9) | OBS (all landblocks) | Confirmed 2026-10-07 |
 | C19 | Encounter table layout (§7) | OBS (5 of 5 records decoded to the last byte) | Confirmed 2026-10-07; meaning OPEN |
 | C20 | Enum mappers and their entry counts (§8) | OBS | Confirmed 2026-10-07 |
-| C21 | Tessera rules D1 (template store and its lookup, including the rule that a base is never answered from a mirror, §3.2.1, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5), D8 (classification values of a sandbox entity, §5.3.1) | Tessera | Decision |
+| C21 | Tessera rules D1 (template store and its lookup, including the rule that a base is never answered from a mirror, §3.2.1, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D4a (values a static-resolution candidate carries, §6.7; a display rule for tools, separate from D3), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5), D8 (classification values of a sandbox entity, §5.3.1) | Tessera | Decision |
 | C22 | Classes 1653 and 1654 are the administrator and player forms of the 69 avatar templates; each of the 138 records is named by exactly one **kind** of referrer (race-table gender entries, monster-play records or the PvP-control record), by one to seven referrer records of that kind; multiplicities per record as in §2.1 | OBS2 (every 0x79 set of every 0x70 record searched; 15 + 67 + 1 references per class, 69 of 69 records of each class reached); OBS3 (per-record counts); `player-character.md` §4 | Confirmed 2026-10-08 |
 | C23 | Reference attributes of the template root object: per class, which are non-null and what they point at (§3.1) | OBS2 (all 38,651 root objects) | Confirmed 2026-10-08 |
 | C24 | Link type 13 is the key labelled `PathMapTest` of the link-type enumeration (§3.3) | OBS2 (mapper 0x230000BE with base 0x230001A9); `wstate.md` §6 | Confirmed 2026-10-08 |
@@ -105,6 +106,10 @@ How sources are marked:
 | C28 | Object form of attitude and filter-list records: per list a map from filter type to one filter; per filter a `Default` integer and a set of 64-bit exception keys built by the §5.3.1 key rule; it equals the property set in every list (§5.3.1) | OBS2 (all 124 attitude records and the class-977 record: 233 lists, 652 filters, 549 exceptions; no genus conflict) | Confirmed 2026-10-08 |
 | C29 | The WEENIECONTENT entry `ClassificationControl` (class 1658) lists 116 classification records and carries, in object form, a species-to-genus map that equals their `Classification_Species` and `Classification_Genus` values (§5.3.1) | OBS2 (116 of 116) | Confirmed 2026-10-08 |
 | C30 | Attitude results 1, 2 and 3 carry the labels `Neutral`, `Friendly` and `Aggressive` of mapper 0x23000112 (§5.3.1) | OBS2 (the mapper; the codes returned by class 884's code) | Confirmed for the labels; that the code uses this mapper's numbering is Inferred (same values) |
+| C31 | No top-level property name in the creature sets matches two of the six mirror patterns of §3.2.1 | OBS4 (every top-level label of the 38,651 sets) | Confirmed 2026-10-09 |
+| C32 | Full dictionary labels of the classification-filter exception fields and of the generator-profile repeat and placement fields (§5.3, §6.5) | OBS4 (property dictionary) | Confirmed 2026-10-09 |
+| C33 | `Formation_Group` is an array of bare `Formation_Follower` DIDs; `Conjunction_RoleList` is an array of `Conjunction_Role` elements, each itself an array of `Conjunction_Role_ContributionToActionMap` structs (§5.6, §5.7) | OBS4 (dictionary types; every occurrence) | Confirmed 2026-10-09 |
+| C34 | Every `OneOf` choice (26,127 entries, 1,952 position-set entries) carries `GeneratorProfile_Weight`; every `GeneratorProfile_Repeat` (1,976) carries both bounds (§6.8) | OBS4 (all 4,168 profiles, every depth) | Confirmed 2026-10-09 |
 
 ---
 
@@ -296,11 +301,15 @@ mirror shows that the two can differ, so the mirror is not a reliable copy of th
 > most likely lies with the server, which no M1–M4 method reaches. Under D1 the base answers its dictionary default and the
 > mirror keeps its own value.
 
-> **OPEN:** (implementer note, `crates/formats/src/gameplay/creatures.rs`) Which pattern
+> **Answered (2026-10-09; was OPEN, implementer note, `crates/formats/src/gameplay/creatures.rs`):** Which pattern
 > applies when a name matches two of the six (for example `ForwardSource_`*X*`_Cached`) is
 > not stated. Tessera takes the first in table order, so such a name is a `_Cached` mirror of
 > `ForwardSource_`*X*, and a lookup may step through two mirrors (at most 8 steps). Confirm or
 > give the rule.
+>
+> *Answer:* no top-level name in the 38,651 sets matches two patterns (C31), so the data never
+> decides. **Decision (Tessera, part of D1):** the first pattern in table order applies, as
+> the implementation does; a chain of mirrors is followed to its end with the 8-step guard.
 
 <a id="s3-2-2"></a>
 #### 3.2.2 Class-constant and varying properties (Confirmed, C5)
@@ -768,13 +777,24 @@ its own `Attitude_Table`, `Agent_ClassificationFilter`, `Agent_Genus`, `Agent_Sp
 > (player-versus-player state, teams, duels, passivity, invulnerability). Neither is needed
 > to evaluate a table.
 
-> **OPEN:** (implementer note) The exception fields are named here only as `…_Alignment`,
+> **Answered (2026-10-09; was OPEN, implementer note):** The exception fields are named here only as `…_Alignment`,
 > `…_Genus`, `…_Species` and `…_Subspecies`, and §6.5 names the repeat and placement fields
 > only as `…_RepeatMinTimes`, `…_RepeatMaxTimes`, `…_ExactPlacementX` (`Y`, `Z`),
 > `…_RandomPlacementMinDist` and `…MaxDist`. Tessera resolves each as the one dictionary label
 > that starts with `ClassificationFilter` (respectively `GeneratorProfile`) and ends with the
 > given suffix, and treats the field as absent when no label or several match; on the
 > 2026-10-07 install every one resolved to exactly one label. Please give the full labels.
+>
+> *Answer (C32):* the exception fields are `ClassificationFilter_FilterException_Alignment`
+> (enum, mapper 0x2300000D), `ClassificationFilter_FilterException_Genus` (32-bit bitfield,
+> mapper 0x2300000A), `ClassificationFilter_FilterException_Species` (enum, 0x2300000B) and
+> `ClassificationFilter_FilterException_Subspecies` (enum, 0x2300000C), all with dictionary
+> default 0. The §6.5 fields are `GeneratorProfile_RepeatMinTimes` and
+> `GeneratorProfile_RepeatMaxTimes` (int, dictionary default 1), `GeneratorProfile_ExactPlacementX`,
+> `…Y`, `…Z` (float, default 0.0; the full labels are `GeneratorProfile_ExactPlacementY` and
+> `GeneratorProfile_ExactPlacementZ`), `GeneratorProfile_RandomPlacementMinDist` and
+> `GeneratorProfile_RandomPlacementMaxDist` (float, no default). The suffix rule of the
+> implementation finds exactly these labels.
 
 <a id="s5-4"></a>
 ### 5.4 Classification (973, 124 records)
@@ -817,33 +837,46 @@ the same type. The explorer lists it separately, marked "top-level".
 <a id="s5-6"></a>
 ### 5.6 Formation (3477, 212 records)
 
-One property, `Formation_Group`: a struct of `Formation_Follower` DIDs (685 in all; → class
-1723 in 668, 1724 in 17; up to 10 per record). A template's `Formation_Group_DataID` names the
+One property, `Formation_Group`: an **array** (dictionary type array; the earlier text said
+struct) whose elements are bare `Formation_Follower` DIDs (685 in all; → class 1723 in 668, 1724
+in 17; up to 10 per record; C33). A template's `Formation_Group_DataID` names the
 group it leads and `Formation_Layout_Type` (enum 0x2300036D) the arrangement.
 
-> **OPEN:** (implementer note) `Formation_Group` is called a struct, but a struct holds each
+> **Answered (2026-10-09; was OPEN, implementer note):** `Formation_Group` is called a struct, but a struct holds each
 > PID at most once (`property-system.md` §4.10) while a formation has up to 10 followers.
 > Tessera collects every `Formation_Follower` DID at any depth under `Formation_Group` (685 on
 > the install, as above). Please state the nesting.
+>
+> *Answer:* `Formation_Group` is an array, not a struct; each element is one
+> `Formation_Follower` DID, directly (C33). The text above is corrected.
 
 <a id="s5-7"></a>
 ### 5.7 Conjunction (1001, 237 records)
 
 Eight properties each: `Conjunction_Name`, `Conjunction_Description` (StringInfo),
 `Conjunction_Category` (enum 0x23000077), `Conjunction_Flags` (bitfield32),
-`Conjunction_Icon_Small`/`_Medium`/`_Large` (→ 0x41), `Conjunction_RoleList` (6
-`Conjunction_Role` entries in every record; below them 9,954
-`Conjunction_Role_ContributionToActionMap` entries, each with `Conjunction_Role_ActionSkill`,
+`Conjunction_Icon_Small`/`_Medium`/`_Large` (→ 0x41), `Conjunction_RoleList` (an array of 6
+`Conjunction_Role` elements in every record; each `Conjunction_Role` is itself an array whose
+elements are `Conjunction_Role_ContributionToActionMap` structs, directly, C33; 9,954 such
+entries in all, each with `Conjunction_Role_ActionSkill`,
 `Conjunction_PvP_Role_ActionSkill` and `Conjunction_Role_ContributionSkill`, → class 827 in
 2,016 entries and null in 7,938). The WEENIECONTENT entry `ConjunctionTable` (class 1006) holds
 a list of 156 DIDs (`Conjunction_MonsterPlay_ConjunctionList`). Templates reach them
 only through `GameEvent_ConjunctionEventTable` scriptlets; `Conjunction_TableOverride` is null in
 every template.
 
-> **OPEN:** (implementer note) Where the `Conjunction_Role_ContributionToActionMap` entries sit
+> **Answered (2026-10-09; was OPEN, implementer note):** Where the `Conjunction_Role_ContributionToActionMap` entries sit
 > below a `Conjunction_Role` ("below them") is not stated. Tessera takes every struct with
 > that PID at any depth under a role element (9,954 on the install, as above). Please state
 > the nesting.
+>
+> *Answer:* one level down: `Conjunction_RoleList` → `Conjunction_Role` (array) → its elements,
+> the `Conjunction_Role_ContributionToActionMap` structs (C33).
+
+> **OPEN:** (implementer, 2026-10-09; engineering choices, recorded for review)
+> `crates/formats/src/gameplay/creatures.rs` reads a `Formation_Group` that is not an array as
+> an error, and skips elements of `Formation_Group` and of a `Conjunction_Role` whose label is
+> not `Formation_Follower` or `Conjunction_Role_ContributionToActionMap`. Confirm or replace.
 
 <a id="s5-8"></a>
 ### 5.8 Puppet target package (3761, 82 records)
@@ -1132,12 +1165,25 @@ sub-profile reached from inside a `PositionSetEntry` stays scoped to that positi
 templates that **can** appear, with their weights and probabilities; which one appears is a
 run-time choice (§6.8).
 
-> **OPEN:** (implementer note) Which weight and probability a candidate carries when several
+> **Answered (2026-10-09; was OPEN, implementer note):** Which weight and probability a candidate carries when several
 > lie on its path is not stated. Tessera reports the weight of the nearest enclosing `OneOf`
 > choice, the nearest `GeneratorProfile_Probability`, and the innermost placement and repeat;
 > a template reached on several paths is listed once per path; entries removed by C17 are
 > left out. A walk visits at most 65,536 profile elements (protection against hostile
 > profile graphs). Confirm or give the rule.
+>
+> *Answer:* confirmed as **Decision D4a (Tessera, tools only):** a candidate carries the weight
+> of its nearest enclosing `OneOf` choice, the nearest `GeneratorProfile_Probability` on its
+> path, the innermost placement on its path (this matches D3, whose rule 2.4 lets the innermost
+> placement win), and the innermost `GeneratorProfile_Repeat` on its path (its own `Entry`'s
+> repeat when it has one, else that of the nearest enclosing `OneOf` that has one); a template
+> reached on several paths is listed once per path; entries removed by C17 are left out; a walk
+> visits at most 65,536 profile elements. The carried repeat is a **display choice of D4a
+> only**, not a rule of D3: under D3 repeats on one path do not replace one another, an
+> `Entry`'s own repeat multiplies its target within each draw (rule 2.2) and a `OneOf`'s repeat
+> repeats that `OneOf`'s whole draw (rule 2.4), so the carried repeat is not the number of
+> objects spawned. The static list is for display; the chance and number of a template follow
+> from D3, not from the carried values alone. D4a is recorded in provenance row C21.
 
 <a id="s6-8"></a>
 ### 6.8 Run-time semantics (Reported; Decisions for the sandbox)
@@ -1224,8 +1270,8 @@ own sandbox rule (Decision D3, C17a), not a claim about the original.
 > or a choice is produced; `ExactPlacement` is an offset from the spawn point;
 > `RandomPlacement` an annulus around it. D3 adopts this hypothesis for the sandbox only.
 
-> **OPEN:** (implementer note: engineering choices of `evaluate_profile` where D3 is silent;
-> not claims about the original) (a) A `OneOf` choice without `GeneratorProfile_Weight` counts
+> **Answered (2026-10-09; was OPEN, implementer note: engineering choices of `evaluate_profile` where D3 is silent;
+> not claims about the original):** (a) A `OneOf` choice without `GeneratorProfile_Weight` counts
 > with weight 1. (b) Absent repeat bounds take the dictionary default of `…_RepeatMinTimes`
 > when it has one, else 1; bounds out of order are swapped and negative bounds count as 0.
 > (c) A probability of 1000 or more succeeds without a random draw, and a `OneOf` with a single
@@ -1235,6 +1281,11 @@ own sandbox rule (Decision D3, C17a), not a claim about the original.
 > choice with a weight of 0 or less is removed like an entry (C17). The first three shapes are
 > reported as grammar deviations; none of the four occurs in the install. (e) Besides the
 > 256-object cap, one evaluation visits at most 65,536 profile elements. Confirm or replace.
+>
+> *Answer:* (a) to (e) are confirmed as part of Decision D3. Data check (C34): every `OneOf`
+> choice of the install carries a weight and every repeat both bounds, so (a) and (b) never
+> apply here; the dictionary default of both repeat bounds is 1, which (b) uses. (c), (d) and
+> (e) change no outcome on this install's data.
 
 <a id="s6-9"></a>
 ### 6.9 Patrol paths (Confirmed C18)
@@ -1688,3 +1739,5 @@ Item numbers are kept; closed items say where the answer is.
 | 2026-10-08 | header, Purpose, §1 (OBS2, BIN2, C9a, C16, C17a, C21–C30), §2.1, §3.1, §3.2.1, §3.3, §3.4, §4.8, §5.1, §5.3, §5.3.1 (new), §5.5, §6.6, §6.8 (D3 step 8), §6.9, §7, §8, §9, §11 (CR16–CR19), §12.4 (new), §13 | OPEN-closing revision; status Revised. **Closed:** §2.1 (classes 1653 and 1654 are the avatar templates, with their referrers); §3.1 (census of the root object's reference attributes); §4.8 (the panel is the analyse-skill panel); §5.3 (the attitude evaluation rule, read from the class library's code and confirmed against the object form of all 233 lists; new §5.3.1 with the species-to-genus table, the 64-bit exception key and Decision D8); §6.6 (role of every profile bundle class; object form equals the property set in all 4,168 profiles); §3.3 in part (link type 13 is `PathMapTest`). **Changed:** D3 step 8 now uses the §5.3.1 rule (aggressive before friendly; the earlier sandbox rule let friendly lists win). **Made precise, still OPEN:** §3.2.1, §3.3 flag, §3.4, §5.1, §5.5, §6.8, §6.9 (two), §7, and a new narrower §5.3.1 item (how the `Interaction_Permission_*` inputs are filled and how the two directions combine): each now says which method was tried and why it cannot settle the question (server-side, or a further M4 pass for §7). Second M4 use recorded as BIN2. | Spec writer (dirty room) |
 | 2026-10-08 | header, §1 (marks key: Inferred; OBS3; C16, C22), §2.1, §5.3.1 (Filter, Key), §6.6.1 (new), §8, §11 (CR16) | Fixes for the review of 2026-10-08, every fact re-measured with fresh probes over all records (OBS3). (A) §2.1 and C22: each avatar record is named by exactly one *kind* of referrer, not by exactly one referrer; new multiplicity table (126 records by one referrer record, 6 by two, 4 by three, 2 by seven; one record per class named twice inside one race-table record). (B) §8: the link-type mapper is labelled with its EMAPPER label `EntityLinkType`; the earlier label had no source in the install. (C) New §6.6.1 with the attribute name hash of every field of every profile node class, including the five constant fields, so that CR16 can be tested from the spec. (D) §5.3.1: *D* is the stored value when present (true in all 351); new rule for an exception whose species has no genus in the table (0 of 549 here; it can never change a result, so it may be dropped or kept). Minor: `Inferred` defined in the §1 marks key. Status stays Revised until a narrow re-review. | Spec writer (dirty room) |
 | 2026-10-08 | header | Narrow re-review of the fixes for review items A–D (separate session, not the author): passed; status Accepted. No content changed. | Spec reviewer |
+| 2026-10-09 | header, §1 (OBS4, C31–C34), §3.2.1, §5.3, §5.6, §5.7, §6.7, §6.8 | OPEN sweep; status Revised, waiting for review. Corrections: `Formation_Group` is an array of bare follower DIDs, not a struct; the conjunction contribution entries are the elements of each `Conjunction_Role` array (C33). Answered: mirror names never match two patterns, first pattern in table order applies (C31, D1); full labels of the exception, repeat and placement fields (C32); the static-resolution carry rule (D4a) and the `evaluate_profile` choices (D3), with the data check that every choice has a weight and every repeat both bounds (C34). Still OPEN: server behaviour (speed mirror, link flag, available-property list, AI tables, interaction values, colour events, spawning, patrols, patrol speed) and the 0x14 slot fields. | Spec writer (dirty room) |
+| 2026-10-09 | header, §1 (sources table order, C21), §6.7 (D4a) | Fixes for the review of the OPEN sweep (changes requested). (1) C21 now covers Decision D4a. (2) D4a no longer attributes an innermost-wins repeat rule to D3: the carried placement is the innermost one, as in D3 rule 2.4; the carried repeat (the innermost `GeneratorProfile_Repeat` on the path) is stated as a display choice of D4a only, and the text says that under D3 an entry's own repeat multiplies within each draw (rule 2.2) while a `OneOf` repeat repeats the whole draw (rule 2.4). No change to what D4a carries. Non-blocking: the header's sweep entry names §5.3, not §6.5; OBS4 moved after OBS3. Status Revised, waiting for re-review. | Spec writer (dirty room) |

@@ -311,6 +311,31 @@ pub fn slider_values(
 /// A deformer beyond it is dropped and logged.
 pub const MAX_BODY_SHAPE_CLIPS: usize = 16;
 
+/// The SliderMeshDeformer whose set the figure holds, and how many slider deformers the
+/// resolution registered.
+///
+/// An entity holds one slider set: starting a SliderMeshDeformer replaces the set of any
+/// other, so the set in use is that of the **most recently started** node
+/// (`script-table.md` §6.9, `appearance.md` §6.4). "Most recently started" is the client's
+/// start order (A33; `script-table.md` §8.2 step 3, §7.5: kind-1 definitions before
+/// kind-2 ones, roots and port children in stored order, a Collection's ports by
+/// ascending ordinal, each node with its immediate starts before the next), which is the
+/// order of [`ClipResolution::deformers`]; so it is the **last** slider deformer there.
+/// Stopping a SliderMeshDeformer removes the set, but a resolution only lists started
+/// nodes, so no stop applies here.
+#[must_use]
+pub fn started_slider(deformers: &[DeformerCandidate]) -> (Option<&DeformerCandidate>, usize) {
+    let mut last = None;
+    let mut count = 0usize;
+    for d in deformers {
+        if matches!(d, DeformerCandidate::Slider { .. }) {
+            last = Some(d);
+            count = count.saturating_add(1);
+        }
+    }
+    (last, count)
+}
+
 /// Collects the shape inputs of figure `c` from a clip resolution of its scripts (any
 /// motion state: the species table's `Startup` registers them in every state).
 ///
@@ -322,8 +347,8 @@ pub const MAX_BODY_SHAPE_CLIPS: usize = 16;
 /// - **Body shape**: every MeshDeformer (at most [`MAX_BODY_SHAPE_CLIPS`]); its fraction
 ///   likewise.
 /// - **Sliders**: the entity holds one slider set, that of the **most recently started**
-///   SliderMeshDeformer (`script-table.md` §6.9, `appearance.md` §6.4): the last one in
-///   evaluation order. Its definitions record; the pieces by [`slider_values`].
+///   SliderMeshDeformer (`script-table.md` §6.9, `appearance.md` §6.4, A33), chosen by
+///   [`started_slider`]. Its definitions record; the pieces by [`slider_values`].
 pub fn figure_shape<S: RecordSource>(
     data: &GameData<S>,
     vocab: &AssemblyVocabulary,
@@ -342,40 +367,36 @@ pub fn figure_shape<S: RecordSource>(
             driver: ShapeDriver::of(vocab, h.manual_time_source),
         });
     }
-    let mut slider_node = None;
     let mut dropped_deformers = 0usize;
-    let mut replaced_slider_sets = 0usize;
+    let (slider_node, slider_nodes) = started_slider(&resolution.deformers);
+    let slider_node = slider_node.and_then(|d| match d {
+        DeformerCandidate::Slider {
+            definitions,
+            values,
+            values_source,
+            ..
+        } => Some((*definitions, values.as_deref(), *values_source)),
+        _ => None,
+    });
+    let replaced_slider_sets = slider_nodes.saturating_sub(1);
     for d in &resolution.deformers {
-        match d {
-            DeformerCandidate::Mesh {
-                clip,
-                time,
-                time_source,
-                use_bone_weights,
-                ..
-            } => {
-                if out.body_shape.len() < MAX_BODY_SHAPE_CLIPS {
-                    out.body_shape.push(BodyShapeClip {
-                        clip: *clip,
-                        fraction: figure_value(vocab, c, *time_source).unwrap_or(*time),
-                        use_bone_weights: *use_bone_weights,
-                    });
-                } else {
-                    dropped_deformers += 1;
-                }
+        if let DeformerCandidate::Mesh {
+            clip,
+            time,
+            time_source,
+            use_bone_weights,
+            ..
+        } = d
+        {
+            if out.body_shape.len() < MAX_BODY_SHAPE_CLIPS {
+                out.body_shape.push(BodyShapeClip {
+                    clip: *clip,
+                    fraction: figure_value(vocab, c, *time_source).unwrap_or(*time),
+                    use_bone_weights: *use_bone_weights,
+                });
+            } else {
+                dropped_deformers += 1;
             }
-            DeformerCandidate::Slider {
-                definitions,
-                values,
-                values_source,
-                ..
-            } => {
-                if slider_node.is_some() {
-                    replaced_slider_sets += 1;
-                }
-                slider_node = Some((*definitions, values.as_deref(), *values_source));
-            }
-            _ => {}
         }
     }
     if dropped_deformers > 0 {
@@ -425,6 +446,36 @@ pub fn figure_shape<S: RecordSource>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A33: the slider set in use is that of the last slider deformer of the resolution
+    /// (the most recently started one); body-shape deformers do not count.
+    #[test]
+    fn the_most_recently_started_slider_node_is_used() {
+        use tessera_formats::Did;
+        let slider = |record: u32| DeformerCandidate::Slider {
+            definitions: Did(record),
+            values: Some("80".into()),
+            values_source: None,
+            table: Did(0x0700_0001),
+        };
+        let mesh = DeformerCandidate::Mesh {
+            clip: Did(0x0500_0001),
+            time: 0.5,
+            time_source: None,
+            use_bone_weights: false,
+            table: Did(0x0700_0001),
+        };
+        let (none, count) = started_slider(&[]);
+        assert!(none.is_none());
+        assert_eq!(count, 0);
+        let (only_mesh, count) = started_slider(std::slice::from_ref(&mesh));
+        assert!(only_mesh.is_none());
+        assert_eq!(count, 0);
+        let list = [slider(0x7800_0001), mesh.clone(), slider(0x7800_0002), mesh];
+        let (used, count) = started_slider(&list);
+        assert_eq!(used, Some(&slider(0x7800_0002)));
+        assert_eq!(count, 2);
+    }
 
     #[test]
     fn channel_labels() {

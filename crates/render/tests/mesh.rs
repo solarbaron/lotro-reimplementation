@@ -15,6 +15,9 @@ use tessera_render::{
     PassSpace, RenderError, Renderer, RgbaImage, TextureUpload, Wrap,
 };
 
+/// Bytes of one packed vertex (`render.md` §2.1: 40 bytes plus the stored binormal).
+const VERTEX_BYTES: u64 = 48;
+
 const BG: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const SIZE: u32 = 64;
 
@@ -91,7 +94,7 @@ fn upload_destroy_and_stats() -> Result<(), RenderError> {
     let sphere = r.upload_mesh(&MeshData::uv_sphere(1.0, 8, 4))?;
     let stats = r.mesh_stats();
     assert_eq!((stats.meshes, stats.pages), (2, 1));
-    assert_eq!(stats.vertex_bytes_used, (24 + 9 * 5) * 40);
+    assert_eq!(stats.vertex_bytes_used, (24 + 9 * 5) * VERTEX_BYTES);
     let info = r.mesh_info(cube).expect("cube info");
     assert_eq!((info.vertex_count, info.index_count), (24, 36));
     assert_eq!(
@@ -123,9 +126,9 @@ fn upload_destroy_and_stats() -> Result<(), RenderError> {
 fn arena_pages_and_caps() -> Result<(), RenderError> {
     // Pages of 64 vertices / 256 indices; a cube (24 / 36 + 60 edges) fits twice.
     let config = MeshConfig {
-        page_vertex_bytes: 64 * 40,
+        page_vertex_bytes: 64 * VERTEX_BYTES,
         page_index_bytes: 256 * 4,
-        max_total_bytes: 2 * (64 * 40 + 256 * 4) + 600_000,
+        max_total_bytes: 2 * (64 * VERTEX_BYTES + 256 * 4) + 600_000,
         ..MeshConfig::default()
     };
     let Some(mut r) = renderer_with(config) else {
@@ -175,7 +178,7 @@ fn arena_pages_and_caps() -> Result<(), RenderError> {
 #[test]
 fn draws_from_several_pages_render() -> Result<(), RenderError> {
     let config = MeshConfig {
-        page_vertex_bytes: 30 * 40,
+        page_vertex_bytes: 30 * VERTEX_BYTES,
         page_index_bytes: 100 * 4,
         ..MeshConfig::default()
     };
@@ -846,9 +849,9 @@ fn mirrored_two_sided_cards_flip_only_back_faces() -> Result<(), RenderError> {
 fn oversized_first_page_is_released() -> Result<(), RenderError> {
     // Regression: page 0 was always kept, even when it had been sized for one
     // large mesh, pinning that memory for the renderer's lifetime.
-    let default_page = 64 * 40 + 256 * 4;
+    let default_page = 64 * VERTEX_BYTES + 256 * 4;
     let config = MeshConfig {
-        page_vertex_bytes: 64 * 40,
+        page_vertex_bytes: 64 * VERTEX_BYTES,
         page_index_bytes: 256 * 4,
         max_total_bytes: 3_000_000,
         ..MeshConfig::default()

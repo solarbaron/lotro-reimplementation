@@ -40,9 +40,10 @@ pub use cell::{
 pub use flags::{
     CREATION_TYPE_INVALID, CREATION_TYPE_SHARED_STATIC_IMMOBILE,
     CREATION_TYPE_UNIQUE_DYNAMIC_IMMOBILE, CREATION_TYPE_UNIQUE_DYNAMIC_MOBILE, CollisionFlags,
-    ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, EntityLookups, PhysicsPids, SetupCollision,
-    content_layer_list, content_layers_pass, ethereality_bit, generated_blocks_walker,
-    static_blocks_walker, static_has_walker_collision,
+    ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, EntityLookups, MAX_PHYSICS_SCALE,
+    PhysicsPids, SCALE_TOLERANCE, SetupCollision, content_layer_list, content_layers_pass,
+    ethereality_bit, generated_blocks_walker, physics_scale, static_blocks_walker,
+    static_has_walker_collision,
 };
 pub use liquid::{
     LiquidBox, LiquidFlags, LiquidPids, LiquidSpan, MAX_LIQUID_BOXES, UNDER_WATER_TOLERANCE,

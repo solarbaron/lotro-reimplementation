@@ -66,8 +66,7 @@ use crate::error::{PhysicsError, Result};
 /// to one skin, and then stops the capsule where the gap is still two skins (up to two and a
 /// half; less only when it started closer). Tessera Decision (`collision.md` §12.4 (w));
 /// the narrow phase's time of impact also lowers the hit threshold to half the capsule's
-/// clearance and counts a starting gap below 10⁻⁶ m as touching (not yet in the spec:
-/// implementer OPEN in §12.4).
+/// clearance and counts a starting gap below 10⁻⁶ m as touching (§12.4 (w)).
 pub const SKIN: f32 = 0.001;
 
 /// Most items (triangles, round primitives, solid boxes) one sweep, ray or contact query
@@ -331,7 +330,7 @@ pub struct BuildReport {
     pub statics_blocking: u32,
     /// Static entities left out by the run-time filters of §9.3: the content-layer test
     /// (item 2) or an effective `Entity_CreationType` of 0, 7 or 8 (item 3; 0 also when
-    /// none is found or the value found is not an integer or enum).
+    /// none is found or the value found is not an enum or property-ID value).
     pub statics_filtered: u32,
     /// Generated objects examined.
     pub generated_seen: u32,
@@ -666,8 +665,8 @@ impl CollisionSetBuilder {
             }
             let flags = CollisionFlags::of_static(own, resolved.flags);
             self.note_resolution(&resolved);
-            // Creation type 0 (also: none found, or not an integer or enum) is rejected by
-            // the loader, 7 and 8 are not created by the client (§9.3 item 3, C29).
+            // Creation type 0 (also: none found, or not an enum or property-ID value) is
+            // rejected by the loader, 7 and 8 are not created by the client (§9.3 item 3, C29).
             if flags.refuses_static_creation() {
                 self.report.statics_filtered += 1;
                 continue;
@@ -784,8 +783,9 @@ impl CollisionSetBuilder {
     /// mesh that cannot become a body (a set-level limit of [`CollisionLimits`] reached,
     /// or an invalid placement) is refused and counted ([`BuildReport::over_limit`] or
     /// [`BuildReport::dropped_elements`]), and the cell is still placed in the lookup
-    /// without a body, as for a mesh beyond the template bound (implementer OPEN in
-    /// `collision.md` §5.3). Returns the body, if one was added.
+    /// without a body, as for a mesh beyond the template bound (Tessera Decision,
+    /// `collision.md` §5.3; the client's lookup phantom never depends on the body, C40).
+    /// Returns the body, if one was added.
     ///
     /// # Errors
     ///
@@ -855,13 +855,14 @@ impl CollisionSetBuilder {
     /// Adds every cell of a landblock-info record (§5.8, §5.8.1): `geometry` returns the
     /// decoded 0x01 record of a DID (`None` when missing). The physics-mesh bodies carry the
     /// two §5.3 flags of the geometry's property set (read with `pids`,
-    /// [`CollisionFlags::cell_body`]). Cells without a position offset, with hostile planes,
+    /// [`CollisionFlags::cell_body`]). A cell without a position offset lies at the landblock
+    /// origin (`landblock.md` §4.4, L42). Cells with hostile planes or placements,
     /// beyond the cell limit or beyond the per-set hull and plane budgets
     /// ([`MAX_SET_CELL_HULL`], [`MAX_SET_CELL_PLANES`]) are refused and counted; only a
     /// placed cell uses up the hull budget. A physics mesh beyond the template limits
     /// ([`super::MAX_TEMPLATE_TRIANGLES`]) or the set's body limits is refused and counted
     /// as a body over a limit (§12.1, [`BuildReport::over_limit`]), and its cell is placed
-    /// without a body (implementer OPEN in `collision.md` §5.3).
+    /// without a body (Tessera Decision, `collision.md` §5.3, C40).
     pub fn add_cells(
         &mut self,
         info: &LandblockInfo,

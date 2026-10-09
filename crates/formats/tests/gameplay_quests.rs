@@ -12,7 +12,8 @@ use tessera_formats::gameplay::quests::{
     AccomplishmentDirectory, CompoundElement, ConditionElement, DirectoryEntry, EventOrigin,
     Operator, QUEST_MAP_NOTES_DID, QuestFamilyKind, QuestLabels, QuestMapNotes, QuestRecord,
     QuestRequirement, QuestSingletons, QuestStatus, RewardLevelTable, RewardList, RoleAction,
-    StatusKind, choose_reward_table, listen_list, required_count_key,
+    StatusKind, active_quest_roles, choose_reward_table, listen_list, quest_item_directory_class,
+    required_count_key,
 };
 use tessera_formats::{
     Did, FormatError, PropertyEntry, PropertySet, PropertyType, PropertyValue, StringInfo,
@@ -520,6 +521,76 @@ fn deed_split_and_defaults() {
 
 // --- §7 roles ---------------------------------------------------------------------------------
 
+// §7.4: an NPC-side entry matches when the named quest has a role of that name whose NPC is
+// the holder; a top-level role struct is read too.
+#[test]
+fn npc_side_role_entries_match_by_name_and_holder() {
+    let n = Names::new();
+    let npc = Did(0x7000_0042);
+    let role = n.e(
+        "Quest_Role",
+        structure(vec![
+            n.e("QuestDispenser_Action", PropertyValue::Enum(6)),
+            n.e(
+                "QuestDispenser_RoleName",
+                PropertyValue::String("giver".into()),
+            ),
+            n.e("QuestDispenser_NPC", did(npc.0)),
+        ]),
+    );
+    let quest_set = n.quest_with_roles(vec![], vec![role], vec![]);
+    let quest = QuestRecord::new(&n.labels, &quest_set).unwrap();
+    let qr = |name: Option<&str>| {
+        let mut fields = vec![n.e("QuestDispenser_Quest", did(0x7000_0100))];
+        if let Some(name) = name {
+            fields.push(n.e(
+                "QuestDispenser_RoleName",
+                PropertyValue::String(name.into()),
+            ));
+        }
+        structure(fields)
+    };
+    let holder = set(vec![
+        n.e(
+            "QuestDispenser_ActiveQuests",
+            array(vec![
+                n.e("QuestDispenser_QuestRole", qr(Some("giver"))),
+                n.e("QuestDispenser_QuestRole", qr(Some("other"))),
+                n.e("QuestDispenser_QuestRole", qr(None)),
+            ]),
+        ),
+        n.e("QuestDispenser_QuestRole", qr(Some("giver"))),
+    ]);
+    let entries = active_quest_roles(&n.labels, &holder);
+    assert_eq!(entries.len(), 4);
+    let matched: Vec<bool> = entries.iter().map(|e| e.matches(&quest, npc)).collect();
+    assert_eq!(matched, vec![true, false, false, true]);
+    // The same entry held by another record does not match.
+    assert!(!entries[0].matches(&quest, Did(0x7000_0043)));
+}
+
+// §2.1 (S1): quest-item directories are the records of the one root class of the records
+// that carry the directory array.
+#[test]
+fn quest_item_directory_class_from_carriers() {
+    let n = Names::new();
+    let dir = set(vec![n.e("Quest_QuestItemDirectory_Array", array(vec![]))]);
+    let empty = set(vec![]);
+    let other = set(vec![n.text("Quest_Name", 1)]);
+    assert_eq!(
+        quest_item_directory_class(&n.labels, [(2315, &dir), (2315, &empty), (1398, &other)]),
+        Some(2315)
+    );
+    assert_eq!(
+        quest_item_directory_class(&n.labels, [(2315, &dir), (2316, &dir)]),
+        None
+    );
+    assert_eq!(
+        quest_item_directory_class(&n.labels, [(1398, &other)]),
+        None
+    );
+}
+
 #[test]
 fn role_objective_rule_keeps_absent_distinct_from_zero() {
     let n = Names::new();
@@ -712,7 +783,15 @@ fn worked_example_2_reward_lookup() {
         control.last().copied()
     );
     assert_eq!(choose_reward_table(None, |_| true, &control, 21), None);
-    assert_eq!(choose_reward_table(None, |_| true, &control, -1), None);
+    // §9.2 step 2 decisions: a level below 0 is treated like 0; a null element gives no
+    // table.
+    assert_eq!(
+        choose_reward_table(None, |_| true, &control, -1),
+        control.last().copied()
+    );
+    let mut holed = control.clone();
+    holed[2] = Did(0);
+    assert_eq!(choose_reward_table(None, |_| true, &holed, 3), None);
 
     // Tier 2,000 without an element gives nothing; tier 0 means none.
     assert_eq!(table.amount(RewardList::Exp, 2000), None);

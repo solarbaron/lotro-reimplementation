@@ -125,7 +125,7 @@ constraints that show up as structure:
                      anim*(→mesh)  mesh*  material*                 │
                      scriptgraph*                                   │
         └──────┴──────┴──────┬─────────────────────────────────────┘
- L2 asset system          assets*   props*/wstate*/text*/wvm*
+ L2 asset system          assets*   props*  text*  wstate*(→props,text)  wvm*(→wstate)
                              │
  L1 record decoders       formats  (+ havok*)
                              │
@@ -150,7 +150,14 @@ Rules:
     generation reads the terrain collision mesh and its queries, and landblock bundles carry
     collision sets built on the asset workers. The allowance is one-way: `physics` depends
     only on `formats` and `props` (L1–L2) and never on `world`, `terrain`, `assets`, `render`
-    or any other L3/L4 crate, and it has no GPU, asset-server or streaming dependency.
+    or any other L3/L4 crate, and it has no GPU, asset-server or streaming dependency;
+  - `wstate` → `props`, `text` (L2, M3): a game object carries its property set, read
+    through the property registry, and the area views render StringInfo names through the
+    string tables (§7.4, `wstate.md` §11);
+  - `wvm` → `wstate` (L2, census 2): the script machine resolves function IDs and slots of
+    the compiled code against the class library schema that `wstate` decodes
+    (`wlib-bytecode.md`). One-way: `wstate`, `props` and `text` never depend on `wvm`, and
+    no crate below the apps depends on `wvm` (today only `dattool` uses it).
 - L0–L2 crates have no GPU, window or audio dependencies.
 - `render`, `audio` and `ui` do not depend on each other. The client app wires them
   together.
@@ -179,8 +186,8 @@ Rules:
 | `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile (version 3) data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
 | `tessera-props` (`crates/props`) | L2 | M1 | Property registry, typed values, property sets, enum mappers, DID maps (§7). |
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
-| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). |
-| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (the L2 scripted-object group, like `wstate` on `props` and `text`). |
+| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). May depend on `props` and `text` (sibling allowance, §3). |
+| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (sibling allowance, §3); nothing below the apps depends on it. |
 | `tessera-assets` (`crates/assets`) | L2 | M1 | Asset server: typed handles, decode jobs on worker threads, caches, priorities, cancellation, GPU-upload hand-off (§8). |
 | `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). From M4.5 also: scenery generation and the frill (grass) ring, landblock water and water volumes, the game clock and sky state (§10), light selection (`lighting.md` §8.3–§8.5), per-class draw distances (`walker.md` §11.4). Builds each landblock's collision set, water included, on the asset workers and hands it to `physics` (§10.3, §20.3). May depend on `physics` (sibling allowance, §3). |
 | `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. The M7 test server reuses the controller and the collision-set types; building the sets from install data is `world`'s work (§10.3, §10.5). |
@@ -662,8 +669,10 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 > one-update overshoot of the residency budget at integration, the re-admission margin
 > of a seam closure, the velocity estimate's sample rules, what a data error in a
 > world-system input does, and the water lookups with `build_water` off) are listed for
-> confirmation in the implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1)
-> (2026-10-07, second set).
+> confirmation in these implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1),
+> all dated 2026-10-07: "streamer defaults", "transient overshoot", "re-admission margin of
+> a seam closure", "lookahead (a) continued", "data errors in world-system inputs" and
+> "`build_water` and the water lookups".
 
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend

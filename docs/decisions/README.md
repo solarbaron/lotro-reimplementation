@@ -31,6 +31,7 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0021](0021-incident-exit-verifier-summaries.md) | Incident: the milestone exit verifier's prompt carried spec writers' reports; workflow fixed, exposed verifiers' code audited (0018 B remedy) | Accepted | 2026-10-08 |
 | [0022](0022-bundled-ui-font.md) | Bundle Noto Sans (OFL-1.1) as the UI fallback font; the only third-party binary asset | Accepted | 2026-10-08 |
 | [0023](0023-plugin-host-split.md) | Plugin host split: plugin-free `tessera-script` core (no Turbine, import or chat state), `tessera-plugins` for the compatible surface; one-way `plugins` → `ui` allowance | Accepted | 2026-10-06 |
+| [0024](0024-parity-track.md) | Parity track, client half (owner: "client half only"): milestones P0–P8 between M7 and M9; gameplay presentation from the install, driven by a sandbox scenario feed (new `scenario-feed.md`) and, if the gate passes, M8 Phase 2; new crate `tessera-gamedata`; LEGAL §11.1 rule 5 unchanged, the game's own rules stay T3; M9 only after P8 and M8 or its fallback | Accepted | 2026-10-09 |
 | [0030](0030-tessera-protocol-transport.md) | Tessera protocol transport: QUIC (quinn, rustls on ring), pinned Ed25519 server keys, control/world/chat streams plus RFC 9221 datagrams; TRD v1 frozen, unused by the protocol (ID out of sequence for parallel branches) | Accepted | 2026-10-06 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next

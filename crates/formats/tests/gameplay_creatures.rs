@@ -4,8 +4,7 @@
 //! §5, the profile grammar checks of §6.5, the landblock spawn index of §6.2–§6.4 and §6.9,
 //! and the encounter table of §7.
 //!
-//! Every PID, DID, class index and enum key here is invented. Labels the spec abbreviates
-//! (`…_RepeatMinTimes` and the like) get synthetic full names containing `Synthetic`.
+//! Every PID, DID, class index and enum key here is invented.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -25,24 +24,25 @@ use tessera_formats::{
 
 /// Labels added for the tests besides those the module resolves.
 const EXTRA_LABELS: &[&str] = &[
-    // Abbreviated in the spec; synthetic full names.
-    "GeneratorProfile_Synthetic_RepeatMinTimes",
-    "GeneratorProfile_Synthetic_RepeatMaxTimes",
-    "GeneratorProfile_Synthetic_ExactPlacementX",
-    "GeneratorProfile_Synthetic_ExactPlacementY",
-    "GeneratorProfile_Synthetic_ExactPlacementZ",
-    "GeneratorProfile_Synthetic_RandomPlacementMinDist",
-    "GeneratorProfile_Synthetic_RandomPlacementMaxDist",
-    "ClassificationFilter_Synthetic_Alignment",
-    "ClassificationFilter_Synthetic_Genus",
-    "ClassificationFilter_Synthetic_Species",
-    "ClassificationFilter_Synthetic_Subspecies",
+    // Repeat, placement and filter-exception fields (full labels, §5.3 answer, C32).
+    "GeneratorProfile_RepeatMinTimes",
+    "GeneratorProfile_RepeatMaxTimes",
+    "GeneratorProfile_ExactPlacementX",
+    "GeneratorProfile_ExactPlacementY",
+    "GeneratorProfile_ExactPlacementZ",
+    "GeneratorProfile_RandomPlacementMinDist",
+    "GeneratorProfile_RandomPlacementMaxDist",
+    "ClassificationFilter_FilterException_Alignment",
+    "ClassificationFilter_FilterException_Genus",
+    "ClassificationFilter_FilterException_Species",
+    "ClassificationFilter_FilterException_Subspecies",
     // §12.1.
     "Health_MaxLevel_Cached",
     "AI_PerceptionRadius_ForwardSource",
     "Combat_CanBlock_Cached",
     "ForwardSource_Movement_SpeedMultiplier",
     // Element labels the readers do not name.
+    "Conjunction_Role",
     "Synthetic_Element",
     "Synthetic_Struct",
 ];
@@ -578,9 +578,9 @@ fn ai_records() {
                 array(vec![f.e(
                     "Synthetic_Struct",
                     structure(vec![
-                        f.e("ClassificationFilter_Synthetic_Alignment", en(al)),
+                        f.e("ClassificationFilter_FilterException_Alignment", en(al)),
                         f.e(
-                            "ClassificationFilter_Synthetic_Genus",
+                            "ClassificationFilter_FilterException_Genus",
                             PropertyValue::Bitfield32(2),
                         ),
                     ]),
@@ -717,18 +717,14 @@ fn ai_records() {
         "the top-level event does not replace the array event"
     );
 
-    // §5.6 formation: followers anywhere under Formation_Group.
+    // §5.6 formation: an array of bare follower DIDs (C33).
     let s = set(vec![f.e(
         "Formation_Group",
-        structure(vec![
+        array(vec![
             f.e("Formation_Follower", did(0x7000_1723)),
-            f.e(
-                "Synthetic_Element",
-                array(vec![
-                    f.e("Formation_Follower", did(0x7000_1724)),
-                    f.e("Formation_Follower", did(0)),
-                ]),
-            ),
+            f.e("Formation_Follower", did(0x7000_1724)),
+            f.e("Formation_Follower", did(0)),
+            f.e("Synthetic_Element", did(0x7000_1725)), // another label: skipped
         ]),
     )]);
     assert_eq!(
@@ -737,6 +733,12 @@ fn ai_records() {
     );
     let fm = Formation::read(&s, a).expect("formation");
     assert_eq!(fm.followers, vec![Did(0x7000_1723), Did(0x7000_1724)]);
+    // The struct form of the earlier text is not a formation group.
+    let wrong = set(vec![f.e(
+        "Formation_Group",
+        structure(vec![f.e("Formation_Follower", did(0x7000_1723))]),
+    )]);
+    assert!(Formation::read(&wrong, a).is_err());
 
     // §5.7 conjunction.
     let contribution = |skill: u32| {
@@ -752,17 +754,15 @@ fn ai_records() {
     let s = set(vec![
         f.e("Conjunction_Category", en(2)),
         f.e("Conjunction_Icon_Small", did(0x4100_0001)),
+        // §5.7: each role is an array whose elements are the contribution structs (C33).
         f.e(
             "Conjunction_RoleList",
             array(vec![
                 f.e(
-                    "Synthetic_Struct",
-                    structure(vec![f.e(
-                        "Synthetic_Element",
-                        array(vec![contribution(0x7000_0010), contribution(0x7000_0020)]),
-                    )]),
+                    "Conjunction_Role",
+                    array(vec![contribution(0x7000_0010), contribution(0x7000_0020)]),
                 ),
-                f.e("Synthetic_Struct", structure(vec![])),
+                f.e("Conjunction_Role", array(vec![])),
             ]),
         ),
     ]);
@@ -823,8 +823,8 @@ impl ProfileBuilder<'_> {
         self.e(
             "GeneratorProfile_Repeat",
             structure(vec![
-                self.e("GeneratorProfile_Synthetic_RepeatMinTimes", int(min)),
-                self.e("GeneratorProfile_Synthetic_RepeatMaxTimes", int(max)),
+                self.e("GeneratorProfile_RepeatMinTimes", int(min)),
+                self.e("GeneratorProfile_RepeatMaxTimes", int(max)),
             ]),
         )
     }
@@ -832,14 +832,8 @@ impl ProfileBuilder<'_> {
         self.e(
             "GeneratorProfile_RandomPlacement",
             structure(vec![
-                self.e(
-                    "GeneratorProfile_Synthetic_RandomPlacementMinDist",
-                    float(min),
-                ),
-                self.e(
-                    "GeneratorProfile_Synthetic_RandomPlacementMaxDist",
-                    float(max),
-                ),
+                self.e("GeneratorProfile_RandomPlacementMinDist", float(min)),
+                self.e("GeneratorProfile_RandomPlacementMaxDist", float(max)),
             ]),
         )
     }
@@ -847,9 +841,9 @@ impl ProfileBuilder<'_> {
         self.e(
             "GeneratorProfile_ExactPlacement",
             structure(vec![
-                self.e("GeneratorProfile_Synthetic_ExactPlacementX", float(x)),
-                self.e("GeneratorProfile_Synthetic_ExactPlacementY", float(y)),
-                self.e("GeneratorProfile_Synthetic_ExactPlacementZ", float(z)),
+                self.e("GeneratorProfile_ExactPlacementX", float(x)),
+                self.e("GeneratorProfile_ExactPlacementY", float(y)),
+                self.e("GeneratorProfile_ExactPlacementZ", float(z)),
             ]),
         )
     }

@@ -31,7 +31,7 @@ fn kind_name(k: MapKind) -> String {
 /// The map card, when the set is of a map kind (§2.3).
 pub(super) fn card(cx: &Cx<'_>, obj: &Object<'_>) -> Option<Built> {
     let p = &cx.s.map;
-    let kind = classify_set(obj.set, p)?;
+    let kind = classify_set(obj.set, p, &cx.s.map_weenie)?;
     let set = obj.set;
     let name = kind_name(kind);
     let title = format!("{name} (map-data.md)");

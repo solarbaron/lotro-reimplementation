@@ -130,8 +130,8 @@ pub const MAX_STEP_DISPLACEMENT: f32 = 10.0;
 /// A step-up must lift the mover by more than this, m (Tessera Decision): on level ground
 /// the raised move is never taken, so sliding along a wall is never sped up.
 pub const STEP_UP_MIN_RISE: f32 = 0.01;
-/// Slack of the step-up's "climbs in proportion" test, m (§12.4 (k) names no tolerance;
-/// Tessera Decision, implementer OPEN there): the short raised move counts as climbing in
+/// Slack of the step-up's "climbs in proportion" test, m (Tessera Decision, `collision.md`
+/// §12.4 (k)): the short raised move counts as climbing in
 /// proportion when it climbs at least the full move's climb × (move / reach) less this.
 pub const PROPORTION_SLACK: f32 = 1e-3;
 /// Least downward acceleration of a mover above its float line in water, m/s² (Tessera
@@ -729,7 +729,7 @@ impl Controller {
         feet = result.feet;
         // Keeping the heading (§12.4 (v)) lifts the clipped velocity onto a walkable plane
         // with its horizontal length kept, which can make it longer than the limit of
-        // §12.3 step 3: limit it again (Tessera Decision, implementer OPEN in §12.4).
+        // §12.3 step 3: limit it again (Tessera Decision, `collision.md` §12.4 (y)).
         let mut vel = result.vel;
         limit_speed(&mut vel, speed_limit);
         report.planes = result.planes;

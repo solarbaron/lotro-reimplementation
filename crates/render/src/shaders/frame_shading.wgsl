@@ -204,3 +204,23 @@ fn frame_light(i: u32, p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, gloss: f32,
     }
     return t;
 }
+
+// The binormal B of a normal map (lighting.md §5.2.4): the stored binormal as given (only
+// normalised; render.md §4.8 OPEN on departure R-D10), or, where the mesh has none or it is
+// (near) zero, w x cross(N0, T) of the mesh convention (render.md §2.1). Zero when neither
+// gives a direction, in which case the caller keeps N0. `t` is the interpolated tangent
+// with its sign in w, `stored` the interpolated stored binormal, both after the transform.
+fn frame_binormal(n: vec3<f32>, t: vec4<f32>, stored: vec3<f32>) -> vec3<f32> {
+    let t_len2 = dot(t.xyz, t.xyz);
+    if (t_len2 <= 1e-12) {
+        return vec3<f32>(0.0);
+    }
+    if (dot(stored, stored) > 1e-6 * t_len2) {
+        return normalize(stored);
+    }
+    let b_raw = cross(n, t.xyz);
+    if (dot(b_raw, b_raw) <= 1e-12 * t_len2) {
+        return vec3<f32>(0.0);
+    }
+    return normalize(b_raw) * select(-1.0, 1.0, t.w >= 0.0);
+}

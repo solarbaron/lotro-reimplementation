@@ -11,7 +11,7 @@
 //! | [`MaterialLibrary`] | Surface → material → texture list → texture chain over a [`RecordSource`], with caches | `material.md` §9, `texture-list.md` §5.2 |
 //! | [`icon`] | Layered icon composition: layer properties, order, straight-alpha source-over, canvas and centring | `docs/specs/icon-layers.md` |
 //! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
-//! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants | `lighting.md` §4.1; `material.md` §8.3, §11 |
+//! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants, the distance-fog switch | `lighting.md` §4.1; `material.md` §8.3, §11 |
 //! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface | `water.md` §8.2 |
 //! | [`texture`] | Mip-chain helpers on top of `tessera-formats` texture lists: effective chain with a resolution cap, level selection, chain classes, GPU upload plans, level invariants | `docs/specs/texture-list.md` §4, §5 |
 //!
@@ -88,7 +88,10 @@ pub mod water;
 
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
 pub use error::{MaterialError, Result, SourceFailure};
-pub use inputs::{NamedInput, NamedValue, ObjectInputs, SpecularInputs, SurfaceInputs};
+pub use inputs::{
+    DistanceFog, NamedInput, NamedValue, ObjectInputs, SpecularInputs, SurfaceInputs,
+    UNLIT_FOG_WHEN_UNKNOWN,
+};
 pub use interface::ShaderInterface;
 pub use library::{
     AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,

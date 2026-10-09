@@ -1134,6 +1134,21 @@ fn visit_dids(
     }
 }
 
+/// Whether `set` holds property `pid` at any nesting depth: as a top-level property, a
+/// struct field or an array element, arrays inside arrays included (`items.md` §2.1
+/// "nested"). `false` when the label is undefined. Depth is bounded by the decoder's nesting
+/// limit.
+#[must_use]
+pub fn contains_pid(set: &PropertySet, pid: Pid) -> bool {
+    fn visit(e: &PropertyEntry, id: u32) -> bool {
+        e.pid == id || e.value.children().iter().any(|c| visit(c, id))
+    }
+    let Some(id) = pid.id() else {
+        return false;
+    };
+    set.entries.iter().any(|e| visit(e, id))
+}
+
 /// Every non-null DID value of `set`; see [`for_each_did_reference`].
 #[must_use]
 pub fn did_references(set: &PropertySet) -> Vec<DidReference> {

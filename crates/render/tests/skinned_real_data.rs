@@ -32,6 +32,7 @@ fn to_render(geo: &tessera_mesh::LevelGeometry) -> Option<(MeshData, MeshSkin)> 
     };
     m.normals = Some(geo.normals.clone());
     m.tangents = geo.tangents.clone();
+    m.binormals = geo.binormals.clone();
     m.uvs = geo.uv_sets.first().cloned();
     m.submeshes = geo
         .parts

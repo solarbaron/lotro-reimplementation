@@ -6,11 +6,12 @@
 use std::collections::HashMap;
 
 use tessera_formats::gameplay::combat::{
-    CombatClasses, CombatFamily, CombatObject, CombatPids, ControlPoint, DetectionVolume,
-    DurationGroup, Effect, EffectRefKind, EffectRole, LevelRange, Lookup, ModEntryKind, ModOp,
-    Progression, ProgressionKind, ProgressionValue, QualityTable, RelatedObject, Skill, Trait,
-    TraitCell, TraitTree, evaluate_progression, mod_entries, ranged_groups, read_combat_object,
-    sandbox_combine, segment_slope, value_arrays_present,
+    ClassTable, CombatClasses, CombatFamily, CombatObject, CombatPids, ControlPoint,
+    DetectionVolume, DurationGroup, Effect, EffectRefKind, EffectRole, LevelRange, Lookup,
+    ModEntryKind, ModOp, MonsterPlayTable, Progression, ProgressionKind, ProgressionValue,
+    QualityTable, RelatedObject, Skill, Trait, TraitCell, TraitTree, evaluate_progression,
+    mod_entries, ranged_groups, read_combat_object, sandbox_combine, segment_slope,
+    value_arrays_present,
 };
 use tessera_formats::gameplay::common::build::{array, did, entry, set, structure};
 use tessera_formats::gameplay::common::{ClassTree, GameObjectRecord, ObjectRoot, Pid};
@@ -471,6 +472,8 @@ fn entry_kinds() {
         ]
     );
     assert!(entries[0].is_skipped() && entries[1].is_skipped());
+    // Decision D6: an entry with neither a value nor a progression is skipped.
+    assert!(entries[4].is_skipped() && !entries[3].is_skipped());
     assert!(entries[0].modifier_list.is_empty());
     assert_eq!(entries[2].modifier_list, [0x1000_0002]);
     assert_eq!(entries[2].progression, Some(prog));
@@ -488,6 +491,13 @@ fn entry_kinds() {
         Some(PropertyValue::Float(6.0))
     );
     assert_eq!(entries[0].resolve_value(&source, 2, None), None);
+    // Decision D6: an entry with both an inline value and a progression uses the
+    // progression; an entry with neither gives nothing.
+    assert_eq!(
+        entries[3].resolve_value(&source, 2, None),
+        Some(PropertyValue::Float(6.0))
+    );
+    assert_eq!(entries[4].resolve_value(&source, 2, None), None);
 }
 
 #[test]
@@ -705,10 +715,26 @@ fn effect_values_and_references() {
         ),
         e(ef.base_vital_type, PropertyValue::Enum(1)),
         e(ef.application_probability, PropertyValue::Float(0.5)),
+        // An aura applied-effect struct (§6.5, C58): recognised by its ID field.
         e(
             p.effect_extra.aura_applied,
-            array(vec![]), // present but not an aura signature on its own
+            array(vec![entry(
+                0x1000_5002,
+                structure(vec![
+                    e(r.aura_applied_effect, did(0x7000_2003)),
+                    e(r.aura_applied_spellcraft, PropertyValue::Float(25.0)),
+                ]),
+            )]),
         ),
+        // §6.4 per-stem lists by full label (C57).
+        e(
+            v.instant_modifier_list,
+            array(vec![
+                entry(0x1000_5003, PropertyValue::PropertyId(0x1000_0042)),
+                entry(0x1000_5003, PropertyValue::PropertyId(0)),
+            ]),
+        ),
+        e(v.instant_critical_multiplier, PropertyValue::Float(1.5)),
         e(p.effect_extra.aura_radius, PropertyValue::Float(12.0)),
         // A generator list with one struct holding a nested data list.
         entry(
@@ -755,18 +781,30 @@ fn effect_values_and_references() {
     assert_eq!(eff.application_probability_or_default(), 0.5);
     assert_eq!(eff.aura.unwrap().radius, Some(12.0));
 
+    assert_eq!(eff.instant_vital_modifiers.modifier_list, [0x1000_0042]);
+    assert_eq!(eff.instant_vital_modifiers.critical_multiplier, Some(1.5));
+    assert!(
+        eff.instant_vital_modifiers
+            .additive_modifier_list
+            .is_empty()
+    );
+    assert!(eff.over_time_initial_modifiers.is_empty());
+
     let refs = &eff.references;
-    assert_eq!(refs.len(), 4);
-    assert_eq!(refs[0].kind, EffectRefKind::Generator);
-    assert_eq!(refs[0].effect, target);
-    assert_eq!(refs[0].top, 0x1000_5000);
-    assert_eq!(refs[0].given_spellcraft(), None);
-    assert_eq!(refs[1].kind, EffectRefKind::SkillEffectData);
-    assert_eq!(refs[1].effect, nested);
-    assert_eq!(refs[1].given_spellcraft(), Some(40.0));
-    assert_eq!(refs[1].given_duration(), None);
-    assert_eq!(refs[2].kind, EffectRefKind::Bare);
-    assert!(refs[3].is_placeholder());
+    assert_eq!(refs.len(), 5);
+    assert_eq!(refs[0].kind, EffectRefKind::Applied);
+    assert_eq!(refs[0].effect, Did(0x7000_2003));
+    assert_eq!(refs[0].given_spellcraft(), Some(25.0));
+    assert_eq!(refs[1].kind, EffectRefKind::Generator);
+    assert_eq!(refs[1].effect, target);
+    assert_eq!(refs[1].top, 0x1000_5000);
+    assert_eq!(refs[1].given_spellcraft(), None);
+    assert_eq!(refs[2].kind, EffectRefKind::SkillEffectData);
+    assert_eq!(refs[2].effect, nested);
+    assert_eq!(refs[2].given_spellcraft(), Some(40.0));
+    assert_eq!(refs[2].given_duration(), None);
+    assert_eq!(refs[3].kind, EffectRefKind::Bare);
+    assert!(refs[4].is_placeholder());
 }
 
 // --- §7 skills -----------------------------------------------------------------------------------
@@ -858,6 +896,81 @@ fn skill_view() {
 }
 
 // --- §8 traits -----------------------------------------------------------------------------------
+
+// §9.1, §9.2 (C58): typed skill entries of class tables and monster-play tables.
+#[test]
+fn class_and_monster_play_entries() {
+    let p = pids();
+    let c = &p.class_table;
+    let skill_entry = structure(vec![
+        e(c.skill_entry_skill, did(0x7000_9001)),
+        e(c.skill_entry_level, PropertyValue::Int(10)),
+        e(c.skill_entry_prerequisite, did(0)),
+        e(c.skill_entry_rank, PropertyValue::Int(1)),
+        e(c.skill_entry_training_cost, PropertyValue::Int(250)),
+        e(c.skill_entry_shortcut_index, PropertyValue::Int(-1)),
+    ]);
+    let table = set(vec![e(
+        c.available_skills,
+        array(vec![entry(0x1000_9000, skill_entry)]),
+    )]);
+    let t = ClassTable::from_properties(&table, c);
+    assert_eq!(t.skill_entries.len(), 1);
+    let s0 = t.skill_entries[0];
+    assert_eq!(s0.skill, Some(Did(0x7000_9001)));
+    assert_eq!(
+        (s0.level, s0.rank, s0.training_cost),
+        (Some(10), Some(1), Some(250))
+    );
+    assert_eq!(s0.prerequisite, Some(Did(0)));
+    assert_eq!(s0.shortcut_index, Some(-1));
+    assert!(t.mount_skill_entries.is_empty());
+
+    let mp = set(vec![
+        e(c.monster_level, PropertyValue::Int(50)),
+        e(
+            c.monster_skill_list,
+            array(vec![entry(
+                0x1000_9001,
+                structure(vec![
+                    e(c.monster_skill, did(0x7000_9002)),
+                    e(c.monster_skill_cost, PropertyValue::Int(3)),
+                    e(c.monster_skill_min_level, PropertyValue::Int(20)),
+                    e(c.monster_skill_min_rank, PropertyValue::Int(2)),
+                ]),
+            )]),
+        ),
+        e(
+            c.monster_trait_list,
+            array(vec![entry(
+                0x1000_9002,
+                structure(vec![
+                    e(c.monster_trait, did(0x7000_9003)),
+                    e(c.monster_trait_min_level, PropertyValue::Int(5)),
+                    e(c.monster_trait_trainable, PropertyValue::Bool(true)),
+                ]),
+            )]),
+        ),
+        e(
+            c.monster_virtue_list,
+            array(vec![entry(
+                0x1000_9003,
+                structure(vec![
+                    e(c.monster_trait, did(0x7000_9004)),
+                    e(c.monster_virtue_start_rank, PropertyValue::Int(1)),
+                    e(c.monster_virtue_max_rank, PropertyValue::Int(10)),
+                ]),
+            )]),
+        ),
+    ]);
+    let m = MonsterPlayTable::from_properties(&mp, c);
+    assert_eq!(m.skill_entries[0].skill, Some(Did(0x7000_9002)));
+    assert_eq!(m.skill_entries[0].min_rank, Some(2));
+    assert_eq!(m.trait_entries[0].trainable, Some(true));
+    assert_eq!(m.trait_entries[0].min_rank, None);
+    assert_eq!(m.virtue_entries[0].trait_did, Some(Did(0x7000_9004)));
+    assert_eq!(m.virtue_entries[0].max_rank, Some(10));
+}
 
 #[test]
 fn trait_and_tree() {

@@ -918,3 +918,37 @@ fn liquid_boxes_per_landblock_are_capped_at_the_collision_set_limit() {
     // The queries still answer.
     assert!(bw.water_at([5.0, 5.0, water_height(38) - 2.0]).is_some());
 }
+
+/// Finding (clean verification, `water.md` §7.4): the walker's column query and the
+/// controller's water once snapped to the plane under different conditions (a level just
+/// below the feet). Both now use `tessera-physics`' rule, so they agree there.
+#[test]
+fn column_water_agrees_with_the_controller_near_the_plane() {
+    use tessera_physics::LiquidWater;
+    use tessera_physics::geometry::{CollisionLimits, CollisionSetBuilder, WaterPlane};
+    // A box from −1 to 0.0005 over feet at 0.
+    let boxes = [staircase_box(-1.0, 1.0005)];
+    for level in [-0.0004_f32, 0.0, 0.0003, 0.0012, -0.002, 0.5] {
+        let plane = WaterPlane::new(level, 1).unwrap();
+        let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+        b.set_water_plane(Some(plane));
+        b.add_liquid_box(boxes[0]).unwrap();
+        let set = b.build();
+        for p in [[5.0, 5.0, 0.0], [5.0, 5.0, -0.5], [5.0, 5.0, 0.0004]] {
+            let world = column_water(p, Some(plane), boxes.iter().map(|b| (b, [0.0; 3])));
+            assert_eq!(world, LiquidWater(&set).water_at(p), "{level} {p:?}");
+            if let Some(w) = world {
+                assert!(w.surface >= p[2]);
+            }
+        }
+    }
+    // The plane 0.4 mm below the feet, within 1 mm of the top: the feet's height.
+    let plane = WaterPlane::new(-0.0004, 1).unwrap();
+    let s = column_water(
+        [5.0, 5.0, 0.0],
+        Some(plane),
+        boxes.iter().map(|b| (b, [0.0; 3])),
+    )
+    .unwrap();
+    assert_eq!(s.surface, 0.0);
+}

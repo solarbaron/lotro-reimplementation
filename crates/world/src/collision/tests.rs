@@ -151,7 +151,7 @@ fn portals_are_placed_in_the_landblock_frame() {
     let info = info(vec![
         cell(0x100, 0x0100_0001, Some([50.0, 60.0, 10.0]), Some(0x101)),
         cell(0x101, 0x0100_0001, Some([58.0, 60.0, 10.0]), Some(0x100)),
-        // No offset (`landblock.md` §4.4 OPEN): kept, not placed, no corners.
+        // No offset: at the landblock origin (`landblock.md` §4.4, L42).
         cell(0x102, 0x0100_0001, None, Some(0x100)),
         // A geometry that is missing: kept with links, no corners.
         cell(0x103, 0x0100_0009, Some([0.0; 3]), Some(0x100)),
@@ -175,14 +175,16 @@ fn portals_are_placed_in_the_landblock_frame() {
             [54.0, 59.0, 12.0]
         ]
     );
-    assert!(cells[2].placement.is_none());
-    assert!(cells[2].portals[0].corners.is_empty());
+    let origin = cells[2].placement.expect("placed at the origin");
+    assert_eq!(origin.position, [0.0; 3]);
+    assert_eq!(cells[2].portals[0].corners.len(), 4);
     assert!(!cells[3].geometry_available);
     assert_eq!(cells[3].portals[0].neighbour, 0x100);
     assert!(cells[3].portals[0].corners.is_empty());
-    // The bounds of the two placed rooms, in the landblock frame.
+    // The bounds of the three placed rooms, in the landblock frame.
     let b = built.cell_bounds.expect("placed cells");
-    assert_eq!((b.min, b.max), ([46.0, 56.0, 10.0], [62.0, 64.0, 13.0]));
+    assert_eq!((b.min, b.max), ([-4.0, -4.0, 0.0], [62.0, 64.0, 13.0]));
+    assert_eq!(built.cell_at([1.0, 1.0, 1.0]).map(|c| c.index), Some(0x102));
     assert_eq!(
         built.cell_at([50.0, 60.0, 11.0]).map(|c| c.index),
         Some(0x100)

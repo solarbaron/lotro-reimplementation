@@ -34,7 +34,7 @@ use tessera_formats::gameplay::quests::{
     QuestArc, QuestArcDirectory, QuestControl, QuestItemDirectory, QuestItemRegionDirectory,
     QuestLabels, QuestMapNotes, QuestRecord, QuestSingletons, QuestTreasure, ReputationControl,
     RewardLevelTable, RewardList, Scene, Title, WorldEvent, WorldEventList, active_quest_roles,
-    choose_reward_table,
+    choose_reward_table, quest_item_directory_class,
 };
 use tessera_formats::{Did, PropertySet, PropertyType};
 
@@ -446,7 +446,14 @@ fn exercise(labels: &QuestLabels, set: &PropertySet) {
     }
     let _ = (quest.failure_conditions(), quest.tracked_conditions());
     let _ = quest.negative_tier();
-    let _ = active_quest_roles(labels, set);
+    let roles = active_quest_roles(labels, set);
+    // §7.4: an entry matches only through a role of the named quest.
+    for r in &roles {
+        if r.matches(&quest, Did(0x7000_0001)) {
+            assert!(r.role_name.is_some());
+        }
+    }
+    let _ = quest_item_directory_class(labels, [(1, set), (2, set)]);
 
     let table = RewardLevelTable::new(labels, set);
     for list in RewardList::ALL {
@@ -455,6 +462,11 @@ fn exercise(labels: &QuestLabels, set: &PropertySet) {
     let control = QuestControl::new(labels, set);
     let tables = control.reward_level_tables();
     let _ = choose_reward_table(None, |_| true, &tables, 0);
+    // §9.2 step 2 (Tessera decisions): a level below 0 is treated like 0.
+    assert_eq!(
+        choose_reward_table(None, |_| true, &tables, -5),
+        choose_reward_table(None, |_| true, &tables, 0)
+    );
     let _ = control.medal_thresholds();
     let t = QuestTreasure::new(labels, set);
     let _ = (

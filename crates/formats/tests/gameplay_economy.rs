@@ -643,8 +643,8 @@ fn stated_shapes_are_strict() {
         ));
     }
 
-    // §4.5, §4.8: the operator is an enum key.
-    let directory = |operator: PropertyEntry| {
+    // §4.5, §4.8: the operator is an enum key, the value an int (E1).
+    let directory_with = |operator: PropertyEntry, value: PropertyEntry| {
         set(vec![a(
             "WorldEventLootTableDirectory_Array",
             vec![s(
@@ -655,17 +655,25 @@ fn stated_shapes_are_strict() {
                         "WorldEvent_AllConditionList",
                         vec![s(
                             "WorldEvent_Condition",
-                            vec![
-                                d("WorldEvent_WorldEvent", 0x70F0_0400),
-                                operator,
-                                int("WorldEvent_ConditionValue", 2),
-                            ],
+                            vec![d("WorldEvent_WorldEvent", 0x70F0_0400), operator, value],
                         )],
                     ),
                 ],
             )],
         )])
     };
+    let directory =
+        |operator: PropertyEntry| directory_with(operator, int("WorldEvent_ConditionValue", 2));
+    assert!(matches!(
+        r.world_event_directory(&directory_with(
+            key("WorldEvent_Operator", 3),
+            key("WorldEvent_ConditionValue", 2)
+        )),
+        Err(FormatError::PropertyTypeMismatch {
+            label: "WorldEvent_ConditionValue",
+            ..
+        })
+    ));
     let ok = r
         .world_event_directory(&directory(key("WorldEvent_Operator", 3)))
         .unwrap();
@@ -856,28 +864,38 @@ fn level_tables() {
     let (trophies, _) = defaulted.mirror_maps();
     assert_eq!(trophies, BTreeMap::from([(1, 0x70F0_1000)]));
 
-    let runic = |n: usize| {
+    // §4.9 (E2): every entry stores `RunicLevelLootTable_Level` = position + 1.
+    let runic = |n: usize, stored: bool| {
         set(vec![a(
             "RunicLevelLootTable_LootTable",
             (0..n)
-                .map(|_| {
-                    s(
-                        "RunicLevelLootTable_LootTable",
-                        vec![
-                            d("RunicLevelLootTable_TrophyList", 0x70F0_1000),
-                            d("RunicLevelLootTable_RunicTrophyList", 0),
-                        ],
-                    )
+                .map(|i| {
+                    let mut fields = vec![
+                        d("RunicLevelLootTable_TrophyList", 0x70F0_1000),
+                        d("RunicLevelLootTable_RunicTrophyList", 0),
+                    ];
+                    if stored {
+                        fields.push(int(
+                            "RunicLevelLootTable_Level",
+                            i32::try_from(i + 1).unwrap(),
+                        ));
+                    }
+                    s("RunicLevelLootTable_LootTable", fields)
                 })
                 .collect(),
         )])
     };
-    let t = r.runic_level_loot_table(&runic(80)).unwrap();
+    let t = r.runic_level_loot_table(&runic(80, true)).unwrap();
     assert_eq!(t.entries[79].level, 80);
+    assert!(t.entries[79].level_stored);
     assert_eq!(t.entries[0].runic_list, None);
     assert!(EconomyRecord::RunicLevelLootTable(t).check().is_empty());
-    let t = r.runic_level_loot_table(&runic(3)).unwrap();
+    let t = r.runic_level_loot_table(&runic(3, true)).unwrap();
     assert_eq!(EconomyRecord::RunicLevelLootTable(t).check().len(), 1);
+    // Absent levels take the default 1, so every entry after the first violates E-I5.
+    let t = r.runic_level_loot_table(&runic(80, false)).unwrap();
+    assert_eq!((t.entries[5].level, t.entries[5].level_stored), (1, false));
+    assert_eq!(EconomyRecord::RunicLevelLootTable(t).check().len(), 79);
 }
 
 #[test]

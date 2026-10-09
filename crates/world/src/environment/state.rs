@@ -19,6 +19,7 @@ use super::blend::{LightingInputs, SkyValues, crossfade_factor, transition_secon
 use super::choose::{DayChoice, INITIAL_DAY_TYPE, choose_day_with_fallback};
 use super::clock::{Calendar, ClockReading, GameClock};
 use super::hooks::InteriorFog;
+use super::sky_objects::DrawnSkyObjects;
 use super::sky_objects::{SkyObjectState, animate_sky_objects};
 use crate::context::WorldContext;
 use crate::error::WorldError;
@@ -289,67 +290,97 @@ pub struct Evaluation {
 pub struct EnvironmentFrame {
     /// The clock reading.
     pub reading: ClockReading,
-    /// The sky key in force.
+    /// The sky key in force (the new sky's during a sky-key cross-fade).
     pub sky_key: Option<u32>,
-    /// The day description in use.
+    /// The day description in use (the new sky's during a cross-fade).
     pub choice: Option<DayChoice>,
     /// Blended and cross-faded values, interior fog applied.
     pub values: SkyValues,
     /// The lighting inputs of `lighting.md` §8.1 from [`EnvironmentFrame::values`].
     pub lighting: LightingInputs,
-    /// The sky objects of the description in use (not cross-faded).
+    /// The sky objects to draw (`environment.md` §11.4, §11.6 step 5): during a sky-key
+    /// cross-fade the old sky's objects with their opacity × (1 − *w*), then the new sky's
+    /// with × *w*; otherwise the objects of the description in use.
     pub objects: Vec<SkyObjectState>,
-    /// The cross-fade factor toward the description in use (1 when no fade runs).
+    /// The cross-fade weight *w* toward the sky in use (1 when no fade runs).
     pub crossfade: f32,
     /// Whether it is night by the Tessera rule of `sound.md` §10.3.5.
     pub is_night: bool,
 }
 
+/// One sky of a track (`environment.md` §11.6): its key, its day description and blended
+/// values, and its drawn objects.
 #[derive(Debug, Clone)]
-struct Fade {
-    from: SkyValues,
+struct Sky {
+    key: Option<u32>,
+    choice: Option<DayChoice>,
+    day: Option<Arc<DayDescription>>,
+    target: SkyValues,
+    drawn: DrawnSkyObjects,
+}
+
+impl Sky {
+    fn empty() -> Self {
+        Self {
+            key: None,
+            choice: None,
+            day: None,
+            target: SkyValues::defaults(),
+            drawn: DrawnSkyObjects::new(),
+        }
+    }
+}
+
+/// A running sky-key cross-fade: the old sky and the time since the change in real
+/// seconds (the raw timer of §11.6 step 1).
+#[derive(Debug, Clone)]
+struct KeyFade {
+    old: Sky,
     elapsed: f32,
     duration: f32,
 }
 
-/// The per-frame environment (`environment.md` §12): the game clock, the day type, the
-/// day description in use with its cross-fade, and the blended values. Each
+/// The per-frame environment of one track (`environment.md` §11.6, §12): the game clock,
+/// the day type, the sky in use with its sky-key cross-fade, and the blended values. Each
 /// [`Environment::update`]:
 ///
 /// 1. advances the clock by the real time × rate (§11.1);
-/// 2. re-chooses the day description (§11.2, with the fallback of
-///    [`choose_day_with_fallback`]) when the sky key or the game day changes, when the time
-///    was set, or every `sky_interval` game seconds (½ (min + max) of §5.1.1);
-/// 3. when the choice changes, starts a cross-fade over the transition time of §11.2 step 5
-///    with the factor of `lighting.md` §8.1, in real seconds (a running fade is never cut
-///    short by setting the clock or its rate);
-/// 4. re-blends the keyframes (§11.3) into the target values every `light_interval` game
-///    seconds (and when the choice changes or the time was set); while a fade runs, only
-///    the cross-fade mix toward that target is recomputed every frame;
-/// 5. animates the sky objects (§11.4) and applies interior fog (§12).
+/// 2. when the wanted sky key differs from the sky's key and no cross-fade runs, starts a
+///    cross-fade (§11.6 steps 1, 3): the sky becomes the old sky and a new sky is made for
+///    the wanted key, over the transition time of [`transition_seconds`] in real seconds;
+///    while a cross-fade runs, further key changes wait until it ends. An immediate update
+///    (the first one, or after [`Environment::mark_immediate`]) switches at once and ends a
+///    running cross-fade (step 2);
+/// 3. re-chooses each sky's day description (§11.2, with the fallback of
+///    [`choose_day_with_fallback`]) when its key or the game day changes, when the time was
+///    set, or every `sky_interval` game seconds (½ (min + max) of §5.1.1); a new day
+///    description under the same key is used at once, without a cross-fade (E27);
+/// 4. re-blends each sky's keyframes (§11.3) every `light_interval` game seconds (and when
+///    its description changes or the time was set); while a cross-fade runs, both skies are
+///    evaluated and blended every frame by [`SkyValues::mix`] (§11.6 step 4);
+/// 5. animates the sky objects of each sky (§11.4, kept per sky, [`DrawnSkyObjects`]) and
+///    applies interior fog (§12).
 ///
 /// Day descriptions come from the [`SkyLibrary`] cache, which [`SkyLibrary::load`]
 /// preloads, so an update reads no records. When a chosen description could not be read
 /// for a reason that is not the data's (the asset pipeline's state), the defaults are
-/// shown and the read is retried every `light_interval`; when it arrives the values
-/// cross-fade to it.
+/// shown and the read is retried every `light_interval`; when it arrives it is used at once.
 #[derive(Debug)]
 pub struct Environment {
     library: Arc<SkyLibrary>,
     clock: GameClock,
     day_type: u32,
-    sky_key: Option<u32>,
     day_number: Option<i64>,
-    choice: Option<DayChoice>,
-    day: Option<Arc<DayDescription>>,
-    target: SkyValues,
+    sky: Sky,
+    fade: Option<KeyFade>,
     shown: SkyValues,
-    fade: Option<Fade>,
     since_light: f64,
     since_sky: f64,
     interior_fog: Option<InteriorFog>,
     started: bool,
     time_moved: bool,
+    immediate: bool,
+    indoor: bool,
 }
 
 /// The midpoint of an interval pair, or `fallback` when it is not finite and positive.
@@ -363,7 +394,8 @@ fn midpoint(a: f64, b: f64, fallback: f64) -> f64 {
 }
 
 impl Environment {
-    /// An environment at clock 0, day type 2 ([`INITIAL_DAY_TYPE`]), no sky key.
+    /// An environment at clock 0, day type 2 ([`INITIAL_DAY_TYPE`]), no sky key, on the
+    /// outdoor track.
     #[must_use]
     pub fn new(library: Arc<SkyLibrary>) -> Self {
         let clock = GameClock::new(library.calendar().clone());
@@ -371,19 +403,38 @@ impl Environment {
             library,
             clock,
             day_type: INITIAL_DAY_TYPE,
-            sky_key: None,
             day_number: None,
-            choice: None,
-            day: None,
-            target: SkyValues::defaults(),
-            shown: SkyValues::defaults(),
+            sky: Sky::empty(),
             fade: None,
+            shown: SkyValues::defaults(),
             since_light: 0.0,
             since_sky: 0.0,
             interior_fog: None,
             started: false,
             time_moved: false,
+            immediate: false,
+            indoor: false,
         }
+    }
+
+    /// Makes this the indoor track (`environment.md` §11.6, §11.7 step 9): its states never
+    /// have a sun ([`SkyValues::sun_present`] false), which the cross-fade rules of §11.6
+    /// step 4 use.
+    pub fn set_indoor(&mut self, indoor: bool) {
+        self.indoor = indoor;
+    }
+
+    /// Whether this is the indoor track.
+    #[must_use]
+    pub fn is_indoor(&self) -> bool {
+        self.indoor
+    }
+
+    /// Marks the next update immediate (`environment.md` §11.6 step 2; Tessera Decision of
+    /// `landblock.md` §4.13: start-up and teleports): it switches to the wanted sky key at
+    /// once and ends a running cross-fade. The first update is always immediate.
+    pub fn mark_immediate(&mut self) {
+        self.immediate = true;
     }
 
     /// The library.
@@ -462,43 +513,44 @@ impl Environment {
         midpoint(s.sky_interval_min, s.sky_interval_max, 180.0)
     }
 
-    /// Makes `choice` with description `day` the one in use, cross-fading from the shown
-    /// values over the transition time of §11.2 step 5 (at once before the first update).
-    fn switch_to(&mut self, choice: Option<DayChoice>, day: Option<Arc<DayDescription>>) {
-        let duration = transition_seconds(self.day.as_deref(), day.as_deref());
-        if self.started && duration > 0.0 {
-            self.fade = Some(Fade {
-                from: self.shown.clone(),
-                elapsed: 0.0,
-                duration,
-            });
+    /// The day choice of `key` on the current game day.
+    fn choose(&self, key: Option<u32>, day_number: u32) -> Option<DayChoice> {
+        key.and_then(|k| choose_day_with_fallback(self.library.sky(), self.day_type, k, day_number))
+    }
+
+    /// Re-chooses `sky`'s day description: a new description is used at once (E27: no
+    /// cross-fade under the same key); a description that failed for a reason that is not
+    /// the data's is read again. True when the sky's description changed.
+    fn rechoose(&self, sky: &mut Sky, day_number: u32, force: bool) -> bool {
+        let choice = self.choose(sky.key, day_number);
+        if force || choice.map(|c| c.day) != sky.choice.map(|c| c.day) {
+            sky.day = choice.and_then(|c| self.library.day(c.day));
+            sky.choice = choice;
+            true
         } else {
-            self.fade = None;
-        }
-        self.choice = choice;
-        self.day = day;
-    }
-
-    /// When a description is chosen but none is loaded (its read failed for a reason that
-    /// is not the data's), reads it again; a data failure is a cache hit. True when it
-    /// arrived and is now in use.
-    fn retry_day(&mut self) -> bool {
-        let Some(choice) = self.choice else {
-            return false;
-        };
-        if self.day.is_some() {
-            return false;
-        }
-        match self.library.day(choice.day) {
-            Some(day) => {
-                self.switch_to(Some(choice), Some(day));
-                true
+            // The same description (its table may differ).
+            sky.choice = choice;
+            if sky.day.is_none()
+                && let Some(c) = choice
+                && let Some(day) = self.library.day(c.day)
+            {
+                sky.day = Some(day);
+                return true;
             }
-            None => false,
+            false
         }
     }
 
-    /// Advances by `real_seconds` with sky key `sky_key` in force and returns the frame's
+    /// The values of `sky` at time of day `t`, with this track's "sun present" rule.
+    fn blend_sky(&self, sky: &Sky, t: f32) -> SkyValues {
+        let mut v = SkyValues::at(sky.day.as_deref(), t);
+        if self.indoor {
+            v.sun_present = false;
+        }
+        v
+    }
+
+    /// Advances by `real_seconds` with sky key `sky_key` wanted and returns the frame's
     /// environment (see the type's docs).
     pub fn update(&mut self, real_seconds: f64, sky_key: Option<u32>) -> EnvironmentFrame {
         let before = self.clock.game_seconds();
@@ -507,85 +559,154 @@ impl Environment {
         self.since_light += game_dt;
         self.since_sky += game_dt;
         let reading = self.clock.read();
-
-        let forced = !self.started || self.time_moved;
-        self.time_moved = false;
-        let rechoose = forced
-            || sky_key != self.sky_key
-            || self.day_number != Some(reading.day_number)
-            || self.since_sky >= self.sky_interval();
-        let mut reblend = forced || self.since_light >= self.light_interval();
-        let mut switched = false;
-        if rechoose {
-            self.since_sky = 0.0;
-            self.sky_key = sky_key;
-            self.day_number = Some(reading.day_number);
-            let choice = sky_key.and_then(|k| {
-                choose_day_with_fallback(
-                    self.library.sky(),
-                    self.day_type,
-                    k,
-                    reading.day_number_u32(),
-                )
-            });
-            if choice.map(|c| c.day) != self.choice.map(|c| c.day) || !self.started {
-                let day = choice.and_then(|c| self.library.day(c.day));
-                self.switch_to(choice, day);
-                switched = true;
-            } else {
-                // The same description (its table may differ).
-                self.choice = choice;
-            }
-        }
-        // A description that failed for a reason that is not the data's is read again on
-        // the next re-blend or re-choose tick (not every frame).
-        if switched || ((rechoose || reblend) && self.retry_day()) {
-            reblend = true;
-        }
-        if reblend {
-            self.since_light = 0.0;
-            self.target = SkyValues::at(self.day.as_deref(), reading.time_of_day_f32());
-        }
+        let day_number = reading.day_number_u32();
+        let t = reading.time_of_day_f32();
         #[allow(clippy::cast_possible_truncation)]
         let real = if real_seconds.is_finite() {
             real_seconds.max(0.0) as f32
         } else {
             0.0
         };
+
+        let immediate = !self.started || self.immediate;
+        self.immediate = false;
+        let forced = immediate || self.time_moved;
+        self.time_moved = false;
+        let new_day = self.day_number != Some(reading.day_number);
+        let rechoose = forced || new_day || self.since_sky >= self.sky_interval();
+        let mut reblend = forced || self.since_light >= self.light_interval();
+
+        // §11.6 steps 1–3: the wanted key.
+        let mut sky_changed = false;
+        if immediate {
+            self.fade = None;
+            if sky_key != self.sky.key || !self.started {
+                self.sky = Sky {
+                    key: sky_key,
+                    ..Sky::empty()
+                };
+                self.rechoose_current(day_number, true);
+                sky_changed = true;
+            }
+        } else if sky_key != self.sky.key && self.fade.is_none() {
+            let old = std::mem::replace(
+                &mut self.sky,
+                Sky {
+                    key: sky_key,
+                    ..Sky::empty()
+                },
+            );
+            self.rechoose_current(day_number, true);
+            let duration = transition_seconds(old.day.as_deref(), self.sky.day.as_deref());
+            self.fade = Some(KeyFade {
+                old,
+                elapsed: 0.0,
+                duration,
+            });
+            sky_changed = true;
+        }
+        if rechoose {
+            self.since_sky = 0.0;
+            self.day_number = Some(reading.day_number);
+            if !sky_changed && self.rechoose_current(day_number, false) {
+                reblend = true;
+            }
+            if let Some(mut fade) = self.fade.take() {
+                if self.rechoose(&mut fade.old, day_number, false) {
+                    reblend = true;
+                }
+                self.fade = Some(fade);
+            }
+        } else if reblend && self.rechoose_current_retry() {
+            reblend = true;
+        }
+        if sky_changed {
+            reblend = true;
+        }
+        if reblend {
+            self.since_light = 0.0;
+            self.sky.target = self.blend_sky(&self.sky, t);
+            if let Some(mut fade) = self.fade.take() {
+                fade.old.target = self.blend_sky(&fade.old, t);
+                self.fade = Some(fade);
+            }
+        }
+        // §11.6 step 4: the weight, both skies blended; step 6: the old sky is dropped.
         let crossfade = match &mut self.fade {
             Some(fade) => {
                 fade.elapsed += real;
-                let f = crossfade_factor(fade.elapsed, fade.duration);
-                if f >= 1.0 {
-                    self.fade = None;
-                }
-                f
+                crossfade_factor(fade.elapsed, fade.duration)
             }
             None => 1.0,
         };
         self.shown = match &self.fade {
-            Some(fade) => fade.from.mix(&self.target, crossfade),
-            None => self.target.clone(),
+            Some(fade) => fade.old.target.mix(&self.sky.target, crossfade),
+            None => self.sky.target.clone(),
         };
+        // §11.4 for each sky, step 5: opacity × the sky's fade weight.
+        let mut objects = Vec::new();
+        if let Some(fade) = &mut self.fade
+            && let Some(day) = fade.old.day.clone()
+        {
+            objects.extend(fade.old.drawn.animate(&day, t).into_iter().map(|mut o| {
+                o.tint[3] *= 1.0 - crossfade;
+                o
+            }));
+        }
+        if let Some(day) = self.sky.day.clone() {
+            objects.extend(self.sky.drawn.animate(&day, t).into_iter().map(|mut o| {
+                o.tint[3] *= crossfade;
+                o
+            }));
+        }
+        if self
+            .fade
+            .as_ref()
+            .is_some_and(|f| f.elapsed >= f.duration || crossfade >= 1.0)
+        {
+            self.fade = None;
+        }
         self.started = true;
         let mut values = self.shown.clone();
         if let Some(fog) = &self.interior_fog {
             fog.apply(&mut values);
         }
-        let t = reading.time_of_day_f32();
         EnvironmentFrame {
             reading,
-            sky_key: self.sky_key,
-            choice: self.choice,
+            sky_key: self.sky.key,
+            choice: self.sky.choice,
             lighting: values.lighting(),
             values,
-            objects: self
-                .day
-                .as_deref()
-                .map(|d| animate_sky_objects(d, t))
-                .unwrap_or_default(),
+            objects,
             crossfade,
             is_night: self.clock.calendar().is_night(reading.time_of_day),
+        }
+    }
+
+    /// [`Environment::rechoose`] on the sky in use.
+    fn rechoose_current(&mut self, day_number: u32, force: bool) -> bool {
+        let mut sky = std::mem::replace(&mut self.sky, Sky::empty());
+        let changed = self.rechoose(&mut sky, day_number, force);
+        self.sky = sky;
+        changed
+    }
+
+    /// When the sky in use has a choice but no description (its read failed for a reason
+    /// that is not the data's), reads it again; a data failure is a cache hit. True when it
+    /// arrived and is now in use.
+    fn rechoose_current_retry(&mut self) -> bool {
+        let Some(choice) = self.sky.choice else {
+            return false;
+        };
+        if self.sky.day.is_some() {
+            return false;
+        }
+        match self.library.day(choice.day) {
+            Some(day) => {
+                self.sky.day = Some(day);
+                true
+            }
+            None => false,
         }
     }
 }

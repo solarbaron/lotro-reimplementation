@@ -276,7 +276,8 @@ const PID_CYL: u32 = 0x1000_7007;
 const PID_LOW: u32 = 0x1000_7008;
 const PID_RADIUS: u32 = 0x1000_7009;
 const PID_HEIGHT: u32 = 0x1000_700A;
-const PID_CTYPE: u32 = 0x1000_700B;
+/// The creation type: the fixed id the validity check reads (`scenery.md` §7.4 step 14a).
+const PID_CTYPE: u32 = tessera_world::scenery::CREATION_TYPE_PID;
 
 fn clearance_schema() -> HashMap<u32, PropertyType> {
     let mut s = testkit::schema();
@@ -307,7 +308,7 @@ fn clearance_pids(b: &mut Bytes<'_>) -> ClearancePids {
         radius: Some(PID_RADIUS),
         height: b.bool().then_some(PID_HEIGHT),
         phys_obj: Some(testkit::pid::PHYS_OBJ),
-        creation_type: b.bool().then_some(PID_CTYPE),
+        creation_type: PID_CTYPE,
     }
 }
 

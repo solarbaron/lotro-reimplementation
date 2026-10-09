@@ -136,6 +136,9 @@ const UNSET_PLAIN: u32 = typed(39, ENUM);
 const ELEMENT_STRUCT: u32 = typed(40, STRUCT);
 const ELEMENT_DID: u32 = typed(41, DID_REF);
 const ELEMENT_KEY: u32 = typed(42, ENUM);
+// `Script_CombinationType` in the per-script sets (§2.4): `Overriding` (1, the value §8.2
+// step 1 states) cuts the gathering descent (§8.2 step 2).
+const COMBINATION_TYPE: u32 = typed(43, ENUM);
 
 const ANIMATION_FIELDS: [u32; 16] = [
     ANIM_ASSET,
@@ -413,6 +416,31 @@ fn put_set(out: &mut Vec<u8>, src: &mut Src<'_>, pids: &[u32], most: u8) {
     #[allow(clippy::cast_possible_truncation)] // at most `most` entries
     put_tsize(out, chosen.len() as u32);
     for pid in chosen {
+        put_u32(out, pid);
+        put_u32(out, pid);
+        put_value(out, src, pid % 24, 0);
+    }
+}
+
+/// A per-script property set (§2.4): usually a `Script_CombinationType` entry, mostly
+/// `Overriding`, sometimes followed by an entity property.
+fn put_script_set(out: &mut Vec<u8>, src: &mut Src<'_>) {
+    if src.below(4) == 0 {
+        put_set(out, src, &STATE, 2);
+        return;
+    }
+    let extra = src.bool();
+    put_tsize(out, 1 + u32::from(extra));
+    put_u32(out, COMBINATION_TYPE);
+    put_u32(out, COMBINATION_TYPE);
+    let v = match src.below(4) {
+        0 => 0,
+        1 => src.u32(),
+        _ => 1,
+    };
+    put_u32(out, v);
+    if extra {
+        let pid = src.pick(&STATE);
         put_u32(out, pid);
         put_u32(out, pid);
         put_value(out, src, pid % 24, 0);
@@ -823,7 +851,7 @@ fn script_table(src: &mut Src<'_>) -> Vec<u8> {
     put_tsize(&mut out, u32::from(sets));
     for _ in 0..sets {
         put_u32(&mut out, src.pick(&keys));
-        put_set(&mut out, src, &STATE, 2);
+        put_script_set(&mut out, src);
     }
     let lists = src.below(2);
     put_tsize(&mut out, u32::from(lists));
@@ -1038,6 +1066,9 @@ fuzz_target!(|data: &[u8]| {
             displacement: Some(ANIM_DISPLACEMENT),
             synchronize_timing: Some(ANIM_SYNCHRONIZE),
         },
+        // Without it every definition is additive and `gather` never takes its
+        // overriding branch.
+        combination_type: Some(COMBINATION_TYPE),
         ..ScriptVocabulary::default()
     };
     // Bits 2–3 of byte 0 all set: tight limits, so that every limit is reached.

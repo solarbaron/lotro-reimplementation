@@ -33,6 +33,15 @@ pub enum DataStatus {
     },
 }
 
+/// Hands a windowed scenario's `--scenario-log` to `world` (no-op without one).
+fn attach_scenario_log(world: &mut World, args: &Args, now: Instant) {
+    if let (Some(slot), Some(sc)) = (&args.scenario_log_slot, &args.scenario_prepared)
+        && let Some(log) = slot.take(sc)
+    {
+        world.set_scenario_log(log, now);
+    }
+}
+
 /// Non-presentation client state.
 #[derive(Debug)]
 pub struct Runtime {
@@ -50,6 +59,18 @@ pub struct Runtime {
     /// The walker's sandbox settings, until [`Runtime::start_walker_session`] starts the
     /// session (once the character catalog can give the avatar and crowd their bodies).
     walker_session: Option<tessera_net::sandbox::SandboxConfig>,
+    /// [`Runtime::hold_walker_session`]: keep the walker's sandbox settings instead of
+    /// starting a session (a scenario screenshot runs its own session).
+    hold_walker_session: bool,
+    /// The held settings, with the avatar and crowd filled in.
+    held_walker_session: Option<tessera_net::sandbox::SandboxConfig>,
+    /// The character a scenario enters with (`scenario-feed.md` §4.3 `enter`).
+    scenario_character: Option<String>,
+    /// The windowed scenario's log and the scenario, for the walker's session.
+    scenario_log: Option<(
+        crate::scenario::live_log::LiveLogSlot,
+        Arc<tessera_net::scenario::ResolvedScenario>,
+    )>,
     /// `--server`: play on a Tessera test server instead of the sandbox (M7).
     remote: Option<crate::net::RemoteSettings>,
     /// System chat lines (sender empty) since the last [`Runtime::take_notices`].
@@ -187,17 +208,34 @@ impl Runtime {
         // The walker's session starts once the world data is loaded
         // (`start_walker_session`); everything else gets a plain sandbox now.
         let mut walker_session = None;
+        // `--scenario` (windowed, `scenario-feed.md` §12.4): the sandbox plays it.
+        let scenario = args.scenario_prepared.clone();
+        let scenario_character = scenario
+            .as_deref()
+            .and_then(|s| s.enter_character())
+            .map(str::to_owned);
         let session = match &walker_shared {
             Some(_) => match crate::walker_host::sandbox_config(args) {
-                Ok(c) => {
+                Ok(mut c) => {
+                    c.scenario.clone_from(&scenario);
                     walker_session = Some(c);
                     Ok(None)
                 }
                 Err(e) => Err(e),
             },
-            None => World::plain(now, remote.as_ref())
-                .map(Some)
-                .map_err(anyhow::Error::from),
+            // No walker (`--no-data`): the plain sandbox with the spawn of `--spawn`,
+            // `--place` and `--heading` (`scenario-feed.md` §12.1), as a headless run.
+            None => match scenario {
+                Some(sc) => crate::scenario::headless_config(args, sc).and_then(|config| {
+                    let mut w = World::sandbox_with(now, config)?;
+                    w.set_character(scenario_character.clone());
+                    attach_scenario_log(&mut w, args, now);
+                    Ok(Some(w))
+                }),
+                None => World::plain(now, remote.as_ref())
+                    .map(Some)
+                    .map_err(anyhow::Error::from),
+            },
         };
         let world = match session {
             Ok(w) => w,
@@ -228,6 +266,13 @@ impl Runtime {
             plugins,
             walker_shared,
             walker_session,
+            hold_walker_session: false,
+            held_walker_session: None,
+            scenario_character,
+            scenario_log: args
+                .scenario_log_slot
+                .clone()
+                .zip(args.scenario_prepared.clone()),
             remote,
             notices: Vec::new(),
             ui_chat: None,
@@ -271,6 +316,10 @@ impl Runtime {
                 config.crowd.appearances = crowd;
             }
         }
+        if self.hold_walker_session {
+            self.held_walker_session = Some(config);
+            return;
+        }
         let retry = (config.crowd.count > 0).then(|| {
             let mut c = config.clone();
             c.crowd.count = 0;
@@ -287,10 +336,33 @@ impl Runtime {
             other => Some(other),
         };
         match world {
-            Some(Ok(w)) => self.world = Some(w),
+            Some(Ok(mut w)) => {
+                if self.scenario_character.is_some() {
+                    w.set_character(self.scenario_character.clone());
+                }
+                if let Some((slot, sc)) = &self.scenario_log
+                    && let Some(log) = slot.take(sc)
+                {
+                    w.set_scenario_log(log, now);
+                }
+                self.world = Some(w);
+            }
             Some(Err(e)) => tracing::error!("world session unavailable: {e}"),
             None => {}
         }
+    }
+
+    /// Keeps the walker's sandbox settings when the walker is ready instead of starting
+    /// its session ([`Runtime::take_held_walker_session`]): a headless scenario screenshot
+    /// (`scenario-feed.md` §12.2) runs the session itself, under the headless driver.
+    pub fn hold_walker_session(&mut self) {
+        self.hold_walker_session = true;
+    }
+
+    /// The walker's sandbox settings held by [`Runtime::hold_walker_session`], with the
+    /// avatar and crowd filled in; `None` until the walker's world has started.
+    pub fn take_held_walker_session(&mut self) -> Option<tessera_net::sandbox::SandboxConfig> {
+        self.held_walker_session.take()
     }
 
     /// Starts (or stops) queueing the world session's entity events for the walker
@@ -554,5 +626,87 @@ mod tests {
             now + Duration::from_secs(5)
         );
         assert!(deadline_after(now, Duration::MAX) > now);
+    }
+
+    /// A windowed `--scenario` run without data, through `Runtime` as `scenario::run`
+    /// prepares it: the plain sandbox plays the scenario, enters its `enter` character at
+    /// the `--spawn` point, and `--scenario-log` is written by the world session.
+    #[test]
+    fn a_windowed_scenario_runs_through_the_runtime() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("w.scenario");
+        std::fs::File::create(&file)
+            .and_then(|mut f| {
+                f.write_all(
+                    b"tessera-scenario 1\ntitle \"Runtime\"\ntick 50ms\nplayer \"Tamsin\"\n\
+                      character \"Orrin\"\nenter \"Orrin\"\nat 0s system \"Hello\"\n\
+                      +0.1s system \"Bye\"\n",
+                )
+            })
+            .expect("scenario file");
+        let log_path = dir.path().join("w.log");
+        let mut args = Args::try_parse_from([
+            "t",
+            "--no-data",
+            "--data-dir",
+            dir.path().to_str().expect("utf-8"),
+            "--scenario",
+            file.to_str().expect("utf-8"),
+            "--scenario-log",
+            log_path.to_str().expect("utf-8"),
+            "--spawn",
+            "1,126,140,10,20,30",
+            "--heading",
+            "0",
+        ])
+        .expect("args");
+        let resolved = crate::scenario::prepare(&args, &crate::scenario::InstallChoice::None)
+            .expect("prepares");
+        args.scenario_prepared = Some(Arc::new(resolved));
+        let out = std::fs::File::create(&log_path).expect("log");
+        args.scenario_log_slot = Some(crate::scenario::live_log::LiveLogSlot::new(Box::new(out)));
+        let start = Instant::now();
+        let mut rt = Runtime::start(&args, start).expect("runtime");
+        let mut finished = false;
+        for k in 0..400u64 {
+            rt.tick(start + Duration::from_millis(10 * k));
+            let w = rt.world.as_ref().expect("world");
+            if matches!(
+                w.scenario_status(),
+                Some(tessera_net::scenario::ScenarioStatus::Finished { .. })
+            ) {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "the scenario finished");
+        let w = rt.world.as_ref().expect("world");
+        let player = w.player().expect("in the world");
+        assert_eq!(
+            w.entities().get(&player).map(|e| e.name.as_str()),
+            Some("Orrin"),
+            "the scenario's enter character"
+        );
+        let at = w.player_location().expect("location").location;
+        assert_eq!(
+            (at.region.0, at.z),
+            (1, 30.0),
+            "the --spawn point, not the default spawn"
+        );
+        rt.shutdown();
+        drop(rt);
+        let log = std::fs::read_to_string(&log_path).expect("log");
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.first(), Some(&"tessera-scenario-log 1"), "{log}");
+        assert!(lines.contains(&"pre > Connect"), "{log}");
+        assert!(lines.iter().any(|l| l.contains("> EnterWorld")), "{log}");
+        assert!(lines.iter().any(|l| l.contains("text=\"Bye\"")), "{log}");
+        assert!(
+            lines
+                .last()
+                .is_some_and(|l| l.contains(" end reason=complete ")),
+            "{log}"
+        );
     }
 }

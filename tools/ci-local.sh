@@ -25,6 +25,7 @@
 #   clippy           clippy -D warnings: workspace, workspace --all-features, fuzz/ --bins
 #   test             cargo build --all-targets --release, cargo test --release --no-fail-fast
 #   doc              cargo doc --workspace --no-deps with RUSTDOCFLAGS=-D warnings
+#   server-deps      tools/check-server-deps.sh --self-test, then tessera-server and its hosts
 #   msrv             cargo check on rust-version from Cargo.toml (if that toolchain is installed)
 #   msrv-explorer    cargo check -p tessera-explorer on its own rust-version (likewise)
 #   deny             cargo deny check bans licenses sources, Cargo.toml and fuzz/Cargo.toml
@@ -50,7 +51,7 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 2
 
-all_jobs=(content spdx reuse dco fmt clippy test doc msrv msrv-explorer deny advisories fuzz)
+all_jobs=(content spdx reuse dco fmt clippy test doc server-deps msrv msrv-explorer deny advisories fuzz)
 quick_jobs=(fmt clippy test)
 
 quick=0
@@ -217,6 +218,11 @@ job_test() {
 
 job_doc() {
     RUSTDOCFLAGS="-D warnings" run cargo doc --workspace --no-deps --locked
+}
+
+job_server_deps() {
+    run tools/check-server-deps.sh --self-test || return 1
+    run tools/check-server-deps.sh
 }
 
 job_msrv() {

@@ -1,0 +1,64 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Practice yard"
+resolve $strikes line=10 family=skill requested=2 candidates=0 got=0 note=no-install
+resolve $auras line=11 family=effect requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$dummy kind=creature name="Straw target" at=0.000,4.000,0.000 facing=180.00
+0.000 LevelChanged entity=$dummy level=5
+0.000 EntitySpawned entity=$coach kind=non-player name="Coach" at=-2.000,1.000,0.000 facing=116.57
+0.000 VitalChanged entity=player vital=health current=820 max=820
+0.000 VitalChanged entity=player vital=power current=300 max=300
+0.000 VitalChanged entity=player vital=resource:"Focus" current=0 max=5
+0.000 VitalChanged entity=$dummy vital=health current=1500 max=1500
+0.000 QuickslotChanged slot=1 content=skill:"Quick jab"
+0.000 QuickslotChanged slot=3 content=skill:"Steady breath"
+0.000 ChatMessage channel=say sender="Coach" text="Strike when ready."
+0.500 > SelectTarget target=$dummy
+0.500 TargetChanged entity=player target=$dummy
+0.500 CombatState entity=player in_combat=yes
+0.500 CombatState entity=$dummy in_combat=yes
+0.800 > UseSkill what="Quick jab" target=$dummy
+0.800 CastStarted entity=player cast=cast what="Quick jab" target=$dummy duration_ms=600
+1.400 CastEnded entity=player outcome=completed
+1.400 VitalDelta source=player target=$dummy vital=health kind=damage amount=145 result=critical what="Quick jab" damage_type=none
+1.400 VitalChanged entity=$dummy vital=health current=1355 max=1500
+1.400 VitalChanged entity=player vital=resource:"Focus" current=1 max=5
+1.400 CooldownStarted what="Quick jab" duration_ms=1500
+2.000 > UseSkill what="Steady breath" target=$dummy
+2.000 CastStarted entity=player cast=channel what="Steady breath" target=none duration_ms=2000
+2.200 CastDelayed entity=player added_ms=500
+2.500 > CancelCast
+2.500 CastEnded entity=player outcome=cancelled
+2.700 EffectApplied entity=player effect=1 what="Second wind" duration_ms=3000 stacks=2 source=none
+2.900 CooldownEnded what="Quick jab"
+3.000 ChatMessage channel=emote sender="Straw target" text="creaks"
+3.300 ChatMessage channel=emote sender="Straw target" text="creaks"
+3.600 ChatMessage channel=emote sender="Straw target" text="creaks"
+4.000 CastStarted entity=$dummy cast=cast what="Flail" target=player duration_ms=2000
+4.500 CastEnded entity=$dummy outcome=interrupted
+4.600 VitalDelta source=$dummy target=player vital=health kind=damage amount=60 result=parry what=none damage_type=none
+4.600 VitalChanged entity=player vital=health current=760 max=820
+4.800 VitalDelta source=none target=player vital=health kind=heal amount=60 result=normal what=none damage_type=none
+4.800 VitalChanged entity=player vital=health current=820 max=820
+5.000 EffectApplied entity=$dummy effect=2 what="Bleeding" duration_ms=2000 stacks=1 source=player
+5.000 EffectApplied entity=$dummy effect=3 what="Bleeding" duration_ms=4000 stacks=1 source=player
+5.700 EffectRemoved entity=player effect=1
+5.700 EffectRemoved entity=$dummy effect=3
+6.000 VitalDelta source=player target=$dummy vital=health kind=damage amount=1355 result=normal what=none damage_type=none
+6.000 VitalChanged entity=$dummy vital=health current=0 max=1500
+6.000 Defeated entity=$dummy by=player
+6.000 CombatState entity=player in_combat=no
+6.000 CombatState entity=$dummy in_combat=no
+6.000 TargetChanged entity=player target=none
+7.000 EffectRemoved entity=$dummy effect=2
+7.000 Revived entity=$dummy
+7.000 VitalChanged entity=$dummy vital=health current=1500 max=1500
+7.000 CooldownEnded what="Quick jab"
+7.000 ChatMessage channel=yell sender="Coach" text="Again!"
+7.000 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0

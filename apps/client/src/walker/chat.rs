@@ -195,21 +195,23 @@ impl ChatOverlay {
         self.outgoing.pop_front()
     }
 
-    /// Takes the lines received this frame. In a `remote` session every line is shown; in
-    /// the sandbox only lines with a sender (system lines stay HUD notices there). Returns
-    /// whether `notice`, the HUD notice of this frame, repeats a system line shown here, in
-    /// which case the caller clears it (one display path per line).
+    /// Takes the lines received this frame. With `show_system` every line is shown: in a
+    /// remote session, and in a sandbox session playing a scenario (the scenario owns the
+    /// chat, `scenario-feed.md` §3.2). Otherwise (the plain sandbox) only lines with a
+    /// sender are shown; system lines stay HUD notices there. Returns whether `notice`, the
+    /// HUD notice of this frame, repeats a system line shown here, in which case the caller
+    /// clears it (one display path per line).
     pub fn receive(
         &mut self,
         lines: &[ChatLine],
-        remote: bool,
+        show_system: bool,
         notice: Option<&str>,
         now: Instant,
     ) -> bool {
         let mut repeated = false;
         for line in lines {
             let system = line.sender.is_empty() || line.channel == ChatChannel::System;
-            if system && !remote {
+            if system && !show_system {
                 continue;
             }
             repeated |= system && notice == Some(line.text.as_str());

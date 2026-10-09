@@ -30,7 +30,13 @@
 //! - accepts player movement, correcting it back (an [`Event::EntityMoved`]
 //!   and a precise [`Event::LocationReport`]) if it moves implausibly fast or
 //!   into another region (a stand-in for server-side validation),
-//! - optionally delays every event by a fixed latency.
+//! - optionally delays every event by a fixed latency,
+//! - with a resolved scenario ([`SandboxConfig::scenario`], feature `scenario`), plays the
+//!   scenario feed (`docs/specs/scenario-feed.md`): the scripted domain events of
+//!   [`crate::domain`], timed steps, triggers on client commands and generic answers. The
+//!   sandbox then spawns no wanderers or crowd, adds no latency and sends no welcome line;
+//!   its character list comes from the scenario. [`SandboxBackend::scenario_status`] and
+//!   [`SandboxBackend::scenario_counters`] report on the run.
 //!
 //! It is fully deterministic given the sequence of `now` values passed in
 //! and the answers of the world source.
@@ -64,6 +70,8 @@ pub mod world;
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
+#[cfg(feature = "scenario")]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use world::{
@@ -76,6 +84,8 @@ use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId,
     EntityKind, Location, LocationCause, RegionId, Transform, Vec3,
 };
+#[cfg(feature = "scenario")]
+use crate::scenario::{ResolvedScenario, ScenarioCounters, ScenarioStatus, feed::Feed};
 use crate::session::{Backend, Command, Event};
 use world::{Statics, clamp_location, sanitize_text};
 
@@ -231,6 +241,11 @@ pub struct SandboxConfig {
     pub wanderer_appearances: Vec<Appearance>,
     /// A crowd in front of the spawn (none by default).
     pub crowd: CrowdConfig,
+    /// A resolved scenario to play (`docs/specs/scenario-feed.md`; none by default).
+    /// With one, the sandbox uses no wanderers, crowd or latency, sends no welcome line,
+    /// and offers the scenario's character list when it declares one.
+    #[cfg(feature = "scenario")]
+    pub scenario: Option<Arc<ResolvedScenario>>,
 }
 
 impl Default for SandboxConfig {
@@ -252,6 +267,8 @@ impl Default for SandboxConfig {
             avatar: None,
             wanderer_appearances: Vec::new(),
             crowd: CrowdConfig::default(),
+            #[cfg(feature = "scenario")]
+            scenario: None,
         }
     }
 }
@@ -433,6 +450,9 @@ pub struct SandboxBackend {
     statics: Statics,
     /// Reused buffer for events produced by the static streamer.
     scratch: Vec<Event>,
+    /// The scenario feed, when the configuration has a scenario.
+    #[cfg(feature = "scenario")]
+    feed: Option<Feed>,
 }
 
 impl SandboxBackend {
@@ -444,6 +464,15 @@ impl SandboxBackend {
     /// [`NetError::InvalidConfig`] if `config` is out of range.
     pub fn new(config: SandboxConfig) -> Result<Self, NetError> {
         config.validate()?;
+        #[cfg(feature = "scenario")]
+        let mut config = config;
+        #[cfg(feature = "scenario")]
+        let feed = config.scenario.clone().map(|sc| {
+            config.wanderers = 0;
+            config.crowd = CrowdConfig::default();
+            config.latency = Duration::ZERO;
+            Feed::new(sc, &config.characters, config.echo_chat)
+        });
         let statics = Statics::new(config.statics.clone());
         Ok(Self {
             config,
@@ -460,7 +489,90 @@ impl SandboxBackend {
             resolving: None,
             statics,
             scratch: Vec::new(),
+            #[cfg(feature = "scenario")]
+            feed,
         })
+    }
+
+    /// The scenario's status (`docs/specs/scenario-feed.md` §3.4); `None` without a
+    /// scenario. Through a [`Session`](crate::Session):
+    /// `session.backend::<SandboxBackend>()`.
+    #[cfg(feature = "scenario")]
+    #[must_use]
+    pub fn scenario_status(&self) -> Option<ScenarioStatus> {
+        self.feed.as_ref().map(Feed::status)
+    }
+
+    /// The scenario's counters (skipped steps, dropped entries, spilled events); `None`
+    /// without a scenario.
+    #[cfg(feature = "scenario")]
+    #[must_use]
+    pub fn scenario_counters(&self) -> Option<ScenarioCounters> {
+        self.feed.as_ref().map(Feed::counters)
+    }
+
+    /// The total weight of the events the scenario feed holds in its output queue
+    /// (`docs/specs/scenario-feed.md` §7.4): never above 2,097,152 units. `None` without a
+    /// scenario. A diagnostic for tests and fuzzing.
+    #[cfg(feature = "scenario")]
+    #[must_use]
+    pub fn scenario_queued_weight(&self) -> Option<u64> {
+        self.feed.as_ref().map(Feed::queued_weight)
+    }
+
+    /// The resolve timeout of the configuration in force
+    /// ([`SandboxConfig::resolve_timeout`]).
+    #[must_use]
+    pub fn resolve_timeout(&self) -> Duration {
+        self.config.resolve_timeout
+    }
+
+    /// The characters offered and accepted for `EnterWorld`.
+    fn characters(&self) -> Vec<String> {
+        #[cfg(feature = "scenario")]
+        if let Some(f) = &self.feed {
+            return f.characters().to_vec();
+        }
+        self.config.characters.clone()
+    }
+
+    /// Whether the scenario feed takes in-world commands now.
+    #[cfg(feature = "scenario")]
+    fn feed_answers(&self) -> bool {
+        self.feed.as_ref().is_some_and(Feed::answers_commands)
+    }
+
+    /// Runs the feed's due ticks and applies its player relocations.
+    #[cfg(feature = "scenario")]
+    fn poll_feed(&mut self, now: Instant) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+        let mut out = std::mem::take(&mut self.scratch);
+        out.clear();
+        let failed = feed.poll(now, &mut out);
+        let relocations = feed.take_relocations();
+        for event in out.drain(..) {
+            self.emit(now, event);
+        }
+        self.scratch = out;
+        for (location, heading, anchor) in relocations {
+            if let Some(player) = self.player.as_mut() {
+                let transform = Transform::new(location.position(), heading);
+                player.location = location;
+                player.anchor = anchor;
+                player.transform = transform;
+                player.last_move = now;
+                player.unseen_teleports = player.unseen_teleports.saturating_add(1);
+                self.wander_anchor = transform.position;
+                self.anchor_moved = true;
+            }
+        }
+        if let Some(error) = failed {
+            tracing::warn!(%error, "scenario feed stopped");
+            self.phase = Phase::Closed;
+            self.resolving = None;
+        }
     }
 
     /// Creates a sandbox that uses `source` for named places, ground heights,
@@ -533,7 +645,7 @@ impl SandboxBackend {
     }
 
     fn begin_enter(&mut self, now: Instant, character: String) {
-        if !self.config.characters.contains(&character) {
+        if !self.characters().contains(&character) {
             self.system(
                 now,
                 format!("No character named {character} on this account."),
@@ -736,7 +848,7 @@ impl SandboxBackend {
             now,
             Event::WorldEntered {
                 player: id,
-                name: character,
+                name: character.clone(),
                 transform: spawn,
             },
         );
@@ -750,6 +862,31 @@ impl SandboxBackend {
                 cause: LocationCause::Entered,
             },
         );
+        #[cfg(feature = "scenario")]
+        if self.feed.is_some() {
+            let appearance = self
+                .feed
+                .as_ref()
+                .and_then(|f| f.base_appearance_for(&character))
+                .or_else(|| self.config.avatar.clone());
+            if let Some(appearance) = appearance.clone() {
+                self.emit(
+                    now,
+                    Event::AppearanceChanged {
+                        id,
+                        appearance: Box::new(appearance),
+                    },
+                );
+            }
+            if let Some(feed) = self.feed.as_mut() {
+                feed.world_entered(now, id, &character, location, heading, appearance);
+            }
+            self.wander_anchor = spawn.position;
+            self.world_start = Some(now);
+            self.last_tick = Some(now);
+            self.phase = Phase::InWorld;
+            return;
+        }
         if let Some(appearance) = self.config.avatar.clone() {
             self.emit(
                 now,
@@ -839,6 +976,10 @@ impl SandboxBackend {
         player.last_move = now;
         player.unseen_teleports = player.unseen_teleports.saturating_add(1);
         let id = player.id;
+        #[cfg(feature = "scenario")]
+        if let Some(feed) = self.feed.as_mut() {
+            feed.player_moved(location, heading);
+        }
         // The wanderers follow the player.
         self.wander_anchor = transform.position;
         self.anchor_moved = true;
@@ -1039,6 +1180,10 @@ impl SandboxBackend {
             }
             player.last_move = now;
             let _ = velocity; // nobody else is watching in the sandbox
+            #[cfg(feature = "scenario")]
+            if let Some(feed) = self.feed.as_mut() {
+                feed.player_moved(player.location, heading);
+            }
         }
     }
 
@@ -1124,13 +1269,30 @@ impl Backend for SandboxBackend {
         match (self.phase, command) {
             (Phase::Idle, Command::Connect) => {
                 let characters = self
-                    .config
-                    .characters
-                    .iter()
-                    .map(|name| CharacterSummary { name: name.clone() })
+                    .characters()
+                    .into_iter()
+                    .map(|name| CharacterSummary { name })
                     .collect();
                 self.emit(now, Event::Connected { characters });
                 self.phase = Phase::Connected;
+                #[cfg(feature = "scenario")]
+                if let Some(feed) = self.feed.as_mut() {
+                    let mut out = Vec::new();
+                    feed.on_connected(&mut out);
+                    for event in out {
+                        self.emit(now, event);
+                    }
+                }
+            }
+            #[cfg(feature = "scenario")]
+            (Phase::Connected, Command::Character(c)) if self.feed.is_some() => {
+                let mut out = Vec::new();
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.pre_world_command(&c, &mut out);
+                }
+                for event in out {
+                    self.emit(now, event);
+                }
             }
             (Phase::Connected, Command::EnterWorld { character }) => {
                 self.begin_enter(now, character);
@@ -1151,6 +1313,21 @@ impl Backend for SandboxBackend {
                 }
             }
             (Phase::InWorld, Command::QueryLocation) => self.report_location(now),
+            #[cfg(feature = "scenario")]
+            (
+                Phase::InWorld,
+                command @ (Command::Chat { .. }
+                | Command::Inventory(_)
+                | Command::Combat(_)
+                | Command::Npc(_)
+                | Command::Social(_)
+                | Command::World(_)
+                | Command::Progression(_)),
+            ) if self.feed_answers() => {
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.submit(now, command)?;
+                }
+            }
             (Phase::InWorld, Command::Chat { channel, text }) => self.chat(now, channel, text),
             (Phase::Closed, _) => return Err(NetError::Closed),
             (_, Command::Disconnect) => self.disconnect(now),
@@ -1168,6 +1345,8 @@ impl Backend for SandboxBackend {
         if self.phase == Phase::InWorld {
             self.tick(now);
             self.update_statics(now);
+            #[cfg(feature = "scenario")]
+            self.poll_feed(now);
         }
         while let Some((due, _)) = self.pending.front() {
             if *due > now {

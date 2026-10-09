@@ -1,0 +1,54 @@
+tessera-scenario-log 1
+install none
+tick 50
+title "Packing for the road"
+resolve $blades line=11 family=item requested=3 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin","Orrin"]
+pre CharacterInfo name="Tamsin" body=none class=none level=12
+pre CharacterInfo name="Orrin" body=none class=none level=3
+pre > CreateCharacter name="Wren" appearance=none class=none
+pre CharacterInfo name="Wren" body=none class=none level=1
+pre > CreateCharacter name="Quill" appearance=none class=none
+pre CharacterRefused name="Quill" reason="Only invented names are kept here."
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$porter kind=non-player name="Porter" at=3.000,1.000,0.000 facing=251.57
+0.000 EntitySpawned entity=$crate kind=object name="Supply crate" at=1.000,2.000,0.000 facing=180.00
+0.000 LevelChanged entity=$crate level=1
+0.000 ContainerSize container=backpack slots=8
+0.000 ContainerSize container=vault slots=20
+0.000 ItemAdded item=$loaf what="Travel loaf" at=backpack:0 quantity=6
+0.000 ItemAdded item=$rope what="Coil of rope" at=backpack:3 quantity=1
+0.000 ItemAdded item=$lamp what="Shuttered lamp" at=backpack:1 quantity=1
+0.000 ItemAdded item=$tent what="Canvas tent" at=vault:0 quantity=1
+0.000 WalletChanged currency=coin amount=4520
+0.000 WalletChanged currency=item:"Copper token" amount=12
+0.400 ItemQuantity item=$loaf quantity=4
+0.400 ItemCondition item=$lamp current=40 max=100
+0.900 LevelChanged entity=player level=13
+0.900 ChatMessage channel=say sender="Porter" text="That should keep you fed for a week."
+1.000 > SplitStack item=$loaf quantity=2
+1.000 ItemQuantity item=$loaf quantity=2
+1.000 ItemAdded item=item:5 what="Travel loaf" at=backpack:2 quantity=2
+1.200 > MoveItem item=$lamp to=backpack:5
+1.200 ItemMoved item=$lamp at=backpack:5
+1.400 > DestroyItem item=$tent
+1.400 ItemRemoved item=$tent
+1.450 EntityMoved entity=$porter at=3.000,1.375,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.500 EntityMoved entity=$porter at=3.000,1.750,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.550 EntityMoved entity=$porter at=3.000,2.125,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.600 > SetQuickslot slot=1 content=item:$loaf
+1.600 QuickslotChanged slot=1 content=item:$loaf
+1.600 EntityMoved entity=$porter at=3.000,2.500,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.650 EntityMoved entity=$porter at=3.000,2.875,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.700 EntityMoved entity=$porter at=3.000,3.250,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.750 EntityMoved entity=$porter at=3.000,3.625,0.000 facing=251.57 velocity=0.000,7.500,0.000
+1.800 > MoveItem item=$loaf to=backpack:1
+1.800 ItemMoved item=$loaf at=backpack:1
+1.800 EntityMoved entity=$porter at=3.000,4.000,0.000 facing=251.57 velocity=0.000,0.000,0.000
+1.900 EntityMoved entity=$porter at=3.000,4.000,0.000 facing=216.87 velocity=0.000,0.000,0.000
+2.100 EntityDespawned entity=$crate
+2.400 ItemRemoved item=$rope
+2.400 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

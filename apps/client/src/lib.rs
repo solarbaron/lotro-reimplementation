@@ -18,6 +18,9 @@
 //!   script graphs (area music, ambience, positional emitters).
 //! - [`ui_host`]: the game UI (M5): `tessera-ui`, the native [`panels`], the plugin host and
 //!   the input bridge in the frame loop (decisions 0014, 0015).
+//! - [`scenario`]: `--scenario` (P0, `docs/specs/scenario-feed.md`): scripted world events
+//!   played by the sandbox, selectors resolved against the install, the headless driver
+//!   and its canonical log.
 
 pub mod app;
 pub mod audio;
@@ -31,6 +34,7 @@ pub mod net;
 pub mod panels;
 pub mod plugins;
 pub mod runtime;
+pub mod scenario;
 pub mod scene;
 pub mod smoke;
 pub mod ui_host;
@@ -40,8 +44,32 @@ pub mod walker_host;
 
 pub use cli::Args;
 
-/// Run the client as configured by `args`.
+/// Runs the client as configured by `args` and returns the process exit code: 0 on
+/// success, 1 on failure, and for `--scenario` the codes of `scenario-feed.md` §12.2
+/// ([`scenario::run`]).
+#[must_use]
+pub fn run_to_exit_code(args: Args) -> u8 {
+    if args.scenario.is_some() {
+        return scenario::run(args);
+    }
+    match run(args) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::error!("{e:#}");
+            1
+        }
+    }
+}
+
+/// Run the client as configured by `args` (`--scenario` runs go through
+/// [`run_to_exit_code`], which keeps their exit codes).
 pub fn run(args: Args) -> anyhow::Result<()> {
+    if args.scenario.is_some() {
+        return match scenario::run(args) {
+            0 => Ok(()),
+            code => Err(anyhow::anyhow!("scenario run failed (exit code {code})")),
+        };
+    }
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         smoke = args.smoke,

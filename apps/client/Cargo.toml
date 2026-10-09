@@ -25,6 +25,9 @@ tessera-audio.workspace = true
 tessera-dat.workspace = true
 tessera-entity.workspace = true
 tessera-formats.workspace = true
+# Scenario selectors resolved against the install (`--scenario`, `docs/specs/scenario-feed.md`
+# §8.6); client and tools only, never linked by tessera-server (LEGAL.md §11.1 rule 5).
+tessera-gamedata.workspace = true
 tessera-havok.workspace = true
 tessera-input = { workspace = true, features = ["winit"] }
 tessera-install.workspace = true
@@ -74,6 +77,8 @@ tempfile = "3"
 # In-process test server and its types for the headless network test (`tests/net_server.rs`).
 tessera-protocol.workspace = true
 tessera-server.workspace = true
+# A synthetic, empty object store for the scenario resolver's unit tests.
+tessera-wstate.workspace = true
 
 [lints]
 workspace = true

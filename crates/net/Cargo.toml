@@ -9,11 +9,16 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["remote"]
+default = ["remote", "scenario"]
 # The test-server backend (`tessera_net::remote`, decision 0030): QUIC via quinn, TLS 1.3
 # via rustls on ring, and a tokio current_thread runtime on a dedicated network thread.
 # Consumers that need only the sandbox can turn default features off.
 remote = ["dep:tokio", "dep:quinn", "tessera-protocol/transport"]
+# The scenario feed (`tessera_net::scenario`, docs/specs/scenario-feed.md): the scenario
+# parser, selector resolution contract, the run-time feed of the sandbox backend, the
+# canonical event log and the headless driver. tessera-server never links it (LEGAL.md
+# §11.1 rule 5).
+scenario = []
 
 [dependencies]
 tessera-protocol.workspace = true

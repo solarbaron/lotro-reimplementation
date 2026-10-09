@@ -1173,3 +1173,19 @@ path = "fuzz_targets/formats_gameplay_items.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-net scenario feed (docs/specs/scenario-feed.md §11.4) ---
+
+[[bin]]
+name = "net_scenario_parse"
+path = "fuzz_targets/net_scenario_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_scenario_run"
+path = "fuzz_targets/net_scenario_run.rs"
+test = false
+doc = false
+bench = false

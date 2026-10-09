@@ -32,6 +32,11 @@
 use std::time::Instant;
 
 use crate::NetError;
+use crate::domain::{
+    CharacterCommand, CharacterEvent, CombatCommand, CombatEvent, InventoryCommand, InventoryEvent,
+    NpcCommand, NpcEvent, ProgressionCommand, ProgressionEvent, SocialCommand, SocialEvent,
+    WorldCommand, WorldEvent,
+};
 use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
     EntityId, EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement,
@@ -180,6 +185,49 @@ pub enum Event {
         /// Why.
         reason: DisconnectReason,
     },
+    /// A character event (character list details, levels;
+    /// `docs/specs/scenario-feed.md` §9.2).
+    Character(CharacterEvent),
+    /// An inventory event (containers, items, wallet).
+    Inventory(InventoryEvent),
+    /// A combat event (targets, vitals, casts, effects, damage).
+    Combat(CombatEvent),
+    /// An NPC window event (dialogue, quests, vendors, loot).
+    Npc(NpcEvent),
+    /// A social event (channels, fellowship, trade, lists, music).
+    Social(SocialEvent),
+    /// A world event (markers, travel, mounts, instances).
+    World(WorldEvent),
+    /// A progression event (experience, skills, traits, crafting, reputation).
+    Progression(ProgressionEvent),
+}
+
+impl Event {
+    /// The variant's name, for logs; for a grouped event the inner variant's name.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Connected { .. } => "Connected",
+            Self::WorldEntered { .. } => "WorldEntered",
+            Self::EntitySpawned { .. } => "EntitySpawned",
+            Self::EntityMoved { .. } => "EntityMoved",
+            Self::StaticSpawned { .. } => "StaticSpawned",
+            Self::StaticsCleared => "StaticsCleared",
+            Self::EntityCreated { .. } => "EntityCreated",
+            Self::AppearanceChanged { .. } => "AppearanceChanged",
+            Self::LocationReport { .. } => "LocationReport",
+            Self::EntityDespawned { .. } => "EntityDespawned",
+            Self::ChatMessage { .. } => "ChatMessage",
+            Self::Disconnected { .. } => "Disconnected",
+            Self::Character(e) => e.name(),
+            Self::Inventory(e) => e.name(),
+            Self::Combat(e) => e.name(),
+            Self::Npc(e) => e.name(),
+            Self::Social(e) => e.name(),
+            Self::World(e) => e.name(),
+            Self::Progression(e) => e.name(),
+        }
+    }
 }
 
 /// Something the client asks the world source to do.
@@ -233,10 +281,25 @@ pub enum Command {
     /// Close the session gracefully. The backend answers with
     /// [`Event::Disconnected`].
     Disconnect,
+    /// A character command (allowed while connected, before world entry).
+    Character(CharacterCommand),
+    /// An inventory command.
+    Inventory(InventoryCommand),
+    /// A combat command.
+    Combat(CombatCommand),
+    /// An NPC window command.
+    Npc(NpcCommand),
+    /// A social command.
+    Social(SocialCommand),
+    /// A world command.
+    World(WorldCommand),
+    /// A progression command.
+    Progression(ProgressionCommand),
 }
 
 impl Command {
-    /// A short static name, for logs and errors.
+    /// A short static name, for logs and errors; for a grouped command the inner variant's
+    /// name.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
@@ -247,6 +310,13 @@ impl Command {
             Self::QueryLocation => "QueryLocation",
             Self::Chat { .. } => "Chat",
             Self::Disconnect => "Disconnect",
+            Self::Character(c) => c.name(),
+            Self::Inventory(c) => c.name(),
+            Self::Combat(c) => c.name(),
+            Self::Npc(c) => c.name(),
+            Self::Social(c) => c.name(),
+            Self::World(c) => c.name(),
+            Self::Progression(c) => c.name(),
         }
     }
 }
@@ -423,10 +493,17 @@ impl Session {
         let allowed = match &command {
             Command::Connect => self.state == S::Idle,
             Command::EnterWorld { .. } => self.state == S::Connected,
+            Command::Character(_) => self.state == S::Connected,
             Command::Move { .. }
             | Command::Chat { .. }
             | Command::Teleport { .. }
-            | Command::QueryLocation => self.state == S::InWorld,
+            | Command::QueryLocation
+            | Command::Inventory(_)
+            | Command::Combat(_)
+            | Command::Npc(_)
+            | Command::Social(_)
+            | Command::World(_)
+            | Command::Progression(_) => self.state == S::InWorld,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
         if !allowed {
@@ -669,7 +746,15 @@ impl Session {
             | Event::StaticSpawned { .. }
             | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
-            Event::ChatMessage { .. } => match self.state {
+            Event::Combat(e) if !e.is_valid() => Verdict::Invalid("non-finite vital or amount"),
+            Event::World(e) if !e.is_valid() => Verdict::Invalid("invalid marker location"),
+            Event::Inventory(_)
+            | Event::Combat(_)
+            | Event::Npc(_)
+            | Event::Social(_)
+            | Event::World(_)
+            | Event::Progression(_) => self.world_verdict(),
+            Event::ChatMessage { .. } | Event::Character(_) => match self.state {
                 S::Connected | S::EnteringWorld | S::InWorld => Verdict::Surface,
                 // Chat that answered an interrupted connect or world entry
                 // (e.g. a welcome line) is stale once Disconnect was sent.
@@ -756,6 +841,11 @@ fn validate(command: &Command) -> Result<(), NetError> {
                         "tell recipient empty, too long or has control characters",
                     ));
                 }
+                ChatChannel::Named { name } if !is_valid_name(name) => {
+                    return Err(NetError::InvalidCommand(
+                        "channel name empty, too long or has control characters",
+                    ));
+                }
                 _ => {}
             }
         }
@@ -767,6 +857,13 @@ fn validate(command: &Command) -> Result<(), NetError> {
             }
         }
         Command::Connect | Command::Disconnect | Command::QueryLocation => {}
+        Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Npc(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Social(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::World(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Progression(c) => c.validate().map_err(NetError::InvalidCommand)?,
     }
     Ok(())
 }
@@ -803,14 +900,23 @@ fn clean_text(event: &mut Event) -> bool {
             if let Some(sender) = sender {
                 changed |= clean(sender, MAX_NAME_LEN);
             }
-            if let ChatChannel::Tell { peer } = channel {
-                changed |= clean(peer, MAX_NAME_LEN);
+            match channel {
+                ChatChannel::Tell { peer } => changed |= clean(peer, MAX_NAME_LEN),
+                ChatChannel::Named { name } => changed |= clean(name, MAX_NAME_LEN),
+                _ => {}
             }
             changed
         }
         Event::Disconnected {
             reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
         } => clean(why, MAX_CHAT_LEN),
+        Event::Character(e) => e.clean(),
+        Event::Inventory(e) => e.clean(),
+        Event::Combat(e) => e.clean(),
+        Event::Npc(e) => e.clean(),
+        Event::Social(e) => e.clean(),
+        Event::World(e) => e.clean(),
+        Event::Progression(e) => e.clean(),
         _ => false,
     }
 }

@@ -1,0 +1,46 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Evening at the inn"
+pre > Connect
+pre Connected characters=["Tamsin","Orrin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$bard kind=player name="Lute player" at=4.000,0.000,0.000 facing=270.00
+0.000 EntitySpawned entity=$host kind=non-player name="Innkeeper" at=0.000,3.000,0.000 facing=180.00
+0.000 ItemAdded item=$ring what="Copper ring" at=backpack:0 quantity=1
+0.000 ChatMessage channel=system sender=none text="The common room fills up."
+0.000 ChatMessage channel=say sender="Innkeeper" text="Welcome in! Find a seat by the fire."
+0.500 ChatMessage channel=yell sender="Lute player" text="Any requests?"
+1.000 > Chat channel=say text="Good evening, everyone."
+1.000 ChatMessage channel=say sender="Tamsin" text="Good evening, everyone."
+1.000 ChatMessage channel=tell:"Hooded stranger" sender="Hooded stranger" text="Psst."
+1.300 ChatMessage channel=emote sender="Lute player" text="tunes the lute"
+1.500 > Chat channel=yell text="Over here!"
+1.500 ChatMessage channel=yell sender="Tamsin" text="Over here!"
+1.600 ChannelJoined channel="Fireside"
+1.800 ChatMessage channel=named:"Fireside" sender="Pip" text="Who is up for a song?"
+2.000 > Chat channel=tell:"Lute player" text="hello"
+2.000 ChatMessage channel=system sender=none text="Lute player is not in the sandbox."
+2.300 FellowshipInvite from="Lute player"
+2.500 > JoinChannel name="Fireside"
+2.800 FellowshipChanged members=[{name="Tamsin" entity=player leader=yes},{name="Lute player" entity=$bard leader=no}]
+3.000 ChatMessage channel=fellowship sender="Lute player" text="Glad to join."
+3.500 PerformanceStarted entity=$bard tune="Harvest reel" delay_ms=500
+6.500 PerformanceStopped entity=$bard
+7.000 FriendList entries=[{name="Lute player" online=yes},{name="Pip" online=no}]
+7.200 IgnoreList names=["Hooded stranger"]
+7.700 TradeShown window=1 peer=$bard
+7.900 TradeOffer window=1 side=peer entries=[{what="Silver whistle" item=none quantity=1}] coin=40
+8.100 TradeReady window=1 side=peer ready=yes
+8.500 > OfferTrade window=1 item=$ring quantity=1 coin=0
+8.700 TradeOffer window=1 side=own entries=[{what="Copper ring" item=$ring quantity=1}] coin=0
+9.000 > SetTradeReady window=1 ready=yes
+9.200 WindowClosed window=1
+9.200 ItemRemoved item=$ring
+9.200 ChatMessage channel=system sender=none text="Trade complete."
+9.500 > AddFriend name="Pip"
+10.000 FellowshipChanged members=[]
+10.000 ChannelLeft channel="Fireside"
+10.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

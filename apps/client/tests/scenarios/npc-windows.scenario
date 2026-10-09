@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# NPC windows (docs/specs/scenario-feed.md §6.3): dialogue pages and options, a quest offer
+# and its objectives, a vendor, loot, and the generic answers to the player's window
+# commands. Synthetic: literal entry lists fill the windows without an install; with one,
+# the item and quest selectors add records.
+tessera-scenario 1
+title "Market morning"
+tick 100ms
+player "Tamsin"
+select $wares = item stackable=yes n=4 seed=21
+select $errands = quest deed=no level=1..30 n=2 seed=5
+actor $grocer kind=npc name="Grocer" pos=2,2,0
+actor $warden kind=npc name="Gate warden" pos=-3,2,0
+item $cider "Pear cider"
+page $greet speaker=$grocer "Fresh from the orchard. Care to look?"
+page $later speaker=$grocer "Come back when the bell rings."
+option $greet 1 "Show me your wares."
+option $greet 2 "Not today." goto=$later
+option $greet 3 "Goodbye." goto=close
+
+at 0s spawn $grocer
++0s spawn $warden
++0s wallet coin 900
+
+on use $grocer
++0s show $greet
+end
+on choose $greet 1
++0s close dialogue
++0s vendor items="Russet apple","Pear cider","Honey cake" npc=$grocer price=12,30,45 stock=20
+end
+on buy entry=2
++0s wallet coin 870
++0s give $cider
+end
+on use $warden
++0s offer "Lost satchel" from=$warden
+end
+on accept
++0.2s objective "Lost satchel" 1 0/1
++0s track "Lost satchel" on
+end
+
+at 6s objective "Lost satchel" 1 1/1 done
++0s quest "Lost satchel" completed
++0s quest $errands active
++0.5s loot items="Satchel strap","Brass buckle" from=$warden qty=1 coin=75
++0.3s loot-taken 1
++1.5s vendor items=$wares npc=$grocer price=5
++1s close vendor
++0s quest "Lost satchel" removed
+
+input
+at 0.5s use $grocer
+at 1s choose $greet 1
+at 1.5s buy 2 qty=1
+at 2s close vendor
+at 3s use $warden
+at 3.5s accept
+at 7.2s take-loot 2
+at 7.5s close loot
+end

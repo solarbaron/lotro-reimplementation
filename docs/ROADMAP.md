@@ -25,7 +25,9 @@
 > server and protocol) was built in parallel
 > on branch `m7` and verified on 2026-10-07 ([M7 status](#m7-status)): criteria 2–4 pass
 > (4 waits for the owner's confirmation before any public test build), criterion 1 passes
-> on one machine and waits for a run between two machines on a LAN. Milestones are ordered by
+> on one machine and waits for a run between two machines on a LAN. The parity track
+> (P0–P8, [decision 0024](decisions/0024-parity-track.md)) started on 2026-10-09 with
+> [P0](#p0) (scenario feed and `tessera-gamedata`). Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -78,7 +80,7 @@ like "ARCH §8" refer to it.
 | **M5** | UI layouts and skins, Lua plugins | T1 | `ui`, `plugins` |
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
-| **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata`; grows `net` (scenario feed), `ui`, `plugins`, `wvm`, `client` |
+| **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata` (new, L3, P0); grows `net` (scenario feed, P0), `ui`, `plugins`, `wvm`, `client` |
 | **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
 | **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
@@ -934,14 +936,13 @@ water, sky and instanced pipelines with mip chains and shadows; the walker on ph
 [owner-observations.md](checklists/owner-observations.md); ARCHITECTURE §3.1, §10 and §20.3.
 
 > **Held work in the verified tree (2026-10-07).** The re-verification ran on the working
-> tree as it stood, with the uncommitted diffs of `crates/render/**`, `apps/client/**`
+> tree as it stood, with the then uncommitted diffs of `crates/render/**`, `apps/client/**`
 > (interior cells, layer-less blocks: `walker/interiors.rs`, `walker/terrain.rs`),
-> `crates/physics/**` and `crates/world/src/scenery/**` / `frills/**`. The proposed incident
-> record [proposed-incident-2026-10-07-review-notes.md](decisions/proposed-incident-2026-10-07-review-notes.md)
-> holds all four until a maintainer decides whether the sessions that wrote them saw
-> dirty-room reviewer material (`CLEAN_ROOM.md` §10). Any result below that depends on
-> them (for example F1, Y5, SL1–SL3) counts only if the hold is lifted; if a diff is
-> discarded, the rows it touches have to be re-run.
+> `crates/physics/**` and `crates/world/src/scenery/**` / `frills/**`. The incident record
+> [0018](decisions/0018-incident-review-notes-in-clean-prompts.md) held all four while it
+> was open. The owner lifted the hold on 2026-10-07 (0018, owner decision A: release; the
+> work landed in `ecc814b` and `6607d43`), so the results below that depend on those diffs
+> (for example F1, Y5, SL1–SL3) count.
 
 | # | | Evidence |
 |---|---|---|
@@ -1366,6 +1367,95 @@ combat presentation, P3 NPC windows, P4 social panels, P5 map, travel, mounts an
 instances, P6 progression and crafting panels, P7 client-run game code, P8 parity audit.
 Only the client half is built; the game's own rules are not run, offline included (T3).
 Each milestone gets its own section here when it starts.
+
+<a id="p0"></a>
+### P0: Foundations
+
+**Goal:** the two foundations every later P milestone stands on: a **scenario feed** that
+drives the client half offline with scripted gameplay events, and **`tessera-gamedata`**,
+the presentation data layer that reads gameplay records from the user's install
+([decision 0024](decisions/0024-parity-track.md) §3–§5). Builds on M5 and M7. Risk tier T1
+(client only, offline).
+
+<a id="p0-deliverables"></a>
+**Deliverables**
+
+- `docs/specs/scenario-feed.md` (new): the scenario file format, step vocabulary, timing and
+  triggers, selector language, resolution contract, the gameplay events and commands,
+  determinism and the canonical event log, hostile-input limits, client options and the
+  rules for committed scenarios. Tessera's own design; no client facts beyond the Accepted
+  specs it cites.
+- `tessera-net`: the scenario feed (`tessera_net::scenario`, cargo feature `scenario`):
+  parser and static checks, the `SelectorResolver` contract and resolved scenario, the
+  run-time feed in the sandbox backend, the headless driver and the canonical log writer;
+  the gameplay event and command groups of ARCH §19.1 (Character, Inventory, Combat, Npc,
+  Social, World, Progression). It decodes no game data.
+- `tessera-gamedata` (`crates/gamedata`, new, L3): the record-family index and typed entry
+  points over `props`/`wstate`, and scenario selector resolution against the install
+  (canonical order, seeded sampling, notes). Typed stores, tooltip and description
+  evaluation grow from P1.
+- `tessera-client`: `--scenario`, `--scenario-log` and `--scenario-input`; headless runs on
+  the scenario's virtual clock with the exit codes of `scenario-feed.md` §12.2; a resolver
+  adapter from the feed to `tessera-gamedata`; committed synthetic scenarios with their
+  logs (`apps/client/tests/scenarios/`) and a replay test.
+- `fuzz/`: `net_scenario_parse` and `net_scenario_run`.
+- `tools/check-server-deps.sh` and the CI job `server-deps`: `tessera-server` links no
+  package outside crates.io other than `tessera-protocol` (so no data-decoding crate, no
+  `tessera-gamedata` and no `tessera-net`, hence no feed). Every crate that runs the server
+  in-process (today `tessera-loadtest`) is checked too, with `tessera-net` also allowed: a
+  host refuses data-decoding crates and `tessera-gamedata`, but in a workspace build its
+  `tessera-net` carries the feed (feature unification). Whether hosts must stay feed-free is
+  OPEN item (3) of `scenario-feed.md` §3.1.
+- Documentation: ARCH §3 and §3.1 (`tessera-gamedata`, dependency rules), §19 (the gameplay
+  events and commands, the scenario feed of the sandbox), §20.1, §23; `docs/USER_GUIDE.md`
+  (scenario runs); at close-out, `CLAUDE.md` Layout (`crates/gamedata`, the `net` scenario
+  feed, `tools/check-server-deps.sh`) and Current state (P0).
+
+<a id="p0-specs"></a>
+**Specs needed:** [`scenario-feed.md`](specs/scenario-feed.md) (new);
+[ARCH §3](ARCHITECTURE.md#layers) (`tessera-gamedata`, [§3.1](ARCHITECTURE.md#crate-table))
+and [ARCH §19](ARCHITECTURE.md#net) (the new domain events, grouped by system); the Accepted
+gameplay specs that define the selector families (`scenario-feed.md` §8.3).
+
+**RE tasks:** none. The feed is a design, and the selector attributes come from Accepted
+specs.
+
+<a id="p0-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. `scenario-feed.md` Accepted after an independent review, no blocking OPEN.
+2. `tessera-client --scenario <file>` plays a synthetic scenario headless; the same file
+   gives the same event sequence on every run.
+3. The scenario parser has a fuzz target; hostile files are refused without a panic.
+4. ARCHITECTURE §3 lists `tessera-gamedata`; CI fails when `tessera-server`'s dependency
+   graph holds a data-decoding crate, `tessera-gamedata` or the feed.
+
+<a id="p0-status"></a>
+**Status:** in progress (started 2026-10-09; exit verification 2026-10-09). Criteria 2, 3
+and 4 pass; criterion 1 is not met: `scenario-feed.md` is in Review (revision 3) and waits
+for an independent re-review. No criterion needs an owner observation in the original client.
+Checks on branch `p0` (uncommitted tree, 2026-10-09): `cargo fmt --check` (workspace and
+`fuzz/`), clippy `-D warnings` (workspace `--all-targets`, also `--all-features`; `fuzz/`
+`--bins`), rustdoc `-D warnings` on `tessera-net`, `tessera-gamedata`, `tessera-client`;
+`cargo test --workspace --release` with the install: 5,103 passed, 0 failed, 10 ignored
+(363 test binaries); `tools/check-content.sh`, `tools/check-spdx.sh` and a link and anchor
+check of the 122 Markdown files: 0 errors. After the verifier's client fix (`--scenario-log` and
+`--scenario-input` refused without `--scenario`, and a log path equal to the scenario file
+refused, both exit 2): `cargo test --release -p tessera-client` with the install 500 passed,
+0 failed, 1 ignored.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **not met** | `scenario-feed.md` header: Review, revision 3. Revision 2 was set Accepted by the session that wrote its fixes R1–R31, which `CLEAN_ROOM.md` §3 does not allow; revision 3 fixes the implementation-phase findings S1–S31. A session that wrote none of revisions 1–3 must re-check R1–R31, S1–S31 and every vector before it can be Accepted. The implementers' tests already run Vectors A–F and the 44 hostile-input rows of §14.5 (`crates/net/tests/scenario_vectors.rs`, `scenario_hostile.rs`; all pass). The spec states no blocking OPEN; its 12 OPEN notes are marked non-blocking (implementer interpretations in §3.1, §12.4, §16; later milestones; owner policy on numeric enum keys before P1; a log-size limit and the CC0 wording of §13, added at exit verification). |
+| 2 | **pass** | `tessera-client --headless --no-data --scenario F --scenario-log L` on the six committed synthetic scenarios (`apps/client/tests/scenarios/`: combat, inventory, npc-windows, progression, social, world), release build, two runs each: exit 0 every time, both logs byte-identical and equal to the committed `.log` (64, 54, 44, 40, 46, 38 lines). `tests/scenarios.rs` 12 / 12 (replay, content rules, exit codes 2–5); with the install `tests/scenarios_real_data.rs` 4 / 4 in 75 s (each scenario twice with identical logs; ground spawn; screenshot run on the GPU); `scenario_world.rs` 3 / 3; `tessera-gamedata` `selectors` 37 / 37 and `real_data` 2 / 2 (383,343 records indexed, 0 failures, two stores give identical DID lists). |
+| 3 | **pass** | Fuzz targets `net_scenario_parse` (parse, then 200 ticks of playback; parse peak allocation bounded) and `net_scenario_run` (synthetic resolver from the input, headless driver, per-poll event and weight bounds). `tools/fuzz-smoke.sh -t 60`: 733,053 and 88,851 executions, no crash. Hostile files given to the release client (random bytes, an unterminated string, a 2 MB file, an over-long integer, unknown keywords): exit 3 with `FILE:LINE:COLUMN` and the error kind, no panic; `scenario_hostile.rs` (the 44 rows of §14.5 and 31 further static errors), `scenario_props.rs` (proptests over random lines and bytes) and the 11 hostile files of `tests/scenarios.rs` pass. |
+| 4 | **pass** | ARCHITECTURE §3 (layer diagram, dependency rule) and §3.1 list `tessera-gamedata` (L3, client and tools only). CI job `server-deps` (`.github/workflows/ci.yml`) runs `tools/check-server-deps.sh --self-test` (14 fixture cases incl. feature unification, dev, build and target-specific edges, path and git packages, in-process hosts, `#[path]`/`include!`; all caught) and the real check: `tessera-server` links nothing outside crates.io but `tessera-protocol`; its host `tessera-loadtest` links no data crate or `tessera-gamedata` (exit 0). Also in `tools/ci-local.sh`. |
+
+Remaining issues: criterion 1 (independent re-review of `scenario-feed.md`); open review items
+for owners: the windowed scenario log is written on the main thread (ARCH §21 exception (d)),
+no test yet checks that event and command `name()` strings are unique (ARCH §19.1), the
+windowed input script is not played (§12.4 OPEN), and whether in-process server hosts must
+stay feed-free (§3.1 OPEN item 3).
 
 ---
 

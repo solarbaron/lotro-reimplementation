@@ -159,6 +159,13 @@ pub enum ChatChannel {
     },
     /// Messages from the world source itself (notices, errors).
     System,
+    /// The player's fellowship.
+    Fellowship,
+    /// A named chat channel the player joined.
+    Named {
+        /// The channel's name (passes [`is_valid_name`]).
+        name: String,
+    },
 }
 
 /// The heading (module convention: radians, 0 = +X, counter-clockwise) of the

@@ -65,6 +65,12 @@ several clients share a world through `tessera-server` over Tessera's own QUIC p
 seeing each other move, animate and chat, with one-hour soaks free of desync and leaks; a
 run between two machines on a LAN and the owner's confirmation of the server content rules
 are still open.
+**P0 (parity track foundations: scenario feed and `tessera-gamedata`) is in its exit phase**
+([P0 status](docs/ROADMAP.md#p0-status)): `tessera-client --headless --scenario <file>`
+plays scripted gameplay events on a virtual clock and writes the same event log on every
+run, scenario selectors resolve against the user's install, the scenario parser is fuzzed,
+and CI checks that `tessera-server` links no data-decoding crate; the scenario-feed spec still
+waits for an independent re-review before it can be Accepted.
 
 | Area | State |
 |---|---|
@@ -88,6 +94,7 @@ are still open.
 | Tessera's own protocol (`tessera-protocol`, QUIC, decision 0030), `tessera-server` with an original default world, the client's test-server backend (`tessera-client --server`), `tessera-loadtest` | done on one machine (M7): one-hour soaks with 16 clients, 0 desync, no leak; protocol spec Accepted after an independent review; 10 fuzz targets; LAN run between two machines pending |
 | UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
+| Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

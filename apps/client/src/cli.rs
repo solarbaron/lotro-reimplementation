@@ -20,7 +20,7 @@ const _: () = assert!(MAX_FLY_SPEED * 5.0 <= tessera_net::sandbox::MAX_SPEED);
 #[command(name = "tessera-client", version, about)]
 #[command(group(
     clap::ArgGroup::new("headless_task")
-        .args(["screenshot", "fly_path", "duration", "ui_script", "walk_path"])
+        .args(["screenshot", "fly_path", "duration", "ui_script", "walk_path", "scenario"])
         .multiple(true)
 ))]
 pub struct Args {
@@ -135,9 +135,9 @@ pub struct Args {
     #[arg(long, value_name = "PNG")]
     pub screenshot: Option<PathBuf>,
 
-    /// Run the walker offscreen without a window (implied by `--screenshot` and
-    /// `--walk-path`; needs `--screenshot`, `--fly-path`, `--duration` or `--walk-path`, which
-    /// end the run).
+    /// Run without a window (implied by `--screenshot` and `--walk-path`; needs one of the
+    /// tasks that end the run: `--screenshot`, `--fly-path`, `--duration`, `--walk-path`,
+    /// `--ui-script` or `--scenario`, which is valid on its own).
     #[arg(long, requires = "headless_task")]
     pub headless: bool,
 
@@ -444,6 +444,54 @@ pub struct Args {
     /// Write the U1–U5 report of the run as Markdown to this file (implies `--ui`).
     #[arg(long, value_name = "FILE")]
     pub ui_report: Option<PathBuf>,
+
+    // ----- scenario feed (P0, `docs/specs/scenario-feed.md` §12) -----
+    /// Play a scenario file with the sandbox: scripted world events (actors, chat, combat,
+    /// windows, inventory, ...) whose records are chosen by selectors against the install
+    /// (none resolve without one). With `--headless` it runs on the scenario's virtual
+    /// clock to its end and exits 0 (finished), 3 (parse error), 4 (resolve error) or 5
+    /// (run-time error); otherwise the walker plays it in real time.
+    #[arg(
+        long,
+        value_name = "FILE",
+        value_parser = parse_scenario_path,
+        conflicts_with_all = ["server", "walk_path", "fly_path", "duration", "smoke", "showcase", "ui_script"]
+    )]
+    pub scenario: Option<PathBuf>,
+
+    /// Write the scenario's canonical event log to FILE (`-` for standard output). The
+    /// log of a headless run is the same, byte for byte, on every run; a windowed run
+    /// writes it too, with wall-clock times (not normative).
+    #[arg(long, value_name = "FILE", requires = "scenario")]
+    pub scenario_log: Option<PathBuf>,
+
+    /// Windowed scenario runs: also play the scenario's input script (headless runs always
+    /// play it). Not played yet in windowed runs (`scenario-feed.md` §12.4 OPEN): the run
+    /// ends as if it were, and a warning says so.
+    #[arg(long, requires = "scenario")]
+    pub scenario_input: bool,
+
+    /// The resolved scenario of `--scenario`, set by the client after parsing and
+    /// resolution (not a command-line option).
+    #[arg(skip)]
+    pub scenario_prepared: Option<std::sync::Arc<tessera_net::scenario::ResolvedScenario>>,
+
+    /// The opened `--scenario-log` of a windowed scenario run, for the world session the
+    /// runtime creates (`scenario-feed.md` §12.4; not a command-line option).
+    #[arg(skip)]
+    pub scenario_log_slot: Option<crate::scenario::live_log::LiveLogSlot>,
+}
+
+/// Checks a `--scenario` path: an existing file (it is read and parsed later, §12.2).
+fn parse_scenario_path(s: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(s);
+    if p.is_file() {
+        Ok(p)
+    } else if p.exists() {
+        Err(format!("{s}: not a regular file"))
+    } else {
+        Err(format!("{s}: no such scenario file"))
+    }
 }
 
 /// Environment variable the test-server password is read from (else a prompt).
@@ -771,6 +819,46 @@ pub fn parse_layer(s: &str) -> Result<u32, String> {
 }
 
 impl Args {
+    /// Checks the option combinations that clap's rules cannot state: `--screenshot` with
+    /// `--scenario` and `--no-data` (a scenario screenshot needs the walker and therefore
+    /// an install, `scenario-feed.md` §12.2).
+    ///
+    /// # Errors
+    ///
+    /// A clap usage error (exit code 2).
+    pub fn check(&self) -> Result<(), clap::Error> {
+        // clap drops `requires = "scenario"` when a conflicting task option is given, so
+        // the rule is checked here as well (`scenario-feed.md` §12.1).
+        if self.scenario.is_none() {
+            if self.scenario_log.is_some() {
+                return Err(crate::scenario::usage_error(
+                    "the argument '--scenario-log <FILE>' requires '--scenario <FILE>'",
+                ));
+            }
+            if self.scenario_input {
+                return Err(crate::scenario::usage_error(
+                    "the argument '--scenario-input' requires '--scenario <FILE>'",
+                ));
+            }
+        }
+        if let (Some(scenario), Some(log)) = (&self.scenario, &self.scenario_log)
+            && log.as_os_str() != "-"
+            && same_file(scenario, log)
+        {
+            return Err(crate::scenario::usage_error(
+                "the argument '--scenario-log <FILE>' names the scenario file itself (it would be \
+                 overwritten)",
+            ));
+        }
+        if self.scenario.is_some() && self.screenshot.is_some() && self.no_data {
+            return Err(crate::scenario::usage_error(
+                "the argument '--screenshot <PNG>' cannot be used with '--scenario <FILE>' and \
+                 '--no-data' (a scenario screenshot needs an install)",
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether the world walker runs (instead of the M0 showcase).
     #[must_use]
     pub fn walker(&self) -> bool {
@@ -792,6 +880,15 @@ impl Args {
     #[must_use]
     pub fn walker_headless(&self) -> bool {
         self.walker() && (self.headless || self.screenshot.is_some() || self.walk_path.is_some())
+    }
+}
+
+/// Whether two paths name the same existing file (both canonicalised; a log path that does
+/// not exist yet cannot be the scenario file).
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -965,6 +1062,101 @@ mod tests {
         assert!(Args::try_parse_from(["t", "--headless"]).is_err());
         assert!(Args::try_parse_from(["t", "--headless", "--screenshot", "a.png"]).is_ok());
         assert!(Args::try_parse_from(["t", "--headless", "--fly-path", "1:2,3:4"]).is_ok());
+    }
+
+    #[test]
+    fn scenario_args() {
+        let f = tempfile::NamedTempFile::new().expect("temp file");
+        let s = f.path().to_str().expect("utf-8");
+        // `--scenario` is a headless task on its own (§12.1).
+        let a = Args::try_parse_from(["t", "--headless", "--scenario", s]).expect("args");
+        assert_eq!(a.scenario.as_deref(), Some(f.path()));
+        assert!(a.scenario_log.is_none() && !a.scenario_input);
+        assert!(a.scenario_prepared.is_none());
+        let a = Args::try_parse_from([
+            "t",
+            "--scenario",
+            s,
+            "--scenario-log",
+            "-",
+            "--scenario-input",
+            "--no-data",
+            "--spawn",
+            "1,2,3,4,5,6",
+            "--heading",
+            "90",
+        ])
+        .expect("args");
+        assert_eq!(a.scenario_log.as_deref(), Some(std::path::Path::new("-")));
+        assert!(a.scenario_input);
+        assert!(a.check().is_ok());
+        // Missing files and directories are refused by clap.
+        assert!(Args::try_parse_from(["t", "--scenario", "/nonexistent/x.scenario"]).is_err());
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(Args::try_parse_from(["t", "--scenario", dir.path().to_str().unwrap()]).is_err());
+        // Options that need --scenario, and the tasks it conflicts with.
+        assert!(Args::try_parse_from(["t", "--scenario-log", "x"]).is_err());
+        assert!(Args::try_parse_from(["t", "--scenario-input"]).is_err());
+        for other in [
+            &["--server", "127.0.0.1:1", "--account", "a"][..],
+            &["--walk-path", s],
+            &["--fly-path", "1:2,3:4"],
+            &["--duration", "3"],
+            &["--smoke"],
+            &["--showcase"],
+            &["--ui-script"],
+        ] {
+            let mut v = vec!["t", "--scenario", s];
+            v.extend_from_slice(other);
+            assert!(Args::try_parse_from(&v).is_err(), "{other:?}");
+        }
+        // A scenario screenshot needs an install: refused with --no-data (exit 2).
+        let a = Args::try_parse_from(["t", "--scenario", s, "--screenshot", "a.png", "--no-data"])
+            .expect("clap alone accepts it");
+        let e = a.check().expect_err("refused");
+        assert_eq!(e.exit_code(), 2);
+        assert!(
+            Args::try_parse_from(["t", "--scenario", s, "--screenshot", "a.png"])
+                .expect("args")
+                .check()
+                .is_ok()
+        );
+        // clap drops `requires` when a conflicting task is given; check() still refuses.
+        for v in [
+            &[
+                "t",
+                "--headless",
+                "--no-data",
+                "--duration",
+                "1",
+                "--scenario-log",
+                "x.log",
+            ][..],
+            &["t", "--no-data", "--smoke", "--scenario-input"],
+        ] {
+            let a = Args::try_parse_from(v).expect("clap alone accepts it");
+            assert_eq!(a.check().expect_err("refused").exit_code(), 2, "{v:?}");
+        }
+        // The log must not overwrite the scenario file, under any spelling of its path.
+        let file = dir.path().join("own.scenario");
+        std::fs::write(&file, "tessera-scenario 1\n").expect("write");
+        let f = file.to_str().unwrap();
+        let alias = dir.path().join(".").join("own.scenario");
+        for log in [f, alias.to_str().unwrap()] {
+            let a =
+                Args::try_parse_from(["t", "--scenario", f, "--scenario-log", log]).expect("args");
+            assert_eq!(a.check().expect_err("refused").exit_code(), 2, "{log}");
+        }
+        let other = dir.path().join("own.log");
+        let a = Args::try_parse_from([
+            "t",
+            "--scenario",
+            f,
+            "--scenario-log",
+            other.to_str().unwrap(),
+        ])
+        .expect("args");
+        assert!(a.check().is_ok());
     }
 
     #[test]

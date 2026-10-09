@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09 (§5.2 recognition of the quest-state test from the table's data, §6.7 absent integer bounds, §9.1 type of `Version_Number`); needs a fresh review of the changed sections. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (fresh dirty-room session, not the writer) |
@@ -63,6 +63,8 @@ says that a number is an algorithm constant (decision 0012).
 | WLB | The class library (record 0x56000000; its SHA-256 equals that of the copy disassembled) disassembled in the dirty room on 2026-10-09 with the rules of [`wlib-bytecode.md`](wlib-bytecode.md) (Accepted): class 287 function 206 (slot 291, the check-list evaluator), class 287 slot 48 (the entry rule of `quests.md` §8.2; only its return convention was read again), class 3172 slot 85 (a game callback), class 3376 slot 3 and its four callers (class 277 slot 13, class 279 slots 1 and 2, class 258 slot 54), classes 1815 and 1887 slot 87 (world-event comparators) and class 1820 slot 5 (world-event condition reader); and a search of the whole code for 32-bit pushes of every property ID of the families in §3. |
 | BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file dated 2026-10-04; the SHA-256 recorded in the analysed project equals that of the installed file), analysed headless on 2026-10-09 in a private copy of the shared Ghidra project (decompiler and disassembler, address ranges only; the copy was deleted after use; nothing copied into this spec). **Questions:** (1) who sets `QuestState_PhasedOut` and by which rule the client decides from the player's quest state whether a placed or spawned object is drawn; (2) which properties that rule reads, from where, and what an absent value means; (3) which events make the client evaluate the rule again; (4) how the client recognises the entity that carries the rule. **Why M1–M3 were not enough:** the data hold the check lists, flags and links but not the rule that combines them, the defaults of absent values, the link orientation used, the identification of a box or the update triggers; the class library never sets `QuestState_PhasedOut` (WLB search); no published source describes the mechanism (M2); observing the client (M3) would need many quest states on one character and could not separate the box, link and default rules. **Read:** the executable's immediate references to the property IDs of the `QuestState_`, `PhasingBox` and `Phasing_` groups; the phasing manager's constructor (identification key), its handlers for entity creation, entity removal, quest change and full refresh, its box test, its target-update and state-setting routines; the property getter's use (only far enough to see that it is the entity lookup of `entity-descriptor.md` §9.2 without dictionary defaults); the default-value helper; the native call into the class library (function ID). No network, login, launcher or anti-tamper code. |
 | DICT | The property dictionary and enum mappers of the install (types, defaults, mapper labels), read with the project's decoders on 2026-10-09. |
+| OBS2 | Observed 2026-10-09 for this revision with new throwaway probes (the project's decoders as tools), read-only: every node of all 7,524 decoded 0x07 tables and 28,992 0x0C scriptlets searched for Switch, When and driven pairs naming a `QuestState_*` property; the `Startup` scripts of the eight tables found dumped node by node and their GameCallback package DIDs read from the record bytes; every 0x47 descriptor, 0x78 and 0x79 set and every landblock SED, instance and landblock set searched for the DIDs of those tables, and every SED's object DID for the descriptors that name them; all 384,948 0x78 and 0x79 sets for the world-event properties (`WorldEvent_*IntValue` on every event set, every `WorldEvent_Condition` and broadcast condition struct at any depth) and for every `Version_Number` value at any depth, with the enum mapper 0x23000076. |
+| WLB2 | The class library (same record, same SHA-256), disassembled 2026-10-09 for this revision with the project's disassembler (`tessera-dattool bytecode`, rules of `wlib-bytecode.md`): class 1887 slots 87 (again), 113 and 114, and the shared body at code offset 0x284 that both call. |
 
 | Row | Fact | Source | Mark |
 |---|---|---|---|
@@ -87,6 +89,10 @@ says that a number is an algorithm constant (decision 0012).
 | WL19 | Property-response objects: 419 in six classes plus 4 templates, layouts and references (§8) | OBS | Confirmed 2026-10-09 |
 | WL20 | Version objects: master list (class 1623), subtree 1621 with 158 objects, 156 of them listed, 2 always-run, 123 with `Version_*` data (§9) | OBS | Confirmed 2026-10-09 |
 | WL21 | Behaviour of counters, timers, generators, custom conditions, event lists, property responses and version objects is not in the client's class library or executable as a rule (beyond §6.7) | WLB (search); BIN (search of immediate PIDs; the few hits checked are error codes that equal a PID by chance) | Confirmed for this build; behaviour server-side (OPEN §14) |
+| WL23 | Three further tables, 0x07001961, 0x0700197E and 0x07001A34, run the same quest-entry callback from `Startup` without a timer and with only a true branch (a light, or the day/night choice of `instance-scripts.md` §6); their users are one 0x47 descriptor that no SED places and two templates of class 796 (§5.1) | OBS2 | Confirmed 2026-10-09 |
+| WL24 | Every quest-state test is built from the six parts of §5.2.1 (timer, quest-ID guard, test override switch, phased-out guard, one or two chained callbacks, leaves); the parts present identify each of the eight tables (§5.2.1) | OBS2 (all 0x07 and 0x0C records) | Confirmed 2026-10-09 |
+| WL25 | The integer event's bounds are read with 0 as the value when the event does not store them; both dictionary defaults are 0; 91 of the 699 integer events store no minimum, all store a positive maximum, and every condition on an event without a stored minimum compares a value inside 0 … maximum (§6.7) | WLB2; DICT; OBS2 | Confirmed (WLB) 2026-10-09 |
+| WL26 | `Version_Number` is an enum (type 8) of mapper 0x23000076; all 94 stored values are type-8 values and keys of that mapper (§9.1) | DICT; OBS2 | Confirmed 2026-10-09 |
 | WL22 | Empty-journal evaluation counts (§4.9) | Tessera computation over OBS data with the rules of §4.3–§4.4 | Computed 2026-10-09 |
 
 ---
@@ -520,7 +526,24 @@ runs a script that swaps its visuals.
 
 The 235 templates are of classes 1724 (134), 1723 (89) and 796 (12). No SED places 0x470053CB
 or 0x470053CD, and no landblock set names one of the tables, so in this install the client meets
-this mechanism only on server-created entities whose template names one of the tables. Script
+this mechanism only on server-created entities whose template names one of the tables.
+
+Three further tables (WL23, found 2026-10-09) run the same quest-entry callback (package
+0x70026F0D, call properties driven from `QuestState_QuestID`, `…Status`, `…Operator`) as the
+root of their `Startup` script, without a timer, and wire only its **true** port:
+
+| Table | Under the callback's true port | Users |
+|---|---|---|
+| 0x07001961 | a Light node whose seven light fields are driven from the entity's own light properties | 0x47005F2C (no SED places it) |
+| 0x0700197E | a Scriptlet node of 0x0C000FCC whose four name ports run 0x10000794 (day) or 0x10000235 (night), as in `instance-scripts.md` §6.2; the table also defines both keys (0x10000235 with a sound, a MeshFX and two particle nodes) | one template of class 796 (0x79031480) |
+| 0x07001A34 | as 0x0700197E (0x10000235 with a sound and a MeshFX node) | one template of class 796 (0x7903290A) |
+
+When the entry fails, these tables do nothing (the false port is not wired), so the light or
+the day/night scripts run only while the quest entry passes. No other table or scriptlet of the
+install holds a GameCallback driven from a `QuestState_*` property, a Switch on
+`QuestState_Test` or a When on `QuestState_QuestID` (OBS2). (Switches on `QuestState_NPC` occur in
+three tables and seven scriptlets, and on `QuestState_PhasedOut` in five more tables; they are not
+quest-entry tests and are outside this section.) Script
 keys: 5 `Startup`, 0x10001CF6 `QuestState_True`, 0x10001CF7 `QuestState_False`, 0x10000524
 `Viewport_Idle` (labels of mapper 0x23000097).
 
@@ -545,12 +568,49 @@ Script 0x10000524 `Viewport_Idle` (tables 0x070014AF and 0x070014BB): an opacity
 (0x070014AF: combiner `Add`, opacity 1.0; 0x070014BB: `Replace`, 1.0) and, in 0x070014BB, a
 SetProperty `QuestState_Test` = 1. It is the variant shown in UI viewports.
 
-> **OPEN (implementer, 2026-10-09):** a reader that applies §5 without running the script
-> tables must know which of the five graph shapes a table has, and this section names the
-> tables only by DID. How is the shape recognised from the table's own data (for example by
-> the node kinds and watched properties under `Startup`)? **Tessera's choice:** the library
-> exposes the five shapes (`QuestStateGraph`) and the caller chooses one; the explorer shows the
-> test and both branches without choosing.
+<a id="s5-2-1"></a>
+#### 5.2.1 Reading the test from a table's own data (OBS2, WL24)
+
+A reader that applies §5 without running the script tables recognises the test by its
+**parts**, not by the table's DID. A table carries a quest-state test when its `Startup`
+script (key 5) holds a GameCallback node (kind 27) whose package is 0x70026F0D and whose driven
+pairs set `Usage_QuestID`, `Usage_QuestStatus` and `Usage_Operator` from `QuestState_QuestID`,
+`QuestState_QuestStatus` and `QuestState_QuestOperator`. The reader then walks from the
+`Startup` root down to that node and reads the nodes on the path, in path order:
+
+| Part | How it is recognised | What it means |
+|---|---|---|
+| Timer | a Timer node (kind 65) as the `Startup` root; the delay is the payload of its port of type 6 | the test runs once, after the delay |
+| Quest-ID guard | a When node (kind 63) on `QuestState_QuestID` whose test compares with the null DID under operator 3 | without a quest ID nothing runs |
+| Test override | a Switch node (kind 12) on `QuestState_Test` with cases 0, 1 and 2 | 1: the True leaf without a test; 2: the False leaf; 0: continue down the path |
+| Phased-out guard | a Switch node on `QuestState_PhasedOut` with a case for false only | while the entity is phased out nothing runs |
+| Entries | the GameCallback node above; a second GameCallback in its **true** port whose pairs are driven from `QuestState_QuestID_2`, `…Status_2`, `…Operator_2` | one entry, or two entries that must both pass (the first one's false port is the False leaf) |
+| Leaves | what the callbacks' value ports hold: a Run node of 0x10001CF6 (`QuestState_True`) or 0x10001CF7 (`QuestState_False`); or, in the three tables of WL23, other nodes under the true port and nothing under the false port | the True and False effects (§5.4; WL23) |
+
+Nodes beside the path (the two MeshFX nodes and the `CanSeeVisibilityMask` When of 0x070014AF
+and 0x070014BB) are not part of the test. The parts present in each table of the install:
+
+| Table | Timer | Quest-ID guard | Test override | Phased-out guard | Entries | Leaves |
+|---|---|---|---|---|---|---|
+| 0x070014AF | 0.2 s | yes | yes | no | 1 | Run True / Run False |
+| 0x070014BB | 0.2 s | no | yes | no | 2 | Run True / Run False |
+| 0x070014CE | 1.0 s | no | no | no | 1 | Run True / Run False |
+| 0x070014B0 | 1.0 s | no | yes | no | 1 | Run True / Run False |
+| 0x070014B1 | 1.0 s | no | yes | yes | 1 | Run True / Run False |
+| 0x07001961 | none | no | no | no | 1 | true: Light node; false: nothing |
+| 0x0700197E | none | no | no | no | 1 | true: day/night Scriptlet; false: nothing |
+| 0x07001A34 | none | no | no | no | 1 | true: day/night Scriptlet; false: nothing |
+
+Each combination of parts is different, so the parts identify the table's behaviour. Evaluation
+from the parts: wait for the delay (if any); stop if a quest-ID guard sees the null DID; apply the
+test override (1 → True leaf, 2 → False leaf, 0 → go on); stop if a phased-out guard sees true;
+evaluate the entries in order, the first failing one choosing the False leaf; run the leaf. A
+`Startup` path holding any other node between the root and the callback, or a callback outside
+this pattern, is not a quest-state test for such a reader; it is left to the script runtime.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the test is recognised by the
+> parts above (OBS2). The interim `QuestStateGraph` with five fixed shapes is replaced by these
+> parts; the three tables of WL23, unknown to the first version, are covered by the same rule.
 
 <a id="s5-3"></a>
 ### 5.3 The quest-entry callback (OBS, WLB; WL14)
@@ -794,8 +854,9 @@ events; `map-data.md` §4.8.6, `quests.md` §14.2) like this:
    current value (false when unknown or unreadable); otherwise `WorldEvent_ConditionValue`
    (−1 when absent).
 6. Integer events (class 1887): false when *c* is below the event's minimum or above its maximum
-   (`WorldEvent_MinIntValue`, `WorldEvent_MaxIntValue`); false when the current value *v* cannot
-   be read; then by *op*: 3 *v* = *c*, 2 *v* ≠ *c*, 1 *v* ≥ *c*, 4 *v* < *c*, 5 *v* ≤ *c*,
+   (`WorldEvent_MinIntValue`, `WorldEvent_MaxIntValue`; each read through the event's property
+   lookup with **0** as the value when the event does not store it, WLB2 — the dictionary
+   default of both is 0 too); false when the current value *v* cannot be read; then by *op*: 3 *v* = *c*, 2 *v* ≠ *c*, 1 *v* ≥ *c*, 4 *v* < *c*, 5 *v* ≤ *c*,
    6 *v* > *c*, any other false.
 7. Boolean events (class 1815): false unless *c* is 0 or 1; false when the current value cannot
    be read; then 3: *v* = *c*, 2: *v* ≠ *c*; any other operator false.
@@ -804,9 +865,18 @@ events; `map-data.md` §4.8.6, `quests.md` §14.2) like this:
 when any holds (`map-data.md` §4.8.6, `quests.md` §14.1). A server that evaluates custom
 conditions (§6.5) should use the same test.
 
-> **OPEN (implementer, 2026-10-09):** step 6 compares *c* with the event's minimum and maximum;
-> what an integer event without `WorldEvent_MinIntValue` or `WorldEvent_MaxIntValue` does is
-> not stated. **Tessera's choice:** an absent bound does not restrict.
+An absent bound therefore **does** restrict: an integer event without a stored maximum accepts
+no *c* above 0, one without a stored minimum no *c* below 0 (so a condition without
+`WorldEvent_ConditionValue`, *c* = −1, fails on it). In this install (OBS2, all 0x78 and 0x79
+sets): all 699 integer events store a positive `WorldEvent_MaxIntValue`; 91 store no
+`WorldEvent_MinIntValue` (455 store 0, 141 a positive and 12 a negative minimum); the 36
+conditions that name one of those 91 events compare a stored *c* between 0 and the maximum, so
+the rule changes no result here. (4,827 conditions name the null DID and fail at step 2; 4,047
+name boolean events.)
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** an absent bound is 0, not "no
+> restriction" (WLB2, WL25). The interim choice gives the same result on every condition of this
+> install but differs for a *c* outside 0 … maximum on an event without stored bounds.
 
 <a id="s6-8"></a>
 ### 6.8 Skirmish bastions, control points and encounter members
@@ -954,8 +1024,15 @@ Reading of the data: when a character (or account) last saw an update older than
 number, the server runs that entry's objects on it once; the two always-run objects run every
 time. Server-side (OPEN §14).
 
-> **OPEN (implementer, 2026-10-09):** the value type of `Version_Number` is not stated.
-> **Tessera's choice:** read it as an enum key or an integer, whichever is stored.
+`Version_Number` (WL26) is an **enum** property (type 8) whose labels come from mapper
+0x23000076 (118 keys, 0 … 4,920 here); the content-update number is the enum key itself. All
+94 stored values (the master object's own value and the 93 list entries) are type-8 values, and
+every one is a key of that mapper. A reader takes the key as the update number and may show the
+mapper's label next to it.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the type is enum (type 8, mapper
+> 0x23000076); no value is stored as an integer. Reading a type-15 integer as well, as the
+> interim choice does, is harmless but never used.
 
 <a id="s9-2"></a>
 ### 9.2 Classes with data
@@ -1040,6 +1117,22 @@ fail when they do not hold elsewhere.
 - **WL-I9.** Every path-map box has min ≤ max on each axis (after defaults).
 - **WL-I10.** Every object listed by `Version_SingletonList` or `Version_AlwaysRunOnPlayers` is
   in subtree 1621, and every object of subtree 1621 is listed by one of them.
+- **WL-I11.** Every table whose `Startup` holds a GameCallback driven from `QuestState_QuestID`
+  is one of the eight of §5.2.1, and its path from the `Startup` root to the callback consists
+  only of the parts of §5.2.1.
+- **WL-I12.** Every integer world event stores `WorldEvent_MaxIntValue` > 0; every condition on
+  an integer event without a stored minimum (in the 0x78 and 0x79 sets; none of them compares
+  with another event) has 0 ≤ *c* ≤ maximum.
+- **WL-I13.** Every `Version_Number` value is a type-8 enum value and a key of mapper 0x23000076.
+
+Behaviour invariants added 2026-10-09:
+
+- **WL-B9.** An integer event with `WorldEvent_MaxIntValue` 10 and no stored minimum, current
+  value 0: a condition with operator 3 and `WorldEvent_ConditionValue` 0 is true; the same
+  condition without `WorldEvent_ConditionValue` (*c* = −1) is false (range check); with
+  *c* = 11, false.
+- **WL-B10.** For a table with the parts of 0x07001961: entry failing → nothing runs; entry
+  passing → the true-port content runs; `QuestState_Test` is not read.
 
 Behaviour invariants (for tests of an implementation with synthetic entities):
 
@@ -1154,3 +1247,4 @@ A landblock view should list (all from data, nothing hard-coded):
 | Date | Sections | Change | Author |
 |---|---|---|---|
 | 2026-10-09 | all | First version (Review). Box phasing (BIN, WLB), quest-state script tables (data, WLB), world-event condition test (WLB), censuses of all groups over all sets, property-response and version objects, reference graph, invariants, examples, explorer view. | Spec writer (dirty room) |
+| 2026-10-09 | §0 header, §1, §5.1, §5.2.1, §6.7, §9.1, §11 | Revision answering the three implementer OPENs of 2026-10-09: the quest-state test read from its parts (new §5.2.1, WL24), with three further callback tables found by a full search (WL23); absent integer bounds are 0, from the class library (WLB2, WL25), with the census; `Version_Number` is an enum of mapper 0x23000076 (WL26). Invariants WL-I11–I13, WL-B9–B10. Status Revised. | Spec writer (dirty room) |

@@ -532,6 +532,12 @@ Consequences an implementation must keep:
 > uniform scale of the node's scale (times the rider's model scale when `UseParentScale` is
 > 1).
 
+> **OPEN (implementer, 2026-10-09):** `MeshFXScript_Scale` is a vec3, and the Decision above
+> applies "a uniform scale of the node's scale". **Tessera's choice:** the three components
+> scale the three axes (the same thing whenever they are equal; every mount node the
+> explorer's real-data test chose had equal components). Should a node with unequal
+> components ever occur, which component (or which combination) is the uniform scale?
+
 <a id="s4-5"></a>
 ### 4.5 Rider and mount talk through targets (Confirmed (script data), MT14)
 

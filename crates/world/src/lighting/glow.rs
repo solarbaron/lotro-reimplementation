@@ -8,14 +8,16 @@
 //! | [`GlowPids`] | the member overrides of §6.3 and the two engine properties of §6.2 |
 //! | [`GlowThresholds::from_scriptlet`] | the day-fraction thresholds and comparisons, read from the scriptlet (§6.2) |
 //! | [`running_variants`], [`TimeOverride`] | which of the day and night scripts run (§6.2, §9.4 step 1) |
-//! | [`GlowStored`], [`glow_light`], [`GlowLight`] | the light of a running, activated variant (§6.3, §6.4, §9.4 step 2) |
+//! | [`GlowStored`], [`GlowStored::from_light`], [`GlowTableLights::from_table`] | the stored fields of the day and night Light nodes, read from the light-glow table (§6.3) |
+//! | [`glow_light`], [`GlowLight`] | the light of a running, activated variant (§6.3, §6.4, §9.4 step 2) |
 //!
-//! The thresholds and comparisons are data of the scriptlet and are read from it; nothing
-//! here hard-codes them. The Light node's stored fields ([`GlowStored`]) are the caller's:
-//! this crate does not decode Light nodes (kind 13), so the caller reads them where it can
-//! (see the implementer note in `instance-scripts.md` §6.3).
+//! The thresholds and comparisons are data of the scriptlet and the stored light fields
+//! are data of the table's Light nodes (kind 13, `script-table.md` §5.3); both are read from
+//! the install, nothing here hard-codes them.
 
-use tessera_formats::script_table::{Node, NodeKind, PortPayload, Scriptlet, when_op};
+use tessera_formats::script_table::{
+    LightNode, Node, NodeData, NodeKind, PortPayload, ScriptTable, Scriptlet, when_op,
+};
 use tessera_formats::terrain_type::FloatCurve;
 use tessera_formats::{PropertyNames, PropertyValue};
 
@@ -107,40 +109,58 @@ impl GlowThresholds {
     #[must_use]
     pub fn from_scriptlet(scriptlet: &Scriptlet, present_time: u32) -> Option<Self> {
         let mut values: Vec<f32> = Vec::new();
-        let mut bad = false;
-        for root in &scriptlet.roots {
-            root.walk(&mut |n: &Node, _| {
-                if n.kind != NodeKind::WHEN {
-                    return;
-                }
-                let tessera_formats::script_table::NodeData::Switch(sw) = &n.data else {
-                    return;
-                };
-                if sw.property != present_time {
-                    return;
-                }
-                for p in &n.ports {
-                    if let PortPayload::WhenTest(t) = &p.payload {
-                        if t.operator != when_op::LESS_THAN_OR_EQUAL
-                            && t.operator != when_op::GREATER_THAN
-                        {
-                            bad = true;
-                        }
-                        match t.constant.as_ref().and_then(|c| c.value.as_f32()) {
-                            Some(v) if v.is_finite() => values.push(v),
-                            _ => bad = true,
-                        }
-                    }
-                }
-            });
-        }
-        if bad {
-            return None;
+        for t in time_tests(scriptlet, present_time) {
+            if t.operator != when_op::LESS_THAN_OR_EQUAL && t.operator != when_op::GREATER_THAN {
+                return None;
+            }
+            match t.constant {
+                Some(v) if v.is_finite() => values.push(v),
+                _ => return None,
+            }
         }
         values.sort_by(f32::total_cmp);
         values.dedup();
         <[f32; THRESHOLD_COUNT]>::try_from(values).ok().map(Self)
     }
+}
+
+/// One test of a When node on the day fraction (§6.2): the constant and the comparison
+/// (enum 0x230000A3 key).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimeTest {
+    /// The constant compared with the day fraction (`None` when it is not a float).
+    pub constant: Option<f32>,
+    /// The comparison key.
+    pub operator: i32,
+}
+
+/// Every test of the When nodes on `World_PresentTimeOfDay` (`present_time`) in the
+/// scriptlet, in walk order (roots in order, parents before children).
+#[must_use]
+pub fn time_tests(scriptlet: &Scriptlet, present_time: u32) -> Vec<TimeTest> {
+    let mut out = Vec::new();
+    for root in &scriptlet.roots {
+        root.walk(&mut |n: &Node, _| {
+            if n.kind != NodeKind::WHEN {
+                return;
+            }
+            let NodeData::Switch(sw) = &n.data else {
+                return;
+            };
+            if sw.property != present_time {
+                return;
+            }
+            for p in &n.ports {
+                if let PortPayload::WhenTest(t) = &p.payload {
+                    out.push(TimeTest {
+                        constant: t.constant.as_ref().and_then(|c| c.value.as_f32()),
+                        operator: t.operator,
+                    });
+                }
+            }
+        });
+    }
+    out
 }
 
 /// `TimeOfDay@Entity.m_eTimeOverride` by its mapper label (§6.2 table).
@@ -234,6 +254,97 @@ pub struct GlowStored {
     pub shadow_caster: bool,
 }
 
+impl GlowStored {
+    /// The stored fields of a Light node (§6.3, `script-table.md` §5.3). An intensity
+    /// waveform without a curve form keeps the light default.
+    #[must_use]
+    pub fn from_light(l: &LightNode) -> Self {
+        Self {
+            diffuse: l.diffuse,
+            range: l.range,
+            falloff: l.falloff,
+            intensity: waveform_curve(&l.diffuse_intensity)
+                .unwrap_or_else(|| LightParams::default().intensity),
+            specular: l.specular,
+            key_light: l.key_light,
+            shadow_caster: l.shadow_caster,
+        }
+    }
+}
+
+/// The stored fields of the day and night Light nodes of a light-glow table (§6.3).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GlowTableLights {
+    /// The day script's Light node.
+    pub day: Option<GlowStored>,
+    /// The night script's Light node.
+    pub night: Option<GlowStored>,
+    /// The day script's Light node as stored (every field).
+    pub day_node: Option<LightNode>,
+    /// The night script's Light node as stored.
+    pub night_node: Option<LightNode>,
+}
+
+impl GlowTableLights {
+    /// Finds the Light nodes of `table` (§6.3): each variant's script is a Switch on that
+    /// variant's `m_bLightActivated` member whose case holds a Light node, so the variant is
+    /// told by the Switch's property ([`GlowPids`]), not by a script key. The first Light
+    /// node found under such a Switch, in script and walk order, is taken.
+    #[must_use]
+    pub fn from_table(table: &ScriptTable, pids: &GlowPids) -> Self {
+        let mut out = Self::default();
+        let day = pids.day[ACTIVATED];
+        let night = pids.night[ACTIVATED];
+        for script in &table.scripts {
+            for root in &script.roots {
+                root.walk(&mut |n: &Node, _| {
+                    let NodeData::Switch(sw) = &n.data else {
+                        return;
+                    };
+                    if n.kind != NodeKind::SWITCH {
+                        return;
+                    }
+                    let slot = if Some(sw.property) == day {
+                        &mut out.day_node
+                    } else if Some(sw.property) == night {
+                        &mut out.night_node
+                    } else {
+                        return;
+                    };
+                    if slot.is_some() {
+                        return;
+                    }
+                    let mut found = None;
+                    for p in &n.ports {
+                        for c in &p.children {
+                            c.walk(&mut |m: &Node, _| {
+                                if found.is_none()
+                                    && let NodeData::Light(l) = &m.data
+                                {
+                                    found = Some((**l).clone());
+                                }
+                            });
+                        }
+                    }
+                    *slot = found;
+                });
+            }
+        }
+        out.day = out.day_node.as_ref().map(GlowStored::from_light);
+        out.night = out.night_node.as_ref().map(GlowStored::from_light);
+        out
+    }
+
+    /// The stored fields of `variant`.
+    #[must_use]
+    pub fn stored(&self, variant: Variant) -> Option<&GlowStored> {
+        match variant {
+            Variant::Day => self.day.as_ref(),
+            Variant::Night => self.night.as_ref(),
+        }
+    }
+}
+
 /// A light-glow light (§6.3): the light fields plus `ShadowCaster`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlowLight {
@@ -303,9 +414,7 @@ pub fn glow_light<'v>(
 mod tests {
     use std::collections::HashMap;
 
-    use tessera_formats::script_table::{
-        BaseBlock, NodeData, Port, PortType, SwitchNode, WhenTest,
-    };
+    use tessera_formats::script_table::{BaseBlock, Port, PortType, SwitchNode, WhenTest};
     use tessera_formats::{Did, PropertyEntry, Waveform};
 
     use super::*;
@@ -429,6 +538,127 @@ mod tests {
         );
         let day = glow_light(&pids, Variant::Day, |p| on.get(&p), false, &stored()).unwrap();
         assert_eq!(day.params.intensity, FloatCurve::Constant(0.8));
+    }
+
+    fn light(range: f32, diffuse: [u8; 4]) -> LightNode {
+        let wave = |subtype: u32, values: Vec<f32>| Waveform {
+            subtype,
+            values,
+            extra: None,
+        };
+        LightNode {
+            direction: [0.0; 3],
+            range,
+            diffuse,
+            diffuse_intensity: wave(1, vec![0.5]),
+            specular: [255; 4],
+            falloff: 1.0,
+            projector_enabled: false,
+            projector_texture: Did(0),
+            projector_yaw: wave(0, Vec::new()),
+            projector_pitch: wave(0, Vec::new()),
+            projector_roll: wave(0, Vec::new()),
+            corona_enabled: false,
+            corona_texture: Did(0),
+            corona_fade_speed: 0.0,
+            corona_size: 0.0,
+            corona_opacity: 0.0,
+            corona_occlusion: false,
+            corona_occlusion_size: 0.0,
+            key_light: false,
+            shadow_caster: true,
+            allow_baked_shadows: true,
+            lifespan: 0.0,
+            fade_time: 0.25,
+            offset: [0.0; 3],
+            run_on_local_player_only: false,
+            only_influence_parent: false,
+            never_influence_parent: false,
+            never_cull_or_occlude: false,
+            global_light: false,
+            holding_location: 0,
+        }
+    }
+
+    fn bare(kind: NodeKind, data: NodeData, children: Vec<Node>) -> Node {
+        Node {
+            kind,
+            data,
+            base: BaseBlock::default(),
+            particle_flag: None,
+            ports: vec![Port {
+                port_type: PortType::SWITCH_VALUE,
+                payload: PortPayload::None,
+                children,
+            }],
+            targets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn light_nodes_are_read_from_the_table() {
+        let pids = GlowPids {
+            day: [None, None, None, None, None, None, None, Some(107)],
+            night: [None, None, None, None, None, None, None, Some(207)],
+            ..GlowPids::default()
+        };
+        let switch = |property: u32, l: LightNode| {
+            bare(
+                NodeKind::SWITCH,
+                NodeData::Switch(SwitchNode {
+                    property,
+                    persistent: true,
+                    autonomous: false,
+                    synchronized: false,
+                }),
+                vec![bare(
+                    NodeKind::LIGHT,
+                    NodeData::Light(Box::new(l)),
+                    Vec::new(),
+                )],
+            )
+        };
+        let table = ScriptTable {
+            did: Did(0x0700_0001),
+            kind: 1,
+            includes: Vec::new(),
+            scripts_size: tessera_formats::TSize::default(),
+            scripts: vec![
+                tessera_formats::Script {
+                    key: 0x1000_0001,
+                    roots: vec![switch(207, light(10.0, [1, 2, 3, 255]))],
+                },
+                tessera_formats::Script {
+                    key: 0x1000_0002,
+                    roots: vec![switch(107, light(12.0, [255; 4]))],
+                },
+                tessera_formats::Script {
+                    key: 0x1000_0003,
+                    roots: vec![switch(999, light(99.0, [0; 4]))],
+                },
+            ],
+            properties_size: tessera_formats::TSize::default(),
+            script_properties: Vec::new(),
+            dids_size: tessera_formats::TSize::default(),
+            script_dids: Vec::new(),
+        };
+        let t = GlowTableLights::from_table(&table, &pids);
+        let night = t.stored(Variant::Night).unwrap();
+        assert_eq!(night.range, 10.0);
+        assert_eq!(night.diffuse, [1, 2, 3, 255]);
+        assert_eq!(night.intensity, FloatCurve::Constant(0.5));
+        assert!(night.shadow_caster && !night.key_light);
+        assert_eq!(t.stored(Variant::Day).unwrap().range, 12.0);
+        assert_eq!(t.night_node.as_ref().unwrap().fade_time, 0.25);
+        // A table without the switches has no stored fields.
+        let none = GlowTableLights::from_table(
+            &ScriptTable {
+                scripts: Vec::new(),
+                ..table
+            },
+            &pids,
+        );
+        assert_eq!(none, GlowTableLights::default());
     }
 
     #[test]

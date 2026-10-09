@@ -338,6 +338,7 @@ impl InstanceScriptTable {
                 None => out.skipped_startup += 1,
             }
         }
+        let mut positions: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
         for e in s.elements(labels.scripts) {
             let Some(entry) = e.value.as_struct() else {
                 out.skipped_entries += 1;
@@ -370,11 +371,18 @@ impl InstanceScriptTable {
                 roots,
                 failed_roots,
             };
-            if let Some(old) = out.scripts.iter_mut().find(|x| x.key == key) {
-                *old = script;
-                out.replaced += 1;
-            } else {
-                out.scripts.push(script);
+            // A map from key to position keeps repeated keys linear in the entry count.
+            match positions.entry(key) {
+                std::collections::hash_map::Entry::Occupied(at) => {
+                    if let Some(old) = out.scripts.get_mut(*at.get()) {
+                        *old = script;
+                    }
+                    out.replaced += 1;
+                }
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(out.scripts.len());
+                    out.scripts.push(script);
+                }
             }
         }
         Some(out)

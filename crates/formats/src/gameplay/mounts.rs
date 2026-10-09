@@ -17,6 +17,7 @@
 //! | [`TemplateMountStats`] | Mount and war-steed stats on templates | §6.1 |
 //! | [`RiderInstance`] | The rider keys of landblock instance sets | §7.1 |
 //! | [`Durability`] | Tessera's server rule for durability (Decision of §2.4) | §2.4, §11.6 |
+//! | [`MountMesh`] | The mount entity the rider's MeshFX branch spawns, its scale and its transform at the rider's location | §4.4, §11.4 |
 //!
 //! Properties are found by label; record kinds by the properties they carry (§2.1), never
 //! by class index or DID. The only numbers written here are the war-steed mask 0x38 (a
@@ -26,6 +27,7 @@
 use crate::did::Did;
 use crate::gameplay::common::{Pid, PropertyAccess, PropertyDefaults, ValueExt};
 use crate::property::{PropertyEntry, PropertyNames, PropertyStruct, PropertyValue};
+use crate::script_table::resolve::MeshFxCandidate;
 use crate::string_info::StringInfo;
 
 // ---------------------------------------------------------------------------------------------
@@ -922,6 +924,92 @@ pub fn default_world_mounted_max_speed<D: PropertyDefaults + ?Sized>(
     defaults
         .default_value(p.world_max_speed.id()?)
         .and_then(ValueExt::float)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The mount mesh (§4.4)
+// ---------------------------------------------------------------------------------------------
+
+/// The mount entity a rider's `Mounted_Player_Cosmetic_Mesh` run spawns (§4.4): the MeshFX
+/// node the rider's mount type, species and sex select, with the rider's values in the
+/// fields the node drives and its stored values in the others (§11.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MountMesh {
+    /// The mount entity (a 0x47 DID; driven by the rider's `…_Slot_Entity`).
+    pub entity: Did,
+    /// The rider's holding location the mount hangs on (`Mount_Connection` in the data).
+    pub holding_location: u32,
+    /// `BoneOffset` (metres, in the location's frame).
+    pub bone_offset: [f32; 3],
+    /// `Scale`: the node's stored scale unless the node drives it (§4.4: then the effect's
+    /// `…_Slot_Scale`).
+    pub scale: [f32; 3],
+    /// Whether the scale came from the rider (the node drives `Scale`).
+    pub scale_driven: bool,
+    /// `UseParentScale`: the rider's model scale multiplies the scale (Decision of §4.4).
+    pub use_parent_scale: bool,
+    /// `Behavior`: the script started on the spawned mount (`Horsepants_Startup`).
+    pub behavior: u32,
+    /// The table whose script started the node.
+    pub table: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+}
+
+impl MountMesh {
+    /// The mount mesh among the MeshFX nodes a rider's evaluation starts: the most recently
+    /// started node under script `mesh_script` (`Mounted_Player_Cosmetic_Mesh`) whose entity
+    /// is not the null DID. `None` when the run starts none (no case matches, or the When
+    /// node stops a rider without an entity: nothing is drawn, §11.4).
+    #[must_use]
+    pub fn choose(candidates: &[MeshFxCandidate], mesh_script: u32) -> Option<Self> {
+        candidates
+            .iter()
+            .rev()
+            .find(|c| c.scripts.contains(&mesh_script) && !c.node.entity.is_null())
+            .map(|c| Self {
+                entity: c.node.entity,
+                holding_location: c.node.holding_location,
+                bone_offset: c.node.bone_offset,
+                scale: c.node.scale,
+                scale_driven: c.driven.scale,
+                use_parent_scale: c.node.use_parent_scale,
+                behavior: c.node.behavior,
+                table: c.table,
+                node_id: c.node_id,
+            })
+    }
+
+    /// The scale the mount is drawn at (Decision of §4.4): the node's scale, times the
+    /// rider's model scale when `UseParentScale` is set. Components that are not finite and
+    /// positive read as 1.
+    #[must_use]
+    pub fn draw_scale(&self, rider_model_scale: f32) -> [f32; 3] {
+        let parent = if self.use_parent_scale && rider_model_scale.is_finite() {
+            rider_model_scale
+        } else {
+            1.0
+        };
+        self.scale.map(|s| {
+            let v = s * parent;
+            if v.is_finite() && v > 0.0 { v } else { 1.0 }
+        })
+    }
+
+    /// The mount's transform in the frame of the rider's holding location (Decision of
+    /// §4.4): a translation by `BoneOffset`, then the scale of [`MountMesh::draw_scale`];
+    /// column-major 4 × 4. The caller places it at the rider's model transform × the
+    /// location's model transform (bone × location frame).
+    #[must_use]
+    pub fn local_transform(&self, rider_model_scale: f32) -> [f32; 16] {
+        let [sx, sy, sz] = self.draw_scale(rider_model_scale);
+        let [tx, ty, tz] = self
+            .bone_offset
+            .map(|v| if v.is_finite() { v } else { 0.0 });
+        [
+            sx, 0.0, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 0.0, sz, 0.0, tx, ty, tz, 1.0,
+        ]
+    }
 }
 
 #[cfg(test)]

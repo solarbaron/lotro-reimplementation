@@ -5,7 +5,7 @@
 //! |---|---|---|
 //! | [`LightPids`], [`LightParams`], [`DayNightVariant`], [`LightEntity`], [`light_entities`], [`waveform_curve`] | Light static entities of landblock info and their fields, with the defaults of a new light and the day/night variants | §8.3, `entity-descriptor.md` §9 |
 //! | [`LightRecord`], [`LightKind`], [`attenuation`] | The per-frame light record and the attenuation rule | §8.3 |
-//! | [`glow`] ([`glow::GlowPids`], [`glow::GlowThresholds`], [`glow::running_variants`], [`glow::glow_light`]) | Day and night lights of placed lamps and windows | `instance-scripts.md` §6, §9.4 |
+//! | [`glow`] ([`glow::GlowPids`], [`glow::GlowThresholds`], [`glow::running_variants`], [`glow::GlowTableLights`], [`glow::glow_light`]) | Day and night lights of placed lamps and windows | `instance-scripts.md` §6, §9.4 |
 //! | [`select_lights`], [`LightSelection`], [`LightRef`], [`SelectionOptions`], [`object_light_list`], [`LightReach`] | Which lights an object receives: main light, key lights, per-vertex lists, the limit of 8 | §8.5 |
 //!
 //! The sun, ambient and fog inputs of `lighting.md` §8.1 come from the environment

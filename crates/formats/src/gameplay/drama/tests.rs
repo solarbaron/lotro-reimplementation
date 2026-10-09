@@ -301,3 +301,60 @@ fn perform_queue_and_precedence() {
     assert_eq!(pick_line(0, |_| 0), None);
     assert!(!Facet::ScriptLink.runs_offline() && Facet::Emote.runs_offline());
 }
+
+#[test]
+fn playback_of_the_greeting() {
+    // §13.1: t = 0 action 1 (emote and dialog), t = 4 action 2, then the emote wait.
+    let l = labels();
+    let set = greeting(&l);
+    let list = DramaList::read(&l.drama, &set).unwrap();
+    let d = list.find(ENTER_WORLD_DRAMA).unwrap();
+    let mut p = DramaPlayback::new(plan_drama(d, |_| 0.0));
+    let ev = p.advance(0.0, |_| true);
+    assert_eq!(
+        ev,
+        vec![PlaybackEvent::Apply {
+            action: 0,
+            facets: vec![Facet::Emote, Facet::Dialog],
+            at: 0.0
+        }]
+    );
+    assert_eq!(p.current(), Some(&DramaStep::Wait(3.0)));
+    assert!(p.advance(2.5, |_| true).is_empty());
+    let ev = p.advance(1.6, |_| true);
+    assert_eq!(
+        ev,
+        vec![PlaybackEvent::Apply {
+            action: 1,
+            facets: vec![Facet::Emote],
+            at: 4.0
+        }]
+    );
+    // The persistent emote runs: the drama waits for it, at most 30 s.
+    assert!(p.advance(10.0, |_| true).is_empty());
+    assert!(!p.is_finished());
+    let ev = p.advance(25.0, |_| true);
+    assert_eq!(ev.len(), 1);
+    assert!(matches!(ev[0], PlaybackEvent::Finished { .. }));
+    assert!(p.is_finished());
+    assert!(p.advance(1.0, |_| true).is_empty());
+
+    // An emote that ends at once ends the wait at once.
+    let mut p = DramaPlayback::new(plan_drama(d, |_| 0.0));
+    let ev = p.advance(4.0, |_| false);
+    assert_eq!(ev.len(), 3, "{ev:?}");
+    assert!(matches!(ev[2], PlaybackEvent::Finished { .. }));
+
+    // Hostile time steps do nothing; "until stopped" holds.
+    let mut p = DramaPlayback::new(vec![DramaStep::Wait(1.0), DramaStep::UntilStopped]);
+    assert!(p.advance(f32::NAN, |_| false).is_empty());
+    assert!(p.advance(-3.0, |_| false).is_empty());
+    let ev = p.advance(2.0, |_| false);
+    assert!(matches!(ev[..], [PlaybackEvent::UntilStopped { .. }]));
+    assert!(p.is_held() && p.current().is_none());
+    // An empty plan ends at once.
+    assert!(matches!(
+        DramaPlayback::new(Vec::new()).advance(0.0, |_| false)[..],
+        [PlaybackEvent::Finished { .. }]
+    ));
+}

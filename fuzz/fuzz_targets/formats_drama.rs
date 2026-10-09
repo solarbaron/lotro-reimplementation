@@ -7,6 +7,7 @@
 //! §3.1 gives it (lists and sequences arrays, dramas and actions structs, names and patrol
 //! names strings, …); when bit 0 of byte 0 is set, about one label in eight takes a wrong
 //! type instead. The list, every drama and action, the facets, the plan of Decision T1, the
+//! playback of that plan with time steps from the input (zero, positive, NaN, negative), the
 //! scripted-fight and starting-idle views and the label helpers are exercised.
 //!
 //! Nothing may panic. A plan never holds anything after `UntilStopped`, applies the facets
@@ -21,9 +22,9 @@ use std::collections::HashMap;
 
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::gameplay::drama::{
-    DramaKind, DramaLabels, DramaList, DramaStep, Facet, KungFu, StartingIdle, actor_number,
-    actors_of_mask, dialog_presentation, perform_decision, pick_line, plan_drama, script_link_port,
-    transition_fires,
+    DramaKind, DramaLabels, DramaList, DramaPlayback, DramaStep, Facet, KungFu, PlaybackEvent,
+    StartingIdle, actor_number, actors_of_mask, dialog_presentation, perform_decision, pick_line,
+    plan_drama, script_link_port, transition_fires,
 };
 use tessera_formats::{PropertySet, PropertyType};
 
@@ -167,6 +168,36 @@ fuzz_target!(|input: &[u8]| {
                     assert!(w.is_finite() && *w > 0.0);
                 }
             }
+            // The playback of the plan (Decision T1) with time steps taken from the input:
+            // time never runs backwards and nothing follows the end.
+            let steps = plan.len();
+            let mut playback = DramaPlayback::new(plan);
+            let mut applied = 0usize;
+            let mut last = 0.0f32;
+            for (i, b) in rest.iter().take(64).enumerate() {
+                let dt = match b % 4 {
+                    0 => 0.0,
+                    1 => f32::from(*b) / 8.0,
+                    2 => f32::NAN,
+                    _ => -1.0,
+                };
+                let ended = playback.is_finished();
+                for ev in playback.advance(dt, |a| (a + i) % 2 == 0) {
+                    assert!(!ended, "an event after the end");
+                    match ev {
+                        PlaybackEvent::Apply { at, .. } => {
+                            applied += 1;
+                            assert!(at >= last);
+                        }
+                        PlaybackEvent::UntilStopped { at } | PlaybackEvent::Finished { at } => {
+                            assert!(at >= last);
+                        }
+                    }
+                }
+                assert!(playback.time() >= last && playback.time().is_finite());
+                last = playback.time();
+            }
+            assert!(applied <= steps);
         }
     }
     let text = String::from_utf8_lossy(rest);

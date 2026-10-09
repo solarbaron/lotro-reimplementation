@@ -8,7 +8,8 @@
 //! - [`Node`]: the frame shared by all 66 node kinds (§4). Every kind is walked to its last
 //!   byte; the kinds clip selection needs (animation, switch, when, scalar blend, random,
 //!   scriptlet, scriptlet parameter, run, set property, …) and the kinds the sound runtime
-//!   needs (sound (48) as [`SoundNode`], sound environment (62); `sound.md` §9) are decoded
+//!   needs (sound (48) as [`SoundNode`], sound environment (62); `sound.md` §9), the light
+//!   (13, [`LightNode`], §5.3) and the MeshFX node (41, [`MeshFxNode`], §5.2) are decoded
 //!   into typed [`NodeData`] variants, every other kind is kept as [`NodeData::Opaque`].
 //! - [`instance`]: the per-instance script table `Entity_InstanceScriptTable` (a script table
 //!   written as a property tree), an entity's table set with its instance definitions and
@@ -39,7 +40,7 @@ pub use node::{
     SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, SwitchNode,
     SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, when_op,
 };
-pub use node::{SoundNode, sound_pid};
+pub use node::{LightNode, MeshFxAppearanceEntry, MeshFxNode, SoundNode, sound_pid};
 pub use record::{NodeCensus, Script, ScriptTable, Scriptlet, TABLE_KINDS};
 
 /// Type prefix of script tables.

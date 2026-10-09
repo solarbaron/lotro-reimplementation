@@ -7,7 +7,9 @@
 
 use crate::did::Did;
 use crate::error::{FormatError, Result};
-use crate::property::{Position, PropertyEntry, PropertySchema, ValueDecoder, read_waveform};
+use crate::property::{
+    Position, PropertyEntry, PropertySchema, ValueDecoder, Waveform, read_waveform,
+};
 use crate::property_set::PropertySet;
 use crate::reader::{Reader, TSize};
 use crate::string_info::StringInfo;
@@ -530,6 +532,240 @@ impl SoundNode {
     }
 }
 
+/// Data of a Light node (kind 13, §5.3): every field in stream order. The field names are
+/// the property names with the common prefix stripped (`LightRange` → `range`, …).
+///
+/// Colours are the four stored bytes as they are (`property-system.md` §4.7 gives their
+/// order); waveforms are kept as decoded (`property-system.md` §4.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LightNode {
+    /// `Direction`.
+    pub direction: [f32; 3],
+    /// `LightRange`.
+    pub range: f32,
+    /// `LightDiffuse` (four stored bytes).
+    pub diffuse: [u8; 4],
+    /// `LightDiffuseIntensity`.
+    pub diffuse_intensity: Waveform,
+    /// `LightSpecular` (four stored bytes).
+    pub specular: [u8; 4],
+    /// `LightFalloff`.
+    pub falloff: f32,
+    /// `ProjectorEnabled`.
+    pub projector_enabled: bool,
+    /// `ProjectorTexture`.
+    pub projector_texture: Did,
+    /// `ProjectorYaw`.
+    pub projector_yaw: Waveform,
+    /// `ProjectorPitch`.
+    pub projector_pitch: Waveform,
+    /// `ProjectorRoll`.
+    pub projector_roll: Waveform,
+    /// `CoronaEnabled`.
+    pub corona_enabled: bool,
+    /// `CoronaTexture`.
+    pub corona_texture: Did,
+    /// `CoronaFadeSpeed`.
+    pub corona_fade_speed: f32,
+    /// `CoronaSize`.
+    pub corona_size: f32,
+    /// `CoronaOpacity`.
+    pub corona_opacity: f32,
+    /// `CoronaOcclusion`.
+    pub corona_occlusion: bool,
+    /// `CoronaOcclusionSize`.
+    pub corona_occlusion_size: f32,
+    /// `KeyLight`.
+    pub key_light: bool,
+    /// `ShadowCaster`.
+    pub shadow_caster: bool,
+    /// `Light_AllowBakedShadows`.
+    pub allow_baked_shadows: bool,
+    /// `LightScript_Lifespan`.
+    pub lifespan: f32,
+    /// `LightScript_FadeTime`.
+    pub fade_time: f32,
+    /// `LightScript_Offset`.
+    pub offset: [f32; 3],
+    /// `LightScript_RunOnLocalPlayerOnly`.
+    pub run_on_local_player_only: bool,
+    /// `LightScript_OnlyInfluenceParent`.
+    pub only_influence_parent: bool,
+    /// `LightScript_NeverInfluenceParent`.
+    pub never_influence_parent: bool,
+    /// `LightScript_NeverCullOrOcclude`.
+    pub never_cull_or_occlude: bool,
+    /// `LightScript_GlobalLight`.
+    pub global_light: bool,
+    /// `LightScript_HoldingLocation`.
+    pub holding_location: u32,
+}
+
+impl LightNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let v3 = |r: &mut Reader<'_>| -> Result<[f32; 3]> { Ok([r.f32()?, r.f32()?, r.f32()?]) };
+        let rgba = |r: &mut Reader<'_>| -> Result<[u8; 4]> { r.array() };
+        Ok(Self {
+            direction: v3(r)?,
+            range: r.f32()?,
+            diffuse: rgba(r)?,
+            diffuse_intensity: read_waveform(r)?,
+            specular: rgba(r)?,
+            falloff: r.f32()?,
+            projector_enabled: r.bool8()?,
+            projector_texture: r.did()?,
+            projector_yaw: read_waveform(r)?,
+            projector_pitch: read_waveform(r)?,
+            projector_roll: read_waveform(r)?,
+            corona_enabled: r.bool8()?,
+            corona_texture: r.did()?,
+            corona_fade_speed: r.f32()?,
+            corona_size: r.f32()?,
+            corona_opacity: r.f32()?,
+            corona_occlusion: r.bool8()?,
+            corona_occlusion_size: r.f32()?,
+            key_light: r.bool8()?,
+            shadow_caster: r.bool8()?,
+            allow_baked_shadows: r.bool8()?,
+            lifespan: r.f32()?,
+            fade_time: r.f32()?,
+            offset: v3(r)?,
+            run_on_local_player_only: r.bool8()?,
+            only_influence_parent: r.bool8()?,
+            never_influence_parent: r.bool8()?,
+            never_cull_or_occlude: r.bool8()?,
+            global_light: r.bool8()?,
+            holding_location: r.u32()?,
+        })
+    }
+}
+
+/// One element of a MeshFX node's `Appearances` list (§5.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshFxAppearanceEntry {
+    /// The appearance record (a 0x20 DID).
+    pub appearance: Did,
+    /// The appearance key.
+    pub key: u32,
+    /// The modifier.
+    pub modifier: f32,
+}
+
+/// Data of a MeshFX node (kind 41, §5.2): the 20 fixed fields, `Scale`, the `Appearances`
+/// list and `MeshIIDTargetProperty`, in stream order. Field names are the
+/// `MeshFXScript_*` names with the prefix stripped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshFxNode {
+    /// `Entity`: the 0x47 entity to spawn (0 when it is driven).
+    pub entity: Did,
+    /// `AttachToParent`.
+    pub attach_to_parent: bool,
+    /// `AllowPhysics`.
+    pub allow_physics: bool,
+    /// `FadeInTime`.
+    pub fade_in_time: f32,
+    /// `LifeTime`.
+    pub life_time: f32,
+    /// `FadeOutTime`.
+    pub fade_out_time: f32,
+    /// `DestroyTime`.
+    pub destroy_time: f32,
+    /// `HoldingLocation`: a `HoldingLocation` key of the parent.
+    pub holding_location: u32,
+    /// `BoneOffset`.
+    pub bone_offset: [f32; 3],
+    /// `OffsetRotationYaw`.
+    pub offset_rotation_yaw: f32,
+    /// `OffsetRotationPitch`.
+    pub offset_rotation_pitch: f32,
+    /// `OffsetRotationRoll`.
+    pub offset_rotation_roll: f32,
+    /// `RemoveRotation`.
+    pub remove_rotation: bool,
+    /// `BoneType`.
+    pub bone_type: u32,
+    /// `Behavior`: the script key started on the spawned entity.
+    pub behavior: u32,
+    /// `Persistent`.
+    pub persistent: bool,
+    /// `OnWater`.
+    pub on_water: bool,
+    /// `UseParentScale`.
+    pub use_parent_scale: bool,
+    /// `UseParticleScale`.
+    pub use_particle_scale: bool,
+    /// `IgnoreChildScale`.
+    pub ignore_child_scale: bool,
+    /// `Scale`.
+    pub scale: [f32; 3],
+    /// `Appearances`.
+    pub appearances: Vec<MeshFxAppearanceEntry>,
+    /// `MeshIIDTargetProperty`: the PID that receives the spawned entity's instance ID.
+    pub mesh_iid_target_property: u32,
+}
+
+impl MeshFxNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let v3 = |r: &mut Reader<'_>| -> Result<[f32; 3]> { Ok([r.f32()?, r.f32()?, r.f32()?]) };
+        let entity = r.did()?;
+        let attach_to_parent = r.bool8()?;
+        let allow_physics = r.bool8()?;
+        let fade_in_time = r.f32()?;
+        let life_time = r.f32()?;
+        let fade_out_time = r.f32()?;
+        let destroy_time = r.f32()?;
+        let holding_location = r.u32()?;
+        let bone_offset = v3(r)?;
+        let offset_rotation_yaw = r.f32()?;
+        let offset_rotation_pitch = r.f32()?;
+        let offset_rotation_roll = r.f32()?;
+        let remove_rotation = r.bool8()?;
+        let bone_type = r.u32()?;
+        let behavior = r.u32()?;
+        let persistent = r.bool8()?;
+        let on_water = r.bool8()?;
+        let use_parent_scale = r.bool8()?;
+        let use_particle_scale = r.bool8()?;
+        let ignore_child_scale = r.bool8()?;
+        let scale = v3(r)?;
+        let n = r.vle()?;
+        let mut appearances = r.alloc_vec(n, 12, usize::MAX)?;
+        for _ in 0..n {
+            let a = MeshFxAppearanceEntry {
+                appearance: r.did()?,
+                key: r.u32()?,
+                modifier: r.f32()?,
+            };
+            r.push(&mut appearances, a, n)?;
+        }
+        Ok(Self {
+            entity,
+            attach_to_parent,
+            allow_physics,
+            fade_in_time,
+            life_time,
+            fade_out_time,
+            destroy_time,
+            holding_location,
+            bone_offset,
+            offset_rotation_yaw,
+            offset_rotation_pitch,
+            offset_rotation_roll,
+            remove_rotation,
+            bone_type,
+            behavior,
+            persistent,
+            on_water,
+            use_parent_scale,
+            use_particle_scale,
+            ignore_child_scale,
+            scale,
+            appearances,
+            mesh_iid_target_property: r.u32()?,
+        })
+    }
+}
+
 /// Kind-specific node data (§5, §6).
 ///
 /// Kinds that clip selection and the sound runtime use are decoded into typed variants;
@@ -636,6 +872,10 @@ pub enum NodeData {
     },
     /// Sound (48): play a sound info (`sound.md` §9.1–§9.2).
     Sound(Box<SoundNode>),
+    /// Light (13): a light while the node runs (§5.3).
+    Light(Box<LightNode>),
+    /// MeshFX (41): spawn an entity attached to this one (§5.2).
+    MeshFx(Box<MeshFxNode>),
     /// SoundEnvironment (62): register a reverb environment while running (`sound.md` §9.4).
     SoundEnvironment {
         /// `SoundEnvironmentScript_Name`: the environment preset (enum 0x23000080).
@@ -959,16 +1199,9 @@ const ENTITY_VFX: &[F] = &[
     U, B, W4, W4, W4, B, Wave, W4, U, Rgba, Wave, Wave, Wave, U, Wave, Rgba, Rgba, Wave, U, V3,
     Wave, Wave, V3, Wave, Rgba, Wave, U,
 ];
-const LIGHT: &[F] = &[
-    V3, W4, Rgba, Wave, Rgba, W4, B, U, Wave, Wave, Wave, B, U, W4, W4, W4, B, W4, B, B, B, W4, W4,
-    V3, B, B, B, B, B, U,
-];
 const STREAK_INFO: &[F] = &[Rgba, V3, V3, U, W4, W4, W4, W4, W4, W4, B, W4, W4, W4];
 const CAMERA_SHAKE: &[F] = &[W4, W4, W4, Wave, Wave, Wave, W4, W4, B];
 const OVERLAY: &[F] = &[U, U, B, Wave, Rgba, U, Wave, Wave, Wave, Wave, B];
-const MESH_FX_FIXED: &[F] = &[
-    U, B, B, W4, W4, W4, W4, U, V3, W4, W4, W4, B, U, U, B, B, B, B, B, V3,
-];
 const FIRE_MISSILE_FIXED: &[F] = &[U, U, V3, W4, W4, W4, W4, W4, W4, B, B, B, B, U];
 const DETECT: &[F] = &[U, U, U, V3, V3, B, W4, B, B, B, B, U, B, B, U, B, B];
 const MOVE_TO: &[F] = &[
@@ -991,7 +1224,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         4 => &[U, Pv, F::PSet],
         9 => &[B, U, B, V3, W4, W4],
         11 => &[B, Wave],
-        13 => LIGHT,
         15 => &[B, B, B],
         16 => STREAK_INFO,
         20 => &[B, U, W4, W4, U, U],
@@ -1276,15 +1508,15 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 self.fields(r, tail)?;
                 opaque(start, r)
             }
+            13 => {
+                let l = LightNode::read(r)?;
+                r.charge(std::mem::size_of::<LightNode>())?;
+                NodeData::Light(Box::new(l))
+            }
             41 => {
-                self.fields(r, MESH_FX_FIXED)?;
-                let n = r.vle()?;
-                r.ensure_elements(n, 12)?;
-                for _ in 0..n {
-                    r.skip(12)?;
-                }
-                r.skip(4)?;
-                opaque(start, r)
+                let m = MeshFxNode::read(r)?;
+                r.charge(std::mem::size_of::<MeshFxNode>())?;
+                NodeData::MeshFx(Box::new(m))
             }
             45 => {
                 self.fields(r, FIRE_MISSILE_FIXED)?;

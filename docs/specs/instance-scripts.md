@@ -608,11 +608,6 @@ when its script stops, the node stops and the light goes.
 `m_bLightActivated`, per variant. No other `Light.Script@Entity` member exists in the
 dictionary.
 
-> **OPEN (implementer, 2026-10-09):** the Light node (kind 13) has no typed decoder in
-> Tessera yet (`script-table.md` §5.3 gives its layout only in part), so the stored fields of
-> the table above cannot be read from table 0x07000689 at run time. **Tessera's choice:** the
-> direct rule of §9.4 (`tessera-world` `lighting::glow`) takes the Light node's stored values
-> from its caller; a spec of the Light node's field order would let it read them.
 
 <a id="s6-4"></a>
 ### 6.4 Values when a member is absent

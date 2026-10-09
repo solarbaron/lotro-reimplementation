@@ -9,7 +9,8 @@
 //! appearance lists, the rider entries of the Decision of §4.1, template stats, riders,
 //! startup and toggled effects), the applicability check runs with masks from the input,
 //! and the durability rule runs over the events. Bit 0 set: the rest is read as floats and
-//! flags for the war-steed controller, which steps up to 64 updates.
+//! flags for the war-steed controller, which steps up to 64 updates, and for the mount mesh
+//! of §4.4 (choice, draw scale and local transform).
 //!
 //! Nothing may panic. The rider entries never repeat a PID; a refused check never comes
 //! from an allowed mask; durability stays within [0, maximum]; the controller's forward
@@ -25,11 +26,14 @@ use std::collections::{HashMap, HashSet};
 
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::gameplay::mounts::{
-    Durability, MountEffect, MountLabels, MountPlace, MountType, RiderInstance, TargetMountFields,
-    TemplateMountStats, check_application, controller_flags, forwarded_mount_speed, mask_check,
-    normal_mount_speed_multiplier, startup_effects, toggled_effects,
+    Durability, MountEffect, MountLabels, MountMesh, MountPlace, MountType, RiderInstance,
+    TargetMountFields, TemplateMountStats, check_application, controller_flags,
+    forwarded_mount_speed, mask_check, normal_mount_speed_multiplier, startup_effects,
+    toggled_effects,
 };
-use tessera_formats::{PropertySet, PropertyType};
+use tessera_formats::script_table::MeshFxNode;
+use tessera_formats::script_table::resolve::{MeshFxCandidate, MeshFxDriven};
+use tessera_formats::{Did, PropertySet, PropertyType};
 use tessera_physics::controller::MovementParams;
 use tessera_physics::controller::warsteed::{
     GaitMultipliers, StepInput, WarSteedActor, WarSteedParams, speed_limit, step,
@@ -186,12 +190,77 @@ fn controller(rest: &[u8]) {
     }
 }
 
+/// The mount mesh of §4.4 from MeshFX candidates built of the input's floats: the chosen
+/// node is one started under the mesh script with a non-null entity, and its draw scale and
+/// local transform are finite (the scale positive) whatever the stored values.
+fn mount_mesh(rest: &[u8]) {
+    let f = |i: usize| {
+        rest.get(i * 4..i * 4 + 4)
+            .map_or(0.0, |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let flag = |i: usize| rest.get(i).is_some_and(|b| b & 1 != 0);
+    let candidates: Vec<MeshFxCandidate> = (0..3)
+        .map(|k| {
+            let base = k * 8;
+            let mut node = MeshFxNode {
+                entity: Did(u32::from(flag(base)) * 0x4700_0001),
+                attach_to_parent: true,
+                allow_physics: false,
+                fade_in_time: 0.25,
+                life_time: 0.25,
+                fade_out_time: 0.25,
+                destroy_time: 0.25,
+                holding_location: k as u32,
+                bone_offset: [f(base), f(base + 1), f(base + 2)],
+                offset_rotation_yaw: 0.0,
+                offset_rotation_pitch: 0.0,
+                offset_rotation_roll: 0.0,
+                remove_rotation: false,
+                bone_type: 0,
+                behavior: 0,
+                persistent: true,
+                on_water: false,
+                use_parent_scale: flag(base + 1),
+                use_particle_scale: false,
+                ignore_child_scale: true,
+                scale: [f(base + 3), f(base + 4), f(base + 5)],
+                appearances: Vec::new(),
+                mesh_iid_target_property: 0,
+            };
+            if flag(base + 2) {
+                node.entity = Did(0);
+            }
+            MeshFxCandidate {
+                node,
+                driven: MeshFxDriven::default(),
+                table: Did(0x0700_0001),
+                scriptlet: Did(0),
+                node_id: k as u32,
+                scripts: if flag(base + 3) { vec![7] } else { Vec::new() },
+            }
+        })
+        .collect();
+    if let Some(m) = MountMesh::choose(&candidates, 7) {
+        assert!(!m.entity.is_null());
+        let c = &candidates[m.node_id as usize];
+        assert!(c.scripts.contains(&7));
+        let parent = f(30);
+        assert!(
+            m.draw_scale(parent)
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0)
+        );
+        assert!(m.local_transform(parent).iter().all(|v| v.is_finite()));
+    }
+}
+
 fuzz_target!(|input: &[u8]| {
     let [mode, rest @ ..] = input else {
         return;
     };
     if mode & 1 != 0 {
         controller(rest);
+        mount_mesh(rest);
         return;
     }
     let Ok(set) = PropertySet::parse(rest, &total) else {

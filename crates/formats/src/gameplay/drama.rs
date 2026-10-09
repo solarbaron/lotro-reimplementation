@@ -12,7 +12,7 @@
 //! | [`names_match`], [`script_link_port`], [`actor_number`], [`actors_of_mask`] | Name matching (Decision T3), script-link port from the label, actor selection | §4.6.1, §4.6.4, §10.4 |
 //! | [`KungFu`], [`KungFuTransition`], [`transition_fires`] | Scripted fights | §7, §10.3 |
 //! | [`StartingIdle`] | Starting-idle properties | §5.3, §8 |
-//! | [`plan_drama`], [`DramaStep`], [`PerformDecision`], [`perform_decision`] | Decision T1: running one named drama | §10.1 |
+//! | [`plan_drama`], [`DramaStep`], [`DramaPlayback`], [`PlaybackEvent`], [`PerformDecision`], [`perform_decision`] | Decision T1: running one named drama | §10.1 |
 //! | [`DialogPresentation`], [`dialog_presentation`], [`Facet::runs_offline`] | Decisions T2 and T5: what the offline client shows | §10.2 |
 //!
 //! Properties are found by label ([`DramaLabels::resolve`]). Enum labels (dialog types,
@@ -1169,6 +1169,161 @@ fn push_wait(steps: &mut Vec<DramaStep>, seconds: f32) -> bool {
         steps.push(DramaStep::Wait(seconds));
     }
     false
+}
+
+/// What a [`DramaPlayback`] reports while it advances.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaybackEvent {
+    /// Apply these facets of action `action`, in this order, at play time `at` (seconds
+    /// since the drama started).
+    Apply {
+        /// The action index.
+        action: usize,
+        /// The facets present, in T1 order.
+        facets: Vec<Facet>,
+        /// Play time of the step.
+        at: f32,
+    },
+    /// The drama reached a wait "until stopped" (T1 step 3.5) at `at`; it stays there.
+    UntilStopped {
+        /// Play time.
+        at: f32,
+    },
+    /// The drama ended at `at` (T1 step 4); the runner clears `Drama_Performing` and
+    /// resumes idles (step 5).
+    Finished {
+        /// Play time.
+        at: f32,
+    },
+}
+
+/// One named drama performed under Decision T1 (§10.1), stepped by the caller's clock: a
+/// planned drama ([`plan_drama`]) whose waits consume the time given to
+/// [`DramaPlayback::advance`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DramaPlayback {
+    steps: Vec<DramaStep>,
+    next: usize,
+    /// Seconds already spent in the current step (a wait or an emote wait).
+    spent: f32,
+    time: f32,
+    state: PlaybackState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackState {
+    Running,
+    UntilStopped,
+    Finished,
+}
+
+impl DramaPlayback {
+    /// A playback of `steps` at time 0.
+    #[must_use]
+    pub fn new(steps: Vec<DramaStep>) -> Self {
+        Self {
+            steps,
+            next: 0,
+            spent: 0.0,
+            time: 0.0,
+            state: PlaybackState::Running,
+        }
+    }
+
+    /// Seconds played.
+    #[must_use]
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// The step the playback is in (the next one to complete), `None` once it ended or
+    /// stays until stopped.
+    #[must_use]
+    pub fn current(&self) -> Option<&DramaStep> {
+        (self.state == PlaybackState::Running)
+            .then(|| self.steps.get(self.next))
+            .flatten()
+    }
+
+    /// Whether the drama ended (T1 step 4).
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.state == PlaybackState::Finished
+    }
+
+    /// Whether the drama waits until it is stopped (T1 step 3.5).
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.state == PlaybackState::UntilStopped
+    }
+
+    /// Advances by `dt` seconds (negative or non-finite: 0) and returns what happened, in
+    /// order. Steps without duration (an `Apply`, a zero wait) complete at once, so
+    /// `advance(0.0, …)` applies the first action of a drama that starts without a wait.
+    /// `emote_running(action)` tells whether the emote that action started is still running
+    /// (T1 step 3.4); an emote wait also ends after [`EMOTE_WAIT_LIMIT`] seconds.
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        mut emote_running: impl FnMut(usize) -> bool,
+    ) -> Vec<PlaybackEvent> {
+        let mut left = if dt.is_finite() && dt > 0.0 { dt } else { 0.0 };
+        let mut out = Vec::new();
+        while self.state == PlaybackState::Running {
+            let Some(step) = self.steps.get(self.next) else {
+                self.time += left;
+                self.state = PlaybackState::Finished;
+                out.push(PlaybackEvent::Finished { at: self.time });
+                break;
+            };
+            match step {
+                DramaStep::Apply { action, facets } => {
+                    out.push(PlaybackEvent::Apply {
+                        action: *action,
+                        facets: facets.clone(),
+                        at: self.time,
+                    });
+                    self.next += 1;
+                    self.spent = 0.0;
+                }
+                DramaStep::Wait(w) => {
+                    let need = (w - self.spent).max(0.0);
+                    if left < need {
+                        self.spent += left;
+                        self.time += left;
+                        break;
+                    }
+                    left -= need;
+                    self.time += need;
+                    self.next += 1;
+                    self.spent = 0.0;
+                }
+                DramaStep::WaitForEmote { action } => {
+                    if !emote_running(*action) {
+                        self.next += 1;
+                        self.spent = 0.0;
+                        continue;
+                    }
+                    let need = (EMOTE_WAIT_LIMIT - self.spent).max(0.0);
+                    if left < need {
+                        self.spent += left;
+                        self.time += left;
+                        break;
+                    }
+                    left -= need;
+                    self.time += need;
+                    self.next += 1;
+                    self.spent = 0.0;
+                }
+                DramaStep::UntilStopped => {
+                    self.time += left;
+                    self.state = PlaybackState::UntilStopped;
+                    out.push(PlaybackEvent::UntilStopped { at: self.time });
+                }
+            }
+        }
+        out
+    }
 }
 
 /// What happens to a perform request (Decision T1, last paragraph).

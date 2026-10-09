@@ -193,8 +193,15 @@ pub fn integrate(
     limit: f32,
 ) -> ([f32; 2], [f32; 2]) {
     let step = |cur: f32, goal: f32, a: f32| {
+        // A NaN bound (from non-finite parameters) allows no change.
         let max = (a * t).abs();
-        (goal - cur).clamp(-max, max)
+        let max = if max.is_nan() { 0.0 } else { max };
+        let delta = goal - cur;
+        if delta.is_nan() {
+            0.0
+        } else {
+            delta.clamp(-max, max)
+        }
     };
     let d = [
         step(v[0], target[0], params.acceleration[0]),
@@ -211,14 +218,14 @@ pub fn integrate(
     (mean, stored)
 }
 
-/// `v` limited to [`lo`, `hi`]; a non-finite value or an empty range gives the nearer
-/// usable bound (never NaN).
+/// `v` limited to [`lo`, `hi`]. A non-finite `v` counts as 0, a NaN bound as no bound, an
+/// empty range gives `hi`; the result is always finite (0 when nothing finite remains).
 fn clamp_range(v: f32, lo: f32, hi: f32) -> f32 {
     let v = if v.is_finite() { v } else { 0.0 };
-    if lo > hi {
-        return hi;
-    }
-    v.clamp(lo, hi)
+    let lo = if lo.is_nan() { f32::NEG_INFINITY } else { lo };
+    let hi = if hi.is_nan() { f32::INFINITY } else { hi };
+    let r = if lo > hi { hi } else { v.clamp(lo, hi) };
+    if r.is_finite() { r } else { 0.0 }
 }
 
 /// The turn of one update, degrees (§5.6): (*T*g + *A*g) × *R* × `t` × `turn_input`, when
@@ -469,6 +476,34 @@ mod tests {
         };
         assert!(close(turn_degrees(&p, &frozen, 1.0, 1.0, 1.0), 0.0));
         assert_eq!(sliders(&p, &frozen, [1.0, 1.0], 9.96), (0.0, 0.0));
+    }
+
+    #[test]
+    fn non_finite_parameters_never_panic() {
+        // A fuzz finding: NaN acceleration bounds once reached `f32::clamp`.
+        let mut p = WarSteedParams::build(&layered(), &actor());
+        p.acceleration = [f32::NAN, f32::INFINITY, 0.0];
+        p.backward = f32::NAN;
+        p.strafe_1 = f32::NEG_INFINITY;
+        let g = GaitMultipliers {
+            gallop_speed: f32::NAN,
+            locked_gear_speed: Some(f32::NEG_INFINITY),
+            turn: f32::NAN,
+        };
+        let s = step(
+            &p,
+            &actor(),
+            &g,
+            f32::NAN,
+            StepInput {
+                input: [1.0, 1.0],
+                turn_input: 1.0,
+                velocity: [1.0, 1.0],
+                seconds: 0.0,
+            },
+        );
+        assert!(s.velocity.iter().chain(&s.mean).all(|c| c.is_finite()));
+        assert!(s.turn_degrees.is_finite());
     }
 
     #[test]

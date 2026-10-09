@@ -37,6 +37,13 @@ tools/dev-setup.sh            # reports what is present/missing; changes nothing
    `TESSERA_TARGET_DIR=<big disk>/tessera-target tools/dev-setup.sh --fix`. `--fix` only
    writes `.cargo/config.toml`; it never downloads anything. `tools/dev-setup.sh` then
    reports the free space of the disk that holds the cache.
+   **Several worktrees** (parallel branches, each with its own target dir) build the same
+   dependencies again and again. A shared compiler cache avoids that. Install sccache (a
+   release binary in `~/.cargo/bin`), then add `[build] rustc-wrapper = "<path>/sccache"`
+   to your **user** `~/.cargo/config.toml`, not the repository's. Set its size and
+   location (on a fast disk) in `~/.config/sccache/config` (`[cache.disk]` `dir`, `size`).
+   Dependencies and release builds are cached; incremental debug builds of the workspace's
+   own crates are not. `sccache --show-stats` shows the hit rate.
 3. **Game install**: install the game (any legal source, e.g. Steam app 212500) and let it
    finish patching. **Real-data tests and the smoke commands below read only
    `TESSERA_GAME_DIR`**; auto-detection serves the apps (`tessera-client`,

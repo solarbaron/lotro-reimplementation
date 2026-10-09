@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
+| **Status** | Revised (2026-10-09, spec writer, awaiting review: the three implementation OPENs of 2026-10-09 in §15 answered from the data (OBS5) and a constant search in the client (BIN7): the label of script key 0x10002BA0, what the placement scripts switch on (new paragraph "What the placement scripts test" in §5.6), the `MonsterPlayer` test in §5.5; rows A41–A43). Before: Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review; 2026-10-08: review of the BIN4 and BIN5 revisions (another fresh session); 2026-10-08: narrow re-review of §3.3 (a further fresh session) |
@@ -74,6 +74,8 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | OBS3 | Observed 2026-10-08 (same Steam install, data current that day), read-only, with a throwaway probe on the repository's own decoders: **all 40,643** 0x47 entities (none failed to decode), every value of each entity's own property set walked at every depth, and every stand-alone 0x78 property set that an entity lists; the 14 avatar entities found through the race table (`skeleton-anim.md` §2.2). Question: which entities name `Appearance_ToggleProperty` in an appearance list and which carry `GOP_AvatarUpdateVisible` (§3.3, answering the blocking item of the 2026-10-07 re-review). |
 | OBS4 | Observed 2026-10-09 (same Steam install, data current that day), read-only, with throwaway probes on the repository's own decoders: **all 10,349** MeshFX nodes (41) of all script tables and scriptlets (1,118 with two or more non-zero stored rotation angles, 89 with a driven rotation); the six placement scripts, the visibility controller 0x10000527 and the cosmetic-inventory script 0x100007C3 of table 0x07000090; the sheathed-instrument script 0x10002BA0 in the 12 avatar binding tables that define it; **all 367** Random nodes (17) with a single Default port; **all 29,134** visual templates (setup sections and parents); **all 47,563** meshes (index buffers and the draw entries of every level); **all 4,201** 0x20 records (74,839 blocks), **all 12,199** list elements of the 0x47 records and **all 421,791** list elements of the landblock instance sets, for finite values; the properties `Inventory_Cosmetic_Slot*` and `NPC_Cosmetic_Inventory_*` over all 0x47 entities, all 0x78 and 0x79 property sets and all landblock instance sets; the dictionary definitions (type, default) of the properties named in §5.5–§5.7; the items, instance sets and lists of the H, N and B34 rows of `docs/checklists/m4-visual.md`. |
 | BIN6 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-09 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the MeshFX node's field registration (to find where each field is held), the routine that places the entity a MeshFX node spawns (angle conversion, the placement frame, the attached and unattached paths, the scale computation), the routine that turns an angle triple into a rotation, the routine that turns a rotation into axes, and the frame-composition routine of the unattached path. **Questions:** the implementation OPENs of 2026-10-09 on the axes and order of `OffsetRotationYaw`, `…Pitch` and `…Roll` and on the placement scale (§15). **Why M1–M3 were not enough:** the data hold the angles and scales but no rule for axes, order or composition; every placement row of §5.6 turns about one axis, so a look at the original (M3) cannot separate the orders; no published source states them. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| OBS5 | Observed 2026-10-09 (same install, data unchanged), read-only, with throwaway probes on the repository's own decoders: the label of script key 0x10002BA0 and of 0x10000324 in enum mapper 0x23000097 and its base 0x230000F8; the six placement scripts of table 0x07000090 node by node (every Switch, When and driven source they read, with the case operators and values), script 0x100007C3 (its `LifeState` and `Agent_ClassificationFilter` Switches), the dictionary definitions of `Agent_ClassificationFilter`, `Item_EquipmentCategory` and the three `Inventory_…EquipmentCategory` properties with their mappers; **all 91,214** 0x79 property sets that carry `Item_EquipmentCategory` (bits per value; the 201 with key 48 `BattleGauntlets`, their `PhysObj` and worn lists); the twelve definitions of key 0x10002BA0 and the include closure of the Human M class table. |
+| BIN7 | Same executable and build as BIN6, read on 2026-10-09 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Question:** does client code write `Inventory_PrimaryEquipmentCategory`, `…Secondary…`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`, i.e. which of the placement scripts' inputs the client sets itself (implementation OPEN of 2026-10-09). **Why M1–M3 were not enough:** the data hold the scripts that read these properties but not who writes them; no running client was available. **Read:** a search of all instructions for the four property IDs as constants, and the one routine that holds one of them. Nothing about network, login, keys, launcher or anti-tamper. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -117,6 +119,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A38 | A ranged-slot instrument is drawn while stowed: script 0x10002BA0 of the avatar's binding table attaches it at a location chosen by `Music_Cached_Instrument_Type`, while the playing script 0x10000324 is not running (§5.3, §5.6) | OBS4 (12 binding tables) | Confirmed (corrects the §5.3 Decision for instruments) |
 | A39 | Creature cosmetic slots `Inventory_Cosmetic_Slot1` … `4` (eight properties each) occur only in 0x79 property sets (3,523 sets), never in 0x47 entities, 0x78 sets or landblock instance sets; script 0x100007C3 attaches them; the property dictionary types `…_Behavior` of all four slots as an enum over the script-key mapper 0x23000097, default 0 (§5.5) | OBS4; property dictionary of the install (all four slots) | Confirmed |
 | A40 | No 0x20 `variant` and no list modifier is non-finite; no visual template that names a setup has a parent; every index buffer of every mesh is drawn exactly once (258 one-triangle meshes by either count); no single-port Random node has weight 0 (§3.2.1, §4.4, §6.1, §7.4) | OBS4 | Confirmed 2026-10-09 (all records) |
+| A41 | Script key 0x10002BA0 has the label `Craft_MeshFx_Lute_Sheathed` and the playing script 0x10000324 the label `Craft_MeshFx_Lute` in enum mapper 0x23000097 (neither is in its base 0x230000F8) (§5.6) | OBS5 | Confirmed 2026-10-09 |
+| A42 | The placement scripts test the slot's `Script_Item_PhysObj_…` with a When "not equal to the null DID", the stowed ones also `Script_Item_…_Cosmetic_Hide` with a When "equal to false", and `Inventory_…EquipmentCategory` with a When "not equal to 0", then switch on `Inventory_…EquipmentCategory` with cases of operator 3 (equality of the whole 64-bit value), one value per category with the single bit *k* − 1 of mapper 0x2300004C key *k*; the `BattleGauntlets` case (key 48) holds 0x0000800000000000. All 91,214 items with a category hold exactly one bit; the 201 `BattleGauntlets` items hold 0x0000800000000000; 200 carry a `PhysObj` and 200 a worn list. No instruction of the client holds the property ID of `Inventory_PrimaryEquipmentCategory`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`; the one that holds `…Secondary…` lies in a routine that looks up a list of identifiers and writes no property (§5.6) | OBS5; BIN7 | Confirmed 2026-10-09 (data, all records); BIN (constant search); who sets the three category properties in the original: not traced |
+| A43 | Script 0x100007C3 tests `Agent_ClassificationFilter` with a Switch whose `MonsterPlayer` case has operator 3 (equality) and the value key 1; the property is an enum over mapper 0x2300000F (0 `Undef`, 1 `MonsterPlayer`, 2 `Monster`, 3 `Victim`, 4 `Guard`, 5 `Player`, 6 `DelvingMonster`) with dictionary default 0 (§5.5) | OBS5 | Confirmed 2026-10-09 |
 
 ---
 
@@ -951,7 +956,10 @@ figure has a creature cosmetic slot; they reach a figure only with a server obje
 
 **Placement by script 0x100007C3** (table 0x07000090). Nothing is drawn while `LifeState` is
 `Dead` or `Incapacitated`; figures whose `Agent_ClassificationFilter` is `MonsterPlayer`
-take another branch (the player-controlled monster's weapons, not covered here). Otherwise,
+take another branch (the player-controlled monster's weapons, not covered here). The test is
+an **equality** (A43): a Switch case of operator 3 with the value key 1 (`MonsterPlayer`) of
+the property's mapper 0x2300000F; the property is an enum (not a bit field) with dictionary
+default 0 (`Undef`), so a figure without it takes the ordinary branch. Otherwise,
 while `NPC_Cosmetic_Inventory_Visible` is true, each slot whose `_Entity` is non-null and
 whose `_Hide` is false is attached by one MeshFX node (`AttachToParent` 1, `UseParentScale`
 1), applied by §5.7:
@@ -1037,16 +1045,18 @@ evaluator reproduces.
 | Ranged | `Javelin` | Dwarf, DwarfStoutAxe | `Sheath_Back_Bow` | 0 | (0, 0, 90) | 1 |
 | Ranged | `Javelin` | Hobbit | `Sheath_Back_Bow` | (0.03, 0, 0) | (0, 0, 90) | 1 |
 | Ranged | `Javelin` | others | `Sheath_Back_Bow` | 0 | 0 | 1 |
-| Ranged | `Instrument` | per species | script 0x10002BA0 of the avatar's binding table, by `Music_Cached_Instrument_Type`; for example Human M with `Lute`: `Sheath_Back_2H_Sword` | (0, −0.1, 0.02) | (180, 20, 0) | 1 |
+| Ranged | `Instrument` | per species | script 0x10002BA0 (`Craft_MeshFx_Lute_Sheathed`) of the avatar's binding table, by `Music_Cached_Instrument_Type`; for example Human M with `Lute`: `Sheath_Back_2H_Sword` | (0, −0.1, 0.02) | (180, 20, 0) | 1 |
 
 The primary and secondary stowed scripts run only while `Script_Item_Primary_Cosmetic_Hide`
 (or `…_Secondary_…`) is false. While the primary flag is true, the primary script attaches
 the item only when `Script_Item_PhysObj_Primary_Cosmetic` is one of the four entity DIDs of
 its fishing-pole case, at `Wpn_RHand`.
 
-**Stowed instruments (OBS4, A38).** For an `Instrument` in the ranged slot the stowed ranged
-script starts script 0x10002BA0 while script 0x10000324 (the playing script) is not running,
-and stops it while that script runs; the wielded ranged script stops it. Script 0x10002BA0
+**Stowed instruments (OBS4, A38, A41).** For an `Instrument` in the ranged slot the stowed ranged
+script starts script 0x10002BA0 (label `Craft_MeshFx_Lute_Sheathed` in mapper 0x23000097,
+an interoperability identifier; read the key from the label at run time) while script
+0x10000324 (the playing script, label `Craft_MeshFx_Lute`) is not running, and stops it while
+that script runs; the wielded ranged script stops it. Script 0x10002BA0
 is defined in each avatar's binding table (`script-table.md` §8.2; 12 tables), and attaches
 `Script_Item_PhysObj_Ranged` with one MeshFX node per value of `Music_Cached_Instrument_Type`
 (some values add a second node with a fixed entity stored in it, for example for the
@@ -1088,6 +1098,48 @@ a Collection whose `Probability` is 0, which never runs (`script-table.md` §4.2
 wielded branch instead runs script 0x10002F3F (cosmetic weapon-effect pieces) and sets
 `Combat_DefaultStrikingImplementType_Melee`. The gauntlets themselves are worn (§5.1).
 (Corrected 2026-10-09: the earlier text said "in both families".)
+
+**What the placement scripts test (OBS5, BIN7, A42; answers the implementation OPEN of
+2026-10-09).** Each script first passes three gates on avatar properties: a When that
+`Script_Item_PhysObj_<slot>` is **not equal** to the null DID; in the stowed scripts a When
+that `Script_Item_<slot>_Cosmetic_Hide` **equals** false; and a When that
+`Inventory_<slot>EquipmentCategory` is **not equal** to 0 (`<slot>` being `Primary`,
+`Secondary` or `Ranged`). The category Switch then reads `Inventory_<slot>EquipmentCategory`
+(dictionary type Bitfield64, mapper 0x2300004C, default 0). Each of its cases holds one or
+more Bitfield64 values, each with the single bit *k* − 1 of the category's mapper key *k*
+(the reading of `Item_EquipmentCategory`, §5.2), and every case has operator 3, so the
+property must **equal** one of the values as a whole 64-bit value; it is not a bit test. The
+`BattleGauntlets` case (key 48) holds 0x0000800000000000. In script 0x10000684 of table
+0x07000090 the chain to the stowed gauntlet effect is: the three gates, then a Switch on
+`NPC_PlayingStartingIdle` (case false; default false), then the category Switch, whose
+`BattleGauntlets` case holds a Collection with the two MeshFX nodes above (ordinals 1 and 2).
+
+So, to reproduce a slot's placements, the figure needs: `Script_Item_PhysObj_<slot>` = the
+item's 0x47 entity (its `PhysObj`, or the cosmetic override), and
+`Inventory_<slot>EquipmentCategory` = the item's `Item_EquipmentCategory` value, 0 for an
+empty slot. In this install every one of the 91,214 items that carries `Item_EquipmentCategory`
+holds exactly one bit, so the equality always matches its category's case; the 201
+`BattleGauntlets` items hold 0x0000800000000000; 200 of them carry a `PhysObj` (the first gate
+passes for those) and 200 the worn list of §5.1. The other inputs keep their
+dictionary defaults unless the figure sets them: `Script_Item_<slot>_Cosmetic_Hide` (false),
+`Script_Item_PhysObj_<slot>_Cosmetic` (null), `NPC_PlayingStartingIdle` (false),
+`Inventory_Cosmetic_IsSheathed` (0); the remaining inputs of the six scripts
+(`Agent_Species`, `Combat_SkillMode`, `Combat_Violent`, `Mount_CurrentMountStatus`,
+`Movement_MovementStyle`, `AvatarVFX_Cosmetic_Locomotion`, `Entity_Mode`) choose among the
+branches and are figure state, the stowed ranged script also watches whether script
+0x10000324 runs, and the driven sources `Script_AdjustableScale_Secondary_Vector`
+and `NPC_Cosmetic_Inventory_Item1` follow §5.7 step 3.
+
+No client instruction holds the property ID of `Inventory_PrimaryEquipmentCategory`,
+`…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList` (BIN7), and the one holding
+`…Secondary…` writes no property, so, like the `Script_Item_PhysObj_…` properties (A25), the
+category properties are not computed by client code from constants; in the original they
+arrive with the character or through a data-driven path that was not traced.
+
+> **Decision (Tessera, 2026-10-09):** set `Inventory_<slot>EquipmentCategory` to the
+> `Item_EquipmentCategory` value of the item in that slot (0 when empty) whenever
+> `Script_Item_PhysObj_<slot>` is set, and evaluate the scripts' Whens and Switches by
+> `script-runtime.md` §6–§7. A stowed `BattleGauntlets` item then gets the two effect nodes.
 
 Each node also names a `Behavior` (a script key run on the attached item, for example its
 draw or sheathe effect), `AttachToParent` 1, `Persistent` 1 and `UseParentScale` 1 in all
@@ -2488,6 +2540,10 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > script-key mapper 0x23000097 (or its base). Tessera uses the key as given; a label would
 > let the key be read from the data at run time like every other script key. Please give
 > the label.
+>
+> **Answered** (spec writer, 2026-10-09, OBS5, A41): the label is `Craft_MeshFx_Lute_Sheathed`
+> in mapper 0x23000097 (not in its base 0x230000F8); the playing script 0x10000324 is
+> `Craft_MeshFx_Lute`. §5.6 "Stowed instruments" names both.
 
 > **OPEN** (implementation, §5.6 gauntlets and "What is normative"): to read the stowed
 > gauntlet effect entity "from the two nodes under the `BattleGauntlets` case of script
@@ -2497,11 +2553,26 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > (the `Item_EquipmentCategory` key, its bit, or another enum), and which properties the
 > client sets on the figure for them besides `Script_Item_PhysObj_*`. Until then Tessera does
 > not attach the gauntlet effect (the gauntlets themselves are worn, §5.1).
+>
+> **Answered** (spec writer, 2026-10-09, OBS5, BIN7, A42): §5.6 "What the placement scripts
+> test". The category Switch of every placement script reads `Inventory_<slot>EquipmentCategory`
+> (Bitfield64 over mapper 0x2300004C); its cases hold single-bit Bitfield64 values (bit *k* − 1
+> for key *k*) compared by **equality** (operator 3); the `BattleGauntlets` case holds
+> 0x0000800000000000 (key 48). Before it, three Whens gate on `Script_Item_PhysObj_<slot>`
+> (not null), `Script_Item_<slot>_Cosmetic_Hide` (false; stowed scripts only) and the category
+> (not 0), and in script 0x10000684 a Switch on `NPC_PlayingStartingIdle` (false). Besides
+> `Script_Item_PhysObj_*`, set `Inventory_<slot>EquipmentCategory` to the item's
+> `Item_EquipmentCategory` value (a Decision: no client code writes these properties by
+> constant); the other inputs keep their defaults or are figure state.
 
 > **OPEN** (implementation, §5.5 creature cosmetic slots): "figures whose
 > `Agent_ClassificationFilter` is `MonsterPlayer` take another branch": is the test an
 > equality with the `MonsterPlayer` key, or a bit test (the property's dictionary type was
 > not stated)? Tessera's choice: equality with the key of the label `MonsterPlayer`.
+>
+> **Answered** (spec writer, 2026-10-09, OBS5, A43): equality. The property is an enum over
+> mapper 0x2300000F (default 0 `Undef`), and the Switch case is operator 3 with the value key 1
+> (`MonsterPlayer`). Tessera's choice is right; §5.5 states it.
 
 ---
 
@@ -2520,6 +2591,7 @@ implemented in `tessera-formats` and `tessera-mesh`.
 | 2026-10-09 (merge) | header | Merge of main into the specs-5 branch: the Accepted text of 2026-10-08 (BIN5, OBS3, narrow re-review) and the branch's owner-observation row above are both kept; status Revised until the O12 change is reviewed. No fact changed. | Spec writer (dirty room) |
 | 2026-10-09 (BIN6, OBS4) | header; §1 (new OBS4, BIN6, A35–A40); §3.2.1 (NaN Decision); §3.3 (absent toggle property); §4.4 (triangle count); §4.7 (rule 4 bounds, shared dye key); §5.3 (Decision revised for instruments); §5.4 (Rule); §5.5 (creature cosmetic slots: names, carriers, placement); §5.6 (cosmetic rows, shield row, instrument row and paragraph, shields out of combat with Decision and OPEN, gauntlets stowed only, what is normative, O13 OPEN narrowed); new §5.7; §6.1 (template chain); §7.4 (single-port Random, seed details); §8 step 9; §15 (five implementation OPENs of 2026-10-09 answered); §17 O13 row | Answers the implementation OPENs filed with the appearance conformance pass of 2026-10-09. From the client (BIN6, decision 0011): MeshFX rotation axes (yaw +Z, pitch +X, roll +Y), order *R*_Z · *R*_Y · *R*_X, composition location × offset × rotation × scale, and the per-axis scale written into the spawned item's `Render_AdjustableScale`. From the data (OBS4): full names and carriers of the creature cosmetic slots (server objects only) and their placements; how a reader finds the cosmetic and gauntlet DIDs; corrections to Accepted text: ranged-slot instruments are drawn while stowed, the gauntlet effect is stowed-only, and the stowed shield node needs a cosmetic override (Decision keeps the forearm). Confirmations of the engineering readings (one differs: weight-0 single-port Random nodes are picked). Status Accepted → Revised. | Spec writer (dirty room) |
 | 2026-10-09 (review answer) | header; §1 (A35, A36, A37, A39); §5.5 (`_Behavior` type); §5.7 steps 2 and 3 (Decision and two OPENs); §6.1 (flag-bit bullet, "What was not traced", Decision cross-reference); §13 (narrow OPENs); §15 (answer on axes qualified) | Answers the review of 2026-10-09 of the BIN6/OBS4 revision. Blocking 1: the composition location frame × placement frame was read only for unattached MeshFX nodes; for attached nodes (every placement of §5.5 and §5.6) it is now a labelled Tessera Decision with an OPEN on the attachment's per-frame composition and on `RemoveRotation` 1; A35 says so. Blocking 2: whether the two flag bits a MeshFX node sets from `UseParticleScale` and `IgnoreChildScale` are the holder-factor bits of §6.1 is now an OPEN; the §6.1 text no longer says that no link was seen and points to §5.7 step 3; the §6.1 Decision (*s* = 1) stays. Non-blocking: A37 covers the fishing-pole case and the `…_Cosmetic_Hide` gating; §5.5 and A39 give `…_Behavior` as an enum over the script-key mapper (property dictionary). No rule an implementation follows changed. | Spec writer (dirty room) |
+| 2026-10-09 (OBS5, BIN7) | header; §1 (new OBS5, BIN7, A41–A43); §5.5 (`MonsterPlayer` test); §5.6 ("Stowed instruments" labels, table row, new paragraph "What the placement scripts test" with a Decision); §15 (three answers) | Answers the three implementation OPENs of 2026-10-09: the label of script key 0x10002BA0 (`Craft_MeshFx_Lute_Sheathed`); what the placement scripts switch on (the category Switch reads `Inventory_<slot>EquipmentCategory`, cases are single-bit values compared by equality, `BattleGauntlets` = 0x0000800000000000; the gating Whens; the figure properties to set, with a Decision for the category properties after a constant search found no client code that writes them); the `MonsterPlayer` test is an equality on an enum. No earlier fact changed. Status Revised, awaiting review. | Spec writer (dirty room) |
 
 ---
 

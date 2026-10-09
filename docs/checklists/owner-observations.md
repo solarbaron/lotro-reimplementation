@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-09 (merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-09 (decision 0024 P1 items O80–O86 added; earlier the same day the merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -69,6 +69,13 @@ marks the item **done** here.
 | [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7); not answerable from the client (a felt comparison; remote updates belong to the excluded network layer) |
 | [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7); not answerable from the client (the server decides) |
 | [O73](#o73) | Range of local "say" chat (optional) | `test-server.md` §4.6, §9 | Two characters, `/loc` | open (M7, optional); not answerable from the client (the server decides) |
+| [O80](#o80) | Item tooltips of ten items: rows, order, colours, worth coins | `item-tooltips.md` §4–§7, §15 | Look, screenshots (private) | open (P1) |
+| [O81](#o81) | Comparison tooltips and pinned tooltips | `item-tooltips.md` §8–§10 | Look | open (P1) |
+| [O82](#o82) | Character panel: opening command, paperdoll rotation, header | `character-panels.md` §2–§3 | Look | open (P1) |
+| [O83](#o83) | Bag windows: which slots each bag shows; item-slot overlays | `character-panels.md` §4.3, §5 | Look | open (P1) |
+| [O84](#o84) | Equipping, unequipping, using, splitting and destroying items | `character-panels.md` §6 | Look | open (P1) |
+| [O85](#o85) | Character selection and race/class screens: order of screens, lists, defaults | `character-screens.md` §2–§4, §6 | Look | open (P1) |
+| [O86](#o86) | Appearance and name screen: controls, randomise, nationality colours | `character-screens.md` §5 | Look | open (P1) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -1228,3 +1235,110 @@ record any chat text.**
 
 **2026-10-08 (check):** not answerable from the data or the offline client: the server
 decides who receives a chat line. Unchanged (optional).
+
+<a id="p1-items"></a>
+## Decision 0024 P1 items (characters, inventory and equipment)
+
+These rows compare Tessera's P1 screens with the original client. They block nothing until
+P8 (decision 0024 §2.6). Describe what you see in your own words; never copy item names,
+descriptions or other game text into this file; use DIDs (the explorer shows them) or "the
+item in bag 1, slot 3".
+
+<a id="o80"></a>
+## O80. Item tooltips of ten items (P1)
+
+**Spec:** `item-tooltips.md` §4–§7 (rows, order, colours), §6.11 (worth coins), §6.12
+(damage and DPS), §6.14 (allowed slots), §6.17 (set lines), §15.
+
+**What to do:** hover over ten items of different kinds: a piece of armour, a jewellery item,
+a one-handed weapon, a two-handed or ranged weapon, a stackable consumable, a quest item, a
+recipe, a set item while wearing another member, an item with a worth whose silver part is
+zero (for example a value of exactly one gold and some copper), and a damaged item. Take a
+private screenshot of each tooltip.
+
+**Record:** per item, its DID (from the explorer) and, for each row from top to bottom: the
+row kind (name, binding, item level, armour, damage, DPS, stat line, durability, requirement,
+set member, set bonus, description, worth, other), its colour in words, and whether a blank
+gap separates it from the next. For the worth row: which coins show (is a zero silver coin
+shown?). For damage: whether the two numbers are integers and what the third part names. For
+DPS: how many decimals. For the stat lines and requirements: the wording pattern without the
+item's text (for example "plus, number, stat name").
+
+<a id="o81"></a>
+## O81. Comparison and pinned tooltips (P1)
+
+**Spec:** `item-tooltips.md` §8 (when comparisons show and where), §10 (pinning).
+
+**What to do:** with the comparison option of the options panel on and then off, hover over a
+backpack ring while wearing two rings, and over a one-handed weapon while holding weapons in
+both hands. Then try to pin a tooltip: press the key bound to the tooltip-detach command (or
+look in the key-binding panel for it) while a tooltip shows; pin the same item twice; pin
+many items.
+
+**Record:** the option's default state; how many comparison tooltips appear and on which side
+of the main tooltip, top-aligned or not; whether the item already equipped shows a comparison
+when hovered on the paperdoll; which input pins; whether pinning the same item twice closes
+it; how many can be pinned (the spec says 20) and what happens at the limit.
+
+<a id="o82"></a>
+## O82. Character panel (P1)
+
+**Spec:** `character-panels.md` §2–§3.
+
+**What to do:** open the character panel with its key; turn the figure with the arrow buttons
+(hold one) and by dragging in the picture; look at the header and the stat list.
+
+**Record:** the command name of the key that opened it (key-binding panel); degrees turned per
+second while an arrow is held, and roughly per centimetre of drag; the figure's pose (idle or
+still); which stat rows show values in green or red and when.
+
+<a id="o83"></a>
+## O83. Bag windows and item-slot overlays (P1)
+
+**Spec:** `character-panels.md` §4.3 (backpack slots per bag), §5 (overlays).
+
+**What to do:** open all bags; note how many slots each shows and in which order items fill
+them; drag an item from the first slot of bag 1 to the last slot of bag 2 and back. Look at a
+stack, a damaged and a broken item, an item your character cannot use (level too low), an
+item on cooldown.
+
+**Record:** slots per bag; whether bag 2 starts where bag 1 ends; for each overlay: when it
+shows (stack of 1: quantity shown or not?), its look in words.
+
+<a id="o84"></a>
+## O84. Equipping and item handling (P1)
+
+**Spec:** `character-panels.md` §6.
+
+**What to do:** equip an item by dragging it to its paperdoll slot, by right-clicking it, and
+by double-clicking it; unequip by dragging back and by right-clicking the paperdoll slot; split
+a stack (try Shift with a drag); destroy an item (drag it out of the window).
+
+**Record:** which inputs equip, unequip, use, split and destroy; any confirmation dialogs (no
+text, only that one appears and its buttons).
+
+<a id="o85"></a>
+## O85. Selection and race/class screens (P1)
+
+**Spec:** `character-screens.md` §2–§4, §6.
+
+**What to do:** log in to the character selection screen; start a new character; go through
+the race and class screen, forward to the appearance and name screen and back.
+
+**Record:** the order of screens and what the back button does on each; the order of
+characters in the list and which is selected first; the order of races (by species, in your
+own words) and of classes for two races; which racial traits the race panel lists (all, or
+only some); whether changing race keeps the selected class.
+
+<a id="o86"></a>
+## O86. Appearance and name screen (P1)
+
+**Spec:** `character-screens.md` §5; `player-character.md` §6.2 Q14.
+
+**What to do:** on the appearance and name screen, press randomise five times; switch
+nationality and look at the hair, skin and eye colour choices; try the random-name button.
+
+**Record:** what randomise changes (all controls or some; the name too?); whether the colour
+choices change with the nationality (fewer swatches, other swatches, or only the default);
+the kind of widget each control kind uses (arrows, swatches, slider).
+

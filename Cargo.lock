@@ -3960,6 +3960,7 @@ dependencies = [
  "tessera-material",
  "tessera-mesh",
  "tessera-net",
+ "tessera-particles",
  "tessera-physics",
  "tessera-props",
  "tessera-protocol",

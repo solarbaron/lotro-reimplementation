@@ -354,7 +354,9 @@ fn emitter_vertices(
             }
         }
         if let Some(q) = stick_point {
-            anchor = q + (anchor - pos);
+            // §8.5.5: the particle and its streak anchor are both drawn at the attachment
+            // point, so a streaked particle collapses to the default corners.
+            anchor = q;
             pos = q;
         }
         // Size and colour (§8.6.1, §8.6.2).

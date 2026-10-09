@@ -208,7 +208,8 @@ pub use mesh::{
     SubmeshInfo,
 };
 pub use particles::{
-    MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_DRAWS_PER_PASS, ParticleDraw, ParticleVertex,
+    MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_DRAWS_PER_PASS, MAX_PARTICLE_VERTICES_PER_PASS,
+    ParticleDraw, ParticleVertex,
 };
 pub use pipelines::{DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT, LineVertex};
 pub use renderer::{

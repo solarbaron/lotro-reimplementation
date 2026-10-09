@@ -581,6 +581,9 @@ pub struct LingerEntry {
     pub system: SystemKey,
     /// Its fixed placement.
     pub placement: Placement,
+    /// A removal time of its own (rule §12.7: a never-ending dropped effect goes 6 s after
+    /// it was placed), checked with the end test at each sweep.
+    pub remove_at: Option<f64>,
 }
 
 /// The running effects of a scene (see the module docs).
@@ -647,6 +650,12 @@ impl EffectManager {
             .collect();
         v.sort_by_key(|(seq, _, _)| *seq);
         v.into_iter().map(|(_, k, e)| (k, e))
+    }
+
+    /// The record DID a running system was made from.
+    #[must_use]
+    pub fn did_of(&self, key: SystemKey) -> Option<u32> {
+        self.running(key).map(|r| r.did)
     }
 
     /// The creation rank of a running system (lower is older, `particles.md` §8.15).
@@ -738,8 +747,10 @@ impl EffectManager {
             .lingering
             .iter()
             .filter(|l| {
-                self.running(l.system)
-                    .is_none_or(|r| r.effect.has_finished(now))
+                l.remove_at.is_some_and(|t| now > t)
+                    || self
+                        .running(l.system)
+                        .is_none_or(|r| r.effect.has_finished(now))
             })
             .map(|l| l.system)
             .collect();
@@ -869,6 +880,7 @@ impl EffectManager {
                 self.lingering.push(LingerEntry {
                     system: key,
                     placement,
+                    remove_at: None,
                 });
             }
             _ => self.destroy(key),
@@ -876,19 +888,25 @@ impl EffectManager {
     }
 
     /// Places a dropped effect once in the world (§5.6 step 5): a lingering entry that was
-    /// never stopped, removed when its end test passes. A never-ending dropped effect is
-    /// treated as stopped at once (rule §12.7).
+    /// never stopped, removed when its end test passes. A never-ending dropped effect (never
+    /// in the data) runs normally and is removed 6 s after it was placed (rule §12.7, the
+    /// reading recorded in the spec's OPEN): it is not stopped first, so it shows its first
+    /// 6 s.
     pub fn drop_effect(
         &mut self,
         did: u32,
-        mut effect: Effect,
+        effect: Effect,
         placement: Placement,
         class: Classification,
         now: f64,
     ) -> SystemKey {
-        if class == Classification::NeverEnding {
-            effect.stop(now);
-        }
+        let remove_at = (class == Classification::NeverEnding).then(|| {
+            if now.is_finite() {
+                now + LINGER_SECONDS
+            } else {
+                0.0
+            }
+        });
         let key = self.insert(effect, did);
         if let Some(r) = self.running_mut(key) {
             r.refs = 0;
@@ -896,6 +914,7 @@ impl EffectManager {
         self.lingering.push(LingerEntry {
             system: key,
             placement,
+            remove_at,
         });
         key
     }

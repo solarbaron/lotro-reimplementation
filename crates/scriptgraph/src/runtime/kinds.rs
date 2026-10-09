@@ -9,12 +9,12 @@ use tessera_formats::script_table::{NodeData, NodeKind, PortPayload, PortType, S
 use tessera_formats::{Did, PropertyValue};
 
 use super::core::REASON_STOP;
-use super::instance::{RunState, WhenRunningState};
+use super::instance::{ParticleState, RunState, WhenRunningState};
 use super::{DeferredRun, Event, INTENSITY_EPSILON, InstanceId, KindState, RunCtx, Runtime};
 use crate::graph::{NodeRef, Unit};
 use crate::sink::{
-    AnimationOutcome, EffectSink, EnvironmentRequest, SoundPositioner, SoundStart,
-    SoundStartOutcome,
+    AnimationOutcome, EffectSink, EntityId, EnvironmentRequest, ParticleStart, SoundPositioner,
+    SoundStart, SoundStartOutcome,
 };
 use crate::values::{as_bool, as_f32, as_i32, as_u32, as_vec3};
 
@@ -27,6 +27,9 @@ pub const PITCH_FLOOR: f32 = 0.01;
 const DIRECTION_EPSILON: f32 = 1e-6;
 /// Longest entity parent chain followed for the internal-object mute (§9.2 step 2).
 const MAX_PARENT_CHAIN: usize = 64;
+/// A finite effect is not started at or below this context intensity
+/// (`particle-runtime.md` §5.4 step 3, BIN).
+pub const PARTICLE_INTENSITY_GATE: f32 = 0.0002;
 
 impl Runtime<'_> {
     /// The kind's start routine (§3.1 step 6). Returns whether the instance may stay; the
@@ -74,6 +77,7 @@ impl Runtime<'_> {
             NodeKind::SOUND => self.sound_start(sink, id, unit, nref),
             NodeKind::SOUND_ENVIRONMENT => self.environment_start(sink, id, unit, nref),
             NodeKind::ANIMATION => self.animation_start(sink, id, unit, nref),
+            NodeKind::PARTICLE => self.particle_start(sink, id, unit, nref),
             NodeKind::SCALAR_BLEND => self.scalar_blend_start(sink, id, unit, nref),
             NodeKind::GAME_CALLBACK => {
                 self.issue(crate::RuntimeIssue::GameCallbackOpaque);
@@ -101,6 +105,7 @@ impl Runtime<'_> {
             KindState::Sequence(s) => Hook::Cancel(vec![s.pending.take()]),
             KindState::Switch(s) => Hook::Cancel(vec![s.delay_event.take(), s.fade_event.take()]),
             KindState::Animation { handle, event } => Hook::Animation(handle.take(), event.take()),
+            KindState::Particle(p) => Hook::Particle(p.handle.take(), p.immediate),
             KindState::Run(r) if !r.unbind => Hook::Run(std::mem::take(&mut r.started)),
             KindState::OnStop if reason != 2 => Hook::OnStop,
             _ => Hook::None,
@@ -125,6 +130,11 @@ impl Runtime<'_> {
                 }
                 if let Some(h) = h {
                     sink.stop_animation(h);
+                }
+            }
+            Hook::Particle(h, immediate) => {
+                if let Some(h) = h {
+                    sink.stop_particle(h, immediate);
                 }
             }
             Hook::Run(started) => {
@@ -910,6 +920,152 @@ impl Runtime<'_> {
         }
     }
 
+    // ----- Particle (`particle-runtime.md` §5.4–§5.8) -----
+
+    /// §5.4: the effect DID, the classification (the stored byte, rule §12.2), the
+    /// intensity gate of finite effects (context flag 0x40 treated as clear, Q-RT2), then
+    /// the sink takes the dropped or the attached path. A finite effect, and every effect on
+    /// the dropped path, completes at once; a never-ending attached effect leaves an
+    /// instance (with an invalid handle when nothing started) that runs until it is stopped
+    /// and listens to the redirect property (§5.5 step 5, §5.8).
+    fn particle_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) -> bool {
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let NodeData::Particle(p) = &n.data else {
+            return false;
+        };
+        let p = **p;
+        // 1. No effect DID: the start fails.
+        let Some(effect) = p.effect_did() else {
+            return false;
+        };
+        let Some((entity, intensity)) = self.insts.get(id).map(|i| (i.entity, i.intensity)) else {
+            return false;
+        };
+        // 2. Classification.
+        let never_ending = n
+            .particle_flag
+            .or_else(|| sink.classify_particle(effect))
+            .unwrap_or(false);
+        // 3. Intensity gate (finite effects only).
+        // NaN counts as at or below the gate (the start needs intensity > 0.0002).
+        let above_gate =
+            intensity.partial_cmp(&PARTICLE_INTENSITY_GATE) == Some(std::cmp::Ordering::Greater);
+        if !never_ending && !above_gate {
+            self.stats.particles_gated += 1;
+            return false;
+        }
+        // 4–5. Dropped or attached path.
+        let target = if p.drop_effect {
+            entity
+        } else {
+            self.particle_target(sink, entity, p.redirect_property)
+        };
+        let request = ParticleStart {
+            entity,
+            target,
+            effect,
+            node: p,
+            never_ending,
+            node_id: n.base.node_id,
+        };
+        self.stats.particles_requested += 1;
+        let handle = sink.start_particle(&request);
+        if !never_ending || p.drop_effect {
+            return false;
+        }
+        if let Some(i) = self.insts.get_mut(id) {
+            i.kind = KindState::Particle(Box::new(ParticleState {
+                handle,
+                target,
+                immediate: p.immediate_disposal,
+                redirect: p.redirect_property,
+            }));
+        }
+        if p.redirect_property != 0 {
+            self.listen(id, entity, p.redirect_property);
+        }
+        true
+    }
+
+    /// §5.5 step 1: the script's entity, unless `redirect` ≠ 0 and the entity's value of
+    /// that property names an existing object (an entity of this runtime, or one the sink
+    /// knows).
+    fn particle_target(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        entity: EntityId,
+        redirect: u32,
+    ) -> EntityId {
+        if redirect == 0 {
+            return entity;
+        }
+        let Some(v) = self
+            .entity_value(entity, redirect)
+            .and_then(|v| v.as_bits())
+            .filter(|&v| v != 0)
+        else {
+            return entity;
+        };
+        if self.entities.contains_key(&EntityId(v)) || sink.object_exists(v) {
+            EntityId(v)
+        } else {
+            entity
+        }
+    }
+
+    /// §5.8: the redirect property of a running never-ending Particle node changed: stop
+    /// the effect as in §7.1 (with the node's `ImmediateDisposal`) and start it again on
+    /// the newly named object by §5.5 steps 1–4, replacing the handle and the target.
+    pub(crate) fn particle_redirect(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        node: &crate::graph::CNode,
+    ) {
+        let NodeData::Particle(p) = &node.data else {
+            return;
+        };
+        let p = **p;
+        let Some(effect) = p.effect_did() else {
+            return;
+        };
+        let Some((entity, old, immediate)) = self.insts.get_mut(id).and_then(|i| {
+            let entity = i.entity;
+            match &mut i.kind {
+                KindState::Particle(s) => Some((entity, s.handle.take(), s.immediate)),
+                _ => None,
+            }
+        }) else {
+            return;
+        };
+        if let Some(h) = old {
+            sink.stop_particle(h, immediate);
+        }
+        let target = self.particle_target(sink, entity, p.redirect_property);
+        let request = ParticleStart {
+            entity,
+            target,
+            effect,
+            node: p,
+            never_ending: true,
+            node_id: node.base.node_id,
+        };
+        self.stats.particles_requested += 1;
+        let handle = sink.start_particle(&request);
+        if let Some(KindState::Particle(s)) = self.insts.get_mut(id).map(|i| &mut i.kind) {
+            s.handle = handle;
+            s.target = target;
+        }
+    }
+
     // ----- ScalarBlend (`script-table.md` §7.3) -----
 
     /// Starts the children of the ports whose blend weight for the property's current
@@ -994,6 +1150,7 @@ enum Hook {
         Option<crate::sink::AnimationHandle>,
         Option<crate::sched::EventKey>,
     ),
+    Particle(Option<crate::sink::ParticleHandle>, bool),
     Run(Vec<InstanceId>),
     OnStop,
 }

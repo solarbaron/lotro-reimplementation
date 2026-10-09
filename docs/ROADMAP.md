@@ -982,6 +982,21 @@ their checklist cameras (T4, T5, T12, T15, T16, Y2, L2, L7; the dark cave ceilin
 changes requested in `walker.md` §13–§14 and `render.md` §4–§5 and re-acceptance of the
 ten Revised specs of the table; then the owner's observations O18–O27.
 
+<a id="m4-5-particles"></a>
+**Particle effects (outside the deliverables above; branch `particles-runtime`,
+2026-10-09).** `particles.md` (Accepted) §8 and `particle-runtime.md` (Accepted) are
+implemented in `tessera-particles` (simulation and run-time rules), the renderer's particle
+pipeline, the explorer's preview and, in the walker, for the Particle nodes of the start-up
+scripts of static entities and placed figures (started by `tessera-scriptgraph`; attached
+and dropped paths, attachment frames, lingering, housekeeping, draw order, distance fade;
+`apps/client/tests/particles_real_data.rs` draws particles at M3-03 and settles). The specs
+are **not implemented end to end**: fork effects (0x44) are not drawn (`particles.md` rule
+§10.2, Q1); systems of the post-processing pass are not drawn (the walker has none); weather
+systems and the global wind (Q13), beams (Q-RT4), the gameplay event handler (Q-RT5), the
+lights of lit systems (Q8 (b)), `inherit_opacity`, driven node fields and bounds culling
+(Q-RT3) remain; the walker's own choices are recorded as implementer OPENs in
+`particle-runtime.md` §3.2, §5.4, §9.2 and §12.
+
 ---
 
 <a id="m5"></a>

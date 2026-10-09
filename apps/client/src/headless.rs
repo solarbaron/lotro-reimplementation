@@ -41,6 +41,9 @@ pub struct HeadlessReport {
     pub characters: crate::walker::characters::CharacterStats,
     /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
     pub audio: Option<crate::audio::AudioReport>,
+    /// Particle effects at the end (`particle-runtime.md`): owners, systems, drawn
+    /// vertices of the last frame and the most of any frame.
+    pub particles: crate::walker::effects::EffectStats,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -250,6 +253,8 @@ fn finish(
         tracing::info!("viewer at: {d}");
     }
     report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    report.particles = walker.effects().stats();
+    tracing::info!("particles: {}", walker.effects().hud_line());
     if let Some(a) = &report.audio {
         crate::audio::log_report(a);
     }

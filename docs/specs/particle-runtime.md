@@ -151,6 +151,20 @@ Each frame the client does the following particle work:
 > it is drawn, so the effects of an undrawn entity freeze like the not-drawn state of
 > `particles.md` §8.13.
 
+> **OPEN:** (implementer, 2026-10-09) What "drawn" means in the walker
+> (`apps/client/src/walker/effects`), engineering choices until Q-RT1 is answered: the
+> walker scans the landblocks within 2 of the viewer for static entities and placed figures
+> whose start-up scripts reach Particle nodes (content layers as the world's; interior
+> entities only with `--interiors`), spawns such an owner in its own script runtime when the
+> viewer is within the owner's *reach* + 20 m and despawns it beyond *reach* + 60 m or when
+> its landblock leaves (checked every 0.25 s, at most 16 spawns per check). *Reach* is the
+> largest `far_fade_end` of the 0x39 records its nodes name (fork nodes: their
+> `FarFadeMaxDistance`) plus the node's `BoneOffset` length, at most 500 m, 60 m when none is
+> known. A static owner counts as drawn while it is spawned (no frustum or per-object draw
+> distance test); a placed figure while the character layer draws it, and it is spawned only
+> once its figure is built (its attachment points and pose come from there). Despawning
+> stops the owner's never-ending nodes (§7.1) and releases its other effects (§7.2).
+
 <a id="s3-3"></a>
 ### 3.3 The random generator (BIN)
 
@@ -296,6 +310,27 @@ the effect either. A finite effect started at intensity 0.5 looks the same as on
 
 > **OPEN (Q-RT2):** Which client paths set bit 0x40 of a script context's flags word
 > (`script-runtime.md` §2.1 lists bits 1 and 3 only). **Decision (Tessera):** treat it as clear.
+
+> **OPEN:** (implementer, 2026-10-09) Choices of the walker where this spec gives no fact for
+> it (`tessera-scriptgraph` runs the node, `apps/client/src/walker/effects` the paths):
+> (a) the redirect of §5.5 step 1 and §5.8 counts as naming "an existing object" only an
+> owner spawned in the walker's effects runtime (the offline walker has no other object
+> IDs); (b) the start gating of `particles.md` §7.1.2 runs with the client's defaults
+> (`DynamicParticles` 0, `StaticEnvironmentalObjects` on), with which the whitelist decides
+> nothing, so it is not read; (c) a Particle node's driven fields (its base block's driven
+> map naming `ParticleScript_` fields, `script-runtime.md` §5.3) are not applied: are any
+> of these fields driven in practice, and how do driven values reach a node that has already
+> started?; (d) the instance opacity of attached and dropped placements is 1 (§8.15's
+> object opacity and `inherit_opacity` are not applied: the walker keeps no parent-object
+> opacity), and which owner value gives an attached instance its own opacity is not stated
+> here; (e) the water probe of §5.7 tests the landblock water planes only (`water.md` §8.1),
+> not cell water or liquid volumes; (f) vector *A* is `Render_AdjustableScale` ×
+> `Model_Scale` for static entities (factors 3 and 4 of `setup.md` §5.2 need attachment
+> parents, which the walker does not have) and the drawn model scale for placed figures; *p*
+> is the product of `value_b` along the object's visual chain (`setup.md` §5.2).
+> (g) Observation: at reference location M3-03, 40 spawned owners asked for 2 effects; the
+> other owners' Particle nodes wait behind Switch nodes on properties the walker does not
+> set (it feeds no world state into these scripts).
 
 <a id="s5-5"></a>
 ### 5.5 Attached path (BIN)
@@ -578,8 +613,15 @@ So after deaths the draw order inside an emitter is no longer creation order (ex
 > local-space system simulates in its own frame (the identity at the origin: spawn, direction
 > and gravity are not turned by the owner), and each draw instance moves the whole particle
 > set by its transform, scaled per axis by *S*, with the camera axes turned into the
-> instance's frame for the billboards; distance-emission offsets are turned into that frame
-> too. A world-space system simulates in world space with the frame of the first instance of
+> instance's frame for the billboards. The two anchors of distance emission (`particles.md`
+> §8.4) follow the world position and orientation of the frame's first instance, also for
+> a local-space system, and each offset from a stepped anchor to the current one (and the
+> `Line` vector between the stepped anchors) is turned back into the system's own frame by
+> that instance's rotation (not divided by *S*, so the drawn trail scales with *S* like the
+> particles); a moving owner therefore leaves a trail. (Corrected 2026-10-09 after
+> verification: the first implementation kept the anchors in the identity frame, so a
+> local-space system never emitted by distance, although this note said otherwise.) A
+> world-space system simulates in world space with the frame of the first instance of
 > the frame and is drawn once, for the first instance that passes the distance test (§4.1 of
 > `particles.md`: "drawn once"). `use_lighting` multiplies by an ambient colour only (white
 > unless the caller supplies one); the point lights wait for Q8 (b). Which of these the
@@ -692,6 +734,12 @@ part of `particles.md` Q1.
 7. **Hostile dropped effects:** a never-ending effect on the dropped path (never in the data,
    §5.2) would never be removed by the client except with its scene; Tessera removes such an
    entry 6 s after it is placed, as if it had been stopped at once.
+
+> **OPEN:** (implementer, 2026-10-09) Rule 7 has two readings. `crates/particles` takes the
+> removal time only: the effect is placed without being stopped, emits normally and is removed
+> at the first sweep more than 6 s after its placement (so it shows its first 6 s). Read
+> literally ("stopped at once"), the effect would be stopped at placement and, since a stopped
+> system emits nothing, would show nothing at all. Which reading is meant?
 8. Q-RT1 to Q-RT6: the Decisions given in their callouts.
 
 > **OPEN:** (implementer, 2026-10-08) Engineering limits the spec does not set, chosen
@@ -868,4 +916,5 @@ These are suggestions for the owners of those specs; this spec edits none of the
 
 | Date | Sections | Change |
 |---|---|---|
+| 2026-10-09 | §3.2, §5.4, §9.2, §12 | Implementer OPEN notes only (clean room): the walker's owners and "drawn" (§3.2), its choices for redirect, gating, driven fields, opacity, water and scales (§5.4), the corrected distance-emission note of §9.2, the two readings of rule §12.7. No fact changed. |
 | 2026-10-08 | all | First version, status Review. Run-time behaviour from a third M4 pass (row BIN) and a census of all 41,354 Particle nodes (OBS): entry points, clock and random generator, the stored never-ending byte, node start gates, attached and dropped paths, water probe, redirect, attachment frames, the owner's scale vectors, stop / linger / removal, particle storage order, draw calls, fork blend-mode table; worked example; Q-RT1–Q-RT6. |

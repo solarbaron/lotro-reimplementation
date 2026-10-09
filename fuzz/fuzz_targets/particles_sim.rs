@@ -97,7 +97,11 @@ fn template() -> ParticleSystem {
         frames_v: 2,
         frame_rate: 12,
         random_start_frame: true,
-        keyframes: vec![key(0.0, 0x770, controller), key(0.5, 0x37E, 5), key(0.8, 0x106, 4)],
+        keyframes: vec![
+            key(0.0, 0x770, controller),
+            key(0.5, 0x37E, 5),
+            key(0.8, 0x106, 4),
+        ],
         bone: u32::from(shape == 5),
         velocity_facing: shape == 2,
         ..Emitter::default()
@@ -182,7 +186,12 @@ fn simulate(ps: ParticleSystem, mut input: Bytes<'_>) {
             )
         } else {
             let b = f32::from(input.u8()) / 32.0;
-            (Vec3::new(b, 0.0, 0.0), Vec3::splat(1.0 + b), Vec3::ONE, Vec3::X * b)
+            (
+                Vec3::new(b, 0.0, 0.0),
+                Vec3::splat(1.0 + b),
+                Vec3::ONE,
+                Vec3::X * b,
+            )
         };
         let p = Placement {
             position,
@@ -199,7 +208,14 @@ fn simulate(ps: ParticleSystem, mut input: Bytes<'_>) {
         let frame = k * u64::from(1 + input.u8() % 3) * 40;
         sim.place(frame, now, p, &env, &mut rng, &OriginAttachments);
         if input.u8() & 3 == 0 {
-            sim.place(frame, now, Placement::at(position + Vec3::X), &env, &mut rng, &OriginAttachments);
+            sim.place(
+                frame,
+                now,
+                Placement::at(position + Vec3::X),
+                &env,
+                &mut rng,
+                &OriginAttachments,
+            );
         }
         if k == 5 {
             sim.recompute_forces(wind);
@@ -210,7 +226,13 @@ fn simulate(ps: ParticleSystem, mut input: Bytes<'_>) {
                 assert!(inst.vertices.len() <= MAX_VERTICES);
                 assert!(inst.quad_vertices <= inst.vertices.len());
                 for v in &inst.vertices {
-                    assert!(v.position.iter().chain(&v.colour).chain(&v.uv).all(|c| c.is_finite()));
+                    assert!(
+                        v.position
+                            .iter()
+                            .chain(&v.colour)
+                            .chain(&v.uv)
+                            .all(|c| c.is_finite())
+                    );
                 }
             }
         }
@@ -227,13 +249,31 @@ fn simulate(ps: ParticleSystem, mut input: Bytes<'_>) {
     // The manager: attach, place, stop with or without disposal, sweep, housekeeping.
     let mut mgr = EffectManager::new();
     let immediate = input.u8() & 1 == 1;
-    let make = || Some(Effect::Particles(SystemSim::with_config(Arc::clone(&desc), 0.0, config)));
+    let make = || {
+        Some(Effect::Particles(SystemSim::with_config(
+            Arc::clone(&desc),
+            0.0,
+            config,
+        )))
+    };
     let started = mgr.start_attached(1, 0x3900_0001, 0.0, make, AttachSpec::default());
     let env = Environment::default();
     for k in 0..12u64 {
         let t = k as f64 * 0.75;
         mgr.begin_frame(k, t);
-        mgr.place_owner(1, k, t, Mat4::IDENTITY, Vec3::ONE, Vec3::ONE, 1.0, &|_| None, &env, &mut rng, &OriginAttachments);
+        mgr.place_owner(
+            1,
+            k,
+            t,
+            Mat4::IDENTITY,
+            Vec3::ONE,
+            Vec3::ONE,
+            1.0,
+            &|_| None,
+            &env,
+            &mut rng,
+            &OriginAttachments,
+        );
         mgr.place_lingering(k, t, &env, &mut rng, &OriginAttachments);
         mgr.housekeep(1, t);
         if k == 4

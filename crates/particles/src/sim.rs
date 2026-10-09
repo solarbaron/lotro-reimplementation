@@ -15,7 +15,9 @@
 //! Frames (`particles.md` Q8, Tessera decision recorded in `particle-runtime.md`): a
 //! world-space system simulates in world coordinates with the first draw instance of the
 //! frame as its frame; a local-space system simulates in its own frame (identity at the
-//! origin) and is drawn through each instance's transform.
+//! origin) and is drawn through each instance's transform. The anchors of distance
+//! emission (§8.4) follow the first instance's world frame in both cases; for a
+//! local-space system the distance-emission offsets are turned back into its own frame.
 
 use std::sync::Arc;
 
@@ -345,6 +347,8 @@ pub struct SystemSim {
     pub(crate) instance_frame: Option<u64>,
     pub(crate) instances: Vec<Placement>,
     pub(crate) frame: SimFrame,
+    /// The first instance's world frame: the anchors of distance emission (§8.4).
+    pub(crate) anchor: SimFrame,
     pub(crate) emitters: Vec<EmitterSim>,
     pub(crate) time_step: f64,
     pub(crate) env: Environment,
@@ -408,6 +412,7 @@ impl SystemSim {
             instance_frame: None,
             instances: Vec::new(),
             frame: SimFrame::IDENTITY,
+            anchor: SimFrame::IDENTITY,
             emitters,
             env: Environment::default(),
             stats: SimStats::default(),
@@ -541,6 +546,10 @@ impl SystemSim {
                 .is_some_and(|f| frame.saturating_sub(f) > RESTART_FRAMES);
         self.last_placed_frame = Some(frame);
         self.frame = self.sim_frame(&placement);
+        self.anchor = SimFrame {
+            position: placement.position,
+            rotation: placement.rotation,
+        };
         if self.start.is_none() || restart {
             self.begin(now, rng);
         }
@@ -579,7 +588,7 @@ impl SystemSim {
         } else {
             inv * self.env.wind
         };
-        let frame = self.frame;
+        let anchor = self.anchor;
         let time_step = self.time_step;
         for (e, s) in self.desc.emitters.iter().zip(&mut self.emitters) {
             let t0 = start + f64::from(finite(e.start_time));
@@ -594,8 +603,8 @@ impl SystemSim {
             s.control.wind = wind;
             s.control.time_step = time_step;
             let line = line_vector(e, &mut s.curves, now, rng);
-            s.prev_system_anchor = frame.position;
-            s.prev_line_anchor = frame.position + frame.rotation * line;
+            s.prev_system_anchor = anchor.position;
+            s.prev_line_anchor = anchor.position + anchor.rotation * line;
         }
     }
 
@@ -628,6 +637,7 @@ impl SystemSim {
         }
         let desc = Arc::clone(&self.desc);
         let frame = self.frame;
+        let anchor = self.anchor;
         let emitting = self.stopped_at.is_none();
         let budget = self.config.max_live_particles;
         let mut live_other: usize = self.live_particles();
@@ -635,7 +645,7 @@ impl SystemSim {
             live_other -= s.particles.len();
             let et = now - (start + f64::from(finite(e.start_time)));
             let line = line_vector(e, &mut s.curves, now, rng);
-            let line_anchor = frame.position + frame.rotation * line;
+            let line_anchor = anchor.position + anchor.rotation * line;
             let room_left = budget.saturating_sub(live_other);
             let mut ctx = SpawnCtx {
                 desc: &desc,
@@ -643,6 +653,7 @@ impl SystemSim {
                 now,
                 start,
                 frame,
+                anchor,
                 room_left,
                 config: self.config,
                 stats: &mut self.stats,
@@ -651,7 +662,7 @@ impl SystemSim {
                 timed_emission(&mut ctx, s, rng);
                 distance_emission(&mut ctx, s, line, line_anchor, rng);
             } else {
-                s.prev_system_anchor = frame.position;
+                s.prev_system_anchor = anchor.position;
                 s.prev_line_anchor = line_anchor;
             }
             particle_update(&mut ctx, s, rng);
@@ -703,6 +714,8 @@ pub(crate) struct SpawnCtx<'a> {
     now: f64,
     start: f64,
     frame: SimFrame,
+    /// The world frame of the distance-emission anchors (§8.4): the first instance's.
+    anchor: SimFrame,
     /// Particles this emitter may still hold under the system budget.
     room_left: usize,
     config: SimConfig,
@@ -796,7 +809,7 @@ fn distance_emission(
         return;
     }
     let now = ctx.now;
-    let system_anchor = ctx.frame.position;
+    let system_anchor = ctx.anchor.position;
     // Step 1.
     let tp = s.last_distance;
     s.last_distance = now;
@@ -819,7 +832,12 @@ fn distance_emission(
     let step2 = (line_anchor - s.prev_line_anchor) / steps;
     // Step 5.
     let mut room = ctx.cap().saturating_sub(s.particles.len());
-    let inv = ctx.frame.rotation.inverse();
+    // World offsets into the simulation frame: unchanged for a world-space system (its
+    // frame is the anchor frame), turned back by the anchor's rotation for a local-space
+    // one (`particle-runtime.md` §9.2 OPEN, Tessera choice).
+    let anchor_inv = ctx.anchor.rotation.inverse();
+    let frame_rot = ctx.frame.rotation;
+    let to_sim = move |v: Vec3| frame_rot * (anchor_inv * v);
     let n = f64::from(steps);
     let mut k = 1.0f64;
     let _ = line;
@@ -841,9 +859,9 @@ fn distance_emission(
             break;
         }
         let count = (burst as usize).min(room);
-        let offset = s.prev_system_anchor - system_anchor;
+        let offset = to_sim(s.prev_system_anchor - system_anchor);
         let line_override = (e.spawn_shape() == Some(SpawnShape::Line))
-            .then(|| inv * (s.prev_line_anchor - s.prev_system_anchor));
+            .then(|| anchor_inv * (s.prev_line_anchor - s.prev_system_anchor));
         for _ in 0..count {
             spawn(ctx, s, t, offset, line_override, rng);
         }

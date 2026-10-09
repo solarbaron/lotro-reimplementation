@@ -41,6 +41,11 @@ const PARTICLES_WGSL: &str = include_str!("shaders/particles.wgsl");
 pub const MAX_PARTICLE_DRAW_VERTICES: usize = 32_768;
 /// Particle draws per pass and frame.
 pub const MAX_PARTICLE_DRAWS_PER_PASS: usize = 65_536;
+/// Particle vertices per pass and frame (all draws together, 36 MiB of vertex data; the
+/// device's `max_buffer_size` lowers it further). Draws that would pass it are skipped
+/// whole, with a warning: the data stays far below it (the largest live count of one system
+/// is about 1,300 particles), so only hostile input meets it.
+pub const MAX_PARTICLE_VERTICES_PER_PASS: usize = 1 << 20;
 /// Quads the shared index buffer covers.
 const MAX_QUADS: usize = MAX_PARTICLE_DRAW_VERTICES / 4;
 
@@ -384,6 +389,11 @@ pub(crate) fn build_hook(
     let mut items = Vec::with_capacity(draws.len());
     let mut warned = false;
     let srgb_target = ctx.format.is_srgb();
+    let vsize = size_of::<ParticleVertex>() as u64;
+    let budget = usize::try_from(device.limits().max_buffer_size / vsize)
+        .unwrap_or(usize::MAX)
+        .min(MAX_PARTICLE_VERTICES_PER_PASS);
+    let mut skipped = 0usize;
     for d in &draws {
         let n = d.vertices.len().min(MAX_PARTICLE_DRAW_VERTICES);
         if n < d.vertices.len() && !warned {
@@ -398,6 +408,10 @@ pub(crate) fn build_hook(
         let quads = (quad_vertices / 4) as u32;
         let tri_vertices = ((n - quad_vertices) / 3 * 3) as u32;
         if quads == 0 && tri_vertices == 0 {
+            continue;
+        }
+        if vertices.len() + quad_vertices + tri_vertices as usize > budget {
+            skipped += 1;
             continue;
         }
         let tint = d.tint.map(|c| if c.is_finite() { c } else { 1.0 });
@@ -456,6 +470,13 @@ pub(crate) fn build_hook(
             quads,
             triangles_vertices: tri_vertices,
         });
+    }
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            budget,
+            "particle draws skipped: the pass's vertex budget is spent"
+        );
     }
     if items.is_empty() {
         return Ok(None);

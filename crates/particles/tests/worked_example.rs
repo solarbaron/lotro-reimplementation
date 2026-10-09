@@ -321,6 +321,43 @@ fn dropped_variant_offsets_twice() {
     assert!(t > 11.75 && t < 11.80, "{t}");
 }
 
+/// Rule §12.7 (the reading in `particle-runtime.md` §12 OPEN): a never-ending effect on the
+/// dropped path is not stopped at placement; it emits and is removed at the first sweep
+/// more than 6 s after it was placed.
+#[test]
+fn never_ending_dropped_effect_runs_then_goes_after_six_seconds() {
+    let mut ps = worked_example();
+    if let Some(e) = ps.emitters.first_mut() {
+        e.emission_limit = 0;
+    }
+    let mut mgr = EffectManager::new();
+    let key = mgr.drop_effect(
+        0x3900_0001,
+        Effect::Particles(SystemSim::new(Arc::new(ps), clock(0))),
+        Placement::at(Vec3::ZERO),
+        Classification::NeverEnding,
+        clock(0),
+    );
+    let mut rng = Ran2::new(4);
+    let env = Environment::default();
+    let mut peak = 0;
+    let mut removed = None;
+    for k in 0..=frame_at(17.0) {
+        let now = clock(k);
+        mgr.begin_frame(k, now);
+        let Some(s) = mgr.effect(key).and_then(Effect::particles) else {
+            removed = Some(now);
+            break;
+        };
+        assert!(s.stopped_at().is_none(), "not stopped at placement");
+        peak = peak.max(s.live_particles());
+        mgr.place_lingering(k, now, &env, &mut rng, &OriginAttachments);
+    }
+    assert!(peak > 0, "the effect emitted");
+    let t = removed.expect("removed");
+    assert!(t > 16.0 && t < 16.0 + 0.041, "{t}");
+}
+
 /// RT-I9: an attached finite effect is removed at most 2 s (plus one frame) after its end
 /// test first passes.
 #[test]

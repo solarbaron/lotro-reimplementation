@@ -382,6 +382,31 @@ fn distance_emission_follows_the_path() {
     for p in sim.particles(0) {
         assert!(p.position.y.abs() < 1e-5 && (0.0..=3.0001).contains(&p.position.x));
     }
+    // A local-space system (Q8 Tessera choice): the anchors follow the instance's world
+    // frame, and the offsets are turned back into the system's own frame.
+    let mut e = emitter(1.0, 10.0);
+    e.emit_interval = 0.0;
+    e.emission_distance = 0.5;
+    let mut ps = system(vec![e]);
+    ps.world_space = false;
+    let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+    let turn = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    for k in 0..=30u64 {
+        let now = k as f64 / 30.0;
+        let mut p = Placement::at(Vec3::new(k as f32 * 0.1, 0.0, 0.0));
+        p.rotation = turn;
+        sim.place(k, now, p, &Environment::default(), &mut rng, &NoAttachments);
+    }
+    let n = sim.live_particles();
+    assert!((5..=6).contains(&n), "local space: {n}");
+    for p in sim.particles(0) {
+        // World offsets behind the owner (−X) are +Y in the frame turned by 90° about Z.
+        assert!(
+            p.position.x.abs() < 1e-4 && (-1e-4..=3.0001).contains(&p.position.y),
+            "{}",
+            p.position
+        );
+    }
     // A negative or non-finite distance is off (§10.9).
     for d in [-1.0, f32::NAN] {
         let mut e = emitter(1.0, 10.0);
@@ -871,5 +896,46 @@ fn huge_owner_scales_keep_vertices_finite() {
                 }
             }
         }
+    }
+}
+
+/// `particles.md` §8.5.5: with `stick_to_bones` = 1 a particle **and its streak anchor**
+/// are drawn at the attachment point, so a streaked particle collapses to the default
+/// corners centred on the point.
+#[test]
+fn stuck_particles_draw_without_a_streak() {
+    let mut e = emitter(10.0, 5.0);
+    e.speed = Curve::constant(2.0);
+    e.direction = CurveVec::constant([0.0, 0.0, 1.0]);
+    e.streak = Curve::constant(0.5);
+    e.bone = 1;
+    e.stick_to_bones = true;
+    if let Some(k) = e.keyframes.first_mut() {
+        k.controller = 2;
+    }
+    let mut sim = SystemSim::new(Arc::new(system(vec![e])), 0.0);
+    let mut rng = Ran2::new(8);
+    let mut drawn = None;
+    for k in 0..30u64 {
+        let now = k as f64 / 30.0;
+        sim.place(
+            k,
+            now,
+            Placement::default(),
+            &Environment::default(),
+            &mut rng,
+            &OriginAttachments,
+        );
+        drawn = sim.draw(now, &camera(), &mut rng);
+    }
+    let drawn = drawn.expect("drawn");
+    let inst = drawn.instances.first().expect("an instance");
+    assert!(inst.quads() > 0);
+    for quad in inst.vertices.as_chunks::<4>().0 {
+        let c = quad
+            .iter()
+            .fold(Vec3::ZERO, |a, v| a + Vec3::from_array(v.position))
+            / 4.0;
+        assert!(c.length() < 1e-4, "quad centred at {c}");
     }
 }

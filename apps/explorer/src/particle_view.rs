@@ -13,7 +13,6 @@
 //! camera and the wheel zooms.
 //!
 //! Fork effects (0x44) are not simulated (`particles.md` rule §10.2): the view says so.
-//! The walker does not start effects yet.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -324,6 +323,39 @@ pub fn draw_sphere(sys: Option<&SystemDraw>) -> ([f32; 3], f32) {
     (c.to_array(), ((hi - lo).length() * 0.5).clamp(0.5, 500.0))
 }
 
+/// The height of the preview's ground: 0, or 5 cm below the lowest finite vertex of
+/// `draws` (at most 500 m down).
+#[must_use]
+pub fn ground_height(draws: &[ParticleDraw]) -> f32 {
+    let low = draws
+        .iter()
+        .flat_map(|d| &d.vertices)
+        .map(|v| v.position[2])
+        .filter(|z| z.is_finite())
+        .fold(0.0f32, f32::min);
+    if low < 0.0 {
+        (low - 0.05).max(-500.0)
+    } else {
+        0.0
+    }
+}
+
+/// The union of bounding spheres (centre, radius) as one sphere around their boxes.
+fn union_sphere(spheres: &[([f32; 3], f32)]) -> ([f32; 3], f32) {
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for (c, r) in spheres {
+        let c = Vec3::from_array(*c);
+        lo = lo.min(c - Vec3::splat(*r));
+        hi = hi.max(c + Vec3::splat(*r));
+    }
+    if !lo.is_finite() || !hi.is_finite() {
+        return ([0.0, 0.0, 1.0], 2.0);
+    }
+    let c = (lo + hi) * 0.5;
+    (c.to_array(), ((hi - lo).length() * 0.5).clamp(0.5, 500.0))
+}
+
 /// The preview's GPU side: a headless renderer, the surface texture and a ground plane.
 pub struct PreviewGpu {
     renderer: Renderer<'static>,
@@ -417,12 +449,16 @@ impl PreviewGpu {
             .renderer
             .begin_offscreen_frame(target)
             .map_err(|e| e.to_string())?;
+        // The ground sits at z = 0, or just below the lowest drawn vertex, so particles
+        // below the owner's origin stay visible.
+        let ground_z = ground_height(&draws);
         let pass = frame.world_pass("particles", camera);
         pass.clear(BACKGROUND).mesh(MeshDraw::new(
             self.ground,
-            tessera_render::glam::Mat4::IDENTITY,
+            tessera_render::glam::Mat4::from_translation(Vec3::new(0.0, 0.0, ground_z)),
             Material::color([0.16, 0.17, 0.17, 1.0]),
         ));
+        let lz = ground_z + 0.002;
         for i in -10..=10 {
             let f = i as f32;
             let c = if i == 0 {
@@ -430,8 +466,8 @@ impl PreviewGpu {
             } else {
                 [0.25, 0.26, 0.27, 1.0]
             };
-            pass.line(Vec3::new(f, -10.0, 0.002), Vec3::new(f, 10.0, 0.002), c)
-                .line(Vec3::new(-10.0, f, 0.002), Vec3::new(10.0, f, 0.002), c);
+            pass.line(Vec3::new(f, -10.0, lz), Vec3::new(f, 10.0, lz), c)
+                .line(Vec3::new(-10.0, f, lz), Vec3::new(10.0, f, lz), c);
         }
         for d in draws {
             pass.particles(d);
@@ -857,12 +893,19 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
     } else {
         plan.angles.clone()
     };
-    // Framing: the drawn particles at the latest time.
-    let latest = times.iter().copied().fold(0.0f64, f64::max);
-    let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
-    probe.run_to(latest);
+    // Framing: the drawn particles of every column that draws any (a column whose effect
+    // has ended adds nothing; with none drawn, the default sphere).
     let mut frame_orbit = OrbitView::new();
-    let (centre, radius) = draw_sphere(probe.draw(&frame_orbit.camera()).as_ref());
+    let mut spheres = Vec::new();
+    for &t in &times {
+        let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
+        probe.run_to(t);
+        let drawn = probe.draw(&frame_orbit.camera());
+        if drawn.as_ref().is_some_and(|d| d.vertex_count() > 0) {
+            spheres.push(draw_sphere(drawn.as_ref()));
+        }
+    }
+    let (centre, radius) = union_sphere(&spheres);
     let aspect = tw as f32 / th as f32;
     let blank = ColorImage::new(
         [tw as usize, th as usize],
@@ -994,5 +1037,20 @@ mod tests {
             .render(render_draws(&drawn, None, AlphaMode::Blend), &cam, 64, 48)
             .expect("rendered");
         assert_eq!(img.size, [64, 48]);
+    }
+
+    #[test]
+    fn ground_drops_below_low_particles_and_spheres_unite() {
+        let v = |z: f32| ParticleVertex {
+            position: [0.0, 0.0, z],
+            color: [1.0; 4],
+            uv: [0.0; 2],
+        };
+        assert_eq!(ground_height(&[]), 0.0);
+        let low = ParticleDraw::new(vec![v(0.5), v(-0.1), v(f32::NAN)], 0);
+        assert!((ground_height(&[low]) + 0.15).abs() < 1e-6);
+        let (c, r) = union_sphere(&[([0.0, 0.0, 0.0], 1.0), ([4.0, 0.0, 0.0], 1.0)]);
+        assert!((c[0] - 2.0).abs() < 1e-6 && r >= 3.0);
+        assert_eq!(union_sphere(&[]), ([0.0, 0.0, 1.0], 2.0));
     }
 }

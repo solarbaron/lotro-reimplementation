@@ -35,7 +35,7 @@ pub use node::{
     SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, SwitchNode,
     SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, when_op,
 };
-pub use node::{SoundNode, sound_pid};
+pub use node::{ParticleScriptNode, SoundNode, sound_pid};
 pub use record::{NodeCensus, Script, ScriptTable, Scriptlet, TABLE_KINDS};
 
 /// Type prefix of script tables.

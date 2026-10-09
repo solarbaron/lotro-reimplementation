@@ -421,3 +421,32 @@ fn hostile_draws_do_not_fail() -> Result<(), RenderError> {
     assert_eq!(stats.particle_draws, 2, "{stats:?}");
     Ok(())
 }
+
+/// The pass's vertex budget ([`MAX_PARTICLE_VERTICES_PER_PASS`]): draws beyond it are
+/// skipped whole instead of failing the frame with one oversized buffer.
+#[test]
+fn the_pass_vertex_budget_skips_whole_draws() -> Result<(), RenderError> {
+    use tessera_render::{MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_VERTICES_PER_PASS};
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let v = ParticleVertex {
+        position: [0.0, 0.0, -50.0],
+        color: [1.0; 4],
+        uv: [0.0; 2],
+    };
+    let fit = MAX_PARTICLE_VERTICES_PER_PASS / MAX_PARTICLE_DRAW_VERTICES;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame.world_pass("p", &camera());
+    for _ in 0..fit + 8 {
+        pass.particles(ParticleDraw::new(
+            vec![v; MAX_PARTICLE_DRAW_VERTICES],
+            MAX_PARTICLE_DRAW_VERTICES,
+        ));
+    }
+    let stats = r.end_frame(frame)?;
+    assert!(stats.particle_draws as usize <= fit, "{stats:?}");
+    assert!(stats.particle_vertices as usize <= MAX_PARTICLE_VERTICES_PER_PASS);
+    Ok(())
+}

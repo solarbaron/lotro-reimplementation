@@ -106,6 +106,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   game-controls) are implemented on main; the eight gameplay decoders (items, combat,
   creatures, quests, economy, map, particles, misc records) and explorer gameplay cards
   are on branch `gameplay-formats`, to be merged.
+- **Particle effects (branch `particles-runtime`, 2026-10-09):** `particles.md` §8 and
+  `particle-runtime.md` are implemented in `tessera-particles`, the render pipeline, the
+  explorer preview and, in the walker, for the effect nodes of the start-up scripts of
+  static entities and placed figures (`tessera-scriptgraph` runs the nodes; real-data test
+  `apps/client/tests/particles_real_data.rs` at M3-03). **Not end to end:** fork effects are
+  not drawn (`particles.md` rule §10.2), nor systems of the post-processing pass; weather
+  systems and wind, beams, the gameplay event handler, lit systems' lights, `inherit_opacity`
+  and bounds culling wait for their specs (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2,
+  §11, §12). To be reviewed and merged.
 - **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
   Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
@@ -172,7 +181,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/script` — Lua 5.1 plugin host
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
 - `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`, particle preview of 0x39 records and `--particles DID --sheet`)
-- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test; `--server` joins a test server)
+- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs, particle effects from the scripts of placed objects and NPCs, and a `--crowd` load test; `--server` joins a test server)
 - `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
 - `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests
 - `docs/specs` — clean-room specifications; `docs/decisions` — decision records;

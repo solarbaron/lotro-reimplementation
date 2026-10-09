@@ -4,6 +4,9 @@
 //!
 //! A counting global allocator measures the peak number of live heap bytes while a
 //! decoder runs. Measurements are serialized by a mutex so tests do not see each other.
+//! It also counts the allocations made by each thread, so a test that expects no
+//! allocation at all counts only its own thread's (the harness's other threads allocate
+//! whenever they like).
 
 // A `GlobalAlloc` implementation is unsafe by definition; it only forwards to `System`.
 #![allow(unsafe_code)]
@@ -11,6 +14,7 @@
 mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -28,8 +32,14 @@ static CURRENT: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 static SERIAL: Mutex<()> = Mutex::new(());
 
+thread_local! {
+    /// Allocations (including reallocations) made by this thread. A `const`-initialised
+    /// `Cell<usize>` needs no allocation and no destructor, so the allocator may use it.
+    static THREAD_ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
 // SAFETY: every method forwards to `System` with the caller's arguments unchanged and only
-// updates two counters on the side.
+// updates counters on the side (thread-local ones without allocating).
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: forwarded unchanged.
@@ -69,6 +79,21 @@ unsafe impl GlobalAlloc for Counting {
 fn track_add(size: usize) {
     let now = CURRENT.fetch_add(size, Ordering::Relaxed) + size;
     PEAK.fetch_max(now, Ordering::Relaxed);
+    // During thread teardown the slot may be gone; such allocations are not counted.
+    let _ = THREAD_ALLOCATIONS.try_with(|n| n.set(n.get().wrapping_add(1)));
+}
+
+/// Allocations made by the current thread so far.
+fn thread_allocations() -> usize {
+    THREAD_ALLOCATIONS.try_with(Cell::get).unwrap_or(0)
+}
+
+/// Runs `f` and returns its result with the number of allocations the current thread made
+/// while it ran (exact: other threads' allocations are not counted).
+fn allocations_during<R>(f: impl FnOnce() -> R) -> (R, usize) {
+    let before = thread_allocations();
+    let r = f();
+    (r, thread_allocations().wrapping_sub(before))
 }
 
 #[global_allocator]
@@ -955,9 +980,13 @@ fn string_entry_iterators_do_not_allocate() {
         .build();
     let t = StringTable::parse(&data).unwrap();
     let e = t.get(7).unwrap();
-    let ((parts, issues), peak) = peak_during(|| (e.parts().count(), e.issues().count()));
+    let ((parts, issues), allocations) =
+        allocations_during(|| (e.parts().count(), e.issues().count()));
     assert_eq!((parts, issues), (6, 2));
-    assert_eq!(peak, 0);
+    assert_eq!(allocations, 0);
+    // The count is the thread's own: an allocation inside the measurement is seen.
+    let (v, allocations) = allocations_during(|| std::hint::black_box(vec![1u8; 16]));
+    assert_eq!((v.len(), allocations), (16, 1));
 }
 
 #[test]

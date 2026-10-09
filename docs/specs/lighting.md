@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08, seventh revision, see §16) |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (2026-10-09, spec writer: §5.2 item 2 and its §15 OPEN point to `material.md` §10.3; awaiting review). Before: Accepted (2026-10-08, seventh revision, see §16) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Seventh revision: separate Claude review session (spec-reviewer role), 2026-10-08, **passed** (Accepted). Sixth revision: Claude review session (spec-writer agent), 2026-10-07, **passed** (Accepted). Earlier rounds and detailed findings: dirty-room review log (incident 0018). |
@@ -375,8 +375,11 @@ buffer (BIN-L (h)), so all arithmetic happens on the stored values (gamma space)
    `ColorAndOpacity` / `ColorAndOpacity2` record 0x2B0006E8 multiplies the RGB values and
    the alphas (the product is the opacity); the `ColorAndDye` / `ColorAndDye2` record
    0x2B0006E4 adds the RGB values. The combine is coded in each record's programs; no data
-   field selects it (§15). **Tessera Decision:** multiply for `…Opacity2` roles, add for
-   `…Dye2` roles, multiply otherwise.
+   field selects it (§15). **Revised 2026-10-09:** the per-record answer is `material.md`
+   §10.3 (row MA50: RGB added in the 15 records listed there, multiplied in the others; the
+   alphas multiplied); it replaces the former Tessera Decision "multiply for `…Opacity2`
+   roles, add for `…Dye2` roles, multiply otherwise", which was wrong for 13 `ColorAndOpacity`
+   records, among them waterfall and foam records (`water.md` §8.5.3).
 3. **Dye.** With a dye mask *a* (the alpha of the role carrying `Dye`, `material.md` §12.2)
    and dye colour *D*: *C* ← *a* · *C* + (1 − *a*) · (*C* × *D*). This is `material.md` §12.3's
    smooth form, applied to the sampled values before lighting. A second dye colour *D2*
@@ -1087,9 +1090,9 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 > **OPEN (for implementers):** align the walker's terrain light selection and the renderer's
 > handling of unattached lights with §8.3 and §8.5 (callouts there).
 
-> **OPEN:** How a record combines its two colour layers (multiply or add, §5.2 item 2): the
+> **Answered 2026-10-09 (`material.md` §10.3, MA50; was OPEN):** How a record combines its two colour layers (multiply or add, §5.2 item 2): the
 > combine is coded per record in its programs and no data field or role name selects it;
-> Tessera Decision there.
+> the per-record table is in `material.md` §10.3.
 
 > **OPEN:** Glow composition (bloom); the other effect inputs of §4.2 E21 (metallic-specular
 > amount, opacity-fog properties, fake ambient terms); cube environment maps.
@@ -1111,3 +1114,4 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 | 2026-10-07 | Fifth revision (spec writer; M4 under decision 0011, BIN-L fourth pass with the Ghidra decompiler). Status Accepted → Revised. §1: BIN-L questions (l), (m); rows L30–L33; L19 cites (m). §8.3: light fields mapped to properties by the ids the client registers (replaces the Inferred mapping by name); the `Light_BakedLandscapeLight` OPEN answered: such lights never reach terrain or ceiling chunks (the former Tessera Decision limited this to chunks with a light map). §8.5: the object-light-list OPEN answered (selection radius ρ with the constant 0.85, box distance test, exclusions, key lights first); a narrower OPEN on the scene's light order with a Tessera Decision. §15 updated. Implementers: `walker.md` §14.3 (terrain light table) and `render.md` §4.3 (automatic selection) differ from these rules. |
 | 2026-10-07 | Sixth revision (spec writer; M4 under decision 0011, BIN-L sixth pass in an own copy of the Ghidra project; incident 0018 follow-up). Status Revised → Review. Header: the long review records moved to the dirty-room review log; a short record remains. §1: BIN-L questions (n)–(p); row L30 narrowed (light lists BIN, "normal play" Inferred); new rows L34–L37. §3.1: the bone-matrix share stated (review census). §3.2: pass 0x41 reading names the light-map bake. §5.6: Tessera Decision for per-pixel evaluation of the listed lights (what `tessera-render` does). §8.1: the indoor record (by reference to `landblock.md` §4.13) replaces the Inferred indoor sentence. §8.3: field-table row and the baked-landscape paragraph aligned with §8.6; implementer OPEN on the walker's terrain light selection. §8.5: step 2 states the candidates (drawn this frame, no scene flags); step 3 the parent rule for lights without a parent (BIN; withdraws the render.md Decision (a)); implementer OPEN of 2026-10-07 part (a) answered, (b) and (c) kept with their Decisions. New §8.6: the client's light-map bake (trigger, inputs, composite; Inferred not in normal play; OPEN and Tessera Decision "no bake"). §9: the shadow Tessera Decision covers the variants the renderer and walker use. §15 updated. Change-log rows put in date order. Implementers: `render.md` §4.3 Decision (a) and the walker's terrain light selection differ from §8.3, §8.5. |
 | 2026-10-08 | Seventh revision (spec writer; M4 under decision 0011, BIN-L seventh pass in an own copy of the Ghidra project, questions (q), (r)). Status Accepted → Revised, waiting for review. No section number or anchor changed. §8.1: the "immediate" switch between the outdoor and indoor records is explained (no transition of its own; the 5 s sun-change fade of `environment.md` §11.6 smooths it exactly when it changes "sun present"; immediate updates cut), row L40; the cross-fade paragraph corrected to follow `environment.md` §11.6 and E27 (a sky-key change starts it, not a new day description; raw timer; direction blended as a vector); the **Sun** paragraph points to the outdoor no-main-light rule (review note 3 of the sixth revision). §5.9: pointer to the glow Decision of `render.md` §4.1 (review note 4). §8.5 step 2 and the implementer OPEN of 2026-10-07: (b) answered for rigid objects (L38: eight corners of one local box under the full transform), skinned and instanced boxes stay open; (c) answered (L39: the walk does not test the light's kind; a directional light is tested by distance and placed by step 4), so Decision (c) of `render.md` §4.3 now departs from the client; the remainder (more than one directional light; key directional light without a main light) stays open. §1: BIN-L questions (q), (r); rows L38–L40. §15 updated. Not done in this revision: review notes 1 and 2 of the sixth revision (§8.6 step 5 reset state; moving the §8.6 evidence narrative). |
+| 2026-10-09 | Spec writer (dirty room), with the water-feature revision of `water.md` and `material.md`. Status Accepted → Revised. §5.2 item 2: the role-based Tessera Decision for combining two colour layers is replaced by the per-record table of `material.md` §10.3 (MA50, read in the programs of both back ends); the matching §15 OPEN is answered. No other change; no section number or anchor changed. |

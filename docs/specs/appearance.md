@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09, full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
+| **Status** | Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review; 2026-10-08: review of the BIN4 and BIN5 revisions (another fresh session); 2026-10-08: narrow re-review of §3.3 (a further fresh session) |
-| **Review record** | Full review 2026-10-09 (Claude review session, spec-reviewer, a fresh session that wrote no part of this spec and did none of the earlier reviews): **passed**, Accepted. Scope: the whole spec, with `git diff f9eb8db` (BIN5, OBS3, the O12 change, the §14 and §15 answers, the merge header). Every `CLEAN_ROOM.md` §5.3 item holds. Every earlier blocking item is resolved: the three of the first review of 2026-10-07 and the one of the re-review of 2026-10-07, repeated on 2026-10-08 (§3.3 toggle counts and the OPEN's conclusion; fixed by OBS3 and A34, passed by the narrow re-review of 2026-10-08). Spot checks (read-only): A34 over all 40,643 0x47 entities with an own probe on the repository decoders (11 name the property, 7 of them carry it; 19 carry it, all true and at top level; no listed 0x78 set carries or names it), matches; the O12 fact (`script-runtime.md` R40) in a private copy of the client analysis, deleted afterwards (the Random pick draws from one global combined generator with a shuffle table, seeded at start-up from the clock and by one other routine; nothing in the pick path seeds per object), matches. Non-blocking notes: name the 0x78 counts of §3.3 in A34; give the O12 fact its own provenance row; refresh the §13 O12 line; answer the last §15 confirmation OPEN. Earlier: first review and re-review 2026-10-07, changes requested; review 2026-10-08 of BIN4 and BIN5, changes requested; narrow re-review 2026-10-08 of §3.3, passed. Full records in the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-09 of the review answer (Claude review session, spec-reviewer, a fresh session that wrote no part of this spec and did not do the review of 2026-10-09): **passed**, Accepted. Scope: commit c2d3cc9 (header; §1 A35, A36, A37, A39; §5.5; §5.7 steps 2 and 3; §6.1; §13; §15; change-log row), read against `CLEAN_ROOM.md` §5.3 together with the rest of `git diff main -- docs/specs/appearance.md`. Every §5.3 item holds: functional facts only; no code or pseudo-code; no copied prose; names only for interoperability; no game text, keys or hostnames; the new statements carry A35–A39 with OBS4, BIN6 or the property dictionary; Decisions are labelled; nothing under a closed gate. Blocking items: (1) resolved, §5.7 step 2 now separates the unattached path (BIN6, the client's rule) from the attached path (labelled Tessera Decision, narrow OPEN on the per-frame composition and on `RemoveRotation` 1), and A35 marks the attached composition as a Decision; (2) resolved, §5.7 step 3 carries an OPEN on whether bits 0x4000 and 0x40000000 are the §6.1 holder-factor bits, the §6.1 "What was not traced" paragraph and its Decision cross-reference agree with BIN6, and A36 records the link as OPEN. Spot checks (read-only, own throwaway probe on the repository decoders, scratch only): the property dictionary types `Inventory_Cosmetic_Slot1_Behavior` … `Slot4_Behavior` as enum over mapper 0x23000097, default 0 (A39, matches); in table 0x07000090, scripts 0x10000684 and 0x10000593 gate their stowed placements on a When test `Script_Item_Primary_Cosmetic_Hide` (or `…_Secondary_…`) = false; the secondary script has no other port there, the primary script's other port holds the four-DID fishing-pole case on `Script_Item_PhysObj_Primary_Cosmetic` with one attached MeshFX node (A37, matches); the cosmetic in-hand case stores 55 values, 54 distinct (matches §5.6); MeshFX nodes store `UseParticleScale` 1 in 4 of 14 nodes of 0x10000684 (the starting-idle sheath nodes) and 20 of 43 of 0x100007C3, `IgnoreChildScale` 1 in none of the three scripts (consistent with the §5.7 step 3 OPEN). Non-blocking notes: the fishing-pole path of script 0x10000684 also sits under a When test `Inventory_PrimaryEquipmentCategory` ≠ 0, which A37 and the §5.6 paragraph do not say; the §5.6 sentence "the primary and secondary stowed scripts run only while … is false" reads better as "place items only while …" since the next sentence gives the primary exception; the per-script counts above could go into the §5.7 step 3 OPEN. Previous record: Review 2026-10-09 of the BIN6/OBS4 revision (Claude review session, spec-reviewer, a fresh session that wrote no part of this spec): **changes requested**. Scope: `git diff main -- docs/specs/appearance.md` on branch specs-11 (commit 5484cc8: OBS4, BIN6, A35–A40, §3.2.1, §3.3, §4.4, §4.7, §5.3–§5.7, §6.1, §7.4, §8, §15, §17). Holds: functional facts only; no code (the §5.7 quaternion is a mathematical identity, checked by hand to equal *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch), and consistent with `coordinates.md` §11.3); no copied prose; names only for interoperability; no game text, keys or hostnames; new facts carry A35–A40 with OBS4 and BIN6 rows (BIN6 under decision 0011, questions and limits stated); Decisions are labelled; stable section numbers (new §5.7 appended); change-log row present. Spot checks (read-only, own probe on the repository decoders): dictionary types and defaults of `Script_AdjustableScale_Secondary_Vector` and `Inventory_Cosmetic_Slot<n>_Scale` (vector3, (1, 1, 1)), `…_OffsetRotationRoll` (float 0), `…_Hide` (bool false), `Inventory_Cosmetic_IsSheathed` labels 0–5; script 0x100007C3 of table 0x07000090 (death and `MonsterPlayer` branches, the sheathed condition, the four fixed `Sheath_Back_Shield` placements, location 0 empty, sheathed nodes drive only `Entity`, `Scale`, `Behavior`, the default and unsheathed nodes drive all seven fields including roll); script 0x10000684 (gauntlet effect 0x4700A619 at `Wpn_RHand` yaw −90 and `Wpn_LHand` yaw +90 in the stowed script; 54 cosmetic in-hand DIDs; the four-DID fishing-pole case at `Wpn_RHand` under `Script_Item_Primary_Cosmetic_Hide`); script 0x10000593 (the same 54 DIDs at `Wpn_LOffHand`; the shield `Wpn_Forearm` nodes only under a non-null `Script_Item_PhysObj_Secondary_Cosmetic`; nothing while ranged and mounted); script 0x10000527 (GameCallback nodes naming 0x70000469). All match. **Blocking:** (1) §5.7 step 2 and A35: the composition for attached nodes (`AttachToParent` 1, every placement of §5.5 and §5.6) was not read, yet the text states it as the rule with only "(Tessera uses the same order)"; mark it as a Tessera Decision and add a narrow `> **OPEN:**` for the attached path, and qualify A35 accordingly (`CLEAN_ROOM.md` §5.3, unknowns marked OPEN, not guessed). (2) §5.7 step 3: "whether these are the two holder-factor bits of §6.1 was not checked" is an unknown without an OPEN callout; add one, and bring the §6.1 "What was not traced" paragraph (which still says no link between a MeshFX field and either bit was seen) in line with BIN6 (the node copies `UseParticleScale` and `IgnoreChildScale` into two flag bits of the spawned object), with a cross-reference. Note for this item: the sheathed nodes of script 0x100007C3 and the starting-idle sheath nodes of 0x10000684 store `UseParticleScale` 1, unlike the §5.6 rows, so the answer matters for those props. Non-blocking: let A37 (or a new row) also cover the fishing-pole case and the `…_Cosmetic_Hide` gating of §5.6; the §5.5 table gives `_Behavior` as "script key", the dictionary types it as an enum over the script-key mapper (say so); the Human M lute row of §5.6 and the 0x10002BA0 node counts were not spot-checked. Previous record: Full review 2026-10-09 (Claude review session, spec-reviewer, a fresh session that wrote no part of this spec and did none of the earlier reviews): **passed**, Accepted. Scope: the whole spec, with `git diff f9eb8db` (BIN5, OBS3, the O12 change, the §14 and §15 answers, the merge header). Every `CLEAN_ROOM.md` §5.3 item holds. Every earlier blocking item is resolved: the three of the first review of 2026-10-07 and the one of the re-review of 2026-10-07, repeated on 2026-10-08 (§3.3 toggle counts and the OPEN's conclusion; fixed by OBS3 and A34, passed by the narrow re-review of 2026-10-08). Spot checks (read-only): A34 over all 40,643 0x47 entities with an own probe on the repository decoders (11 name the property, 7 of them carry it; 19 carry it, all true and at top level; no listed 0x78 set carries or names it), matches; the O12 fact (`script-runtime.md` R40) in a private copy of the client analysis, deleted afterwards (the Random pick draws from one global combined generator with a shuffle table, seeded at start-up from the clock and by one other routine; nothing in the pick path seeds per object), matches. Non-blocking notes: name the 0x78 counts of §3.3 in A34; give the O12 fact its own provenance row; refresh the §13 O12 line; answer the last §15 confirmation OPEN. Earlier: first review and re-review 2026-10-07, changes requested; review 2026-10-08 of BIN4 and BIN5, changes requested; narrow re-review 2026-10-08 of §3.3, passed. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (appearance-list structs, bone-slider definition structs; the 0x20 decoder already exists), `crates/anim` (bone-slider application, attach placement), `crates/assets` or a new assembly module (slot table, priority resolution, material and dye selection), `apps/explorer` (character viewer: species, sex, worn items, dyes, sliders), `apps/client` and the sandbox backend (animated avatar, static NPCs) |
 | **Companion specs** | [`setup.md`](setup.md) (normative for the 0x47, 0x1F, 0x04 and 0x20 layouts, the item paths §3, the slot field §8.3 and §12.2, held items §13). [`skeleton-anim.md`](skeleton-anim.md) (skeletons, the race-table walk §2.2, attach points §8, the multi-part rule §9). [`material.md`](material.md) §9.3 (material groups), §12 (dyes). [`entity-descriptor.md`](entity-descriptor.md) (SEDs, instance IDs). [`landblock.md`](landblock.md) §4.8 (the landblock weenie list). [`property-system.md`](property-system.md) §5–§8 (property sets, enum mappers, DID maps). `script-table.md` (which clip plays; idle animations of NPCs; §5 node layouts of the Appearance, MeshFX, EditMaterial and compositor nodes used by §3.5, §5.6 and §7.4; §8 how a figure finds its tables). [`misc-records.md`](misc-records.md) §3 (face compositors and their composition). |
 
@@ -72,6 +72,8 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | BIN4 | Same executable and build (file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 with Ghidra (headless, read-only fresh copy of the shared project), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), to settle edge cases that a clean-room audit of the River-hobbit height code found unstated. **Questions:** how the slider value string is cut and read when a piece is not a clean hexadecimal pair or the string is short or of odd length (§6.3); what happens to a slider entry for a bone outside the skeleton and to limits that are not finite (§6.3); what a body-shape deformer with a missing clip or a time that is not finite does, how many deformers and slider sets a figure may hold, and how track weights are converted (§6.4). **Why M1–M3 were not enough:** every value string of the install is 70 hexadecimal digits, every bone index is in range and every deformer names a clip, so the data cannot show these rules; no published source covers them; observing the running client (M3) cannot produce such inputs. **Code read:** the slider node's string parser and per-bone entry builder, the animation component's slider-set and deformer registration, the deformation-pose builder (deformer clips and slider application) and the string class's append routine (to read its length field). Nothing of the network, login, launcher or anti-tamper code. |
 | BIN5 | Same executable and build (file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-08 with Ghidra (headless, read-only fresh copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in the same session as `script-table.md` BIN6. **Questions:** the implementation confirmation points of §14 and §15 (2026-10-07 and 2026-10-08): how the client computes a slider's channel value and what it does with a value that is not finite; whether "the most recently started" slider node is the last one in evaluation order. **Code read:** the slider channel-value routine (instruction level), the slider entry builder and applier; the script start order (`script-table.md` BIN6). **Why M1–M3 were not enough:** no slider of the install has limits or values that overflow, and no closure has two slider nodes, so the data cannot show either rule; observing the client (M3) cannot produce those inputs. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 | OBS3 | Observed 2026-10-08 (same Steam install, data current that day), read-only, with a throwaway probe on the repository's own decoders: **all 40,643** 0x47 entities (none failed to decode), every value of each entity's own property set walked at every depth, and every stand-alone 0x78 property set that an entity lists; the 14 avatar entities found through the race table (`skeleton-anim.md` §2.2). Question: which entities name `Appearance_ToggleProperty` in an appearance list and which carry `GOP_AvatarUpdateVisible` (§3.3, answering the blocking item of the 2026-10-07 re-review). |
+| OBS4 | Observed 2026-10-09 (same Steam install, data current that day), read-only, with throwaway probes on the repository's own decoders: **all 10,349** MeshFX nodes (41) of all script tables and scriptlets (1,118 with two or more non-zero stored rotation angles, 89 with a driven rotation); the six placement scripts, the visibility controller 0x10000527 and the cosmetic-inventory script 0x100007C3 of table 0x07000090; the sheathed-instrument script 0x10002BA0 in the 12 avatar binding tables that define it; **all 367** Random nodes (17) with a single Default port; **all 29,134** visual templates (setup sections and parents); **all 47,563** meshes (index buffers and the draw entries of every level); **all 4,201** 0x20 records (74,839 blocks), **all 12,199** list elements of the 0x47 records and **all 421,791** list elements of the landblock instance sets, for finite values; the properties `Inventory_Cosmetic_Slot*` and `NPC_Cosmetic_Inventory_*` over all 0x47 entities, all 0x78 and 0x79 property sets and all landblock instance sets; the dictionary definitions (type, default) of the properties named in §5.5–§5.7; the items, instance sets and lists of the H, N and B34 rows of `docs/checklists/m4-visual.md`. |
+| BIN6 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-09 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the MeshFX node's field registration (to find where each field is held), the routine that places the entity a MeshFX node spawns (angle conversion, the placement frame, the attached and unattached paths, the scale computation), the routine that turns an angle triple into a rotation, the routine that turns a rotation into axes, and the frame-composition routine of the unattached path. **Questions:** the implementation OPENs of 2026-10-09 on the axes and order of `OffsetRotationYaw`, `…Pitch` and `…Roll` and on the placement scale (§15). **Why M1–M3 were not enough:** the data hold the angles and scales but no rule for axes, order or composition; every placement row of §5.6 turns about one axis, so a look at the original (M3) cannot separate the orders; no published source states them. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -109,6 +111,12 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A32 | A slider's channel value is computed per component in single precision as (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`) × *t* + `BoneSlider_LimitMin`, each operation rounded on its own (no fused multiply-add), then multiplied by the sign; nothing checks the result, so a value that is not finite enters the bone entry (§6.3) | BIN5 | BIN; the Tessera handling of such sliders is a Decision |
 | A33 | "The most recently started" slider node is the later one in the client's start order of `script-table.md` §8.2 step 3 and §7.5 (kind-1 definitions before kind-2, roots and port children in stored order, Collection ports by ascending ordinal) (§6.4) | BIN5 (`script-table.md` BIN6, T41, T42) | BIN; no closure has two slider nodes (`script-table.md` SI12) |
 | A34 | `Appearance_ToggleProperty` is named (always as `GOP_AvatarUpdateVisible`) by 7 avatar entities and 4 non-avatar entities; `GOP_AvatarUpdateVisible` is carried, always true and always at the top level of the entity's own set, by 19 entities: the same 7 avatar entities, 3 avatar entities that do not name it (DwarfStoutAxe, RiverHobbit M and F) and 9 non-avatar entities; the 4 non-avatar naming entities do not carry it; no 0x78 set carries or names it (§3.3). Corrects the 2026-10-07 text ("10 entities" naming it) | OBS3 | Confirmed 2026-10-08 (all 40,643 entities) |
+| A35 | A MeshFX node places its entity in the frame of its holding location (or bone): first a translation by `BoneOffset` (metres, location axes), then a rotation built from `OffsetRotationYaw`, `…Pitch`, `…Roll` (degrees): yaw about the location's +Z, pitch about +X, roll about +Y, composed as *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch), right-handed (§5.7). The axes, the order and the angle units hold for every node; the composition location frame × placement frame was read only on the path for unattached nodes (`AttachToParent` 0). For attached nodes (`AttachToParent` 1, every placement of §5.5 and §5.6) the same composition is a Tessera **Decision** with an OPEN (§5.7 step 2) | BIN6; OBS4 (1,118 nodes with two or more angles) | BIN (axes, order, units; composition on the unattached path); Decision (composition on the attached path, OPEN) |
+| A36 | The MeshFX `Scale` is a vector applied per axis: the spawned entity's `Render_AdjustableScale` becomes its own value (default (1, 1, 1)) × `Scale`, divided per axis by the holder's `Render_AdjustableScale` when `UseParentScale` is 0; a driven `Scale` whose source property is absent takes the dictionary default; `Script_AdjustableScale_Secondary_Vector` is a vector3 with default (1, 1, 1) (§5.7). The node copies `UseParticleScale` and `IgnoreChildScale` into two flag bits of the spawned object (values 0x4000 and 0x40000000); whether these are the two holder-factor bits of §6.1 was not read (OPEN, §5.7 step 3) | BIN6; OBS4 | BIN (rule, flag copy); Confirmed (types, defaults); link to §6.1 OPEN |
+| A37 | Placement-script details: the stowed shield node of the non-ranged branch runs only while a cosmetic override is set; the gauntlet effect entity (stored in the node) is attached in the stowed family only (its wielded collection has `Probability` 0); the cosmetic in-hand rows test the override against entity DIDs stored in the Switch cases; the primary and secondary stowed scripts run only while `Script_Item_Primary_Cosmetic_Hide` (or `…_Secondary_…`) is false, and while the primary flag is true the primary script attaches the item at `Wpn_RHand` only when `Script_Item_PhysObj_Primary_Cosmetic` is one of the four entity DIDs of its fishing-pole case (§5.6) | OBS4 | Confirmed (corrects §5.6 of 2026-10-07) |
+| A38 | A ranged-slot instrument is drawn while stowed: script 0x10002BA0 of the avatar's binding table attaches it at a location chosen by `Music_Cached_Instrument_Type`, while the playing script 0x10000324 is not running (§5.3, §5.6) | OBS4 (12 binding tables) | Confirmed (corrects the §5.3 Decision for instruments) |
+| A39 | Creature cosmetic slots `Inventory_Cosmetic_Slot1` … `4` (eight properties each) occur only in 0x79 property sets (3,523 sets), never in 0x47 entities, 0x78 sets or landblock instance sets; script 0x100007C3 attaches them; the property dictionary types `…_Behavior` of all four slots as an enum over the script-key mapper 0x23000097, default 0 (§5.5) | OBS4; property dictionary of the install (all four slots) | Confirmed |
+| A40 | No 0x20 `variant` and no list modifier is non-finite; no visual template that names a setup has a parent; every index buffer of every mesh is drawn exactly once (258 one-triangle meshes by either count); no single-port Random node has weight 0 (§3.2.1, §4.4, §6.1, §7.4) | OBS4 | Confirmed 2026-10-09 (all records) |
 
 ---
 
@@ -275,6 +283,12 @@ code 0.49 gives the 0.45 block; an entry whose only block is 1.0 with modifier 0
 nothing; a dye element with modifier 0.0 gives the 0.00 block (it is layered like any other
 dye block).
 
+**Values that are not numbers (Tessera Decision, 2026-10-09).** A NaN modifier selects no
+block (it is above no `variant`), and a block whose `variant` is NaN is passed over by the
+walk of rule 2 (it is never "greater than the modifier"). The client's handling was not
+traced; no `variant` of any 0x20 record and no list modifier of the install is NaN or
+infinite (A40), so no figure depends on it.
+
 Census over all appearance lists of all 0x47 records (12,199 elements, OBS2): 11,774 match a
 block's `variant` exactly, 265 take a lower block by rule 2, 79 take nothing (13 of them
 have modifier exactly −1.0, rule 1; 66 have a modifier below the first block's `variant`,
@@ -365,7 +379,11 @@ carrying it, see the OPEN below).
 > **Rule (replaces the 2026-10-05 Decision):** use `Appearance_AprToggleFile` when the toggle
 > property reads true for the figure, else `Appearance_AprFile`. Tessera keeps the property
 > in its own settings (default true) and lets the figure's lookup find it there before the
-> entity's value; changing it rebuilds every figure that met it.
+> entity's value; changing it rebuilds every figure that met it. Any other toggle property
+> (none in this install: every naming element names `GOP_AvatarUpdateVisible`, A34) is read
+> through the figure's own sets (instance, game object, entity) and, when absent, as its
+> dictionary default, or false when the dictionary has none (`script-table.md` T28;
+> confirmed 2026-10-09 for the implementation reading of §15).
 >
 > **OPEN (narrow):** the client's property lookup chooses where to read a property (the
 > object's own set, another component, or a client-wide store) by a per-property attribute
@@ -600,7 +618,10 @@ into it in order (§8); a part replaces the slot's current mesh when its priorit
    applied later (§4.7). A winning **stub** mesh (three vertices, one triangle: 258 mesh
    records; the smallest real part has 4 vertices) leaves the slot visually empty: the slot
    is "hidden". The client never draws a stub part of a multi-part figure (`setup.md` §8.5,
-   answers O4).
+   answers O4). The client counts a mesh's triangles over the draw entries of its detail
+   levels (`mesh.md` §8.10); in this install every index buffer of every mesh is drawn
+   exactly once (A40), so the triangles of the index buffers give the same total and the
+   same 258 stubs.
 4. A slot with no candidate keeps the default part.
 
 The rule needs no flag or property anywhere: hiding is expressed only by stub parts at a
@@ -705,7 +726,9 @@ of (key, modifier) pairs, and blocks are applied one after another to a part tab
    recursively), and only then chooses and applies the block of the record's own entry for
    the key. A linked DID that does not resolve is skipped (the client logs it). A linked
    record lacking the key contributes nothing. Every list in this install is empty, so this
-   rule changes no result today.
+   rule changes no result today. The client sets no depth or block limit here; an
+   implementation's own bounds (for example 16 levels of linked records and 4,096 applied
+   blocks per figure) are Tessera limits that no figure of this install reaches.
 
 > **OPEN** (narrow, BIN3): the block-applying routine has no guard against a record that
 > lists itself, directly or through others; what the client does with such data was not
@@ -727,7 +750,9 @@ own supplier (M7):
 > with key `Item_AppearanceKey` and modifier 1.0 and its dye element (§4.9); then rule 1
 > above. This lets battle gauntlets show over a chest's bare hands and an NPC's explicitly
 > listed hair show over a piece's stub. Note rule 2: two items sharing one wardrobe record
-> (the chest/shoulder cross-overs of §4.2) are applied at that record's first position.
+> (the chest/shoulder cross-overs of §4.2) are applied at that record's first position, and
+> their dye elements name the same (record, `ClothingColor`) pair, so the later item's dye
+> code replaces the earlier one there (§3.2.1, last paragraph; confirmed 2026-10-09).
 >
 > **OPEN** (owner observation O10, still wanted): which piece the original shows in the
 > equal-priority cases between items (battle gauntlets against a chest at 5, gloves against
@@ -856,11 +881,14 @@ no script node reads (OBS2) and no client routine references by value (BIN2). On
 names only the three weapon slots). Their `PhysObj` is mostly one generic entity
 (0x470001AE) shared by 579 class items and 246 instruments.
 
-> **Decision (now supported by the data, §5.6):** do not draw `Class`-slot held items and
+> **Decision (now supported by the data, §5.6; revised 2026-10-09, A38):** do not draw
+> `Class`-slot held items (the class items and the 246 `Class`-slot instruments) and
 > `Weapon_Primary_FX` items in the world. The placement scripts of §5.6 cover only the three
-> weapon slots (there is no held-item script property for the `Class` slot), and instruments
-> appear through the music and crafting scripts while they are played. **OPEN** (owner
-> observation O13, narrowed): whether class items are ever visible on the figure.
+> weapon slots (there is no held-item script property for the `Class` slot). An instrument
+> equipped in the **ranged** slot is drawn while stowed, by the sheathed-instrument script of
+> §5.6, and while it is played by the music scripts; while wielded it is not drawn (the
+> earlier text said instruments were never drawn when not played; corrected). **OPEN**
+> (owner observation O13, narrowed): whether class items are ever visible on the figure.
 
 <a id="s5-4"></a>
 ### 5.4 Wielded versus stowed (Confirmed data, §5.6)
@@ -877,9 +905,11 @@ paperdoll view only.
 > shield or ranged item at its **stowed** placement of §5.6; in combat at its **wielded**
 > placement. The walker (no combat) uses the stowed placements. Differences from the old
 > Decision: shields stay on the forearm (`Wpn_Forearm`) when stowed, except while the
-> figure's skill mode is ranged; javelins are stowed at `Sheath_Back_Bow`; staves are stowed
-> at `Sheath_Back_2H` with an offset and a half turn; an orb has no stowed placement (it is
-> not drawn while stowed).
+> figure's skill mode is ranged (a Tessera Decision for the case without a cosmetic
+> override, §5.6 "Shields out of combat"); javelins are stowed at `Sheath_Back_Bow`; staves
+> are stowed at `Sheath_Back_2H` with an offset and a half turn; an orb has no stowed
+> placement (it is not drawn while stowed); a ranged-slot instrument is stowed by its
+> species' sheathed-instrument script (§5.6, revised 2026-10-09).
 
 <a id="s5-5"></a>
 ### 5.5 NPC held items (Confirmed)
@@ -896,9 +926,49 @@ script data does. Every MeshFX node that attaches `NPC_Cosmetic_Inventory_Item1`
 lies under a Switch case `NPC_Cosmetic_Inventory_Visible` = true (or under the sheath
 branch of §5.6 for a figure playing its starting idle), and 41 SetProperty nodes set the
 flag to false (21) or true (20) during scripted actions. The same holds for the creature
-cosmetic slots `Inventory_Cosmetic_Slot1` … `4` (`_Entity`, `_HoldingLocation`, `_Scale`,
-`_OffsetRotationYaw`, `_OffsetRotationPitch`, `_Behavior`, `_Hide`), attached by the script
-key 0x100007C3 of table 0x07000090 while the flag is true and the slot's `_Hide` is false.
+cosmetic slots below, attached by the script key 0x100007C3 of table 0x07000090 while the
+flag is true and the slot's `_Hide` is false.
+
+**Creature cosmetic slots (OBS4, A39; answers the implementation OPEN of 2026-10-09).** For
+slot *n* = 1 … 4 the properties are (full names, given for interoperability):
+
+| Property | Type | Dictionary default | Role |
+|---|---|---|---|
+| `Inventory_Cosmetic_Slot<n>_Entity` | DID (0x47 entity) | 0 | The prop; 0 means the slot is empty |
+| `Inventory_Cosmetic_Slot<n>_HoldingLocation` | `HoldingLocation` enum | 0 | Where it is held unsheathed |
+| `Inventory_Cosmetic_Slot<n>_Scale` | vector3 | (1, 1, 1) | Drives the MeshFX `Scale` (§5.7) |
+| `Inventory_Cosmetic_Slot<n>_OffsetRotationYaw`, `…Pitch`, `…Roll` | float, degrees | 0 | Drive the MeshFX rotations (§5.7) |
+| `Inventory_Cosmetic_Slot<n>_Behavior` | enum over the script-key mapper 0x23000097 (its value is a script key) | 0 | Drives the MeshFX `Behavior` |
+| `Inventory_Cosmetic_Slot<n>_Hide` | bool | false | True: the slot is not drawn |
+| `Inventory_Cosmetic_IsSheathed` (one per figure) | enum: 0 `Undef`, 1 `Sheathed`, 2 `Unsheathed`, 3 `Combat_Defined`, 4 `Sheathed_Staff`, 5 `Combat_Defined_Staff` | 0 | Selects the sheathed placements |
+
+**Carriers.** Only 0x79 property sets carry them: 3,523 sets (slot 1 entity and location in
+3,515, slot 2 in 1,970, slot 3 in 62, slot 4 in none; scales in 307, 166 and 0; behaviours in
+196, 87 and 1; a rotation in at most 18 sets per slot and angle). These are server-side
+objects (creature templates and the cosmetic loadouts of `interaction.md` §6). No 0x47
+entity, no 0x78 set and no landblock instance set carries any of them, so no placed static
+figure has a creature cosmetic slot; they reach a figure only with a server object.
+
+**Placement by script 0x100007C3** (table 0x07000090). Nothing is drawn while `LifeState` is
+`Dead` or `Incapacitated`; figures whose `Agent_ClassificationFilter` is `MonsterPlayer`
+take another branch (the player-controlled monster's weapons, not covered here). Otherwise,
+while `NPC_Cosmetic_Inventory_Visible` is true, each slot whose `_Entity` is non-null and
+whose `_Hide` is false is attached by one MeshFX node (`AttachToParent` 1, `UseParentScale`
+1), applied by §5.7:
+
+- **Sheathed** (`Inventory_Cosmetic_IsSheathed` 1, or 3 while `Combat_Violent` is false): the
+  node is chosen by the slot's `_HoldingLocation`, and the prop goes to `Sheath_Back_Shield`
+  with fixed values: from `Wpn_LHand` offset 0 and rotation (yaw −30, pitch 0, roll 90); from
+  `Wpn_LOffHand` offset (−0.15, 0.2, 0) m and yaw 210; from `Wpn_RHand` offset (0.15, 0.2, 0)
+  m and yaw −210; from `Wpn_Forearm` offset 0 and no rotation; location 0: not drawn. Only
+  `Entity`, `Scale` and `Behavior` are driven by the slot; its rotations are not used. Any
+  other location takes the unsheathed node below.
+- **Unsheathed** (every other value, and 3 while `Combat_Violent` is true): the node's
+  `Entity`, `HoldingLocation`, `Scale`, `OffsetRotationYaw`, `…Pitch`, `…Roll` and
+  `Behavior` are all driven by the slot; offset 0.
+
+> **Rule:** implement creature cosmetic slots as above when server objects supply them
+> (M7 and later). Offline, no figure has one.
 
 > **Rule:** draw a figure's cosmetic props only while `NPC_Cosmetic_Inventory_Visible` is
 > true (its dictionary default is true); skip a creature cosmetic slot whose `_Hide` is true.
@@ -934,7 +1004,10 @@ override DIDs and the `…_Cosmetic_Hide` flags. No client routine references
 `Script_Item_PhysObj_Primary` or `…_Secondary` by value or by name (A25; four routines
 reference `…_Ranged` and were not read): the client does not compute them from the
 inventory, so in the original they arrive with the character. Tessera sets each to the 0x47
-entity of the item in that slot (its `PhysObj`, or the cosmetic override when one is set).
+entity of the item in that slot (its `PhysObj`, or the cosmetic override when one is set),
+leaves the `…_Cosmetic` override DIDs null unless the user chooses an override, and sets
+`Music_Cached_Instrument_Type` to the ranged item's `Item_Music_Instrument_Type` (Decision,
+2026-10-09: how the original sets the cached type was not traced).
 
 Which of the two families runs is decided by the script `Visibility_Controller` (0x10000527)
 of the same table and by the combat scripts: out of combat (`Combat_Violent` false) the
@@ -943,13 +1016,13 @@ a ranged skill mode and cosmetic locomotion styles add exceptions that a full sc
 evaluator reproduces.
 
 **Stowed placements** (offset in metres in the location's frame, rotations in degrees as
-`OffsetRotationYaw`, `…Pitch`, `…Roll`, scale is the node's uniform `Scale`; categories are
+`OffsetRotationYaw`, `…Pitch`, `…Roll`, scale is the node's `Scale`, a vector3 applied per axis by §5.7 (equal components in every stored value); categories are
 `Item_EquipmentCategory` labels):
 
 | Slot | Categories | Species | Location | Offset | Yaw, pitch, roll | Scale |
 |---|---|---|---|---|---|---|
 | Primary | `1HSword`, `1HAxe`, `1HMace`, `1HClub`, `1HHammer`, `Dagger`, `Implement1H`, `Cosmetic` | all | `Sheath_LHip` | 0 | 0 | 1 |
-| Primary | same, while `Script_Item_PhysObj_Primary_Cosmetic` is one of the entity DIDs listed in the script's case (cosmetic in-hand items) | all | `Wpn_RHand` | 0 | 0 | 1 |
+| Primary | same, while `Script_Item_PhysObj_Primary_Cosmetic` equals one of the entity DIDs stored as the values of the Switch case on that property, under the one-handed case of script 0x10000684 (cosmetic in-hand items; 54 distinct DIDs in this install, read from the node) | all | `Wpn_RHand` | 0 | 0 | 1 |
 | Primary | `2HSword` | all | `Sheath_Back_2H_Sword` | 0 | 0 | 1 |
 | Primary | `2HMace`, `2HAxe`, `2HClub`, `2HHammer`, `Spear`, `Halberd`, `Implement2H` | all | `Sheath_Back_2H` | 0 | 0 | 1 |
 | Primary | `2HStaff` | Dwarf, DwarfStoutAxe | `Sheath_Back_2H` | (0, 0.35, 0) | (0, 180, 0) | 1 |
@@ -957,12 +1030,44 @@ evaluator reproduces.
 | Primary | `2HStaff` | others | `Sheath_Back_2H` | (0, 0.4, 0) | (0, 180, 0) | 1 |
 | Primary | `Orb` | all | none (not drawn) | | | |
 | Secondary | one-handed list as above | all | `Sheath_RHip` | 0 | 0 | 1 |
-| Secondary | `Shield`, `HeavyShield`, `MediumShield` | all | `Wpn_Forearm` (skill mode not ranged); `Sheath_Back_Shield` (skill mode `Ranged`) | 0 | 0 | `Script_AdjustableScale_Secondary_Vector` |
+| Secondary | same, while `Script_Item_PhysObj_Secondary_Cosmetic` equals one of the entity DIDs of the corresponding Switch case of script 0x10000593 (the same list in this install) | all | `Wpn_LOffHand` | 0 | 0 | 1 |
+| Secondary | `Shield`, `HeavyShield`, `MediumShield` | all | `Sheath_Back_Shield` while the skill mode is `Ranged` (nothing while also mounted); otherwise `Wpn_Forearm` **only while `Script_Item_PhysObj_Secondary_Cosmetic` is non-null**; with no override this script attaches nothing (see "Shields out of combat") | 0 | 0 | `Script_AdjustableScale_Secondary_Vector` |
 | Ranged | `Bow` | Dwarf, DwarfStoutAxe / Hobbit, RiverHobbit / others | `Sheath_Back_Bow` | 0 | 0 | 0.9 / 0.8 / 1 |
 | Ranged | `Crossbow` | all | `Sheath_Back_Crossbow` | 0 | 0 | 1 |
 | Ranged | `Javelin` | Dwarf, DwarfStoutAxe | `Sheath_Back_Bow` | 0 | (0, 0, 90) | 1 |
 | Ranged | `Javelin` | Hobbit | `Sheath_Back_Bow` | (0.03, 0, 0) | (0, 0, 90) | 1 |
 | Ranged | `Javelin` | others | `Sheath_Back_Bow` | 0 | 0 | 1 |
+| Ranged | `Instrument` | per species | script 0x10002BA0 of the avatar's binding table, by `Music_Cached_Instrument_Type`; for example Human M with `Lute`: `Sheath_Back_2H_Sword` | (0, −0.1, 0.02) | (180, 20, 0) | 1 |
+
+The primary and secondary stowed scripts run only while `Script_Item_Primary_Cosmetic_Hide`
+(or `…_Secondary_…`) is false. While the primary flag is true, the primary script attaches
+the item only when `Script_Item_PhysObj_Primary_Cosmetic` is one of the four entity DIDs of
+its fishing-pole case, at `Wpn_RHand`.
+
+**Stowed instruments (OBS4, A38).** For an `Instrument` in the ranged slot the stowed ranged
+script starts script 0x10002BA0 while script 0x10000324 (the playing script) is not running,
+and stops it while that script runs; the wielded ranged script stops it. Script 0x10002BA0
+is defined in each avatar's binding table (`script-table.md` §8.2; 12 tables), and attaches
+`Script_Item_PhysObj_Ranged` with one MeshFX node per value of `Music_Cached_Instrument_Type`
+(some values add a second node with a fixed entity stored in it, for example for the
+fiddles, the handknells, the drum and the cowbells); offsets, rotations, scales and
+locations differ per species and instrument and are read from the nodes. Nothing is drawn while `Shapeshifting_Target_Entity` is set or the type
+is `Undef`.
+
+**Shields out of combat (OBS4).** The visibility controller 0x10000527 chooses between the
+two secondary scripts for a shield with a game-logic callback (a GameCallback node,
+`script-table.md` §5.2, naming the package 0x70000469). Out of combat and not mounted, a true
+result runs the wielded script (shield at `Wpn_Forearm`) and stops the stowed one; a false
+result does the reverse, and the stowed script then attaches nothing in a non-ranged skill
+mode unless a cosmetic override is set. What the callback returns is game logic and was not
+traced.
+
+> **Decision (2026-10-09):** out of combat the walker draws an equipped shield at
+> `Wpn_Forearm` (the result of a true callback, and of the stowed script with an override),
+> and at `Sheath_Back_Shield` while the skill mode is `Ranged`.
+>
+> **OPEN** (owner observation, added to O13): whether the original shows an equipped
+> shield on the forearm out of combat with the weapons sheathed, or hides it.
 
 **Wielded placements:**
 
@@ -976,19 +1081,112 @@ evaluator reproduces.
 | Ranged | `Crossbow` | `Wpn_RHand` | |
 | Ranged | `Javelin` | `Wpn_ROffhand` | |
 
-`BattleGauntlets` (primary) add a fixed effect entity at `Wpn_RHand` and `Wpn_LHand` (yaw −90
-and +90) in both families; the gauntlets themselves are worn (§5.1).
+`BattleGauntlets` (primary): in the **stowed** family the primary script attaches the
+effect entity named in the node itself (its stored `Entity`, 0x4700A619 in this install) at
+`Wpn_RHand` (yaw −90) and `Wpn_LHand` (yaw +90). In the wielded family the same pair sits in
+a Collection whose `Probability` is 0, which never runs (`script-table.md` §4.2, T4); the
+wielded branch instead runs script 0x10002F3F (cosmetic weapon-effect pieces) and sets
+`Combat_DefaultStrikingImplementType_Melee`. The gauntlets themselves are worn (§5.1).
+(Corrected 2026-10-09: the earlier text said "in both families".)
 
 Each node also names a `Behavior` (a script key run on the attached item, for example its
 draw or sheathe effect), `AttachToParent` 1, `Persistent` 1 and `UseParentScale` 1 in all
-of the placements above. How offset and rotations compose with the location frame is the
-MeshFX rule of `script-table.md` (the rotation fields are degrees by their values).
+of the placements above. How offset, rotations and scale apply is §5.7.
+
+**What is normative (answers the implementation OPEN of 2026-10-09 on rows not modelled).**
+The tables of this section summarise the MeshFX nodes of the scripts named here for the
+categories and species of this install; the scripts (found by table and script key, with
+each node's fields, driven pairs and enclosing Switch and When cases) are the source. An
+implementation that keeps the tables must read the DIDs the scripts store from the nodes at
+run time: the cosmetic in-hand lists (the case values of the Switch on
+`Script_Item_PhysObj_Primary_Cosmetic` or `…_Secondary_Cosmetic`), the gauntlet effect entity
+(the stored `Entity` of the two nodes under the `BattleGauntlets` case of script 0x10000684),
+the fishing-pole list, and the fixed entities of the instrument and cosmetic-locomotion
+branches. Evaluating the MeshFX nodes of these scripts directly, with the Switch, When,
+Collection and Probability rules of `script-table.md` §7, gives the same placements, also
+covers the exceptions (mounts, stealth, cosmetic locomotion, skill modes) and is preferred.
 
 > **OPEN (narrow, owner observation O13):** whether a long weapon held in the hand points
-> along the line of sight or along the forearm (`skeleton-anim.md` §8.3 note), and the order
-> in which yaw, pitch and roll compose for the staff and javelin rows; the transitions
-> between the two families (draw and sheathe animations, scripts 0x10000683 and 0x100008A5)
-> are not covered here.
+> along the line of sight or along the forearm (`skeleton-anim.md` §8.3 note); the
+> transitions between the two families (draw and sheathe animations, scripts 0x10000683 and
+> 0x100008A5) are not covered here. (The order of yaw, pitch and roll is answered by §5.7.)
+
+
+<a id="s5-7"></a>
+### 5.7 How a MeshFX placement is applied (BIN6, A35, A36; answers the implementation OPENs of 2026-10-09)
+
+This applies to every MeshFX node (41) that attaches an entity at a holding location or bone:
+the placements of §5.6, the NPC and creature props of §5.5, and mount and channelling props of
+other specs.
+
+1. **Placement frame.** The node defines a frame relative to the holding location's frame
+   (`skeleton-anim.md` §8.2; or the bone's frame when the node names a `BoneType` instead of
+   a location): its origin is `BoneOffset` (metres, along the location's axes) and its
+   rotation is built from the three angles, which are **degrees**:
+   - yaw (`OffsetRotationYaw`) turns about the location's **+Z** axis, pitch
+     (`OffsetRotationPitch`) about **+X**, roll (`OffsetRotationRoll`) about **+Y**; each
+     positive angle turns counter-clockwise when looking from the positive end of its axis
+     towards the origin (right-handed);
+   - composed as *R* = *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch) for column vectors: a point of
+     the item is turned first by pitch about X, then by roll about Y, then by yaw about Z, all
+     about the location's fixed axes. As a unit quaternion (w, x, y, z) with half angles
+     *a* = yaw/2, *b* = pitch/2, *c* = roll/2: w = cos *c* cos *a* cos *b* + sin *c* sin *a*
+     sin *b*; x = cos *c* cos *a* sin *b* − sin *c* sin *a* cos *b*; y = sin *c* cos *a* cos *b*
+     + cos *c* sin *a* sin *b*; z = cos *c* sin *a* cos *b* − sin *c* cos *a* sin *b*.
+   These are the axes and the order of `coordinates.md` §11.3 for object frames.
+2. **Composition.** Item to world = the holder's world transform × the location frame on its
+   bone (`skeleton-anim.md` §8.4) × translation by `BoneOffset` × *R* × the item's scale
+   (step 3). So the offset is measured along the location's axes, and the item turns about
+   its own origin placed at the offset.
+   - **Unattached nodes** (`AttachToParent` 0): this is the client's rule (BIN6). The client
+     multiplies the location's current world frame by the placement frame of step 1 once,
+     when it places the spawned entity.
+   - **Attached nodes** (`AttachToParent` 1; every placement of §5.5 and §5.6): the client
+     hands the same placement frame, the location or bone and the `RemoveRotation` flag to
+     the holder's attachment, and the attachment's per-frame composition was not read. For
+     these nodes the composition above is a Tessera Decision (below).
+   `RemoveRotation` is 0 in every placement of §5.5 and §5.6.
+
+   > **Decision (Tessera, attached nodes):** an attached item is composed every frame as
+   > holder world transform × location frame on its bone × translation by `BoneOffset` × *R*
+   > × the item's scale, the same order as the unattached path, with `RemoveRotation` 0. A
+   > node with `RemoveRotation` 1 is composed the same way until the OPEN below is answered.
+
+   > **OPEN:** (attached path only) the per-frame composition the holder's attachment applies
+   > to the frame a MeshFX node hands it: whether it is location frame × placement frame
+   > (as on the unattached path) or another order, and what `RemoveRotation` 1 removes (the
+   > location's rotation, the holder's, or the placement's). The axes, order and units of
+   > *R* (step 1) are not part of this question.
+3. **Scale.** When the entity is spawned the client sets its `Render_AdjustableScale`, per
+   axis, to the entity's own `Render_AdjustableScale` ((1, 1, 1) when it has none), divided
+   per axis by the holder's `Render_AdjustableScale` when `UseParentScale` is 0 and the
+   holder has the property, and multiplied by the node's `Scale`. `Scale` is a **vector3**
+   used per axis (a uniform value is the special case of equal components). A driven `Scale`
+   takes the current value of its source property; an absent source reads as the property's
+   dictionary default (`script-table.md` T28): `Script_AdjustableScale_Secondary_Vector` and
+   `Inventory_Cosmetic_Slot<n>_Scale` are vector3 properties with the default (1, 1, 1), so
+   a figure without them leaves the stored `Scale` replaced by (1, 1, 1). The render scale of
+   §6.1 then applies to the item, including the holder's final scale for an attached item.
+   The node also copies `UseParticleScale` and `IgnoreChildScale` into two flag bits of the
+   spawned object (values 0x4000 and 0x40000000, BIN6). Whether these are the two flag bits
+   of the render component that override the holder factor *s* in §6.1 (one forces *s* = 1,
+   the other makes *s* the holder's `Model_ParticleScale`) was not read; see the OPEN below.
+   Until it is answered, Tessera keeps the §6.1 Decision (*s* = 1 for attached items) and
+   ignores both node fields.
+
+   > **OPEN:** (holder-factor bits) are the bits 0x4000 and 0x40000000 that a MeshFX node sets
+   > from `UseParticleScale` and `IgnoreChildScale` the same bits that §6.1 says override *s*,
+   > and if so, which node field forces *s* = 1 and which selects the holder's
+   > `Model_ParticleScale`? The answer changes the drawn size only of items attached by
+   > nodes that store `UseParticleScale` 1 or `IgnoreChildScale` 1 on holders whose reported
+   > scale or `Model_ParticleScale` is not 1. The review of 2026-10-09 notes such nodes among
+   > the sheathed nodes of script 0x100007C3 and the starting-idle sheath nodes of script
+   > 0x10000684 (§5.5); a count of both fields over all MeshFX nodes is part of this question.
+
+Example: the Hobbit javelin row of §5.6 (offset (0.03, 0, 0), roll 90) moves the javelin
+3 cm along the `Sheath_Back_Bow` location's X axis and turns it a quarter turn about that
+location's Y axis; the staff rows (offset (0, *d*, 0), pitch 180) move the staff *d* along
+Y and turn it a half turn about X.
 
 ---
 
@@ -1018,7 +1216,11 @@ the product of both values, standing heights (bind geometry top × scale) become
 - **Template chain.** When a visual template (0x1F) is resolved, its parent chain is
   flattened root first, and the `vec3`, `value_a` and `value_b` of each template are
   **multiplied**, per component, into the accumulated values (a template without the field
-  contributes 1). So a template's effective `vec3` is the product over its chain.
+  contributes 1). So a template's effective `vec3` is the product over its chain. The chain
+  runs to the root; in this install no template that names a setup has a parent (A40), so
+  the root is the template that names the setup and the product over the whole chain equals
+  the product up to that template. Template appearance sections are applied root first
+  (§4.7 rule 2).
 - **Render scale of an object (BIN2, BIN3).** The render component computes a per-axis
   scale in two stages.
   1. **Own scale**, per axis, the product of:
@@ -1030,8 +1232,9 @@ the product of both values, standing heights (bind geometry top × scale) become
        attached object two flag bits of the object's render component can override it: one
        forces *s* = 1; the other, which wins if both are set, makes *s* the holder's
        `Model_ParticleScale` (property 0x5A0, a float, read through the holder's property
-       lookup; 1 when absent or not a float). Where these flag bits come from was not traced;
-       for an unattached object they have no effect;
+       lookup; 1 when absent or not a float). Where these flag bits come from was not traced
+       (candidate: the two bits a MeshFX node sets, §5.7 step 3 and its OPEN); for an
+       unattached object they have no effect;
      - *M*: `Model_Scale` (property 0x3C3, a vector, default (1, 1, 1));
      - *V*: a vector held by a related object of the figure (default (1, 1, 1); see below).
   2. **Final scale** = own scale × the holder's **final** render scale, per axis, when the
@@ -1046,9 +1249,11 @@ the product of both values, standing heights (bind geometry top × scale) become
   axes separately. One entity in this install has one: 0x4700DAD2, (0.4, 1, 1). No 0x47 entity
   has `Model_Scale` or `Render_AdjustableScale_Checkpointed`.
 
-What was not traced: what the holder's reported scale *s* is and where the two flag bits
-come from (the MeshFX placements of §5.6 all set `UseParentScale` 1, but no link between that
-field and either bit was seen); and whether the vector *V* "held by a related object" is the
+What was not traced: what the holder's reported scale *s* is; whether the two flag bits are
+the ones a MeshFX node sets when it spawns an attached item (BIN6 shows that the node copies
+its `UseParticleScale` and `IgnoreChildScale` fields into two flag bits of the spawned object,
+0x4000 and 0x40000000, but not that the render component tests these bits; §5.7 step 3 and its
+OPEN; `UseParentScale` acts only on the spawn-time `Render_AdjustableScale`, §5.7 step 3); and whether the vector *V* "held by a related object" is the
 template chain's `vec3`. The data suggests it: High-elf templates carry larger `vec3` values than the Elf ones
 (1.05 against 1.03 for males) while the entities differ only for females, which a replace
 rule would partly cancel.
@@ -1058,7 +1263,7 @@ rule would partly cancel.
 > `Render_AdjustableScale` (landblock instance set or SED, §7.2), per axis, applied at the
 > object's origin before the world placement; for an attached object (a held item), also
 > × the holder's final model scale, with *s* = 1 (Decision: the holder factor *s* and its
-> flag bits are not modelled until their sources are known). A result with a non-finite
+> flag bits are not modelled until their sources are known; §5.7 step 3 OPEN). A result with a non-finite
 > component, or with a component strictly below 0.0002, is replaced by (1, 1, 1).
 > **OPEN** (owner observation O8, narrowed): whether the template `vec3` enters the render
 > scale. With it a High-elf female stands about 1.84 m (scale 1.0506), without it about
@@ -1526,7 +1731,9 @@ equal-priority tie, a record keeps its first position).
 > **Rule (replaces the 2026-10-05 Decision):** dress a figure with its setup's default
 > parts, its template sections, its class and instance lists (§7.4 steps 1–4), its held
 > props, and then the Appearance nodes its `Startup` scripts run (`script-table.md` §11.3),
-> choosing at each Random node by its weights. Explicit lists and the random type both
+> choosing at each Random node by its weights (`script-table.md` §7.4: a node with exactly
+> one port always picks it, even when its weight is 0; none of the 367 single-port Random
+> nodes of the install has weight 0, A40). Explicit lists and the random type both
 > apply; the script pieces come later and win equal-priority ties (§4.7). The 616 figures
 > that carry both keep both.
 >
@@ -1536,7 +1743,9 @@ equal-priority tie, a record keeps its first position).
 > path (`script-runtime.md` §8, R40, BIN). So a new look per visit is expected (Inferred: a
 > game-logic reseed before the figure's start-up script was not ruled out). Tessera seeds the
 > Random nodes of a placed figure from its instance ID so that a figure keeps its look
-> (Decision).
+> (Decision). Decision details (2026-10-09): a figure without an instance ID (a player body,
+> the explorer's figure) uses seed 0; one generator serves one resolution and is drawn only
+> on the branches the picks take, in the start order of `script-table.md` §8.2.
 
 ---
 
@@ -1583,8 +1792,9 @@ character's appearance values.
    of combat, its wielded placement in combat (§5.4, §5.6); for NPC props, their holding
    locations while `NPC_Cosmetic_Inventory_Visible` is true (§5.5). Resolve the entity's
    setup, look the location up in the wearer's list A, apply the placement's offset,
-   rotation and scale, and place it there each frame (`skeleton-anim.md` §8.4). Items whose
-   location the wearer lacks are not drawn.
+   rotation and scale by §5.7, and place it there each frame (`skeleton-anim.md` §8.4).
+   Items whose location the wearer lacks are not drawn. A ranged-slot instrument is stowed
+   by its species' sheathed-instrument script (§5.6).
 
 A figure is rebuilt (steps 2–6) only when its equipment, appearance values, a watched toggle
 property (§3.3) or its instance set change; the deformation of step 7 when a height control
@@ -1781,8 +1991,13 @@ would put the sole at 0.134 (`skeleton-anim.md` §14.7) — the floating-feet er
 > **OPEN** (owner observation O12, narrowed): same look on every visit or not.
 
 > **Resolved** (2026-10-07, OBS2): stowed and wielded placements of weapons, shields and
-> ranged items (§5.6). **OPEN** (owner observation O13, narrowed): in-hand orientation of
-> long weapons, rotation order, class items (§5.3, §5.6).
+> ranged items (§5.6); rotation order and placement composition (2026-10-09, BIN6, §5.7);
+> stowed ranged-slot instruments (2026-10-09, OBS4). **OPEN** (owner observation O13,
+> narrowed): in-hand orientation of long weapons, class items, an equipped shield out of
+> combat (§5.3, §5.6). **OPEN** (narrow, 2026-10-09): the per-frame composition of attached
+> MeshFX placements and the meaning of `RemoveRotation` 1 (§5.7 step 2, Decision); whether
+> the MeshFX `UseParticleScale` and `IgnoreChildScale` bits are the holder-factor bits of
+> §6.1 (§5.7 step 3).
 
 > **Resolved** (2026-10-07, OBS2): which colour and texture properties drive which face
 > layers and surfaces (§3.5). **OPEN** (frame capture O15, narrowed): the face-skin texture
@@ -2156,6 +2371,16 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > no row of §5.6 exercises: every row turns about one axis). Please state which local axis
 > each of `OffsetRotationYaw`, `…Pitch` and `…Roll` turns about.
 
+> **Answered** (2026-10-09, spec writer, BIN6, A35): §5.7 steps 1–2. Yaw turns about the
+> location's +Z axis, pitch about +X, roll about +Y, in degrees, right-handed, composed
+> *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch); the frame is the location's frame, then the
+> offset along the location's axes, then the rotation, then the scale. The implementation's
+> reading is the client's for the axes, the order and the units. (Qualified 2026-10-09 after
+> the review: the composition was read only for unattached nodes; for attached nodes, which
+> include every row of §5.6, it is a Tessera Decision with an OPEN, §5.7 step 2. The
+> implementation's reading matches the Decision, so no code change follows.) 1,118 MeshFX nodes of the install have two or more non-zero
+> angles (emotes, effects), so the order matters beyond §5.6.
+
 > **OPEN** (implementation, §5.6 shield scale): §5.6 calls the placement scale "the node's
 > uniform `Scale`", while `script-table.md` §5.2 lists the MeshFX `Scale` as a vec3, and the
 > stowed-shield rows drive it from the vector property
@@ -2163,6 +2388,13 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > when the figure's property lookup finds a vector (or a float for all axes), and
 > (1, 1, 1) when it finds none (Tessera choice: the property's dictionary default is not
 > stated here). Please confirm the vec3 reading and state what an absent property gives.
+
+> **Answered** (2026-10-09, spec writer, BIN6 and OBS4, A36): §5.7 step 3. `Scale` is a
+> vector3 applied per axis ("uniform" in §5.6 is withdrawn); it multiplies the spawned
+> item's own `Render_AdjustableScale` per axis. `Script_AdjustableScale_Secondary_Vector` is
+> a vector3 property whose dictionary default is (1, 1, 1), and an absent driven source reads
+> as that default, so (1, 1, 1) is the client's value, not only a Tessera choice. A float
+> value for a vector3 property does not occur (the property is typed vector3).
 
 > **OPEN** (implementation, §5.6 rows not modelled): the implementation reproduces §5.6 as a
 > table, not by running the six placement scripts. Two rows need data the spec does not
@@ -2174,6 +2406,19 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > (script key and node), or should a later implementation evaluate the MeshFX nodes of the
 > placement scripts directly?
 
+> **Answered** (2026-10-09, spec writer, OBS4, A37): both are now in §5.6. The cosmetic
+> in-hand DIDs are the values of the Switch case on `Script_Item_PhysObj_Primary_Cosmetic`
+> under the one-handed case of script 0x10000684 (54 distinct DIDs; the secondary script
+> 0x10000593 holds the same list and places such items at `Wpn_LOffHand`); the gauntlet
+> effect entity is the stored `Entity` of the two nodes under the `BattleGauntlets` case of
+> script 0x10000684, and it is attached in the **stowed** family only (corrects "both
+> families": the wielded pair has `Probability` 0). Evaluating the MeshFX nodes of the
+> scripts directly is preferred ("What is normative" in §5.6); a table must read those DIDs
+> from the nodes. Checking the tables against the scripts also corrected two rows:
+> ranged-slot instruments are stowed by a per-species script (§5.3, §5.6, A38), and the
+> stowed shield node of a non-ranged skill mode needs a cosmetic override (§5.6 "Shields
+> out of combat", with a Decision that keeps the forearm placement).
+
 > **OPEN** (implementation, §5.5 creature cosmetic slots): the implementation attaches the
 > four `NPC_Cosmetic_Inventory_Item<n>` props while `NPC_Cosmetic_Inventory_Visible` is true,
 > but not the creature cosmetic slots `Inventory_Cosmetic_Slot1` … `4`. Their property names
@@ -2182,6 +2427,15 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > names (for example whether the slot's entity is `Inventory_Cosmetic_Slot1_Entity`), which
 > figures carry them (placed static figures or only server objects), and how `_Scale` and
 > the two rotations apply to the attachment (as the MeshFX fields of §5.6?).
+
+> **Answered** (2026-10-09, spec writer, OBS4, A39): §5.5 "Creature cosmetic slots". The
+> names are `Inventory_Cosmetic_Slot<n>_Entity`, `…_HoldingLocation`, `…_Scale`,
+> `…_OffsetRotationYaw`, `…_OffsetRotationPitch`, `…_OffsetRotationRoll`, `…_Behavior` and
+> `…_Hide` for *n* = 1 … 4 (roll was missing from the earlier list). Only server objects
+> carry them (3,523 0x79 property sets; no 0x47 entity, 0x78 set or landblock instance set),
+> so no placed static figure has one and the offline walker needs none. They drive the
+> MeshFX fields of the same names, applied by §5.7; while sheathed the script uses fixed
+> placements at `Sheath_Back_Shield` instead of the slot's location and rotations.
 
 > **OPEN** (implementation, confirmation only, §3.2.1, §3.3, §4.7, §6.1, §7.4, §15):
 > engineering readings taken where the text is silent: (1) §3.2.1: a NaN modifier selects
@@ -2204,6 +2458,23 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > not read the levels); the two agree when each index buffer is drawn once. Please say if
 > any reading differs from the client.
 
+> **Answered** (2026-10-09, spec writer, OBS4, A40; folded into the sections named):
+> (1) Accepted as a Tessera Decision (§3.2.1): the client's handling of NaN was not traced,
+> and no modifier or `variant` of the install is NaN or infinite. (2) Confirmed, with one
+> precision (§3.3 Rule): an absent toggle property reads as its dictionary default, or false
+> when there is none (`script-table.md` T28); no element of the install names any property
+> but `GOP_AvatarUpdateVisible`. (3) Confirmed (§3.2.1, §4.7 Decision): the later item's code
+> replaces the earlier one for the shared (record, key) pair. (4) Confirmed as Tessera
+> bounds (§4.7 rule 4); the client sets none, and every list is empty. (5) Confirmed
+> (§6.1): the product runs to the root; no template that names a setup has a parent, so it
+> equals the product up to the setup template; sections root first. (6) Seeds and the
+> generator per resolution: accepted as Decision details (§7.4). The weight-0 reading
+> **differs** from the client: a Random node with exactly one port always picks it, even at
+> weight 0 (`script-table.md` §7.4 rule 1, BIN3); none of the 367 single-port Random nodes of
+> the install has weight 0, so nothing visible changes, but follow rule 1. (7) Confirmed
+> (§4.4): every index buffer of all 47,563 meshes is drawn exactly once, and both counts
+> flag the same 258 meshes.
+
 ---
 
 <a id="s16"></a>
@@ -2219,6 +2490,8 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 | 2026-10-08 (OBS3) | header; §1 (new OBS3, new A34); §3.3 (toggle-files paragraph, the default-agreement sentence and the narrow OPEN) | Answers the blocking item of the 2026-10-07 re-review, repeated by the review of 2026-10-08. A census of all 40,643 0x47 entities (OBS3) gives: 7 avatar entities name the toggle property and carry it true; 3 more avatar entities carry it true without naming it; 19 entities carry it in all, every value true; 4 non-avatar entities (0x4700A4A4, 0x4700A4A8, 0x4700A4AA, 0x4700A4AF) name it but do not carry it. The earlier "10 entities" and "10 of the 14" are replaced by a table. The OPEN's conclusion is corrected: for those 4 entities the two candidate sources disagree even with the option on (the entity's own set would fall to the dictionary default false and show the plain files); for the 7 naming avatar entities they still differ only when the option is off. The Tessera rule is unchanged. | Spec writer (dirty room) |
 | 2026-10-08 | §7.4 OPEN (O12), §17 O12 row | Owner-observation pass: the random picks of the figures' start-up scripts come from the client's global generator, seeded from the clock at start-up (`script-runtime.md` §8, R40); a new look per visit is expected. No rule of this spec changed. | Spec writer (dirty room) |
 | 2026-10-09 (merge) | header | Merge of main into the specs-5 branch: the Accepted text of 2026-10-08 (BIN5, OBS3, narrow re-review) and the branch's owner-observation row above are both kept; status Revised until the O12 change is reviewed. No fact changed. | Spec writer (dirty room) |
+| 2026-10-09 (BIN6, OBS4) | header; §1 (new OBS4, BIN6, A35–A40); §3.2.1 (NaN Decision); §3.3 (absent toggle property); §4.4 (triangle count); §4.7 (rule 4 bounds, shared dye key); §5.3 (Decision revised for instruments); §5.4 (Rule); §5.5 (creature cosmetic slots: names, carriers, placement); §5.6 (cosmetic rows, shield row, instrument row and paragraph, shields out of combat with Decision and OPEN, gauntlets stowed only, what is normative, O13 OPEN narrowed); new §5.7; §6.1 (template chain); §7.4 (single-port Random, seed details); §8 step 9; §15 (five implementation OPENs of 2026-10-09 answered); §17 O13 row | Answers the implementation OPENs filed with the appearance conformance pass of 2026-10-09. From the client (BIN6, decision 0011): MeshFX rotation axes (yaw +Z, pitch +X, roll +Y), order *R*_Z · *R*_Y · *R*_X, composition location × offset × rotation × scale, and the per-axis scale written into the spawned item's `Render_AdjustableScale`. From the data (OBS4): full names and carriers of the creature cosmetic slots (server objects only) and their placements; how a reader finds the cosmetic and gauntlet DIDs; corrections to Accepted text: ranged-slot instruments are drawn while stowed, the gauntlet effect is stowed-only, and the stowed shield node needs a cosmetic override (Decision keeps the forearm). Confirmations of the engineering readings (one differs: weight-0 single-port Random nodes are picked). Status Accepted → Revised. | Spec writer (dirty room) |
+| 2026-10-09 (review answer) | header; §1 (A35, A36, A37, A39); §5.5 (`_Behavior` type); §5.7 steps 2 and 3 (Decision and two OPENs); §6.1 (flag-bit bullet, "What was not traced", Decision cross-reference); §13 (narrow OPENs); §15 (answer on axes qualified) | Answers the review of 2026-10-09 of the BIN6/OBS4 revision. Blocking 1: the composition location frame × placement frame was read only for unattached MeshFX nodes; for attached nodes (every placement of §5.5 and §5.6) it is now a labelled Tessera Decision with an OPEN on the attachment's per-frame composition and on `RemoveRotation` 1; A35 says so. Blocking 2: whether the two flag bits a MeshFX node sets from `UseParticleScale` and `IgnoreChildScale` are the holder-factor bits of §6.1 is now an OPEN; the §6.1 text no longer says that no link was seen and points to §5.7 step 3; the §6.1 Decision (*s* = 1) stays. Non-blocking: A37 covers the fishing-pole case and the `…_Cosmetic_Hide` gating; §5.5 and A39 give `…_Behavior` as an enum over the script-key mapper (property dictionary). No rule an implementation follows changed. | Spec writer (dirty room) |
 
 ---
 
@@ -2236,6 +2509,6 @@ Answers to the owner items of `docs/checklists/owner-observations.md` in this sp
 | O10 layering ties | **partly** | Equal priority: the later-applied part wins; the order of records and keys (§4.7); the layering cases of §4.6 follow from the priorities. | Worn pieces reach the original client from its server, whose order between items is not in the client; items 5 (gauntlets against a long-sleeved chest) and 1–4, 6–8 remain useful as confirmation. |
 | O11 updated-avatar option | **answered** | A graphics option, default on, bound to `GOP_AvatarUpdateVisible`; with it on, the toggle (newer) style files and the newer face compositor are used; turning it off rebuilds figures with the older files; character creation offers it for Hobbit and Dwarf only (§3.3, §3.5). | Nothing required; a look at the options screen would confirm the default. |
 | O12 random-appearance NPCs | **partly** | Outfits come from Appearance nodes under Switches on the type in the figures' `Startup` scripts, one random piece per group (§7.4); 316 of the 318 placed types have outfits. The picks come from the client's global generator, seeded from the clock at start-up, with no per-object seed (`script-runtime.md` R40, 2026-10-08). | Confirmation that a figure's look changes between visits (expected). Two visits to one figure settle it. |
-| O13 held-item rest positions | **answered** for weapons, shields and ranged items; **partly** overall | Stowed and wielded locations, offsets, rotations and per-species scales by equipment category (§5.6); class items and instruments have no placement script (§5.3). | The in-hand direction of long weapons and the yaw/pitch/roll composition (one screenshot of a stowed staff and of a drawn sword from the side), and whether class items are ever visible. |
+| O13 held-item rest positions | **answered** for weapons, shields and ranged items; **partly** overall | Stowed and wielded locations, offsets, rotations and per-species scales by equipment category (§5.6); how offset, rotation and scale apply, including the yaw/pitch/roll order (§5.7, BIN6, 2026-10-09); ranged-slot instruments are stowed by a per-species script (§5.6, A38); class items have no placement script (§5.3). | The in-hand direction of long weapons (one screenshot of a drawn sword from the side), whether class items are ever visible, and whether an equipped shield shows on the forearm out of combat with weapons sheathed (§5.6 "Shields out of combat"). |
 | O15 skin, hair and eye tints, face layers | **answered** for the pairing and the mechanism; **partly** for rendering detail | The face is one texture composited at run time from the face compositor (`misc-records.md` §3.6) with layer choices from `AC_Texture_*` and colours from `AC_Color_*`; hair and beard (and skin surfaces) are tinted through the dye colour 2003 set from `AC_Color_Hair` and `AC_Color_Skin` (§3.5); a second graphics option, default on, turns face compositing off. | Which texture slot of the face-skin surface receives the composed image (one frame capture of a face, as the checklist asks). |
 | O17 static NPCs at the N spots (dress part only) | **needs the owner** | What a figure wears and holds is settled by §7.2–§7.4 and §5.5 (data and BIN2); positions and headings come from the SED data (`entity-descriptor.md`), which the client places as stored. | Presence, position and facing at each spot depend on the original's server and content layers, not on client code; only the in-game `/loc` readings and a look can settle them. |

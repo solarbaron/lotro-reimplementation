@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** |
+| **Status** | **Accepted** (2026-10-09; the same-day revision of §4.4 and §5.3 re-reviewed and accepted 2026-10-09) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session), not the author |
-| **Review record** | 2026-10-09, spec reviewer (fresh session): passed (CLEAN_ROOM.md §5.3; 7 OBS/BIN facts re-checked independently). Non-blocking notes in the review log. |
+| **Review record** | 2026-10-09, spec reviewer (fresh session): passed (CLEAN_ROOM.md §5.3; 7 OBS/BIN facts re-checked independently). Non-blocking notes in the review log. 2026-10-09, revision review by an independent spec reviewer (fresh session, not the writer): **passed** (CLEAN_ROOM.md §5.3, all items). Changes reviewed: §4.4 per-axis scale and the Answered note, §5.3 strafe pairing and the Answered note, §11.4 example, §13 row for `collision.md` §11.6, rows SCR2, BIN2, MT31, MT32, change log. Spot checks, read-only: MT31 re-counted over every decoded 0x07 and 0x0C record (10,349 MeshFX nodes; 38 with `Mount_MeshFX_Entity`, all with equal components, 18 driving `Scale`; 875 others unequal; both properties vector3 in the dictionary); MT32 re-read on a private copy of the analysed project (deleted after use): the field registration pairs `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` with the last two of the four consecutive speed floats, and the war-steed block copies *S*1 and *S*2 from them in that order. The 397 stored slot-scale values were not re-counted. Non-blocking notes for the next revision: (N1) MT31 counts 38 mount MeshFX nodes while §4.4, MT11 and MI9 count the 35 nodes driven by `Mounted_Player_Cosmetic_Slot_Entity`; say in §4.4 that 3 more nodes write `Mount_MeshFX_Entity` with a stored, undriven entity. (N2) The §13 row for `collision.md` says "the third and fourth float after `ControlAcceleration`"; other fields lie between, so say "the third and fourth of the four consecutive speed floats", or drop the object layout from MT32 and §13 altogether (implementers do not need it; the pairing by property ID is the fact). (N3) The short names `StrafeLeftMoveSpeed` etc. omit the dictionary prefix `GenericPhysicsController_`, as `collision.md` §11.6 does; a one-line note in §1 would help readers look them up. |
 | **Implements into** | `crates/props` (typed views of the mount effect, §2, and of the template mount and war-steed properties, §6); `crates/physics` (the war-steed controller, §5.3–§5.8, next to the controller of `collision.md` §11); `crates/scriptgraph` and `apps/client` (rider presentation through the script tables, §4; the walker's summon and dismiss, §4.9); `apps/explorer` (mount card and mount viewer, §10); Tessera's own server (summoning, durability, war-steed stats, landblock riders, §2.4, §6, §7) |
 | **Companion specs** | [`combat-data.md`](combat-data.md) §3 (two halves), §5 (modifier entries), §6 (effects; class 2459 is listed there as "Mount"), §7 (skills); [`game-controls.md`](game-controls.md) §5.1 (MountDirectory), §5.2 (MountAppearanceTraits), §5.3 (MountedCombatControl, gait multipliers); [`collision.md`](collision.md) §10–§11 (movement parameters, layer choice, the player controller, the movement input, turning, the jump); [`script-table.md`](script-table.md) §4–§8 (nodes, driven properties, targets, MeshFX layout); [`script-runtime.md`](script-runtime.md) (how node graphs run); [`setup.md`](setup.md) and [`skeleton-anim.md`](skeleton-anim.md) §8 (holding locations); [`appearance.md`](appearance.md) §7 (instance sets, NPC figures); [`creatures.md`](creatures.md) §2, §3.2.1, §6 (templates, mirror properties, spawning); [`landblock.md`](landblock.md) §4.8; [`misc-records.md`](misc-records.md) §13.1 (PropertyMetaData); [`property-system.md`](property-system.md) §7.3 (bit-to-key rule), §8 (DID maps); [`wlib-bytecode.md`](wlib-bytecode.md) (the class library's code) |
 
@@ -59,6 +59,8 @@ spec says so and stops.
 | SCR | The script tables (0x07, 7,524 decoded, 2 failures as in `script-table.md` §10.3) and scriptlets (0x0C, 28,992) of the install, read on 2026-10-09 with the same decoders: every node whose driven pairs (`script-table.md` §4.2) name a mount-family property, every Switch and When node watching one, every Run and WhenRunning node naming the mount script keys of §4.3, and the full node trees of the scripts quoted in §4. The MeshFX data (kind 41, opaque in the decoder) was read by the layout of `script-table.md` §5.2. This is data in the user's install (method M1). |
 | BC | The class library's bytecode (record 0x56000000, chunk type 1), read on 2026-10-09 with the project's disassembler (`tessera-wvm`, following `wlib-bytecode.md`): the methods of class 2459 that are not inherited from class 734 (7 bodies), the mount-info class 2464 (9 bodies), the mount-system classes 1358 and 2469 (all bodies with a mount-family constant), and a scan of the whole code block for constants equal to the PIDs of every mount-family and cosmetic-slot property. Data in the install (method M1). |
 | BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, build 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-09), read on 2026-10-09 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use) and a byte scan of the read-only file. **Questions:** (m1) does native code read the mount effect's rider fields or the cosmetic-slot fields by constant property ID; (m2) what native code does with `Mount_Movement_*_Cached`, `MountMovement_CurrentSpeed` and `MountedCombat_Current_LockedGear` (the war-steed controller); (m3) the source of the second forward-speed limit left open by `game-controls.md` Q8; (m4) what the property natives called by the mount-system bytecode do (package 169, functions 3 and 45), located with the registration pairing of `wlib-bytecode.md`'s BIN row; (m5) which bits of `Mount_CurrentMountType` native code tests. **Method:** an instruction scan for immediates equal to 230 mount-family PIDs; a byte scan of the whole file for the 4-byte PIDs of the 12 rider fields of §2.2, the 57 cosmetic-slot PIDs and the 9 mount script keys; decompilation of the functions found. **Why M1–M3 were not enough:** the movement controller and the native property functions exist only in the executable; the data say which properties exist, not which side reads them or how they combine; no published source describes them; no running client is available to this session (M3). **Not read:** network handling, login, keys, the launcher, anti-tamper. The war-steed controller blends its state toward server updates (the controller is server-authoritative, §5.9); that blending was seen at its entry and not followed (decision 0004). No listings, symbol names or addresses are carried into this spec. |
+| SCR2 | The same script tables and scriptlets, read again on 2026-10-09 for this revision with a new throwaway probe: the `Scale` field, its driven pair and `MeshIIDTargetProperty` of **every** MeshFX node (10,349 nodes in all decoded 0x07 and 0x0C records); the property dictionary entries of `MeshFXScript_Scale` and `Mounted_Player_Cosmetic_Slot_Scale`; every value of the latter in all 0x78 and 0x79 sets (nested values included) and all 3,768,840 landblock instance sets. |
+| BIN2 | **M4 (decision 0011)**, same build, 2026-10-09, Ghidra 12 on a private copy of the shared project (deleted after use). **Question (m6):** which property names the two strafe slots of the war-steed parameter block carry. **Why M1–M3 were not enough:** every observed movement layer has equal strafe speeds, so no data and no observation of the running client can tell the slots apart. **Read:** the field registration of the layered movement-parameter object (property ID and accessor of each field), the accessors of `ForwardMoveSpeed`, `BackwardMoveSpeed`, `StrafeLeftMoveSpeed`, `StrafeRightMoveSpeed` and `ControlAcceleration`, and again the war-steed parameter-block builder and the sideways target of §5.4. |
 | SPEC | Facts stated, with their own provenance, in the companion specs; cross-references only. |
 | DEC | Tessera's own choices where the data, the client library and the executable say nothing. Marked **Decision**; not claims about the original. |
 
@@ -97,6 +99,8 @@ consistent with the data and code that was not traced end to end; **Decision** =
 | MT25 | Forwarding pairs of the mount stats (PropertyMetaData) (§6.2) | OBS (5,211 of 5,211 metadata objects) | Confirmed |
 | MT26 | Records that modify mount stats (effects, traits, relics, class-1346 objects, items, progressions) (§6.3) | OBS (every modifier entry and property-ID value) | Confirmed |
 | MT27 | NPC and monster riders: 280 templates carry `Mounted_Player_Cosmetic_Slot_Entity`, all of them with `Mount_Type` and the startup effect 0x70033562; 418 templates start a mount effect (§6.6) | OBS | Confirmed |
+| MT31 | `MeshFXScript_Scale` and `Mounted_Player_Cosmetic_Slot_Scale` are vector3 properties (dictionary). All 38 MeshFX nodes whose `MeshIIDTargetProperty` is `Mount_MeshFX_Entity` store three equal components (18 of them drive `Scale`); 875 of the other 10,311 MeshFX nodes store unequal components, for example (0.7, 0.7, 1.0); all 397 stored `Mounted_Player_Cosmetic_Slot_Scale` values are uniform (§4.4) | SCR2 | Confirmed (script data) |
+| MT32 | The layered movement-parameter object holds `ForwardMoveSpeed`, `BackwardMoveSpeed`, `StrafeLeftMoveSpeed`, `StrafeRightMoveSpeed` as four consecutive floats and `ControlAcceleration` as a vector3 before them; the war-steed block takes *S*1 from the `StrafeLeftMoveSpeed` field and *S*2 from the `StrafeRightMoveSpeed` field, *F*, *B* and *a* from the forward, backward and acceleration fields (§5.3) | BIN2 (m6) | BIN |
 | MT28 | Landblock rider instance sets: 1,549 instance sets carry at least one of the seven rider keys; census, link roles, enum mappers (§7.1–§7.3) | OBS (all 3,768,840 instance sets) | Confirmed |
 | MT29 | How the data consumes the rider keys: rider-pose scriptlets by `Mount_RiderType`, Appearance nodes by `Mount_MountAppearance`, banner scripts by the banner keys (§7.4) | SCR | Confirmed (script data) |
 | MT30 | Durability: 691 records with three change events (event IDs 22, 17, 31 in that order), base maxima 60–300, regeneration 1.0 or 1.5 (§2.4) | OBS | Confirmed (data); rules server-side |
@@ -529,14 +533,24 @@ Consequences an implementation must keep:
 > matter. **Decision (Tessera):** the mount's model transform is the rider's model transform ×
 > the rider's bone transform of the location × the location frame (`skeleton-anim.md` §8.2, as
 > for held items) × a translation by `BoneOffset` (metres, in the location's frame) × a
-> uniform scale of the node's scale (times the rider's model scale when `UseParentScale` is
-> 1).
+> **per-axis** scale by the node's `Scale` vector, component by component (*x*, *y*, *z* of
+> the mount's model space), times the rider's final model scale, also per axis
+> (`appearance.md` §6.1), when `UseParentScale` is 1. (Revised 2026-10-09: was "a uniform
+> scale".)
 
-> **OPEN (implementer, 2026-10-09):** `MeshFXScript_Scale` is a vec3, and the Decision above
-> applies "a uniform scale of the node's scale". **Tessera's choice:** the three components
-> scale the three axes (the same thing whenever they are equal; every mount node the
-> explorer's real-data test chose had equal components). Should a node with unequal
-> components ever occur, which component (or which combination) is the uniform scale?
+Why per axis (MT31, Confirmed (script data)): `MeshFXScript_Scale` and the property that drives
+it, `Mounted_Player_Cosmetic_Slot_Scale`, are both vector3 properties in the dictionary;
+875 MeshFX nodes outside the mounts store unequal components, which only a per-axis scale can
+use; and the object render scale they end up in is per axis (`appearance.md` §6.1, own scale
+×  holder's final scale, component by component). For the mounts the question has no effect in
+this install: all 38 MeshFX nodes that write `Mount_MeshFX_Entity` store equal components,
+and all 397 `Mounted_Player_Cosmetic_Slot_Scale` values in the property sets of
+`client_gamelogic.dat` (effects and templates, §2.2, §6.6; none in a landblock instance set) are
+uniform.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** no component is chosen: the
+> three components scale the three axes (Tessera's choice is the Decision above). How the
+> original applies the node's scale at run time is still part of the MeshFX OPEN above (MQ5).
 
 <a id="s4-5"></a>
 ### 4.5 Rider and mount talk through targets (Confirmed (script data), MT14)
@@ -719,20 +733,24 @@ At each use the controller builds a parameter block from the layered movement pa
 
 The 150 and 2.0 are constants of the client (decision 0012). The replacements and
 multipliers are read from the code. The pairing of the block's slots with the property names
-of the layered parameters follows from their use (§5.4: forward and backward limits, the
-forward and sideways acceleration) and is Inferred; for the two strafe slots the names were
-not traced, as for the player controller (`collision.md` §11.6 OPEN). Every observed layer
-has equal strafe speeds, so the pairing has no effect in this install.
+of the layered parameters is BIN (MT32, revised 2026-10-09): the client registers each field of
+the layered movement-parameter object with its property ID and an accessor, and the war-steed
+block copies *S*1 from the field registered as `StrafeLeftMoveSpeed`, *S*2 from the field
+registered as `StrafeRightMoveSpeed`, *F* from `ForwardMoveSpeed`, *B* from
+`BackwardMoveSpeed` and the three *a* values from `ControlAcceleration`. So a positive sideways
+input *x* (strafing right, `collision.md` §11.8 item 5) targets `StrafeRightMoveSpeed`, a
+negative or zero one `StrafeLeftMoveSpeed`, and the sideways limits of §5.4 are
+−`StrafeLeftMoveSpeed` … +`StrafeRightMoveSpeed`. Every observed layer has equal strafe speeds,
+so the pairing has no effect in this install.
 
 With the template values of §6.1 (`Mount_Movement_Max_Speed` 6.5, `…_Acceleration` 0,
 `…_Turn_Rate` 100, `…_Gear_Change_Rate` 2.0, mirrored in their `_Cached` forms) a rider without
 war-steed bonuses has *F* = 6.5, *a*y = 0 and *R* = 100. The war-steed effects add to the base
 properties (§2.6); the `_Cached` forms are the forwarded results (§6.2).
 
-> **OPEN (implementer, 2026-10-09):** the strafe slots are not paired with property names
-> (Inferred above). **Tessera's choice:** *S*1 is the layered left strafe speed and *S*2 the
-> right one (`tessera-physics` `controller::warsteed`); every observed layer has equal strafe
-> speeds.
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** *S*1 is the layered
+> `StrafeLeftMoveSpeed` and *S*2 the layered `StrafeRightMoveSpeed` (BIN2, m6); Tessera's
+> choice matches the client.
 
 <a id="s5-4"></a>
 ### 5.4 Target velocity and integration (BIN, MT20)
@@ -1198,10 +1216,14 @@ Same block, no locked gear, *g* = 7 (Gallop), input (*x*, *y*) = (0.57, 1), stor
 A synthetic table holds `Mounted_Player_Cosmetic_Mesh` as a Switch on `Mount_CurrentMountType`
 with a case 0x4 (goat) whose species Switch has a branch for species A with a MeshFX node of
 stored scale 1.05 that does **not** drive `Scale`, and a default branch whose node drives
-`Scale`. The mount effect has `Mounted_Player_Cosmetic_Slot_Scale` 0.925.
+`Scale`. The mount effect has `Mounted_Player_Cosmetic_Slot_Scale` (0.925, 0.925, 0.925).
 
-- Rider of species A on the goat: drawn at 1.05; the effect's 0.925 is ignored.
-- Rider of another species on the goat: the default node drives `Scale`: 0.925.
+- Rider of species A on the goat: drawn at (1.05, 1.05, 1.05); the effect's value is ignored.
+- Rider of another species on the goat: the default node drives `Scale`: (0.925, 0.925, 0.925).
+- Same rider, with a synthetic effect value (0.9, 1.0, 1.1) (none occurs in the install): the
+  mount is scaled by 0.9 along its model *x*, 1.0 along *y* and 1.1 along *z*; with
+  `UseParentScale` 1 and a rider final scale of (0.7, 0.7, 0.7) (a River-hobbit,
+  `appearance.md` §6.1), (0.63, 0.7, 0.77).
 - Rider without `Mounted_Player_Cosmetic_Slot_Entity` (null DID): the When node stops the
   branch; nothing is drawn.
 
@@ -1255,6 +1277,7 @@ rider takes a normal hit (200 → 170), then a critical hit (170 → 80), then 3
 | `combat-data.md` §6.1, row 2459 | Point to mounts.md §2 for the fields and groups. |
 | `script-runtime.md` OPEN-17 | The mount MeshFX nodes are persistent (`Persistent` 1) and name their mesh-IID property; mounts.md §4.4 needs the MeshFX kind implemented. |
 | `creatures.md` §6.1 step 5 | Rider overrides of spawned objects (mounts.md §7). |
+| `collision.md` §11.6, OPEN (BIN 36) | The names of the two strafe fields need not rest on the registration order: the field registration gives each field's property ID with an accessor, and the accessors read `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` from the third and fourth float after `ControlAcceleration`, directly after `ForwardMoveSpeed` and `BackwardMoveSpeed` (mounts.md MT32, BIN2). Which of the two the player controller's item 1 reads for *x* > 0 should be re-checked against these accessors. |
 
 ---
 
@@ -1264,3 +1287,4 @@ rider takes a normal hit (200 → 170), then a critical hit (170 → 80), then 3
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (spec writer). Status Review. Sources OBS, SCR, BC, BIN (questions m1–m5). |
+| 2026-10-09 | Revision (spec writer), answering the two implementer OPENs of 2026-10-09. §4.4: the MeshFX `Scale` is applied per axis, with the rider's final model scale per axis (`appearance.md` §6.1); census of every MeshFX node's scale (SCR2, MT31); §11.4 example per axis. §5.3: strafe slots paired with `StrafeLeftMoveSpeed` (*S*1) and `StrafeRightMoveSpeed` (*S*2) from the field registration and accessors (BIN2 question m6, MT32). §13: proposal for `collision.md` §11.6. Status Revised. |

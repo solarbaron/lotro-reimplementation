@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Review — **changes requested** by the independent re-review of 2026-10-09 (one blocking item, R2-1; see the review record). The first review's blocking items (1)–(3) and non-blocking (a)–(d) are answered; (e) stands until branch `p0` is merged |
+| **Status** | Review — revised 2026-10-09 after the independent re-review of 2026-10-09 (changes requested): blocking R2-1 and non-blocking (f)–(j) answered (change log); awaiting a further independent review. (e) stands until branch `p0` is merged |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Pending (an independent spec-review session that wrote no part of this spec) |
@@ -37,6 +37,8 @@ Values (DIDs, labels, counts) are observations of one install; read them at run 
 | **OBS** | The user's install (client build 4906.0071.1794.4035), read-only, archives unchanged since 2026-10-04 (re-checked 2026-10-09): the UI layout records `chargen` (0x2200000C), `chargen_characterselect` (0x2200000D), `chargen_raceclass` (0x2200083E), `chargen_appearance` (0x22000010), `chargen_movielibrary` (0x220001A8), `chargen_movieplayer` (0x220001B9), `renamecharacterdialog` (0x22000845) and the appearance-control templates they are based on (dump of 2026-10-06, re-read with a throwaway value-decoding probe 2026-10-09); the mappers `CharGen_Stage` (0x23000132) and the camera mapper (0x230000B9); the race, nationality and class records (`player-character.md` OBS); string table 0x250001BD (character screens) read for tokens and variable IDs only. |
 | **PC**, **AP** | `player-character.md` and `appearance.md` (Accepted), for record layouts and rules cited by section. |
 | **Design** | Tessera rules, marked **Tessera rule**. |
+| **Probable** (mark) | A reading of observed data that fits every record checked but whose meaning was not traced to the original's behaviour; an implementer may rely on it, and a contrary observation turns it into an OPEN. |
+| **Spec** | Accepted text of another Tessera spec, cited by section (`tessera-protocol.md`, `scenario-feed.md`). |
 
 | # | Fact | Source | Mark |
 |---|---|---|---|
@@ -51,8 +53,10 @@ Values (DIDs, labels, counts) are observations of one install; read them at run 
 | CS9 | `CharGen_Name_Entry_Field` is an element with a base reference to the `Text` element `ChargenNameTextEntry` of layout 0x22000002 (`text`), with editable, selectable and one-line set (§5.3) | OBS | Confirmed 2026-10-09 |
 | CS10 | Side panels anchor by their own edge modes; the scaling parent holds the centre parts (§2.2) | OBS (the three screen layouts' top-level elements) | Confirmed 2026-10-09 |
 | CS11 | The description line of a character row uses the three-variable format token 0x0BB533CE of table 0x250001BD with variables 0x50AA9C, 0x56575, 0x480683, and shorter formats exist (§3) | OBS (token and variable IDs present; no text read) | Confirmed (IDs); **Probable** (that the three variables are level, race name and class name: a reading of the variable roles, not traced) |
-| CS12 | Elements hidden by their own data (`UICore_Element_hide` true): `CharGen_Name_Admin_Button`, `CharGen_Avatar_Loading_CenterScreen`, `CharGen_Avatar_Loading_RaceBlocker` (the latter also blocks clicks) (§3–§5) | OBS | Confirmed 2026-10-09 |
-| CS13 | No backend except the scenario feed can answer a deletion: `tessera-protocol.md` §6.2 has no deletion message; the test-server backend refuses `DeleteCharacter` with `NetError::InvalidCommand` and the plain sandbox ignores it (`scenario-feed.md` §9.5) (§7.2) | `tessera-protocol.md` §6.2; `scenario-feed.md` §9.5 (Accepted on `p0`) | Confirmed (spec text, 2026-10-09) |
+| CS12 | Elements hidden by their own data (`UICore_Element_hide` true): `CharGen_Name_Admin_Button`, `CharGen_ContinueLocked_BuyNowButton`, `CharGen_Avatar_Loading_CenterScreen`, `CharGen_Avatar_Loading_RaceBlocker` (the latter also blocks clicks) (§3–§5) | OBS | Confirmed 2026-10-09 |
+| CS13 | No backend except the scenario feed can answer a deletion (creation: CS14): `tessera-protocol.md` §6.2 has no deletion message; the test-server backend refuses `DeleteCharacter` with `NetError::InvalidCommand` and the plain sandbox ignores it (`scenario-feed.md` §9.5) (§7.2) | `tessera-protocol.md` §6.2; `scenario-feed.md` §9.5 (Accepted on `p0`) | Confirmed (spec text, 2026-10-09) |
+| CS14 | On M7's server the screens' `CreateCharacter` is carried by `CharacterCreate` (§6.2.7) and answered by `CharacterList` or `CharacterCreateFailed` (§6.2.8–§6.2.9, codes §14.4), accepted only when `HelloAck.server_caps` has `CHARACTER_CREATION` (§6.2.2) and only one request is outstanding; the `remote` backend has no event for either answer yet (Appendix A) and `scenario-feed.md` §9.5 makes it refuse `CreateCharacter`; the mapping of §7.1.1 is a Tessera rule that narrows that refusal | Spec (`tessera-protocol.md` §6.2.2, §6.2.7–§6.2.9, §13.1, §14.4, Appendix A; `scenario-feed.md` §9.4–§9.5 on `p0`); Design | Confirmed (spec text, 2026-10-09); Decision (the mapping) |
+| CS15 | `CharGen_Notice_FinishingLogout` is a direct child of `CharGen_CharacterSelect_Base` (only `CharGen_Temp_TooManyPlayers` is inside the scaling parent); `ECommBrowser` (a `Browser`, 100 × 100) is a top-level element of `chargen_characterselect`; `GamePlay_ExaminationTooltip_Activatable` (a `Field`, 192 × 128) is a child of `CharGen_Base_Field`; both loading blockers are based on `Chargen_Silver_Border` of layout 0x22000001 (eight edge pieces and a background) and carry the translucent fill (§2, §3, §4.3) | OBS (layouts 0x2200000C, 0x2200000D, 0x2200083E, 0x22000001, value-decoding probe 2026-10-09) | Confirmed 2026-10-09 |
 
 ---
 
@@ -72,6 +76,10 @@ creation scene: the race's `RaceTable_UIScene` (a 0x21 record, `misc-records.md`
 cameras of `RaceTable_Chargen_Camera` / `RaceTable_Character_Select_Camera` and their zoom
 variants in the gender entry (`player-character.md` §5.2–§5.3).
 
+`CharGen_Base_Field` also holds `GamePlay_ExaminationTooltip_Activatable` (a `Field`,
+192 × 128 at 571, 12, CS15), by its label the in-world examination tooltip's anchor. **Tessera
+rule (P1):** never created on these screens (they have no examinable objects).
+
 <a id="s2-2"></a>
 ### 2.2 Screens and stages (Confirmed, CS2)
 
@@ -89,7 +97,7 @@ scaling parent holds the centre parts:
 
 | Screen | Left panel | Right panel | Scaling parent and its centre parts |
 |---|---|---|---|
-| Selection | `CharGen_CharacterSelect_Panel` | `CharGen_Menu_Panel` | `CharGen_CharacterSelect_ScalingParent`: logo, notices, PvP lobby field, rename buttons |
+| Selection | `CharGen_CharacterSelect_Panel` | `CharGen_Menu_Panel` | `CharGen_CharacterSelect_ScalingParent`: logo, the `CharGen_Temp_TooManyPlayers` notice, PvP lobby field, rename buttons (the other notice, `CharGen_Notice_FinishingLogout`, is a direct child of the root, CS15) |
 | Race and class | `CharGen_RaceSelect_Panel` | `CharGen_ClassSelect_Panel` | `CharGen_RaceClass_ScaleParent`: logo, loading notice, locked-continue store button |
 | Appearance and name | `CharGen_Appearance_Panel_Left` | `CharGen_Appearance_Panel_Right` | `ControlsParent` (this layout's own): create, race-change, advanced-start and name-entry panels |
 
@@ -164,13 +172,14 @@ Which stage shows which control is game code, not data. **Tessera rule (P1):**
 | Part (element label) | Content | P1 (Tessera rule) |
 |---|---|---|
 | `CharGen_CharacterSelect_Panel` (left) | title box (`CharGen_CharacterSelect_Label`, the account type and slots-available labels), the character list `CharGen_CharacterSelect_Listbox` with a page control and a sort menu | shown; slots label: "used / allowed" from the session's list and Tessera's limit (64, `scenario-feed.md` §5.1) |
-| `CharGen_CharacterSelect_New_Button` | new character → §4 | shown |
+| `CharGen_CharacterSelect_New_Button` | new character → §4 | shown; enabled or ghosted per backend (§7.1) |
 | `NewCharacterSlot_Button` | buy a slot (store) | hidden |
 | `CharGen_CharacterSelect_Delete_Button` | delete the selected character (§7.2) | shown; enabled only on a backend that can answer a deletion (§7.2) |
 | `CharGen_CharacterSelect_RaceChange_Button`, `CharGen_RenameCharacter_Button`, `CharGen_RenameCharacter_BuyNow` | race change, rename (store or account services) | hidden |
 | `CharGen_Menu_Panel` (right) | store button, monster-play button, enter button (`CharGen_CharacterSelect_Enter_Button`, large), credits, movie library, options, quit, plugin manager buttons | enter, options, quit, plugin manager shown; others hidden |
 | `CharGen_PVP_Lobby_HideWhenField` | PvP lobby | hidden |
 | `CharGen_Notice_FinishingLogout`, `CharGen_Temp_TooManyPlayers` | notices | shown when applicable (Tessera's own texts) |
+| `ECommBrowser` (top-level element of the layout, a `Browser`, 100 × 100, CS15) | by its label an embedded web view for the store (reading of the label, not traced) | never created in P1 (Tessera embeds no web content) |
 | `CharSelect_ChooseAvailableCharacters_Dialog` (top-level element of the layout, with its entry template `CharSelect_ChooseAvailableCharacters_Entry`: a check box and a name, an Ok entry and a text line) | a dialog with a scrolling list of characters, each with a check box, and an Ok button; by its labels an account-services choice of which characters stay available (reading of the labels, not traced) | never created in P1 |
 
 **Character row** (`CharGen_CharacterSelect_Character_Template`, based on
@@ -237,9 +246,9 @@ list (**Tessera rule**). A choice is valid by `player-character.md` §5.4.
 
 | Element | Data | P1 (Tessera rule) |
 |---|---|---|
-| `CharGen_ContinueLocked_BuyNowButton` (in the scaling parent, 241 × 41 at 600, 666, based on `CharGen_Class_BuyNow` of layout 0x22000837; label and coin children) | a store button in place of Continue for a locked choice | never shown (every choice is enabled, §4.1–§4.2) |
-| `CharGen_Avatar_Loading_CenterScreen` (160 × 100 at 640, 399, translucent dark fill, label child `AvatarLoading_Label`) | hidden by its own data (CS12) | shown while the figure for the current choice is still loading (`appearance.md` §8: assets not yet resident), hidden when it is drawn |
-| `CharGen_Avatar_Loading_RaceBlocker` (276 × 361 at 39, 70 in the left panel, z −10, translucent dark fill) | hidden by its own data, blocks clicks (CS12) | shown over the race list for the same time as the notice, so no new race is chosen while a figure loads |
+| `CharGen_ContinueLocked_BuyNowButton` (in the scaling parent, 241 × 41 at 600, 666, based on `CharGen_Class_BuyNow` of layout 0x22000837; label and coin children) | a store button in place of Continue for a locked choice; hidden by its own data (CS12) | never shown (every choice is enabled, §4.1–§4.2) |
+| `CharGen_Avatar_Loading_CenterScreen` (160 × 100 at 640, 399, based on `Chargen_Silver_Border` of layout 0x22000001 — a nine-part border of eight edge pieces and a background, CS15 — with a translucent dark fill over it, label child `AvatarLoading_Label`) | hidden by its own data (CS12) | shown while the figure for the current choice is still loading (`appearance.md` §8: assets not yet resident), hidden when it is drawn |
+| `CharGen_Avatar_Loading_RaceBlocker` (276 × 361 at 39, 70 in the left panel, z −10, based on the same `Chargen_Silver_Border` with the same translucent dark fill, CS15) | hidden by its own data, blocks clicks (CS12) | shown over the race list for the same time as the notice, so no new race is chosen while a figure loads |
 
 ---
 
@@ -349,23 +358,78 @@ change of a control).
 <a id="s7-1"></a>
 ### 7.1 Creating
 
-The client sends `CreateCharacter { name, appearance, class }` (`scenario-feed.md` §9.4):
-`appearance` = `Appearance::new(Body::Character { species, sex })` with the chosen race table's
-species and the gender entry's sex value, `class` = the class key. On M7's server the client
-sends `CharacterCreate { name, appearance }` (`tessera-protocol.md` §6.2.7); the class is not
-carried (`LEGAL.md` §11.1 rule 5, no gameplay reproduction; `server-content.md`
-gives the checkable form).
+On every backend the screen issues one command, `tessera-net`'s `CreateCharacter { name,
+appearance, class }` (`scenario-feed.md` §9.4): `appearance` =
+`Appearance::new(Body::Character { species, sex })` with the chosen race table's species and
+the gender entry's sex value, `class` = the class key. The backend carries it (on M7's server
+as `CharacterCreate`, §7.1.1) and turns the answer into the session events `CharacterInfo`
+(success) or `CharacterRefused` (failure); the screen sees only these events.
 
-Answers:
+| Backend | New button (`CharGen_CharacterSelect_New_Button`) | Success | Failure |
+|---|---|---|---|
+| Scenario feed | enabled | `CharacterInfo` with that name (an `accept-character` step of an `on create-character` trigger) | `CharacterRefused { name, reason }` (a `refuse-character` step) |
+| Plain sandbox (no scenario) | enabled | none (§8 OPEN) | none |
+| M7 server (`remote` backend) | enabled when the server advertised `CHARACTER_CREATION`, else ghosted (§7.1.1 step 1) | `CharacterInfo` for the new name (§7.1.1 step 3) | `CharacterRefused` with Tessera's own text per code (§7.1.1 step 4) |
 
-| Backend | Success | Failure |
-|---|---|---|
-| Scenario feed | `CharacterInfo` with that name (an `accept-character` step of an `on create-character` trigger) | `CharacterRefused { name, reason }`; the reason text is shown in the error list and the screen stays |
-| Plain sandbox (no scenario) | none (§8 OPEN) | none |
-| M7 server | `CharacterList` containing the name | `CharacterCreateFailed { code, text }`; Tessera shows its own text per code (`tessera-protocol.md` §14.4) |
+Screen rules (**Tessera rule**, CS7): Create (`CharGen_Name_Create_Button`) is ghosted from
+the moment it sends until the answer or the time-out below. A `CharacterInfo` whose name
+equals the requested name is success: the screen returns to the selection screen, adds the
+row (if new) and selects it. A `CharacterRefused` for that name is failure: its `reason` is
+shown in `CharGen_ErrorTextList` and the screen stays with every choice kept. A refusal of the
+command itself (`NetError::InvalidCommand`, for example an invalid name or appearance under
+`scenario-feed.md` §9.5) is shown the same way with Tessera's own text. With no answer within
+10 s an error line is shown, Create is enabled again and the screen stays. A ghosted New button
+keeps its tooltip, which says (Tessera's own text) that this server does not allow creating
+characters.
 
-On success the screen returns to the selection screen with the new character selected.
-**Tessera rule:** with no answer within 10 s, an error line is shown and the screen stays.
+<a id="s7-1-1"></a>
+#### 7.1.1 Creation on M7's server (`remote` backend) (Tessera rule, CS14)
+
+This is the normative rule for `CreateCharacter` on the test-server (`remote`) backend. It
+narrows `scenario-feed.md` §9.5, whose blanket refusal of the new commands still holds for
+`DeleteCharacter` and every other command of its §9.4 (OPEN below for the matching revision
+there).
+
+1. **Capability.** The backend keeps the `server_caps` of the server's `HelloAck`
+   (`tessera-protocol.md` §6.2.2) and lets the screen read whether bit 1
+   `CHARACTER_CREATION` is set (with the other server information it already exposes). The
+   screen ghosts the New button when it is clear.
+2. **Command.** The backend accepts `CreateCharacter` only when all of these hold: the session
+   is `Connected` (the wire state CharacterSelect); `CHARACTER_CREATION` is set; `appearance`
+   is present (the wire message requires one); `scenario-feed.md` §9.5's validation passes;
+   and no `CharacterCreate` or `EnterWorld` of this connection is outstanding (a second one
+   is fatal, `tessera-protocol.md` §13.1 "Outstanding requests"). Otherwise it refuses with
+   `NetError::InvalidCommand` and sends nothing. When it accepts, it sends
+   `CharacterCreate { name, appearance }` (§6.2.7) with the appearance in its §5.3 wire form,
+   drops `class` (the protocol carries none: `LEGAL.md` §11.1 rule 5, no gameplay
+   reproduction; `server-content.md` gives the checkable form) and records the name as the
+   outstanding creation.
+3. **`CharacterList` answer** (§6.2.8). The backend clears the outstanding creation. If the
+   list holds an entry with the outstanding name, it emits one
+   `CharacterInfo { name, body: Some(that entry's body), class: None, level: None }`. If it
+   does not, it emits `CharacterRefused { name: the outstanding name, reason }` with the
+   reason text Tessera uses for code 6 `SERVER_ERROR`. Other entries of the list emit nothing
+   (in v1.0 a list changes only through this connection's own request; a difference is logged
+   at debug level).
+4. **`CharacterCreateFailed { code, text }` answer** (§6.2.9). The backend clears the
+   outstanding creation and emits `CharacterRefused { name: the outstanding name, reason }`,
+   `reason` being Tessera's own text for the code of `tessera-protocol.md` §14.4: one text
+   each for 1 `NAME_TAKEN`, 2 `NAME_INVALID`, 3 `TOO_MANY`, 4 `APPEARANCE_REFUSED`,
+   5 `DISABLED` and 6 `SERVER_ERROR`; any other code is treated as 6. The server's `text` is
+   logged (info level), not shown.
+5. **States.** Both events are character events and are surfaced while the session is
+   `Connected` (`scenario-feed.md` §9.5 "States"). An answer that arrives after the session
+   left `Connected` is dropped with a debug log; an answer with no outstanding creation is a
+   message outside its state, handled as `tessera-protocol.md` §6.1 and §13 say.
+
+> **OPEN (required revision of `scenario-feed.md` §9.5 and `tessera-protocol.md` Appendix A,
+> for their owner; does not block this spec):** §9.5 "Other backends" still says the
+> test-server backend refuses every new command, `CreateCharacter` included, and Appendix A
+> lists no `Event` for `CharacterList` and no `Command` for `CharacterCreate`. Both should
+> point to §7.1.1 here: §9.5 excepting `CreateCharacter` under these conditions, Appendix A
+> mapping `CreateCharacter` → `CharacterCreate`, `CharacterList` → `CharacterInfo` and
+> `CharacterCreateFailed` → `CharacterRefused`. Until they are revised, §7.1.1 governs
+> `CreateCharacter` on the `remote` backend.
 
 > **OPEN (design, blocks the "look" part of P1 exit criterion 1 on M7's server):** the
 > `Appearance` model carries a body (species and sex), a scale, worn items and an idle, but
@@ -456,6 +520,12 @@ For the install at `TESSERA_GAME_DIR`:
    §8.5) or the generator's empty result is reported.
 4. A headless scenario run creates one character per race and gender with the screen's
    command and enters the world with it.
+5. Against Tessera's test server run in-process (`test-server.md`, `character_creation`
+   true), the screen's `CreateCharacter` for one (race, gender) per race yields a
+   `CharacterInfo` with that name and the command's body (§7.1.1 step 3), and `EnterWorld`
+   with it succeeds; a second creation with the same name yields `CharacterRefused` (code 1);
+   with `character_creation` false the New button is ghosted and nothing is sent. The look
+   seen by other clients is limited by the §7.1 OPEN (Q7).
 
 Each step reports per-choice results; a failure is a panic or an unreported error.
 
@@ -489,6 +559,7 @@ Each step reports per-choice results; a failure is a panic or an unreported erro
 | Q8 | Deletion in scenarios; plain-sandbox creation | §7.2, §8 | `scenario-feed.md` owner |
 | Q9 | Deletion on M7's server | §7.2 | design decision (protocol minor) |
 | Q10 | Stage visibility of back, continue, exit, turntable and avatar-update toggle; turn speed | §2.3 | owner (O85) |
+| Q11 | `scenario-feed.md` §9.5 and `tessera-protocol.md` Appendix A to point to the `remote` creation rule | §7.1.1 | their owners (revision; §7.1.1 governs meanwhile) |
 
 ---
 
@@ -499,3 +570,4 @@ Each step reports per-choice results; a failure is a panic or an unreported erro
 |---|---|
 | 2026-10-09 | First version (Review), for decision 0024 P1: screens and stages, selection row, race/gender/class lists and their records, nationality, appearance controls, name, create, flow, commands and answers per backend, scenario-feed driving, real-data test, open design gaps (creation choices in `Appearance`, deletion in the feed, plain-sandbox creation). |
 | 2026-10-09 | Revision after the independent review of 2026-10-09 (changes requested); status stays Review. Blocking (1): new §2.3 names the shared controls of `chargen` under `ControlsParent` (back, exit, continue, the turntable group, the avatar-update toggle) with boxes, base elements and button data, and gives the P1 rule per stage, Exit hidden, the ghosted Continue, the turntable and the toggle; §2.1 and §5.2 point there. Blocking (2): §5.3 states that `CharGen_Name_Entry_Field` is an element with a base reference to the `Text` element `ChargenNameTextEntry` of layout 0x22000002, overridden to editable, selectable and one line. Blocking (3): §7.2 gives the delete rule per backend (scenario feed enabled; plain sandbox and M7 server ghosted, never send), the handling of an `InvalidCommand` refusal and a new protocol OPEN; §3 delete row follows. Non-blocking (a) §7.1 cites `LEGAL.md` §11.1 rule 5; (b) §2.2 corrected (side panels anchor by their own edge modes; per-screen table); (c) provenance row CS11 for the description format; (d) P1 rules for the admin and debug name elements (§5.3), the locked-continue store button and the loading blockers (new §4.3), the nationality text (§5.2), the choose-available-characters dialog (§3). Provenance rows CS8–CS13 added; §11 Q9, Q10; owner check O85 extended. (e) unchanged: `scenario-feed.md` links resolve after branch `p0` is merged. |
+| 2026-10-09 | Revision after the independent re-review of 2026-10-09 (changes requested); status stays Review. Blocking R2-1, answered by option (i): §7.1 now states that the screens issue `CreateCharacter` on every backend and see only `CharacterInfo` / `CharacterRefused`, with the New button rule per backend and the Create, refusal and time-out rules; new §7.1.1 gives the `remote` backend's rule (capability `CHARACTER_CREATION` from `HelloAck`, acceptance conditions, `CharacterCreate` with the class dropped, `CharacterList` → `CharacterInfo`, `CharacterCreateFailed` → `CharacterRefused` with Tessera's text per §14.4 code, states) as the rule that narrows `scenario-feed.md` §9.5, with an OPEN for the matching revision of that section and of `tessera-protocol.md` Appendix A; provenance row CS14; §3 New row, §9 step 5 (M7 part of P1 criterion 1) and §11 Q11 follow. Non-blocking: (f) `CharGen_ContinueLocked_BuyNowButton` added to CS12 and §4.3; (g) §2.2 selection row: `CharGen_Notice_FinishingLogout` is a direct child of the root; (h) `ECommBrowser` (§3) and `GamePlay_ExaminationTooltip_Activatable` (§2.1) never created in P1; (i) the **Probable** mark and the **Spec** source defined in the §1 key; (j) §4.3 loading blockers named as based on `Chargen_Silver_Border`. Provenance row CS15 (OBS, re-checked with the value-decoding probe 2026-10-09). (e) unchanged. |

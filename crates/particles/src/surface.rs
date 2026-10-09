@@ -112,11 +112,11 @@ impl SurfaceProgram {
         let row = match shader {
             0x2B00_070F | 0x2B00_0779 | 0x2B00_07F1 => a,
             0x2B00_07EB | 0x2B00_0760 => Self { doubled: true, ..a },
-            0x2B00_071B | 0x2B00_072D => Self {
+            0x2B00_071B => Self {
                 layers: Some(LayerCombine::Product),
                 ..a
             },
-            0x2B00_07AD => Self {
+            0x2B00_07AD | 0x2B00_072D => Self {
                 layers: Some(LayerCombine::Sum),
                 ..a
             },
@@ -316,7 +316,7 @@ mod tests {
                 true,
                 false,
                 true,
-                Some(LayerCombine::Product),
+                Some(LayerCombine::Sum),
             ),
             (
                 0x2B00_0703,
@@ -443,6 +443,26 @@ mod tests {
             assert_eq!(p.material_colour, did != 0x2B00_0084, "{did:#x}");
         }
         assert_eq!(SurfaceProgram::of(0x2B00_0700), None);
+    }
+
+    /// `particle-runtime.md` §9.1.1: the two-layer records whose colours multiply and the
+    /// ones whose colours add, exactly as the notation paragraph lists them.
+    #[test]
+    fn two_layer_records_combine_as_listed() {
+        for did in [
+            0x2B00_0703,
+            0x2B00_071B,
+            0x2B00_0742,
+            0x2B00_0776,
+            0x2B00_077A,
+        ] {
+            let p = SurfaceProgram::of(did).unwrap_or_else(|| panic!("{did:#x} listed"));
+            assert_eq!(p.layers, Some(LayerCombine::Product), "{did:#x}");
+        }
+        for did in [0x2B00_07AD, 0x2B00_0717, 0x2B00_072D] {
+            let p = SurfaceProgram::of(did).unwrap_or_else(|| panic!("{did:#x} listed"));
+            assert_eq!(p.layers, Some(LayerCombine::Sum), "{did:#x}");
+        }
     }
 
     #[test]

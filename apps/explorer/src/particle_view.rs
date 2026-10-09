@@ -144,13 +144,29 @@ pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
         BlendMode::AlphaBlend if b.depth_write => AlphaMode::TestBlend {
             cutoff: test.unwrap_or(-1.0),
         },
-        BlendMode::AlphaBlend => AlphaMode::Blend,
+        // `particle-runtime.md` §9.1.1 rule 1: alpha test on with depth write off keeps
+        // the material's reference (the renderer switches the test off while *A* < 0.9),
+        // so the draw carries the cut-off without depth write.
+        BlendMode::AlphaBlend => test.map_or(AlphaMode::Blend, |c| {
+            AlphaMode::Fixed(FixedBlend {
+                src: BlendFactor::SrcAlpha,
+                dst: BlendFactor::OneMinusSrcAlpha,
+                op: BlendOp::Add,
+                depth_write: false,
+                alpha_test: Some(tessera_render::AlphaThreshold(c)),
+            })
+        }),
         BlendMode::Additive if b.depth_write => AlphaMode::Fixed(FixedBlend {
             depth_write: true,
             alpha_test: test.map(tessera_render::AlphaThreshold),
             ..FixedBlend::ADDITIVE
         }),
-        BlendMode::Additive => AlphaMode::Additive,
+        BlendMode::Additive => test.map_or(AlphaMode::Additive, |c| {
+            AlphaMode::Fixed(FixedBlend {
+                alpha_test: Some(tessera_render::AlphaThreshold(c)),
+                ..FixedBlend::ADDITIVE
+            })
+        }),
         BlendMode::Custom => {
             let op = match b.op {
                 MatOp::Add => Some(BlendOp::Add),
@@ -1098,6 +1114,121 @@ mod tests {
             surface: Did(0x3100_0001),
             extra_surface: Did(0),
         })
+    }
+
+    /// A resolved unlit particle material with the given blend and alpha test.
+    fn particle_material(
+        mode: BlendMode,
+        dst: MatFactor,
+        depth_write: bool,
+        test: Option<f32>,
+    ) -> ResolvedMaterial {
+        use tessera_material::{
+            AlphaTest, BlendState, FeatureFlags, ParameterSet, ShaderInterface,
+        };
+        let shader = Arc::new(ShaderInterface {
+            did: Did(0x2B00_0001),
+            declarations: Vec::new(),
+            slots: Vec::new(),
+            permutation_count: 1,
+            lit: false,
+            common_blend: None,
+            cull_none: false,
+            default_alpha_ref: None,
+        });
+        let params = ParameterSet::build(&shader, &[]);
+        ResolvedMaterial {
+            surface: Some(Did(0x3100_0001)),
+            binding_key: Some(1),
+            shader,
+            materials: Vec::new(),
+            skipped: Vec::new(),
+            params,
+            slots: Vec::new(),
+            features: FeatureFlags {
+                lit: false,
+                alpha_test: test.map(|threshold| AlphaTest {
+                    threshold,
+                    source_slot: 3000,
+                }),
+                opacity_slot: Some(3000),
+                blend: BlendState {
+                    mode,
+                    src: MatFactor::SrcAlpha,
+                    dst,
+                    op: MatOp::Add,
+                    depth_write,
+                    opacity_slot: Some(3000),
+                },
+                two_sided: true,
+                normal_mapped: false,
+                specular: false,
+                dyeable: false,
+                dyeable_2: false,
+                emissive: false,
+                glow: false,
+                environment: false,
+                second_layer: false,
+                baked_lighting: false,
+                uv_transform: false,
+                animated: false,
+            },
+            dye: None,
+        }
+    }
+
+    /// The alpha-test reference the renderer applies to a draw of `mode` at *A* = `a`
+    /// (`particle-runtime.md` §9.1.1 rule 1 through `material.md` §11.2).
+    fn reference(mode: AlphaMode, a: f32) -> Option<f32> {
+        let (test, depth_write) = match mode {
+            AlphaMode::Fixed(f) => (f.alpha_test.map(|t| t.value()), f.depth_write),
+            AlphaMode::Blend | AlphaMode::Additive => (None, false),
+            other => panic!("unexpected particle mode {other:?}"),
+        };
+        tessera_render::draw_reference(test, depth_write, true, a)
+    }
+
+    /// `particle-runtime.md` §9.1.1 rule 1: a surface with alpha test on and depth write
+    /// off keeps its material's reference while *A* ≥ 0.9 and tests nothing but opacity 0
+    /// below; without alpha test the reference is 0.
+    #[test]
+    fn alpha_tested_surfaces_without_depth_write_keep_their_reference() {
+        let r = (0.5_f32 * 255.0).floor() / 255.0;
+        for (mode, dst, factor) in [
+            (
+                BlendMode::AlphaBlend,
+                MatFactor::InvSrcAlpha,
+                BlendFactor::OneMinusSrcAlpha,
+            ),
+            (BlendMode::Additive, MatFactor::One, BlendFactor::One),
+        ] {
+            let alpha = surface_alpha(&particle_material(mode, dst, false, Some(0.5)));
+            let AlphaMode::Fixed(f) = alpha else {
+                panic!("{mode:?}: {alpha:?}");
+            };
+            assert_eq!(f.src, BlendFactor::SrcAlpha);
+            assert_eq!(f.dst, factor);
+            assert_eq!(f.op, BlendOp::Add);
+            assert!(!f.depth_write);
+            assert_eq!(reference(alpha, 1.0), Some(r), "{mode:?}");
+            assert_eq!(reference(alpha, 0.9), Some(r), "{mode:?}");
+            assert_eq!(reference(alpha, 0.85), Some(0.0), "{mode:?}");
+
+            let untested = surface_alpha(&particle_material(mode, dst, false, None));
+            assert!(matches!(untested, AlphaMode::Blend | AlphaMode::Additive));
+            assert_eq!(reference(untested, 1.0), Some(0.0), "{mode:?}");
+        }
+        // Depth write on: the reference is scaled by *A*.
+        let written = surface_alpha(&particle_material(
+            BlendMode::Additive,
+            MatFactor::One,
+            true,
+            Some(0.5),
+        ));
+        assert_eq!(
+            reference(written, 0.5),
+            Some((0.25_f32 * 255.0).floor() / 255.0)
+        );
     }
 
     #[test]

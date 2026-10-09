@@ -706,7 +706,9 @@ input the output alpha is further multiplied by the soft-particle factor of para
 > without texture matrices 0 and 1 (`material.md` §8.4), as Tessera applies no texture
 > matrices to particle draws;
 > (e) the alpha-test reference is the effective 1043 value of the surface's material as
-> resolved once, not the curve evaluated at the clock at every draw; and fog uses the
+> resolved once, not the curve evaluated at the clock at every draw (the draw carries it
+> whenever the material's alpha test is on, also with depth write off, where the renderer
+> applies rule 1's switch at *A* < 0.9; corrected 2026-10-09); and fog uses the
 > distance fog of the world pass (none in passes without frame lighting, such as the
 > explorer preview).
 

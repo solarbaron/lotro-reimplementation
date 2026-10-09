@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07: the OPEN-closing revision of §12 and its repair passed review; previously Accepted 2026-10-06). Implementers re-check code built on §4, §5.6 and §5.8 against the 2026-10-07 change-log rows. |
-| **Last updated** | 2026-10-07 |
+| **Status** | Revised (2026-10-09, P1 revision: the §4 OPEN on a quality frame is answered from layout data and the tooltip work; no other text changed; awaiting review). Previously Accepted (2026-10-07: the OPEN-closing revision of §12 and its repair passed review; previously Accepted 2026-10-06) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Re-review 2026-10-07 (a separate dirty-room review session, not the author): **accepted**. Full record moved to the review log (decision 0018). |
@@ -352,6 +352,15 @@ are shared across qualities. So:
 > without reading a quality. What the mapped identifiers style (name colour, a slot frame or
 > something else) was not traced; a frame capture of an inventory slot (M3) or a trace of the
 > callers would settle it.
+>
+> *Answered (2026-10-09, P1):* the item-slot template that bags, the paperdoll, vendor and
+> loot lists use (`ItemDisplay_SlottedTemplate` of the `itemdisplay` layout) has no
+> quality-dependent element or state; its overlays are wear, cooldown, selection and similar
+> states (`character-panels.md` §5, layout data, all 302 layouts read). Quality colours the
+> item's **name**: the quality-to-state native maps keys 1–5 to the item-quality states of
+> the `ColorNameText` colour table (`item-tooltips.md` §6.2, BIN there). So the background
+> tile stays the only quality cue of an icon. In Tessera's sandbox the icons shown are those
+> of the item records the scenario feed places (`scenario-feed.md` §5.5).
 
 ---
 
@@ -693,3 +702,4 @@ to 384,950 in the same repair pass, in that spec.)
 | 2026-10-06 | header, §1, §5.8 | Repair after re-review (item 5). §5.8: the rank progressions are named by their minimum, not "first"/"second"; the wrong statement that rank 60 of the second (minimum 0) progression falls on a 0 entry is replaced by a table of the ranks each progression is reached with: rank 60 of the minimum-1 progression (entry 59) is the only 0 entry the reported rule selects; no minimum-0 trait exceeds rank 7. The §5.8 OPEN callout now also covers a 0 entry in a rank progression. OBS2 recheck dated 2026-10-06. No other fact or section number changed. |
 | 2026-10-07 | header, §1, §4, §5.6, §5.8, §9, §10, §12 | OPEN-closing revision (status Revised, waiting for review). New provenance rows OBS3 (literal search in the client library's bytecode) and BIN2 (questions (h) and (i)); I12 revised (index rule from `combat-data.md` §4.3; an absent minimum counts as 0, not 1 as LC assumes, which also settles the reviewer's 2026-10-06 note); new I13 (no native reader of the trait progressions; the trait-icon properties are bytecode literals) and I14 (`Icon_Layer_ImageOverrideDID` is a bytecode literal). §4 OPEN: what native code does with `Item_Quality` added; question kept. §5.6: the "not read" row limited to native code. §5.8: index rule, out-of-range handling (Tessera Decision D1 of `combat-data.md`), where the selection happens; the BIN (g) note corrected; the OPEN narrowed to script behaviour. §9 item 7 narrowed. §10: the 2026-10-06 implementer note recorded as a decision. No section number changed. |
 | 2026-10-07 | header, §1, §4, §5.8, §9, §12 | Repair after review (changes requested, minor). (1) I13: the conclusion that the trait icon and its rank selection are computed in script is marked Inferred; §5.8 "Where the client does it" adds the chance-match caveat of `combat-data.md` §13.2; §5.8 OPEN and §9 item 7 worded to match. (2) §4 OPEN: the description of the 9 native functions that use the `Item_Quality` ID is reduced to what holds for all of them, with the differences listed. No fact, count or section number changed. |
+| 2026-10-09 | header, §4 | P1 revision (spec writer, dirty room; status Accepted → Revised, awaiting review): the §4 OPEN on a separate quality frame answered (no quality element in the item-slot template; quality colours the item name, `item-tooltips.md` §6.2), with a scenario-feed note. No rule of §3 changed. |

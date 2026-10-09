@@ -4,12 +4,12 @@
 
 | | |
 |---|---|
-| **Status** | Revised (OPEN sweep of 2026-10-09, §20 last row; review 2026-10-09: **changes requested**, three blocking items in the review record). Previously Accepted |
+| **Status** | Revised (OPEN sweep of 2026-10-09; review 2026-10-09: changes requested; repaired 2026-10-09, §20 last row: the three blocking items fixed, waiting for re-review). Previously Accepted |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec-writer agent), none of them an author session: first and second review (2026-10-07), review of the 2026-10-08 revision |
-| **Review record** | Second review 2026-10-07: **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08, **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.2, §12.2, §13 (introduction), §13.1, §13.5, §13.7 changed (row U2 and new rows X1–X5); status Revised until a separate session reviews it. Review of the 2026-10-09 revision (separate review session, not an author session, 2026-10-09): **changes requested**. Checked: provenance for every new fact (keys BC and OBS3, rows U2, X1–X5), no code or transliterated pseudo-code, no game text, consistency with `combat-data.md` §5.3 (mapper 0x23000046, key 8 `Multiply`), `wlib-bytecode.md` and `property-system.md`, and the closed OPENs. Spot checks, read-only, with an independent probe over the repository decoders: U2 (bit sums of the flag-word census: 0x010 in 3,026 of 3,051) reproduced; X1 (419 members; 237 / 120 / 21 / 9 / 32; 4 referrer-only objects) reproduced over all 383,332 0x79 sets; X3 (all eleven field types, the `UI_Map_FogOfWar` default false, the three §13.1 enum mappers) reproduced; X5 (4,112 matches in 795 object records, none found among the decoded values) reproduced; X4 read again in the class-library disassembly (class 1341 functions 9 and 12). **Blocking:** (1) X2 and the §13.7 answer say the control's number list names all 123 members and 35 other singletons. Observed: of the 93 structs of `Version_VersionNumberDataList`, 92 carry `Version_SingletonList` and one carries `AccountVersion_SingletonList` instead; the `Version_SingletonList` arrays name 155 distinct DIDs, covering 121 of the 123 members; the other 2 members are the 2 DIDs of `Version_AlwaysRunOnPlayers`; the control as a whole names 158 distinct DIDs (123 members and 35 others). Correct X2, the §13.7 answer and the §13.7 description of the structs. (2) §13.1 step 1 says *d* = 0 when *v* = 1. The bytecode (class 1341 function 9) changes *d* only when *v* > 1 or *v* < 1, so for *v* = 1 (and for NaN) *d* stays *v*: a `Multiply` by exactly 1 shows 100 with the increase template. Correct the step. Recommended in the same change: say that int and int64 values are shown unscaled whatever the flag (their cases of the value-type switch do not consult it), instead of leaving flag-with-non-float unstated. (3) The §13 introduction, edited in this revision, still says each family has one root class and every family except GameCallback has one control singleton named in WEENIECONTENT. That contradicts §13.5 (six root classes, no control; none of the 316 WEENIECONTENT labels is a property-response control), §13.6 (110 root classes) and §13.7 (31 member root classes). State root classes and controls per family (controls for §13.1–§13.4 and §13.7; none for §13.5 and §13.6). **Not blocking:** provenance rows are ordered X1, X2, X4, X5, X3; the header "Implements into" still says one fuzz target per prefix while the §19 answer (8) accepts one per spec. |
-| **Implements into** | `crates/formats` (decoders for prefixes 0x33, 0x21, 0x27, 0x2D, 0x43, 0x0E200000, 0x0EBADA55, and the stored envelope of 0x0E010000–0x0E010002; one fuzz target each), `crates/material` (the compositor image composition of §3.6), `crates/props` (typed views of §12 and §13), `apps/explorer` (compositor and imposter previews, typed metadata views, the PID → metadata index of §13.1), `apps/dattool` (`info` and `validate` for these prefixes) |
+| **Review record** | Second review 2026-10-07: **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08, **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.2, §12.2, §13 (introduction), §13.1, §13.5, §13.7 changed (row U2 and new rows X1–X5); status Revised until a separate session reviews it. Review of the 2026-10-09 revision (separate review session, not an author session, 2026-10-09): **changes requested**. Checked: provenance for every new fact (keys BC and OBS3, rows U2, X1–X5), no code or transliterated pseudo-code, no game text, consistency with `combat-data.md` §5.3 (mapper 0x23000046, key 8 `Multiply`), `wlib-bytecode.md` and `property-system.md`, and the closed OPENs. Spot checks, read-only, with an independent probe over the repository decoders: U2 (bit sums of the flag-word census: 0x010 in 3,026 of 3,051) reproduced; X1 (419 members; 237 / 120 / 21 / 9 / 32; 4 referrer-only objects) reproduced over all 383,332 0x79 sets; X3 (all eleven field types, the `UI_Map_FogOfWar` default false, the three §13.1 enum mappers) reproduced; X5 (4,112 matches in 795 object records, none found among the decoded values) reproduced; X4 read again in the class-library disassembly (class 1341 functions 9 and 12). **Blocking:** (1) X2 and the §13.7 answer say the control's number list names all 123 members and 35 other singletons. Observed: of the 93 structs of `Version_VersionNumberDataList`, 92 carry `Version_SingletonList` and one carries `AccountVersion_SingletonList` instead; the `Version_SingletonList` arrays name 155 distinct DIDs, covering 121 of the 123 members; the other 2 members are the 2 DIDs of `Version_AlwaysRunOnPlayers`; the control as a whole names 158 distinct DIDs (123 members and 35 others). Correct X2, the §13.7 answer and the §13.7 description of the structs. (2) §13.1 step 1 says *d* = 0 when *v* = 1. The bytecode (class 1341 function 9) changes *d* only when *v* > 1 or *v* < 1, so for *v* = 1 (and for NaN) *d* stays *v*: a `Multiply` by exactly 1 shows 100 with the increase template. Correct the step. Recommended in the same change: say that int and int64 values are shown unscaled whatever the flag (their cases of the value-type switch do not consult it), instead of leaving flag-with-non-float unstated. (3) The §13 introduction, edited in this revision, still says each family has one root class and every family except GameCallback has one control singleton named in WEENIECONTENT. That contradicts §13.5 (six root classes, no control; none of the 316 WEENIECONTENT labels is a property-response control), §13.6 (110 root classes) and §13.7 (31 member root classes). State root classes and controls per family (controls for §13.1–§13.4 and §13.7; none for §13.5 and §13.6). **Not blocking:** provenance rows are ordered X1, X2, X4, X5, X3; the header "Implements into" still says one fuzz target per prefix while the §19 answer (8) accepts one per spec. Repair of 2026-10-09 (spec writer, dirty room; every blocking figure re-measured before the change): (1) X2, the §13.7 description of the structs and its answer corrected; (2) §13.1 step 1 and row X4 corrected for *v* = 1 and NaN, and int and int64 values stated as unscaled; (3) the §13 introduction states root classes and controls per family (new row X6). Not-blocking items done too (rows in order X1–X6; "Implements into" says one fuzz target per spec). Status Revised until a separate session re-reviews it. |
+| **Implements into** | `crates/formats` (decoders for prefixes 0x33, 0x21, 0x27, 0x2D, 0x43, 0x0E200000, 0x0EBADA55, and the stored envelope of 0x0E010000–0x0E010002; fuzz targets that together reach every decoder of this spec, one per spec being enough, §19 answer (8)), `crates/material` (the compositor image composition of §3.6), `crates/props` (typed views of §12 and §13), `apps/explorer` (compositor and imposter previews, typed metadata views, the PID → metadata index of §13.1), `apps/dattool` (`info` and `validate` for these prefixes) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize and bucket order, strings), §1.6 (prologues), §2.1 (DID → DB type table, whose BIN rows this spec closes); [`property-system.md`](property-system.md) §4 (value encodings), §5 (property sets), §8 (DID maps), §9 (DB-object-type codes); [`entity-descriptor.md`](entity-descriptor.md) §3 (the static entity descriptor reused by UI scenes); [`wstate.md`](wstate.md) §2, §3 (object records and the WEENIECONTENT map); [`script-table.md`](script-table.md) (script nodes 27 GameCallback, 33 ModifyCompositorColor, 44 ModifyCompositorLayer, 53 TextureCompositor); [`appearance.md`](appearance.md) §3.3–§3.4 (face compositing OPEN, character-creation controls); [`ui-layout.md`](ui-layout.md) §9.6.2 (the 2D compositor's per-pixel arithmetic, reused here); [`texture-list.md`](texture-list.md) §2.2; [`string-table.md`](string-table.md) §10.3 (prefix 0x58). |
 
 ---
@@ -116,10 +116,11 @@ How sources are marked:
 | W1 | WEENIECONTENT DID map census (§14) | OBS (316 entries) | Confirmed |
 | G1 | Typed references into every record type of this spec (§15) | OBS (all property sets of 0x47, 0x70/0x76 (+0x09000000) and 0x78; all DID maps) | Confirmed |
 | X1 | Property-response members: 419 objects in six root classes found by the label rule of §13.5 (237 effect lists, 120 world-event lists, 32 callback-only, 21 map-property, 9 calculate-property arrays) | OBS3 (every 0x79 set); implementation census 2026-10-07 | Confirmed 2026-10-09 |
-| X2 | Version family: 123 members in 31 root classes plus the `VersionSystem` control (class 1623 here), whose number list names all 123 members (and 35 other singletons) | OBS3 | Confirmed 2026-10-09 |
-| X4 | Percentage display of modifier values: the modifier-description code asks the metadata control for `PropertyMetaData_DisplayAsPercentage`; with the flag, a float value is shown × 100, and for `Multiply` as \|v − 1\| × 100 with an increase or decrease text by v ≥ 1 (§13.1) | BC (class 1341 functions 9, 12 and 48; class 1392 function 95; class 1391 function 89 here) | Confirmed (bytecode) 2026-10-09 |
-| X5 | Of the 4,112 raw four-byte matches of 0x78 DIDs in 795 object records, none is a decoded value of the record (§12.2) | OBS3 (all 383,332 0x70 records raw-scanned; the 795 with matches decoded with `tessera-wstate` and every decoded value compared, 2026-10-09) | Confirmed 2026-10-09 |
+| X2 | Version family: 123 members in 31 root classes plus the `VersionSystem` control (class 1623 here). Its `Version_VersionNumberDataList` holds 93 structs, each with a distinct `Version_Number`: 92 carry `Version_SingletonList`, one carries `AccountVersion_SingletonList` (one DID) instead. The `Version_SingletonList` arrays name 155 distinct DIDs: 121 members and 34 other objects; the two members not among them are the two DIDs of `Version_AlwaysRunOnPlayers`, which no number list names. The control names 158 distinct DIDs in all: the 123 members and 35 other 0x70 objects (34 + the `AccountVersion_SingletonList` entry), none of which carries `Version_*` properties (33 of the 35 have an empty property set) (§13.7) | OBS3 (re-measured 2026-10-09 in the repair, after the review's count) | Confirmed 2026-10-09 |
 | X3 | Value types of the `UI_Map_GameMap` fields and of the `AppearanceUI_*` control fields (§12.2, §3.7) | OBS3 (dictionary) | Confirmed 2026-10-09 |
+| X4 | Percentage display of modifier values: the modifier-description code asks the metadata control for `PropertyMetaData_DisplayAsPercentage`; with the flag, a float value *v* is shown as *d* × 100, where for `Multiply` *d* = *v* − 1 when *v* > 1, 1 − *v* when *v* < 1 and *v* itself otherwise (*v* = 1 or NaN), with an increase text when *v* ≥ 1 and a decrease text otherwise; for other operators *d* = *v*; int and int64 values are shown unscaled whatever the flag (§13.1) | BC (class 1341 functions 9, 12 and 48; class 1392 function 95; class 1391 function 89 here); the *v* = 1, NaN and int cases read again in functions 9 and 12 on 2026-10-09 (repair) | Confirmed (bytecode) 2026-10-09 |
+| X5 | Of the 4,112 raw four-byte matches of 0x78 DIDs in 795 object records, none is a decoded value of the record (§12.2) | OBS3 (all 383,332 0x70 records raw-scanned; the 795 with matches decoded with `tessera-wstate` and every decoded value compared, 2026-10-09) | Confirmed 2026-10-09 |
+| X6 | Root classes and controls per §13 family: property metadata 5,211 objects in 1 class, control `PropertyMetaDataControl`; error categories 675 in 1, `ErrorControl`; tutorial hints 337 in 1, `TutorialHintControl`; movie library 85 in 1, `MovieLibraryControl`; property responses 419 in 6, no control; game callbacks 110 in 110, no control; Version 123 in 31, `VersionSystem`. Each control is a separate object of its own class and lacks its family's identifying member property (`PropertyMetaData_Property`, `ErrorCategory_BriefString`, `TutorialHint_Name`, `MovieLibrary_CategoryType`; for Version the control-only properties of §13.7 set it apart). None of the 313 distinct 0x70 objects named in WEENIECONTENT is a property-response or game-callback member or names one at any depth (§13) | OBS3 (every 0x79 set; the WEENIECONTENT map of W1, 2026-10-09 repair) | Confirmed 2026-10-09 |
 
 ---
 
@@ -1075,11 +1076,26 @@ no object record refers to a 0x78 set.
 ## 13. Metadata objects in the object-state range (0x70, DB type 0x45)
 
 These are ordinary object records (`wstate.md` §3) whose payload of interest is their
-property set at DID + 0x09000000 (`property-system.md` §6.2). Each family has one root
-class and (except GameCallback) one **control** singleton, named in WEENIECONTENT (§14),
-that lists its members. (The Version family has several root classes and its control,
-`VersionSystem`, lists them, §13.7; corrected 2026-10-09, X2.) Root-class indices are build-specific;
-families are recognised by the control and by the properties, not by class number.
+property set at DID + 0x09000000 (`property-system.md` §6.2). Root classes and controls
+differ per family (X6; corrected 2026-10-09):
+
+| Family | Members | Root classes of the members | Control (WEENIECONTENT label, §14) |
+|---|---|---|---|
+| Property metadata (§13.1) | 5,211 | 1 | `PropertyMetaDataControl` |
+| Error categories (§13.2) | 675 | 1 | `ErrorControl` |
+| Tutorial hints (§13.3) | 337 | 1 | `TutorialHintControl` |
+| Movie library (§13.4) | 85 | 1 | `MovieLibraryControl` |
+| Property responses (§13.5) | 419 | 6 | none |
+| Game callbacks (§13.6) | 110 | 110 (one each) | none |
+| Version (§13.7) | 123 | 31 | `VersionSystem` |
+
+Where there is a control, it is a separate singleton object of its own class, named in
+WEENIECONTENT, whose property set lists the members (how completely is stated per family);
+it lacks the property by which its members are recognised. The property-response and game-callback
+families have no control: no WEENIECONTENT entry is one of their members or names one, and
+they are found by their properties (§13.5 rule, §13.6 `GameCallback_ReturnValue`). Class
+indices and counts are observations of this build; families are recognised by the control
+and by the properties, not by class number.
 
 <a id="s13-1"></a>
 ### 13.1 Property metadata (Confirmed, M1; 5,211 objects)
@@ -1117,15 +1133,19 @@ The client library's code that writes the description of a modifier entry (`comb
 1392 here) for the modified property's `PropertyMetaData_DisplayAsPercentage` (false when the
 property has no metadata object). When the flag is true and the entry's value *v* is a float:
 
-1. operator `Multiply` (key 8 of mapper 0x23000046): *d* = *v* − 1 when *v* > 1, 1 − *v* when
-   *v* < 1, and 0 when *v* = 1 (single precision); the text template is the "increase" form
-   when *v* ≥ 1 and the "decrease" form otherwise;
+1. operator `Multiply` (key 8 of mapper 0x23000046): *d* = *v* − 1 when *v* > 1 and 1 − *v*
+   when *v* < 1 (single precision); in every other case (*v* exactly 1, or NaN) *d* stays *v*
+   (corrected 2026-10-09). The text template is the "increase" form when *v* ≥ 1 and the
+   "decrease" form otherwise (so NaN takes the decrease form);
 2. any other operator: *d* = *v*;
 3. the number shown is *d* × 100, multiplied in single precision and then widened to double for
    formatting.
 
-So a stored 0.05 with `Add` shows as 5, a `Multiply` by 1.05 as 5 (increase) and one by 0.9 as
-10 (decrease), each in a percentage template. Without the flag the value is shown unscaled. The
+So a stored 0.05 with `Add` shows as 5, a `Multiply` by 1.05 as 5 (increase), one by 0.9 as
+10 (decrease) and one by exactly 1 as 100 (increase), each in a percentage template. Without
+the flag a float is shown unscaled. Int and int64 values are shown unscaled whatever the flag:
+the code's cases for those value types do not consult it. (The flag is also tested once before
+the value type is examined, to choose between two template keys for every value type.) The
 template texts are string-table entries chosen by key and are not reproduced here.
 
 > **OPEN:** the operator semantics of `AllowedOperator` and `ExaminationMod` (the percentage
@@ -1241,9 +1261,17 @@ data.
 and the control (X2). Members describe migrations (quest lists, trait resets,
 skill untraining, chat-type additions, property renames with `Version_GOP_UpdateArray`, item
 conversions …). Control: `VersionSystem` (0x7000021D here) with
-`Version_VersionNumberDataList` (93 structs of `Version_Number`, an enum of content
-updates, and `Version_SingletonList` of object DIDs), `Version_AlwaysRunOnPlayers` (2 DIDs)
-and `Version_Number` (the current update). They describe server-side migrations of
+`Version_VersionNumberDataList`, `Version_AlwaysRunOnPlayers` (2 DIDs) and `Version_Number`
+(the current update). The data list holds 93 structs, each with a `Version_Number` (an enum of
+content updates; 93 distinct values) and one DID array: `Version_SingletonList` in 92 structs,
+`AccountVersion_SingletonList` (one DID) in the other one. The `Version_SingletonList` arrays
+name 155 distinct DIDs: 121 of the 123 members and 34 other objects. The remaining 2 members
+are exactly the 2 DIDs of `Version_AlwaysRunOnPlayers`, which no number list names. In all the
+control names 158 distinct DIDs: all 123 members plus 35 other 0x70 objects (the 34
+and the account entry) that carry no `Version_*` properties and are therefore not members
+(X2; corrected 2026-10-09). A reader that wants every member from the control alone takes the
+union of the `Version_SingletonList` arrays and `Version_AlwaysRunOnPlayers`, and filters by
+the `Version_*` rule above. The family's objects describe server-side migrations of
 character data. Tessera shows them generically; no client behaviour depends on them.
 
 > **Answered (2026-10-09; was OPEN):** whether the 124 include the `VersionSystem` control. The §13 introduction says
@@ -1255,9 +1283,10 @@ character data. Tessera shows them generically; no client behaviour depends on t
 > both agree on whether `VersionSystem` is a control and whether it is counted.
 >
 > *Answer:* the 124 include the control. `VersionSystem` is the family's control (it is named
-> in WEENIECONTENT, §14, and its number list names all 123 members); the §13 introduction is
-> corrected, and this section now says 123 members plus the control, as the implementation
-> counts (X2).
+> in WEENIECONTENT, §14, and between its number list and `Version_AlwaysRunOnPlayers` it names
+> all 123 members, along with 35 objects that are not members; corrected 2026-10-09, see the
+> paragraph above); the §13 introduction is corrected, and this section now says 123 members
+> plus the control, as the implementation counts (X2).
 
 ---
 
@@ -1529,3 +1558,4 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-08 | Revision answering the OPEN callouts (status Accepted → Revised). Fourth BIN use (decision 0011) and new OBS measurements. (1) §3.7, C10: the `AC_Color_*` → colour-key pairing is referenced from `appearance.md` §3.5 (OPEN closed). (2) §4.1, U3: the UI-scene trailer is a fog override of the 3D view; fields renamed `fog_colour`, `fog_override`, `fog_start`, `fog_end` (formerly `colour`, `flag`, `value_a`, `value_b`; the last two are f32, formerly listed as u32 bit patterns). (3) §4.2, U4: camera chosen by UISceneEntity key equal to the viewport's camera value; element types created; `CameraFOV` range. (4) §5.2, I5: `value_a`/`value_b` are the sprite quad's size and lower-edge height (× sprite scale), with the corner table. (5) §5.3, I6: atlas roles (parameters 3000 and 3011) and the normal channel mapping. (6) §5.4, I7, MR13: margin at the right and bottom (BIN + OBS over 12,406 cells); mirrored sprites; I3's OPEN mark removed. (7) New §7.4 (SC3, SC4): channel arbitration, queueing, transition precedence, stop handling; narrowed OPEN. (8) §9 (NF2, NF3, MR14): every rule-set field named and explained (former names in brackets), new §9.1 character check, §9.2 name check with the vowel set, §9.3 narrowed OPEN; correction: class 16 has no range (12 of 13 classes have one). (9) §10 (TB2–TB4, MR15): header fields renamed `category`/`contexts` (formerly `a`/`b`) and explained, the list-table string hash, new §10.1 matching (PCRE2, caseless, unanchored); narrowed OPEN. (10) §12.2, §15, PS2: referrers found inside `Entity_Monitors` structs (`Monitor_VolumePropertiesToApply`) for all local-sky, ambient-music and volume sets; correction: the 19 `Physics_SurfacePropertiesToApply` references are in 0x78 sets, not 0x79, and 52 more are in 0x47; narrowed OPEN on raw matches. (11) §13.1: OPEN made precise (where the rule is not, what would settle it). (12) §16 MR13–MR15, §18 four new proposal rows, §19 rewritten. |
 | 2026-10-08 | Review of the 2026-10-08 revision (separate review session): passed; status Revised → Accepted. No content change. Record in the review log. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows X1–X3; row U2 corrected. Accepted the implementation's census corrections: §4.2 bit 0x010 is in 3,026 descriptors; §13.5 states the member rule and the 32 callback-only objects (X1); §13.7 and the §13 introduction: the Version family has the `VersionSystem` control, 123 members plus the control (X2). §19 implementer notes (1)–(9) confirmed, with the value types of (5) (X3). Still OPEN: script-channel queue modes, name-entry context and order, taboo walking and tokenizer, compression dictionaries (gated), raw 0x78 DID matches in other records, operator semantics of property metadata. §13.1 percentage display read from the class library (new key BC, row X4); the operator part of that callout stays open. §12.2: the raw 0x78 matches in object records are not references (X5); those in 0x07, 0x01 and 0x80 records stay open. |
+| 2026-10-09 | Repair after the review of the OPEN sweep (spec writer, dirty room; status stays Revised, waiting for re-review). Each blocking figure re-measured (OBS3 dump, class-library bytecode) before the change. (1) Row X2, §13.7 and its answer: the 93 number-list structs (92 `Version_SingletonList`, 1 `AccountVersion_SingletonList`), 155 distinct DIDs in the singleton lists covering 121 members, the 2 others in `Version_AlwaysRunOnPlayers`, 158 distinct DIDs in all (123 members, 35 others); the earlier "names all 123 members" was wrong. (2) §13.1 step 1 and row X4: for `Multiply`, *d* stays *v* when *v* = 1 or NaN (a `Multiply` by 1 shows 100, increase template); int and int64 values are unscaled whatever the flag. (3) §13 introduction: table of members, root classes and controls per family; property responses and game callbacks have no control (new row X6). Not blocking: provenance rows ordered X1–X6; "Implements into" says one fuzz target per spec is enough. |

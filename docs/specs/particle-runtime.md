@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08) |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (2026-10-09: implementer OPENs of §3.2, §5.4, §9.2, §10.2 and §12 answered; new §9.1.1 from the surface programs (BIN-S) and two censuses (OBS2); new Q-RT7, Q-RT8; awaiting review). Before: Accepted (2026-10-08) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, not the author), 2026-10-08 |
 | **Review record** | Review 2026-10-08: **passed**, Accepted. Details and non-blocking notes in the review log (decision 0018). |
@@ -53,7 +53,8 @@ constants ([decision 0012](../decisions/0012-numeric-constants.md)).
 
 Legend: **Confirmed (BIN)** = read from the client executable (row BIN); **Confirmed (BIN +
 OBS)** = read from the executable and agreeing with the data over all records of the kind;
-**Confirmed** = observed in the install on 2026-10-08 over all records of the kind;
+**Confirmed** = observed in the install on 2026-10-08 (or the date given) over all records of the kind;
+**Confirmed (BIN-S)** = read from the compiled programs stored in the shader records (row BIN-S);
 **Inferred** = follows from names or consistent data, not traced in code; **Decision** = a
 Tessera rule (§12); **Reported** = published sources only (none used).
 
@@ -61,6 +62,8 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 |---|---|
 | BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. |
 | OBS | User install (Steam), read in place and read-only on 2026-10-08: all 7,526 script tables (7,524 decodable, as in `script-table.md`) and 28,992 scriptlets of `client_gamelogic.dat`, every Particle node (41,354); all 11,155 records with prefix 0x39 and all 254 with prefix 0x44 of `client_general.dat`; the master property dictionary 0x34000000. |
+| BIN-S | **M4 (decision 0011), shader programs.** The compiled programs stored in the 19 shader records that particle surfaces use (same build as BIN; the records are game data), disassembled with a public shader disassembler in the dirty room on 2026-10-09: every Direct3D 10/11 (kind 4) vertex and pixel program of the 19 records, and the OpenGL (kind 3) pixel programs of 0x2B00070F and 0x2B0007F2 as a cross-check (they agree). **Question:** how the alpha test and the blend's source alpha of a particle draw use the texture, the vertex colour and the material colour with the draw's tint (the implementer question of §9.1.1). **Why M1–M3 were not enough:** the data gives the parameters and render states but not what the programs compute; no frame capture is available (M3); no published source describes these programs (M2). |
+| OBS2 | User install (Steam), read in place and read-only on 2026-10-09 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoders used as a tool for the script tables; the record layouts of `material.md` §4–§7 for surfaces and shader records): the `surface` field of all 11,155 records with prefix 0x39, the 1,179 distinct surface records they name, their materials and shader records (effective 4002, 4004, 1043 and 2000 by `material.md` §9.2); the driven pairs of all 41,354 Particle nodes of all script tables and scriptlets. |
 | PS | [`particles.md`](particles.md) (Accepted 2026-10-08): layouts, censuses, the simulation of one 0x39 system (§8), start gating (§7.1.2), fork effects (§6.5). |
 | SR | [`script-runtime.md`](script-runtime.md) §2.1, §3 (contexts, node start, completion, stop). |
 | SE | [`setup.md`](setup.md) §5.2 (render scale; `Model_ParticleScale`, PID 0x5A0). |
@@ -87,7 +90,11 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | RT17 | Fork draw batches select one of the seven UNIQUEDB fork shaders by a blend-mode index 0–6 (§10.2) | BIN; PS §6.4 (the keys) | Confirmed (BIN) |
 | RT18 | Census of Particle-node fields (§5.2) | OBS | Confirmed |
 | RT19 | Tessera rules (§12) | This spec | Decision |
-| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag (Q-RT1–Q-RT6) | BIN (partial) | OPEN |
+| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag; an attached instance's own opacity; driven fields after the start (Q-RT1–Q-RT8) | BIN (partial) | OPEN |
+| RT21 | Particle surfaces: the 11,153 systems with a surface name 1,179 distinct surface records, which use 19 shader records, all unlit and drawn in one pass; their blend is SRCALPHA / INVSRCALPHA or SRCALPHA / ONE (one record also has a frame-buffer-less variant ZERO / ONE); effective alpha test on in 8 surfaces, off in 1,049, not declared in 122; effective depth write off in 1,177, on in 2 (§9.1.1) | OBS2 | Confirmed (2026-10-09) |
+| RT22 | What the 19 records' programs compute: the alpha test reads the texture's opacity alone; the output alpha is the texture opacity × vertex alpha × material alpha in most records, with the exceptions of §9.1.1; colour, doubling and fog per record (§9.1.1) | BIN-S | Confirmed (BIN-S) |
+| RT23 | The draw's colour multiplier (1, 1, 1, instance opacity) is the per-object tint that `material.md` §8.3 multiplies into material colour 2000, so the per-draw alpha-test rules of `material.md` §11.2 apply to particle draws with *A* = 2000 alpha × instance opacity (§9.1.1) | BIN (the draw call hands the surface's material, shader, transform and colour to the renderer, RT16); `material.md` §8.3, §11.2 | Inferred |
+| RT24 | Driven pairs on Particle nodes: 2 of 41,354 nodes, both driving `ParticleScript_ParticleID` from a property with no stored value in the archives (`QuestState_True_Particle`, `QuestState_False_Particle`); no scriptlet-driven pairs (§5.4) | OBS2; `particles.md` §7.1.2 (the two properties have no stored value) | Confirmed (2026-10-09) |
 
 ---
 
@@ -151,19 +158,28 @@ Each frame the client does the following particle work:
 > it is drawn, so the effects of an undrawn entity freeze like the not-drawn state of
 > `particles.md` §8.13.
 
-> **OPEN:** (implementer, 2026-10-09) What "drawn" means in the walker
-> (`apps/client/src/walker/effects`), engineering choices until Q-RT1 is answered: the
-> walker scans the landblocks within 2 of the viewer for static entities and placed figures
-> whose start-up scripts reach Particle nodes (content layers as the world's; interior
-> entities only with `--interiors`), spawns such an owner in its own script runtime when the
-> viewer is within the owner's *reach* + 20 m and despawns it beyond *reach* + 60 m or when
-> its landblock leaves (checked every 0.25 s, at most 16 spawns per check). *Reach* is the
-> largest `far_fade_end` of the 0x39 records its nodes name (fork nodes: their
-> `FarFadeMaxDistance`) plus the node's `BoneOffset` length, at most 500 m, 60 m when none is
-> known. A static owner counts as drawn while it is spawned (no frustum or per-object draw
-> distance test); a placed figure while the character layer draws it, and it is spawned only
-> once its figure is built (its attachment points and pose come from there). Despawning
-> stops the owner's never-ending nodes (§7.1) and releases its other effects (§7.2).
+**Walker application of the Q-RT1 Decision (Tessera rule, 2026-10-09; answers the implementer
+OPEN of that date).** The offline walker (`apps/client/src/walker/effects`) has no scene culling
+of its own for effect owners, so "drawn" is defined by spawning:
+
+- It scans the landblocks within 2 of the viewer for static entities and placed figures whose
+  start-up scripts reach Particle nodes (content layers as the world's; interior entities only
+  with `--interiors`), and spawns such an owner in its own script runtime when the viewer is
+  within the owner's *reach* + 20 m, and despawns it beyond *reach* + 60 m or when its landblock
+  leaves; the check runs every 0.25 s and spawns at most 16 owners per check.
+- *Reach* = the largest `far_fade_end` of the 0x39 records its nodes name (fork nodes: their
+  `FarFadeMaxDistance`) plus the node's `ParticleScript_BoneOffset` length, at most 500 m,
+  60 m when none is known.
+- A static owner counts as drawn while it is spawned (no frustum or per-object draw-distance
+  test); a placed figure while the character layer draws it, and it is spawned only once its
+  figure is built (its attachment points and pose come from there).
+- Despawning stops the owner's never-ending nodes (§7.1) and releases its other effects (§7.2).
+
+These are engineering bounds, not facts about the original; the per-system distance fade of
+`particles.md` §8.13 still decides what is drawn inside the reach.
+
+> **Answered (2026-10-09; was OPEN, implementer, 2026-10-09):** the walker's choices are
+> confirmed and written above as the walker application of the Q-RT1 Decision.
 
 <a id="s3-3"></a>
 ### 3.3 The random generator (BIN)
@@ -311,26 +327,47 @@ the effect either. A finite effect started at intensity 0.5 looks the same as on
 > **OPEN (Q-RT2):** Which client paths set bit 0x40 of a script context's flags word
 > (`script-runtime.md` §2.1 lists bits 1 and 3 only). **Decision (Tessera):** treat it as clear.
 
-> **OPEN:** (implementer, 2026-10-09) Choices of the walker where this spec gives no fact for
-> it (`tessera-scriptgraph` runs the node, `apps/client/src/walker/effects` the paths):
-> (a) the redirect of §5.5 step 1 and §5.8 counts as naming "an existing object" only an
-> owner spawned in the walker's effects runtime (the offline walker has no other object
-> IDs); (b) the start gating of `particles.md` §7.1.2 runs with the client's defaults
-> (`DynamicParticles` 0, `StaticEnvironmentalObjects` on), with which the whitelist decides
-> nothing, so it is not read; (c) a Particle node's driven fields (its base block's driven
-> map naming `ParticleScript_` fields, `script-runtime.md` §5.3) are not applied: are any
-> of these fields driven in practice, and how do driven values reach a node that has already
-> started?; (d) the instance opacity of attached and dropped placements is 1 (§8.15's
-> object opacity and `inherit_opacity` are not applied: the walker keeps no parent-object
-> opacity), and which owner value gives an attached instance its own opacity is not stated
-> here; (e) the water probe of §5.7 tests the landblock water planes only (`water.md` §8.1),
-> not cell water or liquid volumes; (f) vector *A* is `Render_AdjustableScale` ×
-> `Model_Scale` for static entities (factors 3 and 4 of `setup.md` §5.2 need attachment
-> parents, which the walker does not have) and the drawn model scale for placed figures; *p*
-> is the product of `value_b` along the object's visual chain (`setup.md` §5.2).
-> (g) Observation: at reference location M3-03, 40 spawned owners asked for 2 effects; the
-> other owners' Particle nodes wait behind Switch nodes on properties the walker does not
-> set (it feeds no world state into these scripts).
+**Driven node fields (OBS2, RT24).** Only 2 of the 41,354 Particle nodes have driven pairs,
+and both drive `ParticleScript_ParticleID` from a property that has no stored value in the
+archives (`QuestState_True_Particle`, `QuestState_False_Particle`; `particles.md` §7.1.2), so
+its value can only come from the session at run time. At the start the node uses the field's
+value at that moment (`script-runtime.md` §5.2–§5.3: every instance field is read from the
+node copy when it is used). Whether a started effect follows a later change of the driven
+field is Q-RT8.
+
+**Walker rules (Tessera, 2026-10-09; answers the implementer OPEN of that date).** Where this
+spec gives no fact for the offline walker (`tessera-scriptgraph` runs the node,
+`apps/client/src/walker/effects` the paths):
+
+- **(a) Redirect.** The redirect of §5.5 step 1 and §5.8 names "an existing object" only when it
+  names an owner spawned in the walker's effects runtime; the offline walker has no other
+  object IDs.
+- **(b) Start gating.** `particles.md` §7.1.2 runs with the client's defaults
+  (`DynamicParticles` 0, `StaticEnvironmentalObjects` on). With these the whitelist decides
+  nothing, so the walker need not read it; a client that exposes the options reads it.
+- **(c) Driven fields.** Driven pairs of Particle nodes are applied at the start like any
+  node's (above); with no session the two driven nodes' source property is absent and the
+  field keeps its stored value. A later change is not applied (Q-RT8 Decision).
+- **(d) Opacity.** The instance opacity of attached and dropped placements is 1 until Q-RT7 is
+  answered; `particles.md` §8.15's object opacity and `inherit_opacity` multiply it once the
+  walker keeps a parent-object opacity.
+- **(e) Water probe.** The probe of §5.7 tests the landblock water planes (`water.md` §8.1)
+  only, not cell water or placed liquid volumes; this departs from the client, whose probe
+  tests water surfaces in general (§5.7), and is accepted until the walker has those surfaces
+  in one query.
+- **(f) Scale vectors.** *A* = `Render_AdjustableScale` × `Model_Scale` for static entities
+  (factors 3 and 4 of `setup.md` §5.2 need attachment parents, which the walker does not have)
+  and the drawn model scale for placed figures; *p* is the product of `value_b` along the
+  object's visual chain (`setup.md` §5.2).
+- **(g) Observation (no rule).** At reference location M3-03 the 40 owners spawned asked for 2
+  effects; the other owners' Particle nodes wait behind Switch nodes on properties the walker
+  does not set, because it feeds no world state into these scripts.
+
+> **Answered (2026-10-09; was OPEN, implementer, 2026-10-09):** (a), (b), (e), (f) are
+> confirmed as the walker rules above; (c) is answered by the census (RT24: two nodes, both
+> driving the effect DID from a session-only property) with the start-time rule above and
+> Q-RT8; (d): which owner value gives an attached instance its own opacity was not traced and
+> is Q-RT7 (Decision: 1); (g) is recorded as an observation.
 
 <a id="s5-5"></a>
 ### 5.5 Attached path (BIN)
@@ -596,6 +633,64 @@ states are those of the surface record's material** (`material.md` §7). Vertex 
 the particle colour of `particles.md` §8.6.2. The second call passes one more flag value
 (0xC000) whose meaning was not traced (Q-RT6).
 
+<a id="s9-1-1"></a>
+#### 9.1.1 Texture, vertex colour and tint in the surface programs (OBS2, BIN-S; RT21–RT23)
+
+**Which records.** The 11,153 systems with a surface use 1,179 distinct surface records and,
+through them, 19 shader records. All 19 are unlit in the sense of `material.md` §11.3 (no
+additive light passes) and draw in one pass; every render-state block of 18 of them is
+SRCALPHA / INVSRCALPHA ("alpha" below) or SRCALPHA / ONE ("additive"). Effective values over
+the 1,179 surfaces (`material.md` §9.2): alpha test (4004) off in 1,049, on in 8, not declared
+in 122; depth write (4002) off in 1,177, on in 2 (Confirmed, OBS2).
+
+**What the programs compute (BIN-S).** Notation: *T* = the colour-texture sample (slot 3000);
+in the two-layer records *T*.alpha is the product of both layers' alphas and *T*.rgb the
+product (0x2B000703, 0x2B00071B, 0x2B000742, 0x2B000776, 0x2B00077A) or the sum (0x2B0007AD,
+0x2B000717, 0x2B00072D) of both layers' colours. *V* = the vertex colour, which carries the
+particle colour of `particles.md` §8.6.2. *M* = the material colour 2000 times the draw's tint
+(`material.md` §8.3); the tint is the colour multiplier (1, 1, 1, instance opacity) of §9.1
+(RT23, Inferred).
+
+| Shader record (surfaces, systems) | Blend | Alpha test reads | Output alpha | Output colour |
+|---|---|---|---|---|
+| 0x2B00070F (415, 3,281), 0x2B000779 (1, 44), 0x2B0007F1 (3, 10) | alpha | *T*.alpha | *T*.alpha × *V*.alpha × *M*.alpha | *T* × *V* × *M*, fogged |
+| 0x2B0007EB (130, 1,003), 0x2B000760 (1, 3) | alpha | *T*.alpha | *T*.alpha × *V*.alpha × *M*.alpha | 2 × *T* × *V* × *M*, fogged |
+| 0x2B00071B (46, 313), 0x2B0007AD (49, 158), 0x2B00072D (1, 1) | alpha | *T*.alpha (two layers) | *T*.alpha × *V*.alpha × *M*.alpha | *T* × *V* × *M*, fogged |
+| 0x2B000703 (24, 726), 0x2B00077A (1, 1) | alpha | *T*.alpha (two layers) | *T*.alpha × *V*.alpha × *M*.alpha | 2 × *T* × *V* × *M*, fogged |
+| 0x2B000755 (1, 10) | alpha | *T*.alpha | *T*.alpha × *M*.alpha (no vertex colour) | *T* × *M*, fogged |
+| 0x2B0007CB (279, 2,979), 0x2B000701 (2, 7) | additive | *T*.alpha | *T*.alpha × *V*.alpha × *M*.alpha | *T* × *V* × *M*, not fogged |
+| 0x2B000742 (64, 417), 0x2B000717 (20, 78), 0x2B000776 (1, 3) | additive | *T*.alpha (two layers) | *T*.alpha × *V*.alpha × *M*.alpha | *T* × *V* × *M*, not fogged |
+| 0x2B0007F2 (121, 1,909), 0x2B000726 (1, 1) | additive | nothing (no 1043 declared; the role is `Color`) | *V*.alpha × *M*.alpha: the texture's alpha does not enter | *T* × *V* × *M*, not fogged |
+| 0x2B000084 (19, 209) | alpha | nothing (the program has no discard, although the record declares 1043) | *T*.alpha × *V*.alpha (no *M*) | the frame-buffer image read at a position offset by the texture (heat distortion); the record's variant without a frame-buffer input blends ZERO / ONE and leaves the target unchanged |
+
+"Fogged" is the distance fog of `lighting.md` §10 applied to the colour, (1 − *f*) × colour +
+*f* × fog colour, after the doubling where there is one. In the permutations that have a depth
+input the output alpha is further multiplied by the soft-particle factor of parameter 1174
+(`material.md` §8.3). The OpenGL programs checked agree with the Direct3D 10/11 ones.
+
+**Rules that follow.**
+
+1. **Alpha test.** The test compares the texture's opacity *T*.alpha alone with the reference;
+   (0x2B0007F2, 0x2B000726 and 0x2B000084 test nothing); the vertex colour, the material colour
+   and the tint never remove texels (as for meshes,
+   `material.md` §11.2: "vertex-colour alpha is applied after the test"). The reference is set
+   per draw by `material.md` §11.2 ("What the client does per draw") with *A* = *M*.alpha: every
+   particle permutation has `src_blend` SRCALPHA, so with alpha test off the reference is 0 and
+   texels whose texture opacity is 0 are discarded; with alpha test on and depth write off (7 of
+   the 8 surfaces) the test is switched off for the draw while *A* < 0.9, that is while the
+   instance fades below 0.9; with depth write on the reference is scaled by *A*.
+2. **Blend.** The fixed-function blend reads the program's output alpha of the table as source
+   alpha. For the common records that is texture opacity × vertex alpha × tint alpha (times the
+   2000 alpha), so a draw that multiplies texture, vertex colour and tint and blends by the
+   result's alpha matches them; the exceptions are the rows for 0x2B0007F2 and 0x2B000726
+   (texture alpha left out), 0x2B000755 (no vertex colour) and 0x2B000084.
+3. **Meshes are not changed by this section.** `render.md` §4.3 (`Fixed` row) gives meshes with
+   fixed blends the `material.md` §11.3 opacity source alone, without *M*.alpha and the vertex
+   alpha, as a Decision while the client's rule is OPEN in `material.md`. Particle draws follow
+   this section instead, because their 19 records were read program by program. The
+   observation that these unlit programs do multiply the vertex and material alphas into the
+   blend's source alpha is offered to the owners of `material.md` and `render.md` (§16).
+
 <a id="s9-2"></a>
 ### 9.2 Order of particles inside a system (BIN)
 
@@ -608,24 +703,28 @@ the particle colour of `particles.md` §8.6.2. The second call passes one more f
 So after deaths the draw order inside an emitter is no longer creation order (example in
 §14.3). Between systems the order is `particles.md` §8.15.
 
-> **OPEN:** (implementer, 2026-10-08) Frames of local-space systems are `particles.md` Q8.
-> `crates/particles` (`sim.rs`, `draw.rs`) uses this Tessera choice until it is answered: a
-> local-space system simulates in its own frame (the identity at the origin: spawn, direction
-> and gravity are not turned by the owner), and each draw instance moves the whole particle
-> set by its transform, scaled per axis by *S*, with the camera axes turned into the
-> instance's frame for the billboards. The two anchors of distance emission (`particles.md`
-> §8.4) follow the world position and orientation of the frame's first instance, also for
-> a local-space system, and each offset from a stepped anchor to the current one (and the
-> `Line` vector between the stepped anchors) is turned back into the system's own frame by
-> that instance's rotation (not divided by *S*, so the drawn trail scales with *S* like the
-> particles); a moving owner therefore leaves a trail. (Corrected 2026-10-09 after
-> verification: the first implementation kept the anchors in the identity frame, so a
-> local-space system never emitted by distance, although this note said otherwise.) A
-> world-space system simulates in world space with the frame of the first instance of
-> the frame and is drawn once, for the first instance that passes the distance test (§4.1 of
-> `particles.md`: "drawn once"). `use_lighting` multiplies by an ambient colour only (white
-> unless the caller supplies one); the point lights wait for Q8 (b). Which of these the
-> client does is the question.
+**Frames until `particles.md` Q8 (a) is answered (Tessera Decision, 2026-10-09; answers the
+implementer OPEN of 2026-10-08 as far as it can be).**
+
+- A local-space system simulates in its own frame (the identity at the origin: spawn,
+  direction and gravity are not turned by the owner). Each draw instance moves the whole
+  particle set by its transform, scaled per axis by *S* (`particles.md` §8.6.3), with the
+  camera axes turned into the instance's frame for the billboards.
+- The two anchors of distance emission (`particles.md` §8.4) follow the world position and
+  orientation of the frame's first instance, also for a local-space system; each offset from a
+  stepped anchor to the current one, and the `Line` vector between the stepped anchors, is
+  turned back into the system's own frame by that instance's rotation (not divided by *S*, so
+  the drawn trail scales with *S* like the particles). A moving owner therefore leaves a trail.
+- A world-space system simulates in world space with the frame of the first instance of the
+  frame and is drawn once, for the first instance that passes the distance test
+  (`particles.md` §4.1, "drawn once").
+- `use_lighting` multiplies by an ambient colour only (white unless the caller supplies one);
+  the point lights wait for `particles.md` Q8 (b).
+
+> **Answered in part (2026-10-09; was OPEN, implementer, 2026-10-08):** the choices are
+> confirmed as the Decision above. What the client does with local-space frames, the light
+> attenuation and the ambient source stay `particles.md` Q8 (a)–(b); no new BIN reading was made
+> for them in this revision.
 
 <a id="s9-3"></a>
 ### 9.3 Culling, LOD and caps
@@ -684,12 +783,16 @@ render surfaces of the record's `resources` (`particles.md` §6.4), to the shade
 parameters once, the first time the batch is drawn; for index 2 it skips that step. Where the library takes the index from, and the batch primitives, are
 part of `particles.md` Q1.
 
-> **OPEN:** (implementer, 2026-10-08) Without the third-party library (rule §10.2 of
-> `particles.md`), `crates/particles` (`fork.rs`, `runtime.rs`) counts a fork effect as
-> active until the `tail_value` rule of `particles.md` §6.5 expires it (the "library reports
-> no live particles" exit is never taken), and, since a fork effect is local-space and Tessera
-> gives it no draw instance, the release rule of §7.2 step 3 destroys it at once instead of
-> letting it linger. Both follow from drawing nothing; confirm or replace when Q1 is answered.
+**Without the fork library (Tessera rule, 2026-10-09; answers the implementer OPEN of
+2026-10-08).** Tessera has no implementation of the third-party fork library (`particles.md`
+§10.2), so a fork effect draws nothing. It counts as active until the `tail_value` rule of
+`particles.md` §6.5 expires it (the exit "the library reports no live particles" is never
+taken), and, because a fork effect is local-space and gets no draw instance, the release rule
+of §7.2 step 3 destroys it at once instead of letting it linger. Both follow from drawing
+nothing; revisit them when `particles.md` Q1 is answered.
+
+> **Answered (2026-10-09; was OPEN, implementer, 2026-10-08):** confirmed as the Tessera rule
+> above.
 
 ---
 
@@ -732,27 +835,29 @@ part of `particles.md` Q1.
    has `emission_limit` ≠ 0 would make the client divide by zero in §5.3; Tessera treats that
    emitter's term as `time_limit` alone (consistent with `particles.md` §10.6).
 7. **Hostile dropped effects:** a never-ending effect on the dropped path (never in the data,
-   §5.2) would never be removed by the client except with its scene; Tessera removes such an
-   entry 6 s after it is placed, as if it had been stopped at once.
+   §5.2) would never be removed by the client except with its scene. Tessera places it like any
+   dropped effect, without stopping it (it emits normally), and removes the entry at the first
+   lingering sweep (§7.3) more than 6 s after its placement; the effect thus shows its first
+   6 s. (Revised 2026-10-09: the earlier wording "as if it had been stopped at once" could be
+   read as stopping the effect at placement, which would show nothing.)
 
-> **OPEN:** (implementer, 2026-10-09) Rule 7 has two readings. `crates/particles` takes the
-> removal time only: the effect is placed without being stopped, emits normally and is removed
-> at the first sweep more than 6 s after its placement (so it shows its first 6 s). Read
-> literally ("stopped at once"), the effect would be stopped at placement and, since a stopped
-> system emits nothing, would show nothing at all. Which reading is meant?
-8. Q-RT1 to Q-RT6: the Decisions given in their callouts.
+> **Answered (2026-10-09; was OPEN, implementer, 2026-10-09):** the removal-time reading is
+> the rule (rule 7 reworded).
+8. Q-RT1 to Q-RT8: the Decisions given in their callouts.
+9. **Engineering limits for hostile records** (answers the implementer OPEN of 2026-10-08;
+   the data never reaches them: a real-data run of all 11,155 records over 5 s peaks at 1,320
+   live particles in one system):
+   - at most 262,144 live particles per system, all emitters together; when the limit is
+     reached, spawning stops as if every emitter were full;
+   - at most 64 controller-4 steps per particle and update (a positive `time_step` far below
+     1/120 s would otherwise make the 0.25 s catch-up loop unbounded; `particles.md` §10.5
+     covers only non-positive and non-finite values);
+   - at most 1,024 legs of a controller-1 walk per particle and update (repeated points make the
+     walk of `particles.md` §8.7 land on zero-length legs without using up the budget);
+   - a mode-3 curve draws its *r* as one real-range draw over [−1, 1] (§3.4).
 
-> **OPEN:** (implementer, 2026-10-08) Engineering limits the spec does not set, chosen
-> conservatively in `crates/particles` (`SimConfig`) for hostile records; the data never
-> reaches them (the real-data run of all 11,155 records over 5 s peaks at 1,320 live
-> particles in one system): at most 262,144 live particles per system (all emitters
-> together; spawning then stops as if every emitter were full), at most 64 controller-4 steps
-> per particle and update (a positive `time_step` far below 1/120 s would otherwise make the
-> 0.25 s catch-up loop unbounded; rule §10.5 of `particles.md` covers only non-positive and
-> non-finite values), and at most 1,024 legs of a controller-1 walk per particle and update
-> (points that repeat make the squared-distance walk of `particles.md` §8.7 land on zero-length
-> legs without consuming the budget). Mode-3 curves draw their *r* as one real-range draw over
-> [−1, 1] (§3.4). Should these limits be recorded as Tessera rules?
+> **Answered (2026-10-09; was OPEN, implementer, 2026-10-08):** the limits are recorded as
+> Tessera rule 9.
 
 ---
 
@@ -887,6 +992,17 @@ lacks 0x8). The quads face the camera (`particles.md` §8.12, default corners).
 > passes and the `Quad` call does not. **Decision (Tessera):** draw both lists with the same
 > pipeline state.
 
+> **OPEN (Q-RT7):** Which owner value gives an attached draw instance its own opacity (the
+> instance opacity that `particles.md` §8.15 multiplies by the object opacity), for example a
+> fading owner's current opacity. Not traced. **Decision (Tessera):** 1. Suggested method: M4 on
+> the effects component's placement routine (the opacity it hands to the instance).
+
+> **OPEN (Q-RT8):** Whether a running effect follows a later change of a driven
+> `ParticleScript_*` field (only `ParticleScript_ParticleID` is driven in the data, RT24): the
+> Particle node's "fields changed" hook (`script-runtime.md` §5.3 step 2) was not traced.
+> **Decision (Tessera):** fields are read at the start only, as for Sound nodes
+> (`script-runtime.md` OPEN-3).
+
 Still open in `particles.md`: Q1 (fork effect image and simulation; the blend-mode index source
 of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rotation` mode), Q13
 (weather schedule). `particles.md` Q4 is answered by §6.4 here.
@@ -907,6 +1023,13 @@ of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rota
 - `setup.md` §5.2: "how an effect combines the two is for the particle specs" is §6.4 here.
 - `material.md` §5.3.1: the "client's global random generator" of mode 3 is §3.3 here.
 
+- `material.md` §11.3 (rule for unlit records) and §20.1 (output alpha of unlit blended
+  records), `render.md` §4.3 (`Fixed` row, "whether *M*.alpha and the vertex alpha enter in the
+  client is OPEN in `material.md`"): for the 19 unlit records of §9.1.1 the programs multiply the
+  texture's opacity, the vertex alpha (where read) and the material alpha into the output alpha
+  that the fixed blend reads, and the alpha test reads the texture's opacity alone (BIN-S). If
+  any mesh surface uses these records, the same holds there.
+
 These are suggestions for the owners of those specs; this spec edits none of them.
 
 ---
@@ -916,5 +1039,6 @@ These are suggestions for the owners of those specs; this spec edits none of the
 
 | Date | Sections | Change |
 |---|---|---|
+| 2026-10-09 | Header, §1 (BIN-S, OBS2; RT21–RT24; RT20 widened), §3.2, §5.4, new §9.1.1, §9.2, §10.2, §12 (rules 7–9), §15 (Q-RT7, Q-RT8), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. New §9.1.1 from the programs of the 19 shader records that particle surfaces use (BIN-S) and a census of those surfaces (OBS2): the alpha test reads the texture's opacity alone; the blend's source alpha is texture opacity × vertex alpha × material alpha in most records, with three exceptions; colour, doubling and fog per record; the per-draw alpha-test rules of `material.md` §11.2 with *A* = tint alpha (Inferred). §5.4: census of driven pairs (2 nodes, both on the effect DID from a session-only property) and the walker rules (a)–(g); §3.2: the walker's "drawn" rule; §9.2: the local-space frames as a Decision until `particles.md` Q8; §10.2: fork effects without the library as a Tessera rule; §12: rule 7 reworded (removal-time reading), new rule 9 (engineering limits). All implementer OPENs of 2026-10-08 and 2026-10-09 marked Answered (§9.2 in part). New OPENs Q-RT7 (owner opacity of an attached instance) and Q-RT8 (driven fields after the start), each with a Decision. |
 | 2026-10-09 | §3.2, §5.4, §9.2, §12 | Implementer OPEN notes only (clean room): the walker's owners and "drawn" (§3.2), its choices for redirect, gating, driven fields, opacity, water and scales (§5.4), the corrected distance-emission note of §9.2, the two readings of rule §12.7. No fact changed. |
 | 2026-10-08 | all | First version, status Review. Run-time behaviour from a third M4 pass (row BIN) and a census of all 41,354 Particle nodes (OBS): entry points, clock and random generator, the stored never-ending byte, node start gates, attached and dropped paths, water probe, redirect, attachment frames, the owner's scale vectors, stop / linger / removal, particle storage order, draw calls, fork blend-mode table; worked example; Q-RT1–Q-RT6. |

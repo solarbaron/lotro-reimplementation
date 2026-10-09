@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; awaiting review). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
+| **Status** | Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; awaiting review). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -1410,7 +1410,7 @@ have programs of their own, and their slot-3000 texture is not the surface's col
 | Records | Why the generic path is wrong | Drawing |
 |---|---|---|
 | Water records: 0x2B0000A8, 0x2B0000A9, 0x2B0000CE, 0x2B0000DC, 0x2B000559, 0x2B0005EC, 0x2B0007FD, 0x2B00084B, 0x2B00089A, 0x2B000A8D | slots 3000 and 3001 default to the near-white lists 0x40000DDF and 0x40000DE0, which only the low-detail permutations sample; the water permutations shade from the normal map, the frame-buffer copy and the reflection | `water.md` §8.3–§8.6 |
-| Mirror record 0x2B0000AA (puddles) | slot 3000 is a white image whose alpha is the shape; the colour is the reflection | `water.md` §8.5.4 |
+| Mirror record 0x2B0000AA (puddles, and six static mirror surfaces) | slot 3000 is a diffuse image that multiplies the reflection (on the puddles a white image whose alpha is the shape); the colour is the reflection | `water.md` §8.5.4 |
 | Liquid-distortion records 0x2B000442, 0x2B0004B5, 0x2B00063E, 0x2B0007D0 | the colour texture is read at distorted, scrolled coordinates | `water.md` §8.5.5 |
 
 A renderer recognises them from the record's interface, not from fixed DIDs (Confirmed,
@@ -1703,6 +1703,14 @@ changes a result on current data unless stated.
 > without a texture (an empty binding would read 0 and discard every fragment; a default white
 > image would keep them). Answerable by disassembly of the back ends' texture binding (M4) or
 > by owner observation of the 4 affected surfaces.
+>
+> Base-colour case (added 2026-10-09 from Tessera's whole-world probe, `water.md` tag TP):
+> two drawn surface records set slot 3000 itself to 0, 0x31000482 (record 0x2B0007D5, lit
+> `Color`; on rock meshes such as objects 0x470003EA, 0x470014EB, 0x470014B8; 15,976 draws in
+> 2,501 landblocks) and 0x31000908 (record 0x2B000755, unlit `ColorAndOpacity`, material alpha
+> 0, alpha test on; objects 0x47003953, 0x47003954, 0x47003956; 2,379 draws). Neither is water.
+> What the original samples there is the same unknown (an empty binding reads 0: black, and
+> for 0x31000908 every fragment fails the alpha test; a default white image would show white).
 
 > **Answered 2026-10-05 (§20.1, row 1; was OPEN):** §11.3 maps unlit records to a fixed blend but does not say whether alpha test
 > (§11.2) also applies to blended surfaces. The implementation reports both independently:
@@ -2039,3 +2047,4 @@ Answers of 2026-10-07 (BIN-R, BIN-S4):
 | 2026-10-07 | header, §1, §4.1, §4.2, §5.3.1, §7.3, §7.3.1 (new), §7.4, §7.5, §7.6, §7.7, §8.3, §8.4, §8.5, §8.6, §8.7, §9.2, §9.3, §11.2, §11.4, §12.4, §12.5, §14, §17, §18, §19, §20.1 | Fifth revision (spec writer; M4 under decision 0011: BIN-R client-executable pass and BIN-S4 shader pass; M1 censuses). Status Revised. New provenance rows MA37–MA49; MA28 corrected (semantics 33–37 set the curves of type-1, -2 and -3 items, not early translations). §4.1: the u16 `tail` is two flag bytes, `shadow_receiver` and `not_pickable`; §4.2: `binding_key` has no special surface value, 2 is the group-side wildcard. §7.3.1: how each binding sets its own permutation's state, sampler or item. §7.4: `has_programs` is a count, third blob with key bit 10. §7.5: full sampler state; bytes 10 and 11 are minification then magnification (swapped). §7.6: full block; byte 3 is the depth comparison for a reversed depth range, byte 6 the alpha-test switch, bytes 7–38 default reference, colours and specular power as curves and packed colours. §7.7: the extra state list is the texture-transform list; `stage` = texture matrix; composition per permutation. §8.4: matrix of emissive and glow samplers per record. §8.5: 4001–4006 rules per bound permutation; 4007 = second edge-softening draw. §8.6: by-name passing for groups 1000/2000 only. §9.2: client layering, last wins, broken references. §9.3: group matching (`a`, `b`, 2 = all, `a` 0 = none) over all parts of the entity; census. §11.2: per-draw alpha-test handling (quantised reference, material-alpha scaling, reference 0 in SRCALPHA passes, alpha-to-coverage option). §11.4: per-permutation cull. §12.5: tie-dye ramp. §14: MT10–MT13. §18–§19: callouts answered, adopted as Decisions or narrowed. Of the 34 earlier OPEN callouts 30 are closed (25 answered from the client and the data, 5 implementation choices adopted as Decisions) and 4 remain; 2 new, narrower ones were added. Remaining: the setting that enables the 4007 draw (§8.5), effect families (§8.7), two unidentified per-draw alpha-test conditions (§11.2), the dye-block fallback (§12.4), a sampler without a texture (§18), cube-map face order (`texture-list.md`). |
 | 2026-10-08 | header | Fifth revision reviewed (separate review session): passed, status Accepted. No content change. |
 | 2026-10-09 | header, §1, §8.7, §10.3 (new), §11.6 (new) | Spec writer (dirty room), water-feature revision with `water.md` (tag SH-W, rows MA50–MA52). §10.3: how two colour layers combine, per record (add or multiply RGB, alphas multiplied), replacing the role-based Tessera Decision of `lighting.md` §5.2 item 2. §11.6: water, mirror and liquid-distortion records are not drawn by the generic path. §8.7: mirror, flow, foam, depth and bump parameters point to `water.md` §8.5–§8.6; the OPEN narrowed. Status Accepted → Revised, awaiting review. |
+| 2026-10-09 | §11.6, §18 | Spec writer (dirty room), second water-feature revision after Tessera's whole-world fallback probe: §11.6 mirror row covers the six static mirror surfaces (`water.md` §8.5.4, W36); the §18 OPEN on a sampler without a texture records the two drawn surface records with slot 3000 at 0 (not water). No fact of the generic path changed; status stays Revised. |

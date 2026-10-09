@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; §14.5 and §14.6 **Revised** 2026-10-09 (spec writer: two OPENs for water features; review pending); otherwise **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); §13.6 revised 2026-10-09 (spec writer: the implementer OPEN of 2026-10-08 answered by restating the `blocked` and slope-allowance readings); review of 2026-10-09 passed: **Accepted**. §7 and §10.8: Tessera rules added 2026-10-09 by the spec writer (settle wait, audio columns, overlay on the dispatcher); review of 2026-10-09 passed |
+| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; §14.5 and §14.6 **Revised** 2026-10-09 (spec writer: three OPENs for water features; review pending); otherwise **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); §13.6 revised 2026-10-09 (spec writer: the implementer OPEN of 2026-10-08 answered by restating the `blocked` and slope-allowance readings); review of 2026-10-09 passed: **Accepted**. §7 and §10.8: Tessera rules added 2026-10-09 by the spec writer (settle wait, audio columns, overlay on the dispatcher); review of 2026-10-09 passed |
 | **Last updated** | 2026-10-09 (spec writer, dirty room: water-feature OPENs in §14.5 and §14.6; before that, spec writer: implementer OPENs of §7, §10.8 and §13.6 answered; before that, the same day, merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
@@ -2124,6 +2124,16 @@ receives no table lights (§14.3). Landscape water is not drawn from inside an i
 > drawing drifts 6–23 m/s, the original 0.15–0.9 m/s or not at all, §8.7). Keep passing the
 > time input in seconds (E20). Checklist rows W15–W17 of `m4-5-visual.md` §4.8.
 
+> **OPEN (spec writer, 2026-10-09, second revision, for the walker implementer):** water,
+> mirror and liquid parameters are taken from the surface once, at clock 0. Evaluate every
+> curve-valued one at the clock each frame (`water.md` §8.7.1; census there: 1045 on
+> 0x31002A44–0x31002A46 and three liquid surfaces, 1059 and 1061 on 0x3100338F, 1063–1065 on
+> 0x3100328B and 0x3100824C, 1105 on the puddles, 1182, 1183, 1186, 1187 on the flow-map
+> surfaces), and for the two surfaces with curve-valued scales measure *B* from the camera's
+> landblock (Tessera Decision of `water.md` §8.7.1). The fast plain-water surfaces of
+> `water.md` §8.7.2 are right as drawn; do not clamp them, and never divide by a layer scale
+> (0x31000698 has a scale of 0).
+
 <a id="s14-7"></a>
 ### 14.7 Frills (`scenery.md` §8)
 
@@ -2625,3 +2635,4 @@ the fog, sky placement.
 | 2026-10-09 | Merge of main into remediation-2: main's 2026-10-06 M5 rules (§5, §6) and its implementer OPENs (§7 frame-log columns, §10 chat overlay, §13.6 first touch) kept beside the fifth revision; header status combined. No fact changed. |
 | 2026-10-09 | Spec writer (dirty room; Tessera rules only, no new client fact): §7 gains the settle-wait rule (wall-clock limit on the command line, progress limit for library callers and real-data tests) and the four audio frame-log columns; both §7 implementer OPENs marked Answered. §10.8: the overlay bullet says that lines go to the command dispatcher (decision 0020); its OPEN marked Answered. §13.6: `blocked` judged at the first touch and the slope allowance restated from `m4-5-visual.md` §2.2; the implementer OPEN of 2026-10-08 marked Answered. Status of §13.6 Accepted → Revised. |
 | 2026-10-09 | Spec writer (dirty room), water features (owner report of 2026-10-09): OPENs at the end of §14.5 (route placed water surfaces by `water.md` §8.5; draw second colour layers and animated texture matrices) and §14.6 (flow-map records by `water.md` §8.6). §14.5 and §14.6 Revised; review pending. |
+| 2026-10-09 | Spec writer (dirty room), second water-feature revision: OPEN at the end of §14.6 (evaluate curve-valued water parameters each frame; *B* for curve-valued scales; fast rates and scale 0, `water.md` §8.7.1–§8.7.2). §14.6 stays Revised; review pending. |

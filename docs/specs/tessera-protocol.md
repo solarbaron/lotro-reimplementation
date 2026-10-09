@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
+| **Status** | Revised (2026-10-09, spec writer, design: §8.3 "Server relaxations" answers the round-2 OPEN on the settling grace, and invariant 8 is reworded for them and for unreported rejections; no byte two peers exchange changes, the minor version stays 0; awaiting review). Before: Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
 | **Protocol version** | 1.0 (major 1 in ALPN `tessera/1`, minor 0 in `Hello`) |
-| **Last updated** | 2026-10-08 |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | reviewer (did not write the code), 2026-10-07; second round 2026-10-07 ([R.7](#review-r7)). Method and results: [Review](#review) |
 | **Implements into** | `crates/protocol` (schema, framing, encode/decode, version negotiation, fingerprint text; no I/O), `crates/net` (test-server backend), `apps/server` (`tessera-server`), `apps/loadtest`, `fuzz/` |
@@ -1301,24 +1301,32 @@ For each `MoveInput`, in this order:
    (`MoveInput`s of the old epoch are dropped by step 2 in any case.)
 
 
-> **OPEN:** (review, round 2) "The server MAY run further checks of its own" lets a server
-> add checks, never relax them (and invariant 8 relies on that). `tessera-server` relaxes
-> them by default: for `settle_grace_s` (default 3 s, `test-server.md` §4 and §8.3) after an
-> epoch that starts at a ground spawn or a `Ground` destination it validates with up and
-> down speeds of 10⁹ m/s, so a `MoveInput` 5,000 m above the spawn is accepted and relayed
-> where this section requires `LocationReport(CORRECTED)` (*V*ᵤ · *W* = 10 m).
-> `test-server.md` §8.3 has an OPEN addressed to this spec about it; this is the matching
-> note. Spec writer: either allow a bounded server-defined settling window (for example
-> ≤ 10 s) after `Ground`-type epochs, in which only the horizontal allowance and the extent
-> are checked, and reword invariant 8 to match; or keep §8.3 as is, in which case servers
-> default `settle_grace_s` to 0. Review R.3's "follows §8.3 steps 1–7" is true of
-> `MovementValidator`, not of the server's use of it.
+**Server relaxations** (revised 2026-10-09). The further checks that step 6 allows may only
+tighten this procedure, with two exceptions that a server MAY apply. Neither changes a byte on
+the wire, and a client needs no change for either (it sends as §8.2 requires).
 
-> **Note** (spec writer, `test-server.md`, 2026-10-08): `test-server.md` §8.3 now runs the
-> grace by skipping only the up and down tests of step 5; *A*ᵤ and *A*_d stay tracked, and its
-> descent credit (a separate pool of at most *S*, cleared at every epoch) counts at most *A*_d
-> of a move's descent. The question above, whether this section allows the grace and the
-> credit, is unchanged.
+1. **Settling window.** For at most 10 s of server time after an epoch whose starting pose has a
+   height the server does not know (a world entry at a position the server's content marks as
+   approximate, or a `Ground` teleport destination, §5.3), the server MAY skip the up and down
+   tests of step 5. Steps 1–4, the horizontal test of step 5, the extent check and step 6 still
+   apply; on acceptance *A*ᵤ ← max(0, *A*ᵤ − *d*ᵤ). A correction inside the window starts a new
+   epoch as step 7 says; the window stays measured from the start of the epoch that opened it.
+2. **Descent credit.** The server MAY keep per player a credit *C*, 0 ≤ *C* ≤ *S* with
+   *S* ≤ 100 m, set to 0 at every new epoch. With the counted descent *d*_c = min(*d*_d, *A*_d),
+   step 5 then rejects when *d*ₕ > *A*ₕ + *d*_c + *C* (instead of *d*ₕ > *A*ₕ), and step 6 sets
+   *A*ₕ ← max(0, *A*ₕ − *d*ₕ), *A*_d ← *A*_d − *d*_c and
+   *C* ← min(*S*, *C* + *d*_c − max(0, *d*ₕ − *A*ₕ)), the last using *A*ₕ before the update. With
+   *S* = 0 this is step 5 exactly. It lets the horizontal run-out of a slide down a steep face,
+   which the controller of `collision.md` §12 can make faster than *V*ₕ, be paid by the descent
+   that produced it.
+
+`test-server.md` §8.3 gives `tessera-server`'s use of both (settling window 3 s after a `ground`
+spawn or a `Ground` destination, *S* = 58 m) and the reasoning. Invariant 8 (§15) counts them.
+
+> **Answered (2026-10-09, spec writer, design; was OPEN, review round 2):** a bounded
+> server-defined settling window and a bounded descent credit are allowed ("Server
+> relaxations" above), and invariant 8 is reworded to match; `tessera-server`'s defaults lie
+> within the bounds. The earlier note of 2026-10-08 from `test-server.md` is superseded.
 
 <a id="s8-4"></a>
 ### 8.4 Epochs, teleports and corrections
@@ -1862,13 +1870,17 @@ protocol violation, because codes are informational.
    `TeleportRefused`) carrying its `request_id`.
 7. Positions in `EntityCreate` and `MotionBatch` are in the receiver's current region. A
    region change is always preceded by `InterestReset` on the world stream.
-8. Accepted movement never exceeds the allowance of §8.3. Every rejection advances the
-   epoch.
+8. Accepted movement never exceeds the allowance of §8.3 together with the relaxations that
+   §8.3 permits and the server applies: within one epoch, over any stretch of *t* seconds of
+   server time, the horizontal distance of the accepted `MoveInput`s is at most
+   *V*ₕ · (*t* + *W*) + *S* + the descent they count (*S* = 0 without the descent credit), and,
+   outside a settling window, the rise at most *V*ᵤ · (*t* + *W*) and the descent at most
+   *V*_d · (*t* + *W*). Every rejection that is reported advances the epoch (rejections beyond
+   the 4 corrections per second of §8.3 step 7 are dropped without a report). (Reworded
+   2026-10-09.)
 
-> **OPEN:** (implementer note) Invariant 8 conflicts with §8.3 step 7, which drops
-> rejections beyond 4 corrections per second without a report (and so without a new epoch).
-> `crates/protocol` (`MovementValidator`) follows step 7. Spec writer: confirm the wording
-> "every rejection that is reported advances the epoch".
+> **Answered (2026-10-09, spec writer; was OPEN, implementer note):** invariant 8 now says
+> "every rejection that is reported advances the epoch", as the review had confirmed.
 9. The server never sends static world objects or game data. Every DID and data key on the
    wire is an opaque number the client resolves against its own install.
 
@@ -2360,14 +2372,12 @@ them.
 | Date | Change |
 |---|---|
 | 2026-10-06 | v1.0 draft (spec writer, design). Transport per decision 0030. Awaiting review by someone who did not write it (ROADMAP M7 exit criterion 2) |
+| 2026-10-07 | Independent review (M7 exit criterion 2): accepted; non-blocking `OPEN (review)` notes, see [Review](#review). Second round the same day ([R.7](#review-r7)) |
 | 2026-10-08 | §1, §7.3, §8.3: default limits follow the `collision.md` §12 controller: *V*ₕ 8.5 m/s (was 1.25 × `RUN_SPEED` = 7.5), *V*ᵤ 10 m/s (unchanged, reasoned anew), *V*_d 120 m/s (was 60); `WALK_SPEED`/`RUN_SPEED` no longer set a limit. No bytes change. Reasoning in `test-server.md` §4.5. Spec writer (design); needs a reviewer's confirmation |
+| 2026-10-09 | §8.3 "Server relaxations" (spec writer, design): a server MAY apply a settling window of at most 10 s after an epoch with an unknown height (skipping only the up and down tests) and a descent credit of at most 100 m; the round-2 OPEN at §8.3 is answered. §15 invariant 8 reworded for the relaxations and for unreported rejections; its implementer OPEN answered. This table gains the 2026-10-07 review row (round-2 OPEN at §18 answered). No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
 
-
-> **OPEN:** (review, non-blocking, round 2) The status row says Accepted after the
-> 2026-10-07 review, but "Last updated" still reads 2026-10-06 and the only entry above says
-> "Awaiting review". Spec writer (owner of this table and of the status table): add a row
-> "2026-10-07 | Independent review (M7 exit criterion 2): accepted; non-blocking
-> `OPEN (review)` notes, see Review" and update "Last updated".
+> **Answered (2026-10-09, spec writer; was OPEN, review, non-blocking, round 2):** the
+> 2026-10-07 review row is added and "Last updated" is current.
 
 ---
 

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Revised, changes requested (review 2026-10-09 of the owner-observation pass: §8 random source, R40; two blocking items in the review record). The Accepted text of 2026-10-08 stands for everything else. |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (2026-10-09: the two blocking items of the 2026-10-09 review of the owner-observation pass fixed, §8 OPEN-18 and the §28 table; awaiting review). The Accepted text of 2026-10-08 stands for everything else. |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Review 2026-10-08: **passed**, Accepted. 8 BIN facts spot-checked in the client (R1, R5, §4.3, R8, R13, R21, R22, R24) and 3 data facts over every record (§12.3 limits, RI9, the music Switches of §6.2). OPEN-5 settled from the binary (§6.2, row R27); the order of the §3.1 steps corrected (R1). Full record in the review log (decision 0018). Narrow re-review 2026-10-08 (another session) of the R1 order note and the OPEN-5 lines (R27, BIN-R, OBS-R, §6.2, §6.3, §27 item 5, §29 item 1): **passed**; facts re-checked in the client and over every record; the "no value" clause of R27 and §6.2 narrowed to the Switch (wording). Review 2026-10-09 (another session, not the writer) of the owner-observation revision (BIN-O, R40, §8 "Random source", change-log row): **changes requested**. Facts spot-checked in the client (same build, private copy of the analysis project, deleted afterwards) and **all reproduced**: the Random port pick draws an integer in [0, sum − 1] through the integer helper, i.e. the whole part of *u* × sum; *u* comes from one global combined multiplicative congruential generator with a 32-entry shuffle table, strictly between 0 and 1; the seeding routine has exactly two callers, one seeding from the wall-clock time in whole seconds from a start-up routine, the other taking its seed from a script-machine value stack; nothing in the node path seeds per entity, object or node. Checklist: functional facts only, no code or pseudo-code, no copied prose (the name of the published generator design is general knowledge, not an identifier to copy), no game text, keys or hostnames, BIN-O meets decision 0011, nothing under a closed gate. **Blocking:** (1) §28: the new change-log row is separated from the table by a blank line and followed directly by the `---` rule, so it is not part of the table and renders as a heading; move it into the table (no blank line before it, one blank line after it). (2) §8 "Random source": "when it runs was not traced" states an unknown inline; make it a `> **OPEN:**` callout (or point to the O12 OPEN of `appearance.md` §7.4, which already names the possible reseed), so that §5.3 "unknowns are marked OPEN" holds. With (1) and (2) fixed the revision can be accepted without a further binary check. |
+| **Review record** | Review 2026-10-08: **passed**, Accepted. 8 BIN facts spot-checked in the client (R1, R5, §4.3, R8, R13, R21, R22, R24) and 3 data facts over every record (§12.3 limits, RI9, the music Switches of §6.2). OPEN-5 settled from the binary (§6.2, row R27); the order of the §3.1 steps corrected (R1). Full record in the review log (decision 0018). Narrow re-review 2026-10-08 (another session) of the R1 order note and the OPEN-5 lines (R27, BIN-R, OBS-R, §6.2, §6.3, §27 item 5, §29 item 1): **passed**; facts re-checked in the client and over every record; the "no value" clause of R27 and §6.2 narrowed to the Switch (wording). Review 2026-10-09 (another session, not the writer) of the owner-observation revision (BIN-O, R40, §8 "Random source", change-log row): **changes requested**. Facts spot-checked in the client (same build, private copy of the analysis project, deleted afterwards) and **all reproduced**: the Random port pick draws an integer in [0, sum − 1] through the integer helper, i.e. the whole part of *u* × sum; *u* comes from one global combined multiplicative congruential generator with a 32-entry shuffle table, strictly between 0 and 1; the seeding routine has exactly two callers, one seeding from the wall-clock time in whole seconds from a start-up routine, the other taking its seed from a script-machine value stack; nothing in the node path seeds per entity, object or node. Checklist: functional facts only, no code or pseudo-code, no copied prose (the name of the published generator design is general knowledge, not an identifier to copy), no game text, keys or hostnames, BIN-O meets decision 0011, nothing under a closed gate. **Blocking:** (1) §28: the new change-log row is separated from the table by a blank line and followed directly by the `---` rule, so it is not part of the table and renders as a heading; move it into the table (no blank line before it, one blank line after it). (2) §8 "Random source": "when it runs was not traced" states an unknown inline; make it a `> **OPEN:**` callout (or point to the O12 OPEN of `appearance.md` §7.4, which already names the possible reseed), so that §5.3 "unknowns are marked OPEN" holds. With (1) and (2) fixed the revision can be accepted without a further binary check. Writer's answer 2026-10-09: (1) the row moved into the §28 table; (2) the untraced timing of the second seeding caller is now §8 OPEN-18 (pointing to `appearance.md` §7.4 O12), listed in §27 item 17; no fact changed. |
 | **Implements into** | `crates/scriptgraph` (`tessera-scriptgraph`, new in M6: the live, incremental evaluator of script tables and scriptlets: node instances, contexts, the scheduler clock, Switch/When/Random/Collection/Sequence/Timer/Run/WhenRunning/SetProperty/Goto/Label/OnStop/Scriptlet/ScriptletParameter semantics, the intensity chain and driven properties), `crates/audio` (Sound and SoundEnvironment node instances call into `tessera-audio` per `sound.md` §9), `apps/client` (one scheduler advance and one script update per frame, entity creation and removal, the player properties of `sound.md` §10.2) |
 | **Companion specs** | [`script-table.md`](script-table.md) §2–§5 (record framing, node frame, base block, port payloads, node-kind layouts), §7 (the earlier, Reported, name-inferred behaviour that this spec replaces for the kinds it covers), §8.1–§8.2 (an entity's tables and their closure). [`sound.md`](sound.md) §6 (voices, ramp-out), §9 (Sound and SoundEnvironment nodes; §9.6 outcome of a start), §10 (music and ambience graphs), §11 (positional emitters). [`instruments.md`](instruments.md) §10.1 (node intensity; its Q8 is settled here, §4.2). [`property-system.md`](property-system.md) §2 (definitions; the `field_b` value 6 that marks script-parameter properties, §5.1 here), §8 (enum mappers). |
 
@@ -617,12 +617,18 @@ generator with a 32-entry shuffle table (the published "ran2" design). Every ran
 the client that goes through it advances the same sequence. It is seeded **once at client
 start from the wall-clock time** in whole seconds; the only other caller of the seeding
 routine takes its seed from what appears to be the game-logic bytecode interpreter's value
-stack (Inferred; `wlib-bytecode.md`), and when it runs was not traced. Nothing
+stack (Inferred; `wlib-bytecode.md`; when it runs is OPEN-18 below). Nothing
 in the Random node's path seeds it from the entity, the object or the node. Consequence
 (Inferred): which port a Random picks depends on everything else the client has drawn since
 it started, so the same figure created twice (for example on two visits) normally gets
 different picks; Tessera cannot reproduce the original's sequence and keeps its own seeding
 (Decision of `appearance.md` §7.4).
+
+> **OPEN-18:** When the second caller of the seeding routine runs, and with which seed, was
+> not traced: in particular whether game logic reseeds the generator before a figure's
+> start-up script runs, which would make its Random picks repeatable. This is the possible
+> reseed named in the O12 OPEN of `appearance.md` §7.4. **Decision (Tessera):** as there, a
+> placed figure's Random nodes are seeded from its instance ID.
 
 > **OPEN-8:** The order of the internal port table (§6 OPEN-6) decides which port a given
 > draw selects; the distribution is unaffected. **Decision (Tessera):** stored order and the
@@ -1240,6 +1246,7 @@ otherwise unchanged.
 14. Loader conditions for a run's pre-load wait (§12.1 OPEN-15).
 15. Animation instances on undrawn entities (§18 OPEN-16).
 16. Run-time duration of effect kinds (§18 OPEN-17).
+17. When and with which seed the second seeding caller reseeds the generator (§8 OPEN-18).
 
 ---
 
@@ -1253,8 +1260,9 @@ otherwise unchanged.
 | 2026-10-07 | §29 items 11, 13–17 | OPEN notes and Decisions after a code review: deferred Runs inside an advance, nested Switch re-evaluation, int-list changes without a transition, revised guards, teardown and reused entity IDs; no fact changed. | Implementer (clean room) |
 | 2026-10-08 | header, §1 (R1, new R27, sources BIN-R and OBS-R), §3.1, §6.2, §6.3, §27 item 5, §29 item 1 | Review: status Accepted. OPEN-5 settled from the binary: an unset property reads its dictionary default, else its type's zero value, and is then matched like any value (Default port when no case matches); "no value" only for a property ID without a definition. The order in which the §3.1 steps are applied corrected (3, 4, 1, 2, 5, 6, 7); step numbers unchanged. **Behaviour change for implementers:** an unset property no longer means "no port"; implementations that select nothing for it must change (§6.2). | Spec reviewer (dirty room) |
 | 2026-10-08 | header, §1 (R27), §6.2 | Narrow re-review of the R1 order note and the OPEN-5 lines: passed. Wording only: the "no value" clause of R27 and §6.2 now names the Switch; a When prepares its value the same way. No fact changed. | Spec reviewer (dirty room, another session) |
-
 | 2026-10-08 | header, §1 (new source BIN-O, new R40), §8 | Owner-observation pass (O12): the Random node's random source is the client's global generator, seeded once from the wall-clock time at start-up (and reseedable by one bytecode operation); no per-object seed. Status Revised, awaiting review. | Spec writer (dirty room) |
+| 2026-10-09 | header, §8, §27 item 17, §28 | Answer to the blocking items of the 2026-10-09 review: the 2026-10-08 row moved into this table; the untraced timing of the second seeding caller made a callout (new OPEN-18, pointing to `appearance.md` §7.4 O12, with Tessera's per-figure seed as its Decision). No fact changed. Status Revised, awaiting review. | Spec writer (dirty room) |
+
 ---
 
 <a id="s29"></a>

@@ -377,7 +377,8 @@ fn backlog_below_resume_continues_creates() {
 #[test]
 fn memory_budget_disconnects_the_largest_backlog() {
     let mut cfg = Config::default();
-    cfg.limits.memory_budget_mib = 64;
+    // The lowest budget §4.7 accepts: 19 MiB of hashing for one worker + 64 MiB.
+    cfg.limits.memory_budget_mib = 83;
     cfg.use_hash_floor();
     cfg.accounts.hash_workers = 1;
     let mut h = Harness::new(cfg, plain());
@@ -385,8 +386,8 @@ fn memory_budget_disconnects_the_largest_backlog() {
     let b = h.player("Bram", 1024);
     let _ = h.drain(a);
     let _ = h.drain(b);
-    // 19 MiB of hashing plus 48 MiB of chat backlog on Bram: over 64 MiB.
-    h.conns[b].0.chat_unsent.store(48 << 20, Ordering::Relaxed);
+    // 19 MiB of hashing plus 70 MiB of chat backlog on Bram: over 83 MiB.
+    h.conns[b].0.chat_unsent.store(70 << 20, Ordering::Relaxed);
     h.conns[a].0.chat_unsent.store(10, Ordering::Relaxed);
     h.tick();
     let (cmds_b, _) = h.drain(b);
@@ -713,6 +714,76 @@ fn settling_grace_applies_at_every_ground_spawn() {
         );
     }
     assert_eq!(corrected, vec![false, true]);
+}
+
+/// §8.3 (and `tessera-protocol.md` §8.3 "Server relaxations" item 1): the settling grace is
+/// measured from the start of the ground epoch; a correction inside it neither ends nor
+/// restarts it.
+#[test]
+fn settling_grace_runs_from_the_ground_epoch_across_a_correction() {
+    let at_spawn = Location::new(1, 3000.0, 3000.0, 100.0);
+    let mut chars = BTreeMap::new();
+    chars.insert("user0".to_owned(), stored("user0", "Bram", 1, at_spawn));
+    let mut h = Harness::with(
+        Config::default(),
+        two_ground_spawns(),
+        accounts_file(),
+        chars,
+    );
+    let c = h.open();
+    h.login(c, "user0");
+    h.event(
+        c,
+        ServerEvent::EnterWorld {
+            name: "Bram".into(),
+        },
+    );
+    h.tick();
+    let _ = h.drain(c);
+    let start = h.now;
+    let reports = |h: &mut Harness| {
+        let (_, world) = h.drain(c);
+        world
+            .into_iter()
+            .filter_map(|m| match m {
+                Message::LocationReport(r) => Some(r),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // At 1 s a 30 m jump sideways is corrected: epoch 2 at the spawn.
+    h.now = start + 1_000_000;
+    h.conns[c].0.put_move(mv(
+        1,
+        Location::new(1, at_spawn.x + 30.0, at_spawn.y, at_spawn.z),
+    ));
+    h.tick();
+    let r = reports(&mut h);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!(r[0].epoch, 2);
+    // At 2 s, in the new epoch, a 150 m settling drop is still inside the grace.
+    h.now = start + 2_000_000;
+    let mut m = mv(
+        1,
+        Location::new(1, at_spawn.x, at_spawn.y, at_spawn.z - 150.0),
+    );
+    m.epoch = 2;
+    h.conns[c].0.put_move(m);
+    h.tick();
+    assert!(reports(&mut h).is_empty());
+    // After 3 s from the ground epoch (not from the correction) the grace has ended: a
+    // further 150 m drop is corrected.
+    h.now = start + 3_100_000;
+    let mut m = mv(
+        2,
+        Location::new(1, at_spawn.x, at_spawn.y, at_spawn.z - 300.0),
+    );
+    m.epoch = 2;
+    h.conns[c].0.put_move(m);
+    h.tick();
+    let r = reports(&mut h);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!(r[0].epoch, 3);
 }
 
 /// Finding: shutdown saves used `try_send` and were skipped when the writer queue was full,

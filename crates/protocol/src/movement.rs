@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use crate::limits::{
     ALLOWANCE_WINDOW, DEFAULT_TICK_RATE, EXTENT_MAX, EXTENT_MIN, GRID_EXTENT, LANDBLOCK_SIZE,
-    MAX_CORRECTIONS_PER_SECOND, MAX_DOWN_SPEED, MAX_HORIZONTAL_SPEED, MAX_LANDBLOCK, MAX_UP_SPEED,
-    REST_REDUNDANCY,
+    MAX_CORRECTIONS_PER_SECOND, MAX_DESCENT_CREDIT, MAX_DOWN_SPEED, MAX_HORIZONTAL_SPEED,
+    MAX_LANDBLOCK, MAX_SETTLING_WINDOW, MAX_UP_SPEED, REST_REDUNDANCY,
 };
 use crate::message::{LocationCause, LocationReport, MoveInput};
 use crate::rate::SlidingWindow;
@@ -74,7 +74,8 @@ impl MoveScheduler {
 }
 
 /// Tolerances of the server's movement check (§8.3 defaults; `test-server.md` may change
-/// them).
+/// them), and the two relaxations a server MAY apply (§8.3 "Server relaxations"). The
+/// default is the procedure of §8.3 steps 1–7 exactly, without either relaxation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MovementLimits {
     /// *V*ₕ, m/s. Independent of `WALK_SPEED` and `RUN_SPEED` (§7.3).
@@ -89,16 +90,22 @@ pub struct MovementLimits {
     pub extent_min: f64,
     /// Highest x or y accepted, metres.
     pub extent_max: f64,
-    /// The descent credit of `test-server.md` §8.3 with its reserve *S* in metres, or
-    /// `None` for the protocol's §8.3 procedure exactly (the default).
+    /// The descent credit (§8.3 "Server relaxations" item 2) with its reserve *S* in metres,
+    /// or `None` for steps 5 and 6 unchanged (the default).
     ///
     /// With a reserve *S* > 0 the validator keeps a credit pool *C* (0 ≤ *C* ≤ *S*, 0 at
     /// every new epoch, never growing with time). A move's counted descent is
     /// *d*_c = min(*d*_d, *A*_d); step 5 rejects when *d*ₕ > *A*ₕ + *d*_c + *C*, and on
     /// acceptance *A*ₕ pays first, then *d*_c, then *C*, while descent the move does not
     /// need is kept in *C* up to *S*. A reserve of 0, a negative one or NaN turns the
-    /// credit off (the protocol's horizontal test).
+    /// credit off (steps 5 and 6 unchanged); one above [`MAX_DESCENT_CREDIT`] (100 m) counts
+    /// as 100 m.
     pub descent_credit: Option<f64>,
+    /// The settling window (§8.3 "Server relaxations" item 1): how long after the start of
+    /// an epoch opened with [`MovementValidator::open_settling_window`] step 5 skips its up
+    /// and down tests. Zero (the default) applies no window; a value above
+    /// [`MAX_SETTLING_WINDOW`] (10 s) counts as 10 s.
+    pub settling_window: Duration,
 }
 
 impl Default for MovementLimits {
@@ -111,15 +118,30 @@ impl Default for MovementLimits {
             extent_min: EXTENT_MIN,
             extent_max: EXTENT_MAX,
             descent_credit: None,
+            settling_window: Duration::ZERO,
         }
     }
 }
 
 impl MovementLimits {
-    /// The descent-credit reserve *S* in metres (0 without a credit or for a negative or
-    /// NaN value). The credit is on only while this is above 0.
-    fn reserve(&self) -> f64 {
-        self.descent_credit.map_or(0.0, |s| s.max(0.0))
+    /// The descent-credit reserve *S* in metres: 0 without a credit or for a negative or
+    /// NaN value, at most [`MAX_DESCENT_CREDIT`]. The credit is on only while this is above 0.
+    #[must_use]
+    pub fn reserve(&self) -> f64 {
+        // NaN fails `s > 0.0` and gives 0.
+        self.descent_credit.map_or(0.0, |s| {
+            if s > 0.0 {
+                s.min(MAX_DESCENT_CREDIT)
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// The settling window in force, at most [`MAX_SETTLING_WINDOW`].
+    #[must_use]
+    pub fn settling(&self) -> Duration {
+        self.settling_window.min(MAX_SETTLING_WINDOW)
     }
 }
 
@@ -150,11 +172,13 @@ pub struct MovementValidator {
     allow_h: f64,
     allow_up: f64,
     allow_down: f64,
-    /// *C*, the descent credit of `test-server.md` §8.3, metres.
+    /// *C*, the descent credit (§8.3 "Server relaxations" item 2), metres.
     credit: f64,
-    /// Whether the up and down tests of step 5 are skipped (`test-server.md` §8.3 settling
-    /// grace).
-    settling: bool,
+    /// Server time (µs) at which the current epoch started.
+    epoch_start: u64,
+    /// End (µs, exclusive) of the settling window (§8.3 "Server relaxations" item 1), if one
+    /// is open. A correction keeps it; [`MovementValidator::start_epoch`] closes it.
+    settle_until: Option<u64>,
     last_time: u64,
     corrections: SlidingWindow,
 }
@@ -175,7 +199,8 @@ impl MovementValidator {
             allow_up: 0.0,
             allow_down: 0.0,
             credit: 0.0,
-            settling: false,
+            epoch_start: now,
+            settle_until: None,
             last_time: now,
             corrections: SlidingWindow::new(MAX_CORRECTIONS_PER_SECOND, Duration::from_secs(1)),
         };
@@ -183,10 +208,18 @@ impl MovementValidator {
         v
     }
 
-    /// Starts a new epoch at `pose` (a teleport or correction): allowances start full, the
-    /// descent credit is 0, the velocity is zero and the next `MoveInput` is accepted
-    /// whatever its `seq`. The settling state is the caller's and stays as it is.
+    /// Starts a new epoch at `pose` (a teleport): allowances start full, the descent credit
+    /// is 0, the velocity is zero and the next `MoveInput` is accepted whatever its `seq`.
+    /// Any settling window closes; call [`Self::open_settling_window`] afterwards when the
+    /// server does not know the height of `pose`.
     pub fn start_epoch(&mut self, epoch: u32, pose: Pose, now: u64) {
+        self.settle_until = None;
+        self.begin_epoch(epoch, pose, now);
+    }
+
+    /// The epoch start shared by teleports and corrections (step 7); leaves the settling
+    /// window as it is, so a correction inside it neither ends nor restarts it.
+    fn begin_epoch(&mut self, epoch: u32, pose: Pose, now: u64) {
         self.epoch = epoch;
         self.pose = pose;
         self.last_seq = None;
@@ -197,6 +230,7 @@ impl MovementValidator {
         self.allow_up = self.limits.up_speed * w;
         self.allow_down = self.limits.down_speed * w;
         self.credit = 0.0;
+        self.epoch_start = now;
         self.last_time = now;
     }
 
@@ -206,18 +240,24 @@ impl MovementValidator {
         self.limits = limits;
     }
 
-    /// Turns the settling grace of `test-server.md` §8.3 on or off: while it is on, step 5
-    /// skips the up and down tests. The horizontal test (with the descent credit) and the
-    /// extent check still apply, and step 6 still lowers *A*ᵤ and *A*_d, so a move counts at
-    /// most *A*_d of its descent toward the credit.
-    pub fn set_settling(&mut self, settling: bool) {
-        self.settling = settling;
+    /// Opens the settling window of §8.3 "Server relaxations" item 1 for the current epoch,
+    /// whose starting pose has a height the server does not know (a world entry or teleport
+    /// to an approximate height, a `Ground` destination). Call it right after [`Self::new`]
+    /// or [`Self::start_epoch`]. The window lasts [`MovementLimits::settling`] (at most
+    /// 10 s) of server time from the start of this epoch; corrections inside it do not end or
+    /// restart it. While it is open, step 5 skips the up and down tests: steps 1–4, the
+    /// horizontal test (with the descent credit) and step 6 still apply, and step 6 still
+    /// lowers *A*ᵤ and *A*_d (never below 0), so a move counts at most *A*_d of its descent
+    /// toward the credit. With a zero window nothing opens.
+    pub fn open_settling_window(&mut self) {
+        let w = u64::try_from(self.limits.settling().as_micros()).unwrap_or(u64::MAX);
+        self.settle_until = (w > 0).then(|| self.epoch_start.saturating_add(w));
     }
 
-    /// Whether the settling grace is on.
+    /// Whether the settling window is open at server time `now` (µs).
     #[must_use]
-    pub fn settling(&self) -> bool {
-        self.settling
+    pub fn settling_at(&self, now: u64) -> bool {
+        self.settle_until.is_some_and(|end| now < end)
     }
 
     /// *C*, the descent credit held, in metres (always 0 without a credit).
@@ -256,7 +296,7 @@ impl MovementValidator {
         let w = self.limits.window.as_secs_f64();
         let vh = self.limits.horizontal_speed;
         // A_h never holds more than V_h · W; the credit is a pool of its own and never grows
-        // with time (test-server.md §8.3).
+        // with time (§8.3 "Server relaxations" item 2).
         self.allow_h = (self.allow_h + vh * dt).min(vh * w);
         self.credit = self.credit.min(self.limits.reserve());
         self.allow_up = (self.allow_up + self.limits.up_speed * dt).min(self.limits.up_speed * w);
@@ -265,9 +305,10 @@ impl MovementValidator {
     }
 
     /// Runs steps 2–7 of §8.3 for `input` received at server time `now` (µs), steps 5 and 6
-    /// as `test-server.md` §8.3 changes them when [`MovementLimits::descent_credit`] holds a
-    /// reserve above 0 or [`Self::set_settling`] is on. Step 1 (not InWorld) is the caller's.
-    /// The caller MAY run further checks of its own after `Accepted`.
+    /// as the "Server relaxations" change them when [`MovementLimits::descent_credit`] holds
+    /// a reserve above 0 or the settling window is open at `now`. Step 1 (not InWorld) is the
+    /// caller's. The caller MAY run further checks of its own after `Accepted`, which may
+    /// only tighten the procedure.
     pub fn check(&mut self, input: &MoveInput, now: u64) -> MoveVerdict {
         if input.epoch != self.epoch {
             return MoveVerdict::StaleEpoch;
@@ -288,7 +329,7 @@ impl MovementValidator {
         let dz = new.z - p.z;
         let (du, dd) = (dz.max(0.0), (-dz).max(0.0));
         // Counted descent d_c: the part of the descent that the down allowance covers (all
-        // of it outside the settling grace, where a larger descent is rejected).
+        // of it outside the settling window, where a larger descent is rejected).
         let counted = dd.min(self.allow_down);
         let reserve = self.limits.reserve();
         let credit_on = reserve > 0.0;
@@ -297,7 +338,7 @@ impl MovementValidator {
         } else {
             self.allow_h
         };
-        let vertical_ok = self.settling || (du <= self.allow_up && dd <= self.allow_down);
+        let vertical_ok = self.settling_at(now) || (du <= self.allow_up && dd <= self.allow_down);
         if !(dh <= h_budget && vertical_ok) {
             return self.reject(now);
         }
@@ -342,7 +383,7 @@ impl MovementValidator {
         }
         let epoch = self.epoch.wrapping_add(1);
         let pose = self.pose;
-        self.start_epoch(epoch, pose, now);
+        self.begin_epoch(epoch, pose, now);
         MoveVerdict::Corrected(LocationReport {
             cause: LocationCause::Corrected,
             request_id: 0,
@@ -496,11 +537,15 @@ mod tests {
     }
 
     /// The server's default reserve *S* (`test-server.md` §4.5 `slide_reserve`).
-    const RESERVE: f64 = 56.0;
+    const RESERVE: f64 = 58.0;
+
+    /// The server's default settling window (`test-server.md` §4.5 `settle_grace_s`).
+    const SETTLE: Duration = Duration::from_secs(3);
 
     fn server_limits() -> MovementLimits {
         MovementLimits {
             descent_credit: Some(RESERVE),
+            settling_window: SETTLE,
             ..MovementLimits::default()
         }
     }
@@ -699,17 +744,18 @@ mod tests {
     fn slide_right_after_spawn_is_accepted() {
         // The client sees its ground `drop` metres below the spawn and settles onto it in the
         // first move, then slides from rest down a 46° face, runs out jumping and runs on.
-        // The settling grace (3 s) ends during the face.
+        // The settling window (3 s) ends during the face.
         for drop in [2.0, 200.0] {
             let (speeds, _) = slide_and_run_out(46.0, true);
             let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
-            v.set_settling(true);
+            v.open_settling_window();
             let mut seq = 0;
             let (fail, now) = drive(&mut v, &mut seq, 0, steady(1, 0.0, -drop / 0.066_667));
             assert_eq!(fail, None, "settling move of {drop} m");
             let (fail, now) = drive(&mut v, &mut seq, now, speeds[..44].iter().copied());
             assert_eq!(fail, None, "drop {drop}");
-            v.set_settling(false);
+            // The 44th send arrived inside the window, the 45th just after it.
+            assert!(v.settling_at(now - SEND_US) && !v.settling_at(now));
             let (fail, _) = drive(&mut v, &mut seq, now, speeds[44..].iter().copied());
             assert_eq!(fail.map(|i| i + 44), None, "drop {drop}");
             assert_eq!(v.epoch(), 1, "no correction");
@@ -735,9 +781,14 @@ mod tests {
 
     #[test]
     fn claimed_drop_during_settling_earns_at_most_the_reserve() {
-        let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
-        v.set_settling(true);
-        // A 5,000 m drop passes the grace but counts only A_d = V_d · W = 120 m, and the
+        // A window of 1 µs: open at time 0, closed at 1 µs, before the allowances refill.
+        let limits = MovementLimits {
+            settling_window: Duration::from_micros(1),
+            ..server_limits()
+        };
+        let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+        v.open_settling_window();
+        // A 5,000 m drop passes the window but counts only A_d = V_d · W = 120 m, and the
         // credit keeps at most S of it.
         assert_eq!(
             v.check(&burst(&v, 1, 0.0, -5_000.0), 0),
@@ -754,23 +805,87 @@ mod tests {
             w.check(&burst(&w, 2, 8.5 + RESERVE - 0.1, 0.0), 0),
             MoveVerdict::Accepted
         );
-        // A_d is still tracked: right after the grace a further metre down is too much.
+        // A_d is still tracked: right after the window a further metre down is too much.
         let mut w = v.clone();
-        w.set_settling(false);
         assert!(matches!(
-            w.check(&burst(&w, 2, 0.0, -1.0), 0),
+            w.check(&burst(&w, 2, 0.0, -1.0), 1),
             MoveVerdict::Corrected(_)
         ));
-        // So is A_u: a 5,000 m rise passes the grace, a further metre after it does not.
+        // So is A_u: a 5,000 m rise passes the window, a further metre after it does not.
         assert_eq!(
             v.check(&burst(&v, 2, 0.0, 5_000.0), 0),
             MoveVerdict::Accepted
         );
-        v.set_settling(false);
         assert!(matches!(
-            v.check(&burst(&v, 3, 0.0, 1.0), 0),
+            v.check(&burst(&v, 3, 0.0, 1.0), 1),
             MoveVerdict::Corrected(_)
         ));
+    }
+
+    /// §8.3 "Server relaxations" item 1: the window lasts at most 10 s from the start of the
+    /// epoch that opened it, survives corrections, and a teleport closes it.
+    #[test]
+    fn settling_window_bounds() {
+        // Configured above the bound: 10 s.
+        let limits = MovementLimits {
+            settling_window: Duration::from_secs(60),
+            ..MovementLimits::default()
+        };
+        assert_eq!(limits.settling(), MAX_SETTLING_WINDOW);
+        let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+        assert!(!v.settling_at(0), "no window unless opened");
+        v.open_settling_window();
+        assert!(v.settling_at(9_999_999));
+        assert!(!v.settling_at(10_000_000));
+        // A rise beyond V_u · W passes inside the window.
+        assert_eq!(
+            v.check(&burst(&v, 1, 0.0, 50.0), 2_000_000),
+            MoveVerdict::Accepted
+        );
+        // A horizontal correction inside the window starts a new epoch but keeps the window.
+        assert!(matches!(
+            v.check(&burst(&v, 2, 30.0, 0.0), 3_000_000),
+            MoveVerdict::Corrected(_)
+        ));
+        assert_eq!(v.epoch(), 2);
+        assert!(v.settling_at(9_999_999), "measured from the first epoch");
+        assert!(!v.settling_at(10_000_000));
+        assert_eq!(
+            v.check(&burst(&v, 1, 0.0, -500.0), 4_000_000),
+            MoveVerdict::Accepted
+        );
+        // Outside the window the same rise is corrected.
+        assert!(matches!(
+            v.check(&burst(&v, 2, 0.0, 50.0), 10_000_000),
+            MoveVerdict::Corrected(_)
+        ));
+        // A teleport (start_epoch) closes the window; a zero window never opens.
+        let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+        v.open_settling_window();
+        v.start_epoch(2, flat_pose(), 1_000_000);
+        assert!(!v.settling_at(1_000_001));
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        v.open_settling_window();
+        assert!(!v.settling_at(0));
+        assert!(matches!(
+            v.check(&burst(&v, 1, 0.0, 50.0), 0),
+            MoveVerdict::Corrected(_)
+        ));
+    }
+
+    /// §8.3 "Server relaxations" item 2: *S* ≤ 100 m whatever is configured.
+    #[test]
+    fn descent_credit_reserve_is_bounded() {
+        let limits = MovementLimits {
+            descent_credit: Some(500.0),
+            ..MovementLimits::default()
+        };
+        assert_eq!(limits.reserve(), MAX_DESCENT_CREDIT);
+        let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (fail, _) = drive(&mut v, &mut seq, 0, steady(60, 0.0, -50.0));
+        assert_eq!(fail, None);
+        assert_eq!(v.descent_credit(), MAX_DESCENT_CREDIT);
     }
 
     #[test]
@@ -783,14 +898,14 @@ mod tests {
         assert_eq!(v.descent_credit(), RESERVE);
         let mut w = v.clone();
         assert!(matches!(
-            w.check(&burst(&w, seq + 1, 64.6, 0.0), now),
+            w.check(&burst(&w, seq + 1, 8.5 + RESERVE + 0.1, 0.0), now),
             MoveVerdict::Corrected(_)
         ));
         // The correction cleared it.
         assert_eq!(w.descent_credit(), 0.0);
         let mut w = v.clone();
         assert_eq!(
-            w.check(&burst(&w, seq + 1, 64.4, 0.0), now),
+            w.check(&burst(&w, seq + 1, 8.5 + RESERVE - 0.1, 0.0), now),
             MoveVerdict::Accepted
         );
         // Spent: the next metre right away is too much.
@@ -804,14 +919,16 @@ mod tests {
             w.check(&burst(&w, seq + 1, 60.0, 0.0), now),
             MoveVerdict::Accepted
         );
+        // 60 m spent 8.5 m of A_h and 51.5 m of the credit.
+        let left = RESERVE - (60.0 - 8.5);
         let later = now + 1_000_000;
         let mut x = w.clone();
         assert!(matches!(
-            x.check(&burst(&x, seq + 2, 8.5 + 4.6, 0.0), later),
+            x.check(&burst(&x, seq + 2, 8.5 + left + 0.1, 0.0), later),
             MoveVerdict::Corrected(_)
         ));
         assert_eq!(
-            w.check(&burst(&w, seq + 2, 8.5 + 4.4, 0.0), later),
+            w.check(&burst(&w, seq + 2, 8.5 + left - 0.1, 0.0), later),
             MoveVerdict::Accepted
         );
         // A new epoch clears it.
@@ -860,8 +977,9 @@ mod tests {
         }
     }
 
-    /// `test-server.md` §14 invariant 8 on pseudo-random input outside the settling grace,
-    /// where the counted descent is all of each accepted move's descent.
+    /// `tessera-protocol.md` §15 and `test-server.md` §14 invariant 8 on pseudo-random input
+    /// outside a settling window, where the counted descent is all of each accepted move's
+    /// descent.
     #[test]
     fn accepted_distance_stays_within_invariant_8() {
         let mut rng: u64 = 0x2545_f491_4f6c_dd1d;

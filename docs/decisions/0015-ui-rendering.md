@@ -4,7 +4,10 @@
 
 **Status:** Accepted by the owner, 2026-10-06 (approved with its companion record and the
 questions in the owner summary answered "yes"). The open review items below are left to the
-M5 implementation.
+M5 implementation. **Amended 2026-10-06 (Amendment 1, after the open review items):** IB's
+"Coordination" items 10 and 11 applied, owner question 1 recorded, the §4.4 citations
+corrected, the census of nested surfaces recorded, and must-fix 1 and 2 stated as M5
+implementation items; the chosen option is unchanged and no decided rule is withdrawn.
 
 **Amended in part by [0017](0017-extended-scripting.md) (2026-10-07).** The rest of this
 record is unchanged and is not rewritten. Native panels and plugins keep every cap, slice
@@ -93,7 +96,8 @@ Abbreviations for the documents cited most: UL = `ui-layout.md`, UB = `ui-behavi
 **Questions the owner must answer.**
 1. Accept option A, together with IB, and the rewording of ARCHITECTURE §3 (a `plugins` →
    `ui` sibling allowance), §13, §15, §20.3 and §21 and of the ROADMAP M5 deliverable
-   "nine-slice art" (Consequences)?
+   "nine-slice art" (Consequences)? *(Amendment 1, item 6)*: answered "yes"; the allowance is
+   recorded in decision 0023 part 3, and the trait alternative is not taken.
 2. Accept U1–U5 (§6) as M5 exit criteria, including the split that judges frames with a
    scroll step or a new chat line by the 4 ms paint slice (U4 (b), (f)) instead of the
    steady-state U1? Note that U1's mean is at risk in the walking phase, where the moving
@@ -102,7 +106,9 @@ Abbreviations for the documents cited most: UL = `ui-layout.md`, UB = `ui-behavi
 3. Nested surfaces take their own opacity only (Decision 1.7). This departs from the Tessera
    rule of LPA §13.19 and from the wording of UL §5.9 and §6.6, and asks their spec writers
    to align them. Its visible consequences: a Fade item or `SetOpacity` on a window does not
-   fade its nested surfaces, so the P1 marker stays opaque under a Fade on P1's root, and
+   fade its nested surfaces, so the P1 marker stays opaque under a Fade on P1's root
+   (*(Amendment 1, item 5)*: the whole radar stays opaque, since `GamePlay_Radar` has its
+   own surface), and
    the stretch-mode icons of a plugin window set to opacity 0 stay visible. The alternative
    ("own × ancestors") fades children twice (*o*²) under auto-fade. Agree with "own only"?
 4. Accept the stated exception to ARCHITECTURE §21: a bounded synchronous header read (at
@@ -131,7 +137,7 @@ Abbreviations for the documents cited most: UL = `ui-layout.md`, UB = `ui-behavi
      §6.11 show them whole up to 16,384 (§4.6).
 6. With the game UI attached, the walker's HUD and minimap draw **under** the game UI, the
    walker minimap is off by default, and checklist runs set `walker_hud = off` (Decision
-   1.6). Agree?
+   1.6). Agree? *(Amendment 1, item 8)*: answered "yes"; `walker.md` §6 states the rule.
 7. Will you make the seven in-game observations listed under Consequences? None of them
    blocks M5.
 
@@ -141,6 +147,10 @@ Abbreviations for the documents cited most: UL = `ui-layout.md`, UB = `ui-behavi
 After five revise-and-review rounds an independent clean-room review still lists the items
 below. They are recorded here for the owner and for the M5 implementer; none changes the
 chosen option.
+
+*Amendment 1 (2026-10-06), below, states must-fix 1 and 2 as M5 implementation items M5-1
+and M5-2 (its item 7) and corrects the two §4.4 citations of the last two items (its item
+4). The items keep their original wording.*
 
 **Must fix before acceptance:**
 
@@ -167,6 +177,170 @@ chosen option.
 - Owner question 3 and spec question 1 cite LPA §13.19's OPEN and UL §5.9 and §6.6. LPA §13.19's body also says that a window's opacity 'fades the window and all its children' and that a control in a non-zero mode fades 'the control and its children'. Cite those sentences too, so the spec writer aligns them.
 - §4.4 justifies the 64-byte header read as 'of the same kind that import already needs'. ARCHITECTURE §21 has no exception for import either. Either record import's synchronous reads in the same §21 exception, or do not cite import as a precedent.
 - §4.4 says the index is rebuilt 'when the plugin manager refreshes its list (ARCHITECTURE §18.2)', but §18.2 does not mention a refresh. Cite LPA or the plugin-manager spec instead.
+
+## Amendment 1 (2026-10-06): follow-ups after acceptance
+
+**Why this amendment.** The record was accepted together with IB, whose revision 5 asked
+for restatements here (IB "Coordination" items 10 and 11) that the accepting session did not
+make, and the accepting session left owner question 1's choice, the census of spec
+question 7 and the open review items to M5. The M5 spec phase applies them now, so that
+`render.md` §6, ARCHITECTURE §3, §15, §20.3 and §21, `walker.md` §6 and the code follow one
+text. The chosen option is unchanged and no decided rule is withdrawn: each item restates a
+rule of IB as IB now has it, records an owner answer, corrects a citation, or records what
+the data say where the record said the specs did not. Every place in this record that
+changes carries the mark *(Amendment 1, item N)*. Written by the M5 spec phase
+(spec-writer role) from this record, IB, the specs it cites and the revised texts of
+ARCHITECTURE, `render.md`, `plugin-runtime.md` and `ui-layout.md`; the census facts of item
+5 were re-checked against the data (below).
+
+1. **Hit tests use the elements' current geometry** (IB "Coordination" item 10). *Reason:*
+   IB revision 5 (D8, "Geometry used for hit tests") replaced "the layout of the last
+   completed step 8" by the current geometry, which a handler's `SetSize` or `SetPosition`,
+   a panel move or resize and the re-layout of UL §8.4 change at once; four places here
+   still said the old thing. *Change:* Context ("Input timing"), Decision 1.5 ("Hit testing
+   during a transition"), §2.4 (the hit-test bullet) and the Consequences restatement of
+   ARCHITECTURE §20.3 step 1 now say "the elements' current geometry". Step 8 keeps
+   "layout", read as in IB: it changes no box that a hit test reads. The Decision 1.5
+   difference (a click near a moving edge can hit a box that is not drawn yet) still holds
+   and is slightly more frequent, since a box can now move within a frame. §2.4 item 3
+   (rounding under a scale) is unaffected: the displayed box it compares is the current one.
+2. **What step 7 contains** (IB "Coordination" item 11). *Reason:* IB D8 puts the plugin
+   events raised by game and session state (such as `Turbine.Chat.Received`) and the logout
+   unload into the step-7 deferred work, and names the client-exit unload after the last
+   frame as the only plugin code outside steps 1 and 7. *Change:* Context ("Input timing")
+   and the Consequences restatement of ARCHITECTURE §20.3 step 7 say so, and the
+   restatement gains IB's sentence after the step list. IB Amendment 1 adds two rules that
+   the restatement now names as well: UI changes driven by game or session code are applied
+   at the start of step 7 (IB Amendment 1, item 2), and the frame clock steps right after
+   present (item 4). §6 row U1 needs no change: game-raised events and the plugin
+   notifications of queued UI changes are plugin time, which U1 already excludes; the
+   native work of applying queued UI changes is Tessera's own step-7 work, which U1
+   already counts.
+3. **Coordination statuses** (IB "Coordination", its paragraph on the companion's own
+   follow-ups). *Change:* "Coordination with IB" item 5 is marked superseded by IB item 10
+   (item 1 above). Items 6 and 7 are marked settled: IB's "Coordination" section marks its
+   items 7–9 applied, and IB D7 "How the position is frozen" item 2 has the
+   `ui_cursor = software` parenthesis.
+4. **§4.4 citations** (open review, last two items). *Reason:* §4.4 cited ARCHITECTURE §18.2
+   for the plugin manager's refresh and for Lua's synchronous semantics, and §18.2 says
+   neither; and it called the header read "of the same kind that `import` already needs"
+   while ARCHITECTURE §21 listed no exception for `import`. *Change:*
+   - the index is rebuilt when the plugin manager refreshes its list of available plugins:
+     `plugin-descriptor.md` §4.2 (discovery, rerun by the refresh) and LPA §6.7
+     (`RefreshAvailablePlugins` reruns discovery);
+   - the reason the read is synchronous is that LPA §13.8 raises `SetBackground`'s error at
+     call time, so the check must finish before the call returns;
+   - "of the same kind that `import` already needs" stands. ARCHITECTURE §21 now lists
+     `import`'s synchronous reads of plugin source files as its stated exception (c), and
+     this record's header read as exception (a); (c) is the precedent the sentence cites.
+5. **Census of nested surfaces in the M5 panels** (spec question 7, answered by UL §17.2,
+   provenance row U46, Confirmed). *Reason:* Decision 1.7 says that the only named nested
+   entry of the M5 native panels is the P1 marker, and the paragraph "How many native
+   elements this affects" says the specs do not give the per-panel number. UL §17.2 now
+   does. *Facts:*
+   - the 15 M5 panels hold **92 non-root elements with a non-zero object mode: 86 Stretch
+     (1) and 6 CanvasResize (3)**, none in mode None (0) or Tile (2); no state block sets
+     the mode. Per panel: P1 18, P3 53, P4 4, P5 6, P8 1, P10 4, P11 3, P14 3, the other
+     seven 0. At most 3 surfaced ancestors lie above any of them. Each one owns a surface in
+     Tessera when shown (Decision 1.1);
+   - in P1, `GamePlay_Radar` is in mode 1, so it is a nested entry of the root's surface,
+     and the rim `Minimap_Frame`, the marker and the other mode-1 children of
+     `MinimapViewport` (which has no mode) are nested entries of the **radar's** surface
+     (GP G39, G40, §8.7.2 "How P1 splits into surfaces");
+   - no element of the 15 panels, root or not, is in mode Tile, so the Tile-parent rule of
+     Decision 1.7 does not concern them.
+
+   *Consequences, stated here instead of rewriting Decision 1.7:*
+   - **Clip.** The conclusion of Decision 1.7 ("Clip") for the native panels holds with the
+     full count: none of the 92 elements has a root panel between it and its panel's root
+     (`GamePlay_Radar` is not a root panel), so every nested entry of a native panel is
+     clipped by its panel's root, as by the root alone.
+   - **Exactness.** The region where surface contents are not byte-exact is bounded by
+     these 92 elements, which are nested entries when shown (53 are hidden in normal play:
+     15 by the layout, 38 by game code); the per-panel log of Decision 1.7 still records it at run time.
+   - **Opacity example.** Under "own only", a Fade item or `SetOpacity` on P1's root fades
+     only what the root's own canvas holds. The radar with its disc, map, rim and marker,
+     and the drag bar and title, are nested surfaces and keep their own opacity. Auto-fade
+     fades the drag bar, the title and the radar, because UB §11.1 step 2 writes the fade
+     opacity into each child with its own surface; whether it also reaches the rim and the
+     marker, which are descendants of the radar and not children of the root, is not stated
+     there; this amendment does not decide it (owner observation 2 bears on it). New spec
+     question 17 (for the owner of UB §11.1): does auto-fade reach each **child** with its
+     own surface or each **descendant** with its own surface? The `tessera-ui` implementer
+     needs the answer; until UB marks it, it is an OPEN of this record. The Decision 1.7 sentence "a Fade item on P1's root fades the
+     radar but not the player marker" and owner question 3's "the P1 marker stays opaque"
+     therefore understate the effect: under a Fade item on P1's root the whole radar stays
+     opaque. The rule ("own only") is unchanged; owner observation 2 (a panel fading below
+     its top level) is where the original's behaviour shows.
+   - **P1 check 2** (§8) is replaced: `Minimap_Frame` has object mode 1, so under Decision
+     1.1 it owns a surface; its rim pixels are in **its own nested canvas**, not in the root
+     canvas and not in the radar's. The test on a synthetic P1-shaped tree checks that the
+     rim's canvas holds the rim, that the composed frame shows rim pixels outside the
+     170 × 170 viewport box, that no rim pixel lies outside the root's box, and that the
+     radar's canvas holds the disc and the map with the disc's alpha. This is `render.md`
+     §6.14 check 2 (its rows R7, R8) and GP §8.7.2.
+   - **§2.3** ("The minimap marker", last sentence) is corrected the same way as check 4.
+   - **P1 check 4** (§8) is corrected: the 40 × 40 coverage region and "no P1 damage while
+     turning" stand, but the marker's **canvas above is empty at every heading**, not "the
+     same rim pixels", because everything after the marker in the radar's drawing order
+     owns a surface (GP G40, GP17; `render.md` §6.14 check 4).
+   - Consequences question 7 is answered.
+
+   *Re-check (OBS, 2026-10-06, M5 spec phase):* the instantiated trees of the 15 panels
+   (every element resolved with property replacement by PID, UL §7) were walked again from
+   the layout records read earlier from this install (read-only): 92 non-root elements with
+   a mode, 86 in mode 1 and 6 in mode 3, per-panel counts and the largest number of
+   surfaced ancestors as above; `GamePlay_Radar`, `MinimapPlayerMarker` and `Minimap_Frame`
+   in mode 1, `Minimap_Frame` a child of `MinimapViewport` (no mode) at (−34, −33, 237, 237);
+   the 15 roots in modes 1, 3 or none, never Tile.
+6. **Owner question 1: the `plugins` → `ui` allowance** (Consequences, "Crate boundaries").
+   *Reason:* the record proposed the allowance, named a trait alternative, and asked the
+   accepting session to choose. *Answer:* the owner answered "yes"; decision 0023 part 3
+   records the one-way sibling allowance `plugins` → `ui` at L4 (`ui` never depends on
+   `plugins` or `script`) and rejects the trait alternative, and ARCHITECTURE §3 states it
+   (diagram arrow `plugins*(→script, ui)`). `input` and `ui` stay independent (IB).
+7. **Two open review items stated as M5 implementation items** (must-fix 1 and 2). The
+   record's status line leaves its open review items to the M5 implementation. These two
+   must be closed by the implementation, with tests, before the M5 exit check, because a
+   rule of this record is otherwise wrong in a reachable case:
+   - **M5-1, the clip chain with mode-0 child windows** (`tessera-ui` composition-list
+     builder, `render.md` §6.8). A plugin child `Window` in stretch mode 0 is drawn into an
+     ancestor's canvas (Decision 1.1) and has no surface, so a chain built from surfaces
+     alone leaves it out, and a stretch-mode control inside it is not cut at its edge,
+     against LPA §13.18's Tessera rule and Decision 1.7's own example. The implementation
+     builds the chain from the **displayed boxes of the enclosing windows** (root panels),
+     whether each is drawn through a surface or into an ancestor's canvas; a window without
+     a surface is tested in the space of the surface that draws it. `render.md` §6.8 (its
+     row R5) already states the renderer's side and the chain's form, and its clip-chain
+     test includes this case.
+   - **M5-2, the coverage region of an own-rotated non-window entry** (`tessera-ui`,
+     Decision 1.7 steps 1–2, Decision 1.4, §2.3). An entry *N* with its own rotation gets an
+     angle-independent square footprint, but nested entries below *N* turn about *N*'s
+     centre and, when *N* is not a window, are not clipped by it (LPA §13.20 step 3 makes
+     this reachable: a stretch-mode control can receive the angles of a hidden child
+     window). The implementation either (a) joins the footprints of *N*'s subtree in *N*'s
+     own frame first and takes the square around the circle, centred on *N*'s centre,
+     through the farthest corner of that join, or (b) clips the descendants of a rotated
+     non-window surface by it. Either keeps the single-canvas drawing order and the claim
+     that turning is never damage. The choice and its test (a stretch-mode child extending
+     past a rotated stretch-mode parent, turned through 360°, with parent content drawn
+     after it) are recorded in the next amendment of this record.
+
+   The other open review items stay with the M5 implementation as the status line says.
+   `render.md` §6 (UI pass) already settles four of them for the renderer: the alpha
+   threshold is applied to the texel alpha before opacity (its R4, as UW §4.5's rule); the
+   tile-box texture is allocated at the job's full size; a cropped canvas is placed with
+   the full canvas size and the stored part as an offset; screenshots leave out the software
+   cursor (its R9). The rest (group visibility while a root's first paint is withheld, the
+   stand-in switch, the scheduling of the shared paint slice and upload cap, U2's
+   derivation, canvases above in U3 and U5, the back-texture wait, the clip-space wording,
+   pinning of descendants' images, `Graphic(path)`, tooltip and drag-icon shows in U1, the
+   41-frame bound, and the citation of LPA §13.19's body) are unchanged by this amendment.
+8. **Owner question 6 and `walker.md` §6.** *Reason:* the owner answered question 6 "yes",
+   and the Consequences asked for the walker rule. *Change:* `walker.md` §6 now states the
+   overlay rule with a game UI attached (under the UI; `walker_minimap = auto` off with a
+   game UI; `walker_hud` switchable, off in checklist runs); owner question 6 and the
+   Consequences entry are marked done.
 
 ## Context
 
@@ -231,11 +405,15 @@ chosen option.
   only after the UI declined a `mouselook` Start and no item drag is in progress, and off
   after the End of the last `mouselook` hold that turned it on.
 - **Input timing.** UI input routing and the plugin input handlers run in frame-loop step 1,
-  against the previous frame's layout (IB D8, from LPA §3.3 and §9.7). Step 7 runs the UI
+  against the elements' current geometry (IB D8, from LPA §3.3, §9.7 and §13.11)
+  *(Amendment 1, item 1)*. Step 7 runs the UI
   tick of LPA §3.3 (hover refresh, `MouseHover`, the plugins' `Update` broadcast, the rest of
-  the UI's per-frame work) and then the plugin host's deferred work (sliced by whole items)
-  and the collector step; step 8 lays out, paints
-  and builds the composition list (IB D8).
+  the UI's per-frame work) and then the plugin host's deferred work (sliced by whole items;
+  it includes the plugin events raised by game and session state, such as
+  `Turbine.Chat.Received`, and the logout unload) and the collector step; step 8 lays out,
+  paints and builds the composition list (IB D8). At client exit, after the last frame, the
+  plugin host unloads every apartment; that is the only plugin code outside steps 1 and 7
+  *(Amendment 1, item 2)*.
 
 **What is OPEN.** The following facts are not known:
 - how a surface reaches the frame (blend state, premultiplication, filtering) and what an
@@ -694,9 +872,11 @@ one texture.**
      is one that waits for a running generation, the first draw comes later than 100 ms,
      as bounded above.
    - **Hit testing during a transition** uses the current layout (UB §4.1–§4.2; IB D8: the
-     step-1 hit tests and the step-7 hover refresh use the layout of the last completed step
-     8), not the drawn box. While a generation runs, a click near a moving edge or on a
-     moved child can therefore hit a box that is not drawn yet. This is a recorded known
+     step-1 hit tests and the step-7 hover refresh use the elements' current geometry, which
+     a handler's `SetSize` or `SetPosition`, a panel move or resize, and the re-layout of
+     UL §8.4 change at once *(Amendment 1, item 1)*), not the drawn box. While a
+     generation runs, a click near a moving edge or on a moved child can therefore hit a
+     box that is not drawn yet. This is a recorded known
      difference, bounded by the job time that U4 bounds.
 6. **Composition (GPU).** The client gives the renderer an ordered composition list. Each
    entry holds:
@@ -729,7 +909,9 @@ one texture.**
      do not clip. A root entry has an empty chain. The chain has at most 8 boxes (an
      entry has at most 8 surfaced ancestors under the depth cap of §7); the builder intersects consecutive boxes that share one unrotated
      space into one, so an unrotated chain is a single screen scissor, which the renderer
-     may use as a fast path;
+     may use as a fast path. *(Amendment 1, item 7)*: M5 implementation item M5-1 builds the chain
+     from the displayed boxes of the enclosing windows, mode-0 child windows drawn into an
+     ancestor's canvas included (`render.md` §6.8);
    - its opacity: the element's current `UICore_Element_ObjectOpacity`, clamped to 0–1 when
      drawn (LPA §13.19 Tessera rule). Auto-fade (UB §11.1), Fade items (UL §6.6) and the
      plugin `SetOpacity` (LPA §13.19) all write that one property, so nothing else is
@@ -822,6 +1004,8 @@ one texture.**
         Ancestors' rotations are not part of the footprint: they turn the whole group after
         the split (Decision 1.6).
      2. **Join** the footprints of *N* and of every nested entry below *N*, at any depth.
+        *(Amendment 1, item 7)*: when *N* has its own rotation and is not a window, M5 implementation
+        item M5-2 covers the nested entries that turn with it.
      3. **Convert to *P*'s canvas.** Subtract *P*'s displayed origin (in the same space),
         divide by *P*'s composition scale on each axis (Decision 1.6; *P* is never a Tile
         surface, see "Tile parents" below), and subtract *P*'s canvas origin offset. Round **outward**:
@@ -874,8 +1058,10 @@ one texture.**
      `SetOpacity` (LPA §13.19) write the element's own `ObjectOpacity` and nothing else, so
      under this rule they leave nested surfaces **unfaded**. Two visible consequences:
      a Fade item on P1's root fades the radar but not the player marker (its own surface,
-     GP §8.2 step 3); a plugin window set to opacity 0 still shows its children in stretch
-     mode 1, 2 or 3. This contradicts the wording of UL §5.9 (`ObjectOpacity` "fades the
+     GP §8.2 step 3) (*(Amendment 1, item 5)*: the radar `GamePlay_Radar` has a surface too, so
+     such a Fade item leaves the whole radar opaque); a plugin window set to opacity 0
+     still shows its children in stretch mode 1, 2 or 3. This contradicts the wording of
+     UL §5.9 (`ObjectOpacity` "fades the
      element with all its children") and UL §6.6 (the element "fades together with its
      children"), not only LPA §13.19's Tessera rule. Owner question 3 and spec question 1
      carry this. The choice is one switch in the composition-list builder: "own" or
@@ -902,6 +1088,10 @@ one texture.**
 
      For the M5 native panels the result is the same as clipping by the root, because their
      only named nested entry, the P1 marker, has the radar root as its nearest root panel.
+     *(Amendment 1, item 5)*: the M5 panels have 92 nested entries (UL §17.2), not one, and the
+     conclusion holds for all of them: none has a root panel between it and its panel's
+     root. (92 elements are nested entries when shown; 53 of them are hidden in normal
+     play, UL §17.2.)
    - **Transform:** a nested entry inherits the rotation of every surfaced ancestor about that
      ancestor's centre (Decision 1.6). So in a window rotated with `SetRotation` (LPA §13.20,
      mostly `z` headings) a child arrow with `SetStretchMode(1)` turns with the window and
@@ -960,6 +1150,9 @@ one texture.**
    spec writers for the census (Consequences, question 7), and (b) has `tessera-ui` log, for
    each panel it opens, the number of nested surfaces and the area of their coverage
    regions, which the M5 checklist run records next to the U1–U5 results.
+   *(Amendment 1, item 5)*: UL §17.2 (U46) now gives the census: 92 non-root elements with an object
+   mode in the 15 panels, 86 Stretch and 6 CanvasResize, at most 3 surfaced ancestors deep.
+   The log of (b) stays.
 8. **Showing and hiding.**
    - **Hiding** an element that has a surface releases its canvas, its canvases above and its
      texture, unless `UICore_Element_KeepObjectWhenHidden` is true (UB §11.2, LPA §13.19; 35
@@ -1137,7 +1330,9 @@ one texture.**
      Decision 1.7: 40 × 40 around its centre, the same at every heading. Turning (including
      during mouse-look) therefore changes only its entry: no damage in P1, no repaint and
      no upload. The rim content drawn after the marker inside that square lands in its
-     canvas above, also at every heading.
+     canvas above, also at every heading. *(Amendment 1, item 5)*: corrected: the rim
+     (`Minimap_Frame`) and everything else after the marker in the radar's drawing order own
+     surfaces, so the marker's canvas above is empty at every heading.
 4. **Hit testing.**
    - The hit test works in displayed boxes (UB §4.1–§4.2, §9.2.1), and composition draws
      every surface on its displayed box (Decision 1.6), so drawing and hit testing need no
@@ -1160,8 +1355,10 @@ one texture.**
      more than 0.0002 (UB §4.1 step 3); text hit tests always divide (FO §6.3 item 3). Both
      use the scale of the nearest display node at or above the element (UB §9.2.1, UB §17
      item 18 for the open parts).
-   - Hit tests in frame-loop step 1, and the hover refresh of the step-7 tick, use the
-     layout of the last completed step 8 (IB D8, and IB "Coordination" item 5).
+   - Hit tests in frame-loop step 1, and the hover refresh of the step-7 tick, use every
+     element's current geometry: position, size, visibility and z-order as they stand when
+     the hit test runs; step 8 changes no box that a hit test reads (IB D8, and IB
+     "Coordination" item 10) *(Amendment 1, item 1)*.
 5. **Cursor.**
    - **Image.** The cursor image comes from Cursor media items of the captured or hovered
      element, then from a code override, then the default (UB §4.8). Its size is
@@ -1245,6 +1442,13 @@ one texture.**
         drawn at *F* instead and jumps to the real position at that event.
      4. Focus loss ends `mouselook` (the mapper's focus-loss release, IB D7), so it also ends
         the lock by the same sequence.
+   > **OPEN (implementation, M5 clean room, 2026-10-08):** the client implements the lock,
+   > the hiding, the grab (`Locked`, falling back to `Confined`), the warp back to *F* and
+   > the withheld cursor-left as written (`apps/client/src/ui_host/cursor.rs`), and the
+   > `ui_cursor = os | software` setting. The cursor **image** of item "Image" (Cursor media
+   > items of the captured or hovered element, `ui-behaviour.md` §4.8) is not built yet:
+   > the OS cursor stays the platform's default arrow and the software cursor is Tessera's
+   > own arrow at trunc(32 × `UIScale_Cursor`) pixels. Neither is drawn into screenshots.
 6. **Screen size.** Layout uses the render target's physical size (UL §8.5). The OS scale
    factor is **not** applied automatically, because the original has no such factor. Users
    who want larger panels on a 4K display set `UIScale_Global` (UB §9.1), with the same
@@ -1331,7 +1535,8 @@ one texture.**
       by a directory walk **on an asset worker**, never on the main thread: once when the
       plugin host starts (the host loads no plugin before the first index is ready; the
       main thread does not wait for it), and again when the plugin manager refreshes its
-      list (ARCHITECTURE §18.2). A rebuilt index is swapped in whole on the main thread
+      list (`plugin-descriptor.md` §4.2; LPA §6.7, `RefreshAvailablePlugins`)
+      *(Amendment 1, item 4)*. A rebuilt index is swapped in whole on the main thread
       when it is ready; until then lookups use the previous one, so a file added after the
       last walk is found only after the swap. The walk therefore needs no exception to
       ARCHITECTURE §21.
@@ -1339,7 +1544,8 @@ one texture.**
       the TGA header (SK §7.2) and the JPEG start marker. The result is cached per path.
 
    The header read is a bounded synchronous read of the plugin tree, of the same kind that
-   `import` already needs, because Lua's semantics are synchronous (ARCHITECTURE §18.2). It
+   `import` already needs (ARCHITECTURE §21, exception (c)), because the call must fail
+   before it returns (LPA §13.8) *(Amendment 1, item 4)*. It
    is recorded as a stated exception to ARCHITECTURE §21's no-blocking-I/O rule, limited to
    this header read in plugin calls that must fail at call time. The index walk of step 1
    is not part of the exception.
@@ -1522,6 +1728,17 @@ How the budget is kept:
 - **Input.** Pointer moves are coalesced by the mapper (IB D7), so a 1000 Hz mouse costs at
   most one hit test per other event plus one per frame inside U1.
 
+> **OPEN (implementation, M5 clean room, 2026-10-08):** the client's scripted run
+> (`tessera-client --ui-script`, `apps/client/src/ui_host/script.rs`) follows this list
+> with three approximations until the facts are available: (1) the resize bars of P10 and
+> P15 are dragged from each root's bottom-right corner, because no spec names the bar
+> elements by element ID; (2) the `UIScale_Global` change scales the open native panels
+> through their scalers, because `tessera-ui` has no setter for `UIScale_Global`
+> (`UiSettings::scale_global` is read-only); (3) U2 is reported as a proxy (median frame
+> submit and GPU wait with and without the UI pass), because `tessera-render` has no
+> timestamp queries yet (`render.md` §6.16). The indicative results are in
+> `docs/perf/m5-ui-budgets.md`.
+
 ### 7. Hostile input
 
 Layout rectangles, plugin sizes, rotation angles, image sizes and the number of plugin
@@ -1596,14 +1813,18 @@ render implementer picks the number.
    (the round-minimap test above, and P1 on screen).
 2. The rim `Minimap_Frame` is painted without the viewport's clip, clipped only by the radar
    root (GP §8.7.2 Tessera rule): a painter test on a synthetic P1-shaped tree finds rim
-   pixels outside the 170 × 170 viewport box in the root canvas.
+   pixels outside the 170 × 170 viewport box in the root canvas. *(Amendment 1, item 5)*: replaced.
+   `Minimap_Frame` has object mode 1 (GP G39, UL U46), so its rim pixels are in its own
+   nested canvas, not in the root canvas; the test is `render.md` §6.14 check 2.
 3. The marker is a nested entry with a `z` rotation and points as GP §8.6.3 says: up for
    *h* = 0 (north) and right for *h* = 90, on screen.
 4. While walking, the minimap's damage is the viewport box only (Decision 1.4), and while
    turning there is no P1 damage at all: the marker's coverage region is the same 40 × 40
    square at every heading (Decision 1.7). A `tessera-ui` test turns the marker through
    360° in 1° steps and finds no damage after the first rotation, and the canvas above
-   holds the same rim pixels at every angle.
+   holds the same rim pixels at every angle. *(Amendment 1, item 5)*: corrected: the marker's canvas
+   above is empty at every angle, because everything after the marker in the radar's
+   drawing order owns a surface (GP G40, GP17; `render.md` §6.14 check 4).
 
 ## Consequences
 
@@ -1629,7 +1850,8 @@ render implementer picks the number.
     alternative, if the owner or the M5 plan prefers it, is that `tessera-ui` defines a
     trait for the element operations the bindings need and the client wires the two
     crates together, as IB does for `input` and `ui`. This record works with either; it
-    asks the accepting session to choose one (owner question 1).
+    asks the accepting session to choose one (owner question 1). *(Amendment 1, item 6)*: the
+    allowance is chosen (decision 0023 part 3).
 - **Supersedes plans, not accepted records.** These edits are for the session that accepts
   this record. This proposal makes none of them:
   - ARCHITECTURE §15 "Rendering" (a 2D draw list of quads, nine-slice frames and text runs
@@ -1637,23 +1859,33 @@ render implementer picks the number.
     `render` composes surfaces.
   - ARCHITECTURE §15 also gets the image rules of §4.
   - ARCHITECTURE §3 gains the sibling allowance `plugins` → `ui` with the reason above, or
-    records that the client wires the two (Crate boundaries).
+    records that the client wires the two (Crate boundaries). *(Amendment 1, item 6)*: the
+    allowance.
   - ARCHITECTURE §13's frame structure gains the screen-space passes after the world: "…
     transparent → walker overlays when shown (HUD and walker minimap, `walker.md` §6; under
     the game UI) → UI → developer overlay (egui frame stats, planned) → software cursor →
     present" (Decision 1.6, §8 "Order").
   - `walker.md` §6 gets the rule for the walker's overlays with a game UI attached: drawn
     under the UI, the walker minimap off by default (`walker_minimap`), the HUD switchable
-    (`walker_hud`) and off in checklist runs (Decision 1.6).
+    (`walker_hud`) and off in checklist runs (Decision 1.6). *(Amendment 1, item 8)*: done.
   - ARCHITECTURE §20.3 takes IB D8's wording for steps 1, 7 and 8 (IB, owners list). Step 1:
-    UI input routing and plugin input handlers run there, against the previous frame's
-    layout. Step 7: the UI tick of LPA §3.3 (hover refresh, `MouseHover`, the plugins'
-    `Update` broadcast, the rest of the UI's per-frame work), then the plugin host's
-    deferred work (sliced by whole items, 2 ms per frame), then the collector step in every
-    apartment (`plugin-runtime.md` §9.2), then the band changes. Step 8: "UI: layout, paint damaged rectangles
+    UI input routing and plugin input handlers run there, against the elements' current
+    geometry *(Amendment 1, item 1)*; events that arrive between redraws are handled in winit's
+    callbacks on arrival and belong to step 1 of the next frame. Step 7: the UI tick of
+    LPA §3.3 (hover refresh, `MouseHover`, the plugins' `Update` broadcast, the rest of the
+    UI's per-frame work), then the plugin host's
+    deferred work (sliced by whole items, 2 ms per frame; it includes the plugin events
+    raised by game and session state, such as `Turbine.Chat.Received`, and the logout
+    unload) *(Amendment 1, item 2)*, then the collector step in every
+    apartment (`plugin-runtime.md` §9.2), then the band changes; UI changes driven by game
+    or session code are applied at the start of step 7 (IB Amendment 1, item 2). Step 8: "UI: layout, paint damaged rectangles
     within the UI slice, build the composition list". This record and IB give the same
     text; step 8's paint and composition-list wording is this record's, which IB adopted.
-    Step 10 draws the UI pass and the passes around it.
+    Step 10 draws the UI pass and the passes around it. After the list *(Amendment 1, item 2)*: "At
+    client exit, after the last frame, the plugin host unloads every apartment (LPA §6.3);
+    this is the only plugin code outside steps 1 and 7", and the frame clock of the
+    game-time query and the hover rule advances once per frame, right after present (IB
+    Amendment 1, item 4).
   - ARCHITECTURE §21 records the plugin header-probe exception of §4.4.
   - The ROADMAP M5 deliverable "nine-slice art" is reworded.
   - ROADMAP M5 gets an exit criterion for the U1–U5 budgets of §6, measured under the rules
@@ -1693,6 +1925,7 @@ render implementer picks the number.
      pixels on an axis.
   7. UL §17.2: add, per M5 panel, the number of non-root elements with a non-zero object
      mode (by mode). This bounds where surface contents are not byte-exact (Decision 1.7).
+     *(Amendment 1, item 5)*: answered by UL §17.2 (U46): 92, of which 86 Stretch and 6 CanvasResize.
      The alpha-test meters need no census: UW §4.5 already says that none of the 4 is in
      the UL §17 panels.
   8. GP §8.6.3: record the Tessera rule of §2.3 (marker as a nested entry with a `z`
@@ -1786,7 +2019,8 @@ render implementer picks the number.
 
 This record and IB are meant to be accepted together. This revision does not edit IB. It
 applies IB's own "Coordination" items 1–9 to this record. **Two small follow-ups in IB
-remain** (items 6 and 7 below); neither changes IB's design.
+remain** (items 6 and 7 below); neither changes IB's design. *(Amendment 1: both are settled, and IB's
+items 10 and 11 are applied by Amendment 1 items 1 and 2.)*
 1. **IB's owners list: done.** IB's Consequences entry for this record now only points to
    IB's "Coordination" section; the old request (drop "process input" from step 8, exclude
    plugin Lua time from U1, add a high-rate pointer sweep) is gone. Revision 2 of this record
@@ -1816,11 +2050,12 @@ remain** (items 6 and 7 below); neither changes IB's design.
    this. No change to IB.
 5. **Layout used by the hover refresh: applied** (IB Coordination item 5): §2.4 and Decision
    1.5 say that the step-1 hit tests and the step-7 hover refresh use the layout of the last
-   completed step 8.
-6. **Required follow-up in IB: mark items 7–9 applied.** IB's "Coordination" section still
+   completed step 8. **Superseded** by IB Coordination item 10: they use the elements'
+   current geometry *(Amendment 1, item 3)*.
+6. **Settled** *(Amendment 1, item 3)*: IB's "Coordination" marks its items 7–9 applied. **Required follow-up in IB: mark items 7–9 applied.** IB's "Coordination" section still
    presents its items 7–9 as changes this record must make. Revision 5 makes them, so IB
    should mark them applied, as it did for items 1–6.
-7. **Required follow-up in IB: the OS cursor under `ui_cursor = software`.** IB D7 item 2
+7. **Settled** *(Amendment 1, item 3)*: IB D7 "How the position is frozen" item 2 has the parenthesis. **Required follow-up in IB: the OS cursor under `ui_cursor = software`.** IB D7 item 2
    says that the client "hides the cursor" when the lock turns on and "shows the cursor"
    when it turns off. With the software cursor in use, §2.5 now keeps the OS cursor hidden
    for as long as that mode lasts, so "shows the cursor" means that the software cursor is

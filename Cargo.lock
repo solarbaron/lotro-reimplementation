@@ -3961,15 +3961,16 @@ dependencies = [
  "tessera-mesh",
  "tessera-net",
  "tessera-physics",
+ "tessera-plugins",
  "tessera-props",
  "tessera-protocol",
  "tessera-render",
- "tessera-script",
  "tessera-scriptgraph",
  "tessera-server",
  "tessera-settings",
  "tessera-terrain",
  "tessera-text",
+ "tessera-ui",
  "tessera-world",
  "thiserror 2.0.21",
  "tracing",
@@ -4050,6 +4051,7 @@ dependencies = [
  "tessera-settings",
  "tessera-text",
  "tessera-world",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -4063,6 +4065,7 @@ dependencies = [
  "image",
  "proptest",
  "tessera-dat",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -4085,7 +4088,10 @@ dependencies = [
  "bitflags 2.13.2",
  "glam 0.33.12",
  "libc",
+ "proptest",
  "tempfile",
+ "tessera-dat",
+ "tessera-formats",
  "tessera-settings",
  "thiserror 2.0.21",
  "toml",
@@ -4126,12 +4132,14 @@ name = "tessera-material"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "image",
  "proptest",
  "tessera-dat",
  "tessera-formats",
  "tessera-props",
  "thiserror 2.0.21",
  "tracing",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -4169,6 +4177,22 @@ dependencies = [
  "tessera-formats",
  "tessera-mesh",
  "tessera-props",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-plugins"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "roxmltree",
+ "tempfile",
+ "tessera-formats",
+ "tessera-install",
+ "tessera-material",
+ "tessera-script",
+ "tessera-ui",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -4220,8 +4244,6 @@ name = "tessera-script"
 version = "0.1.0"
 dependencies = [
  "mlua",
- "roxmltree",
- "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -4293,6 +4315,23 @@ dependencies = [
  "proptest",
  "tessera-dat",
  "tessera-formats",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-ui"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "libc",
+ "proptest",
+ "tempfile",
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-install",
+ "tessera-material",
+ "tessera-props",
  "thiserror 2.0.21",
  "tracing",
 ]

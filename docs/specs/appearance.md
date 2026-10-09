@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review, changes requested (re-review of 2026-10-07; never Accepted, so it stays in Review). BIN4 slider and deformer edge cases added 2026-10-07; awaiting review. |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (2026-10-09, full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review |
-| **Review record** | Re-review 2026-10-07: **changes requested** (one blocking item); status stays Review. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review; 2026-10-08: review of the BIN4 and BIN5 revisions (another fresh session); 2026-10-08: narrow re-review of §3.3 (a further fresh session) |
+| **Review record** | Full review 2026-10-09 (Claude review session, spec-reviewer, a fresh session that wrote no part of this spec and did none of the earlier reviews): **passed**, Accepted. Scope: the whole spec, with `git diff f9eb8db` (BIN5, OBS3, the O12 change, the §14 and §15 answers, the merge header). Every `CLEAN_ROOM.md` §5.3 item holds. Every earlier blocking item is resolved: the three of the first review of 2026-10-07 and the one of the re-review of 2026-10-07, repeated on 2026-10-08 (§3.3 toggle counts and the OPEN's conclusion; fixed by OBS3 and A34, passed by the narrow re-review of 2026-10-08). Spot checks (read-only): A34 over all 40,643 0x47 entities with an own probe on the repository decoders (11 name the property, 7 of them carry it; 19 carry it, all true and at top level; no listed 0x78 set carries or names it), matches; the O12 fact (`script-runtime.md` R40) in a private copy of the client analysis, deleted afterwards (the Random pick draws from one global combined generator with a shuffle table, seeded at start-up from the clock and by one other routine; nothing in the pick path seeds per object), matches. Non-blocking notes: name the 0x78 counts of §3.3 in A34; give the O12 fact its own provenance row; refresh the §13 O12 line; answer the last §15 confirmation OPEN. Earlier: first review and re-review 2026-10-07, changes requested; review 2026-10-08 of BIN4 and BIN5, changes requested; narrow re-review 2026-10-08 of §3.3, passed. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (appearance-list structs, bone-slider definition structs; the 0x20 decoder already exists), `crates/anim` (bone-slider application, attach placement), `crates/assets` or a new assembly module (slot table, priority resolution, material and dye selection), `apps/explorer` (character viewer: species, sex, worn items, dyes, sliders), `apps/client` and the sandbox backend (animated avatar, static NPCs) |
 | **Companion specs** | [`setup.md`](setup.md) (normative for the 0x47, 0x1F, 0x04 and 0x20 layouts, the item paths §3, the slot field §8.3 and §12.2, held items §13). [`skeleton-anim.md`](skeleton-anim.md) (skeletons, the race-table walk §2.2, attach points §8, the multi-part rule §9). [`material.md`](material.md) §9.3 (material groups), §12 (dyes). [`entity-descriptor.md`](entity-descriptor.md) (SEDs, instance IDs). [`landblock.md`](landblock.md) §4.8 (the landblock weenie list). [`property-system.md`](property-system.md) §5–§8 (property sets, enum mappers, DID maps). `script-table.md` (which clip plays; idle animations of NPCs; §5 node layouts of the Appearance, MeshFX, EditMaterial and compositor nodes used by §3.5, §5.6 and §7.4; §8 how a figure finds its tables). [`misc-records.md`](misc-records.md) §3 (face compositors and their composition). |
 
@@ -70,6 +70,8 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | BIN2 | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-07 with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the routine that builds a figure's appearance from `Appearance_ClassList` and `Appearance_InstanceList`; the toggle-file test; the visual-template object (0x1F) merge, flag computation and parent flattening; the appearance-record (0x20) block choice; the per-record key table and the record order of a figure's appearance; the block application (material groups, parts); the Appearance script node's apply routine; the render component's scale computation and its property-change handler; the registration of the two avatar graphics options and their character-creation and options-panel bindings; the client's object property lookup. Searches by value and by name for the PIDs of the worn-item map structs, the random-appearance properties, the cosmetic-inventory properties and the held-item script properties. **Questions:** O8 (does the template scale combine with the entity scale), O10 (equal-priority ties and source order), O11 (the updated-avatar option and its default), O12 (does the client turn a random-appearance type into an outfit), O13 (does client code choose stowed and wielded locations), O15 (does client code pair colours with face layers); and the implementation OPENs of §14–§15 on block choice, dye pairing, scale type and cosmetic-inventory visibility. **Why M1–M3 were not enough:** the data names the properties, records and nodes but not the rules that combine them (tie order, block choice for a modifier that matches no block, whether a property is read by code at all); no published source covers them; an owner observation (M3) shows one outcome but cannot give a rule. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 | BIN3 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 after the review, with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the render component's scale computation again (threshold comparison, the holder factor and its two flag bits, the holder's final scale); the property lookup call that reads `Model_ParticleScale`; the block-applying routine of a 0x20 record; the 0x20 record reader (the fields after the DID, the `section` byte and the entry table). **Questions:** review items 1, 5 and 9 (is the 0.0002 limit inclusive; which holder factors enter the render scale; what the list applied before a record's own entry is and where it is stored), and the `section` OPEN of §4.2. **Why M1–M3 were not enough:** the u32 after the DID is 0 and the `section` byte has no visible effect in every record, so the data cannot show their use; the limit and the holder factors only change the result for values no record carries (components near 0.0002, attached figures with flags whose source is not in the data); no published source covers them; observing the client (M3) cannot separate them. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 | BIN4 | Same executable and build (file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 with Ghidra (headless, read-only fresh copy of the shared project), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), to settle edge cases that a clean-room audit of the River-hobbit height code found unstated. **Questions:** how the slider value string is cut and read when a piece is not a clean hexadecimal pair or the string is short or of odd length (§6.3); what happens to a slider entry for a bone outside the skeleton and to limits that are not finite (§6.3); what a body-shape deformer with a missing clip or a time that is not finite does, how many deformers and slider sets a figure may hold, and how track weights are converted (§6.4). **Why M1–M3 were not enough:** every value string of the install is 70 hexadecimal digits, every bone index is in range and every deformer names a clip, so the data cannot show these rules; no published source covers them; observing the running client (M3) cannot produce such inputs. **Code read:** the slider node's string parser and per-bone entry builder, the animation component's slider-set and deformer registration, the deformation-pose builder (deformer clips and slider application) and the string class's append routine (to read its length field). Nothing of the network, login, launcher or anti-tamper code. |
+| BIN5 | Same executable and build (file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-08 with Ghidra (headless, read-only fresh copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in the same session as `script-table.md` BIN6. **Questions:** the implementation confirmation points of §14 and §15 (2026-10-07 and 2026-10-08): how the client computes a slider's channel value and what it does with a value that is not finite; whether "the most recently started" slider node is the last one in evaluation order. **Code read:** the slider channel-value routine (instruction level), the slider entry builder and applier; the script start order (`script-table.md` BIN6). **Why M1–M3 were not enough:** no slider of the install has limits or values that overflow, and no closure has two slider nodes, so the data cannot show either rule; observing the client (M3) cannot produce those inputs. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| OBS3 | Observed 2026-10-08 (same Steam install, data current that day), read-only, with a throwaway probe on the repository's own decoders: **all 40,643** 0x47 entities (none failed to decode), every value of each entity's own property set walked at every depth, and every stand-alone 0x78 property set that an entity lists; the 14 avatar entities found through the race table (`skeleton-anim.md` §2.2). Question: which entities name `Appearance_ToggleProperty` in an appearance list and which carry `GOP_AvatarUpdateVisible` (§3.3, answering the blocking item of the 2026-10-07 re-review). |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -104,6 +106,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A29 | Slider value string: cut into two-character pieces from the start; an odd last character is a piece of its own; after an even number of characters one more, empty, piece follows; each piece is read like C `strtol` in base 16, the result taken as an unsigned 32-bit number and divided by 255; sliders beyond the pieces get 0.5 (§6.3) | BIN4 | BIN (rule); Confirmed (strings of the install, OBS) |
 | A30 | Slider entries are applied by walking the skeleton's bones 0 to bone count − 1, so an entry for a bone outside that range is never used and the slider's other bones still apply; a figure holds one slider set, the most recently started slider node's (§6.3, §6.4) | BIN4 | BIN |
 | A31 | Body-shape deformers: a clip that cannot be loaded or whose track count differs from the bone count contributes nothing; any number of deformers; time = duration × fraction limited to [0, duration]; track weights 255 × weight converted to an integer by truncation, no tolerance (§6.4) | BIN4 | BIN; NaN fraction and non-finite slider limits: Tessera Decisions |
+| A32 | A slider's channel value is computed per component in single precision as (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`) × *t* + `BoneSlider_LimitMin`, each operation rounded on its own (no fused multiply-add), then multiplied by the sign; nothing checks the result, so a value that is not finite enters the bone entry (§6.3) | BIN5 | BIN; the Tessera handling of such sliders is a Decision |
+| A33 | "The most recently started" slider node is the later one in the client's start order of `script-table.md` §8.2 step 3 and §7.5 (kind-1 definitions before kind-2, roots and port children in stored order, Collection ports by ascending ordinal) (§6.4) | BIN5 (`script-table.md` BIN6, T41, T42) | BIN; no closure has two slider nodes (`script-table.md` SI12) |
+| A34 | `Appearance_ToggleProperty` is named (always as `GOP_AvatarUpdateVisible`) by 7 avatar entities and 4 non-avatar entities; `GOP_AvatarUpdateVisible` is carried, always true and always at the top level of the entity's own set, by 19 entities: the same 7 avatar entities, 3 avatar entities that do not name it (DwarfStoutAxe, RiverHobbit M and F) and 9 non-avatar entities; the 4 non-avatar naming entities do not carry it; no 0x78 set carries or names it (§3.3). Corrects the 2026-10-07 text ("10 entities" naming it) | OBS3 | Confirmed 2026-10-08 (all 40,643 entities) |
 
 ---
 
@@ -322,9 +327,22 @@ name other files for the same keys (Beorning, HighElf, the toggle files); the en
 is the in-world default.
 
 **Toggle files.** The property named by `Appearance_ToggleProperty` is
-`GOP_AvatarUpdateVisible`, a boolean that each avatar entity naming it sets to true in its
-own property set (10 entities). The toggle
-file holds the same styles as the plain file plus later ones (Human M hair: 57 meshes in
+`GOP_AvatarUpdateVisible`, a boolean graphics option (below). Which entities name it and
+which carry a value for it are two different sets (OBS3, all 40,643 0x47 entities, A34):
+
+| Entities | Name it in a list | Carry it in their own property set | Count |
+|---|---|---|---|
+| Avatar entities Hobbit M and F, Human M and F, Elf M and F, Dwarf M (0x47000606, 0x47000607, 0x4700060A, 0x4700060B, 0x4700060E, 0x4700060F, 0x47000611) | yes | yes, true | 7 |
+| Avatar entities DwarfStoutAxe (0x4700979A) and RiverHobbit M and F (0x4700CEA3, 0x4700CEA4) | no | yes, true | 3 |
+| Avatar entities Beorning M and F, HighElf M and F | no | no | 4 |
+| Non-avatar entities 0x4700A4A4, 0x4700A4A8, 0x4700A4AA, 0x4700A4AF (class lists, every naming element with a non-null toggle file) | yes | **no** | 4 |
+| Other non-avatar entities | no | yes, true | 9 |
+
+So 7 avatar entities name the property, 10 avatar entities carry it, and 19 entities carry
+it in all, every value true. No entity carries it nested inside another value, and none of
+the stand-alone 0x78 property sets that 20,274 entities list carries or names it (the four
+non-avatar naming entities list one such set each, the 7 naming avatar entities two each).
+Every naming element names this property and no other. The toggle file holds the same styles as the plain file plus later ones (Human M hair: 57 meshes in
 common, 4 only in the toggle file, 1 only in the plain file; heads and beards identical
 sets).
 
@@ -340,8 +358,9 @@ the default **on**, the options panel binds a check box to it, and the character
 screen shows a check box for it only while the species is Dwarf (0x49) or Hobbit (0x51)
 (BIN2). The same property also chooses the face compositor (§3.5): on, the newer one; off,
 the older one or, for some head choices, the newer one. So by default the client shows the
-toggle files, which agrees with the avatar entities' own value (true; the property's dictionary
-default is false, see the OPEN below).
+toggle files, which agrees with the own value of the 7 avatar entities that name the property
+(true; the property's dictionary default is false, and 4 non-avatar entities name it without
+carrying it, see the OPEN below).
 
 > **Rule (replaces the 2026-10-05 Decision):** use `Appearance_AprToggleFile` when the toggle
 > property reads true for the figure, else `Appearance_AprFile`. Tessera keeps the property
@@ -354,13 +373,20 @@ default is false, see the OPEN below).
 > was not traced; all 248 `GOP_*` properties, and 15 option-description properties, share
 > `field_a` = 0x18 (`property-system.md` §2.2; OBS2), which fits an option group. That the
 > option store, not the entity, answers for `GOP_AvatarUpdateVisible` is therefore inferred,
-> not traced. The two candidate answers agree by default: the graphics option registered at
-> start-up is on (BIN2), and the property set of every avatar entity whose list names the
-> toggle property holds true (10 of the 14; the Beorning and High-elf entities name no
-> toggle files and do not carry it; OBS). The property's dictionary default (the optional
-> default of its definition, `property-system.md` §2.2) is **false** (OBS2); it would
-> answer only if neither source held a value. So the result differs only when the option is
-> turned off.
+> not traced. The property's dictionary default (the optional default of its definition,
+> `property-system.md` §2.2) is **false** (OBS2); it answers when the chosen source holds no
+> value. The two candidate answers agree by default for the 7 avatar entities that name the
+> toggle property: the graphics option registered at start-up is on (BIN2), and each of the
+> 7 carries true in its own property set (OBS3, A34). They **disagree for the 4 non-avatar
+> entities** 0x4700A4A4, 0x4700A4A8, 0x4700A4AA and 0x4700A4AF, which name the property but
+> do not carry it: if the option store answers, they show the toggle files while the option
+> is on; if the entity's own set answers, the dictionary default false applies and they
+> show the plain files even with the option on. For the 7 avatar entities the result
+> differs between the two sources only when the option is turned off. (The 3 avatar
+> entities that carry the property without naming it, and the Beorning and High-elf
+> entities, which neither name nor carry it, have no toggle files, so the question does not
+> arise for them.) The Tessera rule above (settings first, default true) gives the toggle
+> files for all 11 naming entities by default.
 
 **Face compositing and colours** are in §3.5.
 
@@ -1179,7 +1205,9 @@ order, starting from translation (0, 0, 0), angles (0, 0, 0), scale (1, 1, 1) an
 mask:
 
 1. For slider *i* with value *t*: channel vector *c* = `BoneSlider_LimitMin` + *t* ×
-   (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`), per component.
+   (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`), per component. The client works in
+   single precision and rounds each step on its own: first the difference, then the
+   product with *t*, then the sum with the minimum (no fused multiply-add) (BIN5, A32).
 2. For every bone of its `BoneSlider_BoneIndexArray`, with sign *σ* = −1 when
    `BoneSlider_BoneReverse` is 1, else +1: for every channel bit in the slider's mask, **write**
    (do not add or multiply) *σ* × the matching component of *c* into that bone's entry:
@@ -1209,6 +1237,18 @@ check limits or values for being finite. **Tessera Decision:** a slider with a l
 not finite contributes no entry (OPEN: no instance, and the client's result would not be
 finite). A slider with no channel bit writes no channel, so it changes nothing.
 
+**Channel values that are not finite (BIN5, A32).** With finite limits and a finite *t*, *c*
+can still overflow: *t* reaches about 1.68 × 10⁷ for a piece with a minus sign, and the
+difference of two finite limits near the single-precision range can itself overflow. The
+client writes such a component into the bone entry unchecked; applied to the deformation
+pose (§6.4 step 2), it makes that bone's deformation transform, and through the composition
+of step 3 those of the bones below it, not finite, so every vertex they influence is not
+finite either. **Tessera Decision** (extends the one above, accepted from the
+implementation): a slider whose channel value *c* has a component that is not finite
+contributes no entry, and the case is logged. It differs from the client only for data the
+client cannot draw. No slider of this install comes near it (the largest limit magnitude is
+1.3 and every *t* lies in [0, 1]).
+
 > **Answered** (2026-10-07, BIN4; was the implementation OPEN on bones outside the skeleton
 > and limits that are not finite): an index outside the skeleton loses only that bone's
 > entry; dropping the whole slider is not the client's rule. Keep the slider's other bones
@@ -1226,7 +1266,12 @@ meshes with the ordinary skeleton. Inputs, all from the avatar's species table
 `AC_BoneScale_Test`, `UseBoneWeights`) and, on Human, Elf, HighElf and River-hobbit bodies, the SliderMeshDeformer node
 (entries of §6.3). A figure holds one slider set: with more than one SliderMeshDeformer the
 most recently started one's set is used, and stopping any of them removes the set
-(`script-table.md` §6.9; each species table has one).
+(`script-table.md` §6.9; each species table has one). "Most recently started" follows the
+client's start order (BIN5, A33): nodes started in the same script run count in the order
+of `script-table.md` §8.2 step 3 and §7.5 (kind-1 definitions before kind-2 ones, roots and
+the children of one port in stored order, a Collection's ports by ascending ordinal, each
+node with its immediate starts before the next); a node started by a later run, a later
+Timer or Sequence step or a later Switch branch counts as later.
 
 Algorithm (run at assembly and again whenever a deformer time or the slider string
 changes):
@@ -1471,6 +1516,12 @@ the same path as a list element (§4.7, rule 2: after the lists); the block is c
 `UseParentIntensity` 1 (`script-table.md` §4.2); Tessera uses the stored modifier (factor 1;
 the intensity of enclosing nodes was not checked). 18 nodes in other contexts
 take their record, key or modifier from driven properties (quest-state appearances).
+Appearance nodes of one script run append their elements in the client's start order
+(BIN5, A33; `script-table.md` §8.2 step 3 and §7.5): in particular a Collection of piece
+groups starts its ports by **ascending ordinal**, usually the reverse of their stored
+order, and ports with equal ordinals in an order that was not traced (Tessera Decision:
+stored order). The order matters only through §4.7 rules 1 and 2 (a later element wins an
+equal-priority tie, a record keeps its first position).
 
 > **Rule (replaces the 2026-10-05 Decision):** dress a figure with its setup's default
 > parts, its template sections, its class and instance lists (§7.4 steps 1–4), its held
@@ -1479,10 +1530,13 @@ take their record, key or modifier from driven properties (quest-state appearanc
 > apply; the script pieces come later and win equal-priority ties (§4.7). The 616 figures
 > that carry both keep both.
 >
-> **OPEN** (owner observation O12, narrowed): the data makes the pieces random each time
-> the script runs. Whether the original seeds the choice per object (same look on every
-> visit) or not (a new look per visit) was not traced; Tessera seeds the Random nodes of a
-> placed figure from its instance ID so that a figure keeps its look (Decision).
+> **OPEN** (owner observation O12, narrowed again 2026-10-08): the data makes the pieces random
+> each time the script runs. The client draws them from its single global generator, seeded
+> once from the wall-clock time at start-up, with no per-object seed in the Random node's
+> path (`script-runtime.md` §8, R40, BIN). So a new look per visit is expected (Inferred: a
+> game-logic reseed before the figure's start-up script was not ruled out). Tessera seeds the
+> Random nodes of a placed figure from its instance ID so that a figure keeps its look
+> (Decision).
 
 ---
 
@@ -1842,6 +1896,22 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > `crates/assets` or a new assembly module. They are small and data-only, but the placement
 > needs a decision record, and then this header and the `CLAUDE.md` layout line updated.
 
+> **OPEN** (§6.3 "limits that are not finite", implementer, 2026-10-08): the Tessera
+> Decision covers only a slider with a limit that is not finite. `BoneSliders::add_slider`
+> in `tessera-anim` also gives no entry for a slider whose position *t* or channel value
+> *c* = `BoneSlider_LimitMin` + *t* × (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`) is not
+> finite. *t* from the value parse is always finite, but *c* can overflow to ±∞ (or NaN)
+> when a piece carries a minus sign (*t* about 1.7 × 10⁷) and the limits are very large;
+> the client would then write a non-finite entry (§6.3: it checks nothing). No such slider
+> exists in this install. Conservative choice until the spec decides: treat it like the
+> limits Decision (the slider contributes no entry, logged). Please confirm or state a rule.
+
+> **Answered** (2026-10-08, spec writer, BIN5, A32): confirmed as a Tessera Decision. The
+> client computes *c* in single precision as (max − min) × *t* + min, each step rounded on
+> its own, and writes the result unchecked, so a component that is not finite makes the
+> bone's deformation and those of the bones below it non-finite (§6.3 "Channel values that
+> are not finite"). Dropping the slider and logging it is the Decision now stated there.
+
 ---
 
 <a id="s15"></a>
@@ -1879,6 +1949,11 @@ figure, type 0xDB). Choices the spec leaves open:
 > assembly depends on the classification (the part is drawn either way); please confirm the
 > rule or refine it (for example, require a skinned part).
 
+> **Answered** (2026-10-08, spec writer): keep the rule as stated. The classification of §7.3
+> is this spec's census vocabulary, not a client concept: the client applies appearance
+> elements to every figure the same way, by slot (§4.7, BIN2), and nothing else in assembly
+> reads the class. The marker counts as a humanoid rig by the rule, which changes nothing.
+
 > **OPEN** (§7.4 step 4, weenie objects): a weenie object (0x70) has its own property set
 > besides its entity's. The implementation lets an `Appearance_InstanceList` in the
 > object's set replace the entity's, and the instance set's list replace both; NPC props,
@@ -1886,6 +1961,11 @@ figure, type 0xDB). Choices the spec leaves open:
 > precedence (instance, object, entity). On the reference install all 775 weenie objects
 > have an instance set, but neither it nor the object's set carries an instance list (all
 > 775 use the entity's), so the object-set step is not exercised by the data.
+
+> **Answered** (2026-10-08, spec writer): accepted as a **Tessera Decision** (instance, then
+> object, then entity), the same precedence as the property-set order Decision of
+> `script-table.md` §16. The client's merge of an object's and its entity's sets for these
+> properties was not traced, and no weenie object of this install exercises it.
 
 > **OPEN** (§4.4, stubs): a part is a stub when its mesh has at most three vertices in all
 > submeshes and levels together. Please confirm that no stub has more than one submesh.
@@ -1900,6 +1980,11 @@ figure, type 0xDB). Choices the spec leaves open:
 > part for a slot replaces **all** default parts of that slot (drawn once, at the first one's
 > position). No observed appearance list offers a `Default` part to a static setup with
 > several parts, so this is untested by the data.
+
+> **Answered** (2026-10-08, spec writer): accepted as a **Tessera Decision**. How the client's
+> part table holds several default parts of one slot was not traced (§4.7 rule 1 describes
+> one part per slot), and no appearance list of this install offers a part to such a
+> setup, so no result depends on it.
 
 > **OPEN** (§5.4 Decision, categories it does not name): `Implement1H`, `Implement2H`,
 > `Cosmetic`, `Bauble`, `Instrument`, `Class` and `Weapon_FX` items stay at their in-hand
@@ -1987,10 +2072,18 @@ Review follow-up (clean room, 2026-10-05):
 > odd-length string. Tessera Decision: a pair reads its value only when both characters are
 > hex digits, else 0; a trailing single character is not a pair. Please confirm.
 
+> **Answered** (2026-10-07, BIN4; pointer added 2026-10-08): not confirmed; the client reads
+> `8z` as 8 and a trailing single character as a piece of its own (§6.3 "Values", A29). The
+> implementation has since followed the piece rule (the last note of this section).
+
 > **OPEN** (implementation, §6.4 step 1): a MeshDeformer time that is not finite (NaN or
 > infinite after the driven substitution) is read as fraction 0 by Tessera (Decision); the
 > client's handling was not stated. Step 1's "⌊255 × clip weight⌋ / 255" is implemented with
 > the same 10⁻⁴-of-a-step tolerance as the layer weights (`skeleton-anim.md` §6.6 OPEN).
+
+> **Answered** (2026-10-07, BIN4; pointer added 2026-10-08): §6.4 step 1. +∞ gives the end
+> of the clip, −∞ gives 0, NaN is the Tessera Decision (0); the track weight is truncated
+> without any tolerance (A31, `skeleton-anim.md` §15).
 
 > **OPEN** (implementation, confirmation only, §6.4 step 4 and §6.5): the expected heights of §6.5 were
 > reproduced to the millimetre by the implementation (top 1.231 / 1.266 / 1.300 m and
@@ -1998,6 +2091,13 @@ Review follow-up (clean room, 2026-10-05):
 > 1.215 / 1.245 m; DwarfStoutAxe 1.434 m; Dwarf 1.345 m; Human 1.806 m) with the skinning
 > transform taken as the matrix product of `skeleton-anim.md` §5.4 OPEN below. Only the
 > lowest bone of River-hobbit M at 0.95 differs (0.015 against 0.016, rounding).
+
+> **Answered** (2026-10-08, spec writer): confirmed. The skinning transform is the client's
+> T·R·S of the skinning triple with the inverse reference triple of `skeleton-anim.md` §5.4
+> (K26, resolved 2026-10-07); on the player skeletons (identity reference rotations, unit
+> reference scales) it equals the matrix product used here, so the reproduction stands. The
+> §6.5 values are rounded to the millimetre; compare them with a tolerance of 0.001 m,
+> which covers the lowest-bone difference.
 
 > **OPEN** (implementation, 2026-10-07, after the BIN4 answers; engineering choices,
 > confirmation only): (1) §6.3 values now follow the piece rule (two characters at a time,
@@ -2014,6 +2114,37 @@ Review follow-up (clean room, 2026-10-05):
 > SliderMeshDeformer is taken to be the **last one in evaluation order**. Please confirm that
 > the client starts the nodes of one script in that order (no instance: SI12).
 
+> **Answered** (2026-10-08, spec writer, BIN5 and `script-table.md` BIN6):
+> (1) Confirmed: the piece rule, the `strtol` reading, *t* not limited to [0, 1] and the
+> loss of only the out-of-range bone's entry are the client's (A29, A30).
+> (2) Confirmed as a Tessera Decision. The client computes *c* = (max − min) × *t* + min in
+> single precision, step by step, and writes it unchecked; a component that is not finite
+> makes the bone's deformation, and those of the bones below it, non-finite. The difference
+> therefore matters only for data the client cannot draw; keep dropping and logging such a
+> slider (§6.3 "Channel values that are not finite", A32).
+> (3) Confirmed: the client keeps any number of deformers, so 16 is an implementation
+> limit (log what it drops, as §6.4 says); a clip whose track count differs from the bone
+> count is reported as an error and skipped while the others still contribute, as
+> implemented (A31).
+> (4) Confirmed with a precision: "last in evaluation order" is right **if** the evaluation
+> order is the client's start order (A33). For one script run the client starts the roots
+> of the kind-1 definitions before those of the kind-2 definitions, the roots of one
+> definition and the children of one port in stored order, and each node with its
+> immediate starts before the next (`script-table.md` §8.2 step 3, T41). One exception to
+> "stored order": a Collection starts its ports by **ascending ordinal**, which in most
+> Collections is the reverse of the stored order (`script-table.md` §7.5, T42). A resolver
+> that walks Collection ports in stored order picks the wrong "last" node there. No
+> species table has two slider nodes, so no figure of this install changes; the same order
+> decides equal-priority ties between Appearance nodes of one run (§4.7 rule 2, §7.4).
+
+> **OPEN** (implementation, 2026-10-08, A33 implemented; confirmation only): the
+> resolver lists deformers in the client's start order (`script-table.md` §8.2 step 3,
+> §7.5, T41, T42; Sequence steps and Timer ports by step and time, §7.6), and the figure
+> uses the set of the **last** SliderMeshDeformer in that list. A resolution evaluates every
+> Random port and lists only started nodes, so a slider node under a Random port counts as
+> started (static analysis), and stops of a SliderMeshDeformer are not applied. No figure
+> of the install has two slider nodes (SI12), so nothing visible changes.
+
 ---
 
 <a id="s16"></a>
@@ -2025,6 +2156,10 @@ Review follow-up (clean room, 2026-10-05):
 | 2026-10-07 | header; §1 (OBS2, BIN2, A14, A19–A27); §3.2.1; §3.3; new §3.5; §4.7; §4.9; §4.10; §4.11; §5.3; §5.4; §5.5; new §5.6; §6.1; §6.3; §7.4; §8; §11; §12.2; §13; §14; §15; new §17 | Owner items O8, O10, O11, O12, O13, O15 answered from the client where the client can settle them (BIN2, decision 0011) and from script-table data (OBS2): block choice (largest variant not above the modifier) replaces the old rule and Decision; tie rule and record order; figure-wide material-group list (dye pairing withdrawn); updated-avatar and face-compositing options; face layers and colour tints from species-table script nodes; stowed and wielded weapon placements from the shared avatar table (old stowing Decision replaced); random-appearance outfits from script tables (old Decision replaced); render-scale composition and the vector3 type; eleven implementation OPENs answered. | Spec writer (dirty room) |
 | 2026-10-07 | header; §1 (OBS2, A21, A26, A27, new A28, new BIN3); §3.2.1; §3.3; §3.5; §4.2; §4.7 (new rule 4 and OPEN); §6.1; §7.4; §8 step 4; §9 (AI12, new AI13); §11; §13; §14; §17 (new O9 and O17 rows, O8 row) | Answers the review of 2026-10-07. Blocking: the render-scale limit is **strictly below** 0.0002 (A27, §6.1 twice including the Decision, §14); the §3.2.1 census splits the 79 "none" into 13 by rule 1 and 66 by rule 3; §17 gains the O9 row. Non-blocking: §7.4 states its counting rule and the corrected counts (21,780 nodes, 830 cases, 61 tables in key 5; 21,841 and 62 tables over all scripts); §6.1 states the holder factors (uniform holder scalar with its two flag bits and `Model_ParticleScale`, then the holder's final scale, BIN3); §3.3 names the two sources and the dictionary default (false); §3.5 and A21 attribute the 297 nodes and the compositor counts by kind; OBS2 node total 632,847. From BIN3: the u32 after a 0x20 record's DID counts a linked-record list applied first (§4.2, §4.7 rule 4), and the `section` byte is a lookup-table size class (its OPEN resolved). | Spec writer (dirty room) |
 | 2026-10-07 (BIN4) | header; §1 (new BIN4, A16 note, new A29–A31); §6.3 (values: piece rule and reading; River-hobbit hidden slider 36 gets *t* = 0; new paragraph on bones outside the skeleton and limits that are not finite; two implementation OPENs answered); §6.4 (one slider set per figure; step 1 details; implementation OPEN answered) | Edge cases from a clean-room audit of the River-hobbit height code, settled from the client (BIN4, decision 0011). §6.3: the value string is cut into two-character pieces, an odd last character is a piece of its own, and an even-length string gets one more empty piece; each piece is read as base-16 text up to the first non-digit (`8z` reads 8), taken as unsigned and divided by 255. Correction: with 35-pair strings, the first hidden River-hobbit slider gets *t* = 0, not 0.5 (no visible change, its limits are equal). An entry for a bone outside the skeleton is not used, and the slider's other bones still apply (the implementation drops the whole slider; that differs). Limits that are not finite: Tessera Decision. §6.4: one slider set per figure; track weights truncated without tolerance; a deformer with a missing or non-fitting clip contributes nothing; no limit on deformers; time limited to [0, duration] (+∞ gives the end); NaN: Tessera Decision. The fact the audit found contradicted by the explorer (River-hobbit M body-shape control range 0 to 0.6, §6.2, Confirmed 2026-10-05 from the character-creation control data; not re-measured here) stands, as do the step 1 quantisation (re-read, no tolerance) and the §6.4 step 3 reference to the K26 transform. | Spec writer (dirty room) |
+| 2026-10-08 (BIN5) | header; §1 (new BIN5, A32, A33); §6.3 (step 1 precision; new paragraph "Channel values that are not finite" with an extended Tessera Decision); §6.4 (meaning of "most recently started"); §7.4 (order of Appearance nodes in one run); §14 (OPEN on non-finite channel values answered); §15 (eight implementation OPENs answered: the four confirmation points of 2026-10-07, the §6.5 skinning confirmation, pointers for the `8z` and deformer-time OPENs, the rig rule, weenie-object precedence and static-setup default parts) | Implementation confirmation points settled from the client (BIN5, decision 0011, with `script-table.md` BIN6): the channel value is (max − min) × *t* + min in single precision, unchecked, so a non-finite value poisons the bone and those below it (Tessera Decision: drop and log the slider, as implemented); "most recently started" follows the client's start order, in which a Collection starts its ports by ascending ordinal; the piece rule, the deformer limits and the §6.5 reproduction confirmed; the weenie-object precedence and the static-setup default parts accepted as Tessera Decisions (not traced, no instance). | Spec writer (dirty room) |
+| 2026-10-08 (OBS3) | header; §1 (new OBS3, new A34); §3.3 (toggle-files paragraph, the default-agreement sentence and the narrow OPEN) | Answers the blocking item of the 2026-10-07 re-review, repeated by the review of 2026-10-08. A census of all 40,643 0x47 entities (OBS3) gives: 7 avatar entities name the toggle property and carry it true; 3 more avatar entities carry it true without naming it; 19 entities carry it in all, every value true; 4 non-avatar entities (0x4700A4A4, 0x4700A4A8, 0x4700A4AA, 0x4700A4AF) name it but do not carry it. The earlier "10 entities" and "10 of the 14" are replaced by a table. The OPEN's conclusion is corrected: for those 4 entities the two candidate sources disagree even with the option on (the entity's own set would fall to the dictionary default false and show the plain files); for the 7 naming avatar entities they still differ only when the option is off. The Tessera rule is unchanged. | Spec writer (dirty room) |
+| 2026-10-08 | §7.4 OPEN (O12), §17 O12 row | Owner-observation pass: the random picks of the figures' start-up scripts come from the client's global generator, seeded from the clock at start-up (`script-runtime.md` §8, R40); a new look per visit is expected. No rule of this spec changed. | Spec writer (dirty room) |
+| 2026-10-09 (merge) | header | Merge of main into the specs-5 branch: the Accepted text of 2026-10-08 (BIN5, OBS3, narrow re-review) and the branch's owner-observation row above are both kept; status Revised until the O12 change is reviewed. No fact changed. | Spec writer (dirty room) |
 
 ---
 
@@ -2041,7 +2176,7 @@ Answers to the owner items of `docs/checklists/owner-observations.md` in this sp
 | O9 height and facial sliders | **partly** (rules answered by BIN on 2026-10-05) | The height controls hold clip fractions: `AC_BoneScale_Test` the body-shape deformer (girth only, except DwarfStoutAxe and the River-hobbit look) and `AC_Avatar_Height` the River-hobbit layer-110 clip, higher values taller (§6.2). A slider byte gives *t* = byte / 255 and the channel value `BoneSlider_LimitMin` + *t* × (max − min), so byte 0 (the left end) gives the stored minimum (the smaller scale, for example 0.7 on the nose bridge) and the default 0x80 gives *t* = 0.50196, a hair off the centre value; mirrored sliders negate the value on the reversed bone, so eye separation moves both eyes symmetrically; sliders and body shape deform the meshes once in bind space, about each bone's own joint, never the animated pose (§6.3–§6.4). On real data the computation keeps River-hobbit feet within 1 cm of the ground at every height value in idle (§6.5). | Confirmation only: the standing heights of §6.5 (shortest and tallest River-hobbit, Human ends) against the original's character-creation screen, and that River-hobbit feet rest on the ground at the default height in idle, walk and run (the walking toe-dip OPEN of §6.5). The client code read cannot show the rendered result. |
 | O10 layering ties | **partly** | Equal priority: the later-applied part wins; the order of records and keys (§4.7); the layering cases of §4.6 follow from the priorities. | Worn pieces reach the original client from its server, whose order between items is not in the client; items 5 (gauntlets against a long-sleeved chest) and 1–4, 6–8 remain useful as confirmation. |
 | O11 updated-avatar option | **answered** | A graphics option, default on, bound to `GOP_AvatarUpdateVisible`; with it on, the toggle (newer) style files and the newer face compositor are used; turning it off rebuilds figures with the older files; character creation offers it for Hobbit and Dwarf only (§3.3, §3.5). | Nothing required; a look at the options screen would confirm the default. |
-| O12 random-appearance NPCs | **partly** | Outfits come from Appearance nodes under Switches on the type in the figures' `Startup` scripts, one random piece per group (§7.4); 316 of the 318 placed types have outfits. | Whether a figure keeps its look between visits (the client's random seeding was not traced). Two visits to one figure settle it. |
+| O12 random-appearance NPCs | **partly** | Outfits come from Appearance nodes under Switches on the type in the figures' `Startup` scripts, one random piece per group (§7.4); 316 of the 318 placed types have outfits. The picks come from the client's global generator, seeded from the clock at start-up, with no per-object seed (`script-runtime.md` R40, 2026-10-08). | Confirmation that a figure's look changes between visits (expected). Two visits to one figure settle it. |
 | O13 held-item rest positions | **answered** for weapons, shields and ranged items; **partly** overall | Stowed and wielded locations, offsets, rotations and per-species scales by equipment category (§5.6); class items and instruments have no placement script (§5.3). | The in-hand direction of long weapons and the yaw/pitch/roll composition (one screenshot of a stowed staff and of a drawn sword from the side), and whether class items are ever visible. |
 | O15 skin, hair and eye tints, face layers | **answered** for the pairing and the mechanism; **partly** for rendering detail | The face is one texture composited at run time from the face compositor (`misc-records.md` §3.6) with layer choices from `AC_Texture_*` and colours from `AC_Color_*`; hair and beard (and skin surfaces) are tinted through the dye colour 2003 set from `AC_Color_Hair` and `AC_Color_Skin` (§3.5); a second graphics option, default on, turns face compositing off. | Which texture slot of the face-skin surface receives the composed image (one frame capture of a face, as the checklist asks). |
 | O17 static NPCs at the N spots (dress part only) | **needs the owner** | What a figure wears and holds is settled by §7.2–§7.4 and §5.5 (data and BIN2); positions and headings come from the SED data (`entity-descriptor.md`), which the client places as stored. | Presence, position and facing at each spot depend on the original's server and content layers, not on client code; only the in-game `/loc` readings and a look can settle them. |

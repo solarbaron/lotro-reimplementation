@@ -983,6 +983,15 @@ them (BIN, P47). A reader keeps them and ignores them.
 
 Without keyframes no channel exists and mass is 1 (not observed: every emitter has a key).
 
+> **OPEN:** (implementer, 2026-10-07) Two edge cases that the data never reaches (every first
+> key has time 0 and flags 0x770 or 0x7F0, PS7): (1) does a key become current when the age
+> *equals* its `time`, or only once the age exceeds it ("passes")? (2) what scale, colour and
+> mass does a particle have while no visited key carries the channel's bit (a first key
+> without 0x10/0x02, 0x20/0x04 or 0x40/0x08, or an age below the first key's `time`)? The
+> implementation (`crates/formats/src/gameplay/particles.rs`, `Emitter::channel_state`)
+> visits a key once age ≥ `time` and reports such a channel as absent, leaving the value to
+> the caller.
+
 <a id="s8-6-2"></a>
 #### 8.6.2 Drawn size and colour
 

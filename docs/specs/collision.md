@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08) |
-| **Last updated** | 2026-10-08 |
+| **Status** | **Accepted** (2026-10-09, re-review of the revision answering V1–V4: passed CLEAN_ROOM.md §5.3, every item; see the review record). Before it: revised 2026-10-09 (revision answering the review of 2026-10-09: V1–V4 fixed in §1, §11.6, §11.9, §11.10, §12.5); revised 2026-10-09 (merge of main into specs-5), review of 2026-10-09 **changes requested** (V1–V4). On main: Accepted 2026-10-08 (two parallel revisions, each accepted, merged 2026-10-09 with one disagreement between them recorded as an OPEN in §11.3.2). On this branch: the owner-observation pass of 2026-10-08 (new §11.8–§11.10, C60–C63, CO60–CO62), now reviewed with the merged text. |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec reviewer; separate from the writer's session) |
-| **Review record** | Claude review session (spec reviewer, fresh session), 2026-10-08: re-review of the second revision of 2026-10-08, **Accepted** (CLEAN_ROOM.md §5.3, every item; R1–R5 resolved; non-blocking notes in the dirty-room review log). Previous: Claude review session (spec reviewer), 2026-10-08: review of the 2026-10-08 revision (§11.6, §11.7, §14.10, C40–C46 as then numbered, now C44–C50), **changes requested** (R1–R5; details in the dirty-room review log). Before that: Claude review session (spec reviewer), 2026-10-07: re-review of the second revision of 2026-10-07, **Accepted** (CLEAN_ROOM.md §5.3, every item; F1–F7 resolved). Earlier rounds (2026-10-05 to 2026-10-07) and detailed findings are in the dirty-room review log (decision 0018). |
+| **Review record** | Claude review session (spec reviewer), 2026-10-07: re-review of the second revision of 2026-10-07, **Accepted** (CLEAN_ROOM.md §5.3, every item; F1–F7 resolved). Two parallel revisions of 2026-10-08, each reviewed in a fresh reviewer session: the remediation revision (BIN sixth pass), re-review 2026-10-08 **Accepted** (CLEAN_ROOM.md §5.3, every item; C28, C40–C43 spot-checked in the binary); the walks revision (BIN seventh pass), review 2026-10-08 of §11.6, §11.7, §14.10, C40–C46 as then numbered, now C44–C50, **changes requested** (R1–R5), re-review of its second revision 2026-10-08 **Accepted** (CLEAN_ROOM.md §5.3, every item; R1–R5 resolved; non-blocking notes in the dirty-room review log). 2026-10-09: the two merged, no fact changed, one disagreement between them recorded as an OPEN in §11.3.2; the merged text has not been reviewed as a whole. Earlier rounds (2026-10-05 to 2026-10-07) and detailed findings are in the dirty-room review log (decision 0018). Owner-observation revision of 2026-10-08 (§11.8–§11.10, C60–C63; made on the specs-5 branch on top of the accepted walks revision): not yet reviewed. 2026-10-09: merged with the main text above, no fact changed; status Revised until the owner-observation revision and the merged text are reviewed. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the owner-observation revision (§11.8–§11.10, C60–C63, CO60–CO62, the §11.6/§11.7/§12.5/§16 edits) and of the merged text as a whole against CLEAN_ROOM.md §5.3, **changes requested**. Spot checks passed: C61 (all 256 entries of both decode tables follow the §11.8 item 5 rule; packer constants 1.0, 0.5, 17, 15 and the level limits), C60 (walk-mode factor 0.5 applied after run lock, the 0.0002 test, the 0.5 / 0.57 walking-flag thresholds), C63 (the 0.2 s constant; the jump nodes of 0x0700001C, 0x07002B86 and 0x070017E4 carry `AirTime` 0.2 with `ExpectedGravity` 15 and 7.5, mounted 0.285 with 15), C62 (the mounted 150 is a constant), C60 OBS (the only movement entry of 0x51000000 with scale 0.5 targets command 15); arithmetic of the §11.8 speed table, CO60, CO62 and §11.10. No code, addresses, middleware class names, game text, keys or hostnames; nothing under a closed gate. Blocking: **V1** §11.10 OPEN states that the owner's jump measurement (O18 step 2) "confirms" 1.2 m and 0.8 s, but `owner-observations.md` O18 lists that measurement as still to be made (predicted values); say it is pending and keep the result marked as inferred until it is made. **V2** C63 and §11.10 use the mark "Inferred", which the §1 legend does not define; define it in the legend or use a defined mark (Probable). **V3** §11.6 item 3 still says that what fills the impulse vector "was not traced; see the OPEN below", which contradicts §11.10 and the narrowed §11.7 OPEN; point it to §11.10. **V4** §11.9 (and C62): the mounted turn rate is 150 times the sum of the gait's **turn-rate** multiplier and its add-mod value (`game-controls.md` §5.3.2 item 2); "the mount's gait multiplier plus its add-mod" can be read as the speed multiplier and as (150 × multiplier) + add-mod. State the grouping and name the turn-rate multiplier; C62 omits the add-mod. Findings in the dirty-room review log (decision 0018). Spec writer, 2026-10-09: revision answering V1–V4 (see the change log). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of that revision (`git log -p f9eb8db..` on specs-5, commit 15158f1) against CLEAN_ROOM.md §5.3, **Accepted** (every item). V1 resolved: §11.10 OPEN says O18 step 2 is pending and the 1.2 m / 0.8 s are predictions, consistent with `owner-observations.md` O18. V2 resolved: the §1 legend defines Inferred; C63, §11.10 and the §12.5 jump row use it. V3 resolved: §11.6 item 3 points to §11.10. V4 resolved: §11.9 and C62 give 150 × (turn-rate multiplier + add-mod value), sum first, speed multiplier excluded, consistent with `game-controls.md` §5.3.2 items 2–3 and GC15. Spot checks passed (read-only): BIN, the mounted rate is the constant 150 times one returned value that is the gait's turn-rate multiplier (default 1.0) plus the add-mod property's float value (0 when absent; nothing added when the PID is 0), the gait read from `MountMovement_CurrentSpeed` with default Neutral; the gaits Trot, Canter and Gallop select their own turn-rate pair and every other gait the Walk pair, the property IDs matching the dictionary names; the jump constant 0.2. OBS, the counts of `AirTime` 0.285, `ExpectedGravity` 15 and 7.5 values in 0x0700001C, 0x07002B86 and 0x070017E4 agree with §11.10. No code, addresses, middleware class names, game text, keys or hostnames; nothing under a closed gate. Non-blocking: §11.9 "0 when there is none" folds the two add-mod cases of `game-controls.md` §5.3.2 item 2 (absent PID, no float value), which give the same result. |
 | **Implements into** | `crates/formats` (0x66 and 0x01 decoders, quantised-tree reader), `crates/world` (cells, portals, point-in-cell, collision residency), `crates/terrain` (terrain collision triangles), `crates/physics` (decision 0013: collision sets, Tessera's own acceleration structure, sweeps and the character controller of §12), `apps/client` (walk mode on collision instead of terrain heights), `apps/dattool` / `apps/explorer` (inspection), `fuzz/` (one target per record kind and one for the tree reader) |
-| **Companion specs** | `mesh.md` §8–§10 (detail levels, per-level collision mesh, tree block; **corrected** here in §7 and §14). `landblock.md` §3.1, §3.6, §3.9, §3.11 (height grid, split diagonal, collision tree blocks; §4.4 cells; **extended** here in §6 and §5.8). `setup.md` §2.2, §6.4, §6.5 (0x01 records, collision volumes, 0x66 DID and physics bounds; **completed** here in §4, §5 and §8). `entity-descriptor.md` §4.5, §9 (SED properties, draw rule; collision rule added here in §9). `scenery.md` §7 (procedural scenery; its clearance step uses §6.6, its objects collide per §9.4). `terrain-texturing.md` §4.5 (terrain holes; corrected here in §6.5). [`water.md`](water.md) §6–§7 (landblock water, water volumes; answers the water OPENs of §10.4). `property-system.md` §4–§8 (values, embedded sets, DID maps). `records.md` §1.2 (VLE), §2.1 (prefix table). `coordinates.md` §11.1 (rotations). `appearance.md` §6.1 (model scale). `wstate.md` (0x70 objects). |
+| **Companion specs** | `mesh.md` §8–§10 (detail levels, per-level collision mesh, tree block; **corrected** here in §7 and §14). `landblock.md` §3.1, §3.6, §3.9, §3.11 (height grid, split diagonal, collision tree blocks; §4.4 cells; **extended** here in §6 and §5.8). `setup.md` §2.2, §6.4, §6.5 (0x01 records, collision volumes, 0x66 DID and physics bounds; **completed** here in §4, §5 and §8). `entity-descriptor.md` §4.5, §9 (SED properties, draw rule; collision rule added here in §9). `scenery.md` §7 (procedural scenery; its clearance step uses §6.6, its objects collide per §9.4). `terrain-texturing.md` §4.5 (terrain holes; corrected here in §6.5). [`water.md`](water.md) §6–§7 (landblock water, water volumes; answers the water OPENs of §10.4). `property-system.md` §4–§8 (values, embedded sets, DID maps). `records.md` §1.2 (VLE), §2.1 (prefix table). `coordinates.md` §11.1 (rotations). `appearance.md` §6.1 (render scale and the avatar entities' scales; the physics scale is §8.1). `wstate.md` (0x70 objects). |
 
 ---
 
@@ -61,12 +61,15 @@ Legend:
 - **BIN**: read from the client executable under decision 0011 (method M4); see the BIN row.
   "Confirmed (BIN)" means the fact rests on the executable only.
 - **Probable**: supported by data statistics or names, not by an exact rule.
+- **Inferred**: worked out by arithmetic from BIN and Confirmed facts of this spec, without
+  the whole chain having been traced in the client or observed in the original; it stays
+  Inferred until an owner measurement (M3) or a further trace confirms it.
 - **Reported**: from published material only.
 
 | Tag | Source |
 |---|---|
-| OBS | User install, Steam, data current on 2026-10-05. Read in full: all 1,057 records with prefix 0x01 and all 16,819 with prefix 0x66 (`client_general.dat`); all 28,555 setups (0x04); all 40,643 entity descriptors (0x47), all 1,616 stand-alone property sets (0x78) and all 383,332 object property sets (0x79) (`client_gamelogic.dat`); all 47,563 mesh records (`client_mesh.dat`, `client_mesh_aux_1.datx`); all 390,150 landblock-data and 49,636 landblock-info records of `client_cell_{1,2,3,4,5,14,15}.dat`. Every quantised code block of every 0x66, 0x01 and landblock record and of every mesh level was walked; every triangle that a code block contains was looked up through the code at its centroid and at its three corners. Second pass, same date: the surface layers, ceiling grids and stored ceiling triangles of all 390,150 landblock-data records (6,867 with a ceiling) for §6.4–§6.5, and the 0x47 chains, setups and physics properties of the 4,261 objects named by scene records for §9.4. Third pass, same date (answering the review): the stored x and y origin of all 58,546 terrain trees and the x origin of all 1,095 ceiling trees (§3.2); edge pairing and signed volume of all 16,819 0x66 meshes under both closure tests (§4.2); last-plane normals and hull-vertex distances of all 1,057 0x01 records (§5.4); the frill-object census recounted with the reach rule of `scenery.md` §8.2 (§9.4). Fourth pass, 2026-10-06: the per-SED census of §9.3 (all Physics SEDs of all landblock-info records; chain values from the 0x47 records' embedded sets). Fifth pass, 2026-10-07: the SED's own `Entity_CreationType` of all 2,380,699 Physics SEDs (§9.3); the §9.1 properties of all 40,643 0x47 records with and without their 0x78 extra sets (§9.1); the names of the 14 layer properties and the `MoveToController_*` properties in the property dictionary (§10.3); the §9.3 table recomputed over the 2,380,675 Physics SEDs that have a position. Sixth pass, 2026-10-07 (answering the review of that date): the 4,261 distinct 0x47 objects named by all 3,402 scene records (prefix 0x02), each checked for liquid monitors along its chain with the repository's water-volume decoder (`water.md` §7.3) as a tool (§9.4). |
-| BIN | Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (changelist 711794), read with a disassembler (capstone) on 2026-10-05. **Questions:** (1) which rule turns the per-state movement records into the active parameters; (2) the walkable-slope limit; (3) how the per-avatar float height reaches the controller; (4) what the 16 movement properties are as a unit; (5) what `Physics_NoPhysics` and the shape of a moving entity mean to the client. Second pass, same build and date: (6) how the client builds terrain and ceiling collision (holes, ceiling diagonals, landblocks without a stored tree); (7) how it decides which cell contains a point; (8) what collision it gives to procedurally generated scenery and in which order the pieces are built; (9) the terrain-triangle query used by scenery placement; (10) the instance-ID test for player characters. **Third pass, 2026-10-06 (strings and RTTI only):** (11) the loader's content-layer and creation-type handling for Physics SEDs; (12) which character controller the client uses. The executable carries run-time type information for the middleware's character construction-info types and character motion only, not for a character-proxy or character-rigid-body class, so it does not show which controller the client uses; the third pass's conclusion that the player is driven by the middleware's proxy is withdrawn (§11.3). **Fourth pass, 2026-10-07 (incident 0018 revision; same build; Ghidra headless on a copy of the analysed project):** (13) which `Entity_CreationType` value the static-creation path reads, and what happens to statics of types 7 and 8; (14) whether the content-layer result gates the creation of a static (and so its collision body); (15) whether the property lookup that serves the §9.1 flags includes a 0x47 record's 0x78 extra sets; (16) how a setup's collision mesh and volumes become one shape, and how an object's scale applies to each part; (17) the convex radius the client gives boxes and triangle meshes; (18) how the support contacts of a mover are classified; (19) the client's move procedure: casts, contact planes, step-up. **Why M1–M3 were not enough:** the data holds the parameter records but not the rule that picks and layers them, and holds no slope limit at all; which triangles the client puts into its collision shapes, how it assigns points to cells, how generated scenery becomes physical, which property value its creation filter reads, the shape radius it adds and how it moves a character are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes these rules (M2). Only the offline world and movement code was read; nothing about network, login, keys, launcher or anti-tamper. The velocity integration (jump, ramp, control acceleration, damper) was looked for in the third and fourth passes and not located. **Fifth pass, 2026-10-07 (answering the review of that date; same build; Ghidra headless on a copy of the analysed project, deleted afterwards):** (20) which root-shape kind the face-normal flip of §11.3 tests, and whether the client builds bodies of that kind; (21) when the terrain and ceiling meshes get a tree at load time, and which of the three bodies of §6.3 the client makes; (22) the layout of a generated object's instance ID (§9.4); (23) what the creation-type reader returns when no value is found (§9.3). **Why M1–M3 were not enough:** the kind codes of run-time shapes, the loader's switches and the synthesized IDs are run-time state that no record stores and the running client does not show; no published source describes them. Read: the support collector's callback again, the constructors of the middleware's tree and height-field shapes and every instruction that writes the tree kind code, the terrain mesh builder, its callers and the shape cache it uses, the static-request builder and the two instance-ID helpers it calls, and the creation-type reader. Nothing about network, login, keys, launcher or anti-tamper. **Seventh pass, 2026-10-08 (answering the implementer OPEN of 2026-10-07 on walks WL2, GN1, GN2, GN4; same build; Ghidra headless on a copy of the analysed project, deleted afterwards). Numbering: a parallel revision of the same date in another worktree holds a BIN sixth pass with questions (24)–(30) and facts C40–C43 and invariants CO16–CO17; this pass, its facts and its invariant are numbered after those so that both revisions can be merged without duplicate ids:** (31) how the player controller forms the move request in each update (target, control and physics velocity, damper, gravity, limits); (32) what the controller does with the move's contacts afterwards, and the ground snap that follows a move; (33) which request flags and step-up height a player's move carries; (34) the routine that sets `Entity_Element`; (35) what a mover held forward against a face that is not perpendicular to its heading does; (36), added the same day in answer to the review of 2026-10-08, how the property setter that the controller's published values pass through uses the ramp time, and whether the target and the limit of the sideways control velocity pair the two strafe fields the same way. **Why M1–M3 were not enough:** the velocity integration and the use of the move's contacts are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes them (M2). Read: the registration of the 16 movement properties (which gives the field order of the parameter unit), the controller's per-update routine and the routines it calls for the target, the control velocity, the displacement, the move, the contact projection, the ground snap and the state, the default values of a move request, the two support-flag readers, the initialiser of the fixed 45° cosine, the routine that publishes the six `Slider_*` values, and (for 36) the ramped property setter it calls and the two threshold constants it compares with. Nothing about network, login, keys, launcher or anti-tamper. |
+| OBS | User install, Steam, data current on 2026-10-05. Read in full: all 1,057 records with prefix 0x01 and all 16,819 with prefix 0x66 (`client_general.dat`); all 28,555 setups (0x04); all 40,643 entity descriptors (0x47), all 1,616 stand-alone property sets (0x78) and all 383,332 object property sets (0x79) (`client_gamelogic.dat`); all 47,563 mesh records (`client_mesh.dat`, `client_mesh_aux_1.datx`); all 390,150 landblock-data and 49,636 landblock-info records of `client_cell_{1,2,3,4,5,14,15}.dat`. Every quantised code block of every 0x66, 0x01 and landblock record and of every mesh level was walked; every triangle that a code block contains was looked up through the code at its centroid and at its three corners. Second pass, same date: the surface layers, ceiling grids and stored ceiling triangles of all 390,150 landblock-data records (6,867 with a ceiling) for §6.4–§6.5, and the 0x47 chains, setups and physics properties of the 4,261 objects named by scene records for §9.4. Third pass, same date (answering the review): the stored x and y origin of all 58,546 terrain trees and the x origin of all 1,095 ceiling trees (§3.2); edge pairing and signed volume of all 16,819 0x66 meshes under both closure tests (§4.2); last-plane normals and hull-vertex distances of all 1,057 0x01 records (§5.4); the frill-object census recounted with the reach rule of `scenery.md` §8.2 (§9.4). Fourth pass, 2026-10-06: the per-SED census of §9.3 (all Physics SEDs of all landblock-info records; chain values from the 0x47 records' embedded sets). Fifth pass, 2026-10-07: the SED's own `Entity_CreationType` of all 2,380,699 Physics SEDs (§9.3); the §9.1 properties of all 40,643 0x47 records with and without their 0x78 extra sets (§9.1); the names of the 14 layer properties and the `MoveToController_*` properties in the property dictionary (§10.3); the §9.3 table recomputed over the 2,380,675 Physics SEDs that have a position. Sixth pass, 2026-10-07 (answering the review of that date): the 4,261 distinct 0x47 objects named by all 3,402 scene records (prefix 0x02), each checked for liquid monitors along its chain with the repository's water-volume decoder (`water.md` §7.3) as a tool (§9.4). Seventh pass, 2026-10-08: `Model_Scale` and `Physics_AdjustableScale` of all 3,253,862 landblock-info SEDs (§8.1); the dictionary types of the properties of §9.1, §9.3, §11.1 and `water.md` §7.2 (C41). Owner-observation pass, 2026-10-08: the movement entries of the default action map 0x51000000 (command, toggle type, target, scale; `keymap.md` §12.10); labels of enum mappers 0x230001C0 (movement commands), 0x2300017F (`Movement_MovementStyle`) and 0x23000097 (script keys); every PhysicsImpulse node (kind 9, `script-table.md` §5.3) of all 7,526 script tables and 28,992 scriptlets, decoded with the repository's script-table decoder as a tool (37 nodes; 2 tables that the decoder rejects were not searched), with the path from the script root to each jump node (§11.10). |
+| BIN | Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (changelist 711794), read with a disassembler (capstone) on 2026-10-05. **Questions:** (1) which rule turns the per-state movement records into the active parameters; (2) the walkable-slope limit; (3) how the per-avatar float height reaches the controller; (4) what the 16 movement properties are as a unit; (5) what `Physics_NoPhysics` and the shape of a moving entity mean to the client. Second pass, same build and date: (6) how the client builds terrain and ceiling collision (holes, ceiling diagonals, landblocks without a stored tree); (7) how it decides which cell contains a point; (8) what collision it gives to procedurally generated scenery and in which order the pieces are built; (9) the terrain-triangle query used by scenery placement; (10) the instance-ID test for player characters. **Third pass, 2026-10-06 (strings and RTTI only):** (11) the loader's content-layer and creation-type handling for Physics SEDs; (12) which character controller the client uses. The executable carries run-time type information for the middleware's character construction-info types and character motion only, not for a character-proxy or character-rigid-body class, so it does not show which controller the client uses; the third pass's conclusion that the player is driven by the middleware's proxy is withdrawn (§11.3). **Fourth pass, 2026-10-07 (incident 0018 revision; same build; Ghidra headless on a copy of the analysed project):** (13) which `Entity_CreationType` value the static-creation path reads, and what happens to statics of types 7 and 8; (14) whether the content-layer result gates the creation of a static (and so its collision body); (15) whether the property lookup that serves the §9.1 flags includes a 0x47 record's 0x78 extra sets; (16) how a setup's collision mesh and volumes become one shape, and how an object's scale applies to each part; (17) the convex radius the client gives boxes and triangle meshes; (18) how the support contacts of a mover are classified; (19) the client's move procedure: casts, contact planes, step-up. **Why M1–M3 were not enough:** the data holds the parameter records but not the rule that picks and layers them, and holds no slope limit at all; which triangles the client puts into its collision shapes, how it assigns points to cells, how generated scenery becomes physical, which property value its creation filter reads, the shape radius it adds and how it moves a character are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes these rules (M2). Only the offline world and movement code was read; nothing about network, login, keys, launcher or anti-tamper. The velocity integration (jump, ramp, control acceleration, damper) was looked for in the third and fourth passes and not located. **Fifth pass, 2026-10-07 (answering the review of that date; same build; Ghidra headless on a copy of the analysed project, deleted afterwards):** (20) which root-shape kind the face-normal flip of §11.3 tests, and whether the client builds bodies of that kind; (21) when the terrain and ceiling meshes get a tree at load time, and which of the three bodies of §6.3 the client makes; (22) the layout of a generated object's instance ID (§9.4); (23) what the creation-type reader returns when no value is found (§9.3). **Why M1–M3 were not enough:** the kind codes of run-time shapes, the loader's switches and the synthesized IDs are run-time state that no record stores and the running client does not show; no published source describes them. Read: the support collector's callback again, the constructors of the middleware's tree and height-field shapes and every instruction that writes the tree kind code, the terrain mesh builder, its callers and the shape cache it uses, the static-request builder and the two instance-ID helpers it calls, and the creation-type reader. Nothing about network, login, keys, launcher or anti-tamper. **Sixth pass, 2026-10-08 (answering the implementer OPENs of 2026-10-07; same build; Ghidra headless on a copy of the analysed project, deleted afterwards):** (24) whether a cell's solid body and its lookup phantom are registered independently, and whether making the body reads any property; (25) which builder and convex radius a cell's physics mesh gets; (26) which value types the client's readers accept for the §9.1 booleans and bitfields, the §11.1 conditions, the creation type and the scale; (27) how the physics component turns the scale properties into the scale of its shape; (28) what the content-layer test does with a value that is not a list; (29) the corner order of every terrain and ceiling triangle; (30) the routine that sets `Entity_Element`. **Why M1–M3 were not enough:** the dictionary gives each property one type, so the data never exercises a reader's handling of another type; the order of registrations, the shape scale and the corner order of run-time meshes are not stored in any record; the running client cannot be observed here and no published source describes them. Read: the cell registration routine and the two shape accessors of the cell geometry, the readers named in C41, the physics component's scale update and its set-up routine, the content-layer evaluator, the terrain mesh index builder, the support-flag accessors and the element routine. Nothing about network, login, keys, launcher or anti-tamper. **Seventh pass, 2026-10-08 (answering the implementer OPEN of 2026-10-07 on walks WL2, GN1, GN2, GN4; same build; Ghidra headless on a copy of the analysed project, deleted afterwards). Numbering: a parallel revision of the same date in another worktree holds a BIN sixth pass with questions (24)–(30) and facts C40–C43 and invariants CO16–CO17; this pass, its facts and its invariant are numbered after those so that both revisions can be merged without duplicate ids:** (31) how the player controller forms the move request in each update (target, control and physics velocity, damper, gravity, limits); (32) what the controller does with the move's contacts afterwards, and the ground snap that follows a move; (33) which request flags and step-up height a player's move carries; (34) the routine that sets `Entity_Element`; (35) what a mover held forward against a face that is not perpendicular to its heading does; (36), added the same day in answer to the review of 2026-10-08, how the property setter that the controller's published values pass through uses the ramp time, and whether the target and the limit of the sideways control velocity pair the two strafe fields the same way. **Why M1–M3 were not enough:** the velocity integration and the use of the move's contacts are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes them (M2). Read: the registration of the 16 movement properties (which gives the field order of the parameter unit), the controller's per-update routine and the routines it calls for the target, the control velocity, the displacement, the move, the contact projection, the ground snap and the state, the default values of a move request, the two support-flag readers, the initialiser of the fixed 45° cosine, the routine that publishes the six `Slider_*` values, and (for 36) the ramped property setter it calls and the two threshold constants it compares with. Nothing about network, login, keys, launcher or anti-tamper. **Owner-observation pass, 2026-10-08** (same build, the Ghidra 12 decompiler on a private copy of the analysis project; questions numbered from 60 so that parallel revisions cannot collide): (60) which values the keyboard gives the player's movement commands and how walk mode changes them; (61) how those values reach the controller's input (*x*, *y*), and when the client sets `Movement_MovementStyle`; (62) the keyboard turn rate on foot; (63) what fills the impulse vector of §11.6 item 3 for a jump, and how long a stored impulse lasts. **Why M1–M3 were not enough:** input handling and the controller are run-time code; the data holds only the layer speeds and the script nodes' parameters; the original cannot be observed here, and these questions were waiting on owner measurements (owner observations O14.4, O18, O70). Read: the input system's key-event value and toggle handling, the movement-command collector and the input packer, the controller's target routine and its decode table, the routine that writes `Movement_MovementStyle`, the on-foot and mounted turn routines and the input preference they read, the PhysicsImpulse node's start and its impulse action, and the end of the physics step. Nothing about network, login, keys, launcher or anti-tamper. |
 | PUB | Published descriptions of the middleware's bounding-volume code, written for another game that uses the same middleware: the PyNifly project wiki page "MOPP Bytecode Format" and the PyFFI NIF library (BSD licence; read for facts only). Used as a starting hypothesis for §3.4; every opcode that occurs was then checked against data (OBS). |
 | PUB2 | Mirarkitty `lotro_extractor` (GitHub; read for the fact only): its exporter recognises a character's instance ID by the top byte 0x02. |
 | MESH, LB, SET, ED, SCN, TT, WAT | `mesh.md`, `landblock.md`, `setup.md`, `entity-descriptor.md`, `scenery.md`, `terrain-texturing.md`, `water.md` (same install). |
@@ -90,7 +93,7 @@ Legend:
 | C15 | Layering order and conditions of player parameter records (§11.1) | BIN | Confirmed (BIN) |
 | C16 | Float height chain and the controller it is written to (§11.2) | BIN; OBS (values) | Confirmed (BIN) |
 | C17 | Support classification: walkable if the surface normal's up component exceeds cos 45° (player characters) or cos 70° (other movers); sliding support up to cos 85°; the face-normal substitution with stored corner order and absolute values (§11.3) | BIN; BIN (18: details of §11.3.1) | Confirmed (BIN) |
-| C18 | Player collision capsule from the setup, scaled by the model scale (§10.6) | SET; OBS (all playable setups) | Confirmed (shape); use by the controller Probable |
+| C18 | Player collision capsule from the setup, scaled by the physics scale of §8.1 (§10.6) | SET; OBS (all playable setups); BIN (27, scale) | Confirmed (shape); BIN (scale); use by the controller Probable |
 | C19 | Ethereality bitfields decide which movers pass through an object (§9.2) | OBS (census); names | Probable |
 | C20 | The client builds a terrain collision mesh of all 2,048 grid triangles for every landblock, numbered as in §6.2; no triangle is left out for holes (§6.1, §6.5); the loader builds no tree at load time; the physics body is the mesh with its stored tree, a height field (no tree, switch set) or the bare mesh (no tree, switch not set) (§6.3) | BIN (6, 21) | BIN |
 | C21 | Ceiling collision: same numbering, diagonal from **bit 0** of the vertex-flag byte, triangles clockwise from above, built from all ceiling samples (§6.4) | BIN (6); OBS (5,310,848 of 5,310,848 stored ceiling triangles follow bit 0) | Confirmed |
@@ -100,11 +103,11 @@ Legend:
 | C25 | Generated scenery becomes static entities through the same creation request as landblock-info statics; frills never become entities; build order; the static-creation path takes a landblock-info static only when it passed the content-layer test and its creation type is not 7 or 8 (§9.3, §9.4) | BIN (8, 13, 14); OBS (census) | BIN (path, order, filters); Confirmed (census) |
 | C26 | A mover is a player character for the slope rule when its instance ID's top byte is 2 (§11.3) | BIN (10); PUB2 (meaning of the byte) | BIN (test); Reported (meaning) |
 | C27 | The §9.3 table is a data census over the 2,380,675 Physics SEDs with a position; the run-time set of collision bodies applies the content-layer test (offline *L* = 1, *I* = 0) and the creation-type filter; census 1,651,097 / 97,688 / 82,139, run-time 1,607,212 / 88,749 / 73,509 after the content-layer test and 1,607,211 / 88,749 / 73,509 after the creation-type filter (§9.3) | OBS (fourth and fifth passes); BIN (13, 14) | Confirmed (census and counts); BIN (filters) |
-| C28 | Which surfaces the client calls "controlled" and "uncontrolled" support, and that state 6 (sliding) follows an uncontrolled support underfoot (§11.3) | BIN (18: the collector's flags and their debug labels; 34: the routine that sets `Entity_Element` from them, C49); OBS (SL1–SL3 support faces 53.5°/61.4°/56.3°) | BIN (flags and the link to `Entity_Element` 5/6) |
+| C28 | Which surfaces the client calls "controlled" and "uncontrolled" support; `Entity_Element` is set from the support flags of §11.3.1 and the mover's `Volume_IsLiquid`: 5 / 6 / 4 out of liquid, 1 / 3 / 2 in liquid (§11.3.2; §11.6 item 7 and C49 read an in-water flag that also tests the float height, OPEN in §11.3.2) | BIN (18: the collector's flags and their debug labels; 30: the element routine; 34: the routine that sets `Entity_Element` from them, C49); OBS (SL1–SL3 support faces 53.5°/61.4°/56.3°) | BIN (flags, the link to `Entity_Element` 5/6 and the element rule); Probable (that state 6 makes the mover slide) |
 | C29 | The creation type that the static-creation filter reads is the SED's own `Entity_CreationType`, else the value found along the 0x47 chain (§9.3; agrees with `entity-descriptor.md` §4.9, E24); no value anywhere counts as 0 (rejected); no Physics SED of the install has an effective value 7 or 8, one has 0 | BIN (13, 23); ED (§4.9); OBS (fifth pass: 1,602 placed Physics SEDs have 7 or 8 on their chain, all carry their own value 3, 5, 6 or 9) | BIN (rule); Confirmed (census) |
 | C30 | The §9.1 properties of a 0x47 level are read from its 0x78 extra sets and its embedded set by the lookup of `scenery.md` S31; counts with extra sets (§9.1) | BIN (15, the same descriptor lookup as `scenery.md` S31); OBS (fifth pass) | BIN (rule); Confirmed (counts) |
 | C31 | A setup's collision is one compound of its mesh and all its volumes; per-part scale rules; scale treated as 1 within 0.0002 per axis (§8.1) | BIN (16) | BIN |
-| C32 | Boxes, 0x66 meshes and terrain and ceiling collision carry a convex radius of 0.05 m; cell physics meshes too (Probable) (§8.2) | BIN (17) | BIN; Probable for cells |
+| C32 | Boxes, 0x66 meshes, terrain and ceiling collision and cell physics meshes carry a convex radius of 0.05 m (§8.2) | BIN (17, 25) | BIN |
 | C33 | Support contacts: distance limit 0.08 m, exclusions, early-out after the first walkable contact, the crease rule (§11.3.1) | BIN (18) | BIN |
 | C34 | The client's move: up to 10 casts per move, the contact planes of the plane solver, the extra vertical plane for steep contacts, push-out of penetrating contacts, the ground check, moves longer than 500 m refused (§11.4) | BIN (19) | BIN |
 | C35 | The client's step-up procedure (§11.5) | BIN (19) | BIN |
@@ -112,6 +115,10 @@ Legend:
 | C37 | The face-normal flip of §11.3 tests the middleware's generic tree kind; only that kind's own constructor sets the code, every concrete tree kind replaces it, and no traced builder makes a body of that kind, so the flip is expected never to apply (§11.3) | BIN (20) | BIN (codes and constructors); Probable (never applies) |
 | C38 | A generated object's instance ID: kind byte 5, the landblock's region, X, Y and instance number, and the 0-based list position in bits 0–23 (§9.4) | BIN (22); ED (§4.2 layout) | BIN |
 | C39 | None of the 4,261 0x47 objects named by scene records carries a liquid monitor along its chain (§9.4) | OBS (sixth pass) | Confirmed |
+| C40 | A cell's lookup phantom and its solid body are registered separately: the phantom always, the body only when the cell has a non-empty physics mesh; making the body reads no property of the cell; no size limit was found (§5.3) | BIN (24) | BIN |
+| C41 | Value types the client's readers accept: Boolean (type 21, true when non-zero) for the §9.1 booleans, the §11.1 conditions and the volume flags of `water.md` §7.2; Bitfield32 (type 18, its 32 bits) for ethereality; Enum (8) or property ID (10) for `Entity_CreationType`; Vector (6) for the scale properties; Array (12) for `Entity_ContentLayers`. A value found with another type reads as false, empty, 0 or default; the lookup does not continue past it. The dictionary declares each of these properties with exactly the accepted type (§9.1, §9.3, §11.1) | BIN (26, 28); OBS (seventh pass, dictionary types) | BIN (readers); Confirmed (types) |
+| C42 | The physics scale is uniform: *s* = z of `Physics_AdjustableScale` × z of `Model_Scale` (defaults 1); a non-uniform value is logged and its z used; a non-finite product or one below 0.0002 becomes 1; no landblock-info SED carries `Model_Scale`, and every SED's `Physics_AdjustableScale` is uniform within 0.0002 (§8.1, §10.6) | BIN (27); OBS (seventh pass) | BIN (rule); Confirmed (census) |
+| C43 | Corner order of the two triangles of every terrain and ceiling quad, for both diagonals (§6.1, §6.4, §14.4) | BIN (29); OBS (agrees with C12 and C21) | BIN |
 | C44 | The player controller's target velocity and control velocity: speeds times `Movement_SpeedMultiplier`, per-axis approach by `ControlAcceleration` times `Movement_AccelerationMultiplier` times the update length, mean of the update used for the displacement, no damping, no change by contacts; the target and the limit of the sideways mean read the two strafe fields with opposite sign pairings (§11.6 items 1–2) | BIN (31; 36: the strafe pairing re-read) | BIN (rule; whether the opposite pairing is intended is OPEN, §11.6) |
 | C45 | The physics velocity: gravity, `VelocityDamper` once per update, stored impulse, 50 m/s limit, terminal limit on the vertical part; the requested displacement and its limits (§11.6 items 3–4) | BIN (31) | BIN |
 | C46 | After a move the physics velocity loses its part into each reported contact (horizontal normal for a steep contact while not falling); its vertical part is zeroed on walkable support unless the contact-loss flag is set (§11.6 item 6) | BIN (32) | BIN |
@@ -120,6 +127,10 @@ Legend:
 | C49 | `Entity_Element` is set after every update from the support flags of §11.3.1 and an in-water flag (`Volume_IsLiquid` and a water surface at least the float height above the feet); the contact-loss flag (§11.6 item 7) | BIN (34) | BIN |
 | C50 | A mover held forward against a face keeps sliding along it at the target speed × sin *φ*; a steep contact below the step-up height stops the mover unless the step-up lands on walkable support (§11.7) | BIN (35; consequence of C34, C35, C44–C48) | BIN (rules); the outcome for a given object depends on its geometry |
 | C51 | Values the player controller publishes after every update: the input's *x* to `Slider_Strafe`; its *y*, doubled when both \|*x*\| and \|*y*\| are at most 0.5 (both 0 while movement is frozen), to `Slider_Propel`; 0 to `Slider_Fly`; the component-wise sums of the stored control velocity and the stored physics velocity, without a turn between the frames, to `Slider_StrafeSpeed`, `Slider_ForwardSpeed` and `Slider_FlySpeed`. Each goes through the client's ramped property setter with the layered `RampTime` *T*: the value then moves towards the new one at a constant 1/*T* per second in its own unit, and is taken at once when it is the first value the entity gets, when *T* < 0.0002 s or when the change is at most 0.0002 (§10.1, §11.6 item 8) | BIN (31: the publishing routine; 36: the setter and its two thresholds); agrees with `script-table.md` T30 and `skeleton-anim.md` K28 (constant rate 1/*T*, *T* the player's merged `RampTime`) | BIN |
+| C60 | Movement-command values: 1.0 while a bound key is held (0 when released) times the action-map scale; walk mode (`MovementWalkMode`, a Toggle on command 14 `sneak`) halves forward, backward and both strafe values; run lock forces forward 1 and backward 0 before that; the turn-or-strafe commands count as strafe while the mouse steers, else as turn (§11.8 items 1–3) | BIN (60); OBS (action map, mappers) | BIN (rule); Confirmed (map entries) |
+| C61 | The controller's input is quantised to 15 strafe × 17 forward levels and decoded to *x* = (*s* − 7)/7 and *y* = (*f* − 8)/8 rounded to two decimals; `Movement_MovementStyle` is 1 (Walking) when \|forward − backward\| ≤ 0.5 and \|right − left\| ≤ 0.57 while a move key is active, else 2 (Running); strafing right gives *x* > 0 (§11.8 items 4–6) | BIN (61) (all 256 entries of the client's decode table checked against the rule) | BIN |
+| C62 | On foot the character turns at the `[Input] TurnKeySpeed` preference (initial 150 degrees per second) times (turn right − turn left); walk mode does not change it; the mounted controller uses instead 150 times (the gait's `Mount_Control_Turn_Rate_Multiplier_*` + the actor's value of the property named by the gait's `Mount_Control_Turn_Rate_AddMod_Property_*`), the sum taken first (§11.9; `game-controls.md` §5.3.2 item 2, GC15) | BIN (62); GC15 (the sum) | BIN |
+| C63 | Impulses come from PhysicsImpulse script nodes and last exactly one update; an `IsJump` node gives a vertical impulse of (`AirTime` + 0.2) × `ExpectedGravity` m/s and is skipped while a vertical impulse is already stored; the avatar jump script's on-foot values give 6.0 m/s on ground and 3.0 m/s in water (§11.10) | BIN (63); OBS (all impulse nodes) | BIN (rule); Confirmed (node values); the resulting height and air time Inferred (§1 legend; owner measurement O18 step 2 pending) |
 
 ---
 
@@ -493,20 +504,24 @@ record's own property set (part 8, §5.7): `Physics_SurfacePropertiesToApply` an
 `Physics_AlwaysUncontrolledSurface` or an ethereality value (OBS: part 8 holds only the four
 properties listed in §5.7), so a cell body always counts as support by the rules of §11.3.
 
-> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** a cell physics
-> mesh with more triangles than one shape template may hold (Tessera's bound, 2²⁰) cannot
-> become a body. Tessera (Decision): the body is refused and counted as a body over a limit
-> (§12.1), and the cell is still placed in the cell lookup (§5.8.1) without a body. Please
-> confirm or give the client's behaviour.
->
-> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** the same
-> Decision now covers a physics mesh that fails at a **set-level** limit of §12.1 (bodies,
-> triangles, or spheres, capsules and boxes) or whose placement cannot be applied: the body
-> is refused and counted, and the cell is still placed in the lookup without a body, so
-> both limit paths give the same cell lookup. The cell itself is refused only at the cell
-> limit or the per-set plane and hull-vertex budgets of §12.1. The body carries only the
-> two properties named above; any other §9.1 value found in part 8 (none is observed) is
-> ignored, `Physics_NoPhysics` included. Please confirm.
+**Registration and limits (BIN, C40; answers the two implementer OPENs of 2026-10-07).** The
+client registers a cell's lookup phantom (§5.8.1) and its solid body as two separate objects.
+The phantom is registered for every placed cell. The body is made only when the cell has a
+non-empty physics mesh; making it reads no property of the cell, so `Physics_NoPhysics` or any
+other §9.1 value in part 8 has no effect on it. No size limit on the mesh was found in the
+client. Of the cell's properties, the list the client keeps for a cell
+names `Physics_SurfacePropertiesToApply` and `Physics_CanLedgeClimb` explicitly and no other
+§9.1 property.
+
+Tessera's limits of §12.1 are its own (decision 0013), and the Tessera Decision stands as the
+implementer chose it: a physics mesh refused at any limit (more triangles than one template
+may hold, 2²⁰; a set-level limit of §12.1 on bodies, triangles, or spheres, capsules and
+boxes; a placement that cannot be applied) gives no body and is counted as a body over a
+limit, and the cell is still placed in the cell lookup. Both refusal paths give the same
+lookup, which is the client's behaviour: its phantom never depends on the body. The cell
+itself is refused only at the cell limit or the per-set plane and hull-vertex budgets of
+§12.1. The body carries only the two properties named above; any other §9.1 value found in
+part 8 (none is observed), `Physics_NoPhysics` included, is ignored.
 
 <a id="s5-4"></a>
 ### 5.4 Cell volume (Confirmed)
@@ -667,10 +682,27 @@ centroid and corners) reaches the triangle's key under this triangulation, with 
 BIN: for every landblock the client builds this mesh before anything else uses the
 landblock's terrain: 1,089 vertices, vertex 33 · j + i at (5i, 5j, stored height × 2,000 /
 65,535; `terrain-texturing.md` §13), and 2,048 triangles in the key order of §6.2, each
-counter-clockwise from above (the key-*base* triangle of a quad with the
-south-west/north-east diagonal has its corners in the order (i, j + 1), (i, j),
-(i + 1, j + 1)). The mesh is built from the heights alone: the surface layers are not
-consulted and no triangle is ever left out (§6.5).
+counter-clockwise from above, with the stored corner order of the table below. The mesh is
+built from the heights alone: the surface layers are not consulted and no triangle is ever
+left out (§6.5).
+
+**Stored corner order (BIN, C43).** For the quad with south-west sample (*i*, *j*), corners
+written as grid samples (vertex 33 · *j* + *i*). "Set" means the quad's diagonal bit is set:
+bit 7 of the vertex-flag byte for terrain, bit 0 for the ceiling (§6.4); the diagonal then
+runs south-west/north-east.
+
+| Mesh | Diagonal bit | Key *base* | Key *base* + 1 |
+|---|---|---|---|
+| Terrain | set | (*i*, *j* + 1), (*i*, *j*), (*i* + 1, *j* + 1) | (*i* + 1, *j* + 1), (*i*, *j*), (*i* + 1, *j*) |
+| Terrain | clear | (*i*, *j* + 1), (*i*, *j*), (*i* + 1, *j*) | (*i* + 1, *j*), (*i* + 1, *j* + 1), (*i*, *j* + 1) |
+| Ceiling | set | (*i* + 1, *j* + 1), (*i*, *j*), (*i*, *j* + 1) | (*i* + 1, *j*), (*i*, *j*), (*i* + 1, *j* + 1) |
+| Ceiling | clear | (*i* + 1, *j*), (*i*, *j*), (*i*, *j* + 1) | (*i*, *j* + 1), (*i* + 1, *j* + 1), (*i* + 1, *j*) |
+
+Terrain triangles are counter-clockwise and ceiling triangles clockwise seen from above. Only
+the winding matters to any rule in this spec: the face normal of §11.3 (the cross product of
+the second and third corners minus the first) is the same for every rotation of a triangle's
+corner list, so a reader may store the corners starting at any of them as long as the cyclic
+order is kept.
 
 The client's terrain height and terrain plane queries at a point pick one triangle of this
 mesh by the rules of `scenery.md` §7.4 step 8 (BIN there, S25), which are not always the
@@ -746,7 +778,8 @@ clear → south-east/north-west. BIN: the client's mesh builder tests bit 0 for 
 and bit 7 for the terrain. OBS: all 5,310,848 stored ceiling-chunk triangles (2,068 chunks)
 use the bit-0 diagonal; bit 7 agrees for only 4,999,408. All of them are **clockwise** from
 above (they face down); the client's ceiling mesh has the same quad split as the terrain
-for a given diagonal, with the corners of each triangle in reverse order.
+for a given diagonal, with the corners of each triangle in reverse order (stored order: §6.1
+table, BIN, C43).
 
 BIN: the client builds the ceiling collision mesh for every landblock with a ceiling
 (`has_ceiling`, `landblock.md` §3.1 part 3), from all 1,089 ceiling samples, the zeros
@@ -880,8 +913,28 @@ The client turns a setup's collision into **one** shape: the 0x66 mesh (when the
 one) and every box, sphere and capsule, each as a part of a compound shape (a single part is
 used on its own). Every part collides; a setup with a mesh and volumes blocks with both.
 
-An object's scale *s* = (*s*ₓ, *s*ᵧ, *s*_z) (`Physics_AdjustableScale`, §9.1) reaches each part
-as follows. A scale counts as 1 when every component lies within 0.0002 of 1; the client
+**Physics scale (BIN, C42).** The physics component of an entity (a static, a generated object
+or a mover) computes one **uniform** scale when it is set up and whenever the scale
+properties change:
+
+1. Read `Physics_AdjustableScale` and `Model_Scale` (property 0x3C3) of the entity, each used
+   only when the value found is a vector (C41), else (1, 1, 1).
+2. For each of the two vectors whose x differs from its y or its z by more than 0.0002, the
+   client logs a warning and uses its z for every axis.
+3. *s* = (z of `Physics_AdjustableScale`) × (z of `Model_Scale`). A product that is not finite
+   becomes 1; a product below 0.0002 is logged and becomes 1. There is no upper limit.
+4. The scale applied is (*s*, *s*, *s*). It replaces the previous scale (initially 1) only when
+   it differs from it by more than 0.0002 in some component.
+
+`Render_AdjustableScale` and the template factors of `appearance.md` §6.1 are not part of the
+physics scale. OBS (seventh pass): no landblock-info SED carries `Model_Scale`
+(`appearance.md` §6.1 records that no 0x47 record does either), and every SED's
+`Physics_AdjustableScale` is uniform within 0.0002, so for placed objects *s* is the
+`Physics_AdjustableScale` value.
+
+That scale reaches each part as follows (*s*ₓ = *s*ᵧ = *s*_z = *s* by the rule above; the
+per-axis entries describe the part builders, which never receive a non-uniform scale from
+this path). A scale counts as 1 when every component lies within 0.0002 of 1; the client
 then reuses one unscaled shape per setup.
 
 | Part | Scaled shape |
@@ -891,18 +944,20 @@ then reuses one unscaled shape per setup.
 | Capsule | Both cap centres multiplied by *s* per axis; radius multiplied by *s*_z |
 | 0x66 mesh | Scaled **uniformly** by *s*ₓ rounded down to a multiple of 0.0002 (the client keeps one scaled mesh per record and rounded scale); *s*ᵧ and *s*_z are not used |
 
-Every observed scale is uniform (`entity-descriptor.md` §7), so for the data the table
-reduces to "multiply everything by *s*".
+So in the client every part is multiplied by *s* (the mesh by *s* rounded down to a multiple of
+0.0002).
 
 <a id="s8-2"></a>
 ### 8.2 Convex radius (BIN, C32)
 
 The physics middleware gives each box and each triangle of a triangle mesh a **convex
 radius** of 0.05 m: the surface that a mover touches lies 0.05 m outside the stored box or
-triangle, with rounded edges and corners. The client builds boxes, 0x66 meshes and the
-landblock's terrain and ceiling collision (§6.1, §6.3, §6.4) with this radius; that cell
-physics meshes (§5.3) get it too is Probable (they were not traced to a builder). Spheres and
-capsules have none beyond their own radius.
+triangle, with rounded edges and corners. The client builds boxes, 0x66 meshes, the
+landblock's terrain and ceiling collision (§6.1, §6.3, §6.4) and cell physics meshes (§5.3)
+with this radius: a cell's physics mesh goes through the same mesh-shape builder as a 0x66
+mesh, unscaled, with its stored tree (BIN, sixth pass, C32). The hull phantom of a cell
+(§5.8.1) is built with the same radius; the point-in-cell test of §5.8.1 uses the planes,
+not the phantom's surface. Spheres and capsules have none beyond their own radius.
 
 A box is a solid convex shape: a mover whose shape overlaps it is pushed out of it, not held
 by its inner faces.
@@ -916,21 +971,36 @@ by its inner faces.
   incomplete.
 - Boxes are solid (§8.2): a capsule whose core is inside a box gets one contact, for the face
   it leaves by most easily, with the penetration depth.
-- Scale: triangles (mesh and boxes) take any scale exactly, per axis, after the box frame;
-  sphere and capsule centres move exactly and their radius is multiplied by the **largest**
-  component of *s*. For uniform scales this equals §8.1, except that the client rounds a
-  mesh's scale down to a multiple of 0.0002. For non-uniform scales (never
-  observed) it differs from the client in three ways: the client scales a mesh uniformly by
-  *s*ₓ, scales a box in its own frame, and multiplies radii by *s*_z.
+- Scale (changed 2026-10-08): Tessera uses the client's physics scale of §8.1, the uniform *s*
+  from the z components with the fallbacks of steps 2–4 (the upper limit of 10⁴ of §9.3
+  stays as a hostile-input bound, decision 0013). Every part is multiplied by *s*; Tessera
+  does not round a mesh's scale down to a multiple of 0.0002 (a difference below 0.0002
+  relative). The released per-axis reading gives the same result for every placed object of
+  this install (all uniform, C42).
 - No convex radius: Tessera collides with the bare triangles and boxes, with a contact offset
   of its own (§12.4 item (w)). Every surface a Tessera mover touches therefore lies 0.05 m
   closer to the stored geometry than in the original.
 
-> **OPEN (implementer, from the 2026-10-07 revision):** decide whether `tessera-physics`
-> adopts the 0.05 m convex radius of §8.2 for triangles and boxes (the original's standing
-> height above the ground, clearance under ceilings and widths of gaps all depend on it), and
-> whether the non-uniform scale rules of §8.1 replace the conservative reading above. Until
-> then the bullets above are the Tessera Decision.
+**Answer to the implementer OPEN of 2026-10-07 (2026-10-08).** No client fact is missing for
+this section: the radius applies to every triangle and box body, cells included (§8.2), and
+the client never applies a non-uniform scale (§8.1), so the non-uniform part rules have no
+effect and Tessera follows the uniform scale (bullet above). Whether Tessera adopts the
+0.05 m radius is a Tessera Decision, not a question about the client: the bullets above stand
+(no convex radius, contact offset (w)) until the owner measurements of Q9 or a decision to
+adopt it; adopting it would mean colliding the mover with triangles and boxes as a capsule
+with the same axis and a radius 0.05 m larger, and leaving contacts with spheres and capsules
+as they are.
+
+> **OPEN (implementer, 2026-10-08, remediation pass):** `tessera-physics` now places statics
+> with the physics scale of §8.1 (C42: z of `Physics_AdjustableScale` × z of `Model_Scale`,
+> SED-then-chain lookup, vectors only, the fallbacks of steps 2–4 and Tessera's upper bound
+> 10⁴) and scales the walker's capsule by the avatar entity's physics scale (§10.6). For
+> **generated objects** (§9.4) Tessera still places the shape with the per-axis scale of
+> the scenery transform (`scenery.md` §7.4, uniform in this install). §8.1 says the physics
+> component of a generated object computes its scale from its `Physics_AdjustableScale` and
+> `Model_Scale`, but not whether the scenery scale reaches the object as one of those
+> properties (or as a third factor). Conservative choice until stated: the scenery
+> transform's scale, as before; with uniform scales the result is the same.
 
 ---
 
@@ -973,19 +1043,28 @@ for the first two; bit *k* − 1 stands for key *k*, `property-system.md` §7.3)
 player entities of all species carry EtherealTo = {Camera}; 2,302 creature and NPC entities
 carry {Default, Camera, Corpse, OpenDoor, Missile, ClosedDoor, Creature, NPC, Admin, Player}.
 
-> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** the table types
-> `Physics_NoPhysics`, `Physics_AlwaysUncontrolledSurface` and `Physics_CanLedgeClimb` as
-> boolean but does not say what a value of another type (integer, enum) at some level means.
-> Tessera (Decision, as §10.3 does for movement fields): only a boolean value counts; a value
-> of another type is treated as absent at that level, so the lookup goes on along the
-> chain. The released code read non-zero integers and enum keys as true.
->
-> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** the same
-> question for the three ethereality properties, typed as bitfields above. Tessera
-> (Decision): only a bitfield value (32-bit, 64-bit or any-width) counts, read as its low
-> 64 bits; an integer, 64-bit integer, enum or other value is treated as absent at that
-> level and the lookup goes on along the chain (the released code read integers and enum
-> keys as bit sets). Please confirm or state the client's reading.
+**Value types (BIN, C41; answers the two implementer OPENs of 2026-10-07).** The property
+dictionary gives every property one type, and every stored value of it is decoded with that
+type (`property-system.md` §1, §5.3). In this install `Physics_NoPhysics`,
+`Physics_AlwaysUncontrolledSurface` and `Physics_CanLedgeClimb` are Boolean (type 21) and the
+three ethereality properties are Bitfield32 (type 18) (OBS). The client's readers:
+
+- A boolean flag is true only when the value found is a Boolean and true (stored byte 1,
+  `property-system.md` §4.5). A value of any other type reads as false (traced for `Physics_NoPhysics` and
+  `Physics_AlwaysUncontrolledSurface`; the reader of `Physics_CanLedgeClimb` was not traced).
+- An ethereality value is used only when it is a Bitfield32 (type 18), as its 32 bits. A value
+  of any other type, the 64-bit and variable-width bitfields (types 14 and 22) included, reads
+  as no categories.
+- The lookup stops at the first level that holds the property, whatever the value's type; it
+  does not go on along the chain.
+
+Since all levels of one property share the dictionary's type, stopping and reading false (the
+client) and treating the value as absent and going on (Tessera's Decision) give the same result
+on any data decoded with the dictionary. **Tessera rule:** for the booleans the implementer's
+Decision is confirmed (only a Boolean counts). For the ethereality properties Tessera follows
+the client (changed 2026-10-08): only a Bitfield32 value counts, as its 32 bits; the released
+reading of 64-bit and variable-width bitfields differs from the client only under a dictionary
+that declares these properties with another type.
 
 <a id="s9-2"></a>
 ### 9.2 Pass-through rule (Probable)
@@ -1048,8 +1127,8 @@ only when:
    (8). The value tested is the SED's **own** `Entity_CreationType` when its property set has
    one, else the value found along its 0x47 chain: the lookup order and the classes are those
    of `entity-descriptor.md` §4.9 (E24). When neither the SED's own set nor any level of its
-   chain has `Entity_CreationType`, or the value found is not an integer or enum, the value
-   is 0 and the SED is rejected exactly like an explicit 0 (BIN, fifth pass: the reader
+   chain has `Entity_CreationType`, or the value found is not an enum (type 8) or property-ID
+   (type 10) value, the value is 0 and the SED is rejected exactly like an explicit 0 (BIN, fifth pass: the reader
    returns 0 when the lookup finds nothing; `entity-descriptor.md` §4.9 and E23). No Physics
    SED of this install reaches this case: every one has a value (`entity-descriptor.md`
    §4.9 census). Statics of types 7 and 8 that passed the content-layer test are handed to
@@ -1075,31 +1154,32 @@ carries its own value (5 in 883, 9 in 412, 6 in 262, 3 in 45). One placed Physic
 effective creation type of 0 (its own set says 0 while its object says 3; `entity-descriptor.md`
 §4.9): a drawn mesh blocker in the census, which the client does not create.
 
-> **OPEN (implementer, answer to the OPEN of 2026-10-07):** the released `tessera-physics`
-> reads the creation type from the object's 0x47 chain alone and drops only 7 and 8. The
-> client reads the SED's own value first and also rejects 0 (item 3). The implementation must
-> change to the SED-first value and drop creation type 0 as well, treating a SED with no
-> value anywhere on its chain as 0 (item 3); its census test then expects the figures of
-> the last row of the table below. Likewise, the released code reads `Entity_ContentLayers`
-> and `Physics_AdjustableScale` from the SED's own set only, while the client falls back
-> along the 0x47 chain (the paragraph after item 3). The result is the same in this
-> install, but the implementation should use the SED-then-chain lookup for both.
+**Implementation status and reader details (answers the implementer OPENs of 2026-10-07;
+BIN, C41, C42).** `tessera-physics` reads `Entity_CreationType`, `Entity_ContentLayers` and
+`Physics_AdjustableScale` with the SED-then-chain lookup (0x47 extra sets included, as in
+§9.1), refuses creation types 0, 7 and 8 and counts no value anywhere as 0; the earlier
+chain-only reading is gone. The four points the implementer left open, against the client:
 
-> **OPEN (implementer, 2026-10-07, answer to the implementer OPEN above):**
-> `tessera-physics` now reads `Entity_CreationType`, `Entity_ContentLayers` and
-> `Physics_AdjustableScale` with the SED-then-chain lookup (0x47 extra sets included, as in
-> §9.1) and refuses creation types 0, 7 and 8, with no value anywhere counting as 0; its
-> census test expects the last row of the table below and CO14. The OPEN above can be
-> closed. Points the spec leaves to the implementation, chosen as follows (please confirm):
-> (1) "an integer" is taken as the 32-bit integer type (`property-system.md` §3, type 15)
-> keeping its bit pattern, so a negative value is an "any other" value (class Static); a
-> 64-bit integer (type 19), a bitfield or any other type counts as 0. (2) A found
-> `Physics_AdjustableScale` that is not a vector, or has a component outside the range
-> `entity-descriptor.md` accepts for SED scales (10⁻⁴ to 10⁴), ends the lookup and gives
-> (1, 1, 1). (3) A found `Entity_ContentLayers` that is not an array ends the lookup and
-> counts as no list (`entity-descriptor.md` §4.5.1 item 1). (4) When the property dictionary
-> has no `Entity_CreationType`, no static finds a value, so every landblock-info static is
-> refused (logged at debug level).
+1. **Creation-type value types (changed 2026-10-08).** The client accepts only an enum
+   (type 8) or property-ID (type 10) value and uses its 32-bit value as stored, so a value
+   above the known types falls in the class the value gives by `entity-descriptor.md` §4.9.
+   A 32-bit integer (type 15), a 64-bit integer (type 19), a bitfield or any other type
+   counts as 0, so the SED is rejected. The implementer's reading of type 15 as a creation
+   type is not the client's and must change. The dictionary declares `Entity_CreationType`
+   as an enum (type 8) (OBS), so every stored value is accepted and the census does not
+   change.
+2. **Scale.** The client uses `Physics_AdjustableScale` only when the value found is a vector
+   (type 6), else (1, 1, 1); it does not go on along the chain (confirmed). Its range rule is
+   that of §8.1 steps 2–4, not 10⁻⁴ to 10⁴: a non-uniform vector uses its z, a non-finite
+   result or one below 0.0002 becomes 1, and there is no upper limit. **Tessera rule
+   (changed 2026-10-08):** §8.1 steps 1–4, plus Tessera's own upper bound: a result above 10⁴
+   becomes 1 (hostile input, decision 0013; no SED comes near it, `entity-descriptor.md` ED6).
+3. **Content layers (confirmed).** When the value found is not an array (type 12), the
+   client's content-layer test passes, exactly as with no list; an empty array passes too
+   (`entity-descriptor.md` §4.5.1 owns the rest of the test).
+4. **No dictionary entry (confirmed).** Without a definition no value of `Entity_CreationType`
+   can be decoded, the lookup finds nothing, the value is 0 and every landblock-info static is
+   refused, as the implementer chose.
 
 **Census vs. run-time count (OBS, 2,380,675 Physics SEDs with a position).**
 
@@ -1336,9 +1416,12 @@ Water volumes are surfaces whose 0x78 set carries `Volume_IsLiquid` with `Volume
 Where water volumes and water surfaces are placed in the world, and how the depth of water
 at a point is found, is specified in `water.md`, which owns the water records: landblock
 water (§6.2–§6.3), the landblock water-volume entity (§7.1) and placed volumes (§7.3). The
-client's rule for choosing among the six states is now known (§11.6 item 7, BIN, C49);
-`water.md` §7.4 still lists it as OPEN and should cite §11.6 (§15 row). Tessera's rule, which §12.3
-step 7 uses, differs from it (§12.5).
+client's state rule is §11.3.2 (BIN): liquid with walkable support 1, with steep support 3,
+without support 2. §11.6 item 7 (BIN, C49) gives the client's rule for choosing among the six
+states with an in-water flag that also tests the float height; the two readings disagree on
+that input (OPEN in §11.3.2; §15 row for `water.md` §7.4). Which point of the mover the
+volumes test, and how the client keeps a swimmer at its float height, stay OPEN (`water.md`
+§7.4). Tessera's rule, which §12.3 step 7 uses, differs from the client's (§12.5).
 
 <a id="s10-5"></a>
 ### 10.5 Float height per species (Confirmed values)
@@ -1362,19 +1445,25 @@ Every playable setup (`setup.md` §12.3) has one capsule and no other collision:
 | High-elf 0x04005EC4 / 0x04005EC5 | 0.335 / 0.332 | 1.057 / 1.051 | 0.333 / 0.331 | 1.73 / 1.71 |
 | River-hobbit 0x0400772A/72B | 0.5 | 1.586 | 0.5 | 2.59 |
 
-The capsule is multiplied by the model scale of `appearance.md` §6.1 (template `vec3` ×
-entity `Render_AdjustableScale`, and the instance scale where one is set; the composition is
-recorded there as a Tessera Decision). With that rule every playable species ends up with nearly the same
-capsule: radius 0.35 m and height 1.80–1.81 m for Hobbit, Human, Dwarf, Stout-axe dwarf,
-River-hobbit (setup × 0.7) and High-elf (setup × 1.05, female × 1.03 × 1.02); radius 0.36 m
-and height 1.85–1.86 m for Elf and Beorning (scale 1.02–1.03). So the original does **not**
-size the collision capsule by species height; Hobbits and Dwarves differ from Men only in
-float height (§10.5). Whether the controller uses this capsule directly is Probable (BIN
-shows a support query radius of at least 0.3 m built from the mover's shape radius, §11.3).
+The capsule is multiplied by the entity's **physics scale** (§8.1, BIN, C42; changed
+2026-10-08): the z of its `Physics_AdjustableScale` times the z of its `Model_Scale`. The 14
+playable entities carry `Physics_AdjustableScale` equal to their `Render_AdjustableScale`
+(`appearance.md` §6.1 table): 0.7 for River-hobbits, 1.02 for Elf and High-elf females, 1.03
+for Beornings, 1 otherwise. None carries `Model_Scale`; whether the client sets one on a
+player at run time was not traced. The template `vec3` of `appearance.md` §6.1 is not part of
+the physics scale (earlier revisions multiplied the capsule by the render model scale, which
+includes it). Resulting capsules: radius 0.35 m and height 1.80–1.81 m for Hobbit, Human,
+Dwarf, Stout-axe dwarf, Elf male and River-hobbit (setup × 0.7); about 0.36 m and 1.84 m for
+Elf females; 0.36 m and 1.85–1.86 m for Beornings; 0.333 m and 1.73 m for High-elf males;
+0.338 m and 1.74 m for High-elf females. So the original does **not** size the collision
+capsule by species height; Hobbits and Dwarves differ from Men only in float height (§10.5).
+Whether the controller uses this capsule directly is Probable (BIN shows a support query
+radius of at least 0.3 m built from the mover's shape radius, §11.3).
 
 Tessera Decision: the mover's position is its **feet**; the capsule's lower cap centre lies
 the setup's lower-cap height above it and the upper one `length` higher, all three values
-times the model scale. For most playable setups the lower-cap height equals the radius, so
+times the physics scale of §8.1 (the client's scale; changed 2026-10-08 from the render model
+scale). For most playable setups the lower-cap height equals the radius, so
 the capsule's bottom is the feet (High-elf: about 2 mm above them). Without a setup Tessera
 uses lower cap 0.35, length 1.10, radius 0.35. Accepted ranges (hostile input): radius
 above 0 and at most 5 m, length and lower-cap height 0 – 20 m.
@@ -1407,15 +1496,18 @@ The controller kind is Generic (PHYSICSCONTROLLER key 3), or Mounted (key 0x1000
 `Mount_Movement_Use_RampUp_Controller` is true. The same layering fills the MoveTo set from
 each layer's MoveTo struct.
 
-> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** steps 3,
-> 5, 6, 7, 9 and 10 test `Mount_Is_Mounted`, `Mount_Movement_Use_RampUp_Controller`,
-> `Physics_OnSlide`, `Physics_OnIce`, `Stealth_IsStealthed` and
-> `Movement_ActiveMovementFrozen` for "true" without saying what a value of another type
-> means. Tessera (Decision, as §10.3 does for movement fields and §9.1 for the physics
-> booleans): only a boolean true makes a condition hold; an integer, enum or other value
-> counts as absent (the released code read non-zero integers and enum keys as true). The
-> same rule applies to `GenericPhysicsController_ForceStrafe` and `…_AllowContactLoss`
-> (§10.1, boolean): a value of another type counts as not listed (§10.3).
+**Value types of the conditions (BIN, C41; answers the implementer OPEN of 2026-10-07).** Each
+of `Mount_Is_Mounted`, `Mount_Movement_Use_RampUp_Controller`, `Physics_OnSlide`,
+`Physics_OnIce`, `Stealth_IsStealthed` and `Movement_ActiveMovementFrozen` holds only when the
+value found on the entity is a Boolean (type 21) and true; a value of any other type counts as
+false. The dictionary declares all six as Boolean (OBS). `Entity_Element`,
+`Movement_MovementStyle` and `Agent_Species` are read only as enum or property-ID values (types
+8 and 10), else as 0; the float heights of §11.2 only as floats (type 9). The implementer's
+Decision is the client's behaviour. The layering itself copies each listed field of a layer's
+struct over the set by property, without looking at its type; the readers of
+`GenericPhysicsController_ForceStrafe` and `…_AllowContactLoss` in the composed set were not
+traced, so for them the rule of §10.3 (a value of another type counts as not listed) stays a
+Tessera Decision. Both are Boolean in the dictionary.
 
 Example: a player on foot in deep water uses Swimming over BasePlayer: forward 3.2, backward 2,
 strafe 2, control acceleration (65, 65, 0) (from BasePlayer), damper 0.4, ramp 0.4, gravity
@@ -1507,14 +1599,50 @@ contact, support, walkable support):
 The client's debug description of this state calls a mover with the walkable flag set on a
 "controlled surface" and every other mover on an "uncontrolled surface".
 
-**Link to `Entity_Element` (BIN, C28 and C49; replaces the "mechanism" paragraph of earlier
-revisions, which other documents cite as "§11.3 mechanism").** `Entity_Element` 5
-(Earth_ControlledSurface) follows the walkable flag and 6 (Earth_UncontrolledSurface) a
-support without it; the routine that sets the state after every update is in §11.6 item 7.
-The SL1–SL3 walks of `m4-5-visual.md`, where a walker running onto a bank is expected to slide
-back, agree with it: along their paths the face under the capsule reaches 53.5°, 61.4° and
+**Reading (C28 and C49; replaces the "mechanism" paragraph of earlier revisions, which other
+documents cite as "§11.3 mechanism").** The movement state follows these flags exactly
+(§11.3.2 and §11.6 item 7, BIN since 2026-10-08): `Entity_Element` 5 (Earth_ControlledSurface)
+is the walkable flag and 6 (Earth_UncontrolledSurface) a support without it. That state 6
+makes the mover slide is Probable (through the Slope layer of §11.1 step 8). The SL1–SL3 walks
+of `m4-5-visual.md`, where a walker running onto a bank is expected to slide back, are
+consistent with this: along their paths the face under the capsule reaches 53.5°, 61.4° and
 56.3° (OBS), inside the steep band for players. Tessera's controller follows it (§12.3
 step 6).
+
+<a id="s11-3-2"></a>
+#### 11.3.2 The movement state (BIN, C28)
+
+The client sets a mover's `Entity_Element` from three inputs: the support flag and the
+walkable flag of the support search (§11.3.1, after the crease rule; the search is re-run when
+its result is stale), and *liquid*, the mover's own `Volume_IsLiquid` read as a Boolean
+(C41). Movers get `Volume_IsLiquid` from the liquid monitor volumes they are inside
+(`water.md` §7.1–§7.3, which own those volumes):
+
+| Support flag | Walkable flag | Not liquid | Liquid |
+|---|---|---|---|
+| not set | (any) | 4 Earth_NoSurface | 2 Water_NoSurface |
+| set | not set | 6 Earth_UncontrolledSurface | 3 Water_UncontrolledSurface |
+| set | set | 5 Earth_ControlledSurface | 1 Water_ControlledSurface |
+
+The float height, the depth of the water and the water level play no part in this rule; a
+mover standing on walkable ground inside a liquid volume is in state 1 however deep the water.
+Every volume set that carries `Volume_IsLiquid` counts, the coin sets of `water.md` §7.2
+included. The routine is called from the client's position-update paths; how often it runs
+per step was not traced. Which point or shape of the mover
+the monitor volumes test was not traced (`water.md` §7.4).
+
+> **OPEN (merge of 2026-10-09; RE, §16 Q9):** the two parallel revisions of 2026-10-08 both
+> read the client's routine that sets `Entity_Element` and disagree on one input. This section
+> (BIN sixth pass, question 30, C28) finds no depth or float-height input: *liquid* is the
+> mover's own `Volume_IsLiquid`. §11.6 item 7 (BIN seventh pass, question 34, C49) finds an
+> in-water flag that also needs the water surface found by the controller at least the float
+> height minus 0.0002 m above the feet. They differ for a mover inside a liquid volume whose
+> feet are less than its float height below the surface (here state 1, 3 or 2; there 5, 6 or
+> 4), and so for the answer to the first implementer OPEN of 2026-10-06 in `water.md` §7.4.
+> Whether the two passes read the same routine or two different ones (this one is called from
+> the position-update paths; the one of §11.6 runs after every controller update) was not
+> settled. Both statements are kept as read until a fresh BIN reading decides; Tessera's own
+> rule (`water.md` §7.4 Decision, §12.3 step 7) does not depend on it.
 
 <a id="s11-4"></a>
 ### 11.4 The client's move procedure (BIN, C34)
@@ -1605,7 +1733,8 @@ mover has none).
 3. **Physics velocity.** In each update, Gravity × *t* is subtracted from its vertical part;
    then each world component is multiplied by the matching component of `VelocityDamper`
    (once per update, whatever *t* is); then a stored impulse vector, turned from the mover's
-   frame into the world, is added (what fills it was not traced; see the OPEN below). Its
+   frame into the world, is added (it is filled by PhysicsImpulse script nodes and lasts one
+   update, §11.10). Its
    length is then limited to 50 m/s, and its vertical part to no less than −`Terminal` when
    Gravity > 0 and no more than +`Terminal` when Gravity < 0.
 4. **Requested displacement.** The physics velocity turned into the mover's frame, plus the
@@ -1646,6 +1775,9 @@ mover has none).
    | support, not walkable | 3 | 6 |
    | walkable | 1 | 5 |
 
+   The sixth-pass reading of §11.3.2 finds no float-height input in the routine that sets the
+   state; the disagreement is OPEN there.
+
    The layering of the next update (§11.1) reads this state. The **contact-loss flag** is set
    at the start of an update whose layered Gravity is below −0.0002 m/s², and cleared at the
    end of every update when `AllowContactLoss` is false. For players (`AllowContactLoss` false
@@ -1672,8 +1804,9 @@ mover has none).
 > client's code as read, not a transcription error; which slot carries which name rests on
 > the registration order of the 16 properties (BIN 31). Not known: whether the original
 > intends it (with unequal strafe speeds the sideways mean would be capped by the other
-> side's speed), and which physical side +*x* is (`skeleton-anim.md` §7.4). An implementation
-> that follows items 1 and 2 as written matches the client either way.
+> side's speed). Which physical side +*x* is: answered 2026-10-08, strafing right gives
+> *x* > 0 (§11.8 item 5). An implementation that follows items 1 and 2 as written matches the
+> client either way.
 
 The 45° of item 6 is a fixed constant of the client (BIN); the 50 m/s, 0.0002, 0.5 (item 1),
 0.5502 m and 15° are constants too. All are physics limits that [decision
@@ -1746,13 +1879,149 @@ original's capsule bottom is at the mover's position, as in Tessera's placement 
 > bottom at the feet, no convex radius); the original's feet may then sit up to the
 > *c* = 0.05 column above Tessera's on the same slope, or level with them.
 
-> **OPEN (RE tasks, §16 Q9):** what fills the impulse vector of §11.6 item 3 (where
-> `JumpAcceleration` enters, and for how long); the offset that the caller adds in item 4;
+> **OPEN (RE tasks, §16 Q9):** what fills the impulse vector of §11.6 item 3: answered
+> 2026-10-08 (§11.10: PhysicsImpulse script nodes, one update each; where `JumpAcceleration`
+> enters is still not known); the offset that the caller adds in item 4;
 > where the support shape of §11.3.1 sits relative to the mover; what `ForceStrafe` does; how
-> the water-surface query of items 4 and 7 is formed; the meaning of the per-contact flag of
+> the water-surface query of items 4 and 7 is formed; which point of the mover the liquid volumes
+> test and how buoyancy uses the float height (the state rule itself is §11.3.2 and item 7,
+> whose disagreement is the OPEN in §11.3.2); the meaning of the per-contact flag of
 > item 6; the run-time value of a client-wide flag that makes the ramped property setter of
 > item 8 take every value at once (not read in the traced routines); any fall damage (no
 > client property names one; probably decided by the server).
+
+<a id="s11-8"></a>
+### 11.8 The player's movement input (BIN, C60–C61)
+
+This section says where the input (*x*, *y*) of §11.6 item 1 comes from for the player's own
+character. Movement commands are the keys of enum mapper 0x230001C0 (`keymap.md` §12.10);
+their numbers and labels are interoperability identifiers.
+
+1. **Command values.** A key bound to an input action gives the value 1.0 while it is held
+   and 0 when it is released. The action's entry in the default action map (table B,
+   `keymap.md` §12.10) names the movement command it feeds and a scale; the command's value
+   is the key value times that scale. In this install every movement entry has scale 1.0
+   except `MovementSidestepRight` (0.5); read the scales at run time.
+2. **Combining commands.** Turn right is the larger of commands 17 (`turn_right`) and 9
+   (`turn_or_strafe_right`), turn left the larger of 3 (`turn_left`) and 13
+   (`turn_or_strafe_left`); strafe right is command 15 (`strafe_right`) and strafe left
+   command 4 (`strafe_left`). While the character is steered with the mouse, commands 9 and 13
+   count towards strafe right and left (the larger value wins) instead of turning. Forward is
+   command 8, backward command 11. While run lock (command 12, an Impulse that flips on each
+   press) is on, forward is 1.0 and backward 0; a forward or backward value rising from below
+   0.5 to 0.5 or more turns run lock off.
+3. **Walk mode.** `MovementWalkMode` (toggle type Toggle) targets command 14 (`sneak`): one
+   activation sets it to 1.0, the next back to 0. While its value is above 0.0002 the client
+   multiplies forward, backward, strafe right and strafe left (after item 2) by **0.5**. The
+   turn values are not changed.
+4. **Quantisation.** With *F* = forward − backward and *S* = strafe right − strafe left, the
+   client keeps one packed number: the forward level *f* is the whole part of
+   (*F* + 1) × 0.5 × 17, limited to 0 … 16; the strafe level *s* is the whole part of
+   (*S* + 1) × 0.5 × 15, limited to 0 … 14 (computed in double precision); the packed value is
+   1 + *s* + 15 *f* (1 … 255). Before any input it is 0.
+5. **Decoding.** The controller turns the packed value back into *x* = (*s* − 7) / 7 and
+   *y* = (*f* − 8) / 8, each **rounded to two decimals**, halves away from zero; the packed
+   value 0 decodes to (0, 0). So *x* takes the values 0, ±0.14, ±0.29, ±0.43, ±0.57, ±0.71,
+   ±0.86, ±1 and *y* the values 0, ±0.13, ±0.25, ±0.38, ±0.5, ±0.63, ±0.75, ±0.88, ±1. The
+   client stores the decoded pairs as a fixed table of 256 entries; this rule gives every one
+   of them. The same pair feeds §11.6 item 1 and the published values of item 8 (so
+   `Slider_Strafe` is ±0.57 when walking sideways, `script-table.md` §8). Strafing right
+   gives *x* > 0, which answers the "which physical side" part of the §11.6 OPEN: by item 1,
+   strafing right takes `StrafeLeftMoveSpeed`.
+6. **Walking style.** Whenever at least one of forward, backward, strafe right and strafe left
+   is non-zero (after item 3), the client sets a walking flag when \|*F*\| ≤ 0.5 and
+   \|*S*\| ≤ 0.57, and clears it otherwise; with none of them active the flag keeps its value.
+   In every update the client writes `Movement_MovementStyle` (enum 0x2300017F) as 1
+   (`Walking`) when the flag is set, else 2 (`Running`). This is what selects the Walking
+   layer of §11.1 step 4. A key bound with a scale of 0.5 (the sidestep entry above) therefore
+   walks even without walk mode.
+
+**Resulting ground speeds** (§11.6 item 1 with the layers of §10.3 as observed in this
+install, `Movement_SpeedMultiplier` 1; values from the records must be read at run time):
+
+| Keys | Input (*x*, *y*) | Style, layer | Target speed |
+|---|---|---|---|
+| forward | (0, 1) | Running, BasePlayer | 6.5 m/s |
+| backward | (0, −1) | Running, BasePlayer | 3.25 m/s |
+| strafe | (±1, 0) | Running, BasePlayer | 5.0 m/s |
+| forward and strafe | (±1, 1) | Running, BasePlayer | 5.75 m/s |
+| walk mode, forward | (0, 0.5) | Walking | 0.5 × 5.0 = 2.5 m/s |
+| walk mode, backward | (0, −0.5) | Walking | 0.5 × 4.5 = 2.25 m/s |
+| walk mode, strafe | (±0.57, 0) | Walking | 0.57 × 4.5 = 2.565 m/s |
+| walk mode, forward and strafe | (±0.57, 0.5) | Walking | 0.57 × (0.57 × 4.5 + 0.5 × 5.0) / 1.07 ≈ 2.70 m/s |
+
+In walk mode \|*y*\| = 0.5 is doubled for the blend of item 1 and for `Slider_Propel`, so the
+walk clips play at full slider weight (`Slider_Propel` 1) while the body moves at half the
+Walking layer's speed. Species do not change these speeds: only the Troll layer (`Agent_Species`
+47) has its own value (backward 6). A server-set `Movement_SpeedMultiplier` scales them all.
+
+<a id="s11-9"></a>
+### 11.9 Turning on foot (BIN, C62)
+
+While the player's character is not steered with the mouse and its `Movement_FreezeRotation`
+is not true, the Generic controller turns it in each update by *R* · *t* · (turn right − turn
+left) degrees towards the pressed side, with the turn values of §11.8 item 2 and *t* the
+update's length. *R* is the user's input preference `TurnKeySpeed` (`[Input]` section,
+`keymap.md` §12.16), whose initial value is **150 degrees per second**. The difference
+(turn right − turn left) is published to `Slider_Turn` through the ramped setter of §11.6
+item 8. Walk mode does not change *R*, and `Movement_TurnSpeedMultiplier` is not read on this
+path. A full keyboard turn at the initial setting therefore takes 360 / 150 = **2.4 s**.
+
+The Mounted controller (§11.1) does not read `TurnKeySpeed`. Its rate is a fixed 150
+degrees per second times the gait's **turn rate** of `game-controls.md` §5.3.2 item 2, which
+is one number: the gait's `Mount_Control_Turn_Rate_Multiplier_*` (1.0 when absent) **plus**
+the actor's current value of the property named by the gait's
+`Mount_Control_Turn_Rate_AddMod_Property_*` (0 when there is none). The sum is formed first
+and then multiplied: *R*mounted = 150 × (turn-rate multiplier + add-mod value). The gait is
+the actor's `MountMovement_CurrentSpeed` (§5.3.2 item 3 there). The speed multiplier
+`Mount_Control_Speed_Multiplier_*` does not enter the turn rate. Example: a multiplier of 1.0
+and an add-mod value of 0.2 give 150 × 1.2 = 180 degrees per second.
+
+<a id="s11-10"></a>
+### 11.10 The jump (BIN and OBS, C63)
+
+The impulse vector of §11.6 item 3 is filled by **PhysicsImpulse** script nodes (kind 9,
+`script-table.md` §5.3: `IsJump`, `ImpulseType`, `IsGlobalSpaceImpulse`, `Impulse`,
+`AirTime`, `ExpectedGravity`; field names are interoperability identifiers):
+
+1. When such a node runs on the mover, it adds its vector to the mover's stored impulse
+   (`ImpulseType` 2, the only type in this install's nodes). A node without `IsJump` adds its
+   `Impulse` times its intensity (`script-table.md` §4.2).
+2. A node with `IsJump` true ignores `Impulse` and adds a **vertical** impulse of
+   (`AirTime` + **0.2**) × `ExpectedGravity` m/s (the 0.2 s is a constant of the client). It
+   adds nothing while the stored impulse already has a vertical part larger than 0.0002 in
+   magnitude.
+3. The controller adds the stored impulse to the physics velocity once (§11.6 item 3), and
+   the client clears the stored impulse at the end of **every** physics update, so an impulse
+   acts in exactly one update.
+
+**The avatar's jump (OBS).** The jump nodes of the player character's locomotion tables
+(0x0700001C, 0x07002B86 and 0x070017E4 in this install; read at run time) lie in the script
+labelled `Loc_Jumping` (key 0x1000024F of enum 0x23000097). On foot (the script's
+WhenRunning on `Mounted_Channeling_Loop` reports NotRunning) and with `Movement_CannotJump`
+false, a Switch on `Entity_FinalElement` picks:
+
+| `Entity_FinalElement` | `AirTime` | `ExpectedGravity` | Vertical impulse |
+|---|---|---|---|
+| 5 or 6 (on land; 0x070017E4 has only 5) | 0.2 | 15 | 6.0 m/s |
+| 1, 2 or 3 (in water) | 0.2 | 7.5 | 3.0 m/s |
+
+The mounted branches use `AirTime` 0.285 (driven by `Mount_Movement_Jump_Modifier` in the
+gait-dependent cases) and `ExpectedGravity` 15, which gives 7.275 m/s with the stored value.
+
+**Consequence (Inferred, §1 legend; not traced end to end, not yet measured).** In the air the Falling layer applies
+(gravity 15 m/s², damper 1, §10.3), which equals the jump node's `ExpectedGravity`; so
+`AirTime` + 0.2 is the time to the apex. A jump from flat ground at 6.0 m/s therefore rises
+6.0² / (2 × 15) = **1.2 m** and lands after 2 × 6.0 / 15 = **0.8 s**.
+
+> **OPEN:** which input path starts `Loc_Jumping` (the jump command, movement command 1, is
+> handed to the entity's scripts; the labels `Loc_JumpKeyPressed` and `Loc_JumpKeyReleased`
+> also exist); whether the contact handling of §11.6 item 6 can cancel the take-off in the
+> first update at high update rates (the support search reaches 0.08 m, §11.3.1, and the
+> first update rises 6.0 × *t*); and where, if anywhere, `GenericPhysicsController_JumpAcceleration`
+> and `Movement_JumpMultiplier` enter (not found on this path). The owner's jump measurement
+> (owner observation O18 step 2) is **pending**: the 1.2 m and 0.8 s above are predictions
+> and stay Inferred until it is made.
 
 ---
 
@@ -1800,7 +2069,7 @@ a Tessera Decision unless it cites a BIN or OBS fact; it must be revised when an
 <a id="s12-2"></a>
 ### 12.2 Mover
 
-- Shape: the capsule of the avatar's setup times the model scale, placed on the feet
+- Shape: the capsule of the avatar's setup times the physics scale (§8.1), placed on the feet
   (§10.6). Categories {Player}; the walkable limit is the player's 45° (§11.3; the local
   avatar counts as a player character).
 - Parameters: §11.1 layering over the records of §10.3, composed afresh for every step from
@@ -1899,7 +2168,8 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
   gathered; when one of them penetrates, the mover is moved by the shortest push that brings
   every contact closer than two skins (w) out to two skins, using at most the 32 deepest
   contacts and at most three planes at a time. Up to 4 such rounds run per step, at most
-  0.5 m in all.
+  0.5 m in all. Only contacts whose separation is finite and whose normal has unit length
+  within 10⁻³ count; others are hostile values and are ignored.
 - **(h) MoveTo fields.** The MoveTo structs are layered field by field (property by
   property); their names are now given in §10.3.
 - **(i) Jump ramp time.** The ramp time of (c) is the BasePlayer layer's (0.13 s), whatever
@@ -1919,7 +2189,12 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
   The step-up is taken only when it climbs more than 0.01 m and gets further along the move
   than the unraised slide did. When the raised move was longer than the move itself (the
   minimum of (d)), the same climb with the move's own length is preferred where it also lands
-  walkable and climbs in proportion, so sliding along a wall is never sped up.
+  walkable and climbs in proportion, so sliding along a wall is never sped up. "Climbs in
+  proportion": its climb is at least the raised move's climb × (move length / raised length)
+  − 0.001 m, where the raised length is the length the raised move actually taken covered (the
+  first reach of (d), or the full capsule radius after the retry of (o)); the move's own length
+  must also pass the acceptance test above, otherwise the longer raised move is taken. "Further
+  along the move than the unraised slide" is strict, with no slack.
 - **(l) Per-axis approach and walls.** A mover pushing diagonally into a wall slides along it
   slower than the wall-parallel part of its speed: the wall removes the velocity into it each
   step and the side axis then brakes the rest toward its target. At 0.5 rad from the wall
@@ -1968,17 +2243,27 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
   latest contact is the one the remaining motion runs into (keeping the older normal stopped a
   mover at a shallow concave crease between two walkable triangles). A slide keeps at most 8
   planes. The motion is clipped by sliding along one plane when that keeps it out of all the
-  others, else along the crease line of the last two, else stopped.
+  others, else along the crease line of the last two planes listed, else stopped. The single
+  planes are tried latest first and the first that works is used; a clipped motion *c* is out
+  of a plane with normal *n* when *c* · *n* ≥ −10⁻⁵ · |*v*|, *v* being the motion before
+  clipping (a rounding tolerance).
 - **(v) Keeping the heading.** While a slide has met only walkable planes, the clipped motion
   and velocity are turned back to the horizontal direction of the original motion, keeping
   their horizontal length, and lifted onto the highest of those planes; a walker on a side
   slope then keeps its heading instead of drifting downhill. The rule is skipped when the
-  clipped motion points backward or a plane is nearly vertical.
+  clipped motion points backward or a plane is nearly vertical. It applies in every state (on
+  walkable or steep support, in the air, swimming), but never to the step-up's raised move,
+  whose planes are vertical walls (k). So a mover that lands on a walkable side slope keeps the
+  horizontal heading of its fall in the landing step.
 - **(w) Contact offset.** A sweep reports an obstacle when the gap to it would fall to
   0.001 m (one skin) and stops the capsule where the gap is still two skins (up to two and a
-  half; less only when it started closer). A sweep never resolves an overlap: a capsule that
-  starts inside an obstacle is stopped at once when it moves further in, and not at all
-  otherwise. Ties between equally near obstacles go to the lowest body, then triangles before
+  half; less only when it started closer). The hit threshold is lowered to half the capsule's
+  *clearance* (its smallest starting gap to anything the sweep tests) when that is smaller than
+  one skin, so a capsule starting closer than one skin to a surface is not stopped at the
+  shared edge of a coplanar neighbour; for any other start the threshold is exactly one skin.
+  A starting gap below 10⁻⁶ m counts as touching, like an overlap. A sweep never resolves an
+  overlap: a capsule that starts inside or touching an obstacle is stopped at once when it
+  moves further in, and not at all otherwise. Ties between equally near obstacles go to the lowest body, then triangles before
   spheres and capsules, then the lowest feature.
 - **(x) Face normal (Tessera's rule, differs from §11.3).** Every classification by §11.3 in
   Tessera (sweep contacts, the ground snap, the step-up landing, the support probe) uses
@@ -1992,7 +2277,7 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
      from the contact point on the triangle. The stored corner order plays no part, and no root-kind flip applies (§11.3
      OPEN C37).
   2. A capsule whose core is inside a solid box (§8.3) gets the outward normal of the face it
-     leaves by as both contact and face normal, so (3) never changes it.
+     leaves by as both contact and face normal, so (4) never changes it.
   3. Spheres, capsules and degenerate triangles have no face normal; a face normal that is
      not finite is ignored.
   4. The face normal replaces the contact normal when its *z* is **at most** the walkable
@@ -2003,56 +2288,22 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
   mesh, §4.2, or a ceiling triangle seen from above) is supported as on its front face. The
   face normal also serves the crease rule (n). Differences from the client: §12.5.
 
-> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** three solver
-> details that (k), (v) and (w) do not state:
-> 1. **(w) near contacts.** The sweep's hit threshold is one skin, or half the capsule's
->    *clearance* (its smallest starting gap to anything the sweep tests) when that is
->    smaller; and a starting gap below 10⁻⁶ m counts as touching (stopped at once when moving
->    in, free otherwise), like an overlap. Both matter only for a capsule that starts closer
->    than two skins to something; for any other start the threshold is exactly one skin. The
->    lowered threshold keeps a capsule that starts closer than one skin to a surface from
->    being stopped at the shared edge of a coplanar neighbour (whose gap equals the
->    surface's). The code keeps both; please state them in (w) or give another rule.
-> 2. **(k) "climbs in proportion".** Tessera compares with a slack of 0.001 m: the move's
->    own length counts as climbing in proportion when its climb is at least the raised
->    move's climb × (move length / raised length) − 0.001 m (floating-point rounding would
->    otherwise reject an exact proportion). "Raised length" is the length the raised move
->    actually taken covered: the first reach of (d), or the full capsule radius after the
->    retry of (o). The move's own length must also pass the acceptance test of (k) (more
->    than 0.01 m climbed, further than the unraised slide); otherwise the longer raised
->    move is taken. "Gets further along the move than the unraised slide" is now strict,
->    with no slack (the released code required 0.001 m more).
-> 3. **(v) and the mover's state.** (v) names no state, so `tessera-physics` now applies it
->    in the air, while swimming and on steep support too (it never applies to the step-up's
->    raised move, whose planes are vertical walls, (k)); the released code applied it only on
->    walkable support. A consequence: a mover that falls onto a walkable side slope keeps the
->    horizontal heading of its fall in the landing step, and the horizontal length of its
->    clipped velocity, which includes part of its fall speed, now points along that heading
->    instead of downhill. Please confirm that (v) is meant for every state, or limit it.
-> 4. **(v) and the speed limit** (2026-10-07, second conformance pass). Keeping the
->    horizontal length and lifting the velocity onto a walkable plane makes it longer than
->    the clipped velocity, and can make it longer than the limit of §12.3 step 3 (with a
->    hostile record of forward and terminal speed 120 m/s and damper 1, about 120.9 m/s).
->    Tessera (Decision): after the slide and the step-up the velocity's length is limited
->    again to the terminal velocity and 120 m/s, as (p) does after buoyancy. The
->    displacement already taken is not changed.
-> 5. **(u) and (g) solver details** (2026-10-07, second conformance pass). (u) does not
->    say in which order the single planes are tried or how exactly "keeps it out of all
->    the others" is tested; (g) does not say which contacts count. Tessera (Decision): the
->    single planes are tried latest first (the latest contact is the one the motion runs
->    into, as in (u)'s replacement rule) and the first that works is used; a clipped
->    motion *c* is out of a plane with normal *n* when *c* · *n* ≥ −10⁻⁵ · |*v*| (*v* the
->    motion before clipping; rounding tolerance); the crease line is that of the last two
->    planes listed. The push-out of (g) uses only contacts whose separation is finite and
->    whose normal has unit length within 10⁻³ (others are hostile values and ignored).
->    Please state the original's rule or confirm.
+- **(y) Speed after the slide.** After the slide and the step-up the velocity's length is
+  limited again to the terminal velocity and 120 m/s, as (p) does after buoyancy, because (v)
+  can lengthen it; the displacement already taken is not changed.
+
+The solver details in (g), (k), (u), (v), (w) and (y) answer the implementer OPEN of
+2026-10-07 (items 1–5); they are the released choices, confirmed as Tessera Decisions. None of
+them has a counterpart in the client, whose move is the middleware's cast-and-plane-solver loop
+of §11.4 (its own thresholds: 1.5 × 10⁻⁴ m near contacts, 10⁻⁷ m remaining length, at most 10
+casts); §12.5 lists the differences.
 
 <a id="s12-5"></a>
 ### 12.5 Where Tessera differs from the original's known rules
 
 The original's support search, move and step-up (§11.3.1–§11.5, BIN) became known after the
-controller above was built. Tessera differs from them as follows (all Tessera Decisions until
-the OPEN below is settled):
+controller above was built. Tessera differs from them as follows (all Tessera Decisions; see the answer below the
+table and Q13):
 
 | Topic | Original (BIN) | Tessera |
 |---|---|---|
@@ -2067,6 +2318,15 @@ the OPEN below is settled):
 | Step-up | back off 0.05 m; rise; forward by the rest plus the back-off, at least 10 %; descend by the rise; walkable support; second height; once per move | no back-off; raised move of at least half the radius, retry with the full radius; descend by the rise plus 0.05 m; at least 0.01 m climbed and more progress than the plain slide (d), (k), (o) |
 | Ground check | optional per move (§11.4 item 6) | none |
 | Face normal | stored corner order; negated when pointing down only for a root kind that no traced builder produces (in effect never, C37); replaces the contact normal when \|face *z*\| < cos *α* and \|face *z*\| < \|contact *z*\|; boxes are convex shapes and give none | turned to the capsule's side for every triangle, the 12 triangles of each box included; replaces the contact normal when face *z* ≤ cos *α* and face *z* < contact *z* (signed) (x). Results differ for back faces (the client can choose a downward face normal and skip the contact as an overhang; Tessera never does for a contact from above), at the boundary face *z* = cos *α*, for contacts whose normal points down, and at box edges |
+
+**Answer to the implementer OPEN of 2026-10-07 for the first table (2026-10-08, remediation
+revision).** The client's side of every row of the first table is known (BIN), and Tessera's
+scale rule (§8.3) now follows the client. Keeping Tessera's own rule in each remaining row is
+a Tessera Decision, not an open question about the client: the rows stay as they are until
+the owner measurements of Q9 show a difference that matters, or until a decision to adopt the
+client's rule. (That revision still counted the client's velocity integration as unknown;
+§11.6, from the parallel revision, now states it, so the integration items fall under the
+OPEN below.)
 
 Rows added on 2026-10-08 from §11.6–§11.7 (BIN seventh pass):
 
@@ -2088,7 +2348,16 @@ Rows added on 2026-10-08 from §11.6–§11.7 (BIN seventh pass):
 > record why Tessera keeps its own (owner measurements of Q9 may decide). With §11.6 the
 > integration items (a), (b), (j) and (l) can now be aligned; the jump items (c) and (i) stay
 > Decisions until the §11.7 OPEN is answered, and (p) may keep its Decision for what §11.6
-> item 4 does not cover.
+> item 4 does not cover. Since 2026-10-08 the jump impulse itself is known (§11.10), so (c)
+> and (i) can be aligned with the third table below.
+
+Rows added on 2026-10-08 from §11.8–§11.10 (owner-observation pass):
+
+| Topic | Original (BIN, data) | Tessera |
+|---|---|---|
+| Jump push | a one-update vertical impulse of (`AirTime` + 0.2) × `ExpectedGravity` from the `Loc_Jumping` script: 6.0 m/s on land, 3.0 m/s in water; apex about 1.2 m (Inferred, §11.10) | jump acceleration × BasePlayer ramp time, 5.2 m/s, apex about 0.9 m (c), (i) |
+| Walking input | walk mode halves the command values; the input is quantised (walking strafe 0.57); the Walking style is set from the halved values (§11.8) | not stated in §12 (the walker's own walk mode) |
+| Turn rate on foot | `[Input] TurnKeySpeed`, initially 150 degrees per second (§11.9) | the walker's keyboard turn rate (`keymap.md` §9.3) |
 
 ---
 
@@ -2141,6 +2410,13 @@ Rows added on 2026-10-08 from §11.6–§11.7 (BIN seventh pass):
   the only §9.1 property those sets carry is `Physics_SurfacePropertiesToApply`, which they
   add to 20,164 records that lack it in their embedded set (52 embedded, 20,216 with extra
   sets).
+- **CO16** (corner order, §6.1, synthetic): for every quad and both diagonal bits, the four
+  stored corner lists of the §6.1 table give, as sets, the triangles of §6.2 with the same
+  keys; the terrain lists are counter-clockwise and the ceiling lists clockwise seen from
+  above; each ceiling list is the reverse of the terrain list for the same key and diagonal.
+- **CO17** (scale census, §8.1, OBS): no landblock-info SED carries `Model_Scale`, and every
+  SED's `Physics_AdjustableScale` has x and y within 0.0002 of z (3,253,862 SEDs), so the
+  physics scale of a placed object equals its `Physics_AdjustableScale`.
 - **CO18** (the original's wall slide, synthetic, §11.6, §11.7, §14.10; numbered after the
   parallel revision's CO16–CO17): a mover that follows §11.6 (BasePlayer layer, no
   multipliers, updates of *t* = 1/60 s, capsule radius 0.35 on flat ground) runs with full
@@ -2150,6 +2426,19 @@ Rows added on 2026-10-08 from §11.6–§11.7 (BIN seventh pass):
   0.0574 m), it gets no closer to the wall than at the first touch (within 10⁻⁴ m), and the
   per-update step does not decrease. This states the original's rule; Tessera's controller
   meets it only after the "Held against a face" row of §12.5 is aligned.
+- **CO60** (input decoding, §11.8 items 4–5; numbered from 60 to stay clear of parallel
+  revisions): for every strafe value *S* and forward value *F* in {−1, −0.5, 0, 0.5, 1}, the
+  packed value and its decoding give: *S* = −1, −0.5, 0, 0.5, 1 → *x* = −1, −0.57, 0, 0.57, 1;
+  *F* = −1, −0.5, 0, 0.5, 1 → *y* = −1, −0.5, 0, 0.5, 1. For every level pair (*s*, *f*) the
+  decoded *x* and *y* lie in [−1, 1] and are multiples of 0.01.
+- **CO61** (walk speeds, §11.8, §11.6 item 1, synthetic layers with the values of §10.3): with
+  walk mode on and forward held, the style is Walking and the target speed is 2.5 m/s; with
+  backward held 2.25 m/s; with strafe right held 0.57 × 4.5 = 2.565 m/s; with walk mode off,
+  forward gives 6.5 m/s (Running).
+- **CO62** (jump impulse, §11.10, synthetic node): an `IsJump` PhysicsImpulse node with
+  `AirTime` 0.2 and `ExpectedGravity` 15 adds (0, 0, 6.0) m/s to an empty stored impulse and
+  nothing to a stored impulse whose vertical part is 1.0; the stored impulse is (0, 0, 0)
+  after the next physics update.
 
 ---
 
@@ -2188,16 +2477,16 @@ at +1), points on whole byte values: bytes (100, 150, 0) give 125 → left only 
 
 ### 14.4 Terrain keys
 
-Quad *i* = 3, *j* = 7: *base* = 2 · (32 · 7 + 3) = 454. With bit 7 set at sample (3, 7):
-key 454 = corners (3, 7), (4, 8), (3, 8); key 455 = (3, 7), (4, 7), (4, 8). With bit 7 clear:
-key 454 = (3, 7), (4, 7), (3, 8); key 455 = (4, 7), (4, 8), (3, 8).
+Quad *i* = 3, *j* = 7: *base* = 2 · (32 · 7 + 3) = 454. Corners in the client's stored order
+(§6.1 table). With bit 7 set at sample (3, 7): key 454 = (3, 8), (3, 7), (4, 8); key 455 =
+(4, 8), (3, 7), (4, 7). With bit 7 clear: key 454 = (3, 8), (3, 7), (4, 7); key 455 = (4, 7),
+(4, 8), (3, 8). Every list is counter-clockwise from above; a rotation of a list (for example
+(3, 7), (4, 8), (3, 8) for key 454 with bit 7 set, as earlier revisions wrote it) is the same
+triangle with the same face normal.
 
-> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** §6.1 gives
-> the client's corner order of the key-base triangle of a south-west/north-east quad as
-> (i, j + 1), (i, j), (i + 1, j + 1), here (3, 8), (3, 7), (4, 8); this example lists the same
-> corners in the same winding starting from (3, 7). `tessera-physics` follows §6.1 (the
-> ceiling reverses that order, §6.4). Please align the example, or say whether the
-> example's order is meant as a set.
+The example's corner lists follow the stored order of §6.1 since 2026-10-08 (this answers the
+implementer OPEN of 2026-10-07: the earlier lists were rotations of the same triangles, meant
+as winding, not as a start corner).
 
 ### 14.5 Minimal cell record
 
@@ -2298,8 +2587,9 @@ With *φ* = 32° the same mover slides at 3.44 m/s; with *φ* = 0 it does not mo
 | `landblock.md` §3.6 | Bits 0–6 "a renderer ignores them" | Bit 0 is the ceiling diagonal (§6.4); bits 1–6 stay OPEN. |
 | `terrain-texturing.md` §4.5 | Holes are "cave mouths"; collision "a separate question" | Holes lie where the terrain is buried under the ceiling surface or where there is no ceiling; the client's terrain collision keeps them (§6.5). |
 | `scenery.md` §7.4 step 13 | (pointer) | The clearance step's terrain query is §6.6. |
-| `water.md` §7.4 | Which point of the mover is tested against the liquid boxes and how the client switches between the water states "is not traced (`collision.md` Q9)" | The client's rule is §11.6 item 7 (BIN, C49): the mover is in water when its `Volume_IsLiquid` is true and the water surface found by the controller lies at least the float height minus 0.0002 m above its feet; the state then follows the support flags of §11.3.1 (no support 2, support that is not walkable 3, walkable 1; out of water 4, 6, 5). So in the original a mover without support in water shallower than its float height is out of water (state 4), which answers the first implementer OPEN of 2026-10-06 there for the original. The Tessera rule there differs (§12.5, row "Water states"). How the controller's water-surface query is formed stays OPEN (§11.7). |
+| `water.md` §7.4 | Which point of the mover is tested against the liquid boxes and how the client switches between the water states "is not traced (`collision.md` Q9)" | The client's rule is §11.6 item 7 (BIN, C49): the mover is in water when its `Volume_IsLiquid` is true and the water surface found by the controller lies at least the float height minus 0.0002 m above its feet; the state then follows the support flags of §11.3.1 (no support 2, support that is not walkable 3, walkable 1; out of water 4, 6, 5). So in the original a mover without support in water shallower than its float height is out of water (state 4), which answers the first implementer OPEN of 2026-10-06 there for the original. The parallel reading of §11.3.2 (C28) finds no float-height input and gives state 2 there, as the 2026-10-08 answer in `water.md` §7.4 says; the disagreement is OPEN in §11.3.2. The Tessera rule there differs (§12.5, row "Water states"). How the controller's water-surface query is formed stays OPEN (§11.7). |
 | `scenery.md` §7.6 | Instance ID "synthesized from the landblock and the record's position in the list"; formula not traced | The layout is in §9.4 (kind byte 5, region, X, Y, instance number, 0-based list position; BIN, C38). |
+| `entity-descriptor.md` §4.9 step 1 | "A value that is not an integer or enum counts" as no value | The client's creation-type readers accept an enum (type 8) or property-ID (type 10) value only; a 32-bit integer (type 15) counts as no value (§9.3 item 3, BIN, C41). The dictionary declares `Entity_CreationType` as an enum, so no stored value is affected. |
 
 ---
 
@@ -2316,11 +2606,11 @@ With *φ* = 32° the same mover slides at 3.44 m/s; with *φ* = 0 it does not mo
 | Q6 | Use of per-level collision meshes and trees | §7 | M4 |
 | Q7 | Exact ethereality test and default categories | §9.2 | M4 |
 | Q8 | Placement of water volumes and depth query: owned by `water.md` | §10.4 | — |
-| Q9 | Integration of jump, ramp, control acceleration and damper; how the move request is formed. **Partly answered (BIN, 2026-10-07):** the support search (§11.3.1), the move's casts and plane solver (§11.4) and the step-up (§11.5). The earlier "character proxy" reading is withdrawn (§11.3). **Answered (BIN, 2026-10-08):** the player controller's update, its two velocities, damper, gravity, limits, request flags, contact projection, ground snap and the routine that sets `Entity_Element` (§11.6); a mover held against a face (§11.7). **Still open:** what fills the impulse vector (the jump), the caller's offset, where the support shape sits, the water-surface query (§11.7 OPEN) | §11.3–§11.7, §12.3 | M4, then M3 (owner measurements: jump height and airtime, walk and run speeds, highest climbable step and slope, slide speed along a wall) |
+| Q9 | Integration of jump, ramp, control acceleration and damper; how the move request is formed. **Partly answered (BIN, 2026-10-07):** the support search (§11.3.1), the move's casts and plane solver (§11.4) and the step-up (§11.5). The earlier "character proxy" reading is withdrawn (§11.3). **Answered (BIN, 2026-10-08):** the routine that sets `Entity_Element` (§11.3.2, sixth pass); the player controller's update, its two velocities, damper, gravity, limits, request flags, contact projection, ground snap and the routine that sets `Entity_Element` (§11.6, seventh pass); a mover held against a face (§11.7). **Answered (BIN, 2026-10-08, owner-observation pass):** the player's input and walk mode (§11.8), turning on foot (§11.9), what fills the impulse vector for a jump (§11.10). **Still open:** the caller's offset, where the support shape sits, the water-surface query (§11.7 OPEN), the input path that starts the jump script (§11.10 OPEN), buoyancy, which point of a mover the liquid volumes test, and the disagreement between §11.3.2 and §11.6 item 7 on the in-water input (OPEN in §11.3.2) | §11.3–§11.10, §12.3 | M4, then M3 (owner measurements, now confirmations only: jump height and airtime, walk and run speeds, highest climbable step and slope, slide speed along a wall) |
 | Q10 | Fall damage | §11.3 | probably server-side; nothing in the client data |
 | Q11 | `ForceStrafe`, `Entity_FinalElement`. (`AllowContactLoss`: answered, §11.6 item 7.) | §10.1, §10.4 | M4 |
 | Q12 | Physics bodies for generated objects of client-only creation types (they are created, BIN; the body was not traced) | §9.4 | M4 |
-| Q13 | Whether Tessera adopts the original's 0.05 m convex radius and non-uniform scale rules (§8.1–§8.3), and its support, move, step-up and face-normal rules (§12.5) | §8.3, §12.5 | implementer and owner (Q9 measurements) |
+| Q13 | Whether Tessera adopts the original's 0.05 m convex radius (§8.2–§8.3) and its support, move, step-up and face-normal rules (§12.5). The scale rule is settled: the client's physics scale is uniform and Tessera follows it (§8.1, §8.3, 2026-10-08); no client fact is missing for this row | §8.3, §12.5 | Tessera Decision; owner (Q9 measurements) |
 | Q14 | Whether an offline client instantiates the statics of creation types 7 and 8 that its loader hands to the dynamic list (none in this install has an effective 7 or 8) | §9.3 | M4 |
 | Q15 | What covers the 413,655 undrawn terrain triangles with no ceiling over them, and whether a walker can reach them (collision does not depend on it) | §6.5 | M1 (cells, statics and neighbouring geometry over those triangles) |
 | Q16 | Generated objects (implementation OPEN of 2026-10-06): (a) instance ID: answered (BIN, C38); (b) liquid monitors: no scene object carries one in this install (OBS, C39); still open whether the client would create the volume for a generated object (Tessera Decision: it does) | §9.4 | M4 (only if another install has such objects) |
@@ -2339,5 +2629,10 @@ With *φ* = 32° the same mover slides at 3.44 m/s; with *φ* = 0 it does not mo
 | 2026-10-06 | Movement revision for M4.5 criterion 4. §9.3: the census table is marked a data census (no run-time content-layer or creation-type filter; draw column uses the plain suppression, not E22); the "what blocks a walker" rule now applies the content-layer test (default *L* = 1, *I* = 0) and drops creation types 7 and 8; the two OPENs are resolved with the OBS counts (data 82,139 / 97,688; run-time 73,509 / 88,749; with 7/8 dropped 73,508 / 88,748; 1,651,097 → 1,607,212 → 1,606,311 total). New narrow OPEN: BIN did not trace that the collision **body** is gated on the content-layer test (Tessera gates it as a Decision). §11.3: new BIN mechanism paragraph (C28) — the mover uses the middleware's character **proxy**; the walkable/slide/wall decision is of the surface **underfoot**, a too-steep support is uncontrolled (state 6, slide) and a vertical plane blocks uphill motion; resolves SL1–SL3. §12.3 step 6 rewritten to classify the support underfoot and enter state 6 on a steep support regardless of the previous step; OPEN (e) and (f) revised so the frontal-wall treatment never suppresses a steep support. New facts C27, C28; invariant CO12; BIN row third pass (strings/RTTI only); Q9 partly answered. |
 | 2026-10-07 | Revision for incident 0018 (decision 0018): the spec body now states every client fact the released `tessera-physics` relies on, and every place where it does something else is a Tessera Decision or an OPEN. Header: status Review; the long review records moved to the dirty-room review log, a short record kept. Provenance: BIN third pass corrected (no character-proxy class in the executable; the proxy conclusion withdrawn); BIN fourth pass (13)–(19); OBS fourth and fifth passes; C17, C25, C27, C28 restated; new C29–C36. §3.1, §3.7: the three implementation OPENs of 2026-10-06 become Tessera Decisions. §5.3: flags of the cell body. §5.8.1: lookup Decisions (cells without offset, candidate box, precision, duplicate numbers, across landblocks). §6.1: point-query edges; ceiling variant a Decision. §6.6: order and precision Decisions. §7: detail geometry Decision. §8 rewritten: one compound shape per setup and the per-part scale rules (§8.1, BIN), the 0.05 m convex radius (§8.2, BIN), Tessera's representation and its differences (§8.3), with an implementer OPEN; answers the two §8 OPENs of 2026-10-06. §9.1: lookup includes 0x78 extra sets (BIN, `scenery.md` S31) and the counts with them; answers the OPEN of 2026-10-06. §9.2: Tessera Decisions on bodies of ethereal objects and query categories. §9.3 rewritten: census recomputed over the 2,380,675 Physics SEDs with a position (the table of 2026-10-06 summed to 2,380,699 and counted the mixed setups apart); the content-layer test and creation-type filter are BIN (C25, C29); the filter reads the SED's own creation type first, so in this install it removes only the one Physics SED whose effective creation type is 0 (the chain-only reading would remove 901); answers both 2026-10-07 implementer OPENs and resolves the §9.3/§9.4 inconsistency; new implementer OPEN (the released code reads the chain only). §9.4: generated objects are created whatever their creation type (BIN). §10.1, §10.3: names of the layer and MoveTo properties (OBS), hostile-value and built-in-record Decisions. §10.6: capsule placement Decision. §11.3: face-normal rule with absolute values; the middleware-documentation paragraph and the class names removed; C28 restated as BIN flags plus a Probable reading; new §11.3.1 (support search and crease rule), §11.4 (move procedure), §11.5 (step-up), all BIN. §12 rewritten: world representation, mover and step restated; §12.4 lists the readings (a)–(w) as Decisions (the 2026-10-06 and 2026-10-07 implementer OPENs, plus (u), (v), (w) that the code cites), with the geometric criterion for steep contacts (q); §12.5 tabulates where Tessera differs from §11.3.1–§11.5, with an implementer OPEN. §13: CO12 revised, CO13 (state 6, synthetic), CO14, CO15. §14.9: worked example of riding onto a steep bank. §16: Q9, Q12 updated; Q13, Q14 new. Change log: the 2026-10-06 row's stray third cell removed and the rows put in date order. |
 | 2026-10-07 | Second revision, answering the review of 2026-10-07 (F1–F7). **F1:** §11.3 states the client's face-normal rule in full (stored corner order, body rotation, triangles only, strict absolute compares). The root kind of the flip is identified (BIN fifth pass, C37) as the middleware's generic tree kind, which no traced builder produces, so the flip is expected never to apply; new OPEN with a Tessera Decision (no Tessera body gets the flip). New §12.4 (x) states Tessera's capsule-side face normal and signed compares as a Decision, (q) cites it, and §12.5 has a new "Face normal" row. **F2:** §6.3 rewritten: the loader builds no tree at load time, and a table gives the three physics bodies (mesh with tree; height field; bare mesh); Q4 updated. **F3:** the first 2026-10-07 row no longer says that the creation-type filter removes nothing (it removes the one creation-type-0 SED). **F4:** §9.3 item 3: no value anywhere counts as 0 and is rejected (BIN, fifth pass, question 23); C29 extended. **F5:** §9.3 states that the layer list and the scale use the SED-then-chain lookup, and the implementer OPEN notes that the released code reads the SED only. **F6:** §12.4 (f) gives the jump-step support rule (no support in the step a jump starts, also in water, so wading 1 → 2) and defines "rising in the air". **F7:** §16 rows Q15 (§6.5 OPEN), Q16 (§9.4 implementation OPEN) and Q17 (face-normal root kind). The §9.4 implementation OPEN is answered: (a) the generated-object instance ID layout (BIN fifth pass, C38; §15 row for `scenery.md` §7.6), (b) no scene object carries a liquid monitor (OBS sixth pass, C39). BIN row: fifth pass (20)–(23). OBS row: sixth pass. Q13 now covers the face-normal rule. |
+| 2026-10-08 | Revision answering every implementer OPEN of 2026-10-07 from the binary (BIN sixth pass, questions 24–30; OBS seventh pass). Status Revised. **Confirmed as the client's behaviour:** §5.3 (cell lookup independent of the cell body, which reads no property; no client size limit; C40), §9.1 boolean value types, §9.3 points 3 and 4, §11.1 condition types (C41). **Changed (client behaviour stated):** §9.1 ethereality reads only Bitfield32 (type 18); §9.3 item 3 and point 1: the creation type is read only from an enum or property-ID value, a 32-bit integer counts as 0 (and §15 row for `entity-descriptor.md` §4.9); §9.3 point 2 and §8.1: the physics scale is uniform, z of `Physics_AdjustableScale` × z of `Model_Scale`, with the client's fallbacks (C42), and Tessera's scale bullet of §8.3 follows it; §10.6 and §12.2: the capsule is scaled by that physics scale, not the render model scale (Elf male and High-elf capsules become 3–5 % smaller; C18). **New client facts:** §8.2 cell physics meshes carry the 0.05 m radius (C32 now BIN); §6.1 table of the stored corner order of all terrain and ceiling triangles (C43), §6.4 pointer, §14.4 example aligned to it; new §11.3.2: `Entity_Element` from the support flags and the mover's `Volume_IsLiquid` (C28 now BIN), with §10.4 and the §11.5 OPEN narrowed. **Tessera Decisions recorded:** §12.4 (g), (k), (u), (v), (w) carry the solver details of the implementer OPEN, new (y) re-limits the speed after the slide; §8.3 and §12.5 OPENs answered (no client fact missing; adoption of the radius stays a Decision, Q13). New invariants CO16, CO17; Q9 and Q13 updated; editorial fixes in §12.4 (x) item 2 and before §14. |
 | 2026-10-08 | Revision answering the implementer OPEN of 2026-10-07 on walks WL2, GN1, GN2 and GN4 (BIN seventh pass, questions 31–35). Status Revised. New §11.6: the player controller's update (target, control velocity, physics velocity, requested displacement, request flags with the constant 0.5502 m step-up height, ground snap, contact projection, the `Entity_Element` table with the in-water rule, the contact-loss flag, published slider values). New §11.7: a mover held forward against a face slides along it at *s* · sin *φ*; a steep contact below the step-up height stops it unless the step-up lands on walkable support; informative notes on walk checks and on the height of a capsule's feet above a slope. The implementer OPEN after §11.5 is answered and removed; the RE OPEN is narrowed (impulse vector and jump, caller's offset, support shape, `ForceStrafe`, water-surface query, per-contact flag, fall damage). §10.1: meanings of the speeds, `ControlAcceleration` (axis order), `VelocityDamper`, `RampTime`, Gravity, terminal velocity, `StepUpHeight`, `FloatHeight`, `AllowContactLoss` restated from BIN. §10.4 and §11.3.1: the `Entity_Element` link is BIN (C28 mark raised). §11.4: pointer to §11.6. §12.4 (b), (l): notes on the original. §12.5: ten new difference rows and the implementer OPEN revised. New facts C44–C50; new worked example §14.10; Q9 and Q11 updated. |
 | 2026-10-08 | Second revision of the day, answering the review of 2026-10-08 (R1–R5 and the optional items; BIN seventh pass question 36). **R5:** this revision's facts, BIN questions and pass are renumbered after the parallel 2026-10-08 revision in another worktree (BIN sixth pass, questions 24–30, C40–C43, CO16–CO17): BIN seventh pass, questions 31–35, facts C44–C50 (were C40–C46), invariant CO18; the maintainer merges the two without duplicate ids. **R1:** new C51 for §11.6 item 8 and the §10.1 `RampTime` row. **R3:** item 8 and the §10.1 `RampTime` row now state the ramped setter's rule (constant 1/*T* per second in the property's own unit, value taken at once for a first value, *T* < 0.0002 s or a change of at most 0.0002; BIN 36) and cite `script-table.md` T30 and `skeleton-anim.md` K28; worked example of the speed slider lag. **R2:** the unsupported "Probable" on the original's capsule placement in §11.7 is an OPEN, with new §16 Q18 and a pointer to the §10.6 Decision. **R4:** §15 row for `water.md` §7.4; §10.4 points to it. **Optional:** §11.6 item 2 states the opposite strafe pairing as the client's rule (re-read, BIN 36) with an OPEN on its intent; new invariant CO18 for the wall-slide speed *s* · sin *φ*. The §11.7 RE OPEN adds the setter's client-wide immediate flag. |
+| 2026-10-08 | Owner-observation pass (spec writer; BIN questions 60–63 and an OBS census, numbered from C60 to stay clear of parallel revisions). Status Revised. New §11.8 (the player's movement input: command values, walk mode halving the values, quantisation to 15 × 17 levels and the decode rule, the `Movement_MovementStyle` rule, a table of resulting speeds: walking 2.5 m/s forward, 2.25 m/s backward, 2.565 m/s sideways), §11.9 (turning on foot at `[Input] TurnKeySpeed`, 150 degrees per second initially; mounted turning), §11.10 (PhysicsImpulse nodes fill the impulse vector for one update; the `IsJump` rule; the avatar's jump values; an inferred 1.2 m apex and 0.8 s air time; new OPEN). §11.6 strafe-side OPEN answered in part; §11.7 Q9 OPEN narrowed; §12.5 third table; §13 invariants CO60–CO62; §16 Q9. Provenance: OBS and BIN rows extended, C60–C63. Answers owner observations O14.4, O18 step 1 and O70 and narrows O18 step 2. |
+| 2026-10-09 | Merge of the two parallel 2026-10-08 revisions (remediation: BIN sixth pass, C40–C43, CO16–CO17, §11.3.2; walks: BIN seventh pass, C44–C51, CO18, §11.6–§11.7, §14.10) into one text; review record, C28, §10.4, §11.3, §12.5 answer, Q9 and the §15 `water.md` §7.4 row combined; their disagreement on the in-water input of `Entity_Element` recorded as an OPEN in §11.3.2. No fact changed. |
+| 2026-10-09 | Merge of main into the specs-5 branch: the merged main text above (remediation and walks revisions) and this branch's owner-observation pass of 2026-10-08 (§11.8–§11.10, C60–C63, CO60–CO62) combined; OBS and BIN provenance rows, header, review record and §16 Q9 joined (Q9: "what fills the impulse vector" moves from still open to answered by §11.10). Status Revised. No fact changed. |
+| 2026-10-09 | Revision answering the review of 2026-10-09 (V1–V4; spec writer, no new research: the facts come from BIN 62–63, OBS and `game-controls.md` §5.3.2 already cited). **V1:** §11.10 OPEN now says the owner's jump measurement (O18 step 2) is pending and the 1.2 m / 0.8 s are predictions. **V2:** the §1 legend defines the mark Inferred; C63, §11.10 and the §12.5 jump row use it. **V3:** §11.6 item 3 points to §11.10 for what fills the impulse vector. **V4:** §11.9 and C62 state the mounted turn rate as 150 × (the gait's `Mount_Control_Turn_Rate_Multiplier_*` + the add-mod property's value), the sum first, the speed multiplier not involved, with the gait source and an example; C62 cites GC15. Provenance kept. Status Revised, awaiting re-review. |

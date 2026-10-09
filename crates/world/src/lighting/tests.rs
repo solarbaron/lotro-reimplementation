@@ -252,6 +252,8 @@ mod pid {
     pub const NIGHT_RANGE: u32 = 0x7000_0007;
     pub const DRIVEN: u32 = 0x7000_0008;
     pub const LAYER: u32 = 0x7000_0009;
+    pub const ONLY_PARENT: u32 = 0x7000_000A;
+    pub const NEVER_PARENT: u32 = 0x7000_000B;
 }
 
 #[test]
@@ -266,6 +268,8 @@ fn light_entities_from_landblock_info() {
         ("Entity_ContentLayers", LAYERS),
         ("Light.Script@Entity.Night.m_fLightRange", NIGHT_RANGE),
         ("Light_DrivenByDayCycle", DRIVEN),
+        ("Light_OnlyInfluenceParent", ONLY_PARENT),
+        ("Light_NeverInfluenceParent", NEVER_PARENT),
     ]
     .into_iter()
     .collect();
@@ -280,6 +284,8 @@ fn light_entities_from_landblock_info() {
         (NIGHT_RANGE, 9),
         (DRIVEN, 21),
         (LAYER, 8),
+        (ONLY_PARENT, 21),
+        (NEVER_PARENT, 21),
     ]
     .into_iter()
     .map(|(p, t)| (p, PropertyType::from_code(t)))
@@ -306,9 +312,16 @@ fn light_entities_from_landblock_info() {
                 (KEY, TestValue::Bool(true)),
                 (DRIVEN, TestValue::Bool(true)),
                 (NIGHT_RANGE, TestValue::Float(4.0)),
+                (ONLY_PARENT, TestValue::Bool(true)),
             ],
         ),
-        light(2, vec![(RANGE, TestValue::Float(f32::NAN))]),
+        light(
+            2,
+            vec![
+                (RANGE, TestValue::Float(f32::NAN)),
+                (NEVER_PARENT, TestValue::Bool(true)),
+            ],
+        ),
         // Content layer 0x10000019 only: not in the shared world.
         light(
             3,
@@ -338,7 +351,10 @@ fn light_entities_from_landblock_info() {
     assert!(a.params.key_light && !a.params.specular_stored);
     assert_eq!(a.params.at_time(true), (4.0, true));
     assert_eq!(a.params.at_time(false), (10.0, true));
+    // The parent switches of `lighting.md` §8.5 step 3 (`walker.md` §14.3 row W-L2).
+    assert!(a.params.only_influence_parent && !a.params.never_influence_parent);
     let b = &lights[1];
+    assert!(!b.params.only_influence_parent && b.params.never_influence_parent);
     assert!(b.interior);
     assert_eq!(b.params.range, DEFAULT_RANGE, "non-finite range falls back");
     // With the named layer active the third light appears.

@@ -88,6 +88,7 @@
 //! | [`world_view`] | The landblock and sky views |
 //! | `world_records` | Record-view tables of the M4.5 world records |
 //! | [`collision_overlay`] | Collision overlays of the 3D view from `tessera-physics` geometry |
+//! | [`gameplay`] | The "Gameplay" view: item, skill, effect, trait, creature, quest, vendor, loot, recipe, map and particle cards from `tessera_formats::gameplay` (workers) |
 
 #![warn(missing_docs)]
 
@@ -102,6 +103,7 @@ pub mod decoders;
 mod error;
 pub mod fonts;
 pub mod frame_stats;
+pub mod gameplay;
 pub mod geometry;
 pub mod hex;
 pub mod history;

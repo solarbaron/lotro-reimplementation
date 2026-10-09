@@ -73,6 +73,9 @@
 //! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
 //! | [`imposter`] | imposter tables (0x27): [`ImposterTable`] | `misc-records.md` §5 |
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
+//! | [`font`] | fonts (0x42): metrics, glyph table, atlas DIDs | `fonts.md` §3 |
+//! | [`ui_layout`] | UI layouts (0x22): elements, states, media items, labels, base chains | `ui-layout.md` §3–§6, §10–§13 |
+//! | [`gameplay`] | gameplay record families (items, combat, creatures, quests, economy, map data, particles, misc records) and their shared helpers ([`gameplay::common`]) | `items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `particles.md`, `misc-records.md` |
 //! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, distant-landscape sectors (kind 5, [`SectorRecord`]), region descriptors (0x0F) and their eight table slots | `landblock.md`, `distant-landscape.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
 mod any;
@@ -86,6 +89,8 @@ pub mod did_map;
 pub mod enum_mapper;
 pub mod environment;
 mod error;
+pub mod font;
+pub mod gameplay;
 pub mod imposter;
 pub mod instance;
 pub mod item;
@@ -104,6 +109,7 @@ pub mod string_table;
 pub mod surface;
 pub mod terrain_type;
 pub mod texture_list;
+pub mod ui_layout;
 pub mod water;
 
 pub use any::AnyRecord;
@@ -126,6 +132,7 @@ pub use decode::{
     decode_string_table, decode_surface, decode_terrain_scene_table, decode_terrain_type_table,
     decode_texture_list, decode_visual_template, decode_water_table,
 };
+pub use decode::{decode_font, decode_ui_layout};
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
     name_hash_utf16,
@@ -134,6 +141,7 @@ pub use did_map::{DataIdEntry, DataIdGroup, DataIdMap};
 pub use enum_mapper::EnumMapper;
 pub use environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 pub use error::{FormatError, Result};
+pub use font::{Font, Glyph};
 pub use imposter::{ImposterEntry, ImposterTable, decode_imposter_table};
 pub use landblock::{
     BlockMap, BlockMapDescriptor, CollisionTree, LandblockData, LandblockGroupRecord,
@@ -153,6 +161,7 @@ pub use reader::{Reader, TSize, Utf16String};
 pub use record::Record;
 pub use scenery::{Scene, SceneChoiceTable, TerrainSceneTable};
 pub use script_table::{Node, NodeData, NodeKind, Script, ScriptTable, Scriptlet};
+pub use ui_layout::{ElementDesc, MediaItem, StateBlock, UiLayout};
 // Record types and resolvers only; the setup family's field types (frames, collision
 // volumes, `Aabb`, ...) stay under `setup::`.
 pub use setup::{

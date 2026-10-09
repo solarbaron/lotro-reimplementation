@@ -25,6 +25,12 @@ const SF_GLOSS_NORMAL_ALPHA: u32 = 32u;
 // The base texture's alpha is not an opacity (it is the gloss): the opacity is 1 for the
 // alpha test and the output alpha (material.md §11.2, §11.3).
 const SF_OPACITY_ONE: u32 = 64u;
+// An unlit surface drawn without distance fog (WorldSurfaceOptions::fog off; lighting.md §7
+// code 0x00).
+const SF_NO_FOG: u32 = 128u;
+// A fixed-function blend (AlphaMode::Fixed): the opacity a blend factor reads is the opacity
+// texel alone, not x M.alpha (material.md §11.3, rule for unlit records).
+const SF_FACTOR_OPACITY: u32 = 256u;
 const SF_SRGB_BASE: u32 = 1u;
 const SF_SRGB_NORMAL: u32 = 2u;
 
@@ -40,6 +46,8 @@ struct ModelIn {
     @location(2) tangent: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) color: vec4<f32>,
+    // The stored binormal (+V), zero when the mesh has none (GpuVertex::binormal).
+    @location(13) binormal: vec4<f32>,
 };
 
 fn surface_flag(bit: u32) -> bool {

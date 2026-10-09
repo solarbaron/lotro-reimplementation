@@ -22,6 +22,29 @@ pub const FRAME: Duration = Duration::from_micros(16_667);
 /// Consecutive settled frames before a screenshot is taken.
 const SETTLED_FRAMES: u32 = 20;
 
+/// How a `--screenshot` run waits for the spawn area to settle (`walker.md` §7). Other
+/// headless runs keep their own waits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettleWait {
+    /// At most `--settle-timeout` seconds of wall-clock time after the viewer is placed,
+    /// and `--settle-timeout` + 120 s for the whole run (the command line).
+    #[default]
+    Timeout,
+    /// As long as loading progresses, counted in frames rather than seconds, so a slow or
+    /// loaded machine waits longer instead of giving up: the run gives up (screenshot
+    /// taken, not settled) after `stall_frames` consecutive frames in which
+    /// [`Walker::load_progress`](crate::walker::Walker::load_progress) did not change, or
+    /// after `max_frames` loop iterations in all (start-up included). Frames are paced at
+    /// 60 per second unless `--unpaced`, so both are at least that many 1/60 s of
+    /// wall-clock time. For tests that must not depend on the machine's load.
+    Progress {
+        /// Consecutive frames without loading progress before giving up.
+        stall_frames: u64,
+        /// Loop iterations (start-up and frames) before giving up.
+        max_frames: u64,
+    },
+}
+
 /// What a headless run produced.
 #[derive(Debug, Clone, Default)]
 pub struct HeadlessReport {
@@ -29,6 +52,9 @@ pub struct HeadlessReport {
     pub frames: u64,
     /// Whether the area had settled when the screenshot was taken.
     pub settled: bool,
+    /// What kept the area from settling when the screenshot was taken (empty when
+    /// settled; `Walker::unsettled`).
+    pub unsettled: Vec<&'static str>,
     /// The flight's frame summary.
     pub summary: Option<Summary>,
     /// Where the viewer ended.
@@ -62,12 +88,23 @@ pub struct PlacedReport {
     pub figure_shown: bool,
 }
 
-/// Runs the walker offscreen (module docs).
+/// Runs the walker offscreen (module docs); a screenshot waits at most
+/// `--settle-timeout` ([`SettleWait::Timeout`]).
 ///
 /// # Errors
 ///
 /// No install, no GPU, the walker could not start, or the output could not be written.
 pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
+    run_with(args, SettleWait::Timeout)
+}
+
+/// Runs the walker offscreen (module docs); a screenshot waits for the area to settle as
+/// `wait` says.
+///
+/// # Errors
+///
+/// No install, no GPU, the walker could not start, or the output could not be written.
+pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport> {
     if args.walk_path.is_some() {
         // Scripted walks need no GPU (`walker::movement::run`).
         let report = crate::walker::movement::run::run_cli(args)?;
@@ -117,11 +154,28 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             .saturating_add(Duration::from_secs_f64(flight_secs.max(0.0)))
             .saturating_add(Duration::from_secs(args.duration.unwrap_or(0))),
     );
+    // Progress waits replace the wall-clock limits of screenshot runs by frame counts.
+    let progress_wait = match wait {
+        SettleWait::Progress {
+            stall_frames,
+            max_frames,
+        } if args.screenshot.is_some() && args.fly_path.is_none() && args.duration.is_none() => {
+            Some((stall_frames, max_frames))
+        }
+        _ => None,
+    };
     let mut report = HeadlessReport::default();
     let mut last = Instant::now();
     let mut settled_frames = 0u32;
     let mut viewport_set = false;
+    let mut iterations = 0u64;
+    let mut stall = StallCounter::default();
     let result = loop {
+        iterations = iterations.saturating_add(1);
+        let over_limit = |now: Instant| match progress_wait {
+            Some((_, max_frames)) => iterations > max_frames,
+            None => now > deadline,
+        };
         let now = Instant::now();
         let dt = now.saturating_duration_since(last).as_secs_f32();
         last = now;
@@ -133,7 +187,7 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
         }
         let notices = rt.take_notices();
         let Some(walker) = host.walker.as_mut() else {
-            if now > deadline {
+            if over_limit(now) {
                 break Err(anyhow::anyhow!("world did not load in time"));
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -152,23 +206,32 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             rt.world
                 .as_mut()
                 .map(|w| w as &mut dyn crate::walker::WalkerSession),
+            &mut rt.plugins,
             now,
             dt,
         );
-        let mut frame = renderer.begin_offscreen_frame(&target)?;
-        walker.draw(&renderer, &mut frame);
-        let t_end = Instant::now();
-        let stats = renderer.end_frame(frame)?;
-        walker.record_render_stats(&stats);
-        let t_wait = Instant::now();
-        renderer
-            .context()
-            .wait_idle()
-            .context("waiting for the GPU")?;
-        walker.record_frame_timing(
-            t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
-            t_wait.elapsed().as_secs_f64() * 1e3,
-        );
+        // A renderer error ends the loop through `finish`, which still shuts the walker
+        // down and writes what it can.
+        let drawn = (|| -> anyhow::Result<()> {
+            let mut frame = renderer.begin_offscreen_frame(&target)?;
+            walker.draw(&renderer, &mut frame);
+            let t_end = Instant::now();
+            let stats = renderer.end_frame(frame)?;
+            walker.record_render_stats(&stats);
+            let t_wait = Instant::now();
+            renderer
+                .context()
+                .wait_idle()
+                .context("waiting for the GPU")?;
+            walker.record_frame_timing(
+                t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
+                t_wait.elapsed().as_secs_f64() * 1e3,
+            );
+            Ok(())
+        })();
+        if let Err(e) = drawn {
+            break Err(e);
+        }
         report.frames += 1;
 
         if args.fly_path.is_some() {
@@ -188,21 +251,31 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             } else {
                 0
             };
-            let timed_out = walker.placed()
-                && now.saturating_duration_since(started)
-                    > Duration::from_secs(args.settle_timeout);
+            let timed_out = match progress_wait {
+                None => {
+                    walker.placed()
+                        && now.saturating_duration_since(started)
+                            > Duration::from_secs(args.settle_timeout)
+                }
+                Some((stall_frames, max_frames)) => {
+                    stall.observe(walker.load_progress()) >= stall_frames
+                        || iterations >= max_frames
+                }
+            };
             if settled_frames >= SETTLED_FRAMES || timed_out {
                 report.settled = settled_frames >= SETTLED_FRAMES;
                 if !report.settled {
+                    report.unsettled = walker.unsettled();
                     tracing::warn!(
-                        waiting = ?walker.unsettled(),
+                        waiting = ?report.unsettled,
+                        stalled_frames = stall.stalled,
                         "area not fully loaded; taking the screenshot anyway"
                     );
                 }
                 break Ok(());
             }
         }
-        if now > deadline {
+        if over_limit(now) {
             break Err(anyhow::anyhow!("timed out"));
         }
         if ev.quit {
@@ -216,6 +289,35 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
     let out = finish(args, &mut rt, &mut host, &mut renderer, &mut report, result);
     rt.shutdown();
     out.map(|()| report)
+}
+
+/// Counts consecutive frames whose progress snapshot equals the previous one.
+#[derive(Debug)]
+struct StallCounter<P> {
+    last: Option<P>,
+    stalled: u64,
+}
+
+impl<P> Default for StallCounter<P> {
+    fn default() -> Self {
+        Self {
+            last: None,
+            stalled: 0,
+        }
+    }
+}
+
+impl<P: PartialEq> StallCounter<P> {
+    /// Records this frame's snapshot; returns the frames in a row without a change.
+    fn observe(&mut self, p: P) -> u64 {
+        if self.last.as_ref() == Some(&p) {
+            self.stalled = self.stalled.saturating_add(1);
+        } else {
+            self.last = Some(p);
+            self.stalled = 0;
+        }
+        self.stalled
+    }
 }
 
 fn finish(
@@ -310,5 +412,38 @@ fn keep(first: &mut Option<anyhow::Error>, r: anyhow::Result<()>) {
         && first.is_none()
     {
         *first = Some(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stall_counter_resets_on_any_change() {
+        let mut c = StallCounter::default();
+        assert_eq!(c.observe(1), 0, "the first snapshot is progress");
+        assert_eq!(c.observe(1), 1);
+        assert_eq!(c.observe(1), 2);
+        assert_eq!(c.observe(2), 0, "a change is progress");
+        assert_eq!(c.observe(1), 0, "also a change back");
+        assert_eq!(c.observe(1), 1);
+    }
+
+    #[test]
+    fn a_new_pose_counts_as_progress() {
+        use crate::walker::LoadProgress;
+        let a = LoadProgress::default();
+        let mut b = a;
+        b.characters[2] += 1;
+        let mut c = StallCounter::default();
+        c.observe(a);
+        assert_eq!(c.observe(a), 1);
+        assert_eq!(c.observe(b), 0, "a new pose is progress");
+    }
+
+    #[test]
+    fn settle_wait_defaults_to_the_command_line_timeout() {
+        assert_eq!(SettleWait::default(), SettleWait::Timeout);
     }
 }

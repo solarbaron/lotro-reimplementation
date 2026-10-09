@@ -22,6 +22,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg"], optio
 proptest.workspace = true
 # Real-data tests only (tests/real_data.rs); the library itself stays decoupled from the container.
 tessera-dat = { path = "../dat" }
+# Real-data tests of the gameplay families only (tests/gameplay_*_real_data.rs): the class
+# library (parent map) and record access. A dev-dependency cycle; integration tests share
+# one build of this crate with it, unit tests must not use it.
+tessera-wstate = { path = "../wstate" }
 
 [lints]
 workspace = true

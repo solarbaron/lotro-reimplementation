@@ -7,10 +7,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use tessera_formats::landblock::HeightGrid;
 use tessera_formats::{BlockMap, PropertySchema};
-use tessera_physics::controller::WaterSample;
+use tessera_physics::controller::{WaterSample, water_from_spans};
 use tessera_physics::geometry::{
-    CollisionSetBuilder, LANDBLOCK_SIDE, LiquidBox, LiquidFlags, MAX_LIQUID_BOXES, Plane,
-    WaterPlane,
+    CollisionSetBuilder, LANDBLOCK_SIDE, LiquidBox, LiquidFlags, LiquidSpan, MAX_LIQUID_BOXES,
+    Plane, WaterPlane,
 };
 use tessera_physics::{PhysicsError, WaterQuery};
 
@@ -28,103 +28,36 @@ use crate::source::WorldSource;
 /// caller bug and further inserts are refused with a warning).
 pub const MAX_WATER_MAP_ENTRIES: usize = 16_384;
 
-/// Tolerance of the surface walk, units: a box whose interval starts at most this far above
-/// the current top continues the column (the boxes of one volume entity meet exactly).
-const SURFACE_JOIN: f64 = 1e-3;
-/// A column top this close to the water plane's level snaps to the level.
-const PLANE_SNAP: f64 = 1e-3;
-
-/// The z-interval of the vertical line through (x, y) inside a placed box, in f64, or
-/// `None` when the line misses the box. The containment rule is the one of
-/// [`LiquidBox::contains`]: the inverse-rotated offset from the box position, per axis
-/// between min × scale and max × scale.
-fn column_interval(b: &LiquidBox, x: f32, y: f32) -> Option<(f64, f64)> {
-    let t = &b.transform;
-    let rows = t.rotation.to_rows();
-    // local(z) = Rᵀ (p₀ − position) + z · Rᵀ e_z, with p₀ = (x, y, 0).
-    let rel = [
-        f64::from(x) - f64::from(t.position[0]),
-        f64::from(y) - f64::from(t.position[1]),
-        -f64::from(t.position[2]),
-    ];
-    let mut lo = f64::NEG_INFINITY;
-    let mut hi = f64::INFINITY;
-    // Column a of the rotation matrix is the image of local axis a: (Rᵀ v)ₐ = colₐ · v.
-    let cols: [[f64; 3]; 3] =
-        std::array::from_fn(|a| std::array::from_fn(|i| f64::from(rows[i][a])));
-    for (a, col) in cols.iter().enumerate() {
-        let c = col[0] * rel[0] + col[1] * rel[1] + col[2] * rel[2];
-        let k = col[2];
-        let s = f64::from(t.scale[a]);
-        let (bmin, bmax) = (f64::from(b.min[a]) * s, f64::from(b.max[a]) * s);
-        if k.abs() < 1e-12 {
-            if c < bmin || c > bmax {
-                return None;
-            }
-            continue;
-        }
-        let (z1, z2) = ((bmin - c) / k, (bmax - c) / k);
-        let (z1, z2) = if z1 <= z2 { (z1, z2) } else { (z2, z1) };
-        lo = lo.max(z1);
-        hi = hi.min(z2);
-    }
-    (lo.is_finite() && hi.is_finite() && lo <= hi).then_some((lo, hi))
-}
-
 /// The water at landblock-frame point `p` over `boxes` (each with the offset of its own
 /// frame in `p`'s frame) and the landblock's water `plane` (`water.md` §6.3, §7): `None`
 /// unless a liquid box contains `p` (the physics rule of `water.md` §7.4). The surface is
-/// the top of the liquid column through `p`: the boxes are joined upward from `p` while
-/// they touch, and a top within 1 mm of the plane's level is the level itself. The column
-/// intervals are sorted once and swept upward, so the cost is O(*n* log *n*) in the number
-/// of boxes.
+/// the top of the contiguous liquid column through `p`, or the plane's level when that top
+/// lies within 1 mm of it (the Tessera Decision of `water.md` §7.4). The rule itself
+/// is `tessera-physics`' [`water_from_spans`], so the walker's queries and the controller's
+/// agree; this function only gathers each box's span over the column
+/// ([`LiquidBox::column_span`]), moved by its offset. The spans are sorted once and swept
+/// upward, so the cost is O(*n* log *n*) in the number of boxes.
 #[must_use]
 pub fn column_water<'a>(
     p: [f32; 3],
     plane: Option<WaterPlane>,
-    boxes: impl Iterator<Item = (&'a LiquidBox, [f32; 3])> + Clone,
+    boxes: impl Iterator<Item = (&'a LiquidBox, [f32; 3])>,
 ) -> Option<WaterSample> {
     if !p.iter().all(|c| c.is_finite()) {
         return None;
     }
-    let local = |o: [f32; 3]| [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
-    let flags = boxes
-        .clone()
-        .filter(|(b, o)| b.contains(local(*o)))
-        .fold(LiquidFlags::default(), |acc, (b, _)| acc.union(b.flags));
-    if !flags.liquid {
-        return None;
-    }
-    let mut intervals: Vec<(f64, f64)> = boxes
-        .filter(|(b, _)| b.flags.liquid)
+    let mut spans: Vec<LiquidSpan> = boxes
         .filter_map(|(b, o)| {
-            let q = local(o);
-            column_interval(b, q[0], q[1]).map(|(lo, hi)| {
-                let dz = f64::from(o[2]);
-                (lo + dz, hi + dz)
+            let (bottom, top) = b.column_span(p[0] - o[0], p[1] - o[1])?;
+            let dz = f64::from(o[2]);
+            Some(LiquidSpan {
+                bottom: bottom + dz,
+                top: top + dz,
+                flags: b.flags,
             })
         })
         .collect();
-    // Sweep upward in order of the interval bottoms: an interval that starts within
-    // SURFACE_JOIN of the current top extends it. Once one starts above that, every later
-    // one does too (the top only grows), so the column ends there. This reaches the same
-    // fixed point as repeatedly joining every touching interval.
-    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut top = f64::from(p[2]);
-    for &(lo, hi) in &intervals {
-        if lo > top + SURFACE_JOIN {
-            break;
-        }
-        top = top.max(hi);
-    }
-    if let Some(w) = plane
-        && (top - f64::from(w.level)).abs() <= PLANE_SNAP
-    {
-        top = f64::from(w.level);
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    let surface = (top as f32).max(p[2]);
-    Some(WaterSample { surface, flags })
+    water_from_spans(p, plane, &mut spans)
 }
 
 /// One landblock's water: its §6.2 decision and every liquid box over it (the landblock

@@ -145,7 +145,7 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(info.skin, summary.ok());
             assert_eq!(
                 prepared.gpu_bytes(),
-                u64::from(info.vertex_count) * (40 + 12)
+                u64::from(info.vertex_count) * (48 + 12)
                     + u64::from(info.index_count + info.edge_index_count) * 4
             );
             assert_eq!(

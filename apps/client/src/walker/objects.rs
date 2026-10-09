@@ -207,12 +207,39 @@ pub type CellSchema = Arc<dyn PropertySchema + Send + Sync>;
 ///
 /// A part DID with prefix 0x01 is an interior cell's geometry (`collision.md` §5): the
 /// record is decoded and its embedded render mesh (§5.7, `landblock.md` §4.14) is what the
-/// part draws, decoded with the record's directory stamp.
+/// part draws, decoded with the record's directory stamp. A key whose variant is not 0
+/// draws the cell with the look of that index ([`super::looks::CellLooks::asset_key`],
+/// `landblock.md` §4.14).
 pub struct PartDecoder {
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     mesh_config: MeshConfig,
     limits: GeometryLimits,
     cell_schema: Option<CellSchema>,
+    looks: Option<Arc<super::looks::CellLooks>>,
+}
+
+impl PartDecoder {
+    /// The plan of `surface`, with `look`'s matching groups layered on it.
+    fn plan(&self, surface: Did, look: Option<&super::looks::CellLook>) -> MaterialPlan {
+        let layering = look.and_then(|l| {
+            let key = self.materials.surface_record(surface).ok()?.binding_key;
+            l.layering(key, None)
+        });
+        let resolved = match &layering {
+            Some(layering) => self
+                .materials
+                .resolve_layered(surface, layering)
+                .map(Arc::new),
+            None => self.materials.resolve_surface(surface),
+        };
+        match resolved {
+            Ok(m) => plan_material(&m),
+            Err(e) => {
+                tracing::debug!(surface = %format_args!("{:#010x}", surface.0), "material unresolved: {e}");
+                MaterialPlan::FALLBACK
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for PartDecoder {
@@ -238,6 +265,10 @@ impl Decoder for PartDecoder {
         bytes.truncate(n);
         let did = Did(key.did);
         let stamp = u16::try_from(stamp).ok();
+        // A cell drawn with its appearance list (`landblock.md` §4.14).
+        let look = (key.variant != 0)
+            .then(|| self.looks.as_ref()?.look(key.variant))
+            .flatten();
         let mesh = if did.prefix() == CELL_GEOMETRY_PREFIX {
             let schema = self
                 .cell_schema
@@ -278,15 +309,8 @@ impl Decoder for PartDecoder {
                 .parts
                 .iter()
                 .map(|p| {
-                    p.surface.map_or(MaterialPlan::FALLBACK, |s| {
-                        match self.materials.resolve_surface(s) {
-                            Ok(m) => plan_material(&m),
-                            Err(e) => {
-                                tracing::debug!(surface = %format_args!("{:#010x}", s.0), "material unresolved: {e}");
-                                MaterialPlan::FALLBACK
-                            }
-                        }
-                    })
+                    p.surface
+                        .map_or(MaterialPlan::FALLBACK, |s| self.plan(s, look.as_deref()))
                 })
                 .collect();
             drop(geo);
@@ -695,11 +719,14 @@ struct ObjState {
     faded_at: u64,
 }
 
-/// Whether an object's fade restarts in draw frame `frame` (`walker.md` §14.5: a block not
-/// drawn in the previous frame resets its objects' fades): its fade was not updated in the
-/// frame before, because its block was culled or not reached, or because the object itself
-/// was not drawn (an outdoor object while the camera is in a cell, a generated object with
-/// `scenery` off, an object out of reach).
+/// Whether an object's fade restarts in draw frame `frame`: its fade was not updated in the
+/// frame before. The fade of every object of the walker's scene advances in every frame,
+/// drawn or not (its block out of view, after the draw cap; `walker.md` §14.5 row W-O3: the
+/// client's per-object step runs for every object of the scene before the culls), so this
+/// holds only in the first frame of an object's state (it became active) and when it
+/// re-enters the scene (an outdoor object after the camera leaves a cell, a generated object
+/// after `scenery` is switched on), the walker's counterpart of the client's first frame of
+/// a per-view state. A camera jump of more than 25 m restarts a fade too ([`DrawFade`]).
 #[must_use]
 pub fn fade_resets(faded_at: u64, frame: u64) -> bool {
     faded_at == 0 || faded_at.checked_add(1) != Some(frame)
@@ -726,24 +753,33 @@ struct BlockObjects {
     parts: Vec<u32>,
     /// Part instances of the active objects.
     active_instances: usize,
+    /// The cell each placed figure of the block is drawn through: the [`ObjectInfo::cell`]
+    /// of the object of its first instance, by figure index ([`Instance::figure`]).
+    figure_cells: HashMap<u32, u16>,
 }
 
 impl BlockObjects {
-    /// Updates the smoothed distance of every object of the block that is in the scene
-    /// (active, not a generated object with `scenery` off, drawn through a cell the camera
-    /// sees) but not processed by the draw loop this frame because the block's box is out
-    /// of view. The smoothed distance follows every object of the scene each frame, drawn
-    /// or not (`mesh.md` §8.6 step 3), so an object culled while the camera travels comes
-    /// back with a current one (`walker.md` §14.5 OPEN (b); Tessera reading, the spec
-    /// writer to confirm). `local_cam` is the eye in the block's frame.
+    /// Updates the smoothed distance and the draw-distance fade of every object of the
+    /// block from index `from` on that is in the scene (active, not a generated object with
+    /// `scenery` off, drawn through a cell the camera sees) but not processed by the draw
+    /// loop this frame: because the block's box is out of view (`from` 0), or because the
+    /// draw cap stopped the frame (the objects after the one that reached the cap, and
+    /// every object of the blocks after it). Both follow every object of the scene each
+    /// frame, drawn or not, as the client's per-object step does before its culls
+    /// (`mesh.md` §8.6–§8.7; `walker.md` §14.5 row W-O3), so an object culled while the
+    /// camera travels comes back with a current distance and fade. `local_cam` is the eye in
+    /// the block's frame, `draw_frame` the frame number ([`fade_resets`]), `cap` the
+    /// distance cap.
     fn follow_distances(
         &mut self,
         key: LandblockKey,
         local_cam: Vec3,
         frame: &ObjectFrame,
         drawn: &dyn Fn(LandblockKey, u16) -> bool,
+        from: usize,
+        (draw_frame, cap): (u64, f32),
     ) {
-        for (obj, st) in self.objects.iter().zip(self.state.iter_mut()) {
+        for (obj, st) in self.objects.iter().zip(self.state.iter_mut()).skip(from) {
             if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
                 continue;
             }
@@ -752,6 +788,16 @@ impl BlockObjects {
                     local_cam.to_array(),
                     (c - Vec3::splat(r)).to_array(),
                     (c + Vec3::splat(r)).to_array(),
+                );
+                let reset = fade_resets(st.faded_at, draw_frame);
+                st.faded_at = draw_frame;
+                st.fade.update(
+                    d,
+                    object_draw_distance(&obj.lod, frame, cap),
+                    frame.dt,
+                    frame.camera_moved,
+                    reset,
+                    frame.lod,
                 );
                 st.smooth.update(d, frame.fps, false);
             }
@@ -782,6 +828,14 @@ impl BlockObjects {
         let mut parts: Vec<u32> = instances.iter().map(|i| i.part).collect();
         parts.sort_unstable();
         parts.dedup();
+        let mut figure_cells: HashMap<u32, u16> = HashMap::new();
+        for inst in instances.iter() {
+            if let Some(f) = inst.figure
+                && let Some(o) = objects.get(inst.object as usize)
+            {
+                figure_cells.entry(f).or_insert(o.cell);
+            }
+        }
         BlockObjects {
             instances,
             objects,
@@ -794,8 +848,15 @@ impl BlockObjects {
             max_d0,
             parts,
             active_instances: 0,
+            figure_cells,
         }
     }
+}
+
+/// The asset key part id `part` is requested by: a cell look's ([`super::looks`]), else
+/// the DID itself.
+fn part_key(looks: Option<&super::looks::CellLooks>, part: u32) -> AssetKey {
+    looks.map_or_else(|| AssetKey::new(part, 0), |l| l.asset_key(part))
 }
 
 /// Slack (metres) for an object's extent around its origin when a whole landblock is
@@ -1129,6 +1190,9 @@ pub struct ObjectLayer {
     config: ObjectConfig,
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     parts: AssetStore<StampedSource, PartDecoder>,
+    /// The looks of interior cells: part ids of cells drawn with a look are requested
+    /// through [`ObjectLayer::part_key`].
+    looks: Option<Arc<super::looks::CellLooks>>,
     textures: AssetStore<NoRecord, TexDecoder>,
     blocks: HashMap<LandblockKey, BlockObjects>,
     gpu_parts: HashMap<u32, PartEntry>,
@@ -1182,6 +1246,7 @@ impl ObjectLayer {
         mesh_config: MeshConfig,
         arena_limit: u64,
         cell_schema: Option<CellSchema>,
+        looks: Option<Arc<super::looks::CellLooks>>,
     ) -> Self {
         let materials = Arc::new(MaterialLibrary::with_config(
             Arc::clone(&set),
@@ -1199,6 +1264,7 @@ impl ObjectLayer {
                 mesh_config,
                 limits: GeometryLimits::default(),
                 cell_schema,
+                looks: looks.clone(),
             },
             StoreConfig {
                 // The prepared streams are moved out on upload: never serve a product
@@ -1226,6 +1292,7 @@ impl ObjectLayer {
         Self {
             config,
             materials: library,
+            looks,
             parts,
             textures,
             blocks: HashMap::new(),
@@ -1346,7 +1413,8 @@ impl ObjectLayer {
                     .is_some_and(|l| l.needs_frill_model() && l.data.is_none() && l.instanceable)
                 && e.model_job.is_none()
             {
-                e.model_job = Some(self.parts.request(*p, Priority::Visible));
+                let key = part_key(self.looks.as_deref(), *p);
+                e.model_job = Some(self.parts.request(key, Priority::Visible));
             }
         }
     }
@@ -1381,6 +1449,18 @@ impl ObjectLayer {
                 .as_ref(),
             _ => None,
         }
+    }
+
+    /// The cell the placed figure `tag` ([`figure_tag`]) is drawn through as a static
+    /// instance (`landblock.md` §4.11: [`OUTDOORS`] for the outdoor visibility cell, a cell
+    /// number of its landblock, or [`UNATTACHED`](super::interiors::UNATTACHED)), with
+    /// its landblock; `None` when its landblock's objects are not in the layer or the
+    /// figure has no instance.
+    #[must_use]
+    pub fn figure_cell(&self, tag: u64) -> Option<(LandblockKey, u16)> {
+        let (key, index) = super::figures::tag_parts(tag)?;
+        let cell = *self.blocks.get(&key)?.figure_cells.get(&index)?;
+        Some((key, cell))
     }
 
     /// Whether `part` is on the GPU (or failed for good, so waiting for it is pointless).
@@ -1526,7 +1606,8 @@ impl ObjectLayer {
                 .all(|l| l.model.is_none() && l.data.is_none())
             && e.model_job.is_none()
         {
-            e.model_job = Some(self.parts.request(p, Priority::Visible));
+            let key = part_key(self.looks.as_deref(), p);
+            e.model_job = Some(self.parts.request(key, Priority::Visible));
         }
     }
 
@@ -1643,7 +1724,9 @@ impl ObjectLayer {
                 && e.refs > 0
                 && now >= at
             {
-                let h = self.parts.request(did, e.priority);
+                let h = self
+                    .parts
+                    .request(part_key(self.looks.as_deref(), did), e.priority);
                 e.state = match h.state() {
                     AssetState::Ready(a) => PartState::Waiting(a),
                     AssetState::Failed(err) if err.is_data_error() => {
@@ -1662,12 +1745,13 @@ impl ObjectLayer {
     fn poll_parts(&mut self) {
         let mut models: Vec<(u32, Arc<PartAsset>)> = Vec::new();
         for c in self.parts.poll_completions(4096) {
-            let Some(e) = self.gpu_parts.get_mut(&c.key.did) else {
+            let part = super::looks::part_of(c.key);
+            let Some(e) = self.gpu_parts.get_mut(&part) else {
                 continue;
             };
             if e.model_job.is_some() && matches!(e.state, PartState::Ready(_)) {
                 if let Outcome::Ready(a) = c.outcome {
-                    models.push((c.key.did, a));
+                    models.push((part, a));
                 }
                 e.model_job = None;
                 continue;
@@ -2269,7 +2353,7 @@ impl ObjectLayer {
             _ => TexLookup::Pending,
         };
         let order = std::mem::take(&mut self.order);
-        'blocks: for &(_, key) in &order {
+        for &(_, key) in &order {
             let Some(b) = self.blocks.get_mut(&key) else {
                 continue;
             };
@@ -2284,13 +2368,21 @@ impl ObjectLayer {
                 continue;
             };
             let local_cam = camera - off;
+            // The draw cap stopped the frame: the block is not reached, but the smoothed
+            // distances of its objects still follow the camera.
+            if capped {
+                b.follow_distances(key, local_cam, &frame, drawn, 0, (draw_frame, cap));
+                continue;
+            }
             if !frustum.aabb_visible(off + lo, off + hi) {
                 culled += b.active;
-                b.follow_distances(key, local_cam, &frame, drawn);
+                b.follow_distances(key, local_cam, &frame, drawn, 0, (draw_frame, cap));
                 continue;
             }
             let block_tf = Mat4::from_translation(off);
-            for (oi, obj) in b.objects.iter().enumerate() {
+            // Index of the object whose draw reached the cap.
+            let mut capped_at = None;
+            'objects: for (oi, obj) in b.objects.iter().enumerate() {
                 let Some(st) = b.state.get_mut(oi) else { break };
                 if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
                     continue;
@@ -2367,7 +2459,8 @@ impl ObjectLayer {
                     for (i, plan) in level.plans.iter().enumerate() {
                         if draws >= self.config.max_draws {
                             capped = true;
-                            break 'blocks;
+                            capped_at = Some(oi);
+                            break 'objects;
                         }
                         let Some((material, lit)) =
                             surface_draw(plan, &lookup, frame.lit, opacity, casts)
@@ -2382,6 +2475,16 @@ impl ObjectLayer {
                         draws += 1;
                     }
                 }
+            }
+            if let Some(oi) = capped_at {
+                b.follow_distances(
+                    key,
+                    local_cam,
+                    &frame,
+                    drawn,
+                    oi.saturating_add(1),
+                    (draw_frame, cap),
+                );
             }
         }
         self.order = order;
@@ -2608,6 +2711,51 @@ mod tests {
         shown.insert(figure_tag(other, 2));
         assert!(!drawn_as_character(other, &fig, &shown));
         assert!(!drawn_as_character(key, &plain, &shown));
+    }
+
+    #[test]
+    fn figures_take_the_cell_of_their_first_instance() {
+        // `landblock.md` §4.11 "Moving entities": a placed figure the character layer draws
+        // is culled by the cell its static instance is drawn through.
+        let key = LandblockKey::new(1, 10, 20).unwrap();
+        let o = |cell| ObjectInfo {
+            position: Vec3::ZERO,
+            lod: LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]),
+            generated: false,
+            first: 0,
+            count: 1,
+            cell,
+        };
+        let with = |figure, object| Instance {
+            figure: Some(figure),
+            object,
+            ..inst(1, Vec3::ZERO, 1.0)
+        };
+        let instances: Arc<[Instance]> = vec![
+            inst(1, Vec3::ZERO, 1.0),
+            with(4, 1),
+            with(4, 2),
+            with(6, 0),
+            with(8, 9),
+        ]
+        .into();
+        let objects: Arc<[ObjectInfo]> = vec![o(OUTDOORS), o(12), o(13)].into();
+        let b = BlockObjects::new(instances, objects);
+        assert_eq!(
+            b.figure_cells.get(&4),
+            Some(&12),
+            "the first instance's object"
+        );
+        assert_eq!(b.figure_cells.get(&6), Some(&OUTDOORS));
+        assert_eq!(b.figure_cells.get(&8), None, "an object index out of range");
+        let mut layer_blocks = HashMap::new();
+        layer_blocks.insert(key, b);
+        let lookup = |tag: u64| -> Option<(LandblockKey, u16)> {
+            let (k, i) = super::super::figures::tag_parts(tag)?;
+            Some((k, *layer_blocks.get(&k)?.figure_cells.get(&i)?))
+        };
+        assert_eq!(lookup(figure_tag(key, 4)), Some((key, 12)));
+        assert_eq!(lookup(figure_tag(key, 5)), None);
     }
 
     #[test]
@@ -2944,11 +3092,25 @@ mod tests {
             ..ObjectFrame::default()
         };
         let all = |_: LandblockKey, _: u16| true;
-        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &all);
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            0,
+            (1, 5_000.0),
+        );
         assert_eq!(b.state[0].smooth.value(), Some(1_000.0), "first frame: d");
         assert_eq!(b.state[1].smooth.value(), None, "not in the scene");
-        for _ in 0..600 {
-            b.follow_distances(key, Vec3::new(111.0, 0.0, 0.0), &frame, &all);
+        for f in 0..600 {
+            b.follow_distances(
+                key,
+                Vec3::new(111.0, 0.0, 0.0),
+                &frame,
+                &all,
+                0,
+                (2 + f, 5_000.0),
+            );
         }
         let ds = b.state[0].smooth.value().unwrap();
         assert!(
@@ -2956,12 +3118,113 @@ mod tests {
             "followed the camera to 10 m: {ds}"
         );
         let none = |_: LandblockKey, _: u16| false;
-        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &none);
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &none,
+            0,
+            (602, 5_000.0),
+        );
         assert_eq!(
             b.state[0].smooth.value(),
             Some(ds),
             "a cell the camera does not see"
         );
+    }
+
+    /// Review finding (objects.rs, `walker.md` §14.5 OPEN (b)): when the draw cap stops
+    /// the frame at an object, the objects after it in its block still have their smoothed
+    /// distance updated; the ones before it (already processed by the draw loop) are not
+    /// updated twice.
+    #[test]
+    fn objects_after_the_draw_cap_keep_their_smoothed_distance_current() {
+        let mut blocks = one_block();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let b = blocks.get_mut(&key).unwrap();
+        for st in &mut b.state {
+            st.active = true;
+            st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
+        }
+        let frame = ObjectFrame {
+            fps: 60.0,
+            ..ObjectFrame::default()
+        };
+        let all = |_: LandblockKey, _: u16| true;
+        // The cap was reached at object 0: only object 1 is followed here.
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            1,
+            (1, 5_000.0),
+        );
+        assert_eq!(
+            b.state[0].smooth.value(),
+            None,
+            "processed by the draw loop"
+        );
+        assert_eq!(b.state[1].smooth.value(), Some(1_000.0), "after the cap");
+        // An index past the end is harmless.
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            usize::MAX,
+            (2, 5_000.0),
+        );
+        assert_eq!(b.state[0].smooth.value(), None);
+    }
+
+    /// `walker.md` §14.5 row W-O3: the fade of an object in the scene advances in every
+    /// frame, also while its block is out of view, so it neither pauses nor restarts there;
+    /// it restarts only in an object's first frame and after a camera jump of more than
+    /// 25 m.
+    #[test]
+    fn fades_advance_for_objects_out_of_view() {
+        let mut blocks = one_block();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let b = blocks.get_mut(&key).unwrap();
+        for st in &mut b.state {
+            st.active = true;
+            st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
+        }
+        let mut frame = ObjectFrame {
+            fps: 60.0,
+            dt: 0.1,
+            lod: true,
+            g: 2_080.0,
+            ..ObjectFrame::default()
+        };
+        let all = |_: LandblockKey, _: u16| true;
+        let cap = 50.0;
+        // First frame, within the draw distance: shown at once.
+        b.follow_distances(key, Vec3::new(110.0, 0.0, 0.0), &frame, &all, 0, (1, cap));
+        assert_eq!(b.state[0].fade.opacity(), 1.0);
+        // The camera walks away (out of reach): the fade runs on frame by frame while the
+        // block is out of view, 0.1 s / 1.5 s per frame.
+        for f in 0..5 {
+            b.follow_distances(
+                key,
+                Vec3::new(300.0, 0.0, 0.0),
+                &frame,
+                &all,
+                0,
+                (2 + f, cap),
+            );
+        }
+        let o = b.state[0].fade.opacity();
+        assert!((o - (1.0 - 5.0 * 0.1 / 1.5)).abs() < 1e-4, "{o}");
+        // A camera jump of more than 25 m restarts it.
+        frame.camera_moved = 30.0;
+        b.follow_distances(key, Vec3::new(300.0, 0.0, 0.0), &frame, &all, 0, (7, cap));
+        assert_eq!(b.state[0].fade.opacity(), 0.0);
+        // A frame without the step (the object out of the scene) restarts it on return.
+        frame.camera_moved = 0.0;
+        b.follow_distances(key, Vec3::new(110.0, 0.0, 0.0), &frame, &all, 0, (9, cap));
+        assert_eq!(b.state[0].fade.opacity(), 1.0);
     }
 
     #[test]

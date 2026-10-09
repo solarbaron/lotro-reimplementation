@@ -17,7 +17,7 @@
 //! | 7 | block-map descriptor 0x18 | [`RegionInfo::block_map_descriptor`] |
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tessera_dat::ArchiveSet;
 use tessera_formats::{
@@ -37,7 +37,9 @@ use crate::frills::FrillPids;
 use crate::lighting::LightPids;
 use crate::mapcoords::MapConstants;
 use crate::objects::{ObjectResolver, WorldPids};
-use crate::scenery::{ClearancePids, ObjectPropertyCache, SceneLibrary, SceneryTables};
+use crate::scenery::{
+    ClearancePids, ObjectPropertyCache, RegionSceneryTables, SceneLibrary, SceneryTables,
+};
 use crate::source::WorldSource;
 use crate::water::{
     DEFAULT_VOLUME_CACHE_ENTRIES, VolumeLibrary, WaterPids, WaterSystem, WaterTables,
@@ -62,7 +64,9 @@ pub struct RegionInfo {
     /// The block-map descriptor (0x18) named by the region descriptor.
     pub block_map_descriptor: Option<Arc<BlockMapDescriptor>>,
     /// The scenery tables named by slots 1, 2 and 8 (`scenery.md` §4.1), when
-    /// [`BundleOptions::generate_scenery`] is set and they load.
+    /// [`BundleOptions::generate_scenery`] is set and they load. A region whose tables could
+    /// not be read at context load for a reason outside the data has `None` here in
+    /// [`WorldContext::regions`]; [`WorldContext::region`] loads them again on request.
     pub scenery: Option<Arc<SceneryTables>>,
 }
 
@@ -136,6 +140,11 @@ pub struct WorldContext {
     areas: Option<Arc<dyn AreaNameSource>>,
     options: BundleOptions,
     systems: WorldSystems,
+    /// Regions whose scenery tables failed to load in [`WorldContext::load_systems`] for a
+    /// reason outside the data (`scenery.md` §4.1, implementer note): each slot is filled,
+    /// once, by the first later load that succeeds (the region with its tables) or fails
+    /// on the data (the region without them, for good).
+    scenery_retry: BTreeMap<u8, OnceLock<RegionInfo>>,
 }
 
 impl std::fmt::Debug for WorldContext {
@@ -147,6 +156,10 @@ impl std::fmt::Debug for WorldContext {
             .field("area_names", &self.areas.is_some())
             .field("options", &self.options)
             .field("systems", &self.systems)
+            .field(
+                "scenery_retry",
+                &self.scenery_retry_pending().collect::<Vec<_>>(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -177,6 +190,7 @@ impl WorldContext {
             areas: None,
             options,
             systems: WorldSystems::default(),
+            scenery_retry: BTreeMap::new(),
         }
     }
 
@@ -212,7 +226,10 @@ impl WorldContext {
     /// Loads the world systems with property IDs `pids`, as the options say:
     ///
     /// - [`BundleOptions::generate_scenery`]: every region's scenery tables (slots 1, 2, 8)
-    ///   and the scene library;
+    ///   and the scene library. A region whose tables fail to load for a reason outside
+    ///   the data (full queue, shutdown, worker panic; [`SceneryTables::load_all_regions`])
+    ///   is remembered for a retry: [`WorldContext::region`] loads its tables again on
+    ///   request until a load succeeds or fails on the data;
     /// - [`BundleOptions::build_water`] or [`BundleOptions::generate_scenery`]: the water
     ///   and fog-zone tables (slots 5, 6) and the volume library (scenery generation reads
     ///   the landblock's water plane, `scenery.md` §11, whether or not water is built);
@@ -228,12 +245,16 @@ impl WorldContext {
             pids,
             ..WorldSystems::default()
         };
+        self.scenery_retry.clear();
         if self.options.generate_scenery {
-            let tables = SceneryTables::for_all_regions(self);
+            let RegionSceneryTables { tables, retry } = SceneryTables::load_all_regions(self);
             for (region, info) in &mut self.regions {
                 info.scenery = tables.get(region).cloned();
             }
-            if !tables.is_empty() {
+            self.scenery_retry = retry.into_iter().map(|r| (r, OnceLock::new())).collect();
+            // The scene library is needed as soon as one region has tables, or may get
+            // them on a retry.
+            if !tables.is_empty() || !self.scenery_retry.is_empty() {
                 systems.scenes = Some(Arc::new(SceneLibrary::new(Arc::clone(&self.source))));
             }
         }
@@ -275,6 +296,7 @@ impl WorldContext {
                 .values()
                 .filter(|r| r.scenery.is_some())
                 .count(),
+            scenery_retry = self.scenery_retry.len(),
             water = systems.water.is_some(),
             collision = systems.collision.is_some(),
             sky = systems.sky.is_some(),
@@ -338,9 +360,58 @@ impl WorldContext {
     }
 
     /// One region.
+    ///
+    /// For a region whose scenery tables could not be read at context load for a reason
+    /// outside the data ([`WorldContext::load_systems`]), this first tries to load them
+    /// again ([`SceneryTables::for_region`]: up to three record reads on the calling
+    /// thread, which is a bundle or frill worker in the streamer). On success the region
+    /// is returned with its tables, and so on every later call; on a data fault it is
+    /// returned without them, for good; on another failure of the same kind it is
+    /// returned without them and the next call tries again. Every other region is
+    /// returned as loaded, without any read.
     #[must_use]
     pub fn region(&self, region: u8) -> Option<&RegionInfo> {
-        self.regions.get(&region)
+        let base = self.regions.get(&region)?;
+        let Some(slot) = self.scenery_retry.get(&region) else {
+            return Some(base);
+        };
+        if let Some(info) = slot.get() {
+            return Some(info);
+        }
+        match SceneryTables::for_region(self, region) {
+            Ok(t) => {
+                tracing::info!(region, "scenery tables loaded on retry");
+                // Another thread may have filled the slot first; either value serves.
+                let _ = slot.set(RegionInfo {
+                    scenery: Some(Arc::new(t)),
+                    ..base.clone()
+                });
+            }
+            Err(e) if e.is_data_error() => {
+                tracing::warn!(region, error = %e, "no scenery tables");
+                let _ = slot.set(base.clone());
+            }
+            Err(e) => {
+                tracing::debug!(region, error = %e, "scenery tables still unavailable");
+                return Some(base);
+            }
+        }
+        Some(slot.get().unwrap_or(base))
+    }
+
+    /// The scenery tables of `region` ([`WorldContext::region`], with its retry).
+    #[must_use]
+    pub fn scenery_tables(&self, region: u8) -> Option<Arc<SceneryTables>> {
+        self.region(region).and_then(|r| r.scenery.clone())
+    }
+
+    /// The regions whose scenery tables still wait for a retry (see
+    /// [`WorldContext::region`]), in ascending order.
+    pub fn scenery_retry_pending(&self) -> impl Iterator<Item = u8> + '_ {
+        self.scenery_retry
+            .iter()
+            .filter(|(_, slot)| slot.get().is_none())
+            .map(|(&r, _)| r)
     }
 
     /// The map-coordinate constants of `region`.

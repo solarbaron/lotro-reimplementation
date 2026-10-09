@@ -299,6 +299,10 @@ A point (*x*, *y*) in the parent's coordinates is inside an element when all of 
 > test (alpha ≥ threshold or > threshold; the tiled-image case of UL §9.6). Census: the
 > threshold property is set on 3 elements, all with value 128; no hit-mask media item occurs
 > in the data (UL §6.1).
+> Implementer note (2026-10-07): until answered, `tessera-ui` passes the alpha test when the
+> image's alpha is ≥ the threshold, takes the pixel modulo the image size from the element's
+> top-left plus its image offset (the tiling of UL §9.6), and treats a hit-mask pixel with
+> alpha 0 as excluding (a mask image not loaded yet excludes nothing).
 
 <a id="s4-2"></a>
 ### 4.2 Hit test (BIN, UB4)
@@ -541,6 +545,10 @@ that is being moved or resized follows the pointer (§8.1, §8.2).
 > taps, `Element_mouse_tap`, was seen being sent by the engine); commands whose binding the
 > input layer classifies as a special kind (an internal class value 2) take a separate
 > element entry that was not traced.
+> Implementer note (2026-10-07): `tessera-ui` routes a mouse-button command whose toggle
+> type is 2 (Impulse) as `lua-plugin-api.md` §13.12.1 describes for plugin controls, for
+> native elements too: a one-shot notification to the element under the pointer, no capture,
+> no pressed set, its end ignored; the press is consumed when it had a hit element.
 
 **Tessera consumption rule (IB D7).** For the input bridge (§3.1), a mouse-button command
 counts as **consumed** when its press had a hit element (§4.2, including an element that only
@@ -690,6 +698,13 @@ step 1. IB D7 ("Pointer lock", "How the position is frozen") is the single state
 Census: `UICore_Element_activatable` is set on 370 elements (349 true), `activate_on_show` on
 136 (134 true).
 
+> **OPEN:** (clean-room implementer, 2026-10-07) the order of step 3's first bullet. This
+> section lists the focus loss before `Element_deactivated`, while the worked example of
+> `lua-plugin-api.md` §13.13 gives `Deactivated` on the old window before `FocusLost` on its
+> text box. `tessera-ui` follows the worked example: the old panel pops its maps, sends
+> `Element_deactivated`, then the focus element loses focus. Please confirm which order the
+> original uses.
+
 <a id="s5-2"></a>
 ### 5.2 Keyboard focus and input maps (BIN, UB12)
 
@@ -815,6 +830,14 @@ Census: `editable` 128 elements (103 true), `selectable` 138 (126 true),
 > the character path (IB D6, D7): typed characters are offered to `tessera-ui` while the UI
 > band holds a text-entry context of a focused field by the rule of IB D6, and reach game
 > code otherwise; IME composition stays uncovered (IB Known difference 13).
+
+> **OPEN:** the selection model is not specified, so Tessera has none yet. Tessera rule
+> (implementation, M5): the whole text is the selection of `CopyText` and `CutText`;
+> `PasteText` on an editable element asks the client for the clipboard text and inserts it at
+> the caret as typed characters would go in (control characters dropped, the first character
+> that does not fit under `max_chars` ends the paste). The caret counts UTF-16 units, but
+> caret moves, `DeleteKey` and `BackspaceKey` treat a surrogate pair as one character, and a
+> typed character that does not fit whole under `max_chars` is refused.
 
 **Tessera (IB D2).** The commands of this table are actions of Tessera's `text_entry`
 (`EditControls`) and `ui.clipboard` (`CopyAndPasteControls`) contexts. The caret, delete and
@@ -982,6 +1005,11 @@ children:
 > **OPEN:** how `max_height` limits a tall tooltip (it is not used by the measuring step that
 > was traced).
 
+> **OPEN:** (clean-room implementer, 2026-10-07) step 3's "its scale (§9.2)": which scale a
+> tooltip panel takes (it belongs to no scaling group named here, and `UIScale_Global` alone
+> is a guess). `tessera-ui` lays the tooltip out at its measured size and applies no scale
+> until this is answered.
+
 <a id="s6-5"></a>
 ### 6.5 Placement (BIN, UB21)
 
@@ -1041,6 +1069,11 @@ tooltips have **no timeout**.
 6. If there is still no icon, or the icon is the source element itself, nothing more happens.
 
 Census: `dragable` on 10 elements, `disallow_drag_out` on 2 (both false).
+
+> **OPEN:** (clean-room implementer, 2026-10-07) step 5's "new element built from the source's
+> descriptor": whether the copy includes the source's child elements and the layers its media
+> have set at run time. `tessera-ui` builds the icon from the source's own resolved descriptor
+> without its children, with the source's current base image and overlay copied.
 
 <a id="s7-2"></a>
 ### 7.2 The drag icon (BIN, UB24)
@@ -2102,6 +2135,11 @@ Every item has an in-section `> **OPEN:**` callout.
 26. How a Tessera double-click setting is told apart from its default so that it overrides
     the platform's values (§3.3; a Tessera question about IB D3, not about the original;
     interim Tessera rule there, revision 4 corrections).
+27. The order of `Element_deactivated` and the focus loss when a panel is deactivated
+    (§5.1; added by the clean-room implementation, 2026-10-07; Tessera follows
+    `lua-plugin-api.md` §13.13's worked example).
+28. Which scale a tooltip panel is drawn with (§6.4; added 2026-10-07; Tessera: none).
+29. What the container's drag icon copies from the source (§7.1; added 2026-10-07).
 
 ---
 

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Plugin>
+  <Information>
+    <Name>AtlasSearch</Name>
+    <Author>Tess</Author>
+    <Version>0.1</Version>
+    <Description>Synthetic test plugin.</Description>
+  </Information>
+  <Package>Tess.Atlas.Search</Package>
+  <Configuration Apartment="AtlasSearch" />
+</Plugin>

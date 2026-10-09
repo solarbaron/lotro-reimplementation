@@ -157,8 +157,11 @@ impl BoneSliders {
     /// - a bone index outside the skeleton loses only that bone's entry, the slider's other
     ///   bones keep theirs (`appearance.md` §6.3, BIN4, A30): one
     ///   [`AnimError::BoneIndexOutOfRange`] per such bone;
-    /// - a slider whose limits, position or channel values are not finite contributes no
-    ///   entry (the §6.3 Tessera Decision) and one [`AnimError::BadSlider`] is returned;
+    /// - a slider whose limits are not finite contributes no entry (the §6.3 Tessera
+    ///   Decision), and neither does one whose position *t* or channel value *c* = min +
+    ///   *t*(max − min) is not finite (a Tessera guard beyond that Decision, recorded as an
+    ///   OPEN in `appearance.md` §14; *c* can overflow with a minus-sign piece and very
+    ///   large limits): one [`AnimError::BadSlider`] is returned;
     /// - beyond [`BoneSliders::MAX_OPS`] bones the slider is skipped.
     pub fn build<'a>(
         skeleton: &Skeleton,
@@ -225,7 +228,8 @@ impl BoneSliders {
     }
 
     /// Adds one slider at position `t` for its bones (`appearance.md` §6.3, BIN): channel
-    /// vector *c* = `min` + *t* × (`max` − `min`) per component, with *t* used as given (the
+    /// vector *c* = (`max` − `min`) × *t* + `min` per component in single precision, each
+    /// step rounded on its own (no fused multiply-add; A32), with *t* used as given (the
     /// client does not limit it; a value piece with a minus sign gives a *t* far above 1);
     /// for every `(bone, reverse)`, with sign *σ* = −1 for a reversed bone, every channel of
     /// `channels` **writes** *σ* × the matching component of *c* into the bone's entry
@@ -241,8 +245,9 @@ impl BoneSliders {
     ///
     /// # Errors
     ///
-    /// [`AnimError::BadSlider`] for a non-finite `t`, limit or channel value (the §6.3
-    /// Tessera Decision: such a slider contributes no entry);
+    /// [`AnimError::BadSlider`] for a limit, a `t` or a channel value that is not finite
+    /// (the §6.3 Tessera Decisions "limits that are not finite" and "Channel values that are
+    /// not finite", A32: such a slider contributes no entry; the caller logs it);
     /// [`AnimError::TooManyEntries`] for more than [`BoneSliders::MAX_OPS`] bones.
     pub fn add_slider(
         &mut self,
@@ -260,7 +265,13 @@ impl BoneSliders {
         if !min.iter().chain(&max).all(|v| v.is_finite()) {
             return Err(AnimError::BadSlider { what: "limit" });
         }
-        let value: [f32; 3] = std::array::from_fn(|k| min[k] + t * (max[k] - min[k]));
+        // A32: the difference, then the product with t, then the sum with the minimum, each
+        // rounded to single precision on its own.
+        let value: [f32; 3] = std::array::from_fn(|k| {
+            let span = max[k] - min[k];
+            let scaled = span * t;
+            scaled + min[k]
+        });
         if !value.iter().all(|v| v.is_finite()) {
             return Err(AnimError::BadSlider {
                 what: "channel value",
@@ -505,7 +516,8 @@ mod tests {
         );
         assert_eq!(sl.entries().len(), 1);
         assert_eq!(sl.entry(0).unwrap().translate, Vec3::new(0.0, 0.0, 1.0));
-        // Values that are not finite: the slider contributes no entry (§6.3 Decision).
+        // Limits that are not finite, and a position or channel value that is not finite
+        // (§6.3 Tessera Decisions, A32): the slider contributes no entry.
         let mut sl = BoneSliders::new(&s);
         assert!(
             sl.add_slider(ch, [f32::NAN; 3], [1.0; 3], 1.0, &[(0, false)])
@@ -537,6 +549,29 @@ mod tests {
         assert!(!sl.fits(&skel(4)));
         assert_eq!(SliderChannels::from_bits(0xffff).bits(), 0x1ff);
         assert!(SliderChannels::from_bits(0x1ff).contains(SliderChannels::SCALE_Z));
+    }
+
+    /// `appearance.md` §6.3 step 1 (BIN5, A32): *c* = (max − min) × *t* + min in single
+    /// precision, each step rounded on its own; a large *t* that overflows the product is a
+    /// channel value that is not finite (Decision: no entry).
+    #[test]
+    fn channel_values_round_step_by_step() {
+        let s = skel(2);
+        let ch = SliderChannels::TRANSLATE_X;
+        let (min, max, t) = (0.1f32, 0.7f32, 0.3f32);
+        let mut sl = BoneSliders::new(&s);
+        sl.add_slider(ch, [min; 3], [max; 3], t, &[(0, false)])
+            .unwrap();
+        let span = max - min;
+        let scaled = span * t;
+        let want = scaled + min;
+        assert_eq!(sl.entry(0).unwrap().translate.x.to_bits(), want.to_bits());
+        // t of a piece with a minus sign (about 1.68e7) times a span near the f32 range.
+        let mut sl = BoneSliders::new(&s);
+        assert!(
+            sl.add_slider(ch, [-1.0e32; 3], [1.0e32; 3], 1.68e7, &[(0, false)])
+                .is_err()
+        );
     }
 
     /// `BoneSliders::build` keeps the in-range bones of a slider that names a bone outside

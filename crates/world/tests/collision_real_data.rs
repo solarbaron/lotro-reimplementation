@@ -310,11 +310,14 @@ fn cells_and_portals_of_landblock_info() {
     assert_eq!(left_out, 0, "no portal left out by the per-set budgets");
     if full() {
         assert_eq!(cells, 104_271, "cells of landblock info");
-        assert_eq!(placed, 104_269, "cells placed (two carry no offset)");
+        // `landblock.md` §4.4 (L42): the two cells without an offset lie at the landblock
+        // origin and are placed like every other cell.
+        assert_eq!(placed, 104_271, "cells placed");
         assert_eq!(portals, 393_842, "neighbour entries");
         // §5.8: 862 neighbour entries do not coincide within 1 cm; the 10 entries that
-        // touch the two unplaced cells have no polygon here (392,980 − 10 coincide).
-        assert_eq!(portals - corner_pairs, 10, "entries without a polygon");
+        // touch the two cells without an offset have polygons and coincide (L42: their 5
+        // joins match exactly at the origin).
+        assert_eq!(portals - corner_pairs, 0, "entries without a polygon");
         assert_eq!(
             corner_pairs - coincide,
             862,

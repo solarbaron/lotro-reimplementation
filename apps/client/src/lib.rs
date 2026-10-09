@@ -7,6 +7,8 @@
 //! - [`runtime`]: everything except presentation, shared by both.
 //! - [`data`]: background install discovery, archive statistics and the showcase texture.
 //! - [`net`], [`plugins`], [`scene`], [`input`]: subsystem glue.
+//! - [`commands`]: the one command dispatcher (decision 0020): registry, line pipeline,
+//!   client built-ins; the chat overlay, `--command` and plugins feed it.
 //! - [`walker`]: the offline world walker (ROADMAP M3, M4 characters); [`walker_host`]
 //!   wires it into the runtime, [`headless`] runs it offscreen (`--screenshot`,
 //!   `--fly-path --headless`, `--duration --headless`, and `--walk-path`, which needs no
@@ -14,19 +16,24 @@
 //!   `--walk-path` (`docs/checklists/m4-5-visual.md` §2.1).
 //! - [`audio`]: world audio for the walker (ROADMAP M6): the audio engine driven by the
 //!   script graphs (area music, ambience, positional emitters).
+//! - [`ui_host`]: the game UI (M5): `tessera-ui`, the native [`panels`], the plugin host and
+//!   the input bridge in the frame loop (decisions 0014, 0015).
 
 pub mod app;
 pub mod audio;
 pub mod avatar;
 pub mod cli;
+pub mod commands;
 pub mod data;
 pub mod headless;
 pub mod input;
 pub mod net;
+pub mod panels;
 pub mod plugins;
 pub mod runtime;
 pub mod scene;
 pub mod smoke;
+pub mod ui_host;
 pub mod walk_path;
 pub mod walker;
 pub mod walker_host;
@@ -42,6 +49,8 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     );
     if args.smoke {
         smoke::run(&args).map(|_| ())
+    } else if args.walker_headless() && args.ui_enabled() {
+        ui_host::run::run(&args).map(|_| ())
     } else if args.walker_headless() {
         headless::run(&args).map(|_| ())
     } else {

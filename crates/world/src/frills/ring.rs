@@ -31,7 +31,8 @@ use crate::coords::WorldPos;
 /// largest level is 16, plus the pre-cache rings). The cap never cuts below
 /// [`far_reach_sectors`] of the far distance D, so a capped ring still holds every sector
 /// within D of the centre sector, which the Tessera Decision of `scenery.md` §8.2 accepts
-/// in place of the square (implementer note in `scenery.md` §13.2).
+/// in place of the square (implementer note in `scenery.md` §8.2, after the ring-centre
+/// Tessera Decision).
 pub const MAX_RING_RADIUS: u32 = 64;
 
 /// The Chebyshev radius in sectors of the smallest square that holds every sector with some

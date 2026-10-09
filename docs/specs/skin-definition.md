@@ -644,6 +644,19 @@ report for a missing file (RES). Tessera uses the same image, with the texel val
   media lists, positions or sizes. Images that a state would set are not pre-loaded; they pass
   through §6.3 when the element next enters that state (§6.9).
 
+> **OPEN:** (clean-room implementer, 2026-10-07) D2 and §6.6 disagree on a case-sensitive
+> file system that holds two entries differing only in case (`A.tga` and `a.tga`): D2's
+> "exact name when it exists" makes `FileName="A.tga"` and `FileName="a.tga"` open two
+> different files, while §6.4 step 4 and §6.6 give both the one cache key `…/a.tga`, so the
+> picture both mappings show would depend on which is requested first. Until this is
+> decided, `tessera-ui::skin` makes the file a function of the key: below the skin folder
+> (or the mapped drive root) every component is matched ignoring ASCII case and, when
+> several entries match, the smallest by byte value wins (D2's last sentence), even when
+> an entry spelled exactly as in `FileName` exists. The skin folder itself is used as
+> discovery found it. Folder listings are kept per activation (a switch lists anew, so
+> §6.6's re-reading still holds). Please confirm or choose the other reading (for example
+> the entry spelled exactly as the lower-cased path first).
+
 <a id="s6-7"></a>
 ### 6.7 How much of the UI is skinnable (Confirmed, LAY)
 
@@ -885,6 +898,18 @@ The appearance of 8-bit (greyscale or colour-mapped) TGA files, which become alp
 images, is OPEN-4. The publisher's guidance is 32-bit TGA with alpha (DOC, RES), which takes
 the A8R8G8B8 path.
 
+> **OPEN:** (clean-room implementer, 2026-10-07) step 5 says pixel values pass through the
+> colour map "before format conversion", but not how a mapped entry (of its own entry size,
+> 15, 16, 24 or 32 bits) is converted at a pixel depth other than 8, nor what happens when a
+> pixel value lies outside the map (below the first entry index or past its end), nor which
+> entry sizes are accepted. `tessera-material::ui_image` provisionally decodes the entry by
+> its own size (32 = B, G, R, A; 24 = B, G, R; 16 = A1R5G5B5; 15 = X1R5G5B5), keeps the
+> entry's alpha at depths 32 and 16, forces alpha 255 at depths 24 and 15, uses D17 at
+> depth 8, fails the load for any other entry size, and fails the load for an index outside
+> the map. Only decoded pixels are looked up: pixels that the D25 crop drops, and pixels of
+> a final run-length packet past the end of the image, are not, so an uncompressed and a
+> run-length file of the same picture give the same result.
+
 <a id="s7-3"></a>
 ### 7.3 JPEG (Confirmed (BIN))
 
@@ -892,6 +917,22 @@ The whole file is read into memory (a zero-length file fails) and decoded by an 
 of the 2010 release family that is linked into the client; it handles baseline, progressive
 and arithmetic-coded JPEG. JPEG images have no alpha channel and are drawn opaque. The
 published guide notes that JPEG works as well as TGA (RES).
+
+> **OPEN:** (clean-room implementer, 2026-10-07) three points that the Tessera JPEG decoder
+> handles differently from, or without knowing, the original: (a) the decoder used
+> (`zune-jpeg`) does not decode arithmetic-coded JPEG, which the original's libjpeg does,
+> so such a file gets the placeholder; (b) whether the original treats libjpeg's warnings
+> (entropy data that ends early, a missing end-of-image marker, bytes other than markers
+> between header segments) as a failed load is not stated; Tessera decodes such a stream,
+> fills the missing part and skips the extra bytes, as libjpeg does by default; (c) D25's crop cannot bound the decode of a JPEG, which is decoded whole before
+> it is cropped, so Tessera fails (placeholder) a JPEG whose full frame exceeds two
+> budgets: at most 256 MiB estimated decode memory, with every frame counted as progressive
+> (2 bytes per coefficient per component at full resolution, also for a baseline frame,
+> whose decoder keeps the same buffers when the first scan does not hold every component)
+> plus 4 bytes per pixel of output and 4 per pixel of the cropped image, so about
+> 4,480 × 4,480 for three components and 5,792 × 5,792 for one; and at most
+> min(32 Mi, 1 Mi + 1,024 × file length) pixels (for example 8,192 × 4,096 or
+> 5,792 × 5,792), although D4 allows up to 16,384 × 16,384. D4/D25 do not cover this case.
 
 <a id="s7-4"></a>
 ### 7.4 DDS (Confirmed (BIN))
@@ -987,6 +1028,11 @@ matter.
 > loads them was not traced. Skin files never reach an overlay (§6.3, §6.8), so the answer
 > changes nothing for the skin paths of this spec. Tessera rule (UR §4.2, spec question 16
 > there): D26 tags such images as "other", so an overlay made from one would draw nothing.
+
+> **OPEN:** (clean-room implementer, 2026-10-07) the engine-specific B8G8R8 row lists masks
+> R = 0, G = FF, B = FF00, A = FF0000, which name no red channel, and the section does not
+> say how its pixels are decoded. `tessera-material::ui_image` provisionally reads it by its
+> name (first byte red, second green, third blue; alpha 255).
 
 <a id="s7-5"></a>
 ### 7.5 IFF (Confirmed (BIN))
@@ -1189,6 +1235,14 @@ fixed, (width, height) the bottom-right corner. A skin's `ScaleOriginX` and `Sca
 of the screen can keep it anchored there when the player changes the UI scale. Worked example:
 §12.8.
 
+> **OPEN:** (clean-room implementer, 2026-10-07) step 1 reads *s*₀ from data, and step 3
+> does not say what happens when *s*₀ or *s*₁ is not finite, is negative, or makes
+> *ox*·*s* exceed the 32-bit integer range (the truncation target's width is not stated).
+> Until this is settled, `tessera-ui::skin::scale_about_origin` truncates to 64 bits with
+> saturation (NaN gives 0, ±infinity and huge products the 64-bit limits), adds with
+> saturation and then clamps as in step 4, so it never fails; it does not replace such a
+> scale by 1.0.
+
 <a id="s8-5"></a>
 ### 8.5 `Detach` (Confirmed (BIN))
 
@@ -1388,6 +1442,40 @@ The rows of the last group are deliberate, recorded differences: an implementer 
 | D27 | **Failed skin-file loads** (§6.11; the original's retry behaviour is OPEN-15). A skin file whose load failed is remembered as failed, like a loaded image, until the skin-image cache is emptied by the next switch (§6.6); every element that asks for it meanwhile gets the placeholder without a new attempt. The failure is logged with `tracing` (warning level) once per path per activation, with the path and the reason. |
 | D28 | **Overrides on the plugin game-styled controls** (§6.8; OPEN-16). Tessera follows `lua-plugin-api.md` §14.2.1 step 4: no top-level panel override is applied to these controls, whatever its ID, so a control starts with the rectangle that `lua-plugin-api.md` §13.1 gives (0, 0, 50 × 50) whether or not a skin is active. Overrides of their descendants are matched through the ID path of §8.3 as for any element; that path starts with the control's run-time ID, which no skin can name, so in practice none applies. Their art is skinned (D21). |
 
+> **OPEN:** (clean-room implementer, 2026-10-07) points that §3–§10 leave to the
+> implementation, and the choices `tessera-ui::skin` made until the spec decides them:
+> (a) D4 "element nesting deeper than 64" is applied to XML element depth with the root
+> element at depth 1, so a definition has at most 62 nested `Element` levels; (b) a
+> definition with more than 65,536 `Mapping` or more than 65,536 `Element` elements is
+> rejected as a whole (listed with D9) rather than having the excess ignored; (c) a folder
+> with more than 4,096 entries is skipped as a whole, with a warning, rather than walking
+> an arbitrary 4,096 of them; (d) only regular files (after following links inside the
+> root) named `SkinDefinition.xml` are candidates, so a folder of that name is walked but
+> not listed as a rejected definition (§3.2 step 2.1 would list it and fail to read it);
+> (e) the 255-byte path cut of §6.4 step 5 is not reproduced (paths are bounded only by
+> the 4,096-byte cache key; no D row says whether to reproduce it); (f) the "invalid DID"
+> of the base-table load (§6.1) is taken to be the null DID 0; (g) with D6's empty value
+> meaning "no skin", a skin whose name is empty can be listed but never chosen (the
+> analogue of §9.3's rule for a name equal to the "no skin" text); (h) SP25's "a 4,096 ×
+> 4,096 image is not changed" cannot hold for an uncompressed 32-bit TGA, which at
+> 67,108,882 bytes exceeds D4's 64 MiB file limit and fails; the test uses a 24-bit file.
+
+
+> **OPEN:** (clean-room implementer, 2026-10-07) D4's limits are per file; their product is
+> large and is spent at UI start (§9.4): a definition within them can keep about 19 MB
+> resident (65,536 element overrides), up to 1,024 skins may be kept, rejected candidates
+> are read and parsed without a count limit (`MAX_SKINS` counts accepted skins only), and
+> D9 logs every rejected entry (up to about 65,535 warnings per file). Proposed Tessera
+> bounds for D4/D9, not yet enforced: at most 64 MiB of definition files read per
+> discovery and at most 4,096 candidates parsed (accepted plus rejected), each reported as
+> a walk issue; per file, the first 100 rejected entries logged and then one summary line
+> with the count (the options entry still lists every rejection). Also: `tessera-ui::skin`
+> already rejects, as malformed, a start tag with more than 256 attributes
+> (`MAX_XML_ATTRIBUTES`, against memory amplification inside the 4 MiB file limit; no
+> skin element uses more than a handful), and of several definition files in one folder
+> whose names differ only in letter case it uses the one that sorts first by byte value
+> and reports the others as shadowed (D2). Please confirm these as D4 rows or set other
+> values.
 ---
 
 <a id="s11"></a>
@@ -1428,6 +1516,12 @@ Real data (each checked against the whole install on 2026-10-05; tests read
   `CharacterEquipmentPage_Page`, which also uses Colorize (1) and Screen (7) (80 items).
 - **SI13** The layout labelled `luaplugins` has the top-level element labels `LotroButton`,
   `LotroCheckBox`, `LotroTextBox` and `LotroWindow_Container` (§6.8).
+
+> **OPEN:** (clean-room implementer, 2026-10-07) SI1–SI9 are asserted by
+> `crates/ui/tests/skin_real_data.rs`. SI10–SI13 need the §8.6 rows resolved into element
+> trees (`ui-layout.md` §7.1) and the `UILAYOUT` map; they are not yet tested anywhere and
+> belong with the element-tree tests of the native panels (`tessera-ui`'s tree module),
+> which should take them over when the panels are built.
 
 Parser and resolver (synthetic fixtures; each is a test):
 

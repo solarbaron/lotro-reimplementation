@@ -450,6 +450,22 @@ Allowed:
 - screenshots in bug reports only as ToS §14.1 permits (non-commercial, no logos, no implied
   endorsement), kept to what is needed.
 
+**The one third-party binary asset: the UI fallback font**
+([decision 0022](decisions/0022-bundled-ui-font.md), owner, 2026-10-08).
+`crates/ui/assets/fonts/NotoSans-Regular.ttf` is **Noto Sans Regular** (version 2.015),
+copyright The Noto Project Authors, licensed under the **SIL Open Font License 1.1**
+(`OFL-1.1`, text in [`LICENSES/OFL-1.1.txt`](../LICENSES/OFL-1.1.txt)). The OFL allows the font
+to be bundled with GPL software; the font itself stays under the OFL when Tessera is
+distributed (OFL conditions 2 and 5), and its copyright notice and licence go with every copy
+(`REUSE.toml` annotation, `crates/ui/assets/fonts/OFL.txt`, and the font's own `name` table).
+It is bundled unmodified and under its original name, so the OFL's Reserved Font Name rules
+do not apply. It is not a game font: it is Tessera's own fallback for text without a game
+layout. `tools/content-allowlist.txt` exempts exactly that path from the font checks.
+
+**Game fonts are still never committed.** The game's fonts and glyph atlases are only ever
+loaded at run time from the user's install ([`fonts.md`](specs/fonts.md)). Any other
+third-party binary asset needs its own decision.
+
 Exporters and viewers are for personal use, are opt-in, and are never advertised as bulk
 extraction or ripping tools. The engine must run with original placeholder content so it
 has substantial uses that do not depend on game data. Extended scripts' read access to

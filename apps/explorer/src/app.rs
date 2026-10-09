@@ -211,6 +211,7 @@ pub(crate) struct Stores {
     pub scene: AssetStore<ContextSource, SceneDecoder>,
     pub landblock: AssetStore<ContextSource, crate::world::LandblockDecoder>,
     pub sky: AssetStore<ContextSource, crate::world::SkyDecoder>,
+    pub gameplay: AssetStore<ContextSource, crate::gameplay::GameplayDecoder>,
 }
 
 impl Stores {
@@ -277,6 +278,12 @@ impl Stores {
                 &pool,
                 ContextSource,
                 crate::world::SkyDecoder(Arc::clone(ctx)),
+                cfg.clone(),
+            ),
+            gameplay: AssetStore::new(
+                &pool,
+                ContextSource,
+                crate::gameplay::GameplayDecoder::new(Arc::clone(ctx)),
                 cfg,
             ),
             scene: AssetStore::new(
@@ -304,6 +311,7 @@ impl Stores {
             + self.scene.poll_completions(256).len()
             + self.landblock.poll_completions(256).len()
             + self.sky.poll_completions(256).len()
+            + self.gameplay.poll_completions(256).len()
     }
 }
 
@@ -361,6 +369,8 @@ pub(crate) struct Current {
     pub mesh: MeshState,
     /// The landblock and sky views' state.
     pub world: crate::world_view::WorldViewState,
+    /// The gameplay view's state.
+    pub gameplay: crate::gameplay::view::GameplayViewState,
 }
 
 impl Current {
@@ -393,6 +403,7 @@ impl Current {
             record_filtered: None,
             mesh,
             world: crate::world_view::WorldViewState::default(),
+            gameplay: crate::gameplay::view::GameplayViewState::default(),
         }
     }
 
@@ -417,6 +428,7 @@ impl Current {
         }
         self.mesh.cancel();
         self.world.cancel();
+        self.gameplay.cancel();
     }
 }
 
@@ -1568,6 +1580,7 @@ impl ExplorerApp {
             }
             ViewKind::Landblock => fin(&cur.world.landblock),
             ViewKind::Sky => crate::world_view::sky_ready(&cur.world),
+            ViewKind::Gameplay => cur.gameplay.is_finished(),
         }
     }
 

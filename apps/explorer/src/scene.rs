@@ -826,6 +826,7 @@ fn terrain_part(bundle: &tessera_world::LandblockBundle) -> ScenePart {
         positions,
         normals: Some(normals),
         tangents: None,
+        binormals: None,
         uvs: None,
         colors: None,
         indices: tessera_render::Indices::U32(indices),
@@ -2305,6 +2306,13 @@ pub(crate) fn build_part_from(
             &sk.joints,
             &sk.weights,
         );
+        // The stored binormals (render.md §4.8, R-D10) turn with the tangents: the
+        // deformer's direction path (the same blended transform without translation,
+        // renormalised, zero kept) applied with throw-away positions.
+        if let Some(b) = data.binormals.as_deref_mut() {
+            let mut scratch = vec![[0.0f32; 3]; b.len()];
+            d.deform(&mut scratch, Some(b), None, &sk.joints, &sk.weights);
+        }
         // The stored boxes describe the undeformed mesh: the scene's bounds (framing, the
         // sheet's bind-pose top) come from the deformed vertices.
         for (s, &(first, count)) in part.submeshes.iter_mut().zip(&ranges) {

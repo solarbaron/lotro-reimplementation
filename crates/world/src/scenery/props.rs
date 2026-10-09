@@ -194,26 +194,13 @@ pub fn value_bool(v: &PropertyValue) -> Option<bool> {
     }
 }
 
-/// A boolean under the Tessera Decision of `scenery.md` §8.3 rule 8: true for a stored
-/// boolean true or an integer-like value other than 0; a value of any other type counts as
-/// absent (`None`), so the reader's default applies.
-///
-/// "Integer-like" is not defined by the spec (OPEN note at §8.3 rule 8). Conservative
-/// choice: the integer and bitfield types (`Int`, `Int64`, `Enum`, `Bitfield32`,
-/// `Bitfield64` and bitfields of any width) count; references and identifiers (`DidRef`,
-/// `StringToken`, `PropertyId`, `InstanceId`), the tri-state byte and every non-scalar
-/// type do not.
+/// A frill per-object boolean (`scenery.md` §8.3 rule 8, BIN (y), S52): read only from a
+/// stored boolean (true when non-zero); a value of any other type, integers, enums and
+/// bitfields included, counts as absent (`None`), so the reader's default applies.
 #[must_use]
 pub fn value_flag(v: &PropertyValue) -> Option<bool> {
     match v {
         PropertyValue::Bool(b) => Some(*b),
-        PropertyValue::Int(_)
-        | PropertyValue::Int64(_)
-        | PropertyValue::Enum(_)
-        | PropertyValue::Bitfield32(_)
-        | PropertyValue::Bitfield64(_) => v.as_bits().map(|b| b != 0),
-        // Every bit counts, not only the first 64.
-        PropertyValue::BitfieldAny(b) => Some(b.bytes.iter().any(|x| *x != 0)),
         _ => None,
     }
 }

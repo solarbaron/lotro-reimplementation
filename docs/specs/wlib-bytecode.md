@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (third review of 2026-10-07 passed) |
-| **Last updated** | 2026-10-07 |
+| **Status** | **Accepted** (revision of 2026-10-08 reviewed and passed 2026-10-08) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
-| **Review record** | 2026-10-07: first and second reviews **changes requested** (fixed by F1–F5 and R1–R3, §17). Third review, 2026-10-07 (separate session, not the author): **passed**, Accepted; R1–R3 reproduced over all records. Details in the review log (decision 0018). |
+| **Review record** | 2026-10-07: first and second reviews **changes requested** (fixed by F1–F5 and R1–R3, §17). Third review, 2026-10-07 (separate session, not the author): **passed**, Accepted; R1–R3 reproduced over all records. 2026-10-08 revision, reviewed 2026-10-08 (separate session, not the author): **passed**, Accepted. Details in the review log (decision 0018). |
 | **Implements into** | A script-machine crate on top of `crates/wstate` (decoder, validator, interpreter core; crate placement is the implementer's choice); `apps/explorer` (disassembly and cross-reference view, §11); `apps/dattool` (listing and statistics) |
 | **Companion specs** | [`wlib.md`](wlib.md) (container §3, bytecode chunk §4.1, messages §4.2, value type codes §5, class table and method tables §6, singleton list §7, attribute lists §8, parent map §9); [`wstate.md`](wstate.md) (object records, native classes §5.3); [`records.md`](records.md) §1.4 (UTF-16 strings); [`property-system.md`](property-system.md) §9 (DB-object types); [`combat-data.md`](combat-data.md) §13.2; [`misc-records.md`](misc-records.md) §13.5, §13.6; [`plugin-runtime.md`](plugin-runtime.md) §4.6 (floating-point environment) |
 
@@ -53,7 +53,7 @@ How sources are marked:
 | Key | Source |
 |---|---|
 | OBS | Observed in the user's install, 2026-10-07 (Steam install; data files dated 2026-10-04). The library record 0x56000000 decoded as in `wlib.md`; the bytecode chunk swept from the first to the last byte (362,178 instructions in 18,323 function bodies, ending exactly at the chunk length); all 2,129 class-table entries, all method tables, all 4,525 messages; the object-family census of §10 uses the root class and property names of all 383,332 object records with prefix 0x70 (`wstate.md`). |
-| BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 in the dirty room with a headless decompiler and a disassembler, on a copy of the project's analysis database (deleted after use), by address range only: the script interpreter's dispatch routine and its 220 instruction handlers and error exits; the three routines through which native code calls script functions (by function ID, virtual by function ID, virtual by slot) and their shared call helper; the library's post-load link step and the instruction-length routine it uses; the allocation helpers used by instructions 0x0C, 0x0E and 0x0F; the prototype-record loader used by 0x0D; the machine release and resume helpers; the native-function registration routines (only to pair function IDs with entry points, by instruction pattern); three registered native functions, read to establish the native calling convention; the arguments at all 1,376 client call sites of the three entry routines (1,372 of the static form, 3 of the virtual form by function ID, 1 of the virtual form by slot), by instruction pattern. A second, shorter reading on 2026-10-07 (revision session, a disassembler on the read-only executable only, no copy of the analysis database) re-counted those call sites, looked at the argument registers of the three entry routines and at the 9 sites whose function ID the pattern had not recovered, and read the handlers of 0x73 and 0x74 (§5.9). **Questions:** instruction encoding and lengths; what each instruction does; the value, frame and call model and its limits; static and virtual dispatch; which operations leave the script machine and how arguments and results cross; how message strings are used; how references, attributes and prototype records are reached. **Why M1–M3 were not enough:** the data show only byte patterns. A census can suggest that instructions are 32-bit words, but not which byte is the opcode, what any opcode does, its stack effect, its limits or its error behaviour, and not what operand values refer to. No published source describes this bytecode (M2: the research clones and the third-party documentation were searched; the only third-party description of the library, `wlib.md`'s LC and MK sources, stops at the container). A running client (M3) does not expose the script machine's internal state. **Not read:** nothing from network, login, launcher or anti-tamper code. The callers of the resume helper (§6.5) were not followed, because their purpose was not established and they may serve server-driven continuations (decision 0004). |
+| BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 in the dirty room with a headless decompiler and a disassembler, on a copy of the project's analysis database (deleted after use), by address range only: the script interpreter's dispatch routine and its 220 instruction handlers and error exits; the three routines through which native code calls script functions (by function ID, virtual by function ID, virtual by slot) and their shared call helper; the library's post-load link step and the instruction-length routine it uses; the allocation helpers used by instructions 0x0C, 0x0E and 0x0F; the prototype-record loader used by 0x0D; the machine release and resume helpers; the native-function registration routines (only to pair function IDs with entry points, by instruction pattern); three registered native functions, read to establish the native calling convention; the arguments at all 1,376 client call sites of the three entry routines (1,372 of the static form, 3 of the virtual form by function ID, 1 of the virtual form by slot), by instruction pattern. A second, shorter reading on 2026-10-07 (revision session, a disassembler on the read-only executable only, no copy of the analysis database) re-counted those call sites, looked at the argument registers of the three entry routines and at the 9 sites whose function ID the pattern had not recovered, and read the handlers of 0x73 and 0x74 (§5.9). **Questions:** instruction encoding and lengths; what each instruction does; the value, frame and call model and its limits; static and virtual dispatch; which operations leave the script machine and how arguments and results cross; how message strings are used; how references, attributes and prototype records are reached. **Why M1–M3 were not enough:** the data show only byte patterns. A census can suggest that instructions are 32-bit words, but not which byte is the opcode, what any opcode does, its stack effect, its limits or its error behaviour, and not what operand values refer to. No published source describes this bytecode (M2: the research clones and the third-party documentation were searched; the only third-party description of the library, `wlib.md`'s LC and MK sources, stops at the container). A running client (M3) does not expose the script machine's internal state. **Not read:** nothing from network, login, launcher or anti-tamper code. The callers of the resume helper (§6.5) were not followed, because their purpose was not established and they may serve server-driven continuations (decision 0004). **Third reading, 2026-10-08** (revision session; a disassembler on the read-only executable, same build, plus the first reading's dirty-room notes; no copy of the analysis database was made): which instruction handlers read byte 1 and bytes 2–3 of the first word; the link step's walk and what it does with operands it cannot resolve; how frame entry and return use *L* and *A*; the path of 0x0D through the object table; the exception-unwind data of the interpreter, the three entry routines and their call helper. Why M1–M3 were not enough: these are the client's reactions to inputs the shipped data never contain, so the data cannot show them (M1), nothing is published (M2), and a running client never meets them (M3). |
 | WL | [`wlib.md`](wlib.md) (Accepted): container, chunk layouts, class table, method tables, function IDs (§6.4), singleton list (§7), attribute lists (§8). |
 | WS | [`wstate.md`](wstate.md): native class indices and their codec names (§5.3); the client's registry of 258 native classes (its N6, BIN). |
 | CD, MR | [`combat-data.md`](combat-data.md) (family root classes, modifier classes 1339–1342) and [`misc-records.md`](misc-records.md) §13.5–§13.6 (property-response and game-callback objects). |
@@ -81,6 +81,11 @@ How sources are marked:
 | B18 | Body sharing comes only from inheritance: each of the 4,218 shared bodies has an owner that is an ancestor of all its other owners, and every other owner holds it at the same slot indices; 1,428 of them have two owners that are not ancestor and descendant (§2) | OBS (all method tables, parent map of `wlib.md` §9) | Confirmed |
 | B19 | Property-ID immediates: 8,712 integer immediates of 0x01 equal a defined property ID (3,524 distinct IDs), no float immediate does; a byte search of the whole block finds 5,993 distinct IDs (§11.2, §16) | OBS (every 0x01 instruction, every byte offset; the 27,546 defined property IDs of the install's property registry, `property-system.md`); CD (§13.2, same byte-search count) | Confirmed |
 | B20 | Class ancestry of the families of §10: all 110 game-callback classes descend from class 91 (78 as children, 27 through class 916, 5 through class 946; 916 and 946 are children of 91 and override slot 85); none of the 136 descendants of class 91 overrides slot 84; usage plugins: 24 children of class 3227, 6 grandchildren (through 3603 and 3694), and class 3227 itself | OBS (parent map of `wlib.md` §9 and method tables of all classes; family membership as in B15) | Confirmed |
+| B21 | Byte 1 of the first word is read only by 0x01–0x04, which push it unchanged (zero-extended, any value 0–255) as the type code of their result; every other instruction ignores byte 1, and instructions without a 16-bit field ignore bytes 2–3 (§3.1, §12) | BIN (third reading) | BIN only |
+| B22 | The client validates nothing at load: the link step walks from offset 0 with the length rule of §3.2, taking 4 bytes for any opcode not listed there, and stops at the first instruction start at or beyond *L*; unresolvable 0x0C, 0x0E and 0x15 operands fail only when the instruction runs (§7.3, §12) | BIN (third reading; the first reading for §7.3) | BIN only |
+| B23 | Frame entry and return use *L* and *A* as byte counts: SP moves by *L* bytes, the 0xCD fill covers *L* rounded down to a multiple of 4 bytes, return sets SP to FP − *A* bytes; neither is checked or rounded to whole cells (§12) | BIN (third reading); OBS (every *L* and *A* is a multiple of 8, *L* ≤ 416, *A* ≤ 144, re-checked 2026-10-08) | Confirmed (BIN + OBS) |
+| B24 | Each execution of 0x0D decodes the record anew into newly allocated objects and pushes the new root reference; it never returns a root object made by an earlier execution (§9.3) | BIN (third reading) | BIN only |
+| B25 | The interpreter, the three native-to-script entry routines and their call helper register no exception filter (their unwind data carry at most the C++ unwind handler), and the interpreter does not change the floating-point control state (§5.12) | BIN (third reading) | BIN only |
 
 ---
 
@@ -103,8 +108,10 @@ How sources are marked:
 | **Status** | The result of one run of the machine: 1 completed, 3 error (§6.5). |
 | **Link step** | The client's pass over the loaded code block that resolves the operands of 0x0C, 0x0E and 0x15 (§7.3). |
 
-Instruction names in this spec (`push.i32`, `br.false` and so on) are Tessera's own labels;
-the data carries opcode numbers only.
+Instruction names in this spec (`push.imm32`, `call.native` and so on) are Tessera's own labels;
+the data carries opcode numbers only. Opcodes that §5 lists without a name (arithmetic,
+conversions, comparisons, logic, branches, switches) have no prescribed label: a tool chooses
+its own, one distinct label per valid opcode (Tessera rule, 2026-10-08).
 
 ---
 
@@ -144,8 +151,8 @@ Census of the whole block: 362,178 instructions; frame entries declare 0–416 b
 | Byte(s) of word 0 | Meaning |
 |---|---|
 | 0 | **Opcode** (u8). The interpreter dispatches on this byte alone. |
-| 1 | **Type code** for the four immediate-push instructions 0x01–0x04 (`wlib.md` §5); zero in every other instruction (OBS: all 362,178). |
-| 2–3 | **16-bit field** *k*. Signed or unsigned depending on the instruction (§5). Zero where the instruction has no such field (OBS). |
+| 1 | **Type code** for the four immediate-push instructions 0x01–0x04 (`wlib.md` §5); zero in every other instruction (OBS: all 362,178). The original reads byte 1 only in 0x01–0x04 and pushes it unchanged, whatever its value; all other instructions ignore it (B21). |
+| 2–3 | **16-bit field** *k*. Signed or unsigned depending on the instruction (§5). Zero where the instruction has no such field (OBS); the original ignores it there (B21). |
 
 Further words (operand words) follow for the instructions of §3.2.
 
@@ -553,8 +560,14 @@ The original client does not guard against the following (BIN); the data never n
 - integer division or remainder by zero, and the minimum value divided by −1 (0x1D–0x20):
   a processor fault in the original;
 - float division by zero (0x2D, 0x2E): infinity or a fault, depending on the floating-point
-  exception mask in force (PR; not established for the script machine);
+  exception mask in force (PR). The interpreter does not change the floating-point control
+  state; it runs with that of the thread that started it (B25), which is not established;
 - opcodes 0xC0–0xC3 and 0xE0–0xFF, and any operand out of range (§4.4).
+
+Neither the interpreter nor the three native-to-script entry routines (§6.4) nor their call
+helper registers an exception filter: their unwind data carry at most the C++ unwind handler,
+so a processor fault is not handled inside the script machine and passes to the frames that
+started it (B25). What those frames do with it is not established.
 
 Tessera rule (its own): each of these ends the run with status 3 (§12).
 
@@ -746,6 +759,11 @@ rewrites, in its in-memory copy, the operand word of:
 - 0x15: native function ID → an entry for the function, or a stub that returns status 3 if
   the ID is not registered.
 
+The walk takes 4 bytes for any opcode the length rule does not list, valid or not, and stops
+at the first instruction start at or beyond *L*. It rejects nothing: an instruction or switch
+table running past *L*, an invalid opcode and an out-of-range operand all pass, and the
+operands above that cannot be resolved fail only when their instruction runs (B22).
+
 The file holds the unresolved values listed in §3.3. Tessera may resolve these at load time
 into its own tables; it must not depend on the client's rewritten form.
 
@@ -805,9 +823,11 @@ are used). It pushes a reference to the loaded object, or null if the object can
 loaded. The object table loads a 0x76 record only for a class in chunk 64 (`wlib.md` §7.2,
 W29). OBS: 5 sites, all naming class 1603, which is in chunk 64.
 
-> **OPEN:** whether repeated executions of 0x0D yield the same object or a fresh copy of the
-> prototype each time. Tessera loads a fresh object graph per execution until settled
-> (`wlib.md` §7.2 states that the 0x76 record is decoded anew for each new object).
+Each execution decodes the record anew into newly allocated objects of the object table and
+pushes the reference of the new root object, so two executions yield two distinct root
+objects (BIN only, B24). The original does not look for a root object made by an earlier
+execution. An interpreter loads a fresh object graph per execution (this agrees with
+`wlib.md` §7.2, which says that the 0x76 record is decoded anew for each new object).
 
 <a id="s9-4"></a>
 ### 9.4 References
@@ -931,10 +951,17 @@ does not mark 0x03 immediates (OBS).
 <a id="s12"></a>
 ## 12. Tessera rules (validation and limits)
 
-The original trusts the bytecode. Tessera treats the library as hostile input and adds these
+The original trusts the bytecode. It validates nothing at load (B22): its link step (§7.3)
+walks the block and rejects nothing; byte 1 of 0x01–0x04 is pushed as a type code whatever its
+value, and byte 1 and unused bytes 2–3 of other instructions are ignored (B21); *L* and *A* are
+used as byte counts without a check, so a value that is not a multiple of 8 puts SP off the
+cell grid (B23); failures of V9, V10 and V12 surface only when the instruction runs (status 3,
+§7.3) and failures of V8, V11 and V13 are not detected at all (§4.4). Every rule of this
+section is therefore Tessera's own. Tessera treats the library as hostile input and adds these
 rules; all of them hold for the shipped data (§13).
 
-At load (a failure rejects the code block, the rest of the library stays usable):
+At load (a failure rejects the code block, the rest of the library stays usable). These are
+invariants V1–V7, the multiple-of-8 part of V14, and the byte-1 rule:
 
 - every method-table offset (other than 0xFFFFFFFF) is < *L*, a multiple of 4, and an
   instruction start under §3.2 when sweeping from 0; the sweep ends exactly at *L*;
@@ -943,7 +970,20 @@ At load (a failure rejects the code block, the rest of the library stays usable)
   of 8;
 - branch and switch targets are instruction starts within the body;
 - static-call operands are body starts;
-- frame indices of §5.3 and §5.5 lie in −*A*/8 … *L*/8 − 1 (two-cell forms: up to *L*/8 − 2).
+- frame indices of §5.3 and §5.5 lie in −*A*/8 … *L*/8 − 1 (two-cell forms: up to *L*/8 − 2);
+- byte 1 is zero outside 0x01–0x04; in 0x01 and 0x03 it is 1, 2 or 3, in 0x02 and 0x04 it is
+  130, 131 or 195 (any value type code of the pushed width, `wlib.md` §5; wider than the codes
+  V4 observed, narrower than the original, which accepts any byte). Bytes 2–3 of an
+  instruction without a 16-bit field are ignored, as in the original; a disassembler may show
+  them when they are not zero.
+
+Reported, not rejected (a tool lists them as findings; the library stays loaded):
+
+- V8–V13 and the sharing rule of §2 (B18). An interpreter does not need them at load: the
+  run-time checks below cover every case where they would matter, which matches where the
+  original fails (V9, V10, V12 at run time) or improves on it (V8, V11, V13);
+- the bounds of V14 (*L* ≤ 416, *A* ≤ 144). They are census values of this install, not
+  limits; the value-stack check below bounds frame sizes at run time.
 
 At run time (a failure ends the run with status 3):
 
@@ -961,15 +1001,16 @@ Locals are filled at frame entry exactly as in §4.3 step 3: every local cell be
 body reads a local before any store on some path and behaves differently with zero (§4.3,
 B17, §13 V16).
 
-> **OPEN:** (implementer note, `crates/wvm`, 2026-10-08; engineering choices the spec leaves
-> open, for review) (1) The decoder rejects the code block on V1–V7 and on a byte 1 that V4
-> does not allow; for 0x01–0x04 it accepts any type code of the pushed width (1–3 for 0x01
-> and 0x03, 130/131/195 for 0x02 and 0x04), not only the codes V4 observed. (2) V8–V13 and
-> the sharing rule of §2 (B18) are reported as findings, not load failures, because the
-> run-time checks of this section cover what an interpreter needs; V14's upper bounds
-> (416, 144) are census values, not enforced. (3) The V16 analysis skips bodies with more
-> than 64 local cells (the data have at most 52) and reports them as skipped. (4) V15 (the
-> stack-depth search) is not implemented. Is any of these meant to be stricter?
+Cross-checks (V15, V16) are optional analyses for tools, never load conditions. The original
+performs neither. A tool may leave V15 out. A V16 analysis may bound its work, for example by
+skipping bodies with more than 64 local cells (the shipped maximum is 52, §2), provided it
+reports which bodies it skipped. Such a bound must not change the result for the shipped data:
+the one body V16 names (offset 0x125B8) has 3 local cells.
+
+The rules above answer the implementer note of 2026-10-08 (`crates/wvm`): its decoder's
+load-time rejections, its reporting of V8–V13 and B18 as findings, its unenforced V14 bounds,
+its V16 bound of 64 local cells and its omission of V15 are all within this section. None needs
+to be stricter.
 
 ---
 
@@ -995,8 +1036,10 @@ B17, §13 V16).
 | V15 | Stack depth: in 18,314 of the 18,323 bodies each instruction can be given one operand-stack depth (cells above FP + *L*/8) such that every instruction finds at least as many cells as it pops (an empty-area return of §4.3 excepted), and every branch target and fall-through agrees, except at a 0x13, where depths may differ (§4.3). The stack effects are those of §5 and §7.2; for 0x14 and 0x15, whose effect depends on the callee, some consistent choice exists. For the other 9 bodies the search was stopped by its time limit, not refuted. |
 | V16 | Definite assignment of locals: follow every path from the start of each body (fall-through, branch targets of §3.4, every switch target; no edge out of a return) and treat a local cell (index 0 … *L*/8 − 1) as assigned once a store to it has run on **every** path to the current instruction. Stores are 0x48, 0x49, 0xA8–0xB5 and, conservatively, 0x52 (taking the cell's address, since a callee may write through it); for the two-cell forms both cells count. (0x46 and 0x47, the stores with a computed index, do not occur.) Reads are all frame-cell reads (0x43, 0x44, 0x9B–0xA7, 0x95–0x98) whose cells include a local; a two-cell read starting at FP − 1 (0xA3, or 0x44 with *k* = −1) reads local 0 as its second cell. (0xA3 and 0x44 with *k* = −1 do not occur, so they do not change the result.) Exactly one body has a read of a local that is not assigned on every path: offset 0x125B8, local 0, at 0x127D4 and 0x127E0 (§4.3). |
 
-V1–V14 are load-time checks (§12). V15 and V16 are cross-checks; a Tessera tool may report bodies that
-fail it but must not reject the library for it.
+V1–V7, the multiple-of-8 part of V14 and the byte-1 rule of §12 are load-time checks; V8–V13,
+the bounds of V14 and the sharing rule of §2 (B18) are reported findings (§12). V15 and V16 are
+cross-checks; a Tessera tool may report bodies that fail them but must not reject the library
+for them, and need not implement them (§12).
 
 ---
 
@@ -1085,11 +1128,11 @@ fewer than 6 entries, the result is the missing-function error (status 3).
 > descend from class 91, narrowed to the constant virtual ID of §6.4, whose call site's
 > purpose is not established).
 
-> **OPEN:** whether 0x0D returns one shared object per prototype or a fresh one (§9.3).
-
 > **OPEN:** what the original does after a processor fault in the interpreter (integer
 > division by zero, minimum ÷ −1) and whether float division by zero faults in its
-> floating-point environment (§5.12). Tessera's rule is status 3.
+> floating-point environment (§5.12). Narrowed 2026-10-08: the script machine itself neither
+> handles the fault nor sets the floating-point state (B25); the answer lies in the frames
+> outside it. Tessera's rule is status 3.
 
 > **OPEN:** which native functions consume property IDs (§11.2).
 
@@ -1125,3 +1168,4 @@ fewer than 6 entries, the result is the missing-function error (status 3).
 | 2026-10-07 | Revision after the first review (changes requested), status stays Review; spec writer in a separate session, with new probes over every record and a short second BIN reading (BIN row). F1: §12 no longer allows zero-filled locals; §4.3 names the one body that reads a local before any store (offset 0x125B8) and what changes with zero; new B17 and invariant V16 (definite-assignment rule). F2: §2 shared-body statement corrected (sharing comes only from inheritance; 1,428 bodies have sibling owners; the "2,140 unrelated, identical bodies" claim withdrawn); new B18. F3: call sites re-counted: 1,376 sites of the three entry routines (1,372 static, 3 virtual by ID, 1 by slot); 2 static sites the first pattern missed carry constant IDs, so 1,367 constant static IDs (1,362 resolve), 5 computed; one virtual site carries the constant ID 0x005B0001 (class 91, slot 84, forwarding to slot 85) and the by-slot site uses slot 0. BIN row, B14, §6.4 (new table), §10 bullet and OPEN, §15 updated. F4: new B19 for the property-ID counts of §11.2 and §16, plus the 0x03 observation in §11.2. F5: §5.9 states the IEEE zero test of 0x73–0x78 (−0.0 is zero, NaN is true). |
 | 2026-10-07 | Revision after the second review (changes requested), status stays Review; spec writer in a separate session, own probe over the parent map and all method tables (no BIN reading). R1: §10 now says all 110 game-callback classes descend from class 91 (78 children, 27 through class 916, 5 through class 946, which are children of 91 and override slot 85), so the 0x005B0001 virtual call reaches a slot-85 body for all 110; the §10 OPEN and the third §15 OPEN narrowed to "not established that the client starts callbacks there". R2: usage plugins: 24 have class 3227 as parent, 6 as grandparent, the 31st is class 3227. R3: V16 counts every frame-cell read whose cells include a local (0xA3 and 0x44 with *k* = −1 read local 0 as their second cell; neither occurs). New B20. |
 | 2026-10-07 | Third review (separate session, not the author): passed; status Accepted. No content change. |
+| 2026-10-08 | Revision (status Revised; spec writer in a separate session). Answers the implementer note of §12 (`crates/wvm`): a third BIN reading (BIN row; disassembler on the read-only executable, no analysis-database copy) and a re-check of the frame sizes over every body. New B21 (byte 1 read only by 0x01–0x04, pushed unchanged; unused fields ignored), B22 (no load-time validation; link-step walk), B23 (*L*, *A* are unchecked byte counts), B24 (0x0D decodes a fresh object graph per execution), B25 (no exception filter in the script machine; no floating-point state change). §1: labels for unnamed opcodes are the tool's choice; the example names now match §5. §3.1, §7.3: client behaviour from B21, B22. §12: what the original checks; load-time rules now list the byte-1 rule; V8–V13, B18 and the V14 bounds are reported findings; V15 optional, V16 may be bounded if skips are reported; the implementer OPEN is closed (its four choices stand as Tessera rules). §13: closing sentence matches §12 (also the third review's note N1). §9.3 OPEN closed (fresh object per execution, B24); §5.12 and its §15 OPEN narrowed (B25). |

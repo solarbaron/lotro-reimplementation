@@ -2,8 +2,10 @@
 //! The data side of world audio, run on the asset workers: the property dictionary and
 //! vocabularies, script tables and scriptlets (with the sound infos their Sound nodes name
 //! prefetched into the loader's cache), the player avatar's start-up scripts (`sound.md`
-//! §10.1, §12.4 step 1), area music types (§10.3.1), and per landblock the static
-//! entities whose start-up scripts make sound (§11) and the monitor volumes (§10.3.4).
+//! §10.1, §12.4 step 1), area and dungeon music types (§10.3.1), and per landblock the
+//! static entities whose start-up scripts make sound (§11), the monitor volumes (§10.3.4)
+//! and the sets of the location sources (§10.8.1: the landblock source, the cells'
+//! property sets).
 //!
 //! Every record is read through [`AudioData`]'s caches, so a table or sound info is read
 //! once; the runtime's [`ScriptSource`] ([`DataSource`]) reads from the same caches and
@@ -29,7 +31,8 @@ use tessera_scriptgraph::{EntityId, EntityInit, RuntimeVocabulary, ScriptSource}
 use tessera_world::{LandblockBundle, LandblockKey, WorldContext};
 
 use super::loader::{InfoCache, fetch, lock};
-use super::props::{AreaMusic, AudioPids, MonitorVolume, PlaceValues};
+use super::location::{CELL_NONE, CELL_OUTSIDE, LocationSet, landblock_source, location_set};
+use super::props::{AreaMusic, AudioPids, MonitorVolume};
 
 /// The property dictionary's DID (`property-system.md`).
 pub const PROPERTY_DICTIONARY: u32 = tessera_world::context::PROPERTY_DICTIONARY_DID;
@@ -47,6 +50,13 @@ pub const MAX_CACHED_SCRIPTS: usize = 8192;
 pub const MAX_CACHED_OBJECTS: usize = 32_768;
 /// Most area music types cached.
 pub const MAX_CACHED_AREAS: usize = 16_384;
+/// Most dungeon music types cached.
+pub const MAX_CACHED_DUNGEONS: usize = 16_384;
+/// Most distinct dungeons whose music one landblock scan reads.
+pub const MAX_DUNGEONS_PER_BLOCK: usize = 64;
+/// Heights above and below an interior entity's origin tried for its cell (metres; the
+/// walker's object layer uses the same, `entity-descriptor.md` §4.8 fallback).
+pub const ENTITY_CELL_PROBES: [f32; 3] = [0.0, 0.05, -0.05];
 /// Most emitters taken from one landblock.
 pub const MAX_EMITTERS_PER_BLOCK: usize = 1024;
 /// Most monitor volumes taken from one landblock.
@@ -124,8 +134,9 @@ pub struct MonitorDef {
     pub offset: [f32; 3],
     /// `Monitor_ScaleWithEntity`.
     pub scale_with_entity: bool,
-    /// The place values its `Monitor_VolumePropertiesToApply` set carries.
-    pub values: PlaceValues,
+    /// The properties its `Monitor_VolumePropertiesToApply` set carries (`sound.md`
+    /// §10.8.1 source 1).
+    pub values: Arc<LocationSet>,
 }
 
 /// The audio facts of one entity object (0x47).
@@ -133,7 +144,7 @@ pub struct MonitorDef {
 pub struct ObjectAudio {
     /// Its scripts, when they make sound.
     pub scripts: Option<Arc<EmitterScripts>>,
-    /// Its monitors that apply place values.
+    /// Its monitors that apply properties.
     pub monitors: Vec<MonitorDef>,
 }
 
@@ -146,6 +157,9 @@ pub struct StaticEmitter {
     pub position: [f64; 3],
     /// Rotation (x, y, z, w).
     pub rotation: [f32; 4],
+    /// Its cell in the landblock (`sound.md` §10.8.6 step 7): 0 for an exterior entity, the
+    /// cell containing an interior entity's origin, 0xFFFF when none does.
+    pub cell: u16,
     /// Its scripts.
     pub scripts: Arc<EmitterScripts>,
 }
@@ -161,8 +175,12 @@ pub struct BlockScan {
     pub area: AreaMusic,
     /// The area object named by `Area_DID`.
     pub area_did: Option<Did>,
-    /// Its block-map place values.
-    pub place: PlaceValues,
+    /// The landblock source's set (`sound.md` §10.8.1 source 4): block-map values under
+    /// the landblock-info set.
+    pub location: Arc<LocationSet>,
+    /// The embedded property sets of its cells (§10.8.2), by cell number; cells without
+    /// one are left out.
+    pub cells: HashMap<u16, Arc<LocationSet>>,
     /// Static emitters.
     pub emitters: Vec<StaticEmitter>,
     /// Monitor volumes.
@@ -203,6 +221,7 @@ pub struct AudioData {
     scriptlets: Mutex<HashMap<Did, Option<Arc<Scriptlet>>>>,
     objects: Mutex<HashMap<Did, Arc<ObjectAudio>>>,
     areas: Mutex<HashMap<Did, Option<u32>>>,
+    dungeons: Mutex<HashMap<Did, Option<u32>>>,
     main_thread_reads: AtomicU64,
 }
 
@@ -254,6 +273,7 @@ impl AudioData {
             scriptlets: Mutex::new(HashMap::new()),
             objects: Mutex::new(HashMap::new()),
             areas: Mutex::new(HashMap::new()),
+            dungeons: Mutex::new(HashMap::new()),
             main_thread_reads: AtomicU64::new(0),
         })
     }
@@ -454,8 +474,38 @@ impl AudioData {
     }
 
     fn read_area_music(&self, area: Did) -> Option<u32> {
-        let pid = self.pids.ambient_music_type?;
-        let set_did = object_property_set_did(area)?;
+        self.read_object_enum(area, self.pids.ambient_music_type?)
+    }
+
+    /// The `Dungeon_Music` of a dungeon object (`sound.md` §10.3.1), read once: `None`
+    /// when the dungeon has none or its set cannot be read. Blocking (workers only).
+    #[must_use]
+    pub fn dungeon_music(&self, dungeon: Did) -> Option<u32> {
+        if let Some(v) = lock(&self.dungeons).get(&dungeon) {
+            return *v;
+        }
+        let v = self
+            .pids
+            .dungeon_music
+            .and_then(|pid| self.read_object_enum(dungeon, pid));
+        let mut m = lock(&self.dungeons);
+        if m.len() < MAX_CACHED_DUNGEONS {
+            m.insert(dungeon, v);
+        }
+        v
+    }
+
+    /// The cached `Dungeon_Music` of a dungeon, without reading: `None` when the dungeon
+    /// was not read yet (main thread).
+    #[must_use]
+    pub fn cached_dungeon_music(&self, dungeon: Did) -> Option<Option<u32>> {
+        lock(&self.dungeons).get(&dungeon).copied()
+    }
+
+    /// An enum (or other integer) value `pid` of an object's property set
+    /// (DID + 0x09000000).
+    fn read_object_enum(&self, object: Did, pid: u32) -> Option<u32> {
+        let set_did = object_property_set_did(object)?;
         let bytes = fetch(&self.set, set_did.0).ok()??;
         let rec = PropertySetRecord::parse_expecting(&bytes, set_did, &*self.dict).ok()?;
         rec.set
@@ -508,7 +558,7 @@ impl AudioData {
     }
 
     /// The monitors of an entity descriptor (the first descriptor of its parent chain that
-    /// carries `Entity_Monitors`) whose property sets apply place values.
+    /// carries `Entity_Monitors`) whose property sets apply properties.
     fn monitors_of(&self, object: Did) -> Vec<MonitorDef> {
         let p = &self.pids;
         let Some(list_pid) = p.monitors else {
@@ -564,24 +614,43 @@ impl AudioData {
             .filter(|d| !d.is_null())?;
         let bytes = fetch(&self.set, set_did.0).ok()??;
         let rec = PropertySetRecord::parse_expecting(&bytes, set_did, &*self.dict).ok()?;
-        let values = PlaceValues::read(p, |pid| rec.set.get(pid).cloned());
-        (!values.is_empty()).then_some(MonitorDef {
+        let values = location_set(rec.set.iter().map(|e| (e.pid, &e.value)));
+        (!values.is_empty()).then(|| MonitorDef {
             min,
             max,
             offset,
             scale_with_entity,
-            values,
+            values: Arc::new(values),
         })
     }
 
-    /// What landblock `bundle` contributes (module docs): area music, block-map place
-    /// values, emitters and monitors. Blocking (workers only).
+    /// What landblock `bundle` contributes (module docs): area music, the landblock
+    /// source's set and the cells' sets (with the music of the dungeons they name read into
+    /// the cache), emitters and monitors. Blocking (workers only).
     #[must_use]
     pub fn scan_block(&self, bundle: &LandblockBundle, identity: usize) -> BlockScan {
         let key = bundle.key;
         let area_did = bundle.block_props.area.filter(|d| !d.is_null());
         let area = AreaMusic::Known(area_did.and_then(|a| self.area_music(a)));
-        let place = PlaceValues::read(&self.pids, |pid| bundle.block_props.value(pid).cloned());
+        let location = landblock_location(bundle);
+        let cells = cell_locations(bundle);
+        let mut dungeons: Vec<Did> = Vec::new();
+        if let Some(pid) = self.pids.dungeon_did {
+            for set in std::iter::once(&location).chain(cells.values().map(|c| &**c)) {
+                if let Some(d) = set
+                    .get(&pid)
+                    .and_then(PropertyValue::as_did)
+                    .filter(|d| !d.is_null())
+                    && !dungeons.contains(&d)
+                    && dungeons.len() < MAX_DUNGEONS_PER_BLOCK
+                {
+                    dungeons.push(d);
+                }
+            }
+        }
+        for d in dungeons {
+            let _ = self.dungeon_music(d);
+        }
         let origin = key.origin();
         let mut emitters = Vec::new();
         let mut monitors = Vec::new();
@@ -614,10 +683,16 @@ impl AudioData {
             if let Some(s) = &audio.scripts
                 && emitters.len() < MAX_EMITTERS_PER_BLOCK
             {
+                let cell = if e.interior {
+                    entity_cell(bundle, pl.position)
+                } else {
+                    CELL_OUTSIDE
+                };
                 emitters.push(StaticEmitter {
                     id: emitter_id(key, e.index),
                     position,
                     rotation,
+                    cell,
                     scripts: Arc::clone(s),
                 });
             }
@@ -633,7 +708,7 @@ impl AudioData {
                     max: m.max,
                     offset: m.offset,
                     scale_with_entity: m.scale_with_entity,
-                    values: m.values.clone(),
+                    values: Arc::clone(&m.values),
                 });
             }
         }
@@ -642,11 +717,66 @@ impl AudioData {
             bundle: identity,
             area,
             area_did,
-            place,
+            location: Arc::new(location),
+            cells,
             emitters,
             monitors,
         }
     }
+}
+
+/// The landblock source's set of a bundle (`sound.md` §10.8.1 source 4, §10.8.6 step 4):
+/// every block-map pair whose key the descriptor assigns a property (out-of-range palette
+/// indices give nothing), then every property of the landblock-info set on top.
+#[must_use]
+pub fn landblock_location(bundle: &LandblockBundle) -> LocationSet {
+    let bp = &bundle.block_props;
+    let block_map = bp
+        .values
+        .iter()
+        .filter_map(|v| v.pid.map(|pid| (pid, bp.value_of(v).cloned())));
+    let info = bundle
+        .info
+        .iter()
+        .flat_map(|i| i.properties.iter().map(|e| (e.pid, e.value.clone())));
+    landblock_source(block_map, info)
+}
+
+/// The embedded property sets of a bundle's cells (`sound.md` §10.8.2), by cell number.
+/// Cells numbered 0 or 0xFFFF and cells without a set are left out; the first of two
+/// cells with one number counts.
+#[must_use]
+pub fn cell_locations(bundle: &LandblockBundle) -> HashMap<u16, Arc<LocationSet>> {
+    let mut out = HashMap::new();
+    for c in bundle.info.iter().flat_map(|i| i.cells()) {
+        if c.index == CELL_OUTSIDE || c.index == CELL_NONE {
+            continue;
+        }
+        let Some(props) = c.properties.as_ref().filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        out.entry(c.index)
+            .or_insert_with(|| Arc::new(location_set(props.iter().map(|e| (e.pid, &e.value)))));
+    }
+    out
+}
+
+/// The cell of the bundle's collision set containing an interior entity's origin
+/// (landblock frame), tried at [`ENTITY_CELL_PROBES`]; 0xFFFF when none does or the block
+/// has no collision set (`sound.md` §10.8.6 step 7 with `landblock.md` §4.11).
+#[must_use]
+pub fn entity_cell(bundle: &LandblockBundle, origin: [f32; 3]) -> u16 {
+    let Some(col) = bundle.collision.as_deref() else {
+        return CELL_NONE;
+    };
+    ENTITY_CELL_PROBES
+        .into_iter()
+        .find_map(|dz| {
+            col.cell_at([origin[0], origin[1], origin[2] + dz])
+                .map(|c| c.index)
+        })
+        .filter(|&c| c != CELL_OUTSIDE && c != CELL_NONE)
+        .unwrap_or(CELL_NONE)
 }
 
 /// The runtime's script source: [`AudioData`]'s caches, reading on a miss (counted).
@@ -671,15 +801,15 @@ impl ScriptSource for DataSource {
     }
 }
 
-/// The block-map place values and area of landblock `key`, read from the archives and
-/// resolved against the region's block-map descriptor (`landblock.md` §5.4). For tools and
+/// The block-map values and area of landblock `key`, read from the archives and resolved
+/// against the region's block-map descriptor (`landblock.md` §5.4). For tools and
 /// real-data checks; the walker reads them from its bundles.
 #[must_use]
 pub fn read_block_values(
     data: &AudioData,
     ctx: &WorldContext,
     key: LandblockKey,
-) -> Option<(Option<Did>, PlaceValues)> {
+) -> Option<(Option<Did>, LocationSet)> {
     let did = key.block_map_did();
     let bytes = fetch(&data.set, did.0).ok()??;
     let map = BlockMap::parse_expecting(&bytes, did).ok()?;
@@ -697,7 +827,13 @@ pub fn read_block_values(
         .and_then(get)
         .and_then(|v| v.as_did())
         .filter(|d| !d.is_null());
-    Some((area, PlaceValues::read(&data.pids, get)))
+    let set = landblock_source(
+        values
+            .iter()
+            .filter_map(|v| v.pid.map(|pid| (pid, v.value.cloned()))),
+        std::iter::empty(),
+    );
+    Some((area, set))
 }
 
 /// The player avatar of the race table's first entry (`skeleton-anim.md` §2.2). Every

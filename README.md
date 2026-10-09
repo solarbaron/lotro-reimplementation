@@ -50,6 +50,11 @@ fall-through), visual rows that fail or cannot be judged (45 of 54 pass on the i
 clippy lint, and design specs with changes requested; the M3-b flight passed an indicative
 run and awaits a quiet-machine re-measure. Nothing here is playable yet: the walker flies and walks over the world
 offline, with an animated avatar and the NPCs the data places.
+**M5 (UI layouts, skins and Lua plugins) is in its exit phase** ([M5 status](docs/ROADMAP.md#m5-status)):
+every UI layout and font record decodes, the game's own panels open in the walker with the
+expected geometry, user skins change their art, and plugins run in a sandbox that passes its
+escape tests; the owner's screenshots and plugin install are still to come, and the UI time
+budgets are not met yet.
 **M6 (audio and player music) passes on Tessera's side** ([M6 status](docs/ROADMAP.md#m6-status)):
 all 44,329 sound payloads decode, area music cross-fades at area borders in the walker, an
 ABC conformance suite of original tunes passes (156 / 156 rows), and a 10-minute flight had
@@ -81,7 +86,8 @@ are still open.
 | Terrain texture layers, generated scenery and grass, collision and the walk controller (`tessera-physics`), water, sky and game clock, lit pipeline with shadows and lights, draw distances | in progress (M4.5): every new record kind decodes (3,402 scenes, 16,819 collision meshes, 1,057 cells, …); scenery of 78,114 landblocks deterministic; 25 / 32 scripted walks and a 1,000-walk soak with no fall-through; 45 / 54 visual rows pass on the image (re-verified 2026-10-07) |
 | Sound payloads (Ogg Vorbis, WAV), sound infos, script-table sound nodes; script-graph runtime (`tessera-scriptgraph`); audio engine on cpal with our own mixer (decision 0019); world audio in the walker (area music, ambience, emitters); ABC player music (`/play`, `/playstart`, `/playlist`, `/playstop`) with instruments and synchronised start | done on Tessera's side (M6): 44,329 / 44,329 payloads decode; area-music cross-fade at borders; ABC conformance 156 / 156; 0 underruns in a 603 s flight (indicative); owner's listening checks pending |
 | Tessera's own protocol (`tessera-protocol`, QUIC, decision 0030), `tessera-server` with an original default world, the client's test-server backend (`tessera-client --server`), `tessera-loadtest` | done on one machine (M7): one-hour soaks with 16 clients, 0 desync, no leak; protocol spec Accepted after an independent review; 10 fuzz targets; LAN run between two machines pending |
-| UI and plugins | planned (M5) |
+| UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
+| Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

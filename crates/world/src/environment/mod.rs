@@ -7,8 +7,9 @@
 //! |---|---|---|
 //! | [`Calendar`], [`GameClock`], [`ClockReading`] | The game clock *G* with its rate; year, day, time of day, game day number, month | §6, §11.1 |
 //! | [`day_hash`], [`weighted_pick`], [`choose_day`], [`choose_day_with_fallback`], [`DayChoice`] | The day description of a sky key on a game day; the Tessera fallback for keys only the day groups list | §11.2, §10 |
-//! | [`keyframe_pair`], [`blend_factor`], [`lerp_angle`], [`toward_sun`], [`SkyValues`], [`LightingInputs`], [`crossfade_factor`], [`transition_seconds`] | Keyframe blending, defaults, the cross-fade and the lighting inputs | §11.3, §11.2 step 5, `lighting.md` §8.1 |
-//! | [`animate_sky_objects`], [`SkyObjectState`], [`object_angle`], [`object_visible`] | Sky objects: visibility, angles, keyframe tints | §11.4 |
+//! | [`keyframe_pair`], [`blend_factor`], [`lerp_angle`], [`toward_sun`], [`SkyValues`], [`LightingInputs`], [`crossfade_factor`], [`transition_seconds`], [`outdoor_sun_present`] | Keyframe blending, defaults, "sun present", the sky-key cross-fade and the lighting inputs | §11.3, §11.6 steps 3–4, §11.7 step 9, `lighting.md` §8.1 |
+//! | [`EnvState`], [`SunChangeFade`] | The composed state of the track in use and the 5 s sun-change fade that smooths it, also across the switch between the outdoor and indoor tracks | §11.6 (E34, E37), §11.7 |
+//! | [`animate_sky_objects`], [`DrawnSkyObjects`], [`SkyObjectState`], [`object_angle`], [`object_visible`] | Sky objects: visibility, angles, keyframe entries, kept tints | §11.4 |
 //! | [`EnvironmentPids`], [`SkyKeyLayers`], [`block_sky_key`], [`set_sky_key`], [`InteriorFog`] | Sky keys of landblocks, cells and monitors; interior fog | §7.1, §7.2, §12 |
 //! | [`SkyLibrary`], [`Environment`], [`EnvironmentFrame`] | Records read from the install; the per-frame driver | §12 |
 //!
@@ -33,26 +34,31 @@
 mod blend;
 mod choose;
 mod clock;
+mod fade;
 mod hooks;
 mod sky_objects;
 mod state;
 
 pub use blend::{
-    CROSSFADE_EPSILON, KeyframePair, LightingInputs, Rgb, SkyValues, blend_factor,
-    crossfade_factor, keyframe_pair, lerp, lerp_angle, lerp_rgb, lerp_rgba, rgb, toward_sun,
-    transition_seconds,
+    CROSSFADE_EPSILON, DEFAULT_TRANSITION_SECONDS, KeyframePair, LightingInputs, Rgb, SUN_EPSILON,
+    SkyValues, blend_direction, blend_factor, crossfade_factor, heading_pitch, keyframe_pair, lerp,
+    lerp_angle, lerp_rgb, lerp_rgba, outdoor_sun_present, rgb, toward_sun, transition_seconds,
 };
 pub use choose::{
     ChoiceSource, DAY_HASH_MUL, DAY_HASH_SUB1, DAY_HASH_SUB2, DayChoice, INITIAL_DAY_TYPE,
     choose_day, choose_day_with_fallback, day_hash, weighted_pick,
 };
 pub use clock::{Calendar, ClockReading, GameClock, MAX_GAME_SECONDS, MAX_RATE};
+pub use fade::{
+    EnvState, MIN_SUN_CHANGE_SECONDS, NO_FOG_FAR, NO_FOG_NEAR, SUN_CHANGE_SECONDS, SunChangeFade,
+};
 pub use hooks::{
     EnvironmentPids, InteriorFog, InteriorFogType, SkyKeyLayers, block_sky_key, property_colour,
     set_indoor_ambiance, set_sky_key, sky_key_of,
 };
 pub use sky_objects::{
-    SkyObjectState, UNTINTED, animate_sky_objects, object_angle, object_progress, object_visible,
+    DrawnSkyObject, DrawnSkyObjects, SkyObjectState, UNTINTED, animate_sky_objects, object_angle,
+    object_progress, object_visible,
 };
 pub use state::{DEFAULT_DAY_CACHE_ENTRIES, Environment, EnvironmentFrame, Evaluation, SkyLibrary};
 

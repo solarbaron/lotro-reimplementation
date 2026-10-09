@@ -7,8 +7,9 @@
 //! colour *Ms* and power *p* (black below power 0.5), glow and dye colours, cull mode,
 //! depth test and write, the alpha-test threshold *τ*, the texture matrices, every
 //! parameter bound to a program constant by name (flag byte 1, `material.md` §8.6) and
-//! the program time (`lighting.md` §4.2 E20). A renderer maps these to GPU state; nothing
-//! here depends on one.
+//! the program time (`lighting.md` §4.2 E20) and whether the colour pass takes distance fog
+//! ([`DistanceFog`], `lighting.md` §2.1, §7 code 0x00, §10). A renderer maps these to GPU
+//! state; nothing here depends on one.
 //!
 //! Float parameters are curves evaluated at the clock of `material.md` §5.3.1 with the
 //! drawn instance's [`CurveStates`]; every float handed out is finite. A surface without
@@ -24,6 +25,63 @@ use crate::vocab::ids;
 /// Below this effective specular power the client uploads a black specular colour, so
 /// the surface has no highlight (`material.md` §8.3, `lighting.md` §5.8).
 pub const SPECULAR_POWER_CUTOFF: f32 = 0.5;
+
+/// What an unlit surface does about distance fog while it is not known whether its record's
+/// program reads the fog inputs: fogged (Tessera Decision, `material.md` §17 OPEN on the
+/// unlit fog switch). This keeps distant effects from showing through fog at full
+/// strength, and it is what renderers did before the switch existed.
+pub const UNLIT_FOG_WHEN_UNKNOWN: bool = true;
+
+/// Whether a surface's colour pass takes distance fog (`lighting.md` §10).
+///
+/// A lit record's base pass always contains distance fog (`lighting.md` §2.1). An unlit
+/// record (no additive light passes, `material.md` §11.3) is fogged only when its single
+/// pass's program reads the fog inputs (`lighting.md` §7 code 0x00, §12). Which programs
+/// do is not stated by the specs, and Tessera does not inspect programs (`material.md`
+/// §11.1), so [`DistanceFog::Unlit::reads_fog`] is `None` for every record today and
+/// [`DistanceFog::fogged`] falls back to [`UNLIT_FOG_WHEN_UNKNOWN`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DistanceFog {
+    /// A lit record: always fogged.
+    Lit,
+    /// An unlit record.
+    Unlit {
+        /// Whether its program reads the fog inputs, when known.
+        reads_fog: Option<bool>,
+    },
+}
+
+impl DistanceFog {
+    /// The fog switch of the surface: `true` for lit records; for unlit ones whether the
+    /// program reads the fog inputs, or [`UNLIT_FOG_WHEN_UNKNOWN`] when that is not known.
+    /// This is the value of the renderer's unlit fog switch (`render.md` §4.1
+    /// `LitSurface::fog`, §5.5 `WorldSurfaceOptions::fog`); a renderer fogs lit surfaces
+    /// whatever it says.
+    #[must_use]
+    pub const fn fogged(self) -> bool {
+        match self {
+            Self::Lit => true,
+            Self::Unlit { reads_fog } => match reads_fog {
+                Some(r) => r,
+                None => UNLIT_FOG_WHEN_UNKNOWN,
+            },
+        }
+    }
+}
+
+impl ResolvedMaterial {
+    /// Whether the surface's colour pass takes distance fog ([`DistanceFog`]): lit by
+    /// [`crate::FeatureFlags::lit`] (`material.md` §11.3), else unlit with the program's
+    /// fog reading not known.
+    #[must_use]
+    pub fn distance_fog(&self) -> DistanceFog {
+        if self.features.lit {
+            DistanceFog::Lit
+        } else {
+            DistanceFog::Unlit { reads_fog: None }
+        }
+    }
+}
 
 /// What the drawn object contributes (`material.md` §8.3, `lighting.md` §4.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -117,6 +175,8 @@ pub struct SurfaceInputs {
     pub named: Vec<NamedInput>,
     /// The program time (E20, [`program_time`]).
     pub time: f32,
+    /// Whether the colour pass takes distance fog (E12; [`ResolvedMaterial::distance_fog`]).
+    pub fog: DistanceFog,
 }
 
 fn finite4(c: [f32; 4]) -> [f32; 4] {
@@ -216,6 +276,7 @@ impl SurfaceInputs {
             texture_matrices: layout.evaluate(params, t, states),
             named,
             time: program_time(t),
+            fog: material.distance_fog(),
         }
     }
 

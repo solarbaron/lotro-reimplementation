@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (re-review of the 2026-10-08 revision passed, 2026-10-08) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec reviewer), not the author session |
-| **Review record** | First review 2026-10-07 (separate session, not the author): **passed**, Accepted (CLEAN_ROOM.md §5.3, every item). Spot checks over all 33,159 records with an independent parser; four non-blocking notes. Details in the dirty-room review log (decision 0018). |
+| **Review record** | First review 2026-10-07 (separate session): **passed**, Accepted. Revision 2026-10-08: re-reviewed 2026-10-08 by a separate spec-reviewer session (not the author): **passed**, Accepted. Details in the dirty-room review log (decision 0018). |
 | **Implements into** | `crates/formats` (sector record decoder, one fuzz target), `crates/world` (sector keys, loaded-sector set, per-landblock LOD and near-field flags, distant water positional read), `crates/terrain` or `crates/render` (horizon mesh: vertices, generated indices, LOD stitching, ceiling mesh), `crates/render` (distant sprites from imposter atlases), `apps/explorer` (region overview from sector samples), `apps/client` (horizon beyond the full-detail rings) |
 | **Companion specs** | [`landblock.md`](landblock.md) §2.1 (DID shape, kind 5), §3.3–§3.6 (height grid, height scale, ceiling grid, vertex-flag grid), §3.14 (terrain vertex normals), §7 (kind 5 framing, superseded in detail by this spec). [`water.md`](water.md) §6.2 (landblock water rule), §8.1 (sector water quads), §9. [`records.md`](records.md) §1.2 (VLE), §2.1 (DB types), §5 (render surfaces). [`texture-list.md`](texture-list.md) §2 (texture lists), §6.3.1 (the 96 × 96 sector tiles). [`misc-records.md`](misc-records.md) §5 (imposter tables, prefix 0x27). [`entity-descriptor.md`](entity-descriptor.md) §4.1 (entity types), §4.2 (instance IDs), §9.3 (view distances). [`property-system.md`](property-system.md) §4.6 (Position), §4.11 and §5.2 (list-form property, arrays). [`material.md`](material.md) §8.0 (parameter ids 3000, 3001, 3075, 4005, 4006). [`terrain-texturing.md`](terrain-texturing.md) §12 (distance bands, sector overlay). [`coordinates.md`](coordinates.md) (frames and units). |
 
@@ -53,7 +53,9 @@ the original).
 |---|---|
 | OBS | Observed in the user's install (Steam) on 2026-10-07 by throwaway read-only probes in the dirty-room scratchpad (a stream reader built on the project's `tessera-dat` crate plus independent parsers written from the hypotheses of this spec). Read: **all 33,159** kind-5 records of `client_cell_{1,2,3,4,5,14}.dat` (every record decoded to the last byte with the layout of §3); all 390,150 landblock-data records (kind 0: height grids, ceiling grids, vertex-flag grids) and all 390,150 block maps (kind 1) of the same regions; all 507 imposter tables (prefix 0x27); the headers of every texture list (0x40) and render surface (0x41) a sector names (36,098 lists, 34,100 surfaces); the water tables 0x16000000, 0x16000004, 0x16000005, 0x1600000A through `tessera-dattool show`. |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, re-checked 2026-10-07), read on 2026-10-07 with a headless Ghidra session on an own copy of the shared project (deleted afterwards) plus a byte scan of the executable for constants. **Questions:** (a) the grammar of the sector record's trailing section: the reader of DB type 0x41, its sub-object reader and its versioned lists; (b) how the client turns the 5-byte samples into vertices (positions, height scale, normal decoding, texture coordinates) and which index layout it draws; (c) which sectors and levels of detail the client chooses around the viewer, and how it stitches different levels; (d) what the mode byte, the ceiling mask, the 23-byte entries, the entity list and the six trailing DIDs are used for; (e) how distant water is built from the record. **Why M1–M3 were not enough:** the trailing section has variable-length parts whose sizes the data cannot reveal without the grammar (only 660-byte records are self-evident); the sample-to-vertex conversion, the index layout and the LOD and stitching rules are code with no trace in any record; no published source describes kind 5; no running client is available for M3. **Read:** the sector object's type registration, constructor, dependency collector and serialiser with its sub-object, chunk, water-list, sprite-entry and entity-entry readers; the far-terrain vertex and index builders and the LOD stitching table builder; the sector manager's update (sector list, per-landblock LOD grid, per-sector mesh build, sprite placement) and its option handler; the distant water chunk builder. Nothing about network, login, keys, launcher, patcher or anti-tamper (decision 0004). Output is prose facts only; listings stay in the dirty scratch area. |
-| SPEC | Other Tessera specs, cited by section (`landblock.md`, `water.md`, `texture-list.md`, `misc-records.md`, `entity-descriptor.md`, `property-system.md`, `material.md`, `terrain-texturing.md`). |
+| OBS2 | Observed in the same install on 2026-10-08 by a throwaway read-only probe in the dirty-room scratchpad: the stored normal bytes of **every** sample of all 33,159 terrain meshes (all nine blocks, interior, edge and corner samples) and all 941 ceiling meshes, compared with the rule of §4.3 computed from the kind-0 height, ceiling and vertex-flag grids of the sample's landblock and its eight neighbours (all 390,150 landblock-data records of regions 1–5 and 14). |
+| BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, second session. Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-08 with headless Ghidra on an own copy of the shared project (deleted afterwards). **Questions:** (f) what the client does with `ceiling_mask` bits above bit 8 (implementer OPEN of 2026-10-08); (g) how the sprite builder sets each sprite's fade parameter and mirror flag and what the sprite's last byte is; (h) what the client does with the entity list; (i) how the per-landblock near flag reaches the far mesh. **Read:** the sector reader's mode and mask branch, every reader of the stored mask, the sprite-entry reader, the sprite part of the sector manager's update with its constants and helper functions, the object draw-distance factor function, the camera field-of-view setter, the far-entity registration and its object constructor, the chunk mesh builder. **Why M1–M3 were not enough:** no record has mask bits above 8; the fade parameter, the mirror flag and the entity registration are code with no trace in the data; no running client is available for M3. Nothing about network, login, keys, launcher, patcher or anti-tamper. |
+| SPEC | Other Tessera specs, cited by section (`landblock.md`, `water.md`, `texture-list.md`, `misc-records.md`, `entity-descriptor.md`, `property-system.md`, `material.md`, `terrain-texturing.md`, `terrain.md`, `mesh.md`, `walker.md`). |
 
 No published third-party source describes kind-5 records (the research clones were searched;
 one tool skips the DID range without decoding it).
@@ -66,14 +68,21 @@ one tool skips the DID range without decoding it).
 | DL4 | Sample = u16 height on the landblock height scale + three normal bytes; samples are nine 33 × 33 blocks, block *k* = 3·*x* + *y*, sample index inside a block 33·*j* + *i* (*i* along X) (§3.3, §4.1) | BIN (b); OBS (all 298,431 terrain blocks equal the kind-0 height grid of their landblock, sample for sample) | Confirmed |
 | DL5 | Vertex position (*x*, *y*) = landblock offset + 5 × sample index; height converted exactly as `landblock.md` §3.4 (§4.2) | BIN (b) (constants 1/32, 160.0 from the record, 2,000.0 and the 32-bit 1/65,535) | BIN; heights Confirmed (DL4) |
 | DL6 | Normal byte *b* decodes to *b* × 2/255 − 1; the three bytes are world X, world Z (up), world Y (§4.3) | BIN (b) (constant 0.0078431377 = 2/255 and 1.0); OBS (fit against terrain normals) | Confirmed (decode); order Confirmed |
-| DL7 | Stored terrain normals are the normalised mean of `landblock.md` §3.14's triangle normals, encoded as ⌊(*c* + 1) × 127.5⌋ (§4.3) | OBS: 285,731,621 of 285,739,896 interior samples (all landblocks except the 1,095 with a ceiling collision tree) match exactly, every sample within one step | Probable |
+| DL7 | Stored terrain normals are the normalised mean of `landblock.md` §3.14's triangle normals, encoded as ⌊(*c* + 1) × 127.5⌋ (§4.3) | OBS: 285,731,621 of 285,739,896 interior samples (all landblocks except the 1,095 with a ceiling collision tree) match exactly, every sample within one step; OBS2: the same for every sample of every terrain block, edges and corners included (§4.3) | Confirmed (within one step), 2026-10-08 |
+| DL23 | At block edges and corners the stored normals use the neighbouring landblocks' samples and diagonals (any landblock of the region, not only those of the sector), the quads east and north of the block with the neighbour's own flag byte; ceiling normals follow the mirrored ceiling rule of `landblock.md` §3.14, normalised (§4.3) | OBS2 | Confirmed (within one step), 2026-10-08 |
+| DL24 | `ceiling_mask` bits 9–31 are stored but never read: the client queries only bits 0–8, and the ceiling sample count is the mesh block's own count (§3.5) | BIN2 (f) | BIN |
+| DL25 | Sprite fade parameter: the stored `distance` for sprites within the 3 × 3 landblocks around the viewer's landblock, otherwise a value computed from the sprite size, the screen and the object draw-distance factor (§5.6) | BIN2 (g); its use in the sprite program: `misc-records.md` §18 (BIN there) | BIN |
+| DL26 | The sprite's last byte is a heading *b* × 360/256 degrees; the client mirrors the sprite when that heading points away from a fixed point near the viewer (§4.8, §5.6) | BIN2 (g); mirror rendering `misc-records.md` §5.4 | BIN |
+| DL27 | Sprites are built only while the distant-imposter graphics option is on | BIN2 (g) (option identified by its storage next to the two draw-distance options) | BIN (rule); option identity Probable |
+| DL28 | The far entities become placement objects keyed by instance ID; an instance ID already known is skipped (§4.9) | BIN2 (h) | BIN |
+| DL29 | Near radius *N* = 1 landblock; sector radius *F* = ⌊*R* / 3⌋ + 1 from the landscape draw-distance option; near landblocks go to a second, flagged batch of the same far mesh (§5.1, §5.2) | `terrain.md` TR20, TR21 (BIN-T there); BIN2 (i) | BIN |
 | DL8 | Chunk entry *c* = *x* + 3·*y* describes landblock (X + *x*, Y + *y*): vertex start, vertex count, bounds, water flag and water index, four LOD index ranges (§3.4, §4.5) | BIN (a), (d), (e); OBS (all chunk fields follow the rules of §7 in every record) | Confirmed |
 | DL9 | Mode byte 0 = no ceiling, 1 = ceiling in all nine landblocks, 2 = a u32 mask follows; mask bit *x* + 3·*y* = landblock (X + *x*, Y + *y*) has a ceiling (§3.5) | BIN (a), (d); OBS (mask equals the landblocks' `has_ceiling`, 33,159 of 33,159; mode 1 exactly when all nine) | Confirmed |
 | DL10 | Ceiling mesh: same block layout; samples only for ceiling landblocks, packed in vertex-block order; heights equal the ceiling grid; absent chunks all zero (§4.4) | BIN (a), (d); OBS (6,780 ceiling blocks equal their ceiling grid exactly; 1,689 absent chunks all zero) | Confirmed |
 | DL11 | `block_size` = 160.0 in every record; the vertex builder takes landblock size and sample spacing (`block_size` / 32) from it (§3.1, §4.2) | BIN (b); OBS (33,159 of 33,159) | Confirmed |
 | DL12 | Water list: VLE count, then (u8 water type, f32 height) pairs; chunk water flag and index name the pair; the flags and pairs equal `water.md` §6.2; list in order of first use in vertex-block order (§3.6, §4.6) | BIN (a), (e); OBS (all 298,431 chunk flags and all 89,913 wet pairs agree; order holds in all 1,188 records with two or more pairs) | Confirmed |
 | DL13 | Sprite entry (23 bytes): u16 imposter name key, (*x*, height, *y*) sector-local position, f32 scale, f32 distance, u8 (§3.7) | BIN (a), (d); OBS (3,549,236 entries in 8,159 records) | Confirmed (layout) |
-| DL14 | The client looks a sprite's key up in the sector's own imposter table and skips sprites whose key is absent; size comes from the imposter entry times the sprite's scale (§4.8, §5.6) | BIN (d); OBS (3,495,690 of 3,549,236 keys present in the sector's table) | BIN (rule); census Confirmed |
+| DL14 | The client looks a sprite's key up in the sector's own imposter table and skips sprites whose key is absent; size comes from the imposter entry times the sprite's scale, with the roles of `misc-records.md` §5.2 (I5) (§4.8, §5.6) | BIN (d); `misc-records.md` I5 (BIN there); OBS (3,495,690 of 3,549,236 keys present in the sector's table) | BIN (rule); census Confirmed |
 | DL15 | Sprite positions lie on the terrain: second component = absolute height (§4.8) | OBS (region 1 sample of 29,577 sprites: median 0.24, 99th percentile 2.96 units from the nearest terrain sample; swapped axes give 26 / 452) | Probable |
 | DL16 | Entity entry: u32 entity type, u32 object DID, u64 instance ID, three f32 scale, Position, one list-form property, f32 squared view distance (§3.8) | BIN (a); OBS (304,450 entries in 4,306 records) | Confirmed |
 | DL17 | Entity entries are placements of the sector's own landblocks (instance ID and position name a landblock of the sector, outdoors) with view distance ≥ 250 (§4.9) | OBS (304,450 of 304,450) | Confirmed |
@@ -183,7 +192,7 @@ entities) is 49,673 bytes (§8.1).
 | 1 | sample count *n* | u32 | Terrain: 9,801 in every record. Ceiling: 1,089 × the number of ceiling landblocks. |
 | 2 | `samples` | *n* × 5 bytes (§3.3) | Sample array |
 | 3 | index count *m* | u32 | 0 in every mesh block of this install (33,159 terrain, 941 ceiling) |
-| 4 | `indices` | *m* × u16 | Stored index list. The client keeps it only under a stream mode that was not traced and otherwise skips the bytes; with no stored indices it generates its own (§5.3, BIN). Empty in this install. |
+| 4 | `indices` | *m* × u16 | Stored index list. The client keeps it only under a stream mode that was not traced and otherwise skips the bytes; with no stored indices it generates its own (§5.3, BIN). Empty in this install. **Tessera rule:** skip the *m* × 2 bytes and always use the generated list of §5.3 (the client's ordinary loading path). |
 | 5 | `chunks` | 9 × chunk entry (66 bytes, §3.4) | Entry *c* describes landblock (*X* + (*c* mod 3), *Y* + ⌊*c* / 3⌋) |
 | 6 | `bounds_min` | 3 × f32 | (*x*, *y*, *z*) minimum over the chunks present (§4.5) |
 | 7 | `bounds_max` | 3 × f32 | (*x*, *y*, *z*) maximum |
@@ -226,6 +235,13 @@ Order of samples: §4.1.
   `has_ceiling` = 1 in its landblock data (`landblock.md` §3.5), in all 33,159 records.
 - The client reads no mask for a mode above 2 and still reads a ceiling mesh block (BIN).
   No such mode occurs; **Tessera rule:** reject the record as malformed.
+- **Mask bits 9–31 (BIN2 (f), DL24).** The client stores the u32 of `mode` 2 unchanged and
+  never reads those bits: every reader of the mask asks for bit *x* + 3·*y* with *x* and *y*
+  each 0–2, so only bits 0–8 matter. The mask does not size the ceiling mesh: the ceiling
+  mesh block carries its own sample count (§3.2), and each chunk entry its own
+  `vertex_start` and `vertex_count`. A record with high bits set therefore loads in the
+  client and behaves as if they were clear. No record of this install has such a bit
+  (DL-I7). Tessera's rule is §3.11.
 
 <a id="s3-6"></a>
 ### 3.6 Water list
@@ -250,8 +266,8 @@ The client fails the record when *w* exceeds the remaining bytes (BIN). Pair ord
 | 6 | 4 | f32 | `height` | Absolute height, units | −3.3 to 1,765.2 |
 | 10 | 4 | f32 | `north` | Sector-local *y* (north), units | 0.0–479.999 |
 | 14 | 4 | f32 | `scale` | Size factor | 0.1–10.0 (median 0.96) |
-| 18 | 4 | f32 | `distance` | Distance parameter, units (§4.8) | 45, 80, 140, 180, 200, 300 or 1,000 |
-| 22 | 1 | u8 | `byte` | Meaning OPEN (§4.8) | 0–255, roughly uniform (0 in 72,738, others about 13,800 each) |
+| 18 | 4 | f32 | `distance` | Fade distance, units (§4.8, §5.6) | 45, 80, 140, 180, 200, 300 or 1,000 |
+| 22 | 1 | u8 | `byte` | Heading, `byte` × 360/256 degrees (§4.8, §5.6) | 0–255, roughly uniform (0 in 72,738, others about 13,800 each) |
 
 The sprite count is a plain u32; the client allocates *s* × 23 bytes without first comparing
 *s* with the remaining bytes (BIN). **Tessera rule:** reject *s* > remaining / 23.
@@ -325,14 +341,19 @@ input. A record that leaves bytes over or runs short under the newest grammar is
 - The terrain sample count must be 9,801 for the grid meaning of §4.1; Tessera rejects any
   other value (the client's grammar would accept it).
 - A ceiling mesh's sample count must equal 1,089 × the number of mask bits (DL10).
+- **`ceiling_mask` bits 9–31 (Tessera Decision, confirmed 2026-10-08).** A `mode` 2 mask with
+  any of bits 9–31 set is rejected as malformed. The client ignores those bits instead
+  (§3.5, BIN2); Tessera keeps the stricter rule, like the other rules of this list that are
+  stricter than the client, because no record of this install has such a bit and DL-I7 then
+  fails. With bits 9–31 rejected, "the number of mask bits" above is the number of set bits
+  among bits 0–8.
+- **Encoder (Tessera Decision, confirmed 2026-10-08).** The format needs no encoder. An
+  encoder that Tessera uses for synthetic fixtures and fuzzing may write every entity entry
+  with a null property (a u32 PID of 0, §3.8); such records are valid and decode to the same
+  entries. The client offers no rule here: it writes the property it holds.
 
-> **OPEN:** (implementer, 2026-10-08) The spec does not say what a `mode` 2 `ceiling_mask`
-> with bits above bit 8 means (no landblock is named by them; none observed). Tessera's
-> decoder (`crates/formats/src/landblock/sector.rs`) rejects such a record as malformed, the
-> conservative reading of §3.11; whether the client ignores those bits or counts them toward
-> the ceiling sample count is not stated. Also an engineering choice, not a format fact: the
-> encoder (`SectorRecord::to_bytes`, used by tests and the fuzz target) writes entity entries
-> with a null property only, because the crate has no property-value encoder.
+Answered 2026-10-08 (implementer OPEN of 2026-10-08 on mask bits above bit 8 and on the
+encoder's null properties): the two rules above; the client's behaviour is §3.5.
 
 ---
 
@@ -379,7 +400,7 @@ compact copy; a reader that has only the sectors (for example a map tool) gets t
 terrain heights from them.
 
 <a id="s4-3"></a>
-### 4.3 Normals (decode Confirmed, DL6; rule Probable, DL7)
+### 4.3 Normals (decode Confirmed, DL6; rule Confirmed within one step, DL7, DL23)
 
 Each of the three normal bytes decodes to *b* × 2/255 − 1 (the client multiplies by the
 32-bit float 0.0078431377 and subtracts 1.0, BIN). Byte 2 is the world X component, byte 3
@@ -387,12 +408,37 @@ the world Z (up) component and byte 4 the world Y component. A flat terrain samp
 (127, 255, 127), which decodes to (−0.0039, 1.0, −0.0039) in (X, Z, Y) order; the client
 does not renormalise.
 
-The stored terrain normals are, within one encoding step, the normalised mean of the
-triangle normals of `landblock.md` §3.14 (terrain rule, bit-7 diagonals) encoded as
-⌊(component + 1) × 127.5⌋ (DL7: exact for 285,731,621 of 285,739,896 interior samples; edge
-samples were not tested). The client does not recompute them; a reader decodes the stored
-bytes. Ceiling normals face down (the middle byte is near 0 in every ceiling block); their
-exact rule was not tested (§10).
+The client does not recompute the normals; a reader decodes the stored bytes. The rule
+below says how they were made, for a tool that writes or checks sector records (OBS, OBS2;
+DL7, DL23; revised 2026-10-08, it covered interior terrain samples only before):
+
+1. Compute the vertex normal of `landblock.md` §3.14 for the sample: for the terrain mesh
+   with *s* = +1 (terrain heights, bit-7 diagonals), for the ceiling mesh with *s* = −1
+   (the stored ceiling grid including its zero samples, bit-0 diagonals, X offsets mirrored,
+   normals facing down).
+2. Across a block edge, corners at index −1 or 33 come from the neighbouring landblock in
+   that direction (the diagonal neighbour at a corner), at its sample 31 or 1. The neighbour
+   is any landblock-data record of the region, whether or not it belongs to the same sector.
+3. A quad at index −1 in an axis reads its diagonal bit from the neighbour's flag byte at
+   index 31 in that axis, and a quad at index **32** from the neighbour's flag byte at index
+   0 (the quad east or north of the block belongs to the neighbour). This differs from
+   `landblock.md` §3.14 step 4, which reads the block's own byte at index 32 for the
+   client's run-time normals; for the stored sector normals only the neighbour's byte
+   matches at every corner sample.
+4. A triangle with a corner in a landblock that has no landblock-data record (beyond the
+   region border, `terrain.md` TR18), or, for the ceiling, in a landblock without a ceiling
+   grid, is left out of the mean. A quad's bit counts as set only when its landblock has no
+   record; a neighbour without a ceiling grid still supplies its bit-0 flags (with mirrored
+   X offsets, a quad outside the block can contribute a triangle whose corners all lie
+   inside it).
+5. Normalise the mean to unit length and encode each component *c* as ⌊(*c* + 1) × 127.5⌋,
+   in the byte order X, Z (up), Y of §3.3.
+
+Observed (OBS2, every sample of every record): the encoded rule equals the stored bytes in
+324,981,787 of 324,991,359 terrain samples (all 33,159 records × 9,801) and 7,383,411 of 7,383,420 ceiling samples (all 6,780 ceiling blocks), and every
+other sample differs by one step in one or more components (rounding at a step boundary,
+Inferred). In every ceiling sample the middle (up) byte is at most 126: ceiling normals
+never point up.
 
 <a id="s4-4"></a>
 ### 4.4 Ceiling mesh (Confirmed, DL10)
@@ -463,7 +509,7 @@ of the terrain mesh block. No byte search is needed.
 - `imposter_table`: the sprites' atlas and size source (§4.8, §5.6).
 
 <a id="s4-8"></a>
-### 4.8 Sprites (layout Confirmed; use BIN; some fields OPEN)
+### 4.8 Sprites (layout Confirmed; use BIN)
 
 Each sprite entry places one billboard drawn from the imposter atlases of the sector's
 imposter table:
@@ -475,15 +521,18 @@ imposter table:
 - Position: sector frame (*x* = `east`, *y* = `north`), *z* = `height` absolute. Sprites
   stand on the terrain (DL15). All 3,549,236 lie inside the sector square.
 - Size: the client multiplies the imposter entry's two stored floats (`misc-records.md` §5.2
-  `value_a`, `value_b`) by `scale` (BIN). Which one is the sprite height and which the vertical
-  offset of its anchor is **Inferred** (`value_a` × `scale` the height, `value_b` × `scale`
-  the anchor offset; `value_b` is at most 0.144 in every imposter entry), because the client's in-memory copy
-  of the imposter entry was not mapped field by field.
-- `distance`: kept with the sprite as a distance parameter; the client replaces it by a
-  computed value when the sprite lies outside a region of the scene that was not traced (BIN).
-  Whether it is a fade or a cut-off distance is OPEN.
-- `byte`: not used by any code read; its uniform spread suggests a per-sprite random value
-  (Inferred). OPEN.
+  `value_a`, `value_b`) by `scale` (BIN). *S* = `value_a` × `scale` is the width and height
+  of the billboard quad and *B* = `value_b` × `scale` the height of its lower edge above the
+  sprite position (`misc-records.md` I5, BIN there; corner table in its §5.2). Revised
+  2026-10-08: this was Inferred here before.
+- `distance`: the sprite's **fade distance**. It becomes the sprite's fade parameter when the
+  sprite lies near the viewer, and is replaced by a computed value otherwise (§5.6, BIN2;
+  DL25). The sprite program fades the sprite in, beyond a start distance derived from that
+  parameter (`misc-records.md` §18, BIN there).
+- `byte`: the sprite's **heading** *θ* = `byte` × 360 / 256 degrees (0 ≤ *θ* < 360; the
+  client computes it as (`byte` × 1/256 × 360) modulo 360 in 32-bit floats). The only use
+  found is the decision whether the billboard is drawn mirrored (§5.6, BIN2; DL26). Its uniform
+  spread in the data fits a random heading per sprite.
 - Atlas cell: the imposter entry's (`column`, `row`) and the table's `cell_u`, `cell_v`
   (`misc-records.md` §5.4); the client takes the table's two texture lists as the sprite
   batch's two textures (BIN).
@@ -492,7 +541,7 @@ These are the "distant imposters" of the far band (`terrain-texturing.md` §12, 
 similar scenery shown as flat sprites beyond the full-detail scenery.
 
 <a id="s4-9"></a>
-### 4.9 Far entities (layout Confirmed; use partly OPEN)
+### 4.9 Far entities (layout Confirmed; registration BIN; drawing OPEN)
 
 Each entity entry repeats a placement from the sector's own landblocks (DL17): in all
 304,450 entries the instance ID's region and landblock (`entity-descriptor.md` §4.2) name a
@@ -503,8 +552,21 @@ Physics placements (§9.3 counts 314,957 long-range Physics nodes in the shared 
 1,335 Weenie placements of the 29 distant-battle unit groups (§9.3 counts 546 long-range
 Weenie nodes). Whether every entry matches a stored SED field by field was not checked (OPEN).
 
-The client hands the list to its world-object layer on every sector update (BIN); whether it
-creates entities from it and how it draws them was not traced (OPEN).
+The client hands the list to its world-object layer on every sector update (BIN). There
+(BIN2 (h), DL28), for each entry:
+
+1. if the layer's table of far placements already holds the entry's instance ID, the entry is
+   skipped (so a sector that is loaded again, or an entry repeated in two records, adds
+   nothing);
+2. otherwise the client builds a placement object from the entry, copying the entity type,
+   object DID, instance ID, the three scale values, the Position, the property and the squared
+   view distance (the object's own default for that field, before the copy, is 1,000,000,
+   that is a view distance of 1,000 units), and adds it to the table under the instance ID.
+
+The placement object is of the same kind the world-object layer builds elsewhere (one object
+type, two builders), which suggests the far entries are handled like ordinary placements
+(Inferred). When those objects are created as entities, drawn and removed was not traced
+(OPEN, §10).
 
 ---
 
@@ -516,10 +578,13 @@ creates entities from it and how it draws them was not traced (OPEN).
 
 1. The viewer's sector key is (⌊viewer landblock X / 3⌋, ⌊viewer landblock Y / 3⌋), when
    the viewer's region is valid and 3·key < 255 on both axes.
-2. With a far radius *F* (in sectors; a client setting, value not traced), the client lists
+2. With a far radius *F* in sectors, the client lists
    every key (*sx*, *sy*) with |*sx* − viewer *sx*| ≤ *F* and |*sy* − viewer *sy*| ≤ *F*
    whose corner landblock is inside 0–254 on both axes. It asks for each listed sector's
-   record and skips those that do not exist.
+   record and skips those that do not exist. *F* = ⌊*R* / 3⌋ + 1, where *R* is the
+   landscape far radius in landblocks that the landscape draw-distance option gives (2, 4,
+   6, 9 or 12 for levels 0–4; `terrain.md` TR20, `walker.md` §11.3; BIN there). *R* is a
+   user setting: read it from Tessera's own settings, do not assume a level.
 3. The client re-evaluates the list when the viewer's region, landblock or instance changes or
    a radius setting changes. When the viewer changes region or moves by more than one
    landblock on either axis, it first discards every loaded sector.
@@ -532,12 +597,16 @@ For every landblock of a loaded sector the client computes, from the landblock o
 
 - LOD = 0 when *dx*² + *dy*² ≤ 3; 1 when ≤ 24; 2 when ≤ 99; 3 otherwise. LOD *l* uses every
   2^*l*-th sample (§5.3).
-- **near** when max(|*dx*|, |*dy*|) ≤ the near radius *N* (in landblocks; a client setting,
-  value not traced).
+- **near** when max(|*dx*|, |*dy*|) ≤ the near radius *N* = 1 landblock: the viewer's
+  landblock and its eight neighbours (`terrain.md` TR21, BIN there; DL29).
 
 Landblocks outside the near field go into the sector's main draw batch; landblocks inside it
-go into a second batch that the client marks with a flag. What that flag changes was not
-traced (OPEN, §10). The ceiling mesh contributes only landblocks whose mask bit is set.
+go into a second batch of the **same** far mesh (BIN2 (i)): the near landblocks are not left
+out of the distant mesh. The client sets a flag on the second batch's draw item and clears
+it on the first. What that flag changes in the renderer was not traced (OPEN, §10).
+**Inferred** (`terrain.md` §9): the layered near terrain covers the same 3 × 3 landblocks,
+so the flagged batch is the part of the far mesh that lies under the full-detail terrain.
+The ceiling mesh contributes only landblocks whose mask bit is set.
 
 The client also tracks, over the landblocks on the outer ring of the loaded area, the lowest
 of (water height when `wet`, else the chunk's `min` *z*). Its use was not traced.
@@ -579,7 +648,10 @@ loaded sector, has a different LOD, and is either in the near field or has the l
 LOD. It then adds, for every segment of the coarser side's edge (2^*l* samples long), one
 triangle joining the segment's two end samples with the edge sample at the segment's middle,
 oriented like the mesh. These are vertical slivers that close the crack between the coarse
-edge and the finer neighbour's edge.
+edge and the finer neighbour's edge. With the thresholds of §5.2, two landblocks that share
+an edge never differ by more than one LOD (checked for every offset up to 60 landblocks), so
+the finer edge has exactly one extra sample in the middle of each coarse segment and one
+triangle per segment closes it.
 
 <a id="s5-4"></a>
 ### 5.4 Material
@@ -612,10 +684,40 @@ This is the builder `water.md` §8.1 describes; this spec adds where its inputs 
 When a sector is drawn and its imposter table has entries, the client walks the sprite
 list: it looks each `name_key` up in that table, skips misses, and adds a billboard with the
 position of §4.8 offset by the sector's world origin, the size of §4.8, the table entry's
-atlas cell, and the sprite's `distance`. It also computes a per-sprite flag from the sprite's
-horizontal position (offset by −160 units on both axes) and an angle that was not traced
-(OPEN). The billboards of a sector are batched with its imposter table's
-two atlases.
+atlas cell, a fade parameter and a mirror flag. The billboards of a sector are batched with
+its imposter table's two atlases. The client builds the billboards when it builds the
+sector's draw data (§5.1 re-evaluation), not every frame. Details (BIN2 (g) unless marked):
+
+1. **Condition.** Billboards are built only while the distant-imposter graphics option is
+   on (DL27; the option the preferences call `DistantImposters`, `walker.md` §11.2, built-in
+   value on; its identification is Probable) and only for a sector whose imposter table has
+   at least one entry.
+2. **Viewer frame.** Let (*x*, *y*) be the sprite's horizontal position relative to the
+   south-west corner of the **viewer's landblock** (the landblock of §5.1 step 1): its
+   sector-local `east`, `north` plus 160 × (sector corner landblock − viewer landblock) on
+   each axis. (When the sector lies in another region than the viewer the client uses an
+   offset of −2,000 on each axis; such sectors are not listed by §5.1.)
+3. **Fade parameter** *P* (DL25).
+   - When −160 ≤ *x* ≤ 320 and −160 ≤ *y* ≤ 320 (the sprite lies on the viewer's
+     landblock or one of its eight neighbours), *P* = the sprite's stored `distance`.
+   - Otherwise *P* = *S* × *K* / *M_d*, with *S* the billboard size of §4.8, *M_d* the
+     object draw-distance multiplier (0.6, 0.8, 1.0, 1.4 or 2.0 for the object draw-distance
+     levels 0–4, `mesh.md` §8.7, `walker.md` §11.2), and *K* = (*H* / *φ*) / 248, where *H*
+     is the height of the render target in pixels and *φ* the camera's field of view in
+     radians (the client converts the stored field of view in degrees with π / 180).
+     Identifying *H* and *φ* with those two quantities is Inferred: the client reads them
+     from the render device and the camera, whose fields were not mapped one by one.
+   *P* is handed to the sprite program, which fades the sprite in over 10 units beyond a
+   start distance computed from *P* (`misc-records.md` §18).
+4. **Mirror flag** (DL26). With *θ* the heading of §4.8 converted to radians, the billboard is
+   drawn mirrored exactly when (*x* − 160) × sin *θ* + (*y* − 160) × cos *θ* > 0 (strictly).
+   The point (160, 160) is the north-east corner of the viewer's landblock in the frame of
+   step 2. How a mirrored billboard is drawn: `misc-records.md` §5.4 (horizontal flip of
+   the atlas cell, normal R axis negated).
+5. The atlas cell is the table entry's (`column`, `row`) (`misc-records.md` §5.4).
+
+The billboard corners, atlas texture coordinates and the sprite program are specified in
+`misc-records.md` §5.2–§5.4.
 
 <a id="s5-7"></a>
 ### 5.7 Entities
@@ -639,8 +741,9 @@ sector, log it once, keep going.
 ### 6.1 Horizon in the walker
 
 1. Load the sectors of §5.1 with a far radius chosen by Tessera (suggested: 8 sectors, about
-   3.8 km) and skip the landblocks the full-detail terrain already draws (the near field of
-   §5.2 with *N* = the full-detail ring radius).
+   3.8 km; the original uses *F* = ⌊*R* / 3⌋ + 1, at most 5 sectors, §5.1) and skip the
+   landblocks the full-detail terrain already draws (the near field of §5.2 with *N* = the
+   full-detail ring radius).
 2. Build the far mesh per §5.3 (positions, normals, texture coordinates and the generated
    index layout). Use the LOD rule of §5.2. Either reproduce the stitching triangles of §5.3
    or hang vertical skirts below every chunk edge; both close cracks.
@@ -686,7 +789,8 @@ from the mask. These are exact copies of facts the landblock records also hold (
 | DL-I11 | Every sprite lies inside 0 ≤ `east`, `north` ≤ 480; `scale` > 0. |
 | DL-I12 | Every entity's instance ID and Position name a landblock of the sector, cell 0; the three scale values are equal; `view_distance_sq` ≥ 62,500. |
 | DL-I13 | `imposter_table` is the 0x27 table of the square containing the sector; `colour_list` and `tile` are non-zero and exist; `ceiling_colour_list` and `ceiling_tile` are non-zero exactly when `mode` ≠ 0. |
-| DL-I14 | Every stored terrain normal is within one encoding step of the normalised §3.14 normal on interior samples (Probable, DL7). |
+| DL-I14 | Every stored terrain and ceiling normal is within one encoding step, per component, of the rule of §4.3 (all samples, edges and corners included; Confirmed 2026-10-08, DL7, DL23). The middle byte of every ceiling sample is at most 126. |
+| DL-I15 | In a `mode` 2 record `ceiling_mask` has no bit above bit 8 (Confirmed; the client would ignore such bits, §3.5). |
 
 ---
 
@@ -717,11 +821,13 @@ A sector with no ceiling, water, sprites or entities.
 <a id="s8-2"></a>
 ### 8.2 One chunk entry
 
-Chunk *c* = 1 (landblock *x* = 1, *y* = 0), terrain heights from 100.0 to 150.0, dry:
+Chunk *c* = 1 (landblock *x* = 1, *y* = 0), lowest stored height 3,277 and highest 4,915
+(converted by §4.2 to 100.00763 and 149.99619; revised 2026-10-08, the earlier 100.0 and
+150.0 are not reachable by that conversion), dry:
 
 `C3 0C 00 00` (vertex start 3,267) · `41 04 00 00` (1,089) · `00 00 20 43` `00 00 00 00`
-`00 00 C8 42` (min 160, 0, 100) · `00 00 A0 43` `00 00 20 43` `00 00 16 43` (max 320, 160,
-150) · `00` (`wet`) · `00` (`water_index`) · `A0 5F 00 00` `00 08 00 00` (24,480, 2,048) ·
+`E8 03 C8 42` (min 160, 0, 100.00763) · `00 00 A0 43` `00 00 20 43` `06 FF 15 43` (max 320,
+160, 149.99619) · `00` (`wet`) · `00` (`water_index`) · `A0 5F 00 00` `00 08 00 00` (24,480, 2,048) ·
 `A0 77 00 00` `00 02 00 00` (30,624, 512) · `A0 7D 00 00` `80 00 00 00` (32,160, 128) ·
 `20 7F 00 00` `20 00 00 00` (32,544, 32). 66 bytes.
 
@@ -778,13 +884,13 @@ landblock 3/0xF0, cell 0, *x*, *y*, *z*) · `00 00 00 00` (null property) · `00
 ## 10. Open questions
 
 > **OPEN:** How the client obtains the format version of a sector record (DL19). Every record
-> of this install decodes with the newest grammar; the version is not stored in the record,
-> and the stream query that returns it was not traced to its source (directory stamp,
-> iteration or an archive-level table).
+> of this install decodes with the newest grammar; the version is not stored in the record.
+> The reader asks the stream's version source for the version of this record type (BIN2);
+> that source (directory stamp, iteration or an archive-level table) was not traced.
 
-> **OPEN:** The values of the near radius *N* and the far radius *F* of §5.1–§5.2 (client
-> settings), and what the flag on the near-field batch of §5.2 changes (for example drawing
-> only where full-detail terrain is not resident, or a depth offset).
+> **OPEN:** What the flag on the near-field batch of §5.2 changes in the renderer (for
+> example drawing only where full-detail terrain is not resident, a depth offset, or a
+> separate pass). The radii are answered: *N* = 1, *F* = ⌊*R* / 3⌋ + 1 (§5.1, §5.2).
 
 > **OPEN:** The use of `tile` and `ceiling_tile` (96 × 96 DXT3, alpha 0 everywhere,
 > `texture-list.md` §6.3.1): loaded as dependencies, no reader found in the far-terrain,
@@ -794,14 +900,17 @@ landblock 3/0xF0, cell 0, *x*, *y*, *z*) · `00 00 00 00` (null property) · `00
 > **OPEN:** Texture parameter 3001 of the sector material (a texture held by the sector
 > manager) and the normal-map source of the far-landscape normal-map option (§5.4).
 
-> **OPEN:** Sprites: the role of `distance` (fade or cut-off), the meaning of `byte`, the
-> per-sprite flag and its angle (§5.6), and a field-by-field confirmation of the size rule of §4.8.
+> **OPEN:** Sprites: the value of the sprite program constant that scales the fade parameter
+> *P* into the fade start distance (`misc-records.md` §18 gives the program side; the value
+> the client loads into that constant was not found). Answered 2026-10-08: the role of
+> `distance` and of `byte`, the mirror flag and its angle, the size rule (§4.8, §5.6).
 
 > **OPEN:** Far entities (§4.9): whether every entry equals a stored SED of its landblock
-> field by field, and what the client does with the list (creation, drawing, removal).
+> field by field, and when the client creates, draws and removes entities from the
+> placement objects it registers (registration answered 2026-10-08, §4.9).
 
-> **OPEN:** The rule of the stored ceiling normals (only "facing down" was checked), and the
-> terrain normals at block edges (DL7 tested interior samples only).
+Answered 2026-10-08 (were OPEN): the rule of the stored ceiling normals and of the terrain
+normals at block edges and corners (§4.3, DL23).
 
 ---
 
@@ -817,8 +926,11 @@ This spec does not edit other specs. Their owners may adopt:
 | `landblock.md` §7 | "The u16 values do not equal the terrain heights" | Corrected by §4.2: they are equal under the block order of §4.1 |
 | `water.md` §9 | "The rest of the record's layout is OPEN"; Tessera rule to derive from block maps | §3, §4.6, §5.5 (both routes give the same pairs) |
 | `texture-list.md` §6.3.1 | OPEN (1): role of the two 96 × 96 tiles | Positions explained (§3.9: `tile`, `ceiling_tile`); role still OPEN (§10) |
-| `misc-records.md` §5 | "Nothing in the data names these DIDs" | Every sector names its square's imposter table (§2.3); sprites use `value_a`, `value_b` as sizes (§4.8, Inferred) |
+| `misc-records.md` §5 | "Nothing in the data names these DIDs" | Every sector names its square's imposter table (§2.3); sprites use `value_a`, `value_b` as size and lower-edge height (§4.8; BIN, `misc-records.md` I5) |
 | `terrain-texturing.md` §12 | OPEN on the sector overlay | §5.4 (Inferred identification of the sector material; conditions BIN) |
+| `walker.md` §11.9 | OPEN on `DistantImposters` | The option gates the sector sprites of §4.8 and §5.6 (DL27); how far they show is the fade rule of §5.6 step 3 with `misc-records.md` §18 |
+| `terrain.md` §9 | OPEN (a) on which landblocks the far mesh draws | Partly: the far mesh also holds the 3 × 3 near landblocks, in a second, flagged batch (§5.2, BIN2 (i)); what the flag does is still OPEN |
+| `misc-records.md` §18 | Proposed answers for this spec (size roles, fade, mirror flag) | Adopted in §4.8 and §5.6 (rev. 2026-10-08) |
 
 ---
 
@@ -829,3 +941,4 @@ This spec does not edit other specs. Their owners may adopt:
 |---|---|
 | 2026-10-07 | First version (Review): full layout of kind-5 records over all 33,159 records (BIN + OBS); sample order and heights, normals, ceiling mesh, chunk entries, water list and per-landblock water, sprite and entity lists, DID tail; client behaviour for loading, LOD, mesh and index generation, stitching, material, distant water and sprites (BIN); invariants, examples, census, OPENs. |
 | 2026-10-07 | Review passed (separate reviewer session); status Accepted. No content change. |
+| 2026-10-08 | Spec writer (dirty room; M1 probe OBS2, M4 BIN2 under decision 0011). Status Accepted → Revised. Implementer OPEN of 2026-10-08 answered: client ignores `ceiling_mask` bits 9–31 (§3.5, DL24); Tessera keeps rejecting them and the null-property encoder is a Tessera Decision (§3.11); new invariant DL-I15. §3.2: Tessera rule for stored indices (review note 3). §4.3: normal rule for every sample, edges, corners and ceilings (DL7 now Confirmed, DL23; DL-I14 widened; review note 1). §4.8, §5.6: sprite size roles BIN (from `misc-records.md`), `distance` = fade parameter with the near/far selection rule, `byte` = heading, mirror-flag rule, option gate (DL25–DL27). §4.9: far-entity registration by instance ID (DL28). §5.1, §5.2: radii *N* = 1 and *F* = ⌊*R*/3⌋ + 1 adopted from `terrain.md`, near batch belongs to the same far mesh (DL29). §5.3: at most one LOD step between neighbours (review note 2). §6.1 step 1: the original's radius noted. §8.2: example heights now reachable (review note 4). §10: OPENs narrowed or closed; §11: three rows. |

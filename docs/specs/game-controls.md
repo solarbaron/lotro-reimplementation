@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (third review of 2026-10-07 passed) |
-| **Last updated** | 2026-10-07 |
+| **Status** | **Accepted** (review of the 2026-10-08 revision passed, 2026-10-08) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | First and second reviews 2026-10-07: changes requested, repaired (§14). Third review 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the review log (decision 0018). |
+| **Review record** | Reviews 2026-10-07: first and second changes requested; third passed (Accepted). Revision 2026-10-08: reviewed 2026-10-08 by a separate session (spec reviewer, AI-assisted), **passed**, Accepted. Details in the review log (decision 0018). |
 | **Implements into** | `crates/props` (typed views of the singletons of §3–§8, the WEENIECONTENT label index of §2); `apps/explorer` (generic typed singleton views, the label index, the reference graph of §9); `apps/client` (the mounted gait multipliers of §5.3.2, duel timings of §5.7, the player-note limit of §8.1, consideration and vital-display lookups once their OPENs close); Tessera's own server (M7: PvP, monster-play, perk, collection, reset and social rules); `apps/dattool` (`info` for the generic forms of §3) |
 | **Companion specs** | [`property-system.md`](property-system.md) §5 (property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels, the bit-to-key rule §7.3), §8 (DID maps, the root key 0x0A WEENIECONTENT); [`wstate.md`](wstate.md) §3–§5 (object records, items, native classes; the small set of class 18 and the counted lists of classes 104 and 11, §5.3); [`wlib.md`](wlib.md) (class library, parent map); [`misc-records.md`](misc-records.md) §14 (the WEENIECONTENT map; this spec resolves the labels it hands on); [`combat-data.md`](combat-data.md) §4 (progressions, class 1385), §7 (skills, class 827), §8 (traits), §10.1 (the combat control); [`economy.md`](economy.md) §4.12 (loot singletons), §6.4 (perk vendors); [`items.md`](items.md) §6.4 (paper-item lists); [`map-data.md`](map-data.md) §9.7 (the housing control); [`quests.md`](quests.md) (reputation, reward-track experience); [`creatures.md`](creatures.md) §2.1 (classes 1653 and 1654); [`sound.md`](sound.md) §10.6 (combat music script); [`walker.md`](walker.md) (movement controller, for §5.3.2) |
 
@@ -69,25 +69,26 @@ How sources are marked:
 | Key | Source |
 |---|---|
 | OBS | Observed in the user's install on 2026-10-07 (Steam install, client data current on that date). Read: the WEENIECONTENT map (all 316 entries) and the root DID map; **all 383,343 object records** (383,332 of prefix 0x70 and 11 of prefix 0x76, all in `client_gamelogic.dat`: root class, size); the **383,332 object property sets** (0x79; one per 0x70 object; the 0x76 objects have none, because DID + 0x09000000 would be a 0x7F record and none exists), none failed; all **1,618 bare property sets** (0x78: 1,616 in `client_gamelogic.dat`, 2 in `client_local_English.dat`; no other archive holds records of prefixes 0x70–0x7F); and all 24 DID maps (all in `client_general.dat`), for the typed-reference census of §9 (5,915,209 non-null DID values in the 383,332 object sets and the 1,616 bare sets of `client_gamelogic.dat`, plus 3,666 non-null DID-map values; the two `client_local_English.dat` sets, one chat-font array with 6 non-null DIDs and one empty set, were checked separately in the revision and name none of the 119 labels); a byte scan for the raw 4-byte DIDs of the 119 labels of §2.2 over every record of prefixes 0x07, 0x0C, 0x22, 0x28, 0x47, 0x56, 0x70, 0x76, 0x78 and 0x79 in `client_gamelogic.dat` and `client_general.dat`, and over the two bare sets of `client_local_English.dat` (added in the revision of 2026-10-07); the full property trees of the 119 labelled objects and per-class censuses (every property path: presence, occurrences, type, range, distinct values, referenced classes) of 97 + 18 root classes; the object states of the class-3399, 849, 852 and 1490 records (§3.3, §4.2, §4.10); the enum mappers named by the properties of this spec (labels and key sets); the property dictionary (27,546 definitions) for the family counts of §4.9, §5.10 and §8.5. The probes used the project's own decoders (`tessera-dat`, `tessera-formats`, `tessera-props`, `tessera-wstate`) read-only plus small independent scripts. |
-| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read on 2026-10-07 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use). **Questions:** (q1) which WEENIECONTENT singletons the client's native code resolves, and how; (q2) whether native code reads any property of this spec's singletons by a constant property ID; (q3) for each native reader found, what it reads, which defaults apply when a value is absent, and how the values are combined. **Method:** an instruction scan for call sites that pass the WEENIECONTENT root key together with a constant key of that map; an instruction scan for immediates equal to the 296 property IDs of this spec's controls; decompilation of the resolver's callers for this spec's labels and of the functions found by the property scan. **Why M1–M3 were not enough:** the data does not say which side (client or server) consumes a control, nor which value applies when a property is absent; a frame or log capture (M3) cannot separate the mounted gait multipliers from server-driven movement, and no capture of the running client is available to this session. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. No symbol names, listings or addresses are carried into this spec; they stay in the dirty notes. **Second revision (2026-10-07):** (q4) whether native code could read GRSControl by a constant property ID (§7.16); method: a byte scan (no disassembly) of the same executable (SHA-256 prefix re-verified) for the 4-byte little-endian values of the 28 property IDs of GRSControl's property tree, sorted by PE section. |
+| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read on 2026-10-07 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use). **Questions:** (q1) which WEENIECONTENT singletons the client's native code resolves, and how; (q2) whether native code reads any property of this spec's singletons by a constant property ID; (q3) for each native reader found, what it reads, which defaults apply when a value is absent, and how the values are combined. **Method:** an instruction scan for call sites that pass the WEENIECONTENT root key together with a constant key of that map; an instruction scan for immediates equal to the 296 property IDs of this spec's controls; decompilation of the resolver's callers for this spec's labels and of the functions found by the property scan. **Why M1–M3 were not enough:** the data does not say which side (client or server) consumes a control, nor which value applies when a property is absent; a frame or log capture (M3) cannot separate the mounted gait multipliers from server-driven movement, and no capture of the running client is available to this session. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. No symbol names, listings or addresses are carried into this spec; they stay in the dirty notes. **Second revision (2026-10-07):** (q4) whether native code could read GRSControl by a constant property ID (§7.16); method: a byte scan (no disassembly) of the same executable (SHA-256 prefix re-verified) for the 4-byte little-endian values of the 28 property IDs of GRSControl's property tree, sorted by PE section. **Third revision (2026-10-08):** (q5) what the guild reader does when `Guild_PlayerNoteMaxLength` is present with a type other than int; method: the decompilation of the guild reader made for q3 on 2026-10-07 was re-read (same executable, SHA-256 prefix re-verified on 2026-10-08); no new disassembly. |
+| OBS2 | Observed in the user's install on 2026-10-08 (same data as OBS), with a new throwaway probe on the project's decoders, read-only: the class-table definition (defined or undefined, `wlib.md` §6.3) and parent of each role class of §2.1; every property of the 17 entities of §3.4 compared by value; the value types of every flank and trait-tree field of MountedCombatControl; the full property tree of RandomItemRewardControl with value types; the path from the top of the set to every `VitalDisplayOverride_UnlockedVDOs` value in all object property sets and bare sets of `client_gamelogic.dat`, and every occurrence of the array that holds them; every property set holding `RaceTable_IsTallRace`, with its `RaceTable_Race`; every array of the 387 objects of this spec's scope that have a property set (119 labels and 268 family members; the 32 compiled-only tables of §4.10 have none): lengths and null DID elements. |
 | SPEC | Facts stated, with their own provenance, in the companion specs named in the header; used here as cross-references only. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
-| GC1 | Structural kinds of all 316 WEENIECONTENT entries: the ordered rule and the class indices of §2.1 (ancestry 484 ← 485 ← 89 of all 314 object entries; 286 under 486, 28 under 223; the rule gives the counts of the kind table) | OBS (316 of 316; rule re-run in the revision of 2026-10-07) | Confirmed |
+| GC1 | Structural kinds of all 316 WEENIECONTENT entries: the ordered rule and the class indices of §2.1 (ancestry 484 ← 485 ← 89 of all 314 object entries; 286 under 486, 28 under 223; the rule gives the counts of the kind table) | OBS (316 of 316; rule re-run in the revision of 2026-10-07); OBS2 (which role classes are defined in the class table) | Confirmed |
 | GC2 | This spec's scope: 119 labels (97 root classes, 338,903 bytes of object state and property set) and 300 member objects in 18 classes (61,067 bytes) (§2.2) | OBS | Confirmed |
 | GC3 | No typed property value and no DID map other than WEENIECONTENT references any of the 119 labelled objects, except MOUNTED_1H (one monster-play table) and NewbieCinematicEncounter (8 references); raw 4-byte scans find no other occurrence at a reference position (§2.3) | OBS (all typed references of the 383,332 object sets, the 1,618 bare sets and the 24 DID maps; raw byte scan as in the OBS row) | Confirmed |
 | GC4 | Native client code resolves WEENIECONTENT entries by **key**, through the general DID-map lookup with root key 0x0A; of this spec's labels only CombatControl, MountedCombatControl, RandomItemRewardControl and GuildControl are resolved that way (§2.4) | BIN (q1: every call site with a constant key of the map); OBS (keys) | BIN |
 | GC5 | Of 296 property IDs of this spec's controls, native code reads by constant ID only the mounted gait multipliers and add-mod names, the mounted-combat unlock trait, two duel timings, the login-reward category name and tier fields, and one guild field; all other matches are user-interface element identifiers that share the numeric range (§2.4) | BIN (q2) | BIN |
 | GC6 | Empty marker objects: 38 `Dialog_*` labels, 3 level directories and 11 other labels; one script object with no attributes, a 6-byte empty property set; one distinct root class each (§3.2) | OBS (52 of 52) | Confirmed |
 | GC7 | Class-3399 DID sets: six labels; one reference attribute to a class-18 small set of object DIDs; empty property set (§3.3) | OBS (6 of 6) | Confirmed |
-| GC8 | Manager entities: the 14 labels whose root class has the manager base (788 here) as parent; one 36-property entity template (RepositoryManager adds 12 repository version numbers, listed in §3.4); three other entities (WorldEventServer, PrivateEncounterServer, RipCordPersistentUnique) carry the same template except `PhysObj` (§3.4) | OBS (all 28 entity entries compared property by property) | Confirmed |
+| GC8 | Manager entities: the 14 labels whose root class has the manager base (788 here) as parent; one 36-property entity template (RepositoryManager adds 12 repository version numbers, listed in §3.4); three other entities (WorldEventServer, PrivateEncounterServer, RipCordPersistentUnique) carry the same template except `PhysObj` (§3.4) | OBS (all 28 entity entries compared property by property); OBS2 (the name property is `Name`, the only property whose value differs between the 13 managers other than RepositoryManager) | Confirmed |
 | GC9 | PvP controls: PVPControl, PVPVirtueControl (+ slot schedule), PVPCombatControl, PVPFeatControl, GloryControl (§4.1–§4.5) | OBS | Confirmed |
 | GC10 | Monster-play controls and tables: MonsterPlayControl, MPAdvancementControl, MPLevelTableDirectory, the two empty level directories (§4.6–§4.8) | OBS | Confirmed |
 | GC11 | Compiled-only tables referenced by these controls: class 849 (29 cumulative-value arrays of u64), class 852 (3 maps of u32 to float bits) (§4.10) | OBS (29 + 3 object states) | Confirmed (layout); meaning of the index OPEN |
-| GC12 | Mount directory: 676 skill DIDs (347 tall, 329 short; disjoint) (§5.1) | OBS | Confirmed |
+| GC12 | Mount directory: 676 skill DIDs (347 tall, 329 short; disjoint); the per-species tall flag of the race table (§5.1) | OBS; OBS2 (`RaceTable_IsTallRace` in every property set of `client_gamelogic.dat`: 8 species objects) | Confirmed |
 | GC13 | MountAppearanceTraits is the set of all 767 trait objects of class 3509. Each carries exactly one `Trait_Group`, nested as the single element of the top-level array `Trait_Groups` (none at top level); keys 8–14 of mapper 0x230002EE with the per-slot counts of §5.2; the seven keys are exactly the keys of `Mount_Control_Appearance_Group_To_Property_Hash`; the appearance fields and dye flags of §5.2; the seven slot-material properties named by the hash share the mapper of `Trait_Appearance_Material` and occur in no object property set and no bare set (§5.2) | OBS (767 of 767, full recursive walk of each property set; all 383,332 object sets and the 1,616 `client_gamelogic.dat` bare sets for the slot-material properties; second revision of 2026-10-07) | Confirmed |
-| GC14 | MountedCombatControl layout (§5.3.1) | OBS | Confirmed |
+| GC14 | MountedCombatControl layout (§5.3.1); the flank fields are floats; both trait-tree struct kinds carry `Mount_Control_Trait_Tree` | OBS; OBS2 (types and labels, 10 of 10 flank structs, 3 + 3 tree structs) | Confirmed |
 | GC15 | Mounted gait multipliers: speed by gait (Walk/Trot/Canter/Gallop, else 1.0), turn rate by gait plus the actor's add-mod property, the locked-gear speed limit (§5.3.2) | BIN (q3) | BIN |
 | GC16 | The 17 weapon-style default-attack skills: shared shape, distinguishing fields, mounted additions (§5.5) | OBS (17 of 17) | Confirmed (data); selection rule OPEN |
 | GC17 | WeaponDamageVarianceTable, CombatStateControl, ResistControl layouts (§5.6, §5.8, §5.9) | OBS | Confirmed |
@@ -95,17 +96,18 @@ How sources are marked:
 | GC19 | Perks: PerkControl channels and the 47 perk objects (§6.1) | OBS (47 of 47) | Confirmed |
 | GC20 | Collections: CollectionControl and 29 collection objects; collection data on 1,347 skills (§6.2) | OBS | Confirmed |
 | GC21 | Paper-item services: 35 entries in 7 classes, one per service type (§6.3) | OBS (35 of 35) | Confirmed |
-| GC22 | TurbinePointsControl, RewardTrackControl, RandomItemRewardControl, LoginRewards and the two login-reward objects (§6.4–§6.7) | OBS; BIN (RandomItemRewardControl reader) | Confirmed; reader BIN |
-| GC23 | Vital-display overrides: 113 override objects, the control list, the 111 unlocking items (§7.1) | OBS (113 + 111) | Confirmed |
+| GC22 | TurbinePointsControl, RewardTrackControl, RandomItemRewardControl, LoginRewards and the two login-reward objects (§6.4–§6.7) | OBS; OBS2 (the full tier-field labels and their types, 10 of 10 entries); BIN (RandomItemRewardControl reader) | Confirmed; reader BIN |
+| GC23 | Vital-display overrides: 113 override objects, the control list, the 111 unlocking items; each unlock is the single element of the item's top-level `Usage_SetPropertyUsageData_Array` (§7.1) | OBS (113 + 111); OBS2 (the location, 111 of 111; every set of `client_gamelogic.dat` that holds the array) | Confirmed |
 | GC24 | AlertsControl covers each non-zero alert type once (§7.3) | OBS | Confirmed |
 | GC25 | ResetScheduleControl (§7.4) | OBS | Confirmed |
 | GC26 | Consideration control and its 8 tables: 31 ranks per table, non-decreasing, index 15 = Even in all 8 (§7.5) | OBS (8 of 8) | Confirmed (data); index rule OPEN |
 | GC27 | Formation control and the 30 formation-layout objects (§7.6) | OBS (30 of 30) | Confirmed |
 | GC28 | Small UI and system controls: AggroPing, CombatMusic, DiscoveryDistance, TrackingState, Shapeshift, PetControl (2), PetChannel, PruneInfo_Skill, WhiteList (4), OpenTapping, GRS (§7.7–§7.16) | OBS; BIN (q4, GRSControl byte scan) | Confirmed; GRS scan BIN |
-| GC29 | Social controls: GuildControl, MailControl, AuctionControl; player-note default 48 (§8) | OBS; BIN (q3, the guild reader) | Confirmed; default BIN |
+| GC29 | Social controls: GuildControl, MailControl, AuctionControl; player-note default 48, also for a value that is not an int (§8) | OBS; BIN (q3, the guild reader; q5, the type check) | Confirmed; default BIN |
 | GC30 | Dictionary-only families: LFG (17 definitions) and Antispam (65) hold no value anywhere; used versus defined counts of the other families (§4.9, §5.10, §8.5) | OBS (all 383,332 object sets and all 1,618 bare sets; the two `client_local_English.dat` sets hold no property of these families) | Confirmed |
 | GC31 | Reference graph of the singletons and their families (§9) | OBS (the typed-reference census of the OBS row) | Confirmed |
 | GC32 | TravelMountSpeedBoostOverride is an effect object (class 734) with the values of §5.4 | OBS (full property tree, re-read in the revision of 2026-10-07) | Confirmed |
+| GC33 | In the 387 scope objects with a property set, no array of DID elements holds a null DID (38 such arrays); the longest array is MountDirectory's `Mount_SkillList` (676) (§3.1) | OBS2 (387 of 387) | Confirmed |
 
 ---
 
@@ -197,13 +199,16 @@ Notes on the rule:
   MithrilCoins_PaperItem, MordorAdvancementItemGrant, BankFillItem, GroupRefereeEntity and
   the three server entities named above.
 
-> **OPEN:** (implementer note, 2026-10-08) The cross-checks of the class-index table cannot
-> require each role class to have a class-table definition: on the test install the entity
-> base (223 here) occurs only in the parent map. The implementation (`tessera_wstate::
-> game_controls::ClassIndices::check`) therefore checks parentage only (root without
-> parent, child, grandchild, every base below the grandchild, the four plain-object roles
-> below the plain-object base, the manager base below the entity base, the two bases
-> unrelated). Should the spec state that a role class may be undefined in the class table?
+**Role classes need not be defined** (Confirmed, GC1, OBS2). The rule and the cross-checks
+use only the parent map, never the class table. A role class may be an undefined entry of
+the class table (`wlib.md` §6.3) and still have a parent: in this install the **entity base
+(223 here) is undefined**. It occurs only in the parent map, with parent 89 (`wlib.md` §9
+notes the same index as the one undefined parent of a defined class). The other nine role
+classes (484, 485, 89, 486, 3399, 1728, 827, 698, 788) are defined. The parent chain of
+the cross-checks holds whether a role class is defined or not: 484 has no parent, 485's
+parent is 484, 89's parent is 485, and 486 and 223 both have parent 89. A reader therefore
+checks parentage only and does not require a class-table definition for any role class.
+(Answers the implementer note of 2026-10-08.)
 
 The 14 "other empty markers" are: DefaultGeneratorCondition, MonsterLevelDirectory,
 UsagePermission_AlwaysAllow, UsagePermission_Default, UsagePermission_HousingDecorationItem,
@@ -307,12 +312,14 @@ it with the generic property-set reader; the per-control tables of §4–§8 giv
 No new byte decoder is needed. Each control in this spec has exactly one object in its root
 class, except where a section says otherwise (PetControl's class holds two objects, §7.12).
 
-> **OPEN:** (implementer note, 2026-10-08) Engineering choices of the typed views
-> (`tessera_wstate::game_controls`), not facts of the format: every list a view keeps is
-> capped at 65,536 entries (the player-character cap); a present property of an unexpected
-> type is an error of the view, except for the reads whose client fallback the spec states
-> (§5.3.2, §5.7, §8.1), which treat it as absent; DID lists drop null elements except the
-> consideration lists of §7.5, which keep their 120 positions.
+**Typed views: what the client settles and what is a Tessera Decision** (answers the
+implementer note of 2026-10-08; GC33, OBS2; BIN for the native reads):
+
+| Choice | Client behaviour | Status for Tessera |
+|---|---|---|
+| A cap on the length of a list a view keeps (the implementation uses 65,536) | No native read of these lists was found (§2.4), so the client gives no limit. Longest property array in scope here: 676 (`Mount_SkillList`); largest DID set: 1,767 members (WebStore, §3.3) | **Tessera Decision.** Any cap well above the observed lengths is acceptable; 65,536 is kept |
+| A present property whose value type differs from the type this spec states | A value's type comes from the dictionary (`property-system.md` §3), so within one install a property always has one type; a mismatch can only appear when another build's dictionary redefines the property. The client's native reads of §5.3.2, §5.7 and §8.1 treat a value of another type exactly as an absent value and use their stated fallback (BIN) | **Client behaviour** for the reads of §5.3.2, §5.7 and §8.1. **Tessera Decision** for every other field: report it as an error of the view (no native read was found to copy) |
+| Null DIDs inside DID lists | Not observable here: none of the 38 arrays of DID elements in the 387 scope objects that have a property set holds a null DID (GC33). No native read of these lists was found (§2.4) | **Tessera Decision.** Dropping null elements is kept, except in the consideration lists of §7.5, which keep all 120 positions because the position is the level index (§7.5 reading) |
 
 <a id="s3-2"></a>
 ### 3.2 Empty marker objects (Confirmed, GC6)
@@ -384,8 +391,8 @@ FellowshipMakerManager, MailManager, AuctionManager, HousingAuthority,
 CharacterSheetManager, PopulationTrackingManager, RepositoryManager, WorldJoinManager,
 TrackingManager, ScriptManager and NeighborManager. Each has its own root class.
 
-- All 14 property sets hold the same 36 properties with the same values except the literal
-  name (whose text is not reproduced): `Entity_CreationType` = UniqueDynamicImmobile,
+- All 14 property sets hold the same 36 properties with the same values except the name,
+  `Name` (whose text is not reproduced; see the last item): `Entity_CreationType` = UniqueDynamicImmobile,
   `WeenieType` = Entity, `SeeMeVisibilityMask` = Hidden, `NeverHousekeep` = true,
   `IsSelectable` = true, `PhysObj` = one entity descriptor (0x47000601 here, the same in
   all), `Entity_AdditionalScriptTables` = one entry naming 0x07000000, `Usage_Action` and
@@ -407,11 +414,12 @@ TrackingManager, ScriptManager and NeighborManager. Each has its own root class.
   their only difference is `PhysObj` (0x47000687 here, the same in the three). They are
   "other entities" (§2.1 row 9) and are not covered by this spec. A reader that needs the
   manager kind uses the parent-class rule of §2.1.
-
-> **OPEN:** (implementer note, 2026-10-08) The property that holds the "literal name" is
-> not labelled here. The census (`crates/wstate/tests/game_controls_real_data.rs`) finds it
-> as the single PID whose value differs between the 13 non-repository managers, and checks
-> GCI4 with that PID; the spec could name the label.
+- **The name property is `Name`** (StringInfo; PID 0x00000354 here; GC8, OBS2). Among the
+  13 managers other than RepositoryManager it is the only property whose value differs (13
+  distinct values); every one of the 17 entities of this section (the 14 managers and the
+  three server entities) holds exactly one textual property, and it is `Name`. A reader
+  looks the property up by the label `Name` through the dictionary, not by the PID.
+  (Answers the implementer note of 2026-10-08.)
 
 They are hidden, never-housekept server-side entities, one per service. A client has no
 use for them. A Tessera server may treat each label as the identity of the matching
@@ -587,8 +595,17 @@ stored order interleaves the two kinds.
 The same two properties also occur on 377 items each (mount items that grant one skill per
 body size). 102 of the 131 collection pieces (§6.2) are skills of this directory.
 
-> **OPEN:** (Q6) Which player bodies count as "tall" and "short" (the race-to-size rule) is
-> not in this record.
+**Tall and short species** (Confirmed, GC12, OBS2). The size is not in this record but in
+the race table (`skeleton-anim.md` §2.2): each of the eight species objects (the objects
+that hold `RaceTable_Race`; 8 distinct species) holds the bool `RaceTable_IsTallRace` at the
+top level of its property set, and no other property set of `client_gamelogic.dat` holds
+it. Here it is true for Human, Elf, Beorning and HighElf and false for Hobbit, Dwarf,
+DwarfStoutAxe and RiverHobbit (`SpeciesType` labels, mapper 0x2300000B). A reader takes the
+flag from the race table at run time.
+
+> **OPEN:** (Q6, narrowed 2026-10-08) That `RaceTable_IsTallRace` = true selects the
+> `Mount_SkillToGrantTall` group and false the `…Short` group is a reading from the labels;
+> no client or data link between the flag and the two groups has been read.
 
 <a id="s5-2"></a>
 ### 5.2 MountAppearanceTraits (Confirmed, GC13)
@@ -670,21 +687,27 @@ actor's slot-material property of the trait's slot to the trait's
 | `MountedCombat_Control_MountLevelToTotalPointsProgression`, `MountedCombat_Control_TraitPointsToRefundCostProgression` | DID → class 1385 | progressions |
 | `Mount_Control_Mounted_Combat_Unlocked_Trait` | DID → class 1477 | a trait |
 | `Mount_Control_Tree_Array` | 3 `Mount_Control_Tree_Struct` | per `Mount_Control_Trait_Tree` (mapper 0x23000369: MountedCombat_Light, _Medium, _Heavy): `Mount_Control_Tree_Effect` (DID → class 718) and `Mount_WarSteed_SkillCombo` (bitfield32, mapper 0x23000387: Light, Heavy, or none for Medium) |
-| `Mount_Control_Tree_To_Skill_Hash` | 3 `Mount_Control_Tree_To_Skill_Struct` | per trait tree: `Mount_Control_Mount_Skill_Hash`, 8 structs of `Mount_Control_Player_Race` (species mapper 0x2300000B) → `Mount_Control_Mount_Skill` (skill DID); 24 entries, 12 distinct skills |
-| `Mount_Control_FlankConstraints_Array` | 10 structs | `Mount_Control_FlankPosition` (bitfield32, mapper 0x23000372: Right, Left, Back, Front, the four diagonals, Front180, Back180; each once), `Mount_Control_Flank_Heading` (0–315 degrees), `Mount_Control_Flank_LeftArc` (−90 to 0) and `…_RightArc` (0 to 90) |
+| `Mount_Control_Tree_To_Skill_Hash` | 3 `Mount_Control_Tree_To_Skill_Struct` | per trait tree (`Mount_Control_Trait_Tree`, as in the tree array): `Mount_Control_Mount_Skill_Hash`, 8 structs of `Mount_Control_Player_Race` (species mapper 0x2300000B) → `Mount_Control_Mount_Skill` (skill DID); 24 entries, 12 distinct skills |
+| `Mount_Control_FlankConstraints_Array` | 10 structs | `Mount_Control_FlankPosition` (bitfield32, mapper 0x23000372: Right, Left, Back, Front, the four diagonals, Front180, Back180; each once), `Mount_Control_Flank_Heading` (0–315 degrees), `Mount_Control_Flank_LeftArc` (−90 to 0) and `…_RightArc` (0 to 90), all three floats |
 | `Mount_Control_Slots_Allowing_Dye` | 5 structs | `Mount_Control_Slot_Allowed_to_be_Dyed` (mapper 0x230002EE, TraitGroup: mount slots) and `Mount_Control_Colors_Allowed_to_be_Dyed` (any-width bitfield, mapper 0x23000398 AppearanceColor; 3 distinct masks) |
 | `Mount_Control_Appearance_Group_To_Property_Hash` | 7 structs | `Trait_Group` (mount slot) → `Mount_Control_Apperance_Trait_Material_PropertyName` (PID of the actor property that holds that slot's material) |
 
 The flank constraints read as: a position covers the arc from heading + left arc to heading
 + right arc, in degrees relative to the steed's facing (reading consistent with the values).
 
-> **OPEN:** (implementer note, 2026-10-08) The property type of `Mount_Control_Flank_Heading`
-> (the census finds `…_LeftArc` and `…_RightArc` to be floats) and the label of the
-> trait-tree field of a `Mount_Control_Tree_To_Skill_Struct` are not stated. The view
-> accepts an int or a float for the flank fields, and reads the tree key of both struct
-> kinds as
-> `Mount_Control_Trait_Tree`; on the test install that field is present in all three
-> skill-hash entries with the three keys of the tree array.
+**Field types and the tree key** (GC14, OBS2; answers the implementer note of 2026-10-08):
+
+- `Mount_Control_Flank_Heading`, `Mount_Control_Flank_LeftArc` and
+  `Mount_Control_Flank_RightArc` are all **floats** (dictionary type float, default 0.0;
+  float in all 10 flank structs). `Mount_Control_FlankPosition` is a bitfield32. A reader
+  needs no int form of the flank fields.
+- Both struct kinds name their tree by the same field, **`Mount_Control_Trait_Tree`** (enum,
+  mapper 0x23000369): each `Mount_Control_Tree_Struct` holds it with
+  `Mount_Control_Tree_Effect` and `Mount_WarSteed_SkillCombo`, and each
+  `Mount_Control_Tree_To_Skill_Struct` holds it with `Mount_Control_Mount_Skill_Hash`, whose
+  elements are `Mount_Control_Mount_Skill_Struct` structs of `Mount_Control_Player_Race`
+  (enum) and `Mount_Control_Mount_Skill` (DID). Here each of the three tree keys
+  (MountedCombat_Light, _Medium, _Heavy) occurs once in each of the two arrays.
 
 > **OPEN:** (Q7) How the flank constraints are used (which attacks or effects test a flank
 > position). Server rule; no native reader was found (§2.4).
@@ -976,7 +999,7 @@ counted in `items.md` and the experience sources in `quests.md`.
 
 | Property | Type | Observed |
 |---|---|---|
-| `RandomItemReward_Silver_Category`, `RandomItemReward_Gold_Category` | array of 5 `RandomItemReward_Tier_Entry` | each: `…_Tier_Title`, `…_Tier_Description` (StringInfo), `…_Tier_NPC` (DID → class 1724, an NPC template), `…_Tier_NPC_Icon` (0x41 surface), `…_Tier_VXP` (DID → item, class 796) |
+| `RandomItemReward_Silver_Category`, `RandomItemReward_Gold_Category` | array of 5 `RandomItemReward_Tier_Entry` (struct) | each: `RandomItemReward_Tier_Title` and `RandomItemReward_Tier_Description` (StringInfo), `RandomItemReward_Tier_NPC` (DID → class 1724, an NPC template), `RandomItemReward_Tier_NPC_Icon` (DID, 0x41 surface) and `RandomItemReward_Tier_VXP` (DID → item, class 796); all five fields in all 10 entries |
 | `RandomItemRewardControl_ChanceToShowRarest` | float | 0.1 |
 
 **Client use (BIN):** the login-reward window resolves this control by key (§2.4). It takes
@@ -984,11 +1007,9 @@ the PID stored in a login-reward record's `LoginReward_ControlCategory_PropertyN
 (§6.7), reads that array from this control, and for each tier entry shows the title and
 description and uses the NPC, NPC icon and reward item.
 
-> **OPEN:** (implementer note, 2026-10-08) The tier fields are given elided (`…_Tier_Title`
-> and so on). The implementation reads them as `RandomItemReward_Tier_Title`,
-> `…_Tier_Description`, `…_Tier_NPC`, `…_Tier_NPC_Icon` and `…_Tier_VXP` with the prefix
-> `RandomItemReward`; the census checks that these names exist in the dictionary with the
-> stated types. The spec could spell the full labels.
+The tier-field labels are spelled out in the table above (GC22, OBS2). The prefix of the
+tier fields is `RandomItemReward_`, not `RandomItemRewardControl_`; only the rarest-tier
+chance carries the longer prefix. (Answers the implementer note of 2026-10-08.)
 
 > **OPEN:** (Q12) The order in which the client lists the tiers and what
 > `RandomItemRewardControl_ChanceToShowRarest` drives (a display choice or a server roll).
@@ -1039,11 +1060,26 @@ Data navigation: an item's set bit *b* gives key *b* + 1; the override whose
 `RequiredEnum` is that key gives the UI state to apply to the character's vital display,
 for the character kinds whose flag is true.
 
-> **OPEN:** (implementer note, 2026-10-08) Where in an item's property set
-> `VitalDisplayOverride_UnlockedVDOs` sits is not stated. On the test install none of the
-> 111 values is at the top level of its set; all 111 are nested (inside a struct or array
-> value), one per item. The census reads it at any depth. Which struct or array holds it
-> (and so how a client finds it on an item) should be stated.
+**Where the unlock sits on an item** (GC23, OBS2; answers the implementer note of
+2026-10-08). `VitalDisplayOverride_UnlockedVDOs` is never a top-level property. In each of
+the 111 items it is the **single element** of the top-level array
+`Usage_SetPropertyUsageData_Array` (depth 1, directly an element of the array, not inside a
+struct). A client finds it by taking that array from the item's property set and the
+element whose label is `VitalDisplayOverride_UnlockedVDOs`.
+
+- In all of `client_gamelogic.dat`, 112 property sets hold
+  `Usage_SetPropertyUsageData_Array`, always at the top level: the 111 unlock items (one
+  element each) and one set whose single element is a quest property. So the array is a
+  general list of property values, not a VDO-specific field; a reader takes the element by
+  its label.
+- The 111 items share their usage settings: the same usage-action record (as
+  `Usage_Action` and `Usage_Action_Shadow`), `Usage_DestroyOnUse` = true,
+  `Usage_InventoryRequired` = true, `Usage_AllowedInCombat` = false; 110 of them have
+  `Usage_MonsterPlayerCanUse` = true.
+- No property set of `client_gamelogic.dat` holds `VitalDisplayOverride_UnlockedVDOs` anywhere else
+  (no creature or player template carries it). Reading (from the labels, not stated by the
+  data): using such an item sets the array's property values on the user, so a character's
+  unlocked overrides would be a run-time value of the same property (Q13, Q25).
 
 > **OPEN:** (Q13) Where the chosen override key is stored on the character, and how the UI
 > state changes the vitals display (frame art, colours). The overrides are not read by
@@ -1305,10 +1341,10 @@ out of scope.
 `Guild_PlayerNoteMaxLength` (an int). This install's control does **not** hold it, and the
 client then uses **48**.
 
-> **OPEN:** (implementer note, 2026-10-08) The spec gives the default only for an absent
-> value. The implementation also uses 48 when the property is present with another type
-> (as §5.3.2 and §5.7 state for their reads); whether the client does the same is not
-> stated.
+The client uses the stored value only when it is an **int** (property type 15,
+`property-system.md` §3). When the control holds the property with any other type, the
+client uses **48**, exactly as when the property is absent (BIN q5, GC29). This confirms
+the implementation's choice. (Answers the implementer note of 2026-10-08.)
 
 <a id="s8-2"></a>
 ### 8.2 MailControl (Confirmed, GC29)
@@ -1427,7 +1463,7 @@ a data error to report, never as a reason to panic.
    exactly two items: a root script object with one reference attribute, and a class-18
    set; every member is the DID of an existing object record.
 4. **GCI4.** Exactly 14 entries of the map have a root class whose parent is the manager
-   base (§2.1 row 8). Their property sets are identical apart from the literal name, except
+   base (§2.1 row 8). Their property sets are identical apart from `Name`, except
    that RepositoryManager has the 12 extra version properties of §3.4 and no other
    difference. The three server entities named in §3.4 have the same property set as the
    managers apart from the name and `PhysObj`, and their root classes' parent is not the
@@ -1462,6 +1498,14 @@ a data error to report, never as a reason to panic.
     by at least one member (per-slot counts 152, 175, 105, 54, 153, 118, 10 for keys 8–14
     here); every member's `Trait_Appearance_List` has two `Trait_Appearance_Set` elements
     of one `Trait_Appearance_Struct` each (§5.2).
+17. **GCI17.** Every `VitalDisplayOverride_UnlockedVDOs` value of the install is the single
+    element of a top-level `Usage_SetPropertyUsageData_Array` of an item (111 of 111 here);
+    none occurs at the top level or inside a struct (§7.1).
+18. **GCI18.** MountedCombatControl's flank heading and arc fields are floats, and the
+    `Mount_Control_Trait_Tree` keys of the tree array and of the tree-to-skill array are the
+    same set, each key once per array (§5.3.1).
+19. **GCI19.** Among the 13 managers other than RepositoryManager, `Name` is the only
+    property whose value differs (§3.4).
 
 Install-specific values (counts, DIDs, keys, class indices) are observations; tests compare
 them only when `TESSERA_GAME_DIR` names an install of the same data.
@@ -1539,7 +1583,7 @@ no meaning.
 | Q3 | Purpose of the DID sets beyond membership | §3.3 | the store and big-battle specs |
 | Q4 | The three lists of a trait slot schedule (class 1490) | §4.2 | `combat-data.md` §8 work |
 | Q5 | Index base of class-849 lists; key meaning of class-852 maps | §4.10 | comparison with displayed rank thresholds (M3) |
-| Q6 | Which bodies are tall and short for mount skills | §5.1 | race-table data (`skeleton-anim.md` §2.2) or M3 |
+| Q6 | Whether the race table's `RaceTable_IsTallRace` is what selects the tall or short mount-skill group (the per-species flag itself is now in §5.1) | §5.1 | BIN (a native read of the flag); M3 (mount skills granted to a short and a tall character) |
 | Q7 | Use of the flank constraints | §5.3.1 | server rule; Tessera decides for M7 |
 | Q8 | Source of the second forward-speed limit; rest of the mounted controller | §5.3.2 | further BIN in the movement controller (`walker.md`) |
 | Q9 | Default-attack selection rule | §5.5 | BIN or script-library reading; M3 observation of auto-attack animations |
@@ -1581,6 +1625,9 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 - **`combat-data.md` §10.1:** name the label `CombatControl`; add the client's duel-timing
   defaults (§5.7).
 - **`items.md` §6.4:** point to §6.3 for the paper-item services.
+- **`items.md`:** state that `Usage_SetPropertyUsageData_Array` is a top-level array of
+  property values on usable items, and that the vital-display unlocks are its elements
+  (§7.1).
 - **`walker.md`:** reference §5.3.2 for the mounted gait speed and turn-rate multipliers if
   the walker gains mounted movement.
 
@@ -1595,3 +1642,4 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 | 2026-10-07 | Revision for the first review (changes requested), status stays Review. §2.1: the kind rule is now an ordered table with a replaceable table of class indices (484, 485, 89 common root; 486 plain-object base; 223 entity base; 3399, 1728, 827, 698, 788) and cross-checks; managers are recognised by parent class 788, not by the property template; row 9 listed by label (GC1, GCI15 new). §3.4 and GCI4: three server entities share the manager template except `PhysObj`; RepositoryManager's 12 extra properties corrected (GC8). OBS row, §2.3, §9, GC3, GC30: 383,332 object property sets (the 11 0x76 objects have none); 1,618 bare sets = 1,616 in `client_gamelogic.dat` + 2 in `client_local_English.dat`, the 2 now covered by the typed and raw scans; scope of the 5,915,209 DID values stated. Provenance: §9 cites the new row GC31, §5.4 the new row GC32. §5.2: the slot examples removed (the 767 traits carry no `Trait_Group`, GC13), Q23. Readings in §6.1, §7.1, §7.10, §7.12 and §7.14 turned into OPEN Q24–Q28. |
 | 2026-10-07 | Second revision, for the second review (changes requested), status stays Review. §5.2, GC13: the earlier statement that the 767 class-3509 traits carry no `Trait_Group` was wrong (a top-level-only check); each carries exactly one, nested as the single element of `Trait_Groups`, keys 8–14 with per-slot counts, equal to the keys of the appearance-group hash; the appearance fields, dye flags and the shared material mapper added; Q23 narrowed to how the appearance is applied; new Q29 (dye rule) and GCI16. §2.3: each labelled record's own DID at payload offset 0 named as the expected raw match. §6.2: the completion rule marked as a reading, Q30. §7.16: "no client use" replaced by the BIN facts (not resolved by key; byte scan, q4, finds unexamined code-section matches of 9 of 28 property IDs) and Q1. BIN row: q4. |
 | 2026-10-07 | Third review passed; status Review → Accepted (reviewer). No content change. |
+| 2026-10-08 | Revision answering the six implementer OPEN notes of 2026-10-08; status Accepted → Revised. No section renumbered. §2.1: role classes need not be defined in the class table; the entity base is undefined here and the cross-checks use the parent map only (GC1, OBS2). §3.1: the typed-view choices split into client behaviour (wrong type = absent for the native reads of §5.3.2, §5.7, §8.1) and Tessera Decisions (list cap, error on wrong type elsewhere, null DIDs dropped except in the consideration lists); no DID list in scope holds a null DID (new GC33). §3.4: the name property is `Name` (GC8, GCI4, new GCI19). §5.3.1: the flank fields are floats; both trait-tree struct kinds carry `Mount_Control_Trait_Tree` (GC14, new GCI18). §6.6: the tier-field labels spelled in full (GC22). §7.1: each unlock is the single element of the item's top-level `Usage_SetPropertyUsageData_Array` (GC23, new GCI17; reading added to Q13/Q25 context). §8.1: the client uses 48 also for a value that is not an int (BIN q5, GC29). §5.1: the per-species tall flag `RaceTable_IsTallRace` of the race table (GC12); Q6 narrowed to the link between flag and skill group. New provenance key OBS2; BIN row: q5. §13: an `items.md` proposal. |

@@ -39,11 +39,13 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::gameplay::common::ClassTree;
 use tessera_formats::gameplay::common::build::{array, did, entry, set, structure};
 use tessera_formats::gameplay::items::{
-    DpsTable, DurationMap, EffectListKind, ItemClassKind, ItemClasses, ItemKind, ItemSchema,
-    ItemSetView, ItemView, ItemWeenieKinds, Progression, RelicView, SetMembership, ValueTable,
-    WeaponTimingTable, WeaponTimings, WearControl, armour_value, damage_range,
-    equipment_category_keys, item_references, item_value, legacy_effects, mod_entry_is_well_formed,
-    round_half_up, runic_list, set_directory, truncate, weapon_damage, weapon_timing_table_dids,
+    DpsTable, DurationMap, EffectListKind, ImbuedLegacyView, ItemClassKind, ItemClasses, ItemKind,
+    ItemSchema, ItemSetView, ItemView, ItemWeenieKinds, LegacyGroup, LegendaryTitleView,
+    Progression, RelicView, SetMembership, TransmutationRecipeView, ValueTable, WeaponTimingTable,
+    WeaponTimings, WearControl, armour_value, damage_range, equipment_category_keys,
+    examination_list, examination_properties, item_references, item_value, legacy_effects,
+    merge_list, mod_entry_is_well_formed, round_half_up, runic_list, set_directory, truncate,
+    weapon_damage, weapon_timing_table_dids,
 };
 use tessera_formats::{
     Did, PropertyEntry, PropertySet, PropertyType, PropertyValue, StringInfo, StringSource,
@@ -54,9 +56,8 @@ use tessera_formats::{
 /// Types are the ones `items.md` §5–§7, `combat-data.md` §4.1 / §5.1, `map-data.md` §8.4.1
 /// and `quests.md` §8.2 give; where no spec states a type, the one the reader accepts. A
 /// struct lists its fields, an array its element labels. Labels starting with `fuzz.` are
-/// synthetic element labels (the readers do not look at element labels) and stand-ins: the
-/// constant field of a modifier (`fuzz.stat`) and the unlabelled key and number fields of
-/// the keyed tables (`items.md` §6.3, §6.4 OPEN).
+/// synthetic element labels (the readers do not look at element labels) and stand-ins, such
+/// as the constant field of a modifier (`fuzz.stat`).
 type Typed = (&'static str, u32, &'static [&'static str]);
 
 const TYPED: &[Typed] = &[
@@ -209,7 +210,8 @@ const TYPED: &[Typed] = &[
     ("Usage_MinUsageDist", 9, &[]),
     ("ItemDecay_Duration", 8, &[]),
     ("Usage_RequiredClassList", 12, &["fuzz.enum"]),
-    ("Usage_RequiredRaces", 12, &["fuzz.enum"]),
+    ("Usage_RequiredRaces", 12, &["Usage_RequiredRaceEntry"]),
+    ("Usage_RequiredRaceEntry", 8, &[]),
     (
         "Usage_RequiredFaction",
         11,
@@ -222,11 +224,18 @@ const TYPED: &[Typed] = &[
     (
         "fuzz.required_trait",
         11,
-        &["Usage_RequiredTrait", "Usage_RequiredVirtueRank"],
+        &[
+            "Usage_RequiredTrait",
+            "Usage_RequiredVirtueRank",
+            "Usage_RequiredVirtueRankMax",
+        ],
     ),
     ("Usage_RequiredVirtueRank", 15, &[]),
+    ("Usage_RequiredVirtueRankMax", 15, &[]),
     ("Usage_BarringTrait", 20, &[]),
     ("Usage_BarringSkill", 20, &[]),
+    ("Usage_BarringTrait_Array", 12, &["Usage_BarringTrait"]),
+    ("Usage_BarringSkill_Array", 12, &["Usage_BarringSkill"]),
     ("Usage_BarringEmote", 20, &[]),
     ("Usage_MinGloryRank", 15, &[]),
     ("Usage_RequiredCraftProfession", 20, &[]),
@@ -276,6 +285,32 @@ const TYPED: &[Typed] = &[
     ("Usage_PlayersCanOpen", 21, &[]),
     ("Usage_PlayersCanClose", 21, &[]),
     ("Key_CanBePlacedOnKeyRing", 21, &[]),
+    // §2.1 door labels (F45; value types are not given by `items.md`, so booleans here:
+    // only their presence is read).
+    ("MapNote_Enabled", 21, &[]),
+    ("MapNote_Linkable", 21, &[]),
+    ("Physics_CollisionReports", 21, &[]),
+    ("Physics_EtherealToType", 21, &[]),
+    ("Physics_EtherealityType", 21, &[]),
+    ("Physics_NoPathmaps", 21, &[]),
+    ("Physics_PlacementEtherealToType", 21, &[]),
+    // §2.1 property-modifying token labels (F45; `combat-data.md` C55 nests `Mod_Array` in
+    // two of them; the other types are stand-ins: only presence is read).
+    ("SPM_Max_Error", 15, &[]),
+    ("SPM_Min_Error", 15, &[]),
+    ("SPM_PropertyMod", 11, &["Mod_Array"]),
+    ("SPM_SKU", 15, &[]),
+    ("SPM_Target", 15, &[]),
+    ("SPM_Target_Max", 15, &[]),
+    ("SPM_Target_Min", 15, &[]),
+    ("Usage_ModPropertyUsageData_MaxValues", 12, &["fuzz.int"]),
+    ("Usage_ModPropertyUsageData_MinValues", 12, &["fuzz.int"]),
+    (
+        "Usage_ModPropertyUsageData_ModProperties",
+        12,
+        &["SPM_PropertyMod"],
+    ),
+    ("Usage_PropertyCondition_Array", 12, &["fuzz.int"]),
     // §6.1, §6.2
     ("Item_BaseValArray", 12, &["fuzz.base_value"]),
     ("fuzz.base_value", 11, &["Item_BaseVal"]),
@@ -326,17 +361,69 @@ const TYPED: &[Typed] = &[
     (
         "ItemWearControl_RepairCostQualityModArray",
         12,
-        &["fuzz.keyed"],
+        &["fuzz.repair"],
     ),
+    (
+        "fuzz.repair",
+        11,
+        &[
+            "ItemWearControl_RepairCostQualityModEnum",
+            "ItemWearControl_RepairCostQualityModValue",
+        ],
+    ),
+    ("ItemWearControl_RepairCostQualityModEnum", 8, &[]),
+    ("ItemWearControl_RepairCostQualityModValue", 9, &[]),
     (
         "ItemWearControl_ItemWearStateValueModArray",
         12,
-        &["fuzz.keyed"],
+        &["fuzz.wear_state"],
     ),
-    ("ItemWearControl_SkillGateArray", 12, &["fuzz.keyed"]),
-    ("CooldownControl_DurationMapList", 12, &["fuzz.keyed"]),
-    ("ItemDecayControl_DurationMapList", 12, &["fuzz.keyed"]),
-    ("fuzz.keyed", 11, &["fuzz.enum", "fuzz.number", "fuzz.int"]),
+    (
+        "fuzz.wear_state",
+        11,
+        &[
+            "ItemWearControl_ItemWearState",
+            "ItemWearControl_ItemWearStateValueMod",
+        ],
+    ),
+    ("ItemWearControl_ItemWearState", 8, &[]),
+    ("ItemWearControl_ItemWearStateValueMod", 9, &[]),
+    ("ItemWearControl_SkillGateArray", 12, &["fuzz.skill_gate"]),
+    (
+        "fuzz.skill_gate",
+        11,
+        &[
+            "ItemWearControl_SkillGateEnum",
+            "ItemWearControl_SkillGateValue",
+        ],
+    ),
+    ("ItemWearControl_SkillGateEnum", 8, &[]),
+    ("ItemWearControl_SkillGateValue", 9, &[]),
+    ("CooldownControl_DurationMapList", 12, &["fuzz.cooldown"]),
+    (
+        "fuzz.cooldown",
+        11,
+        &[
+            "CooldownControl_DurationType",
+            "CooldownControl_DurationValue",
+        ],
+    ),
+    ("CooldownControl_DurationType", 8, &[]),
+    ("CooldownControl_DurationValue", 9, &[]),
+    ("ItemDecayControl_DurationMapList", 12, &["fuzz.decay"]),
+    (
+        "fuzz.decay",
+        11,
+        &[
+            "ItemDecayControl_DurationType",
+            "ItemDecayControl_DurationValue",
+        ],
+    ),
+    ("ItemDecayControl_DurationType", 8, &[]),
+    ("ItemDecayControl_DurationValue", 9, &[]),
+    // §6.4 inventory control lists (F53).
+    ("InventoryControl_ExamProperty_Array", 12, &["fuzz.pid"]),
+    ("InventoryControl_MergeProperty_Array", 12, &["fuzz.pid"]),
     // `combat-data.md` §4.1, §4.2, §4.6
     ("Progression_MinimumIndexValue", 15, &[]),
     ("PropertyProgression_Array", 12, &["fuzz.stat"]),
@@ -428,7 +515,7 @@ const TYPED: &[Typed] = &[
     ("Runic_Name", 13, &[]),
     ("Runic_Type", 18, &[]),
     ("Runic_Level", 15, &[]),
-    ("Runic_Tier", 15, &[]),
+    ("Runic_Tier", 8, &[]),
     ("Runic_RequiredItemLevel", 15, &[]),
     ("Relic_ValidContainerSlots", 18, &[]),
     ("Runic_Deconstruction_Value", 15, &[]),
@@ -448,6 +535,100 @@ const TYPED: &[Typed] = &[
     ),
     ("ItemAdvancement_Effect", 20, &[]),
     ("ItemAdvancement_Mod_Weight", 15, &[]),
+    // §7.2 transmutation recipes (F49).
+    ("Relic_Transmutation_Recipe_RelicCurrencyCost", 15, &[]),
+    ("Relic_Transmutation_Recipe_TransmutationCategory", 8, &[]),
+    (
+        "Relic_Transmutation_Recipe_Output_List",
+        12,
+        &["fuzz.transmutation_output"],
+    ),
+    (
+        "fuzz.transmutation_output",
+        11,
+        &[
+            "Relic_Transmutation_Recipe_Output_Relic",
+            "Relic_Transmutation_Recipe_Output_Weight",
+        ],
+    ),
+    ("Relic_Transmutation_Recipe_Output_Relic", 20, &[]),
+    ("Relic_Transmutation_Recipe_Output_Weight", 15, &[]),
+    ("Relic_Transmutation_Recipe_Can_Produce_Items", 21, &[]),
+    ("Relic_Transmutation_Recipe_Output_Icon_Override", 20, &[]),
+    ("Relic_Transmutation_Recipe_Output_Title_Override", 13, &[]),
+    (
+        "Relic_Transmutation_Recipe_Output_Tooltip_Override",
+        13,
+        &[],
+    ),
+    // §7.3 legacy groups, titles, imbued legacies (F49).
+    (
+        "ItemAdvancement_ProgressionListArray",
+        12,
+        &["fuzz.progression_list"],
+    ),
+    (
+        "fuzz.progression_list",
+        11,
+        &[
+            "ItemAdvancement_ProgressionList",
+            "ItemAdvancement_ProgressionList_Weight",
+        ],
+    ),
+    ("ItemAdvancement_ProgressionList", 20, &[]),
+    ("ItemAdvancement_ProgressionList_Weight", 15, &[]),
+    (
+        "ItemAdvancement_ProgressionPullCountList",
+        12,
+        &["fuzz.pull_count"],
+    ),
+    (
+        "fuzz.pull_count",
+        11,
+        &[
+            "ItemAdvancement_ProgressionPullCount_Amount",
+            "ItemAdvancement_ProgressionPullCount_Weight",
+        ],
+    ),
+    ("ItemAdvancement_ProgressionPullCount_Amount", 15, &[]),
+    ("ItemAdvancement_ProgressionPullCount_Weight", 15, &[]),
+    ("ItemAdvancement_IATitle_Category", 8, &[]),
+    ("ItemAdvancement_IATitle_Tier", 8, &[]),
+    ("ItemAdvancement_Title_SlayerGenusType", 18, &[]),
+    ("ItemAdvancement_Title_DamageType", 8, &[]),
+    ("EffectGenerator_RunicEffectList", 12, &["fuzz.effect"]),
+    ("ItemAdvancement_ImbuedLegacy_Effect", 20, &[]),
+    ("ItemAdvancement_AdvanceableWidget_InitialMaxLevel", 15, &[]),
+    (
+        "ItemAdvancement_AdvanceableWidget_AbsoluteMaxLevel",
+        15,
+        &[],
+    ),
+    ("ItemAdvancement_AdvanceableWidget_Icon", 20, &[]),
+    ("ItemAdvancement_AdvanceableWidget_SmallIcon", 20, &[]),
+    ("ItemAdvancement_AdvanceableWidget_Category", 8, &[]),
+    ("UI_Examination_Tooltip_0Click_Element", 8, &[]),
+    ("UI_Examination_Tooltip_0Click_Layout", 20, &[]),
+    (
+        "ItemAdvancement_ImbuedLegacy_ClassicLegacyTransform",
+        11,
+        &[
+            "ItemAdvancement_ImbuedLegacy_TierTransform_Array",
+            "ItemAdvancement_LegacyTypeName_Array",
+        ],
+    ),
+    (
+        "ItemAdvancement_ImbuedLegacy_TierTransform_Array",
+        12,
+        &["ItemAdvancement_AdvanceableWidget_UnlockedLevels"],
+    ),
+    ("ItemAdvancement_AdvanceableWidget_UnlockedLevels", 15, &[]),
+    (
+        "ItemAdvancement_LegacyTypeName_Array",
+        12,
+        &["ItemAdvancement_PropertyName"],
+    ),
+    ("ItemAdvancement_PropertyName", 10, &[]),
     // §2.4 reference sources (nested at any depth)
     (
         "fuzz.references",
@@ -466,6 +647,7 @@ const TYPED: &[Typed] = &[
     ("fuzz.number", 9, &[]),
     ("fuzz.enum", 8, &[]),
     ("fuzz.did", 20, &[]),
+    ("fuzz.pid", 10, &[]),
 ];
 
 /// Label groups that one record carries together; the builder starts from one of them.
@@ -547,6 +729,24 @@ const GROUPS: &[&[&str]] = &[
         "Usage_RequiredCraftTier",
         "Usage_MinLevel",
         "Usage_MaxLevel",
+        "Usage_BarringTrait_Array",
+        "Usage_BarringSkill_Array",
+    ],
+    // Doors, interactive objects and property-modifying tokens (§2.1, F45).
+    &[
+        "WeenieType",
+        "Item_Class",
+        "CSM_ActionHandler",
+        "MapNote_Enabled",
+        "Physics_NoPathmaps",
+        "Usage_PlayersCanOpen",
+    ],
+    &[
+        "WeenieType",
+        "SPM_SKU",
+        "SPM_PropertyMod",
+        "Usage_ModPropertyUsageData_ModProperties",
+        "Usage_PropertyCondition_Array",
     ],
     &[
         "Item_Socket_Type",
@@ -608,6 +808,39 @@ const GROUPS: &[&[&str]] = &[
         "Mod_Array",
     ],
     &["RunicList_Array", "ItemAdvancement_Effect_Array"],
+    &[
+        "InventoryControl_ExamProperty_Array",
+        "InventoryControl_MergeProperty_Array",
+        "Item_Value",
+        "Item_Level",
+    ],
+    &[
+        "Relic_Transmutation_Recipe_RelicCurrencyCost",
+        "Relic_Transmutation_Recipe_TransmutationCategory",
+        "Relic_Transmutation_Recipe_Output_List",
+        "Relic_Transmutation_Recipe_Can_Produce_Items",
+        "Relic_Transmutation_Recipe_Output_Title_Override",
+    ],
+    &[
+        "ItemAdvancement_ProgressionListArray",
+        "ItemAdvancement_ProgressionPullCountList",
+    ],
+    &[
+        "Name",
+        "ItemAdvancement_IATitle_Category",
+        "ItemAdvancement_IATitle_Tier",
+        "ItemAdvancement_Title_SlayerGenusType",
+        "ItemAdvancement_Title_DamageType",
+        "EffectGenerator_RunicEffectList",
+        "Mod_Array",
+    ],
+    &[
+        "ItemAdvancement_ImbuedLegacy_Effect",
+        "ItemAdvancement_AdvanceableWidget_InitialMaxLevel",
+        "ItemAdvancement_AdvanceableWidget_Category",
+        "UI_Examination_Tooltip_0Click_Element",
+        "ItemAdvancement_ImbuedLegacy_ClassicLegacyTransform",
+    ],
     &["fuzz.references", "fuzz.references"],
 ];
 
@@ -872,6 +1105,18 @@ fuzz_target!(|input: &[u8]| {
     if let Some(c) = ItemClasses::discover(&tree, words.iter().map(|w| w % 32).take(16)) {
         assert_eq!(c.classify(&tree, c.item_base), ItemClassKind::Item);
         assert_ne!(c.classify(&tree, c.item_parent), ItemClassKind::Other);
+        // The tie rule (F51) changes the child, never P.
+        let hinted = ItemClasses::discover_with_bank_fill(
+            &tree,
+            words.iter().map(|w| w % 32).take(16),
+            Some(word(6) % 32),
+        )
+        .expect("same references");
+        assert_eq!(hinted.item_parent, c.item_parent);
+        assert_eq!(
+            hinted.classify(&tree, hinted.item_base),
+            ItemClassKind::Item
+        );
     }
 
     let x = f32::from_bits(word(2));
@@ -932,6 +1177,10 @@ fn exercise(f: &Fixture, set: &PropertySet, level: i32, quality: u32, bits: u32)
     );
     let _ = (v.cooldown(), v.equip_cooldown(), v.decay(), v.item_set());
     let _ = (v.socketable(), v.disenchant(), v.requirements(), v.slayer());
+    let stored = v.requirements();
+    let defaulted = v.requirements_or_default(&no_defaults);
+    assert_eq!(stored, defaulted, "no defaults, no change");
+    let _ = v.has_door_label();
     let _ = (v.granted_skill(), v.granted_trait(), v.cooldown_channel());
     let _ = (v.min_level_or_default(&no_defaults), v.script_tables());
     for s in v.sockets() {
@@ -994,10 +1243,17 @@ fn exercise(f: &Fixture, set: &PropertySet, level: i32, quality: u32, bits: u32)
         }
     }
     let _ = weapon_timing_table_dids(set, t);
-    for list in [t.cooldown_map, t.decay_map] {
-        let durations = DurationMap::from_set(set, list);
+    for durations in [DurationMap::cooldown(set, t), DurationMap::decay(set, t)] {
         assert!(durations.covers(0));
         let _ = durations.seconds(quality);
+    }
+    let exam = examination_list(set, t);
+    let merge = merge_list(set, t);
+    assert!(exam.ends_with(&merge), "§6.4: merge PIDs close the list");
+    let carried = examination_properties(set, &exam);
+    assert!(carried.len() <= exam.len());
+    for e in carried {
+        assert!(exam.contains(&e.pid));
     }
 
     // Sets, relics, runic lists, legacies.
@@ -1028,4 +1284,38 @@ fn exercise(f: &Fixture, set: &PropertySet, level: i32, quality: u32, bits: u32)
     let _ = (r.name(), r.runic_type(), r.level(), r.tier(), r.mods());
     let _ = runic_list(set, &schema.aux);
     let _ = legacy_effects(set, &schema.aux);
+    let tr = TransmutationRecipeView::new(set, schema);
+    let _ = (
+        tr.currency_cost(),
+        tr.category(),
+        tr.outputs(),
+        tr.can_produce_items(),
+    );
+    let _ = (
+        tr.icon_override(),
+        tr.title_override(),
+        tr.tooltip_override(),
+    );
+    let _ = LegacyGroup::from_set(set, &schema.legacy);
+    let title = LegendaryTitleView::new(set, schema);
+    let _ = (
+        title.name(),
+        title.category(),
+        title.tier(),
+        title.slayer_genus(),
+    );
+    let _ = (title.damage_type(), title.effects(), title.mods());
+    let imbued = ImbuedLegacyView::new(set, schema);
+    let _ = (
+        imbued.effect(),
+        imbued.initial_max_level(),
+        imbued.absolute_max_level(),
+    );
+    let _ = (
+        imbued.icon(),
+        imbued.small_icon(),
+        imbued.category(),
+        imbued.tooltip(),
+    );
+    let _ = (imbued.tier_transform(), imbued.legacy_type_names());
 }

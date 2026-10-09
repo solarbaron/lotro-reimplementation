@@ -51,8 +51,8 @@ use tessera_formats::{
 
 /// Value types (codes of `property-system.md` §3) of every label the module reads, as the
 /// spec's tables give them (economy.md §4–§8), and of the element labels of its arrays.
-/// Labels whose type the spec does not state (`WorldEvent_ConditionValue`, the progression
-/// fields of §6.2) get the type the reader accepts first.
+/// Labels whose type the spec does not state (the progression fields of §6.2) get the type
+/// the reader accepts first; `WorldEvent_ConditionValue` is an int (E1).
 ///
 /// The list is also the grammar of the set builder: every struct or array is followed by
 /// its element and fields (repeated where several compounds share them; where the spec names
@@ -130,6 +130,7 @@ const TYPED: &[(&str, u32)] = &[
     // §4.9–§4.11
     ("RunicLevelLootTable_LootTable", 12),
     ("LevelBasedLootTable_LootTable_Entry", 11),
+    ("RunicLevelLootTable_Level", 15),
     ("RunicLevelLootTable_TrophyList", 20),
     ("RunicLevelLootTable_RunicTrophyList", 20),
     ("RunicList_Array", 12),

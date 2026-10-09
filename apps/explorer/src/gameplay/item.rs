@@ -21,7 +21,9 @@ fn kind_name(k: ItemKind) -> &'static str {
         ItemKind::MultiRecipeScroll => "multi-recipe scroll",
         ItemKind::Package => "package",
         ItemKind::TextItem => "text item",
-        ItemKind::Door => "door or interactive object",
+        ItemKind::PropertyToken => "property-modifying token",
+        ItemKind::Door => "door",
+        ItemKind::InteractiveObject => "interactive object",
         ItemKind::Key => "key",
         ItemKind::Jewellery => "jewellery",
         ItemKind::Shield => "shield",
@@ -316,10 +318,10 @@ fn requirements(cx: &Cx<'_>, view: &ItemView<'_>) -> Section {
             l.enum_key(r.required_classes, *c),
         );
     }
-    if !req.races.is_empty() {
+    for (i, race) in req.races.iter().enumerate() {
         s.field(
-            r.required_races.label(),
-            format!("{} entries", req.races.len()),
+            format!("{} [{i}]", r.required_races.label()),
+            l.enum_key(r.required_races, *race),
         );
     }
     if let Some(f) = req.faction {
@@ -348,6 +350,8 @@ fn requirements(cx: &Cx<'_>, view: &ItemView<'_>) -> Section {
     s.did(r.barring_skill.label(), req.barring_skill);
     s.did("barring recipe", req.barring_recipe);
     s.did(r.barring_emote.label(), req.barring_emote);
+    s.dids(r.barring_trait_array.label(), &req.barring_traits);
+    s.dids(r.barring_skill_array.label(), &req.barring_skills);
     s.opt(r.min_glory_rank.label(), req.min_glory_rank);
     s.did(r.required_craft_profession.label(), req.craft_profession);
     if req.craft_tier.is_some() {

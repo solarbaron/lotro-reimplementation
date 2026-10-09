@@ -1019,6 +1019,63 @@ fn generator_profiles_census() {
     c.check("OneOfs choosing position sets", 888, set_choice);
     c.check("… their PositionSetEntry choices", 1_952, set_choice_elems);
     c.check("entries with their own Repeat", 8, repeats);
+    // C34: every `OneOf` choice has a weight and every repeat both bounds, at every depth.
+    let (mut choices, mut set_choices, mut unweighted) = (0usize, 0usize, 0usize);
+    let (mut all_repeats, mut partial_repeats) = (0usize, 0usize);
+    fn walk_one_of(o: &OneOf, n: &mut [usize; 5]) {
+        if let Some(Modifier::Repeat(r)) = o.modifier {
+            n[3] += 1;
+            n[4] += usize::from(r.min.is_none() || r.max.is_none());
+        }
+        for ch in &o.choices {
+            n[2] += usize::from(ch.weight().is_none());
+            match ch {
+                Choice::Entry(e) => {
+                    n[0] += 1;
+                    walk_entry(e, n);
+                }
+                Choice::PositionSet(p) => {
+                    n[1] += 1;
+                    walk_set(p, n);
+                }
+            }
+        }
+    }
+    fn walk_entry(e: &ProfileEntry, n: &mut [usize; 5]) {
+        if let Some(r) = e.repeat {
+            n[3] += 1;
+            n[4] += usize::from(r.min.is_none() || r.max.is_none());
+        }
+    }
+    fn walk_set(p: &PositionSetEntry, n: &mut [usize; 5]) {
+        if let Some(e) = &p.entry {
+            walk_entry(e, n);
+        }
+        if let Some(o) = &p.one_of {
+            walk_one_of(o, n);
+        }
+    }
+    for p in src.values() {
+        let mut n = [0usize; 5];
+        for el in &p.elements {
+            match el {
+                ProfileElement::Entry(e) => walk_entry(e, &mut n),
+                ProfileElement::OneOf(o) => walk_one_of(o, &mut n),
+                ProfileElement::PositionSet(s) => walk_set(s, &mut n),
+                _ => {}
+            }
+        }
+        choices += n[0];
+        set_choices += n[1];
+        unweighted += n[2];
+        all_repeats += n[3];
+        partial_repeats += n[4];
+    }
+    c.check("OneOf entry choices, all depths", 26_127, choices);
+    c.check("OneOf position-set choices, all depths", 1_952, set_choices);
+    c.check("repeats, all depths", 1_976, all_repeats);
+    assert_eq!(unweighted, 0, "C34: every OneOf choice carries a weight");
+    assert_eq!(partial_repeats, 0, "C34: every repeat carries both bounds");
     c.check("entries with their own RandomPlacement", 8, randoms);
     c.finish("creatures §6.5 profiles");
 }

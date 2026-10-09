@@ -6,8 +6,8 @@
 //!
 //! | Item | Purpose | Spec |
 //! |---|---|---|
-//! | [`ItemClasses`], [`ItemClassKind`], [`item_references`] | Find the item base class *I* and its parent *P* from vendor, barter and treasure references; classify a root class | §2.4, §9.1 |
-//! | [`ItemKind`], [`ItemWeenieKinds`], [`ItemView::kind`] | Descriptive kinds, recognised by the property signatures of §2.1 and the `WeenieType` label | §2.1, §2.4 rule 4 |
+//! | [`ItemClasses`], [`ItemClassKind`], [`item_references`] | Find the item base class *I* and its parent *P* from vendor, barter and treasure references (tie rule F51); classify a root class | §2.4, §9.1 |
+//! | [`ItemKind`], [`ItemWeenieKinds`], [`ItemView::kind`] | Descriptive kinds in the order of §2.4 rule 4 (Decision F51): the signatures of §2.1, the door split, the `WeenieType` label | §2.1, §2.4 rule 4 |
 //! | [`ItemSchema`] and its PID tables | Every label this module reads, resolved against the dictionary | §5, §6, §7 |
 //! | [`ItemView`] | Typed accessors over an item's property set, by group; dictionary defaults on request | §5, §14 |
 //! | [`Binding`], [`BindingFlags`] | The binding combinations | §5.4 |
@@ -17,8 +17,10 @@
 //! | [`DpsTable`], [`weapon_damage`], [`damage_range`] | DPS tables, the DPS and damage rules | §6.2, §9.3, §9.4 |
 //! | [`armour_value`] over a `combat` [`Progression`] | The armour rule | §9.5 |
 //! | [`WearControl`], [`WeaponTimingTable`], [`WeaponTimings`], [`DurationMap`] | Control tables | §6.3, §6.4, §9.6–§9.8 |
+//! | [`examination_list`], [`merge_list`], [`examination_properties`] | The inventory control's examination list and what an examination carries | §6.4 |
 //! | [`ItemSetView`], [`SetTier`], [`SetMembership`] | Item sets and set membership | §7.1, §9.9 |
-//! | [`RelicView`], [`RunicListEntry`], [`LegacyEffect`] | Relics, runic lists, legacy tables | §7.2, §7.3 |
+//! | [`RelicView`], [`RunicListEntry`], [`TransmutationRecipeView`] | Relics, runic lists, transmutation recipes | §7.2 |
+//! | [`LegacyEffect`], [`LegacyGroup`], [`LegendaryTitleView`], [`ImbuedLegacyView`] | Legacy tables and groups, legendary titles, imbued legacies | §7.3 |
 //! | [`ENTITY_STAMP_LABELS`], [`COPY_LABELS`], [`DERIVED_LABELS`], [`property_category`] | Stamps, copies and derived values | §4.2, §4.3, §4.5 |
 //!
 //! Everything works on property sets decoded by [`crate::property_set`]; PIDs are found by
@@ -41,7 +43,8 @@ use crate::error::{FormatError, Result};
 pub use crate::gameplay::combat::{LevelRange, ModEntry, ModEntryKind, Progression};
 use crate::gameplay::combat::{ModifierPids, ProgressionPids, mod_entries};
 use crate::gameplay::common::{
-    ClassIndex, ClassParents, Pid, PropertyAccess, PropertyDefaults, ValueExt, did_references,
+    ClassIndex, ClassParents, Pid, PropertyAccess, PropertyDefaults, ValueExt, contains_pid,
+    did_references,
 };
 use crate::gameplay::quests::{QuestRequirement, QuestStatus};
 use crate::property::{PropertyEntry, PropertyStruct, PropertyValue};
@@ -167,13 +170,32 @@ crate::property_ids! {
         players_can_open = "Usage_PlayersCanOpen",
         players_can_close = "Usage_PlayersCanClose",
         key_ring = "Key_CanBePlacedOnKeyRing",
+        // §2.1 row 1722: the eight labels present in every door and in no interactive
+        // object (F45; `CSM_ActionHandler` is `action_handler` above).
+        map_note_enabled = "MapNote_Enabled",
+        map_note_linkable = "MapNote_Linkable",
+        physics_collision_reports = "Physics_CollisionReports",
+        physics_ethereal_to_type = "Physics_EtherealToType",
+        physics_ethereality_type = "Physics_EtherealityType",
+        physics_no_pathmaps = "Physics_NoPathmaps",
+        physics_placement_ethereal_to_type = "Physics_PlacementEtherealToType",
+        // §2.1 row 3924: the 11 labels of the property-modifying tokens (F45).
+        spm_max_error = "SPM_Max_Error",
+        spm_min_error = "SPM_Min_Error",
+        spm_property_mod = "SPM_PropertyMod",
+        spm_sku = "SPM_SKU",
+        spm_target = "SPM_Target",
+        spm_target_max = "SPM_Target_Max",
+        spm_target_min = "SPM_Target_Min",
+        mod_property_max_values = "Usage_ModPropertyUsageData_MaxValues",
+        mod_property_min_values = "Usage_ModPropertyUsageData_MinValues",
+        mod_property_mod_properties = "Usage_ModPropertyUsageData_ModProperties",
+        property_condition_array = "Usage_PropertyCondition_Array",
     }
 }
 
 crate::property_ids! {
-    /// Requirement and limit labels of item usage (`items.md` §5.10). Field types not
-    /// given there follow `map-data.md` §8.4.1 and `quests.md` §8.2 (quest requirements,
-    /// faction tier).
+    /// Requirement and limit labels of item usage (`items.md` §5.10; value types F47).
     pub struct ItemRequirementPids {
         required_classes = "Usage_RequiredClassList",
         required_races = "Usage_RequiredRaces",
@@ -183,9 +205,12 @@ crate::property_ids! {
         required_trait = "Usage_RequiredTrait",
         required_trait_array = "Usage_RequiredTrait_Array",
         required_virtue_rank = "Usage_RequiredVirtueRank",
+        required_virtue_rank_max = "Usage_RequiredVirtueRankMax",
         barring_trait = "Usage_BarringTrait",
         barring_skill = "Usage_BarringSkill",
         barring_emote = "Usage_BarringEmote",
+        barring_trait_array = "Usage_BarringTrait_Array",
+        barring_skill_array = "Usage_BarringSkill_Array",
         min_glory_rank = "Usage_MinGloryRank",
         required_craft_profession = "Usage_RequiredCraftProfession",
         required_craft_tier = "Usage_RequiredCraftTier",
@@ -247,10 +272,23 @@ crate::property_ids! {
         wear_durability_enum = "ItemWearControl_DurabilityEnum",
         wear_durability_value = "ItemWearControl_DurabilityValue",
         wear_repair_cost_array = "ItemWearControl_RepairCostQualityModArray",
+        wear_repair_cost_enum = "ItemWearControl_RepairCostQualityModEnum",
+        wear_repair_cost_value = "ItemWearControl_RepairCostQualityModValue",
         wear_state_array = "ItemWearControl_ItemWearStateValueModArray",
+        wear_state_key = "ItemWearControl_ItemWearState",
+        wear_state_value = "ItemWearControl_ItemWearStateValueMod",
         wear_skill_gate_array = "ItemWearControl_SkillGateArray",
+        wear_skill_gate_enum = "ItemWearControl_SkillGateEnum",
+        wear_skill_gate_value = "ItemWearControl_SkillGateValue",
         cooldown_map = "CooldownControl_DurationMapList",
+        cooldown_type = "CooldownControl_DurationType",
+        cooldown_value = "CooldownControl_DurationValue",
         decay_map = "ItemDecayControl_DurationMapList",
+        decay_type = "ItemDecayControl_DurationType",
+        decay_value = "ItemDecayControl_DurationValue",
+        // §6.4 inventory control lists (F53).
+        exam_property_array = "InventoryControl_ExamProperty_Array",
+        merge_property_array = "InventoryControl_MergeProperty_Array",
     }
 }
 
@@ -299,6 +337,47 @@ crate::property_ids! {
 }
 
 crate::property_ids! {
+    /// Transmutation recipes (class 3138 here, `items.md` §7.2) and the legendary tables of
+    /// §7.3 (classes 2139, 2338, 4015 here; F49).
+    pub struct ItemLegacyPids {
+        transmutation_cost = "Relic_Transmutation_Recipe_RelicCurrencyCost",
+        transmutation_category = "Relic_Transmutation_Recipe_TransmutationCategory",
+        transmutation_outputs = "Relic_Transmutation_Recipe_Output_List",
+        transmutation_output_relic = "Relic_Transmutation_Recipe_Output_Relic",
+        transmutation_output_weight = "Relic_Transmutation_Recipe_Output_Weight",
+        transmutation_can_produce_items = "Relic_Transmutation_Recipe_Can_Produce_Items",
+        transmutation_icon_override = "Relic_Transmutation_Recipe_Output_Icon_Override",
+        transmutation_title_override = "Relic_Transmutation_Recipe_Output_Title_Override",
+        transmutation_tooltip_override = "Relic_Transmutation_Recipe_Output_Tooltip_Override",
+        progression_list_array = "ItemAdvancement_ProgressionListArray",
+        progression_list = "ItemAdvancement_ProgressionList",
+        progression_list_weight = "ItemAdvancement_ProgressionList_Weight",
+        pull_count_list = "ItemAdvancement_ProgressionPullCountList",
+        pull_count_amount = "ItemAdvancement_ProgressionPullCount_Amount",
+        pull_count_weight = "ItemAdvancement_ProgressionPullCount_Weight",
+        title_name = "Name",
+        title_category = "ItemAdvancement_IATitle_Category",
+        title_tier = "ItemAdvancement_IATitle_Tier",
+        title_slayer_genus = "ItemAdvancement_Title_SlayerGenusType",
+        title_damage_type = "ItemAdvancement_Title_DamageType",
+        runic_effect_list = "EffectGenerator_RunicEffectList",
+        imbued_effect = "ItemAdvancement_ImbuedLegacy_Effect",
+        widget_initial_max_level = "ItemAdvancement_AdvanceableWidget_InitialMaxLevel",
+        widget_absolute_max_level = "ItemAdvancement_AdvanceableWidget_AbsoluteMaxLevel",
+        widget_icon = "ItemAdvancement_AdvanceableWidget_Icon",
+        widget_small_icon = "ItemAdvancement_AdvanceableWidget_SmallIcon",
+        widget_category = "ItemAdvancement_AdvanceableWidget_Category",
+        tooltip_element = "UI_Examination_Tooltip_0Click_Element",
+        tooltip_layout = "UI_Examination_Tooltip_0Click_Layout",
+        classic_transform = "ItemAdvancement_ImbuedLegacy_ClassicLegacyTransform",
+        tier_transform_array = "ItemAdvancement_ImbuedLegacy_TierTransform_Array",
+        unlocked_levels = "ItemAdvancement_AdvanceableWidget_UnlockedLevels",
+        legacy_type_name_array = "ItemAdvancement_LegacyTypeName_Array",
+        legacy_property_name = "ItemAdvancement_PropertyName",
+    }
+}
+
+crate::property_ids! {
     /// The leaf properties of vendor, barter and treasure-group tables whose DIDs name
     /// items (`items.md` §2.4 step 1).
     pub struct ItemReferencePids {
@@ -327,6 +406,8 @@ pub struct ItemSchema {
     pub sets: ItemSetPids,
     /// Relics, runic lists and legacies.
     pub aux: ItemAuxPids,
+    /// Transmutation recipes and the legendary tables of §7.3.
+    pub legacy: ItemLegacyPids,
     /// Reference sources for class discovery.
     pub references: ItemReferencePids,
 }
@@ -344,6 +425,7 @@ impl ItemSchema {
             tables: ItemTablePids::resolve(names),
             sets: ItemSetPids::resolve(names),
             aux: ItemAuxPids::resolve(names),
+            legacy: ItemLegacyPids::resolve(names),
             references: ItemReferencePids::resolve(names),
         }
     }
@@ -361,6 +443,7 @@ impl ItemSchema {
             ItemTablePids::LABELS,
             ItemSetPids::LABELS,
             ItemAuxPids::LABELS,
+            ItemLegacyPids::LABELS,
             ItemReferencePids::LABELS,
         ]
         .concat()
@@ -377,6 +460,7 @@ impl ItemSchema {
         out.extend(self.tables.missing());
         out.extend(self.sets.missing());
         out.extend(self.aux.missing());
+        out.extend(self.legacy.missing());
         out.extend(self.references.missing());
         out
     }
@@ -557,8 +641,9 @@ impl ItemClasses {
     ///
     /// - *P* is the deepest class that is an ancestor-or-self of every referenced class;
     /// - *I* is the child of *P* whose subtree holds the most references. References whose
-    ///   class is *P* itself count for no child. On a tie the lower class index wins (a
-    ///   Tessera choice; the spec does not cover ties).
+    ///   class is *P* itself count for no child. A tie goes to the lowest class index
+    ///   (Decision F51 without the `BankFillItem` hint; see
+    ///   [`ItemClasses::discover_with_bank_fill`]) and is logged.
     ///
     /// `None` when there are no references, the classes have no common ancestor, or every
     /// reference names a record of class *P* itself.
@@ -566,6 +651,20 @@ impl ItemClasses {
     pub fn discover<P: ClassParents + ?Sized>(
         parents: &P,
         reference_classes: impl IntoIterator<Item = u32>,
+    ) -> Option<Self> {
+        Self::discover_with_bank_fill(parents, reference_classes, None)
+    }
+
+    /// [`ItemClasses::discover`] with the tie rule of Decision F51 (§2.4 step 1): when two or
+    /// more children of *P* share the largest count, the one whose subtree holds
+    /// `bank_fill_class` (the root class of the record the WEENIECONTENT label
+    /// `BankFillItem` names) wins; if none of them does, or `bank_fill_class` is `None`, the
+    /// lowest class index wins. A tie is logged.
+    #[must_use]
+    pub fn discover_with_bank_fill<P: ClassParents + ?Sized>(
+        parents: &P,
+        reference_classes: impl IntoIterator<Item = u32>,
+        bank_fill_class: Option<u32>,
     ) -> Option<Self> {
         let mut per_class: BTreeMap<u32, usize> = BTreeMap::new();
         for c in reference_classes {
@@ -578,14 +677,29 @@ impl ItemClasses {
                 *per_child.entry(child).or_default() += n;
             }
         }
-        // Highest count; on a tie the first (lowest) class in ascending order.
-        let mut best: Option<(u32, usize)> = None;
-        for (&child, &n) in &per_child {
-            if best.is_none_or(|(_, b)| n > b) {
-                best = Some((child, n));
-            }
-        }
-        let (item_base, _) = best?;
+        let best = per_child.values().copied().max()?;
+        // Ascending class order, so the first candidate is the lowest index.
+        let candidates: Vec<u32> = per_child
+            .iter()
+            .filter(|&(_, &n)| n == best)
+            .map(|(&c, _)| c)
+            .collect();
+        let lowest = *candidates.first()?;
+        let item_base = if candidates.len() > 1 {
+            let holder = bank_fill_class
+                .and_then(|b| candidates.iter().copied().find(|&c| parents.is_a(b, c)));
+            let chosen = holder.unwrap_or(lowest);
+            tracing::warn!(
+                ?candidates,
+                count = best,
+                chosen,
+                by_bank_fill = holder.is_some(),
+                "item base class discovery: tie between children of the item parent"
+            );
+            chosen
+        } else {
+            lowest
+        };
         Some(Self {
             item_base,
             item_parent,
@@ -665,35 +779,46 @@ pub fn item_references(set: &PropertySet, pids: &ItemReferencePids) -> Vec<Did> 
 /// A descriptive item kind (§2.1 descriptive labels; §2.4 rule 4).
 ///
 /// The kind is a reading aid for kind-specific code (the explorer card, the sandbox
-/// server); the authoritative kind is the root class. [`ItemView::kind`] tries, in order:
-/// the signatures of §2.1 that are present in every record of their class or exclusive to
-/// it (weapon, recipe scroll, multi-recipe scroll, package, text item, door, key), then
-/// the `WeenieType` label ([`ItemWeenieKinds`]), then `Item_WornAppearanceMapList`
-/// ([`ItemKind::Wearable`]); [`ItemKind::General`] matches everything else.
+/// server); the authoritative kind is the root class. [`ItemView::kind`] follows the order of
+/// §2.4 rule 4 (Decision F51):
 ///
-/// §2.1's in-world interactive objects share the `WeenieType` label `Door` with the
-/// doors and read as [`ItemKind::Door`]; the property-modifying tokens read as
-/// [`ItemKind::General`]. §2.1 does not name a signature that separates either kind
-/// (`items.md` §2.4 OPEN, implementer).
+/// 1. a label §2.1 marks for the kind: weapon (any of its six labels), recipe scroll (either
+///    of its two), multi-recipe scroll (`Effect_Crafting_RecipeList` at **any** nesting
+///    depth), package, text item (either of its two), property-modifying token (any of its
+///    11 labels), key (`Key_CanBePlacedOnKeyRing`, in only some keys);
+/// 2. `WeenieType` `Door`: an in-world door when the set has `CSM_ActionHandler` or another
+///    of the eight door labels of §2.1, else an in-world interactive object;
+/// 3. the other `WeenieType` labels of [`ItemKind::from_weenie_label`];
+/// 4. `Item_WornAppearanceMapList` present: worn apparel;
+/// 5. otherwise a general item.
+///
+/// On the observed install this gives the root class's kind for all but six item records
+/// (§2.4): one interactive object with `WeenieType` `Item` reads as general, and the five
+/// general items with a worn look read as apparel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ItemKind {
-    /// Has `Combat_DPS_LUT`, `Combat_BaseDPS`, `Combat_Damage`, `Combat_DamageVariance`,
-    /// `Combat_DamageType` and `Combat_WeaponSpeed`, or `WeenieType` label `Weapon`.
+    /// Has any of `Combat_DPS_LUT`, `Combat_BaseDPS`, `Combat_Damage`,
+    /// `Combat_DamageVariance`, `Combat_DamageType`, `Combat_WeaponSpeed`, or `WeenieType`
+    /// label `Weapon`.
     Weapon,
-    /// Has `RecipeItem_Recipe` and `Usage_BarringCraftRecipe`.
+    /// Has `RecipeItem_Recipe` or `Usage_BarringCraftRecipe`.
     RecipeScroll,
-    /// A usage effect whose data list carries `Effect_Crafting_RecipeList`.
+    /// Has `Effect_Crafting_RecipeList` at any depth (inside the usage effect list's data
+    /// list).
     MultiRecipeScroll,
     /// Has `PackageItem_TrophyListTemplate`, or `WeenieType` label `PackageItem`.
     Package,
-    /// Has `TextItem_Title` and `TextItem_PrefabContentList`, or `WeenieType` label
-    /// `Letter`.
+    /// Has `TextItem_Title` or `TextItem_PrefabContentList`, or `WeenieType` label `Letter`.
     TextItem,
-    /// Has `Usage_PlayersCanOpen` or `Usage_PlayersCanClose`, or `WeenieType` label `Door`
-    /// (in-world doors and interactive objects).
-    Door,
+    /// Property-modifying token: has any of the 11 `SPM_*` / `Usage_ModPropertyUsageData_*` /
+    /// `Usage_PropertyCondition_Array` labels (§2.1 row 3924).
+    PropertyToken,
     /// Has `Key_CanBePlacedOnKeyRing`, or `WeenieType` label `Key`.
     Key,
+    /// In-world door: `WeenieType` label `Door` with one of the eight door labels.
+    Door,
+    /// In-world interactive object: `WeenieType` label `Door` without any door label.
+    InteractiveObject,
     /// `WeenieType` label `Jewelry`.
     Jewellery,
     /// `WeenieType` label `Shield`.
@@ -711,15 +836,17 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
-    /// Every kind, in rule order.
-    pub const ALL: [Self; 13] = [
+    /// Every kind.
+    pub const ALL: [Self; 15] = [
         Self::Weapon,
         Self::RecipeScroll,
         Self::MultiRecipeScroll,
         Self::Package,
         Self::TextItem,
-        Self::Door,
+        Self::PropertyToken,
         Self::Key,
+        Self::Door,
+        Self::InteractiveObject,
         Self::Jewellery,
         Self::Shield,
         Self::TravelPoint,
@@ -730,7 +857,8 @@ impl ItemKind {
 
     /// The kind a `WeenieType` label gives (§2.1 `WeenieType` column). `None` for labels
     /// that give no kind (`Item`, `Money`, `PopupImage`, `Entity`, `Hotspot` and every label
-    /// §2.1 does not list).
+    /// §2.1 does not list). `Door` gives [`ItemKind::Door`]; [`ItemView::kind`] splits it
+    /// into doors and interactive objects by the door labels (§2.4 rule 4 step 2).
     #[must_use]
     pub fn from_weenie_label(label: &str) -> Option<Self> {
         Some(match label {
@@ -1101,28 +1229,32 @@ pub struct FactionRequirement {
     pub tier: Option<u32>,
 }
 
-/// One `Usage_RequiredTrait_Array` element (§5.10).
+/// One `Usage_RequiredTrait_Struct` of `Usage_RequiredTrait_Array` (§5.10, F47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraitRequirement {
     /// `Usage_RequiredTrait` (null included).
     pub required_trait: Option<Did>,
-    /// `Usage_RequiredVirtueRank`, an integer or enum key (the spec does not give the
-    /// type).
-    pub virtue_rank: Option<i64>,
+    /// `Usage_RequiredVirtueRank` (int; dictionary default −1, applied by
+    /// [`ItemView::requirements_or_default`]).
+    pub virtue_rank: Option<i32>,
+    /// `Usage_RequiredVirtueRankMax` (int; allowed by the dictionary, carried by no struct
+    /// of the observed install).
+    pub virtue_rank_max: Option<i32>,
 }
 
 /// Requirements and limits of item usage (§5.10), as stored. Their semantics are
 /// Reported (LC); nothing here evaluates them.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Requirements<'a> {
+pub struct Requirements {
     /// `Usage_MinLevel` as stored (dictionary default: [`ItemView::min_level_or_default`]).
     pub min_level: Option<i32>,
     /// `Usage_MaxLevel`.
     pub max_level: Option<i32>,
     /// `Usage_RequiredClassList`: `Usage_ClassType` keys in stored order.
     pub classes: Vec<u32>,
-    /// `Usage_RequiredRaces` elements, raw (the entry fields are not specified).
-    pub races: &'a [PropertyEntry],
+    /// `Usage_RequiredRaces`: the `Usage_RequiredRaceEntry` elements, each a bare enum key
+    /// of the race mapper (F47), in stored order.
+    pub races: Vec<u32>,
     /// `Usage_RequiredFaction`.
     pub faction: Option<FactionRequirement>,
     /// `Usage_RequiredTrait`.
@@ -1137,25 +1269,28 @@ pub struct Requirements<'a> {
     pub barring_recipe: Option<Did>,
     /// `Usage_BarringEmote`.
     pub barring_emote: Option<Did>,
+    /// `Usage_BarringTrait_Array`: bare `Usage_BarringTrait` DIDs in stored order (null
+    /// included).
+    pub barring_traits: Vec<Did>,
+    /// `Usage_BarringSkill_Array`: bare `Usage_BarringSkill` DIDs in stored order (null
+    /// included).
+    pub barring_skills: Vec<Did>,
     /// `Usage_MinGloryRank`.
     pub min_glory_rank: Option<i32>,
     /// `Usage_RequiredCraftProfession`.
     pub craft_profession: Option<Did>,
-    /// `Usage_RequiredCraftTier` key.
+    /// `Usage_RequiredCraftTier` key (enum; the craft tier mapper).
     pub craft_tier: Option<u32>,
-    /// `Usage_RequiredCraftMastery` key.
+    /// `Usage_RequiredCraftMastery` key (enum; the craft tier mapper).
     pub craft_mastery: Option<u32>,
-    /// `Usage_QuestRequirements` entries, empty slots included (`quests.md` §8.2).
+    /// `Usage_QuestRequirements` entries, empty slots included (`quests.md` §8.2). An
+    /// absent `Usage_Operator` reads as 0 here; [`ItemView::requirements_or_default`]
+    /// applies the dictionary default instead (§5.10, §14).
     pub quests: Vec<QuestRequirement>,
     /// `Usage_RestrictedEffect`.
     pub restricted_effect: Option<Did>,
     /// `Usage_RequiredEffect`.
     pub required_effect: Option<Did>,
-}
-
-/// An integer or an enum key, widened.
-fn number(v: &PropertyValue) -> Option<i64> {
-    v.integer().or_else(|| v.enum_key().map(i64::from))
 }
 
 /// Typed, label-aware view of an item's property set (§5). Every accessor returns `None`
@@ -1215,43 +1350,97 @@ impl<'a> ItemView<'a> {
         .all(|&pid| self.set.has(pid))
     }
 
-    /// The descriptive kind (§2.1, §2.4 rule 4; rule order of [`ItemKind`]): signatures
-    /// first, then the `WeenieType` label through `weenie`, then the worn-look list.
+    /// The descriptive kind (§2.1, §2.4 rule 4, Decision F51; rule order of [`ItemKind`]):
+    /// signature labels first, then the `WeenieType` label through `weenie` (with the door
+    /// split of step 2), then the worn-look list.
     #[must_use]
     pub fn kind(&self, weenie: &ItemWeenieKinds) -> ItemKind {
         let p = self.pids();
         let s = self.set;
-        if [
+        let any = |pids: &[Pid]| pids.iter().any(|&pid| s.has(pid));
+        // Step 1, in the order of §2.4 rule 4.
+        if any(&[
             p.dps_table,
             p.base_dps,
             p.damage,
             p.damage_variance,
             p.damage_type,
             p.weapon_speed,
-        ]
-        .iter()
-        .all(|&pid| s.has(pid))
-        {
-            ItemKind::Weapon
-        } else if s.has(p.recipe) && s.has(p.barring_recipe) {
-            ItemKind::RecipeScroll
-        } else if self.is_multi_recipe() {
-            ItemKind::MultiRecipeScroll
-        } else if s.has(p.package_trophy_list) {
-            ItemKind::Package
-        } else if s.has(p.text_title) && s.has(p.text_content) {
-            ItemKind::TextItem
-        } else if s.has(p.players_can_open) || s.has(p.players_can_close) {
-            ItemKind::Door
-        } else if s.has(p.key_ring) {
-            ItemKind::Key
-        } else if let Some(k) = self.weenie_type().and_then(|k| weenie.kind(k)) {
-            k
-        } else if s.has(p.worn_appearance_list) {
+        ]) {
+            return ItemKind::Weapon;
+        }
+        if any(&[p.recipe, p.barring_recipe]) {
+            return ItemKind::RecipeScroll;
+        }
+        if self.is_multi_recipe() {
+            return ItemKind::MultiRecipeScroll;
+        }
+        if s.has(p.package_trophy_list) {
+            return ItemKind::Package;
+        }
+        if any(&[p.text_title, p.text_content]) {
+            return ItemKind::TextItem;
+        }
+        if self.is_property_token() {
+            return ItemKind::PropertyToken;
+        }
+        if s.has(p.key_ring) {
+            return ItemKind::Key;
+        }
+        // Steps 2 and 3.
+        match self.weenie_type().and_then(|k| weenie.kind(k)) {
+            Some(ItemKind::Door) if self.has_door_label() => return ItemKind::Door,
+            Some(ItemKind::Door) => return ItemKind::InteractiveObject,
+            Some(k) => return k,
+            None => {}
+        }
+        // Steps 4 and 5.
+        if s.has(p.worn_appearance_list) {
             ItemKind::Wearable
         } else {
             ItemKind::General
         }
+    }
+
+    /// Whether the set has one of the eight labels of §2.1 row 1722 that every door has and
+    /// no interactive object has (F45).
+    #[must_use]
+    pub fn has_door_label(&self) -> bool {
+        let p = self.pids();
+        [
+            p.action_handler,
+            p.map_note_enabled,
+            p.map_note_linkable,
+            p.physics_collision_reports,
+            p.physics_ethereal_to_type,
+            p.physics_ethereality_type,
+            p.physics_no_pathmaps,
+            p.physics_placement_ethereal_to_type,
+        ]
+        .iter()
+        .any(|&pid| self.set.has(pid))
+    }
+
+    /// Whether the set holds one of the 11 property-modifying-token labels of §2.1 row
+    /// 3924. The labels are exclusive to the kind at every nesting depth (F45), so they are
+    /// searched at every depth.
+    fn is_property_token(&self) -> bool {
+        let p = self.pids();
+        [
+            p.spm_max_error,
+            p.spm_min_error,
+            p.spm_property_mod,
+            p.spm_sku,
+            p.spm_target,
+            p.spm_target_max,
+            p.spm_target_min,
+            p.mod_property_max_values,
+            p.mod_property_min_values,
+            p.mod_property_mod_properties,
+            p.property_condition_array,
+        ]
+        .iter()
+        .any(|&pid| contains_pid(self.set, pid))
     }
 
     /// [`ItemView::kind`] from the signatures alone, without `WeenieType` labels.
@@ -1260,11 +1449,10 @@ impl<'a> ItemView<'a> {
         self.kind(&ItemWeenieKinds::default())
     }
 
+    /// `Effect_Crafting_RecipeList` searched at every nesting depth (§2.1 row 3663 marks it
+    /// nested; §2.4 rule 4 step 1, F54).
     fn is_multi_recipe(&self) -> bool {
-        self.effects(EffectListKind::Usage).iter().any(|e| {
-            e.argument(self.schema.effects.crafting_recipe_list)
-                .is_some()
-        })
+        contains_pid(self.set, self.schema.effects.crafting_recipe_list)
     }
 
     // §5.1 identity and display
@@ -1585,7 +1773,27 @@ impl<'a> ItemView<'a> {
     }
     /// The requirements and limits, as stored.
     #[must_use]
-    pub fn requirements(&self) -> Requirements<'a> {
+    pub fn requirements(&self) -> Requirements {
+        self.read_requirements(&|_| None)
+    }
+
+    /// [`ItemView::requirements`] with the dictionary defaults of absent struct fields
+    /// applied (§5.10, §14 decision): `Usage_Operator` and `Usage_QuestStatus` of a quest
+    /// requirement, `Usage_RequiredVirtueRank` of a trait requirement (−1).
+    #[must_use]
+    pub fn requirements_or_default<D: PropertyDefaults + ?Sized>(
+        &self,
+        defaults: &D,
+    ) -> Requirements {
+        self.read_requirements(&|pid: Pid| defaults.default_value(pid.id()?))
+    }
+
+    /// Reads the requirements; `default` gives the dictionary default of an absent struct
+    /// field (or nothing, for the stored view).
+    fn read_requirements<'d>(
+        &self,
+        default: &dyn Fn(Pid) -> Option<&'d PropertyValue>,
+    ) -> Requirements {
         let r = &self.schema.requirements;
         let s = self.set;
         Requirements {
@@ -1596,7 +1804,11 @@ impl<'a> ItemView<'a> {
                 .iter()
                 .filter_map(ValueExt::enum_key)
                 .collect(),
-            races: s.elements(r.required_races),
+            races: s
+                .elements(r.required_races)
+                .iter()
+                .filter_map(ValueExt::enum_key)
+                .collect(),
             faction: s.structure(r.required_faction).map(|f| FactionRequirement {
                 faction: f.did(r.required_faction_did),
                 tier: f.enum_key(r.required_faction_tier),
@@ -1606,23 +1818,44 @@ impl<'a> ItemView<'a> {
                 .structs(r.required_trait_array)
                 .map(|t| TraitRequirement {
                     required_trait: t.did(r.required_trait),
-                    virtue_rank: t.get_pid(r.required_virtue_rank).and_then(number),
+                    virtue_rank: t
+                        .get_pid(r.required_virtue_rank)
+                        .or_else(|| default(r.required_virtue_rank))
+                        .and_then(ValueExt::int),
+                    virtue_rank_max: t.int(r.required_virtue_rank_max),
                 })
                 .collect(),
             barring_trait: s.did(r.barring_trait),
             barring_skill: s.did(r.barring_skill),
             barring_recipe: s.did(self.pids().barring_recipe),
             barring_emote: s.did(r.barring_emote),
+            barring_traits: s
+                .elements(r.barring_trait_array)
+                .iter()
+                .filter_map(ValueExt::did_ref)
+                .collect(),
+            barring_skills: s
+                .elements(r.barring_skill_array)
+                .iter()
+                .filter_map(ValueExt::did_ref)
+                .collect(),
             min_glory_rank: s.int(r.min_glory_rank),
             craft_profession: s.did(r.required_craft_profession),
             craft_tier: s.enum_key(r.required_craft_tier),
             craft_mastery: s.enum_key(r.required_craft_mastery),
             quests: s
                 .structs(r.quest_requirements)
-                .map(|q| QuestRequirement {
-                    operator: q.enum_key(r.quest_operator).unwrap_or(0),
-                    quest: q.did(r.quest_id),
-                    status: q.enum_key(r.quest_status).map(QuestStatus),
+                .map(|q| {
+                    let field = |pid: Pid| q.get_pid(pid).or_else(|| default(pid));
+                    QuestRequirement {
+                        operator: field(r.quest_operator)
+                            .and_then(ValueExt::enum_key)
+                            .unwrap_or(0),
+                        quest: q.did(r.quest_id),
+                        status: field(r.quest_status)
+                            .and_then(ValueExt::enum_key)
+                            .map(QuestStatus),
+                    }
                 })
                 .collect(),
             restricted_effect: s.did(r.restricted_effect),
@@ -1989,52 +2222,46 @@ pub fn armour_value(progression: &Progression, level: i32) -> Option<i64> {
     truncate(progression.value_at(i64::from(level))?.as_f32()?)
 }
 
-/// Reads a (key, number) struct array whose field labels the spec does not give: the key is
-/// the first enum field and the number the first float (or int, converted) field of each
-/// struct. Elements without both are skipped (logged).
-fn generic_keyed_rows(elements: &[PropertyEntry]) -> Vec<(u32, f32)> {
-    let mut out = Vec::new();
-    for e in elements {
-        let Some(s) = e.value.as_struct() else {
-            tracing::debug!("keyed table element is not a struct; skipped");
-            continue;
-        };
-        let key = s.fields.iter().find_map(|f| f.value.enum_key());
-        #[allow(clippy::cast_precision_loss)]
-        let value = s.fields.iter().find_map(|f| match f.value {
-            PropertyValue::Float(v) => Some(v),
-            PropertyValue::Int(v) => Some(v as f32),
-            _ => None,
-        });
-        match (key, value) {
-            (Some(k), Some(v)) => out.push((k, v)),
-            _ => tracing::debug!("keyed table element without an enum key and a number; skipped"),
-        }
+/// [`quality_rows`] for an array that may be absent (empty then).
+fn optional_quality_rows<A: PropertyAccess + ?Sized>(
+    set: &A,
+    array: Pid,
+    key_pid: Pid,
+    value_pid: Pid,
+    what: &'static str,
+) -> Result<Vec<(u32, f32)>> {
+    if set.has(array) {
+        quality_rows(set, array, key_pid, value_pid, what)
+    } else {
+        Ok(Vec::new())
     }
-    out
 }
 
-/// The wear control (§6.3).
+/// The wear control (§6.3; entry structs F48).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WearControl {
-    /// `ItemWearControl_MaxStructurePointsArray`: (enum key, structure points).
+    /// `ItemWearControl_MaxStructurePointsArray`: (`…_MaxStructurePointsEnum` key,
+    /// `…_MaxStructurePointsValue`).
     pub max_structure_points: Vec<(u32, i32)>,
-    /// `ItemWearControl_DurabilityArray`: (enum key, durability value).
+    /// `ItemWearControl_DurabilityArray`: (`…_DurabilityEnum` key, `…_DurabilityValue`).
     pub durability: Vec<(u32, f32)>,
-    /// `ItemWearControl_RepairCostQualityModArray`: (quality key, factor); role OPEN.
+    /// `ItemWearControl_RepairCostQualityModArray`: (`…_RepairCostQualityModEnum`, an
+    /// `Item_Quality` key; `…_RepairCostQualityModValue` factor).
     pub repair_cost_quality: Vec<(u32, f32)>,
-    /// `ItemWearControl_ItemWearStateValueModArray`: (wear-state key, factor); role OPEN.
+    /// `ItemWearControl_ItemWearStateValueModArray`: (`ItemWearControl_ItemWearState`, an
+    /// `Item_WearState` key; `ItemWearControl_ItemWearStateValueMod` factor).
     pub wear_state_value: Vec<(u32, f32)>,
-    /// `ItemWearControl_SkillGateArray`: (key, number); role OPEN.
+    /// `ItemWearControl_SkillGateArray`: (`…_SkillGateEnum` key, `…_SkillGateValue`); the
+    /// client library does not read it (§6.3).
     pub skill_gate: Vec<(u32, f32)>,
 }
 
 impl WearControl {
     const WHAT: &'static str = "wear control";
 
-    /// Reads the wear control's property set. The structure-point and durability arrays
-    /// are required and read by label; the other three are read by field type (their field
-    /// labels are not specified) and are empty when absent.
+    /// Reads the wear control's property set. Every entry of the five arrays holds exactly
+    /// its two labelled fields (F48); an entry without them is an error. The structure-point
+    /// and durability arrays are required; the other three are empty when absent.
     pub fn from_set<A: PropertyAccess + ?Sized>(set: &A, pids: &ItemTablePids) -> Result<Self> {
         let msp = set.require_array(pids.wear_msp_array, Self::WHAT)?;
         let max_structure_points = msp
@@ -2061,9 +2288,27 @@ impl WearControl {
         Ok(Self {
             max_structure_points,
             durability,
-            repair_cost_quality: generic_keyed_rows(set.elements(pids.wear_repair_cost_array)),
-            wear_state_value: generic_keyed_rows(set.elements(pids.wear_state_array)),
-            skill_gate: generic_keyed_rows(set.elements(pids.wear_skill_gate_array)),
+            repair_cost_quality: optional_quality_rows(
+                set,
+                pids.wear_repair_cost_array,
+                pids.wear_repair_cost_enum,
+                pids.wear_repair_cost_value,
+                Self::WHAT,
+            )?,
+            wear_state_value: optional_quality_rows(
+                set,
+                pids.wear_state_array,
+                pids.wear_state_key,
+                pids.wear_state_value,
+                Self::WHAT,
+            )?,
+            skill_gate: optional_quality_rows(
+                set,
+                pids.wear_skill_gate_array,
+                pids.wear_skill_gate_enum,
+                pids.wear_skill_gate_value,
+                Self::WHAT,
+            )?,
         })
     }
 
@@ -2168,15 +2413,52 @@ pub struct DurationMap {
 }
 
 impl DurationMap {
-    /// Reads list `list` (`CooldownControl_DurationMapList` or
-    /// `ItemDecayControl_DurationMapList`) of a control record. The entry field labels are
-    /// not specified, so each struct is read by type: its first enum field is the key and
-    /// its first float (or int) field the seconds. Absent list → empty map.
+    /// Reads `CooldownControl_DurationMapList` of the cooldown control: each
+    /// `CooldownControl_DurationMapListEntry` gives `CooldownControl_DurationType` (enum key)
+    /// and `CooldownControl_DurationValue` (float seconds). Absent list → empty map.
     #[must_use]
-    pub fn from_set<A: PropertyAccess + ?Sized>(set: &A, list: Pid) -> Self {
-        Self {
-            rows: generic_keyed_rows(set.elements(list)),
+    pub fn cooldown<A: PropertyAccess + ?Sized>(set: &A, pids: &ItemTablePids) -> Self {
+        Self::from_entries(
+            set,
+            pids.cooldown_map,
+            pids.cooldown_type,
+            pids.cooldown_value,
+        )
+    }
+
+    /// Reads `ItemDecayControl_DurationMapList` of the decay control: each
+    /// `ItemDecayControl_DurationMapListEntry` gives `ItemDecayControl_DurationType` (enum
+    /// key) and `ItemDecayControl_DurationValue` (float seconds) (F48). Absent list → empty
+    /// map.
+    #[must_use]
+    pub fn decay<A: PropertyAccess + ?Sized>(set: &A, pids: &ItemTablePids) -> Self {
+        Self::from_entries(set, pids.decay_map, pids.decay_type, pids.decay_value)
+    }
+
+    /// Reads list `list` whose entry structs hold an enum key field `key` and a float
+    /// seconds field `value`. Entries without both are skipped (logged).
+    #[must_use]
+    pub fn from_entries<A: PropertyAccess + ?Sized>(
+        set: &A,
+        list: Pid,
+        key: Pid,
+        value: Pid,
+    ) -> Self {
+        let mut rows = Vec::new();
+        for e in set.elements(list) {
+            let row = e
+                .value
+                .as_struct()
+                .and_then(|s| Some((s.enum_key(key)?, s.float(value)?)));
+            match row {
+                Some(r) => rows.push(r),
+                None => tracing::debug!(
+                    list = list.label(),
+                    "duration entry without its key and seconds fields; skipped"
+                ),
+            }
         }
+        Self { rows }
     }
 
     /// The seconds of key `key`; key 0 ("none") gives 0.0 when it has no row.
@@ -2190,6 +2472,54 @@ impl DurationMap {
     pub fn covers(&self, key: u32) -> bool {
         key == 0 || keyed_lookup(&self.rows, key).is_some()
     }
+}
+
+/// The examination list of the inventory control (§6.4, F53): the PIDs of
+/// `InventoryControl_ExamProperty_Array` followed by those of
+/// `InventoryControl_MergeProperty_Array`, each in stored order (the compiled class-17 list
+/// that the examination builder reads). Elements that are not property IDs are skipped.
+#[must_use]
+pub fn examination_list<A: PropertyAccess + ?Sized>(
+    inventory_control: &A,
+    pids: &ItemTablePids,
+) -> Vec<u32> {
+    [pids.exam_property_array, pids.merge_property_array]
+        .into_iter()
+        .flat_map(|list| {
+            inventory_control
+                .elements(list)
+                .iter()
+                .filter_map(ValueExt::property_ref)
+        })
+        .collect()
+}
+
+/// The merge list of the inventory control alone (`InventoryControl_MergeProperty_Array`,
+/// stored order). Its use beyond the examination list is OPEN (§6.4).
+#[must_use]
+pub fn merge_list<A: PropertyAccess + ?Sized>(
+    inventory_control: &A,
+    pids: &ItemTablePids,
+) -> Vec<u32> {
+    inventory_control
+        .elements(pids.merge_property_array)
+        .iter()
+        .filter_map(ValueExt::property_ref)
+        .collect()
+}
+
+/// The properties an item's examination (tooltip) carries (§6.4 steps 2–5, F53): for each
+/// PID of `list` (normally [`examination_list`]) in order, the property of `object` with
+/// that PID, if `object` holds it. An object without properties gives nothing; a PID listed
+/// twice is taken twice, as the builder walks the list.
+#[must_use]
+pub fn examination_properties<'a>(object: &'a PropertySet, list: &[u32]) -> Vec<&'a PropertyEntry> {
+    if object.entries.is_empty() {
+        return Vec::new();
+    }
+    list.iter()
+        .filter_map(|&pid| object.entries.iter().find(|e| e.pid == pid))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2434,10 +2764,10 @@ impl<'a> RelicView<'a> {
     pub fn level(&self) -> Option<i32> {
         self.set.int(self.pids.runic_level)
     }
-    /// `Runic_Tier` (an int or an enum key; the spec does not give the type).
+    /// `Runic_Tier` key (enum, the runic tier mapper; F49).
     #[must_use]
-    pub fn tier(&self) -> Option<i64> {
-        number(self.set.get_pid(self.pids.runic_tier)?)
+    pub fn tier(&self) -> Option<u32> {
+        self.set.enum_key(self.pids.runic_tier)
     }
     /// `Runic_RequiredItemLevel`.
     #[must_use]
@@ -2476,8 +2806,8 @@ pub fn runic_list<A: PropertyAccess + ?Sized>(set: &A, pids: &ItemAuxPids) -> Ve
 pub struct LegacyEffect {
     /// `ItemAdvancement_Effect`.
     pub effect: Option<Did>,
-    /// `ItemAdvancement_Mod_Weight` (int or float; the spec does not give the type).
-    pub weight: Option<f64>,
+    /// `ItemAdvancement_Mod_Weight` (int; dictionary default 0; F49).
+    pub weight: Option<i32>,
 }
 
 /// The entries of a legacy table's `ItemAdvancement_Effect_Array`.
@@ -2489,9 +2819,267 @@ pub fn legacy_effects<A: PropertyAccess + ?Sized>(
     set.structs(pids.legacy_effect_array)
         .map(|s| LegacyEffect {
             effect: s.did(pids.legacy_effect),
-            weight: s
-                .get_pid(pids.legacy_weight)
-                .and_then(PropertyValue::as_f64),
+            weight: s.int(pids.legacy_weight),
         })
         .collect()
+}
+
+/// One `Relic_Transmutation_Recipe_Output` (§7.2, F49).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TransmutationOutput {
+    /// `Relic_Transmutation_Recipe_Output_Relic`: a relic or an item (null included).
+    pub output: Option<Did>,
+    /// `Relic_Transmutation_Recipe_Output_Weight`.
+    pub weight: Option<i32>,
+}
+
+/// Typed view of a transmutation recipe (class 3138 here, §7.2, F49).
+#[derive(Debug, Clone, Copy)]
+pub struct TransmutationRecipeView<'a> {
+    set: &'a PropertySet,
+    pids: &'a ItemLegacyPids,
+}
+
+impl<'a> TransmutationRecipeView<'a> {
+    /// A view of `set`.
+    #[must_use]
+    pub fn new(set: &'a PropertySet, schema: &'a ItemSchema) -> Self {
+        Self {
+            set,
+            pids: &schema.legacy,
+        }
+    }
+    /// `Relic_Transmutation_Recipe_RelicCurrencyCost`.
+    #[must_use]
+    pub fn currency_cost(&self) -> Option<i32> {
+        self.set.int(self.pids.transmutation_cost)
+    }
+    /// `Relic_Transmutation_Recipe_TransmutationCategory` key.
+    #[must_use]
+    pub fn category(&self) -> Option<u32> {
+        self.set.enum_key(self.pids.transmutation_category)
+    }
+    /// The `Relic_Transmutation_Recipe_Output_List` entries in stored order.
+    #[must_use]
+    pub fn outputs(&self) -> Vec<TransmutationOutput> {
+        let p = self.pids;
+        self.set
+            .structs(p.transmutation_outputs)
+            .map(|s| TransmutationOutput {
+                output: s.did(p.transmutation_output_relic),
+                weight: s.int(p.transmutation_output_weight),
+            })
+            .collect()
+    }
+    /// `Relic_Transmutation_Recipe_Can_Produce_Items`.
+    #[must_use]
+    pub fn can_produce_items(&self) -> Option<bool> {
+        self.set.boolean(self.pids.transmutation_can_produce_items)
+    }
+    /// `Relic_Transmutation_Recipe_Output_Icon_Override` (an icon).
+    #[must_use]
+    pub fn icon_override(&self) -> Option<Did> {
+        self.set.did(self.pids.transmutation_icon_override)
+    }
+    /// `Relic_Transmutation_Recipe_Output_Title_Override`.
+    #[must_use]
+    pub fn title_override(&self) -> Option<&'a StringInfo> {
+        self.set.string_info(self.pids.transmutation_title_override)
+    }
+    /// `Relic_Transmutation_Recipe_Output_Tooltip_Override`.
+    #[must_use]
+    pub fn tooltip_override(&self) -> Option<&'a StringInfo> {
+        self.set
+            .string_info(self.pids.transmutation_tooltip_override)
+    }
+}
+
+/// One `ItemAdvancement_ProgressionList_Entry` of a legacy group (class 2139 here, §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProgressionListEntry {
+    /// `ItemAdvancement_ProgressionList`: a legacy table (null included).
+    pub list: Option<Did>,
+    /// `ItemAdvancement_ProgressionList_Weight`.
+    pub weight: Option<i32>,
+}
+
+/// One `ItemAdvancement_ProgressionPullCount_Entry` of a legacy group (§7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PullCountEntry {
+    /// `ItemAdvancement_ProgressionPullCount_Amount`.
+    pub amount: Option<i32>,
+    /// `ItemAdvancement_ProgressionPullCount_Weight`.
+    pub weight: Option<i32>,
+}
+
+/// The two lists of a legacy group (class 2139 here, §7.3, F49). How they are rolled is
+/// OPEN (§7.3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LegacyGroup {
+    /// `ItemAdvancement_ProgressionListArray` entries in stored order.
+    pub lists: Vec<ProgressionListEntry>,
+    /// `ItemAdvancement_ProgressionPullCountList` entries in stored order.
+    pub pull_counts: Vec<PullCountEntry>,
+}
+
+impl LegacyGroup {
+    /// Reads a legacy group's property set.
+    #[must_use]
+    pub fn from_set<A: PropertyAccess + ?Sized>(set: &A, pids: &ItemLegacyPids) -> Self {
+        Self {
+            lists: set
+                .structs(pids.progression_list_array)
+                .map(|s| ProgressionListEntry {
+                    list: s.did(pids.progression_list),
+                    weight: s.int(pids.progression_list_weight),
+                })
+                .collect(),
+            pull_counts: set
+                .structs(pids.pull_count_list)
+                .map(|s| PullCountEntry {
+                    amount: s.int(pids.pull_count_amount),
+                    weight: s.int(pids.pull_count_weight),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Typed view of a legendary title (class 2338 here, §7.3, F49).
+#[derive(Debug, Clone, Copy)]
+pub struct LegendaryTitleView<'a> {
+    set: &'a PropertySet,
+    schema: &'a ItemSchema,
+}
+
+impl<'a> LegendaryTitleView<'a> {
+    /// A view of `set`.
+    #[must_use]
+    pub fn new(set: &'a PropertySet, schema: &'a ItemSchema) -> Self {
+        Self { set, schema }
+    }
+    /// `Name`.
+    #[must_use]
+    pub fn name(&self) -> Option<&'a StringInfo> {
+        self.set.string_info(self.schema.legacy.title_name)
+    }
+    /// `ItemAdvancement_IATitle_Category` key.
+    #[must_use]
+    pub fn category(&self) -> Option<u32> {
+        self.set.enum_key(self.schema.legacy.title_category)
+    }
+    /// `ItemAdvancement_IATitle_Tier` key.
+    #[must_use]
+    pub fn tier(&self) -> Option<u32> {
+        self.set.enum_key(self.schema.legacy.title_tier)
+    }
+    /// `ItemAdvancement_Title_SlayerGenusType` bits (32-bit bitfield).
+    #[must_use]
+    pub fn slayer_genus(&self) -> Option<u64> {
+        self.set.bitfield(self.schema.legacy.title_slayer_genus)
+    }
+    /// `ItemAdvancement_Title_DamageType` key.
+    #[must_use]
+    pub fn damage_type(&self) -> Option<u32> {
+        self.set.enum_key(self.schema.legacy.title_damage_type)
+    }
+    /// The `EffectGenerator_EffectStruct`s of `EffectGenerator_RunicEffectList` (§5.9).
+    #[must_use]
+    pub fn effects(&self) -> Vec<EffectRef<'a>> {
+        self.set
+            .structs(self.schema.legacy.runic_effect_list)
+            .map(|s| EffectRef::from_struct(s, &self.schema.effects))
+            .collect()
+    }
+    /// The title's `Mod_Array` entries (`combat-data.md` §5.1).
+    #[must_use]
+    pub fn mods(&self) -> Vec<ModEntry> {
+        mod_entries(self.set, &self.schema.modifiers)
+    }
+}
+
+/// Typed view of an imbued legacy (class 4015 here, §7.3, F49). The widget labels also occur
+/// in a few records of other classes; the view reads whatever the set holds.
+#[derive(Debug, Clone, Copy)]
+pub struct ImbuedLegacyView<'a> {
+    set: &'a PropertySet,
+    pids: &'a ItemLegacyPids,
+}
+
+impl<'a> ImbuedLegacyView<'a> {
+    /// A view of `set`.
+    #[must_use]
+    pub fn new(set: &'a PropertySet, schema: &'a ItemSchema) -> Self {
+        Self {
+            set,
+            pids: &schema.legacy,
+        }
+    }
+    /// `ItemAdvancement_ImbuedLegacy_Effect`.
+    #[must_use]
+    pub fn effect(&self) -> Option<Did> {
+        self.set.did(self.pids.imbued_effect)
+    }
+    /// `ItemAdvancement_AdvanceableWidget_InitialMaxLevel`.
+    #[must_use]
+    pub fn initial_max_level(&self) -> Option<i32> {
+        self.set.int(self.pids.widget_initial_max_level)
+    }
+    /// `ItemAdvancement_AdvanceableWidget_AbsoluteMaxLevel`.
+    #[must_use]
+    pub fn absolute_max_level(&self) -> Option<i32> {
+        self.set.int(self.pids.widget_absolute_max_level)
+    }
+    /// `ItemAdvancement_AdvanceableWidget_Icon`.
+    #[must_use]
+    pub fn icon(&self) -> Option<Did> {
+        self.set.did(self.pids.widget_icon)
+    }
+    /// `ItemAdvancement_AdvanceableWidget_SmallIcon`.
+    #[must_use]
+    pub fn small_icon(&self) -> Option<Did> {
+        self.set.did(self.pids.widget_small_icon)
+    }
+    /// `ItemAdvancement_AdvanceableWidget_Category` key.
+    #[must_use]
+    pub fn category(&self) -> Option<u32> {
+        self.set.enum_key(self.pids.widget_category)
+    }
+    /// `UI_Examination_Tooltip_0Click_Element` and `…_0Click_Layout`, as stored (tooltip
+    /// layout, `ui-layout.md`; their value types are not restated by `items.md`).
+    #[must_use]
+    pub fn tooltip(&self) -> (Option<&'a PropertyValue>, Option<&'a PropertyValue>) {
+        (
+            self.set.get_pid(self.pids.tooltip_element),
+            self.set.get_pid(self.pids.tooltip_layout),
+        )
+    }
+    /// `ItemAdvancement_AdvanceableWidget_UnlockedLevels` of the classic transform's
+    /// `ItemAdvancement_ImbuedLegacy_TierTransform_Array`, in stored order.
+    #[must_use]
+    pub fn tier_transform(&self) -> Vec<i32> {
+        self.set
+            .structure(self.pids.classic_transform)
+            .map(|t| {
+                t.elements(self.pids.tier_transform_array)
+                    .iter()
+                    .filter_map(ValueExt::int)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    /// `ItemAdvancement_PropertyName` PIDs of the classic transform's
+    /// `ItemAdvancement_LegacyTypeName_Array`, in stored order.
+    #[must_use]
+    pub fn legacy_type_names(&self) -> Vec<u32> {
+        self.set
+            .structure(self.pids.classic_transform)
+            .map(|t| {
+                t.elements(self.pids.legacy_type_name_array)
+                    .iter()
+                    .filter_map(ValueExt::property_ref)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }

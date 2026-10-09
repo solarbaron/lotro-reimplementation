@@ -48,7 +48,7 @@ use tessera_formats::gameplay::common::{
 use tessera_formats::gameplay::creatures::{CreaturePids, LabelIndex, WeenieKinds};
 use tessera_formats::gameplay::economy::EconomyReader;
 use tessera_formats::gameplay::items::{ItemSchema, ItemWeenieKinds};
-use tessera_formats::gameplay::map::MapPids;
+use tessera_formats::gameplay::map::{MapPids, MapWeenieKeys};
 use tessera_formats::gameplay::quests::{QuestLabels, QuestSingletons};
 use tessera_formats::{
     DataIdMap, Did, EnumMapper, PropertySet, PropertySetRecord, object_property_set_did,
@@ -145,6 +145,7 @@ pub(crate) struct Schemas {
     pub singletons: QuestSingletons,
     pub economy: EconomyReader,
     pub map: MapPids,
+    pub map_weenie: MapWeenieKeys,
     pub uniquedb: Option<Arc<DataIdMap>>,
     /// Problems met while building (shown on every card).
     pub problems: Vec<String>,
@@ -192,6 +193,7 @@ impl Schemas {
         let chain = mapper_chain(ctx, &registry, items.item.weenie_type, &mut problems);
         let item_weenie = ItemWeenieKinds::from_mapper_chain(&chain);
         let creature_weenie = WeenieKinds::from_mapper_chain(&chain);
+        let map_weenie = MapWeenieKeys::from_mapper_chain(&chain);
         let library = match ctx.game.read(LIBRARY_DID) {
             Ok(Some(bytes)) => match ClassLibrary::parse(&bytes) {
                 Ok(l) => Some(l),
@@ -237,6 +239,7 @@ impl Schemas {
             singletons,
             economy: EconomyReader::new(dict),
             map: MapPids::resolve(dict),
+            map_weenie,
             uniquedb,
             problems,
             registry,

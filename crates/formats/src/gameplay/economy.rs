@@ -41,10 +41,8 @@
 //!    its default (the dictionary default when the definition has one, else the default the
 //!    spec lists, [`EconomyDefaults`]). The same holds for the elements of arrays and for
 //!    shapes the spec states (a range bound of `EntityFilter_PropertyRange` is a one-element
-//!    array, §4.5; a store bundle holds DID elements, §8). Two places accept several value
-//!    types because the spec does not give the type (each is an OPEN in the spec):
-//!    `WorldEvent_ConditionValue` (§4.5, §4.8: an int, enum or boolean value is read as an
-//!    integer) and the values of a float progression (§6.2: `Progression_MinimumIndexValue`
+//!    array, §4.5; a store bundle holds DID elements, §8). One place accepts several value
+//!    types: the values of a float progression (§6.2: `Progression_MinimumIndexValue`
 //!    as a 32- or 64-bit int, an element of `FloatProgression_Array` as a float or an int,
 //!    bare or as the `FloatProgression_FloatValue` field of a struct).
 //! 2. **Invariants** (§12) are reported as warnings ([`Violation`]), never as decode errors.
@@ -125,6 +123,7 @@ crate::property_ids! {
         we_directory = "WorldEventLootTableDirectory_Array",
         we_directory_level_table = "WorldEventLootTableDirectory_LevelTable",
         runic_level_table = "RunicLevelLootTable_LootTable",
+        runic_level_level = "RunicLevelLootTable_Level",
         runic_level_trophy = "RunicLevelLootTable_TrophyList",
         runic_level_runic = "RunicLevelLootTable_RunicTrophyList",
         runic_list = "RunicList_Array",
@@ -371,6 +370,8 @@ pub struct EconomyDefaults {
     /// `WorldEventLevelLootTable_Level` (§4.8): the spec lists no default, so only the
     /// dictionary's, if its definition has one.
     pub world_event_level: Option<i32>,
+    /// `RunicLevelLootTable_Level` (§4.9, E2).
+    pub runic_level: i32,
     /// `CraftRecipe_ResultItemQuantity` (§5.1).
     pub result_quantity: i32,
     /// `CraftRecipe_CriticalResultItemQuantity` (§5.1).
@@ -392,6 +393,7 @@ impl EconomyDefaults {
         profile_quantity: 1,
         level_table_level: 1,
         world_event_level: None,
+        runic_level: 1,
         result_quantity: 1,
         critical_quantity: 1,
         ingredient_consumed: true,
@@ -421,6 +423,7 @@ impl EconomyDefaults {
             level_table_level: int(pids.loot.level_table_level, spec.level_table_level),
             world_event_level: dictionary_default(defaults, pids.loot.we_level, ValueExt::int)
                 .or(spec.world_event_level),
+            runic_level: int(pids.loot.runic_level_level, spec.runic_level),
             result_quantity: int(pids.craft.recipe_result_quantity, spec.result_quantity),
             critical_quantity: int(pids.craft.recipe_critical_quantity, spec.critical_quantity),
             ingredient_consumed: boolean(
@@ -1018,8 +1021,9 @@ pub struct WorldEventCondition {
     pub world_event: Did,
     /// `WorldEvent_Operator` key.
     pub operator: Option<u32>,
-    /// `WorldEvent_ConditionValue`.
-    pub value: Option<i64>,
+    /// `WorldEvent_ConditionValue` (int, type 15; E1). Absent: `None` (dictionary default
+    /// −1 on the observed install).
+    pub value: Option<i32>,
 }
 
 /// One filter of a filtered-treasure-list entry (§4.5).
@@ -1249,8 +1253,11 @@ pub struct WorldEventLootTableDirectory {
 /// One level of a runic level loot table (§4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunicLevelEntry {
-    /// The level: the entry's position + 1 (the spec gives no level field for this table).
-    pub level: u32,
+    /// `RunicLevelLootTable_Level`, with the default (1, §4.9) filled in; equal to the
+    /// entry's position + 1 in every entry of the observed install (E2).
+    pub level: i32,
+    /// Whether `RunicLevelLootTable_Level` was stored.
+    pub level_stored: bool,
     /// Trophy list, `None` for 0.
     pub trophy_list: Option<Did>,
     /// Runic list, `None` for 0.
@@ -2456,12 +2463,8 @@ impl EconomyReader {
     ) -> Result<WorldEventCondition> {
         let p = &self.pids.loot;
         let operator = opt_enum(s, p.world_event_operator, what)?;
-        // The spec gives no type for the value (OPEN in §4.5); any integer-like type is read.
-        let value = typed(s, p.world_event_value, what, "int, enum or bool", |v| {
-            v.integer()
-                .or_else(|| v.enum_key().map(i64::from))
-                .or_else(|| v.boolean().map(i64::from))
-        })?;
+        // An int (type 15) wherever the label occurs (E1).
+        let value = opt_int(s, p.world_event_value, what)?;
         Ok(WorldEventCondition {
             world_event: did_or_null(s, p.world_event, what)?,
             operator,
@@ -2645,8 +2648,8 @@ impl EconomyReader {
         Ok(WorldEventLootTableDirectory { entries })
     }
 
-    /// Runic level loot table (§4.9). The level is the entry's position + 1 (see
-    /// [`RunicLevelEntry::level`]).
+    /// Runic level loot table (§4.9): the stored `RunicLevelLootTable_Level` of each entry
+    /// (E2).
     pub fn runic_level_loot_table<A: PropertyAccess + ?Sized>(
         &self,
         set: &A,
@@ -2655,10 +2658,11 @@ impl EconomyReader {
         let p = &self.pids.loot;
         let entries = struct_elements(set, p.runic_level_table, WHAT)?
             .into_iter()
-            .zip(1u32..)
-            .map(|(e, level)| {
+            .map(|e| {
+                let level = opt_int(e, p.runic_level_level, WHAT)?;
                 Ok(RunicLevelEntry {
-                    level,
+                    level: level.unwrap_or(self.defaults.runic_level),
+                    level_stored: level.is_some(),
                     trophy_list: nonnull_did(e, p.runic_level_trophy, WHAT)?,
                     runic_list: nonnull_did(e, p.runic_level_runic, WHAT)?,
                 })
@@ -3462,13 +3466,11 @@ impl EconomyRecord {
                 );
             }
             Self::RunicLevelLootTable(t) => {
-                if t.entries.len() != RUNIC_TABLE_LEVELS {
-                    out.push(Violation::new(
-                        Invariant::LevelTables,
-                        None,
-                        "entry count differs from the table size",
-                    ));
-                }
+                check_levels(
+                    &mut out,
+                    t.entries.iter().map(|e| Some(e.level)),
+                    RUNIC_TABLE_LEVELS,
+                );
             }
             Self::SpeciesLevelLootTable(t) => {
                 let mut seen = HashSet::new();

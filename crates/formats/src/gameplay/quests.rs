@@ -13,7 +13,7 @@
 //! | [`Objective`], [`Condition`], [`CompoundEvent`], [`EventEntry`] | Source form of objectives, conditions and events | §5.1–§5.6 |
 //! | [`EventNumbering`], [`QuestRecord::number_events`] | EventID, ObjectiveID, ConditionID, compound members, required counts | §5.2, §5.7, §6.1 |
 //! | [`listen_list`] | Event types an event reacts to (compiled form) | §6.2 |
-//! | [`Role`], [`RoleAction`], [`CompletionComment`], [`active_quest_roles`] | Roles, dialogue lines, NPC-side role lists | §7.1–§7.4 |
+//! | [`Role`], [`RoleAction`], [`CompletionComment`], [`active_quest_roles`], [`QuestRoleRef::matches`] | Roles, dialogue lines, NPC-side role lists and their matching rule | §7.1–§7.4 |
 //! | [`NpcComment`], [`NpcCommentList`], [`ColourTextList`], [`ColourTextControl`], [`Scene`] | Free-standing dialogue, barks, scenes | §7.7–§7.9 |
 //! | [`Permissions`], [`QuestRequirement`], [`QuestStatus`], [`Operator`], [`WorldEventCondition`] | Usage permissions and quest requirements | §8, §14.2 |
 //! | [`RewardList`], [`RewardLevelTable`], [`choose_reward_table`], [`QuestControl`], [`QuestTreasure`] | Reward tiers, tables, treasure, medals | §9 |
@@ -22,7 +22,7 @@
 //! | [`Title`], [`Emote`], [`EmoteDirectory`] | Titles and emotes | §12 |
 //! | [`Faction`], [`AccountModifier`], [`ReputationControl`] | Reputation | §13 |
 //! | [`WorldEvent`], [`WorldEventList`] | World events | §14 |
-//! | [`QuestItemRegionDirectory`], [`QuestItemDirectory`] | Quest-item directories | §15 |
+//! | [`QuestItemRegionDirectory`], [`QuestItemDirectory`], [`quest_item_directory_class`] | Quest-item directories | §2.1, §15 |
 //! | [`QuestMapNotes`] | The quest map-note record (byte layout) | §17 |
 //!
 //! The compiled quest object of the 0x70 record (§6) and the quest-target index (§16) are
@@ -990,6 +990,40 @@ impl QuestLabels {
             }
         }
     }
+}
+
+/// The root class of the quest-item directories (§2.1, S1): the one root class of the
+/// records whose property set carries `Quest_QuestItemDirectory_Array`. Every record of
+/// that class is a quest-item directory, including one whose set is empty. `records` gives
+/// (root class, property set) per object record. `None` (logged) when no record carries the
+/// array or the carriers have more than one root class.
+#[must_use]
+pub fn quest_item_directory_class<'a>(
+    labels: &QuestLabels,
+    records: impl IntoIterator<Item = (u32, &'a PropertySet)>,
+) -> Option<u32> {
+    let mut found: Option<u32> = None;
+    for (class, set) in records {
+        if !set.has(labels.npc.item_directory_array) {
+            continue;
+        }
+        match found {
+            None => found = Some(class),
+            Some(c) if c == class => {}
+            Some(c) => {
+                tracing::warn!(
+                    first = c,
+                    second = class,
+                    "quest-item directories in more than one root class"
+                );
+                return None;
+            }
+        }
+    }
+    if found.is_none() {
+        tracing::debug!("no record carries Quest_QuestItemDirectory_Array");
+    }
+    found
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2616,9 +2650,27 @@ pub struct QuestRoleRef<'a> {
     pub role_name: Option<&'a str>,
 }
 
-/// The `QuestDispenser_QuestRole` entries of a set (NPC, monster, item or map-note info,
-/// §7.4, §17): the elements of `QuestDispenser_ActiveQuests`, then a top-level
-/// `QuestDispenser_QuestRole` struct if one is stored.
+impl QuestRoleRef<'_> {
+    /// Whether the entry **matches** (§7.4): `quest` (the record the entry names) has, in
+    /// `Quest_RoleArray`, a role with the entry's role name whose `QuestDispenser_NPC` is
+    /// `holder`, the record that lists the entry. An entry without a role name never
+    /// matches. Not every entry matches (S5), and the rule does not apply to landblock
+    /// weenie lists, whose holders have no record DID (S6).
+    #[must_use]
+    pub fn matches(&self, quest: &QuestRecord<'_>, holder: Did) -> bool {
+        self.role_name
+            .is_some_and(|name| !quest.roles_named(name, Some(holder)).is_empty())
+    }
+}
+
+/// The `QuestDispenser_QuestRole` entries of a set (§7.4, §17): the elements of
+/// `QuestDispenser_ActiveQuests`, then a top-level `QuestDispenser_QuestRole` struct if one
+/// is stored.
+///
+/// An NPC-side reader applies it to the property set of **every** object record that has
+/// the property, whatever the record's kind (NPCs, monsters, items, class-5785 records,
+/// quests, a pet-summoning effect, S5), and does not add the lists of map notes (copies of
+/// the target's own list, §17.1) or landblock weenies (S6) to the NPC-side lists.
 #[must_use]
 pub fn active_quest_roles<'a, A: PropertyAccess + ?Sized>(
     labels: &QuestLabels,
@@ -3124,8 +3176,9 @@ impl<'a> RewardLevelTable<'a> {
 ///    else no table (two quests name a quest record).
 /// 2. Otherwise (Reported) element *level* (1-based) of `QuestControl_RewardLevelDIDArray`
 ///    (`control`), and the last element when *level* is 0. `level` is the quest's level
-///    (§4.3). Levels outside 0 … `control.len()` give `None` (the rule for levels above the
-///    table is OPEN, §9.2), as does a null element.
+///    (§4.3). **Decisions of Tessera** (§9.2 step 2): a level below 0 is treated like 0;
+///    a null element gives no table. A level above `control.len()` gives `None` until the
+///    §9.2 OPEN is answered.
 #[must_use]
 pub fn choose_reward_table(
     quest_table: Option<Did>,
@@ -3136,7 +3189,7 @@ pub fn choose_reward_table(
     if let Some(did) = quest_table.filter(|d| !d.is_null()) {
         return is_table(did).then_some(did);
     }
-    let did = if level == 0 {
+    let did = if level <= 0 {
         *control.last()?
     } else {
         let i = usize::try_from(level).ok()?.checked_sub(1)?;

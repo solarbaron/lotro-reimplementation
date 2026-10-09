@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-08 |
+| **Status** | Accepted (fifth review 2026-10-09 of the OPEN sweep of 2026-10-09) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec-reviewer, not the author session): first review, second review (re-review) and third review (acceptance), all 2026-10-07; fourth review (2026-10-08 revision) 2026-10-08 |
-| **Review record** | Third review 2026-10-07 (a session different from the author and both earlier reviewers): **passed**, Accepted. Full record moved to the review log (decision 0018). Fourth review 2026-10-08 of the 2026-10-08 revision (Claude review session, separate from the writer's): **passed**, Accepted. Details in the review log (decision 0018). |
+| **Review record** | Third review 2026-10-07 (a session different from the author and both earlier reviewers): **passed**, Accepted. Full record moved to the review log (decision 0018). Fourth review 2026-10-08 of the 2026-10-08 revision (Claude review session, separate from the writer's): **passed**, Accepted. Details in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.5, §4.8, §4.9 and §6.2 changed (rows E1–E3); status Revised until a separate session reviews it. Fifth review 2026-10-09 of that revision (Claude review session, separate from the writer's; `git diff 777ccec`): **passed**, Accepted. Checklist of CLEAN_ROOM.md §5.3 met: rows E1–E3 and key OBS3 give provenance for every new fact; no code or pseudo-code; no game text; the three implementer OPENs are answered, with the type codes added to the tables of §4.5, §4.8 and §4.9, consistent with E-I5 and §6.2 step 4. Spot check: an independent read-only probe over all 383,332 0x79 and 1,616 0x78 sets of the install (repository decoders) reproduced E1 (type 15, default −1; 102 distinct values −24 … 70,000; top counts 0: 10,289, 1: 4,364, 2: 430, 3: 385; operator type 8, mapper 0x23000039), E2 (1,200 of 1,200 entries store position + 1; type 15, default 1) and E3 (105,841 top level only, 5,167 inside the struct only, 0 both). No new BIN facts, so no Ghidra check was needed. Not blocking: step 2 of §6.2 could name the top-level-first order itself instead of only the answered callout. |
 | **Implements into** | `crates/formats` / `crates/props` (typed views of the records below, read from their property sets), `crates/wstate` (the object-state mirror of §9, optional), `apps/explorer` and `apps/dattool` (the cross-links of §10: "drops from", "sold by", "bartered for", "crafted by", "used in"); a later server or sandbox backend (`crates/net`) consumes §11 |
 | **Companion specs** | [`property-system.md`](property-system.md) §3–§5 (type codes, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels), §8 (DID maps); [`wstate.md`](wstate.md) §3–§5 (object-state records, the root class at offset 4, native codecs, in particular classes 11, 17, 25, 35, 39, 117, 166, 175, 176, 182, 199 and 1942 of §5.3–§5.4); [`wlib.md`](wlib.md) (class indices, ancestry, attribute lists); [`records.md`](records.md) §7–§8 (enum mappers, DID maps). This spec starts with decoded property sets and decoded object-state records. |
 
@@ -72,6 +72,7 @@ How sources are marked:
 | LC | LotroCompanion `lotro-tools` (no licence file; all rights reserved) and `lotro-core`: the loot, generic-mob-loot, custom-instance-loot, recipe, crafting, trade, hobby and perk loaders. Read for facts (which property means what) only. |
 | DS | `research/notes/data-semantics.md` §4.7 and §5.2 (DID-map examples, root-class list). |
 | BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of `wstate.md`), read in the dirty room on 2026-10-07 with a headless Ghidra copy of the shared project. **Questions:** (1) does the client itself read the loot, recipe, barter and vendor tables, and if so which properties; (2) what the item-examination code does with a recipe. **Method:** a search of the whole program for the PIDs of all 520 properties of this family as immediate operands, then reading the functions that held hits. **Why M1–M3 were not enough:** the data cannot show which properties the client consumes or how; no published source covers it; a running client (M3) shows only the result on screen, not which fields drive it. Only examination-tooltip and user-interface construction code was read; nothing from network, login, launcher or anti-tamper code. |
+| OBS3 | Observed in the user's install on 2026-10-09 (OPEN sweep, spec writer), read-only; archives unchanged since 2026-10-04 (file times). A dump of **every** 0x70 record with its 0x79 set and of all 0x78 sets, made on 2026-10-07 with the repository's own decoders, walked at every nesting depth, plus the property dictionary for types and defaults. |
 | OBS2 | Observed in the user's install on 2026-10-08 with fresh throwaway probes, each over **every** record concerned: all 1,007 class-3307 records (both forms); all 1,439 NPCs with `Vendor_InventoryList` and all 400 inventories; all 202 barter profiles with `Barter_ItemMungeLevelOverride`, their 2,336 reward structs and the reward structs of all other profiles; the CooldownControl record (both forms); all six class-3399 records; the keys of every `set_u64` (105) and `refmap_u64` (117) object of all 383,343 object records. |
 | WL | The code of the class library (record 0x56000000, chunk 1), which is **data** in the user's install (method M1), disassembled in the dirty room on 2026-10-08 with the rules of [`wlib-bytecode.md`](wlib-bytecode.md) §2–§6: the method tables of every class of §2 and the bodies named in the fact rows below, located through the method tables (`wlib.md` §6.4) and through the property-ID immediates of `wlib-bytecode.md` §11.2 (each such immediate was checked by reading the call that consumes it; immediates that only coincide with a PID were discarded). "Class *c* function *s*" below means the body in slot *s* of class *c*'s method table. |
 | BIN2 | **M4 (decision 0011).** Same build as BIN (SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-08 with a headless Ghidra copy of the shared project. **Question (3):** how the crafting panel turns the critical-chance values that the class library hands to it (WL, §11.5) into the chance it shows. **Method:** the native functions 289/31, 289/33 and 289/45 that the class library calls were resolved through the client's native-function registration; the fields they store were followed to the one panel function that reads them, and its two floating-point constants were read. **Why M1–M3 were not enough:** the data holds the inputs but not the rule that combines them; M3 shows only a rounded percentage for the few recipes and ingredients one character can use, which cannot separate addition from other rules or show a cap. Only crafting-panel user-interface code was read; nothing from network, login, launcher or anti-tamper code. |
@@ -109,6 +110,9 @@ How sources are marked:
 | L8 | Class 3399 is a set of DIDs; the record named by `LootGenControl_RewardOnceTGPs` is empty in both forms (§14) | OBS2; WL | Confirmed (6 of 6 records) |
 | W6 | The class library's four-field 64-bit key packing (field widths and the bits 0–3 field) (§9.5) | WL; OBS2 (low-nibble census) | Confirmed in the class library; its use for the loot maps is not shown (§14) |
 | V7 | Barter profiles with `Barter_ItemMungeLevelOverride` mostly reward scaling items (§6.2) | OBS2 | Confirmed as a count; meaning OPEN |
+| E1 | `WorldEvent_ConditionValue` is an int (type 15, dictionary default −1) wherever it occurs; `WorldEvent_Operator` an enum (type 8) of mapper 0x23000039; observed condition values over every set: most often 0 (10,289), 1 (4,364), 2 (430) and 3 (385), in all −24 … 70,000 (102 distinct values; the loot holders of §4.5 and §4.8 use 0 … 3 only) (§4.5, §4.8) | OBS3 | Confirmed 2026-10-09 |
+| E2 | Every one of the 1,200 runic level-table entries stores `RunicLevelLootTable_Level` (type 15, dictionary default 1), equal to its position + 1 (§4.9) | OBS3 | Confirmed 2026-10-09 |
+| E3 | No property set holds `Usage_MinLevel` both at top level and inside `DefaultPermissionBlobStruct` (105,841 top level only, 5,167 inside the struct only) (§6.2) | OBS3 (every 0x79 set) | Confirmed 2026-10-09 |
 
 ---
 
@@ -384,16 +388,19 @@ Filter kinds (elements of `EntityFilter_Array`):
 |---|---|---|---|
 | `EntityFilter_PropertySet` | 12 | 18,525 (7,356 of them empty) | A list of property values; every element carries the PID of the property it tests and an allowed value. Observed tested properties: `Agent_Class` (17,051 values, 19 distinct class keys), `Agent_Species` (18), `ze_skirmish_difficulty` (104), `WE_Player_Level_Cap` (108), `WE_Lootbox_bonus_embers_motes` (8). All elements of one non-empty filter carry the same PID (11,169 of 11,169). |
 | `EntityFilter_PropertyRange` | 11 | 7,426 | Struct of `EntityFilter_PropertyRange_Min` and `EntityFilter_PropertyRange_Max`, each a one-element array whose element carries the tested property and the bound. Tested: `Advancement_Level` (5,070), `ze_skirmish_level` (2,284), `ze_skirmish_difficulty` (72). Minimum and maximum name the same property and min ≤ max in all 7,426. Maxima of 999 and 1,000 occur, above every level the data uses. |
-| `EntityFilter_WorldEvent` | 11 | 326 | Struct holding one `WorldEvent_Condition` (fields `WorldEvent_WorldEvent` → world-event record of class 1815 or 1887, `WorldEvent_Operator` key 3 in all, `WorldEvent_ConditionValue` 0 or 1). |
+| `EntityFilter_WorldEvent` | 11 | 326 | Struct holding one `WorldEvent_Condition` (fields `WorldEvent_WorldEvent` (type 20) → world-event record of class 1815 or 1887, `WorldEvent_Operator` (type 8, mapper 0x23000039) key 3 in all, `WorldEvent_ConditionValue` (type 15, int, dictionary default −1) 0 or 1; E1). |
 
 The definition of `EntityFilter_Array` allows more element kinds (weenie type, player-pet
 flag, alignment, class); none occurs in these records.
 
-> **OPEN:** (implementer, 2026-10-07) The type codes of the `WorldEvent_Condition` fields are
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The type codes of the `WorldEvent_Condition` fields are
 > not given here or in §4.8: `WorldEvent_Operator` is described as a key (read as an enum,
 > type 8), but the type of `WorldEvent_ConditionValue` (values 0–3) is not stated. Which type
 > code does it have? Until answered, `crates/formats` reads it from an int, an enum or a
 > boolean.
+>
+> *Answer (E1):* type 15 (int; dictionary default −1) wherever the label occurs; every stored
+> value is an int. The tables of §4.5 and §4.8 now give the type codes of all three fields.
 
 Meaning (Reported, LC): an entry applies to a looter for whom every filter of the entry
 holds; a property-set filter holds when the looter's value of the tested property equals
@@ -443,7 +450,7 @@ them, §9.5).
 | `…_Entry/WorldEventLevelLootTable_TrophyListTemplate` | 20 | all | 1237: 1,063; 1917: 160; 0: 537 |
 | `WorldEventLootTableDirectory_Array` (class 2128) | 12 | 1 record | 11 entries |
 | `…_Entry/WorldEventLootTableDirectory_LevelTable` | 20 | all | 2127 in all 11 (each of the 11 tables once) |
-| `…_Entry/WorldEvent_AllConditionList[]/WorldEvent_Condition` | 11 | 12 conditions | `WorldEvent_WorldEvent` → 1887 (9) or 1815 (3); operator key 3; value 1–3 |
+| `…_Entry/WorldEvent_AllConditionList[]/WorldEvent_Condition` | 11 | 12 conditions | `WorldEvent_WorldEvent` (20) → 1887 (9) or 1815 (3); `WorldEvent_Operator` (8) key 3; `WorldEvent_ConditionValue` (15) 1–3 |
 
 The directory is the WEENIECONTENT label `WorldEventLootTableDirectory` (§4.12). Meaning
 (Reported): the first directory entry whose conditions all hold selects a level table.
@@ -453,7 +460,8 @@ The directory is the WEENIECONTENT label `WorldEventLootTableDirectory` (§4.12)
 
 | Path | Type | Present | Observed | Default |
 |---|---|---|---|---|
-| `RunicLevelLootTable_LootTable` (2227) | 12 | all 15 | 80 entries each (1,200); entry *i* (from 0) has level *i* + 1 | |
+| `RunicLevelLootTable_LootTable` (2227) | 12 | all 15 | 80 entries each (1,200) | |
+| `…_Entry/RunicLevelLootTable_Level` | 15 | all | entry *i* (from 0) stores level *i* + 1 in all 1,200 (E2) | 1 |
 | `…_Entry/RunicLevelLootTable_TrophyList` | 20 | all | 1237 in all 1,200 | 0 |
 | `…_Entry/RunicLevelLootTable_RunicTrophyList` | 20 | all | runic lists 2229: 1,050; 0: 150 | 0 |
 | `RunicList_Array` (2229) | 12 | all 169 | 1–11 entries; 842 | |
@@ -469,11 +477,15 @@ The directory is the WEENIECONTENT label `WorldEventLootTableDirectory` (§4.12)
 Meaning (Reported, LC): a runic list is a trophy list for relics; a runic treasure group
 first picks a pull count by weight, then picks that many relics by weight.
 
-> **OPEN:** (implementer, 2026-10-07) The table above names no level field for the entries of
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The table above names no level field for the entries of
 > `RunicLevelLootTable_LootTable`, unlike §4.6 (`LevelBasedLootTable_Level`) and §4.8
 > (`WorldEventLevelLootTable_Level`). Is a level stored in each entry, and under which label?
 > Until answered, `crates/formats` derives the level from the position (entry *i* has level
 > *i* + 1) and checks E-I5 for this table by entry count only.
+>
+> *Answer (E2):* yes, `RunicLevelLootTable_Level` (type 15, dictionary default 1) in every
+> entry, equal to the position + 1 in all 1,200; the table above now lists it, and E-I5 can be
+> checked against the stored level.
 
 <a id="s4-10"></a>
 ### 4.10 Skirmish lookups (classes 2728, 2729)
@@ -809,11 +821,15 @@ The progression format itself belongs to the progression spec.
 > `FloatProgression_FloatValue` values (f32), and §4.2 gives `Progression_MinimumIndexValue` as
 > an int (absent ⇒ 0); §4.3 gives the index rule.
 
-> **OPEN:** (implementer, 2026-10-07) Step 2 names two places for `Usage_MinLevel` (top
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** Step 2 names two places for `Usage_MinLevel` (top
 > level, or inside `DefaultPermissionBlobStruct`) but no precedence when a reward item has
 > both with different values. `crates/formats` takes the top-level property first; with that
 > order all 5,565 look-up costs of the install match the object form, so the data does not
 > contradict it. A value that is not a whole number gives no quantity (no rounding rule).
+>
+> *Answer:* no property set of this install holds both (E3), so the order never decides here.
+> **Decision (Tessera):** the top-level property first, as implemented; an element that is not
+> a whole number gives no quantity and is reported (every element used here is whole, step 4).
 
 Profiles with the override (V7, OBS2): its value is one of 22 levels from 18 to 160 (160 in
 35 profiles, 100 in 33, 95 in 24). Of the 2,336 reward structs in the 202 profiles, 2,065
@@ -1675,3 +1691,4 @@ Data questions:
 | 2026-10-07 | Second review revision (status stays Review). (d) §14, third data OPEN: the count was wrong as worded. Re-measured over all 1,007 class-3307 records with a fresh probe: 29 (not 27) match neither a stable nor a reverse-stable sort by weight; 2 of the 29 keep equal weights in ascending trophy-list DID order and 2 in descending DID order, leaving 25 that match none of the four orders (the earlier 27 excluded only the ascending-DID order). The breakdown (448 without ties; 518 stable, 12 reverse-stable, 29 neither) is now stated in §9.4. No other change. |
 | 2026-10-08 | Revision (status Accepted → Revised): OPEN closure with fresh probes over all records (OBS2), the class library's code (WL, data) and one M4 question (BIN2). Closed: the order of the class-3308 array (§9.4.1, binary-heap rule, 1,007 of 1,007) and the order of `Vendor_ItemList` (§6.3.1, growing hash set, 1,439 of 1,439), removing the §6.3 OPEN and the third data OPEN of §14. Answered and narrowed: critical-success chance shown while crafting (§11.5.1; remaining OPEN: the server's roll); recipe experience value (§11.5.2; remaining: how it is credited); cooldown keys → CooldownControl durations in seconds (§11.5.3; remaining OPEN: execution time only); purchase price from a vendor (§11.6.1; remaining OPEN: the price a vendor pays). Added facts to the remaining OPENs: munge-override counts (§6.2), trophy-list description and icon in examination (§11.2), the class library's four-field key and classification filter (§9.5.1), profession attribute 5 accessor, class 3399 as a DID set with the reward-once set empty (§14). New §11.7 (functions declared without bodies), invariants E-I16–E-I18, examples §13.6–§13.8, provenance OBS2, WL, BIN2 and rows W5, V5, V6, R3, R4, R5, L7, L8, W6, V7. Owner observations that can settle the remaining behavioural OPENs are named in each. |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §6.2 (progression types: answered by `combat-data.md` §4.1–§4.3) and §9.5 (packed field widths: answered by §9.5.1); the munge-override OPEN of the base text is replaced by the Accepted §6.2 text. No fact changed; status unchanged. |
+| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows E1–E3. Answered the three implementer OPENs: §4.5/§4.8 type codes of the world-event condition fields (E1), §4.9 the stored `RunicLevelLootTable_Level` (E2), §6.2 `Usage_MinLevel` never stored in both places, top level first by decision (E3). Still OPEN (server behaviour or owner observation): the munge-level override, loot rolls, random generator and descent order, runic pulls, level index, filtered lists, species tables, critical crafts, craft XP, execution time, sale price, money drops and their unit, profession attributes, PVP key, reward-once set. |

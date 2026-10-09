@@ -47,9 +47,9 @@ use crate::string_info::StringInfo;
 
 /// The property dictionary's labels indexed both ways (`property-system.md` §2).
 ///
-/// Besides exact lookups it answers [`LabelIndex::unique_match`], which this module uses for
-/// the struct fields that `creatures.md` names only in abbreviated form (§5.3, §6.5; see the
-/// OPEN notes there).
+/// Besides exact lookups it answers [`LabelIndex::unique_match`] (a prefix and suffix
+/// search, kept for tools; the module itself resolves every label in full, `creatures.md`
+/// §5.3 answer, C32).
 #[derive(Debug, Clone, Default)]
 pub struct LabelIndex {
     by_name: HashMap<String, u32>,
@@ -341,64 +341,60 @@ crate::property_ids! {
     }
 }
 
-/// Fields of `GeneratorProfile_Repeat`, `…_ExactPlacement` and `…_RandomPlacement` (§6.5).
-/// The spec abbreviates their labels; they are found with [`LabelIndex::unique_match`]
-/// (prefix `GeneratorProfile`, suffixes as below).
+/// Fields of `GeneratorProfile_Repeat`, `…_ExactPlacement` and `…_RandomPlacement` (§6.5),
+/// by their full dictionary labels (§5.3 answer, C32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProfileFieldPids {
-    /// `…_RepeatMinTimes`.
+    /// `GeneratorProfile_RepeatMinTimes` (int, dictionary default 1).
     pub repeat_min: Pid,
-    /// `…_RepeatMaxTimes`.
+    /// `GeneratorProfile_RepeatMaxTimes` (int, dictionary default 1).
     pub repeat_max: Pid,
-    /// `…_ExactPlacementX`, `…Y`, `…Z`.
+    /// `GeneratorProfile_ExactPlacementX`, `…Y`, `…Z` (float, default 0.0).
     pub exact: [Pid; 3],
-    /// `…_RandomPlacementMinDist`.
+    /// `GeneratorProfile_RandomPlacementMinDist` (float).
     pub random_min: Pid,
-    /// `…_RandomPlacementMaxDist`.
+    /// `GeneratorProfile_RandomPlacementMaxDist` (float).
     pub random_max: Pid,
 }
 
 impl ProfileFieldPids {
-    const PREFIX: &'static str = "GeneratorProfile";
+    const REPEAT_MIN: &'static str = "GeneratorProfile_RepeatMinTimes";
+    const REPEAT_MAX: &'static str = "GeneratorProfile_RepeatMaxTimes";
+    const EXACT: [&'static str; 3] = [
+        "GeneratorProfile_ExactPlacementX",
+        "GeneratorProfile_ExactPlacementY",
+        "GeneratorProfile_ExactPlacementZ",
+    ];
+    const RANDOM_MIN: &'static str = "GeneratorProfile_RandomPlacementMinDist";
+    const RANDOM_MAX: &'static str = "GeneratorProfile_RandomPlacementMaxDist";
 
-    /// Resolves the abbreviated labels.
+    /// Resolves the labels against `labels`.
     #[must_use]
-    pub fn resolve(labels: &LabelIndex) -> Self {
-        let p = Self::PREFIX;
+    pub fn resolve<N: PropertyNames + ?Sized>(labels: &N) -> Self {
+        let [x, y, z] = Self::EXACT;
         Self {
-            repeat_min: labels.abbreviated("GeneratorProfile_…RepeatMinTimes", p, "RepeatMinTimes"),
-            repeat_max: labels.abbreviated("GeneratorProfile_…RepeatMaxTimes", p, "RepeatMaxTimes"),
+            repeat_min: Pid::resolve(labels, Self::REPEAT_MIN),
+            repeat_max: Pid::resolve(labels, Self::REPEAT_MAX),
             exact: [
-                labels.abbreviated("GeneratorProfile_…ExactPlacementX", p, "ExactPlacementX"),
-                labels.abbreviated("GeneratorProfile_…ExactPlacementY", p, "ExactPlacementY"),
-                labels.abbreviated("GeneratorProfile_…ExactPlacementZ", p, "ExactPlacementZ"),
+                Pid::resolve(labels, x),
+                Pid::resolve(labels, y),
+                Pid::resolve(labels, z),
             ],
-            random_min: labels.abbreviated(
-                "GeneratorProfile_…RandomPlacementMinDist",
-                p,
-                "RandomPlacementMinDist",
-            ),
-            random_max: labels.abbreviated(
-                "GeneratorProfile_…RandomPlacementMaxDist",
-                p,
-                "RandomPlacementMaxDist",
-            ),
+            random_min: Pid::resolve(labels, Self::RANDOM_MIN),
+            random_max: Pid::resolve(labels, Self::RANDOM_MAX),
         }
     }
 
     /// Every field unresolved.
     #[must_use]
     pub const fn unresolved() -> Self {
+        let [x, y, z] = Self::EXACT;
         Self {
-            repeat_min: Pid::unresolved("GeneratorProfile_…RepeatMinTimes"),
-            repeat_max: Pid::unresolved("GeneratorProfile_…RepeatMaxTimes"),
-            exact: [
-                Pid::unresolved("GeneratorProfile_…ExactPlacementX"),
-                Pid::unresolved("GeneratorProfile_…ExactPlacementY"),
-                Pid::unresolved("GeneratorProfile_…ExactPlacementZ"),
-            ],
-            random_min: Pid::unresolved("GeneratorProfile_…RandomPlacementMinDist"),
-            random_max: Pid::unresolved("GeneratorProfile_…RandomPlacementMaxDist"),
+            repeat_min: Pid::unresolved(Self::REPEAT_MIN),
+            repeat_max: Pid::unresolved(Self::REPEAT_MAX),
+            exact: [Pid::unresolved(x), Pid::unresolved(y), Pid::unresolved(z)],
+            random_min: Pid::unresolved(Self::RANDOM_MIN),
+            random_max: Pid::unresolved(Self::RANDOM_MAX),
         }
     }
 
@@ -418,33 +414,35 @@ impl ProfileFieldPids {
     }
 }
 
-/// Fields of `ClassificationFilter_FilterException` (§5.3), abbreviated in the spec as
-/// `…_Alignment`, `…_Genus`, `…_Species` and `…_Subspecies`; found with
-/// [`LabelIndex::unique_match`] (prefix `ClassificationFilter`).
+/// Fields of a classification-filter exception (§5.3), by their full dictionary labels
+/// (C32): `ClassificationFilter_FilterException_Alignment` (enum), `…_Genus` (32-bit
+/// bitfield), `…_Species` (enum) and `…_Subspecies` (enum), all with dictionary default 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilterExceptionPids {
-    /// `…_Alignment`.
+    /// `ClassificationFilter_FilterException_Alignment`.
     pub alignment: Pid,
-    /// `…_Genus`.
+    /// `ClassificationFilter_FilterException_Genus`.
     pub genus: Pid,
-    /// `…_Species`.
+    /// `ClassificationFilter_FilterException_Species`.
     pub species: Pid,
-    /// `…_Subspecies`.
+    /// `ClassificationFilter_FilterException_Subspecies`.
     pub subspecies: Pid,
 }
 
 impl FilterExceptionPids {
-    const PREFIX: &'static str = "ClassificationFilter";
+    const ALIGNMENT: &'static str = "ClassificationFilter_FilterException_Alignment";
+    const GENUS: &'static str = "ClassificationFilter_FilterException_Genus";
+    const SPECIES: &'static str = "ClassificationFilter_FilterException_Species";
+    const SUBSPECIES: &'static str = "ClassificationFilter_FilterException_Subspecies";
 
-    /// Resolves the abbreviated labels.
+    /// Resolves the labels against `labels`.
     #[must_use]
-    pub fn resolve(labels: &LabelIndex) -> Self {
-        let p = Self::PREFIX;
+    pub fn resolve<N: PropertyNames + ?Sized>(labels: &N) -> Self {
         Self {
-            alignment: labels.abbreviated("ClassificationFilter_…_Alignment", p, "_Alignment"),
-            genus: labels.abbreviated("ClassificationFilter_…_Genus", p, "_Genus"),
-            species: labels.abbreviated("ClassificationFilter_…_Species", p, "_Species"),
-            subspecies: labels.abbreviated("ClassificationFilter_…_Subspecies", p, "_Subspecies"),
+            alignment: Pid::resolve(labels, Self::ALIGNMENT),
+            genus: Pid::resolve(labels, Self::GENUS),
+            species: Pid::resolve(labels, Self::SPECIES),
+            subspecies: Pid::resolve(labels, Self::SUBSPECIES),
         }
     }
 
@@ -452,10 +450,10 @@ impl FilterExceptionPids {
     #[must_use]
     pub const fn unresolved() -> Self {
         Self {
-            alignment: Pid::unresolved("ClassificationFilter_…_Alignment"),
-            genus: Pid::unresolved("ClassificationFilter_…_Genus"),
-            species: Pid::unresolved("ClassificationFilter_…_Species"),
-            subspecies: Pid::unresolved("ClassificationFilter_…_Subspecies"),
+            alignment: Pid::unresolved(Self::ALIGNMENT),
+            genus: Pid::unresolved(Self::GENUS),
+            species: Pid::unresolved(Self::SPECIES),
+            subspecies: Pid::unresolved(Self::SUBSPECIES),
         }
     }
 
@@ -477,7 +475,7 @@ pub struct CreaturePids {
     pub exceptions: FilterExceptionPids,
     /// Generator-profile properties (§6.5).
     pub profile: ProfilePids,
-    /// Abbreviated profile fields (§6.5).
+    /// Repeat and placement fields of the profile (§6.5).
     pub profile_fields: ProfileFieldPids,
     /// Generator, spawn-point and link properties (§6.2–§6.4, §6.9).
     pub spawn: SpawnPids,
@@ -510,7 +508,7 @@ impl CreaturePids {
         }
     }
 
-    /// The labels (or abbreviated patterns) that did not resolve.
+    /// The labels that did not resolve.
     #[must_use]
     pub fn missing(&self) -> Vec<&'static str> {
         let mut out = self.template.missing();
@@ -814,8 +812,8 @@ impl MirrorPattern {
 }
 
 /// Whether `name` is a mirror name, and its pattern and base (§3.2.1). A name matching
-/// several patterns takes the first in table order ([`MirrorPattern::ALL`]); see the
-/// implementer note in `creatures.md` §3.2.1.
+/// several patterns takes the first in table order ([`MirrorPattern::ALL`]; Decision D1, no
+/// name of the observed install matches two, C31).
 #[must_use]
 pub fn mirror_base(name: &str) -> Option<(MirrorPattern, &str)> {
     MirrorPattern::ALL
@@ -2171,23 +2169,18 @@ pub struct Formation {
 }
 
 impl Formation {
-    /// Reads the formation; `Formation_Group` is required. The followers are collected
-    /// from the whole value under it (see the implementer note in §5.6).
+    /// Reads the formation; `Formation_Group` is required and is an array whose elements are
+    /// bare `Formation_Follower` DIDs (§5.6, C33). Null DIDs and elements of another label or
+    /// type are skipped.
     pub fn read<A: PropertyAccess + ?Sized>(set: &A, p: &AiRecordPids) -> Result<Self> {
-        let group = set.require(p.formation_group, "formation")?;
-        let mut followers = Vec::new();
-        collect_dids(group, p.formation_follower, &mut followers);
+        let group = set.require_array(p.formation_group, "formation")?;
+        let followers = group
+            .elements
+            .iter()
+            .filter(|e| p.formation_follower.is(e.pid))
+            .filter_map(ValueExt::did_nonnull)
+            .collect();
         Ok(Self { followers })
-    }
-}
-
-/// Every non-null DID with PID `pid` under `value`, depth first in stored order.
-fn collect_dids(value: &PropertyValue, pid: Pid, out: &mut Vec<Did>) {
-    for c in value.children() {
-        match &c.value {
-            PropertyValue::DidRef(d) if pid.is(c.pid) && !d.is_null() => out.push(*d),
-            v => collect_dids(v, pid, out),
-        }
     }
 }
 
@@ -2226,35 +2219,29 @@ pub struct Conjunction {
     pub roles: Vec<ConjunctionRole>,
 }
 
-fn collect_contributions(value: &PropertyValue, p: &AiRecordPids, out: &mut Vec<RoleContribution>) {
-    for c in value.children() {
-        if p.contribution.is(c.pid)
-            && let Some(s) = c.value.as_struct()
-        {
-            out.push(RoleContribution {
-                action_skill: s.did(p.role_action_skill),
-                pvp_action_skill: s.did(p.pvp_role_action_skill),
-                contribution_skill: s.did(p.contribution_skill),
-            });
-        } else {
-            collect_contributions(&c.value, p, out);
-        }
-    }
-}
-
 impl Conjunction {
-    /// Reads the record (never fails). Contributions are every struct labelled
-    /// `Conjunction_Role_ContributionToActionMap` under a role (see the implementer note in
-    /// §5.7).
+    /// Reads the record (never fails). `Conjunction_RoleList` is an array of
+    /// `Conjunction_Role` elements, each itself an array whose elements are the
+    /// `Conjunction_Role_ContributionToActionMap` structs (§5.7, C33); elements of another
+    /// label or type are skipped.
     #[must_use]
     pub fn read<A: PropertyAccess + ?Sized>(set: &A, p: &AiRecordPids) -> Self {
         let roles = set
             .elements(p.role_list)
             .iter()
-            .map(|e| {
-                let mut contributions = Vec::new();
-                collect_contributions(&e.value, p, &mut contributions);
-                ConjunctionRole { contributions }
+            .map(|role| ConjunctionRole {
+                contributions: role
+                    .value
+                    .children()
+                    .iter()
+                    .filter(|c| p.contribution.is(c.pid))
+                    .filter_map(|c| c.value.as_struct())
+                    .map(|s| RoleContribution {
+                        action_skill: s.did(p.role_action_skill),
+                        pvp_action_skill: s.did(p.pvp_role_action_skill),
+                        contribution_skill: s.did(p.contribution_skill),
+                    })
+                    .collect(),
             })
             .collect();
         Self {
@@ -2413,9 +2400,9 @@ pub const MAX_PROFILE_TREE_DEPTH: usize = 16;
 /// this install) through [`EvalOptions`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Repeat {
-    /// `…_RepeatMinTimes`.
+    /// `GeneratorProfile_RepeatMinTimes`.
     pub min: Option<i32>,
-    /// `…_RepeatMaxTimes`.
+    /// `GeneratorProfile_RepeatMaxTimes`.
     pub max: Option<i32>,
 }
 
@@ -2990,8 +2977,9 @@ pub struct Candidate {
     /// The innermost placement on its path (the entry's own, else the nearest `OneOf`
     /// modifier).
     pub placement: Option<Placement>,
-    /// The nearest `Repeat` on its path (the entry's own, else the nearest `OneOf`
-    /// modifier).
+    /// The innermost `Repeat` on its path (the entry's own, else the nearest enclosing one).
+    /// A display value of Decision D4a only: it is not the number of objects spawned, which
+    /// follows from D3 (rules 2.2 and 2.4).
     pub repeat: Option<Repeat>,
     /// Whether it lies inside a `PositionSetEntry` (scoped to the point's position set).
     pub scoped: bool,
@@ -3209,9 +3197,11 @@ impl<F: FnMut(u32) -> u32> SpawnRandom for F {
 /// Parameters of [`evaluate_profile`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EvalOptions {
-    /// Weight of a choice that has none (see the implementer note in §6.8).
+    /// Weight of a choice that has none (Decision D3 (a), §6.8; never needed on the observed
+    /// install, C34).
     pub default_weight: i32,
-    /// `RepeatMinTimes` / `RepeatMaxTimes` when absent (the dictionary default).
+    /// `GeneratorProfile_RepeatMinTimes` / `…MaxTimes` when absent (the dictionary default,
+    /// 1; Decision D3 (b)).
     pub default_repeat: i32,
     /// Most objects produced per spawn point and evaluation (rule 2.5).
     pub max_objects: usize,
@@ -3229,7 +3219,7 @@ impl Default for EvalOptions {
 
 impl EvalOptions {
     /// The defaults with the repeat default taken from the dictionary when it defines one
-    /// for `…_RepeatMinTimes`.
+    /// for `GeneratorProfile_RepeatMinTimes`.
     #[must_use]
     pub fn from_defaults<D: PropertyDefaults + ?Sized>(defaults: &D, f: &ProfileFieldPids) -> Self {
         let mut o = Self::default();

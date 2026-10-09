@@ -17,6 +17,7 @@
 //! | [`CompressionDictionaryEnvelope`] | stored envelope of the compression dictionaries only | §11 |
 //! | [`BareSetClassifier`], [`GameMapView`] | 0x78 bare property sets: families, game-map view | §12 |
 //! | [`MetadataClassifier`] and the `*View` types | metadata objects in the 0x70 range | §13 |
+//! | [`modifier_value_display`] | the percentage display of modifier values | §13.1 |
 //! | [`MetadataControls`], label constants | WEENIECONTENT, UNIQUEDB and enum-mapper labels | §2, §14 |
 //!
 //! Every reader treats its input as hostile: counts are checked against the bytes left
@@ -1038,17 +1039,17 @@ pub struct CompositorControl {
 }
 
 impl CompositorControl {
-    /// Reads one `AppearanceUI_CompositorControl` struct. Fields are read leniently (the
-    /// spec does not give their value types): any integer-like value counts as a key.
+    /// Reads one `AppearanceUI_CompositorControl` struct with the dictionary types of §19
+    /// answer (5) (X3): `AppearanceUI_CompositorLayerName` an enum key,
+    /// `AppearanceUI_ControlPropertyName` a PID, `AppearanceUI_MinControlValue` an int. A
+    /// field of another type reads as absent.
     #[must_use]
     pub fn from_struct(s: &PropertyStruct, pids: &CompositorControlPids) -> Self {
         Self {
             file: s.did(pids.file),
-            layer_key: s.get_pid(pids.layer_name).and_then(key_of),
-            control_property: s.get_pid(pids.control_property).and_then(key_of),
-            min_value: s
-                .get_pid(pids.min_value)
-                .and_then(|v| v.integer().or_else(|| v.as_bits().map(|b| b as i64))),
+            layer_key: s.enum_key(pids.layer_name),
+            control_property: s.property_ref(pids.control_property),
+            min_value: s.int(pids.min_value).map(i64::from),
         }
     }
 
@@ -2121,21 +2122,21 @@ impl BareSetClassifier {
     }
 }
 
-/// The typed view of a game-map set (§12.2, explorer): image, scale and offsets. Numeric
-/// fields accept any numeric value type (the spec does not give their types).
+/// The typed view of a game-map set (§12.2, explorer): image, scale and offsets, with the
+/// dictionary types of §19 answer (5) (X3). A field of another type reads as absent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GameMapView<'a> {
-    /// `UI_Map_MapImage` (a render surface).
+    /// `UI_Map_MapImage` (a DID of a render surface, 0x41).
     pub image: Option<Did>,
-    /// `UI_Map_Scale`.
-    pub scale: Option<f64>,
-    /// `UI_Map_PixelOffsetX`, `UI_Map_PixelOffsetY`.
-    pub pixel_offset: [Option<f64>; 2],
-    /// `UI_Map_BlockOffsetX`, `UI_Map_BlockOffsetY`.
-    pub block_offset: [Option<f64>; 2],
-    /// `UI_Map_FogOfWar`, as stored.
-    pub fog_of_war: Option<&'a PropertyValue>,
-    /// `UI_Map_FogOfWar_Color`, as stored.
+    /// `UI_Map_Scale` (float).
+    pub scale: Option<f32>,
+    /// `UI_Map_PixelOffsetX`, `UI_Map_PixelOffsetY` (ints).
+    pub pixel_offset: [Option<i32>; 2],
+    /// `UI_Map_BlockOffsetX`, `UI_Map_BlockOffsetY` (ints).
+    pub block_offset: [Option<i32>; 2],
+    /// `UI_Map_FogOfWar` (bool, dictionary default false), as stored.
+    pub fog_of_war: Option<bool>,
+    /// `UI_Map_FogOfWar_Color` (a colour), as stored.
     pub fog_of_war_colour: Option<&'a PropertyValue>,
     /// Whether the set also carries `Landblock_LightMap`.
     pub has_light_map: bool,
@@ -2146,13 +2147,18 @@ impl<'a> GameMapView<'a> {
     #[must_use]
     pub fn from_set(set: &'a PropertySet, pids: &BareSetPids) -> Option<Self> {
         let s = set.structure(pids.game_map)?;
-        let num = |p: Pid| s.get_pid(p).and_then(PropertyValue::as_f64);
         Some(Self {
             image: s.did(pids.map_image),
-            scale: num(pids.map_scale),
-            pixel_offset: [num(pids.map_pixel_offset_x), num(pids.map_pixel_offset_y)],
-            block_offset: [num(pids.map_block_offset_x), num(pids.map_block_offset_y)],
-            fog_of_war: s.get_pid(pids.map_fog_of_war),
+            scale: s.float(pids.map_scale),
+            pixel_offset: [
+                s.int(pids.map_pixel_offset_x),
+                s.int(pids.map_pixel_offset_y),
+            ],
+            block_offset: [
+                s.int(pids.map_block_offset_x),
+                s.int(pids.map_block_offset_y),
+            ],
+            fog_of_war: s.boolean(pids.map_fog_of_war),
             fog_of_war_colour: s.get_pid(pids.map_fog_of_war_colour),
             has_light_map: set.has(pids.light_map),
         })
@@ -2271,6 +2277,7 @@ crate::property_ids! {
         version_number = "Version_Number",
         version_singleton_list = "Version_SingletonList",
         version_always_run_on_players = "Version_AlwaysRunOnPlayers",
+        account_version_singleton_list = "AccountVersion_SingletonList",
     }
 }
 
@@ -2347,8 +2354,9 @@ impl MetadataClassifier {
     }
 
     /// The family of an object's property set, if any. Controls are not members: the
-    /// version control is recognised by its control-only properties
-    /// (`Version_VersionNumberDataList`, `Version_AlwaysRunOnPlayers`) and left out.
+    /// version control (`VersionSystem`, the Version family's control, §13 table) is
+    /// recognised by its control-only properties ([`MetadataClassifier::is_version_control`])
+    /// and left out, so 123 members plus the control make the 124 objects of §13.7.
     #[must_use]
     pub fn classify(&self, set: &PropertySet) -> Option<MetadataFamily> {
         let p = &self.pids;
@@ -2372,6 +2380,16 @@ impl MetadataClassifier {
         } else {
             None
         }
+    }
+}
+
+impl MetadataClassifier {
+    /// Whether `set` is the Version family's control: it carries a control-only property
+    /// (`Version_VersionNumberDataList` or `Version_AlwaysRunOnPlayers`, §13.7).
+    #[must_use]
+    pub fn is_version_control(&self, set: &PropertySet) -> bool {
+        set.has(self.pids.version_number_data_list)
+            || set.has(self.pids.version_always_run_on_players)
     }
 }
 
@@ -2792,8 +2810,12 @@ pub fn game_callback_return_value(set: &PropertySet, pids: &MetadataPids) -> Opt
 /// The version control (§13.7).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VersionSystemView {
-    /// (`Version_Number`, `Version_SingletonList`) per data-list struct, stored order.
+    /// (`Version_Number`, `Version_SingletonList`) per data-list struct, stored order; a
+    /// struct that carries `AccountVersion_SingletonList` instead has an empty list here.
     pub updates: Vec<(Option<u32>, Vec<Did>)>,
+    /// (`Version_Number`, `AccountVersion_SingletonList`) of the structs that carry the
+    /// account list (one on the observed install), stored order.
+    pub account_updates: Vec<(Option<u32>, Vec<Did>)>,
     /// `Version_AlwaysRunOnPlayers`.
     pub always_run_on_players: Vec<Did>,
     /// `Version_Number`: the current update.
@@ -2814,9 +2836,114 @@ impl VersionSystemView {
                     )
                 })
                 .collect(),
+            account_updates: set
+                .structs(pids.version_number_data_list)
+                .filter(|s| s.has(pids.account_version_singleton_list))
+                .map(|s| {
+                    (
+                        s.get_pid(pids.version_number).and_then(key_of),
+                        s.dids(pids.account_version_singleton_list).collect(),
+                    )
+                })
+                .collect(),
             always_run_on_players: set.dids(pids.version_always_run_on_players).collect(),
             current: set.get_pid(pids.version_number).and_then(key_of),
         }
+    }
+
+    /// The objects the control names as member candidates (§13.7): the union of every
+    /// `Version_SingletonList` and `Version_AlwaysRunOnPlayers`, each DID once, in first
+    /// occurrence order. Not all of them are members: a reader keeps those whose set the
+    /// `Version_*` rule accepts ([`MetadataClassifier::classify`]). The account list is not
+    /// included (its object is not a member on the observed install).
+    #[must_use]
+    pub fn member_candidates(&self) -> Vec<Did> {
+        let mut seen = BTreeSet::new();
+        self.updates
+            .iter()
+            .flat_map(|(_, list)| list.iter())
+            .chain(self.always_run_on_players.iter())
+            .copied()
+            .filter(|d| seen.insert(*d))
+            .collect()
+    }
+}
+
+/// How the description of a modifier entry shows its value (§13.1, X4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModifierValueDisplay {
+    /// Whether the percentage template key is used (the property's
+    /// `PropertyMetaData_DisplayAsPercentage`; the flag picks the template key for every
+    /// value type).
+    pub percent_template: bool,
+    /// The number shown.
+    pub number: f64,
+    /// For a float `Multiply` entry shown as a percentage: the increase or decrease
+    /// template; `None` otherwise.
+    pub direction: Option<ModifierDirection>,
+}
+
+/// The template form of a percentage `Multiply` entry (§13.1 step 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModifierDirection {
+    /// *v* ≥ 1.
+    Increase,
+    /// *v* < 1, or NaN.
+    Decrease,
+}
+
+/// The number the client library shows for a modifier entry's value (§13.1, X4).
+/// `display_as_percentage` is the modified property's `PropertyMetaData_DisplayAsPercentage`
+/// (false when it has no metadata object); `multiply` whether the entry's operator is
+/// `Multiply` (`combat-data.md` §5.3).
+///
+/// With the flag and a float value *v*: for `Multiply`, *d* = *v* − 1 when *v* > 1, 1 − *v*
+/// when *v* < 1, else *v* (exactly 1 or NaN), with the increase form when *v* ≥ 1; for other
+/// operators *d* = *v*; the number is *d* × 100 in single precision, widened. Without the
+/// flag a float is shown unscaled; int and int64 values are always unscaled. `None` for
+/// other value types.
+#[must_use]
+pub fn modifier_value_display(
+    value: &PropertyValue,
+    multiply: bool,
+    display_as_percentage: bool,
+) -> Option<ModifierValueDisplay> {
+    let plain = |number: f64| ModifierValueDisplay {
+        percent_template: display_as_percentage,
+        number,
+        direction: None,
+    };
+    match *value {
+        #[allow(clippy::cast_precision_loss)]
+        PropertyValue::Int(v) => Some(plain(f64::from(v))),
+        #[allow(clippy::cast_precision_loss)]
+        PropertyValue::Int64(v) => Some(plain(v as f64)),
+        PropertyValue::Float(v) if !display_as_percentage => Some(plain(f64::from(v))),
+        PropertyValue::Float(v) => {
+            let (d, direction) = if multiply {
+                let d = if v > 1.0 {
+                    v - 1.0
+                } else if v < 1.0 {
+                    1.0 - v
+                } else {
+                    v
+                };
+                let dir = if v >= 1.0 {
+                    ModifierDirection::Increase
+                } else {
+                    ModifierDirection::Decrease
+                };
+                (d, Some(dir))
+            } else {
+                (v, None)
+            };
+            Some(ModifierValueDisplay {
+                percent_template: true,
+                number: f64::from(d * 100.0),
+                direction,
+            })
+        }
+        _ => None,
     }
 }
 

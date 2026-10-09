@@ -24,7 +24,7 @@ use tessera_formats::gameplay::quests::{
     ColourTextList, EmoteDirectory, EventOrigin, NpcComment, QUEST_MAP_NOTES_DID, QuestArc,
     QuestArcDirectory, QuestControl, QuestFamilyKind, QuestItemDirectory, QuestItemRegionDirectory,
     QuestLabels, QuestMapNotes, QuestRecord, QuestSingletons, QuestTreasure, RewardLevelTable,
-    RewardList, RoleAction, Scene, WorldEventList, active_quest_roles,
+    RewardList, RoleAction, Scene, WorldEventList, active_quest_roles, quest_item_directory_class,
 };
 use tessera_formats::{
     Did, PropertyDictionary, PropertySet, PropertySetRecord, PropertyValue, StringSource,
@@ -372,6 +372,8 @@ fn quest_family_census_and_invariants() {
     let mut q = QuestStats::default();
     let mut quest_roles: HashMap<Did, Vec<(String, Option<Did>)>> = HashMap::new();
     let mut npc_side: Vec<(Did, Option<Did>, Option<String>)> = Vec::new();
+    // §7.4 (S5): records holding `QuestDispenser_ActiveQuests`, empty lists included.
+    let mut role_list_holders = 0usize;
     let (mut sets, mut strings, mut bad_strings) = (0usize, 0usize, 0usize);
 
     for &did in dids.iter().step_by(stride) {
@@ -385,6 +387,13 @@ fn quest_family_census_and_invariants() {
             .unwrap_or_else(|e| panic!("{set_did}: {e}"))
             .set;
         sets += 1;
+        role_list_holders += usize::from(
+            labels
+                .role
+                .active_quests
+                .id()
+                .is_some_and(|p| set.get(p).is_some()),
+        );
         for r in active_quest_roles(&labels, &set) {
             npc_side.push((did, r.quest, r.role_name.map(str::to_owned)));
         }
@@ -545,8 +554,8 @@ fn quest_family_census_and_invariants() {
         "§2.1 emote-like sets the directory does not list, by root class: {unlisted_classes:?}"
     );
 
-    // --- §7.4 NPC-side role lists (holders other than quest records): an entry matches
-    // when its quest has a role with the same role name and the holder as NPC.
+    // --- §7.4 NPC-side role lists of every object record (S5), quest records included: an
+    // entry matches when its quest has a role with the same role name and the holder as NPC.
     let quest_dids: HashSet<Did> = kinds
         .get(&QuestFamilyKind::Quest)
         .into_iter()
@@ -554,10 +563,11 @@ fn quest_family_census_and_invariants() {
         .copied()
         .collect();
     let (mut npc_entries, mut matched) = (0usize, 0usize);
+    let (mut quest_held, mut quest_held_matched) = (0usize, 0usize);
     // Root class of each holder → (entries, matching entries, holders), to place the
     // census of §7.4.
     let mut by_class: BTreeMap<u32, (usize, usize, BTreeSet<Did>)> = BTreeMap::new();
-    for (holder, quest, name) in npc_side.iter().filter(|(h, _, _)| !quest_dids.contains(h)) {
+    for (holder, quest, name) in &npc_side {
         npc_entries += 1;
         let hit = quest
             .and_then(|d| quest_roles.get(&d))
@@ -567,6 +577,10 @@ fn quest_family_census_and_invariants() {
                     .any(|(n, npc)| Some(n.as_str()) == name.as_deref() && *npc == Some(*holder))
             });
         matched += usize::from(hit);
+        if quest_dids.contains(holder) {
+            quest_held += 1;
+            quest_held_matched += usize::from(hit);
+        }
         if full {
             let class = store
                 .header(*holder)
@@ -579,9 +593,9 @@ fn quest_family_census_and_invariants() {
         }
     }
     census.row(
-        "NPC-side role-list entries (non-quest holders)",
+        "NPC-side role-list entries, all holders",
         npc_entries,
-        43_406,
+        43_413,
     );
     if full {
         let mut rows: Vec<(u32, usize, usize, usize)> = by_class
@@ -593,7 +607,18 @@ fn quest_family_census_and_invariants() {
             "§7.4 NPC-side entries by holder root class (class, entries, matching, holders): \
              {rows:?}"
         );
-        census.row("NPC-side entries matching name and NPC", matched, 43_401);
+        census.row("NPC-side entries matching name and NPC", matched, 43_402);
+        census.row(
+            "holders of QuestDispenser_ActiveQuests",
+            role_list_holders,
+            10_845,
+        );
+        census.row("entries held by quest records", quest_held, 6);
+        census.row(
+            "entries held by quest records that match",
+            quest_held_matched,
+            0,
+        );
         // §7.4: all but a handful match.
         assert!(
             matched * 1000 >= npc_entries * 999,
@@ -640,6 +665,20 @@ fn quest_family_census_and_invariants() {
                 count(QuestFamilyKind::QuestItemDirectory) + empty.len(),
                 21,
             );
+            // §2.1 (S1): the directories are the records of one root class, the empty one
+            // included.
+            let class_of = |d: Did| store.header(d).expect("header").map(|h| h.root_class);
+            let carriers: Vec<(u32, &PropertySet)> = kinds
+                .get(&QuestFamilyKind::QuestItemDirectory)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| Some((class_of(*d)?, &kept[d])))
+                .collect();
+            let dir_class = quest_item_directory_class(&labels, carriers.iter().copied())
+                .expect("§2.1: one root class of quest-item directories");
+            for d in &empty {
+                assert_eq!(class_of(*d), Some(dir_class), "§2.1: {d}");
+            }
         }
     }
 

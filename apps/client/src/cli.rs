@@ -157,7 +157,8 @@ pub struct Args {
     pub residency_mib: u64,
 
     /// Terrain view distance in landblocks (far ring radius). Default: the landscape extent
-    /// of `--landscape-distance` (2,080 m at the built-in level High, `walker.md` §11.3).
+    /// of `--landscape-distance` (2,080 m at the built-in level High, `walker.md` §11.3), or
+    /// 2 landblocks (the 3 × 3 near field) with `--far-view on`.
     #[arg(long, value_parser = clap::value_parser!(u8).range(2..=30))]
     pub view_blocks: Option<u8>,
 
@@ -223,10 +224,22 @@ pub struct Args {
     #[arg(long, value_name = "M", default_value_t = crate::walker::DEFAULT_FAR_BAND, value_parser = parse_far_band)]
     pub far_band: f32,
 
-    /// The far view of the distant-landscape sectors (`far-view.md`): `on` or `off`. Its far
-    /// radius follows `--landscape-distance`; the walker's full-detail rings stay (`--view-blocks
-    /// 3` gives the original's 3 × 3 near field).
-    #[arg(long, value_name = "on|off", default_value = "off", value_parser = parse_on_off)]
+    /// The far view of the distant-landscape sectors (`far-view.md`): `on` or `off` (a bare
+    /// `--far-view` is `on`). Its far radius follows `--landscape-distance`. With the far view
+    /// on, full-detail terrain covers the original's near field, the 3 × 3 landblocks around
+    /// the viewer's (`far-view.md` §2, §3.2), streamed within 2 landblocks (320 m), and the
+    /// sectors draw everything beyond it out to the landscape extent; `--view-blocks` keeps a
+    /// larger full-detail ring instead (Tessera Decision FD9), the sectors then start where it
+    /// ends.
+    #[arg(
+        long,
+        value_name = "on|off",
+        default_value = "off",
+        num_args = 0..=1,
+        default_missing_value = "on",
+        action = clap::ArgAction::Set,
+        value_parser = parse_on_off
+    )]
     pub far_view: bool,
 
     /// Hide the HUD and the minimap (clean screenshots).
@@ -1167,6 +1180,40 @@ mod tests {
             Args::try_parse_from(["t", "--server", "h:1", "--account", "a", "--walk-path", "w"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn far_view_args() {
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["t"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(argv).map(|a| a.far_view)
+        };
+        assert!(!parse(&[]).unwrap());
+        assert!(parse(&["--far-view", "on"]).unwrap());
+        assert!(parse(&["--far-view=on"]).unwrap());
+        assert!(parse(&["--far-view", "ON"]).unwrap());
+        assert!(!parse(&["--far-view", "off"]).unwrap());
+        assert!(!parse(&["--far-view=off"]).unwrap());
+        // A bare flag switches it on, also before another flag.
+        assert!(parse(&["--far-view"]).unwrap());
+        assert!(parse(&["--far-view", "--fly"]).unwrap());
+        assert!(parse(&["--far-view", "maybe"]).is_err());
+        assert!(parse(&["--far-view=true"]).is_err());
+        // With the screenshot flags of the headless walker.
+        let a = Args::try_parse_from([
+            "t",
+            "--headless",
+            "--screenshot",
+            "a.png",
+            "--far-view",
+            "on",
+            "--view-blocks",
+            "4",
+        ])
+        .unwrap();
+        assert!(a.far_view);
+        assert_eq!(a.view_blocks, Some(4));
     }
 
     #[test]

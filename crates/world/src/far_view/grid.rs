@@ -173,14 +173,16 @@ pub enum Cell {
     /// No listed, readable sector holds the landblock.
     #[default]
     Uncovered,
-    /// In a listed sector and in the near field, with its LOD.
+    /// In the near field and in a listed sector (or, for an explicit near set, anywhere in
+    /// the grid's rectangle), with its LOD.
     Near(u8),
     /// In a listed sector outside the near field, with its LOD.
     Far(u8),
 }
 
 impl Cell {
-    /// Whether a listed sector holds the landblock.
+    /// Whether the landblock is drawn by a far batch or by the full-detail terrain (a
+    /// listed sector holds it, or it is in an explicit near set).
     #[must_use]
     pub fn covered(self) -> bool {
         self != Self::Uncovered
@@ -309,6 +311,22 @@ impl LandblockGrid {
                     if let Some(i) = grid.index(i32::from(x), i32::from(y)) {
                         grid.cells[i] = cell;
                     }
+                }
+            }
+        }
+        // An explicit near set names landblocks the walker draws at full detail whatever
+        // their sector: inside the rectangle they are near even where no sector record
+        // covers them, so a far neighbour stitches to their edge instead of leaving it
+        // open (Tessera choice for FD9, implementer note in `far-view.md` §12).
+        if let NearField::Set(set) = near {
+            for &(x, y) in set.iter() {
+                if let Some(i) = grid.index(i32::from(x), i32::from(y))
+                    && let Some(c) = grid.cells.get_mut(i)
+                    && *c == Cell::Uncovered
+                {
+                    let dx = i32::from(x) - i32::from(vx);
+                    let dy = i32::from(y) - i32::from(vy);
+                    *c = Cell::Near(lod_of(dx, dy));
                 }
             }
         }

@@ -1332,7 +1332,7 @@ impl<'w> Renderer<'w> {
     }
 
     /// Build the render-world hooks of one lit pass (`docs/specs/render.md` §5.1), in
-    /// draw order: terrain layers, far terrain and distant sprites, instanced scenery, sky,
+    /// draw order: terrain layers, instanced scenery, sky, far terrain and distant sprites,
     /// water.
     #[allow(clippy::too_many_arguments)]
     fn world_hooks(
@@ -1385,16 +1385,19 @@ impl<'w> Renderer<'w> {
         {
             hooks.push(h);
         }
-        if let Some(h) =
-            crate::far_view::build_hook(&mut self.far_view_state, far_terrain, sprites, &ctx)?
-        {
-            hooks.push(h);
-        }
         if let Some(h) = crate::instanced::build_hook(&mut self.instanced_state, instanced, &ctx)? {
             hooks.push(h);
         }
         if let Some(h) =
             crate::sky::build_hook(&mut self.sky_state, &mut self.instanced_state, sky, &ctx)?
+        {
+            hooks.push(h);
+        }
+        // The far view draws after the sky: the far-draw fade (`far-view.md` §6.3 step 3)
+        // and the sprites' fog blend over the sky instead of the clear colour. The sky
+        // writes no depth, so the far terrain still passes its depth test there.
+        if let Some(h) =
+            crate::far_view::build_hook(&mut self.far_view_state, far_terrain, sprites, &ctx)?
         {
             hooks.push(h);
         }

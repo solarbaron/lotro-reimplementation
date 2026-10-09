@@ -44,6 +44,9 @@ pub struct SectorMeshes {
     pub key: Option<SectorKey>,
     /// Generation the batches were built for.
     pub generation: u64,
+    /// The nine descriptors the batches were built from (which landblocks the far batches
+    /// cover: present and far).
+    pub descriptors: [LandblockDescriptor; 9],
     /// Far terrain batch.
     pub terrain: FarMesh,
     /// Far ceiling batch (records with a ceiling).
@@ -52,6 +55,26 @@ pub struct SectorMeshes {
     pub near_terrain: Option<FarMesh>,
     /// Near ceiling batch (only with [`FarViewSettings::near_batches`]).
     pub near_ceiling: Option<FarMesh>,
+}
+
+impl SectorMeshes {
+    /// The landblocks (*X*, *Y*) the far terrain batch covers: present and outside the near
+    /// field in the descriptors it was built from (none without a key).
+    pub fn far_landblocks(&self) -> impl Iterator<Item = (u8, u8)> + '_ {
+        let corner = self.key.map(SectorKey::corner);
+        self.descriptors
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.present && d.far)
+            .filter_map(move |(c, _)| {
+                let (cx, cy) = corner?;
+                let c = u8::try_from(c).ok()?;
+                Some((
+                    cx.checked_add(c % SECTOR_SIDE)?,
+                    cy.checked_add(c / SECTOR_SIDE)?,
+                ))
+            })
+    }
 }
 
 /// One sector's slot.
@@ -68,6 +91,9 @@ pub struct SectorSlot {
     /// The batches swapped in last (possibly of an older generation while a newer one
     /// builds).
     pub meshes: Option<Arc<SectorMeshes>>,
+    /// Generation whose build failed (logged once; the sector then counts as settled
+    /// without batches until its descriptors change).
+    pub build_failed: Option<u64>,
     /// Sprite epoch of the last sprite job requested.
     pub sprite_epoch: u64,
     /// The sprites placed last, with their epoch.
@@ -82,6 +108,7 @@ impl SectorSlot {
             descriptors: None,
             generation: 0,
             meshes: None,
+            build_failed: None,
             sprite_epoch: 0,
             sprites: None,
         }
@@ -143,6 +170,7 @@ impl BuildJob {
         Ok(SectorMeshes {
             key: Some(self.key),
             generation: self.generation,
+            descriptors: self.descriptors,
             terrain,
             ceiling,
             near_terrain,
@@ -231,7 +259,10 @@ pub struct FarViewState {
     sprite_epoch: u64,
     distant: DistantSet,
     content_layers_pid: Option<u32>,
-    failures_logged: BTreeSet<SectorKey>,
+    /// Sectors whose read failure was logged.
+    read_failures_logged: BTreeSet<SectorKey>,
+    /// Sectors whose batch-build failure was logged.
+    build_failures_logged: BTreeSet<SectorKey>,
 }
 
 impl FarViewState {
@@ -253,7 +284,8 @@ impl FarViewState {
             sprite_epoch: 1,
             distant: DistantSet::default(),
             content_layers_pid,
-            failures_logged: BTreeSet::new(),
+            read_failures_logged: BTreeSet::new(),
+            build_failures_logged: BTreeSet::new(),
         }
     }
 
@@ -344,10 +376,10 @@ impl FarViewState {
                 SectorRecordState::Loading => false,
                 SectorRecordState::Missing | SectorRecordState::Failed => true,
                 SectorRecordState::Ready(r) => {
-                    let meshes = s
-                        .meshes
-                        .as_ref()
-                        .is_some_and(|m| m.generation == s.generation);
+                    let meshes = s.build_failed == Some(s.generation)
+                        || s.meshes
+                            .as_ref()
+                            .is_some_and(|m| m.generation == s.generation);
                     let sprites = !self.settings.sprites()
                         || r.sprites.is_empty()
                         || matches!(
@@ -543,6 +575,13 @@ impl FarViewState {
         }
         match result {
             Ok(Some(rec)) => {
+                // §3.6 step 3: a missing colour list is logged; the sector is still built.
+                if rec.colour_list.0 == 0 {
+                    tracing::warn!(did = %rec.did, "distant-landscape sector without a colour list");
+                }
+                if rec.ceiling.is_some() && rec.ceiling_colour_list.0 == 0 {
+                    tracing::warn!(did = %rec.did, "distant-landscape sector without a ceiling colour list");
+                }
                 let rec = Arc::new(rec);
                 slot.record = SectorRecordState::Ready(Arc::clone(&rec));
                 if slot.listed {
@@ -553,7 +592,7 @@ impl FarViewState {
             Ok(None) => slot.record = SectorRecordState::Missing,
             Err(e) => {
                 slot.record = SectorRecordState::Failed;
-                if self.failures_logged.insert(key) {
+                if self.read_failures_logged.insert(key) {
                     tracing::warn!(did = %key.did(), error = %e, "distant-landscape sector skipped");
                 }
             }
@@ -582,11 +621,15 @@ impl FarViewState {
         match result {
             Ok(m) if generation == slot.generation => {
                 slot.meshes = Some(Arc::new(m));
+                slot.build_failed = None;
                 true
             }
             Ok(_) => false,
             Err(e) => {
-                if self.failures_logged.insert(key) {
+                if generation == slot.generation {
+                    slot.build_failed = Some(generation);
+                }
+                if self.build_failures_logged.insert(key) {
                     tracing::warn!(did = %key.did(), error = %e, "distant-landscape sector mesh skipped");
                 }
                 false

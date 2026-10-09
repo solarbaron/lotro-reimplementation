@@ -633,12 +633,56 @@ each records the question, not an answer about the original.
 > `crates/render/src/far_view.rs`) stores them after the grid triangles and draws them with
 > face culling off.
 
-> **OPEN:** (implementer) FD9 asks the far mesh to "stitch by the same rule" to a larger
-> full-detail ring, where a far landblock of LOD 2 or 3 meets a full-resolution edge. One
-> triangle per segment then leaves T-junctions. Tessera treats a near neighbour as LOD 0
-> for a far landblock and fans each segment over every neighbour edge sample inside it
-> (identical to the client's single triangle when the neighbour is one LOD finer, the only
-> case with *N* = 1).
+> **OPEN:** (implementer, corrected 2026-10-09) FD9 asks the far mesh to "stitch by the
+> same rule" to a larger full-detail ring, where a far landblock of LOD 2 or 3 meets a
+> full-resolution edge. One triangle per segment then leaves T-junctions, and the walker's
+> full-detail terrain has distance LODs of its own, so its edge can be coarser than LOD 0.
+> Neither case arises with *N* = 1 (§4: the 3 × 3 is LOD 0). Tessera: (a) the far mesh
+> treats a near neighbour as LOD 0 and fans each segment over every neighbour edge sample
+> inside it (identical to the client's single triangle when the neighbour is one LOD finer);
+> (b) the walker meshes every full-detail block that borders a far landblock (or one about
+> to be far) at its finest level, and leaves the far neighbour out of its own seam
+> matching, so its edge carries every sample the fan joins
+> (`apps/client/src/walker/terrain.rs`, `farview.rs`).
+
+> **OPEN:** (implementer) §4 calls a landblock near only when a listed, readable sector
+> covers it, so a far landblock next to a full-detail landblock whose sector has no record
+> gets no stitch on that edge (§5.2). Whether the original ever has such a pair was not
+> stated. Tessera: with an explicit near set (`NearField::Set`, the walker's) those
+> landblocks count as near inside the grid's rectangle and their far neighbours stitch
+> toward them; the radius form (tools, tests) keeps the §4 rule.
+
+> **OPEN:** (implementer) FD3 swaps work in per sector, so for some frames after the near
+> field changes the far batches on the GPU were built for the old one; the spec does not say
+> what is drawn meanwhile. Tessera hands off per landblock: the full-detail terrain (and
+> ceiling) and the landblock water skip exactly the landblocks the far batches on the GPU
+> cover, and only those landblocks get sector water (§8) from the far view; a near-field
+> landblock whose full-detail mesh is not on the GPU yet is left out of the near set, so the
+> far batch draws it until the mesh arrives. A sector's terrain batch is drawn only once its
+> colour list is loaded or has failed.
+
+> **OPEN:** (implementer) The draw order of the far terrain and sprites against the sky is
+> not given; the far-draw fade (§6.3 step 3, §7.2) blends with whatever lies behind. Tessera
+> draws the far view after the sky in the opaque stage (order: terrain layers, instanced
+> scenery, sky, far view, water; `render.md` §5.1 does not list the far view), so the fade
+> and the far edge blend with the sky, not the clear colour.
+
+> **OPEN:** (implementer) Walker settings with `--far-view on`: without `--view-blocks` the
+> full-detail terrain, landblock water and static objects are streamed within 2 landblocks
+> (320 units, which holds the 3 × 3 from any position in the viewer's landblock) and the
+> terrain is drawn for the 3 × 3 near field only (§2, §3.2); `--view-blocks` keeps a larger
+> ring (FD9 enhancement). The landscape extent used for the global object limit and the fog
+> (§7.1) is *E* of the settings either way, and the far clip plane covers *E*. The walker's
+> viewer instance is always 0, so the instance rules of §3.4 and §10 step 2 never fire.
+
+> **OPEN:** (implementer) Not implemented yet, recorded so the gaps stay visible: the
+> normal-mapped template (§6.4; the walker always uses the plain one, `FarLandscapeNormalMaps`
+> and the graphics core are not read), the seam overlay (§6.5, which needs that template),
+> the flow-map material copy of the sector water (`distant-landscape.md` §5.5, parameter
+> 3075; the far water uses the water type's surface as it is), and drawing the far
+> entities of §10 (the distant set is kept and walked, nothing is created). The plain
+> template's detail repeats are read from its declared defaults of 1001 and 1002 (4 × 4
+> when the record is missing).
 
 > **OPEN:** (implementer) Whether the ceiling mesh uses the terrain descriptors' stitch
 > flags (neighbours without a ceiling included) or its own. Tessera applies the same nine

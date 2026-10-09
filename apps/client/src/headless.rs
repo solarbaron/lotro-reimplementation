@@ -41,6 +41,8 @@ pub struct HeadlessReport {
     pub characters: crate::walker::characters::CharacterStats,
     /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
     pub audio: Option<crate::audio::AudioReport>,
+    /// The far view's counters of the last frame (`--far-view on`).
+    pub far_view: Option<crate::walker::farview::FarViewStats>,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -250,6 +252,10 @@ fn finish(
         tracing::info!("viewer at: {d}");
     }
     report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    report.far_view = walker.far_view_stats();
+    if let Some(f) = &report.far_view {
+        tracing::info!(?f, "far view at the end");
+    }
     if let Some(a) = &report.audio {
         crate::audio::log_report(a);
     }

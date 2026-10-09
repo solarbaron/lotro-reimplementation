@@ -822,7 +822,16 @@ impl Walker {
         } else {
             None
         };
-        let far = far_plane(config.stream.rings.far);
+        // With the far view the sectors reach the landscape extent E beyond the ring.
+        let far = far_plane(if config.far_view.enabled {
+            config
+                .stream
+                .rings
+                .far
+                .max(f64::from(config.far_view.settings.extent()))
+        } else {
+            config.stream.rings.far
+        });
         let config_region = config.region;
         let config_bench = config.bench;
         let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
@@ -1032,6 +1041,7 @@ impl Walker {
             && (!self.frills_drawn() || self.frills.settled())
             && (!self.sky_drawn() || self.env.sky_settled(&self.objects))
             && self.resolver.pending() == 0
+            && self.far_view_settled()
     }
 
     /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
@@ -1088,6 +1098,9 @@ impl Walker {
         }
         if self.resolver.pending() > 0 {
             out.push("resolver");
+        }
+        if !self.far_view_settled() {
+            out.push("far view");
         }
         out
     }
@@ -1361,10 +1374,20 @@ impl Walker {
             });
             self.last_eye = Some(eye);
             if let Some(fv) = self.far_view.as_mut() {
-                let far = self.config.stream.rings.far;
-                let near = farview::near_field_of(self.terrain.keys(), &eye, far);
+                let ring = self.config.stream.rings.far;
+                let terrain = &self.terrain;
+                let near = farview::near_field_of(
+                    fv.near_mode(),
+                    terrain.keys(),
+                    |k| terrain.drawable(k),
+                    &eye,
+                    ring,
+                    fv.near_radius(),
+                );
                 let view = farview::sprite_view(self.viewport.1, FOV_Y, &self.config.distances);
                 fv.update(renderer, &mut self.objects, Some(&eye), near, view);
+                // The terrain draws this frame and meshes next frame by the new hand-off.
+                self.terrain.set_far_view(Some(fv.hand_off()));
             }
             let t2 = Instant::now();
             if let Some(k) = eye.landblock() {
@@ -1548,9 +1571,34 @@ impl Walker {
     }
 
     /// The landscape extent in force (`walker.md` §11.3): the far ring's radius, which the
-    /// host sets to *E* of the distance preferences unless `--view-blocks` overrides it.
+    /// host sets to *E* of the distance preferences unless `--view-blocks` overrides it; with
+    /// the far view on, *E* of its settings (`far-view.md` §7.1), whatever the full-detail
+    /// ring.
     fn extent(&self) -> f32 {
+        match &self.far_view {
+            Some(fv) => fv.extent(),
+            None => self.ring_extent(),
+        }
+    }
+
+    /// The radius of the full-detail ring (terrain and landblock water are drawn within it).
+    fn ring_extent(&self) -> f32 {
         self.config.stream.rings.far as f32
+    }
+
+    /// The far view's counters of the last frame (`None` with the far view off).
+    #[must_use]
+    pub fn far_view_stats(&self) -> Option<farview::FarViewStats> {
+        self.far_view.as_ref().map(farview::FarViewLayer::stats)
+    }
+
+    /// Whether the far view is in (true with it off or while the outdoors is not visible).
+    fn far_view_settled(&self) -> bool {
+        !self.scene.outdoor_visible
+            || self
+                .far_view
+                .as_ref()
+                .is_none_or(|fv| fv.settled(&self.objects))
     }
 
     /// Seconds on the material and light clock (`material.md` §5.3.1: since the start).
@@ -1568,7 +1616,7 @@ impl Walker {
             } else {
                 0.0
             },
-            extent: self.extent(),
+            extent: self.ring_extent(),
             far_band: self.config.far_band,
             time: self.material_time(),
         }
@@ -2270,6 +2318,7 @@ impl Walker {
                 self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
             let water_on = self.water_drawn();
+            let hand_off = self.far_view.as_ref().map(farview::FarViewLayer::hand_off);
             if let (Some(fv), true) = (self.far_view.as_mut(), scene.outdoor_visible) {
                 let c = self.config.distances.object_multiplier();
                 fv.draw(
@@ -2339,7 +2388,8 @@ impl Walker {
                     &self.streamer,
                     &anchor,
                     eye,
-                    self.extent(),
+                    self.ring_extent(),
+                    hand_off.as_deref(),
                     &mut self.resolver,
                     &mut self.objects,
                 );

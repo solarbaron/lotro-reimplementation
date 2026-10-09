@@ -9,8 +9,10 @@
 //! change only when the viewer crosses a landblock boundary, so a sector's sprites are
 //! placed again at each rebuild.
 
-use tessera_formats::ImposterTable;
+use std::collections::HashMap;
+
 use tessera_formats::landblock::SectorSprite;
+use tessera_formats::{ImposterEntry, ImposterTable};
 
 use super::settings::BLOCK;
 
@@ -101,12 +103,18 @@ pub fn place_sprites(
 ) -> usize {
     let mut skipped = 0usize;
     let mut placed = 0usize;
+    // One lookup map per call: a hostile table and sprite list would make a scan per
+    // sprite quadratic. The first entry of a repeated key wins, as `ImposterTable::get`.
+    let mut index: HashMap<u32, &ImposterEntry> = HashMap::with_capacity(table.entries.len());
+    for e in &table.entries {
+        index.entry(e.name_key).or_insert(e);
+    }
     for s in sprites {
         if placed >= MAX_SPRITES_PER_SECTOR {
             skipped += 1;
             continue;
         }
-        let Some(entry) = table.get(u32::from(s.name_key)) else {
+        let Some(entry) = index.get(&u32::from(s.name_key)).copied() else {
             skipped += 1;
             continue;
         };

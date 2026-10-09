@@ -312,6 +312,89 @@ fn uncovered_neighbours_leave_edges_open() {
     assert!(!e.stitch);
 }
 
+#[test]
+fn explicit_near_set_stitches_across_a_missing_sector() {
+    // The missing sector is (34, 16) (landblocks 102–104 × 48–50). The walker draws
+    // (102, 50) at full detail although no record covers it: with an explicit near set it
+    // is near, so its far neighbour (102, 51) of sector (34, 17) stitches toward it.
+    let v = lb(100, 50);
+    let list = sector_list(v, 2);
+    let missing = SectorKey::new(1, 34, 16).unwrap_or_else(|| unreachable!());
+    let near: BTreeSet<(u8, u8)> = [(101, 50), (102, 50), (100, 50)].into_iter().collect();
+    let grid = LandblockGrid::build(v, &list, |k| k != missing, &NearField::Set(Arc::new(near)));
+    assert_eq!(grid.cell(102, 50), Cell::Near(1));
+    // Other landblocks of the missing sector stay uncovered.
+    assert_eq!(grid.cell(103, 50), Cell::Uncovered);
+    // (102, 51) of sector (34, 17) is far and stitches its south edge toward (102, 50).
+    let above = SectorKey::new(1, 34, 17).unwrap_or_else(|| unreachable!());
+    let d = grid.descriptors(above, 0);
+    // (102, 51) is chunk x = 0, y = 0 of sector (34, 17) (corner 102, 51).
+    let own = d[0];
+    assert!(own.far);
+    assert!(own.edges[1].stitch, "south edge toward the near (102, 50)");
+    assert_eq!(own.edges[1].neighbour_lod, 0);
+    // With the original's radius the same landblock stays uncovered (§4).
+    let grid = LandblockGrid::build(v, &list, |k| k != missing, &NearField::Radius(1));
+    assert_eq!(grid.cell(102, 50), Cell::Uncovered);
+}
+
+#[test]
+fn far_landblocks_follow_the_descriptors() {
+    let v = lb(100, 50);
+    let (_, grid) = full_grid(v, 1, &NearField::Radius(1));
+    let key = SectorKey::of_landblock(v);
+    let rec = record(key, 0);
+    let j = BuildJob {
+        key,
+        generation: 1,
+        record: Arc::new(rec),
+        descriptors: grid.descriptors(key, 0),
+        near_batches: false,
+    };
+    let m = j.run().unwrap_or_else(|e| panic!("{e}"));
+    let far: BTreeSet<(u8, u8)> = m.far_landblocks().collect();
+    // Sector (33, 16) holds landblocks 99–101 × 48–50; the near field 99–101 × 49–51
+    // leaves its south row far.
+    assert_eq!(
+        far,
+        [(99, 48), (100, 48), (101, 48)]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+    );
+    assert_eq!(m.terrain.landblocks, 3);
+}
+
+#[test]
+fn failed_build_settles_and_is_logged_apart() {
+    let settings = FarViewSettings {
+        imposters: false,
+        ..FarViewSettings::from_level(0)
+    };
+    let mut st = FarViewState::new(settings, None);
+    let v = viewer(100, 50);
+    let w = st.update(Some(v), NearField::Radius(1), SpriteView::default());
+    for k in &w.load_sectors {
+        st.sector_loaded(*k, Ok(Some(record(*k, 0))));
+    }
+    let w = st.update(Some(v), NearField::Radius(1), SpriteView::default());
+    assert_eq!(w.build.len(), 9);
+    let failing = w.build[0].key;
+    for j in &w.build {
+        if j.key == failing {
+            let e = crate::error::WorldError::Config("synthetic build failure");
+            assert!(!st.built(j.key, j.generation, Err(e)));
+        } else {
+            let m = j.run();
+            assert!(st.built(j.key, j.generation, m));
+        }
+    }
+    // The failed sector has no batches but no longer holds the view back.
+    let slot = st.slot(failing).unwrap_or_else(|| unreachable!());
+    assert!(slot.meshes.is_none());
+    assert_eq!(slot.build_failed, Some(slot.generation));
+    assert!(st.settled());
+}
+
 // ---------------------------------------------------------------------------------------
 // Meshes (FV-I5, FV-I6)
 // ---------------------------------------------------------------------------------------
@@ -661,6 +744,34 @@ fn sprite(key: u16, east: f32, north: f32, distance: f32, byte: u8) -> SectorSpr
         distance,
         byte,
     }
+}
+
+#[test]
+fn sprite_placement_takes_the_first_entry_of_a_repeated_key() {
+    let mut t = table();
+    t.entries.push(ImposterEntry {
+        name_key: 600,
+        column: 2,
+        row: 0,
+        value_a: 99.0,
+        value_b: 0.0,
+    });
+    let mut out = Vec::new();
+    let skipped = place_sprites(
+        &[sprite(600, 10.0, 10.0, 140.0, 0)],
+        &t,
+        [0.0, 0.0],
+        &SpriteView::default(),
+        &mut out,
+    );
+    assert_eq!(skipped, 0);
+    assert_eq!(out.len(), 1);
+    assert_eq!(
+        out[0].size,
+        10.0 * 1.5,
+        "first entry, as ImposterTable::get"
+    );
+    assert_eq!(t.get(600).map(|e| e.value_a), Some(10.0));
 }
 
 #[test]

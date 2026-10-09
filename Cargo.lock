@@ -4305,6 +4305,7 @@ dependencies = [
  "tessera-dat",
  "tessera-formats",
  "tessera-havok",
+ "tessera-material",
  "tessera-physics",
  "tessera-props",
  "tessera-terrain",

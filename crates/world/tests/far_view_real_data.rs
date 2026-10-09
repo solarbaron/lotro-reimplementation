@@ -3,7 +3,9 @@
 //! `TESSERA_GAME_DIR` is set).
 //!
 //! - `uniquedb_entries`: the four UNIQUEDB keys of `far-view.md` §6.1 and §7.3 name existing
-//!   records of the expected kinds (FV-I13, existence and kind only).
+//!   records of the expected kinds, and the two templates declare the parameters of FV-I13
+//!   (3000, 3001, 4005, 4006 and transform set 0 with scale 4; the normal-mapped one also
+//!   3011 and transform set 1 with scale 4).
 //! - `flight_residency_and_mesh_invariants`: flies the viewer across a row of region 1 one
 //!   landblock at a time (with one long jump, a discard) at `LandscapeDrawDistance` High
 //!   (*F* = 4) with the original's near field (*N* = 1). Every step reads the listed
@@ -24,7 +26,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tessera_dat::{ArchiveKind, ArchiveSet, SetOptions};
-use tessera_formats::Did;
+use tessera_formats::{Did, Record};
+use tessera_material::ShaderRecord;
 use tessera_world::far_view::{
     Cell, FarViewRecords, FarViewSettings, FarViewState, NearField, SectorKey, SpriteView, Viewer,
     grid::EDGES, mesh, read_imposter_table, read_sector,
@@ -68,6 +71,46 @@ fn uniquedb_entries() {
         assert_eq!(d.map(Did::prefix), Some(prefix), "FV-I13: {what} kind");
     }
     eprintln!("UNIQUEDB far-view entries: 4 of 4 present");
+    // FV-I13: the templates' declared parameters (`material.md` §8.4: 1001/1002 scale of
+    // transform set 0, 1003/1004 of set 1).
+    let template = |d: Option<Did>| {
+        let d = d.expect("template");
+        let bytes = ctx.source().read(d).expect("read").expect("present");
+        <ShaderRecord as Record>::parse_expecting(&bytes, d).expect("template decodes")
+    };
+    let scale = |rec: &ShaderRecord, id: u32| rec.declaration(id).and_then(|e| e.value.as_float());
+    let plain = template(r.plain_template);
+    for id in [3000, 3001, 4005, 4006, 1001, 1002] {
+        assert!(plain.declares(id), "FV-I13: plain template lacks {id}");
+    }
+    assert_eq!(
+        scale(&plain, 1001),
+        Some(4.0),
+        "FV-I13: plain set 0 u scale"
+    );
+    assert_eq!(
+        scale(&plain, 1002),
+        Some(4.0),
+        "FV-I13: plain set 0 v scale"
+    );
+    let normal = template(r.normal_template);
+    for id in [3000, 3001, 3011, 4005, 4006, 1003, 1004] {
+        assert!(
+            normal.declares(id),
+            "FV-I13: normal-mapped template lacks {id}"
+        );
+    }
+    assert_eq!(
+        scale(&normal, 1003),
+        Some(4.0),
+        "FV-I13: normal-mapped set 1 u scale"
+    );
+    assert_eq!(
+        scale(&normal, 1004),
+        Some(4.0),
+        "FV-I13: normal-mapped set 1 v scale"
+    );
+    eprintln!("far-terrain templates: declared parameters as FV-I13");
 }
 
 /// The sector keys of `region` that have a record, from the directory (no reads).

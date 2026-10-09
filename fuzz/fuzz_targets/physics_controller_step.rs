@@ -28,10 +28,10 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::Setup;
 use tessera_formats::setup::{CollisionBox, CollisionCapsule, CollisionSphere, Frame, Quaternion};
 use tessera_physics::controller::{
-    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind,
-    MAX_SPEED, MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
-    MovementState, MoverState, NoWater, PlayerMovementRecord, StepEnv, StepOutcome, WaterContact,
-    WaterQuery,
+    CharacterShape, Controller, ControllerConfig, Impulse, JumpNode, JumpTable, LayerConditions,
+    LayerKind, MAX_SPEED, MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer,
+    MovementPids, MovementState, MoverState, NoWater, PlayerMovementRecord, StepEnv, StepOutcome,
+    WaterContact, WaterQuery,
 };
 use tessera_physics::geometry::{
     BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionSetBuilder, CollisionView,
@@ -421,10 +421,23 @@ fuzz_target!(|data: &[u8]| {
         1 => CharacterShape::new(b.small(), b.small(), b.small().max(0.05)).unwrap_or_default(),
         _ => CharacterShape::PLAYABLE,
     };
+    let is_player = b.byte() & 1 == 0;
+    // A jump table (`collision.md` §11.10) from hostile fields, or none (the earlier rule).
+    let jump = (b.byte() & 1 == 0).then(|| {
+        let mut t = JumpTable::new();
+        for key in 1..=6 {
+            if let Some(state) = MovementState::from_key(key) {
+                let node = JumpNode::new(b.f(), b.f());
+                t.set(state, node);
+            }
+        }
+        t
+    });
     let config = ControllerConfig {
         shape,
         filter: QueryFilter::player(),
-        is_player: b.byte() & 1 == 0,
+        is_player,
+        jump,
     };
     // The frame: a landblock corner (sometimes far beyond the f32 range limit), the set at
     // a small offset in it.
@@ -515,6 +528,19 @@ fuzz_target!(|data: &[u8]| {
             if c.set_state(state) {
                 let v = c.state().velocity;
                 assert!((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() <= MAX_SPEED * 1.001);
+            }
+        }
+        if b.byte() & 7 == 0 {
+            let impulse = if b.byte() & 1 == 0 {
+                JumpNode::new(b.f(), b.f()).map(Impulse::Jump)
+            } else {
+                Some(Impulse::Vector {
+                    vector: [b.f(), b.f(), b.f()],
+                    global: b.byte() & 1 == 0,
+                })
+            };
+            if let Some(i) = impulse {
+                let _ = c.add_impulse(i);
             }
         }
         let input = MoveInput {

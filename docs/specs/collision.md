@@ -2359,6 +2359,48 @@ Rows added on 2026-10-08 from §11.8–§11.10 (owner-observation pass):
 | Walking input | walk mode halves the command values; the input is quantised (walking strafe 0.57); the Walking style is set from the halved values (§11.8) | not stated in §12 (the walker's own walk mode) |
 | Turn rate on foot | `[Input] TurnKeySpeed`, initially 150 degrees per second (§11.9) | the walker's keyboard turn rate (`keymap.md` §9.3) |
 
+> **OPEN (implementer, 2026-10-09; alignment with §11.6 item 1 and §11.8–§11.10):**
+> `tessera-physics` and the client's collision walk mode now follow the original in the
+> three rows above and in the target of §11.6 item 1: (a) the target velocity of an input
+> pair is §11.6 item 1 (direction along (*x*, *y*), length *m* · max(\|*x*\|, \|*y*\|) · the
+> blended speed, \|*y*\| doubled when both are at most 0.5, the client's strafe pairing; the
+> pair is no longer normalised), which §12.3 step 1 still describes as a per-axis
+> product; (b) the player's input is §11.8 (command values, walk mode halving them,
+> quantisation and decoding, the walking style that selects the Walking layer; run lock is
+> the walker's `autorun`); (c) the keyboard turns at 150 degrees per second (§11.9); (d) the
+> jump is §11.10: the jump command adds the one-step vertical impulse
+> (`AirTime` + 0.2) × `ExpectedGravity` of the `IsJump` node that the avatar's `Loc_Jumping`
+> script picks for the mover's state, read from the data at run time (6.0 m/s on land, 3.0 m/s
+> in water; apex 1.2 m above the jump's first step), replacing §12.4 (c) and (i). Please
+> revise §12.3 steps 1–2, §12.4 (c), (i) and the Tessera column of this table. Implementer
+> choices the spec does not settle, to confirm or replace with facts:
+> 1. The jump command itself starts `Loc_Jumping` (the input path is the §11.10 OPEN).
+> 2. `Entity_FinalElement` is read as the mover's `Entity_Element` at the start of the step
+>    (§16 Q11).
+> 3. A state's jump node is found once, when the mover is set up, by running `Loc_Jumping`
+>    with `Entity_FinalElement` (and `Entity_Element`) set to the state, on foot (nothing else
+>    running), `Movement_CannotJump` as stored (false when unset, `script-runtime.md` R27),
+>    and taking the `IsJump` node that starts with the highest chance; driven fields and
+>    scriptlet parameters apply as for animation nodes. In this install the on-foot path
+>    passes a While node (kind 50) before the `Movement_CannotJump` Switch; no spec gives
+>    While's behaviour (`script-runtime.md` §18 lists it as not implemented), so the scan
+>    starts its children, relying on this section's statement that on foot with
+>    `Movement_CannotJump` false the Switch on `Entity_FinalElement` picks the node. With that
+>    the scan finds the §11.10 values (6.0 m/s for states 5 and 6, 3.0 m/s for 1–3, none for 4).
+> 4. Without such nodes (no data, or a body whose scripts have none) Tessera keeps the
+>    earlier rule (c), (i).
+> 5. The impulse is added after gravity and the damper of Tessera's single velocity (§12.4
+>    (b)), its vertical part counting from the start of the step in the mean-speed
+>    displacement of §12.3 step 3; an upward impulse counts as a jump for (f); in the step a
+>    jump starts the float-line rule (p) is skipped (§11.6 item 4 applies "not jumping";
+>    how long `Movement_IsJumping` stays true is not stated).
+> 6. The walking flag of §11.8 item 6 starts with the entity's `Movement_MovementStyle`
+>    (Running when unset); §11.8 does not give its value before the first move key.
+> 7. The `[Input] TurnKeySpeed` preference is not read yet (`keymap.md` §12.16 Decision);
+>    the initial 150 degrees per second is used. The turn-or-strafe commands are not bound by
+>    Tessera's default keymap (`keymap.md` imports them as plain turning), so mouse steering
+>    does not turn them into strafing in the walker, although `tessera-physics` implements it.
+
 ---
 
 <a id="s13"></a>

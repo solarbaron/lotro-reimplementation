@@ -22,9 +22,10 @@ use std::time::{Duration, Instant};
 use tessera_input::controller::view_direction;
 use tessera_input::{
     BindingSpec, FixedTimestep, FlyConfig, FlyController, HeightQuery, InputMapper, IntentLatch,
-    Keymap, LookSettings, RawEvent, StandardActions, WalkConfig, WalkController, default_keymap,
-    default_registry,
+    Keymap, LookSettings, MoveIntent, RawEvent, StandardActions, WalkConfig, WalkController,
+    default_keymap, default_registry,
 };
+use tessera_physics::controller::{TURN_KEY_SPEED_DEGREES, turn_rate_on_foot};
 use tessera_render::glam::Vec3;
 use tessera_world::WorldPos;
 
@@ -495,15 +496,28 @@ impl Controls {
             && let (Some(world), Some(w)) = (world, self.physics.as_mut())
         {
             // The collision controller owns its 1/60 s accumulator and latches the jump.
-            let i = intent.sanitized();
+            // The player's input follows `collision.md` §11.8: the command values without
+            // autorun, which is run lock there (forward held until forward or backward is
+            // pressed); walk mode halves them, and the style follows the halved values.
+            let raw = a.intent(&self.mapper, false);
+            if w.run_lock() != self.autorun {
+                w.set_run_lock(self.autorun);
+            }
+            let i = MoveIntent {
+                walk: intent.walk,
+                ..raw
+            }
+            .sanitized();
             let input = MoveInput {
                 forward: i.forward,
                 strafe: i.strafe,
                 heading: None,
                 jump: i.jump,
             };
-            let turn = i.turn * self.walk.config.turn_rate;
+            // §11.9: the keyboard turns at `[Input] TurnKeySpeed`, initially 150°/s.
+            let turn = i.turn * turn_rate_on_foot(TURN_KEY_SPEED_DEGREES);
             let _ = w.frame(f64::from(dt.max(0.0)), &input, turn, i.walk, world);
+            self.autorun = w.run_lock();
             // Keep the terrain walk controller with the avatar (mode toggles, rebase).
             let (feet, yaw) = {
                 let s = w.state();

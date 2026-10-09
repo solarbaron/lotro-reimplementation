@@ -7,7 +7,7 @@
 //! | Module | Purpose |
 //! |---|---|
 //! | [`geometry`] | Terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries, cell volumes and point-in-cell, per-landblock collision sets, Tessera's bounding-volume hierarchy and capsule sweeps |
-//! | [`controller`] | The character controller: parameter layering, float height, contacts, step-up, fixed 1/60 s step, water states |
+//! | [`controller`] | The character controller: parameter layering, float height, contacts, step-up, fixed 1/60 s step, water states, the player's input (§11.8), turn rate (§11.9) and impulses (§11.10) |
 //!
 //! Layer L3 (`docs/ARCHITECTURE.md` §3.1): depends only on `tessera-formats` and
 //! `tessera-props`.
@@ -21,9 +21,9 @@ pub mod geometry;
 /// The controller's entry points: everything needed to build a [`Controller`], step it and
 /// read the result (the rest is under [`controller`]).
 pub use controller::{
-    CharacterShape, Controller, ControllerConfig, LayerConditions, LiquidWater,
-    MAX_STEPS_PER_FRAME, MoveInput, MovementPids, MovementState, MoverState, NoWater,
-    PlayerMovementRecord, STEP_SECONDS, STEPS_PER_SECOND, StepEnv, StepOutcome, StepReport,
-    WaterQuery,
+    CharacterShape, Controller, ControllerConfig, Impulse, JumpNode, JumpTable, LayerConditions,
+    LiquidWater, MAX_STEPS_PER_FRAME, MoveInput, MovementCommands, MovementPids, MovementState,
+    MovementStyle, MoverState, NoWater, PlayerInput, PlayerMovementRecord, STEP_SECONDS,
+    STEPS_PER_SECOND, StepEnv, StepOutcome, StepReport, WaterQuery,
 };
 pub use error::{PhysicsError, Result};

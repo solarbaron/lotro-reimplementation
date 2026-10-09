@@ -9,8 +9,8 @@ use std::convert::Infallible;
 
 use common::B;
 use tessera_formats::script_table::resolve::{
-    AnimationFieldPids, ClipResolver, EntityScripts, MotionInputs, MotionState, MovementStyle,
-    PropertyState, ResolveIssue, ResolveLimits, ScriptVocabulary,
+    AnimationFieldPids, ClipResolver, EntityScripts, ImpulseFieldPids, MotionInputs, MotionState,
+    MovementStyle, PropertyState, ResolveIssue, ResolveLimits, ScriptVocabulary,
 };
 use tessera_formats::script_table::{
     MAX_NODE_DEPTH, NodeData, NodeKind, PortPayload, PortType, TargetData, TargetValue,
@@ -158,6 +158,9 @@ const PID_BIG: u32 = 0x1000_0141;
 const PID_BIG_ELEMENT: u32 = 0x1000_0142;
 /// `Script_CombinationType` (an enum; `Overriding` = 1, `Additive` = 2; §8.2).
 const PID_COMBINATION: u32 = 0x1000_0143;
+const PID_FINAL_ELEMENT: u32 = 0x1000_0150;
+const PID_AIR_TIME: u32 = 0x1000_0151;
+const PID_JUMP_MOD: u32 = 0x1000_0152;
 const STARTUP: u32 = 5;
 const WALKING: u32 = 1;
 const RUNNING: u32 = 2;
@@ -174,6 +177,8 @@ fn schema(pid: u32) -> Option<PropertyType> {
         PID_DB_TABLE => PropertyType::DidRef,
         PID_STARTUP_NAMES => PropertyType::Array,
         PID_COMBINATION => PropertyType::Enum,
+        PID_FINAL_ELEMENT => PropertyType::Enum,
+        PID_JUMP_MOD | PID_AIR_TIME => PropertyType::Float,
         _ => return None,
     })
 }
@@ -2723,4 +2728,187 @@ fn the_most_recently_started_slider_node_is_the_last_deformer() {
     );
     let res = resolve_class(&m, order_vocab());
     assert_eq!(definitions(&res), vec![0x7800_0001, 0x7800_0002]);
+}
+
+// --- PhysicsImpulse nodes and one-script runs (`collision.md` §11.10) ---
+
+const JUMP_KEY: u32 = 0x1000_0250;
+const JUMP_TABLE: u32 = 0x0700_0700;
+
+fn impulse_node(
+    id: u32,
+    is_jump: bool,
+    impulse: [f32; 3],
+    air: f32,
+    g: f32,
+    driven: &[(u32, u32)],
+) -> Vec<u8> {
+    let data = B::new()
+        .u8(u8::from(is_jump))
+        .u32(2)
+        .u8(0)
+        .f32(impulse[0])
+        .f32(impulse[1])
+        .f32(impulse[2])
+        .f32(air)
+        .f32(g);
+    node(9, data, base_full(id, 1.0, driven), &[])
+}
+
+/// A table whose jump script switches on the final element: land (5, 6) and water (1–3)
+/// jump nodes; its `Startup` holds a plain impulse that a one-script run must not start.
+fn jump_world() -> HashMap<Did, Vec<u8>> {
+    let land = impulse_node(
+        11,
+        true,
+        [0.0, 0.0, 9.0],
+        0.2,
+        15.0,
+        &[(PID_AIR_TIME, PID_JUMP_MOD)],
+    );
+    let water = impulse_node(12, true, [0.0; 3], 0.2, 7.5, &[]);
+    let sw = switch(
+        10,
+        PID_FINAL_ELEMENT,
+        &[
+            switch_case(&[(PID_FINAL_ELEMENT, 5), (PID_FINAL_ELEMENT, 6)], &[land]),
+            switch_case(
+                &[
+                    (PID_FINAL_ELEMENT, 1),
+                    (PID_FINAL_ELEMENT, 2),
+                    (PID_FINAL_ELEMENT, 3),
+                ],
+                &[water],
+            ),
+        ],
+    );
+    let push = impulse_node(20, false, [1.0, 2.0, 3.0], 0.0, 0.0, &[]);
+    // The same jump under a While node (kind 50: property, no values, no names, not
+    // inverted), whose behaviour the evaluator has no rule for.
+    let inner = impulse_node(31, true, [0.0; 3], 0.3, 10.0, &[]);
+    let wrapped = node(
+        50,
+        B::new().u32(PID_FINAL_ELEMENT).u8(0).u8(0).u8(0),
+        base(30),
+        &[port(6, None, &[inner])],
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(JUMP_TABLE),
+        table(
+            2,
+            &[],
+            &[
+                (STARTUP, vec![push]),
+                (JUMP_KEY, vec![sw]),
+                (JUMP_KEY + 1, vec![wrapped]),
+            ],
+        ),
+    );
+    m
+}
+
+fn jump_vocab() -> ScriptVocabulary {
+    ScriptVocabulary {
+        jump_script: Some(JUMP_KEY),
+        final_element: Some(PID_FINAL_ELEMENT),
+        impulse: ImpulseFieldPids {
+            air_time: Some(PID_AIR_TIME),
+            ..ImpulseFieldPids::default()
+        },
+        ..vocab()
+    }
+}
+
+#[test]
+fn physics_impulse_nodes_decode() {
+    let m = jump_world();
+    let t = ScriptTable::parse(&m[&Did(JUMP_TABLE)], &schema).unwrap();
+    let push = &t.scripts[0].roots[0];
+    assert_eq!(push.kind, NodeKind::PHYSICS_IMPULSE);
+    let p = push.physics_impulse().expect("typed data");
+    assert!(!p.is_jump && !p.global_space);
+    assert_eq!((p.impulse_type, p.impulse), (2, [1.0, 2.0, 3.0]));
+    let NodeData::Switch(_) = &t.scripts[1].roots[0].data else {
+        panic!("switch");
+    };
+    let land = &t.scripts[1].roots[0].ports[0].children[0];
+    let p = land.physics_impulse().unwrap();
+    assert!(p.is_jump);
+    assert_eq!((p.air_time, p.expected_gravity), (0.2, 15.0));
+}
+
+#[test]
+fn one_script_run_lists_the_jump_node_of_each_state() {
+    let m = jump_world();
+    let mut r = ClipResolver::new(&schema, jump_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(JUMP_TABLE)),
+        ..EntityScripts::default()
+    };
+    let state = |element: u32, jump_mod: Option<f32>| {
+        let mut st = PropertyState::new();
+        st.set(PID_FINAL_ELEMENT, PropertyValue::Enum(element));
+        if let Some(v) = jump_mod {
+            st.set(PID_JUMP_MOD, PropertyValue::Float(v));
+        }
+        st
+    };
+    let land = r
+        .resolve_script(&e, JUMP_KEY, state(5, None))
+        .unwrap()
+        .impulses;
+    assert_eq!(land.len(), 1, "only the jump script runs: {land:?}");
+    assert!(land[0].node.is_jump);
+    assert_eq!(
+        (land[0].node.air_time, land[0].node.expected_gravity),
+        (0.2, 15.0)
+    );
+    assert_eq!((land[0].chance, land[0].table), (1.0, Did(JUMP_TABLE)));
+    let g = |r: &mut ClipResolver<'_, _, _, _, _>, element: u32| {
+        r.resolve_script(&e, JUMP_KEY, state(element, None))
+            .unwrap()
+            .impulses
+            .first()
+            .map(|c| c.node.expected_gravity)
+    };
+    assert_eq!(g(&mut r, 6), Some(15.0));
+    for w in [1, 2, 3] {
+        assert_eq!(g(&mut r, w), Some(7.5));
+    }
+    assert_eq!(g(&mut r, 4), None, "no jump in the air");
+    // A driven field wins over the stored value.
+    let driven = r
+        .resolve_script(&e, JUMP_KEY, state(5, Some(0.285)))
+        .unwrap();
+    assert_eq!(driven.impulses[0].node.air_time, 0.285);
+    // An unknown key runs nothing; the normal resolution sees the Startup impulse.
+    let none = r
+        .resolve_script(&e, 0x1000_0999, PropertyState::new())
+        .unwrap();
+    assert!(none.impulses.is_empty() && none.candidates.is_empty());
+    let all = r.resolve(&e, MotionState::Idle).unwrap();
+    assert_eq!(all.impulses.len(), 1);
+    assert_eq!(all.impulses[0].node.impulse, [1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn pass_through_kinds_start_their_children() {
+    let m = jump_world();
+    let e = EntityScripts {
+        class_table: Some(Did(JUMP_TABLE)),
+        ..EntityScripts::default()
+    };
+    let mut plain = ClipResolver::new(&schema, jump_vocab(), fetch(&m));
+    let r = plain
+        .resolve_script(&e, JUMP_KEY + 1, PropertyState::new())
+        .unwrap();
+    assert!(r.impulses.is_empty(), "a While starts nothing by default");
+    let mut through =
+        ClipResolver::new(&schema, jump_vocab(), fetch(&m)).with_pass_through(&[NodeKind::WHILE]);
+    let r = through
+        .resolve_script(&e, JUMP_KEY + 1, PropertyState::new())
+        .unwrap();
+    assert_eq!(r.impulses.len(), 1);
+    assert_eq!(r.impulses[0].node.air_time, 0.3);
 }

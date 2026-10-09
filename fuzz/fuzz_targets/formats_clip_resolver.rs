@@ -1119,7 +1119,22 @@ fuzz_target!(|data: &[u8]| {
     }
     let all = r.reachable(&entity).expect("fetch never fails");
     assert!(all.candidates.len() <= limits.max_candidates);
+    assert!(all.impulses.len() <= limits.max_candidates);
     assert_issues_unique(&all);
+    // One-script runs (`collision.md` §11.10, the jump script): every key the start-up
+    // run knows plus a key from the input, with the element set to each state.
+    for key in [5, 0x1000_0039, u32::from(mode)] {
+        for element in 1..=6u32 {
+            let mut st = entity.properties.clone();
+            st.set(ENTITY_ELEMENT, PropertyValue::Enum(element));
+            let one = r
+                .resolve_script(&entity, key, st)
+                .expect("fetch never fails");
+            assert!(one.nodes_visited <= limits.max_node_visits + 1);
+            assert!(one.impulses.len() <= limits.max_candidates);
+            assert_issues_unique(&one);
+        }
+    }
     // Entity chains from a game object and from an entity: errors, never panics; a chain
     // that resolves is evaluated too. The 0x…0001 starts read the raw parts above; the
     // 0x…0002 starts read the same parts behind a prologue the harness writes (the set

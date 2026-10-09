@@ -53,7 +53,10 @@ use std::sync::Arc;
 
 use tessera_assets::WorkerPool;
 use tessera_input::FixedTimestep;
-use tessera_physics::controller::{COS_PLAYER_WALKABLE, WaterQuery, WaterSample};
+use tessera_physics::controller::{
+    COS_PLAYER_WALKABLE, InputFrame, MovementCommands, MovementStyle, PlayerInput, WaterQuery,
+    WaterSample, target_velocity,
+};
 use tessera_physics::geometry::{BodySource, CollisionQuery, CollisionSet, CollisionView, Contact};
 pub use tessera_physics::{
     Controller, ControllerConfig, MAX_STEPS_PER_FRAME, MoveInput, MovementState, MoverState,
@@ -525,10 +528,14 @@ pub struct StepRecord {
     pub penetration: f32,
     /// The step was undone at the solid boundary of an absent landblock.
     pub at_boundary: bool,
-    /// The input of the step.
+    /// The controller's input of the step: the decoded pair of `collision.md` §11.8 item 5
+    /// (`forward` *y*, `strafe` *x*), the heading and the jump command.
     pub input: MoveInput,
-    /// The Walking layer was in force.
+    /// The Walking layer was in force (`Movement_MovementStyle` Walking, §11.8 item 6).
     pub walking: bool,
+    /// The length of the target velocity the step's input asked for, m/s (`collision.md`
+    /// §11.6 item 1 with the layers in force at the step's start).
+    pub target_speed: f32,
 }
 
 impl StepRecord {
@@ -583,6 +590,7 @@ pub struct PhysicsWalker {
     region: u8,
     jump: bool,
     walking: bool,
+    input: PlayerInput,
     details: bool,
     last: Option<StepRecord>,
     scratch: Vec<Contact>,
@@ -600,6 +608,7 @@ impl PhysicsWalker {
         let controller = Controller::new(
             ControllerConfig {
                 shape: setup.shape,
+                jump: setup.jump,
                 ..ControllerConfig::default()
             },
             Arc::clone(&setup.record),
@@ -616,6 +625,7 @@ impl PhysicsWalker {
             region,
             jump: false,
             walking: setup.conditions.walking,
+            input: PlayerInput::with_walking(setup.conditions.walking),
             details: false,
             last: None,
             scratch: Vec::new(),
@@ -970,23 +980,74 @@ impl PhysicsWalker {
             .any(|k| k.is_none_or(|k| world.readiness(k) == BlockReadiness::Absent))
     }
 
-    /// Runs one step with `input` when every needed set is installed; `None` (nothing
-    /// changed) otherwise. `walking` selects the Walking layer (`collision.md` §11.1).
+    /// Run lock (`collision.md` §11.8 item 2): while on, forward is held; a forward or
+    /// backward value rising to 0.5 or more turns it off.
+    #[must_use]
+    pub fn run_lock(&self) -> bool {
+        self.input.run_lock()
+    }
+
+    /// Sets run lock (the walker's autorun, `keymap.md` `autorun` → `MovementRunLock`).
+    pub fn set_run_lock(&mut self, on: bool) {
+        self.input.set_run_lock(on);
+    }
+
+    /// The player's input state (`collision.md` §11.8).
+    #[must_use]
+    pub fn player_input(&self) -> &PlayerInput {
+        &self.input
+    }
+
+    /// Runs one step when every needed set is installed; `None` (nothing changed)
+    /// otherwise. `input`'s `forward` and `strafe` are the movement **command** axes (keys:
+    /// forward − backward, strafe right − strafe left, each −1 … 1); with walk mode
+    /// `walk_mode` they become the controller's input through `collision.md` §11.8
+    /// (walk mode halves them, quantisation and decoding, the walking style that selects
+    /// the Walking layer of §11.1). Its heading and jump go to the controller as they are.
     pub fn step(
         &mut self,
         input: &MoveInput,
-        walking: bool,
+        walk_mode: bool,
+        world: &dyn CollisionWorld,
+    ) -> Option<&StepRecord> {
+        let commands = MovementCommands::from_axes(input.forward, input.strafe, 0.0);
+        self.step_commands(&commands, walk_mode, input.heading, input.jump, world)
+    }
+
+    /// [`PhysicsWalker::step`] with the movement commands themselves (turn-or-strafe and
+    /// mouse steering included, `collision.md` §11.8 item 2). The turn values are not
+    /// applied here (the caller turns the heading, §11.9).
+    pub fn step_commands(
+        &mut self,
+        commands: &MovementCommands,
+        walk_mode: bool,
+        heading: Option<f32>,
+        jump: bool,
         world: &dyn CollisionWorld,
     ) -> Option<&StepRecord> {
         if !self.pending(world).is_empty() {
             return None;
         }
+        let frame: InputFrame = self.input.update(commands, walk_mode);
+        let walking = frame.style == MovementStyle::Walking;
+        let input = MoveInput {
+            forward: frame.y,
+            strafe: frame.x,
+            heading,
+            jump,
+        };
+        let input = &input;
         if walking != self.controller.conditions().walking {
             let mut c = *self.controller.conditions();
             c.walking = walking;
             self.controller.set_conditions(c);
         }
         self.walking = walking;
+        let target_speed = {
+            let p = self.controller.params();
+            let (f, side) = target_velocity(input.strafe, input.forward, &p, 1.0);
+            f.hypot(side)
+        };
         let pins = self.step_pins(world);
         if self.check_placement {
             let view = world.step_view(&self.feet(), &pins);
@@ -1029,6 +1090,7 @@ impl PhysicsWalker {
             at_boundary,
             input: *input,
             walking,
+            target_speed,
         });
         self.last.as_ref()
     }
@@ -1089,14 +1151,47 @@ impl PhysicsWalker {
     /// most [`MAX_STEPS_PER_FRAME`]; time beyond is dropped). While a needed set is missing
     /// no step runs, the accumulated time is dropped and the latched input kept.
     /// `turn` (radians per second, counter-clockwise) turns the heading per step.
+    /// `input`'s axes are command axes and `walk_mode` is walk mode
+    /// ([`PhysicsWalker::step`]).
     pub fn frame(
         &mut self,
         dt: f64,
         input: &MoveInput,
         turn: f32,
-        walking: bool,
+        walk_mode: bool,
         world: &dyn CollisionWorld,
     ) -> FrameSteps {
+        let commands = MovementCommands::from_axes(input.forward, input.strafe, 0.0);
+        self.frame_commands(
+            dt,
+            &commands,
+            input.heading,
+            input.jump,
+            turn,
+            walk_mode,
+            world,
+        )
+    }
+
+    /// [`PhysicsWalker::frame`] with the movement commands themselves
+    /// ([`PhysicsWalker::step_commands`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn frame_commands(
+        &mut self,
+        dt: f64,
+        commands: &MovementCommands,
+        heading: Option<f32>,
+        jump: bool,
+        turn: f32,
+        walk_mode: bool,
+        world: &dyn CollisionWorld,
+    ) -> FrameSteps {
+        let input = &MoveInput {
+            forward: 0.0,
+            strafe: 0.0,
+            heading,
+            jump,
+        };
         self.jump |= input.jump;
         let ticks = self
             .timestep
@@ -1114,12 +1209,11 @@ impl PhysicsWalker {
                 } else {
                     0.0
                 };
-            let step_input = MoveInput {
-                heading: Some(heading),
-                jump: self.jump,
-                ..*input
-            };
-            if self.step(&step_input, walking, world).is_some() {
+            let jump = self.jump;
+            if self
+                .step_commands(commands, walk_mode, Some(heading), jump, world)
+                .is_some()
+            {
                 self.jump = false;
                 out.steps += 1;
             }

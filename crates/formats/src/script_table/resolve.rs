@@ -20,6 +20,9 @@
 //!    [`MotionInputs`] of a [`MotionState`] (§8.4, §11.3 step 2), runs the `Startup` script
 //!    (the `Startup` definitions of every closure table), then the start-up scripts the
 //!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s.
+//! 4. [`ClipResolver::resolve_script`] runs one script key instead (for example the
+//!    avatar's `Loc_Jumping`, `collision.md` §11.10); every resolution also lists the
+//!    PhysicsImpulse nodes that would start ([`ImpulseCandidate`]).
 //!
 //! Every script run (`Startup`, a start-up name, a Run node) runs **all** the definitions
 //! the lookup gathers (§8.2 steps 2–3, T25, T41) in the client's start order: the
@@ -48,8 +51,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::node::{
-    AnimationNode, Node, NodeData, NodeKind, PortPayload, PortType, SWITCH_ALL_BITS_SET,
-    SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
+    AnimationNode, Node, NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType,
+    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
 use super::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
@@ -110,6 +113,55 @@ pub struct MeshDeformerFieldPids {
     pub time: Option<u32>,
     /// `MeshDeformerScriptNode_UseBoneWeights`.
     pub use_bone_weights: Option<u32>,
+}
+
+/// PIDs of the PhysicsImpulse (kind 9) fields that driven properties and scriptlet
+/// parameters can set (§5.3 names with the `PhysicsImpulseScript_` prefix). Each is `None`
+/// when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImpulseFieldPids {
+    /// `PhysicsImpulseScript_IsJump`.
+    pub is_jump: Option<u32>,
+    /// `PhysicsImpulseScript_ImpulseType`.
+    pub impulse_type: Option<u32>,
+    /// `PhysicsImpulseScript_IsGlobalSpaceImpulse`.
+    pub global_space: Option<u32>,
+    /// `PhysicsImpulseScript_Impulse`.
+    pub impulse: Option<u32>,
+    /// `PhysicsImpulseScript_AirTime`.
+    pub air_time: Option<u32>,
+    /// `PhysicsImpulseScript_ExpectedGravity`.
+    pub expected_gravity: Option<u32>,
+}
+
+impl ImpulseFieldPids {
+    /// Looks the §5.3 field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            is_jump: p("PhysicsImpulseScript_IsJump"),
+            impulse_type: p("PhysicsImpulseScript_ImpulseType"),
+            global_space: p("PhysicsImpulseScript_IsGlobalSpaceImpulse"),
+            impulse: p("PhysicsImpulseScript_Impulse"),
+            air_time: p("PhysicsImpulseScript_AirTime"),
+            expected_gravity: p("PhysicsImpulseScript_ExpectedGravity"),
+        }
+    }
+
+    /// The PIDs that are defined.
+    fn all(&self) -> impl Iterator<Item = u32> {
+        [
+            self.is_jump,
+            self.impulse_type,
+            self.global_space,
+            self.impulse,
+            self.air_time,
+            self.expected_gravity,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 impl MeshDeformerFieldPids {
@@ -181,6 +233,14 @@ pub struct ScriptVocabulary {
     /// Key of `Overriding` in the `Script_CombinationType` enum; `None` reads as
     /// [`COMBINATION_OVERRIDING`], the value §8.2 step 1 states.
     pub combination_overriding: Option<u32>,
+    /// The `Loc_Jumping` script key (label of the `ScriptTable_ScriptID` enum): the
+    /// avatar's jump script (`collision.md` §11.10). `None` when the enum lacks it.
+    pub jump_script: Option<u32>,
+    /// `Entity_FinalElement`: the property the jump script switches on (`collision.md`
+    /// §11.10).
+    pub final_element: Option<u32>,
+    /// PhysicsImpulse field PIDs.
+    pub impulse: ImpulseFieldPids,
 }
 
 /// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
@@ -241,6 +301,7 @@ impl ScriptVocabulary {
         let element_no_surface = entity_element.and_then(|p| label(p, "Earth_NoSurface").ok());
         let combination_type = opt("Script_CombinationType");
         let combination_overriding = combination_type.and_then(|p| label(p, "Overriding").ok());
+        let jump_script = label(script_id, "Loc_Jumping").ok();
         Ok(Self {
             class_script_table: need("Entity_ClassScriptTable")?,
             additional_script_tables: opt("Entity_AdditionalScriptTables"),
@@ -267,6 +328,9 @@ impl ScriptVocabulary {
             mesh_deformer: MeshDeformerFieldPids::from_names(dict),
             combination_type,
             combination_overriding,
+            jump_script,
+            final_element: opt("Entity_FinalElement"),
+            impulse: ImpulseFieldPids::from_names(dict),
         })
     }
 }
@@ -1027,6 +1091,24 @@ impl ClipCandidate {
     }
 }
 
+/// A PhysicsImpulse node (kind 9) that would start, with its fields after scriptlet
+/// parameters and driven properties (the same rules as an animation's, §7.8, §8.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImpulseCandidate {
+    /// The node's fields.
+    pub node: PhysicsImpulseNode,
+    /// Product of Random shares and node probabilities above it (1 when certain; §7.4).
+    pub chance: f32,
+    /// Product of the blend weights above it.
+    pub blend_weight: f32,
+    /// The table whose script started it.
+    pub table: Did,
+    /// The scriptlet it lies in (0 for a table's own node).
+    pub scriptlet: Did,
+    /// `ScriptNode_ID` of the node.
+    pub node_id: u32,
+}
+
 /// The result of [`ClipResolver::resolve`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClipResolution {
@@ -1035,6 +1117,9 @@ pub struct ClipResolution {
     /// Every animation that would start, in the client's start order (§8.2 step 3, §7.5,
     /// §7.6; T41, T42).
     pub candidates: Vec<ClipCandidate>,
+    /// Every PhysicsImpulse node that would start, in the same order (`collision.md`
+    /// §11.10).
+    pub impulses: Vec<ImpulseCandidate>,
     /// Every bind-space deformer registered (§6.9), in the same start order: the last
     /// slider deformer is the most recently started one (`appearance.md` §6.4, A33).
     pub deformers: Vec<DeformerCandidate>,
@@ -1117,6 +1202,9 @@ pub struct ClipResolver<'s, S: ?Sized, F, B, E> {
     defaults: Option<Box<dyn Fn(u32) -> Option<PropertyValue> + Send + Sync + 's>>,
     /// Whether an unset scalar property without a default reads as 0.
     unset_as_zero: bool,
+    /// Kinds whose Default-port children start as if the node were a container
+    /// ([`ClipResolver::with_pass_through`]).
+    pass_through: Vec<NodeKind>,
     _marker: PhantomData<fn() -> (B, E)>,
 }
 
@@ -1148,6 +1236,7 @@ where
             failures: HashMap::new(),
             defaults: None,
             unset_as_zero: false,
+            pass_through: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -1188,6 +1277,17 @@ where
     #[must_use]
     pub fn unset_reads_as_zero(mut self, zero: bool) -> Self {
         self.unset_as_zero = zero;
+        self
+    }
+
+    /// Nodes of the kinds in `kinds` that have no evaluation rule here (for example While,
+    /// whose run-time behaviour `script-runtime.md` §18 leaves unimplemented) start the
+    /// children of their Default ports in stored order, instead of nothing. For scans whose
+    /// outcome a spec states for the path as a whole (the jump script of `collision.md`
+    /// §11.10); off (empty) by default. Kinds with a rule here are not affected.
+    #[must_use]
+    pub fn with_pass_through(mut self, kinds: &[NodeKind]) -> Self {
+        self.pass_through = kinds.to_vec();
         self
     }
 
@@ -1407,11 +1507,39 @@ where
         self.evaluate(entity, state, true)
     }
 
+    /// One run of script `key` on `entity` with property state `state`, instead of the
+    /// start-up scripts: every definition the lookup gathers through the closure, in the
+    /// client's start order (§8.2), evaluated as [`ClipResolver::resolve_with_state`] does.
+    /// Nothing else runs first, so a WhenRunning node sees only the scripts this run starts.
+    /// A key no table defines gives an empty result.
+    ///
+    /// # Errors
+    ///
+    /// Only [`ResolveError::Fetch`].
+    pub fn resolve_script(
+        &mut self,
+        entity: &EntityScripts,
+        key: u32,
+        state: PropertyState,
+    ) -> Result<ClipResolution, ResolveError<E>> {
+        self.evaluate_entry(entity, state, false, Entry::Script(key))
+    }
+
     fn evaluate(
         &mut self,
         entity: &EntityScripts,
         state: PropertyState,
         all_branches: bool,
+    ) -> Result<ClipResolution, ResolveError<E>> {
+        self.evaluate_entry(entity, state, all_branches, Entry::Startup)
+    }
+
+    fn evaluate_entry(
+        &mut self,
+        entity: &EntityScripts,
+        state: PropertyState,
+        all_branches: bool,
+        entry: Entry,
     ) -> Result<ClipResolution, ResolveError<E>> {
         let entity_tables = entity.tables();
         let closure = self.closure(&entity_tables)?;
@@ -1448,6 +1576,7 @@ where
             defined,
             gathered: HashMap::new(),
             out: Vec::new(),
+            impulses: Vec::new(),
             deformers: Vec::new(),
             issues: Vec::new(),
             reported: HashSet::new(),
@@ -1461,16 +1590,35 @@ where
             table: Did(0),
             all_branches,
         };
+        if let Entry::Script(key) = entry {
+            let defs = ev.gather(key);
+            if !defs.is_empty() {
+                ev.running.insert(key);
+                ev.calls.push(Call::Script(key));
+                let res = ev.start(key, &defs, Ctx::ONE);
+                ev.calls.pop();
+                res?;
+            }
+        }
         // The `Startup` script: one run of every definition the lookup gathers, so the
         // `Startup` of every closure table (§8.2 start-up), in the client's start order
         // (§8.2 step 3, T41).
-        let defs = ev.gather(startup);
+        let defs = if entry == Entry::Startup {
+            ev.gather(startup)
+        } else {
+            Arc::from(Vec::new())
+        };
         if !defs.is_empty() {
             ev.running.insert(startup);
             ev.start(startup, &defs, Ctx::ONE)?;
         }
         // Then the start-up scripts named by the table structs (§8.1, §11.3 step 3).
-        for &key in &entity.startup_scripts {
+        let startup_scripts: &[u32] = if entry == Entry::Startup {
+            &entity.startup_scripts
+        } else {
+            &[]
+        };
+        for &key in startup_scripts {
             if ev.stopped {
                 break;
             }
@@ -1493,6 +1641,7 @@ where
         }
         let Eval {
             out,
+            impulses,
             deformers,
             issues,
             visits,
@@ -1501,11 +1650,21 @@ where
         Ok(ClipResolution {
             closure,
             candidates: out,
+            impulses,
             deformers,
             issues,
             nodes_visited: visits,
         })
     }
+}
+
+/// What an evaluation runs first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    /// `Startup` and the start-up scripts (§11.3).
+    Startup,
+    /// One script key ([`ClipResolver::resolve_script`]).
+    Script(u32),
 }
 
 /// Weights carried down the evaluation.
@@ -1641,6 +1800,7 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// Gathered definitions per key, in start order (§8.2 step 4: cached per key).
     gathered: HashMap<u32, Arc<[Definition]>>,
     out: Vec<ClipCandidate>,
+    impulses: Vec<ImpulseCandidate>,
     deformers: Vec<DeformerCandidate>,
     issues: Vec<ResolveIssue>,
     /// Issues already in `issues`.
@@ -1931,11 +2091,19 @@ where
                 self.slider_deformer(n, values, *definitions);
                 Ok(())
             }
+            NodeData::PhysicsImpulse(p) => {
+                self.impulse(n, p, scope, ctx);
+                Ok(())
+            }
             // Containers whose children all start: Collection (by ascending ordinal, §7.5),
             // Sequence and Timer (by step and by time, §7.6), Label (stored order).
             NodeData::None if n.kind == NodeKind::COLLECTION => self.collection(n, scope, ctx),
             NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
             NodeData::Label { .. } => self.children(n, None, scope, ctx),
+            // Kinds the caller asked to pass through (`with_pass_through`).
+            _ if self.r.pass_through.contains(&n.kind) => {
+                self.children(n, Some(PortType::DEFAULT), scope, ctx)
+            }
             // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
@@ -2435,6 +2603,53 @@ where
         });
     }
 
+    /// A PhysicsImpulse node (`collision.md` §11.10): its fields after scriptlet parameters
+    /// (the closest invocation wins) and driven values (they win over parameters), as for an
+    /// animation.
+    fn impulse(&mut self, n: &Node, p: &PhysicsImpulseNode, scope: &Scope<'_>, ctx: Ctx) {
+        if self.impulses.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            self.stopped = true;
+            return;
+        }
+        let pids = self.r.vocab.impulse;
+        if !self.charge(n.base.driven.len()) {
+            return;
+        }
+        let mut node = *p;
+        let mut params: Vec<(u32, &PropertyValue)> = Vec::new();
+        for pid in pids.all() {
+            let mut s = Some(scope);
+            while let Some(sc) = s {
+                let entries = sc.params.map_or(0, |p| p.entries.len());
+                if !self.charge(entries.saturating_add(1)) {
+                    return;
+                }
+                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                    params.push((pid, v));
+                    break;
+                }
+                s = sc.parent;
+            }
+        }
+        for (pid, v) in params {
+            apply_impulse_field(&mut node, &pids, pid, v);
+        }
+        for &(field, source) in &n.base.driven {
+            if let Some(v) = self.state.get(source) {
+                apply_impulse_field(&mut node, &pids, field, v);
+            }
+        }
+        self.impulses.push(ImpulseCandidate {
+            node,
+            chance: ctx.chance,
+            blend_weight: ctx.weight,
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
+        });
+    }
+
     fn emit(&mut self, n: &Node, a: &AnimationNode, scope: &Scope<'_>, ctx: Ctx) {
         if self.out.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -2559,6 +2774,36 @@ impl AnimationFieldPids {
 }
 
 /// Sets the candidate field bound to `pid` from `v`, when the types fit.
+/// Applies a scriptlet parameter or driven value `v` of field `pid` to an impulse node.
+fn apply_impulse_field(
+    c: &mut PhysicsImpulseNode,
+    pids: &ImpulseFieldPids,
+    pid: u32,
+    v: &PropertyValue,
+) {
+    let is = |f: Option<u32>| f == Some(pid);
+    #[allow(clippy::cast_possible_truncation)]
+    let float = || v.as_f64().map(|x| x as f32);
+    let flag = || v.as_f64().map(|x| x != 0.0);
+    if is(pids.is_jump) {
+        c.is_jump = flag().unwrap_or(c.is_jump);
+    } else if is(pids.impulse_type) {
+        if let Some(x) = v.as_bits().and_then(|b| u32::try_from(b).ok()) {
+            c.impulse_type = x;
+        }
+    } else if is(pids.global_space) {
+        c.global_space = flag().unwrap_or(c.global_space);
+    } else if is(pids.impulse) {
+        if let PropertyValue::Vector3(d) = v {
+            c.impulse = *d;
+        }
+    } else if is(pids.air_time) {
+        c.air_time = float().unwrap_or(c.air_time);
+    } else if is(pids.expected_gravity) {
+        c.expected_gravity = float().unwrap_or(c.expected_gravity);
+    }
+}
+
 fn apply_field(c: &mut ClipCandidate, pids: &AnimationFieldPids, pid: u32, v: &PropertyValue) {
     let is = |f: Option<u32>| f == Some(pid);
     #[allow(clippy::cast_possible_truncation)]

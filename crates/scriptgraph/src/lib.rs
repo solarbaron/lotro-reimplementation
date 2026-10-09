@@ -38,7 +38,11 @@
 //!   advance, events per advance, scriptlet nesting, lookup size, compiled nodes, Timer
 //!   cycles that make no progress or crowd one advance); problems are logged
 //!   with `tracing` and listed as [`RuntimeIssue`]s. Nothing panics on malformed data.
-//! - Random draws use a seeded [`rand::rngs::SmallRng`] ([`Runtime::with_seed`]).
+//! - Random draws use one seeded [`rand::rngs::SmallRng`] per runtime ([`Runtime::with_seed`]),
+//!   like the original's single global generator (`script-runtime.md` §8, R40); a Random
+//!   node picks the whole part of *u* × the weight sum. An entity spawned with
+//!   [`EntityInit::random_seed`] (a placed figure seeded from its instance ID, the §8
+//!   OPEN-18 Decision) draws its Random picks from its own generator instead.
 
 // Unit tests reuse the integration tests' graph builders, which name the crate.
 #[cfg(test)]

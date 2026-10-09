@@ -869,6 +869,9 @@ impl WorldAudio {
                 properties: e.scripts.properties.clone(),
                 parent: None,
                 run_startup: false,
+                // Placed emitters draw from the graph's single generator (`script-runtime.md`
+                // §8, R40); the per-figure seed of OPEN-18 is for placed figures.
+                random_seed: None,
             };
             let startup: Vec<u32> = startup_key
                 .into_iter()

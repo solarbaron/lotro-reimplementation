@@ -23,6 +23,20 @@ use crate::values::{as_bool, as_f32, as_i32, as_u32, as_vec3};
 pub const FIRE_AND_FORGET_MIN_VOLUME: f32 = 0.005;
 /// Lowest pitch multiplier (`sound.md` §6.3).
 pub const PITCH_FLOOR: f32 = 0.01;
+/// The Random pick of `script-runtime.md` §8 step 3 (R40): the whole part of `u` × `sum`,
+/// limited to `sum` − 1 (a `u` of 1 or more, or not a number, cannot leave the range).
+fn random_index(u: f64, sum: u64) -> u64 {
+    #[allow(clippy::cast_precision_loss)]
+    let x = (u * sum as f64).floor();
+    if x.is_finite() && x > 0.0 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let i = x as u64;
+        i.min(sum.saturating_sub(1))
+    } else {
+        0
+    }
+}
+
 /// Shortest random-offset direction before "straight up" is used (`sound.md` §9.2 step 5).
 const DIRECTION_EPSILON: f32 = 1e-6;
 /// Longest entity parent chain followed for the internal-object mute (§9.2 step 2).
@@ -202,7 +216,18 @@ impl Runtime<'_> {
                     self.random_memory.remove(&nref);
                     None
                 } else {
-                    let r = self.rng.random_range(0..sum);
+                    // §8 (R40): the whole part of u × sum, u a uniform value between 0 and
+                    // 1 from the entity's own generator when it has one (OPEN-18
+                    // Decision), else from the runtime's single generator.
+                    let entity = self.insts.get(id).map(|i| i.entity);
+                    let u: f64 = match entity
+                        .and_then(|e| self.entities.get_mut(&e))
+                        .and_then(|e| e.rng.as_mut())
+                    {
+                        Some(rng) => rng.random(),
+                        None => self.rng.random(),
+                    };
+                    let r = random_index(u, sum);
                     let mut acc = 0u64;
                     let mut chosen = None;
                     for &i in ports.iter().filter(eligible) {
@@ -996,4 +1021,21 @@ enum Hook {
     ),
     Run(Vec<InstanceId>),
     OnStop,
+}
+
+#[cfg(test)]
+mod random_tests {
+    use super::random_index;
+
+    #[test]
+    fn random_index_is_the_whole_part_of_u_times_sum() {
+        assert_eq!(random_index(0.0, 5), 0);
+        assert_eq!(random_index(0.199, 5), 0);
+        assert_eq!(random_index(0.2, 5), 1);
+        assert_eq!(random_index(0.999_999, 5), 4);
+        assert_eq!(random_index(1.0, 5), 4);
+        assert_eq!(random_index(f64::NAN, 5), 0);
+        assert_eq!(random_index(-0.5, 5), 0);
+        assert_eq!(random_index(0.5, 1), 0);
+    }
 }

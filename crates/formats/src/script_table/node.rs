@@ -463,6 +463,41 @@ pub struct SoundNode {
     pub pitch_variance: f32,
 }
 
+/// Data of a PhysicsImpulse node (kind 9, §5.3: `PhysicsImpulseScript_` fields in stream
+/// order). What the client does with it is `collision.md` §11.10.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicsImpulseNode {
+    /// `IsJump`: a jump, whose vertical impulse comes from `air_time` and
+    /// `expected_gravity` (`Impulse` is ignored).
+    pub is_jump: bool,
+    /// `ImpulseType` (2 in every observed node).
+    pub impulse_type: u32,
+    /// `IsGlobalSpaceImpulse`: `impulse` in world axes instead of the entity's frame.
+    pub global_space: bool,
+    /// `Impulse`, m/s.
+    pub impulse: [f32; 3],
+    /// `AirTime`, s.
+    pub air_time: f32,
+    /// `ExpectedGravity`, m/s².
+    pub expected_gravity: f32,
+}
+
+impl PhysicsImpulseNode {
+    /// Stored size of the data (§5.3: bool8, u32, bool8, vec3, f32, f32).
+    pub const SIZE: usize = 26;
+
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self {
+            is_jump: r.bool8()?,
+            impulse_type: r.u32()?,
+            global_space: r.bool8()?,
+            impulse: [r.f32()?, r.f32()?, r.f32()?],
+            air_time: r.f32()?,
+            expected_gravity: r.f32()?,
+        })
+    }
+}
+
 impl Default for SoundNode {
     /// The constructor defaults (`instruments.md` §15): fire-and-forget and move-with-entity
     /// on, everything else 0 and no sound info.
@@ -643,6 +678,8 @@ pub enum NodeData {
         /// `SoundEnvironmentScript_Priority`.
         priority: i32,
     },
+    /// PhysicsImpulse (9): an impulse on the entity's mover (§5.3; `collision.md` §11.10).
+    PhysicsImpulse(PhysicsImpulseNode),
     /// SliderMeshDeformer (81): the bone sliders of a figure (§6.9).
     SliderMeshDeformer {
         /// `BoneSlider_ValueArray_String`: the slider value string as stored.
@@ -862,6 +899,15 @@ impl Node {
         }
     }
 
+    /// The impulse data, if this is a PhysicsImpulse node (kind 9).
+    #[must_use]
+    pub fn physics_impulse(&self) -> Option<&PhysicsImpulseNode> {
+        match &self.data {
+            NodeData::PhysicsImpulse(p) => Some(p),
+            _ => None,
+        }
+    }
+
     /// The sound data, if this is a Sound node (kind 48).
     #[must_use]
     pub fn sound(&self) -> Option<&SoundNode> {
@@ -985,7 +1031,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         1 => DECAL,
         3 => ENTITY_VFX,
         4 => &[U, Pv, F::PSet],
-        9 => &[B, U, B, V3, W4, W4],
         11 => &[B, Wave],
         13 => LIGHT,
         15 => &[B, B, B],
@@ -1189,6 +1234,7 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                     persistent: r.bool8()?,
                 }
             }
+            9 => NodeData::PhysicsImpulse(PhysicsImpulseNode::read(r)?),
             17 => NodeData::Random {
                 no_repeats: r.bool8()?,
                 autonomous: r.bool8()?,

@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use tessera_formats::setup::{CollisionBox, Frame};
 use tessera_physics::controller::{
-    COS_PLAYER_WALKABLE, CharacterShape, ContactClass, Controller, ControllerConfig,
-    LayerConditions, LayerKind, LiquidWater, MAX_SPEED, MOVEMENT_FIELD_NAMES, MoveInput,
-    MovementLayer, MovementParams, MovementPids, MovementState, MoverState, PlayerMovementRecord,
-    STEP_SECONDS, StepEnv, StepOutcome, Support, WaterQuery, classify, float_height,
-    is_player_instance,
+    COS_PLAYER_WALKABLE, CharacterShape, ContactClass, Controller, ControllerConfig, Impulse,
+    JumpNode, JumpTable, LayerConditions, LayerKind, LiquidWater, MAX_SPEED, MOVEMENT_FIELD_NAMES,
+    MoveInput, MovementLayer, MovementParams, MovementPids, MovementState, MoverState,
+    PlayerMovementRecord, STEP_SECONDS, StepEnv, StepOutcome, Support, WaterQuery, classify,
+    float_height, is_player_instance,
 };
 use tessera_physics::geometry::{
     BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionQuery, CollisionSet,
@@ -1116,6 +1116,199 @@ fn jump_apex_airtime_and_ceilings() {
     );
     assert!(top > 0.4);
     assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}
+
+/// The jump table of this install's avatar jump script (`collision.md` §11.10 table): on
+/// land (states 5, 6) 0.2 s and 15 m/s², in water (1–3) 0.2 s and 7.5 m/s², none in the air.
+fn jump_table() -> JumpTable {
+    let mut t = JumpTable::new();
+    for s in [
+        MovementState::EarthControlledSurface,
+        MovementState::EarthUncontrolledSurface,
+    ] {
+        t.set(s, JumpNode::new(0.2, 15.0));
+    }
+    for s in [
+        MovementState::WaterControlledSurface,
+        MovementState::WaterNoSurface,
+        MovementState::WaterUncontrolledSurface,
+    ] {
+        t.set(s, JumpNode::new(0.2, 7.5));
+    }
+    t
+}
+
+fn jumping_controller(start: [f64; 3]) -> Controller {
+    Controller::new(
+        ControllerConfig {
+            jump: Some(jump_table()),
+            ..ControllerConfig::default()
+        },
+        Arc::new(record()),
+        Arc::new(pids()),
+        LayerConditions::default(),
+        MoverState::at(start, 0.0),
+    )
+}
+
+/// `collision.md` §11.10: the jump script's impulse, 6.0 m/s on land, one step only; under
+/// the Falling layer's 15 m/s² the jump rises 6.0²/30 = 1.2 m above its first step and
+/// lands about 0.8 s later (the Inferred consequence; plus the jump's own step).
+#[test]
+fn jump_impulse_from_the_jump_script() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut c = jumping_controller([0.0, 0.0, 0.0]);
+    run(&set, &mut c, MoveInput::default(), 10);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+    let jump = MoveInput {
+        jump: true,
+        ..MoveInput::default()
+    };
+    let r = c.step(&jump, &env);
+    assert!(r.jumped);
+    assert!(
+        c.stored_impulse().is_zero(),
+        "cleared at the end of the step"
+    );
+    assert!(
+        (c.state().velocity[2] - 6.0).abs() < 1e-4,
+        "{:?}",
+        c.state()
+    );
+    let first = z(&c);
+    assert!(
+        (first - 0.1).abs() < 1e-4,
+        "first step rises 6.0 × 1/60: {first}"
+    );
+    let mut apex = first;
+    let mut air = 1;
+    // A jump command in the air (state 4) adds nothing.
+    let r = c.step(&jump, &env);
+    assert!(!r.jumped);
+    while c.state().element != MovementState::EarthControlledSurface && air < 600 {
+        c.step(&MoveInput::default(), &env);
+        apex = apex.max(z(&c));
+        air += 1;
+    }
+    let rise = apex - first;
+    assert!(
+        (rise - 1.2).abs() < 0.01,
+        "rise above the first step {rise}"
+    );
+    let airtime = air as f32 * STEP_SECONDS;
+    assert!(
+        (airtime - (0.8 + 2.0 * STEP_SECONDS)).abs() < 0.04,
+        "airtime {airtime}"
+    );
+}
+
+/// CO61 (`collision.md` §13): the player's input of §11.8 through the layering of §11.1
+/// and the target of §11.6 item 1, with the record's layers (the §10.3 values).
+#[test]
+fn co61_walk_speeds() {
+    use tessera_physics::controller::{
+        MovementCommands, MovementStyle, PlayerInput, target_velocity,
+    };
+    let rec = record();
+    let speed = |keys: MovementCommands, walk_mode: bool| {
+        let mut input = PlayerInput::new();
+        let f = input.update(&keys, walk_mode);
+        let conditions = LayerConditions {
+            walking: f.style == MovementStyle::Walking,
+            ..LayerConditions::default()
+        };
+        let p = rec.compose_movement(&conditions, MovementState::EarthControlledSurface);
+        let (tf, ts) = target_velocity(f.x, f.y, &p, 1.0);
+        (f.style, tf.hypot(ts))
+    };
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    let fwd = MovementCommands::from_axes(1.0, 0.0, 0.0);
+    let (style, v) = speed(fwd, true);
+    assert_eq!(style, MovementStyle::Walking);
+    assert!(close(v, 2.5), "{v}");
+    assert!(close(
+        speed(MovementCommands::from_axes(-1.0, 0.0, 0.0), true).1,
+        2.25
+    ));
+    assert!(close(
+        speed(MovementCommands::from_axes(0.0, 1.0, 0.0), true).1,
+        2.565
+    ));
+    let (style, v) = speed(fwd, false);
+    assert_eq!(style, MovementStyle::Running);
+    assert!(close(v, 6.5), "{v}");
+}
+
+/// CO62 on the controller: an impulse added between steps acts in the next step only; a
+/// jump adds nothing while a vertical impulse is stored.
+#[test]
+fn impulses_last_one_step() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut c = jumping_controller([0.0, 0.0, 0.0]);
+    run(&set, &mut c, MoveInput::default(), 10);
+    let node = JumpNode::new(0.2, 15.0).unwrap();
+    assert!(c.add_impulse(Impulse::Vector {
+        vector: [0.0, 0.0, 1.0],
+        global: true,
+    }));
+    assert!(
+        !c.add_impulse(Impulse::Jump(node)),
+        "a vertical impulse is stored"
+    );
+    let r = c.step(&MoveInput::default(), &env);
+    assert!(r.jumped);
+    assert!((c.state().velocity[2] - 1.0).abs() < 1e-4);
+    assert!(c.stored_impulse().is_zero());
+    // A forward impulse in the mover's frame (heading 0: +X).
+    run(&set, &mut c, MoveInput::default(), 60);
+    assert!(c.add_impulse(Impulse::Vector {
+        vector: [3.0, 0.0, 0.0],
+        global: false,
+    }));
+    c.step(&MoveInput::default(), &env);
+    let v = c.state().velocity;
+    assert!(v[0] > 2.0 && v[1].abs() < 1e-4, "{v:?}");
+}
+
+/// §11.10 table: in water the jump script gives 3.0 m/s; the earlier rule allowed no jump
+/// while swimming.
+#[test]
+fn jump_in_water_uses_the_water_node() {
+    let level = -0.5;
+    let set = water_scene(level);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut c = jumping_controller([60.0, 0.0, -4.0]);
+    c.set_conditions(LayerConditions {
+        avatar_float_height: Some(1.42),
+        ..LayerConditions::default()
+    });
+    for _ in 0..240 {
+        c.step(&MoveInput::default(), &env);
+    }
+    assert_eq!(c.state().element, MovementState::WaterNoSurface);
+    let r = c.step(
+        &MoveInput {
+            jump: true,
+            ..MoveInput::default()
+        },
+        &env,
+    );
+    assert!(r.jumped);
+    let vz = c.state().velocity[2];
+    // 3.0 m/s, less the Swimming layer's damper and buoyancy of the step.
+    assert!(vz > 1.0 && vz <= 3.0 + 20.0 * STEP_SECONDS, "vz {vz}");
+    for _ in 0..600 {
+        c.step(&MoveInput::default(), &env);
+        assert!(c.state().is_finite());
+    }
+    let feet = z(&c) as f32;
+    assert!((feet - (level - 1.42)).abs() < 0.02, "floats again: {feet}");
 }
 
 #[test]

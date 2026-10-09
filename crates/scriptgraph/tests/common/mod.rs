@@ -42,6 +42,10 @@ pub mod pid {
     pub const LIST: u32 = 0x100F;
     /// A property ID that the dictionary does not define.
     pub const UNDEFINED: u32 = 0x1010;
+    /// `ParticleScript_ParticleID`, a Particle node field that driven pairs may name.
+    pub const PARTICLE_ID: u32 = 0x1011;
+    /// A DID-valued source property (like the session-only quest-state particles).
+    pub const EFFECT_SOURCE: u32 = 0x1012;
 }
 
 /// The `Startup` key of the synthetic vocabulary.
@@ -69,6 +73,7 @@ pub fn vocab() -> RuntimeVocabulary {
         ("Script_CombinationType", pid::COMBINATION),
         ("SoundScript_SoundID", pid::SOUND_ID),
         ("RunScriptOutput_Source", pid::OUTPUT_SOURCE),
+        ("ParticleScript_ParticleID", pid::PARTICLE_ID),
     ]
     .into_iter()
     .map(|(n, p)| (n.to_string(), p))
@@ -102,6 +107,8 @@ pub fn catalog() -> SyntheticCatalog {
         (pid::OUTPUT_SOURCE, PropertyType::InstanceId),
         (pid::MONITOR, PropertyType::Enum),
         (pid::TRI, PropertyType::TriState),
+        (pid::PARTICLE_ID, PropertyType::DidRef),
+        (pid::EFFECT_SOURCE, PropertyType::DidRef),
     ] {
         c.types.insert(p, ty);
     }

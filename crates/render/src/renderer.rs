@@ -2584,6 +2584,15 @@ impl<'w> Renderer<'w> {
                             exclude: Some(&view),
                         },
                         premultiplied: pass.premultiplied,
+                        fog: frame_uniform
+                            .as_ref()
+                            .filter(|u| u.fog_color[3] != 0.0)
+                            .map(|u| crate::particles::ParticleFog {
+                                eye: [u.eye[0], u.eye[1], u.eye[2]],
+                                near: u.fog[0],
+                                inv_range: u.fog[1],
+                                color: [u.fog_color[0], u.fog_color[1], u.fog_color[2]],
+                            }),
                     };
                     if let Some(h) = crate::particles::build_hook(
                         &mut self.particle_state,

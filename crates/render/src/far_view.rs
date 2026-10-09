@@ -14,16 +14,21 @@
 //! normal-mapped template of §6.4 (normal strength, near-view mask, coverage, the sun per
 //! pixel through the normal map in the tangent frame of FD5). Render state: SRCALPHA /
 //! INVSRCALPHA, depth test "nearer or equal", depth write on, back faces culled for the grid
-//! triangles; the stitching slivers are drawn without culling (implementer note in
-//! `far-view.md` §12). No shadows reach the far terrain (§6.3).
+//! triangles (FV23); the stitching slivers are drawn without culling (Tessera Decision FD10,
+//! `far-view.md` §5.2, §12). The material colour 2000 that scales *A* and *H* is the
+//! templates' (1, 1, 1, 1), which the per-sector copy leaves unchanged (FV23), so the
+//! shader does not multiply by it. No shadows reach the far terrain (§6.3).
 //!
 //! **Distant sprites.** A sector's placed sprites are uploaded once with
 //! [`Renderer::upload_sprite_batch`] and drawn with [`Pass::distant_sprites`]: one
 //! camera-facing quad per sprite built in the vertex shader (`misc-records.md` §5.2), the
 //! atlas cell (mirrored *u* given by the caller, §5.4), the fade-in opacity of §9.3 times the
 //! far-draw fade, an alpha test, lighting by the fake directional light, ambient and
-//! hemispheric ambient through the normal atlas (§5.3), doubled, fogged (§9.6). Blended
-//! SRCALPHA / INVSRCALPHA with depth writes; callers queue batches far to near (FD4).
+//! hemispheric ambient through the normal atlas (§5.3), doubled, fogged (§9.6). The sprite
+//! material's state is data (FV24, §9.3): alpha test with the block's reference 0.1, handed
+//! to the program as 25 / 255 ([`DEFAULT_SPRITE_ALPHA_TEST`]) and kept when the faded
+//! coverage reaches it plus 0.001; blended SRCALPHA / INVSRCALPHA; depth test "nearer or
+//! equal" with depth writes; two-sided. Callers queue batches far to near (FD4).
 
 use std::fmt;
 use std::sync::Arc;
@@ -57,9 +62,34 @@ pub const MAX_SPRITES_PER_BATCH: usize = 1 << 16;
 /// Most far-terrain and sprite draws per pass (each).
 pub const MAX_FAR_DRAWS: usize = 4_096;
 
-/// The alpha-test threshold of distant sprites when the caller sets none (the sprite
-/// material's own value is not in the specs; Tessera's choice, `far-view.md` §12 note).
-pub const DEFAULT_SPRITE_ALPHA_TEST: f32 = 0.5;
+/// The alpha-test reference of distant sprites when the caller sets none: the sprite
+/// records' render-state reference 0.1 (FV24), handed to the programs as
+/// ⌊0.1 × 255⌋ / 255 = 25 / 255 (`far-view.md` §9.3, `material.md` §11.2; the material and
+/// tint alpha are 1 for sprites).
+pub const DEFAULT_SPRITE_ALPHA_TEST: f32 = 25.0 / 255.0;
+
+/// The margin the sprite program adds to the alpha-test reference (`misc-records.md` §5.3:
+/// a texel is discarded below the reference plus 0.001). `far_sprites.wgsl` uses the same
+/// value.
+pub const SPRITE_ALPHA_MARGIN: f32 = 0.001;
+
+/// Face culling of the far-terrain grid triangles: back faces (FV23, every render-state
+/// block of both templates has cull mode 2).
+pub const FAR_GRID_CULL: Option<wgpu::Face> = Some(wgpu::Face::Back);
+
+/// Face culling of the stitching triangles: none (Tessera Decision FD10; the client culls
+/// back faces, so a sliver seen from its back would leave a gap).
+pub const FAR_STITCH_CULL: Option<wgpu::Face> = None;
+
+/// Face culling of distant sprites: none, drawn two-sided (FV24).
+pub const SPRITE_CULL: Option<wgpu::Face> = None;
+
+/// Whether the sprite program keeps a texel of faded coverage `coverage` under the
+/// alpha-test reference `alpha_test` (`far-view.md` §9.3; the rule of `fs_sprite`).
+#[must_use]
+pub fn sprite_texel_kept(coverage: f32, alpha_test: f32) -> bool {
+    coverage >= alpha_test + SPRITE_ALPHA_MARGIN
+}
 
 // ---------------------------------------------------------------------------------------
 // Far terrain: public types
@@ -704,8 +734,8 @@ impl FarViewState {
                 cache: None,
             })
         };
-        let grid = make(Some(wgpu::Face::Back), "tessera-far-terrain");
-        let stitch = make(None, "tessera-far-terrain-stitch");
+        let grid = make(FAR_GRID_CULL, "tessera-far-terrain");
+        let stitch = make(FAR_STITCH_CULL, "tessera-far-terrain-stitch");
         self.terrain
             .push((ctx.format, grid.clone(), stitch.clone()));
         (layout, grid, stitch)
@@ -766,7 +796,7 @@ impl FarViewState {
                 })],
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: None,
+                cull_mode: SPRITE_CULL,
                 ..Default::default()
             },
             depth_stencil: Some(world_depth(true)),
@@ -1154,6 +1184,40 @@ mod tests {
                 panic!("{}", e.emit_to_string(&src));
             }
         }
+    }
+
+    /// FV24, §9.3: the sprite reference is 0.1 handed as 25 / 255, so a texel is kept when
+    /// its faded coverage reaches about 0.099; the shader adds the same margin.
+    #[test]
+    fn sprite_alpha_test_follows_the_records() {
+        assert!((DEFAULT_SPRITE_ALPHA_TEST - 25.0 / 255.0).abs() < 1e-7);
+        assert!((DEFAULT_SPRITE_ALPHA_TEST + SPRITE_ALPHA_MARGIN - 0.099).abs() < 1e-3);
+        assert!(sprite_texel_kept(0.1, DEFAULT_SPRITE_ALPHA_TEST));
+        assert!(sprite_texel_kept(1.0, DEFAULT_SPRITE_ALPHA_TEST));
+        assert!(!sprite_texel_kept(0.098, DEFAULT_SPRITE_ALPHA_TEST));
+        assert!(!sprite_texel_kept(0.0, DEFAULT_SPRITE_ALPHA_TEST));
+        // Tessera's former 0.5 would have cut every texel between 0.1 and 0.5.
+        assert!(sprite_texel_kept(0.3, DEFAULT_SPRITE_ALPHA_TEST));
+        assert!(
+            FAR_SPRITES_WGSL.contains("coverage < sd.params.y + 0.001"),
+            "fs_sprite must use SPRITE_ALPHA_MARGIN"
+        );
+    }
+
+    /// FV23, FV24, FD10: the grid culls back faces, stitching slivers and sprites are
+    /// two-sided; every far pipeline tests "nearer or equal" and writes depth.
+    #[test]
+    fn far_render_states() {
+        assert_eq!(FAR_GRID_CULL, Some(wgpu::Face::Back));
+        assert_eq!(FAR_STITCH_CULL, None);
+        assert_eq!(SPRITE_CULL, None);
+        let depth = world_depth(true);
+        assert_eq!(depth.depth_write_enabled, Some(true));
+        assert_eq!(depth.depth_compare, Some(crate::pipelines::DEPTH_COMPARE));
+        assert_eq!(
+            blend_target(wgpu::TextureFormat::Rgba8Unorm).blend,
+            Some(wgpu::BlendState::ALPHA_BLENDING)
+        );
     }
 
     #[test]

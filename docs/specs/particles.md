@@ -1019,6 +1019,16 @@ mass 1, the values of an emitter without keys, and no motion without a controlle
 > emitter is created. The data does not decide it (every emitter has keys, and every first key
 > has `time` 0). Suggested method: a further M4 look at the particle update's entry conditions.
 
+> **OPEN:** (implementer, 2026-10-09) When one walk (step 2) makes two controller keys current
+> at once and the first of them has controller 3, the second key's base fix (step 3: "the
+> position is first fixed with the previous controller") runs controller 3 before that
+> controller ever ran, so its point index (step 4) was never drawn. Which point does the base
+> fix use then: the particle's index from an earlier controller-3 key (0 when there was
+> none), or none at all (the base stays where it is)? The data never reaches it (every first
+> key has `time` 0 and no two controller keys share a time in practice). The run-time
+> simulation (`crates/particles`, `sim.rs`) uses the particle's index as it stands (0 when no
+> controller-3 key has run) and does not advance the key's counter for it.
+
 > **Answered (2026-10-09, BIN third pass; was OPEN, implementer, 2026-10-07):** (1) a key
 > becomes current when the age equals its `time` (step 2: "at least"; the age is raised to 0
 > first); (2) a channel that no visited key has set has no defined value in the client; the

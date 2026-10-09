@@ -2,8 +2,9 @@
 //! The interface the embedding client implements for the plugin host.
 //!
 //! Spec: `lua-plugin-api.md` §6.6 (error reporting), §10 (plugin data), §11.1
-//! (`Shell.WriteLine`, built-in commands), §12 (`Engine`); decision 0023 (the plugin
-//! `HostApi` extends the core's [`CoreHost`]).
+//! (`Shell.WriteLine`, the shell commands in the host's registry: `chat-window.md` §10
+//! item 3, decision 0020 item 6), §12 (`Engine`); decision 0023 (the plugin `HostApi`
+//! extends the core's [`CoreHost`]).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -207,15 +208,60 @@ pub trait HostApi: CoreHost {
         (13, 0)
     }
 
-    /// Whether `name` (lower case, no leading `/`) is a client built-in chat command, so
-    /// plugins cannot take it and `Shell.IsCommand` reports it (§11.1).
-    fn is_builtin_command(&self, _name: &str) -> bool {
-        false
+    /// A registry for hosts without a command dispatcher of their own: the default
+    /// command methods below forward to it. Default: `None` (plugins cannot add commands,
+    /// and `IsCommand` answers false). A client with a dispatcher overrides the command
+    /// methods instead (decision 0020 item 6).
+    fn command_table(&self) -> Option<&crate::CommandTable> {
+        None
     }
 
-    /// All client built-in command names, for `Shell.GetCommands` (§11.1).
-    fn builtin_commands(&self) -> Vec<String> {
-        Vec::new()
+    /// `Shell.AddCommand` for one name (`lua-plugin-api.md` §11.1; `chat-window.md` §7.1,
+    /// §10 item 3; decision 0020 item 6): registers `name` (one piece of the names list,
+    /// trimmed, never empty) in the host's one command registry for the command object
+    /// `handler` of the apartment `apartment` (its lower-case key). Returns whether it was
+    /// added: `false` when the registry already holds the name (compared
+    /// case-insensitively, built-in or plugin) or refuses it. The plugin host keeps no
+    /// command table of its own. Default: [`Self::command_table`].
+    fn register_command(&self, apartment: &str, name: &str, handler: u64) -> bool {
+        self.command_table()
+            .is_some_and(|t| t.register(apartment, name, handler))
+    }
+
+    /// `Shell.RemoveCommand`: removes every name `apartment` registered for `handler`;
+    /// returns how many. Default: [`Self::command_table`].
+    fn unregister_command(&self, apartment: &str, handler: u64) -> usize {
+        self.command_table()
+            .map_or(0, |t| t.unregister(apartment, handler))
+    }
+
+    /// Removes every name of `apartment` (its unload, `lua-plugin-api.md` §6.3 step 4);
+    /// returns how many. Default: [`Self::command_table`].
+    fn unregister_apartment_commands(&self, apartment: &str) -> usize {
+        self.command_table()
+            .map_or(0, |t| t.unregister_apartment(apartment))
+    }
+
+    /// `Shell.IsCommand` (`chat-window.md` §8.2): whether the registry holds `name`
+    /// exactly as given (no trimming, no prefix removal), compared case-insensitively.
+    /// Default: [`Self::command_table`].
+    fn is_command(&self, name: &str) -> bool {
+        self.command_table().is_some_and(|t| t.is_command(name))
+    }
+
+    /// `Shell.GetCommands`: every name of the registry, built-in and plugin, aliases
+    /// included. Default: [`Self::command_table`].
+    fn command_names(&self) -> Vec<String> {
+        self.command_table()
+            .map_or_else(Vec::new, crate::CommandTable::names)
+    }
+
+    /// The apartment and handler that hold the plugin command `word` (case-insensitive),
+    /// for [`crate::PluginManager::execute_command`], the line entry point of hosts
+    /// without a dispatcher. A client with a dispatcher looks the word up itself and calls
+    /// [`crate::PluginManager::run_command`]. Default: [`Self::command_table`].
+    fn command_target(&self, word: &str) -> Option<(String, u64)> {
+        self.command_table().and_then(|t| t.target(word))
     }
 
     /// Install further native packages (`Turbine.UI`, ...) into a new apartment. Called

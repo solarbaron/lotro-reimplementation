@@ -30,6 +30,8 @@ struct Rec {
 }
 
 struct Host {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     rec: Mutex<Rec>,
     data: PluginDataLocation,
     /// Hold worker jobs back instead of running them (the first-index wait test).
@@ -51,6 +53,10 @@ impl CoreHost for Host {
 }
 
 impl HostApi for Host {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.rec.lock().unwrap().lines.push(text.to_owned());
     }
@@ -90,6 +96,7 @@ impl Fx {
         let plugins = dir.path().join("Plugins");
         std::fs::create_dir_all(plugins.join("T")).unwrap();
         let host = Arc::new(Host {
+            commands: tessera_plugins::CommandTable::new(),
             rec: Mutex::new(Rec::default()),
             data: PluginDataLocation {
                 root: dir.path().join("data"),

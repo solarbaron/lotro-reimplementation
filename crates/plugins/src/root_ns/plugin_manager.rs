@@ -191,14 +191,17 @@ pub(crate) fn close_apartment(shared: &Arc<Shared>, cell: &Arc<ApartmentCell>, m
     // Step 4: native objects: shell commands, and the embedding layers' objects.
     {
         let mut state = lock(&shared.state);
-        state.commands.retain(|_, owner| *owner != ap.ctx.id);
         state
             .loaded
             .retain(|r| crate::shared::apartment_key(&r.apartment) != ap.ctx.key);
     }
+    // The apartment's names leave the host's command registry (`lua-plugin-api.md` §11.1:
+    // registrations are removed when it unloads).
+    shared.host.unregister_apartment_commands(&ap.ctx.key);
     let hooks = {
         let mut inner = lock(&ap.ctx.inner);
         inner.commands.clear();
+        inner.command_names = 0;
         std::mem::take(&mut inner.close_hooks)
     };
     for hook in hooks {

@@ -17,6 +17,8 @@ use tessera_plugins::{
 
 #[derive(Debug, Default)]
 struct Host {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     lines: Mutex<Vec<String>>,
     errors: Mutex<Vec<ScriptErrorReport>>,
 }
@@ -28,6 +30,10 @@ impl CoreHost for Host {
 }
 
 impl HostApi for Host {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.lines.lock().unwrap().push(text.to_owned());
     }

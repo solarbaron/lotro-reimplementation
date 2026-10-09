@@ -11,7 +11,7 @@ use tessera_script::api_fn;
 
 use crate::host::CHAT_TYPE_WRITE_LINE;
 use crate::object::{Builder, NativeKind};
-use crate::shared::{ApartmentCtx, ChatEvent, SharedState, lock};
+use crate::shared::{ApartmentCtx, ChatEvent, lock};
 
 /// Longest `Shell.WriteLine` text kept, in bytes; longer text is cut at a character
 /// boundary (a chat line, not a bulk transfer channel; Tessera bound).
@@ -25,23 +25,20 @@ pub(crate) const MAX_COMMANDS_PER_APARTMENT: usize = 4096;
 /// the names argument (`lua-plugin-api.md` §3.3).
 const COMMAND_NAME_COST: u64 = 64;
 
-/// Built-in command names the host always owns (`/plugins`, §6.4).
-pub(crate) const HOST_COMMANDS: [&str; 1] = ["plugins"];
-
 /// Characters trimmed from command names (§11.1).
 const NAME_TRIM: [char; 5] = [' ', '\t', '\r', '\n', '\u{0C}'];
 
-/// Lower-case command name: trimmed, without a leading `/`.
-fn normalize_command(name: &str) -> String {
-    name.trim_matches(NAME_TRIM)
-        .trim_start_matches('/')
-        .to_ascii_lowercase()
-}
-
-fn is_taken(ctx: &ApartmentCtx, state: &SharedState, name: &str) -> bool {
-    HOST_COMMANDS.contains(&name)
-        || state.commands.contains_key(name)
-        || ctx.shared().is_ok_and(|s| s.host.is_builtin_command(name))
+/// The handler id of the command object `cmd` in this apartment: the id it already has,
+/// or `None`.
+fn handler_of(lua: &Lua, ctx: &ApartmentCtx, cmd: &Table) -> Option<u64> {
+    lock(&ctx.inner)
+        .commands
+        .iter()
+        .find(|(_, k)| {
+            lua.registry_value::<Table>(k)
+                .is_ok_and(|t| t.to_pointer() == cmd.to_pointer())
+        })
+        .map(|(h, _)| *h)
 }
 
 /// Cut `text` to at most [`MAX_LINE_BYTES`] bytes at a character boundary.
@@ -100,6 +97,9 @@ pub(super) fn install(
         })?,
     )?;
 
+    // The shell commands live in the host's one command registry (`chat-window.md` §10
+    // item 3, decision 0020 item 6): the apartment keeps only its command objects, by
+    // handler id, and every name goes to the host with the apartment as its owner.
     let c = Arc::clone(ctx);
     shell.raw_set(
         "AddCommand",
@@ -110,28 +110,34 @@ pub(super) fn install(
                 let Some(cmd) = cmd else { return Ok(0u32) };
                 let shared = c.shared()?;
                 c.budget.charge(names.len() as u64)?;
+                let known = handler_of(lua, &c, &cmd);
+                let handler = known.unwrap_or_else(|| {
+                    let mut inner = lock(&c.inner);
+                    inner.next_handler = inner.next_handler.wrapping_add(1);
+                    inner.next_handler
+                });
                 let mut added = 0u32;
                 for raw in names.split([';', ':', ',']) {
                     c.budget.charge(COMMAND_NAME_COST)?;
-                    let name = normalize_command(raw);
+                    let name = raw.trim_matches(NAME_TRIM);
                     if name.is_empty() {
                         continue;
                     }
-                    if lock(&c.inner).commands.len() >= MAX_COMMANDS_PER_APARTMENT {
+                    if lock(&c.inner).command_names >= MAX_COMMANDS_PER_APARTMENT {
                         tracing::warn!(
                             apartment = %c.name,
                             "AddCommand: the apartment has {MAX_COMMANDS_PER_APARTMENT} commands; no more are added"
                         );
                         break;
                     }
-                    let mut state = lock(&shared.state);
-                    if is_taken(&c, &state, &name) {
-                        continue;
+                    if shared.host.register_command(&c.key, name, handler) {
+                        lock(&c.inner).command_names += 1;
+                        added += 1;
                     }
-                    let key = lua.create_registry_value(cmd.clone())?;
-                    state.commands.insert(name.clone(), c.id);
-                    lock(&c.inner).commands.insert(name, key);
-                    added += 1;
+                }
+                if added > 0 && known.is_none() {
+                    let key = lua.create_registry_value(cmd)?;
+                    lock(&c.inner).commands.insert(handler, key);
                 }
                 Ok(added)
             },
@@ -143,28 +149,20 @@ pub(super) fn install(
         "RemoveCommand",
         api_fn(lua, "RemoveCommand", move |lua, cmd: Option<Table>| {
             let Some(cmd) = cmd else { return Ok(0u32) };
-            let names: Vec<String> = {
-                let inner = lock(&c.inner);
-                inner
-                    .commands
-                    .iter()
-                    .filter(|(_, k)| {
-                        lua.registry_value::<Table>(k)
-                            .is_ok_and(|t| t.to_pointer() == cmd.to_pointer())
-                    })
-                    .map(|(n, _)| n.clone())
-                    .collect()
+            let Some(handler) = handler_of(lua, &c, &cmd) else {
+                return Ok(0u32);
             };
             let shared = c.shared()?;
-            let mut state = lock(&shared.state);
-            let mut inner = lock(&c.inner);
-            for n in &names {
-                state.commands.remove(n);
-                if let Some(k) = inner.commands.remove(n) {
-                    let _ = lua.remove_registry_value(k);
-                }
+            let removed = shared.host.unregister_command(&c.key, handler);
+            let key = {
+                let mut inner = lock(&c.inner);
+                inner.command_names = inner.command_names.saturating_sub(removed);
+                inner.commands.remove(&handler)
+            };
+            if let Some(k) = key {
+                let _ = lua.remove_registry_value(k);
             }
-            Ok(names.len() as u32)
+            Ok(u32::try_from(removed).unwrap_or(u32::MAX))
         })?,
     )?;
 
@@ -172,10 +170,9 @@ pub(super) fn install(
     shell.raw_set(
         "IsCommand",
         api_fn(lua, "IsCommand", move |_, name: String| {
-            let name = normalize_command(&name);
+            // `chat-window.md` §8.2: exactly as given, case-insensitive.
             let shared = c.shared()?;
-            let state = lock(&shared.state);
-            Ok(!name.is_empty() && is_taken(&c, &state, &name))
+            Ok(shared.host.is_command(&name))
         })?,
     )?;
 
@@ -184,11 +181,8 @@ pub(super) fn install(
         "GetCommands",
         api_fn(lua, "GetCommands", move |lua, ()| {
             let shared = c.shared()?;
-            let mut names: Vec<String> = shared.host.builtin_commands();
-            names.extend(HOST_COMMANDS.iter().map(|s| (*s).to_owned()));
-            names.extend(lock(&shared.state).commands.keys().cloned());
-            names.sort();
-            names.dedup();
+            let mut names = shared.host.command_names();
+            names.truncate(crate::commands::MAX_TABLE_NAMES);
             lua.create_sequence_from(names)
         })?,
     )?;
@@ -241,6 +235,5 @@ mod tests {
         assert_eq!(split_command_line("greet"), None);
         assert_eq!(split_command_line("/"), None);
         assert_eq!(split_command_line("/a\t\"q\""), Some(("a", "\"q\"")));
-        assert_eq!(normalize_command(" \t/Hi\r\n"), "hi");
     }
 }

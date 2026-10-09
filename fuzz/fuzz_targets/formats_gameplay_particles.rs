@@ -63,6 +63,12 @@ fn particle(data: &[u8]) {
         if let Some(k) = c.controller_key {
             assert!(k < e.keyframes.len());
         }
+        // Rule §10.11: without a visited key every channel has its default.
+        if c.key.is_none() {
+            assert_eq!(c.scale, [1.0, 1.0]);
+            assert_eq!(c.mass, 1.0);
+            assert_eq!(c.physics_flags, 0);
+        }
         let _ = e.atlas_uv(1.0, 0.0, f64::from(t), f32_from(data, 4));
         let a = e.fade_alpha(sys.fast_forward, f64::from(t));
         assert!(a.is_nan() || (0.0..=1.0).contains(&a));

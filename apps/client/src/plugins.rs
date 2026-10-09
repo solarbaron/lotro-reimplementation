@@ -14,11 +14,15 @@
 //! [`Plugins::pump_step7`]). The dispatcher's start-up lines and player music still run in
 //! [`Plugins::pump`].
 //!
-//! The plugins' shell commands are registered in the dispatcher's registry (decision 0020
-//! item 6) under [`PLUGIN_COMMANDS_OWNER`] before each dispatched line, so `/help` lists
-//! them and the client's built-ins keep their names.
+//! The plugin host keeps no command table (`chat-window.md` §10 item 3, decision 0020
+//! item 6): [`LogHost`] answers `Shell.AddCommand`, `RemoveCommand`, `IsCommand` and
+//! `GetCommands` from the dispatcher's registry, with the calling apartment as the owner, so
+//! `/help` lists the plugins' commands and the client's built-ins keep their names. The
+//! install's command names are registered when the dispatcher's one read of the string
+//! tables has finished or failed, and plugins load only after that (no plugin can take an
+//! original name); start-up command lines wait for it too.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -32,9 +36,12 @@ use tessera_plugins::{
 };
 
 use crate::commands::line::History;
-use crate::commands::registry::{Handler, Help, Owner};
+use crate::commands::registry::{Handler, Help, Owner, Registry};
 use crate::commands::text::CommandText;
-use crate::commands::{Context, Dispatcher, LineKind, LocalLine, Origin, Outcome, PluginCommands};
+use crate::commands::{
+    Context, Dispatcher, LineKind, LocalLine, Origin, Outcome, PluginCommands, SharedRegistry,
+    lock_registry,
+};
 use crate::panels::chat::{CHAT_ERROR, CHAT_LOG};
 use crate::walker::WalkerSession;
 
@@ -45,9 +52,6 @@ pub const SANDBOX_SERVER: &str = "sandbox";
 /// Most lines kept for [`LogHost::take_fresh`] and [`Plugins::take_lines`] (the oldest
 /// go first).
 pub const MAX_PENDING_LINES: usize = 256;
-/// The registry owner of the plugins' shell commands. The plugin host keeps one shell
-/// command table for all apartments, so the commands are registered under one owner.
-pub const PLUGIN_COMMANDS_OWNER: &str = "plugins";
 
 /// [`HostApi`] for the client: chat output goes to the log; plugin data lives under
 /// Tessera's own data folder, never inside the game install.
@@ -66,23 +70,26 @@ pub struct LogHost {
     manager_request: AtomicBool,
     /// The frame clock (seconds) for `Turbine.Engine.GetGameTime`, once the host sets it.
     game_time: Mutex<Option<f64>>,
-    /// The client's command names (lower case), for `Shell.IsCommand` and
-    /// `Shell.GetCommands` (decision 0020 item 6).
-    builtins: Mutex<BTreeSet<String>>,
+    /// The dispatcher's registry: the plugins' shell commands go here (decision 0020
+    /// item 6, `chat-window.md` §10 item 3).
+    registry: SharedRegistry,
 }
 
 /// Most chat lines queued for the chat window between two frames.
 pub const MAX_QUEUED_CHAT: usize = 1024;
 
-/// Lua registry key under which each apartment keeps the client's copy of its native
-/// `Turbine.Shell.GetCommands`, saved before any plugin code runs. Plugins can replace
-/// the global table entry but cannot reach the registry.
-pub const GET_COMMANDS_KEY: &str = "tessera.client.GetCommands";
-
 impl LogHost {
-    /// Host storing plugin data below `data_root`.
+    /// Host storing plugin data below `data_root`, with a registry of its own (tools and
+    /// tests; the client uses [`Self::with_registry`]).
     #[must_use]
     pub fn new(data_root: PathBuf) -> Self {
+        Self::with_registry(data_root, Arc::new(Mutex::new(Registry::new())))
+    }
+
+    /// Host storing plugin data below `data_root` whose shell commands go to the
+    /// dispatcher's `registry`.
+    #[must_use]
+    pub fn with_registry(data_root: PathBuf, registry: SharedRegistry) -> Self {
         Self {
             location: Mutex::new(PluginDataLocation {
                 root: data_root,
@@ -96,7 +103,7 @@ impl LogHost {
             chat: Mutex::new(VecDeque::new()),
             manager_request: AtomicBool::new(false),
             game_time: Mutex::new(None),
-            builtins: Mutex::new(BTreeSet::new()),
+            registry,
         }
     }
 
@@ -145,13 +152,6 @@ impl LogHost {
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
             .collect()
-    }
-
-    /// Sets the client's command names (stored lower case).
-    pub fn set_builtin_commands(&self, names: impl IntoIterator<Item = String>) {
-        let mut b = self.builtins.lock().unwrap_or_else(PoisonError::into_inner);
-        b.clear();
-        b.extend(names.into_iter().map(|n| n.to_lowercase()));
     }
 
     /// Set (or clear) the character in the world, which enables character-scope data.
@@ -219,38 +219,51 @@ impl HostApi for LogHost {
         }
     }
 
-    fn is_builtin_command(&self, name: &str) -> bool {
-        !name.is_empty()
-            && self
-                .builtins
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains(&name.to_lowercase())
+    fn register_command(&self, apartment: &str, name: &str, handler: u64) -> bool {
+        lock_registry(&self.registry).register(
+            name,
+            &Owner::Plugin(apartment.to_owned()),
+            &Handler::Plugin(handler),
+            &Help::Plugin,
+        ) > 0
     }
 
-    fn builtin_commands(&self) -> Vec<String> {
-        self.builtins
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .cloned()
+    fn unregister_command(&self, apartment: &str, handler: u64) -> usize {
+        lock_registry(&self.registry).unregister(
+            &Owner::Plugin(apartment.to_owned()),
+            &Handler::Plugin(handler),
+        )
+    }
+
+    fn unregister_apartment_commands(&self, apartment: &str) -> usize {
+        lock_registry(&self.registry).unregister_owner(&Owner::Plugin(apartment.to_owned()))
+    }
+
+    fn is_command(&self, name: &str) -> bool {
+        lock_registry(&self.registry).is_command(name)
+    }
+
+    fn command_names(&self) -> Vec<String> {
+        lock_registry(&self.registry)
+            .entries()
+            .map(|e| e.name.clone())
             .collect()
+    }
+
+    fn command_target(&self, word: &str) -> Option<(String, u64)> {
+        match lock_registry(&self.registry).lookup(word) {
+            Some(e) => match (&e.owner, &e.handler) {
+                (Owner::Plugin(a), Handler::Plugin(h)) => Some((a.clone(), *h)),
+                _ => None,
+            },
+            None => None,
+        }
     }
 
     fn install_natives(
         &self,
         api: &tessera_plugins::api::NativeApi<'_>,
     ) -> tessera_plugins::mlua::Result<()> {
-        // Keep the apartment's own `Turbine.Shell.GetCommands` where plugin code cannot
-        // replace it (the registry; plugins have no `debug` library), so that the panels'
-        // command list never runs plugin code ([`GET_COMMANDS_KEY`]).
-        if let Ok(shell) = api
-            .ns_root()
-            .raw_get::<tessera_plugins::mlua::Table>("Shell")
-            && let Ok(f) = shell.raw_get::<tessera_plugins::mlua::Function>("GetCommands")
-        {
-            api.lua().set_named_registry_value(GET_COMMANDS_KEY, f)?;
-        }
         let binding = *self.ui.lock().unwrap_or_else(PoisonError::into_inner);
         match binding {
             Some(b) => tessera_plugins::ui::install(api, b),
@@ -279,29 +292,22 @@ impl HostApi for LogHost {
 }
 
 /// The plugin side of the command dispatcher (decision 0020 item 6) on the plugin manager:
-/// `/plugins` and plugin commands go through the manager's own line entry point. Plugin
-/// commands the registry holds ([`PLUGIN_COMMANDS_OWNER`]) run with
-/// [`PluginCommands::run_command`]; a word registered after the last synchronisation still
-/// reaches the plugins through [`PluginCommands::run_unregistered`].
+/// `/plugins` is a client built-in that calls the manager, and the plugins' registry
+/// entries run on their apartment's command object, with the word as typed and the
+/// arguments of `chat-window.md` §7.4.
 impl PluginCommands for PluginManager {
     fn plugins_command(&mut self, arguments: &str) {
-        self.execute_command(&format!("/plugins {arguments}"));
+        PluginManager::plugins_command(self, arguments);
     }
 
-    fn run_unregistered(&mut self, word: &str, arguments: &str) -> bool {
-        if word.is_empty() || word.contains(char::is_whitespace) {
-            return false;
+    fn run_command(&mut self, apartment: &str, handler: u64, word: &str, arguments: &str) {
+        if !PluginManager::run_command(self, apartment, handler, word, arguments) {
+            tracing::debug!(word, apartment, "plugin command object is gone");
         }
-        self.execute_command(&format!("/{word} {arguments}"))
     }
 
-    fn run_command(&mut self, _apartment: &str, _handler: u64, word: &str, arguments: &str) {
-        if word.is_empty() || word.contains(char::is_whitespace) {
-            return;
-        }
-        if !self.execute_command(&format!("/{word} {arguments}")) {
-            tracing::debug!(word, "plugin command not handled");
-        }
+    fn help(&mut self, apartment: &str, handler: u64, long: bool) -> Option<String> {
+        self.command_help(apartment, handler, long)
     }
 }
 
@@ -321,7 +327,7 @@ pub trait CommandSink {
 }
 
 /// Start-up command lines (`--command`, decision 0020 item 7) and the install's command
-/// words they wait for.
+/// words they, and the plugin loads, wait for (`chat-window.md` §10 item 3).
 #[derive(Debug, Default)]
 struct Startup {
     lines: Vec<String>,
@@ -329,6 +335,10 @@ struct Startup {
     data_seen: bool,
     /// The background read of the install's command words.
     words: Option<Receiver<CommandText>>,
+    /// The read has finished or failed (or there are no archives): plugins may load.
+    words_settled: bool,
+    /// Incremented each time the dispatcher takes a new read (the chat window follows).
+    words_generation: u64,
 }
 
 /// The plugin manager plus its host, and the command dispatcher.
@@ -355,10 +365,13 @@ impl Plugins {
     /// Discover plugins in `plugins_dir` (read-only) and queue loads of the named ones; they
     /// run in [`Self::pump`] once the first plugin file index is ready.
     pub fn start(plugins_dir: &Path, data_root: PathBuf, load: &[String]) -> Self {
-        let host = Arc::new(LogHost::new(data_root));
-        // Client built-ins are registered before any plugin loads (decision 0020 item 6).
+        // Client built-ins are registered before any plugin loads (decision 0020 item 6),
+        // and the plugin host's shell commands go to the same registry.
         let dispatcher = Dispatcher::new();
-        host.set_builtin_commands(dispatcher.client_names());
+        let host = Arc::new(LogHost::with_registry(
+            data_root,
+            dispatcher.shared_registry(),
+        ));
         let host_dyn: Arc<dyn HostApi> = Arc::clone(&host) as Arc<dyn HostApi>;
         let mut config = ManagerConfig::new(plugins_dir);
         // The clean-room class helper (decision 0016), used only when the user's Plugins
@@ -389,7 +402,8 @@ impl Plugins {
             );
         }
         // Each load is a step-7 item that runs once the first plugin file index is ready
-        // (`plugin-runtime.md` §8.2, §8.4; decision 0015 §4.4), not here.
+        // (`plugin-runtime.md` §8.2, §8.4; decision 0015 §4.4) and the install's command
+        // names are in the registry (`chat-window.md` §10 item 3), not here.
         for name in load {
             if manager.queue_load(name) {
                 tracing::info!(plugin = %name, "plugin load queued");
@@ -416,7 +430,8 @@ impl Plugins {
     }
 
     /// The archives are open: reads the install's command words on a background thread;
-    /// the start-up lines run after that, in [`Self::pump`].
+    /// the start-up lines and the plugin loads run after that, in [`Self::pump`]
+    /// (`chat-window.md` §10 item 3).
     pub fn attach_data(&mut self, set: Arc<ArchiveSet>) {
         self.startup.data_seen = true;
         let (tx, rx) = mpsc::sync_channel(1);
@@ -427,36 +442,47 @@ impl Plugins {
             });
         match spawned {
             Ok(_) => self.startup.words = Some(rx),
-            Err(e) => tracing::warn!("command words: thread: {e}; Tessera's defaults"),
+            Err(e) => {
+                tracing::warn!("command words: thread: {e}; only Tessera's command names");
+                self.startup.words_settled = true;
+            }
         }
     }
 
-    /// There are no archives: the start-up lines run with Tessera's own command words.
+    /// There are no archives: the start-up lines run with Tessera's own command words and
+    /// the plugins may load.
     pub fn data_unavailable(&mut self) {
         self.startup.data_seen = true;
+        if self.startup.words.is_none() {
+            self.startup.words_settled = true;
+        }
+    }
+
+    /// Whether the install's command names are in the registry, or their read failed
+    /// (or there are no archives): only then do plugins load (`chat-window.md` §10 item 3).
+    #[must_use]
+    pub fn command_words_settled(&self) -> bool {
+        self.startup.words_settled
+    }
+
+    /// How many times the dispatcher has taken the install's command words (0: never); the
+    /// chat window re-reads [`Self::command_text`] when it changes (§10 item 11).
+    #[must_use]
+    pub fn command_text_generation(&self) -> u64 {
+        self.startup.words_generation
+    }
+
+    /// The command words in use: the dispatcher's one read of the install's tables, or
+    /// Tessera's defaults before (or without) it.
+    #[must_use]
+    pub fn command_text(&self) -> &CommandText {
+        self.dispatcher.text()
     }
 
     /// The dispatcher.
     #[must_use]
     pub fn dispatcher(&self) -> &Dispatcher {
         &self.dispatcher
-    }
-
-    /// Registers the plugins' shell commands in the dispatcher's registry (decision 0020
-    /// item 6) under [`PLUGIN_COMMANDS_OWNER`], replacing the previous set. Names the
-    /// client already holds are not taken (the first registration wins). The names come
-    /// from the apartments' native `GetCommands` ([`GET_COMMANDS_KEY`]), so no plugin code
-    /// runs.
-    fn sync_plugin_commands(&mut self) {
-        let owner = Owner::Plugin(PLUGIN_COMMANDS_OWNER.to_owned());
-        let builtins = self.host.builtin_commands();
-        let names = crate::ui_host::services::plugin_command_names(&self.manager, &builtins);
-        let registry = self.dispatcher.registry_mut();
-        registry.unregister_owner(&owner);
-        for (i, name) in names.iter().enumerate() {
-            let key = u64::try_from(i).unwrap_or(u64::MAX);
-            registry.register(name, &owner, &Handler::Plugin(key), &Help::Plugin);
-        }
     }
 
     /// Runs one line through the dispatcher in the `Say` mode (the walker's overlay, the
@@ -499,7 +525,6 @@ impl Plugins {
         session: Option<&mut dyn WalkerSession>,
         now: Instant,
     ) -> Outcome {
-        self.sync_plugin_commands();
         let mut out = Vec::new();
         let mut ctx = Context {
             now,
@@ -571,13 +596,18 @@ impl Plugins {
             match rx.try_recv() {
                 Ok(text) => {
                     self.startup.words = None;
+                    self.startup.words_settled = true;
+                    self.startup.words_generation = self.startup.words_generation.wrapping_add(1);
                     self.dispatcher.apply_text(text);
-                    self.refresh_builtins();
                 }
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => {
                     self.startup.words = None;
-                    tracing::warn!("command words: the read ended without a result");
+                    self.startup.words_settled = true;
+                    tracing::warn!(
+                        "command words: the read ended without a result; only Tessera's \
+                         command names, prefix /"
+                    );
                 }
             }
         }
@@ -590,13 +620,6 @@ impl Plugins {
                 tracing::warn!(line = %line, "start-up command unknown");
             }
         }
-    }
-
-    /// The host's command names: the dispatcher's client names (`Shell.IsCommand`,
-    /// `Shell.GetCommands`, LPA §11.1).
-    fn refresh_builtins(&self) {
-        self.host
-            .set_builtin_commands(self.dispatcher.client_names());
     }
 
     /// Routes the player-music commands (`/play`, `/playstart`, `/playlist`, `/playstop`,
@@ -639,14 +662,16 @@ impl Plugins {
     }
 
     /// Per-frame work: the install's command words and the start-up lines, player music,
-    /// then the plugins (without a game UI; with one, [`Self::pump_step7`] runs them).
+    /// then the plugins (without a game UI; with one, [`Self::pump_step7`] runs them). The
+    /// plugin manager's work, and with it every plugin load, waits until the install's
+    /// command names are registered or their read failed (`chat-window.md` §10 item 3).
     pub fn pump(&mut self) {
         self.pump_startup(Instant::now());
         if let Some(m) = &mut self.music {
             m.update();
         }
         self.flush_music();
-        if !self.ui_driven {
+        if !self.ui_driven && self.startup.words_settled {
             self.manager.pump();
         }
         self.flush_host();
@@ -685,9 +710,12 @@ impl Plugins {
         self.ui_driven
     }
 
-    /// Step 7: the deferred work, sliced by whole items, then the collector step.
+    /// Step 7: the deferred work, sliced by whole items, then the collector step (once the
+    /// install's command names are settled, as [`Self::pump`]).
     pub fn pump_step7(&mut self) {
-        self.manager.pump();
+        if self.startup.words_settled {
+            self.manager.pump();
+        }
     }
 
     /// Sets the frame clock in seconds (decision 0014 D8, "Frame clock").
@@ -699,11 +727,15 @@ impl Plugins {
             .unwrap_or_else(PoisonError::into_inner) = Some(seconds);
     }
 
-    /// The client's built-in chat command names (lower case), from the dispatcher's
-    /// registry.
+    /// Every command name of the dispatcher's registry (built-in and plugin), as
+    /// registered; read without running plugin code.
     #[must_use]
-    pub fn builtin_commands(&self) -> Vec<String> {
-        self.host.builtin_commands()
+    pub fn command_names(&self) -> Vec<String> {
+        self.dispatcher
+            .registry()
+            .entries()
+            .map(|e| e.name.clone())
+            .collect()
     }
 
     /// The client's own chat lines (type, text) posted since the last call while a game UI
@@ -782,8 +814,10 @@ mod tests {
         std::fs::write(pkg.join("Main.lua"), MAIN).expect("write");
 
         let mut p = Plugins::start(&plugins, dir.path().join("data"), &["Hello".to_owned()]);
-        // Nothing loads at start-up; the queued load runs in a pump once the index is ready.
+        // Nothing loads at start-up; the queued load runs in a pump once the index is ready
+        // and the install's command names are settled (here: no archives).
         assert!(p.manager().loaded_plugins().is_empty());
+        p.data_unavailable();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while p.manager().loaded_plugins().is_empty() && std::time::Instant::now() < deadline {
             p.pump();
@@ -831,6 +865,7 @@ Turbine.Shell.WriteLine("is " .. tostring(Turbine.Shell.IsCommand("Playlist")))
         std::fs::write(plugins.join("Test").join("Cmd.plugin"), CMD_PLUGIN).expect("write");
         std::fs::write(pkg.join("Main.lua"), CMD_MAIN).expect("write");
         let mut p = Plugins::start(&plugins, dir.path().join("data"), &["Cmd".to_owned()]);
+        p.data_unavailable();
         // The queued load runs in a pump once the plugin file index is ready.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while p.manager().loaded_plugins().is_empty() && std::time::Instant::now() < deadline {
@@ -855,6 +890,103 @@ Turbine.Shell.WriteLine("is " .. tostring(Turbine.Shell.IsCommand("Playlist")))
         );
         assert!(texts.contains(&"Available plugins:"), "{texts:?}");
         p.shutdown();
+    }
+
+    const TAKER_MAIN: &str = r#"
+local cmd = Turbine.ShellCommand()
+function cmd:Execute(name, args) Turbine.Shell.WriteLine("taker " .. name) end
+Turbine.Shell.WriteLine("taken " .. Turbine.Shell.AddCommand("aide;Talk;mine", cmd))
+Turbine.Shell.WriteLine("knows " .. tostring(Turbine.Shell.IsCommand("AIDE")))
+"#;
+
+    /// `chat-window.md` §10 item 3: plugins load only after the dispatcher's read of the
+    /// install's tables has finished, so a plugin can never take an original name; the
+    /// plugin's own names go to the dispatcher's registry with its apartment as the owner,
+    /// and leave it when the apartment unloads.
+    #[test]
+    fn plugins_load_after_the_install_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plugins = dir.path().join("Plugins");
+        let pkg = plugins.join("Test").join("Cmd");
+        std::fs::create_dir_all(&pkg).expect("mkdir");
+        std::fs::write(plugins.join("Test").join("Cmd.plugin"), CMD_PLUGIN).expect("write");
+        std::fs::write(pkg.join("Main.lua"), TAKER_MAIN).expect("write");
+        let mut p = Plugins::start(&plugins, dir.path().join("data"), &["Cmd".to_owned()]);
+        // The archives are open and the read is under way (a channel stands in for it).
+        let (tx, rx) = mpsc::sync_channel(1);
+        p.startup.data_seen = true;
+        p.startup.words = Some(rx);
+        for _ in 0..200 {
+            p.pump();
+            std::thread::yield_now();
+        }
+        assert!(!p.command_words_settled());
+        assert!(
+            p.manager().loaded_plugins().is_empty(),
+            "no plugin loads before the install's names are in"
+        );
+        assert_eq!(p.command_text_generation(), 0);
+        tx.send(CommandText {
+            help_names: Some("help;aide".into()),
+            default_word: Some("talk".into()),
+            ..CommandText::default()
+        })
+        .expect("send");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while p.manager().loaded_plugins().is_empty() && std::time::Instant::now() < deadline {
+            p.pump();
+            std::thread::yield_now();
+        }
+        assert!(p.command_words_settled());
+        assert_eq!(p.command_text_generation(), 1);
+        assert_eq!(p.command_text().default_word.as_deref(), Some("talk"));
+        let lines = p.host().chat_lines();
+        assert!(lines.iter().any(|l| l == "taken 1"), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "knows true"), "{lines:?}");
+        let names = p.command_names();
+        assert!(names.iter().any(|n| n == "mine"), "{names:?}");
+        assert!(names.iter().any(|n| n == "aide"), "{names:?}");
+        {
+            let reg = p.dispatcher().registry();
+            assert_eq!(
+                reg.lookup("AIDE").map(|e| e.owner.clone()),
+                Some(Owner::Client)
+            );
+            assert_eq!(
+                reg.lookup("talk").map(|e| e.owner.clone()),
+                Some(Owner::Client)
+            );
+            assert!(matches!(
+                reg.lookup("mine").map(|e| e.owner.clone()),
+                Some(Owner::Plugin(_))
+            ));
+        }
+        assert!(p.command("/MINE x"));
+        let mut out = Vec::new();
+        p.take_lines(&mut out);
+        assert!(out.iter().any(|l| l.text == "taker MINE"), "{out:?}");
+        p.shutdown();
+        assert!(
+            !p.dispatcher().registry().is_command("mine"),
+            "unload removes the names"
+        );
+    }
+
+    /// A failed read lets the plugins load with Tessera's names only.
+    #[test]
+    fn a_failed_read_settles_too() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut p = Plugins::start(&dir.path().join("nope"), dir.path().join("data"), &[]);
+        let (tx, rx) = mpsc::sync_channel::<CommandText>(1);
+        p.startup.data_seen = true;
+        p.startup.words = Some(rx);
+        p.pump();
+        assert!(!p.command_words_settled());
+        drop(tx);
+        p.pump();
+        assert!(p.command_words_settled());
+        assert_eq!(p.command_text_generation(), 0);
+        assert_eq!(p.dispatcher().prefix(), "/");
     }
 
     #[test]

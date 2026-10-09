@@ -276,7 +276,6 @@ struct Conn {
     character_key: Option<String>,
     known: HashMap<u64, Known>,
     validator: Option<MovementValidator>,
-    grace_until: u64,
     chat_bucket: Bucket,
     chat_rejections: SlidingWindow,
     flood_limit: usize,
@@ -369,14 +368,17 @@ impl Sim {
             stats,
         } = parts;
         let m = &config.movement;
-        // §4.5 and §8.3: the limits do not depend on the walk and run speeds; the descent
-        // credit lets slides down steep faces pass.
+        // §4.5 and §8.3: the limits do not depend on the walk and run speeds. The two
+        // relaxations of `tessera-protocol.md` §8.3 (bounded there: S ≤ 100 m, window ≤ 10 s):
+        // the descent credit lets slides down steep faces pass, the settling window lets a
+        // player settle onto its own terrain after a ground spawn or `Ground` teleport.
         let limits = MovementLimits {
             horizontal_speed: m.max_horizontal_speed,
             up_speed: m.max_up_speed,
             down_speed: m.max_down_speed,
             window: Duration::from_secs_f64(m.window_s),
             descent_credit: Some(m.slide_reserve),
+            settling_window: Duration::try_from_secs_f64(m.settle_grace_s).unwrap_or_default(),
             ..MovementLimits::default()
         };
         let mut name_index = HashMap::new();
@@ -647,7 +649,6 @@ impl Sim {
                     character_key: None,
                     known: HashMap::new(),
                     validator: None,
-                    grace_until: 0,
                     chat_bucket: Bucket::new(f64::from(cfg.bucket_capacity), cfg.refill_s, now),
                     chat_rejections: SlidingWindow::new(
                         cfg.flood_rejections,
@@ -1211,16 +1212,15 @@ impl Sim {
         };
         self.entities.insert(eid, entity);
         self.players_by_key.insert(key.clone(), eid);
-        let grace = at_ground_spawn;
-        let grace_us = micros(Duration::from_secs_f64(self.config.movement.settle_grace_s));
         let limits = self.limits;
         if let Some(c) = self.conns.get_mut(&id) {
             c.entity = Some(eid);
             c.character_key = Some(key);
             let mut v = MovementValidator::new(limits, epoch, pose, now);
-            v.set_settling(grace && grace_us > 0);
+            if at_ground_spawn {
+                v.open_settling_window();
+            }
             c.validator = Some(v);
-            c.grace_until = if grace { now + grace_us } else { 0 };
             c.last_activity = now;
             c.active_pos = pose.location;
             c.saved_pos = pose.location;
@@ -1538,7 +1538,6 @@ impl Sim {
         let new_block = interest_block(&pose.location, pose.anchor.as_ref());
         let reset =
             pose.location.region != old_region || block_distance(old_block, new_block) > r + 1;
-        let grace_us = micros(Duration::from_secs_f64(self.config.movement.settle_grace_s));
         let epoch = {
             let Some(c) = self.conns.get_mut(&id) else {
                 return;
@@ -1547,7 +1546,6 @@ impl Sim {
                 return;
             };
             let epoch = v.epoch().wrapping_add(1);
-            c.grace_until = if ground { now + grace_us } else { 0 };
             c.last_teleport = Some(now);
             c.save_at = Some(now + TELEPORT_SAVE_DELAY);
             c.active_pos = pose.location;
@@ -1562,10 +1560,12 @@ impl Sim {
         if let Some(c) = self.conns.get_mut(&id)
             && let Some(v) = c.validator.as_mut()
         {
-            // A new epoch clears the descent credit (§8.3); the grace runs by skipping the
-            // up and down tests while `grace_until` lies ahead.
-            v.set_settling(ground && grace_us > 0);
+            // A new epoch clears the descent credit and closes any settling window (§8.3); a
+            // ground destination opens a new one from this epoch's start.
             v.start_epoch(epoch, pose, now);
+            if ground {
+                v.open_settling_window();
+            }
         }
         if let Some(e) = self.entities.get_mut(&eid) {
             e.pose = pose;
@@ -1972,13 +1972,11 @@ impl Sim {
                 return;
             };
             let Some(eid) = c.entity else { return };
-            let grace = now < c.grace_until;
             let Some(v) = c.validator.as_mut() else {
                 return;
             };
-            // §8.3 settling grace: only the up and down tests are skipped; the horizontal
-            // test with its counted descent and credit applies throughout.
-            v.set_settling(grace);
+            // §8.3: inside the settling window only the up and down tests are skipped; the
+            // horizontal test with its counted descent and credit applies throughout.
             match v.check(&m, now) {
                 MoveVerdict::Accepted => {
                     self.stats.moves_accepted.fetch_add(1, Ordering::Relaxed);

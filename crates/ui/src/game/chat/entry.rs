@@ -83,8 +83,8 @@ impl ChannelModes {
 
     /// The command word the submit uses for a mode (§6.2 step 2), or empty when the table
     /// has none, so that §7.2 uses the default word. The map chat type → command word is
-    /// OPEN (Q12); Tessera's choice, recorded in the implementation note under
-    /// `chat-window.md` §6.5, is the first name of the first plain row of that chat type.
+    /// OPEN (Q12); the Tessera rule under `chat-window.md` §6.5 (confirmed in revision 3)
+    /// is the first name of the first plain row of that chat type.
     #[must_use]
     pub fn command_word(&self, chat_type: u32) -> &str {
         self.rows

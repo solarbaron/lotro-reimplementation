@@ -8,6 +8,11 @@
 //! classification (`flag`), the start and stop times, the expiry rule of `tail_value`, the
 //! node's fade settings, and the effect matrix built from the owner's frame (§6.5).
 //! [`fork_shader_key`] is the blend-mode table of `particle-runtime.md` §10.2.
+//!
+//! Tessera rule of `particle-runtime.md` §10.2 (without the fork library): a fork effect
+//! counts as active until the `tail_value` rule expires it (the library's "no live
+//! particles" exit is never taken), and since it is local-space and gets no draw instance,
+//! the release rule of §7.2 step 3 destroys it at once instead of letting it linger.
 
 use glam::{Mat4, Vec3, Vec4};
 use tessera_formats::gameplay::particles::ForkSystem;

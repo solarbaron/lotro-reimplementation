@@ -123,8 +123,8 @@ pub(crate) fn row_of(d: &PluginDescriptor, scaling: &HashMap<String, bool>) -> P
 /// Runs plugins: discovery, apartments, load and unload, commands, chat and deferred work.
 ///
 /// All plugin code runs on the caller's thread. Decision 0014 D8 places it: the client
-/// calls [`PluginManager::execute_command`] (and the UI's input routing) in frame-loop
-/// step 1, [`PluginManager::pump`] in step 7 after the UI tick, and
+/// calls [`PluginManager::run_command`] and [`PluginManager::plugins_command`] from its
+/// command dispatcher (and the UI's input routing) in frame-loop step 1, [`PluginManager::pump`] in step 7 after the UI tick, and
 /// [`PluginManager::unload_all`] once at client exit, after the last frame. Events raised
 /// by game or session state ([`PluginManager::post_chat_line`],
 /// [`PluginManager::raise_gameplay_event`], [`PluginManager::queue_logout_unload`]) are
@@ -620,47 +620,112 @@ impl PluginManager {
         }
     }
 
-    /// Handle a chat-command line typed by the user (`/name args`), in frame-loop step 1.
-    /// Returns `true` if a plugin command or `/plugins` handled it, `false` if the line is
-    /// not a plugin command (including any line that does not start with `/`).
-    pub fn execute_command(&mut self, line: &str) -> bool {
+    /// Runs the plugin command `word` with `arguments` (`lua-plugin-api.md` §11.2:
+    /// `cmd:Execute(word, arguments)`, both passed unchanged) on the command object
+    /// `handler` of the apartment `apartment`, as the host's command dispatcher found them
+    /// in its registry (decision 0020 item 6), in frame-loop step 1. Errors are reported as
+    /// plugin errors. Returns `false` when no such apartment or command object exists.
+    pub fn run_command(
+        &mut self,
+        apartment: &str,
+        handler: u64,
+        word: &str,
+        arguments: &str,
+    ) -> bool {
         let start = Instant::now();
-        let handled = self.execute_command_inner(line);
+        let ran = self.run_command_inner(apartment, handler, word, arguments);
         self.add_plugin_time(start);
-        handled
+        ran
     }
 
-    fn execute_command_inner(&mut self, line: &str) -> bool {
-        let Some((word, rest)) = split_command_line(line) else {
-            return false;
-        };
-        let name = word.to_ascii_lowercase();
-        if name == "plugins" {
-            self.plugins_command(rest);
-            return true;
-        }
-        let owner = lock(&self.shared.state).commands.get(&name).copied();
-        let Some(owner) = owner else {
-            return false;
-        };
-        let Some(cell) = lock(&self.shared.state).cell_by_id(owner) else {
+    fn run_command_inner(
+        &self,
+        apartment: &str,
+        handler: u64,
+        word: &str,
+        arguments: &str,
+    ) -> bool {
+        let Some(cell) = self.cell(apartment) else {
             return false;
         };
         let slot = lock(&cell.slot);
         let Some(ap) = slot.as_ref() else {
             return false;
         };
-        let Some(cmd) = ap.command_table(&name) else {
+        let Some(cmd) = ap.command_table(handler) else {
             return false;
         };
-        if let Err(e) = execute_shell_command(ap, &cmd, word, rest) {
+        if let Err(e) = execute_shell_command(ap, &cmd, word, arguments) {
             ap.report(None, &format!("command /{word}"), &e);
         }
         true
     }
 
-    /// `/plugins load|unload|list|refresh|manager` (§6.4). Output wording is Tessera's own.
-    fn plugins_command(&mut self, args: &str) {
+    /// A plugin command's help for the host's `/help` (`lua-plugin-api.md` §11.2):
+    /// `cmd:GetHelp()` when `long`, else `cmd:GetShortHelp()`, converted to a string and
+    /// cut to the chat-line bound. `None` when the apartment or command object is gone, the
+    /// call fails (reported) or the result is not a string or number.
+    pub fn command_help(&mut self, apartment: &str, handler: u64, long: bool) -> Option<String> {
+        let start = Instant::now();
+        let help = self.command_help_inner(apartment, handler, long);
+        self.add_plugin_time(start);
+        help
+    }
+
+    fn command_help_inner(&self, apartment: &str, handler: u64, long: bool) -> Option<String> {
+        let cell = self.cell(apartment)?;
+        let slot = lock(&cell.slot);
+        let ap = slot.as_ref()?;
+        let cmd = ap.command_table(handler)?;
+        let method = if long { "GetHelp" } else { "GetShortHelp" };
+        match ap.call_method(&cmd, method, mlua::MultiValue::new()) {
+            Ok(values) => {
+                let mut text = match values.into_iter().next()? {
+                    mlua::Value::String(s) => s.to_string_lossy(),
+                    mlua::Value::Integer(i) => i.to_string(),
+                    mlua::Value::Number(n) => n.to_string(),
+                    _ => return None,
+                };
+                crate::root_ns::truncate_line(&mut text);
+                Some(text)
+            }
+            Err(e) => {
+                ap.report(None, &format!("command help ({method})"), &e);
+                None
+            }
+        }
+    }
+
+    /// The line entry point for hosts **without** a command dispatcher (tools, tests):
+    /// handles `/plugins …` (§6.4) and a plugin command the host's registry holds
+    /// ([`HostApi::command_target`](crate::HostApi::command_target)), in frame-loop step 1.
+    /// Returns `true` if `/plugins` or a plugin command handled the line, `false` otherwise
+    /// (including any line that does not start with `/`). The client's dispatcher parses
+    /// lines itself and calls [`Self::run_command`] and [`Self::plugins_command`].
+    pub fn execute_command(&mut self, line: &str) -> bool {
+        let Some((word, rest)) = split_command_line(line) else {
+            return false;
+        };
+        if word.eq_ignore_ascii_case("plugins") {
+            self.plugins_command(rest);
+            return true;
+        }
+        let Some((apartment, handler)) = self.shared.host.command_target(word) else {
+            return false;
+        };
+        self.run_command(&apartment, handler, word, rest)
+    }
+
+    /// `/plugins load|unload|list|refresh|manager` (§6.4) with the text after the command
+    /// word: the plugin-manager command, which the client registers as a built-in of its
+    /// dispatcher (`chat-window.md` §10 item 3). Output wording is Tessera's own.
+    pub fn plugins_command(&mut self, args: &str) {
+        let start = Instant::now();
+        self.plugins_command_inner(args);
+        self.add_plugin_time(start);
+    }
+
+    fn plugins_command_inner(&mut self, args: &str) {
         let host = Arc::clone(&self.shared.host);
         let args = args.trim();
         let (sub, rest) = match args.find(char::is_whitespace) {

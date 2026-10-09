@@ -184,6 +184,12 @@ pub const ALLOWANCE_WINDOW: Duration = Duration::from_secs(1);
 pub const EXTENT_MIN: f64 = -1_280.0;
 /// Highest x or y of the movement extent, metres (§8.3).
 pub const EXTENT_MAX: f64 = 40_800.0 + 1_280.0;
+/// Longest settling window a server may apply after an epoch whose starting height it does
+/// not know (§8.3 "Server relaxations" item 1).
+pub const MAX_SETTLING_WINDOW: Duration = Duration::from_secs(10);
+/// Largest descent-credit reserve *S* a server may keep, metres (§8.3 "Server relaxations"
+/// item 2).
+pub const MAX_DESCENT_CREDIT: f64 = 100.0;
 /// Most corrections the server sends per second (§8.3).
 pub const MAX_CORRECTIONS_PER_SECOND: u32 = 4;
 /// Most `MoveInput`s per second (§8.2, §13.1).

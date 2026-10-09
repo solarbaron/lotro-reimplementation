@@ -70,7 +70,10 @@ impl Rig {
         let plugins_dir = dir.path().join("Plugins");
         std::fs::create_dir_all(&plugins_dir).expect("Plugins folder");
         setup(&plugins_dir);
-        let plugins = Plugins::start(&plugins_dir, dir.path().join("data"), &[]);
+        let mut plugins = Plugins::start(&plugins_dir, dir.path().join("data"), &[]);
+        // No install: the command words are Tessera's own, and plugins may load
+        // (`chat-window.md` §10 item 3).
+        plugins.data_unavailable();
         let options = UiOptions {
             screen: SCREEN,
             record: true,

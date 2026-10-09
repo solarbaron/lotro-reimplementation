@@ -138,7 +138,10 @@ pub struct WorldSection {
 /// The validation defaults follow the character controller (`collision.md` §12), not the
 /// walk and run speeds, which only drive gait and animation: *V*ₕ = 8.5 m/s (fastest
 /// controlled speed 6.5 m/s + 30 %), *V*ᵤ = 10 m/s, *V*_d = 120 m/s (the controller's speed
-/// cap), and a descent credit with *S* = 16 m so slides down steep faces pass (§8.3).
+/// cap). `slide_reserve` and `settle_grace_s` use the two relaxations that
+/// `tessera-protocol.md` §8.3 permits ("Server relaxations": descent credit *S* ≤ 100 m,
+/// settling window ≤ 10 s): a descent credit with *S* = 58 m so slides down steep faces pass,
+/// and a 3 s settling window after ground spawns and `Ground` teleports (§8.3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MovementSection {
     /// `WALK_SPEED` sent to each player, m/s; gait and animation only.
@@ -151,16 +154,18 @@ pub struct MovementSection {
     pub max_up_speed: f64,
     /// *V*_d, m/s (50–200, default 120).
     pub max_down_speed: f64,
-    /// *S*, the most descent credit kept for a slide's run-out, metres (0–100, default 56,
+    /// *S*, the most descent credit kept for a slide's run-out, metres (0–100, default 58,
     /// §8.3); 0 turns the credit off.
     pub slide_reserve: f64,
     /// *W*, seconds.
     pub window_s: f64,
-    /// Settling grace after ground spawns and `Ground` teleports, seconds.
+    /// Settling grace after ground spawns and `Ground` teleports, seconds (0–10, default 3).
     pub settle_grace_s: f64,
 }
 
-/// `[chat]` (§4.6).
+/// `[chat]` (§4.6). The protocol fixes the chat rate limit and flood rule
+/// (`tessera-protocol.md` §10.2), so the bucket and flood keys may only make them stricter:
+/// their ranges stop at the protocol's values, and the defaults equal them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChatSection {
     /// Say range, metres.
@@ -169,13 +174,13 @@ pub struct ChatSection {
     pub emote_range_m: f64,
     /// Yell scope.
     pub yell_scope: YellScope,
-    /// Chat token bucket capacity.
+    /// Chat token bucket capacity (1–5).
     pub bucket_capacity: u32,
-    /// Seconds per token.
+    /// Seconds per token (2.0–60).
     pub refill_s: f64,
-    /// Rejections within the window that end the session with `FLOODING`.
+    /// Rejections within the window that end the session with `FLOODING` (5–20).
     pub flood_rejections: u32,
-    /// Flood window, seconds.
+    /// Flood window, seconds (60–3,600).
     pub flood_window_s: u32,
     /// Log chat lines (debugging only).
     pub log_chat: bool,
@@ -192,7 +197,8 @@ pub struct LimitsSection {
     pub max_handshakes: u32,
     /// Inbound control messages queued per connection.
     pub control_queue: u32,
-    /// Accounted memory budget, MiB.
+    /// Accounted memory budget, MiB (83–65,536; at least `argon2_memory_kib` ×
+    /// `hash_workers` + 64 MiB).
     pub memory_budget_mib: u32,
 }
 
@@ -275,7 +281,7 @@ impl Default for Config {
                 max_horizontal_speed: 8.5,
                 max_up_speed: 10.0,
                 max_down_speed: 120.0,
-                slide_reserve: 56.0,
+                slide_reserve: 58.0,
                 window_s: 1.0,
                 settle_grace_s: 3.0,
             },
@@ -928,17 +934,19 @@ fn parse_chat(r: &mut Reader<'_, '_>, v: View<'_, '_>, c: &mut ChatSection) {
         ],
         &mut c.yell_scope,
     );
-    u32_key(r, v, "bucket_capacity", 1, 50, &mut c.bucket_capacity);
+    // The protocol's fixed limits (§10.2 there: 5 tokens, one per 2 s, 20 rejections in
+    // 60 s) bound these ranges, so a configured value is never looser (§4.6).
+    u32_key(r, v, "bucket_capacity", 1, 5, &mut c.bucket_capacity);
     float_key(
         r,
         v,
         "refill_s",
-        |f| (0.1..=60.0).contains(&f),
-        "0.1–60",
+        |f| (2.0..=60.0).contains(&f),
+        "2.0–60",
         &mut c.refill_s,
     );
-    u32_key(r, v, "flood_rejections", 5, 1_000, &mut c.flood_rejections);
-    u32_key(r, v, "flood_window_s", 10, 3_600, &mut c.flood_window_s);
+    u32_key(r, v, "flood_rejections", 5, 20, &mut c.flood_rejections);
+    u32_key(r, v, "flood_window_s", 60, 3_600, &mut c.flood_window_s);
     bool_key(r, v, "log_chat", &mut c.log_chat);
 }
 
@@ -968,7 +976,7 @@ fn parse_limits(r: &mut Reader<'_, '_>, v: View<'_, '_>, l: &mut LimitsSection) 
         r,
         v,
         "memory_budget_mib",
-        64,
+        83,
         65_536,
         &mut l.memory_budget_mib,
     );
@@ -1049,7 +1057,7 @@ mod tests {
         assert_eq!(m.max_horizontal_speed, 8.5);
         assert_eq!(m.max_up_speed, 10.0);
         assert_eq!(m.max_down_speed, 120.0);
-        assert_eq!(m.slide_reserve, 56.0);
+        assert_eq!(m.slide_reserve, 58.0);
         assert_eq!((m.window_s, m.settle_grace_s), (1.0, 3.0));
 
         let (c, f) = Config::parse(
@@ -1081,6 +1089,55 @@ tolerance = 1.25
             assert!(lines.contains(&(line, Rule::Config)), "line {line}: {f:?}");
         }
         assert_eq!(c.movement, Config::default().movement);
+    }
+
+    #[test]
+    fn chat_and_memory_ranges() {
+        // §4.6: the chat keys stop at the protocol's limits (they may only tighten them).
+        let c = Config::default().chat;
+        assert_eq!(
+            (
+                c.bucket_capacity,
+                c.refill_s,
+                c.flood_rejections,
+                c.flood_window_s
+            ),
+            (5, 2.0, 20, 60)
+        );
+        let (c, f) = Config::parse(
+            "[chat]\nbucket_capacity = 1\nrefill_s = 60.0\nflood_rejections = 5\nflood_window_s = 3600\n",
+        );
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(
+            (
+                c.chat.bucket_capacity,
+                c.chat.refill_s,
+                c.chat.flood_rejections,
+                c.chat.flood_window_s
+            ),
+            (1, 60.0, 5, 3_600)
+        );
+        let (c, f) = Config::parse(
+            "[chat]\nbucket_capacity = 6\nrefill_s = 1.9\nflood_rejections = 21\nflood_window_s = 59\n",
+        );
+        let lines: Vec<_> = f.iter().map(|f| (f.line, f.rule)).collect();
+        for line in 2..=5 {
+            assert!(lines.contains(&(line, Rule::Config)), "line {line}: {f:?}");
+        }
+        assert_eq!(c.chat, Config::default().chat);
+        // §4.7: 83 MiB is the lowest budget (it meets the constraint at the Argon2id floor).
+        let (c, f) = Config::parse(
+            "[accounts]\nargon2_memory_kib = 19456\nhash_workers = 1\n[limits]\nmemory_budget_mib = 83\n",
+        );
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(c.limits.memory_budget_mib, 83);
+        let (_, f) = Config::parse(
+            "[accounts]\nargon2_memory_kib = 19456\nhash_workers = 1\n[limits]\nmemory_budget_mib = 82\n",
+        );
+        assert!(
+            f.iter().any(|f| f.line == 5 && f.rule == Rule::Config),
+            "{f:?}"
+        );
     }
 
     #[test]

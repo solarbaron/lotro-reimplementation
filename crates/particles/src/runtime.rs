@@ -889,9 +889,8 @@ impl EffectManager {
 
     /// Places a dropped effect once in the world (§5.6 step 5): a lingering entry that was
     /// never stopped, removed when its end test passes. A never-ending dropped effect (never
-    /// in the data) runs normally and is removed 6 s after it was placed (rule §12.7, the
-    /// reading recorded in the spec's OPEN): it is not stopped first, so it shows its first
-    /// 6 s.
+    /// in the data) runs normally and is removed at the first lingering sweep more than 6 s
+    /// after it was placed (rule §12.7): it is not stopped first, so it shows its first 6 s.
     pub fn drop_effect(
         &mut self,
         did: u32,

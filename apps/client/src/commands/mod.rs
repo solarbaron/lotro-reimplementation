@@ -19,11 +19,18 @@
 //!
 //! Only channel commands build a chat message for the session; player music, help and the
 //! plugin manager never need one. No handler creates movement input (item 8).
+//!
+//! The registry is the client's one command table (`chat-window.md` §10 item 3): the
+//! built-ins are registered under their Tessera names at start-up, the install's names when
+//! the tables have been read ([`Dispatcher::apply_text`]), and the plugins' commands through
+//! the plugin host's `Shell.AddCommand` with their apartment as the owner
+//! ([`SharedRegistry`]); plugins load only after the install's names are in.
 
 pub mod line;
 pub mod registry;
 pub mod text;
 
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use tessera_net::ChatChannel;
@@ -118,19 +125,17 @@ pub enum Outcome {
     TooLong,
 }
 
-/// The plugin side of the dispatcher (decision 0020 item 6). Until M5 connects
-/// `tessera-script` to the registry, the client implements it on the plugin manager with
-/// two transitional calls ([`Self::plugins_command`], [`Self::run_unregistered`]).
+/// The plugin side of the dispatcher (decision 0020 item 6; `chat-window.md` §10 item 3):
+/// the plugin manager's entry points the built-in `plugins` command and the plugins'
+/// registry entries call. The plugin host keeps no command table: its `Shell.AddCommand`,
+/// `RemoveCommand` and `IsCommand` reach the dispatcher's registry ([`SharedRegistry`]).
 pub trait PluginCommands {
-    /// `/plugins <arguments>` (`lua-plugin-api.md` §6.4).
+    /// `/plugins <arguments>` (`lua-plugin-api.md` §6.4): the plugin-manager command, a
+    /// client built-in that calls the plugin manager.
     fn plugins_command(&mut self, arguments: &str);
-    /// Transitional (until M5): runs a word the client registry does not hold through the
-    /// plugin manager's own command table; `false` when no plugin has it.
-    fn run_unregistered(&mut self, word: &str, arguments: &str) -> bool;
-    /// Runs a plugin command of the registry (M5 `run_command(apartment, word, args)`).
-    fn run_command(&mut self, apartment: &str, handler: u64, word: &str, arguments: &str) {
-        let _ = (apartment, handler, word, arguments);
-    }
+    /// Runs a plugin command of the registry: `cmd:Execute(word, arguments)` on the
+    /// command object `handler` of `apartment` (`lua-plugin-api.md` §11.2, §9).
+    fn run_command(&mut self, apartment: &str, handler: u64, word: &str, arguments: &str);
     /// A plugin command's help: `GetHelp` when `long`, else `GetShortHelp`.
     fn help(&mut self, apartment: &str, handler: u64, long: bool) -> Option<String> {
         let _ = (apartment, handler, long);
@@ -163,10 +168,21 @@ impl std::fmt::Debug for Context<'_> {
     }
 }
 
+/// The dispatcher's registry, shared with the plugin host's [`tessera_plugins::HostApi`]
+/// (decision 0020 item 6): plugin code registers into it while the dispatcher is not
+/// running, and the dispatcher never holds its lock while plugin code runs.
+pub type SharedRegistry = Arc<Mutex<Registry>>;
+
+/// Locks a [`SharedRegistry`] (a poisoned lock is used as it is: the registry stays
+/// consistent after every single operation).
+pub fn lock_registry(r: &SharedRegistry) -> MutexGuard<'_, Registry> {
+    r.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The command dispatcher (module docs).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Dispatcher {
-    registry: Registry,
+    registry: SharedRegistry,
     text: CommandText,
     history: History,
 }
@@ -304,18 +320,22 @@ impl Dispatcher {
             registry.register(name, &Owner::Client, &Handler::Builtin(b), &help);
         }
         Self {
-            registry,
+            registry: Arc::new(Mutex::new(registry)),
             text: CommandText::default(),
             history: History::new(),
         }
     }
 
     /// Takes the install's words (`chat-window.md` §10 items 3, 4, 6): the prefix, the
-    /// unknown-command line, and the original names of help, the plugin manager and the
-    /// channels, registered for the same built-ins (a name already held is skipped).
+    /// unknown-command line, and the original names of help, the plugin manager, the
+    /// `CommandSetup` default channel word (a `Say` word, so plain text always finds its
+    /// command; in this install the same name as the `Say` row's, CW42, and then a no-op)
+    /// and the 26 fixed mode-table rows, registered for the same built-ins (a name already
+    /// held is skipped, §7.1). Call before any plugin loads (§10 item 3).
     pub fn apply_text(&mut self, text: CommandText) {
         let client = Owner::Client;
         let mut added = 0;
+        let mut reg = lock_registry(&self.registry);
         let mut add = |reg: &mut Registry, names: &str, b: Builtin| {
             let help = match b {
                 Builtin::Channel(ch) => channel_help(ch),
@@ -327,31 +347,32 @@ impl Dispatcher {
             added += reg.register(names, &client, &Handler::Builtin(b), &help);
         };
         if let Some(n) = &text.help_names {
-            add(&mut self.registry, n, Builtin::Help);
+            add(&mut reg, n, Builtin::Help);
         }
         if let Some(n) = &text.plugins_names {
-            add(&mut self.registry, n, Builtin::Plugins);
+            add(&mut reg, n, Builtin::Plugins);
         }
         // The default channel word runs plain text (§7.2 step 5), so it must be registered.
         if let Some(w) = &text.default_word {
-            add(&mut self.registry, w, Builtin::Channel(Channel::Say));
+            add(&mut reg, w, Builtin::Channel(Channel::Say));
         }
-        for (names, ch) in &text.channel_words {
-            add(&mut self.registry, names, Builtin::Channel(*ch));
+        for m in &text.modes {
+            add(&mut reg, &m.names, Builtin::Channel(m.channel));
         }
+        drop(reg);
         tracing::info!(added, prefix = %text.prefix, "install command names registered");
         self.text = text;
     }
 
-    /// The registry.
-    #[must_use]
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    /// The registry (locked for the guard's lifetime; never hold it across plugin code).
+    pub fn registry(&self) -> MutexGuard<'_, Registry> {
+        lock_registry(&self.registry)
     }
 
-    /// The registry, for plugin registrations (M5, decision 0020 item 6).
-    pub fn registry_mut(&mut self) -> &mut Registry {
-        &mut self.registry
+    /// The registry for the plugin host (decision 0020 item 6).
+    #[must_use]
+    pub fn shared_registry(&self) -> SharedRegistry {
+        Arc::clone(&self.registry)
     }
 
     /// The command prefix.
@@ -440,13 +461,9 @@ impl Dispatcher {
                 return Outcome::TooLong;
             }
         };
-        let Some(entry) = self.registry.lookup(&inv.word).cloned() else {
-            if !inv.word.contains(line::is_whitespace)
-                && let Some(p) = ctx.plugins.as_deref_mut()
-                && p.run_unregistered(&inv.word, &inv.arguments)
-            {
-                return Outcome::Ran;
-            }
+        // The guard is a temporary: the lock is released before any handler runs.
+        let entry = self.registry().lookup(&inv.word).cloned();
+        let Some(entry) = entry else {
             tracing::debug!(word = %inv.word, "unknown command");
             out.push(LocalLine::error(self.unknown_line()));
             return Outcome::Unknown;
@@ -530,10 +547,10 @@ impl Dispatcher {
     }
 
     /// The help groups: entries of one owner and handler, names sorted, groups ordered by
-    /// their first name.
-    fn groups(&self) -> Vec<Vec<&Entry>> {
+    /// their first name (of a snapshot, so that plugin help runs without the lock).
+    fn groups(entries: &[Entry]) -> Vec<Vec<&Entry>> {
         let mut groups: Vec<Vec<&Entry>> = Vec::new();
-        for e in self.registry.entries() {
+        for e in entries {
             match groups.iter_mut().find(|g| {
                 g.first()
                     .is_some_and(|f| f.owner == e.owner && f.handler == e.handler)
@@ -560,7 +577,8 @@ impl Dispatcher {
             out.push(LocalLine::log(format!(
                 "Commands (type {p}help <command> for one command's help):"
             )));
-            for g in self.groups() {
+            let entries: Vec<Entry> = self.registry().entries().cloned().collect();
+            for g in Self::groups(&entries) {
                 let Some(first) = g.first() else { continue };
                 let names: Vec<String> = g.iter().map(|e| format!("{p}{}", e.name)).collect();
                 let short = match &first.help {
@@ -576,7 +594,8 @@ impl Dispatcher {
             return;
         };
         let name = arg.trim_start_matches(|c: char| p.contains(c));
-        match self.registry.lookup(name) {
+        let entry = self.registry().lookup(name).cloned();
+        match entry.as_ref() {
             Some(e) => {
                 let long = match &e.help {
                     Help::Text { long, .. } => Some(long.clone()),
@@ -588,17 +607,6 @@ impl Dispatcher {
             }
             None => out.push(LocalLine::error(format!("There is no command {p}{name}."))),
         }
-    }
-
-    /// Every name the client owns (lower case), for the plugin host's `IsCommand` and
-    /// `GetCommands` until M5 (`HostApi::is_builtin_command`, `builtin_commands`).
-    #[must_use]
-    pub fn client_names(&self) -> Vec<String> {
-        self.registry
-            .entries()
-            .filter(|e| e.owner == Owner::Client)
-            .map(|e| registry::key(&e.name))
-            .collect()
     }
 }
 
@@ -616,6 +624,7 @@ impl EntryHistory for History {
 
 #[cfg(test)]
 mod tests {
+    use super::text::ModeText;
     use super::*;
     use crate::audio::player_music::MusicConfig;
     use crate::net::PlayerLocation;
@@ -663,22 +672,38 @@ mod tests {
     #[derive(Default)]
     struct FakePlugins {
         plugins: Vec<String>,
-        known: Vec<String>,
-        ran: Vec<(String, String)>,
+        ran: Vec<(String, u64, String, String)>,
     }
 
     impl PluginCommands for FakePlugins {
         fn plugins_command(&mut self, arguments: &str) {
             self.plugins.push(arguments.to_owned());
         }
-        fn run_unregistered(&mut self, word: &str, arguments: &str) -> bool {
-            if self.known.iter().any(|k| k.eq_ignore_ascii_case(word)) {
-                self.ran.push((word.to_owned(), arguments.to_owned()));
-                true
-            } else {
-                false
-            }
+        fn run_command(&mut self, apartment: &str, handler: u64, word: &str, arguments: &str) {
+            self.ran.push((
+                apartment.to_owned(),
+                handler,
+                word.to_owned(),
+                arguments.to_owned(),
+            ));
         }
+        fn help(&mut self, apartment: &str, handler: u64, long: bool) -> Option<String> {
+            Some(format!(
+                "{apartment}#{handler} {}",
+                if long { "long" } else { "short" }
+            ))
+        }
+    }
+
+    fn modes(rows: &[(&str, Channel)]) -> Vec<ModeText> {
+        rows.iter()
+            .map(|(names, channel)| ModeText {
+                names: (*names).to_owned(),
+                chat_type: 5,
+                kind: tessera_ui::game::chat::ModeKind::Plain,
+                channel: *channel,
+            })
+            .collect()
     }
 
     fn run(
@@ -819,7 +844,7 @@ mod tests {
         let p = Owner::Plugin("ap".into());
         for name in ["play", "HELP", "say", "plugins"] {
             assert_eq!(
-                d.registry_mut()
+                d.registry()
                     .register(name, &p, &Handler::Plugin(1), &Help::Plugin),
                 0,
                 "{name}"
@@ -831,11 +856,12 @@ mod tests {
             unknown_line: Some("Nope.".into()),
             help_names: Some("help; aide, hilfe".into()),
             plugins_names: Some("plugins;plugin".into()),
-            channel_words: vec![
-                ("say;s".into(), Channel::Say),
-                ("fellowship;f".into(), Channel::Unavailable),
-                ("reply;r".into(), Channel::TellReply),
-            ],
+            marker: None,
+            modes: modes(&[
+                ("say;s", Channel::Say),
+                ("fellowship;f", Channel::Unavailable),
+                ("reply;r", Channel::TellReply),
+            ]),
         });
         assert!(d.registry().is_command("AIDE"));
         assert!(d.registry().is_command("plugin"));
@@ -883,13 +909,21 @@ mod tests {
         assert_eq!(out[0].kind, LineKind::Error);
     }
 
+    /// `chat-window.md` §10 item 3, decision 0020 item 6: plugin commands live in the
+    /// dispatcher's registry with their apartment as the owner; the dispatcher runs them
+    /// through `run_command` with the word as typed and the §7.4 arguments; `/plugins` is
+    /// a client built-in that calls the plugin manager; a word nobody registered is the
+    /// unknown-command line (there is no second table to fall back to).
     #[test]
     fn plugins_bridge() {
         let mut d = Dispatcher::new();
-        let mut fp = FakePlugins {
-            known: vec!["hello".into()],
-            ..FakePlugins::default()
-        };
+        let owner = Owner::Plugin("ap".into());
+        assert_eq!(
+            d.registry()
+                .register("hello;hi", &owner, &Handler::Plugin(7), &Help::Plugin),
+            2
+        );
+        let mut fp = FakePlugins::default();
         let mut out = Vec::new();
         let mut ctx = Context {
             now: Instant::now(),
@@ -908,8 +942,23 @@ mod tests {
         );
         assert_eq!(d.submit("/other", &mut ctx, &mut out), Outcome::Unknown);
         assert_eq!(out.len(), 1);
+        // Plugin help comes from the plugin when `/help` runs.
+        out.clear();
+        assert_eq!(d.submit("/help hi", &mut ctx, &mut out), Outcome::Ran);
+        assert_eq!(out, [LocalLine::log("ap#7 long")]);
         assert_eq!(fp.plugins, ["list"]);
-        assert_eq!(fp.ran, [("Hello".to_owned(), "a \"b c\"".to_owned())]);
+        assert_eq!(
+            fp.ran,
+            [(
+                "ap".to_owned(),
+                7,
+                "Hello".to_owned(),
+                "a \"b c\"".to_owned()
+            )]
+        );
+        // The apartment's unload removes its names.
+        assert_eq!(d.registry().unregister_owner(&owner), 2);
+        assert!(!d.registry().is_command("hello"));
         // No plugin host: the plugin manager command says so.
         let (_, out) = run(&mut d, "/plugins list", None, None, Origin::Chat);
         assert_eq!(out, [LocalLine::error(NO_PLUGINS)]);
@@ -955,11 +1004,12 @@ mod tests {
             unknown_line: None,
             help_names: None,
             plugins_names: None,
-            channel_words: vec![
-                ("s;say".into(), Channel::Say),
-                ("t;tell".into(), Channel::Tell),
-                ("f".into(), Channel::Unavailable),
-            ],
+            marker: None,
+            modes: modes(&[
+                ("s;say", Channel::Say),
+                ("t;tell", Channel::Tell),
+                ("f", Channel::Unavailable),
+            ]),
         });
         let mut s = Recorder {
             remote: true,

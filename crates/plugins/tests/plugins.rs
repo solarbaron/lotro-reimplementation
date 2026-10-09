@@ -23,6 +23,8 @@ struct Recorded {
 
 #[derive(Debug)]
 struct TestHost {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     rec: Mutex<Recorded>,
     data: PluginDataLocation,
     /// Install a small synthetic `Turbine.UI` (extension-point test).
@@ -71,6 +73,10 @@ impl CoreHost for TestHost {
 }
 
 impl HostApi for TestHost {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.rec.lock().unwrap().lines.push(text.to_owned());
     }
@@ -123,6 +129,7 @@ impl Fixture {
         let data_root = dir.path().join("data/plugindata");
         std::fs::create_dir_all(&plugins).unwrap();
         let host = Arc::new(TestHost {
+            commands: tessera_plugins::CommandTable::new(),
             rec: Mutex::new(Recorded::default()),
             data: PluginDataLocation {
                 root: data_root.clone(),
@@ -540,8 +547,9 @@ function cmd:Execute(name, args)
     Turbine.Shell.WriteLine("exec " .. name .. " [" .. tostring(args) .. "]")
 end
 Turbine.Shell.WriteLine("added " .. Turbine.Shell.AddCommand("greet;Hi,plugins", cmd))
-Turbine.Shell.WriteLine("is " .. tostring(Turbine.Shell.IsCommand("/HI")) .. " "
-    .. tostring(Turbine.Shell.IsCommand("plugins")) .. " " .. tostring(Turbine.Shell.IsCommand("nope")))
+Turbine.Shell.WriteLine("is " .. tostring(Turbine.Shell.IsCommand("HI")) .. " "
+    .. tostring(Turbine.Shell.IsCommand("/HI")) .. " " .. tostring(Turbine.Shell.IsCommand(" hi"))
+    .. " " .. tostring(Turbine.Shell.IsCommand("plugins")) .. " " .. tostring(Turbine.Shell.IsCommand("nope")))
 Turbine.Shell.WriteLine("cmds " .. table.concat(Turbine.Shell.GetCommands(), ","))
 Echoes = 0
 Turbine.Chat.Received = {
@@ -575,8 +583,10 @@ _G.removeCmd = function() return Turbine.Shell.RemoveCommand(cmd) end
         fx.lines(),
         [
             "added 2",
-            "is true true false",
-            "cmds greet,hi,plugins",
+            // `chat-window.md` §8.2: exactly as given (no prefix removal, no trimming),
+            // case-insensitive; the names live in the host's registry as registered.
+            "is true false false true false",
+            "cmds greet,Hi,plugins",
             "exec greet []",
             "exec HI [there  world ]",
             "chat Someone: hello true"

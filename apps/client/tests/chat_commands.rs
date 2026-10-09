@@ -178,13 +178,13 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             // The install's command words (chat-window.md §10 items 3, 4; CW-I6, CW-I7):
             // counts only, no game text.
             let _ = wait_until(WORDS_WAIT, Duration::from_millis(20), || {
-                if !plugins.dispatcher().text().channel_words.is_empty() {
+                if !plugins.dispatcher().text().modes.is_empty() {
                     return None;
                 }
                 plugins.pump();
                 let t = plugins.dispatcher().text();
                 Some((
-                    t.channel_words.len(),
+                    t.modes.len(),
                     t.help_names.is_some(),
                     t.plugins_names.is_some(),
                     t.default_word.is_some(),
@@ -196,7 +196,7 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             eprintln!(
                 "real data: {} of {} channel rows read, help names {}, plugin names {}, \
                  default word {}, unknown line {}, prefix {} chars, {} names registered",
-                t.channel_words.len(),
+                t.modes.len(),
                 tessera_client::commands::text::MODE_TABLE.len(),
                 t.help_names.is_some(),
                 t.plugins_names.is_some(),
@@ -206,7 +206,7 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
                 d.registry().len()
             );
             assert_eq!(
-                t.channel_words.len(),
+                t.modes.len(),
                 tessera_client::commands::text::MODE_TABLE.len()
             );
             assert!(t.help_names.is_some() && t.plugins_names.is_some());

@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Water for the controller (`collision.md` §12.3 step 7, `water.md` §7.4).
 //!
-//! **Tessera rule** (`water.md` §7.4, Decision): a mover is in water when its feet are
-//! inside a liquid box; it swims (state 2) when the water surface lies more than its float
-//! height above its feet, otherwise it wades (state 1, or 3 on steep support); a mover in
-//! water without any support swims, whatever the depth (the client's state too, W19). The
-//! client's own state rule (`collision.md` §11.3.2, W19) gives state 1 on walkable support
-//! however deep the water; Tessera keeps its float-height test because the client's buoyancy
-//! is not known and the float line needs deep water to be a swimming state (`water.md` §7.4).
+//! **Tessera rule** (`water.md` §7.4, Decision; `collision.md` §12.3 step 7): a mover is in
+//! water when its feet are inside a liquid box; it swims (state 2) when the water surface
+//! lies more than its float height above its feet, otherwise it wades (state 1, or 3 on steep
+//! support); a mover in water without any support swims, whatever the depth.
+//!
+//! The client sets the state with two routines that share one table (`collision.md`
+//! §11.3.2, C64; `water.md` W19, W22). After every controller update, the one that decides
+//! the state of a moving player, its **in-water input** needs `Volume_IsLiquid` *and* the
+//! water surface at least the float height minus 0.0002 m above the feet (§11.3.2 (a), W22);
+//! only a mover placed by the position-update paths reads `Volume_IsLiquid` alone (§11.3.2 (b),
+//! W19). Measured against the controller-update rule, the Tessera rule differs in four cases
+//! (`water.md` §7.4, `collision.md` §12.5 row "Water states"): in water shallower than the float
+//! height it gives 1, 3 and 2 where the client gives 5, 6 and 4 (walkable, steep, no support);
+//! in deeper water on any support it gives 2 where the client gives 1 or 3. Without support in
+//! deeper water both give 2. Tessera keeps its test because the client's buoyancy is not
+//! known and its float line (`collision.md` §12.4 (p)) needs deep water to be a swimming
+//! state. [`super::MovementState::from_support`] applies the rule.
 //!
 //! Water reaches the controller through [`WaterQuery`]. [`LiquidWater`] implements it over
 //! any [`CollisionQuery`] from the water plane and liquid boxes the sets carry (decision

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The plugin host as the native panels see it ([`PluginControl`]), the plugins' shell
-//! command names for the command dispatcher's registry ([`plugin_command_names`]), and the
-//! local-player view the plugins read (`plugin-api-usage.md` §8).
+//! The plugin host as the native panels see it ([`PluginControl`]) and the local-player view
+//! the plugins read (`plugin-api-usage.md` §8). The plugins' shell commands are not here:
+//! they live in the command dispatcher's registry (`chat-window.md` §10 item 3).
 //!
 //! Panel code runs while the host holds a mutable borrow of the [`tessera_ui::Ui`], and
 //! plugin code drives the same UI through `tessera-plugins`, so no plugin code may run
@@ -77,36 +77,6 @@ pub fn plugin_rows(manager: &PluginManager) -> Vec<PluginRow> {
         });
     }
     rows.into_values().collect()
-}
-
-/// The plugins' shell command names (`lua-plugin-api.md` §11.1), without the client's
-/// built-in names. They come from the first apartment's **native** `GetCommands`, which the
-/// client saved in that apartment's registry before any plugin code ran
-/// ([`crate::plugins::GET_COMMANDS_KEY`]); the writable `Turbine.Shell.GetCommands` entry is
-/// never called, so no plugin code runs inside a panel call even when a plugin replaced it.
-/// Empty when there is no apartment or the saved function is missing.
-#[must_use]
-pub fn plugin_command_names(manager: &PluginManager, builtins: &[String]) -> Vec<String> {
-    let Some(ap) = manager.apartment_names().into_iter().next() else {
-        return Vec::new();
-    };
-    manager
-        .with_lua(&ap, |lua| -> Option<Vec<String>> {
-            use tessera_plugins::mlua::{Function, Table};
-            let f: Function = lua
-                .named_registry_value(crate::plugins::GET_COMMANDS_KEY)
-                .ok()?;
-            let t: Table = f.call(()).ok()?;
-            let mut out = Vec::new();
-            for v in t.sequence_values::<String>().take(4096).flatten() {
-                if !builtins.iter().any(|b| b.eq_ignore_ascii_case(&v)) {
-                    out.push(v.to_ascii_lowercase());
-                }
-            }
-            Some(out)
-        })
-        .flatten()
-        .unwrap_or_default()
 }
 
 /// The adapter's view (module docs). Rows are read from the manager on first use only, so
@@ -224,10 +194,6 @@ mod tests {
         let mut v = PluginView::new(&manager, &d);
         assert!(PluginControl::load(&mut v, "B").is_err(), "no such plugin");
         assert!(v.unload(None).is_ok());
-        assert!(
-            plugin_command_names(&manager, &[]).is_empty(),
-            "no apartment, no commands"
-        );
         v.refresh();
         let d = d.into_inner();
         assert_eq!(d.unloads, vec![None]);

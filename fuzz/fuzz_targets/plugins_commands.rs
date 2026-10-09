@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Chat command lines through `PluginManager::execute_command` (`docs/specs/lua-plugin-api.md`
-//! §6.4 `/plugins`, §11.1–§11.2 plugin commands) and the step-7 deferred work they queue
+//! §6.4 `/plugins`, §11.1–§11.2 plugin commands, held in the host's registry,
+//! `chat-window.md` §10 item 3) and the step-7 deferred work they queue
 //! (`plugin-runtime.md` §8.4), with hostile lines.
 //!
 //! One plugin manager with one small plugin lives for the whole run, in a temporary folder
@@ -24,14 +25,19 @@ use std::time::Duration;
 
 use libfuzzer_sys::fuzz_target;
 use tessera_plugins::{
-    CoreHost, DataScope, HostApi, Limits, ManagerConfig, PluginManager, ScriptErrorReport,
+    CommandTable, CoreHost, DataScope, HostApi, Limits, ManagerConfig, PluginManager,
+    ScriptErrorReport,
 };
 
 /// Most lines run per input.
 const MAX_LINES: usize = 16;
 
-#[derive(Debug)]
-struct QuietHost;
+/// A host with its own command registry (the plugin host keeps none, `chat-window.md`
+/// §10 item 3).
+#[derive(Debug, Default)]
+struct QuietHost {
+    commands: CommandTable,
+}
 
 impl CoreHost for QuietHost {
     fn script_log(&self, _state: &str, _message: &str) {}
@@ -39,6 +45,9 @@ impl CoreHost for QuietHost {
 }
 
 impl HostApi for QuietHost {
+    fn command_table(&self) -> Option<&CommandTable> {
+        Some(&self.commands)
+    }
     fn write_line(&self, _text: &str) {}
     fn plugin_data_dir(&self, _scope: DataScope) -> Option<PathBuf> {
         None
@@ -90,7 +99,7 @@ fn manager() -> &'static Mutex<PluginManager> {
         config.index_on_worker = false;
         config.writes_on_worker = false;
         config.deferred_slice = Duration::from_millis(50);
-        let host: Arc<dyn HostApi> = Arc::new(QuietHost);
+        let host: Arc<dyn HostApi> = Arc::new(QuietHost::default());
         let mut m = PluginManager::new(config, host);
         m.refresh();
         m.load_plugin(PLUGIN).expect("fuzz plugin loads");

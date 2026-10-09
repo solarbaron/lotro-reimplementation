@@ -855,23 +855,48 @@ impl Default for Emitter {
     }
 }
 
-/// Values of the keyframe channels at one particle age (§8.6.1). A channel is `None` when
-/// no visited key carries its bit (always the case without keyframes, where the spec gives
-/// mass 1).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// Values of the keyframe channels at one particle age (§8.6.1). A channel that no visited
+/// key has set (always the case without keyframes) has the values of Tessera rule §10.11:
+/// scale (1, 1), opaque white, mass 1; the physics flags are then 0 (§8.6.1 step 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChannelState {
     /// Index of the last visited key.
     pub key: Option<usize>,
-    /// `scale_x`, `scale_y`.
-    pub scale: Option<[f32; 2]>,
-    /// Red, green, blue, alpha in 0–1 (not clamped; drawing clamps, §8.6.2).
-    pub colour: Option<[f32; 4]>,
-    /// Mass.
-    pub mass: Option<f32>,
-    /// Index of the current controller key.
+    /// `scale_x`, `scale_y`; (1, 1) without a current scale key (rule §10.11).
+    pub scale: [f32; 2],
+    /// Red, green, blue, alpha in 0–1 (not clamped; drawing clamps, §8.6.2); opaque white
+    /// without a current colour key (rule §10.11).
+    pub colour: [f32; 4],
+    /// Mass; 1 without a current mass key (rule §10.11).
+    pub mass: f32,
+    /// Index of the current scale key.
+    pub scale_key: Option<usize>,
+    /// Index of the current colour key.
+    pub colour_key: Option<usize>,
+    /// Index of the current mass key.
+    pub mass_key: Option<usize>,
+    /// Index of the current controller key; without one the particle does not move
+    /// (§8.6.1 step 5).
     pub controller_key: Option<usize>,
-    /// The physics flags of the last visited key with [`KEY_PHYSICS`].
-    pub physics_flags: Option<u32>,
+    /// The physics flags of the last visited key with [`KEY_PHYSICS`]; 0 without one.
+    pub physics_flags: u32,
+}
+
+impl Default for ChannelState {
+    /// A particle without a current key (§8.6.1 step 1, rule §10.11).
+    fn default() -> Self {
+        Self {
+            key: None,
+            scale: [1.0, 1.0],
+            colour: [1.0; 4],
+            mass: 1.0,
+            scale_key: None,
+            colour_key: None,
+            mass_key: None,
+            controller_key: None,
+            physics_flags: 0,
+        }
+    }
 }
 
 fn lerp(a: f32, b: f32, f: f32) -> f32 {
@@ -1042,11 +1067,19 @@ impl Emitter {
             .map_or(key, |(i, _)| i)
     }
 
-    /// The keyframe channels for a particle of `age` seconds (§8.6.1). Keys are visited in
-    /// stored order while the next key's `time` ≤ `age`.
+    /// The keyframe channels for a particle of `age` seconds (§8.6.1, BIN third pass): the
+    /// age is raised to 0 when negative (a NaN age counts as 0), and keys are visited in
+    /// stored order while the next key's `time` is at most that age (an equal age counts).
+    /// Interpolation uses the age itself. Channels without a current key take the values
+    /// of rule §10.11 ([`ChannelState::default`]).
     #[must_use]
     pub fn channel_state(&self, age: f32) -> ChannelState {
-        let visited = self.keyframes.iter().take_while(|k| k.time <= age).count();
+        let walk_age = age.max(0.0);
+        let visited = self
+            .keyframes
+            .iter()
+            .take_while(|k| k.time <= walk_age)
+            .count();
         let Some(last) = visited.checked_sub(1) else {
             return ChannelState::default();
         };
@@ -1066,44 +1099,59 @@ impl Emitter {
                 ((age - k.time) / dt).clamp(0.0, 1.0)
             }
         };
-        let pair = |bits: u32, lerp_bit: u32| -> Option<(&Keyframe, &Keyframe, bool)> {
-            let ki = current(bits | lerp_bit)?;
+        let pair = |ki: usize, lerp_bit: u32| -> Option<(&Keyframe, &Keyframe, bool)> {
             let ti = self.channel_target(ki, lerp_bit);
             let k = self.keyframes.get(ki)?;
             let t = self.keyframes.get(ti)?;
             Some((k, t, ti != ki))
         };
-        let scale = pair(KEY_SCALE, KEY_SCALE_LERP).map(|(k, t, distinct)| {
-            if distinct {
-                let f = factor(k, t, false);
-                [lerp(k.scale_x, t.scale_x, f), lerp(k.scale_y, t.scale_y, f)]
-            } else {
-                [k.scale_x, k.scale_y]
-            }
-        });
-        let colour = pair(KEY_COLOUR, KEY_COLOUR_LERP).map(|(k, t, distinct)| {
-            let a = k.colour.to_rgba();
-            if distinct {
-                let f = factor(k, t, false);
-                let b = t.colour.to_rgba();
-                [0, 1, 2, 3].map(|i| lerp(a[i], b[i], f))
-            } else {
-                a
-            }
-        });
-        let mass = pair(KEY_MASS, KEY_MASS_LERP).map(|(k, t, _)| {
-            let f = factor(k, t, true);
-            lerp(k.mass, t.mass, f)
-        });
+        let defaults = ChannelState::default();
+        let scale_key = current(KEY_SCALE | KEY_SCALE_LERP);
+        let scale = scale_key.and_then(|ki| pair(ki, KEY_SCALE_LERP)).map_or(
+            defaults.scale,
+            |(k, t, distinct)| {
+                if distinct {
+                    let f = factor(k, t, false);
+                    [lerp(k.scale_x, t.scale_x, f), lerp(k.scale_y, t.scale_y, f)]
+                } else {
+                    [k.scale_x, k.scale_y]
+                }
+            },
+        );
+        let colour_key = current(KEY_COLOUR | KEY_COLOUR_LERP);
+        let colour = colour_key.and_then(|ki| pair(ki, KEY_COLOUR_LERP)).map_or(
+            defaults.colour,
+            |(k, t, distinct)| {
+                let a = k.colour.to_rgba();
+                if distinct {
+                    let f = factor(k, t, false);
+                    let b = t.colour.to_rgba();
+                    [0, 1, 2, 3].map(|i| lerp(a[i], b[i], f))
+                } else {
+                    a
+                }
+            },
+        );
+        let mass_key = current(KEY_MASS | KEY_MASS_LERP);
+        let mass =
+            mass_key
+                .and_then(|ki| pair(ki, KEY_MASS_LERP))
+                .map_or(defaults.mass, |(k, t, _)| {
+                    let f = factor(k, t, true);
+                    lerp(k.mass, t.mass, f)
+                });
         let controller_key = current(KEY_CONTROLLER);
         let physics_flags = current(KEY_PHYSICS)
             .and_then(|i| keys.get(i))
-            .map(|k| k.physics_flags);
+            .map_or(0, |k| k.physics_flags);
         ChannelState {
             key: Some(last),
             scale,
             colour,
             mass,
+            scale_key,
+            colour_key,
+            mass_key,
             controller_key,
             physics_flags,
         }

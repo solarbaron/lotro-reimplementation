@@ -456,8 +456,12 @@ impl Pass {
     /// blends" (R12): they keep the destination alpha, except SRCALPHA /
     /// INVSRCALPHA, ADD, which blends alpha with `One`/`OneMinusSrcAlpha`, and
     /// destination factor ZERO with a source factor ZERO, ONE, SRCALPHA or
-    /// INVSRCALPHA, ADD, which writes alpha 1. Outside such a pass every fixed
-    /// blend keeps the destination alpha. A unit test of this module checks
+    /// INVSRCALPHA, ADD, which writes alpha 1. That second exception is drawn
+    /// without blending, as render.md §6.10 "Drawing exception 2 without
+    /// blending" allows: the fragment clamps colour and alpha to [0, 1], then
+    /// writes the colour times the source factor and alpha 1 (`FIXED_OPAQUE`
+    /// of `frame_shading.wgsl`). Outside such a pass every fixed blend keeps
+    /// the destination alpha. A unit test of this module checks
     /// every fixed blend against that rule and fails when a pipeline with
     /// another blend state is added, so that this option is extended before
     /// such a pipeline can draw a portrait.

@@ -32,6 +32,8 @@ pub struct Rec {
 
 #[derive(Debug)]
 pub struct Host {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     pub rec: Mutex<Rec>,
     pub data: PluginDataLocation,
     pub binding: Mutex<Option<UiBinding>>,
@@ -47,6 +49,10 @@ impl CoreHost for Host {
 }
 
 impl HostApi for Host {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.rec.lock().unwrap().lines.push(text.to_owned());
     }
@@ -136,6 +142,7 @@ impl Fx {
         };
         let data = dir.path().join("data/plugindata");
         let host = Arc::new(Host {
+            commands: tessera_plugins::CommandTable::new(),
             rec: Mutex::new(Rec::default()),
             data: PluginDataLocation {
                 root: data,

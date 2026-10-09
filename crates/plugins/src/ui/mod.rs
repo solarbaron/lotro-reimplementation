@@ -24,8 +24,8 @@
 //! - After any other entry into plugin code (the manager's pump, chat commands, chat
 //!   dispatch, loads), call [`PluginUi::deliver`] as well.
 //! - Chat commands that quickslot `Alias` shortcuts run (§14.6) are collected by
-//!   [`PluginUi::take_chat_commands`]; the client runs them like typed commands (plugin
-//!   commands through [`PluginManager::execute_command`]).
+//!   [`PluginUi::take_chat_commands`]; the client runs them like typed commands, through
+//!   its command dispatcher (plugin commands through [`PluginManager::run_command`]).
 //! - Plugin list boxes and trees are laid out lazily: once before any plugin call that may
 //!   read geometry, and at the end of [`PluginUi::deliver`] and [`PluginUi::update_tick`].
 //!   A client that runs plugin code without a following `deliver` calls

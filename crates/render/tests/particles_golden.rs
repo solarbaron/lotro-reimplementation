@@ -29,8 +29,9 @@ use tessera_particles::{
 };
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, Camera, ColorSpace, Filter, Material, MeshData, MeshDraw, OffscreenFormat,
-    ParticleDraw, ParticleVertex, RenderError, Renderer, RgbaImage, TextureId, TextureUpload, Wrap,
+    AlphaMode, AlphaThreshold, Camera, ColorSpace, Filter, FixedBlend, Fog, FrameLighting,
+    Material, MeshData, MeshDraw, OffscreenFormat, ParticleDraw, ParticleLayers, ParticleShading,
+    ParticleVertex, RenderError, Renderer, RgbaImage, TextureId, TextureUpload, Wrap,
 };
 
 const WIDTH: u32 = 320;
@@ -219,6 +220,7 @@ fn draws(sys: &SystemDraw, texture: Option<TextureId>, alpha: AlphaMode) -> Vec<
             texture,
             alpha,
             tint: [1.0, 1.0, 1.0, i.opacity],
+            ..ParticleDraw::default()
         })
         .collect()
 }
@@ -273,29 +275,14 @@ fn particles_fountain_golden() -> Result<(), RenderError> {
     Ok(())
 }
 
-/// One quad and one triangle at the centre of a 16 × 16 target, drawn with `alpha` and
-/// `tint` over a mid-grey background; returns the centre pixel.
-fn centre_pixel(
-    r: &mut Renderer<'static>,
-    alpha: AlphaMode,
-    color: [f32; 4],
-    tint: [f32; 4],
-    behind_wall: bool,
-) -> Result<[u8; 4], RenderError> {
-    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
-    let wall = r.upload_mesh(&MeshData::plane(4.0, 4.0, 1, 1))?;
-    let cam = Camera {
-        eye: Vec3::new(0.0, 0.0, 5.0),
-        target: Vec3::ZERO,
-        up: Vec3::Y,
-        ..Camera::default()
-    };
+/// One quad and one triangle covering the centre of a 16 × 16 target (vertex colour
+/// `color`, texture coordinates at the texel centre).
+fn centre_draw(color: [f32; 4]) -> ParticleDraw {
     let v = |x: f32, y: f32| ParticleVertex {
         position: [x, y, 0.0],
         color,
         uv: [0.5, 0.5],
     };
-    // A quad covering the centre, then a triangle covering it too.
     let vertices = vec![
         v(-1.0, 1.0),
         v(-1.0, -1.0),
@@ -305,9 +292,34 @@ fn centre_pixel(
         v(1.0, -1.0),
         v(0.0, 1.0),
     ];
+    ParticleDraw::new(vertices, 4)
+}
+
+/// Draws `draw` over a mid-grey background (behind a nearer blue wall when `behind_wall`,
+/// in a lit pass with `fog` when given) and returns the centre pixel.
+fn centre_pixel_of(
+    r: &mut Renderer<'static>,
+    draw: ParticleDraw,
+    behind_wall: bool,
+    fog: Option<Fog>,
+) -> Result<[u8; 4], RenderError> {
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let wall = r.upload_mesh(&MeshData::plane(4.0, 4.0, 1, 1))?;
+    let cam = Camera {
+        eye: Vec3::new(0.0, 0.0, 5.0),
+        target: Vec3::ZERO,
+        up: Vec3::Y,
+        ..Camera::default()
+    };
     let mut frame = r.begin_offscreen_frame(&target)?;
     let pass = frame.world_pass("p", &cam);
     pass.clear([0.5, 0.5, 0.5, 1.0]);
+    if let Some(f) = fog {
+        pass.frame_lighting(FrameLighting {
+            fog: Some(f),
+            ..FrameLighting::default()
+        });
+    }
     if behind_wall {
         pass.mesh(MeshDraw::new(
             wall,
@@ -318,14 +330,38 @@ fn centre_pixel(
             },
         ));
     }
-    pass.particles(ParticleDraw {
-        tint,
-        alpha,
-        ..ParticleDraw::new(vertices, 4)
-    });
+    pass.particles(draw);
     let stats = r.end_frame(frame)?;
     assert_eq!(stats.particle_draws, 1);
     Ok(r.read_pixels(&target)?.pixel(8, 8).unwrap_or_default())
+}
+
+/// [`centre_draw`] drawn with `alpha` and `tint`.
+fn centre_pixel(
+    r: &mut Renderer<'static>,
+    alpha: AlphaMode,
+    color: [f32; 4],
+    tint: [f32; 4],
+    behind_wall: bool,
+) -> Result<[u8; 4], RenderError> {
+    let draw = ParticleDraw {
+        tint,
+        alpha,
+        ..centre_draw(color)
+    };
+    centre_pixel_of(r, draw, behind_wall, None)
+}
+
+/// A 1 × 1 linear texture of `rgba`.
+fn texel(r: &mut Renderer<'static>, rgba: [u8; 4]) -> Result<TextureId, RenderError> {
+    r.upload_texture(&TextureUpload {
+        color_space: ColorSpace::Linear,
+        ..TextureUpload::rgba8(1, 1, &rgba)
+    })
+}
+
+fn near(p: u8, v: f32) -> bool {
+    (i32::from(p) - (v * 255.0).round() as i32).abs() <= 2
 }
 
 #[test]
@@ -368,7 +404,8 @@ fn blend_modes_tint_and_depth() -> Result<(), RenderError> {
         (i32::from(p[0]) - 128).abs() <= 2 && (i32::from(p[1]) - 128).abs() <= 2,
         "{p:?}"
     );
-    // Alpha test discards below the cutoff.
+    // The alpha test reads the texture's opacity alone (particle-runtime.md §9.1.1 rule 1):
+    // a vertex alpha below the cut-off removes nothing.
     let p = centre_pixel(
         &mut r,
         AlphaMode::Mask { cutoff: 0.6 },
@@ -376,7 +413,7 @@ fn blend_modes_tint_and_depth() -> Result<(), RenderError> {
         [1.0; 4],
         false,
     )?;
-    assert!((i32::from(p[0]) - 128).abs() <= 2, "{p:?}");
+    assert!(p[0] > 250 && p[1] < 5, "{p:?}");
     // The depth test: a wall nearer the camera hides the particles.
     let p = centre_pixel(
         &mut r,
@@ -386,6 +423,188 @@ fn blend_modes_tint_and_depth() -> Result<(), RenderError> {
         true,
     )?;
     assert!(p[2] > 200 && p[0] < 20, "{p:?}");
+    Ok(())
+}
+
+/// `particle-runtime.md` §9.1.1 rule 1 with `material.md` §11.2 per draw: the texture's
+/// opacity is tested against the reference, which the draw's *A* = material alpha × tint
+/// alpha adjusts.
+#[test]
+fn alpha_test_reads_the_texture_with_the_per_draw_reference() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let half = texel(&mut r, [255, 255, 255, 128])?;
+    let clear = texel(&mut r, [255, 255, 255, 0])?;
+    let red = [1.0, 0.0, 0.0, 1.0];
+    // Texture opacity 0.5 at or below the cut-off 0.6: discarded.
+    let draw = |alpha: AlphaMode, tex: TextureId, tint: [f32; 4]| ParticleDraw {
+        texture: Some(tex),
+        alpha,
+        tint,
+        ..centre_draw(red)
+    };
+    let p = centre_pixel_of(
+        &mut r,
+        draw(AlphaMode::Mask { cutoff: 0.6 }, half, [1.0; 4]),
+        false,
+        None,
+    )?;
+    assert!(near(p[0], 0.5) && near(p[1], 0.5), "{p:?}");
+    // Depth write on: the reference becomes 0.6 × A; with A = 0.5 the texel is kept.
+    let p = centre_pixel_of(
+        &mut r,
+        draw(
+            AlphaMode::TestBlend { cutoff: 0.6 },
+            half,
+            [1.0, 1.0, 1.0, 0.5],
+        ),
+        false,
+        None,
+    )?;
+    assert!(p[0] > 140 && p[1] < 120, "{p:?}");
+    // Depth write off: the test is switched off while A < 0.9 (the reference becomes 0).
+    let tested = AlphaMode::Fixed(FixedBlend {
+        alpha_test: Some(AlphaThreshold(0.6)),
+        ..FixedBlend::ADDITIVE
+    });
+    let p = centre_pixel_of(&mut r, draw(tested, half, [1.0; 4]), false, None)?;
+    assert!(near(p[0], 0.5), "kept off at A = 1: {p:?}");
+    // (two additive layers of red × 0.5 × 0.8 over grey saturate red)
+    let p = centre_pixel_of(
+        &mut r,
+        draw(tested, half, [1.0, 1.0, 1.0, 0.8]),
+        false,
+        None,
+    )?;
+    assert!(p[0] > 250 && near(p[1], 0.5), "drawn at A = 0.8: {p:?}");
+    // Alpha test off in a source-alpha blend: texels of opacity 0 leave the image as it is …
+    let p = centre_pixel_of(&mut r, draw(AlphaMode::Blend, clear, [1.0; 4]), false, None)?;
+    assert!(near(p[0], 0.5) && near(p[1], 0.5), "{p:?}");
+    // … but a program that tests nothing and leaves the texture alpha out (0x2B0007F2)
+    // draws them.
+    let no_test = ParticleDraw {
+        shading: ParticleShading {
+            tests_texture: false,
+            texture_alpha: false,
+            ..ParticleShading::STANDARD
+        },
+        ..draw(AlphaMode::Blend, clear, [1.0; 4])
+    };
+    let p = centre_pixel_of(&mut r, no_test, false, None)?;
+    assert!(p[0] > 250 && p[1] < 5, "{p:?}");
+    Ok(())
+}
+
+/// `particle-runtime.md` §9.1.1: output colour and alpha per program.
+#[test]
+fn surface_programs_colour_and_alpha() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // M = material colour 2000 × tint.
+    let p = centre_pixel_of(
+        &mut r,
+        ParticleDraw {
+            material: [0.0, 1.0, 0.0, 1.0],
+            ..centre_draw([1.0; 4])
+        },
+        false,
+        None,
+    )?;
+    assert!(p[0] < 5 && p[1] > 250, "{p:?}");
+    // The material alpha enters the output alpha (two layers of red at 0.5 over grey).
+    let p = centre_pixel_of(
+        &mut r,
+        ParticleDraw {
+            material: [1.0, 0.0, 0.0, 0.5],
+            ..centre_draw([1.0; 4])
+        },
+        false,
+        None,
+    )?;
+    assert!(near(p[0], 0.875) && near(p[1], 0.125), "{p:?}");
+    // Doubling: 2 × 0.25 red.
+    let doubled = ParticleShading {
+        doubled: true,
+        ..ParticleShading::STANDARD
+    };
+    let p = centre_pixel_of(
+        &mut r,
+        ParticleDraw {
+            shading: doubled,
+            ..centre_draw([0.25, 0.0, 0.0, 1.0])
+        },
+        false,
+        None,
+    )?;
+    assert!(near(p[0], 0.5) && p[1] < 5, "{p:?}");
+    // No vertex colour (0x2B000755): T × M, alpha T.a × M.a.
+    let p = centre_pixel_of(
+        &mut r,
+        ParticleDraw {
+            shading: ParticleShading {
+                vertex_colour: false,
+                ..ParticleShading::STANDARD
+            },
+            ..centre_draw([0.0; 4])
+        },
+        false,
+        None,
+    )?;
+    assert!(p[0] > 250 && p[1] > 250, "{p:?}");
+    // Two layers: the alphas multiply (tested), the colours multiply or add.
+    let l1 = texel(&mut r, [64, 0, 0, 255])?;
+    let l2 = texel(&mut r, [255, 64, 0, 128])?;
+    let layered = |layers| ParticleDraw {
+        texture: Some(l1),
+        second_texture: Some(l2),
+        alpha: AlphaMode::Mask { cutoff: 0.6 },
+        shading: ParticleShading {
+            layers: Some(layers),
+            ..ParticleShading::STANDARD
+        },
+        ..centre_draw([1.0; 4])
+    };
+    let p = centre_pixel_of(&mut r, layered(ParticleLayers::Product), false, None)?;
+    assert!(
+        near(p[0], 0.5) && near(p[1], 0.5),
+        "product alpha 0.5 is discarded: {p:?}"
+    );
+    let sum = ParticleDraw {
+        alpha: AlphaMode::Opaque,
+        ..layered(ParticleLayers::Sum)
+    };
+    let p = centre_pixel_of(&mut r, sum, false, None)?;
+    assert!(near(p[0], 1.0) && near(p[1], 0.25), "sum: {p:?}");
+    let product = ParticleDraw {
+        alpha: AlphaMode::Opaque,
+        ..layered(ParticleLayers::Product)
+    };
+    let p = centre_pixel_of(&mut r, product, false, None)?;
+    assert!(near(p[0], 0.25) && p[1] < 5, "product: {p:?}");
+    // Fog (lit pass): fogged programs blend toward the fog colour, additive ones do not.
+    let fog = Fog {
+        near: -10_000.0,
+        far: 20.0,
+        color: [0.0, 0.0, 1.0],
+    };
+    let fogged = ParticleShading {
+        fogged: true,
+        ..ParticleShading::STANDARD
+    };
+    let p = centre_pixel_of(
+        &mut r,
+        ParticleDraw {
+            shading: fogged,
+            ..centre_draw([1.0, 0.0, 0.0, 1.0])
+        },
+        false,
+        Some(fog),
+    )?;
+    assert!(p[2] > 240 && p[0] < 10, "fogged: {p:?}");
+    let p = centre_pixel_of(&mut r, centre_draw([1.0, 0.0, 0.0, 1.0]), false, Some(fog))?;
+    assert!(p[0] > 250 && p[2] < 5, "not fogged: {p:?}");
     Ok(())
 }
 

@@ -2273,6 +2273,15 @@ silent or ambiguous. The code follows each note; a reviewer should confirm or co
 > **OPEN:** (implementer note) §4.7: after `LoginFailed(RATE_LIMITED, retry_after)` the
 > client session refuses `Login` and `Register` until `retry_after` seconds have passed.
 
+> **OPEN:** (implementer note, 2026-10-09) §8.3 "Server relaxations": `MovementValidator`
+> enforces the bounds by clamping, not by refusing: a configured settling window above 10 s
+> acts as 10 s and a descent-credit reserve above 100 m as 100 m (a negative or NaN reserve
+> turns the credit off). Neither relaxation is on by default (window 0, no credit). The server
+> opens the window per epoch (an epoch whose starting height it does not know); the validator
+> then measures it from that epoch's start, keeps it across its own corrections (step 7) and
+> closes it at the next teleport epoch. Spec writer: confirm, or say whether a server must
+> refuse such a configuration instead.
+
 ---
 
 ### 17.2 Implementer notes (`tessera-net` test-server backend, 2026-10-06)

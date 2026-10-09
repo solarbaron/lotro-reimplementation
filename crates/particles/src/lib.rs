@@ -13,6 +13,7 @@
 //! | [`draw`] | distance fade, the not-drawn state, billboards, atlas frames, vertex order, system draw order | particles §8.10–§8.15; runtime §9 |
 //! | [`wind`] | the eased global wind | particles §8.8 |
 //! | [`fork`] | fork effects: lifetime, fade, effect matrix, shader table (not simulated, rule §10.2) | particles §6.5; runtime §10 |
+//! | [`surface`] | what the programs of a particle surface compute: output alpha, alpha-test source, doubling, fog, layers | runtime §9.1.1 |
 //! | [`runtime`] | classification, node start gates, start gating, attachment frames, owner scale vectors, the effect manager with sharing, release, lingering and housekeeping | runtime §4–§7 |
 //!
 //! All input is hostile: a decoded record may hold any value its layout allows. The
@@ -53,6 +54,7 @@ pub mod fork;
 pub mod rng;
 pub mod runtime;
 pub mod sim;
+pub mod surface;
 pub mod wind;
 
 pub use draw::{
@@ -70,6 +72,7 @@ pub use sim::{
     AttachmentSource, Environment, NoAttachments, OriginAttachments, Particle, Placement,
     SimConfig, SimStats, SystemSim,
 };
+pub use surface::{LayerCombine, ParticleSurface, SurfaceBlend, SurfaceProgram};
 pub use wind::Wind;
 
 use std::sync::Arc;

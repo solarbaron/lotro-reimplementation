@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use rand::Rng;
-use tessera_formats::script_table::{NodeData, NodeKind, PortPayload, PortType, SoundNode};
+use tessera_formats::script_table::{
+    NodeData, NodeKind, ParticleScriptNode, PortPayload, PortType, SoundNode,
+};
 use tessera_formats::{Did, PropertyValue};
 
 use super::core::REASON_STOP;
@@ -1147,6 +1149,69 @@ impl Runtime<'_> {
 
     // ----- Particle (`particle-runtime.md` §5.4–§5.8) -----
 
+    /// The Particle node's fields with the driven values of this start applied
+    /// (`particle-runtime.md` §5.4 "Driven node fields", walker rule (c)): a field takes
+    /// its driven value when its source property has one, else keeps the stored value. The
+    /// fields are read when the effect starts (or restarts on a redirect, §5.8); a later
+    /// change of a driven field does not reach a running effect (Q-RT8 Decision).
+    fn effective_particle(
+        &self,
+        id: InstanceId,
+        stored: &ParticleScriptNode,
+    ) -> ParticleScriptNode {
+        let mut p = *stored;
+        let Some(i) = self.insts.get(id) else {
+            return p;
+        };
+        let f = &self.vocab.particle;
+        if let Some(v) = i.override_of(f.particle_id).and_then(as_u32) {
+            p.particle_id = Did(v);
+        }
+        if let Some(v) = i.override_of(f.fork_particle_id).and_then(as_u32) {
+            p.fork_particle_id = Did(v);
+        }
+        if let Some(v) = i.override_of(f.should_fade).and_then(as_bool) {
+            p.should_fade = v;
+        }
+        if let Some(v) = i.override_of(f.far_fade_min).and_then(as_f32) {
+            p.far_fade_min = v;
+        }
+        if let Some(v) = i.override_of(f.far_fade_max).and_then(as_f32) {
+            p.far_fade_max = v;
+        }
+        if let Some(v) = i.override_of(f.close_fade_min).and_then(as_f32) {
+            p.close_fade_min = v;
+        }
+        if let Some(v) = i.override_of(f.close_fade_max).and_then(as_f32) {
+            p.close_fade_max = v;
+        }
+        if let Some(v) = i.override_of(f.holding_location).and_then(as_u32) {
+            p.holding_location = v;
+        }
+        if let Some(v) = i.override_of(f.bone_type).and_then(as_u32) {
+            p.bone_type = v;
+        }
+        if let Some(v) = i.override_of(f.bone_offset).and_then(as_vec3) {
+            p.bone_offset = v;
+        }
+        if let Some(v) = i.override_of(f.drop_effect).and_then(as_bool) {
+            p.drop_effect = v;
+        }
+        if let Some(v) = i.override_of(f.remove_rotation).and_then(as_bool) {
+            p.remove_rotation = v;
+        }
+        if let Some(v) = i.override_of(f.on_water).and_then(as_bool) {
+            p.on_water = v;
+        }
+        if let Some(v) = i.override_of(f.immediate_disposal).and_then(as_bool) {
+            p.immediate_disposal = v;
+        }
+        if let Some(v) = i.override_of(f.redirect_property).and_then(as_u32) {
+            p.redirect_property = v;
+        }
+        p
+    }
+
     /// §5.4: the effect DID, the classification (the stored byte, rule §12.2), the
     /// intensity gate of finite effects (context flag 0x40 treated as clear, Q-RT2), then
     /// the sink takes the dropped or the attached path. A finite effect, and every effect on
@@ -1166,7 +1231,7 @@ impl Runtime<'_> {
         let NodeData::Particle(p) = &n.data else {
             return false;
         };
-        let p = **p;
+        let p = self.effective_particle(id, p);
         // 1. No effect DID: the start fails.
         let Some(effect) = p.effect_did() else {
             return false;
@@ -1258,7 +1323,7 @@ impl Runtime<'_> {
         let NodeData::Particle(p) = &node.data else {
             return;
         };
-        let p = **p;
+        let p = self.effective_particle(id, p);
         let Some(effect) = p.effect_did() else {
             return;
         };

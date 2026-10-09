@@ -32,7 +32,7 @@ use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
 use crate::lit_pipelines::LightTarget;
 use crate::lit_pipelines::SHADOW_FORMAT;
-use crate::material::{AlphaMode, FixedBlend, FogRule, LightSelection, Specular};
+use crate::material::{AlphaMode, FixedAlpha, FixedBlend, FogRule, LightSelection, Specular};
 use crate::mesh::{GpuVertex, MeshData, MeshInfo};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
@@ -1014,6 +1014,9 @@ pub(crate) struct ModelLayouts {
 struct PipeKey {
     format: wgpu::TextureFormat,
     kind: SurfaceKind,
+    /// How a fixed blend writes alpha in the pass ([`FixedBlend::alpha_rule`]);
+    /// [`FixedAlpha::Keep`] for the other kinds.
+    alpha: FixedAlpha,
     two_sided: bool,
     /// Instances with a negative determinant: the front face is clockwise, so the other
     /// face is culled (`docs/specs/render.md` §2.3 Mirrored transforms; unused when
@@ -1112,6 +1115,7 @@ impl InstancedState {
             return Some(p.clone());
         }
         let (shader, layout) = (self.shader.as_ref()?, self.colour_layout.as_ref()?);
+        let mut constants: &[(&str, f64)] = &[];
         let (fs, blend, write) = match key.kind {
             SurfaceKind::Opaque => ("fs_opaque", None, true),
             SurfaceKind::Mask => ("fs_mask", None, true),
@@ -1121,15 +1125,21 @@ impl InstancedState {
                 true,
             ),
             SurfaceKind::Blend => ("fs_blend", Some(wgpu::BlendState::ALPHA_BLENDING), false),
-            SurfaceKind::Fixed(b) => (
-                match b.fog_rule() {
-                    FogRule::Lerp => "fs_blend",
-                    FogRule::FadeOut => "fs_additive",
-                    FogRule::TowardWhite => "fs_modulate",
-                },
-                Some(b.blend_state()),
-                b.depth_write,
-            ),
+            SurfaceKind::Fixed(b) => {
+                // A fixed blend that draws opaque (render.md §6.10, R12) has fog rule
+                // `Lerp`, so its entry point applies `FIXED_OPAQUE`.
+                let fixed = b.pipeline(key.alpha);
+                constants = fixed.constants();
+                (
+                    match b.fog_rule() {
+                        FogRule::Lerp => "fs_blend",
+                        FogRule::FadeOut => "fs_additive",
+                        FogRule::TowardWhite => "fs_modulate",
+                    },
+                    fixed.blend,
+                    b.depth_write,
+                )
+            }
         };
         let buffers = [
             Some(mesh_vertex_layout()),
@@ -1161,7 +1171,10 @@ impl InstancedState {
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some(fs),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format: key.format,
                     blend,
@@ -1578,6 +1591,10 @@ pub(crate) fn build_hook(
                     PipeKey {
                         format: ctx.format,
                         kind,
+                        alpha: match kind {
+                            SurfaceKind::Fixed(b) => b.alpha_rule(ctx.premultiplied),
+                            _ => FixedAlpha::Keep,
+                        },
                         two_sided: surface.two_sided,
                         mirrored: *mirrored && !surface.two_sided,
                     },

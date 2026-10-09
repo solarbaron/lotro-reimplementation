@@ -206,7 +206,7 @@ fn fs_lit_test_blend(in: LitVsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
-    return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
+    return frame_blend_output(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
 // Additive (SRCALPHA / ONE): fogged distance fades the contribution out (§6, §10).

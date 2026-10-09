@@ -41,6 +41,34 @@ fn frame_output(c: vec3<f32>) -> vec3<f32> {
     return c;
 }
 
+// Fixed blends that draw opaque in a premultiplied pass (render.md §6.10 "Fixed blends",
+// R12; set per pipeline, `FixedPipeline` in material.rs). 0: the fragment writes what it
+// computed and the blend unit applies the factors. Otherwise the pipeline does not blend
+// (destination factor ZERO, ADD) and the fragment writes alpha 1 and the colour times the
+// source factor: 1 = ZERO, 2 = ONE, 3 = SRCALPHA, 4 = INVSRCALPHA.
+override FIXED_OPAQUE: u32 = 0u;
+
+// What a blended fragment writes: `rgb` from `frame_output`, `alpha` its output alpha.
+fn frame_blend_output(rgb: vec3<f32>, alpha: f32) -> vec4<f32> {
+    switch FIXED_OPAQUE {
+        case 1u: {
+            return vec4<f32>(vec3<f32>(0.0), 1.0);
+        }
+        case 2u: {
+            return vec4<f32>(rgb, 1.0);
+        }
+        case 3u: {
+            return vec4<f32>(rgb * alpha, 1.0);
+        }
+        case 4u: {
+            return vec4<f32>(rgb * (1.0 - alpha), 1.0);
+        }
+        default: {
+            return vec4<f32>(rgb, alpha);
+        }
+    }
+}
+
 // Distance fog factor f of a world position (lighting.md §10); evaluated per vertex.
 fn frame_fog_factor(world_pos: vec3<f32>) -> f32 {
     if (frame.fog_color.w == 0.0) {

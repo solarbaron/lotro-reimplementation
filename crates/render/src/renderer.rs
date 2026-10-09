@@ -639,6 +639,9 @@ pub(crate) struct WorldFrame<'a> {
     pub textures: TextureResolver<'a>,
     /// Id of the renderer (handles of other renderers are skipped).
     pub owner: u64,
+    /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
+    /// write alpha by [`crate::material::FixedBlend::alpha_rule`].
+    pub premultiplied: bool,
 }
 
 /// What a render-world module needs to create retained GPU objects.
@@ -1368,6 +1371,7 @@ impl<'w> Renderer<'w> {
         size: (u32, u32),
         target: &wgpu::TextureView,
         scene_copy: bool,
+        premultiplied: bool,
     ) -> Result<Vec<Arc<dyn PassHook>>> {
         let selector = LightSelector::new(frame, reach);
         let copy_view = if scene_copy {
@@ -1393,6 +1397,7 @@ impl<'w> Renderer<'w> {
                 exclude: Some(target),
             },
             owner: self.owner,
+            premultiplied,
         };
         let WorldDraws {
             terrain,
@@ -1974,12 +1979,15 @@ impl<'w> Renderer<'w> {
                         AlphaMode::Mask { .. } => LitKind::Mask,
                         AlphaMode::TestBlend { .. } => LitKind::TestBlend,
                         AlphaMode::Blend => LitKind::Blend,
-                        AlphaMode::Additive => LitKind::Fixed(FixedBlend::ADDITIVE),
-                        AlphaMode::Fixed(b) => LitKind::Fixed(b),
+                        AlphaMode::Additive => LitKind::Fixed(
+                            FixedBlend::ADDITIVE,
+                            FixedBlend::ADDITIVE.alpha_rule(pass.premultiplied),
+                        ),
+                        AlphaMode::Fixed(b) => LitKind::Fixed(b, b.alpha_rule(pass.premultiplied)),
                     };
                     let blended = matches!(
                         kind,
-                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(_)
+                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(..)
                     );
                     let key = LitKey {
                         format,
@@ -2527,6 +2535,7 @@ impl<'w> Renderer<'w> {
                                 (width, height),
                                 &view,
                                 copy,
+                                pass.premultiplied,
                             )?;
                             pass.hooks.splice(0..0, hooks);
                         }

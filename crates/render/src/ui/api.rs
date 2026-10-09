@@ -450,13 +450,19 @@ impl Pass {
     /// and compose it with [`super::UiSource::Premultiplied`].
     ///
     /// Every built-in pipeline blends alpha that way (or not at all, writing
-    /// alpha 1), except the fixed blend states of the lit, instanced and sky
-    /// pipelines (`FixedBlend`: additive, modulate, min, max), which keep the
-    /// destination alpha (render.md §6.10 OPEN); the option only sets the
-    /// clear. A unit test of this module fails when a pipeline with another
-    /// blend state is added, so that this option is extended before such a
-    /// pipeline can draw a portrait.
+    /// alpha 1). The fixed blend states of the lit, instanced and sky
+    /// pipelines (`FixedBlend`: additive, modulate, min, max, ...) keep their
+    /// colour blend and, in this pass, write alpha by render.md §6.10 "Fixed
+    /// blends" (R12): they keep the destination alpha, except SRCALPHA /
+    /// INVSRCALPHA, ADD, which blends alpha with `One`/`OneMinusSrcAlpha`, and
+    /// destination factor ZERO with a source factor ZERO, ONE, SRCALPHA or
+    /// INVSRCALPHA, ADD, which writes alpha 1. Outside such a pass every fixed
+    /// blend keeps the destination alpha. A unit test of this module checks
+    /// every fixed blend against that rule and fails when a pipeline with
+    /// another blend state is added, so that this option is extended before
+    /// such a pipeline can draw a portrait.
     pub fn premultiplied_alpha(&mut self) -> &mut Self {
+        self.premultiplied = true;
         self.clear([0.0; 4])
     }
 }
@@ -476,9 +482,254 @@ pub(crate) fn scoped<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Opt
 mod tests {
     use std::path::Path;
 
+    use crate::material::{BlendFactor, BlendOp, FixedAlpha, FixedBlend, FixedPipeline, FogRule};
+
     /// The blend states `Pass::premultiplied_alpha` relies on (render.md §6.10):
     /// alpha blended with `One`/`OneMinusSrcAlpha`.
     const PREMULTIPLYING: [&str; 2] = ["ALPHA_BLENDING", "PREMULTIPLIED_ALPHA_BLENDING"];
+
+    /// The fixed-blend pipeline builder, whose every output is checked against
+    /// render.md §6.10 "Fixed blends" (R12) by [`fixed_blends_follow_r12`], and the type
+    /// it returns: (file name, first line, last line) of each block.
+    const CHECKED_BUILDERS: [(&str, &str, &str); 2] = [
+        ("material.rs", "pub(crate) struct FixedPipeline {", "}"),
+        (
+            "material.rs",
+            "pub(crate) fn pipeline(self, alpha: FixedAlpha) -> FixedPipeline {",
+            "    }",
+        ),
+    ];
+
+    const FACTORS: [BlendFactor; 10] = [
+        BlendFactor::Zero,
+        BlendFactor::One,
+        BlendFactor::SrcColor,
+        BlendFactor::OneMinusSrcColor,
+        BlendFactor::SrcAlpha,
+        BlendFactor::OneMinusSrcAlpha,
+        BlendFactor::DstAlpha,
+        BlendFactor::OneMinusDstAlpha,
+        BlendFactor::DstColor,
+        BlendFactor::OneMinusDstColor,
+    ];
+    const OPS: [BlendOp; 5] = [
+        BlendOp::Add,
+        BlendOp::Subtract,
+        BlendOp::ReverseSubtract,
+        BlendOp::Min,
+        BlendOp::Max,
+    ];
+
+    /// Every fixed blend. The matches stop compiling when a factor or an operation is
+    /// added, so that it is added to the lists above and checked too.
+    fn every_fixed_blend() -> Vec<FixedBlend> {
+        let listed_factor = |f: BlendFactor| match f {
+            BlendFactor::Zero
+            | BlendFactor::One
+            | BlendFactor::SrcColor
+            | BlendFactor::OneMinusSrcColor
+            | BlendFactor::SrcAlpha
+            | BlendFactor::OneMinusSrcAlpha
+            | BlendFactor::DstAlpha
+            | BlendFactor::OneMinusDstAlpha
+            | BlendFactor::DstColor
+            | BlendFactor::OneMinusDstColor => FACTORS.contains(&f),
+        };
+        let listed_op = |o: BlendOp| match o {
+            BlendOp::Add
+            | BlendOp::Subtract
+            | BlendOp::ReverseSubtract
+            | BlendOp::Min
+            | BlendOp::Max => OPS.contains(&o),
+        };
+        let mut out = Vec::new();
+        for src in FACTORS {
+            for dst in FACTORS {
+                for op in OPS {
+                    assert!(listed_factor(src) && listed_factor(dst) && listed_op(op));
+                    for depth_write in [false, true] {
+                        out.push(FixedBlend {
+                            src,
+                            dst,
+                            op,
+                            depth_write,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// One channel of a fixed blend's operand: the source colour `c` and alpha `a` the
+    /// fragment computed, the destination colour `dc` and alpha `d` in the target.
+    #[derive(Debug, Clone, Copy)]
+    struct Px {
+        c: f64,
+        a: f64,
+        dc: f64,
+        d: f64,
+    }
+
+    /// The colour a fixed blend means (`material.md` §7.6 factors and operations, as the
+    /// pass without the premultiplied option draws it); R12 never changes it.
+    fn fixed_colour(b: FixedBlend, p: Px) -> f64 {
+        let f = |f: BlendFactor| match f {
+            BlendFactor::Zero => 0.0,
+            BlendFactor::One => 1.0,
+            BlendFactor::SrcColor => p.c,
+            BlendFactor::OneMinusSrcColor => 1.0 - p.c,
+            BlendFactor::SrcAlpha => p.a,
+            BlendFactor::OneMinusSrcAlpha => 1.0 - p.a,
+            BlendFactor::DstAlpha => p.d,
+            BlendFactor::OneMinusDstAlpha => 1.0 - p.d,
+            BlendFactor::DstColor => p.dc,
+            BlendFactor::OneMinusDstColor => 1.0 - p.dc,
+        };
+        let (s, t) = (p.c * f(b.src), p.dc * f(b.dst));
+        let v = match b.op {
+            BlendOp::Add => s + t,
+            BlendOp::Subtract => s - t,
+            BlendOp::ReverseSubtract => t - s,
+            BlendOp::Min => p.c.min(p.dc),
+            BlendOp::Max => p.c.max(p.dc),
+        };
+        v.clamp(0.0, 1.0)
+    }
+
+    /// What R12 says a fixed blend writes into the target's alpha (render.md §6.10 "Fixed
+    /// blends"; outside premultiplied passes the destination alpha is kept).
+    fn r12_alpha(b: FixedBlend, premultiplied: bool, p: Px) -> f64 {
+        use BlendFactor as F;
+        if !premultiplied || b.op != BlendOp::Add {
+            return p.d;
+        }
+        match (b.src, b.dst) {
+            // 1. Source-over: alpha with One / OneMinusSrcAlpha.
+            (F::SrcAlpha, F::OneMinusSrcAlpha) => p.a + p.d * (1.0 - p.a),
+            // 2. Destination ZERO, a source factor that does not read the destination:
+            //    opaque, alpha 1.
+            (F::Zero | F::One | F::SrcAlpha | F::OneMinusSrcAlpha, F::Zero) => 1.0,
+            _ => p.d,
+        }
+    }
+
+    /// The value of a wgpu blend factor; `alpha`: on the alpha channel.
+    fn wgpu_factor(f: wgpu::BlendFactor, p: Px, alpha: bool) -> f64 {
+        use wgpu::BlendFactor as W;
+        let (c, dc) = if alpha { (p.a, p.d) } else { (p.c, p.dc) };
+        match f {
+            W::Zero => 0.0,
+            W::One => 1.0,
+            W::Src => c,
+            W::OneMinusSrc => 1.0 - c,
+            W::SrcAlpha => p.a,
+            W::OneMinusSrcAlpha => 1.0 - p.a,
+            W::Dst => dc,
+            W::OneMinusDst => 1.0 - dc,
+            W::DstAlpha => p.d,
+            W::OneMinusDstAlpha => 1.0 - p.d,
+            other => panic!("blend factor {other:?} is not modelled by this test"),
+        }
+    }
+
+    /// What a pipeline built by `FixedBlend::pipeline` leaves in one channel of a `Unorm`
+    /// target: (colour, alpha).
+    fn drawn(fixed: FixedPipeline, p: Px) -> (f64, f64) {
+        // The fragment (`frame_blend_output` with the `FIXED_OPAQUE` override).
+        let (c, a) = match fixed.fixed_opaque {
+            0 => (p.c, p.a),
+            1 => (0.0, 1.0),
+            2 => (p.c, 1.0),
+            3 => (p.c * p.a, 1.0),
+            4 => (p.c * (1.0 - p.a), 1.0),
+            other => panic!("FIXED_OPAQUE {other} is not defined"),
+        };
+        let Some(state) = fixed.blend else {
+            return (c.clamp(0.0, 1.0), a.clamp(0.0, 1.0));
+        };
+        let q = Px { c, a, ..p };
+        let component = |k: wgpu::BlendComponent, alpha: bool| {
+            let (src, dst) = if alpha { (q.a, q.d) } else { (q.c, q.dc) };
+            let s = src * wgpu_factor(k.src_factor, q, alpha);
+            let t = dst * wgpu_factor(k.dst_factor, q, alpha);
+            let v = match k.operation {
+                wgpu::BlendOperation::Add => s + t,
+                wgpu::BlendOperation::Subtract => s - t,
+                wgpu::BlendOperation::ReverseSubtract => t - s,
+                wgpu::BlendOperation::Min => src.min(dst),
+                wgpu::BlendOperation::Max => src.max(dst),
+            };
+            v.clamp(0.0, 1.0)
+        };
+        (component(state.color, false), component(state.alpha, true))
+    }
+
+    /// render.md §6.10 "Fixed blends" (R12), for every fixed blend in passes with and
+    /// without the premultiplied option, evaluated over source and destination colours
+    /// and alphas: the colour is the blend's in both; the alpha is the rule's. Outside
+    /// premultiplied passes the pipeline is the same as before R12 (destination alpha
+    /// kept by the blend state, no override).
+    #[test]
+    fn fixed_blends_follow_r12() {
+        let keep = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let samples = [0.0, 0.2, 0.5, 0.75, 1.0];
+        let blends = every_fixed_blend();
+        assert_eq!(blends.len(), 1000);
+        let (mut over, mut opaque) = (0, 0);
+        for b in blends {
+            assert_eq!(b.alpha_rule(false), FixedAlpha::Keep, "{b:?}");
+            let outside = b.pipeline(b.alpha_rule(false));
+            assert_eq!(outside.fixed_opaque, 0, "{b:?}: no override outside");
+            assert_eq!(
+                outside.blend.map(|s| s.alpha),
+                Some(keep),
+                "{b:?}: outside premultiplied passes"
+            );
+            assert!(outside.constants().is_empty());
+            let alpha = b.alpha_rule(true);
+            match alpha {
+                FixedAlpha::Over => over += 1,
+                FixedAlpha::Opaque => {
+                    opaque += 1;
+                    // Its entry points apply the override.
+                    assert_eq!(b.fog_rule(), FogRule::Lerp, "{b:?}");
+                }
+                FixedAlpha::Keep => {}
+            }
+            let inside = b.pipeline(alpha);
+            assert_eq!(
+                inside.constants().len(),
+                usize::from(inside.fixed_opaque != 0),
+                "{b:?}"
+            );
+            for (fixed, premultiplied) in [(outside, false), (inside, true)] {
+                for c in samples {
+                    for a in samples {
+                        for dc in samples {
+                            for d in samples {
+                                let p = Px { c, a, dc, d };
+                                let got = drawn(fixed, p);
+                                let want = (fixed_colour(b, p), r12_alpha(b, premultiplied, p));
+                                assert!(
+                                    (got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9,
+                                    "{b:?} premultiplied {premultiplied}, {p:?}: drawn {got:?}, \
+                                     R12 wants {want:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // SRCALPHA / INVSRCALPHA, ADD (both depth writes); four source factors with
+        // destination ZERO, ADD (both depth writes).
+        assert_eq!((over, opaque), (2, 8));
+    }
 
     fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -510,21 +761,25 @@ mod tests {
         rust_files(&src, &mut files);
         assert!(files.len() > 5, "sources found under {}", src.display());
         let mut bad = Vec::new();
+        let mut builders_found = 0;
         for path in files.iter().filter(|p| !p.starts_with(&ui)) {
             let text = std::fs::read_to_string(path).unwrap_or_default();
-            // The one known exception (render.md §6.10 OPEN): `FixedBlend::blend_state`
-            // in material.rs, which keeps the destination alpha.
-            let fixed_blend = path.ends_with("material.rs");
-            let mut in_fixed = false;
+            // Blend states built by a checked builder are covered by
+            // `fixed_blends_follow_r12` (render.md §6.10, R12) for every fixed blend.
+            let builders: Vec<(&str, &str)> = CHECKED_BUILDERS
+                .iter()
+                .filter(|(file, ..)| path.ends_with(file))
+                .map(|(_, first, last)| (*first, *last))
+                .collect();
+            let mut in_builder: Option<&str> = None;
             for (n, line) in text.lines().enumerate() {
-                if fixed_blend
-                    && line.contains("pub(crate) fn blend_state(self) -> wgpu::BlendState")
-                {
-                    in_fixed = true;
+                if let Some((_, last)) = builders.iter().find(|(first, _)| line.contains(first)) {
+                    in_builder = Some(last);
+                    builders_found += 1;
                 }
-                if in_fixed {
-                    if line == "    }" {
-                        in_fixed = false;
+                if let Some(last) = in_builder {
+                    if line == last {
+                        in_builder = None;
                     }
                     continue;
                 }
@@ -548,11 +803,17 @@ mod tests {
                 }
             }
         }
+        assert_eq!(
+            builders_found,
+            CHECKED_BUILDERS.len(),
+            "every checked blend-state builder is still in place"
+        );
         assert!(
             bad.is_empty(),
-            "pipelines with a blend state other than ALPHA_BLENDING: extend \
+            "pipelines with a blend state other than ALPHA_BLENDING or one built by \
+             FixedBlend::pipeline (checked against R12): extend \
              Pass::premultiplied_alpha (render.md §6.10) so that a portrait pass \
-             blends alpha with One/OneMinusSrcAlpha, then allow them here:\n{}",
+             writes alpha by the §6.10 rules, then check them here:\n{}",
             bad.join("\n")
         );
     }

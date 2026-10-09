@@ -1519,6 +1519,23 @@ implementing; they add no facts about the game.
 > "≥ 1" and "finite and > 0". The Tessera bounds in the table above keep every position
 > exact in `f32` and every reciprocal finite; a spec bound would replace them.
 
+> **OPEN (implementer, 2026-10-09, §6.10 "Fixed blends", R12; engineering choice for the
+> reviewer to confirm or replace):** R12 is implemented in `crates/render`
+> (`FixedBlend::alpha_rule` and `FixedBlend::pipeline` in `material.rs`; the lit, instanced
+> and sky pipelines key on the result). `Pass::premultiplied_alpha` now marks the pass as
+> well as clearing it. Exception 1 blends alpha with `wgpu::BlendComponent::OVER`. Exception
+> 2 cannot write alpha 1 through a blend state alone (every alpha factor scales the
+> fragment's alpha or the destination's, which may both be 0), and such a blend never reads
+> the destination, so its pipeline draws **without blending**: the fragment writes alpha 1
+> and the colour times the source factor (0, 1, *a* or 1 − *a*), selected by the WGSL
+> pipeline-overridable constant `FIXED_OPAQUE` in `frame_shading.wgsl` (default 0, no
+> change). The colour equals the blended one up to rounding. Outside premultiplied passes
+> the pipelines are unchanged. The guard test in `ui/api.rs` no longer exempts
+> `FixedBlend`: it evaluates every fixed blend (all factor and operation pairs) with and
+> without the option over sampled source and destination values against R12 and the
+> blend's colour, and still fails on any other blend state. The "API" row of the table above
+> predates R12 in its description of `Pass::premultiplied_alpha`.
+
 **Indicative measurements (2026-10-07, development machine under load from other builds,
 load average about 9–11; not the idle reference machine).** `tests/ui_perf.rs` (release,
 `--ignored`): a 3840 × 2160 `Rgba8Srgb` target, 46 entries (one screen-sized 1 : 1

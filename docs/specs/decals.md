@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09, spec writer: the two non-blocking notes of the first review taken up, §2.1 (DC3 wording, stored order counted) and §6.5 (total 52,028); no rule changed). Second review 2026-10-09: **changes requested** (one blocking item, see Review record); stays Revised until it is fixed and re-reviewed. Before: Accepted (2026-10-09) |
+| **Status** | Revised (2026-10-09, spec writer: the two non-blocking notes of the first review taken up, §2.1 (DC3 wording, stored order counted) and §6.5 (total 52,028); no rule changed). Second review 2026-10-09: **changes requested** (one blocking item). Revised again 2026-10-09 (spec writer): blocking item (1) fixed, §10 invariant 2 now states the comparison as in DC3, independent of stored order; awaiting re-review. Before: Accepted (2026-10-09) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (independent dirty-room spec reviewer, not the author) |
@@ -772,7 +772,9 @@ Data (checkable on the install; Confirmed 2026-10-08 unless noted):
 
 1. Every Decal SED names a 0x47 object whose chain yields `DecalVolume_Material`, and the
    value is the DID of an existing surface record (prefix 0x31).
-2. Every Decal SED's per-instance property set equals its own property set.
+2. Every Decal SED's per-instance property set holds the same entries as its own property
+   set (the same PIDs with the same values) and has the same header; the stored order of the
+   entries may differ and is not part of the comparison (DC3; differs in 1,671 of 16,511).
 3. `DecalVolume_*` properties occur on Decal SEDs, their instance sets and the 140 marker
    objects only, apart from one Light SED.
 4. `UseHeightBasedOpacity` and `UseDepthBasedOpacity` are false (or absent) for every decal;
@@ -865,3 +867,4 @@ stored as +2.0, +0.8, +0.4.
 |---|---|
 | 2026-10-09 | First version (Review). New spec for placed decal volumes, answering `entity-descriptor.md` §9's "decal volumes have no spec yet" (its owner may point the OPEN there to this spec). Census of all Decal SEDs, marker objects, instance sets, receiving properties and depth-bias definitions (OBS 2026-10-08); client behaviour from one BIN session (2026-10-08, questions 1–10). |
 | 2026-10-09 | Non-blocking notes of the first review taken up (spec writer): §6.5, the total of `Render_DepthBias_Type` on Physics SEDs is 52,028 (the per-value counts were right; their sum was misprinted as 51,028); DC3 and the §2.1 table now say that the instance set holds the same entries as the SED's own set, in another stored order in 1,671 of 16,511 (re-counted over all landblock-info records). No rule changed. Status Revised, awaiting review. |
+| 2026-10-09 | Blocking item (1) of the second review fixed (spec writer): §10 invariant 2 no longer says the per-instance set "equals" the SED's own set; it now requires the same entries (PIDs and values) and the same header, independent of stored order, as DC3 states. No rule or count changed. Status Revised, awaiting re-review. |

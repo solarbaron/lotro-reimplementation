@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09; review of this revision on 2026-10-09: **changes requested**, 2 blocking items, see Review record). Revision by the spec writer: the implementer OPEN of 2026-10-09 in §4.5.1 on port types of 256 or more answered from the client (BIN3): the port declarations of all 66 node classes were read, every declared type is 1–30; Q8 answered for the lists; rows I20, source BIN3). Before: Accepted (2026-10-09). History: Accepted 2026-10-09; Revised the same day to answer the three implementer OPENs of 2026-10-09 (§2.1 census, §4.4.1 merge order, §4.5.1 port rule); review of that revision: changes requested (2 blocking items); revised again 2026-10-09 to fix both items and notes N1, N2 (§4.4.1 consequence bullets, §4.5.1 Decision, §9.3 step 3, IS13, Q8, Q9); re-review of 2026-10-09: **pass**, Accepted (Review record). |
+| **Status** | Revised (2026-10-09, third pass: the 2 blocking items and notes N4–N6 of the review of the BIN3 revision answered in §4.5.1, I19, I20, §12, Q8, Q9; the Decision now keeps port types 1–255 and states its known divergence from the client; awaiting review). Before: Revised (2026-10-09; review of this revision on 2026-10-09: **changes requested**, 2 blocking items, see Review record). Revision by the spec writer: the implementer OPEN of 2026-10-09 in §4.5.1 on port types of 256 or more answered from the client (BIN3): the port declarations of all 66 node classes were read, every declared type is 1–30; Q8 answered for the lists; rows I20, source BIN3). Before: Accepted (2026-10-09). History: Accepted 2026-10-09; Revised the same day to answer the three implementer OPENs of 2026-10-09 (§2.1 census, §4.4.1 merge order, §4.5.1 port rule); review of that revision: changes requested (2 blocking items); revised again 2026-10-09 to fix both items and notes N1, N2 (§4.4.1 consequence bullets, §4.5.1 Decision, §9.3 step 3, IS13, Q8, Q9); re-review of 2026-10-09: **pass**, Accepted (Review record). |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -87,8 +87,8 @@ referred to by structure, never quoted.
 | I16 | `Light_LODClass` (PID 0x1DC) and `Light_DrivenByDayCycle` (0x707) fill two fields of the client's light object, its level-of-detail class and its day-cycle switch: the light class registers those fields with these PIDs, as it does for the fields of `lighting.md` §8.3 (§6.6, §8.2) | BIN | BIN; their consumers OPEN |
 | I17 | The entity property read chooses its store by the definition's `field_b`: 4, 3 and 8 are three stores of the entity, 6 the run-parameter set, 7 and 9 a service lookup (§6.2, §12) | BIN (the read's dispatch) | BIN |
 | I18 | Per-script property sets are merged **first value wins**: a PID already in the merged set is never replaced. The instance definition's set is merged first, then each included table's set in include order, each table before its own includes (depth-first, stored order); a table's includes are not visited for properties once the merged set holds `Script_CombinationType` = 1 (§4.4) | BIN2 (question 8) | BIN |
-| I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists were not enumerated. Observed (kind, port type) pairs over all tables and scriptlets in §4.5 | BIN (step 3 rule); BIN2 (declaration record form); OBS2 (observed pairs) | BIN; per-kind lists OPEN (§13 Q8), selector field OPEN (§13 Q9) |
-| I20 | Each port-declaration entry holds four 32-bit words: a category (0 for an output port, 1 for a target port; meaning Inferred from the types each holds), the port type, the maximum count (all bits set for unlimited) and a word of flags. The declarations of all 66 node classes, listed in §4.5.1, declare only port types 1–30 (values of enum 0x230000A1); 31 kinds declare nothing. So the client creates no tree port of type 31 or more, in particular none of 256 or more (§4.5.1) | BIN3 | BIN. Answers the implementer OPEN of §4.5.1 and Q8 for the lists; the use of the category and flag words in step 3 stays Q9 |
+| I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists are I20. Observed (kind, port type) pairs over all tables and scriptlets in §4.5.1 | BIN (step 3 rule); BIN2 (declaration record form); BIN3 (lists); OBS2 (observed pairs) | BIN; observed pairs Confirmed 2026-10-09; which of the category and flag words step 3 tests OPEN (§13 Q9) |
+| I20 | Each port-declaration entry holds four 32-bit words: a category (0 for an output port, 1 for a target port; meaning Inferred from the types each holds), the port type, the maximum count (all bits set for unlimited) and a word of flags. The declarations of all 66 node classes, listed in §4.5.1, declare only port types 1–30 (values of enum 0x230000A1); 31 kinds declare nothing. So the client creates no tree port of type 31 or more, in particular none of 256 or more (§4.5.1) | BIN3 | BIN (top-level ports and targets only; sub-targets not read, §4.5.1). Answers the implementer OPEN of §4.5.1 and Q8; the use of the category and flag words in step 3 stays Q9 |
 
 ---
 
@@ -500,14 +500,17 @@ For a `ScriptTable_Node` struct:
 <a id="s4-5-1"></a>
 #### 4.5.1 Port declarations (BIN, BIN2, OBS2; I19)
 
-The node object supplies its kind's port declarations as a list of entries, each with a port
-type, a maximum number of ports of that type (or a marker for "unlimited") and a further
-selector whose non-default values were not traced. Step 3 takes the first entry whose port type
-equals the tree port's type; with the default selector and a finite maximum, it counts the
-ports of that type the node already holds and refuses the port when the count has reached the
-maximum; otherwise it asks the node to create a port of that type. A tree port whose type no
-entry declares is not created. The per-kind lists themselves were not enumerated (BIN2: the
-node classes could not be listed from the executable within this session; §13 Q8).
+The node object supplies its kind's port declarations as a list of entries. Each entry is
+four 32-bit words (I20): the **category word** (0 for an output port, 1 for a target port;
+meaning Inferred), the **port type**, the **maximum** number of ports of that type (all bits set
+for "unlimited") and the **flag word**. Step 3 takes the first entry whose port type equals the
+tree port's type; when the one further word of the entry that step 3 tests (BIN2 saw it tested
+but did not trace whether it is the category word or the flag word, §13 Q9) has its default
+value and the maximum is finite, it counts the ports of that type the node already holds and
+refuses the port when the count has reached the maximum; otherwise it asks the node to create a
+port of that type. A tree port whose type no entry declares is not created. The per-kind lists
+were enumerated in BIN3 and are given in the table "Port declarations per node kind" below
+(revised 2026-10-09; BIN2 could not list the node classes, BIN3 did).
 
 What the data show (OBS2): every port of every node in all 7,524 decoded tables and 28,992
 scriptlets has one of these (kind, port type) pairs; "nodes" is the number of nodes with at
@@ -546,15 +549,26 @@ The table is a census of this install, not a decoding rule: a data update may ad
 the client's declarations accept, and an implementation must not refuse ports because their
 pair is missing from it.
 
-> **Decision (Tessera; answers the implementer OPEN of 2026-10-09 as far as the data allow;
-> revised 2026-10-09):** while the per-kind declarations are unknown (§13 Q8), a tree port is
-> kept when its port type is 1 or more, whatever the node's kind, with no limit on the count of
-> ports of one type. A port of type 0 (including a port type that is not an enum or property-ID
-> value, taken as 0 by step 3) is dropped with its subtree and logged; no port of this install
-> has type 0. The rule does not depend on the table above. Tools and real-data tests may
-> compare the kept ports with the observed pairs and count or log the ports outside them as
-> census findings (IS13); such a finding never changes what is kept. On every record of this
-> install the rule keeps every stored port.
+> **Decision (Tessera; revised 2026-10-09, second time):** a tree port is kept when its port
+> type is 1–255, whatever the node's kind, with no limit on the count of ports of one type. A
+> port of type 0 (including a port type that is not an enum or property-ID value, taken as 0 by
+> step 3) and a port of type 256 or more are dropped with their subtree and logged; for both
+> this is also the client's outcome (no kind declares type 0 or a type above 30, I20). No port
+> of this install has either. The rule does not depend on the census table above or on the
+> declaration table below.
+>
+> **Known divergence from the client (deliberate):** the client would also refuse (a) a port
+> of type 31–255, which no kind declares, (b) a port of type 1–30 whose (kind, port type) pair
+> its kind does not declare, and (c) a port beyond the declared maximum of its type. Tessera
+> keeps all three. Reasons: the declarations are client code, not data, so they cannot be read
+> from the install at run time and would have to be carried as a second table tied to one
+> client build; step 3 cannot be reproduced exactly while the role of the category and flag
+> words is open (§13 Q9); and no record of this install holds a port of kind (a), (b) or (c)
+> (census above: every observed pair is declared and every observed count is within its
+> maximum), so on this install the Decision and the client keep the same ports. Tools and
+> real-data tests may compare the kept ports with the census pairs (and with the declaration
+> table) and count or log ports outside them as census findings (IS13); such a finding never
+> changes what is kept.
 
 > **OPEN** (implementer, 2026-10-09): Tessera's node model stores a port type in one byte
 > (`script-table.md` §4.3 frames it as a u8). A tree port whose type is 256 or more (an enum
@@ -568,7 +582,8 @@ pair is missing from it.
 > below), so no kind declares a type of 31 or more and the client never creates such a tree
 > port. Dropping it with its subtree and logging it, as Tessera does, is the client's
 > outcome, not only a Decision; a one-byte port type in the node model loses nothing. The
-> same holds for the types 31–255 that fit in a byte: no kind declares them either.
+> client would refuse the types 31–255 that fit in a byte too, since no kind declares them;
+> Tessera keeps them (see the Decision above and its known divergence).
 
 **Port declarations per node kind (BIN3, I20).** "Output" lists the output-port entries
 (category 0), "Target" the target-port entries (category 1), each as *type* (*maximum*), ∞ for
@@ -601,9 +616,18 @@ unlimited. Kinds not listed declare nothing: 1, 3, 7, 13, 16, 18, 28, 30, 32, 33
 | 63 When | 24 (∞), 6 (1), 22 (1) | 25 (1), 7 (1) |
 
 Every (kind, port type) pair of the census above is declared as an output port, and every
-observed count is within its maximum. The Decision below is unchanged: whether step 3 consults
-the category word (a tree port matching only a target entry) and what the flag word does are
-Q9, and on every record of this install the Decision and the declarations keep the same ports.
+observed count is within its maximum. Whether step 3 consults the category word (a tree port
+matching only a target entry) and what the flag word does are §13 Q9; the Decision above does
+not depend on either, and on every record of this install the Decision and the declarations
+keep the same ports.
+
+Scope of BIN3: the table covers the ports and the top-level targets of nodes (step 3 and the
+target port of step 4). Sub-targets (`ScriptTable_NodeTargets` of a target, step 4; port types
+6, 16, 20 and 25 in the data) are not declared by any node class; whether the client matches
+them against declarations of the target classes was not read. The review of 2026-10-09 checked
+the category meaning against the data (its own read-only probe over all 0x07 and 0x0C
+records): the 26 (kind, port type) pairs of the nodes' top-level targets are all declared as
+category-1 entries, none more often than its maximum.
 
 <a id="s4-6"></a>
 ### 4.6 What runs where
@@ -936,7 +960,7 @@ client uses a light's LOD class (presumably to cull or fade distant lights) was 
    For SetProperty, the element whose PID equals `SetPropertyScript_PropertyName` is the value
    to set.
 3. Build ports and targets as in §4.5 steps 3–4, keeping ports by the rule of the §4.5.1
-   Decision (port type 1 or more, any kind, any count); for a Link target take `LinkTarget_Name` from
+   Decision (port type 1–255, any kind, any count); for a Link target take `LinkTarget_Name` from
    the target's `ScriptTable_NodeProperties` and resolve it as §3.5 decides.
 4. Bound the work against hostile input: nesting depth (the install needs 2 levels of nodes;
    a limit of 32 is ample, together with `property-system.md` §5.3's value-depth limit), and
@@ -1126,7 +1150,7 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
   way" there should add the rule of §4.4.1 (BIN2): first value wins, and the descent into a
   table's includes for properties is stopped by an `Overriding` value in the **merged** set.
 - **`script-table.md` §4.3**: the observed (kind, port type) pairs of §4.5.1 may serve as its
-  port census; the client's per-kind declarations are still open (§13 Q8).
+  port census; the client's per-kind declarations are in §4.5.1 (BIN3, I20).
 - **`landblock.md` §4.6** OPEN "which end is which": for Script links (type 12), `end_id_2` is
   the entity whose instance script names the link and `end_id_1` the entity the script runs on
   (182,928 of 184,214 link targets, §3.5).
@@ -1149,8 +1173,8 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | Q5 | What the client does with a light's `LODClass` and `DrivenByDayCycle` fields | §6.6, §8.2 | ignore both (as `lighting.md` does today for σ) |
 | Q6 | The Light node's own run-time rules (`LightScript_FadeTime`, `LightScript_Lifespan`, `LightScript_Offset`, holding location) | §6.3 | add and remove the light at once; offset 0 |
 | Q7 | Meaning of `ScriptSystem_TimeofDay_Activation` (378 SED-IID sets, read by no node) | §8.1 | ignore |
-| Q8 | The client's port declarations per node kind (port types and maximum counts), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2) without success; **answered for the lists** 2026-10-09 (BIN3, I20): §4.5.1 lists every kind's declarations; how step 3 uses the category and flag words is Q9 | §4.5.1 | keep every port of type 1 or more, any kind, no count limit; count ports outside the observed pairs as census findings (IS13) |
-| Q9 | The meaning and the non-default values of the further selector field of a port declaration entry (§4.5.1): which values exist and how a non-default value changes the count check of step 3. Split from Q8 on 2026-10-09 (review note N2); not traced in BIN2 | §4.5.1 | ignore the selector (the Q8 decision keeps the port either way) |
+| Q8 | The client's port declarations per node kind (port types and maximum counts), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2) without success; **answered** 2026-10-09 (BIN3, I20): §4.5.1 lists every kind's declarations. Closed; the remaining unknown is Q9 | §4.5.1 | none needed; Tessera keeps ports by the §4.5.1 Decision (type 1–255, any kind, no count limit), a deliberate divergence stated there |
+| Q9 | The role of the category word and the flag word of a port declaration entry (I20) in step 3: BIN2 saw step 3 test one further word of the entry besides the type and the maximum but did not trace whether it is the category word or the flag word; which non-default values exist and how they change the match or the count check. In every entry of the classes sampled by the review of 2026-10-09, the declaration method wrote only the low three bytes of the flag word (as zero) and left its top byte unset, so the flag word may be a one-byte field plus padding. Split from Q8 on 2026-10-09 (review note N2) | §4.5.1 | ignore both words (the §4.5.1 Decision keeps the port either way) |
 
 ---
 
@@ -1163,3 +1187,4 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | 2026-10-09 | Revision (spec writer, dirty room) answering the three implementer OPENs of 2026-10-09. §2.1: recount with a new probe (OBS2); no SED set is a strict subset, the 955,794 were sets in another stored order plus the 9 later SEDs of shared IIDs; I2 and IS8 corrected. §4.4.1 new: per-script property merge, first value wins, descent stopped by an `Overriding` merged value (BIN2, I18, IS12). §4.5.1 new: port declaration rule (BIN2), observed (kind, port type) census over all tables and scriptlets (OBS2), Decision to keep only observed pairs (I19, IS13); per-kind declarations remain OPEN as Q8. §12 notes for `script-runtime.md` §12.2 and `script-table.md` §4.3. Status Revised. |
 | 2026-10-09 | Revision (spec writer, dirty room) answering the review of the same day (changes requested). Blocking (1): §4.4.1 second consequence bullet restricted to a `Script_CombinationType` value merged from an earlier table or the table's own set; new bullet: an `Overriding` instance definition stops the lookup at §4.4 step 2 and no table's set is merged. Blocking (2): §4.5.1 Decision now keeps every tree port of type 1 or more for any kind with no count limit, independent of the census; the observed-pair table is stated as a census of this install; ports outside it are census findings only; §9.3 step 3 and the Q8 decision follow; IS13 restated as a census check that fails only in a strict census mode. N1: §4.4.1 states that null includes are skipped and adds Tessera's visited-set and depth bound for the property walk. N2: the declaration entry's selector field is its own open question, Q9. No new observations. Status stays Revised. |
 | 2026-10-09 | Revision (spec writer, dirty room, second pass of the day) answering the implementer OPEN of 2026-10-09 in §4.5.1 (port types of 256 or more). New source BIN3 and row I20: the port declarations of all 66 node classes read from the client; every declared type is 1–30, so the client never creates a tree port of type 31 or more and dropping it is the client's outcome. §4.5.1 gains the per-kind declaration table; Q8 answered for the lists (the category and flag words stay Q9); the Decision is unchanged. Status Revised, awaiting review. |
+| 2026-10-09 | Revision (spec writer, dirty room, third pass of the day) answering the review of the BIN3 revision (changes requested). Blocking (1): stale "not enumerated" statements removed from the §4.5.1 first paragraph, I19 (sources and mark), the Decision's lead-in, the Q8 row and the §12 note on `script-table.md` §4.3; the declaration entry is described once in I20's terms (category word, port type, maximum, flag word), and Q9 now asks which of the category and flag words step 3 tests; "The Decision below" corrected. Blocking (2): the Decision now keeps ports of type 1–255 for any kind with no count limit and drops type 0 and 256 or more (both also the client's outcome); a new "Known divergence" paragraph states that ports of type 31–255, undeclared pairs and ports beyond a maximum are kept although the client would refuse them, with the reasons, and that no record of this install holds one. N4 recorded in Q9; N5 (scope: sub-targets not read) added to §4.5.1 and I20; N6 (category meaning supported by the review's data check of top-level targets) added to §4.5.1. N3: the property walk of §4.4.1 is bounded by the per-lookup visited set only; the "depth bound" of the earlier row means that set. No new observations. Status Revised, awaiting review. |

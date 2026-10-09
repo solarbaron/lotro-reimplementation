@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-07, BIN5 re-check of the layer and skinning rules; awaiting review) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Revised (2026-10-08, §7.4 OPEN and §15.1 O14.4 answered from `collision.md` §11.8; awaiting review) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
 | **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. BIN5 revision of 2026-10-07: not yet reviewed. Full record in the review log (decision 0018). |
@@ -105,6 +105,7 @@ Legend:
 | K27 | The executable contains no runtime cloth classes (only serialization names of Havok cloth types), never creates a ragdoll instance, and its animation component has no secondary-motion step: capes and skirts move only with their clip tracks (§13) | BIN3 | Confirmed 2026-10-07 (BIN only) |
 | K28 | The player's own movement controller is configured from the game object that the `WEENIECONTENT` DID map labels `PlayerPhysicsControl`: its `PlayerPhysicsControl_BasePlayerParameters`, overlaid in a fixed order by state-dependent parameter structures (troll, mounted, walking, slide, ice, falling, slope, swimming, frozen). The merged `GenericPhysicsController_…MoveSpeed` fields are the per-direction speeds, and the merged `GenericPhysicsController_RampTime` is the slider time *T* of the player's input path (§7.4) | BIN4; OBS3 | Confirmed 2026-10-07 (path, order and field use BIN; values OBS3, read at run time) |
 | K29 | Starting or stopping a clip changes no other clip's overall weight *c*; a layer has no limit on its number of clips (at 1,000 the client logs a warning and still plays the new clip) (§6.5) | BIN5 | Confirmed 2026-10-07 (BIN only) |
+| K30 | The keyboard's input vector per gait and the resulting walking speeds (§7.4, §15.1 O14.4) | `collision.md` §11.8 (BIN questions 60–61, C60–C61, 2026-10-08) | BIN |
 
 ---
 
@@ -916,13 +917,15 @@ contributions add, and a warning is logged when more than one layer contributes.
 of the entity's three scale components (`script-table.md` §6.3). Which movers use this
 velocity was not traced (the avatar's controller of the list above does not).
 
-> **OPEN** (owner observation O14.4, narrowed 2026-10-07): the configured speeds and the
-> speed rule are known (above); not traced is the input vector (*x*, *y*) the keyboard gives
-> in run mode and in walk mode, so the walking ground speed is unknown and the running one
-> is predicted, not confirmed. Check: time a character moving straight for 10 s between two
-> `/loc` readings, per gait (prediction for running: 6.5 m/s forward, 3.25 m/s backward, with
-> no speed buffs), and note whether the feet slide. Tessera's walk controller follows
-> `script-table.md` §8.5 meanwhile.
+> **Answered 2026-10-08** (owner observation O14.4; was OPEN): the input vector is traced
+> (`collision.md` §11.8, BIN). The keyboard gives (0, ±1) or (±1, 0) when running; walk mode
+> halves the command values, which the client quantises to (0, ±0.5) forward and backward
+> and (±0.57, 0) sideways and which also select the Walking layer. Ground speeds with
+> `Movement_SpeedMultiplier` 1 and this install's layers: running 6.5 m/s forward, 3.25 m/s
+> backward, 5.0 m/s sideways; walking **2.5 m/s** forward, **2.25 m/s** backward, **2.565 m/s**
+> sideways (the table in `collision.md` §11.8). The walking speed is thus close to the walk
+> clips' natural speed of about 2 m/s, and feet slide by the difference (no rate matching,
+> above). A `/loc` timing by the owner is now only a confirmation.
 
 ---
 
@@ -1485,7 +1488,7 @@ welcome where noted.
 | O14.1 | Blend method and cross-fade time | **Answered** on foot (BIN, data), visual check welcome; mounted **Partly** | Weighted per-bone average with linear weight ramps (§6.5, §6.6). Walk ↔ run: 0.2 s linear cross-fade (the locomotion template's case `RampOut`, `script-table.md` §8.4). Idle ↔ walk and idle ↔ run: the locomotion clips' weights follow `Slider_Propel` / `Slider_Strafe`, which the player's own input path moves at a constant rate of 1/*T* per second, *T* being the merged `GenericPhysicsController_RampTime` of the player's controller (§7.4, K28): 0.13 s while running on the ground and 0.25 s while walking in this install (so 0 → 1 takes 0.13 s or 0.25 s, about 8 or 15 frames at 60 fps). Other entities move their sliders through the follower paths (0.2 s or 0.5 s, `script-table.md` §8.4). No pop, except for clips started by start-up scripts, which start at full weight. Still OPEN: the slider time of the `Mounted` controller type. |
 | O14.2 | Upper-body clips over locomotion | **Answered** (BIN, K18), visual check welcome | Legs keep running while moving; a standing attack moves the whole body (§6.6). |
 | O14.3 | Turn direction of turn-in-place clips | **Answered** (BIN, K24) | The client never applies the clips' extracted yaw; the heading change comes from the movement system. A positive stored w would be a left turn about +Z (§7.3). Nothing left to observe for rendering. |
-| O14.4 | Walk, run, backward speeds; foot sliding | **Partly** (BIN, data); **needs the owner** for walking and as a confirmation | Rate rule answered (K25: no rate matching, feet slide when speeds differ). Configured speeds answered (K28, §7.4): running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s strafing for a full input with `Movement_SpeedMultiplier` 1; walking configuration 5.0 / 4.5 / 4.5. Not traced: the input vector the keyboard gives per gait, so the actual walking speed needs the owner's `/loc` timing (§7.4 OPEN); the running prediction needs only a confirmation. |
+| O14.4 | Walk, run, backward speeds; foot sliding | **Answered** (BIN, data; 2026-10-08), confirmation welcome | Rate rule answered (K25: no rate matching, feet slide when speeds differ). Speeds (K28, §7.4; input vector `collision.md` §11.8): running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s strafing; walking 2.5 m/s forward, 2.25 m/s backward, 2.565 m/s strafing, with `Movement_SpeedMultiplier` 1. |
 | O14.5 | Scale inheritance from parent bones | **Answered** (BIN, K17) | Children inherit the scale (their vertices grow too) but their joints do not move: a hand on an inflating arm grows around its own joint and stays where the arm's unscaled joints put it (§5.4). |
 | O14.6 | Runtime cloth on capes and skirts | **Answered** (BIN, K27) | None: capes and skirts move only with their clip tracks. |
 | O14.7 | Turning in place | **Answered** (data + BIN), visual check welcome | While standing, a turn input sets `Slider_Turn`; the template then plays the species' turn-left or turn-right clips (stepping feet) on the locomotion layer, only while propel and strafe are 0, and the movement system rotates the body (`script-table.md` §8.4). |
@@ -1499,3 +1502,4 @@ welcome where noted.
 | 2026-10-07 | §1 (BIN3, OBS2, K20–K27), §3.4, §4.4, §5.4, §6.5 (new ramp and cross-fade paragraph), §6.6, §7.3, §7.4, §10, §13, new §14.9–§14.10, §15 (rewritten list; implementation OPENs answered), new §15.1 | Owner observation O14 settled from the client where possible (BIN3, decision 0011): linear ramps, start-up clips without ramp-in, the 0.2 s `UseBoneOpacity` change, fill at a total of at most 0.1 aligned with the running sum, no extracted motion applied in the world, no rate matching and move speeds absent from the data, no cloth; §5.4 corrected (inverse reference translation not divided by the reference scale; the skinning matrix is T·R·S of the triple); the implementation's skinning-form and cross-fade-chain Decisions withdrawn, its other Decisions accepted as Tessera rules. | Spec writer (dirty room) |
 | 2026-10-07 (revision after review) | §1 (new BIN4, OBS3, K25 revised, new K28), §6.5 (slider time), §7.4 (speed rule wording, new paragraph on the player's controller configuration, PlayerPhysics defaults, OPEN narrowed), §11 (new KI9), §15, §15.1 (O14.1, O14.4) | Review of 2026-10-07 answered. O14.1: the player's own slider time, which the review found untraced, is now traced (BIN4): it is the `RampTime` of the player's controller configuration, read from the `PlayerPhysicsControl` object of the data (0.13 s running, 0.25 s walking here); the row says Answered on foot and leaves the mounted controller OPEN. §7.4: max(\|*x*\|, \|*y*\|) is taken before \|*y*\| is doubled (optional review item); which strafe speed goes with which sign of *x*. Correction: K25's "the per-direction move speeds are not in the data files" was wrong; the player's speeds come from `PlayerPhysicsControl_…Parameters` (K28), so O14.4 is narrowed to the keyboard's input vector per gait. | Spec writer (dirty room) |
 | 2026-10-07 (BIN5) | header; §1 (new BIN5, K18 and K26 sources, new K29); §6.5 (paragraph after the ramps table); §15 (implementation OPEN answered) | A clean-room audit of the River-hobbit height code found code contradicting §5.4 and §6.6 (a 10⁻⁴ quantisation tolerance, a cross-fade chain product, the exact matrix inverse for skinning). The client was re-read (BIN5, decision 0011): the spec's rules stand unchanged (truncation without tolerance, each clip's own overall weight, the K26 palette). Added: starting or stopping a clip changes no other clip's weight, and a layer has no clip limit (warning at 1,000). | Spec writer (dirty room) |
+| 2026-10-08 | header; §1 (K30); §7.4 (OPEN answered); §15.1 (O14.4) | Owner-observation pass: the keyboard's input vector per gait is now traced in `collision.md` §11.8 (BIN questions 60–61, C60–C61), so the walking speeds are known (2.5 / 2.25 / 2.565 m/s forward / backward / sideways) and O14.4 needs only a confirmation. No other rule changed. | Spec writer (dirty room) |

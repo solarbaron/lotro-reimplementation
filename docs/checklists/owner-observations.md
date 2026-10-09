@@ -1324,7 +1324,7 @@ text, only that one appears and its buttons).
 <a id="o85"></a>
 ## O85. Selection and race/class screens (P1)
 
-**Spec:** `character-screens.md` §2–§4, §6.
+**Spec:** `character-screens.md` §2–§4, §6, §7.2.
 
 **What to do:** log in to the character selection screen; start a new character; go through
 the race and class screen, forward to the appearance and name screen and back.
@@ -1332,7 +1332,11 @@ the race and class screen, forward to the appearance and name screen and back.
 **Record:** the order of screens and what the back button does on each; the order of
 characters in the list and which is selected first; the order of races (by species, in your
 own words) and of classes for two races; which racial traits the race panel lists (all, or
-only some); whether changing race keeps the selected class.
+only some); whether changing race keeps the selected class; on each screen, which of the
+back, continue and exit buttons, the turntable buttons and the avatar-update check box are
+shown (`character-screens.md` §2.3), when exit appears, how fast and in what steps the
+turntable turns the figure; whether the delete button is offered and what happens after a
+deletion is confirmed.
 
 <a id="o86"></a>
 ## O86. Appearance and name screen (P1)

@@ -27,6 +27,9 @@ tessera-mesh.workspace = true
 # Real-data test only (tests/terrain_layers_golden.rs): real landblock layers resolved by
 # the terrain crate, drawn through the terrain layer pipeline. Never a normal dependency.
 tessera-terrain.workspace = true
+# Golden test only (tests/particles_golden.rs): a synthetic particle system simulated by
+# the particle runtime, drawn through the particle pipeline. Never a normal dependency.
+tessera-particles.workspace = true
 
 # CPU cost of skinned drawing (50 characters x 30 parts); a plain binary, no harness.
 [[bench]]

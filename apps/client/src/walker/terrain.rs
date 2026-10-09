@@ -453,7 +453,7 @@ fn unresolved_terrain(data: &LandblockData, table: &TerrainTypeTable) -> Option<
 }
 
 /// The walker's §4.9 path for one surface of a block (`terrain-texturing.md` §4.9,
-/// `walker.md` §14.4): [`block_open`], then the surface resolved as [`resolve_surface`]
+/// `walker.md` §14.4): [`block_open`], then the surface resolved as `resolve_surface`
 /// does. Returns the layers and whether the chunk is not drawn (rule 3).
 ///
 /// # Errors

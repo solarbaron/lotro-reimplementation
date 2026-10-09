@@ -229,6 +229,19 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             settle_timeout: Duration::from_secs(args.settle_timeout),
         }),
         audio: crate::audio::config_from_args(args),
+        effects: crate::walker::effects::EffectConfig {
+            enabled: !args.no_particles,
+            interiors: args.interiors,
+            seed: args.particle_seed.unwrap_or_else(|| {
+                if args.walker_headless() {
+                    1
+                } else {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(1, |d| d.as_secs() as u32)
+                }
+            }),
+        },
         systems: systems(args),
         clock: ClockConfig {
             day: args.day.unwrap_or(crate::walker::env::DEFAULT_DAY),

@@ -69,6 +69,9 @@ pub struct HeadlessReport {
     pub audio: Option<crate::audio::AudioReport>,
     /// The far view's counters of the last frame (`--far-view on`).
     pub far_view: Option<crate::walker::farview::FarViewStats>,
+    /// Particle effects at the end (`particle-runtime.md`): owners, systems, drawn
+    /// vertices of the last frame and the most of any frame.
+    pub particles: crate::walker::effects::EffectStats,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -358,6 +361,8 @@ fn finish(
     if let Some(f) = &report.far_view {
         tracing::info!(?f, "far view at the end");
     }
+    report.particles = walker.effects().stats();
+    tracing::info!("particles: {}", walker.effects().hud_line());
     if let Some(a) = &report.audio {
         crate::audio::log_report(a);
     }

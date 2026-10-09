@@ -26,6 +26,7 @@ use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
 use crate::mesh_pipelines::{
     Cull, DrawContext, DrawUniform, Kind, MeshKey, MeshLayouts, MeshPipelineCache, is_mirrored,
 };
+use crate::particles::{ParticleFrame, ParticleState};
 use crate::pass_hook::{HookPrepare, HookRecord, HookStage, PassHook};
 use crate::pipelines::{
     DEPTH_CLEAR, DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
@@ -201,6 +202,11 @@ pub struct FrameStats {
     pub instances_culled: u32,
     /// Colour-buffer copies made for water refraction.
     pub scene_copies: u32,
+    /// Particle draws (one per [`crate::ParticleDraw`] with vertices; each is one or two
+    /// draw calls, counted in `draw_calls`).
+    pub particle_draws: u32,
+    /// Particle vertices drawn.
+    pub particle_vertices: u32,
     /// UI pass and UI texture statistics (render.md §6), kept apart from
     /// asset uploads.
     pub ui: crate::ui::UiStats,
@@ -395,6 +401,7 @@ pub struct Renderer<'w> {
     water_state: WaterState,
     far_view_state: crate::far_view::FarViewState,
     sky_state: SkyState,
+    particle_state: ParticleState,
     instanced_state: InstancedState,
     /// Copy of the colour target for water refraction: texture, view, size, format.
     scene_copy: Option<SceneCopy>,
@@ -935,6 +942,7 @@ impl<'w> Renderer<'w> {
             water_state: WaterState::default(),
             far_view_state: crate::far_view::FarViewState::default(),
             sky_state: SkyState::default(),
+            particle_state: ParticleState::default(),
             instanced_state: InstancedState::default(),
             scene_copy: None,
             clear_color: wgpu::Color { r, g, b, a },
@@ -2564,6 +2572,27 @@ impl<'w> Renderer<'w> {
                         }
                     }
                 }
+                let particle_draws = std::mem::take(&mut pass.particles);
+                if !particle_draws.is_empty() {
+                    let pctx = ParticleFrame {
+                        device: &self.ctx.device,
+                        format,
+                        view_proj,
+                        textures: TextureResolver {
+                            store: &self.textures,
+                            white: (&self.white_view.0, &self.white_view.1),
+                            exclude: Some(&view),
+                        },
+                        premultiplied: pass.premultiplied,
+                    };
+                    if let Some(h) = crate::particles::build_hook(
+                        &mut self.particle_state,
+                        particle_draws,
+                        &pctx,
+                    )? {
+                        pass.hooks.push(h);
+                    }
+                }
                 let prepare = HookPrepare {
                     device: &self.ctx.device,
                     queue: &self.ctx.queue,
@@ -2579,7 +2608,9 @@ impl<'w> Renderer<'w> {
                     hook.prepare(&prepare)?;
                 }
             } else {
-                if (!pass.meshes.is_empty() || !pass.world.is_empty()) && !warnings.screen_mesh {
+                if (!pass.meshes.is_empty() || !pass.world.is_empty() || !pass.particles.is_empty())
+                    && !warnings.screen_mesh
+                {
                     tracing::warn!(pass = %pass.label, "meshes in a screen pass are ignored");
                     warnings.screen_mesh = true;
                 }

@@ -227,6 +227,10 @@ pub struct FigureAsset {
     pub shape: FigureShape,
     /// Whole-body scale (`appearance.md` §6.1).
     pub model_scale: f32,
+    /// Every holding location and `attach_map` bone of the figure's setup, for the particle
+    /// effects attached to it (`particle-runtime.md` §6.1); `None` when the setup does not
+    /// read.
+    pub points: Option<Arc<crate::walker::effects::data::AttachPoints>>,
     /// The figure's `Render_LODClass` (`walker.md` §11.4.3, W22): the first found in the
     /// placement's instance set, then along the 0x47 entity chain from the figure's entity;
     /// `None` when no level holds it (the component's initial values apply, `mesh.md` §8.5).
@@ -536,6 +540,19 @@ pub fn build_figure(
         }
         _ => None,
     };
+    let points = crate::audio::loader::fetch(&ctx.set, c.skeleton.setup.0)
+        .ok()
+        .flatten()
+        .and_then(|b| {
+            let s = <tessera_formats::setup::Setup as tessera_formats::Record>::parse_expecting(
+                &b,
+                c.skeleton.setup,
+            )
+            .ok()?;
+            Some(Arc::new(
+                crate::walker::effects::data::AttachPoints::from_setup(&s, &b),
+            ))
+        });
     let model_scale = c.model_scale();
     let model_scale = if model_scale.is_finite() && model_scale > 0.0 && model_scale < 100.0 {
         model_scale
@@ -552,6 +569,7 @@ pub fn build_figure(
         deformation: deformation.map(Arc::new),
         shape,
         model_scale,
+        points,
         lod_class,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,

@@ -530,6 +530,101 @@ impl SoundNode {
     }
 }
 
+/// Data of a Particle node (kind 59; 58 bytes, §5.3; `particle-runtime.md` §5.2). The
+/// fields carry the `ParticleScript_` labels of the master property dictionary; stored
+/// values are kept as they are (the run time sanitises them).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleScriptNode {
+    /// `ParticleScript_ParticleID`: a 0x39 (or 0x44) DID, or 0.
+    pub particle_id: Did,
+    /// `ParticleScript_ForkParticleID`: a 0x44 DID, or 0.
+    pub fork_particle_id: Did,
+    /// `ParticleScript_ShouldFade` (fork effects only).
+    pub should_fade: bool,
+    /// `ParticleScript_FarFadeMinDistance`.
+    pub far_fade_min: f32,
+    /// `ParticleScript_FarFadeMaxDistance`.
+    pub far_fade_max: f32,
+    /// `ParticleScript_CloseFadeMinDistance`.
+    pub close_fade_min: f32,
+    /// `ParticleScript_CloseFadeMaxDistance`.
+    pub close_fade_max: f32,
+    /// `ParticleScript_HoldingLocation`: a `HoldingLocation` enum key, or 0.
+    pub holding_location: u32,
+    /// `ParticleScript_BoneType`: a `BoneType` enum key, or 0.
+    pub bone_type: u32,
+    /// `ParticleScript_BoneOffset`, metres.
+    pub bone_offset: [f32; 3],
+    /// `ParticleScript_DropEffect`.
+    pub drop_effect: bool,
+    /// `ParticleScript_RemoveRotation`.
+    pub remove_rotation: bool,
+    /// `ParticleScript_OnWater`.
+    pub on_water: bool,
+    /// `ParticleScript_ImmediateDisposal`.
+    pub immediate_disposal: bool,
+    /// `ParticleScript_RedirectProperty`: a PID, or 0.
+    pub redirect_property: u32,
+}
+
+impl Default for ParticleScriptNode {
+    /// The defaults of a new node (`particle-runtime.md` §5.2).
+    fn default() -> Self {
+        Self {
+            particle_id: Did(0),
+            fork_particle_id: Did(0),
+            should_fade: true,
+            far_fade_min: 40.0,
+            far_fade_max: 60.0,
+            close_fade_min: 0.0,
+            close_fade_max: 0.0,
+            holding_location: 0,
+            bone_type: 0,
+            bone_offset: [0.0; 3],
+            drop_effect: false,
+            remove_rotation: false,
+            on_water: false,
+            immediate_disposal: false,
+            redirect_property: 0,
+        }
+    }
+}
+
+impl ParticleScriptNode {
+    /// Stored size of the data (§5.3: two DIDs, a bool8, four f32, two u32, a vec3, four
+    /// bool8, a u32).
+    pub const SIZE: usize = 58;
+
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self {
+            particle_id: r.did()?,
+            fork_particle_id: r.did()?,
+            should_fade: r.bool8()?,
+            far_fade_min: r.f32()?,
+            far_fade_max: r.f32()?,
+            close_fade_min: r.f32()?,
+            close_fade_max: r.f32()?,
+            holding_location: r.u32()?,
+            bone_type: r.u32()?,
+            bone_offset: [r.f32()?, r.f32()?, r.f32()?],
+            drop_effect: r.bool8()?,
+            remove_rotation: r.bool8()?,
+            on_water: r.bool8()?,
+            immediate_disposal: r.bool8()?,
+            redirect_property: r.u32()?,
+        })
+    }
+
+    /// The effect DID the node starts (`particles.md` §7.1.1): `ParticleID` when not 0,
+    /// otherwise `ForkParticleID`; `None` when both are 0.
+    #[must_use]
+    pub fn effect_did(&self) -> Option<Did> {
+        [self.particle_id, self.fork_particle_id]
+            .into_iter()
+            .find(|d| !d.is_null())
+    }
+}
+
 /// Kind-specific node data (§5, §6).
 ///
 /// Kinds that clip selection and the sound runtime use are decoded into typed variants;
@@ -636,6 +731,8 @@ pub enum NodeData {
     },
     /// Sound (48): play a sound info (`sound.md` §9.1–§9.2).
     Sound(Box<SoundNode>),
+    /// Particle (59): start a particle or fork effect (`particle-runtime.md` §5).
+    Particle(Box<ParticleScriptNode>),
     /// SoundEnvironment (62): register a reverb environment while running (`sound.md` §9.4).
     SoundEnvironment {
         /// `SoundEnvironmentScript_Name`: the environment preset (enum 0x23000080).
@@ -843,8 +940,9 @@ pub struct Node {
     pub data: NodeData,
     /// The common base block.
     pub base: BaseBlock,
-    /// The extra byte of Particle nodes (kind 59) after the base block (meaning OPEN);
-    /// `None` for every other kind.
+    /// The extra byte of Particle nodes (kind 59) after the base block: the stored
+    /// never-ending classification, 1 = never-ending (`particle-runtime.md` §5.3); `None`
+    /// for every other kind.
     pub particle_flag: Option<bool>,
     /// Output ports in stored order (order is not meaningful, §4.3).
     pub ports: Vec<Port>,
@@ -858,6 +956,15 @@ impl Node {
     pub fn animation(&self) -> Option<&AnimationNode> {
         match &self.data {
             NodeData::Animation(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The particle data, if this is a Particle node (kind 59).
+    #[must_use]
+    pub fn particle(&self) -> Option<&ParticleScriptNode> {
+        match &self.data {
+            NodeData::Particle(p) => Some(p),
             _ => None,
         }
     }
@@ -975,7 +1082,6 @@ const BEAM: &[F] = &[
     B, Rgba, Pos, B, U, U, U, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, U, U, V3,
     B, U, U, V3, B, B, W4, W4, W4, W4, U, U, W4, W4, U, U,
 ];
-const PARTICLE: &[F] = &[U, U, B, W4, W4, W4, W4, U, U, V3, B, B, B, B, U];
 const EDIT_MATERIAL: &[F] = &[U, U, U, W4, Wave, Rgba, U, B];
 
 /// Fixed layouts of the kinds that are skipped field by field (§5.1–§5.3). `None` for
@@ -1009,7 +1115,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         53 => &[U, U, U, U],
         54 => BEAM,
         56 => &[U, U, U, B],
-        59 => PARTICLE,
         60 => EDIT_MATERIAL,
         81 => &[Str, U],
         _ => return None,
@@ -1244,6 +1349,11 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 let s = SoundNode::read(r)?;
                 r.charge(std::mem::size_of::<SoundNode>())?;
                 NodeData::Sound(Box::new(s))
+            }
+            59 => {
+                let p = ParticleScriptNode::read(r)?;
+                r.charge(std::mem::size_of::<ParticleScriptNode>())?;
+                NodeData::Particle(Box::new(p))
             }
             62 => NodeData::SoundEnvironment {
                 name: r.u32()?,

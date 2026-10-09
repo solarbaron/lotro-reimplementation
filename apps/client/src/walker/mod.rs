@@ -40,6 +40,7 @@ pub(crate) mod boot;
 pub mod characters;
 pub mod chat;
 pub(crate) mod controls;
+pub mod effects;
 pub mod env;
 pub mod farband;
 pub mod farview;
@@ -413,6 +414,8 @@ pub struct WalkerConfig {
     pub autorun: Option<bool>,
     /// World audio (ROADMAP M6); off by default.
     pub audio: crate::audio::AudioConfig,
+    /// Particle effects (`particle-runtime.md`).
+    pub effects: effects::EffectConfig,
     /// Walk on collision (`tessera-physics`, ROADMAP M4.5) when the world builds collision
     /// sets; otherwise, or when false, walk mode follows terrain heights.
     pub collision_walk: bool,
@@ -486,6 +489,7 @@ impl Default for WalkerConfig {
             bench: None,
             autorun: None,
             audio: crate::audio::AudioConfig::default(),
+            effects: effects::EffectConfig::default(),
             collision_walk: true,
             avatar: crate::avatar::AvatarSpec::default(),
             systems: Systems::all(),
@@ -674,6 +678,8 @@ pub struct Walker {
     chars_ms: f64,
     /// World audio (`None` with audio off).
     audio: Option<crate::audio::WorldAudio>,
+    /// Particle effects.
+    effects: effects::EffectLayer,
     /// The collision walk mode's mover, loading on its own thread.
     mover_job: Option<std::thread::JoinHandle<movement::setup::MoverSetup>>,
     /// The M4.5 systems in effect (`walker.md` §14.2).
@@ -905,6 +911,13 @@ impl Walker {
                     ctx.options().active_content_layers.clone(),
                 )
             });
+        let effects = effects::EffectLayer::new(
+            config.effects,
+            Arc::clone(&set),
+            objects.materials(),
+            pool.clone(),
+            ctx.options().active_content_layers.clone(),
+        );
         // The collision walk mode: the mover (capsule, movement record, conditions) loads on
         // its own thread (locating the movement record reads the 0x79 sets).
         let mover_job = if config.collision_walk && ctx.options().build_collision {
@@ -984,6 +997,7 @@ impl Walker {
             player_region: config_region,
             chars_ms: 0.0,
             audio,
+            effects,
             mover_job,
             systems,
             env,
@@ -1195,6 +1209,7 @@ impl Walker {
             && (!self.sky_drawn() || self.env.sky_settled(&self.objects))
             && self.resolver.pending() == 0
             && self.far_view_settled()
+            && self.effects.settled()
     }
 
     /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
@@ -1254,6 +1269,9 @@ impl Walker {
         }
         if !self.far_view_settled() {
             out.push("far view");
+        }
+        if !self.effects.settled() {
+            out.push("particle effects");
         }
         out
     }
@@ -1649,6 +1667,21 @@ impl Walker {
         chars_ms += t_chars.elapsed().as_secs_f64() * 1e3;
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
+
+        // Particle effects (`particle-runtime.md` §3.2): owners, sweep, placement,
+        // housekeeping.
+        let fx_eye = self.controls.placed().then(|| self.view().0);
+        let time = self.material_time();
+        self.effects.update(
+            effects::EffectInput {
+                dt: f64::from(dt),
+                now: time,
+                streamer: &self.streamer,
+                eye: fx_eye,
+                characters: &self.characters,
+            },
+            &mut self.objects,
+        );
 
         // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
         if self.audio.is_some() {
@@ -2451,6 +2484,7 @@ impl Walker {
             if let Some(a) = &self.audio {
                 out.push((a.hud_line(), GREY));
             }
+            out.push((self.effects.hud_line(), GREY));
             if self.flight.is_none() {
                 out.push((
                     format!("{} (fly {:.0} m/s)", self.help, self.controls.fly_speed()),
@@ -2665,6 +2699,9 @@ impl Walker {
                     Instant::now(),
                 );
             }
+            // Particle effects after the other translucent surfaces of the scene
+            // (`particle-runtime.md` §9; their order is `particles.md` §8.15).
+            self.effects.draw(pass, &anchor, eye, dir, &self.objects);
             let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
             self.phase_ms[3] = ms(t0, t1);
             self.phase_ms[4] = ms(t1, t2);
@@ -2815,6 +2852,12 @@ impl Walker {
         Some(describe(&lock(&self.shared), &pos, self.controls.heading()))
     }
 
+    /// Particle effects (counters for tests and reports).
+    #[must_use]
+    pub fn effects(&self) -> &effects::EffectLayer {
+        &self.effects
+    }
+
     /// World audio, when on.
     #[must_use]
     pub fn audio(&self) -> Option<&crate::audio::WorldAudio> {
@@ -2826,6 +2869,7 @@ impl Walker {
         if let Some(a) = self.audio.as_mut() {
             a.shutdown();
         }
+        self.effects.shutdown();
         self.characters.shutdown(renderer, &mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);

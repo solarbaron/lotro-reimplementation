@@ -412,6 +412,15 @@ pub struct Args {
     #[arg(long)]
     pub no_emitters: bool,
 
+    /// No particle effects (the effect nodes of the scripts of placed objects and NPCs).
+    #[arg(long)]
+    pub no_particles: bool,
+
+    /// Seed of the particles' shared random generator (default: 1 for `--headless`, the
+    /// wall-clock seconds otherwise, `particle-runtime.md` §12 rule 1).
+    #[arg(long, value_name = "N")]
+    pub particle_seed: Option<u32>,
+
     /// A command line for the client's command dispatcher (decision 0020 item 7), for
     /// example a player-music command (`/play <name> [<part>] [sync]`, `/playstart`,
     /// `/playlist`, `/playstop`, `/instrument`) or `/help`. Repeatable; the lines run in

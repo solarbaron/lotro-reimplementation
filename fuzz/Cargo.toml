@@ -43,6 +43,7 @@ tessera-wvm = { path = "../crates/wvm" }
 tessera-audio = { path = "../crates/audio" }
 tessera-scriptgraph = { path = "../crates/scriptgraph" }
 tessera-assets = { path = "../crates/assets" }
+tessera-particles = { path = "../crates/particles" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -1186,6 +1187,15 @@ bench = false
 [[bin]]
 name = "formats_gameplay_items"
 path = "fuzz_targets/formats_gameplay_items.rs"
+test = false
+doc = false
+bench = false
+
+# --- Particle runtime: simulation, drawing and the effect manager (crates/particles; particles.md §8, particle-runtime.md §3–§9) ---
+
+[[bin]]
+name = "particles_sim"
+path = "fuzz_targets/particles_sim.rs"
 test = false
 doc = false
 bench = false

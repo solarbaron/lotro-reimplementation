@@ -151,6 +151,11 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Particles (`docs/specs/particle-runtime.md` §9): [`Pass::particles`] draws one
+//! [`ParticleDraw`] per draw instance of a particle system, world-space
+//! [`ParticleVertex`]es with quads first and triangles after, in the caller's order (no
+//! sorting), with the blend, alpha test and depth write of an [`AlphaMode`], in lit and
+//! unlit world passes.
 //! Game UI (M5): [`Renderer::create_ui_texture`] and
 //! [`Renderer::update_texture_rect`] hold panel canvases, and
 //! [`Frame::ui_pass`] composes them with transform and clip chains; see the
@@ -172,6 +177,7 @@ mod lit_pipelines;
 mod material;
 mod mesh;
 mod mesh_pipelines;
+mod particles;
 mod pass_hook;
 mod pipelines;
 mod renderer;
@@ -214,6 +220,10 @@ pub use material::{
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,
     SubmeshInfo,
+};
+pub use particles::{
+    MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_DRAWS_PER_PASS, MAX_PARTICLE_VERTICES_PER_PASS,
+    ParticleDraw, ParticleVertex,
 };
 pub use pipelines::{DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT, LineVertex};
 pub use renderer::{

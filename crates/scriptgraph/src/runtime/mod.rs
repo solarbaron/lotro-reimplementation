@@ -141,6 +141,10 @@ pub struct RuntimeStats {
     pub sounds_accepted: u64,
     /// Sound environments registered.
     pub environments_registered: u64,
+    /// Particle effects asked of the sink (`particle-runtime.md` §5.4–§5.8).
+    pub particles_requested: u64,
+    /// Finite Particle nodes skipped by the intensity gate (§5.4 step 3).
+    pub particles_gated: u64,
     /// Scheduler events delivered.
     pub events_delivered: u64,
     /// Property changes that notified listeners.

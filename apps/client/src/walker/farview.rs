@@ -4,16 +4,16 @@
 //! colour lists and the detail texture, the sectors' landscape water outside the
 //! full-detail landblocks, and the distant sprites from the imposter atlases.
 //!
-//! - **Near field** (§2, §3.2, Tessera Decision FD9): by default the original's 3 × 3
-//!   landblocks around the viewer's ([`NearFieldMode::Original`]; the host streams terrain
-//!   within [`NEAR_FIELD_RING`]); with `--view-blocks` the walker's own full-detail ring
-//!   ([`NearFieldMode::Ring`]). Only landblocks the terrain layer can draw (meshed, or
+//! - **Near field** (§2, §3.2, Tessera Decisions FD9 and FD15): by default the original's
+//!   3 × 3 landblocks around the viewer's ([`NearFieldMode::Original`]; the host streams
+//!   terrain within [`NEAR_FIELD_RING`]); with `--view-blocks` the walker's own full-detail
+//!   ring ([`NearFieldMode::Ring`]), whose far neighbours stitch to it by FD11 and FD12. Only landblocks the terrain layer can draw (meshed, or
 //!   deliberately out of the scene) enter the near field ([`near_field_of`]); the far
 //!   batches cover the rest of the listed sectors, so an unmeshed near landblock is filled
 //!   by the far mesh until its full-detail mesh arrives.
-//! - **Hand-off** ([`FarHandOff`]): the terrain and water layers skip exactly the
-//!   landblocks the far batches **on the GPU** cover, so while new batches build on the
-//!   workers a landblock is drawn by the old far batch or by the full-detail terrain,
+//! - **Hand-off** ([`FarHandOff`], Tessera Decision FD13): the terrain and water layers
+//!   skip exactly the landblocks the far batches **on the GPU** cover, so while new
+//!   batches build on the workers a landblock is drawn by the old far batch or by the full-detail terrain,
 //!   never by both and never by neither (as long as the terrain still holds it). Terrain
 //!   blocks next to the far field mesh at the finest level and ignore the far neighbour
 //!   for their seam, so their edge has every sample the far stitch fans to (§5.2).
@@ -26,7 +26,10 @@
 //!   entities through the object layer is not wired yet (the HUD reports the live count).
 //! - **Horizon fill** (§7.3): the mesh of UNIQUEDB key 0x95 is placed as §7.3 says and drawn
 //!   through the instanced path, only when its horizontal radius is at least 1.25 × *E*, so
-//!   it can never hide listed terrain (its depth state is OPEN, `far-view.md` §12 note).
+//!   it can never hide listed terrain (Tessera Decision under the §12 OPEN on the horizon
+//!   mesh: placed from the eye's height; its depth state is not traced).
+//! - **Draw order** (Tessera Decision FD14): the renderer draws the far view after the sky
+//!   and before the water, so the far-draw fade blends with the sky.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -616,7 +619,7 @@ impl FarViewLayer {
             self.horizon = Some(d.0);
         }
         // §6.1: the active template's defaults. Only the plain template is drawn (the
-        // normal-mapped one is not implemented, implementer note in `far-view.md` §12).
+        // normal-mapped one is not implemented yet, `far-view.md` §12 implementation status).
         if let Some(r) = &self.records
             && !self.template_asked
         {
@@ -1052,7 +1055,7 @@ impl FarViewLayer {
                 tracing::info!(
                     radius = r,
                     extent,
-                    "horizon fill smaller than 1.25 E; not drawn (its depth state is OPEN)"
+                    "horizon fill smaller than 1.25 E; not drawn (its depth state is not traced)"
                 );
             }
             return;

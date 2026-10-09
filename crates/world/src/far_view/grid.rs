@@ -317,7 +317,7 @@ impl LandblockGrid {
         // An explicit near set names landblocks the walker draws at full detail whatever
         // their sector: inside the rectangle they are near even where no sector record
         // covers them, so a far neighbour stitches to their edge instead of leaving it
-        // open (Tessera choice for FD9, implementer note in `far-view.md` §12).
+        // open (Tessera Decision FD12).
         if let NearField::Set(set) = near {
             for &(x, y) in set.iter() {
                 if let Some(i) = grid.index(i32::from(x), i32::from(y))

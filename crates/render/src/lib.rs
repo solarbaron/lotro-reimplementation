@@ -198,9 +198,10 @@ pub use context::{
 };
 pub use error::{RenderError, Result};
 pub use far_view::{
-    DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FarFadeParams, FarTerrainData, FarTerrainDraw,
-    FarTerrainMesh, MAX_FAR_TERRAIN_INDICES, MAX_FAR_TERRAIN_VERTICES, MAX_SPRITES_PER_BATCH,
-    SpriteBatch, SpriteDraw,
+    DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FAR_GRID_CULL, FAR_STITCH_CULL, FarFadeParams,
+    FarTerrainData, FarTerrainDraw, FarTerrainMesh, MAX_FAR_TERRAIN_INDICES,
+    MAX_FAR_TERRAIN_VERTICES, MAX_SPRITES_PER_BATCH, SPRITE_ALPHA_MARGIN, SPRITE_CULL, SpriteBatch,
+    SpriteDraw, sprite_texel_kept,
 };
 pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
 pub use instanced::{

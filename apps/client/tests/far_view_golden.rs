@@ -526,3 +526,161 @@ fn plain_template_fade_and_sprite_fade_in() -> Result<(), RenderError> {
     assert!(px[0] > px[1] + 40, "sprite missing: {px:?}");
     Ok(())
 }
+
+/// The centre pixel of a sprite quad filling the view whose atlas texels have coverage
+/// `alpha` (0–255), drawn with alpha-test reference `reference` (`None`: the default)
+/// over a blue clear colour.
+fn sprite_coverage_pixel(
+    r: &mut Renderer<'static>,
+    alpha: u8,
+    reference: Option<f32>,
+) -> Result<[u8; 4], RenderError> {
+    let atlas = upload(
+        r,
+        4,
+        4,
+        &texels(4, 4, |_, _| [200, 40, 40, alpha]),
+        Wrap::Repeat,
+    )?;
+    let camera = Camera {
+        eye: Vec3::new(80.0, 80.0, 140.0),
+        target: Vec3::new(80.0, 80.0001, 0.0),
+        up: Vec3::Z,
+        projection: Perspective {
+            fov_y: 30f32.to_radians(),
+            near: 0.5,
+            far: 10_000.0,
+        },
+    };
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame
+        .world_pass("sprite coverage", &camera)
+        .clear([0.0, 0.0, 1.0, 1.0])
+        .frame_lighting(FrameLighting {
+            ambient: [0.3; 3],
+            hemispheric: [0.0; 3],
+            sun: None,
+            fog: None,
+            ..FrameLighting::default()
+        });
+    let batch = r.upload_sprite_batch(
+        "coverage",
+        &[DistantSprite {
+            position: [80.0, 80.0, 10.0],
+            size: 400.0,
+            base: -200.0,
+            u: [0.0, 1.0],
+            v: [0.0, 1.0],
+            distance: 1.0,
+            mirror: false,
+        }],
+    )?;
+    let mut d = SpriteDraw::new(batch, Mat4::IDENTITY, Some(atlas));
+    if let Some(a) = reference {
+        d.alpha_test = a;
+    }
+    pass.distant_sprites(d);
+    r.end_frame(frame)?;
+    Ok(r.read_pixels(&target)?.pixel(8, 8).unwrap_or_default())
+}
+
+/// FV24, `far-view.md` §9.3: the sprite material's alpha test uses the records' reference
+/// 0.1 (handed as 25 / 255), so a texel of coverage 0.3 is drawn and one of 0.08 is not;
+/// the former Tessera threshold 0.5 would have cut the 0.3 texel.
+#[test]
+fn sprite_alpha_test_uses_the_records_reference() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let kept = sprite_coverage_pixel(&mut r, 77, None)?;
+    assert!(kept[0] > 0, "coverage 0.3 must be drawn: {kept:?}");
+    let cut = sprite_coverage_pixel(&mut r, 20, None)?;
+    assert_eq!(cut, [0, 0, 255, 255], "coverage 0.08 must be discarded");
+    let old = sprite_coverage_pixel(&mut r, 77, Some(0.5))?;
+    assert_eq!(
+        old,
+        [0, 0, 255, 255],
+        "an explicit 0.5 reference still applies"
+    );
+    Ok(())
+}
+
+/// FD14: the far view draws after the sky in the same pass, so a half-faded far-terrain
+/// pixel blends with the sky behind it, not with the clear colour (a far view drawn before
+/// the sky would write depth there and keep the sky out).
+#[test]
+fn far_view_fades_over_the_sky() -> Result<(), RenderError> {
+    use tessera_render::{MeshData, SkyDraw, SkyObject, WorldSurface};
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let mesh = flat_square(&mut r)?;
+    let grey = |v: u8| [v, v, v, 255];
+    let colour = upload(&mut r, 4, 4, &texels(4, 4, |_, _| grey(102)), Wrap::Clamp)?;
+    let detail = upload(&mut r, 4, 4, &texels(4, 4, |_, _| grey(128)), Wrap::Repeat)?;
+    // A red sky card below the eye, so it lies behind the terrain in the view.
+    let h = 500.0;
+    let card = MeshData::new(
+        vec![
+            [-h, -h, -40.0],
+            [h, -h, -40.0],
+            [h, h, -40.0],
+            [-h, h, -40.0],
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    );
+    let sky = r.upload_world_model(
+        &card,
+        &[WorldSurface {
+            unlit: true,
+            two_sided: true,
+            ..WorldSurface {
+                base_color: [1.0, 0.0, 0.0, 1.0],
+                ..WorldSurface::default()
+            }
+        }],
+    )?;
+    let camera = Camera {
+        eye: Vec3::new(80.0, 80.0, 100.0),
+        target: Vec3::new(80.0, 80.0001, 0.0),
+        up: Vec3::Z,
+        projection: Perspective {
+            fov_y: 30f32.to_radians(),
+            near: 0.5,
+            far: 10_000.0,
+        },
+    };
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame
+        .world_pass("far over sky", &camera)
+        .clear([0.0, 0.0, 1.0, 1.0])
+        .frame_lighting(FrameLighting {
+            ambient: [0.3; 3],
+            hemispheric: [0.0; 3],
+            sun: None,
+            fog: None,
+            ..FrameLighting::default()
+        });
+    let mut d = FarTerrainDraw::new(mesh, Mat4::IDENTITY);
+    d.colour = Some(colour);
+    d.detail = Some(detail);
+    // About half faded at the centre pixel (100 units away).
+    d.fade = FarFadeParams {
+        start: 80.0,
+        inv_range: 1.0 / 40.0,
+    };
+    // Queued before the sky: the renderer's order decides, not the queue.
+    pass.far_terrain(d);
+    pass.sky(SkyDraw {
+        objects: vec![SkyObject::new(sky, 0.0, 0.0)],
+    });
+    r.end_frame(frame)?;
+    let px = r.read_pixels(&target)?.pixel(8, 8).unwrap_or_default();
+    assert!(
+        i32::from(px[0]) > i32::from(px[2]) + 60,
+        "the faded far terrain must blend with the sky: {px:?}"
+    );
+    Ok(())
+}

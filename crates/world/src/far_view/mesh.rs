@@ -19,9 +19,9 @@
 //! sample at its middle, as the client does. Against a neighbour more than one LOD finer
 //! (possible only when the walker keeps a larger full-detail ring, FD9) Tessera adds a fan
 //! from the segment's first end over every neighbour edge sample inside the segment
-//! (implementer note in `far-view.md` §12). Stitching triangles are vertical slivers; they
-//! are stored after the grid triangles ([`FarMesh::stitch_start`]) so the renderer can draw
-//! them without face culling.
+//! (Tessera Decision FD11). Stitching triangles are vertical slivers; they are stored after
+//! the grid triangles ([`FarMesh::stitch_start`]) so the renderer can draw them without
+//! face culling (Tessera Decision FD10; the client culls back faces, FV23).
 
 use tessera_formats::landblock::{SectorMesh, SectorSample, block_sample_offset, chunk_index};
 use tessera_formats::{Did, FormatError};

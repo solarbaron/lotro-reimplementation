@@ -562,7 +562,8 @@ mod tests {
     }
 
     /// One channel of a fixed blend's operand: the source colour `c` and alpha `a` the
-    /// fragment computed, the destination colour `dc` and alpha `d` in the target.
+    /// fragment computed (lit colour may exceed 1), the destination colour `dc` and alpha
+    /// `d` in the target (in [0, 1]).
     #[derive(Debug, Clone, Copy)]
     struct Px {
         c: f64,
@@ -571,9 +572,21 @@ mod tests {
         d: f64,
     }
 
+    /// The source as the blend unit of a `Unorm` target uses it: colour and alpha clamped
+    /// to [0, 1] before any factor is applied.
+    fn unit_source(p: Px) -> Px {
+        Px {
+            c: p.c.clamp(0.0, 1.0),
+            a: p.a.clamp(0.0, 1.0),
+            ..p
+        }
+    }
+
     /// The colour a fixed blend means (`material.md` §7.6 factors and operations, as the
-    /// pass without the premultiplied option draws it); R12 never changes it.
+    /// pass without the premultiplied option draws it into a `Unorm` target, which clamps
+    /// the source first); R12 never changes it.
     fn fixed_colour(b: FixedBlend, p: Px) -> f64 {
+        let p = unit_source(p);
         let f = |f: BlendFactor| match f {
             BlendFactor::Zero => 0.0,
             BlendFactor::One => 1.0,
@@ -601,6 +614,7 @@ mod tests {
     /// blends"; outside premultiplied passes the destination alpha is kept).
     fn r12_alpha(b: FixedBlend, premultiplied: bool, p: Px) -> f64 {
         use BlendFactor as F;
+        let p = unit_source(p);
         if !premultiplied || b.op != BlendOp::Add {
             return p.d;
         }
@@ -636,19 +650,22 @@ mod tests {
     /// What a pipeline built by `FixedBlend::pipeline` leaves in one channel of a `Unorm`
     /// target: (colour, alpha).
     fn drawn(fixed: FixedPipeline, p: Px) -> (f64, f64) {
-        // The fragment (`frame_blend_output` with the `FIXED_OPAQUE` override).
+        // The fragment (`frame_blend_output` with the `FIXED_OPAQUE` override, which
+        // clamps colour and alpha to [0, 1] before it applies the source factor).
+        let (sc, sa) = (p.c.clamp(0.0, 1.0), p.a.clamp(0.0, 1.0));
         let (c, a) = match fixed.fixed_opaque {
             0 => (p.c, p.a),
             1 => (0.0, 1.0),
-            2 => (p.c, 1.0),
-            3 => (p.c * p.a, 1.0),
-            4 => (p.c * (1.0 - p.a), 1.0),
+            2 => (sc, 1.0),
+            3 => (sc * sa, 1.0),
+            4 => (sc * (1.0 - sa), 1.0),
             other => panic!("FIXED_OPAQUE {other} is not defined"),
         };
         let Some(state) = fixed.blend else {
             return (c.clamp(0.0, 1.0), a.clamp(0.0, 1.0));
         };
-        let q = Px { c, a, ..p };
+        // The blend unit clamps the source before it applies the factors.
+        let q = unit_source(Px { c, a, ..p });
         let component = |k: wgpu::BlendComponent, alpha: bool| {
             let (src, dst) = if alpha { (q.a, q.d) } else { (q.c, q.dc) };
             let s = src * wgpu_factor(k.src_factor, q, alpha);
@@ -667,7 +684,8 @@ mod tests {
 
     /// render.md §6.10 "Fixed blends" (R12), for every fixed blend in passes with and
     /// without the premultiplied option, evaluated over source and destination colours
-    /// and alphas: the colour is the blend's in both; the alpha is the rule's. Outside
+    /// and alphas (source colours and alphas above 1 included, as unclamped lit colour
+    /// reaches the blend): the colour is the blend's in both; the alpha is the rule's. Outside
     /// premultiplied passes the pipeline is the same as before R12 (destination alpha
     /// kept by the blend state, no override).
     #[test]
@@ -677,6 +695,10 @@ mod tests {
             dst_factor: wgpu::BlendFactor::One,
             operation: wgpu::BlendOperation::Add,
         };
+        // Source colour and alpha above 1: the blend unit clamps them, so must R12's
+        // opaque path (render.md §6.10, testable consequence 3).
+        let colours = [0.0, 0.2, 0.5, 0.75, 1.0, 1.5, 3.0];
+        let alphas = [0.0, 0.2, 0.5, 0.75, 1.0, 1.25];
         let samples = [0.0, 0.2, 0.5, 0.75, 1.0];
         let blends = every_fixed_blend();
         assert_eq!(blends.len(), 1000);
@@ -708,8 +730,8 @@ mod tests {
                 "{b:?}"
             );
             for (fixed, premultiplied) in [(outside, false), (inside, true)] {
-                for c in samples {
-                    for a in samples {
+                for c in colours {
+                    for a in alphas {
                         for dc in samples {
                             for d in samples {
                                 let p = Px { c, a, dc, d };

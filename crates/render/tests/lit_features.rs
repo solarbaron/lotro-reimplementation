@@ -712,7 +712,9 @@ fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
 /// source-over) and destination ZERO with a source factor that does not read the
 /// destination (alpha 1); over a pixel an opaque draw covered, the colour equals the same
 /// draw into an opaque target and alpha stays 1. Without the option nothing changes: every
-/// fixed blend keeps the destination alpha.
+/// fixed blend keeps the destination alpha. The colour check also runs with an over-bright
+/// pane (lit colour above 1, not clamped on a `Rgba8Unorm` target): the blend unit clamps
+/// the source before it applies the factor, so the opaque path must too.
 #[test]
 fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), RenderError> {
     let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
@@ -721,7 +723,6 @@ fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), Rende
     let plane = ground(&mut r)?;
     let white = texel(&mut r, [255; 4])?;
     let grey = texel(&mut r, [128, 128, 128, 255])?;
-    let l = ambient_only(0.5);
     // An opaque grey ground (lit colour 128 / 255) over the left half of the view.
     let left = MeshDraw::new(
         plane,
@@ -729,7 +730,8 @@ fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), Rende
         Material::textured(grey),
     )
     .with_lit(LitSurface::default());
-    // A pane in front of everything: lit colour 1, output alpha 0.5.
+    // A pane in front of everything: lit colour 1 (ambient 0.5) or above 1 (ambient 1),
+    // output alpha 0.5.
     let pane = |src, dst, op| {
         MeshDraw::new(
             plane,
@@ -751,7 +753,7 @@ fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), Rende
         })
     };
     // (premultiplied, clear) → (left pixel, right pixel).
-    let mut run = |draw: MeshDraw, premultiplied: bool, clear: [f32; 4]| {
+    let mut run = |l: &FrameLighting, draw: MeshDraw, premultiplied: bool, clear: [f32; 4]| {
         let target = r.create_offscreen_target(SIZE, SIZE, OffscreenFormat::Rgba8Unorm)?;
         let mut frame = r.begin_offscreen_frame(&target)?;
         let pass = frame.world_pass("pass", &camera());
@@ -780,10 +782,13 @@ fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), Rende
         (F::One, F::One, BlendOp::Max, 1.0, 0.0),
         (F::One, F::One, BlendOp::Min, 0.0, 0.0),
     ];
-    for (src, dst, op, colour, alpha) in cases {
-        let what = format!("{src:?} / {dst:?} {op:?}");
+    for ((src, dst, op, colour, alpha), level) in
+        cases.into_iter().flat_map(|c| [(c, 0.5f32), (c, 1.0)])
+    {
+        let l = ambient_only(level);
+        let what = format!("{src:?} / {dst:?} {op:?}, ambient {level}");
         let draw = pane(src, dst, op);
-        let (p_left, p_right) = run(draw, true, [0.0; 4])?;
+        let (p_left, p_right) = run(&l, draw, true, [0.0; 4])?;
         assert_pixel(p_right, [colour; 3], &format!("{what}: colour over empty"));
         let a = (alpha * 255.0f32).round() as u8;
         assert!(
@@ -791,10 +796,10 @@ fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), Rende
             "{what}: alpha over empty {p_right:?}, R12 wants {a}"
         );
         assert_eq!(p_left[3], 255, "{what}: alpha over the opaque ground");
-        let (o_left, _) = run(draw, false, [0.0, 0.0, 0.0, 1.0])?;
+        let (o_left, _) = run(&l, draw, false, [0.0, 0.0, 0.0, 1.0])?;
         assert_eq!(p_left, o_left, "{what}: same colour as in an opaque target");
         // Without the option every fixed blend keeps the destination alpha.
-        let (n_left, n_right) = run(draw, false, [0.0; 4])?;
+        let (n_left, n_right) = run(&l, draw, false, [0.0; 4])?;
         assert_eq!(
             n_right[3], 0,
             "{what}: alpha kept outside premultiplied passes"

@@ -45,23 +45,27 @@ fn frame_output(c: vec3<f32>) -> vec3<f32> {
 // R12; set per pipeline, `FixedPipeline` in material.rs). 0: the fragment writes what it
 // computed and the blend unit applies the factors. Otherwise the pipeline does not blend
 // (destination factor ZERO, ADD) and the fragment writes alpha 1 and the colour times the
-// source factor: 1 = ZERO, 2 = ONE, 3 = SRCALPHA, 4 = INVSRCALPHA.
+// source factor: 1 = ZERO, 2 = ONE, 3 = SRCALPHA, 4 = INVSRCALPHA. Colour and alpha are
+// clamped to [0, 1] first, as the blend unit clamps the source on the (Unorm) targets
+// before it applies a factor, so the stored colour equals the blended one.
 override FIXED_OPAQUE: u32 = 0u;
 
 // What a blended fragment writes: `rgb` from `frame_output`, `alpha` its output alpha.
 fn frame_blend_output(rgb: vec3<f32>, alpha: f32) -> vec4<f32> {
+    let c = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let a = clamp(alpha, 0.0, 1.0);
     switch FIXED_OPAQUE {
         case 1u: {
             return vec4<f32>(vec3<f32>(0.0), 1.0);
         }
         case 2u: {
-            return vec4<f32>(rgb, 1.0);
+            return vec4<f32>(c, 1.0);
         }
         case 3u: {
-            return vec4<f32>(rgb * alpha, 1.0);
+            return vec4<f32>(c * a, 1.0);
         }
         case 4u: {
-            return vec4<f32>(rgb * (1.0 - alpha), 1.0);
+            return vec4<f32>(c * (1.0 - a), 1.0);
         }
         default: {
             return vec4<f32>(rgb, alpha);

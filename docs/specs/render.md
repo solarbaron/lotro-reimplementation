@@ -1529,11 +1529,17 @@ implementing; they add no facts about the game.
 > the destination, so its pipeline draws **without blending**: the fragment writes alpha 1
 > and the colour times the source factor (0, 1, *a* or 1 − *a*), selected by the WGSL
 > pipeline-overridable constant `FIXED_OPAQUE` in `frame_shading.wgsl` (default 0, no
-> change). The colour equals the blended one up to rounding. Outside premultiplied passes
+> change). Before it applies the factor, the fragment clamps its colour and alpha to
+> [0, 1], as the blend unit of a `Unorm` target clamps the source before applying blend
+> factors (lit colour can exceed 1 and is not clamped on `Rgba8Unorm`). Without that clamp
+> the first version of this path (commit 820391d) stored *a* × colour where the blend
+> stores *a* × clamp(colour), for SRCALPHA / ZERO and INVSRCALPHA / ZERO (corrected
+> 2026-10-09 after a clean verifier's finding). With the clamp the stored colour equals the
+> blended one up to rounding, also for over-bright colour. Outside premultiplied passes
 > the pipelines are unchanged. The guard test in `ui/api.rs` no longer exempts
 > `FixedBlend`: it evaluates every fixed blend (all factor and operation pairs) with and
-> without the option over sampled source and destination values against R12 and the
-> blend's colour, and still fails on any other blend state. The "API" row of the table above
+> without the option over sampled source and destination values (source colour and alpha
+> above 1 included) against R12 and the blend's colour, and still fails on any other blend state. The "API" row of the table above
 > predates R12 in its description of `Pass::premultiplied_alpha`.
 
 **Indicative measurements (2026-10-07, development machine under load from other builds,

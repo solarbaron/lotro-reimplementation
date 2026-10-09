@@ -224,6 +224,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 > limit applies. The command line keeps `--settle-timeout`. The owner of this spec should
 > decide whether to fold this into the list above or expose it on the command line.
 
+> **OPEN:** (clean-room implementer, 2026-10-09; engineering choice, no client fact) the
+> other waits of library callers follow the same rule. `WorldStreamer::settle_on_progress`
+> settles like `settle` but gives up only after a number of consecutive updates in which the
+> streamer's cumulative work counters (requests, completed jobs, integrations, evictions,
+> releases, cancellations, failures, retries) and its loading, pending and retry counts did
+> not change, or after an update cap. The scripted-walk and soak runners (§13.6, §13.7) take
+> a `LoadWait`: the command line's `--settle-timeout` as before, or a progress wait that
+> gives up after consecutive polls in which neither the walk world's loading counters
+> (main and pin streamers, cell-owner index) nor the missing landblocks changed, or after a
+> poll cap. Player-music waits count polls in which start-up, a job or a queued command
+> finished. The real-data tests use these progress waits; no client behaviour changes.
+
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
 

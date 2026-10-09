@@ -1962,6 +1962,28 @@ open:
 > entry? the wearer's body?). The rule that pairs them is needed for a faithful dye
 > preview of worn items.
 
+> **OPEN (implementer, 2026-10-09, fallback diagnostic; engineering choice, no format
+> fact):** `tessera_material::diagnose` names why a submesh draws without its base-colour
+> texture by the first step of the chain that fails: no surface entry; surface record
+> missing or not decoding (§4); shader record missing or not decoding (§7; the surface then
+> has no effect, §9.2 MA45); other chain failure; no slot 3000 declared, or slot 3000 with
+> value 0 (§8.2, §9.2); no 3000 texture but an opacity texture (the §11.2 source, else the
+> §11.3 blend slot), drawn as white with that alpha; texture list missing or not decoding,
+> no level resolving (`texture-list.md` §5.2), unknown pixel format (`texture-list.md`
+> §7), other level decode failure, above the size limit, a read failure, or a renderer's
+> compose or upload failure. The material kind groups the result: the water, mirror and
+> liquid-distortion records of §11.6 (recognised from the interface as §11.6 states; their
+> slot 3000 resolves but is a placeholder), else lit or unlit (§11.3). The walker tallies
+> per frame the reasons by surface record, the draws of §11.6 records it sends through the
+> generic path, and the draws whose animated texture matrices or second colour layer it
+> leaves out (at most 4,096 distinct surfaces per frame, the eight with the most draws
+> listed). Census on the reference install (2026-10-09, base textures decoded at the
+> walker's 512 cap): of 13,781 surface records 23 have no usable base texture (20 unlit and
+> 1 lit without slot 3000, 1 lit and 1 unlit with slot 3000 at 0); no texture list, level
+> or format fails; the §11.6 recognition picks 98 water, 9 mirror and 16 liquid-distortion
+> surface records, on exactly the records of the §11.6 table. A reviewer may want a
+> different grouping; nothing here is the original's behaviour.
+
 
 ---
 

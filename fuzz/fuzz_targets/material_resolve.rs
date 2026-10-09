@@ -3,9 +3,9 @@
 //! (`docs/specs/material.md` §9–§12, `texture-list.md` §5.2): the whole chain surface
 //! record → shader record + materials → texture list → surface over an in-memory source
 //! built from the input, then texture decoding (capped levels, the resolved chain with its
-//! upload plan, cube faces), the dye preview, the dye blend on arbitrary images and dye
-//! block selection. Nothing may panic; decoded textures stay
-//! within the configured size limit.
+//! upload plan, cube faces), the dye preview, the fallback diagnosis
+//! (`tessera_material::diagnose`), the dye blend on arbitrary images and dye block
+//! selection. Nothing may panic; decoded textures stay within the configured size limit.
 //!
 //! Input layout: a control byte, then up to six chunks, each a u16 little-endian length
 //! and that many bytes: shader record 0x2B000001, materials 0x30000001 and 0x30000002,
@@ -95,6 +95,17 @@ fuzz_target!(|data: &[u8]| {
         for f in &faces {
             check(&f.image);
         }
+    }
+    // The fallback diagnosis never fails and agrees with the resolution.
+    let d = lib.diagnose_surface(Did(0x3100_0001), Some(u32::from(ctl)), ctl & 2 == 2);
+    assert_eq!(d.surface, Did(0x3100_0001));
+    if d.fallback.is_none() {
+        assert!(d.base_texture.is_some());
+    }
+    if d.fallback
+        .is_some_and(tessera_material::FallbackReason::unresolved)
+    {
+        assert!(lib.resolve_surface(Did(0x3100_0001)).is_err());
     }
     if let Ok(r) = lib.resolve_surface(Did(0x3100_0001)) {
         for slot in &r.slots {

@@ -66,6 +66,23 @@ pub struct BlendTriple {
     pub count: usize,
 }
 
+/// The program family of a shader record whose own programs the generic lit and unlit path
+/// must not stand in for (`material.md` §11.6, MA51), recognised from its interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ProgramFamily {
+    /// Every other record: the generic path of `material.md` §9–§11.
+    #[default]
+    Generic,
+    /// A water record: declares 1057 or 1056 and has a `FrameBufferTexture` sampler
+    /// (`water.md` §8.3–§8.6).
+    Water,
+    /// The mirror record: declares any of 1100–1106 (`water.md` §8.5.4).
+    Mirror,
+    /// A liquid-distortion record: declares 1057, has no `FrameBufferTexture` sampler and has
+    /// a `LiquidNormalTexture` or `Distortion` sampler (`water.md` §8.5.5).
+    LiquidDistortion,
+}
+
 /// The analysed interface of one shader record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShaderInterface {
@@ -88,6 +105,8 @@ pub struct ShaderInterface {
     pub cull_none: bool,
     /// The most common render-state `alpha_ref` (the shader's built-in default threshold).
     pub default_alpha_ref: Option<f32>,
+    /// The program family (`material.md` §11.6).
+    pub family: ProgramFamily,
 }
 
 /// Most common element of `items`; ties go to the first met.
@@ -194,6 +213,29 @@ impl ShaderInterface {
         let default_alpha_ref =
             most_common(states().map(|s| s.alpha_ref().to_bits())).map(|(b, _)| f32::from_bits(b));
 
+        // §11.6: the family from the declared ids and the sampler names of any permutation.
+        let declares = |id: u32| index_of.contains_key(&id);
+        let sampler_named = |names: &[&str]| {
+            record
+                .permutations
+                .iter()
+                .flat_map(|p| p.samplers.iter())
+                .any(|s| names.contains(&s.name.as_str()))
+        };
+        let frame_buffer = sampler_named(&["FrameBufferTexture"]);
+        let family = if (declares(1057) || declares(1056)) && frame_buffer {
+            ProgramFamily::Water
+        } else if (1100..=1106).any(declares) {
+            ProgramFamily::Mirror
+        } else if declares(1057)
+            && !frame_buffer
+            && sampler_named(&["LiquidNormalTexture", "Distortion"])
+        {
+            ProgramFamily::LiquidDistortion
+        } else {
+            ProgramFamily::Generic
+        };
+
         Self {
             did: record.did,
             declarations,
@@ -203,6 +245,7 @@ impl ShaderInterface {
             common_blend,
             cull_none,
             default_alpha_ref,
+            family,
         }
     }
 

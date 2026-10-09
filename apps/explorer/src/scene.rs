@@ -3214,6 +3214,7 @@ mod tests {
             common_blend: None,
             cull_none: false,
             default_alpha_ref: None,
+            family: tessera_material::interface::ProgramFamily::Generic,
         });
         let params = ParameterSet::build(&shader, &[]);
         ResolvedMaterial {

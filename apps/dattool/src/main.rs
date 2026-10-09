@@ -9,6 +9,7 @@ mod bytecode;
 mod census;
 mod detect;
 mod diff;
+mod fallback;
 mod info;
 mod input;
 mod instance;
@@ -105,6 +106,10 @@ enum Cmd {
     /// and count decoded and failed records, items and collision-tree walks; exit 1 on any
     /// failure.
     Census(CensusArgs),
+    /// Why surfaces end up without their base-colour texture (drawn white or untextured):
+    /// the reason per surface record (0x31), mesh (0x06) or cell (0x01), or counts over
+    /// every surface record with --all.
+    Fallback(FallbackArgs),
     /// Compare two installs, archives or snapshots: added, removed and changed DIDs per
     /// archive, with a summary by DID type.
     Diff(DiffArgs),
@@ -301,6 +306,29 @@ struct CensusArgs {
 }
 
 #[derive(Debug, Args)]
+struct FallbackArgs {
+    /// Install directory.
+    #[arg(value_name = "DIR")]
+    target: String,
+    /// Surface records (0x31), meshes (0x06) or cells (0x01), hex.
+    #[arg(value_parser = parse_did, value_name = "DID")]
+    dids: Vec<u32>,
+    /// Diagnose every surface record and print counts by reason and material kind.
+    #[arg(long)]
+    all: bool,
+    /// Do not decode the base textures (material-level reasons only; faster).
+    #[arg(long)]
+    no_decode: bool,
+    /// With --all: list at most N surfaces per reason and kind (0 = none).
+    #[arg(long, default_value_t = 10, value_name = "N")]
+    top: usize,
+    /// With --all: list only water, mirror and liquid-distortion surfaces (records with
+    /// programs of their own).
+    #[arg(long)]
+    water: bool,
+}
+
+#[derive(Debug, Args)]
 struct DiffArgs {
     /// Older side: install directory, archive, or snapshot file.
     #[arg(value_name = "A")]
@@ -485,6 +513,18 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 max_failures: a.max_failures,
             },
         )?,
+        Cmd::Fallback(a) => fallback::run(
+            &mut out,
+            &ctx,
+            &fallback::Opts {
+                target: a.target,
+                dids: a.dids,
+                all: a.all,
+                decode: !a.no_decode,
+                top: a.top,
+                water: a.water,
+            },
+        )?,
         Cmd::Diff(a) => diff::run(
             &mut out,
             &ctx,
@@ -601,5 +641,13 @@ mod tests {
             matches!(c.cmd, Cmd::Census(CensusArgs { ref prefix, .. }) if prefix == &[0x66, 0x80])
         );
         assert!(Cli::try_parse_from(["t", "snapshot", "/x", "-o", "f", "--content"]).is_ok());
+        let c = Cli::try_parse_from(["t", "fallback", "/x", "3100053C", "0x06000001", "--water"])
+            .unwrap();
+        assert!(matches!(
+            c.cmd,
+            Cmd::Fallback(FallbackArgs { ref dids, water: true, all: false, top: 10, .. })
+                if dids == &[0x3100_053C, 0x0600_0001]
+        ));
+        assert!(Cli::try_parse_from(["t", "fallback", "/x", "--all", "--no-decode"]).is_ok());
     }
 }

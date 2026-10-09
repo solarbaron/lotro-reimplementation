@@ -11,9 +11,11 @@
 //! counter-clockwise front faces in both, UVs unflipped. Material colours are read as
 //! sRGB-encoded (`material.md` §19 OPEN), the reading the mesh viewer uses.
 
+use tessera_formats::Did;
 use tessera_formats::RgbaImage;
+use tessera_material::diagnose::{base_reason, opacity_slot};
 use tessera_material::vocab::ids;
-use tessera_material::{BlendMode, ResolvedMaterial};
+use tessera_material::{BlendMode, FallbackReason, MaterialKind, ResolvedMaterial};
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
 use tessera_render::{AlphaMode, Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
 
@@ -103,6 +105,41 @@ impl LitInputs {
     };
 }
 
+/// What a plan was made from and why it has no base-colour texture, for the fallback
+/// diagnostic (`tessera_material::diagnose`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanDiag {
+    /// The surface record (0 when the submesh names none).
+    pub surface: u32,
+    /// The material-level reason the plan draws without a base-colour texture (`None`:
+    /// it has one to load; a texture that fails to load is the texture store's reason).
+    pub fallback: Option<FallbackReason>,
+    /// What kind of material it is (water surfaces are drawn as ordinary meshes,
+    /// `walker.md` §14.6).
+    pub kind: MaterialKind,
+    /// The material animates its texture coordinates (texture-coordinate transforms
+    /// declared and an animated curve, `material.md` §8.4, §5.3), which the walker does not
+    /// draw (`walker.md` §14.5): the texture stands still.
+    pub scrolls: bool,
+    /// The material has a second colour layer (3001) with a texture, which the walker does
+    /// not draw (`walker.md` §14.5).
+    pub second_layer: bool,
+}
+
+impl PlanDiag {
+    /// The diagnostic of a plan that could not be resolved.
+    #[must_use]
+    pub const fn unresolved(surface: u32, reason: FallbackReason) -> Self {
+        Self {
+            surface,
+            fallback: Some(reason),
+            kind: MaterialKind::Unresolved,
+            scrolls: false,
+            second_layer: false,
+        }
+    }
+}
+
 /// What one submesh needs to be drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialPlan {
@@ -121,6 +158,8 @@ pub struct MaterialPlan {
     pub dye: Option<(TexRequest, [f32; 3])>,
     /// The inputs of the lit pipeline (M4.5).
     pub lit: LitInputs,
+    /// Where the plan came from and why it lacks a base texture (diagnostics only).
+    pub diag: PlanDiag,
 }
 
 impl MaterialPlan {
@@ -133,7 +172,20 @@ impl MaterialPlan {
         unlit: false,
         dye: None,
         lit: LitInputs::FALLBACK,
+        diag: PlanDiag::unresolved(0, FallbackReason::ChainFailed),
     };
+
+    /// [`MaterialPlan::FALLBACK`] for surface `surface` (`None`: the submesh names none,
+    /// [`FallbackReason::NoSurface`]) that failed with `reason`.
+    #[must_use]
+    pub const fn unresolved(surface: Option<Did>, reason: FallbackReason) -> Self {
+        let mut p = Self::FALLBACK;
+        p.diag = match surface {
+            Some(s) => PlanDiag::unresolved(s.0, reason),
+            None => PlanDiag::unresolved(0, FallbackReason::NoSurface),
+        };
+        p
+    }
 
     /// Every texture the plan samples: the base texture, the dye mask and the lit
     /// pipeline's normal, emissive and glow textures.
@@ -177,14 +229,9 @@ pub fn srgb_unit_to_linear(c: f32) -> f32 {
 pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
     let f = &m.features;
     let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture).map(|d| d.0);
-    let opacity = f
-        .alpha_test
-        .map(|a| a.source_slot)
-        .or(if f.blend.is_transparent() {
-            f.blend.opacity_slot
-        } else {
-            None
-        });
+    // The alpha-test source, else the opacity slot of a transparent blend (the same rule
+    // as the fallback diagnostic's).
+    let opacity = opacity_slot(m);
     let diffuse = slot_tex(ids::DIFFUSE);
     let texture = match (diffuse, opacity) {
         (None, None) => None,
@@ -265,6 +312,15 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
         unlit: !f.lit,
         dye: None,
         lit,
+        diag: PlanDiag {
+            surface: m.surface.map_or(0, |d| d.0),
+            fallback: base_reason(m),
+            kind: MaterialKind::of(m),
+            scrolls: f.uv_transform && f.animated,
+            second_layer: m
+                .slot(ids::SECOND_LAYER)
+                .is_some_and(|s| s.texture.is_some()),
+        },
     }
 }
 

@@ -43,7 +43,8 @@ use tessera_assets::{
 use tessera_dat::ArchiveSet;
 use tessera_formats::collision::{CELL_GEOMETRY_PREFIX, CellGeometry};
 use tessera_formats::{Did, PropertySchema, RgbaImage};
-use tessera_material::{LibraryConfig, MaterialLibrary};
+use tessera_material::diagnose::{reason_of_resolve_error, reason_of_texture_error};
+use tessera_material::{FallbackReason, LibraryConfig, MaterialLibrary};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
@@ -55,6 +56,7 @@ use tessera_world::draw_distance::{DistanceSmoother, DrawFade, aabb_distance, de
 use tessera_world::{DistanceSettings, LANDBLOCK_SIZE, LandblockKey, LodValues};
 
 use super::UploadBudget;
+use super::fallback::{FallbackStats, FallbackTally};
 use super::figures::figure_tag;
 use super::geometry::{
     AlphaFrom, AlphaKind, GlossFrom, MaterialPlan, TexRequest, VARIANT_ALPHA_ONLY,
@@ -236,7 +238,7 @@ impl PartDecoder {
             Ok(m) => plan_material(&m),
             Err(e) => {
                 tracing::debug!(surface = %format_args!("{:#010x}", surface.0), "material unresolved: {e}");
-                MaterialPlan::FALLBACK
+                MaterialPlan::unresolved(Some(surface), reason_of_resolve_error(&e))
             }
         }
     }
@@ -309,8 +311,10 @@ impl Decoder for PartDecoder {
                 .parts
                 .iter()
                 .map(|p| {
-                    p.surface
-                        .map_or(MaterialPlan::FALLBACK, |s| self.plan(s, look.as_deref()))
+                    p.surface.map_or(
+                        MaterialPlan::unresolved(None, FallbackReason::NoSurface),
+                        |s| self.plan(s, look.as_deref()),
+                    )
                 })
                 .collect();
             drop(geo);
@@ -657,7 +661,21 @@ enum TexState {
     Retry(Instant),
     Waiting(Arc<TexImage>),
     Ready(TextureId, u64, [f32; 3], Option<Arc<[RgbaImage]>>),
-    Failed,
+    /// Failed for good, with the reason for the fallback diagnostic.
+    Failed(FallbackReason),
+}
+
+/// The fallback reason of a texture request that failed (`tessera_material::diagnose`).
+#[must_use]
+pub fn texture_failure_reason(err: &AssetError) -> FallbackReason {
+    match err {
+        AssetError::Decode { source, .. } => match source.downcast_ref::<ObjectError>() {
+            Some(ObjectError::Material(e)) => reason_of_texture_error(e),
+            Some(ObjectError::Compose) => FallbackReason::TextureComposeFailed,
+            _ => FallbackReason::TextureUndecodable,
+        },
+        _ => FallbackReason::TextureReadFailed,
+    }
 }
 
 struct TexEntry {
@@ -1217,6 +1235,10 @@ pub struct ObjectLayer {
     frame: ObjectFrame,
     /// Draw frames recorded so far ([`fade_resets`]).
     draw_frame: u64,
+    /// The fallback diagnostic of the frame being drawn ([`super::fallback`]).
+    fallback: FallbackTally,
+    /// The fallback diagnostic of the last frame drawn.
+    fallback_stats: FallbackStats,
 }
 
 /// Whether instance `inst` of block `key` is a placed figure the character layer draws
@@ -1310,6 +1332,8 @@ impl ObjectLayer {
             batches: HashMap::new(),
             frame: ObjectFrame::default(),
             draw_frame: 0,
+            fallback: FallbackTally::default(),
+            fallback_stats: FallbackStats::default(),
         }
     }
 
@@ -1356,7 +1380,7 @@ impl ObjectLayer {
     pub fn texture(&self, t: TexRequest) -> TexLookup {
         match self.gpu_tex.get(&t).map(|e| &e.state) {
             Some(TexState::Ready(id, ..)) => TexLookup::Ready(*id),
-            Some(TexState::Failed) => TexLookup::Failed,
+            Some(TexState::Failed(_)) => TexLookup::Failed,
             _ => TexLookup::Pending,
         }
     }
@@ -1489,6 +1513,14 @@ impl ObjectLayer {
         self.stats
     }
 
+    /// The fallback diagnostic of the last frame drawn: submesh draws without their
+    /// base-colour texture, by reason and surface, and the draws of records with programs of
+    /// their own drawn through the generic path ([`super::fallback`]).
+    #[must_use]
+    pub fn fallback_stats(&self) -> &FallbackStats {
+        &self.fallback_stats
+    }
+
     /// Whether every part and texture in use is on the GPU or failed, and every instanced
     /// model wanted is built.
     #[must_use]
@@ -1510,7 +1542,7 @@ impl ObjectLayer {
                 .gpu_tex
                 .values()
                 .filter(|e| e.refs > 0)
-                .all(|e| matches!(e.state, TexState::Ready(..) | TexState::Failed))
+                .all(|e| matches!(e.state, TexState::Ready(..) | TexState::Failed(_)))
     }
 
     /// Sets the objects of `key` (replacing earlier ones).
@@ -1962,7 +1994,7 @@ impl ObjectLayer {
         let gpu_tex = &self.gpu_tex;
         let lookup = |t: TexRequest| match gpu_tex.get(&t).map(|e| &e.state) {
             Some(TexState::Ready(id, ..)) => TexLookup::Ready(*id),
-            Some(TexState::Failed) => TexLookup::Failed,
+            Some(TexState::Failed(_)) => TexLookup::Failed,
             _ => TexLookup::Pending,
         };
         let mut added = 0u64;
@@ -2049,7 +2081,7 @@ impl ObjectLayer {
                     AssetState::Ready(img) => TexState::Waiting(img),
                     AssetState::Failed(err) if err.is_data_error() => {
                         tracing::debug!(texture = %format_args!("{:#010x}/{}", t.did, t.variant), "texture failed: {err}");
-                        TexState::Failed
+                        TexState::Failed(texture_failure_reason(&err))
                     }
                     AssetState::Failed(_) | AssetState::Cancelled => {
                         TexState::Retry(now + RETRY_AFTER)
@@ -2076,7 +2108,7 @@ impl ObjectLayer {
                 Outcome::Ready(img) => TexState::Waiting(img),
                 Outcome::Failed(err) if err.is_data_error() => {
                     tracing::debug!(texture = %c.key, "texture failed: {err}");
-                    TexState::Failed
+                    TexState::Failed(texture_failure_reason(&err))
                 }
                 Outcome::Failed(_) | Outcome::Cancelled => {
                     TexState::Retry(Instant::now() + RETRY_AFTER)
@@ -2089,7 +2121,9 @@ impl ObjectLayer {
             {
                 e.state = match h.state() {
                     AssetState::Ready(img) => TexState::Waiting(img),
-                    AssetState::Failed(err) if err.is_data_error() => TexState::Failed,
+                    AssetState::Failed(err) if err.is_data_error() => {
+                        TexState::Failed(texture_failure_reason(&err))
+                    }
                     _ => TexState::Retry(Instant::now() + RETRY_AFTER),
                 };
             }
@@ -2152,7 +2186,7 @@ impl ObjectLayer {
                 }
                 Err(err) => {
                     tracing::debug!(texture = %label, "texture upload failed: {err}");
-                    e.state = TexState::Failed;
+                    e.state = TexState::Failed(FallbackReason::TextureComposeFailed);
                 }
             }
         }
@@ -2312,7 +2346,7 @@ impl ObjectLayer {
         for e in self.gpu_tex.values() {
             match e.state {
                 TexState::Ready(..) => s.textures_ready += 1,
-                TexState::Failed => {}
+                TexState::Failed(_) => {}
                 _ => s.textures_pending += 1,
             }
         }
@@ -2349,9 +2383,14 @@ impl ObjectLayer {
         let gpu_tex = &self.gpu_tex;
         let lookup = |t: TexRequest| match gpu_tex.get(&t).map(|e| &e.state) {
             Some(TexState::Ready(id, ..)) => TexLookup::Ready(*id),
-            Some(TexState::Failed) => TexLookup::Failed,
+            Some(TexState::Failed(_)) => TexLookup::Failed,
             _ => TexLookup::Pending,
         };
+        let failed = |t: TexRequest| match gpu_tex.get(&t).map(|e| &e.state) {
+            Some(TexState::Failed(r)) => Some(*r),
+            _ => None,
+        };
+        self.fallback.clear();
         let order = std::mem::take(&mut self.order);
         for &(_, key) in &order {
             let Some(b) = self.blocks.get_mut(&key) else {
@@ -2467,6 +2506,14 @@ impl ObjectLayer {
                         else {
                             continue;
                         };
+                        let reason = plan.diag.fallback.or_else(|| {
+                            material.base_texture.is_none().then(|| {
+                                plan.texture
+                                    .and_then(failed)
+                                    .unwrap_or(FallbackReason::TextureComposeFailed)
+                            })
+                        });
+                        self.fallback.count(&plan.diag, reason, 1);
                         pass.mesh(
                             MeshDraw::new(level.mesh, tf, material)
                                 .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
@@ -2493,15 +2540,24 @@ impl ObjectLayer {
             if list.is_empty() {
                 continue;
             }
-            let Some(model) = self.model(*part, usize::from(*k)) else {
+            let Some(model) = self.model(*part, usize::from(*k)).cloned() else {
                 continue;
             };
-            let mut batch = InstanceBatch::new(model.clone(), list.as_slice());
+            if let Some(PartState::Ready(g)) = self.gpu_parts.get(part).map(|e| &e.state)
+                && let Some(level) = g.levels.get(usize::from(*k))
+            {
+                for plan in &level.plans {
+                    let reason = plan.diag.fallback.or_else(|| plan.texture.and_then(failed));
+                    self.fallback.count(&plan.diag, reason, list.len());
+                }
+            }
+            let mut batch = InstanceBatch::new(model, list.as_slice());
             batch.cast_shadow = *casts;
             pass.instanced(batch);
             batches += 1;
         }
         self.batches.retain(|_, v| !v.is_empty());
+        self.fallback_stats = self.fallback.stats();
         self.stats.draws = draws;
         self.stats.objects_drawn = objects_drawn;
         self.stats.fading = fading;

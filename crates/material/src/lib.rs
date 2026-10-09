@@ -13,6 +13,7 @@
 //! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
 //! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants, the distance-fog switch | `lighting.md` §4.1; `material.md` §8.3, §11 |
 //! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface | `water.md` §8.2 |
+//! | [`diagnose`] | Why a submesh falls back to a white base colour: [`FallbackReason`] per step of the chain, [`MaterialKind`], [`MaterialLibrary::diagnose_surface`] | `material.md` §9–§10, `texture-list.md` §5.2, `water.md` §8.2 |
 //! | [`texture`] | Mip-chain helpers on top of `tessera-formats` texture lists: effective chain with a resolution cap, level selection, chain classes, GPU upload plans, level invariants | `docs/specs/texture-list.md` §4, §5 |
 //!
 //! # Resolving a submesh
@@ -70,6 +71,7 @@
 #![warn(missing_docs)]
 
 mod cache;
+pub mod diagnose;
 mod dims;
 pub mod dye;
 mod error;
@@ -86,6 +88,7 @@ pub mod ui_image;
 pub mod vocab;
 pub mod water;
 
+pub use diagnose::{FallbackReason, MaterialKind, SurfaceDiagnosis};
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
 pub use error::{MaterialError, Result, SourceFailure};
 pub use inputs::{

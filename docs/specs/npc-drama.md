@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09) |
+| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the two implementer OPENs of 2026-10-09: §7 transition labels spelled in full (with PIDs and types), §11 two preview rules adopted as Decision T7 items; needs a fresh review of the changed sections. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -100,6 +100,7 @@ How sources are marked:
 | D23 | Starting-idle properties and their relation to the idle-stop action (§8) | OBS | Confirmed 2026-10-08 |
 | D24 | The shared NPC script table 0x07000B0A defines the client-side drama scripts (emote, scriptlet, sound, sanity marker); it reaches every mob and NPC template through 0x07000097 and 0x07000001 (§9.1) | OBS (all 0x07 tables, all 0x78/0x79 sets) | Confirmed 2026-10-09 |
 | D25 | The class library reads `Drama_Performing` and `Drama_CanInteractDuringDrama` only (functions of classes 1039/1742), uses them in the quest-interaction check and the mouse-over rules, and starts the drama sound script for barks (§9.2–§9.4) | WLB | Confirmed (bytecode) 2026-10-09 |
+| D27 | Full labels, PIDs, types and defaults of the scripted-fight transition fields and of the drama state switches (§7.1) | OBS (property dictionary 0x34000000, re-read 2026-10-09) | Confirmed 2026-10-09 |
 | D26 | The executable reads no drama action or dialog property and contains no `drama` text; every immediate equal to an action-property PID is a user-interface identifier; it reads `AI_KungFu_IsNPC` through the typed property getters (§9.5) | BIN (B1, B2) | BIN |
 | T1–T7 | Tessera's playback timing, dialog presentation, name matching, list precedence, offline scope, server runner and explorer viewer (§10, §11) | — | Decision |
 
@@ -867,14 +868,15 @@ quest event type 27 is labelled `KungFu` (`quests.md` §5.4). The entity-level p
 
 | Element | Fields | Count | Name in own list |
 |---|---|---|---|
-| `AI_KungFu_DramaTransition` | `AI_KungFu_Transition_Drama` (String, all), `…_HealthRatio` (f32, all), `AI_KungFu_ShouldEndCombat` (246: true 94), `…_Transition_AlwaysActive` (43: true 21), `…_Transition_SuppressHealthClamp` (6: true) | instance 2,206, templates 36 | 2,195 of 2,206; 36 of 36 |
-| `AI_KungFu_QuestTransition` | `…_Transition_Drama` (all), `…_HealthRatio` (all), `…_Transition_AlwaysActive` (2: false) | instance 525 | 520 of 525 |
+| `AI_KungFu_DramaTransition` | `AI_KungFu_Transition_Drama` (String, all), `AI_KungFu_Transition_HealthRatio` (f32, all), `AI_KungFu_ShouldEndCombat` (246: true 94), `AI_KungFu_Transition_AlwaysActive` (43: true 21), `AI_KungFu_Transition_SuppressHealthClamp` (6: true) | instance 2,206, templates 36 | 2,195 of 2,206; 36 of 36 |
+| `AI_KungFu_QuestTransition` | `AI_KungFu_Transition_Drama` (all), `AI_KungFu_Transition_HealthRatio` (all), `AI_KungFu_Transition_AlwaysActive` (2: false) | instance 525 | 520 of 525 |
 
 Health ratios: drama transitions 0–33, all but 2 within 0–1; quest transitions 0.01–0.99; over all
 2,767 transitions the most common are 0.5 (365), 0.25 (300), 0.1 (278), 0.2 (248), 0.75 (203).
 
 Named dramas carry the state switch: `Drama_KungFu_BecomeMonster` (true in 3,525) and
-`Drama_KungFu_BecomeNPC` (true in 1,358), with `…_DoNotEndCombat` (default true). 254 of the
+`Drama_KungFu_BecomeNPC` (true in 1,358), with `Drama_KungFu_BecomeNPC_DoNotEndCombat` (default
+true). 254 of the
 2,767 transitions name a drama that becomes monster or NPC; most transition dramas only speak or
 emote. Quest events of types 27, 19 and 29 name dramas with `QuestEvent_KungFuDramaName` (530 of
 535 found on the role-key entity, §6.2) and switch the fight with `QuestEvent_RunKungFu` (48
@@ -894,11 +896,41 @@ spawn; `EnableCombat` lets the entity fight while still an NPC. `AI_KungFu_IsNPC
 > repetition), what the health clamp is, the 2 ratios above 1, and the effect of `EnableCombat`.
 > Server-side; no client code reads these properties except `AI_KungFu_IsNPC` (§9.5).
 
-> **OPEN (implementer, 2026-10-09):** the transition fields are written with elisions
-> (`…_HealthRatio`, `…_Transition_AlwaysActive`); the health-ratio label could be read as
-> `AI_KungFu_HealthRatio` or `AI_KungFu_Transition_HealthRatio`. Tessera resolves both and uses
-> the one the install's dictionary defines (only the second resolves here). Please spell the
-> full labels of the transition fields.
+<a id="s7-1"></a>
+### 7.1 Full labels of the scripted-fight fields (Confirmed D27)
+
+Every label of this section, as the property dictionary defines it (interoperability
+identifiers; PIDs and defaults are this install's and are read at run time). No other label
+of the dictionary contains `KungFu`; in particular there is no `AI_KungFu_HealthRatio`.
+
+| Label | PID | Type | Dictionary default | Child of |
+|---|---|---|---|---|
+| `AI_KungFu_StartAsNPC` | 0x100009D3 | Bool | false | entity sets |
+| `AI_KungFu_Repeatable` | 0x10000A9B | Bool | true | entity sets |
+| `AI_KungFu_EnableCombat` | 0x100011EC | Bool | false | entity sets |
+| `AI_KungFu_IsNPC` | 0x100014EA | Bool | false | run-time state |
+| `AI_KungFu_TransitionList` | 0x100000A0 | Array | — | entity sets; elements are the two structs below |
+| `AI_KungFu_DramaTransition` | 0x1000036A | Struct | — | `AI_KungFu_TransitionList` |
+| `AI_KungFu_QuestTransition` | 0x100013FC | Struct | — | `AI_KungFu_TransitionList` |
+| `AI_KungFu_Transition_Drama` | 0x100013FD | String | — | both transition structs |
+| `AI_KungFu_Transition_HealthRatio` | 0x10000538 | Float | — | both transition structs |
+| `AI_KungFu_Transition_AlwaysActive` | 0x10003E43 | Bool | false | both transition structs |
+| `AI_KungFu_ShouldEndCombat` | 0x1000071A | Bool | false | `AI_KungFu_DramaTransition` only |
+| `AI_KungFu_Transition_SuppressHealthClamp` | 0x100061E1 | Bool | false | `AI_KungFu_DramaTransition` only |
+| `Drama_KungFu_BecomeMonster` | 0x10000EBF | Bool | false | `Drama_NamedDrama` |
+| `Drama_KungFu_BecomeNPC` | 0x10001464 | Bool | false | `Drama_NamedDrama` |
+| `Drama_KungFu_BecomeNPC_DoNotEndCombat` | 0x100027AE | Bool | true | `Drama_NamedDrama` |
+| `QuestEvent_KungFuDramaName` | 0x10000F74 | String | — | quest events (§6.2) |
+| `QuestEvent_RunKungFu` | 0x10001508 | Bool | true | quest events (§6.2) |
+
+"Child of" for the two transition structs is the dictionary's child list: the quest transition
+lists only `…Transition_Drama`, `…Transition_AlwaysActive` and `…Transition_HealthRatio`. In
+§10.3 item 5, `HealthRatio` is `AI_KungFu_Transition_HealthRatio` and `DoNotEndCombat` is
+`Drama_KungFu_BecomeNPC_DoNotEndCombat`.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the full labels are in the table
+> above. The health ratio is `AI_KungFu_Transition_HealthRatio`; a reader needs to resolve only
+> that label.
 
 ---
 
@@ -1138,15 +1170,22 @@ For a selected entity (instance set, static entity or template) the explorer sho
    link, script-link label and the wired targets, broadcast range and match, director's cast with
    actor entities, effect and scriptlet DIDs;
 3. the entity's scripted-fight properties and transitions (§7) and starting-idle properties (§8);
-4. a "play" button that runs T1 under T2/T5 rules in the character viewer.
+4. a "play" button that runs T1 under T2/T5 rules in the character viewer, with two preview
+   rules (Decision T7, 2026-10-09; they affect only the preview, not T1–T6):
+   1. **Figure.** The dramas play on the figure the character view shows. An instance set of a
+      server-placed object names no template (§2.2), so for such a selection the shown figure
+      stands in for the actor, and every emote and stop key is resolved through **that
+      figure's** script tables (`script-runtime.md` §12.2). The viewer says so next to the
+      button.
+   2. **Emote clip.** An emote key plays one clip: among the clips that a run of the key would
+      start on the figure (§4.3, `script-runtime.md` §12), the one with the largest product of
+      blend weight and chance, held clips excluded; ties go to the first in table order. A key
+      that would start no clip on the figure is logged and plays nothing; the drama continues
+      with its next facet.
 
-> **OPEN (implementer, 2026-10-09):** two choices of the explorer's "play" button (item 4)
-> that the Decisions leave to the viewer. (a) A spawned object's instance set names no
-> template (§2.2), so its dramas play on the figure the character view shows, and their emotes
-> are resolved through that figure's script tables. (b) An emote plays the most likely clip
-> (largest blend weight × chance, not a held clip) among the clips whose run starts at the
-> emote's script key; a key that starts no clip on the figure is logged and plays nothing.
-> Both affect only the preview, not T1–T6.
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** both choices of the
+> implementer are adopted as the two preview rules of item 4 (Tessera Decisions; the original
+> has no drama preview).
 
 ---
 
@@ -1274,3 +1313,4 @@ observation (M3) of the original; the traffic side stays behind the gate of `doc
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (status Review). Rows D1–D26 and Decisions T1–T7. |
+| 2026-10-09 | Revision (spec writer) answering the two implementer OPENs of 2026-10-09: new §7.1 with the full labels, PIDs, types, defaults and child lists of every scripted-fight field and drama state switch (D27, from the dictionary); the elided labels of §7 spelled in full; §11 item 4 gains the two preview rules (figure and emote clip) as Decision T7 items. Status Revised. |

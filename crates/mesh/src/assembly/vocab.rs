@@ -103,15 +103,21 @@ pub struct PlacementRow {
 /// avatar table, as data. Out of combat an equipped item takes its **stowed** placement, in
 /// combat its **wielded** one (§5.4 Rule). The first row (in table order) whose slot,
 /// family, categories, species and skill mode match decides; an item no row matches
-/// (class items, instruments, baubles, effect items, items outside the three weapon slots)
-/// is not drawn (§5.3 Decision).
+/// (class items, baubles, effect items, items outside the three weapon slots) is not drawn
+/// (§5.3 Decision). A ranged-slot instrument has no row: while stowed the assembler
+/// evaluates the sheathed-instrument script instead (§5.6 "Stowed instruments"), and while
+/// wielded it is not drawn.
 ///
 /// `Item_EquipmentCategory` is a 64-bit bitfield: an item stores a **bit mask** in which
 /// bit *k* − 1 stands for enum key *k* (`property-system.md` §7.3; `appearance.md` §15).
 ///
-/// Not modelled: the cosmetic in-hand row (it lists entity DIDs in the script, not in the
-/// spec), the battle-gauntlet effect entity (named by the script), and the exceptions for
-/// mounts, stealth and cosmetic locomotion styles that a full script evaluator reproduces.
+/// Not modelled (§5.6 "What is normative" prefers evaluating the scripts): the cosmetic
+/// in-hand rows and the fishing-pole case, which apply only while a cosmetic override is
+/// set (Tessera sets none, §5.6), the stowed battle-gauntlet effect entity (stored in the
+/// script's node, found through a case the spec does not name; OPEN in `appearance.md`
+/// §15), and the exceptions for stealth and cosmetic locomotion styles that a full script
+/// evaluator reproduces. The mounted exception of the stowed shield is applied by the
+/// assembler ([`super::CharacterSpec::mounted`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlacementRule {
     /// `ContainerSlot` bits of `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`.
@@ -470,6 +476,155 @@ impl PlacementRule {
     }
 }
 
+/// The key of the sheathed-instrument script of the avatars' binding tables
+/// (`appearance.md` §5.6 "Stowed instruments", A38; this install's script key, given by the
+/// spec without its label, see the OPEN of `appearance.md` §15 of 2026-10-09).
+pub const SHEATHED_INSTRUMENT_SCRIPT: u32 = 0x1000_2BA0;
+
+/// The properties of one creature cosmetic slot (`appearance.md` §5.5, A39):
+/// `Inventory_Cosmetic_Slot<n>_…`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CosmeticSlotPids {
+    /// `…_Entity`: the prop (0 means the slot is empty).
+    pub entity: Option<u32>,
+    /// `…_HoldingLocation`.
+    pub holding_location: Option<u32>,
+    /// `…_Scale` (vector3, default (1, 1, 1)).
+    pub scale: Option<u32>,
+    /// `…_OffsetRotationYaw`.
+    pub yaw: Option<u32>,
+    /// `…_OffsetRotationPitch`.
+    pub pitch: Option<u32>,
+    /// `…_OffsetRotationRoll`.
+    pub roll: Option<u32>,
+    /// `…_Hide`.
+    pub hide: Option<u32>,
+}
+
+/// What the creature cosmetic slots of `appearance.md` §5.5 need: the four slots, the
+/// figure's sheath state and the conditions of script 0x100007C3, as PIDs, enum keys and
+/// holding-location keys looked up by label.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CosmeticSlotVocabulary {
+    /// Slots 1–4.
+    pub slots: Vec<CosmeticSlotPids>,
+    /// `Inventory_Cosmetic_IsSheathed`.
+    pub is_sheathed: Option<u32>,
+    /// Its `Sheathed` key.
+    pub sheathed: Option<u32>,
+    /// Its `Combat_Defined` key.
+    pub combat_defined: Option<u32>,
+    /// `Combat_Violent`.
+    pub combat_violent: Option<u32>,
+    /// `LifeState`.
+    pub life_state: Option<u32>,
+    /// Its `Dead` and `Incapacitated` keys.
+    pub life_state_down: Vec<u32>,
+    /// `Agent_ClassificationFilter`.
+    pub classification: Option<u32>,
+    /// Its `MonsterPlayer` key.
+    pub monster_player: Option<u32>,
+    /// `HoldingLocation` keys: `Sheath_Back_Shield`, `Wpn_LHand`, `Wpn_LOffHand`,
+    /// `Wpn_RHand`, `Wpn_Forearm`.
+    pub sheath_back_shield: Option<u32>,
+    /// See [`CosmeticSlotVocabulary::sheath_back_shield`].
+    pub left_hand: Option<u32>,
+    /// See [`CosmeticSlotVocabulary::sheath_back_shield`].
+    pub left_off_hand: Option<u32>,
+    /// See [`CosmeticSlotVocabulary::sheath_back_shield`].
+    pub right_hand: Option<u32>,
+    /// See [`CosmeticSlotVocabulary::sheath_back_shield`].
+    pub forearm: Option<u32>,
+}
+
+/// One placement of a creature cosmetic slot (`appearance.md` §5.5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CosmeticPlacement {
+    /// The prop entity.
+    pub entity: Did,
+    /// The `HoldingLocation` key it is attached at.
+    pub location: u32,
+    /// `BoneOffset`, metres.
+    pub offset: [f32; 3],
+    /// Yaw, pitch, roll, degrees.
+    pub rotation: [f32; 3],
+    /// Per-axis scale.
+    pub scale: [f32; 3],
+}
+
+impl CosmeticSlotVocabulary {
+    /// Whether the slot props are drawn on a figure whose values `prop` reads (§5.5:
+    /// nothing while `LifeState` is `Dead` or `Incapacitated`; a figure whose
+    /// `Agent_ClassificationFilter` is `MonsterPlayer` takes another branch, not covered).
+    pub fn applies(&self, prop: &dyn Fn(Option<u32>) -> Option<u32>) -> bool {
+        let down = prop(self.life_state).is_some_and(|v| self.life_state_down.contains(&v));
+        let monster =
+            self.monster_player.is_some() && prop(self.classification) == self.monster_player;
+        !down && !monster
+    }
+
+    /// Whether the figure's props take the sheathed placements (§5.5: `IsSheathed`
+    /// `Sheathed`, or `Combat_Defined` while `Combat_Violent` is false).
+    pub fn sheathed(&self, sheath_state: Option<u32>, violent: bool) -> bool {
+        match sheath_state {
+            Some(v) if Some(v) == self.sheathed => true,
+            Some(v) if Some(v) == self.combat_defined => !violent,
+            _ => false,
+        }
+    }
+
+    /// The placement of a slot with prop `entity` held unsheathed at `location`, with its
+    /// scale and rotations (§5.5): sheathed, the fixed placement at `Sheath_Back_Shield`
+    /// chosen by the location (only the scale follows the slot; location 0 draws nothing,
+    /// any other location takes the unsheathed placement); unsheathed, the slot's location,
+    /// rotations and scale with offset 0.
+    #[must_use]
+    pub fn placement(
+        &self,
+        entity: Did,
+        location: u32,
+        scale: [f32; 3],
+        rotation: [f32; 3],
+        sheathed: bool,
+    ) -> Option<CosmeticPlacement> {
+        if location == 0 {
+            return None;
+        }
+        let unsheathed = CosmeticPlacement {
+            entity,
+            location,
+            offset: [0.0; 3],
+            rotation,
+            scale,
+        };
+        if !sheathed {
+            return Some(unsheathed);
+        }
+        let back = self.sheath_back_shield;
+        let fixed = |offset: [f32; 3], rotation: [f32; 3]| {
+            back.map(|location| CosmeticPlacement {
+                entity,
+                location,
+                offset,
+                rotation,
+                scale,
+            })
+        };
+        let at = |k: Option<u32>| k == Some(location);
+        if at(self.left_hand) {
+            fixed([0.0; 3], [-30.0, 0.0, 90.0])
+        } else if at(self.left_off_hand) {
+            fixed([-0.15, 0.2, 0.0], [210.0, 0.0, 0.0])
+        } else if at(self.right_hand) {
+            fixed([0.15, 0.2, 0.0], [-210.0, 0.0, 0.0])
+        } else if at(self.forearm) {
+            fixed([0.0; 3], [0.0; 3])
+        } else {
+            Some(unsheathed)
+        }
+    }
+}
+
 /// Property IDs and enum keys assembly needs, looked up by name in the data. Every field
 /// is public so that tests and fuzzers can build one by hand; [`AssemblyVocabulary::default`]
 /// knows nothing (no dyes, no holding locations, no NPC properties).
@@ -516,6 +671,19 @@ pub struct AssemblyVocabulary {
     /// `AC_BoneSlider_Value_Array` (§6.3): the property whose value the figure's slider
     /// bytes replace when it drives a SliderMeshDeformer node's string.
     pub slider_values: Option<u32>,
+    /// `Item_EquipmentCategory` bit of `Instrument` (§5.6 "Stowed instruments").
+    pub instrument_category: u64,
+    /// The sheathed-instrument script key ([`SHEATHED_INSTRUMENT_SCRIPT`]).
+    pub sheathed_instrument_script: Option<u32>,
+    /// `Item_Music_Instrument_Type` (the item's instrument type).
+    pub item_instrument_type: Option<u32>,
+    /// `Music_Cached_Instrument_Type`: set to the ranged item's instrument type (§5.6
+    /// Decision of 2026-10-09).
+    pub cached_instrument_type: Option<u32>,
+    /// `Script_Item_PhysObj_Ranged`: the ranged item's entity (§5.6).
+    pub physobj_ranged: Option<u32>,
+    /// Creature cosmetic slots (§5.5).
+    pub cosmetic: CosmeticSlotVocabulary,
 }
 
 impl AssemblyVocabulary {
@@ -586,6 +754,45 @@ impl AssemblyVocabulary {
             bone_scale: names.pid_of("AC_BoneScale_Test"),
             avatar_height: names.pid_of("AC_Avatar_Height"),
             slider_values: names.pid_of("AC_BoneSlider_Value_Array"),
+            instrument_category: category("Instrument").unwrap_or(0),
+            sheathed_instrument_script: Some(SHEATHED_INSTRUMENT_SCRIPT),
+            item_instrument_type: names.pid_of("Item_Music_Instrument_Type"),
+            cached_instrument_type: names.pid_of("Music_Cached_Instrument_Type"),
+            physobj_ranged: names.pid_of("Script_Item_PhysObj_Ranged"),
+            cosmetic: CosmeticSlotVocabulary {
+                slots: (1..=4)
+                    .map(|n| {
+                        let p = |field: &str| {
+                            names.pid_of(&format!("Inventory_Cosmetic_Slot{n}_{field}"))
+                        };
+                        CosmeticSlotPids {
+                            entity: p("Entity"),
+                            holding_location: p("HoldingLocation"),
+                            scale: p("Scale"),
+                            yaw: p("OffsetRotationYaw"),
+                            pitch: p("OffsetRotationPitch"),
+                            roll: p("OffsetRotationRoll"),
+                            hide: p("Hide"),
+                        }
+                    })
+                    .collect(),
+                is_sheathed: names.pid_of("Inventory_Cosmetic_IsSheathed"),
+                sheathed: enum_key("Inventory_Cosmetic_IsSheathed", "Sheathed"),
+                combat_defined: enum_key("Inventory_Cosmetic_IsSheathed", "Combat_Defined"),
+                combat_violent: names.pid_of("Combat_Violent"),
+                life_state: names.pid_of("LifeState"),
+                life_state_down: ["Dead", "Incapacitated"]
+                    .iter()
+                    .filter_map(|l| enum_key("LifeState", l))
+                    .collect(),
+                classification: names.pid_of("Agent_ClassificationFilter"),
+                monster_player: enum_key("Agent_ClassificationFilter", "MonsterPlayer"),
+                sheath_back_shield: location("Sheath_Back_Shield"),
+                left_hand: location("Wpn_LHand"),
+                left_off_hand: location("Wpn_LOffHand"),
+                right_hand: location("Wpn_RHand"),
+                forearm: location("Wpn_Forearm"),
+            },
         }
     }
 

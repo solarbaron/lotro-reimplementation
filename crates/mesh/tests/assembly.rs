@@ -18,7 +18,8 @@ use tessera_formats::{
 use tessera_mesh::assembly::{
     AssemblyError, AssemblyLimits, AssemblyOptions, AssemblyVocabulary, CharacterAssembler,
     CharacterSpec, DiagnosticCategory as Cat, EquippedItem, LayerKind, ListOrigin, MapSource,
-    PlacementRule, RigKind, ScriptAppearance, SourceRef, StyleChoice, WeaponSlot, WieldState,
+    PlacementRule, RigKind, ScriptAppearance, ScriptMeshFx, SourceRef, StyleChoice, WeaponSlot,
+    WieldState,
 };
 use tessera_mesh::{MeshSummary, SubmeshSummary, VertexFormat};
 
@@ -168,6 +169,7 @@ fn vocab() -> AssemblyVocabulary {
         bone_scale: None,
         avatar_height: None,
         slider_values: None,
+        ..AssemblyVocabulary::default()
     }
 }
 
@@ -888,6 +890,11 @@ fn held_items_take_their_section_5_6_placement() {
     spec.ranged_skill_mode = true;
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.held[0].location, L_BACK_SHIELD);
+    // Mounted as well: nothing (§5.6, revised 2026-10-09).
+    spec.mounted = true;
+    let c = asm.assemble_character(&spec).unwrap();
+    assert!(c.held.is_empty());
+    assert_eq!(c.count(Cat::NoPlacement), 1);
     // A stowed staff: species rows with an offset and a half turn (§5.6).
     let mut s = world();
     s.items.insert(
@@ -925,6 +932,173 @@ fn held_items_take_their_section_5_6_placement() {
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.held.len(), 1);
     assert_eq!(c.count(Cat::LimitExceeded), 3, "{:?}", c.diagnostics);
+}
+
+/// `appearance.md` §5.6 "Stowed instruments" (A38): a ranged-slot instrument is attached
+/// while stowed by the wearer's sheathed-instrument script (here a fixed answer of the
+/// source), with the node's location, offset, rotations and scale; wielded it is not drawn.
+#[test]
+fn stowed_instruments_come_from_the_sheathed_instrument_script() {
+    const C_INSTRUMENT: u64 = 1 << 21;
+    const I_LUTE: u32 = 0x7900_0030;
+    const KEY: u32 = 0x1000_2BA0;
+    let mut s = world();
+    s.items
+        .insert(Did(I_LUTE), held_item(S_RANGED, SWORD_ENTITY, C_INSTRUMENT));
+    let node = ScriptMeshFx {
+        entity: Did(SWORD_ENTITY),
+        location: L_BACK_BOW,
+        offset: [0.0, -0.1, 0.02],
+        rotation: [180.0, 20.0, 0.0],
+        scale: [1.0; 3],
+    };
+    s.script_mesh_fx.insert((Did(AVATAR), KEY), vec![node]);
+    let mut back = (*s.setups[&Did(SETUP)]).clone();
+    back.bone_frames.push(location(L_BACK_BOW, 16, 0.0));
+    s.setups.insert(Did(SETUP), Arc::new(back));
+    let mut v = vocab();
+    v.instrument_category = C_INSTRUMENT;
+    v.sheathed_instrument_script = Some(KEY);
+    let mut asm = CharacterAssembler::new(s, v);
+    let spec = CharacterSpec::new(HUMAN, MALE)
+        .wearing(EquippedItem::new(I_LUTE).with_state(WieldState::Sheathed));
+    let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.held.len(), 1, "{:?}", c.diagnostics);
+    let h = &c.held[0];
+    assert_eq!((h.location, h.item), (L_BACK_BOW, Some(Did(I_LUTE))));
+    assert_eq!(h.placement.offset, [0.0, -0.1, 0.02]);
+    assert_eq!(h.placement.rotation, [180.0, 20.0, 0.0]);
+    let c = asm.assemble_character(&human(&[I_LUTE])).unwrap();
+    assert!(c.held.is_empty(), "not drawn while wielded");
+    assert_eq!(c.count(Cat::NoPlacement), 1);
+}
+
+/// `appearance.md` §5.5 "Creature cosmetic slots" (A39): a slot's prop is attached while
+/// the props are visible and its `_Hide` is false; sheathed it goes to
+/// `Sheath_Back_Shield` with the fixed values of its location, unsheathed to its own
+/// location with its rotations and scale.
+#[test]
+fn creature_cosmetic_slots_follow_their_sheath_state() {
+    use tessera_mesh::assembly::{CosmeticSlotPids, CosmeticSlotVocabulary};
+    const P_SLOT_ENTITY: u32 = 130;
+    const P_SLOT_LOC: u32 = 131;
+    const P_SLOT_SCALE: u32 = 132;
+    const P_SLOT_YAW: u32 = 133;
+    const P_SLOT_HIDE: u32 = 134;
+    const P_SHEATHED: u32 = 135;
+    const PROP: u32 = 0x4700_0301;
+    let mut s = world();
+    s.chains
+        .insert(Did(PROP), vec![Did(PROP), Did(SWORD_SETUP)]);
+    let mut wearer = (*s.setups[&Did(SETUP)]).clone();
+    wearer
+        .bone_frames
+        .push(location(L_BACK_SHIELD, BONE_HIP as i32, 0.0));
+    s.setups.insert(Did(SETUP), Arc::new(wearer));
+    let mut v = vocab();
+    v.cosmetic = CosmeticSlotVocabulary {
+        slots: vec![CosmeticSlotPids {
+            entity: Some(P_SLOT_ENTITY),
+            holding_location: Some(P_SLOT_LOC),
+            scale: Some(P_SLOT_SCALE),
+            yaw: Some(P_SLOT_YAW),
+            hide: Some(P_SLOT_HIDE),
+            ..CosmeticSlotPids::default()
+        }],
+        is_sheathed: Some(P_SHEATHED),
+        sheathed: Some(1),
+        combat_defined: Some(3),
+        sheath_back_shield: Some(L_BACK_SHIELD),
+        left_hand: Some(L_LHAND),
+        left_off_hand: Some(L_WPN_LOFFHAND),
+        right_hand: Some(L_WPN_RHAND),
+        forearm: Some(L_FOREARM),
+        ..CosmeticSlotVocabulary::default()
+    };
+    let mut asm = CharacterAssembler::new(s, v);
+    let slot = |sheath: u32, hide: bool| {
+        set(vec![
+            (P_SLOT_ENTITY, PropertyValue::DidRef(Did(PROP))),
+            (P_SLOT_LOC, PropertyValue::Enum(L_WPN_LOFFHAND)),
+            (P_SLOT_SCALE, PropertyValue::Vector3([0.5, 0.6, 0.7])),
+            (P_SLOT_YAW, PropertyValue::Float(45.0)),
+            (P_SLOT_HIDE, PropertyValue::Bool(hide)),
+            (P_SHEATHED, PropertyValue::Enum(sheath)),
+        ])
+    };
+    // Unsheathed: its own location, rotation and scale, offset 0.
+    let c = asm
+        .assemble_object(Did(ENTITY), Some(&slot(2, false)))
+        .unwrap();
+    let h = c
+        .held
+        .iter()
+        .find(|h| h.source == SourceRef::CosmeticSlot(1))
+        .expect("slot prop");
+    assert_eq!(h.location, L_WPN_LOFFHAND);
+    assert_eq!(h.placement.rotation, [45.0, 0.0, 0.0]);
+    assert_eq!(h.placement.scale, [0.5, 0.6, 0.7]);
+    assert_eq!(h.placement.offset, [0.0; 3]);
+    // Sheathed: from Wpn_LOffHand to Sheath_Back_Shield, offset (−0.15, 0.2, 0), yaw 210;
+    // the slot's rotation is not used.
+    let c = asm
+        .assemble_object(Did(ENTITY), Some(&slot(1, false)))
+        .unwrap();
+    let h = c
+        .held
+        .iter()
+        .find(|h| h.source == SourceRef::CosmeticSlot(1))
+        .expect("slot prop");
+    assert_eq!(h.location, L_BACK_SHIELD);
+    assert_eq!(h.placement.offset, [-0.15, 0.2, 0.0]);
+    assert_eq!(h.placement.rotation, [210.0, 0.0, 0.0]);
+    assert_eq!(h.placement.scale, [0.5, 0.6, 0.7]);
+    // Hidden: not drawn.
+    let c = asm
+        .assemble_object(Did(ENTITY), Some(&slot(1, true)))
+        .unwrap();
+    assert!(
+        !c.held
+            .iter()
+            .any(|h| h.source == SourceRef::CosmeticSlot(1))
+    );
+}
+
+/// `appearance.md` §3.3 Rule (confirmed 2026-10-09): a toggle property other than
+/// `GOP_AvatarUpdateVisible` that the figure does not carry reads its dictionary default.
+#[test]
+fn absent_toggle_properties_read_their_default() {
+    const P_TOGGLE: u32 = 140;
+    const ALT_REC: u32 = 0x2000_0300;
+    let toggled = |default: Option<bool>| {
+        let mut s = world();
+        if let Some(d) = default {
+            s.defaults.insert(P_TOGGLE, PropertyValue::Bool(d));
+        }
+        s.appearances.insert(
+            Did(ALT_REC),
+            record(
+                ALT_REC,
+                vec![(KEY_HAIR, vec![block(0.0, &[(1.0, HELMET, G)], &[])])],
+            ),
+        );
+        let body = s.bodies.get_mut(&Did(AVATAR)).unwrap();
+        for e in &mut body.class_list {
+            if e.key == KEY_HAIR {
+                e.toggle_file = Some(Did(ALT_REC));
+                e.toggle_property = Some(P_TOGGLE);
+            }
+        }
+        let mut asm = assembler(s);
+        let c = asm.assemble_character(&human(&[])).unwrap();
+        c.parts.iter().any(|p| p.mesh == Did(G) && !p.hidden)
+    };
+    assert!(
+        toggled(Some(true)),
+        "the default true picks the toggle file"
+    );
+    assert!(!toggled(Some(false)));
+    assert!(!toggled(None), "no default: false");
 }
 
 #[test]

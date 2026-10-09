@@ -2971,7 +2971,8 @@ where
 
     /// Registers a MeshFX node (§5.2) with scriptlet parameters, then driven properties,
     /// applied to its fields (as for animation nodes: the innermost parameter, then the
-    /// run-time value, which wins).
+    /// run-time value, which wins; an absent source reads its dictionary default,
+    /// `appearance.md` §5.7 step 3).
     fn mesh_fx(&mut self, n: &Node, m: &MeshFxNode, scope: &Scope<'_>) {
         if self.mesh_fx.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -3016,9 +3017,11 @@ where
                 s = sc.parent;
             }
         }
+        // `appearance.md` §5.7 step 3 (A36): a driven field takes its source's current
+        // value, an absent source its dictionary default (when the resolver has defaults).
         for &(field, source) in &n.base.driven {
-            if let Some(v) = self.state.get(source) {
-                apply_mesh_fx_field(&mut c, &pids, field, v);
+            if let Some(v) = self.r.read(&self.state, source) {
+                apply_mesh_fx_field(&mut c, &pids, field, &v);
             }
         }
         self.mesh_fx.push(c);

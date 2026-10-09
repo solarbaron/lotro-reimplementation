@@ -691,6 +691,38 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         Ok(())
     }
 
+    /// The attachments of the sheathed-instrument script for the ranged item `item` with
+    /// entity `phys_obj` on the figure whose scripts start at `start` (§5.6 "Stowed
+    /// instruments"): `Script_Item_PhysObj_Ranged` is the entity and
+    /// `Music_Cached_Instrument_Type` the item's `Item_Music_Instrument_Type`.
+    fn instrument_attachments(
+        &mut self,
+        start: Did,
+        item: Did,
+        phys_obj: Did,
+        key: u32,
+    ) -> Result<Vec<super::ScriptMeshFx>, AssemblyError> {
+        let mut props: Vec<(u32, PropertyValue)> = Vec::new();
+        if let Some(p) = self.vocab.physobj_ranged {
+            props.push((p, PropertyValue::DidRef(phys_obj)));
+        }
+        if let (Some(from), Some(to)) = (
+            self.vocab.item_instrument_type,
+            self.vocab.cached_instrument_type,
+        ) && let Lookup::Found(set) =
+            self.source.object_properties(item).map_err(source_error)?
+            && let Some(v) = set.get(from)
+        {
+            props.push((to, v.clone()));
+        }
+        let mut out = self
+            .source
+            .script_mesh_fx(start, key, &props)
+            .map_err(source_error)?;
+        out.truncate(self.limits.max_held);
+        Ok(out)
+    }
+
     /// The instance list in use and where it came from (§7.4 step 4 Decision): a list
     /// property present in the instance set, else in the game object's set, else the
     /// entity's own.
@@ -769,16 +801,46 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             let pid = pid?;
             sets.iter().flatten().find_map(|s| s.get(pid))
         };
-        // §3.3 Tessera rule: the option store answers `GOP_AvatarUpdateVisible` before the
-        // figure's values; other toggle properties read through the figure's lookup, an
-        // absent one false (the dictionary default of the only toggle property in use).
+        // §3.3 Rule: the option store answers `GOP_AvatarUpdateVisible` before the figure's
+        // values; any other toggle property reads through the figure's lookup (instance,
+        // game object, entity) and, when absent, as its dictionary default, false when the
+        // dictionary has none (`script-table.md` T28; confirmed 2026-10-09).
         let options = self.options;
         let update_visible = self.vocab.avatar_update_visible;
+        let mut toggle_defaults: Vec<(u32, bool)> = Vec::new();
+        {
+            let (instance_list, _) = self.instance_list(&input);
+            let toggles: Vec<u32> = body
+                .template_appearance
+                .iter()
+                .chain(&body.class_list)
+                .chain(instance_list.as_deref().unwrap_or(&body.instance_list))
+                .filter_map(|e| e.watched_toggle())
+                .filter(|&p| Some(p) != update_visible)
+                .collect();
+            for p in toggles {
+                if toggle_defaults.len() >= 64 || toggle_defaults.iter().any(|(q, _)| *q == p) {
+                    continue;
+                }
+                let d = self
+                    .source
+                    .property_default(p)
+                    .map_err(source_error)?
+                    .is_some_and(|v| as_true(&v));
+                toggle_defaults.push((p, d));
+            }
+        }
         let toggle_true = |pid: u32| {
             if Some(pid) == update_visible {
                 options.avatar_update_visible
             } else {
-                prop(Some(pid)).is_some_and(as_true)
+                match prop(Some(pid)) {
+                    Some(v) => as_true(v),
+                    None => toggle_defaults
+                        .iter()
+                        .find(|(q, _)| *q == pid)
+                        .is_some_and(|(_, d)| *d),
+                }
             }
         };
 
@@ -926,20 +988,61 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         // Step 9: held items at their placements (§5.4, §5.6).
         let species = input.spec.map_or(0, |s| s.species);
         let ranged = input.spec.is_some_and(|s| s.ranged_skill_mode);
+        let mounted = input.spec.is_some_and(|s| s.mounted);
         let secondary_scale = prop(self.vocab.secondary_scale)
             .and_then(scale_vector)
             .unwrap_or([1.0; 3]);
         for (i, item, visual, phys_obj) in held_queue {
             let source = SourceRef::Item(i);
             let stowed = item.state == WieldState::Sheathed;
-            let row = self.vocab.placement.row(
-                visual.default_slot.unwrap_or(0),
-                visual.equipment_category.unwrap_or(0),
-                species,
-                ranged,
-                stowed,
-            );
+            let slot = visual.default_slot.unwrap_or(0);
+            let category = visual.equipment_category.unwrap_or(0);
+            // §5.6: the stowed shield goes on the back in the ranged skill mode, and is not
+            // drawn while the figure is also mounted.
+            let row = self
+                .vocab
+                .placement
+                .row(slot, category, species, ranged, stowed)
+                .filter(|r| {
+                    !(mounted
+                        && r.stowed
+                        && r.slot == super::WeaponSlot::Secondary
+                        && r.skill_mode == super::SkillModeMatch::Ranged)
+                });
             let placements: Vec<_> = row.map(|r| r.placements.clone()).unwrap_or_default();
+            // §5.6 "Stowed instruments" (A38): a stowed ranged-slot instrument is attached by
+            // the sheathed-instrument script of the wearer's binding table, evaluated with
+            // the item's entity and `Music_Cached_Instrument_Type` set to its instrument type
+            // (Decision of 2026-10-09).
+            if placements.is_empty()
+                && stowed
+                && self.vocab.instrument_category & category != 0
+                && self.vocab.placement.weapon_slot(slot) == Some(super::WeaponSlot::Ranged)
+                && let Some(key) = self.vocab.sheathed_instrument_script
+            {
+                let attached =
+                    self.instrument_attachments(input.start, item.item, phys_obj, key)?;
+                if attached.is_empty() {
+                    cx.diag(Cat::NoPlacement, source, Some(item.item), None);
+                }
+                for a in attached {
+                    self.place_held(
+                        &mut cx,
+                        &setup,
+                        source,
+                        Some(item.item),
+                        a.entity,
+                        a.location,
+                        item.state,
+                        HeldPlacement {
+                            offset: a.offset,
+                            rotation: a.rotation,
+                            scale: a.scale,
+                        },
+                    )?;
+                }
+                continue;
+            }
             if placements.is_empty() {
                 cx.diag(Cat::NoPlacement, source, Some(item.item), None);
                 continue;
@@ -998,6 +1101,59 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 WieldState::Wielded,
                 HeldPlacement::default(),
             )?;
+        }
+
+        // Creature cosmetic slots 1–4 while the props are visible (§5.5, A39): server
+        // objects carry them; each slot with a prop and `_Hide` false is attached by the
+        // rule of script 0x100007C3 ([`super::CosmeticSlotVocabulary::placement`]).
+        let cos = &self.vocab.cosmetic;
+        let code = |pid: Option<u32>| prop(pid).and_then(as_u32);
+        if props_visible && cos.applies(&code) {
+            let sheathed = cos.sheathed(
+                code(cos.is_sheathed),
+                prop(cos.combat_violent).is_some_and(as_true),
+            );
+            let float = |pid: Option<u32>| {
+                #[allow(clippy::cast_possible_truncation)]
+                prop(pid)
+                    .and_then(PropertyValue::as_f64)
+                    .map(|v| v as f32)
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(0.0)
+            };
+            let placements: Vec<(u8, super::CosmeticPlacement)> = cos
+                .slots
+                .iter()
+                .take(4)
+                .enumerate()
+                .filter_map(|(n, s)| {
+                    let entity = prop(s.entity)?.as_did().filter(|d| !d.is_null())?;
+                    if prop(s.hide).is_some_and(as_true) {
+                        return None;
+                    }
+                    let scale = prop(s.scale).and_then(scale_vector).unwrap_or([1.0; 3]);
+                    let rotation = [float(s.yaw), float(s.pitch), float(s.roll)];
+                    let location = code(s.holding_location).unwrap_or(0);
+                    cos.placement(entity, location, scale, rotation, sheathed)
+                        .map(|p| (n as u8 + 1, p))
+                })
+                .collect();
+            for (n, p) in placements {
+                self.place_held(
+                    &mut cx,
+                    &setup,
+                    SourceRef::CosmeticSlot(n),
+                    None,
+                    p.entity,
+                    p.location,
+                    WieldState::Wielded,
+                    HeldPlacement {
+                        offset: p.offset,
+                        rotation: p.rotation,
+                        scale: p.scale,
+                    },
+                )?;
+            }
         }
 
         let starting_idle_animation = prop(self.vocab.idle_animation).and_then(as_u32);

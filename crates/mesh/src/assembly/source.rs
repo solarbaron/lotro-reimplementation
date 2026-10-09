@@ -10,11 +10,16 @@ use tessera_formats::item::{ItemPids, ItemVisual};
 use tessera_formats::property_set::{is_property_set_did, object_property_set_did};
 use tessera_formats::setup::{ResolveError, SETUP_PREFIX};
 use tessera_formats::{
-    AppearanceRecord, Did, PropertySet, PropertySetRecord, Record, Setup, resolve_setup_did,
+    AppearanceRecord, Did, PropertySet, PropertySetRecord, PropertyValue, Record, Setup,
+    resolve_setup_did,
 };
 use tessera_props::{GameData, PropsError, RecordSource};
 
+use super::ScriptMeshFx;
 use crate::summary::MeshSummary;
+use tessera_formats::script_table::resolve::{
+    ClipResolver, ScriptVocabulary, collect_entity_scripts,
+};
 
 /// The outcome of looking a record up: found, absent, or present but unusable.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,7 +109,9 @@ pub trait AssemblySource {
     /// Only when the source fails.
     fn item(&mut self, did: Did) -> Result<Lookup<ItemVisual>, Self::Error>;
 
-    /// The property set of a game object (0x70–0x76), by the +0x09000000 rule.
+    /// The property set of a game object (0x70–0x76), by the +0x09000000 rule, or of a
+    /// property-set DID itself (an item named by its set, as [`AssemblySource::item`]
+    /// accepts).
     ///
     /// # Errors
     ///
@@ -121,6 +128,38 @@ pub trait AssemblySource {
     fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Self::Error> {
         let _ = entity;
         Ok(None)
+    }
+
+    /// The dictionary default of property `pid`, `None` when the dictionary has none (an
+    /// absent toggle property reads it, `appearance.md` §3.3 Rule). The default
+    /// implementation knows none.
+    ///
+    /// # Errors
+    ///
+    /// Only when the source fails.
+    fn property_default(&mut self, pid: u32) -> Result<Option<PropertyValue>, Self::Error> {
+        let _ = pid;
+        Ok(None)
+    }
+
+    /// The MeshFX attachments one run of script `key` starts on the figure whose scripts
+    /// start at `start` (a 0x70 object or 0x47 entity, `script-table.md` §8.1), with the
+    /// figure's values and `properties` set on top (`appearance.md` §5.6–§5.7: the
+    /// sheathed-instrument script with the ranged item's entity and instrument type).
+    /// Nodes whose entity is the null DID are left out. The default implementation runs
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Only when the source fails.
+    fn script_mesh_fx(
+        &mut self,
+        start: Did,
+        key: u32,
+        properties: &[(u32, PropertyValue)],
+    ) -> Result<Vec<ScriptMeshFx>, Self::Error> {
+        let _ = (start, key, properties);
+        Ok(Vec::new())
     }
 }
 
@@ -153,6 +192,17 @@ impl<T: AssemblySource + ?Sized> AssemblySource for &mut T {
     fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Self::Error> {
         (**self).held_scale(entity)
     }
+    fn property_default(&mut self, pid: u32) -> Result<Option<PropertyValue>, Self::Error> {
+        (**self).property_default(pid)
+    }
+    fn script_mesh_fx(
+        &mut self,
+        start: Did,
+        key: u32,
+        properties: &[(u32, PropertyValue)],
+    ) -> Result<Vec<ScriptMeshFx>, Self::Error> {
+        (**self).script_mesh_fx(start, key, properties)
+    }
 }
 
 /// Hand-built records in maps: for synthetic tests, fuzzing and tools that assemble
@@ -179,6 +229,11 @@ pub struct MapSource {
     pub objects: HashMap<Did, PropertySet>,
     /// Own model scales of held entities ([`AssemblySource::held_scale`]).
     pub held_scales: HashMap<Did, [f32; 3]>,
+    /// Dictionary defaults by PID ([`AssemblySource::property_default`]).
+    pub defaults: HashMap<u32, PropertyValue>,
+    /// Script attachments by (start, script key) ([`AssemblySource::script_mesh_fx`]),
+    /// whatever the properties.
+    pub script_mesh_fx: HashMap<(Did, u32), Vec<ScriptMeshFx>>,
     /// DIDs every lookup reports as [`Lookup::Invalid`] (for bodies, setups, chains,
     /// appearance records, meshes, items and object property sets alike), whatever the
     /// maps hold.
@@ -234,6 +289,21 @@ impl AssemblySource for MapSource {
     fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Infallible> {
         Ok(self.held_scales.get(&entity).copied())
     }
+    fn property_default(&mut self, pid: u32) -> Result<Option<PropertyValue>, Infallible> {
+        Ok(self.defaults.get(&pid).cloned())
+    }
+    fn script_mesh_fx(
+        &mut self,
+        start: Did,
+        key: u32,
+        _properties: &[(u32, PropertyValue)],
+    ) -> Result<Vec<ScriptMeshFx>, Infallible> {
+        Ok(self
+            .script_mesh_fx
+            .get(&(start, key))
+            .cloned()
+            .unwrap_or_default())
+    }
 }
 
 /// Most records of each kind a [`GameDataSource`] keeps decoded; a full cache is emptied.
@@ -283,6 +353,9 @@ pub struct GameDataSource<'a, S: RecordSource> {
     appearances: Cache<Arc<AppearanceRecord>>,
     meshes: Cache<MeshSummary>,
     items: Cache<ItemVisual>,
+    /// The script vocabulary, looked up on first use (`None` inside: the data lacks a
+    /// required name, and script attachments are not evaluated).
+    script_vocab: Option<Option<ScriptVocabulary>>,
 }
 
 impl<'a, S: RecordSource> GameDataSource<'a, S> {
@@ -308,6 +381,7 @@ impl<'a, S: RecordSource> GameDataSource<'a, S> {
             appearances: Cache::new(),
             meshes: Cache::new(),
             items: Cache::new(),
+            script_vocab: None,
         })
     }
 
@@ -452,7 +526,14 @@ impl<S: RecordSource> AssemblySource for GameDataSource<'_, S> {
     }
 
     fn object_properties(&mut self, object: Did) -> Result<Lookup<PropertySet>, PropsError> {
-        match object_property_set_did(object) {
+        // An item may be named by its property set itself (as [`AssemblySource::item`]
+        // accepts).
+        let set = if is_property_set_did(object) {
+            Some(object)
+        } else {
+            object_property_set_did(object)
+        };
+        match set {
             Some(set) => property_set(self.data, set),
             None => Ok(Lookup::Invalid(format!("{object} is not a game object"))),
         }
@@ -463,5 +544,83 @@ impl<S: RecordSource> AssemblySource for GameDataSource<'_, S> {
             Lookup::Found(b) => Some(b.model_scale()),
             _ => None,
         })
+    }
+
+    fn property_default(&mut self, pid: u32) -> Result<Option<PropertyValue>, PropsError> {
+        let registry = self.data.registry()?;
+        Ok(registry
+            .dictionary()
+            .definition(pid)
+            .and_then(|d| d.default.clone()))
+    }
+
+    fn script_mesh_fx(
+        &mut self,
+        start: Did,
+        key: u32,
+        properties: &[(u32, PropertyValue)],
+    ) -> Result<Vec<ScriptMeshFx>, PropsError> {
+        let data = self.data;
+        let registry = data.registry()?;
+        let dict = registry.dictionary();
+        let vocab = self
+            .script_vocab
+            .get_or_insert_with(|| {
+                ScriptVocabulary::from_data(dict, |d| {
+                    data.enum_mapper(d).ok().flatten().map(|m| (*m).clone())
+                })
+                .map_err(|e| tracing::warn!(error = %e, "script vocabulary unavailable"))
+                .ok()
+            })
+            .clone();
+        let Some(vocab) = vocab else {
+            return Ok(Vec::new());
+        };
+        let fetch_error = |e: ResolveError<PropsError>| match e {
+            ResolveError::Fetch { source, .. } => Some(source),
+            other => {
+                tracing::warn!(error = %other, "script attachments not evaluated");
+                None
+            }
+        };
+        let scripts = match collect_entity_scripts(start, dict, &vocab, |d| data.read(d)) {
+            Ok(c) => c.scripts,
+            Err(e) => {
+                return match fetch_error(e) {
+                    Some(source) => Err(source),
+                    None => Ok(Vec::new()),
+                };
+            }
+        };
+        let mut state = scripts.properties.clone();
+        for (pid, v) in properties {
+            state.set(*pid, v.clone());
+        }
+        let mut resolver =
+            ClipResolver::new(dict, vocab, |d: Did| data.read(d)).with_dictionary_defaults(dict);
+        let r = match resolver.resolve_script(&scripts, key, state) {
+            Ok(r) => r,
+            Err(e) => {
+                return match fetch_error(e) {
+                    Some(source) => Err(source),
+                    None => Ok(Vec::new()),
+                };
+            }
+        };
+        Ok(r.mesh_fx
+            .iter()
+            .filter(|c| !c.node.entity.is_null())
+            .map(|c| ScriptMeshFx {
+                entity: c.node.entity,
+                location: c.node.holding_location,
+                offset: c.node.bone_offset,
+                rotation: [
+                    c.node.offset_rotation_yaw,
+                    c.node.offset_rotation_pitch,
+                    c.node.offset_rotation_roll,
+                ],
+                scale: c.node.scale,
+            })
+            .collect())
     }
 }

@@ -35,7 +35,9 @@
 //!    offered to its slot, replacing the current part on equal or greater priority (rule
 //!    1); every material group inserted into **one figure-wide list** by ascending group
 //!    priority (§4.10), which applies to every drawn part whose slot matches;
-//! 4. held items at their stowed or wielded placement (§5.4, §5.6) and NPC props while
+//! 4. held items at their stowed or wielded placement (§5.4, §5.6; a stowed ranged-slot
+//!    instrument through the wearer's sheathed-instrument script,
+//!    [`AssemblySource::script_mesh_fx`]), and NPC props and creature cosmetic slots while
 //!    `NPC_Cosmetic_Inventory_Visible` is true (§5.5).
 //!
 //! Static objects keep every default part of their setup, in order; the slot table applies
@@ -71,7 +73,8 @@ use tessera_formats::{Did, PropertySet, Setup};
 pub use resolve::CharacterAssembler;
 pub use source::{AssemblySource, GAME_DATA_CACHE_ENTRIES, GameDataSource, Lookup, MapSource};
 pub use vocab::{
-    AssemblyVocabulary, Placement, PlacementRow, PlacementRule, PlacementScale, SkillModeMatch,
+    AssemblyVocabulary, CosmeticPlacement, CosmeticSlotPids, CosmeticSlotVocabulary, Placement,
+    PlacementRow, PlacementRule, PlacementScale, SHEATHED_INSTRUMENT_SCRIPT, SkillModeMatch,
     SpeciesMatch, WeaponSlot,
 };
 
@@ -261,6 +264,9 @@ pub struct CharacterSpec {
     /// The figure's `Combat_SkillMode` is `Ranged`: stowed shields go on the back
     /// (`appearance.md` §5.6).
     pub ranged_skill_mode: bool,
+    /// The figure is mounted: a stowed shield in the ranged skill mode is not drawn
+    /// (`appearance.md` §5.6, revised 2026-10-09).
+    pub mounted: bool,
 }
 
 impl CharacterSpec {
@@ -300,6 +306,8 @@ pub enum SourceRef {
     Script(u32),
     /// NPC prop *n* (1–4, `NPC_Cosmetic_Inventory_Item<n>`, §5.5).
     NpcProp(u8),
+    /// Creature cosmetic slot *n* (1–4, `Inventory_Cosmetic_Slot<n>_Entity`, §5.5).
+    CosmeticSlot(u8),
     /// The figure as a whole (body, sliders, scale).
     Figure,
 }
@@ -487,6 +495,23 @@ pub struct HeldPart {
     pub placement: HeldPlacement,
     /// The held entity's own model scale (template chain × entity `Render_AdjustableScale`,
     /// §6.1), before the holder's scale; see [`AssembledCharacter::held_scale`].
+    pub scale: [f32; 3],
+}
+
+/// A MeshFX attachment a script run of the wearer starts (`appearance.md` §5.6–§5.7): the
+/// node's entity, holding location, offset, rotations and scale after its driven values
+/// ([`AssemblySource::script_mesh_fx`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScriptMeshFx {
+    /// The attached entity (never the null DID).
+    pub entity: Did,
+    /// The `HoldingLocation` key.
+    pub location: u32,
+    /// `BoneOffset`, metres.
+    pub offset: [f32; 3],
+    /// `OffsetRotationYaw`, `…Pitch`, `…Roll`, degrees.
+    pub rotation: [f32; 3],
+    /// `Scale`, per axis.
     pub scale: [f32; 3],
 }
 
@@ -702,8 +727,9 @@ pub enum DiagnosticCategory {
     MeshUndecodable,
     /// A block carries extras (setup DIDs, `setup.md` §8.3): not used by assembly.
     BlockExtraIgnored,
-    /// A held item has no placement (class items, instruments, baubles, items outside the
-    /// weapon slots, an orb while stowed; §5.3 Decision, §5.6): not drawn.
+    /// A held item has no placement (class items, baubles, items outside the weapon slots,
+    /// an orb while stowed, an instrument while wielded or when the sheathed-instrument
+    /// script attaches nothing; §5.3 Decision, §5.6): not drawn.
     NoPlacement,
     /// An NPC prop has no holding location: not drawn.
     NoHoldingLocation,

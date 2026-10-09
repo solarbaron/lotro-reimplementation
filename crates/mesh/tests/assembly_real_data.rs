@@ -356,7 +356,10 @@ const HELD: [HeldRow; 25] = [
 /// right hip; two-handed swords at `Sheath_Back_2H_Sword`; other two-handed weapons,
 /// staves, spears and halberds at `Sheath_Back_2H`; bows and javelins at
 /// `Sheath_Back_Bow`, crossbows at `Sheath_Back_Crossbow`; shields stay on the forearm
-/// (skill mode not ranged); orbs, instruments and class items are not drawn.
+/// (skill mode not ranged, the Decision of §5.6 "Shields out of combat"); a ranged-slot
+/// instrument is attached by the sheathed-instrument script (H24, revised 2026-10-09: the
+/// Human M `Lute` node at `Sheath_Back_2H_Sword`, §5.6 "Stowed instruments"); orbs and class
+/// items are not drawn.
 const STOWED: [HeldRow; 25] = [
     ("H1", 0x7900_066F, &[("Sheath_LHip", 3)]),
     ("H2", 0x7900_06D1, &[("Sheath_LHip", 3)]),
@@ -381,7 +384,7 @@ const STOWED: [HeldRow; 25] = [
     ("H21", 0x7900_F164, &[("Wpn_Forearm", 54)]),
     ("H22", 0x7900_06CF, &[("Wpn_Forearm", 54)]),
     ("H23", 0x7900_6BF8, &[("Wpn_Forearm", 54)]),
-    ("H24", 0x7900_1298, NONE),
+    ("H24", 0x7900_1298, &[("Sheath_Back_2H_Sword", 16)]),
     ("H25", 0x7901_5F4E, NONE),
 ];
 
@@ -630,6 +633,19 @@ fn bodies_and_checklist_items_assemble() {
         {
             failures.push(format!("{row}: a held item was worn"));
         }
+        // H24 stowed (m4-visual.md, revised 2026-10-09): offset (0, −0.1, 0.02) m, yaw 180,
+        // pitch 20, roll 0, read from the sheathed-instrument script's node.
+        if row == "H24 stowed"
+            && let Some(h) = c.held.first()
+        {
+            let close =
+                |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4);
+            if !close(h.placement.offset, [0.0, -0.1, 0.02])
+                || !close(h.placement.rotation, [180.0, 20.0, 0.0])
+            {
+                failures.push(format!("{row}: placement {:?}", h.placement));
+            }
+        }
     }
     // Dual wielding: H1 in the primary slot and H2 in the secondary slot.
     let secondary = enum_key(data, "Inventory_DefaultSlot", "Weapon_Secondary")
@@ -847,8 +863,8 @@ fn weenie_objects_and_npc_spots_assemble() {
             0x0453_E070_0000_001B,
             0x7006_986E,
             0x0400_003E,
-            0,
-            &[],
+            0x41,
+            &[(0x4700_012D, "Wpn_LHand")],
         ),
     ];
     let wanted: Vec<(u32, u64)> = N_ROWS.iter().map(|r| (r.1, r.2)).collect();
@@ -902,6 +918,26 @@ fn weenie_objects_and_npc_spots_assemble() {
                 ));
             }
         }
+        // N3 (corrected 2026-10-09): two pieces from the instance list, 0x2000002D and
+        // 0x2000002E; the `Worn` element for 0x2000080A names a key that record lacks.
+        if row == "N3" {
+            let records: BTreeSet<u32> = c
+                .parts
+                .iter()
+                .filter_map(|q| match q.origin {
+                    tessera_mesh::assembly::PartOrigin::Appearance {
+                        source: SourceRef::InstanceList(_),
+                        record,
+                        ..
+                    } if !q.hidden => Some(record.0),
+                    _ => None,
+                })
+                .collect();
+            let want: BTreeSet<u32> = [0x2000_002D, 0x2000_002E].into_iter().collect();
+            if records != want {
+                failures.push(format!("N3: pieces from {records:x?}, expected {want:x?}"));
+            }
+        }
         if std::env::var_os("TESSERA_VERBOSE").is_some() {
             for part in &c.parts {
                 eprintln!(
@@ -933,10 +969,14 @@ fn weenie_objects_and_npc_spots_assemble() {
         );
     }
 
-    // N5 is a random-appearance figure: its outfit comes from the Appearance nodes of its
-    // start-up scripts (§7.4 Rule), picked with a generator seeded from its instance ID
-    // (§7.4 Decision). The picks must be deterministic and must dress the rig.
-    if let Some(p) = rows.iter().find(|p| p.landblock == 0x8021_4F79) {
+    // N5 and N6 are random-appearance figures (m4-visual.md, corrected 2026-10-09): their
+    // outfit comes from the Appearance nodes of their start-up scripts (§7.4 Rule), picked
+    // with a generator seeded from the instance ID (§7.4 Decision). The picks must be
+    // deterministic and must dress the rig.
+    for (row, lb) in [("N5", 0x8021_4F79u32), ("N6", 0x8025_3E07)] {
+        let Some(p) = rows.iter().find(|p| p.landblock == lb) else {
+            continue;
+        };
         let registry = data.registry().unwrap();
         let dict = registry.dictionary();
         let script_vocab = ScriptVocabulary::from_data(dict, |d| {
@@ -945,13 +985,13 @@ fn weenie_objects_and_npc_spots_assemble() {
         .expect("script vocabulary");
         let base = asm
             .assemble_object(p.object, p.instance.as_ref())
-            .expect("N5 assembles");
+            .expect("random figure assembles");
         let picks = |seed: u64| {
             let mut chain =
                 collect_entity_scripts(base.clip_inputs.start, dict, &script_vocab, |d: Did| {
                     data.read(d)
                 })
-                .expect("N5 scripts");
+                .expect("random figure scripts");
             if let Some(inst) = &base.clip_inputs.instance_properties {
                 chain.scripts.add_property_set(inst, &script_vocab);
             }
@@ -960,7 +1000,7 @@ fn weenie_objects_and_npc_spots_assemble() {
                 .with_random_seed(Some(seed));
             let r = resolver
                 .resolve(&chain.scripts, MotionState::Idle)
-                .expect("N5 resolution");
+                .expect("random figure resolution");
             r.appearances
                 .iter()
                 .filter(|a| a.picked)
@@ -972,23 +1012,27 @@ fn weenie_objects_and_npc_spots_assemble() {
                 .collect::<Vec<_>>()
         };
         let scripts = picks(p.iid.0);
-        assert_eq!(scripts, picks(p.iid.0), "N5: the picks are deterministic");
+        assert_eq!(
+            scripts,
+            picks(p.iid.0),
+            "{row}: the picks are deterministic"
+        );
         let c = asm
             .assemble_object_with(p.object, p.instance.as_ref(), &scripts)
-            .expect("N5 dressed");
+            .expect("random figure dressed");
         let dressed = c
             .parts
             .iter()
             .filter(|q| matches!(q.source(), Some(SourceRef::Script(_))))
             .count();
         eprintln!(
-            "N5: {} script elements picked, {dressed} parts from them, diagnostics [{}]",
+            "{row}: {} script elements picked, {dressed} parts from them, diagnostics [{}]",
             scripts.len(),
             diagnostic_summary(&c)
         );
         if scripts.is_empty() || dressed == 0 || c.count(Cat::RandomAppearance) != 0 {
             failures.push(format!(
-                "N5: random appearance not dressed ({} elements, {dressed} parts)",
+                "{row}: random appearance not dressed ({} elements, {dressed} parts)",
                 scripts.len()
             ));
         }

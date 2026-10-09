@@ -3448,6 +3448,26 @@ fn worked_example_mount_scale() {
     assert_eq!(MountMesh::choose(&res.mesh_fx, MESH_SCRIPT), None);
 }
 
+/// `appearance.md` §5.7 step 3 (A36): a driven `Scale` whose source property the figure
+/// lacks takes the property's dictionary default, (1, 1, 1) for the vector properties.
+#[test]
+fn absent_driven_mesh_fx_sources_read_their_default() {
+    use tessera_formats::gameplay::mounts::MountMesh;
+    let m = mount_world();
+    let mut e = rider(SPECIES_B, MOUNT_ENTITY);
+    let mut props = PropertyState::new();
+    props.set(PID_MOUNT_TYPE, PropertyValue::Enum(GOAT));
+    props.set(PID_SPECIES, PropertyValue::Enum(SPECIES_B));
+    props.set(PID_SLOT_ENTITY, PropertyValue::DidRef(Did(MOUNT_ENTITY)));
+    e.properties = props;
+    let mut r = ClipResolver::new(&schema, mount_vocab(), fetch(&m))
+        .with_defaults(|pid| (pid == PID_SLOT_SCALE).then_some(PropertyValue::Vector3([1.0; 3])));
+    let res = r.resolve_with_state(&e, e.properties.clone()).unwrap();
+    let mesh = MountMesh::choose(&res.mesh_fx, MESH_SCRIPT).unwrap();
+    assert_eq!(mesh.scale, [1.0; 3]);
+    assert!(mesh.scale_driven);
+}
+
 #[test]
 fn running_keys_select_when_running_branches() {
     let m = mount_world();

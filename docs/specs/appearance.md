@@ -120,7 +120,7 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A39 | Creature cosmetic slots `Inventory_Cosmetic_Slot1` … `4` (eight properties each) occur only in 0x79 property sets (3,523 sets), never in 0x47 entities, 0x78 sets or landblock instance sets; script 0x100007C3 attaches them; the property dictionary types `…_Behavior` of all four slots as an enum over the script-key mapper 0x23000097, default 0 (§5.5) | OBS4; property dictionary of the install (all four slots) | Confirmed |
 | A40 | No 0x20 `variant` and no list modifier is non-finite; no visual template that names a setup has a parent; every index buffer of every mesh is drawn exactly once (258 one-triangle meshes by either count); no single-port Random node has weight 0 (§3.2.1, §4.4, §6.1, §7.4) | OBS4 | Confirmed 2026-10-09 (all records) |
 | A41 | Script key 0x10002BA0 has the label `Craft_MeshFx_Lute_Sheathed` and the playing script 0x10000324 the label `Craft_MeshFx_Lute` in enum mapper 0x23000097 (neither is in its base 0x230000F8) (§5.6) | OBS5 | Confirmed 2026-10-09 |
-| A42 | The placement scripts test the slot's `Script_Item_PhysObj_…` with a When "not equal to the null DID", the stowed ones also `Script_Item_…_Cosmetic_Hide` with a When "equal to false", and `Inventory_…EquipmentCategory` with a When "not equal to 0", then switch on `Inventory_…EquipmentCategory` with cases of operator 3 (equality of the whole 64-bit value), one value per category with the single bit *k* − 1 of mapper 0x2300004C key *k*; the `BattleGauntlets` case (key 48) holds 0x0000800000000000. All 91,214 items with a category hold exactly one bit; the 201 `BattleGauntlets` items hold 0x0000800000000000; 200 carry a `PhysObj` and 200 a worn list. No instruction of the client holds the property ID of `Inventory_PrimaryEquipmentCategory`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`; the one that holds `…Secondary…` lies in a routine that looks up a list of identifiers and writes no property (§5.6) | OBS5; BIN7 | Confirmed 2026-10-09 (data, all records); BIN (constant search); who sets the three category properties in the original: not traced |
+| A42 | Five of the six placement scripts (0x10000684, 0x10000593, 0x10000135 stowed; 0x10002981, 0x10002983 wielded) start with a When that the slot's `Script_Item_PhysObj_…` is "not equal to the null DID" and a When that `Inventory_…EquipmentCategory` is "not equal to 0"; the three stowed ones put a When `Script_Item_…_Cosmetic_Hide` "equal to false" between the two; 0x10002981 tests `…_Secondary_Cosmetic_Hide` only inside its shield case, below the category Switch; 0x10002983 has no Hide test. The wielded primary script 0x10002982 is the exception: its root is a Switch on `AvatarVFX_Cosmetic_Locomotion` whose two cases reach, through a Switch on `Combat_Violent` and a category Switch, MeshFX nodes with fixed effect entities and no PhysObj or category gate; only its Default port (a Label, also reached by Goto from those branches) leads to the two gating Whens. Every category Switch has cases of operator 3 (equality of the whole 64-bit value), one value per category with the single bit *k* − 1 of mapper 0x2300004C key *k*; the `BattleGauntlets` case (key 48) holds 0x0000800000000000. Of the 91,214 items with a category, 91,178 hold exactly one bit and 36 store 0; none holds more than one bit; the 201 `BattleGauntlets` items hold 0x0000800000000000; 200 carry a `PhysObj` and 200 a worn list. No instruction of the client holds the property ID of `Inventory_PrimaryEquipmentCategory`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`; the one that holds `…Secondary…` lies in a routine that looks up a list of identifiers and writes no property (§5.6) | OBS5; BIN7 | Confirmed 2026-10-09 (data, all records); BIN (constant search); who sets the three category properties in the original: not traced |
 | A43 | Script 0x100007C3 tests `Agent_ClassificationFilter` with a Switch whose `MonsterPlayer` case has operator 3 (equality) and the value key 1; the property is an enum over mapper 0x2300000F (0 `Undef`, 1 `MonsterPlayer`, 2 `Monster`, 3 `Victim`, 4 `Guard`, 5 `Player`, 6 `DelvingMonster`) with dictionary default 0 (§5.5) | OBS5 | Confirmed 2026-10-09 |
 
 ---
@@ -1100,11 +1100,31 @@ wielded branch instead runs script 0x10002F3F (cosmetic weapon-effect pieces) an
 (Corrected 2026-10-09: the earlier text said "in both families".)
 
 **What the placement scripts test (OBS5, BIN7, A42; answers the implementation OPEN of
-2026-10-09).** Each script first passes three gates on avatar properties: a When that
-`Script_Item_PhysObj_<slot>` is **not equal** to the null DID; in the stowed scripts a When
-that `Script_Item_<slot>_Cosmetic_Hide` **equals** false; and a When that
-`Inventory_<slot>EquipmentCategory` is **not equal** to 0 (`<slot>` being `Primary`,
-`Secondary` or `Ranged`). The category Switch then reads `Inventory_<slot>EquipmentCategory`
+2026-10-09; corrected 2026-10-09 after review).** Five of the six scripts start at their
+root with gates on avatar properties: a When that `Script_Item_PhysObj_<slot>` is **not
+equal** to the null DID, then a When that `Inventory_<slot>EquipmentCategory` is **not
+equal** to 0 (`<slot>` being `Primary`, `Secondary` or `Ranged`). The three stowed scripts
+(0x10000684, 0x10000593, 0x10000135) put a third When between the two, that
+`Script_Item_<slot>_Cosmetic_Hide` **equals** false. The wielded scripts have no Hide gate
+before the category Switch: the wielded secondary script 0x10002981 tests
+`Script_Item_Secondary_Cosmetic_Hide` only inside its shield case (below the category
+Switch: with false the forearm placements run; through the When's Default port they run
+only while `Combat_Violent` is true), and the wielded ranged script 0x10002983 has no Hide
+test.
+
+The wielded primary script 0x10002982 is **the exception**: its root is a Switch on
+`AvatarVFX_Cosmetic_Locomotion`. Each of its two cases (keys 3 and 1) goes to a Switch on
+`Combat_Violent` whose case false holds a category Switch: one case (five values under key 3,
+one value under key 1) holds a Goto to the script's Label, and the Default port holds MeshFX
+nodes that name a fixed effect entity in the node (under an `Agent_Species` Switch for key 3,
+under the `Walking` case of a `Movement_MovementStyle` Switch for key 1). These nodes have no
+`Script_Item_PhysObj_Primary` or category gate, so they also run with an empty slot (category
+0). The `Combat_Violent` Default ports hold a Goto to the same Label. The root's Default
+port holds the Label (a Goto starts it, `script-runtime.md` §15); under it come the When on
+`Script_Item_PhysObj_Primary`, the When on the category, then a Switch on `Entity_Mode`
+whose Default port holds the category Switch with the item placements.
+
+Every category Switch reads `Inventory_<slot>EquipmentCategory`
 (dictionary type Bitfield64, mapper 0x2300004C, default 0). Each of its cases holds one or
 more Bitfield64 values, each with the single bit *k* − 1 of the category's mapper key *k*
 (the reading of `Item_EquipmentCategory`, §5.2), and every case has operator 3, so the
@@ -1113,12 +1133,19 @@ property must **equal** one of the values as a whole 64-bit value; it is not a b
 0x07000090 the chain to the stowed gauntlet effect is: the three gates, then a Switch on
 `NPC_PlayingStartingIdle` (case false; default false), then the category Switch, whose
 `BattleGauntlets` case holds a Collection with the two MeshFX nodes above (ordinals 1 and 2).
+(The same case of 0x10002982, below its gates, is the `Probability` 0 Collection named
+above.)
 
 So, to reproduce a slot's placements, the figure needs: `Script_Item_PhysObj_<slot>` = the
 item's 0x47 entity (its `PhysObj`, or the cosmetic override), and
 `Inventory_<slot>EquipmentCategory` = the item's `Item_EquipmentCategory` value, 0 for an
-empty slot. In this install every one of the 91,214 items that carries `Item_EquipmentCategory`
-holds exactly one bit, so the equality always matches its category's case; the 201
+empty slot. In this install, of the 91,214 items that carry `Item_EquipmentCategory`,
+91,178 hold exactly one bit and **36 store 0**; none holds more than one bit. For a one-bit
+item the equality matches its category's case. For an item that stores 0 the Decision below
+sets the category property to 0, so the category When fails and the scripts place nothing for
+that item (in 0x10002982 the cosmetic-locomotion nodes above can still run; they do not
+depend on the item). An invariant must therefore say "at most one bit", not "exactly one".
+The 201
 `BattleGauntlets` items hold 0x0000800000000000; 200 of them carry a `PhysObj` (the first gate
 passes for those) and 200 the worn list of §5.1. The other inputs keep their
 dictionary defaults unless the figure sets them: `Script_Item_<slot>_Cosmetic_Hide` (false),
@@ -1132,14 +1159,22 @@ and `NPC_Cosmetic_Inventory_Item1` follow §5.7 step 3.
 
 No client instruction holds the property ID of `Inventory_PrimaryEquipmentCategory`,
 `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList` (BIN7), and the one holding
-`…Secondary…` writes no property, so, like the `Script_Item_PhysObj_…` properties (A25), the
+`…Secondary…` writes no property, so, like `Script_Item_PhysObj_Primary` and `…_Secondary`
+(A25; four routines reference `…_Ranged` and were not read), the
 category properties are not computed by client code from constants; in the original they
 arrive with the character or through a data-driven path that was not traced.
 
 > **Decision (Tessera, 2026-10-09):** set `Inventory_<slot>EquipmentCategory` to the
 > `Item_EquipmentCategory` value of the item in that slot (0 when empty) whenever
 > `Script_Item_PhysObj_<slot>` is set, and evaluate the scripts' Whens and Switches by
-> `script-runtime.md` §6–§7. A stowed `BattleGauntlets` item then gets the two effect nodes.
+> `script-runtime.md` §6–§7. The category comes from the **equipped** item, not from a
+> cosmetic override: the stowed scripts read the override separately, through
+> `Script_Item_PhysObj_<slot>_Cosmetic`. A stowed `BattleGauntlets` item then gets the two
+> effect nodes.
+
+> **OPEN:** whether the original sets `Inventory_<slot>EquipmentCategory` from the equipped
+> item or from its cosmetic override when the two differ was not traced (BIN7 found no
+> client code that writes it).
 
 Each node also names a `Behavior` (a script key run on the attached item, for example its
 draw or sheathe effect), `AttachToParent` 1, `Persistent` 1 and `UseParentScale` 1 in all
@@ -2278,8 +2313,9 @@ Review follow-up (clean room, 2026-10-05):
 > **Answered** (2026-10-07, spec writer, OBS2): confirmed. `Item_EquipmentCategory` is
 > registry type Bitfield64 with the enum mapper 0x2300004C (key *k* = bit *k* − 1), and the
 > avatar properties `Inventory_PrimaryEquipmentCategory`, `…Secondary…`, `…Ranged…` that the
-> placement scripts switch on are Bitfield64 too; the scripts' cases compare single bits
-> (for example 0x4 `2HSword`, bit 38 `Orb`).
+> placement scripts switch on are Bitfield64 too; the scripts' cases hold single-bit values
+> (for example 0x4 `2HSword`, bit 38 `Orb`), compared by equality of the whole value, not by
+> a bit test (§5.6 "What the placement scripts test", A42; note of 2026-10-09).
 
 > **OPEN** (§4.11, material-only list elements under other keys): a list element whose
 > chosen block has material groups but no parts, under a key other than `ClothingColor` /
@@ -2558,9 +2594,11 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > test". The category Switch of every placement script reads `Inventory_<slot>EquipmentCategory`
 > (Bitfield64 over mapper 0x2300004C); its cases hold single-bit Bitfield64 values (bit *k* − 1
 > for key *k*) compared by **equality** (operator 3); the `BattleGauntlets` case holds
-> 0x0000800000000000 (key 48). Before it, three Whens gate on `Script_Item_PhysObj_<slot>`
+> 0x0000800000000000 (key 48). Before it, Whens gate on `Script_Item_PhysObj_<slot>`
 > (not null), `Script_Item_<slot>_Cosmetic_Hide` (false; stowed scripts only) and the category
-> (not 0), and in script 0x10000684 a Switch on `NPC_PlayingStartingIdle` (false). Besides
+> (not 0), and in script 0x10000684 a Switch on `NPC_PlayingStartingIdle` (false); the wielded
+> primary script 0x10002982 places fixed cosmetic-locomotion effects without these gates
+> before reaching them (corrected 2026-10-09, §5.6). Besides
 > `Script_Item_PhysObj_*`, set `Inventory_<slot>EquipmentCategory` to the item's
 > `Item_EquipmentCategory` value (a Decision: no client code writes these properties by
 > constant); the other inputs keep their defaults or are figure state.

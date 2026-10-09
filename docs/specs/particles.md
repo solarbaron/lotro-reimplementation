@@ -34,7 +34,9 @@ This spec lets an implementer:
 Out of scope: the node semantics of the scripts that start effects (`script-table.md`); the
 surface, material and shader programs that draw particles (`material.md`, `lighting.md`); the
 internal layout and simulation of the embedded third-party effect image of 0x44 records (§6.2,
-OPEN Q1).
+OPEN Q1). The run time around a system (starting effects from scripts, attachment to entities,
+stopping, lingering and removal, the random source, particle order inside a system) is
+[`particle-runtime.md`](particle-runtime.md).
 
 Field labels. Most fields of the 0x39 format have a **property label** in the master property
 dictionary 0x34000000 (`PSDesc_…` for the system, `PEDesc_…` for an emitter); the tables give
@@ -991,6 +993,17 @@ Without keyframes no channel exists and mass is 1 (not observed: every emitter h
 > implementation (`crates/formats/src/gameplay/particles.rs`, `Emitter::channel_state`)
 > visits a key once age ≥ `time` and reports such a channel as absent, leaving the value to
 > the caller.
+
+> **OPEN:** (implementer, 2026-10-08) The run-time simulation (`crates/particles`,
+> `sim.rs`) makes the first key current at creation whatever its `time` (the worked example of
+> `particle-runtime.md` §14.3 moves a particle advanced to age −0.02 under its first
+> controller key), visits each later key once the age at a particle update is ≥ its `time`,
+> applies a key's physics flags (0x200) before its controller (0x100) when it carries both (so
+> the controller-3 random index of §8.7 sees the new flags), and uses scale (1, 1), opaque
+> white and mass 1 for a channel without a current key and no motion without a controller key.
+> In §8.5.2 the radial direction of an exploding emitter uses the shape point before both the
+> attachment of §8.5.5 and `origin`. Whether the client does the same in these cases (none is
+> reached by the data) is the question.
 
 <a id="s8-6-2"></a>
 #### 8.6.2 Drawn size and colour

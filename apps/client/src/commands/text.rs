@@ -161,14 +161,23 @@ impl CommandText {
             plugins_names: entry(strings, commands, TOKEN_PLUGINS),
             modes,
         };
-        tracing::info!(
-            setup = setup.is_some(),
-            commands = commands.is_some(),
-            prefix_from_install = text.prefix != DEFAULT_PREFIX,
-            unknown_line = text.unknown_line.is_some(),
-            mode_rows = text.modes.len(),
-            "command words read"
-        );
+        if setup.is_some() && commands.is_some() {
+            tracing::info!(
+                prefix_from_install = text.prefix != DEFAULT_PREFIX,
+                unknown_line = text.unknown_line.is_some(),
+                mode_rows = text.modes.len(),
+                "command words read"
+            );
+        } else {
+            // chat-window.md §10 item 3: a table that cannot be read is a warning.
+            tracing::warn!(
+                setup = setup.is_some(),
+                commands = commands.is_some(),
+                prefix_from_install = text.prefix != DEFAULT_PREFIX,
+                mode_rows = text.modes.len(),
+                "command words: a command table cannot be read; only Tessera's names"
+            );
+        }
         text
     }
 
@@ -180,7 +189,8 @@ impl CommandText {
         match crate::audio::player_music::local_strings(set, language) {
             Some(strings) => Self::from_strings(&strings),
             None => {
-                tracing::info!("command words: no language archive; Tessera's defaults");
+                // chat-window.md §10 item 3: no table can be read.
+                tracing::warn!("command words: no language archive; only Tessera's names");
                 Self::default()
             }
         }
@@ -201,5 +211,54 @@ mod tests {
         tokens.sort_unstable();
         tokens.dedup();
         assert_eq!(tokens.len(), MODE_TABLE.len());
+    }
+
+    /// A `MakeWriter` that collects formatted log lines.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Ok(mut v) = self.0.lock() {
+                v.extend_from_slice(buf);
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Finding: chat-window.md §10 item 3 asks for a warning when a command table cannot be
+    /// read; it was logged at info.
+    #[test]
+    fn unreadable_command_tables_log_a_warning() {
+        let out = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(out.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+        let text = tracing::subscriber::with_default(subscriber, || {
+            CommandText::from_strings(&Strings::new(tessera_text::MemorySource::new()))
+        });
+        assert_eq!(text.prefix, "/");
+        let log = String::from_utf8(out.0.lock().map(|v| v.clone()).unwrap_or_default())
+            .unwrap_or_default();
+        let line = log
+            .lines()
+            .find(|l| l.contains("command words"))
+            .unwrap_or_else(|| panic!("no command-words line: {log}"));
+        assert!(line.contains("WARN"), "{line}");
+        assert!(line.contains("cannot be read"), "{line}");
     }
 }

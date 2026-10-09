@@ -390,8 +390,11 @@ pub struct Stats {
     pub overruns: AtomicU64,
     /// Ticks skipped after falling more than 5 behind.
     pub skipped_ticks: AtomicU64,
-    /// Longest tick so far, µs.
+    /// Longest tick since the server started, µs (soak and load reports).
     pub tick_max_us: AtomicU64,
+    /// Longest tick since the last statistics line, µs (§11.1); [`StatsInterval::close`]
+    /// resets it.
+    pub tick_max_interval_us: AtomicU64,
     /// Last tick's duration, µs.
     pub tick_last_us: AtomicU64,
     /// Movement corrections sent.
@@ -456,6 +459,16 @@ pub struct StatsSnapshot {
 }
 
 impl Stats {
+    /// Records the duration of one tick: the last, the longest since start and the longest
+    /// of the current statistics interval.
+    pub fn record_tick(&self, took_us: u64) {
+        self.ticks.fetch_add(1, Ordering::Relaxed);
+        self.tick_last_us.store(took_us, Ordering::Relaxed);
+        self.tick_max_us.fetch_max(took_us, Ordering::Relaxed);
+        self.tick_max_interval_us
+            .fetch_max(took_us, Ordering::Relaxed);
+    }
+
     /// A snapshot of every counter.
     #[must_use]
     pub fn snapshot(&self) -> StatsSnapshot {
@@ -494,5 +507,106 @@ impl Stats {
             throttle_entries: u(&self.throttle_entries),
             character_files: u(&self.character_files),
         }
+    }
+}
+
+/// The figures of a statistics line that cover the interval since the previous line
+/// (`test-server.md` §11.1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IntervalFigures {
+    /// Longest tick over the interval, µs.
+    pub tick_max_us: u64,
+    /// Bytes received per second over the interval.
+    pub bytes_in_per_s: u64,
+    /// Bytes sent per second over the interval.
+    pub bytes_out_per_s: u64,
+}
+
+/// Where the current statistics interval started: server time and the byte counters then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatsInterval {
+    start: u64,
+    bytes_in: u64,
+    bytes_out: u64,
+}
+
+impl StatsInterval {
+    /// An interval starting at server time `now` (µs).
+    #[must_use]
+    pub fn new(stats: &Stats, now: u64) -> Self {
+        Self {
+            start: now,
+            bytes_in: stats.bytes_in.load(Ordering::Relaxed),
+            bytes_out: stats.bytes_out.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Ends the interval at server time `now` (µs), returns its figures and starts the next
+    /// one: resets the interval's longest tick and remembers the byte counters.
+    pub fn close(&mut self, stats: &Stats, now: u64) -> IntervalFigures {
+        let tick_max_us = stats.tick_max_interval_us.swap(0, Ordering::Relaxed);
+        let next = Self::new(stats, now);
+        let elapsed = now.saturating_sub(self.start);
+        let rate = |before: u64, after: u64| -> u64 {
+            if elapsed == 0 {
+                return 0;
+            }
+            let delta = u128::from(after.saturating_sub(before));
+            u64::try_from(delta * 1_000_000 / u128::from(elapsed)).unwrap_or(u64::MAX)
+        };
+        let figures = IntervalFigures {
+            tick_max_us,
+            bytes_in_per_s: rate(self.bytes_in, next.bytes_in),
+            bytes_out_per_s: rate(self.bytes_out, next.bytes_out),
+        };
+        *self = next;
+        figures
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// §11.1: the statistics line reports the longest tick over the interval (not since
+    /// start) and bytes per second (not cumulative bytes).
+    #[test]
+    fn interval_figures_cover_only_the_interval() {
+        let stats = Stats::default();
+        stats.bytes_in.store(1_000, Ordering::Relaxed);
+        stats.bytes_out.store(5_000, Ordering::Relaxed);
+        let mut iv = StatsInterval::new(&stats, 10_000_000);
+        stats.record_tick(900);
+        stats.record_tick(300);
+        stats.bytes_in.fetch_add(4_000, Ordering::Relaxed);
+        stats.bytes_out.fetch_add(20_000, Ordering::Relaxed);
+        // Two seconds later.
+        let f = iv.close(&stats, 12_000_000);
+        assert_eq!(
+            f,
+            IntervalFigures {
+                tick_max_us: 900,
+                bytes_in_per_s: 2_000,
+                bytes_out_per_s: 10_000,
+            }
+        );
+        // The next interval: shorter ticks only, a slower rate; the since-start maximum
+        // keeps the long tick.
+        stats.record_tick(200);
+        stats.bytes_in.fetch_add(500, Ordering::Relaxed);
+        let f = iv.close(&stats, 13_000_000);
+        assert_eq!(
+            f,
+            IntervalFigures {
+                tick_max_us: 200,
+                bytes_in_per_s: 500,
+                bytes_out_per_s: 0,
+            }
+        );
+        assert_eq!(stats.snapshot().tick_max_us, 900);
+        assert_eq!(stats.snapshot().tick_last_us, 200);
+        assert_eq!(stats.snapshot().ticks, 3);
+        // No tick and no time in between: zeros, no division by zero.
+        assert_eq!(iv.close(&stats, 13_000_000), IntervalFigures::default());
     }
 }

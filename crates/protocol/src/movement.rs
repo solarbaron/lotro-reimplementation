@@ -176,9 +176,11 @@ pub struct MovementValidator {
     credit: f64,
     /// Server time (µs) at which the current epoch started.
     epoch_start: u64,
-    /// End (µs, exclusive) of the settling window (§8.3 "Server relaxations" item 1), if one
-    /// is open. A correction keeps it; [`MovementValidator::start_epoch`] closes it.
-    settle_until: Option<u64>,
+    /// Start (µs) of the epoch that opened the settling window (§8.3 "Server relaxations"
+    /// item 1), if one is open. The window ends [`MovementLimits::settling`] after it, under
+    /// the limits in force. A correction keeps it; [`MovementValidator::start_epoch`] closes
+    /// it.
+    settle_start: Option<u64>,
     last_time: u64,
     corrections: SlidingWindow,
 }
@@ -200,7 +202,7 @@ impl MovementValidator {
             allow_down: 0.0,
             credit: 0.0,
             epoch_start: now,
-            settle_until: None,
+            settle_start: None,
             last_time: now,
             corrections: SlidingWindow::new(MAX_CORRECTIONS_PER_SECOND, Duration::from_secs(1)),
         };
@@ -213,7 +215,7 @@ impl MovementValidator {
     /// Any settling window closes; call [`Self::open_settling_window`] afterwards when the
     /// server does not know the height of `pose`.
     pub fn start_epoch(&mut self, epoch: u32, pose: Pose, now: u64) {
-        self.settle_until = None;
+        self.settle_start = None;
         self.begin_epoch(epoch, pose, now);
     }
 
@@ -234,10 +236,29 @@ impl MovementValidator {
         self.last_time = now;
     }
 
-    /// Changes the limits. The allowances and the credit are capped anew at the next
-    /// `check`.
-    pub fn set_limits(&mut self, limits: MovementLimits) {
+    /// Changes the limits at server time `now` (µs). The allowances and the credit are
+    /// capped at once by the new *V* · *W* and reserve *S*. An open settling window stays
+    /// measured from the start of the epoch that opened it, with the new length: a shorter
+    /// one may end it at once, a zero one closes it. A window that had already ended by
+    /// `now` stays closed even if the new length would cover `now`.
+    pub fn set_limits(&mut self, limits: MovementLimits, now: u64) {
+        if !self.settling_at(now) {
+            self.settle_start = None;
+        }
         self.limits = limits;
+        if self.window_us() == 0 {
+            self.settle_start = None;
+        }
+        let w = self.limits.window.as_secs_f64();
+        self.allow_h = self.allow_h.min(self.limits.horizontal_speed * w).max(0.0);
+        self.allow_up = self.allow_up.min(self.limits.up_speed * w).max(0.0);
+        self.allow_down = self.allow_down.min(self.limits.down_speed * w).max(0.0);
+        self.credit = self.credit.min(self.limits.reserve());
+    }
+
+    /// The settling window's length under the limits in force, µs.
+    fn window_us(&self) -> u64 {
+        u64::try_from(self.limits.settling().as_micros()).unwrap_or(u64::MAX)
     }
 
     /// Opens the settling window of §8.3 "Server relaxations" item 1 for the current epoch,
@@ -250,14 +271,14 @@ impl MovementValidator {
     /// lowers *A*ᵤ and *A*_d (never below 0), so a move counts at most *A*_d of its descent
     /// toward the credit. With a zero window nothing opens.
     pub fn open_settling_window(&mut self) {
-        let w = u64::try_from(self.limits.settling().as_micros()).unwrap_or(u64::MAX);
-        self.settle_until = (w > 0).then(|| self.epoch_start.saturating_add(w));
+        self.settle_start = (self.window_us() > 0).then_some(self.epoch_start);
     }
 
     /// Whether the settling window is open at server time `now` (µs).
     #[must_use]
     pub fn settling_at(&self, now: u64) -> bool {
-        self.settle_until.is_some_and(|end| now < end)
+        self.settle_start
+            .is_some_and(|start| now < start.saturating_add(self.window_us()))
     }
 
     /// *C*, the descent credit held, in metres (always 0 without a credit).
@@ -873,6 +894,65 @@ mod tests {
         ));
     }
 
+    /// Finding: `set_limits` left an open settling window at its old end. The window stays
+    /// measured from the start of the epoch that opened it (also after a correction), with
+    /// the new length; a zero length closes it, and an ended window stays closed.
+    #[test]
+    fn set_limits_recomputes_an_open_settling_window() {
+        let with = |secs: u64| MovementLimits {
+            settling_window: Duration::from_secs(secs),
+            ..MovementLimits::default()
+        };
+        // Opened at 0 with 3 s, corrected at 1 s (new epoch, same window).
+        let mut v = MovementValidator::new(with(3), 1, flat_pose(), 0);
+        v.open_settling_window();
+        assert!(matches!(
+            v.check(&burst(&v, 1, 30.0, 0.0), 1_000_000),
+            MoveVerdict::Corrected(_)
+        ));
+        // Longer: ends 6 s after the opening epoch, not after the correction's epoch.
+        v.set_limits(with(6), 2_000_000);
+        assert!(v.settling_at(5_999_999));
+        assert!(!v.settling_at(6_000_000));
+        // A climb the old window would have refused at 4 s passes under the new one.
+        assert_eq!(
+            v.check(&burst(&v, 1, 0.0, 50.0), 4_000_000),
+            MoveVerdict::Accepted
+        );
+        // Shorter, already past its end: closed at once.
+        v.set_limits(with(2), 4_500_000);
+        assert!(!v.settling_at(4_500_000));
+        assert!(matches!(
+            v.check(&burst(&v, 2, 0.0, 50.0), 4_500_000),
+            MoveVerdict::Corrected(_)
+        ));
+        // An ended window does not reopen when the length grows again.
+        v.set_limits(with(10), 5_000_000);
+        assert!(!v.settling_at(5_000_000));
+        // Zero closes an open window for good.
+        let mut v = MovementValidator::new(with(3), 1, flat_pose(), 0);
+        v.open_settling_window();
+        v.set_limits(with(0), 1_000_000);
+        assert!(!v.settling_at(1_000_000));
+        v.set_limits(with(3), 1_000_000);
+        assert!(!v.settling_at(1_000_000));
+        // Lower speeds cap the allowances at once: a full 10 m rise allowance under V_u
+        // 10 m/s becomes 2 m under 2 m/s.
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        v.set_limits(
+            MovementLimits {
+                up_speed: 2.0,
+                ..MovementLimits::default()
+            },
+            0,
+        );
+        assert!(matches!(
+            v.clone().check(&burst(&v, 1, 0.0, 2.1), 0),
+            MoveVerdict::Corrected(_)
+        ));
+        assert_eq!(v.check(&burst(&v, 1, 0.0, 1.9), 0), MoveVerdict::Accepted);
+    }
+
     /// §8.3 "Server relaxations" item 2: *S* ≤ 100 m whatever is configured.
     #[test]
     fn descent_credit_reserve_is_bounded() {
@@ -943,10 +1023,14 @@ mod tests {
         let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
         let mut seq = 0;
         let (_, now) = drive(&mut v, &mut seq, 0, steady(30, 0.0, -50.0));
-        v.set_limits(MovementLimits {
-            descent_credit: Some(10.0),
-            ..MovementLimits::default()
-        });
+        v.set_limits(
+            MovementLimits {
+                descent_credit: Some(10.0),
+                ..MovementLimits::default()
+            },
+            now,
+        );
+        assert_eq!(v.descent_credit(), 10.0, "capped at once");
         assert!(matches!(
             v.clone().check(&burst(&v, seq + 1, 18.6, 0.0), now),
             MoveVerdict::Corrected(_)

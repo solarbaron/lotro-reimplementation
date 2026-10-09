@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Review, **changes requested** (first version, 2026-10-09; reviewed 2026-10-09, three blocking items, see the review record; implementers do not build from it until it is Accepted) |
+| **Status** | Revised (2026-10-09: the three blocking items and the non-blocking items (a)–(d) and (f) of the first-version review are fixed, see the change log; awaiting re-review; implementers do not build from it until it is Accepted) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Independent spec-review session (Claude Code), which wrote no part of this spec |
@@ -40,15 +40,16 @@ install; implementations read them at run time.
 | # | Fact | Source | Mark |
 |---|---|---|---|
 | CP1 | The character panel is `Journal_Window` of layout `journal`: a scaled window with two tab pages, equipment (open) and appearance (§2) | OBS | Confirmed 2026-10-09 |
-| CP2 | The equipment page: header (level, class icon, name, title button, race-and-class line), a paperdoll viewport with rotate buttons, 23 equipment slots, a stat list, a row of buttons (§3) | OBS | Confirmed |
-| CP3 | Slot table: element, `Container_Slot` bit, position, empty-slot tooltip (§3.3) | OBS | Confirmed |
-| CP4 | Stat rows: display type, value properties, states `normal`, `buffed`, `debuffed` with colours (§3.4) | OBS | Confirmed |
-| CP5 | Six bag windows `PlayerBag1_Template` … `PlayerBag6_Template`, each with an item list of 5 columns by default and a per-bag column setting; each names its toggle command (§4) | OBS | Confirmed |
-| CP6 | `InventoryControl`: base backpack slots 45, slots per bag 15, at most 6 bags, slots per pouch 5, 21 equipment slots; avatar templates: 75 backpack, 21 equipment, 20 overflow slots (§4.2) | OBS | Confirmed |
-| CP7 | Item-slot display: icon, quantity text, and overlays by state (§5) | OBS | Confirmed layout; conditions OPEN |
+| CP2 | The equipment page: header (level, class icon, name, title button, race-and-class line), a paperdoll viewport with rotate buttons, 23 equipment slots, a stat list, a row of buttons (§3) | OBS | Confirmed 2026-10-09 |
+| CP3 | Slot table: element, `Container_Slot` bit, position, empty-slot tooltip (§3.3) | OBS | Confirmed 2026-10-09 |
+| CP4 | Stat rows: display type, value properties, states `normal`, `buffed`, `debuffed` with colours (§3.4) | OBS | Confirmed 2026-10-09 |
+| CP5 | Six bag windows `PlayerBag1_Template` … `PlayerBag6_Template`, each with an item list of 5 columns by default and a per-bag column setting; each names its toggle command (§4) | OBS | Confirmed 2026-10-09 |
+| CP6 | `InventoryControl`: base backpack slots 45, slots per bag 15, at most 6 bags, slots per pouch 5, 21 equipment slots; avatar templates: 75 backpack, 21 equipment, 20 overflow slots (§4.2) | OBS | Confirmed 2026-10-09 |
+| CP7 | Item-slot display: icon, quantity text, and overlays by state (§5) | OBS | Confirmed 2026-10-09 (layout); conditions OPEN |
 | CP8 | `Backpack:GetItem(index)` takes 1 … `GetSize()`; `Equipment:GetItem(slot)` takes the API slot enumeration; events `ItemAdded`, `ItemRemoved`, `ItemMoved`, `SizeChanged`, `ItemEquipped`, `ItemUnequipped` (§8) | S2 | Reported |
 | CP9 | The API's `Equipment` values equal the data's `ContainerSlot` key minus one for keys 2–22 (`Head` … `Mounted`/`Bridle`) (§8.2) | S2 (API enum, `lua-plugin-api.md` Appendix A); OBS (mapper names) | Reported (API values) + Confirmed (data keys) |
-| CP10 | Interactions, slot-to-bag mapping, overlay conditions, stat values (§6, §4.3, §5, §3.4) | Design | Decision |
+| CP10 | Interactions, slot-to-bag mapping, the all-bags command, overlay conditions, stat values (§6, §4.3, §4.1, §5, §3.4) | Design | Decision |
+| CP11 | The `UILAYOUT` map (0x28000003 here) holds key 0x10000021, label `journal`, target 0x2200003B (§2 Opening); `InventoryControl_SmartSortInfo_Array` has 8 entries, each a sort type and a list of property IDs (§4.4, `items.md` §6.4); `InventoryControl_MutuallyExclusiveLocation_MappingList` has two pairs of holding locations: right hand with right off-hand, left hand with left off-hand (§6) | OBS (DID map 0x28000003 re-read 2026-10-09 per `records.md` §8; decoded dump of 0x70000230 of 2026-10-07) | Confirmed 2026-10-09 |
 
 ---
 
@@ -57,11 +58,11 @@ install; implementations read them at run time.
 
 | Part | Data |
 |---|---|
-| Root | `Journal_Window`, widget type `UIScaler`, scaling group `Character` (29), origin (357, 200), design rect (183, 98, 713, 648); saves its location; activatable; auto-fade 0.1; object mode Stretch (`ui-layout.md` §9.9, `ui-behaviour.md` §9.2, §11.1) |
+| Root | `Journal_Window`, widget type `UIScaler`, scaling group `Character` (29), origin (357, 200), design rect at position (183, 98), size 713 × 648; saves its location; activatable; auto-fade 0.1; object mode Stretch (`ui-layout.md` §9.9, `ui-behaviour.md` §9.2, §11.1) |
 | Chrome | background `Box_Silver`, title bar with a title text (StringInfo of table 0x25000023), a drag bar with a tooltip, a close button |
 | `Journal_Panel` | widget type `Panel`, pages (in order): `Equipment_Page` (open at start, tab `Equipment_Tab`) and `Appearance_Page` (tab `Appearance_Tab`); each page is based on the page element of its own layout (`CharacterEquipmentPage_Page`, `CharacterAppearancePage_Page`) |
 
-Opening: `UILAYOUT` key of `journal` (0x10000021 → 0x2200003B here), root `Journal_Window`.
+Opening (CP11): `UILAYOUT` entry `journal` (key 0x10000021 → 0x2200003B here), root `Journal_Window`.
 
 > **OPEN:** which input command toggles the character panel (by its name, `ToggleJournalPanel`
 > of the input-action mapper; the binding comes from the key map, `keymap.md`). **Tessera
@@ -188,9 +189,14 @@ height 36). Bag 1 also has a toolbar (`InventoryToolbar`, a search entry).
 | 2 | `QUICKSLOT_BACKPACK2` | `UI.Bag2Columns` |
 | 3–6 | `QUICKSLOT_BACKPACK3` … `6` | `UI.Bag3Columns` … `UI.Bag6Columns` |
 
-The input action is the command that toggles that bag; `QUICKSLOT_BACKPACK` (no number)
-toggles all bags (reading of the name). The column setting is a user setting overriding the
+The input action is the command that toggles that bag. The column setting is a user setting overriding the
 5 columns; the resize bar changes it (`ui-behaviour.md` §8.2).
+
+> **OPEN:** whether the input action `QUICKSLOT_BACKPACK` (the label without a number) toggles
+> all bags, and how it behaves when some bags are open and others closed; no bag window names
+> it, and only its label suggests the meaning. Owner check O83. **Tessera rule:**
+> `QUICKSLOT_BACKPACK` acts on every offered bag (§4.3): if at least one of them is closed it
+> opens all of them, otherwise it closes all of them.
 
 <a id="s4-2"></a>
 ### 4.2 Sizes
@@ -208,17 +214,28 @@ toggles all bags (reading of the name). The column setting is a user setting ove
 ### 4.3 Which backpack slots a bag shows
 
 > **OPEN:** how the original maps backpack slot indices to the six windows (base slots, bags
-> bought later, pouches). **Tessera rule:** the backpack size *N* is the session's last
-> `ContainerSize` for `Backpack`; before the first one (a scenario without a `bag` step,
-> `scenario-feed.md` §5.5) *N* = max(`InventoryControl_BaseBackpackSlots`, highest occupied
-> backpack slot + 1). Bag *k* (1 … 6) shows slots 15 × (*k* − 1) up to
-> min(15 × *k*, *N*) − 1, in ascending order, row by row with the bag's column count; a bag
-> with no slots is not offered. Slots beyond 90 are shown by bag 6.
+> bought later, pouches). Owner check O83. **Tessera rule** (slot indices are 0-based, as in
+> the feed):
+>
+> 1. **Size *N*.** After the session's first `ContainerSize` for `Backpack`, *N* is the *n* of
+>    the last one. Before it (a scenario without a `bag` step, `scenario-feed.md` §5.5), *N*
+>    starts at `InventoryControl_BaseBackpackSlots` and, whenever an item arrives at backpack
+>    slot *s* ≥ *N*, becomes *s* + 1; it never shrinks without a `ContainerSize`.
+> 2. **Bags 1–5.** Bag *k* (*k* = 1 … 5) shows slots 15 × (*k* − 1) through
+>    min(15 × *k*, *N*) − 1.
+> 3. **Bag 6.** Bag 6 shows slots 75 through *N* − 1, however large *N* is (so every slot from
+>    75 upwards, including 90 and above, is in bag 6).
+> 4. A bag whose range is empty (*N* ≤ its first slot) is not offered. Each bag lists its
+>    slots in ascending order, row by row with the bag's column count.
+> 5. **Plugins.** The growth of rule 1 takes effect before the arriving item is reported to
+>    plugins, so its index lies in 1 … `GetSize()`. Like every change of *N*, it fires the
+>    plugin `SizeChanged`, queued before that item's `ItemAdded`; the event rule itself is
+>    owned by `lua-plugin-api.md` §15.1 (`Backpack.SizeChanged` row).
 
 <a id="s4-4"></a>
 ### 4.4 Sorting
 
-`InventoryControl_SmartSortInfo_Array` lists, per `Item_Client_Sort_Type`, the properties a
+`InventoryControl_SmartSortInfo_Array` (CP11) lists, per `Item_Client_Sort_Type`, the properties a
 sort compares (`items.md` §6.4). **Tessera rule:** the bag sort (when offered) groups by
 `Item_Client_Sort_Type` ascending (absent last), then compares the listed properties in order,
 then the record DID; it only proposes moves, sent as `MoveItem` commands (§6).
@@ -239,7 +256,7 @@ overlays (all hidden by default; each switched by states):
 |---|---|---|
 | `ItemDisplay_QuantityOverlay` | text, right-justified, one line, at (0, 15) 32 × 12 | the stack quantity; **Tessera rule:** shown when the quantity is greater than 1 |
 | `ItemDisplay_BrokenOverlay` | `broken`, `almostBroken`, `notBroken` | wear state; **Tessera rule:** as the durability row of `item-tooltips.md` §6.10 and §11 |
-| `ItemDisplay_UnusableOverlay` | `overlay_on`/`off` | the viewer cannot use the item; **Tessera rule:** on when the item's `Usage_MinLevel` exceeds the viewer's level or its required classes exclude the viewer's class |
+| `ItemDisplay_UnusableOverlay` | `overlay_on`/`off` | the viewer cannot use the item; **Tessera rule:** on when the item's `Usage_MinLevel` exceeds the viewer's level or its `Usage_RequiredClassList` (`items.md`) is present and does not contain the viewer's class |
 | `ItemDisplay_CooldownOverlay` | `Meter` with 60 frames, draw mode Multiply | cooldown sweep; **Tessera rule:** follows `CooldownStarted`/`CooldownEnded` for the item's record (P2) |
 | `ItemDisplay_SelectedOverlay`, `…_ElligibleOverlay`, `…_PendingOverlay`, `…_LockedOverlay`, `…_GhostedOverlay`, `…_NewItemOverlay`, `…_DarkenOverlay`, `…_OutOfRangeOverlay`, the legendary and essence overlays | `overlay_on`/`off` and others | **Tessera rule:** off in P1 |
 | `ItemDisplay_RolloverOverlay` | rollover highlight | on while the pointer is over the slot |
@@ -267,14 +284,14 @@ changes nothing locally until the matching event arrives:
 | Drop an equipped item on a backpack slot | `MoveItem { item, to: Backpack slot }` (or `UnequipItem` when dropped on the bag window outside a slot) |
 | Activate an equipped item | `UnequipItem { item }` |
 | Drop an item on another slot of the same or another bag | `MoveItem` (the feed swaps an occupant, `scenario-feed.md` §7.6) |
-| Shift-drop a stack onto an empty slot | `SplitStack` with half the quantity rounded down |
+| Shift-drop a stack of 2 or more onto an empty slot | `SplitStack` with half the quantity rounded down (a stack of 1 is moved as an ordinary drop, `MoveItem`) |
 | Drag an item out of every window and confirm | `DestroyItem` |
 
 > **OPEN:** the original's bindings for use, split and destroy, and whether activating an
 > equipped item unequips it. Owner check O84.
 
 `InventoryControl_MutuallyExclusiveLocation_MappingList` lists holding locations that cannot
-be used together (two pairs here); the feed does not enforce it (no rules, decision 0024 §2.4).
+be used together (two pairs here, CP11); the feed does not enforce it (no rules, decision 0024 §2.4).
 
 ---
 
@@ -299,6 +316,11 @@ change (decision 0024 P1 exit criterion 3).
 <a id="s8"></a>
 ## 8. Plugin views (`lua-plugin-api.md` §15)
 
+This section gives the API facts the panels share with the plugin views. **Which plugin
+events fire for which feed event, and what the views' getters return, is owned by
+`lua-plugin-api.md` §15.1 alone**; this spec does not restate it. The inventory model that
+§15.1 reads is the one of §4.3 and §9 here.
+
 <a id="s8-1"></a>
 ### 8.1 Backpack (Reported, CP8)
 
@@ -307,10 +329,9 @@ change (decision 0024 P1 exit criterion 3).
 Events: `ItemAdded`, `ItemRemoved` (arguments `Index`, `Item`), `ItemMoved` (`OldIndex`,
 `NewIndex`, `Item`), `SizeChanged`.
 
-**Tessera mapping:** index = feed slot + 1 for the `Backpack` container; `GetSize` = the
-backpack size *N* of §4.3. `ItemAdded` per `ItemAdded` into `Backpack`; `ItemRemoved` per
-`ItemRemoved` of a backpack item and per `ItemMoved` out of the backpack; `ItemMoved` per
-`ItemMoved` within the backpack; `SizeChanged` per `ContainerSize` of `Backpack`.
+Index *i* is the feed's backpack slot *i* − 1, and `GetSize()` is the backpack size *N* of
+§4.3. The derivation of the four events from the feed: `lua-plugin-api.md` §15.1
+(`Backpack` events row).
 
 <a id="s8-2"></a>
 ### 8.2 Equipment (Reported + Confirmed, CP9)
@@ -320,9 +341,9 @@ the `Turbine.Gameplay.Equipment` enumeration. The API values are the data's `Con
 keys minus one: `Head` 1 ↔ key 2 `Head`, … , `Pocket` 15 ↔ key 16 `Pocket1`, `PrimaryWeapon`
 16 ↔ 17, `SecondaryWeapon`/`Shield` 17 ↔ 18, `RangedWeapon`/`Instrument` 18 ↔ 19,
 `CraftTool` 19 ↔ 20, `Class` 20 ↔ 21, `Bridle` 21 ↔ 22 `Mounted`. The FX slots (keys 23–25)
-have no API value. Events `ItemEquipped`, `ItemUnequipped` carry `Index` (the API value) and
-`Item`. **Tessera rule:** `GetSize()` returns 21 (the largest API value, equal to
-`InventoryControl_NumEquipmentSlots` here); FX-slot items are not visible to plugins.
+have no API value, so FX-slot items are not visible to plugins. Events `ItemEquipped`,
+`ItemUnequipped` carry `Index` (the API value) and `Item`. `GetSize()`, `GetItem` and the
+derivation of the two events from the feed: `lua-plugin-api.md` §15.1 (`Equipment` rows).
 
 ---
 
@@ -331,12 +352,14 @@ have no API value. Events `ItemEquipped`, `ItemUnequipped` carry `Index` (the AP
 
 | Feed event (`scenario-feed.md` §9.2) | Panel effect |
 |---|---|
-| `ContainerSize { Backpack, n }` | Backpack size *N* (§4.3); bags shown accordingly; plugin `SizeChanged` |
+| `ContainerSize { Backpack, n }` | Backpack size *N* (§4.3); bags shown accordingly |
 | `ItemAdded`, `ItemMoved`, `ItemRemoved`, `ItemQuantity`, `ItemCondition` | Slot contents, quantity overlay, broken overlay, paperdoll slots for the `Equipment` container (slot = data key, §3.3); tooltips (`item-tooltips.md` §11) |
 | `AppearanceChanged` of the player | The paperdoll viewport's figure and the walker's avatar (§7) |
 | `CharacterInfo`, `LevelChanged` | Header: level, class icon, race-and-class line; the viewer's class and level for §5 |
 | `VitalChanged` (health, power) | Morale and power rows (`current` / `max`) |
 | `WalletChanged { Coin }` | The wallet view behind `Player_Wallet_Button` (money display of `item-tooltips.md` §6.11) |
+
+Plugin events for these feed events: `lua-plugin-api.md` §15.1 (§8).
 
 Commands from §6 go to the session; with `defaults on` the feed answers equip, unequip, move,
 split and destroy generically (`scenario-feed.md` §7.6), so a scenario with a few `give` steps
@@ -357,9 +380,9 @@ is enough to test every interaction. A scenario that checks the worn look script
 | ID | Invariant | Status |
 |---|---|---|
 | CPI1 | Every slot element of `CharacterEquipmentPage_SlotField` has a `Container_Slot` with exactly one bit set, and the 23 bits are distinct | Confirmed 2026-10-09 |
-| CPI2 | Every element label in `UI_Inventory_EquipmentSlotList` names a slot element of the slot field (23 of 23) | Confirmed |
-| CPI3 | The API `Equipment` value + 1 is a `ContainerSlot` key whose mapper name matches the API name (21 of 21, with `Pocket`↔`Pocket1`, `PrimaryWeapon`↔`Weapon_Primary`, `SecondaryWeapon`↔`Weapon_Secondary`, `RangedWeapon`↔`Weapon_Ranged`, `Bridle`↔`Mounted`) | Confirmed (names) |
-| CPI4 | Each `PlayerBagN_Template` (N = 1 … 6) has a `Backpack_ItemList` whose input action is `QUICKSLOT_BACKPACKN` | Confirmed |
+| CPI2 | Every element label in `UI_Inventory_EquipmentSlotList` names a slot element of the slot field (23 of 23) | Confirmed 2026-10-09 |
+| CPI3 | The API `Equipment` value + 1 is a `ContainerSlot` key whose mapper name matches the API name (21 of 21, with `Pocket`↔`Pocket1`, `PrimaryWeapon`↔`Weapon_Primary`, `SecondaryWeapon`↔`Weapon_Secondary`, `RangedWeapon`↔`Weapon_Ranged`, `Bridle`↔`Mounted`) | Confirmed 2026-10-09 (names) |
+| CPI4 | Each `PlayerBagN_Template` (N = 1 … 6) has a `Backpack_ItemList` whose input action is `QUICKSLOT_BACKPACKN` | Confirmed 2026-10-09 |
 | CPI5 | Backpack index ↔ slot: `GetItem(i)` returns the item at slot *i* − 1 for every *i* in 1 … `GetSize()` | Design check (scenario) |
 
 ---
@@ -374,6 +397,7 @@ is enough to test every interaction. A scenario that checks the worn look script
 | Q3 | Stat values and buffed/debuffed | §3.4 | server data; feed proposal §9 |
 | Q4 | Backpack slots per window | §4.3 | owner (O83) |
 | Q5 | Overlay conditions | §5 | owner (O83) |
+| Q8 | Whether `QUICKSLOT_BACKPACK` toggles all bags | §4.1 | owner (O83) |
 | Q6 | Use, split, destroy, unequip inputs | §6 | owner (O84) |
 | Q7 | Held-item hand in `Equipped` | §7 | design (feed and protocol revision) |
 
@@ -400,3 +424,4 @@ is enough to test every interaction. A scenario that checks the worn look script
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (Review), for decision 0024 P1: character panel, equipment page, slot table, stat list, bag windows and sizes, item-slot overlays, interactions as Tessera rules, worn look, plugin `Backpack` and `Equipment` mapping, scenario-feed driving. |
+| 2026-10-09 | Revised after the first-version review (blocking 1–3, non-blocking a–d, f). §4.3: one Tessera rule with numbered steps (bags 1–5 by range, bag 6 shows 75 … *N* − 1; *N* grows on arrival before the first `ContainerSize` and never shrinks without one; that growth fires the plugin `SizeChanged` before the item's `ItemAdded`, as `lua-plugin-api.md` §15.1 states). §8: plugin event derivation and the views' getters removed; `lua-plugin-api.md` §15.1 is their only owner (§9 points there). §4.1: `QUICKSLOT_BACKPACK` is an OPEN with a Tessera rule (Q8, owner check O83). Provenance: dates on CP2–CP7 and CPI2–CPI4; new row CP11 (the `UILAYOUT` entry of `journal`, re-read from the install 2026-10-09; `SmartSortInfo` count and the two mutually exclusive location pairs, from the decoded `InventoryControl` dump). §2 rect written as position and size; §6 split only for stacks of 2 or more; §5 unusable overlay names `Usage_RequiredClassList`. |

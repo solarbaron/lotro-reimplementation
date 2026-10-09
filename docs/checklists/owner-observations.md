@@ -72,7 +72,7 @@ marks the item **done** here.
 | [O80](#o80) | Item tooltips of ten items: rows, order, colours, worth coins | `item-tooltips.md` §4–§7, §15 | Look, screenshots (private) | open (P1) |
 | [O81](#o81) | Comparison tooltips and pinned tooltips | `item-tooltips.md` §8–§10 | Look | open (P1) |
 | [O82](#o82) | Character panel: opening command, paperdoll rotation, header | `character-panels.md` §2–§3 | Look | open (P1) |
-| [O83](#o83) | Bag windows: which slots each bag shows; item-slot overlays | `character-panels.md` §4.3, §5 | Look | open (P1) |
+| [O83](#o83) | Bag windows: which slots each bag shows; all-bags command; item-slot overlays | `character-panels.md` §4.1, §4.3, §5 | Look | open (P1) |
 | [O84](#o84) | Equipping, unequipping, using, splitting and destroying items | `character-panels.md` §6 | Look | open (P1) |
 | [O85](#o85) | Character selection and race/class screens: order of screens, lists, defaults | `character-screens.md` §2–§4, §6 | Look | open (P1) |
 | [O86](#o86) | Appearance and name screen: controls, randomise, nationality colours | `character-screens.md` §5 | Look | open (P1) |
@@ -1295,14 +1295,18 @@ still); which stat rows show values in green or red and when.
 <a id="o83"></a>
 ## O83. Bag windows and item-slot overlays (P1)
 
-**Spec:** `character-panels.md` §4.3 (backpack slots per bag), §5 (overlays).
+**Spec:** `character-panels.md` §4.1 (all-bags command), §4.3 (backpack slots per bag), §5
+(overlays).
 
 **What to do:** open all bags; note how many slots each shows and in which order items fill
-them; drag an item from the first slot of bag 1 to the last slot of bag 2 and back. Look at a
+them; drag an item from the first slot of bag 1 to the last slot of bag 2 and back. Press the
+key bound to "toggle all bags" (not a single bag) once with all bags closed, once with only
+bag 1 open, once with all open. Look at a
 stack, a damaged and a broken item, an item your character cannot use (level too low), an
 item on cooldown.
 
-**Record:** slots per bag; whether bag 2 starts where bag 1 ends; for each overlay: when it
+**Record:** slots per bag; whether bag 2 starts where bag 1 ends; which bags are open after
+each press of the all-bags key; for each overlay: when it
 shows (stack of 1: quantity shown or not?), its look in words.
 
 <a id="o84"></a>

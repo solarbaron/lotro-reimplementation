@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-07 (items answered or narrowed from the client; M7 items O70–O73 added) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-09 (merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -35,25 +35,25 @@ marks the item **done** here.
 
 | ID | Question | Spec | Needs | Status |
 |---|---|---|---|---|
-| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | partly answered (`coordinates.md` §4, §8–§9, §14: formula, rounding, landcells and block edges from the client); left for the owner: the avatar's height above the terrain (`oz`), the area-name column, and whether map coordinates show indoors |
+| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | partly answered (`coordinates.md` §4, §8–§9, §14: formula, rounding, landcells and block edges from the client); left for the owner (2026-10-08: not in the data or the client): `oz` on flat ground at two or three rows (expected terrain + 0.00 or + 0.05 m), the area-name column, and whether map coordinates show indoors |
 | [O2](#o2) | Compass bearing of a placed object versus `/loc` heading | `entity-descriptor.md` §4.4 | In-game `/loc` | answered from the client (`coordinates.md` §11.3–§11.4: h = (360° − yaw) mod 360, bearing of model +Y); optional confirmation |
 | [O3](#o3) | Which content layer the world shows by default | `entity-descriptor.md` §4.5.1 | In-game look | answered from the client (`entity-descriptor.md` §4.5.1, §9.3: layers 1 and 2 are both shown, for every kind of placed object including drawn Physics objects; only named layers depend on story progress); optional confirmation spot: region 1, block 0xA15B |
 | [O4](#o4) | Are one-triangle placeholder parts drawn? | `setup.md` §8.5 | Look, or frame capture | answered from the client (`setup.md`: never drawn in objects with more than one part); no observation needed |
-| [O5](#o5) | Exact dye blend | `material.md` §12.3 | Look, or frame capture | open |
-| [O6](#o6) | Other material and render-state questions | `material.md` §17 and §19 | Frame capture | open |
+| [O5](#o5) | Exact dye blend | `material.md` §12.3 | — | **Answered from the client (2026-10-08)**: smooth blend on stored values, no threshold, dye alpha unused, no sRGB (`material.md` §12.3, MA24, MA33); no observation needed |
+| [O6](#o6) | Other material and render-state questions | `material.md` §17 and §19 | Look, toggling options | narrowed (2026-10-08): O6.1–O6.9 answered from the client (`material.md` §17, §19, §20.1); left for the owner, without a frame capture: which graphics option turns on the soft edges of cut-out foliage (`material.md` §8.5 OPEN) |
 | [O7](#o7) | Command-line option leniency | `install-layout.md` §10 | Launch test | answered from the client (`install-layout.md` §10.1); no observation needed |
-| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, §17, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | partly answered (`appearance.md` §6.1, §17); left for the owner: one screenshot of a High-elf female beside a Human female |
-| [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | partly answered (`appearance.md` §6.2–§6.5, §17: slider rules); left for the owner, as confirmation only: heights at the ends of the height controls, River-hobbit feet on the ground |
-| [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | partly answered (`appearance.md` §4.7, §17: the client's tie rule); left for the owner: items 1–8, mainly item 5 and whether the order of equipping matters |
+| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, §17, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | partly answered (`appearance.md` §6.1, §17); left for the owner: one screenshot of a High-elf female beside a Human female; unchanged 2026-10-08 (whether the template scale enters the render scale was not traced; the one screenshot pair settles it) |
+| [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | partly answered (`appearance.md` §6.2–§6.5, §17: slider rules); left for the owner, as confirmation only: heights at the ends of the height controls, River-hobbit feet on the ground; unchanged 2026-10-08 (confirmation by look only) |
+| [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | partly answered (`appearance.md` §4.7, §17: the client's tie rule); left for the owner: items 1–8, mainly item 5 and whether the order of equipping matters; unchanged 2026-10-08 (item 5 depends on the order the server sends; not in the client) |
 | [O11](#o11) | Updated-avatar option and default style files | `appearance.md` §3.3 | Options screen, look | answered from the client (`appearance.md` §3.3, §3.5, §17); optional glance at the options screen to confirm the default |
-| [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | partly answered (`appearance.md` §7.4, §17: where outfits come from); left for the owner: two visits to one figure (same look or not) |
-| [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | partly answered (`appearance.md` §5.6, §17: weapons, shields, ranged items); left for the owner: in-hand direction of long weapons (two side screenshots) and whether class items are ever visible |
-| [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | Look, `/loc`, short videos | partly answered (`skeleton-anim.md` §15.1: O14.1–O14.3, O14.5–O14.7 answered); left for the owner: O14.4 walking speeds by `/loc` timing; visual checks of O14.1, O14.2, O14.7 optional |
-| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority) |
-| [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still |
-| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look |
-| [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O21, O22, O26 partly answered (2026-10-07); the others open (M4.5) |
-| [O28](#o28) | Audio and player music: area-music cross-fade, gaps, falloff, day/night and indoor beds, combat fade, ABC checks, live play, instance limit | `sound.md` §16, `script-runtime.md` §26, `abc-dialect.md` §11 and §17, `instruments.md` §16 | Listening, `/loc`, a recording of the client's output, small original ABC files | open (M6) |
+| [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | partly answered (`appearance.md` §7.4, §17: where outfits come from); left for the owner: two visits to one figure (same look or not); narrowed 2026-10-08: the picks come from the client's clock-seeded global generator with no per-object seed, so a different look per visit is expected (`script-runtime.md` §8, R40); the two visits confirm it |
+| [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | partly answered (`appearance.md` §5.6, §17: weapons, shields, ranged items); left for the owner: in-hand direction of long weapons (two side screenshots) and whether class items are ever visible; unchanged 2026-10-08 (look) |
+| [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | — | **Answered from the client (2026-10-08)**: all rows (`skeleton-anim.md` §15.1; O14.4 walking speeds 2.5 / 2.25 / 2.57 m/s from `collision.md` §11.8); `/loc` timing and visual checks optional |
+| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority); unchanged 2026-10-08 (frame capture, low priority) |
+| [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still; unchanged 2026-10-08 (side-by-side look) |
+| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look; unchanged 2026-10-08 (server state and look) |
+| [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O18 mostly answered (2026-10-08; only the jump measurement left); O21, O22, O26 partly answered (2026-10-07); O19, O20, O23–O25, O27 need the original (visual) |
+| [O28](#o28) | Audio and player music: area-music cross-fade, gaps, falloff, day/night and indoor beds, combat fade, ABC checks, live play, instance limit | `sound.md` §16, `script-runtime.md` §26, `abc-dialect.md` §11 and §17, `instruments.md` §16 | Listening, `/loc`, a recording of the client's output, small original ABC files | narrowed (2026-10-08): O28.3, O28.4, O28.7, O28.9 answered from the data and the client; O28.1–O28.2 reduced to where the music changes; the others need listening (M6) |
 | [O39](#o39) | Screenshots of at least 10 native panels in the original client | `ui-layout.md` §17, `m5-visual.md` | Screenshots (private) | open (M5 criterion 2) |
 | [O40](#o40) | The 14 plugins of the usage census installed and run in Tessera | `plugin-api-usage.md` §9, `lua-plugin-api.md` | Plugin install, look | open (M5 criterion 4) |
 | [O41](#o41) | A published user skin in the original client versus Tessera | `skin-definition.md` | Look (optional) | open (M5 criterion 3, optional) |
@@ -65,18 +65,18 @@ marks the item **done** here.
 | [O47](#o47) | Owner-written nested-surface test plugin | decision 0015 (observation 4) | Test plugin, screenshot | open (M5) |
 | [O48](#o48) | Cursor during and after mouse-look; OS cursor size at scale 1.333; minimap marker edges | decision 0015 (observations 5–7) | Look | open (M5) |
 | [O49](#o49) | U1–U5 scripted UI measurement on the idle reference laptop | decision 0015 §6, decision 0010 | Measurement run | open (M5 criterion 7) |
-| [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | In-game `/loc`, stopwatch | open (M7) |
-| [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7) |
-| [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7) |
-| [O73](#o73) | Range of local "say" chat (optional) | `test-server.md` §4.6, §9 | Two characters, `/loc` | open (M7, optional) |
+| [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | — | **Answered from the client (2026-10-08)**: run 6.5 / 3.25 / 5.0 m/s, walk 2.5 / 2.25 / 2.57 m/s (forward / backward / strafe), keyboard turn 150°/s (`[Input] TurnKeySpeed`), no species difference (`collision.md` §11.8–§11.9) |
+| [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7); not answerable from the client (a felt comparison; remote updates belong to the excluded network layer) |
+| [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7); not answerable from the client (the server decides) |
+| [O73](#o73) | Range of local "say" chat (optional) | `test-server.md` §4.6, §9 | Two characters, `/loc` | open (M7, optional); not answerable from the client (the server decides) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
-criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
+criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
 items): O10, O13; the sandbox's static NPCs: O12, O17. Criterion 4 (performance) passed
 on the reference machine and needs no observation.
 
 M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md#m4-5-status)):
-criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O20 (terrain,
+criterion 4 (walking on collision): O18 (only the jump measurement left since 2026-10-08), O19; criterion 6 (visual checklist): O20 (terrain,
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
 fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
 
@@ -92,7 +92,8 @@ mark as owner observations; criteria 1, 3 and 4 need no observation in the origi
 (criterion 4 still needs an idle re-measurement on the reference machine, decision 0010).
 
 M7 items O70–O73 tune defaults of Tessera's own protocol and test server so that movement
-feels like the original; no M7 exit criterion waits on them ([ROADMAP M7
+feels like the original (O70 answered from the client on 2026-10-08; O71–O73 depend on the
+server or on feel and stay with the owner); no M7 exit criterion waits on them ([ROADMAP M7
 status](../ROADMAP.md#m7-status)). They are numbered from O70 because other milestone
 branches added items at the same time (M4.5 uses O18–O27, M6 uses O28); they keep their
 numbers.
@@ -128,6 +129,18 @@ confirmation. Still for the owner:
 - **Indoors (new):** stand inside one building or dungeon and note whether any panel shows
   your map coordinates there, where it shows them, and what `/loc` prints (numbers and
   layout only, no names). `coordinates.md` §8.3 OPEN.
+
+**2026-10-08 (check against the data and the client):** none of the three columns can be read
+from the install or the offline client. The area name and the indoor display are what the
+original shows on screen, and the avatar's height above the ground depends on where the
+original places the player's capsule, which was not traced (`collision.md` §11.7 OPEN, §16
+Q18). To keep the `oz` part short:
+
+- **`oz` (reduced):** at two or three rows on flat open ground, record `oz`. The spec writer
+  compares it with the walker's terrain height there; the client's rules allow only about
+  0.00 m (capsule bottom at the feet) or about 0.05 m (the terrain's 0.05 m convex radius)
+  above the terrain (`collision.md` §11.7 table). The other rows' `oz` are not needed.
+- The area-name column and the indoors check stay as above.
 
 <a id="o2"></a>
 ## O2. Bearing of placed objects versus the `/loc` heading
@@ -216,6 +229,14 @@ Tessera uses the smooth form.
    the mask alpha against a constant (threshold) or interpolates with it; and whether the
    render target and texture views are sRGB (gamma-space or linear-space multiply).
 
+**Answered from the client (2026-10-08).** No observation is needed. `material.md` §12.3
+(MA24 from the compiled shader programs, BIN-S; MA33 from the graphics back ends, BIN-T (g))
+already holds every answer: the blend is smooth, dyed colour = base × (1 − *w*) + base × dye
+× *w* with *w* = 1 − mask alpha, applied to the sampled texture values before lighting; there
+is no threshold and no brightness boost; the dye colour's alpha is not used; no back end uses
+sRGB textures or frame buffers, so the multiply works on the stored values. Steps 1 and 2
+remain an optional confirmation.
+
 <a id="o6"></a>
 ## O6. Other material and render-state questions (frame captures)
 
@@ -235,6 +256,21 @@ cull mode, alpha-to-coverage) and, where noted, shader constants.
 | O6.7 | Texture matrix: U/V order, composition order, coordinate set per slot | §8.4 | A surface with a rotated or offset detail texture | Texture-coordinate transform constants |
 | O6.8 | Animated float curves (modes 2–10) | §5.3 | Scrolling water or a pulsing glow, as a short video or several captures over time | Value over time of the animated constant |
 | O6.9 | Vertex colours and diffuse colour 2000 | §19 | Foliage cards and a snow-covered surface | Whether vertex colour or a material tint constant enters the colour |
+
+**2026-10-08 (from the client, narrowed).** Rows O6.1–O6.9 are answered in `material.md` from
+the compiled shader programs and the client (§17 items 1–8, §19, §20.1; MA22–MA49): blend
+and depth state per pass (§7.6, §11.3), two-sided = flag 4003 (§11.4), no alpha test without
+an opacity source and discard at or below the threshold (§11.2), opacity of unlit blended
+effects (§20.1), lighting and specular (`lighting.md` §5; §8.3, §11.5), normal-map axes
+(§10.2), texture matrices (§8.4), float curves (§5.3.1), vertex colours and colour 2000
+(§19). The frame captures above are no longer needed. Left for the owner, by look only:
+
+- **Soft foliage edges** (`material.md` §8.5 OPEN): with a tree close in view, switch each
+  graphics option that could plausibly affect edges (anti-aliasing, alpha-to-coverage,
+  material or texture detail) off and on once, and record which one turns the leaf edges from
+  hard to soft.
+- **Optional** (`material.md` §11.2 OPEN): whether cut-out foliage on an object that is
+  fading in at the draw distance loses its hard edges during the fade.
 
 <a id="o7"></a>
 ## O7. Command-line option leniency (low priority)
@@ -430,6 +466,12 @@ Still for the owner:
 - **Record:** "same look both visits" or "different look". The second nearby figure and the
   outfit description are now optional.
 
+**2026-10-08 (from the client, narrowed):** the client draws these random picks from its single
+global generator, which it seeds once from the wall-clock time at start-up; nothing in the
+pick seeds it per figure (`script-runtime.md` §8, R40; `appearance.md` §7.4). So a **different
+look on each visit is expected**. A game-logic reseed before the figure's start-up script was
+not ruled out, so the two visits above remain the confirmation; nothing else is needed.
+
 <a id="o13"></a>
 ## O13. Where held items rest (M4)
 
@@ -498,6 +540,14 @@ Still for the owner:
   confirmation. Note whether the feet slide (the client does not match the clip rate to the
   speed, so some sliding is expected). This is the same measurement as O18 step 1; do it once
   for both.
+
+**Answered from the client (2026-10-08).** O14.4 is answered too, so every row of O14 is
+answered and nothing is required (`collision.md` §11.8, BIN; `skeleton-anim.md` §7.4,
+§15.1). Walk mode halves the key values, which selects the Walking layer: walking moves at
+**2.5 m/s** forward, **2.25 m/s** backward and **2.57 m/s** sideways; running at 6.5, 3.25 and
+5.0 m/s (no speed effects active). The walk clips cover about 2 m/s, so the feet slide a
+little when walking. The `/loc` timing and the visual checks of O14.1, O14.2 and O14.7 are
+optional confirmations.
 
 <a id="o15"></a>
 ## O15. Skin, hair and eye colours; face layers (M4, frame capture, low priority)
@@ -605,16 +655,16 @@ graphics settings (record any setting you changed) with the expected facts liste
 
 | ID | Question | Spec | Needs | Status |
 |---|---|---|---|---|
-| [O18](#o18) | Movement: jump, speeds, highest step, steepest slope, wading and swimming depth | `collision.md` §10–§12 (Q9, Q11), `water.md` §7.4 | In-game `/loc`, stopwatch, short video | open |
-| [O19](#o19) | Outcome of the 32 scripted walks in the original | `m4-5-visual.md` §2 | In-game `/loc`, look | open |
-| [O20](#o20) | Side-by-side look at the terrain, scenery and frill rows | `m4-5-visual.md` §4.1–§4.3 | Look, private screenshots | open |
-| [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §10.1, §11.1 | Clock in the UI or `/loc`, stopwatch | partly answered (`environment.md` §10.1, §11.1, §11.5: rate, date, night flag, day-type rule); left for the owner: two (in-game time, UTC) readings for the epoch, and the weather on several days |
-| [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8, `environment.md` §11.7 | Look, `/loc` | partly answered (`environment.md` §10.1, §11.7: fog-distance limits; the distance rules were already from the client); left for the owner: steps 1–6 as a visual check |
-| [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open |
-| [O24](#o24) | Water look: surface, lava, placed water, distant water | `water.md` §8–§9, `m4-5-visual.md` §4.4 | Look, frame capture optional | open |
-| [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open |
-| [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §10.1, §11.2–§12, `lighting.md` §10 | Look at set times | partly answered (`environment.md` §10.1: day-type rule, interior fog rules, sun and moon path); left for the owner: the Y1–Y4 look at set times (after O21), sun and moon size, fog on the sky |
-| [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open |
+| [O18](#o18) | Movement: jump, speeds, highest step, steepest slope, wading and swimming depth | `collision.md` §10–§12 (Q9, Q11), `water.md` §7.4 | Stopwatch or short video | mostly answered from the client (2026-10-08: speeds, highest step, steepest slope, swimming depth, `collision.md` §10.5, §11.3, §11.5–§11.6, §11.8); left for the owner: the jump's height and airtime (predicted 1.2 m, 0.8 s, §11.10) |
+| [O19](#o19) | Outcome of the 32 scripted walks in the original | `m4-5-visual.md` §2 | In-game `/loc`, look | open; not answerable from the client (outcome in the original; needs `/loc` and look) |
+| [O20](#o20) | Side-by-side look at the terrain, scenery and frill rows | `m4-5-visual.md` §4.1–§4.3 | Look, private screenshots | open; not answerable from the client (visual comparison) |
+| [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §10.1, §11.1 | Clock in the UI or `/loc`, stopwatch | partly answered (`environment.md` §10.1, §11.1, §11.5: rate, date, night flag, day-type rule); left for the owner: two (in-game time, UTC) readings for the epoch, and the weather on several days; unchanged 2026-10-08 (the epoch is not in the client) |
+| [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8, `environment.md` §11.7 | Look, `/loc` | partly answered (`environment.md` §10.1, §11.7: fog-distance limits; the distance rules were already from the client); left for the owner: steps 1–6 as a visual check; unchanged 2026-10-08 (visual check) |
+| [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open; not answered from the client in this pass (shadow colour, cascades and fade stay `lighting.md` §9 OPEN; the rest is visual) |
+| [O24](#o24) | Water look: surface, lava, placed water, distant water | `water.md` §8–§9, `m4-5-visual.md` §4.4 | Look, frame capture optional | open; not answerable from the client (visual comparison; reflection, flow and foam stay `water.md` §8 OPEN) |
+| [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open; not answerable from the client (visual; radius, fade and density are already the client's, `scenery.md` §8.3–§8.4) |
+| [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §10.1, §11.2–§12, `lighting.md` §10 | Look at set times | partly answered (`environment.md` §10.1: day-type rule, interior fog rules, sun and moon path); left for the owner: the Y1–Y4 look at set times (after O21), sun and moon size, fog on the sky; unchanged 2026-10-08 (look at set times) |
+| [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open; not answerable from the client (visual comparison) |
 
 <a id="o18"></a>
 ## O18. Movement measurements (M4.5)
@@ -657,6 +707,30 @@ character slid; for each WA walk the `/loc` where swimming started (compare with
 speeds from the data (they match Tessera's values above); the walking speed depends on an
 input value that was not traced, so the walking timings are the ones that matter. Steps
 2–5 are unchanged and still open.
+
+**2026-10-08 (from the client, mostly answered).** Steps 1, 3, 4 and 5 are answered from the
+client's code and the data; the measurements above are optional confirmations
+(`collision.md` §10.5, §11.3, §11.5–§11.6, §11.8):
+
+- **Step 1, speeds:** running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s sideways; walking
+  2.5, 2.25 and 2.57 m/s; swimming 3.2 m/s forward. The same for every playable species
+  (only server-set speed effects change them). Tessera's walk of 5 m/s above is not the
+  original's.
+- **Step 3, highest step:** the client lifts the character by a fixed 0.55 m (0.5502 m) when
+  a ledge blocks it and keeps the step only when it lands on walkable ground, so ledges up to
+  about 0.55 m are climbed without jumping.
+- **Step 4, steepest slope:** players can walk on ground up to 45°; on steeper ground they
+  cannot climb and slide down (no control; the Slope layer's gravity of 10 m/s²).
+- **Step 5, swimming depth:** the character swims once the water at its feet is deeper than
+  its float height: Human, Elf, Beorning, High-elf 1.42 m (male) and 1.40 m (female),
+  Hobbit 0.92 m, Dwarf 1.05 m, Stout-axe dwarf 1.12 m, River-hobbit 0.985 m (male) and 0.97 m (female); shallower
+  water is wading.
+
+**Still for the owner, step 2 only (reduced):** the jump's push is now known from the client
+and the data (6.0 m/s upwards on land, `collision.md` §11.10), which predicts a jump about
+**1.2 m** high and about **0.8 s** in the air; the take-off itself was not traced end to end.
+Jump once on flat ground beside something of known height and film it from the side (or count
+frames); record the height (to 0.1 m) and the airtime (to 0.1 s).
 
 <a id="o19"></a>
 ## O19. Scripted walks in the original (M4.5)
@@ -920,6 +994,35 @@ ABC file (`abc-dialect.md` §4.1: undefined behaviour in the original).
 | O28.16 | Several performers (Q6) | `instruments.md` §9.3, `sound.md` §6.6 | With several characters playing at once (a group, or several of your own clients) | Dropped notes once many voices sound? |
 | O28.17 | Handknells octave (Q5, optional) | `instruments.md` §7.4 | Compare one Handknells note against a reference tone (a tuner app) | The octave heard |
 
+**2026-10-08 (from the data and the client, narrowed).** Several rows are predicted exactly by
+the original's scripts (data) and its script runtime (BIN); for those, listening is only a
+confirmation:
+
+- **O28.3, answered from the data:** the silences between tracks are one-shot timers of the
+  music programs, mostly 5–30 s (15 s commonest, then 10, 20 and 30 s; `sound.md` §10.4).
+- **O28.4, answered from the client:** loudness falls linearly from the sound's minimum to its
+  maximum distance and is zero beyond; the distances are stored per sound (`sound.md` §6.2).
+- **O28.7, answered from the data and the client:** entering combat runs a 3 s fade-out to
+  0.05 of the music level (applied twice, so about −52 dB, `script-runtime.md` §4.4) and the
+  combat music; leaving combat fades the area music back in over 8 s (`sound.md` §10.6).
+  When combat starts is server state.
+- **O28.9, answered from the client:** a looping sequence runs at most ten passes per second
+  and a looping timer's cycle is at least 0.1 s (`script-runtime.md` §10.4, §11.2), so no
+  burst is faster than ten per second.
+- **O28.1 and O28.2, narrowed:** when the area music changes, the old track fades out
+  linearly over its own ramp-out time (1–4 s, mostly 4 s) while the new area's programme
+  starts at once; crossing back starts the first area's programme again from its first step
+  (`script-runtime.md` §6.6, `sound.md` §10.5). Not in the data or the client code read so
+  far: **where** the music changes (landblock or finer, and whether dungeon, landmark or area
+  music wins; `sound.md` §10.3.1 OPEN). Still for the owner: cross one area border with music
+  playing and record the `/loc` where the music changes and whether the old track fades for
+  a few seconds; O28.2 is then optional.
+- **Unchanged (listening needed):** O28.5 (which beds change at night and indoors; the night
+  switch itself is at time of day 0.8 and 0.25, `environment.md` §6, §10.1), O28.6, O28.8
+  (quest-dependent music: the quest state comes from the server and the game callback that
+  reads it was not decoded, `script-runtime.md` §18 OPEN-11), O28.10–O28.17 (ABC and instrument
+  checks: OC1–OC8 confirm `abc-dialect.md`'s predictions, OC9–OC10 settle its §4.1 OPEN).
+
 ---
 
 <a id="m5-items"></a>
@@ -1062,6 +1165,19 @@ time it.
 strafe"); degrees per second for the keyboard turn; whether the speeds seem to differ by
 species (if so, per species).
 
+**Answered from the client (2026-10-08).** No measurement is needed (`collision.md`
+§11.8–§11.9, BIN; values from the data):
+
+- **Speeds** (no speed effects active): running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s
+  strafing (the client has strafe); walking (walk mode) 2.5 m/s forward, 2.25 m/s backward,
+  2.57 m/s strafing. The 2 m/s walk and 6 m/s run that the M7 specs use are therefore not the
+  original's.
+- **Keyboard turn on foot:** the `[Input] TurnKeySpeed` preference, 150 degrees per second by
+  default (a full turn in 2.4 s); walk mode does not slow it.
+- **Species:** no difference; only speed effects set by the server change the speeds.
+
+The stopwatch runs above are an optional confirmation.
+
 <a id="o71"></a>
 ## O71. How other players' characters move when watched (M7)
 
@@ -1077,6 +1193,10 @@ video may be kept privately, never in the repository.
 or turning; does it turn on the spot with a stepping animation or rotate rigidly; does it
 slide or stutter at a normal latency. Rough delays in milliseconds where you can judge them.
 
+**2026-10-08 (check):** not answerable from the data or the offline client. It is a felt
+comparison, and the path that applies other players' updates belongs to the network layer,
+which decision 0011 excludes. Unchanged.
+
 <a id="o72"></a>
 ## O72. Distance at which other player characters appear and disappear (M7)
 
@@ -1091,6 +1211,9 @@ moment it appears.
 **Record:** the distance in metres (or landblocks, from the two `/loc` readings) for
 disappearing and for appearing again; whether the two differ (hysteresis).
 
+**2026-10-08 (check):** not answerable from the data or the offline client: the server
+decides which characters a client is told about. Unchanged.
+
 <a id="o73"></a>
 ## O73. Range of local "say" chat (M7, optional)
 
@@ -1102,3 +1225,6 @@ seems to have its own range.
 
 **Record:** metres only (from `/loc`), for say and, if different, for emote text. **Do not
 record any chat text.**
+
+**2026-10-08 (check):** not answerable from the data or the offline client: the server
+decides who receives a chat line. Unchanged (optional).

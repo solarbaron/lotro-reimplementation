@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (2026-10-09: the implementer notes of §12 answered; Tessera Decisions FD10–FD15 and two data facts FV23–FV24 added; awaiting review). Before: Accepted (2026-10-08) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
 | **Review record** | 2026-10-08, spec reviewer: passed (CLEAN_ROOM.md §5.3), Accepted. Details in the dirty-room review log (decision 0018). |
@@ -49,6 +49,7 @@ disassembled with a generic DXBC disassembler; these are data, not the executabl
 |---|---|
 | BIN-F | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of `distant-landscape.md`'s BIN row), read on 2026-10-08 with a headless Ghidra session on an own copy of the shared analysis project (deleted afterwards), plus the listings the `distant-landscape.md` session left in the dirty scratch area. **Questions:** (a) the values of the near radius and the far radius of the sector manager and how the graphics preferences set them; (b) which landblocks are drawn at full detail and which from the sectors; what the near-field batch flag does; (c) when sectors are loaded, kept and discarded; (d) the far-terrain material: which material records, which textures (parameter 3001, normal maps) and under which options; (e) how the landscape extent, fog and draw distances interact, and what is drawn beyond the last sector; (f) when distant sprites are drawn, their fade distances, the per-sprite byte and flag; (g) what the client does with the sectors' entity lists. **Why M1–M3 were not enough:** the radii, the batch rules, the material choice, the fade rules and the entity handling are code with no trace in the records; the shader records hold the per-pixel arithmetic but not the inputs the client feeds them; no published source describes the far view; no running client or frame capture is available (M3). **Read:** the landscape manager's update, sector-list, option, radius and per-frame functions; the sector mesh draw and readiness functions; the near-landscape block builder's option path; the preference registration table and the reader of `LandscapeDrawDistance`; the scene-description builder and its initialiser; the frame state copy (draw-distance scale); the sprite batch builder and sprite painter; the entity streaming manager's distant set; the sky-gradient placement. Nothing about network, login, keys, launcher, patcher or anti-tamper (decision 0004). Output is prose facts only; listings and addresses stay in the dirty scratch area and the review log. |
 | OBS-F | **M1**, user install (Steam), 2026-10-08, read-only: the DID map 0x28000002 (UNIQUEDB, `property-system.md` §8) decoded for keys 0x39, 0xB6, 0x7A and 0x95; the shader records 0x2B0005ED and 0x2B000461 decoded with the layout of `material.md` §7 (parameter declarations and defaults, permutations, render-state blocks) and their DXBC programs disassembled; the texture lists 0x40000002, 0x40000007 and 0x40017690 and the surfaces they name (headers); the render mesh 0x06000000 (presence); **all 33,159** sector records streamed and parsed (sprite `distance` per imposter key; entity view distances). Repository tools (`tessera-dattool`) and throwaway probes were used. |
+| OBS-F2 | **M1**, user install (Steam), 2026-10-09, read-only, with throwaway probes in the dirty-room scratch area and the layout of `material.md` §7: the parameter declarations, defaults and every render-state block of the two far-terrain templates 0x2B0005ED and 0x2B000461 and of the three sprite shader records 0x2B00000E, 0x2B0003B9 and 0x2B0006E5 (`misc-records.md` §5). |
 | SPEC | `distant-landscape.md` (DL rows), `walker.md` (W rows), `entity-descriptor.md` §9.3, `misc-records.md` §5, `terrain-texturing.md` §12, `water.md` §8.1, `lighting.md`, `material.md`. |
 
 | # | Fact | Sources | Mark |
@@ -75,6 +76,8 @@ disassembled with a generic DXBC disassembler; these are data, not the executabl
 | FV20 | The sprite's last byte is a heading in steps of 360/256 degrees; it decides the mirror flag (§9.5) | BIN-F (f) | BIN |
 | FV21 | Sector entity lists feed the entity streaming manager's distant set: created within their view distance, removed beyond it or when the sector leaves the list (§10) | BIN-F (g) | BIN |
 | FV22 | Detail texture: a nine-level texture list, top level 1,024 × 1,024 DXT1; template defaults of the texture transforms (§6.2, §6.3) | OBS-F | Confirmed 2026-10-08 |
+| FV23 | Both far-terrain templates declare material colour 2000 with default (1, 1, 1, 1) and declare neither 4003 nor 4004; every render-state block of both has cull mode 2 (back faces culled); the per-sector copy sets only 3000, 3001, 4005 and 4006 (FV10), so far terrain, stitching triangles included, is drawn with back-face culling and *M* = the template's 2000 (§5.2, §6.3, §12) | OBS-F2; BIN-F (d) via FV10 | Confirmed 2026-10-09 |
+| FV24 | The three sprite shader records declare only textures (3000; 3011 in two of them) and 4007 = 0, no 1043, 4004, 4002, 4003 or 2000; every render-state block of all three is SRCALPHA / INVSRCALPHA, ADD, depth comparison "nearer or equal", depth write on, cull none (two-sided), alpha test on with reference 0.1, material colour white (§9.3, §12) | OBS-F2 | Confirmed 2026-10-09 |
 
 ---
 
@@ -273,6 +276,10 @@ There are no skirts. Cracks are closed by the stitching triangles of
 - Toward an uncovered neighbour (a missing sector or the map edge) no stitching is made; the
   edge stays open.
 
+The stitching triangles are drawn with the far batch and its material, whose render state
+culls back faces (FV23), so each is seen from one side only, the side set by its stored corner
+order (`distant-landscape.md` §5.3); Tessera's Decision is FD10.
+
 The far mesh ignores the vertex-flag diagonals of the near terrain (DL20). Inside the near
 field nothing is shared, so the two triangulations differ only inside each landblock.
 
@@ -356,7 +363,9 @@ Per pixel:
 
 Render state (OBS): source factor SRCALPHA, destination INVSRCALPHA, depth test "nearer or
 equal", depth write on, back faces culled (`material.md` §7.6). No shadows and no point
-lights reach the far terrain through this template.
+lights reach the far terrain through this template. The material colour that scales *A* and
+*H* in step 1 is the template's 2000, (1, 1, 1, 1) in both templates, which the per-sector copy
+leaves unchanged (FV23).
 
 <a id="s6-4"></a>
 ### 6.4 Normal-mapped template (OBS, FV11, FV12)
@@ -521,6 +530,13 @@ distance from the eye to the sprite's anchor, the sprite's opacity factor is
 the second factor being the far-draw fade of §7.2. It multiplies the atlas coverage before
 the alpha test (`misc-records.md` §5.3).
 
+The sprite material's state (FV24): alpha test on with the block's reference 0.1 (the sprite
+records declare no 1043), blended SRCALPHA / INVSRCALPHA, depth test "nearer or equal", depth
+write on, drawn two-sided. The per-draw rules of `material.md` §11.2 hand the programs the
+reference ⌊0.1 × 255⌋ / 255 = 25 / 255 (with depth write on, scaled by the material and tint
+alpha, which are 1 for sprites), so a sprite texel is kept when its faded coverage exceeds
+about 0.099 (the program's 0.001 margin included).
+
 Consequences:
 
 - In the near field the sprite starts to appear 25 units before *D* × *c* and is complete
@@ -622,90 +638,64 @@ within its view distance and within its LOD-class draw distance.
 | FD7 | Apply the content-layer test of `entity-descriptor.md` §4.5.1 to distant-set entries, using the entry's own `Entity_ContentLayers` (§10) | Whether the client tests layers for these entries was not traced |
 | FD8 | Never draw the near batch in the world view; use the near batch only for tools (§5.1) | Matches the original's world view |
 | FD9 | The walker may keep its own far band (`walker.md` §14.4) until this spec is implemented; when implemented, the near field is 3 × 3 landblocks as here, unless the owner chooses a larger full-detail ring as an enhancement (then the far mesh must skip those landblocks and stitch to them by the same rule) | Fidelity versus look; owner choice |
+| FD10 | Draw the stitching triangles with face culling off (§5.2) | The client culls back faces (FV23); a sliver seen from its back then shows a gap in the original. Two-sided slivers close every crack and cost almost nothing |
+| FD11 | With a full-detail ring larger than *N* = 1 (FD9 enhancement): the far mesh treats a near neighbour as LOD 0 and fans each 2-sample segment over every neighbour edge sample inside it (the client's single triangle when the neighbour is one LOD finer); the walker meshes every full-detail landblock that borders a far landblock, or one about to become far, at its finest level and leaves the far neighbour out of its own seam matching, so the edge carries every sample the fan joins | One triangle per segment would leave T-junctions against a coarser full-detail edge; the case cannot arise with *N* = 1 (§4) |
+| FD12 | With an explicit near set (the walker's), the landblocks of the set count as near inside the grid's rectangle even when their sector has no record, and their far neighbours stitch toward them; the radius form (tools, tests) keeps the §4 rule | §4 calls a landblock near only when a listed, readable sector covers it; the walker's full-detail terrain exists without a sector record, and an open edge there would show a crack |
+| FD13 | Hand-off per landblock: the full-detail terrain (and ceiling) and the landblock water skip exactly the landblocks that the far batches on the GPU cover, and only those landblocks get sector water (§8) from the far view; a near-field landblock whose full-detail mesh is not on the GPU yet is left out of the near set, so the far batch draws it until the mesh arrives; a sector's terrain batch is drawn only once its colour list is loaded or has failed | FD3 swaps work per sector; this keeps every landblock drawn exactly once while the near field changes |
+| FD14 | Draw order in the world pass: terrain layers, instanced scenery, sky, far view, water. The far view comes after the sky so that the far-draw fade (§6.3 step 3, §7.2) and the far edge blend with the sky, not with the clear colour | The client's order was not traced; `render.md` §5.1 does not list the far view yet (note for its owner) |
+| FD15 | Walker with `--far-view on`: without `--view-blocks` the full-detail terrain, landblock water and static objects are streamed within 2 landblocks (320 units, which holds the 3 × 3 from any position in the viewer's landblock) and the terrain is drawn for the 3 × 3 near field only; `--view-blocks` keeps a larger ring (FD9, FD11). The landscape extent for the global object limit and the fog (§7.1) is *E* either way, and the far clip plane covers *E*. The walker's viewer instance is always 0, so the instance rules of §3.4 and §10 step 2 never fire | Walker settings, not client facts |
 
-**Implementer notes (OPEN, 2026-10-08).** Engineering choices made where the spec is silent;
-each records the question, not an answer about the original.
+**Implementer notes of 2026-10-08, answered 2026-10-09 (spec writer).**
 
-> **OPEN:** (implementer) §5.2 says the stitching triangles are "oriented like the mesh",
-> but they are vertical slivers (all three points on one landblock edge), so a winding gives
-> no front face seen from above. Which side faces the viewer, and whether the client culls
-> them, is not stated. Tessera (`crates/world/src/far_view/mesh.rs`,
-> `crates/render/src/far_view.rs`) stores them after the grid triangles and draws them with
-> face culling off.
+> **Answered (was OPEN, implementer):** which side of a stitching triangle faces the viewer and
+> whether the client culls them. The far-terrain material culls back faces (FV23), so the
+> client draws each sliver from one side only, set by its stored corner order; Tessera's
+> two-sided slivers are Decision FD10.
 
-> **OPEN:** (implementer, corrected 2026-10-09) FD9 asks the far mesh to "stitch by the
-> same rule" to a larger full-detail ring, where a far landblock of LOD 2 or 3 meets a
-> full-resolution edge. One triangle per segment then leaves T-junctions, and the walker's
-> full-detail terrain has distance LODs of its own, so its edge can be coarser than LOD 0.
-> Neither case arises with *N* = 1 (§4: the 3 × 3 is LOD 0). Tessera: (a) the far mesh
-> treats a near neighbour as LOD 0 and fans each segment over every neighbour edge sample
-> inside it (identical to the client's single triangle when the neighbour is one LOD finer);
-> (b) the walker meshes every full-detail block that borders a far landblock (or one about
-> to be far) at its finest level, and leaves the far neighbour out of its own seam
-> matching, so its edge carries every sample the fan joins
-> (`apps/client/src/walker/terrain.rs`, `farview.rs`).
+> **Answered (was OPEN, implementer, corrected 2026-10-09):** stitching to a larger
+> full-detail ring: Decision FD11 (the fan and the walker's finest-level edge).
 
-> **OPEN:** (implementer) §4 calls a landblock near only when a listed, readable sector
-> covers it, so a far landblock next to a full-detail landblock whose sector has no record
-> gets no stitch on that edge (§5.2). Whether the original ever has such a pair was not
-> stated. Tessera: with an explicit near set (`NearField::Set`, the walker's) those
-> landblocks count as near inside the grid's rectangle and their far neighbours stitch
-> toward them; the radius form (tools, tests) keeps the §4 rule.
+> **Answered (was OPEN, implementer):** far landblocks next to a full-detail landblock whose
+> sector has no record: Decision FD12 (explicit near set). Whether the original ever has such a
+> pair inside its 3 × 3 was not checked; with the §4 rule its edge would stay open.
 
-> **OPEN:** (implementer) FD3 swaps work in per sector, so for some frames after the near
-> field changes the far batches on the GPU were built for the old one; the spec does not say
-> what is drawn meanwhile. Tessera hands off per landblock: the full-detail terrain (and
-> ceiling) and the landblock water skip exactly the landblocks the far batches on the GPU
-> cover, and only those landblocks get sector water (§8) from the far view; a near-field
-> landblock whose full-detail mesh is not on the GPU yet is left out of the near set, so the
-> far batch draws it until the mesh arrives. A sector's terrain batch is drawn only once its
-> colour list is loaded or has failed.
+> **Answered (was OPEN, implementer):** what is drawn while the near field changes: Decision
+> FD13 (hand-off per landblock).
 
-> **OPEN:** (implementer) The draw order of the far terrain and sprites against the sky is
-> not given; the far-draw fade (§6.3 step 3, §7.2) blends with whatever lies behind. Tessera
-> draws the far view after the sky in the opaque stage (order: terrain layers, instanced
-> scenery, sky, far view, water; `render.md` §5.1 does not list the far view), so the fade
-> and the far edge blend with the sky, not the clear colour.
+> **Answered (was OPEN, implementer):** the draw order against the sky: Decision FD14.
 
-> **OPEN:** (implementer) Walker settings with `--far-view on`: without `--view-blocks` the
-> full-detail terrain, landblock water and static objects are streamed within 2 landblocks
-> (320 units, which holds the 3 × 3 from any position in the viewer's landblock) and the
-> terrain is drawn for the 3 × 3 near field only (§2, §3.2); `--view-blocks` keeps a larger
-> ring (FD9 enhancement). The landscape extent used for the global object limit and the fog
-> (§7.1) is *E* of the settings either way, and the far clip plane covers *E*. The walker's
-> viewer instance is always 0, so the instance rules of §3.4 and §10 step 2 never fire.
+> **Answered (was OPEN, implementer):** walker settings with `--far-view on`: Decision FD15.
 
-> **OPEN:** (implementer) Not implemented yet, recorded so the gaps stay visible: the
-> normal-mapped template (§6.4; the walker always uses the plain one, `FarLandscapeNormalMaps`
-> and the graphics core are not read), the seam overlay (§6.5, which needs that template),
-> the flow-map material copy of the sector water (`distant-landscape.md` §5.5, parameter
-> 3075; the far water uses the water type's surface as it is), and drawing the far
-> entities of §10 (the distant set is kept and walked, nothing is created). The plain
-> template's detail repeats are read from its declared defaults of 1001 and 1002 (4 × 4
-> when the record is missing).
+> **Answered (was OPEN, implementer):** the material colour that scales *A* and *H* (§6.3
+> step 1) is the template's 2000, (1, 1, 1, 1) in both templates (FV23); Tessera's 1 is the
+> client's value.
 
-> **OPEN:** (implementer) Whether the ceiling mesh uses the terrain descriptors' stitch
-> flags (neighbours without a ceiling included) or its own. Tessera applies the same nine
-> descriptors to both meshes.
+> **Answered (was OPEN, implementer):** the distant-sprite material's alpha-test threshold and
+> blend and depth state are data (FV24, §9.3): reference 0.1 (handed as 25 / 255), SRCALPHA /
+> INVSRCALPHA, depth write on, two-sided. Tessera's threshold 0.5 departs from it and is
+> replaced by 0.1; batches stay far to near (FD4).
 
-> **OPEN:** (implementer) §6.3 step 1 scales *A* and *H* by the material colour, but the
-> templates' colour (2000) default is not given. Tessera uses 1.
+**Implementation status (2026-10-09; gaps, not questions).** Not implemented yet, recorded so
+that they stay visible: the normal-mapped template (§6.4; the walker always uses the plain one
+and does not read `FarLandscapeNormalMaps` or the graphics core); the seam overlay (§6.5, which
+needs that template); the flow-map material copy of the sector water (`distant-landscape.md`
+§5.5, parameter 3075; the far water uses the water type's surface as it is); drawing the far
+entities of §10 (the distant set is kept and walked, nothing is created). The plain template's
+detail repeats are read from its declared defaults of 1001 and 1002 (§6.2), 4 × 4 when the
+record is missing.
 
-> **OPEN:** (implementer) The distant-sprite material's alpha-test threshold (§9.3,
-> `misc-records.md` §5.3: "below the alpha-test threshold plus 0.001") and its blend and
-> depth state. Tessera: threshold 0.5, SRCALPHA / INVSRCALPHA with depth writes, batches far
-> to near (FD4).
+> **OPEN:** whether the ceiling mesh uses the terrain descriptors' stitch flags (neighbours
+> without a ceiling included) or flags of its own. Not traced. **Tessera Decision:** the same
+> nine descriptors serve both meshes.
 
-> **OPEN:** (implementer) The fake directional light's "default direction" when the main
-> light is not directional (`lighting.md` E18) is not given. Tessera lights sprites from
+> **OPEN:** the fake directional light's "default direction" when the main light is not
+> directional (`lighting.md` E18). Not traced. **Tessera Decision:** sprites are lit from
 > straight above with grey 0.6.
 
-> **OPEN:** (implementer) §7.3 step 5 places the horizon mesh "at the eye's horizontal
-> position, shifted down by *k*" without saying from which height (Tessera: the eye's
-> height), and does not say whether the mesh writes depth or is drawn behind the terrain.
-> A mesh whose horizontal radius is below *E* would hide listed terrain if drawn
-> depth-tested in the world. The walker draws it only when its radius is at least 1.25 *E*.
-
+> **OPEN:** §7.3 step 5 places the horizon mesh "at the eye's horizontal position, shifted
+> down by *k*" without saying from which height or whether it writes depth. Not traced.
+> **Tessera Decision:** from the eye's height; the walker draws it only when its horizontal
+> radius is at least 1.25 *E*, so that a depth-tested mesh never hides listed terrain.
 
 ---
 
@@ -852,6 +842,7 @@ This spec edits no other spec except one cross-reference line in `distant-landsc
 | `walker.md` §14.11 | OPEN: the original's far landscape and seam | §5, §6, §11 |
 | `terrain-texturing.md` §12 | OPEN: what the sector overlay contributes, and when the renderer holds a sector material | §6.5 (coverage formula, conditions); "Reported" bands of 14 and 24 blocks are the freecam tool's overrides (`walker.md` W19), not the client's |
 | `water.md` §8.1 | OPEN: whether the sector quads are used at every distance | §8: yes |
+| `render.md` §5.1 | The world pass's draw order does not list the far view | FD14: terrain layers, instanced scenery, sky, far view, water |
 | `misc-records.md` §18 | Proposed answer on sprite `distance` and the flag | Confirmed and completed by §9.3, §9.5 |
 
 ---
@@ -862,3 +853,4 @@ This spec edits no other spec except one cross-reference line in `distant-landsc
 | Date | Change |
 |---|---|
 | 2026-10-08 | First version (Review): radii and settings, near field, sector list and its rebuild rules, per-landblock grid, far batches and the near-batch rule, stitching against the near field, far-terrain materials (templates, detail texture, normal maps, shading, fade, near-view mask), seam overlay, extent and horizon fill, sector water at every distance, distant sprites (gates, fade-in distances, cross-fade, heading and mirror), far entities, transitions, Tessera Decisions, invariants, worked examples, OPENs (BIN-F, OBS-F). |
+| 2026-10-09 | Spec writer (dirty room); status Accepted → Revised, awaiting review. §12: the implementer notes of 2026-10-08 answered; new Tessera Decisions FD10 (two-sided stitching triangles), FD11 (stitching to a larger full-detail ring), FD12 (explicit near set), FD13 (hand-off per landblock), FD14 (far view after the sky), FD15 (walker settings); the gaps recorded as an implementation status; three notes stay OPEN with Decisions (ceiling stitch flags, fake light default direction, horizon mesh height and depth). New data facts (OBS-F2): FV23 (templates: 2000 = (1, 1, 1, 1), back-face culling, no 4003 or 4004), FV24 (sprite records: alpha test on, reference 0.1, alpha blend, depth write, two-sided). §5.2, §6.3 and §9.3 cite them; §16 gains a row for `render.md` §5.1. |

@@ -247,7 +247,7 @@ pub use ui::{
 };
 pub use water::{
     MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, WATER_BLOCK, WaterDraw,
-    WaterParams, WaterQuad, fresnel as water_fresnel, wave_height as water_wave_height,
+    WaterParams, WaterQuad, fresnel as water_fresnel, water_fade, wave_height as water_wave_height,
 };
 
 /// Re-export of the math library used in the public API.

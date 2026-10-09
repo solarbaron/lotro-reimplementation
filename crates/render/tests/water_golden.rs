@@ -20,11 +20,11 @@ use std::path::Path;
 
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, Camera, ColorSpace, Filter, Fog, FrameLighting, LitSurface, Material, MeshData,
-    MeshDraw, OffscreenFormat, Opacity, PassSpace, Perspective, RenderError, Renderer, RgbaImage,
-    SunLight, SunShadow, TerrainChunkData, TerrainDraw, TerrainLayer, TerrainLayerTextures,
-    TerrainTransform, TerrainVertices, TextureId, TextureUpload, WaterDraw, WaterParams, WaterQuad,
-    Wrap, water_fresnel,
+    AlphaMode, Camera, ColorSpace, FarFadeParams, Filter, Fog, FrameLighting, LitSurface, Material,
+    MeshData, MeshDraw, OffscreenFormat, Opacity, PassSpace, Perspective, RenderError, Renderer,
+    RgbaImage, SunLight, SunShadow, TerrainChunkData, TerrainDraw, TerrainLayer,
+    TerrainLayerTextures, TerrainTransform, TerrainVertices, TextureId, TextureUpload, WaterDraw,
+    WaterParams, WaterQuad, Wrap, water_fade, water_fresnel,
 };
 
 const WIDTH: u32 = 320;
@@ -383,6 +383,27 @@ fn water_over_with(
     normal_map: Option<TextureId>,
     lighting: FrameLighting,
 ) -> Result<[u8; 4], RenderError> {
+    water_over_faded(
+        r,
+        floor_rgb,
+        params,
+        eye_z,
+        normal_map,
+        lighting,
+        FarFadeParams::default(),
+    )
+}
+
+/// [`water_over_with`] with the far-draw fade `fade`.
+fn water_over_faded(
+    r: &mut Renderer<'static>,
+    floor_rgb: [f32; 3],
+    params: WaterParams,
+    eye_z: f32,
+    normal_map: Option<TextureId>,
+    lighting: FrameLighting,
+    fade: FarFadeParams,
+) -> Result<[u8; 4], RenderError> {
     let floor = r.upload_mesh(&floor(-1.0))?;
     let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
     let mut frame = r.begin_offscreen_frame(&target)?;
@@ -411,15 +432,18 @@ fn water_over_with(
                 ..LitSurface::default()
             }),
         )
-        .water(WaterDraw::new(
-            [WaterQuad {
-                origin: [0.0, 0.0],
-                size: [4.0, 4.0],
-                height: 0.0,
-            }],
-            normal_map,
-            params,
-        ));
+        .water(WaterDraw {
+            fade,
+            ..WaterDraw::new(
+                [WaterQuad {
+                    origin: [0.0, 0.0],
+                    size: [4.0, 4.0],
+                    height: 0.0,
+                }],
+                normal_map,
+                params,
+            )
+        });
     let stats = r.end_frame(frame)?;
     assert_eq!(stats.scene_copies, 1);
     assert_eq!(stats.water_quads, 1);
@@ -479,6 +503,43 @@ fn refraction_composite_follows_section_8_4() -> Result<(), RenderError> {
             "eye {eye}: {px:?} vs {want:?}"
         );
     }
+    Ok(())
+}
+
+/// The far-draw fade of the sector water (`far-view.md` §8 OPEN, Tessera: the far
+/// terrain's fade of §7.2): the water blends toward what lies behind it by
+/// *a* = 1 − sat((*d* − *s*) × *r*) and is gone beyond *s* + 1 / *r*.
+#[test]
+fn far_draw_fade_blends_toward_the_scene_behind() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.8, 0.4, 0.2];
+    // Tinted water seen straight down from 100 units: colour = [0.6, 0.6, 0.3] unfaded.
+    let tinted = WaterParams {
+        fog_amount: 0.0,
+        water_color: [0.5, 1.0, 1.0],
+        overbright: 1.5,
+        ..WaterParams::default()
+    };
+    let unlit = || FrameLighting {
+        sun: None,
+        ..FrameLighting::default()
+    };
+    let fade = |start: f32, inv_range: f32| FarFadeParams { start, inv_range };
+    let at = |r: &mut Renderer<'static>, f: FarFadeParams| {
+        water_over_faded(r, floor, tinted, 100.0, None, unlit(), f)
+    };
+    // d = 100: before the start, unchanged.
+    let px = at(&mut r, fade(200.0, 1.0 / 100.0))?;
+    assert!(close(px, [0.6, 0.6, 0.3]), "before the fade: {px:?}");
+    // Halfway: a = 0.5.
+    let px = at(&mut r, fade(50.0, 1.0 / 100.0))?;
+    assert!(close(px, [0.7, 0.5, 0.25]), "halfway: {px:?}");
+    // Beyond the end: the floor alone.
+    let px = at(&mut r, fade(0.0, 1.0 / 50.0))?;
+    assert!(close(px, floor), "beyond the end: {px:?}");
+    assert_eq!(water_fade(fade(50.0, 1.0 / 100.0), 100.0), 0.5);
     Ok(())
 }
 

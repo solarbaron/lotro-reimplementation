@@ -327,6 +327,22 @@ pub fn fade_params(settings: &FarViewSettings) -> FarFadeParams {
     }
 }
 
+/// Whether the square of side `size` with south-west corner `origin` (render frame) lies
+/// wholly beyond the end of the far-draw fade `fade` seen from `eye`: its nearest point is
+/// farther than *s* + 1 / *r* horizontally, so every point of it is at least that far and
+/// fully faded (*a* = 0). Never with no fade (*r* = 0) or non-finite values.
+#[must_use]
+pub fn beyond_fade(origin: [f32; 2], size: f32, eye: Vec3, fade: FarFadeParams) -> bool {
+    if !(fade.inv_range.is_finite() && fade.inv_range > 0.0 && fade.start.is_finite()) {
+        return false;
+    }
+    let end = fade.start + 1.0 / fade.inv_range;
+    let nx = eye.x.clamp(origin[0], origin[0] + size);
+    let ny = eye.y.clamp(origin[1], origin[1] + size);
+    let d = (eye.x - nx).hypot(eye.y - ny);
+    d.is_finite() && d > end
+}
+
 /// The detail repeats of a far-terrain template (§6.2: the defaults of texture transform
 /// set 0, parameters 1001 and 1002); `None` when the record is missing, does not decode or
 /// holds no positive finite pair.
@@ -938,6 +954,11 @@ impl FarViewLayer {
                     };
                     let size = LANDBLOCK_SIZE as f32;
                     let o = origin + Vec3::new(f32::from(x) * size, f32::from(y) * size, 0.0);
+                    // Limited like the far terrain (§8 OPEN, Tessera): a quad wholly beyond
+                    // the end of the far-draw fade is not drawn.
+                    if beyond_fade([o.x, o.y], size, eye, fade) {
+                        continue;
+                    }
                     quads
                         .entry(surface)
                         .or_default()
@@ -963,6 +984,8 @@ impl FarViewLayer {
             water_quads += list.len();
             let mut d = WaterDraw::new(list, normal, params);
             d.block_offset = block_offset;
+            // Faded like the far terrain (§7.2, FD1; §8 OPEN, Tessera choice).
+            d.fade = fade;
             pass.water(d);
         }
         self.draw_horizon(pass, eye, store, &settings);
@@ -1102,6 +1125,43 @@ mod tests {
             NearField::Set(s) => s.iter().copied().collect(),
             NearField::Radius(_) => panic!("expected a set"),
         }
+    }
+
+    #[test]
+    fn far_water_ends_with_the_far_terrain_fade() {
+        // FD1 at High: s = E − 160, r = 1/160, so nothing is visible beyond E = 2,080.
+        let fade = FarFadeParams {
+            start: 1_920.0,
+            inv_range: 1.0 / 160.0,
+        };
+        let eye = Vec3::new(0.0, 0.0, 500.0);
+        // Nearest point 1,920 or 2,080 away: inside the fade band, drawn.
+        assert!(!beyond_fade([1_920.0, -80.0], 160.0, eye, fade));
+        assert!(!beyond_fade([2_080.0, 0.0], 160.0, eye, fade));
+        // Nearest point just past E: wholly faded, not drawn (whatever the eye height).
+        assert!(beyond_fade([2_081.0, 0.0], 160.0, eye, fade));
+        assert!(beyond_fade([1_500.0, 1_500.0], 160.0, eye, fade));
+        // A quad around the eye is never beyond.
+        assert!(!beyond_fade([-80.0, -80.0], 160.0, eye, fade));
+        // No fade, or hostile values: never limited.
+        assert!(!beyond_fade(
+            [1.0e6, 0.0],
+            160.0,
+            eye,
+            FarFadeParams::default()
+        ));
+        let nan = FarFadeParams {
+            start: f32::NAN,
+            inv_range: 1.0,
+        };
+        assert!(!beyond_fade([1.0e6, 0.0], 160.0, eye, nan));
+        // The settings' fade is the one the far terrain uses.
+        let settings = FarViewSettings::default();
+        let f = fade_params(&settings);
+        assert_eq!(
+            (f.start, f.inv_range),
+            (settings.fade().start, settings.fade().inv_range)
+        );
     }
 
     #[test]

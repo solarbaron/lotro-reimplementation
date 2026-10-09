@@ -31,7 +31,7 @@ quinn.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time", "sync", "macros", "signal"] }
 # Only the low-level Argon2id function is used; the PHC string is formatted here
 # (test-server.md §3.4).
-argon2 = { workspace = true, default-features = false, features = ["alloc"] }
+argon2 = { workspace = true, features = ["alloc"] }
 base64ct = { version = "1.8", features = ["alloc"] }
 getrandom = "0.4"
 # Spanned TOML parsing (no serde): every finding names its line (test-server.md §2.6).

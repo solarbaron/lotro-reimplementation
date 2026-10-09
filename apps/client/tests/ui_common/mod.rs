@@ -118,6 +118,9 @@ impl Rig {
             .offer_pending(&mut self.mapper, &mut self.plugins, &mut NoWindow);
         self.mapper.update(now);
         self.host.step7(&mut self.plugins, Some(&mut self.mapper));
+        // Lines typed in the chat window go to the command dispatcher (no session here).
+        self.host
+            .dispatch_entry_lines(&mut self.plugins, None, Instant::now());
         self.host.step8(self.renderer.as_mut(), &mut self.plugins);
         self.host.apply_band_changes(&mut self.mapper);
         self.host.end_frame(&self.plugins, 0.0);

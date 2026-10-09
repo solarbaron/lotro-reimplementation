@@ -7,9 +7,11 @@
 //! - its art-surface count equals the A row, and its element, text-element, state, font and
 //!   string-reference counts equal the §17.2 table (the instantiated-panel census);
 //! - P15's store button is hidden (§17.4);
-//! - the Escape rule of `game-panels.md` §16, the chat window's texts and commands read from
-//!   the install (`chat-window.md` §10), and the minimap data source (outdoor tiles and
-//!   indoor dungeon maps, on the worker pool too) work on the real panels.
+//! - the Escape rule of `game-panels.md` §16, the chat window's texts and the command
+//!   dispatcher's words read from the install (`chat-window.md` §10; lines typed in the
+//!   window's entry go to the dispatcher, decision 0020), and the minimap data source
+//!   (outdoor tiles and indoor dungeon maps, on the worker pool too) work on the real
+//!   panels.
 //!
 //! Only counts and rectangles are printed; no game data leaves the install. Skipped
 //! (reported as passed) unless `TESSERA_GAME_DIR` points at an install. Run with
@@ -20,17 +22,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tessera_assets::{PoolConfig, WorkerPool};
+use tessera_client::commands::registry::split_names;
+use tessera_client::commands::text::CommandText;
+use tessera_client::commands::{Context, Dispatcher, LineKind, LocalLine, Origin};
 use tessera_client::panels::catalog::game_layouts;
-use tessera_client::panels::chat::ChatSetup;
+use tessera_client::panels::chat::{CHAT_LOG, ChatPanel, ChatSetup};
 use tessera_client::panels::{
-    NativePanels, NoMaps, NoPlugins, NoShell, PanelCatalog, PanelId, Services, WorldMaps,
-    panel_census,
+    NativePanels, NoMaps, NoPlugins, PanelCatalog, PanelId, Services, WorldMaps, panel_census,
 };
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::ui_layout::{UiEnum, UiLabels};
 use tessera_formats::{DataIdMap, Did, EnumMapper, PropertyDictionary, Record, UiLayout};
-use tessera_ui::game::chat::CommandOutcome;
-use tessera_ui::game::chat::command::RESULT_UNKNOWN;
+use tessera_ui::game::chat::{CommandOutcome, NoHistory};
 use tessera_ui::game::escape::EscapeOutcome;
 use tessera_ui::game::radar::RadarInput;
 use tessera_ui::game::{GameVocab, MapLookup, MapSource};
@@ -232,6 +235,36 @@ fn panels_for(inst: &Install, gv: &GameVocab) -> NativePanels {
     p
 }
 
+/// Types `text` into the chat window's entry and presses Enter (`chat-window.md` §6.2),
+/// then runs the submitted line through `dispatcher` without a session, as the UI host
+/// does (decision 0020 item 1). Returns the lines the dispatcher posted.
+fn submit_typed(
+    ui: &mut Ui,
+    chat: &mut ChatPanel,
+    dispatcher: &mut Dispatcher,
+    text: &str,
+) -> Vec<LocalLine> {
+    let w = chat.chat.primary().expect("primary window");
+    let entry = chat.chat.windows[w].entry.expect("entry");
+    ui.set_focus(Some(entry));
+    ui.set_text(entry, Some(text.to_owned()));
+    let line = match chat.command(ui, "AcceptInput", false, false, dispatcher.history_mut()) {
+        CommandOutcome::Submitted(line) => line,
+        other => panic!("not submitted: {other:?}"),
+    };
+    assert_eq!(ui.text_of(entry), "", "the entry is cleared");
+    let mut out = Vec::new();
+    let mut ctx = Context {
+        now: std::time::Instant::now(),
+        origin: Origin::Chat,
+        session: None,
+        music: None,
+        plugins: None,
+    };
+    dispatcher.submit_in(&line.text, &line.word, &line.target, &mut ctx, &mut out);
+    out
+}
+
 #[test]
 fn native_panels_from_the_install() {
     let Some(inst) = open_install() else { return };
@@ -258,11 +291,10 @@ fn native_panels_from_the_install() {
         let mut ui = Ui::new(Box::new(inst.env()), vocab.clone(), size);
         gv.register_classes(&mut ui);
         let mut panels = panels_for(&inst, &gv);
-        let (mut maps, mut plugins, mut shell) = (NoMaps, NoPlugins, NoShell);
+        let (mut maps, mut plugins) = (NoMaps, NoPlugins);
         let mut sv = Services {
             maps: &mut maps,
             plugins: &mut plugins,
-            shell: &mut shell,
         };
         let started = std::time::Instant::now();
         for (i, id) in PanelId::ALL.into_iter().enumerate() {
@@ -335,14 +367,13 @@ fn escape_chat_and_minimap_on_the_install() {
     gv.register_classes(&mut ui);
     let mut panels = panels_for(&inst, &gv);
     let mut maps = WorldMaps::new(reader_for(&inst), gv.pids);
-    let (mut plugins, mut shell) = (NoPlugins, NoShell);
+    let mut plugins = NoPlugins;
 
     // HUD.
     {
         let mut sv = Services {
             maps: &mut maps,
             plugins: &mut plugins,
-            shell: &mut shell,
         };
         for (id, r) in panels.open_hud(&mut ui, &mut sv) {
             r.unwrap_or_else(|e| panic!("{id} opens: {e}"));
@@ -362,7 +393,6 @@ fn escape_chat_and_minimap_on_the_install() {
         let mut sv = Services {
             maps: &mut maps,
             plugins: &mut plugins,
-            shell: &mut shell,
         };
         let o = panels.escape(&mut ui, true, false, &mut sv);
         assert!(matches!(o, EscapeOutcome::ShowedMainMenu(_)), "{o:?}");
@@ -396,8 +426,11 @@ fn escape_chat_and_minimap_on_the_install() {
         }
     }
 
-    // Chat: the built-in help and the local echo (chat-window.md §10 items 2–3).
+    // Chat: lines typed in the window's entry go to the client's command dispatcher, with
+    // the install's command words (chat-window.md §6.2, §10 items 3, 4, 6; decision 0020).
     {
+        let mut dispatcher = Dispatcher::new();
+        dispatcher.apply_text(CommandText::load(&inst.set, None));
         let chat = panels.chat.as_mut().expect("chat");
         let w = chat.chat.primary().expect("primary window");
         let tabs = chat.chat.windows[w].tabs.len();
@@ -405,87 +438,84 @@ fn escape_chat_and_minimap_on_the_install() {
         assert!(tabs >= 1);
         let list = chat.chat.windows[w].tabs[0].list.expect("log list");
         let before = ui.list_entries(list).len();
-        assert_eq!(chat.run_line(&mut ui, "/help", &mut shell, &mut plugins), 1);
-        assert!(ui.list_entries(list).len() > before, "help line in tab 1");
-        assert!(chat.is_command("help", &shell));
-        assert!(chat.is_command("HELP", &shell));
-        assert!(!chat.is_command("/help", &shell));
-        let out = chat.take_outgoing();
-        assert!(!out.is_empty(), "lines queued for the plugins");
-        // §10 items 3, 4, 6, 8: the install's texts and command names (only counts are
-        // printed, never the texts).
+        let out = submit_typed(&mut ui, chat, &mut dispatcher, "/help");
+        assert!(!out.is_empty(), "help lines");
+        assert!(out.iter().all(|l| l.kind == LineKind::Log));
+        for l in &out {
+            chat.post(&mut ui, CHAT_LOG, &l.text);
+        }
+        assert!(ui.list_entries(list).len() > before, "help lines in tab 1");
+        assert!(
+            !chat.take_outgoing().is_empty(),
+            "lines queued for the plugins"
+        );
+        let reg = dispatcher.registry();
+        assert!(reg.is_command("help"));
+        assert!(reg.is_command("HELP"));
+        assert!(!reg.is_command("/help"));
+        // The install's texts and command names (only counts are printed, never texts).
         let setup = chat.setup().clone();
+        let text = dispatcher.text().clone();
+        let count = |e: &Option<String>| e.as_deref().map_or(0, |e| split_names(e).count());
         println!(
-            "chat texts: prefix {} char(s), help names {}, plugin names {}, mode rows {}",
+            "chat texts: prefix {} char(s), help names {}, plugin names {}, mode rows {}, \
+             channel rows {}",
             setup.command_setup.prefix.chars().count(),
-            tessera_client::panels::chat::entry_names(&setup.help_entry).len(),
-            tessera_client::panels::chat::entry_names(&setup.plugins_entry).len(),
-            setup.modes.len()
+            count(&text.help_names),
+            count(&text.plugins_names),
+            setup.modes.len(),
+            text.channel_words.len()
         );
         assert_eq!(setup.command_setup.prefix, "/", "CW-I6: U+002F");
         assert_eq!(setup.command_setup.marker, ";", "CW-I6: U+003B");
-        assert!(!setup.texts.unknown_command.is_empty(), "token 0x04FE7F13");
+        assert_eq!(text.prefix, setup.command_setup.prefix, "one prefix");
+        assert!(text.unknown_line.is_some(), "token 0x04FE7F13");
         assert!(!setup.texts.no_reply_target.is_empty(), "token 0x00CC89CC");
         assert_eq!(setup.modes.len(), 26, "the fixed rows of §6.5");
-        for entry in [&setup.help_entry, &setup.plugins_entry] {
-            let names = tessera_client::panels::chat::entry_names(entry);
-            assert!(!names.is_empty(), "a name list (CW35a)");
-            for n in names {
-                assert!(chat.is_command(&n, &shell), "IsCommand on an install name");
-                assert!(chat.is_builtin(&n));
+        assert_eq!(
+            text.channel_words.len(),
+            26,
+            "the same rows for the dispatcher"
+        );
+        for entry in [&text.help_names, &text.plugins_names] {
+            let entry = entry.as_deref().expect("a name list (CW35a)");
+            let mut n = 0;
+            for name in split_names(entry) {
+                assert!(reg.is_command(name), "IsCommand on an install name");
+                n += 1;
             }
+            assert!(n > 0, "a name list (CW35a)");
         }
         let say = setup.command_setup.default_word.clone();
-        assert!(chat.is_command(&say, &shell), "the default channel word");
-        // Unknown command from `run_line`: one Error line in the log and in the queue.
-        let before = ui.list_entries(list).len();
+        assert!(reg.is_command(&say), "the default channel word");
+        // Unknown command typed in the entry: the dispatcher's one Error line, from the
+        // install (§7.6, §10 item 6).
+        let out = submit_typed(&mut ui, chat, &mut dispatcher, "/zzznosuchcommand");
         assert_eq!(
-            chat.run_line(&mut ui, "/zzznosuchcommand", &mut shell, &mut plugins),
-            RESULT_UNKNOWN
-        );
-        assert_eq!(
-            ui.list_entries(list).len(),
-            before + 1,
-            "§7.6 line in tab 1"
-        );
-        assert_eq!(
-            chat.take_outgoing(),
-            vec![(1, setup.texts.unknown_command.clone())]
+            out,
+            vec![LocalLine::error(
+                text.unknown_line.clone().unwrap_or_default()
+            )]
         );
         // `ChatModeReply` without a target: logged and queued with mask 0x21.
         let before = ui.list_entries(list).len();
-        let o = chat.command(
-            &mut ui,
-            "ChatModeReply",
-            false,
-            false,
-            &mut shell,
-            &mut plugins,
-        );
+        let o = chat.command(&mut ui, "ChatModeReply", false, false, &mut NoHistory);
         assert_eq!(o, CommandOutcome::Handled);
         assert_eq!(ui.list_entries(list).len(), before + 1);
         assert_eq!(
             chat.take_outgoing(),
             vec![(0x21, setup.texts.no_reply_target.clone())]
         );
-        assert_eq!(
-            chat.run_line(&mut ui, "/plugins manager", &mut shell, &mut plugins),
-            1
-        );
     }
     {
         let mut sv = Services {
             maps: &mut maps,
             plugins: &mut plugins,
-            shell: &mut shell,
         };
-        let mut acts = Vec::new();
-        panels.run_chat_requests(&mut ui, &mut sv, &mut acts);
-        println!("chat requests ran: {acts:?}");
-        assert!(
-            panels.is_shown(&ui, PanelId::PluginManager),
-            "P12 from /plugins manager"
-        );
+        panels
+            .open_plugin_manager(&mut ui, &mut sv)
+            .expect("P12 opens");
+        assert!(panels.is_shown(&ui, PanelId::PluginManager), "P12 shown");
         assert!(!panels.manager.is_own(), "the install's P12 layout is used");
     }
     // P12: the plugin rows go into the layout's plugin Tree.
@@ -519,7 +549,6 @@ fn escape_chat_and_minimap_on_the_install() {
         let mut sv = Services {
             maps: &mut maps,
             plugins: &mut plugins,
-            shell: &mut shell,
         };
         let acts = panels.handle_event(&mut ui, &ev, &mut sv);
         println!("MapZoom click: {acts:?}");

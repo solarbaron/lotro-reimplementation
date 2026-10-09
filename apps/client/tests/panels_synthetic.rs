@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The native panels on synthetic layouts (no install): opening and showing panels, the
 //! Escape rule of `game-panels.md` §16 (GP15, GP16, the sequence of §13.7), Tessera's own
-//! plugin manager window, the P12 layout view, and the chat command registry of
-//! `chat-window.md` §7 and §10 (built-ins, `/plugins`, plugin commands, local echo).
+//! plugin manager window and the P12 layout view. (The chat window's lines go to the
+//! client's command dispatcher, decision 0020: `tests/panels_review.rs` and the
+//! dispatcher's own tests.)
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use tessera_client::panels::chat::{ChatPanel, ChatSetup, ShellCommands};
 use tessera_client::panels::{
-    NativePanels, NoMaps, NoShell, PanelCatalog, PanelId, PanelRef, PluginControl, PluginRow,
-    Services,
+    NativePanels, NoMaps, PanelCatalog, PanelId, PanelRef, PluginControl, PluginRow, Services,
 };
 use tessera_formats::ui_layout::{ElementDesc, Rect};
 use tessera_formats::{Did, TSize, UiLayout};
 use tessera_ui::events::ControlEvent;
-use tessera_ui::game::chat::command::RESULT_UNKNOWN;
 use tessera_ui::game::escape::EscapeOutcome;
 use tessera_ui::game::{GameLayouts, GameVocab};
 use tessera_ui::{ElementKey, MemoryEnv, Ui, UiEvent, Vocab};
@@ -135,11 +133,10 @@ impl PluginControl for FakePlugins {
 }
 
 macro_rules! services {
-    ($maps:ident, $plugins:ident, $shell:ident) => {
+    ($maps:ident, $plugins:ident) => {
         Services {
             maps: &mut $maps,
             plugins: &mut $plugins,
-            shell: &mut $shell,
         }
     };
 }
@@ -147,8 +144,8 @@ macro_rules! services {
 #[test]
 fn panels_open_show_and_hide() {
     let (mut ui, mut panels) = fixture();
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let k = panels.open(&mut ui, PanelId::QuestLog, &mut sv).unwrap();
     let b = ui.layout_box(k).unwrap();
     assert_eq!((b.l, b.t, b.w(), b.h()), (10, 100, 700, 500));
@@ -182,8 +179,8 @@ fn panels_open_show_and_hide() {
 #[test]
 fn escape_rule_gp15_gp16() {
     let (mut ui, mut panels) = fixture();
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let toolbar = panels.open(&mut ui, PanelId::Toolbar, &mut sv).unwrap();
     // §13.7 step 1: nothing open: Escape opens and activates P6.
     let o = panels.escape(&mut ui, true, false, &mut sv);
@@ -239,13 +236,9 @@ fn escape_rule_gp15_gp16() {
 #[test]
 fn plugin_manager_layout_view_fills_the_tree() {
     let (mut ui, mut panels) = fixture();
-    let (mut maps, mut plugins, mut shell) = (
-        NoMaps,
-        FakePlugins::with(&["Alpha", "Beta", "Gamma"]),
-        NoShell,
-    );
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::with(&["Alpha", "Beta", "Gamma"]));
     let calls = Rc::clone(&plugins.calls);
-    let mut sv = services!(maps, plugins, shell);
+    let mut sv = services!(maps, plugins);
     let root = panels.open_plugin_manager(&mut ui, &mut sv).unwrap();
     assert_eq!(panels.root(PanelId::PluginManager), Some(root));
     assert!(!panels.manager.is_own());
@@ -357,161 +350,4 @@ fn plugin_manager_own_window() {
         },
         &mut plugins
     ));
-}
-
-/// A shell with one plugin command `foo` (id 7) recording its calls.
-#[derive(Default)]
-struct FooShell {
-    calls: Vec<(u32, String, String)>,
-}
-
-impl ShellCommands for FooShell {
-    fn lookup(&self, word: &str) -> Option<u32> {
-        word.eq_ignore_ascii_case("foo").then_some(7)
-    }
-
-    fn run(&mut self, id: u32, word: &str, args: &str) -> i32 {
-        self.calls.push((id, word.to_string(), args.to_string()));
-        1
-    }
-
-    fn names(&self) -> Vec<String> {
-        vec!["foo".to_string()]
-    }
-}
-
-#[test]
-fn chat_commands_and_echo() {
-    let mut ui = Ui::new(Box::new(MemoryEnv::default()), Vocab::default(), (800, 600));
-    let mut setup = ChatSetup::sandbox();
-    setup.help_entry = "aide; hilfe".to_string();
-    setup.texts.unknown_command = "unknown".to_string();
-    let mut chat = ChatPanel::new(GameVocab::default(), LAYOUT, setup);
-    let mut shell = FooShell::default();
-    let mut plugins = FakePlugins::with(&["Alpha"]);
-    // Built-ins under Tessera's names and the install's names (§10 item 3).
-    for n in [
-        "help", "HELP", "aide", "hilfe", "plugins", "say", "foo", "FOO",
-    ] {
-        assert!(chat.is_command(n, &shell), "{n}");
-    }
-    for n in ["", "/help", " help", "nope"] {
-        assert!(!chat.is_command(n, &shell), "{n:?}");
-    }
-    assert_eq!(chat.run_line(&mut ui, "/help", &mut shell, &mut plugins), 1);
-    let out = chat.take_outgoing();
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].0, 1 << 7, "a type 8 Log line");
-    assert!(out[0].1.contains("foo") && out[0].1.contains("plugins"));
-    // A plugin command gets the word as typed and the trimmed arguments (§9, §11.1).
-    assert_eq!(
-        chat.run_line(&mut ui, "/Foo   a  b ", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        shell.calls,
-        vec![(7, "Foo".to_string(), "a  b".to_string())]
-    );
-    // `/plugins` sub-commands.
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins load Alpha", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins list", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins unload", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        chat.run_line(
-            &mut ui,
-            "/plugins unload AlphaApt",
-            &mut shell,
-            &mut plugins
-        ),
-        1
-    );
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins refresh", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins load Nope", &mut shell, &mut plugins),
-        0
-    );
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins", &mut shell, &mut plugins),
-        0
-    );
-    assert_eq!(
-        plugins.calls.borrow().as_slice(),
-        [
-            "load Alpha",
-            "unload *",
-            "unload AlphaApt",
-            "refresh",
-            "load Nope"
-        ]
-    );
-    let out = chat.take_outgoing();
-    assert!(
-        out.iter().any(|(m, t)| *m == 1 && t.contains("Nope")),
-        "an Error line"
-    );
-    assert!(out.iter().any(|(_, t)| t.contains("Alpha 1.0")), "the list");
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins manager", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(
-        chat.take_requests(),
-        vec![tessera_client::panels::ChatRequest::OpenPluginManager]
-    );
-    // Plain text is echoed on the Say channel (§10 item 2).
-    assert_eq!(
-        chat.run_line(&mut ui, "hello there", &mut shell, &mut plugins),
-        1
-    );
-    let out = chat.take_outgoing();
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].0, 1 << 4, "a type 5 Say line");
-    assert!(out[0].1.ends_with("hello there"));
-    // Unknown command (§7.6): result 3 and the error line for the plugins.
-    assert_eq!(
-        chat.run_line(&mut ui, "/nope", &mut shell, &mut plugins),
-        RESULT_UNKNOWN
-    );
-    assert_eq!(chat.take_outgoing(), vec![(1, "unknown".to_string())]);
-    // No window is open, so the logs took nothing, and posting still queues.
-    assert_eq!(chat.post_system(&mut ui, "x"), 0);
-    assert_eq!(chat.post(&mut ui, 99, "bad type"), 0);
-    assert_eq!(chat.take_outgoing().len(), 1);
-    assert_eq!(chat.primary_root(), None);
-}
-
-#[test]
-fn hostile_command_lines_do_not_panic() {
-    let mut ui = Ui::new(Box::new(MemoryEnv::default()), Vocab::default(), (800, 600));
-    let mut chat = ChatPanel::new(GameVocab::default(), LAYOUT, ChatSetup::sandbox());
-    let mut shell = FooShell::default();
-    let mut plugins = FakePlugins::default();
-    let long = "x".repeat(200_000);
-    for line in [
-        "",
-        "/",
-        "//",
-        "/\"",
-        "/plugins load \"",
-        "/plugins unload \u{0}",
-        ";;;;",
-        "/foo ;x",
-        long.as_str(),
-        "/\u{FFFF}\u{10FFFF}",
-    ] {
-        let _ = chat.run_line(&mut ui, line, &mut shell, &mut plugins);
-    }
-    let _ = chat.take_outgoing();
 }

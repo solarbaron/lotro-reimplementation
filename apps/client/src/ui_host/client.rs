@@ -7,7 +7,9 @@
 //!
 //! 0. once, right after creating it: [`ClientUi::prepare`] (session chat lines wait for the
 //!    chat window from then on);
-//! 1. raw events → [`ClientUi::raw_event`] (instead of `Walker::input`);
+//! 1. raw events → [`ClientUi::raw_event`] (instead of `Walker::input`); lines submitted in
+//!    the chat window go to the command dispatcher with the world session right after each
+//!    event (decision 0020 item 1);
 //! 2. [`ClientUi::before_update`] (pending offers, the OS cursor), then `Walker::update`
 //!    (steps 2–6 and the mapper's snapshot);
 //! 3. [`ClientUi::after_update`] with the walker's events (Escape, positions, the session's
@@ -329,6 +331,7 @@ impl ClientUi {
         };
         let (mapper, now) = walker.mapper_mut();
         host.handle_raw(mapper, event, now, &mut rt.plugins, window);
+        dispatch_lines(host, rt);
         // The walker's own keys (time of day, system switches) when no UI element has the
         // keyboard focus.
         if !host.keyboard_focused() {
@@ -353,6 +356,7 @@ impl ClientUi {
             host.sync_cursor(window);
             let (mapper, _) = walker.mapper_mut();
             host.offer_pending(mapper, &mut rt.plugins, window);
+            dispatch_lines(host, rt);
         }
     }
 
@@ -458,6 +462,7 @@ impl ClientUi {
                 }
             }
         }
+        dispatch_lines(host, rt);
     }
 
     /// After `Walker::update`: Escape, the position and the character (game code), the
@@ -487,6 +492,8 @@ impl ClientUi {
         host.post_session_lines(rt.take_ui_chat());
         let (mapper, _) = walker.mapper_mut();
         host.step7(&mut rt.plugins, Some(mapper));
+        // Chat commands that quickslot aliases ran in step 7.
+        dispatch_lines(host, rt);
     }
 
     /// Step 8.
@@ -597,6 +604,19 @@ impl ClientUi {
     pub fn plugins_dir(rt: &Runtime) -> PathBuf {
         rt.plugins.manager().plugins_dir().to_path_buf()
     }
+}
+
+/// Runs the lines submitted in the chat window through the client's command dispatcher
+/// with the world session (decision 0020 items 1 and 3: `--server` or the sandbox).
+fn dispatch_lines(host: &mut UiHost, rt: &mut Runtime) {
+    if !host.has_entry_lines() {
+        return;
+    }
+    let session = rt
+        .world
+        .as_mut()
+        .map(|w| w as &mut dyn crate::walker::WalkerSession);
+    host.dispatch_entry_lines(&mut rt.plugins, session, Instant::now());
 }
 
 #[cfg(test)]

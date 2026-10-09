@@ -1154,6 +1154,29 @@ These are Tessera's rules, not facts about the original.
 > `/plugins <arguments>`. The client answers `HostApi::is_builtin_command` and
 > `builtin_commands` from the registry, so plugins cannot take client names.
 
+> **OPEN (implementation, chat window on the dispatcher, 2026-10-09):** the M5 chat window's
+> entry line now feeds the client's one dispatcher (decision 0020 item 1); the window keeps
+> no registry, pipeline or history of its own (the earlier window registry and the
+> `tessera-ui` copy of §7.1–§7.5 are removed). Choices made where this spec and the decision
+> are silent; please confirm or correct:
+> (a) **Order of the submit.** The window takes the text, the mode's word *C* and target *G*
+> (§6.2 submit steps 1–2), clears the entry and restores the tab's mode (step 5), and only
+> then hands the line to the dispatcher, which runs §7.2 and posts the §7.6 line (steps
+> 3–4). The window never sees the result code.
+> (b) **When the line runs.** In frame-loop step 1 right after the raw event (or pending
+> offer) that submitted it, once the UI is no longer borrowed, with the world session
+> (`--server` or the sandbox). Chat commands of quickslot aliases run after step 7, in the
+> `Say` mode with the default word.
+> (c) **Where the replies go.** The dispatcher's own lines (the §7.6 line, help, refusals,
+> player music) are shown in the chat window in step 7 of the same frame as type 1 or type 8
+> lines and are delivered to `Turbine.Chat.Received` like Tessera's notices (§10 item 9).
+> (d) **Plain text in the sandbox.** It goes to the sandbox session, whose echo comes back as
+> a session line (decision 0020 item 3); the window's former local echo of §10 item 2 is
+> gone. Without a session it is refused with "Not connected: chat not sent".
+> (e) **Mode words and registry.** A mode word the dispatcher's registry does not hold
+> (for example when the install's `Commands` table could not be read by the dispatcher but
+> was by the window) gives the unknown-command line; nothing is sent.
+
 ---
 
 <a id="s11"></a>

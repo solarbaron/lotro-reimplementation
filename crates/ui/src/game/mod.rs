@@ -9,7 +9,7 @@
 //! engine class [`GameVocab::register_classes`] gives it); [`GamePanels::attach`] then finds
 //! the instances below a panel root and runs each type's post-creation work. The data they
 //! show comes in through small traits the client implements with sandbox values
-//! ([`GameData`], [`MapSource`], [`Shortcuts`], [`chat::CommandHost`]); this module depends
+//! ([`GameData`], [`MapSource`], [`Shortcuts`], [`chat::EntryHistory`]); this module depends
 //! on neither the session layer nor the world.
 //!
 //! How the client drives it:

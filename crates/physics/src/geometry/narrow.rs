@@ -214,8 +214,7 @@ impl Convex {
 
 /// Below this gap (metres) a capsule counts as touching an item: a sweep is then blocked at
 /// once when it moves into the item and free otherwise (the f64 distance routines are not
-/// meaningful much below it). Not stated by `collision.md` §12.4 (w), which speaks of
-/// overlaps only: implementer OPEN there.
+/// meaningful much below it). Tessera Decision, `collision.md` §12.4 (w).
 pub(crate) const TOUCH_GAP: f64 = 1e-6;
 
 /// A sweep reports an item only when the gap to it would fall to this many skins

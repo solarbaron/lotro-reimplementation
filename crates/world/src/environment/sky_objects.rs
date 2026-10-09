@@ -2,7 +2,7 @@
 //! Animating sky objects (`environment.md` §11.4).
 
 use tessera_formats::Did;
-use tessera_formats::environment::{DayDescription, KeyframeObjectEntry, SkyObject};
+use tessera_formats::environment::{DayDescription, SkyObject};
 
 use super::blend::{KeyframePair, blend_factor, day_keyframe_pair, lerp, lerp_rgba};
 
@@ -16,8 +16,9 @@ pub struct SkyObjectState {
     pub index: u32,
     /// The 0x47 object drawn: the stored one, or a keyframe entry's replacement.
     pub object: Did,
-    /// Whether it is visible at this time (step 1). False for an object whose begin or end
-    /// time is not finite (hostile input).
+    /// Whether it is drawn at this time: visible by step 1, or replaced by *kₐ*'s keyframe
+    /// entry (step 4, E26). An object whose begin or end time is not finite (hostile input)
+    /// is not visible by step 1.
     pub visible: bool,
     /// Angle A in degrees: ≥ 0 after step 3 for animated objects but not reduced, so it can
     /// exceed 360 (the install stores ends up to 430); the keyframe offset is added on top.
@@ -26,7 +27,8 @@ pub struct SkyObjectState {
     pub angle_a: f32,
     /// Angle B in degrees, as angle A (not reduced, keyframe offset added).
     pub angle_b: f32,
-    /// Tint as RGBA in [0, 1]; alpha is the opacity (step 4).
+    /// Tint as RGBA in [0, 1]; alpha is the opacity (step 4) before the sky's fade weight
+    /// (step 5: the caller multiplies it in, [`super::EnvironmentFrame::objects`]).
     pub tint: [f32; 4],
 }
 
@@ -68,22 +70,75 @@ pub fn object_angle(begin: f32, end: f32, reverse: bool, f: f32) -> f32 {
     if a < 0.0 { a + 360.0 } else { a }
 }
 
-fn entry_tint(e: Option<&KeyframeObjectEntry>) -> [f32; 4] {
-    e.map_or(UNTINTED, |e| e.tint.to_rgba_f32())
+/// What the client keeps per drawn sky object between updates (`environment.md` §11.4
+/// steps 3–4): the angles of the last update (offsets included) and the tint. A new drawn
+/// object has angles 0 and an opaque white tint.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrawnSkyObject {
+    /// Angle A of the last update, keyframe offset included.
+    pub angle_a: f32,
+    /// Angle B of the last update, keyframe offset included.
+    pub angle_b: f32,
+    /// The tint of the last update.
+    pub tint: [f32; 4],
 }
 
-/// The state of every sky object of `day` at time of day `t` (`environment.md` §11.4), in
-/// stored order. Keyframe entries come from the blending pair of §11.3 for `t`: their
-/// angle offsets and tints are blended by the keyframe factor (Inferred, §11.4 step 4); a
-/// side without an entry counts as untinted and unrotated (**Tessera Decision**), and a
-/// replacement object is taken from *kₐ* when its entry has one, else from *k_b*.
+impl Default for DrawnSkyObject {
+    fn default() -> Self {
+        Self {
+            angle_a: 0.0,
+            angle_b: 0.0,
+            tint: UNTINTED,
+        }
+    }
+}
+
+/// The drawn objects of one sky, one per **position** in the day description's object list
+/// (`environment.md` §11.4 step 4): kept while the sky stays the same, also across a new day
+/// description under the same sky key; a new sky starts with new ones.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DrawnSkyObjects {
+    objects: Vec<DrawnSkyObject>,
+}
+
+impl DrawnSkyObjects {
+    /// No drawn objects yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The state of every sky object of `day` at time of day `t`, updating the kept angles
+    /// and tints (`environment.md` §11.4 steps 1–4, E26):
+    ///
+    /// - a visible object's angles are recomputed (steps 2–3); an invisible one keeps the
+    ///   angles of the previous update;
+    /// - *kₐ*'s entry alone gives the replacement (drawn even while the object is not
+    ///   visible) and the angle offsets, which are added to the angles (again at every update
+    ///   while the object stays invisible);
+    /// - the tint is the blend of *kₐ*'s and *k_b*'s entries when both have one, otherwise
+    ///   the tint of the previous update.
+    ///
+    /// [`SkyObjectState::visible`] says whether the object is drawn: visible by step 1, or
+    /// replaced by *kₐ*'s entry. Positions beyond the list are dropped.
+    pub fn animate(&mut self, day: &DayDescription, t: f32) -> Vec<SkyObjectState> {
+        let pair = day_keyframe_pair(day, t);
+        self.objects
+            .resize(day.objects.len(), DrawnSkyObject::default());
+        day.objects
+            .iter()
+            .zip(self.objects.iter_mut())
+            .map(|(o, kept)| sky_object_state(day, o, t, pair, kept))
+            .collect()
+    }
+}
+
+/// The state of every sky object of `day` at time of day `t` as for a new sky
+/// ([`DrawnSkyObjects::animate`] on fresh drawn objects: angles 0 and opaque white tints
+/// before this update), in stored order. A pure function of its inputs.
 #[must_use]
 pub fn animate_sky_objects(day: &DayDescription, t: f32) -> Vec<SkyObjectState> {
-    let pair = day_keyframe_pair(day, t);
-    day.objects
-        .iter()
-        .map(|o| sky_object_state(day, o, t, pair))
-        .collect()
+    DrawnSkyObjects::new().animate(day, t)
 }
 
 /// `v`, or 0 when it is not finite.
@@ -96,10 +151,14 @@ fn sky_object_state(
     o: &SkyObject,
     t: f32,
     pair: Option<KeyframePair>,
+    kept: &mut DrawnSkyObject,
 ) -> SkyObjectState {
     let times_ok = o.begin_time.is_finite() && o.end_time.is_finite();
+    let visible = times_ok && object_visible(o, t);
     #[allow(clippy::float_cmp)]
-    let (angle_a, angle_b) = if !times_ok || o.begin_time == o.end_time {
+    let (mut angle_a, mut angle_b) = if !visible {
+        (kept.angle_a, kept.angle_b)
+    } else if o.begin_time == o.end_time {
         (o.angle_a_begin, o.angle_b_begin)
     } else {
         let f = object_progress(o, t);
@@ -116,27 +175,27 @@ fn sky_object_state(
         ),
         None => (None, None, 0.0),
     };
-    let off = |e: Option<&KeyframeObjectEntry>| {
-        e.map_or((0.0, 0.0), |e| {
-            (
-                finite_or_zero(e.angle_a_offset),
-                finite_or_zero(e.angle_b_offset),
-            )
-        })
-    };
-    let (oa_a, oa_b) = off(ea);
-    let (ob_a, ob_b) = off(eb);
-    let replacement = [ea, eb]
-        .into_iter()
-        .flatten()
-        .map(|e| e.replacement)
-        .find(|d| d.0 != 0);
+    let mut replacement = None;
+    if let Some(e) = ea {
+        if !e.replacement.is_null() {
+            replacement = Some(e.replacement);
+        }
+        angle_a += finite_or_zero(e.angle_a_offset);
+        angle_b += finite_or_zero(e.angle_b_offset);
+    }
+    let angle_a = finite_or_zero(angle_a);
+    let angle_b = finite_or_zero(angle_b);
+    if let (Some(a), Some(b)) = (ea, eb) {
+        kept.tint = lerp_rgba(a.tint.to_rgba_f32(), b.tint.to_rgba_f32(), f);
+    }
+    kept.angle_a = angle_a;
+    kept.angle_b = angle_b;
     SkyObjectState {
         index: o.index,
         object: replacement.unwrap_or(o.object),
-        visible: times_ok && object_visible(o, t),
-        angle_a: finite_or_zero(angle_a + lerp(oa_a, ob_a, f)),
-        angle_b: finite_or_zero(angle_b + lerp(oa_b, ob_b, f)),
-        tint: lerp_rgba(entry_tint(ea), entry_tint(eb), f),
+        visible: visible || replacement.is_some(),
+        angle_a,
+        angle_b,
+        tint: kept.tint,
     }
 }

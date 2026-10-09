@@ -99,8 +99,10 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   hand-written close-out workflow. The owner released the held work (A) and kept the
   River-hobbit code after a clean audit (B); see `docs/decisions/0018-incident-review-notes-in-clean-prompts.md`. Rule: clean
   prompts carry only the task, spec paths, review status and clean findings. Remediation
-  round 1 is on main (`5863586`); round 2 (open verifier items, `walker.md`/`render.md`
-  repair, implementer OPENs) runs on branch `remediation-2`.
+  round 1 is on main (`5863586`); rounds 2 and 3 (verifier items, `walker.md`/`render.md`
+  repair, implementer OPENs, `scenery.md` and `landblock.md` Accepted, binormal stream,
+  unlit fog switch, script start order, timing-free streamer tests, walker cell gaps) were
+  merged on 2026-10-09.
 - **Data decoders beyond the milestones (2026-10-08):** census-2 specs (distant-landscape,
   player-character, instances, wlib-bytecode with the new `tessera-wvm` crate,
   game-controls) are implemented on main; the eight gameplay decoders (items, combat,

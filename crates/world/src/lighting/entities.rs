@@ -32,6 +32,10 @@ pub struct LightPids {
     pub baked_landscape: Option<u32>,
     /// `Light_GlobalLight` (bool).
     pub global: Option<u32>,
+    /// `Light_OnlyInfluenceParent` (bool, `lighting.md` §8.5 step 3).
+    pub only_influence_parent: Option<u32>,
+    /// `Light_NeverInfluenceParent` (bool, `lighting.md` §8.5 step 3).
+    pub never_influence_parent: Option<u32>,
     /// `Light.Script@Entity.Day.m_fLightRange`.
     pub day_range: Option<u32>,
     /// `Light.Script@Entity.Night.m_fLightRange`.
@@ -58,6 +62,8 @@ impl LightPids {
             driven_by_day_cycle: pid_of("Light_DrivenByDayCycle"),
             baked_landscape: pid_of("Light_BakedLandscapeLight"),
             global: pid_of("Light_GlobalLight"),
+            only_influence_parent: pid_of("Light_OnlyInfluenceParent"),
+            never_influence_parent: pid_of("Light_NeverInfluenceParent"),
             day_range: pid_of("Light.Script@Entity.Day.m_fLightRange"),
             night_range: pid_of("Light.Script@Entity.Night.m_fLightRange"),
             day_activated: pid_of("Light.Script@Entity.Day.m_bLightActivated"),
@@ -110,6 +116,11 @@ pub struct LightParams {
     pub baked_landscape: bool,
     /// `Light_GlobalLight`.
     pub global: bool,
+    /// `Light_OnlyInfluenceParent`: reaches no object but its parent, so a light without a
+    /// parent reaches none (`lighting.md` §8.5 step 3, L34).
+    pub only_influence_parent: bool,
+    /// `Light_NeverInfluenceParent`: does not reach its parent.
+    pub never_influence_parent: bool,
     /// Day variant.
     pub day: DayNightVariant,
     /// Night variant.
@@ -129,6 +140,8 @@ impl Default for LightParams {
             driven_by_day_cycle: false,
             baked_landscape: false,
             global: false,
+            only_influence_parent: false,
+            never_influence_parent: false,
             day: DayNightVariant::default(),
             night: DayNightVariant::default(),
         }
@@ -230,6 +243,8 @@ impl LightParams {
             driven_by_day_cycle: boolean(set, pids.driven_by_day_cycle).unwrap_or(false),
             baked_landscape: boolean(set, pids.baked_landscape).unwrap_or(false),
             global: boolean(set, pids.global).unwrap_or(false),
+            only_influence_parent: boolean(set, pids.only_influence_parent).unwrap_or(false),
+            never_influence_parent: boolean(set, pids.never_influence_parent).unwrap_or(false),
             day: DayNightVariant {
                 range: float(set, pids.day_range),
                 activated: boolean(set, pids.day_activated),

@@ -93,7 +93,7 @@ pub struct LiquidFlags {
 impl LiquidFlags {
     /// Reads the flags from a monitor's property set (`Monitor_VolumePropertiesToApply`).
     /// The flags are boolean properties (`water.md` §7.2); a value of another type counts
-    /// as not set (Tessera Decision, implementer OPEN in `water.md` §7.2).
+    /// as not set (the client's readers, `water.md` §7.2 W18).
     #[must_use]
     pub fn from_set(set: &PropertySet, pids: &LiquidPids) -> Self {
         let get = |pid: Option<u32>| {

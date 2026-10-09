@@ -1079,17 +1079,18 @@ pub struct LayerConditions {
 
 impl LayerConditions {
     /// Reads the conditions from an entity's property set (absent properties are false
-    /// or `None`). The boolean conditions of §11.1 hold only for a boolean true; a value of
-    /// another type counts as absent (Tessera Decision, as §10.3 does for movement fields).
+    /// or `None`), with the client's value types (§11.1 "Value types of the conditions",
+    /// BIN, C41): the boolean conditions hold only for a Boolean true, `Agent_Species` and
+    /// `Movement_MovementStyle` count only as an enum or property-ID value (another type
+    /// reads as 0), the float height only as a float.
     #[must_use]
     pub fn from_set(set: &PropertySet, pids: &MovementPids) -> Self {
         let get = |p: Option<u32>| p.and_then(|p| set.get(p));
         let flag = |p: Option<u32>| get(p).and_then(value_bool).unwrap_or(false);
         let int = |p: Option<u32>| {
-            get(p).and_then(|v| match v {
-                Value::Enum(k) => Some(*k),
-                Value::Int(i) => u32::try_from(*i).ok(),
-                _ => None,
+            get(p).map(|v| match v {
+                Value::Enum(k) | Value::PropertyId(k) => *k,
+                _ => 0,
             })
         };
         Self {
@@ -1294,5 +1295,45 @@ mod tests {
         let c = LayerConditions::from_set(&all(Value::Bool(true)), &p);
         assert!(c.mounted && c.on_slide && c.on_ice && c.stealthed && c.frozen);
         assert!(c.ramp_up_controller);
+    }
+
+    /// §11.1 "Value types of the conditions" (BIN, C41): `Agent_Species` and
+    /// `Movement_MovementStyle` are read only as enum or property-ID values, else as 0; the
+    /// float height only as a float.
+    #[test]
+    fn species_and_style_take_only_enum_or_property_id_values() {
+        let mut p = pids();
+        p.species = Some(300);
+        p.movement_style = Some(301);
+        p.avatar_float_height = Some(302);
+        let set = |species: Value, style: Value, float: Value| {
+            PropertySet::from_properties([
+                Property::new(300, species),
+                Property::new(301, style),
+                Property::new(302, float),
+            ])
+        };
+        let c = LayerConditions::from_set(
+            &set(
+                Value::Enum(TROLL_SPECIES),
+                Value::PropertyId(1),
+                Value::Float(1.2),
+            ),
+            &p,
+        );
+        assert_eq!(c.species, Some(TROLL_SPECIES));
+        assert!(c.walking);
+        assert_eq!(c.avatar_float_height, Some(1.2));
+        #[allow(clippy::cast_possible_wrap)]
+        let troll = TROLL_SPECIES as i32;
+        let c =
+            LayerConditions::from_set(&set(Value::Int(troll), Value::Int(1), Value::Int(1)), &p);
+        assert_eq!(c.species, Some(0));
+        assert!(!c.walking);
+        assert_eq!(c.avatar_float_height, None);
+        assert!(
+            !c.layers(MovementState::EarthControlledSurface)
+                .contains(LayerKind::Troll)
+        );
     }
 }

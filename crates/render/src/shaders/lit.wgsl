@@ -14,13 +14,16 @@ struct LitVsOut {
     @location(5) shadow: vec3<f32>,
     // x = fog factor (per vertex, §10), y = view depth (clip w, §9 step 6).
     @location(6) fog_depth: vec2<f32>,
+    // The stored binormal after the transform (zero when the mesh has none).
+    @location(7) binormal: vec3<f32>,
 };
 
 fn normal_matrix() -> mat3x3<f32> {
     return mat3x3<f32>(draw.normal0.xyz, draw.normal1.xyz, draw.normal2.xyz);
 }
 
-fn lit_vertex(in: VsIn, position: vec3<f32>, normal: vec3<f32>, tangent: vec3<f32>) -> LitVsOut {
+fn lit_vertex(in: VsIn, position: vec3<f32>, normal: vec3<f32>, tangent: vec3<f32>,
+    binormal: vec3<f32>) -> LitVsOut {
     let world = draw.model * vec4<f32>(position, 1.0);
     let m3 = mat3x3<f32>(draw.model[0].xyz, draw.model[1].xyz, draw.model[2].xyz);
     var sign = 1.0;
@@ -32,6 +35,9 @@ fn lit_vertex(in: VsIn, position: vec3<f32>, normal: vec3<f32>, tangent: vec3<f3
     out.world_pos = world.xyz;
     out.normal = normal_matrix() * normal;
     out.tangent = vec4<f32>(m3 * tangent, in.tangent.w * sign);
+    // The stored binormal is a direction like the tangent: a mirrored transform mirrors
+    // it with the texture, so it needs no sign flip.
+    out.binormal = m3 * binormal;
     out.uv = in.uv;
     out.color = in.color;
     out.shadow = frame_shadow_coords(world.xyz);
@@ -41,13 +47,13 @@ fn lit_vertex(in: VsIn, position: vec3<f32>, normal: vec3<f32>, tangent: vec3<f3
 
 @vertex
 fn vs_lit(in: VsIn) -> LitVsOut {
-    return lit_vertex(in, in.position, in.normal.xyz, in.tangent.xyz);
+    return lit_vertex(in, in.position, in.normal.xyz, in.tangent.xyz, in.binormal.xyz);
 }
 
 @vertex
 fn vs_lit_skinned(in: VsIn, skin: SkinIn) -> LitVsOut {
     return lit_vertex(in, skin_point(skin, in.position), skin_dir(skin, in.normal.xyz),
-        skin_dir(skin, in.tangent.xyz));
+        skin_dir(skin, in.tangent.xyz), skin_dir(skin, in.binormal.xyz));
 }
 
 fn light_index(i: u32) -> u32 {
@@ -59,7 +65,8 @@ struct Shaded {
     // Colour in stored-value space, fog applied as for a base pass.
     color: vec3<f32>,
     // Output alpha (lighting.md §5.12): opacity x M.alpha when the base texture carries the
-    // opacity, else M.alpha (x vertex alpha where read).
+    // opacity, else M.alpha (x vertex alpha where read); for a fixed blend the opacity
+    // source alone (material.md §11.3).
     alpha: f32,
     // Opacity texel alpha for the alpha test (before vertex colours, §5.12).
     opacity: f32,
@@ -92,6 +99,11 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     // Only a base-texture opacity reaches the output alpha; the opacity of slot 3020 or 3018
     // drives the alpha test alone (lighting.md §5.12, material.md §11.3).
     out.alpha = select(1.0, out.opacity, lit_source(LIT_OPACITY_SHIFT) == SOURCE_BASE) * m.a;
+    // A fixed blend's factors read the §11.2 opacity source, or 1 without one
+    // (material.md §11.3, rule for unlit records).
+    if (lit_flag(LIT_FACTOR_OPACITY)) {
+        out.alpha = out.opacity;
+    }
 
     // Albedo C after dye (§5.2 items 2-3; renderer mask convention, 1 = dyed).
     var c = base.rgb;
@@ -119,13 +131,11 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     // Shading normal (§5.2.4). Back faces keep the front normal (material.md §11.4).
     var n = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
     if ((f & F_NORMAL_MAP) != 0u) {
-        // The tangent as given (normalised, not made orthogonal to N0) and the binormal
-        // w x cross(N0, T) of the mesh convention (docs/specs/render.md §2.1).
-        let t_len2 = dot(in.tangent.xyz, in.tangent.xyz);
-        let b_raw = cross(n, in.tangent.xyz);
-        if (t_len2 > 1e-12 && dot(b_raw, b_raw) > 1e-12 * t_len2) {
-            let t = in.tangent.xyz * inverseSqrt(t_len2);
-            let b = normalize(b_raw) * select(-1.0, 1.0, in.tangent.w >= 0.0);
+        // The tangent as given (normalised, not made orthogonal to N0) and the stored
+        // binormal, or the derived one without it (frame_binormal).
+        let b = frame_binormal(n, in.tangent, in.binormal);
+        if (dot(b, b) > 0.0) {
+            let t = normalize(in.tangent.xyz);
             var tn = normal_tex.xyz * 2.0 - 1.0;
             tn.y = tn.y * draw.params.y;
             n = frame_normalize(t * tn.x + b * tn.y + n * tn.z, n);
@@ -203,9 +213,12 @@ fn fs_lit_test_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
+// Blended kinds: the threshold is -1 except for a fixed blend with an alpha test
+// (render.md R-D11), so only those discard.
 @fragment
 fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
@@ -213,6 +226,7 @@ fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_lit_additive(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(s.unfogged * (1.0 - s.fog)), clamp(s.alpha, 0.0, 1.0));
 }
 
@@ -221,5 +235,6 @@ fn fs_lit_additive(in: LitVsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_lit_modulate(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(mix(s.unfogged, vec3<f32>(1.0), s.fog)), clamp(s.alpha, 0.0, 1.0));
 }

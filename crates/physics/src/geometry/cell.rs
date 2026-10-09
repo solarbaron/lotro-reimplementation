@@ -168,18 +168,16 @@ impl CellPlacement {
         Ok(Self { position, rotation })
     }
 
-    /// The placement of a landblock-info cell. A cell whose position carries no x, y, z
-    /// offset (two observed cells; `landblock.md` §4.4 OPEN) cannot be placed and is
-    /// refused rather than put at the landblock origin.
+    /// The placement of a landblock-info cell. A position without an x, y, z offset is
+    /// (0, 0, 0) and one without an orientation the identity, so such a cell lies at the
+    /// landblock origin (`landblock.md` §4.4, L42: two cells of this install have no offset,
+    /// and their portal joins match their neighbours' exactly there).
     ///
     /// # Errors
     ///
-    /// As [`CellPlacement::new`]; `InvalidInput` without an offset.
+    /// As [`CellPlacement::new`].
     pub fn of_cell(cell: &Cell) -> Result<Self> {
-        let p = cell
-            .position
-            .offset()
-            .ok_or(PhysicsError::InvalidInput("cell position has no offset"))?;
+        let p = cell.position.offset().unwrap_or([0.0; 3]);
         Self::new(p, cell.rotation().unwrap_or(Quaternion::IDENTITY))
     }
 

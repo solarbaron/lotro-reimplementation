@@ -120,7 +120,8 @@ pub struct Part {
 /// A level as engine-neutral streams with one entry per vertex.
 ///
 /// Streams that only some parts have are filled for the others: generated area-weighted
-/// face normals, zero UVs, white colours, zero tangents with sign +1, and joint 0 /
+/// face normals, zero UVs, white colours, zero tangents with sign +1 and zero binormals,
+/// and joint 0 /
 /// weight 0 skin slots (use [`Part::skinned`] to tell them apart).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LevelGeometry {
@@ -135,6 +136,11 @@ pub struct LevelGeometry {
     /// (generated when the format has none; §5.6: handedness varies per vertex). `None`
     /// if no part has a tangent frame.
     pub tangents: Option<Vec<[f32; 4]>>,
+    /// The stored binormals (`mesh.md` §5.6: the +V direction, as stored: not made
+    /// orthogonal to the normal, either handedness), one per vertex. Present exactly when
+    /// [`LevelGeometry::tangents`] is; zero for parts without a tangent frame. A renderer
+    /// uses them as the normal map's **B** (`lighting.md` §5.2.4, `render.md` §4.8).
+    pub binormals: Option<Vec<[f32; 3]>>,
     /// UV sets; set 0 is the diffuse coordinate. Empty if no part has UVs.
     pub uv_sets: Vec<Vec<[f32; 2]>>,
     /// Vertex colours, R G B A bytes, if any part has them.
@@ -155,6 +161,7 @@ pub struct LevelGeometry {
 const POSITION_BYTES: u64 = 12;
 const NORMAL_BYTES: u64 = 12;
 const TANGENT_BYTES: u64 = 16;
+const BINORMAL_BYTES: u64 = 12;
 const UV_BYTES: u64 = 8;
 const COLOR_BYTES: u64 = 4;
 const SKIN_BYTES: u64 = 4 + 16;
@@ -166,6 +173,7 @@ impl LevelGeometry {
         let per_vertex = POSITION_BYTES
             + NORMAL_BYTES
             + self.tangents.as_ref().map_or(0, |_| TANGENT_BYTES)
+            + self.binormals.as_ref().map_or(0, |_| BINORMAL_BYTES)
             + UV_BYTES * self.uv_sets.len() as u64
             + self.colors.as_ref().map_or(0, |_| COLOR_BYTES)
             + self.joints.as_ref().map_or(0, |_| SKIN_BYTES);
@@ -322,7 +330,11 @@ impl Mesh {
         let wide = nv > 65_536;
         let per_vertex = POSITION_BYTES
             + NORMAL_BYTES
-            + if any_tangents { TANGENT_BYTES } else { 0 }
+            + if any_tangents {
+                TANGENT_BYTES + BINORMAL_BYTES
+            } else {
+                0
+            }
             + UV_BYTES * uv_sets as u64
             + if any_colors { COLOR_BYTES } else { 0 }
             + if any_skin { SKIN_BYTES } else { 0 };
@@ -370,6 +382,7 @@ impl Mesh {
             positions: Vec::with_capacity(nv),
             normals: Vec::with_capacity(nv),
             tangents: any_tangents.then(|| Vec::with_capacity(nv)),
+            binormals: any_tangents.then(|| Vec::with_capacity(nv)),
             uv_sets: (0..uv_sets).map(|_| Vec::with_capacity(nv)).collect(),
             colors: any_colors.then(|| Vec::with_capacity(nv)),
             joints: any_skin.then(|| Vec::with_capacity(nv)),
@@ -396,9 +409,10 @@ impl Mesh {
                 Some(n) => g.normals.extend_from_slice(n),
                 None => g.normals.extend(face_normals(&st.positions, &ib.indices)),
             }
-            if let Some(out) = g.tangents.as_mut() {
+            if let (Some(out), Some(bout)) = (g.tangents.as_mut(), g.binormals.as_mut()) {
                 match (&st.tangents, &st.binormals) {
                     (Some(t), Some(b)) => {
+                        bout.extend_from_slice(b);
                         // The sign is taken against the normals just written, which are
                         // the generated ones when the format has none.
                         let normals = &g.normals[base..base + vc];
@@ -411,7 +425,10 @@ impl Mesh {
                             out.push([t[0], t[1], t[2], w]);
                         }
                     }
-                    _ => out.extend(std::iter::repeat_n([0.0, 0.0, 0.0, 1.0], vc)),
+                    _ => {
+                        out.extend(std::iter::repeat_n([0.0, 0.0, 0.0, 1.0], vc));
+                        bout.extend(std::iter::repeat_n([0.0; 3], vc));
+                    }
                 }
             }
             for (i, set) in g.uv_sets.iter_mut().enumerate() {

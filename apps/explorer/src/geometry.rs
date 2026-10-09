@@ -100,6 +100,9 @@ pub fn level_mesh_data(geo: &LevelGeometry, options: &ConvertOptions, label: Str
         positions: geo.positions.clone(),
         normals: Some(geo.normals.clone()),
         tangents: geo.tangents.clone(),
+        // The stored binormals, used as the normal map's B by the lit pipelines
+        // (render.md §4.8, R-D10).
+        binormals: geo.binormals.clone(),
         uvs,
         colors,
         indices,
@@ -531,7 +534,9 @@ mod tests {
         assert_eq!(data.submeshes[0].first_index, 0);
         assert_eq!(data.submeshes[1].first_index, data.submeshes[0].index_count);
         assert!(data.colors.is_some() && data.uvs.is_some() && data.tangents.is_some());
+        assert_eq!(data.binormals, geo.binormals);
         let info = data.validate(&Default::default()).unwrap();
+        assert!(info.has_binormals);
         assert_eq!(info.submeshes.len(), 2);
         let no_colors = level_mesh_data(
             &geo,

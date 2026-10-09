@@ -86,10 +86,10 @@ impl GridMesh {
             // `quad_triangles` lists the west triangle second for the SW-NE diagonal and
             // first for the SE-NW one (`collision.md` §6.2, §14.4).
             let mut tri = quad_triangles(i, j, split)[usize::from(split == west)];
-            // §6.1: the key-base triangle of a SW-NE quad has its corners in the order
-            // (i, j + 1), (i, j), (i + 1, j + 1) (the same winding as `quad_triangles`'
-            // (i, j), (i + 1, j + 1), (i, j + 1), from another first corner).
-            if split && west {
+            // §6.1 stored corner order (BIN, C43): the same winding as `quad_triangles`, from
+            // the table's first corner, which is `quad_triangles`' last for every triangle
+            // but the north-east one of a SE-NW quad (key base + 1, diagonal bit clear).
+            if split || west {
                 let [a, b, c] = tri;
                 tri = [c, a, b];
             }

@@ -780,7 +780,8 @@ fn cells_carry_their_geometry_flags() {
         vec![
             cell(2, 0x0100_0001, Some([100.0, 100.0, 10.0])),
             cell(1, 0x0100_0002, Some([20.0, 20.0, 10.0])),
-            // No offset (two such cells in the data): refused.
+            // No offset (two such cells in the data): at the landblock origin
+            // (`landblock.md` §4.4, L42).
             cell(3, 0x0100_0001, None),
             // Missing geometry: refused.
             cell(4, 0x0100_0009, Some([50.0, 50.0, 0.0])),
@@ -791,14 +792,14 @@ fn cells_carry_their_geometry_flags() {
     let mut b = CollisionSetBuilder::new(CollisionLimits::default());
     b.add_cells(&lb, &pids(), |d| geometries.get(&d).cloned());
     let r = *b.report();
-    assert_eq!((r.cells, r.cells_refused), (3, 2));
+    assert_eq!((r.cells, r.cells_refused), (4, 1));
     let set = b.build();
     let mesh_bodies: Vec<_> = set
         .bodies()
         .iter()
         .filter(|b| matches!(b.source, BodySource::Cell { .. }))
         .collect();
-    assert_eq!(mesh_bodies.len(), 2);
+    assert_eq!(mesh_bodies.len(), 3);
     for body in mesh_bodies {
         assert_eq!(body.flags.surface_properties, Some(Did(0x7800_0D0D)));
         assert_eq!(body.flags.can_ledge_climb, Some(false));
@@ -807,8 +808,9 @@ fn cells_carry_their_geometry_flags() {
     assert_eq!(set.cell_at([20.0, 20.0, 11.0]).map(|h| h.cell), Some(1));
     assert_eq!(set.cell_at([120.0, 100.0, 11.0]).map(|h| h.cell), Some(5));
     assert!(set.cell_at([60.0, 60.0, 11.0]).is_none());
+    assert_eq!(set.cell_at([1.0, 1.0, 1.0]).map(|h| h.cell), Some(3));
     let numbers: Vec<u16> = set.cells().cells().iter().map(|c| c.index).collect();
-    assert_eq!(numbers, vec![1, 2, 5]);
+    assert_eq!(numbers, vec![1, 2, 3, 5]);
 }
 
 /// Finding: a refused cell (no offset, too many hull vertices, limits) still used up the

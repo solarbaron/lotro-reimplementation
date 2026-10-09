@@ -96,7 +96,9 @@
 //! [`WorldStreamer::update_with_velocity`] replaces the estimate and discards its
 //! positions (the estimate starts over on the next [`WorldStreamer::update`]), a given
 //! velocity that is not finite turns lookahead off for that update, and a rejected focus
-//! keeps the previous velocity (Tessera's choices, `landblock.md` §8.1 lookahead OPEN).
+//! keeps the previous velocity and the estimate's positions, given a velocity or not: the
+//! given velocity of such an update is ignored (Tessera's choices, `landblock.md` §8.1
+//! lookahead OPEN).
 //!
 //! A request must start at least one job time before its landblock reaches the near ring,
 //! and job times grow with the landblock (a large collision set: M3-b's late landblock
@@ -1246,14 +1248,16 @@ impl WorldStreamer {
         let t0 = Instant::now();
         let mut report = FrameReport::default();
         let valid = focus.is_finite() && LandblockKey::new(focus.region, 0, 0).is_ok();
-        // A rejected focus keeps the previous velocity, like the previous focus.
+        // A rejected focus keeps the previous velocity and the estimate's positions, like
+        // the previous focus, whether a velocity was given or not: the validity check
+        // comes before the given velocity.
         self.velocity = match given {
+            _ if !valid => self.velocity,
             Some(v) => {
                 self.motion.clear();
                 v.iter().all(|c| c.is_finite()).then_some(v)
             }
-            None if valid => self.motion.push(t0, focus.region, focus.xy()),
-            None => self.velocity,
+            None => self.motion.push(t0, focus.region, focus.xy()),
         };
         let focus = if valid {
             focus
@@ -2322,7 +2326,8 @@ impl WorldStreamer {
                     tracing::warn!(error = %e, "frill sector job failed");
                     *st = FrillState::Ready(Arc::new(FrillSector::default()), 0);
                 }
-                // Cancelled, shut down or full: try again.
+                // Cancelled, shut down or full, or the region's tables wait for a retry
+                // (`scenery.md` §4.1): try again.
                 (None, _) => *st = FrillState::Waiting,
             }
         }
@@ -2368,6 +2373,13 @@ impl WorldStreamer {
                 let Some(bundle) = k.landblock().and_then(|lb| self.bundle(lb)) else {
                     continue;
                 };
+                if bundle.scenery.is_none() && scenery_tables_waited(bundle) {
+                    // Built while its region's tables were unavailable for a reason that
+                    // is not the data's (`scenery.md` §4.1): no sector is generated from
+                    // it; the sector stays waiting and is tried again on a later update
+                    // (the bundle is rebuilt on its landblock's next load).
+                    continue;
+                }
                 let next = if bundle.scenery.is_none() {
                     // No scenery for this landblock (no tables, or generation off): an
                     // empty sector.
@@ -2392,7 +2404,9 @@ impl WorldStreamer {
                                     return;
                                 }
                                 let mut thinner = DensityThinner::new();
-                                let sector = build_frill_sector(
+                                // `None` (the region's tables wait for a retry): the cell
+                                // stays empty and the sector waits again.
+                                let sector = try_build_frill_sector(
                                     &ctx,
                                     &bundle,
                                     sx,
@@ -2400,7 +2414,7 @@ impl WorldStreamer {
                                     density,
                                     &mut thinner,
                                 );
-                                *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(sector);
+                                *out.lock().unwrap_or_else(PoisonError::into_inner) = sector;
                             });
                     match spawned {
                         Ok(h) => {
@@ -2491,6 +2505,41 @@ pub fn build_frill_sector(
         limits: ctx.options().scenery_limits,
     };
     generate_sector(&input, &sc.markers, sx, sy, density, thinner)
+}
+
+/// [`build_frill_sector`], except that a sector built while the region's scenery tables
+/// are unavailable for a reason that is not the data's (the region waits for a retry,
+/// [`WorldContext::scenery_retry_pending`]) is `None`: it holds no records and does not
+/// count as generated, so the frill engine generates it again later (`scenery.md` §4.1
+/// Tessera Decision).
+#[must_use]
+pub fn try_build_frill_sector(
+    ctx: &WorldContext,
+    bundle: &LandblockBundle,
+    sx: u8,
+    sy: u8,
+    density: f32,
+    thinner: &mut DensityThinner,
+) -> Option<FrillSector> {
+    let region = bundle.key.region();
+    let tables = ctx.region(region).and_then(|r| r.scenery.as_ref());
+    if tables.is_none() && ctx.scenery_retry_pending().any(|r| r == region) {
+        return None;
+    }
+    if bundle.scenery.is_none() && scenery_tables_waited(bundle) {
+        return None;
+    }
+    Some(build_frill_sector(ctx, bundle, sx, sy, density, thinner))
+}
+
+/// Whether `bundle` was built without scenery because its region's tables were
+/// unavailable for a reason that is not the data's (its transient "scenery" problem,
+/// `scenery.md` §4.1).
+fn scenery_tables_waited(bundle: &LandblockBundle) -> bool {
+    bundle
+        .problems
+        .iter()
+        .any(|p| p.transient && p.what == "scenery")
 }
 
 /// Heap bytes of a frill sector.

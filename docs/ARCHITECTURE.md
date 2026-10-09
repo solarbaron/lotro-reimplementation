@@ -669,8 +669,10 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 > one-update overshoot of the residency budget at integration, the re-admission margin
 > of a seam closure, the velocity estimate's sample rules, what a data error in a
 > world-system input does, and the water lookups with `build_water` off) are listed for
-> confirmation in the implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1)
-> (2026-10-07, second set).
+> confirmation in these implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1),
+> all dated 2026-10-07: "streamer defaults", "transient overshoot", "re-admission margin of
+> a seam closure", "lookahead (a) continued", "data errors in world-system inputs" and
+> "`build_water` and the water lookups".
 
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend

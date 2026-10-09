@@ -47,9 +47,8 @@ fn verts(c: [(u16, u16); 3]) -> [u16; 3] {
     c.map(|(i, j)| 33 * j + i)
 }
 
-/// §14.4: quad i = 3, j = 7, base = 454, both diagonals. The key-base triangle of a SW-NE
-/// quad starts at (i, j + 1) (§6.1, the client's corner order; §14.4 lists the same
-/// corners in the same winding from (i, j)).
+/// §14.4: quad i = 3, j = 7, base = 454, both diagonals, every corner list in the client's
+/// stored order (§6.1 table, BIN, C43).
 #[test]
 fn s14_4_terrain_keys() {
     let heights = HeightGrid::flat(0);
@@ -60,12 +59,12 @@ fn s14_4_terrain_keys() {
     );
     assert_eq!(
         set.triangle_vertices(455),
-        Some(verts([(3, 7), (4, 7), (4, 8)]))
+        Some(verts([(4, 8), (3, 7), (4, 7)]))
     );
     let clear = GridMesh::from_grid(GridSurface::Terrain, &heights, &flags_with(3, 7, 0));
     assert_eq!(
         clear.triangle_vertices(454),
-        Some(verts([(3, 7), (4, 7), (3, 8)]))
+        Some(verts([(3, 8), (3, 7), (4, 7)]))
     );
     assert_eq!(
         clear.triangle_vertices(455),
@@ -84,16 +83,54 @@ fn s14_4_terrain_keys() {
     );
     assert_eq!(
         ceiling.triangle_vertices(455),
-        Some(verts([(4, 8), (4, 7), (3, 7)]))
+        Some(verts([(4, 7), (3, 7), (4, 8)]))
     );
     let ceiling_bit7 = GridMesh::from_grid(GridSurface::Ceiling, &heights, &flags_with(3, 7, 0x80));
     assert_eq!(
         ceiling_bit7.triangle_vertices(454),
-        Some(verts([(3, 8), (4, 7), (3, 7)]))
+        Some(verts([(4, 7), (3, 7), (3, 8)]))
+    );
+    assert_eq!(
+        ceiling_bit7.triangle_vertices(455),
+        Some(verts([(3, 8), (4, 8), (4, 7)]))
     );
     // Terrain faces up, ceiling down.
     assert!(set.plane(454).expect("plane").normal[2] > 0.99);
     assert!(ceiling.plane(454).expect("plane").normal[2] < -0.99);
+}
+
+/// CO16 (§6.1 stored corner order, synthetic): for every quad and both diagonal bits the
+/// stored lists give, as sets, the triangles of §6.2 with the same keys; terrain lists are
+/// counter-clockwise and ceiling lists clockwise from above, each ceiling list the reverse
+/// of the terrain list for the same key and diagonal.
+#[test]
+fn co16_corner_order_of_every_quad() {
+    let heights = HeightGrid::flat(0);
+    for bits in [0u8, 0x81] {
+        let flags = VertexFlags::filled(bits);
+        let t = GridMesh::from_grid(GridSurface::Terrain, &heights, &flags);
+        let c = GridMesh::from_grid(GridSurface::Ceiling, &heights, &flags);
+        for key in 0..2048u16 {
+            let tv = t.triangle_vertices(key).expect("terrain key");
+            let mut cv = c.triangle_vertices(key).expect("ceiling key");
+            cv.reverse();
+            assert_eq!(tv, cv, "key {key}, bits {bits:#x}");
+            let quad = usize::from(key / 2);
+            let (i, j) = (quad % 32, quad / 32);
+            let west = key % 2 == 0;
+            let split = bits != 0;
+            let corners = |v: [u16; 3]| v.map(|n| (usize::from(n % 33), usize::from(n / 33)));
+            let expected = match (split, west) {
+                (true, true) => [(i, j + 1), (i, j), (i + 1, j + 1)],
+                (true, false) => [(i + 1, j + 1), (i, j), (i + 1, j)],
+                (false, true) => [(i, j + 1), (i, j), (i + 1, j)],
+                (false, false) => [(i + 1, j), (i + 1, j + 1), (i, j + 1)],
+            };
+            assert_eq!(corners(tv), expected, "key {key}, bits {bits:#x}");
+            assert!(t.plane(key).expect("plane").normal[2] > 0.99);
+            assert!(c.plane(key).expect("plane").normal[2] < -0.99);
+        }
+    }
 }
 
 /// §14.7: the client's radius query.

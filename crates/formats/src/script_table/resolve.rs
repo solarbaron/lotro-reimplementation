@@ -17,9 +17,18 @@
 //! 2. [`ClipResolver::closure`] expands the tables through their includes in pre-order
 //!    (§8.2 Decision).
 //! 3. [`ClipResolver::resolve`] builds the property state from the entity's values and the
-//!    [`MotionInputs`] of a [`MotionState`] (§8.4, §11.3 step 2), runs the `Startup` script of
-//!    every closure table, then the start-up scripts the lookup finds (§11.3 step 3), and
-//!    returns the [`ClipCandidate`]s.
+//!    [`MotionInputs`] of a [`MotionState`] (§8.4, §11.3 step 2), runs the `Startup` script
+//!    (the `Startup` definitions of every closure table), then the start-up scripts the
+//!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s.
+//!
+//! Every script run (`Startup`, a start-up name, a Run node) runs **all** the definitions
+//! the lookup gathers (§8.2 steps 2–3, T25, T41) in the client's start order: the
+//! definitions of kind-1 tables, then kind 2, then kind 4 ([`RUN_LIST_KINDS`]; kinds
+//! compared as bit masks), each definition's roots in stored order, each node with its
+//! immediate starts before its next sibling. A Collection starts its ports by ascending
+//! ordinal (§7.5, T42); Sequence and Timer ports start by step and by time (§7.6). The
+//! candidate and deformer lists are in this order, so "the most recently started" node of
+//! `appearance.md` §6.4 (A33) is the last one of its kind.
 //!
 //! Everything is bounded ([`ResolveLimits`]): table count, include depth, scriptlet and run
 //! nesting, evaluation depth, visited nodes, the work done inside the visits (ports, case
@@ -30,7 +39,8 @@
 //!
 //! Property names and enum labels (`Movement_MovementStyle`, `Walking`, `Startup`, …) are
 //! looked up in the data at run time ([`ScriptVocabulary::from_data`]); nothing here
-//! hard-codes a PID or an enum key.
+//! hard-codes a PID, and the only enum key is the `Overriding` value 1 that §8.2 states
+//! ([`COMBINATION_OVERRIDING`]), used when the mapper lacks the label.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -164,7 +174,23 @@ pub struct ScriptVocabulary {
     pub slider_definitions: Option<u32>,
     /// MeshDeformer field PIDs (§6.9).
     pub mesh_deformer: MeshDeformerFieldPids,
+    /// `Script_CombinationType` (enum 0x2300016D): the per-script property (§2.4) that marks
+    /// a definition as overriding (§8.2 step 2). `None` when the dictionary lacks it: then
+    /// every definition is additive.
+    pub combination_type: Option<u32>,
+    /// Key of `Overriding` in the `Script_CombinationType` enum; `None` reads as
+    /// [`COMBINATION_OVERRIDING`], the value §8.2 step 1 states.
+    pub combination_overriding: Option<u32>,
 }
+
+/// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
+/// step 1); used when the enum mapper does not name it.
+pub const COMBINATION_OVERRIDING: u32 = 1;
+
+/// The three definition lists of one script run, in start order (§8.2 step 3, T41): kind 1,
+/// then kind 2, then kind 4. A table joins a list when its kind and the list's kind have a
+/// set bit in common.
+pub const RUN_LIST_KINDS: [u32; 3] = [1, 2, 4];
 
 /// Looks `label` up in the enum mapper that `pid`'s definition names, following base
 /// mappers ([`EnumMapper::key_in_chain_from`]).
@@ -213,6 +239,8 @@ impl ScriptVocabulary {
         let entity_element = opt("Entity_Element");
         let element_ground = entity_element.and_then(|p| label(p, "Earth_ControlledSurface").ok());
         let element_no_surface = entity_element.and_then(|p| label(p, "Earth_NoSurface").ok());
+        let combination_type = opt("Script_CombinationType");
+        let combination_overriding = combination_type.and_then(|p| label(p, "Overriding").ok());
         Ok(Self {
             class_script_table: need("Entity_ClassScriptTable")?,
             additional_script_tables: opt("Entity_AdditionalScriptTables"),
@@ -237,6 +265,8 @@ impl ScriptVocabulary {
             slider_values: opt("BoneSlider_ValueArray_String"),
             slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
             mesh_deformer: MeshDeformerFieldPids::from_names(dict),
+            combination_type,
+            combination_overriding,
         })
     }
 }
@@ -1002,9 +1032,11 @@ impl ClipCandidate {
 pub struct ClipResolution {
     /// The table closure that was run.
     pub closure: TableClosure,
-    /// Every animation that would start, in evaluation order.
+    /// Every animation that would start, in the client's start order (§8.2 step 3, §7.5,
+    /// §7.6; T41, T42).
     pub candidates: Vec<ClipCandidate>,
-    /// Every bind-space deformer registered (§6.9), in evaluation order.
+    /// Every bind-space deformer registered (§6.9), in the same start order: the last
+    /// slider deformer is the most recently started one (`appearance.md` §6.4, A33).
     pub deformers: Vec<DeformerCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
@@ -1289,7 +1321,8 @@ where
     }
 
     /// The closure of `roots` in lookup order (§8.2 Decision: pre-order, includes depth
-    /// first in stored order, first occurrence wins).
+    /// first in stored order, first occurrence wins). Null includes and includes naming
+    /// their own table are skipped (§8.2 step 3).
     ///
     /// # Errors
     ///
@@ -1320,8 +1353,9 @@ where
                 }
                 continue;
             }
+            // A null include and one naming the table itself are skipped (§8.2 step 3).
             for &inc in t.includes.iter().rev() {
-                if !seen.contains(&inc) {
+                if !inc.is_null() && inc != did && !seen.contains(&inc) {
                     stack.push((inc, depth + 1));
                 }
             }
@@ -1379,27 +1413,40 @@ where
         state: PropertyState,
         all_branches: bool,
     ) -> Result<ClipResolution, ResolveError<E>> {
-        let closure = self.closure(&entity.tables())?;
+        let entity_tables = entity.tables();
+        let closure = self.closure(&entity_tables)?;
         let mut tables = Vec::with_capacity(closure.order.len());
         for &did in &closure.order {
             if let Some(t) = self.load_table(did)? {
                 tables.push(t);
             }
         }
-        // Script key → (table, script) of its first definition in lookup order (§8.2
-        // Decision), built once so that a Run visit costs one hash lookup.
-        let mut index: HashMap<u32, (usize, usize)> = HashMap::new();
+        let positions: HashMap<Did, usize> =
+            tables.iter().enumerate().map(|(i, t)| (t.did, i)).collect();
+        // The gathering roots: the entity's own tables, in order (§8.2 step 2).
+        let roots: Vec<usize> = entity_tables
+            .iter()
+            .filter_map(|d| positions.get(d).copied())
+            .collect();
+        // (script key, table) → the script's index in that table, built once so that
+        // gathering a key costs one hash lookup per visited table.
+        let mut index: HashMap<(u32, usize), usize> = HashMap::new();
         for (ti, t) in tables.iter().enumerate() {
-            for (si, s) in t.scripts.iter().enumerate() {
-                index.entry(s.key).or_insert((ti, si));
+            for (si, sc) in t.scripts.iter().enumerate() {
+                index.entry((sc.key, ti)).or_insert(si);
             }
         }
+        let defined: HashSet<u32> = index.keys().map(|&(k, _)| k).collect();
         let startup = self.vocab.startup_key;
         let mut ev = Eval {
             r: self,
             state,
             tables,
+            positions,
+            roots,
             index,
+            defined,
+            gathered: HashMap::new(),
             out: Vec::new(),
             deformers: Vec::new(),
             issues: Vec::new(),
@@ -1409,21 +1456,18 @@ where
             stopped: false,
             depth: 0,
             calls: Vec::new(),
+            runs: Vec::new(),
             running: HashSet::new(),
             table: Did(0),
             all_branches,
         };
-        let root = Scope::root();
-        // Every closure table's Startup script, in lookup order (§8.2 Decision).
-        for t in ev.tables.clone() {
-            if ev.stopped {
-                break;
-            }
-            if let Some(s) = t.script(startup) {
-                ev.table = t.did;
-                ev.running.insert(startup);
-                ev.nodes(&s.roots, &root, Ctx::ONE)?;
-            }
+        // The `Startup` script: one run of every definition the lookup gathers, so the
+        // `Startup` of every closure table (§8.2 start-up), in the client's start order
+        // (§8.2 step 3, T41).
+        let defs = ev.gather(startup);
+        if !defs.is_empty() {
+            ev.running.insert(startup);
+            ev.start(startup, &defs, Ctx::ONE)?;
         }
         // Then the start-up scripts named by the table structs (§8.1, §11.3 step 3).
         for &key in &entity.startup_scripts {
@@ -1433,21 +1477,19 @@ where
             if key == startup {
                 continue;
             }
-            match ev.lookup(key) {
-                Some((owner, si)) => {
-                    ev.table = owner.did;
-                    ev.running.insert(key);
-                    ev.calls.push(Call::Script(key));
-                    if let Some(s) = owner.scripts.get(si) {
-                        ev.nodes(&s.roots, &root, Ctx::ONE)?;
-                    }
-                    ev.calls.pop();
-                }
-                None => ev.report(
+            let defs = ev.gather(key);
+            if defs.is_empty() {
+                ev.report(
                     IssueKey::Startup(key),
                     ResolveIssue::StartupScriptNotFound(key),
-                ),
+                );
+                continue;
             }
+            ev.running.insert(key);
+            ev.calls.push(Call::Script(key));
+            let res = ev.start(key, &defs, Ctx::ONE);
+            ev.calls.pop();
+            res?;
         }
         let Eval {
             out,
@@ -1530,6 +1572,48 @@ enum Call {
     Script(u32),
 }
 
+/// The firing order of a Sequence step or Timer port (§7.6): a total order, so sorting
+/// never panics on hostile values. Times compare by value with −0 equal to +0, and a NaN
+/// time sorts after every number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StepKey {
+    Step(u32),
+    /// (is NaN, the time's total-order key).
+    Time(bool, i32),
+}
+
+impl StepKey {
+    fn step(step: u32) -> Self {
+        Self::Step(step)
+    }
+
+    fn time(t: f32) -> Self {
+        if t.is_nan() {
+            return Self::Time(true, 0);
+        }
+        // −0 and +0 fire together; map both to +0.
+        let t = if t == 0.0 { 0.0 } else { t };
+        // The usual total-order key of an IEEE 754 single: flip the magnitude bits of
+        // negative numbers so that the signed integers compare like the floats.
+        #[allow(clippy::cast_possible_wrap)]
+        let bits = t.to_bits() as i32;
+        Self::Time(false, bits ^ (((bits >> 31) as u32) >> 1) as i32)
+    }
+}
+
+/// One gathered definition of a script key: (index in the evaluator's tables, index in
+/// that table's scripts).
+type Definition = (usize, usize);
+
+/// A script run in progress: its key and how many times a Run node stopped it while it was
+/// still starting. A Collection compares the count at its entry with the count between its
+/// ports, so only a stop that happens after it began cuts it (§7.5 step 4).
+#[derive(Debug, Clone, Copy)]
+struct RunFrame {
+    key: u32,
+    stops: u64,
+}
+
 /// What makes two issues the same report (see [`ResolveIssue`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum IssueKey {
@@ -1544,9 +1628,18 @@ enum IssueKey {
 struct Eval<'r, 's, S: ?Sized, F, B, E> {
     r: &'r mut ClipResolver<'s, S, F, B, E>,
     state: PropertyState,
+    /// The closure tables that loaded, in lookup order.
     tables: Vec<Arc<ScriptTable>>,
-    /// Script key → (index in `tables`, index in its `scripts`).
-    index: HashMap<u32, (usize, usize)>,
+    /// Table DID → index in `tables`.
+    positions: HashMap<Did, usize>,
+    /// The entity's own tables (indices in `tables`): where gathering starts (§8.2 step 2).
+    roots: Vec<usize>,
+    /// (script key, index in `tables`) → index in that table's `scripts`.
+    index: HashMap<(u32, usize), usize>,
+    /// Keys some closure table defines.
+    defined: HashSet<u32>,
+    /// Gathered definitions per key, in start order (§8.2 step 4: cached per key).
+    gathered: HashMap<u32, Arc<[Definition]>>,
     out: Vec<ClipCandidate>,
     deformers: Vec<DeformerCandidate>,
     issues: Vec<ResolveIssue>,
@@ -1558,6 +1651,9 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     stopped: bool,
     depth: usize,
     calls: Vec<Call>,
+    /// The script runs in progress, outermost first, for stops during a start (§7.5
+    /// step 4).
+    runs: Vec<RunFrame>,
     running: HashSet<u32>,
     table: Did,
     /// Run every branch of Switch, When, ScalarBlend and WhenRunning nodes.
@@ -1570,10 +1666,123 @@ where
     F: FnMut(Did) -> Result<Option<B>, E>,
     B: AsRef<[u8]>,
 {
-    /// The first closure table defining `key` (§8.2 Decision) and the script's index in it.
-    fn lookup(&self, key: u32) -> Option<(Arc<ScriptTable>, usize)> {
-        let &(ti, si) = self.index.get(&key)?;
-        Some((Arc::clone(self.tables.get(ti)?), si))
+    /// The definitions of `key` that one run starts, in the client's start order (§8.2
+    /// steps 2–3, T41; cached per key, step 4).
+    ///
+    /// For each list kind of [`RUN_LIST_KINDS`] in turn, the entity's tables and their
+    /// includes are visited in pre-order, depth first, in stored include order, each table
+    /// once. A table whose kind has a set bit in common with the list's kind contributes
+    /// its definition of `key`; when that definition is overriding
+    /// (`Script_CombinationType`, §8.2 step 2) the visit does not descend into the
+    /// table's includes. A table that does not match is still descended into. Null
+    /// includes and includes naming their own table are skipped. A definition is in a list
+    /// at most once (a root node is not added twice); a table whose kind has several list
+    /// bits contributes to each of those lists.
+    ///
+    /// Tessera Decision (`script-table.md` §16 OPEN of 2026-10-08): a table's overriding
+    /// definition stops the descent only in the lists the table contributes to.
+    fn gather(&mut self, key: u32) -> Arc<[Definition]> {
+        if let Some(g) = self.gathered.get(&key) {
+            return Arc::clone(g);
+        }
+        let mut out: Vec<Definition> = Vec::new();
+        if self.defined.contains(&key) {
+            let mut seen = vec![false; self.tables.len()];
+            'lists: for list in RUN_LIST_KINDS {
+                seen.iter_mut().for_each(|v| *v = false);
+                let mut stack: Vec<usize> = self.roots.iter().rev().copied().collect();
+                while let Some(ti) = stack.pop() {
+                    match seen.get_mut(ti) {
+                        Some(v) if !*v => *v = true,
+                        _ => continue,
+                    }
+                    let Some(t) = self.tables.get(ti).map(Arc::clone) else {
+                        continue;
+                    };
+                    if !self.charge(t.includes.len().saturating_add(1)) {
+                        break 'lists;
+                    }
+                    let mut descend = true;
+                    if t.kind & list != 0
+                        && let Some(&si) = self.index.get(&(key, ti))
+                    {
+                        out.push((ti, si));
+                        if self.overriding(&t, key) {
+                            descend = false;
+                        }
+                    }
+                    if descend {
+                        for inc in t.includes.iter().rev() {
+                            if inc.is_null() || *inc == t.did {
+                                continue;
+                            }
+                            if let Some(&j) = self.positions.get(inc)
+                                && !seen.get(j).copied().unwrap_or(true)
+                            {
+                                stack.push(j);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let g: Arc<[Definition]> = out.into();
+        self.gathered.insert(key, Arc::clone(&g));
+        g
+    }
+
+    /// Whether `t`'s definition of `key` is overriding: its per-script property set
+    /// (§2.4) has `Script_CombinationType` = `Overriding` (§8.2 step 1).
+    fn overriding(&self, t: &ScriptTable, key: u32) -> bool {
+        let vocab = &self.r.vocab;
+        let Some(pid) = vocab.combination_type else {
+            return false;
+        };
+        let overriding = vocab
+            .combination_overriding
+            .unwrap_or(COMBINATION_OVERRIDING);
+        t.script_properties(key)
+            .and_then(|set| set.get(pid))
+            .and_then(PropertyValue::as_f64)
+            .is_some_and(|v| v == f64::from(overriding))
+    }
+
+    /// Starts the gathered definitions `defs` of script `key` as one run: definitions in
+    /// order, each definition's roots in stored order, each root with its immediate starts
+    /// before the next (§8.2 step 3, T41), with the weights `ctx` of the starting node. The
+    /// caller manages `running` and `calls`.
+    fn start(&mut self, key: u32, defs: &[Definition], ctx: Ctx) -> Result<(), ResolveError<E>> {
+        self.runs.push(RunFrame { key, stops: 0 });
+        let saved = self.table;
+        let root = Scope::root();
+        let mut res = Ok(());
+        for &(ti, si) in defs {
+            if self.stopped {
+                break;
+            }
+            let Some(t) = self.tables.get(ti).map(Arc::clone) else {
+                continue;
+            };
+            let Some(sc) = t.scripts.get(si) else {
+                continue;
+            };
+            self.table = t.did;
+            res = self.nodes(&sc.roots, &root, ctx);
+            if res.is_err() {
+                break;
+            }
+        }
+        self.table = saved;
+        self.runs.pop();
+        res
+    }
+
+    /// How many times the innermost script run in progress was stopped so far during its
+    /// start (0 outside any run). Runs started below a node are pushed and popped before
+    /// that node continues, so between a Collection's ports the innermost frame is the
+    /// frame of the run the Collection belongs to.
+    fn run_stops(&self) -> u64 {
+        self.runs.last().map_or(0, |f| f.stops)
     }
 
     /// Pushes `issue` unless an issue with the same key was reported.
@@ -1722,11 +1931,11 @@ where
                 self.slider_deformer(n, values, *definitions);
                 Ok(())
             }
-            // Containers whose children all start: Collection, Label, Sequence, Timer.
-            NodeData::None if n.kind == NodeKind::COLLECTION => self.children(n, None, scope, ctx),
-            NodeData::Label { .. } | NodeData::Sequence { .. } | NodeData::Timer(_) => {
-                self.children(n, None, scope, ctx)
-            }
+            // Containers whose children all start: Collection (by ascending ordinal, §7.5),
+            // Sequence and Timer (by step and by time, §7.6), Label (stored order).
+            NodeData::None if n.kind == NodeKind::COLLECTION => self.collection(n, scope, ctx),
+            NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
+            NodeData::Label { .. } => self.children(n, None, scope, ctx),
             // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
@@ -1848,6 +2057,81 @@ where
         Ok(())
     }
 
+    /// Collection (§7.5, T42): its Default ports by **ascending ordinal** (unsigned
+    /// 32-bit), equal ordinals in stored order (the §7.5 step 2 Tessera Decision; the sort
+    /// is stable), each port's children in stored order. When the script run it belongs to
+    /// is stopped while it is starting (a Run node with `RunScript_Stop` below it, §7.5
+    /// step 4), it starts no further ports. Only a stop after the Collection began counts:
+    /// a Collection that starts later in a run that was already stopped (a later root, a
+    /// later sibling or a later port child) starts its ports like any other node of that
+    /// run.
+    #[inline(never)]
+    fn collection<'a>(
+        &mut self,
+        n: &'a Node,
+        scope: &Scope<'a>,
+        ctx: Ctx,
+    ) -> Result<(), ResolveError<E>> {
+        // Collecting the ports, then sorting them.
+        if !self.charge(n.ports.len().saturating_mul(2)) {
+            return Ok(());
+        }
+        let mut ports: Vec<(u32, &'a [Node])> = n
+            .ports_of(PortType::DEFAULT)
+            .filter_map(|p| match p.payload {
+                PortPayload::U32(ordinal) => Some((ordinal, p.children.as_slice())),
+                _ => None,
+            })
+            .collect();
+        ports.sort_by_key(|&(ordinal, _)| ordinal);
+        let begun = self.run_stops();
+        for (_, children) in ports {
+            if self.stopped || self.run_stops() != begun {
+                break;
+            }
+            self.nodes(children, scope, ctx)?;
+        }
+        Ok(())
+    }
+
+    /// Sequence and Timer (§7.6): their Default ports in the order they fire, a Sequence's
+    /// by ascending step number and a Timer's by ascending time, so that a later step
+    /// counts as started later (`appearance.md` §6.4, A33). Equal keys keep their stored
+    /// order (Tessera Decision); a Timer time that is not a number sorts last. Ports of
+    /// other types follow in stored order, as before.
+    #[inline(never)]
+    fn steps<'a>(
+        &mut self,
+        n: &'a Node,
+        scope: &Scope<'a>,
+        ctx: Ctx,
+    ) -> Result<(), ResolveError<E>> {
+        if !self.charge(n.ports.len().saturating_mul(2)) {
+            return Ok(());
+        }
+        let mut timed: Vec<(StepKey, &'a [Node])> = Vec::new();
+        let mut rest: Vec<&'a [Node]> = Vec::new();
+        for p in &n.ports {
+            match (p.port_type, &p.payload) {
+                (PortType::DEFAULT, PortPayload::U32(step)) => {
+                    timed.push((StepKey::step(*step), &p.children));
+                }
+                (PortType::DEFAULT, PortPayload::F32(t)) => {
+                    timed.push((StepKey::time(*t), &p.children));
+                }
+                _ => rest.push(&p.children),
+            }
+        }
+        timed.sort_by_key(|&(key, _)| key);
+        for children in timed.into_iter().map(|(_, c)| c).chain(rest) {
+            if self.stopped {
+                break;
+            }
+            self.nodes(children, scope, ctx)?;
+        }
+        Ok(())
+    }
+
     /// Random (§7.4): every port with a positive weight, with its share of the chance.
     #[inline(never)]
     fn random<'a>(
@@ -1936,11 +2220,25 @@ where
         }
     }
 
-    /// Run (§7.7): look the script up in the closure and run it (or stop it).
+    /// Run (§7.7): gather the script's definitions (§8.2) and run all of them as one run
+    /// (T25, T41), or stop it. A stop counts against the runs of that script in progress,
+    /// so a Collection of those runs that began before the stop starts no further ports
+    /// (§7.5 step 4); in the every-branch mode of [`ClipResolver::reachable`] stops cut
+    /// nothing.
     #[inline(never)]
     fn run(&mut self, script: u32, stop: bool, ctx: Ctx) -> Result<(), ResolveError<E>> {
         if stop {
             self.running.remove(&script);
+            if !self.all_branches {
+                if !self.charge(self.runs.len()) {
+                    return Ok(());
+                }
+                for f in &mut self.runs {
+                    if f.key == script {
+                        f.stops = f.stops.wrapping_add(1);
+                    }
+                }
+            }
             return Ok(());
         }
         if self.calls.contains(&Call::Script(script)) {
@@ -1954,19 +2252,14 @@ where
             self.limit("max_call_depth");
             return Ok(());
         }
-        let Some((owner, si)) = self.lookup(script) else {
+        let defs = self.gather(script);
+        if defs.is_empty() {
             return Ok(());
-        };
+        }
         self.running.insert(script);
-        let saved = std::mem::replace(&mut self.table, owner.did);
         self.calls.push(Call::Script(script));
-        let root = Scope::root();
-        let res = match owner.scripts.get(si) {
-            Some(s) => self.nodes(&s.roots, &root, ctx),
-            None => Ok(()),
-        };
+        let res = self.start(script, &defs, ctx);
         self.calls.pop();
-        self.table = saved;
         res
     }
 

@@ -57,17 +57,25 @@ pub enum AlphaMode {
     /// additive light passes; lerping an additive effect toward the fog colour would
     /// brighten fogged distance). Outside lit passes it draws as [`AlphaMode::Blend`].
     ///
-    /// The same as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`]. An additive surface
-    /// whose render state writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE
-    /// shaders have depth write on) uses [`AlphaMode::Fixed`] with `depth_write` set.
+    /// The same blend state as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`], but the
+    /// source alpha is the output alpha as for [`AlphaMode::Blend`] (opacity × *M*.alpha,
+    /// so a caller can fade the surface by *M*.alpha), where [`AlphaMode::Fixed`] reads the
+    /// opacity source alone (`material.md` §11.3). An additive surface whose render state
+    /// writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE shaders have depth write
+    /// on) uses [`AlphaMode::Fixed`] with `depth_write` set.
     Additive,
     /// The fixed-function blend state of an unlit record (`material.md` §11.3 rule for
     /// unlit records: the most common (src, dst, op) triple of the record's render-state
     /// blocks, the D3D factor codes of §7.6 mapped by the caller, depth write from the
-    /// same block). No alpha test; drawn with the blended draws, sorted back to front; casts
-    /// no shadow. The opacity a factor reads is the output alpha (opacity × *M*.alpha, as
-    /// for [`AlphaMode::Blend`]). In lit passes fog follows [`FixedBlend`]'s fog rule.
-    /// Outside lit passes it draws as [`AlphaMode::Blend`].
+    /// same block), with the record's alpha test when it has one ([`FixedBlend::alpha_test`],
+    /// `material.md` §11.2); drawn with the blended draws, sorted back to front; casts no
+    /// shadow. The opacity a factor reads (SRCALPHA and INVSRCALPHA) is the opacity
+    /// source of `material.md` §11.2, or 1 without one (§11.3, rule for unlit records):
+    /// [`LitSurface::opacity`] for meshes, the base alpha unless it is the gloss for world
+    /// surfaces; *M*.alpha (the instance tint included) and the vertex alpha do not enter.
+    /// Sky objects still scale it by their keyframe opacity (`render.md` §5.4). In lit
+    /// passes fog follows [`FixedBlend`]'s fog rule. Outside lit passes it draws as
+    /// [`AlphaMode::Blend`].
     Fixed(FixedBlend),
 }
 
@@ -84,7 +92,7 @@ pub enum BlendFactor {
     SrcColor,
     /// 1 − the source colour.
     OneMinusSrcColor,
-    /// The source alpha (the surface's output alpha).
+    /// The source alpha (the surface's opacity, as [`AlphaMode::Fixed`] says).
     SrcAlpha,
     /// 1 − the source alpha.
     OneMinusSrcAlpha,
@@ -113,9 +121,50 @@ pub enum BlendOp {
     Max,
 }
 
+/// The alpha-test threshold of a fixed blend (`material.md` §11.2: parameter 1043, used
+/// when 4004 is on and an opacity source exists): fragments whose opacity is at most the
+/// threshold are discarded. Compared and hashed by its bits, so it can key pipelines. A
+/// value that is not finite acts as 0.5.
+#[derive(Debug, Clone, Copy)]
+pub struct AlphaThreshold(pub f32);
+
+impl AlphaThreshold {
+    /// The threshold the shaders compare with (0.5 for a value that is not finite).
+    #[must_use]
+    pub fn value(self) -> f32 {
+        if self.0.is_finite() { self.0 } else { 0.5 }
+    }
+}
+
+impl PartialEq for AlphaThreshold {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for AlphaThreshold {}
+
+impl PartialOrd for AlphaThreshold {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AlphaThreshold {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl std::hash::Hash for AlphaThreshold {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 /// A fixed-function blend state ([`AlphaMode::Fixed`]): colour = op(src · `src`, dst ·
-/// `dst`), and whether the surface writes depth. The target's alpha channel is kept
-/// (Tessera's choice; the presented image is opaque).
+/// `dst`), whether the surface writes depth and its alpha test. The target's alpha channel
+/// is kept (Tessera's choice; the presented image is opaque).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FixedBlend {
     /// Source factor.
@@ -126,6 +175,10 @@ pub struct FixedBlend {
     pub op: BlendOp,
     /// Depth write (`depth_write` of the render-state block, `material.md` §7.6, §11.3).
     pub depth_write: bool,
+    /// The record's alpha test (`material.md` §11.2, `render.md` §4.8 R-D11): `None` when
+    /// the record has none (4004 off or no opacity source). It tests the opacity source, as
+    /// for lit surfaces (§11.2); a discarded fragment writes neither colour nor depth.
+    pub alpha_test: Option<AlphaThreshold>,
 }
 
 /// How fog acts on an [`AlphaMode::Fixed`] surface in lit passes (Tessera Decision,
@@ -150,7 +203,14 @@ impl FixedBlend {
         dst: BlendFactor::One,
         op: BlendOp::Add,
         depth_write: false,
+        alpha_test: None,
     };
+
+    /// The threshold the shaders compare with: the alpha test's, or −1 (no test).
+    #[must_use]
+    pub(crate) fn cutoff(self) -> f32 {
+        self.alpha_test.map_or(-1.0, AlphaThreshold::value)
+    }
 
     /// The wgpu blend state: the colour by the factors and operation (factors ONE for
     /// min and max, which ignore them), the alpha channel kept.
@@ -458,10 +518,11 @@ pub enum LightSelection {
     /// whose squared distance to the draw's world box is below the square of their
     /// selection radius ρ ([`crate::LightReach`]), without lights baked into the landscape
     /// on terrain chunks and with the parent switches applied; key lights first, each group
-    /// nearest first (Tessera Decision of §8.5); then one directional light; at most
-    /// [`crate::MAX_DRAW_LIGHTS`] in all with light 0 counted: 7 from the table (light 0 is
-    /// the sun or, without one, the default directional light), 8 when a key directional
-    /// table light takes light 0 in a pass without a sun.
+    /// nearest first (Tessera Decision of §8.5); in a pass without a sun the first key
+    /// directional light (light 0); then one other directional light (the extra slot,
+    /// §8.2); at most [`crate::MAX_DRAW_LIGHTS`] in all with light 0 counted: 7 from the
+    /// table (light 0 is the sun or, without one, the default directional light), 8 when a
+    /// key directional table light takes light 0 in a pass without a sun.
     #[default]
     Auto,
     /// No light from the table (the sun and ambient still apply).
@@ -623,11 +684,30 @@ mod tests {
             dst: BlendFactor::Zero,
             op: BlendOp::Max,
             depth_write: true,
+            alpha_test: None,
         };
         let s = max.blend_state();
         assert_eq!(s.color.src_factor, wgpu::BlendFactor::One);
         assert_eq!(s.color.dst_factor, wgpu::BlendFactor::One);
         assert_eq!(s.color.operation, wgpu::BlendOperation::Max);
+    }
+
+    /// `render.md` R-D11: the alpha test of a fixed blend; thresholds compare by bits.
+    #[test]
+    fn fixed_blend_alpha_test() {
+        assert_eq!(FixedBlend::ADDITIVE.cutoff(), -1.0);
+        let tested = FixedBlend {
+            alpha_test: Some(AlphaThreshold(0.25)),
+            ..FixedBlend::ADDITIVE
+        };
+        assert_eq!(tested.cutoff(), 0.25);
+        assert_ne!(tested, FixedBlend::ADDITIVE);
+        let nan = FixedBlend {
+            alpha_test: Some(AlphaThreshold(f32::NAN)),
+            ..FixedBlend::ADDITIVE
+        };
+        assert_eq!(nan.cutoff(), 0.5);
+        assert_eq!(nan, nan);
     }
 
     /// The fog rule fades a blended contribution toward what leaves the destination
@@ -640,6 +720,7 @@ mod tests {
                 dst,
                 op,
                 depth_write: false,
+                alpha_test: None,
             }
             .fog_rule()
         };

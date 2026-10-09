@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07; was Revised, footprint revision and its two repair revisions of 2026-10-07; see change log) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (2026-10-08, after review of the third 2026-10-08 revision: NaN clamp, S52, S54, clearance-list levels, S45, SC22, SC28, SC29). Revised earlier on 2026-10-08 (implementer OPENs of 2026-10-07 answered, eighth to tenth BIN passes (w)–(ab); changes Accepted text in §4.1, §7.4 step 14a, §7.6, §8.2, §8.3 rule 8, §8.5, §13, §13.2 and §15; see change log). Previously Accepted 2026-10-07. |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer agent), a different session from the writer |
-| **Review record** | Claude review sessions (spec-writer and spec-reviewer agents), each a different session from the writer: 2026-10-05 changes requested; 2026-10-05 changes requested; 2026-10-06 changes requested; 2026-10-06 changes requested; 2026-10-06 **passed** (Review → Accepted); 2026-10-07 (footprint revision) changes requested; 2026-10-07 (footprint revision, second review) changes requested; 2026-10-07 (repair revision, spec-reviewer agent) changes requested; 2026-10-07 (second repair revision, spec-reviewer agent) **passed** (Revised → Accepted). Each round was answered by a revision (change log). Detailed findings are kept in the dirty-room area, not in this file (decision 0018). |
+| **Review record** | Claude review sessions (spec-writer and spec-reviewer agents), each a different session from the writer: 2026-10-05 changes requested; 2026-10-05 changes requested; 2026-10-06 changes requested; 2026-10-06 changes requested; 2026-10-06 **passed** (Review → Accepted); 2026-10-07 (footprint revision) changes requested; 2026-10-07 (footprint revision, second review) changes requested; 2026-10-07 (repair revision, spec-reviewer agent) changes requested; 2026-10-07 (second repair revision, spec-reviewer agent) **passed** (Revised → Accepted); 2026-10-08 (implementer-OPEN revision, spec-reviewer agent) changes requested; 2026-10-08 (second revision of the day, spec-reviewer agent) changes requested (NaN clamp of §8.3 rule 8, S52 and SC29; per-entity-type levels of the clearance-list lookup in §7.4 step 14a; SC28 fixture details); answered by the third revision of the day; 2026-10-08 (third revision of the day, spec-reviewer agent, a fresh session that wrote none of it) **passed** (Revised → Accepted). Each round was answered by a revision (change log). Detailed findings are kept in the dirty-room area, not in this file (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the region scene tables 0x11, 0x12 and scene records 0x02; the terrain-type table 0x19 decoder of `terrain-texturing.md` §3 and the LOD-class record 0x32 decoder of `environment.md` §9.1, which own those layouts; fuzz targets for each), `crates/world` (per-landblock scenery generation, §7), a frill (grass) layer with its own ring (§8, `crates/world` + `crates/render`), `crates/render` (instanced drawing of scenery and frill objects), `apps/explorer` (scene and scenery views), `apps/client` |
 | **Companion specs** | [`landblock.md`](landblock.md) §3.3–§3.8 (height grid, coarse 17 × 17 grid, surface layers and quad grid), §4.5 (static entities), §5 (block maps). [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19, full entry layout), §13 (height constant). [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh and triangle keys), §6.6 (terrain triangles near a point), §9.4 (collision of generated scenery). [`water.md`](water.md) §6.2–§6.4 (per-landblock water surface). [`environment.md`](environment.md) §3 (region descriptor slots), §7.4 (`WindSpeed`), §9.1 (LOD-class record 0x32, owner of its layout). [`entity-descriptor.md`](entity-descriptor.md) (hand-placed static entities). [`setup.md`](setup.md) (0x47 → 0x1F → 0x04 → 0x06 chain; §3.1 parent 0x47 records, §4.4 extra sets, used by §9.2). [`mesh.md`](mesh.md) §6.1 (stored vertex-block bounding box, §8.5). [`coordinates.md`](coordinates.md) §11 (axes, quaternion convention, compass heading). [`property-system.md`](property-system.md) (property sets in 0x47 records). [`records.md`](records.md) §1 (VLE, TSize). |
 
@@ -51,8 +51,8 @@ counts.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). Fourth pass, 2026-10-06 (answering the re-review): the group objects that the frill pass meets after a frill layer (§8.1), the part, detail-level and draw-entry census of all 1,967 objects that can become frill records (meshes read with the repository's mesh decoder; §8.3), and the properties of the 452 objects among them that no frill layer reaches (§8.3). Fifth pass, 2026-10-06 (answering the third review): the properties of all 4,261 objects resolved along their 0x47 parent chains (197 objects have a parent; 156 distinct parents, 128 of them scene objects themselves and 28 not, none of which has a parent of its own), and the 0x78 extra sets named by all 4,289 records involved, the 4,261 objects and the 28 parents that are not scene objects (1,043 of these records name one or two; every set exists and none holds a `Render_*` or `Entity_*` property) (§9.2). Seventh pass, 2026-10-07 (footprint revision): the generated lists of the 11 landblocks of `m4-5-visual.md` §4.2 and of walks GN1–GN4 re-derived with the dirty-room generator corrected to §7.4 step 14b; they equal the lists of the clean-room implementation (`tessera_world::scenery`, built from this spec) object for object (DID, position, heading, scale) in all 11 landblocks. Frill records of the six landblocks of `m4-5-visual.md` §4.3, and of a random sample of 72 landblocks (12 per region), generated under the rule of §8.2 item 5 and under the Tessera Decision it replaces. Eighth pass, 2026-10-07 (repair revision): **all** 49,636 landblock-info records and **all** 2,683,271 static entities of types Weenie, Physics and PatrolPoint in them, with their two clearance lists found by the lookup of `entity-descriptor.md` §4.9 (every element of every list parsed; boxes, cylinders, frames and rotations counted, §7.4 step 14a, S46); then **all** 78,114 landblocks with a non-zero coarse grid generated twice with the repository's generator, once with the static list as the released `world` implementation builds it and once with a static list built by the rules of §7.4 step 14a, both without water (S46, §13.2). |
-| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Fourth pass, same build, 2026-10-06: (k) what the frill engine does with a frill record: whether it filters records by object property, creation type or part count, which geometry of the object it draws, and how it stores the vertices of a sector; (l) which graphics back ends force the frill terrain-colour intensity to 0. Fifth pass, same build, 2026-10-06: (m) how the client resolves a property of an object along its 0x47 chain, which reads of `Entity_CreationType`, `Render_LODClass` and the frill per-object properties go through that resolution, and what an object without `Render_LODClass` gets; (n) which texture-coordinate set the frill bake copies. Sixth pass, same build (PE file version re-read 2026-10-07), 2026-10-07, answering the M4.5 exit verification: (o) which entries of the landblock's generated list the spacing test of §7.4 step 14b visits, how a footprint marker is created, closed and told apart from an object, whether the `no_spacing*` and `no_checks*` switches pass through scene references, and what happens to a node's marker when one of its children fails; (p) whether the frill pass works on the same generated list as the static pass, and whether anything empties or shortens that list between the two passes; (q) in which order generated objects become creation requests and which filters apply at that point. For (o) and (p), M1 and M2 could not decide: the clean-room implementation and the checklist's dirty-room generator disagreed on which markers count, and both outcomes are self-consistent placements that the data does not store. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. Seventh pass, same build, 2026-10-07 (repair revision under decision 0018, so that the spec body states every client rule the released `world` implementation relies on): (r) which child failures exist, how far a failure climbs (in particular out of a frill layer), and what the frill engine does with a sector whose vertex fails; (s) every scale mode of §7.4 steps 3 and 11 with its salts; (t) how the static list of §7.4 step 14a gets its clearance lists (which property lookup, how list elements are read, how boxes are stored, the frame of a static entity without one, which entities are skipped) and the form of the cylinder test with `spacing_3d`; (u) which frill sectors the frill engine generates and keeps, in which order, when it drops them, and how the ring centre is blended from camera and player (including the case without a player and blends of 0 or less and above 1); (v) the bound of step 6 against the landblock normalisation of a frame, the landblock test of frill records, the edge cases of the weighted pick of §7.2, a region without a terrain-type table (step 7), a region whose slot-1 or slot-2 table is empty or cannot be read (§4.1), and what `max_objects` counts. Why M1–M3 were not enough for (r)–(v): these are rules of the generator and of the frill engine that leave no trace in data (failures, unused scale modes and the 3D cylinder test do not occur in this install; the static list and the frill sector set exist only in memory), no published source describes them, and no frame capture is available. The slot-1 and slot-2 cases of (v) and the ring-centre cases of (u) were re-checked in a separate read-only copy of the project, same build, on 2026-10-07 (second repair revision); every region of this install has both tables and the blend is a client option at its default, so M1 cannot show either. No network, login, launcher or anti-tamper code was examined. |
+| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). Fourth pass, 2026-10-06 (answering the re-review): the group objects that the frill pass meets after a frill layer (§8.1), the part, detail-level and draw-entry census of all 1,967 objects that can become frill records (meshes read with the repository's mesh decoder; §8.3), and the properties of the 452 objects among them that no frill layer reaches (§8.3). Fifth pass, 2026-10-06 (answering the third review): the properties of all 4,261 objects resolved along their 0x47 parent chains (197 objects have a parent; 156 distinct parents, 128 of them scene objects themselves and 28 not, none of which has a parent of its own), and the 0x78 extra sets named by all 4,289 records involved, the 4,261 objects and the 28 parents that are not scene objects (1,043 of these records name one or two; every set exists and none holds a `Render_*` or `Entity_*` property) (§9.2). Seventh pass, 2026-10-07 (footprint revision): the generated lists of the 11 landblocks of `m4-5-visual.md` §4.2 and of walks GN1–GN4 re-derived with the dirty-room generator corrected to §7.4 step 14b; they equal the lists of the clean-room implementation (`tessera_world::scenery`, built from this spec) object for object (DID, position, heading, scale) in all 11 landblocks. Frill records of the six landblocks of `m4-5-visual.md` §4.3, and of a random sample of 72 landblocks (12 per region), generated under the rule of §8.2 item 5 and under the Tessera Decision it replaces. Eighth pass, 2026-10-07 (repair revision): **all** 49,636 landblock-info records and **all** 2,683,271 static entities of types Weenie, Physics and PatrolPoint in them, with their two clearance lists found by the lookup of `entity-descriptor.md` §4.9 (every element of every list parsed; boxes, cylinders, frames and rotations counted, §7.4 step 14a, S46); then **all** 78,114 landblocks with a non-zero coarse grid generated twice with the repository's generator, once with the static list as the released `world` implementation builds it and once with a static list built by the rules of §7.4 step 14a, both without water (S46, §13.2). Ninth pass, 2026-10-08 (answering the `world` OPENs): **all** 2,683,271 static entities of types Weenie (33,676), Physics (2,380,699) and PatrolPoint (268,896) in all 49,636 landblock-info records: every one stores an object DID, none is 0, and every one has the prefix 0x47 or 0x70; the install's property registry names id 0x47E `Entity_CreationType` (S50). Tenth pass, 2026-10-08 (answering the review of the same date): the dictionary declares id 0x47E an enum (type 8, enum mapper 0x23000174), so every stored value of it has type 8; of the same 2,683,271 static entities every Weenie names a 0x70 object and every Physics and PatrolPoint entity a 0x47 object; 55,533 Physics, 4 PatrolPoint and 3 Weenie entities hold 0x47E in their own set (S50). |
+| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Fourth pass, same build, 2026-10-06: (k) what the frill engine does with a frill record: whether it filters records by object property, creation type or part count, which geometry of the object it draws, and how it stores the vertices of a sector; (l) which graphics back ends force the frill terrain-colour intensity to 0. Fifth pass, same build, 2026-10-06: (m) how the client resolves a property of an object along its 0x47 chain, which reads of `Entity_CreationType`, `Render_LODClass` and the frill per-object properties go through that resolution, and what an object without `Render_LODClass` gets; (n) which texture-coordinate set the frill bake copies. Sixth pass, same build (PE file version re-read 2026-10-07), 2026-10-07, answering the M4.5 exit verification: (o) which entries of the landblock's generated list the spacing test of §7.4 step 14b visits, how a footprint marker is created, closed and told apart from an object, whether the `no_spacing*` and `no_checks*` switches pass through scene references, and what happens to a node's marker when one of its children fails; (p) whether the frill pass works on the same generated list as the static pass, and whether anything empties or shortens that list between the two passes; (q) in which order generated objects become creation requests and which filters apply at that point. For (o) and (p), M1 and M2 could not decide: the clean-room implementation and the checklist's dirty-room generator disagreed on which markers count, and both outcomes are self-consistent placements that the data does not store. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. Seventh pass, same build, 2026-10-07 (repair revision under decision 0018, so that the spec body states every client rule the released `world` implementation relies on): (r) which child failures exist, how far a failure climbs (in particular out of a frill layer), and what the frill engine does with a sector whose vertex fails; (s) every scale mode of §7.4 steps 3 and 11 with its salts; (t) how the static list of §7.4 step 14a gets its clearance lists (which property lookup, how list elements are read, how boxes are stored, the frame of a static entity without one, which entities are skipped) and the form of the cylinder test with `spacing_3d`; (u) which frill sectors the frill engine generates and keeps, in which order, when it drops them, and how the ring centre is blended from camera and player (including the case without a player and blends of 0 or less and above 1); (v) the bound of step 6 against the landblock normalisation of a frame, the landblock test of frill records, the edge cases of the weighted pick of §7.2, a region without a terrain-type table (step 7), a region whose slot-1 or slot-2 table is empty or cannot be read (§4.1), and what `max_objects` counts. Why M1–M3 were not enough for (r)–(v): these are rules of the generator and of the frill engine that leave no trace in data (failures, unused scale modes and the 3D cylinder test do not occur in this install; the static list and the frill sector set exist only in memory), no published source describes them, and no frame capture is available. The slot-1 and slot-2 cases of (v) and the ring-centre cases of (u) were re-checked in a separate read-only copy of the project, same build, on 2026-10-07 (second repair revision); every region of this install has both tables and the blend is a client option at its default, so M1 cannot show either. Eighth pass, same build, 2026-10-08, in an own read-only copy of the shared project (deleted afterwards), answering the `world` implementation's OPENs of 2026-10-07: (w) what makes a static entity's object DID invalid in the validity check of §7.4 step 14a, and how the creation type is read when no level of the lookup has it; (x) which z′ the `spacing_3d` cylinder test takes for every stored height, a negative one included; (y) which stored value types the frill engine accepts for its boolean and float per-object values, and what a NaN gives after the clamp; (z) whether the client registers the frill engine options with a range. Why M1–M3 were not enough for (w)–(z): every static entity of the three types in this install names an object (OBS ninth pass), no cylinder has a negative height, every per-object value has its declared type and is finite, and option ranges are not data; no published source describes them and no frame capture is available. Ninth pass, same build, 2026-10-08, in an own read-only copy of the shared project (deleted afterwards), answering the review of the same date: (aa) the creation-type reader re-read: which stored value types it accepts, what it does with the value found when the object is a game object, and which levels its lookup searches for each entity type. Why M1–M3 were not enough for (aa): this install's dictionary gives the property one type, and no Weenie names a 0x47 object nor any Physics or PatrolPoint entity a game object (OBS tenth pass), so the data cannot show these branches. Tenth pass, same build, 2026-10-08, in an own read-only copy of the shared project (deleted afterwards) and the instruction listing of the installed executable, answering the second review of 2026-10-08: (ab) what the clamp of the frill per-object floats does with a NaN at the instruction level, and what the frill engine then does with the clamped animation and terrain-colour intensities (group value, shader-variant test, per-vertex inputs); and whether the static-list builder reads the two clearance lists through the same lookup routine as the creation type, with its per-entity-type levels. Why M1–M3 were not enough for (ab): no stored value is NaN, the decompiler's rendering of the clamp hides the NaN case, no entity of this install is in a combination where the per-entity-type levels differ from the per-object-kind levels (OBS tenth pass), and no frame capture is available. No network, login, launcher or anti-tamper code was examined. |
 | LB | [`landblock.md`](landblock.md) (height grid, coarse grid layout, surface chunks, block maps). |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19 decoded to the last byte), §13 (height constant). |
 | COL | [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh, triangle keys), §6.6 (terrain triangles near a point), §9.4. |
@@ -113,11 +113,16 @@ data together but not proven for every case; **Reported** = third-party only.
 | S42 | In the frill pass a failed vertex keeps the frill records it made before the failure; the sector's other vertices still run, the sector counts as generated and is not generated again (§8.2) | BIN (r) | BIN |
 | S43 | Scale modes 0–9: the per-axis draws of step 3 with the salts 0x00515E71, 0x0DE876C7, 0x17E0784F; `scale_min` for equal limits and for modes 7 and 8; the water-depth and slope adjustments of modes 5–9 in step 11 and their rejections; which radius uses the scale before and which after step 11 (§6.2, §7.4 steps 3, 5, 11, 13, 15) | BIN (s) | BIN (every node of this install has mode 4, SC4) |
 | S44 | `max_objects` counts the objects a node creates itself, frill records counted when they are made (before the landblock and density tests), and the objects created directly in the group of a scene the node references; objects of nested nodes and objects the frill pass skips are not counted; the limit is checked after each child (§7.4 step 15) | BIN (v) | BIN (`max_objects` is 0 everywhere) |
-| S45 | Static list: the entity types and the validity check of `entity-descriptor.md` §4.9; both clearance lists found by the lookup of `entity-descriptor.md` §4.9 (for a weenie the 0x70 property set, then its `PhysObj` chain), each list taken whole from the nearest level; element rules (struct with every field, first bad element ends the list); boxes stored with their corners sorted per axis; a static entity without a frame at the landblock origin with the identity rotation; the sphere-against-cylinder form with `spacing_3d` (§7.4 step 14a) | BIN (t) | BIN |
+| S45 | Static list: the entity types and the validity check of `entity-descriptor.md` §4.9; both clearance lists found by the lookup of `entity-descriptor.md` §4.9 (for a weenie the 0x70 property set, then its `PhysObj` chain), each list taken whole from the nearest level; the two lists are read through the same lookup routine as the creation type of S50, so beyond the own set a Physics or PatrolPoint entity searches only a 0x47 object's chain and a Weenie only a game object's set and `PhysObj` chain (BIN (ab), 2026-10-08); element rules (struct with every field, first bad element ends the list); boxes stored with their corners sorted per axis; a static entity without a frame at the landblock origin with the identity rotation; the sphere-against-cylinder form with `spacing_3d` (§7.4 step 14a) | BIN (t), (ab) | BIN |
 | S46 | Census of the static list under S45 (2,683,271 static entities of the three types, 25 of them without a frame): 1,780,859 entities with at least one list element; the box list comes from the entity's own set for 516,433 entities, from its 0x47 chain for 1,216,325 and from a weenie's `PhysObj` chain for 26,459; the cylinder list from the own set for 140,914 and from the 0x47 chain for 56,073; 1,742,051 boxes (378,327 with every extent at most 0.0002; 7,471 with a corner pair out of order, all of them non-degenerate), 196,837 cylinders (144,767 with radius at most 0); every element a struct with every field, of the right type, finite; 18 usable volumes on Physics entities without a frame; no entity with a volume fails the validity check; at most 5,561 volumes per landblock, 8 per entity; rotations unit within 1.4 × 10⁻⁷. Generating all 78,114 landblocks with the static list of the released implementation and with the static list of S45 gives different lists in 246 landblocks (§13.2) | OBS eighth pass | Confirmed |
 | S47 | The frill sector set: every sector within *n* + `FrillEngine.ExtraPreCacheRadiusLevels` sectors of the centre sector on each axis (a square), visited ring by ring in a fixed order; the set is dropped when the centre moves two or more landblocks or changes region; a sector outside the square for more than 120 s is dropped; the ring centre is the camera moved toward the player by `FrillEngine.PlayerPositionBlend`; with no player, or a blend of 0 or less, it is the camera position; the move is not clamped, so a blend above 1 puts the centre beyond the player (§8.2) | BIN (u); that the frame the engine starts from is the camera's: Probable | BIN |
 | S48 | Step 6 tests the block-local position before the frame is moved into the landblock that contains it; the frill landblock test compares that landblock with the generated one, so with ρ ≥ 0 it drops nothing (§7.4 step 6, §8.2) | BIN (v) | BIN |
 | S49 | Weighted pick: an entry with no choices gives no scene; when no running sum exceeds T (including a NaN weight) the last choice is taken (§7.2). A region whose terrain-type table is missing or unreadable passes the terrain-type test (§7.4 step 7). A region whose slot-2 table is empty or cannot be read: the client never fills the landblock's per-vertex scene choices (it tries again on each later use and logs nothing), so what a vertex then reads is not given by the data (Tessera Decision of §4.1: no scene). A region whose slot-1 table is empty or cannot be read: no vertex gets a scene, and the client logs a diagnostic for each vertex (§4.1) | BIN (v) | BIN (every region of this install has all three tables, §4.1) |
+| S50 | Validity check of the static list: the object DID is invalid only when it is the client's invalid value, which is 0 (an absent `object` field, or a stored 0); any other DID, whatever its prefix, passes that part. The creation type is read by the fixed property id 0x47E, not through the property dictionary, with the lookup of `entity-descriptor.md` §4.9; beyond the entity's own set, a Physics or PatrolPoint entity searches only a 0x47 object's chain and a Weenie entity only a game object's set and its `PhysObj` chain. A found value is taken only when its stored type is 8 (enum value) or 10 (property ID) of `property-system.md` §4.1; any other type, int (15) included, gives 0. When the property is found and the object DID is a game object (DB-object type 0x45, DIDs 0x70000000–0x77FFFFFF), the value is then adjusted as in `entity-descriptor.md` §4.9 step 2 and is never 0: a wrong-typed value or a stored 0 becomes 8. The entity is therefore dropped when no level has the property, or, for an object that is not a game object, when the value found has another type or is 0 (§7.4 step 14a) | BIN (w), (aa); OBS ninth pass (every object DID non-zero with prefix 0x47 or 0x70; id 0x47E named `Entity_CreationType`); OBS tenth pass (the dictionary declares 0x47E an enum, so every stored value of it has type 8; every Weenie names a 0x70 object and every Physics and PatrolPoint entity a 0x47 object) | BIN; data Confirmed (2026-10-08) |
+| S51 | `spacing_3d` cylinder test: with top = cz + h, z′ = top when the mapped z is above top; otherwise z′ = z when z is not below cz, else cz. For h < 0 this gives top for every z above top and cz for every other z (§7.4 step 14a) | BIN (x) | BIN (no cylinder of this install has h < 0) |
+| S52 | The frill engine's boolean per-object values are read only from a stored boolean (true when non-zero); its float values only from a stored float. A value of any other type counts as absent, so the default applies. The clamp to 0 … 1 gives −∞ → 0, +∞ → 1, and passes a NaN through unchanged (corrected 2026-10-08, third revision: it was "a NaN becomes 1") (§8.3 rules 6–8) | BIN (y), (ab) | BIN |
+| S54 | Use of the two frill intensities after the clamp: a frill group's animation intensity is the largest of its records' values, starting from 0 and raised only by a greater value (a NaN never raises it); the animated shader variant needs the group value above 0.0002; on the Direct3D 10/11 back ends each baked vertex carries the animation intensity as the integer part of value × 255 and the terrain-colour intensity as the integer part of value × 250, each kept as one byte, and a NaN gives the byte 0; on the Direct3D 9 and OpenGL back ends the animation intensity multiplies the sway weight before it becomes a byte, also 0 for a NaN (§8.3 rule 8, §8.5 step 4) | BIN (ab) | BIN (no stored value is NaN in this install) |
+| S53 | The frill engine options of §8.4 (`FrillEngine.*`) are registered without a range; `FrillEngine.ExtraPreCacheRadiusLevels` is therefore unbounded in the client (§8.2) | BIN (z) | BIN |
 
 ---
 
@@ -209,15 +214,25 @@ When slot 1 or slot 2 is empty, or its table cannot be read (BIN (v), S49):
 > has no procedural scenery and no frills. An implementation may log one diagnostic per
 > region (or per landblock) instead of one per vertex.
 
-> **OPEN (raised by the `world` implementation, 2026-10-07):** this section and the
-> Tessera Decisions of §7.4 step 15 do not say what a read of a slot-1, slot-2 or slot-8
-> table that fails for a reason outside the data and outside the archive (Tessera's work
-> queue is full, the asset pipeline is shutting down, a worker panicked) does. Conservative
-> engineering choice until answered, following the step-15 decision for scene reads: such
-> a failure is not a property of the data, so the region is left out of that load only,
-> nothing about it is remembered, and the loader reports the region as retryable so that
-> the caller can load its tables again later (`SceneryTables::load_all_regions`). Archive
-> errors and decode failures stay data faults (the Tessera Decision above).
+> **Tessera Decision** (pipeline failures of the region tables; answers the OPEN raised by
+> the `world` implementation on 2026-10-07; the client has no counterpart, so this is not a
+> statement about the original):
+> - A read of a slot-1, slot-2 or slot-8 table that fails for a reason outside the data and
+>   outside the archive (Tessera's work queue is full, the asset pipeline is shutting down, a
+>   worker panicked) is not a property of the data. The region is left out of that load
+>   only, nothing about the failure is remembered, and the loader reports the region as
+>   retryable. Archive errors and decode failures stay data faults (the Tessera Decision
+>   above), exactly as for scene reads (§7.4 step 15).
+> - The world context keeps such a region and loads its tables again whenever a landblock
+>   or frill sector of the region is next built, until a load succeeds or fails on the data.
+> - A landblock built while its region's tables are unavailable for such a reason gets no
+>   scenery **and is marked incomplete**, like a landblock whose scene read failed for a
+>   pipeline reason (§7.4 step 15): it is dropped from the asset store's cache and built
+>   again on its next load (`landblock.md` §8.1, rule F3). A frill sector built so holds no
+>   records and does **not** count as generated: the frill engine generates it again on a
+>   later frill update while it stays in the sector set. So the region's scenery and frills
+>   appear once its tables load. A region whose tables fail on the data is final: its
+>   landblocks and sectors are complete and have no scenery or frills.
 
 A missing slot-8 table only disables the terrain-type test (§7.4 step 7). Every region of
 this install has all three (§4.1 table).
@@ -796,12 +811,19 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
          it is **not** left out. The rotation is used as stored. The entity's scale plays no
          part.
        - **Which value.** Each of the two properties is looked up separately with the
-         client's lookup on a static entity, `entity-descriptor.md` §4.9: the entity's own
-         property set; then, for a 0x47 object, the object and its parents (§9.2 rule 2);
-         for a 0x70 game object (weenies), the game object's property set (DID +
-         0x09000000) and then the 0x47 object named by its `PhysObj` and that object's
-         parents. The first level that has the property supplies the **whole** list; lists
-         of different levels are never combined.
+         client's lookup on a static entity, `entity-descriptor.md` §4.9. It is the same
+         lookup as the one the creation-type part of the validity check uses (below), with
+         the same levels for each entity type (BIN (t), (ab); S45, S50): first the entity's
+         own property set; then, only for a **Physics or PatrolPoint** entity whose object
+         is a 0x47 record, the object and its parents (§9.2 rule 2); only for a **Weenie**
+         entity whose object is a game object (0x70…0x77), the game object's property set
+         (DID + 0x09000000) and then the 0x47 object named by its `PhysObj` and that
+         object's parents. Every other combination searches the own set only: a Weenie
+         naming a 0x47 object, a Physics or PatrolPoint entity naming a game object, any
+         other prefix. The first level that has the property supplies the **whole** list;
+         lists of different levels are never combined. (No entity of this install is in
+         such another combination, OBS tenth pass, so the restriction changes no list
+         here.)
        - **Reading a list.** The value must be an array; anything else gives no volumes.
          Its elements are read in order. A box element must be a struct holding both
          `Entity_Clearance_Box_Min` and `Entity_Clearance_Box_Max` as vectors (property
@@ -823,10 +845,15 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
          the candidate's `spacing_3d` is set) is compared: overlap when it is at most ρ²;
        - cylinder (low point (cx, cy, cz), radius r, height h): skipped when r is not
          above 0 (NaN included). Unless the candidate's `spacing_3d` is set: overlap when
-         (x − cx)² + (y − cy)² ≤ (ρ + r)². With `spacing_3d` (BIN (t), S45): let z′ be the
-         mapped z clamped to cz … cz + h (z itself when inside, cz + h when above, cz when
-         below); overlap when (x − cx)² + (y − cy)² + (z − z′)² **<** (ρ + r)² (strictly
-         less). No node of this install sets `spacing_3d`.
+         (x − cx)² + (y − cy)² ≤ (ρ + r)². With `spacing_3d` (BIN (t), S45): let z′ be a
+         height on the cylinder's axis, chosen from the mapped z in this order
+         (BIN (x), S51), with top = cz + h: when z is above top, z′ = top; otherwise, when z
+         is not below cz, z′ = z; otherwise z′ = cz. For h ≥ 0 this is z clamped to
+         cz … top. For h < 0 the first test wins: every z above top gives top, every other
+         z gives cz (a z between top and cz gives top, not cz). A NaN z fails every
+         comparison and gives top. Overlap when (x − cx)² + (y − cy)² + (z − z′)² **<**
+         (ρ + r)² (strictly less). No node of this install sets `spacing_3d`, and no cylinder
+         has h < 0.
 
        The client has a second list tested the same way, meant for other objects already
        registered in the landblock; in this build nothing ever fills the registry that
@@ -834,8 +861,8 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
 
        The static-entity filter: the client drops entities that fail the validity check
        of `entity-descriptor.md` §4.9 (invalid object DID, creation type 0, a weenie whose
-       final class is Static; BIN (t)) and, in one of its run modes, entities that are the
-       target of a Generator link (`landblock.md` §4.6, type 8) and one object named by a
+       final class is Static; BIN (t); the first two parts in detail below) and, in one of
+       its run modes, entities that are the target of a Generator link (`landblock.md` §4.6, type 8) and one object named by a
        DID map. No entity of this install that carries a volume fails the validity check
        (OBS eighth pass), so implementations may apply it or not. Tessera Decision: keep
        every entity of the three types that is not invalid in that sense; do not drop
@@ -844,18 +871,59 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        > **OPEN:** which run mode of the static-entity filter an offline client is in, and so
        > whether Generator targets are dropped from the static list (§15 item 6).
 
-       > **OPEN (raised by the `world` implementation, 2026-10-07):** (a) what makes an
-       > object DID "invalid" for the validity check. `entity-descriptor.md` §3.4 says an
-       > absent `object` field is the invalid DID; whether a stored value can also be invalid
-       > (for example 0, or a DID whose prefix is neither 0x47 nor a game object) is not
-       > stated. (b) What the check does when the property dictionary does not define
-       > `Entity_CreationType` (the lookup can then find nothing, which would make every
-       > Physics and PatrolPoint entity invalid). (c) Which z′ the `spacing_3d` cylinder
-       > test uses when `Entity_Clearance_Height` is negative, where "above" and "below"
-       > overlap (no element of this install has one). Conservative engineering choices until
-       > answered: (a) only an absent object or the DID 0 is invalid; (b) the creation-type
-       > part of the check is not applied; (c) a mapped z below cz takes cz, else one above
-       > cz + h takes cz + h, else z itself.
+       **The validity check in detail** (BIN (w), S50; answers the OPEN raised by the
+       `world` implementation on 2026-10-07):
+       - **Invalid object DID.** The client compares the entity's object DID with its
+         invalid DID value, which is 0. So the object DID is invalid exactly when the
+         `object` field is absent (`entity-descriptor.md` §3.4: its default is the invalid
+         DID) or stores 0. Any other value passes this part, whatever its prefix and whether
+         or not the record exists.
+       - **Creation type** (BIN (w), (aa), S50). Where this bullet and S50 differ from
+         `entity-descriptor.md` §4.9 (which still says "an integer or enum" and gives the
+         levels by object kind alone), this bullet and S50 are the client's rule for the
+         static list and refine §4.9 until that spec is revised. The client looks the
+         property up with the
+         lookup of `entity-descriptor.md` §4.9, using the property id 0x47E as a fixed number;
+         it does not consult the property dictionary. (This install's dictionary names 0x47E
+         `Entity_CreationType` and declares it an enum, OBS ninth and tenth passes.) Beyond
+         the entity's own property set, the levels searched depend on the entity type and on
+         the kind of object: a Physics or PatrolPoint entity searches the chain of a 0x47
+         object and nothing else; a Weenie entity searches a game object's set and its
+         `PhysObj` chain and nothing else. Every other combination (a Physics or PatrolPoint
+         entity naming a game object, a Weenie naming a 0x47 object, any other prefix, a
+         record that cannot be read) searches only the entity's own set. The value is then
+         read in three steps:
+         1. When no level has the property, the creation type is 0.
+         2. When a level has it, the value is taken only if its stored type is 8 (enum
+            value) or 10 (property ID), numbered as in `property-system.md` §4.1. A value of
+            any other type, an int (type 15) included, gives 0.
+         3. When a level has the property and the entity's object DID is a game object
+            (DB-object type 0x45, DIDs 0x70000000–0x77FFFFFF, `property-system.md` §9), the
+            value of step 2 is adjusted as `entity-descriptor.md` §4.9 step 2 describes:
+            a value outside {1, 4, 6, 7, 8, 9} becomes 6 when its class is ClientOnly and 8
+            otherwise, and then a value whose class is Static becomes 8. The result is never
+            0; in particular a wrong-typed value and a stored 0 both become 8. This
+            adjustment depends on the object DID only, not on the entity type, and it is
+            not made when no level has the property.
+
+         Only zero against non-zero matters for the static list. An entity is dropped by
+         this part exactly when no level has the property, or when its object is not a game
+         object and the value found has another type than 8 or 10 or is 0.
+       - **Data.** Every static entity of the three types in this install stores a non-zero
+         object DID (2,683,271 of 2,683,271, OBS ninth pass); every Weenie names a 0x70
+         object and every Physics and PatrolPoint entity a 0x47 object, and every stored
+         value of 0x47E has type 8 (OBS tenth pass). None that carries a volume fails the
+         check (OBS eighth pass).
+
+       **Tessera Decision** (where a reader differs from the client by construction): a
+       reader that resolves property ids by name uses 0x47E as a fixed number for this part,
+       as the client does (decision 0012), whatever the install's dictionary maps the name
+       `Entity_CreationType` to. It applies the three steps above in every case. Of the
+       engineering choices recorded with the 2026-10-07 OPEN, (a) "only an absent object or
+       the DID 0 is invalid" is the client's rule; (b) "the creation-type part is not
+       applied" is withdrawn; (c) is replaced by the z′ order above. (Changed 2026-10-08,
+       second revision: the former decision took the id from the dictionary and fell back
+       to 0x47E; on this install both give 0x47E.)
 
     b. **Footprints of placed nodes**, unless `no_spacing*`: every *closed* footprint
        marker in the landblock's generated list (step 15; markers of the current node and
@@ -1028,13 +1096,13 @@ entries are skipped. Generated objects pass no creation-type filter at this poin
 object whose `Entity_CreationType` is 7 or 8 still becomes a request. Its creation type
 travels with the request.
 
-> **OPEN (implementer note, `world`, 2026-10-07):** representation choice for the record of
-> the first paragraph. Tessera's generator output carries the object DID, frame, scale and
-> generating vertex, but not the `Entity_CreationType`: placement never reads it, and it
-> depends on the object alone, so generation does not read 0x47 records to fill it in. A
-> consumer that needs it (creation requests, `collision.md` §9.4) resolves it from the
-> object along the 0x47 chain as §9.2 rule 2 states (0 when no level has it), which gives
-> the client's value. A spec revision may confirm this or require the field.
+> **Tessera Decision** (representation of the record of the first paragraph; answers the
+> implementer note of 2026-10-07): an implementation need not store the
+> `Entity_CreationType` in its generator output. Placement never reads it, and it depends
+> on the object alone, so a consumer that needs it (creation requests, `collision.md` §9.4)
+> resolves it from the object along the 0x47 chain as §9.2 rule 2 states (0 when no level
+> has it), which gives the client's value. Generator output then carries the object DID,
+> frame, scale and generating vertex. The order of creation requests above still applies.
 
 > **For `collision.md` (§9.3–§9.4), from the footprint revision (BIN (o), (q); no change
 > to the scenery rules):**
@@ -1243,14 +1311,15 @@ Tessera does not draw the records of source (b) (§8.6).
 > player's position (the two positions share no coordinate system); with a blend of 0 or
 > less the camera position applies, as above.
 >
-> **OPEN (implementer note, `world`, 2026-10-07):** an engineering cap on the sector set,
-> which the spec does not state. `FrillEngine.ExtraPreCacheRadiusLevels` is user input, so
-> the client's square of *n* + *e* sectors is unbounded. Conservative choice until a
-> revision states a cap: the square is kept up to 64 sectors; above that it is cut to
-> max(64, ⌊D / S⌋ + 1) sectors, the smallest square that holds every sector with some point
-> within D (boundary included) of the centre sector. So the set always holds either the
-> client's square or every sector the first Tessera Decision above requires; with
-> `FrillEngine.UseDepthTransitions` off (D = 1,000 units) a large *e* gives 101 sectors,
+> **Tessera Decision** (cap on the sector set; answers the implementer note of 2026-10-07).
+> The client registers `FrillEngine.ExtraPreCacheRadiusLevels` without a range (BIN (z),
+> S53), so its square of *n* + *e* sectors is unbounded; the cap is Tessera's own bound on
+> user input. The square is kept up to 64 sectors from the centre sector on each axis;
+> above that it is cut to max(64, ⌊D / S⌋ + 1) sectors, the smallest square that holds every
+> sector of which some point lies within D (boundary included) of some point of the centre
+> sector (S = 10 units, the sector size). The set therefore always holds either the
+> client's square or every sector the first Tessera Decision above requires. With
+> `FrillEngine.UseDepthTransitions` off (D = 1,000 units) a large *e* gives 101 sectors;
 > with it on (D below *n* sectors) at most 64. Only non-default settings reach the cap.
 
 <a id="s8-3"></a>
@@ -1342,21 +1411,38 @@ The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 1
    OpenGL back end (BIN (l)); on the Direct3D 10 and Direct3D 11 back ends the property
    applies. The blend formula is in the frill shaders (OPEN, callout below).
    **Tessera Decision:** Tessera's renderer behaves like the Direct3D 10/11 back ends.
-8. **Tessera Decisions for values the client's rules leave open** (hostile or user input;
-   none occurs in the data): a per-object value of the wrong property type counts as
-   absent, so the default of rules 6–7 applies; a boolean property is true when it is a
-   stored boolean true or an integer-like value other than 0; a float that is NaN counts as
-   0 before the clamp. A radius of 0 (level 0, an unknown level, or `WorldRender.DrawFrills`
-   off) means no frill sector is generated or drawn. `Render.FrillDensity` is clamped to
-   0 … 1 (NaN counts as 0); a `FrillEngine.DepthFadeDistance` that is negative or NaN gives
-   a fade length of 0. A group with no instances draws none (rule 4).
-
-   > **OPEN (raised by the `world` implementation, 2026-10-07):** which property types are
-   > "integer-like" for the boolean rule above. Not stated: whether DID references, string
-   > tokens, property IDs, instance IDs, the tri-state byte and bitfields wider than 64 bits
-   > count. Conservative engineering choice until answered: the signed integers (32 and 64
-   > bits), enum keys and bitfields of every width count (a bitfield is true when any bit
-   > is set); every other type counts as absent, so the default of rules 6–7 applies.
+8. **Value types and edge values.** The client (BIN (y), S52) reads each boolean
+   per-object value of rule 6 only from a stored **boolean** value (true when the stored
+   word is non-zero) and each float value of rules 6–7 only from a stored **float** value.
+   A value of any other type, integers, enums and bitfields included, counts as absent, so
+   the default of rules 6–7 applies. The clamp to 0 … 1 gives −∞ → 0, +∞ → 1 and the usual
+   result for every finite value; a **NaN passes through the clamp unchanged** (the clamp
+   takes the smaller of 1 and the value, then the larger of 0 and that, in a form that
+   returns the value whenever it is NaN; BIN (ab), S52). What the client then does with a
+   NaN (BIN (ab), S54):
+   - **Animation intensity.** A frill group (§8.5 step 4) carries the largest animation
+     intensity of its records, starting from 0; a record raises it only when its value is
+     greater, so a NaN never raises it. The animated shader variant is chosen when the
+     group's value exceeds 0.0002 (rule 6), so a NaN alone never selects it.
+   - **Vertex inputs.** On the Direct3D 10/11 back ends (rule 7) the engine writes, per
+     baked vertex, the animation intensity as one byte, the integer part of value × 255,
+     and the terrain-colour intensity as another byte, the integer part of value × 250
+     (0 when rule 7 makes it 0); the integer conversion of a NaN gives a byte of 0.
+   On the Direct3D 9 and OpenGL back ends the animation intensity instead multiplies the
+   sway weight before it is stored as a byte, which is also 0 for a NaN. So a NaN acts as 0
+   in every use of these two values that was traced.
+   **Tessera Decision:** treat a NaN animation or terrain-colour intensity as 0 after the
+   clamp, wherever Tessera keeps the value (the client's result, without its byte
+   encoding). (Corrected 2026-10-08, third revision: the second 2026-10-08 revision said
+   "a NaN becomes 1", which was wrong. The first 2026-10-08 revision withdrew the former
+   Tessera Decision "a boolean is true for a stored boolean true or an integer-like value
+   other than 0"; the OPEN of 2026-10-07 on which types are integer-like is answered by
+   "none".)
+   **Tessera Decisions** for values the client's rules leave open (user input; none occurs
+   in the data): a radius of 0 (level 0, an unknown level, or `WorldRender.DrawFrills` off)
+   means no frill sector is generated or drawn. `Render.FrillDensity` is clamped to 0 … 1
+   (NaN counts as 0); a `FrillEngine.DepthFadeDistance` that is negative or NaN gives a
+   fade length of 0. A group with no instances draws none (rule 4).
 
 > **OPEN:** the shader-side fade or scale formula, the terrain-colour blend and the sway
 > formula (frill shader programs, prefix 0x2B); the third variant flag; the renderer
@@ -1414,7 +1500,9 @@ sector (§8.2):
    the 8 objects whose only part is one (§8.3).
 4. **Groups.** Records are grouped by the surface state of the draw entry, the opaque flag,
    the reduction flag and the third flag of §8.3 rule 6. Records of different objects that
-   agree in all four share a group.
+   agree in all four share a group. Each group also carries the largest animation intensity of its records
+   (starting from 0); the shader variant of §8.3 rule 6 is chosen per group from it (§8.3
+   rule 8, S54).
 5. **Baking.** For every record, with position p, orientation Q and per-axis scale s, and
    for every vertex of the vertex block (model space, position v, normal n), the engine
    writes one world-space vertex:
@@ -1425,7 +1513,10 @@ sector (§8.2):
    - a **sway weight** w = clamp((v.z − z_min) / h, 0, 1). Here z_min and z_max are the z
      components of the minimum and maximum of the vertex block's stored bounding box
      (`mesh.md` §6.1), not recomputed from the vertices. h = max(0.0002, z_max − z_min), and
-     w = 0 when h ≤ 0.01 (flat blocks do not sway). v.z is the unscaled model-space z;
+     w = 0 when h ≤ 0.01 (flat blocks do not sway). v.z is the unscaled model-space z.
+     This is the weight of the Direct3D 10/11 back ends; on the Direct3D 9 and OpenGL back
+     ends the stored weight is the same expression multiplied by the animation intensity
+     before the clamp (BIN (ab), S54);
    - per-record terrain-colour and animation inputs of the frill shaders (§8.3 rules 6–7;
      formulas OPEN, §8.3 callout).
 
@@ -1804,7 +1895,15 @@ record, shared edges counted twice):
   and whose `PhysObj` 0x47 object holds that box: the same candidate is rejected. (c) A
   Physics static entity without a frame whose object holds that box: a candidate at
   (0.5, 0.5, z) is rejected. (d) A box list whose second element lacks `Box_Max`: only the
-  first box exists; a candidate overlapping only the third box is placed.
+  first box exists; a candidate overlapping only the third box is placed. (e) Per-entity-type
+  levels (BIN (ab), S45): a Physics static entity at (40, 40, 0) whose own set has no
+  clearance list and whose object is a game object (0x70…) whose property set holds that
+  box: the candidate at (40.5, 40, z) is **placed** (only the own set is searched); a
+  Weenie static entity whose own set has no clearance list and whose object is a 0x47
+  record holding that box: also placed. In both cases the entity passes the validity check
+  (its own set holds `Entity_CreationType` 7 as an enum, type 8: class Dynamic, so the
+  Weenie is not dropped as Static); with the box in the entity's own set instead, both
+  candidates are rejected.
 - **SC23** (§7.4 step 14a; BIN, S45; synthetic fixture). A cylinder with low point
   (0, 0, 0), radius 1 and height 2 in an entity with identity frame at the origin of the
   mapped space, candidate ρ = 0.5. With `spacing_3d`: overlap at mapped (1.4, 0, 1) and at
@@ -1823,6 +1922,43 @@ record, shared edges counted twice):
   offsets (±5, ±5), whose nearest corner lies 40·√2 ≈ 56.6 units from the centre sector
   while their centres lie √50 ≈ 7.07 sectors away. A conforming set holds all four while
   the centre is still; the client's square (offsets up to 7 on each axis) holds them.
+- **SC27** (§7.4 step 14a; BIN, S51; synthetic fixture). A cylinder with low point
+  (0, 0, 0), radius 1 and height −2 (top = −2) in an entity with identity frame, candidate
+  ρ = 0.5 with `spacing_3d`. Mapped (0, 0, −0.4) does not overlap (z′ = top = −2,
+  1.6² = 2.56 is not less than 2.25); a clamp of z to −2 … 0 (z′ = −0.4) and the withdrawn
+  choice (c) (z′ = cz = 0, 0.16) would both overlap there. Mapped (0, 0, −2.5) does not
+  overlap (z′ = cz = 0, 6.25 is not less than 2.25); a clamp (z′ = −2, 0.25) would. Mapped
+  (0, 0, −1.9) overlaps (z′ = −2, 0.01 < 2.25), as a clamp would. (Corrected 2026-10-08,
+  second revision: the former text claimed that a clamp differs at −1.9.)
+- **SC28** (§7.4 step 14a; BIN, S50; synthetic fixture). Every entity below stands at
+  block-local (40, 40, 0) with the identity rotation and holds, in its **own** property set,
+  one clearance box (−1, −1, 0) … (1, 1, 2); a node with ρ = 0.1 and no other failing test
+  places a candidate at (40.5, 40, 0). "Kept" means the candidate is **rejected** by the
+  entity's box; "dropped" means it is **placed** (the entity is not in the static list).
+  Each case is a separate landblock with that one entity. Static entities of type Physics:
+  one with no `object` field and one with object DID 0 are dropped; one whose object DID
+  names no record but whose own property set holds `Entity_CreationType` 3 stored as an
+  enum (type 8) is kept; one
+  whose 0x47 object chain and own set hold no `Entity_CreationType` is dropped; one whose
+  0x47 object holds 0x47E as an int (type 15) with value 3 is dropped; one whose own set
+  holds 0x47E as a property ID (type 10) with value 3 is kept. Static entities of type
+  Weenie naming a 0x70 game object: one whose game object's set holds 0x47E as an int
+  (type 15) with value 3 is kept (the value becomes 8); one whose own set holds the enum
+  value 0 is kept (0 becomes 8); one where no level (own set, game object's set, `PhysObj`
+  chain) has 0x47E is dropped. A Physics entity naming a 0x70 game object whose own set
+  holds the enum value 0 is kept (the adjustment depends on the object DID), and one whose
+  own set has no 0x47E is dropped even when the game object's set has it (only the own set
+  is searched).
+- **SC29** (§8.3 rule 8; BIN, S52, S54; synthetic). A frill object whose
+  `Render_Frill_IsOpaque` is stored as an integer 0 is opaque (the value counts as absent;
+  default true); one whose `Render_Frill_AnimationIntensity` is stored as a float NaN acts
+  as intensity 0: alone in its group it does not select the animated variant, and its
+  baked vertices carry an animation byte of 0 (BIN (ab), S54); one whose
+  `Render_Frill_TerrainColorIntensity` is stored as a float NaN gets, with
+  `Render.FrillTerrainColor` on, a terrain-colour byte of 0, the same as an intensity of 0
+  (rule 7); one whose `Render_Frill_AnimationIntensity` is stored as an integer 1 gets
+  intensity 0 (absent; default 0). A group holding one record of intensity 0.5 and one of
+  NaN has group value 0.5 and selects the animated variant.
 
 <a id="s13-1"></a>
 ### 13.1 Hostile-input notes
@@ -1871,56 +2007,53 @@ record, shared edges counted twice):
 <a id="s13-2"></a>
 ### 13.2 Where the released `world` implementation departs from this revision
 
-Facts added by the repair revisions of 2026-10-07 (S45, S47) that the `world` code released
-on 2026-10-07 (decision 0018) does not yet follow. Each is a client rule or a Tessera
-Decision stated in the body; an implementer aligns the code from the body text
-(CLEAN_ROOM.md §5.4). (The Tessera Decision on scene-read failures in §7.4 step 15 was
-restated by the second repair revision to match the released code; it is not a departure.)
+**Closed 2026-10-08.** The three OPEN callouts that stood here (the static list of §7.4
+step 14a, the frill sector set of §8.2 and the ring centre of §8.2) are closed: a clean
+conformance review of the `world` code against the 2026-10-07 body (raised as an OPEN by
+the `world` implementation on 2026-10-07) found that it follows each of them, with
+synthetic tests for SC22, SC23, SC25 and SC26; a spot check by the spec writer of the
+clearance and ring-centre code agrees. The measured effect of the former static-list
+difference (246 of 78,114 landblocks, S46) no longer applies to that code.
 
-> **OPEN (for the `world` implementation): the static list of §7.4 step 14a.** The code
-> reads a weenie's clearance lists from its 0x70 property set only, not from the `PhysObj`
-> chain behind it (26,459 static entities of this install take a box from there); stores a
-> box with its corners as written instead of sorted per axis (7,471 boxes, of which 7,260
-> are then skipped and 211 tested with crossed bounds); leaves out static entities without
-> a frame (18 volumes); keeps cylinder elements without `Entity_Clearance_Height` and
-> elements after an invalid one, where the client ends the list (no such element here);
-> does not apply the validity check (no effect here); and uses the 2D cylinder test with
-> `spacing_3d` (no node sets it). Measured effect (OBS eighth pass, S46): generating all
-> 78,114 landblocks without water, the lists differ in 246 landblocks; 1,001 objects occur
-> only in the code's lists and 283 only under §7.4 step 14a. The 11 landblocks of
-> `m4-5-visual.md` §4.2 give identical lists either way, so the checklist's rows and walks
-> are unaffected. SC22 and SC23 test the rules.
+The 2026-10-08 revision changes three rules that the code may not yet follow; an
+implementer aligns the code from the body text (CLEAN_ROOM.md §5.4):
 
-> **OPEN (for the `world` implementation): the frill sector set of §8.2.** The code keeps the
-> sectors whose centres lie within *n* + *e* sectors of the centre sector's (a disc). With
-> the default *e* = 1 that disc misses sectors of which some point lies within the far
-> distance D of some point of the centre sector (the distance between the two squares):
-> 4 corner sectors at *n* = 6 and 8 at *n* = 12 and at *n* = 16, none at *n* = 4, 5, 7, 8,
-> 10 or 14; with *e* = 0 it misses sectors at every radius. The client generates the square
-> of §8.2, which contains them all. The Tessera Decision of §8.2 requires every such sector.
-> SC26 tests the rule.
+> **OPEN (for the `world` implementation, 2026-10-08; item 1 restated by the second
+> 2026-10-08 revision, items 1 and 2 by the third):** (1) §7.4 step 14a: the
+> creation-type part of the validity check reads the fixed id 0x47E whatever the dictionary says, takes a found value only when its
+> stored type is enum (8) or property ID (10), and for an entity whose object is a game
+> object (0x70…0x77) turns every found value into a non-zero one (a wrong-typed value or a
+> stored 0 becomes 8), so such an entity is dropped only when no level has the property;
+> the levels searched depend on the entity type (Physics and PatrolPoint: own set and a
+> 0x47 chain only; Weenie: own set and a game object's set and `PhysObj` chain only), and
+> the two clearance lists are looked up with the **same** per-entity-type levels (third
+> 2026-10-08 revision, S45; the released code chooses the levels by object kind alone for
+> both reads); and the `spacing_3d` cylinder test takes z′ in the client's order
+> (top first), which differs from the former engineering choice only for a negative
+> height. (2) §8.3 rule 8: boolean per-object values only from stored booleans, floats only
+> from stored floats; a NaN passes the clamp and then acts as 0 (corrected by the third
+> 2026-10-08 revision: the second revision said "a NaN clamps to 1"; code that counts a NaN
+> as 0 before the clamp already gives the client's result). (3) §4.1: a landblock or frill
+> sector built while its region's tables are unavailable for a pipeline reason is
+> incomplete and built again. None of the three changes a result on this install's data.
 
-> **OPEN (for the `world` implementation): the ring centre of §8.2.** The code blends camera
-> and player for every finite `FrillEngine.PlayerPositionBlend`. The client uses the camera
-> position when the blend is 0 or less, so with a negative blend the code puts the centre
-> on the far side of the camera from the player, where the client keeps it on the camera.
-> The code also treats a blend of −∞ as 1 (the body gives the camera position), and when
-> camera and player lie in different regions it returns the player's position even for a
-> blend of 0 or less (the body gives the camera position). It takes no "no player" input;
-> under the body's Tessera Decision the centre is then the camera position, so a caller
-> without a player must obtain that result (for example by passing the camera position as
-> the player's). With the default blend 1.0 and with blend 0 in one region the code and the
-> body agree, so no default setting is affected. Blends above 1 are not clamped in either.
-> SC25 tests the rule.
-
-> **OPEN (raised by the `world` implementation, 2026-10-07):** the three callouts above,
-> and §15 item 18, look stale. A clean conformance review of the current `world` code
-> against this revision's body found that it follows §7.4 step 14a (the `PhysObj` chain of
-> a weenie, sorted box corners, statics without a frame at the origin, the first bad
-> element ending a list (a cylinder without `Entity_Clearance_Height` counts as bad), the
-> validity check, the `spacing_3d` cylinder test), the client's square of §8.2 and the
-> ring centre of §8.2 with its Tessera Decision (SC22, SC23, SC25 and SC26 have synthetic
-> tests). No code change is pending for them; a spec revision may close this section.
+> **OPEN (implementer, 2026-10-08, status of the callout above; for the spec writer):** the
+> `world` code now follows items (1)–(3). (1) `crates/world/src/scenery/clearance.rs`: the
+> creation type is read by the fixed id 0x47E for every reader (`CREATION_TYPE_PID`; it is
+> no longer taken from the dictionary), taken only as an enum or property-ID value, and
+> adjusted for a game object only when a level has it; the levels searched for the creation
+> type and for both clearance lists follow the entity type (Physics and PatrolPoint: own
+> set and a 0x47 chain; Weenie: own set, a game object's set and its `PhysObj` chain; any
+> other combination: own set only); z′ of the `spacing_3d` test is chosen top first.
+> Synthetic tests: SC22 (a)–(e), SC23, SC27, SC28. (2) Frill booleans come only from stored
+> booleans and floats only from stored floats; a NaN intensity counts as 0 after the clamp
+> (SC29 test); the withdrawn "integer-like boolean" decision is gone from the code. (3) A
+> landblock built while its region's tables wait for a retry carries a transient scenery
+> problem and is incomplete; a frill sector of that region, or of such a landblock, is not
+> generated and is tried again on a later frill update. One engineering choice to confirm:
+> a frill sector of a landblock built while the tables waited stays ungenerated until that
+> landblock is built again on its next load, even after the tables have arrived (the
+> landblock holds no scenery inputs to generate it from). The callout above can be closed.
 
 ---
 
@@ -2014,9 +2147,20 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
     clearance lists, §7.4 step 14a; the frill sector set, its order, eviction and ring
     centre, §8.2; the step-6 bound, the pick's edge cases and a missing terrain-type table,
     §7.2 and §7.4 steps 6–7.)
-18. Alignment of the released `world` implementation with §7.4 step 14a and §8.2 (§13.2:
-    three OPEN callouts addressed to the implementer, on the static list, the frill sector
-    set and the ring centre; no fact is unknown).
+18. (Closed 2026-10-08: the `world` code follows §7.4 step 14a and §8.2 of the 2026-10-07
+    revision, §13.2.) Remaining for the implementer: the three alignments of the 2026-10-08
+    revision listed in §13.2 (no fact is unknown).
+19. (Closed 2026-10-08, BIN (w)–(z): the invalid object DID and the creation-type read of
+    the validity check, the `spacing_3d` z′ for negative heights, §7.4 step 14a; the value
+    types and NaN of the frill per-object values, §8.3 rule 8; the unbounded
+    `FrillEngine.ExtraPreCacheRadiusLevels`, §8.2. Tessera Decisions for pipeline failures of
+    the region tables, §4.1, and for the generator output record, §7.6.)
+    The creation-type read was corrected by the second 2026-10-08 revision (BIN (aa): stored
+    types 8 and 10 only; the adjustment for game objects; the levels searched per entity
+    type).
+    The third 2026-10-08 revision (BIN (ab)) corrected the NaN case (a NaN passes the clamp
+    and acts as 0, S52, S54) and applied the per-entity-type levels to the clearance lists
+    too (S45).
 
 ---
 
@@ -2033,3 +2177,6 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 | 2026-10-07 | Footprint revision (sixth BIN pass (o)–(q), seventh OBS pass), answering the OPEN of the M4.5 exit verification under §7.4 step 14b. Status Accepted → Revised. **§7.4 step 14b:** the rule is unchanged and now confirmed. The client tests every entry of the landblock's single generated list except markers that are still open (those of the candidate's ancestors), and object entries have radius 0 (S36). The OPEN is replaced by the exact rule and an explanation: the checklist's expected lists (`m4-5-visual.md` §4.2, walk GN1) came from a dirty-room generator with the test inverted. The S9 discrepancy came from nested scene references (362 under the inverted test, 221 under the client's rule, 1,532 with no test). The rows are re-derived in `m4-5-visual.md` §8, and the code needs no change. **§7.4 step 2:** the switches pass through scene references unchanged (S37); the OPEN is closed and the earlier Tessera Decision is now the client's rule. **§7.4 step 15:** a failing child (unreadable scene reference, `scale_mode` above 8 with differing scale limits, refused frill record) ends the vertex and leaves the markers of the failing branch open (S38). **§7.6:** the order of creation requests, and no creation-type filter for generated objects (S40); new note "For `collision.md`". **§8.2 item 5:** the frill pass tests against all of the static pass's markers, which stay in the list (S39). The OPEN and its Tessera Decision are replaced, with the consequences: in the frill pass, group nodes (those the static pass also processes) with a spacing radius above 0 that undergo the marker test are always rejected, and the result does not depend on how often or in which order frill passes run; nodes inside a frill layer's subtree are tested against every static-pass marker. Frill records are unchanged in the six landblocks of `m4-5-visual.md` §4.3 and change in 12 of a sample of 72 landblocks (−2.4 % over the sample). Provenance: BIN row (sixth pass), OBS row (seventh pass), S36–S40. New invariants SC16–SC19. §15 item 13 closed. |
 | 2026-10-07 | Repair revision answering both reviews of the footprint revision and incident 0018 (decision 0018: the spec body must state every client fact the released `world` code relies on). Seventh BIN pass (r)–(v), eighth OBS pass; new provenance rows S41–S49, S38 corrected. Header: the long review record is moved to the dirty-room area; the header keeps reviewer, date and result per round. **§7.4 step 15:** exactly two failure causes (the third, "a frill record the frill engine refuses", is withdrawn: making a frill record and creating an object always succeed); the mode boundary is "9 or higher"; a failure never climbs out of a frill layer (the scene ignores its frill layer's result; the state stays set); what `max_objects` counts (S44); Tessera Decisions for non-data read failures and for Tessera's own limits, answering the `world` OPEN of 2026-10-07, which is removed. **§6.2, §7.4 steps 3, 5, 11, 13:** every scale mode with its three salts (the §6.2 OPEN is closed) and the step-11 adjustments of modes 5–9; Tessera Decision to reject the modes Tessera does not implement. **§7.4 step 6:** the bound is unconditional and reads the position before the landblock normalisation (S48). **Step 7:** a missing terrain-type table passes (S49). **§7.4 step 14a:** how the client builds the static list: lookup of `entity-descriptor.md` §4.9 including a weenie's `PhysObj` chain, whole list from the nearest level, element rules, boxes stored with sorted corners, static entities without a frame at the origin, the validity check, and the sphere-against-cylinder test with `spacing_3d` (§15 item 5 closed) (S45, S46). **§7.2:** the pick's edge cases (S49). **§8.2:** a failed vertex in the frill pass keeps its records and its sector is not regenerated (S42); the frill sector set is a square of radius *n* + *e*, its visiting order, reset and eviction, and the ring centre blend (S47); the landblock test of frill records; the OPEN of 2026-10-06 is replaced by the client rule and a Tessera Decision. **§8.3 rule 8, §9.2:** Tessera Decisions for hostile values and chains. **§13:** new SC20 (failure inside a frill layer; records kept after a frill-pass failure), SC21 (scale modes), SC22–SC23 (static list, 3D cylinder), SC24 (pick). **§13.1:** the `formats` and `world` OPENs of 2026-10-06 become Tessera Decisions with the client's behaviour stated; observed maxima of the generation limits. **New §13.2:** two OPEN callouts for the `world` implementation where the released code departs from this revision (static list: 246 of 78,114 landblocks differ; frill sector disc misses corner sectors at some radii). §15 items 5, 17, 18. |
 | 2026-10-07 | Second repair revision answering the review of the repair revision (2026-10-07, spec-reviewer agent). Re-checked in a separate read-only copy of the Ghidra project (same build; BIN (u), (v) extended). **§4.1:** what an empty or unreadable slot-1 or slot-2 table does, stated per slot (slot 2: the per-vertex choices are never filled, the client retries and logs nothing, its result is not given by the data; slot 1: no scene, one diagnostic per vertex), with a Tessera Decision (no scene for the region); provenance S49 and question (v) extended. **§7.4 step 15:** the Tessera Decision on scene reads restated to match the released code: every archive error, I/O included, is a data fault (child fails, scene may be remembered as unreadable, result not incomplete), with the reason; only a full queue, a shutdown or a worker panic mark a result incomplete. **§8.2:** the ring-centre blend is not clamped (a blend above 1 moves the centre beyond the player), S47 extended; new Tessera Decision for no player (camera position), NaN/+∞ (1), −∞ (camera) and different regions; the sector-set Tessera Decision now states its distance (between the two squares, not from the centre sector's middle). **§13.2:** new OPEN for the ring centre (negative blends, −∞, different regions with blend ≤ 0, no player input); the sector-set OPEN states the distance and the radii without misses; intro notes the step-15 restatement. **§13:** SC18 and SC20 now fix `frequency` 1 and every other check; new SC25 (ring centre) and SC26 (sector-set distance). §15 item 18 updated. |
+| 2026-10-08 | Revision answering the `world` implementation's OPENs of 2026-10-07 (eighth BIN pass (w)–(z), ninth OBS pass; new rows S50–S53). Status Accepted → Revised. **§4.1:** the OPEN on pipeline failures of the region tables becomes a Tessera Decision: retry the region, and a landblock or frill sector built while its tables are unavailable is incomplete and built again. **§7.4 step 14a:** the invalid object DID is 0 (absent or stored 0); the creation type is read by the fixed id 0x47E, and a lookup that finds nothing drops the entity (S50); Tessera Decision for name-based readers; the `spacing_3d` z′ is chosen top first, which differs from a clamp only for a negative height (S51). The OPEN with choices (a)–(c) is removed. **§7.6:** the implementer note becomes a Tessera Decision (generator output need not carry the creation type). **§8.2:** the cap note becomes a Tessera Decision; the client registers the option without a range (S53). **§8.3 rule 8:** booleans only from stored booleans, floats only from stored floats, NaN clamps to 1 (S52); the former Tessera Decisions on integer-like booleans and NaN → 0 are withdrawn, and the OPEN on integer-like types is answered. **§13.2:** the three implementer callouts are closed (the code follows the 2026-10-07 body); one new OPEN lists the alignments of this revision. **§13:** new SC27 (negative cylinder height), SC28 (validity check), SC29 (frill value types). **§15:** items 18 and 19. |
+| 2026-10-08 | Second revision of the day, answering the review of the 2026-10-08 revision (changes requested). Ninth BIN pass (aa), tenth OBS pass. **S50, §7.4 step 14a (creation type):** a found value is taken only with stored type 8 (enum) or 10 (property ID); an int (15) or any other type gives 0 (the former text said "not an integer or enum"); for an entity whose object is a game object (DB-object type 0x45) a found value is adjusted as in `entity-descriptor.md` §4.9 step 2 and is never 0, so such an entity is dropped only when no level has the property (the former text dropped it for a wrong-typed or zero value); the levels searched per entity type are stated (Physics and PatrolPoint search only a 0x47 chain beyond their own set, Weenie only a game object's set and `PhysObj` chain). **Tessera Decision:** the id is the fixed 0x47E (decision 0012), no longer the dictionary id with a fallback. **SC27:** the false last sentence is replaced; the first point is now (0, 0, −0.4), which separates the client from a clamp and from the withdrawn choice (c). **SC28:** cases added for wrong-typed and zero values on 0x47 and game objects and for a Physics entity naming a game object. **§8.3 rule 8:** wording of the clamp results clarified (no change of fact). **§13.2:** OPEN item 1 restated; **§15** item 19 notes the correction. Header status and review record updated. |
+| 2026-10-08 | Third revision of the day, answering the review of the second 2026-10-08 revision (changes requested). Tenth BIN pass (ab), in an own read-only copy of the shared project and the instruction listing of the installed executable. **§8.3 rule 8, S52 (corrected):** the clamp of the frill per-object floats passes a NaN through (the second revision said "a NaN becomes 1"); new **S54**: a frill group's animation intensity is the largest of its records' values and a NaN never raises it, the animated variant needs a group value above 0.0002, and the baked vertex bytes (value × 255 for the animation intensity, value × 250 for the terrain-colour intensity, integer part) are 0 for a NaN, so a NaN acts as 0 in every use; new Tessera Decision: treat it as 0 after the clamp. **§8.5 steps 4–5:** the group's animation intensity; the sway weight stored by the Direct3D 9 and OpenGL back ends (multiplied by the animation intensity). **§7.4 step 14a "Which value", S45:** the clearance lists are read through the same lookup routine as the creation type, so the per-entity-type levels of S50 apply to them too (a Physics or PatrolPoint entity naming a game object, or a Weenie naming a 0x47 object, reads its lists from its own set only); the creation-type bullet notes that S50 refines `entity-descriptor.md` §4.9 until that spec is revised. **§13:** SC22 case (e) (per-entity-type levels); SC28 now fixes every entity's own clearance box, position, candidate and the stored type of its `Entity_CreationType` 3 (enum, type 8), so kept and dropped are observable; SC29's NaN case corrected and a mixed-group case added. **§13.2:** OPEN items (1) and (2) restated. **§15** item 19. No layout changed; no section renumbered. |

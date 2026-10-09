@@ -119,13 +119,13 @@ constraints that show up as structure:
                          │ client app  │     │           │           │
                          └──┬───┬───┬──┘     │           │           │
  L4 presentation & host     │   │   │        │           │           │
-     render  audio*  ui*  input*(→settings)  settings*  plugins*(→script)  net(backends)  entity*
-        │      │      │     │                   │               │
- L3 world & assets   world*(→physics)  physics*  terrain*       │
-                     anim*(→mesh)  mesh*  material*             │
-                     scriptgraph*                               │
-        └──────┴──────┴──────┬─────────────────────────────────┘
- L2 asset system          assets*   props*/wstate*/text*/wvm*
+     render  audio*  ui*  input*(→settings)  settings*  plugins*(→script, ui)  net(backends)  entity*
+        │      │      │     │                   │                   │
+ L3 world & assets   world*(→physics)  physics*  terrain*           │
+                     anim*(→mesh)  mesh*  material*                 │
+                     scriptgraph*                                   │
+        └──────┴──────┴──────┬─────────────────────────────────────┘
+ L2 asset system          assets*   props*  text*  wstate*(→props,text)  wvm*(→wstate)
                              │
  L1 record decoders       formats  (+ havok*)
                              │
@@ -150,10 +150,26 @@ Rules:
     generation reads the terrain collision mesh and its queries, and landblock bundles carry
     collision sets built on the asset workers. The allowance is one-way: `physics` depends
     only on `formats` and `props` (L1–L2) and never on `world`, `terrain`, `assets`, `render`
-    or any other L3/L4 crate, and it has no GPU, asset-server or streaming dependency.
+    or any other L3/L4 crate, and it has no GPU, asset-server or streaming dependency;
+  - `wstate` → `props`, `text` (L2, M3): a game object carries its property set, read
+    through the property registry, and the area views render StringInfo names through the
+    string tables (§7.4, `wstate.md` §11);
+  - `wvm` → `wstate` (L2, census 2): the script machine resolves function IDs and slots of
+    the compiled code against the class library schema that `wstate` decodes
+    (`wlib-bytecode.md`). One-way: `wstate`, `props` and `text` never depend on `wvm`, and
+    no crate below the apps depends on `wvm` (today only `dattool` uses it).
 - L0–L2 crates have no GPU, window or audio dependencies.
 - `render`, `audio` and `ui` do not depend on each other. The client app wires them
   together.
+- `input` and `ui` do not depend on each other either. The client wires them: the mapper
+  offers events to the UI through a synchronous sink that the client implements
+  ([0014](decisions/0014-ui-input-bridge.md)).
+- Sibling allowances at L4, each one-way ([0023](decisions/0023-plugin-host-split.md)):
+  - `plugins` → `script`: the plugin host runs on the plugin-free Lua core (§18).
+  - `plugins` → `ui`: the plugin API's UI classes are thin bindings over `tessera-ui`
+    elements; painting and composition stay in `ui`. `ui` never depends on `plugins` or
+    `script`. The alternative, a trait in `ui` that the client wires to `plugins`, was
+    rejected (0023); the owner may revise this.
 - `net` depends only on L0–L2 types it needs for its event vocabulary (property values,
   positions). It never depends on `render`, `ui` or `audio`.
 - Tools (`dattool`, `explorer`) may use any library crate. The client must never depend
@@ -170,8 +186,8 @@ Rules:
 | `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile (version 3) data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
 | `tessera-props` (`crates/props`) | L2 | M1 | Property registry, typed values, property sets, enum mappers, DID maps (§7). |
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
-| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). |
-| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (the L2 scripted-object group, like `wstate` on `props` and `text`). |
+| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). May depend on `props` and `text` (sibling allowance, §3). |
+| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (sibling allowance, §3); nothing below the apps depends on it. |
 | `tessera-assets` (`crates/assets`) | L2 | M1 | Asset server: typed handles, decode jobs on worker threads, caches, priorities, cancellation, GPU-upload hand-off (§8). |
 | `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). From M4.5 also: scenery generation and the frill (grass) ring, landblock water and water volumes, the game clock and sky state (§10), light selection (`lighting.md` §8.3–§8.5), per-class draw distances (`walker.md` §11.4). Builds each landblock's collision set, water included, on the asset workers and hands it to `physics` (§10.3, §20.3). May depend on `physics` (sibling allowance, §3). |
 | `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. The M7 test server reuses the controller and the collision-set types; building the sets from install data is `world`'s work (§10.3, §10.5). |
@@ -184,11 +200,11 @@ Rules:
 | `tessera-render` (`crates/render`) | L4 | M0 | wgpu renderer: device and surface, frame graph, pipelines and WGSL shaders, texture/mesh uploads, headless mode (§13). |
 | `tessera-audio` (`crates/audio`) | L4 | M6 | Output backend (cpal behind the `device` feature; null and offline backends otherwise) and the project-owned mixer: channels and volumes, positional voices, gain chain, distance law, voice limit, request gates, reverb environments, sample-accurate scheduling; Vorbis/WAV decoding; player music (ABC dialect, instruments) (§14, [0019](decisions/0019-audio-backend.md)). |
 | `tessera-scriptgraph` (`crates/scriptgraph`) | L3 | M6 | Continuous script-graph runtime: keeps script-table and scriptlet node instances alive over time (Switches, Sequences, Timers, Randoms, driven properties, intensities) and hands sound and sound-environment effects to sinks that the client wires to `tessera-audio`, and Particle-node effects (`particle-runtime.md` §5.4–§5.8: start gates, never-ending instances, stop hook, redirect listener) to sinks that the walker wires to `tessera-particles`. Depends on `formats` only, not on `audio` or `particles`. |
-| `tessera-ui` (`crates/ui`) | L4 | M5 | Retained widget tree built from UI layout records, user skins and plugin controls; text layout; 2D batching (§15). |
+| `tessera-ui` (`crates/ui`) | L4 | M5 | Retained element tree built from UI layout records, user skins and plugin controls; layout, behaviour and focus; text; art tiled at native size into sparse 32-bit CPU canvases (one per surface-owning element), damage and paint jobs, the composition list that `render` draws (§15). No GPU and no Lua dependency; depends on neither `script` nor `plugins`. |
 | `tessera-input` (`crates/input`) | L4 | M3 | Raw input → actions via a keymap; input contexts; gamepad (§16). |
 | `tessera-settings` (`crates/settings`) | L4 | M1 | Tessera's own settings file (INI-shaped), with a read-only importer for the original client's preferences file (§17). |
-| `tessera-script` (`crates/script`) | L4 | M0 | Sandboxed Lua 5.1 host: state creation, library allow-list, limits, binding helpers (§18). |
-| `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin discovery (`.plugin` XML), apartments, lifecycle, the compatible Lua API surface, plugin-data persistence (§18). |
+| `tessera-script` (`crates/script`) | L4 | M0 | Plugin-free sandboxed Lua 5.1 core: state creation from an apartment profile, library allow-list, limits and instruction budget, protected calls, text-only compilation, bounded pattern matcher, collector stepping, neutral Lua-table data reader. No plugin API names or plugin state ([0023](decisions/0023-plugin-host-split.md), §18.1). |
+| `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin host on the `script` core: discovery (`.plugin` XML), apartments, lifecycle, `import` and the `Plugins/` file index, the compatible Lua API surface (its UI classes drive `tessera-ui` elements), command table, request and chat queues, `.plugindata` persistence, the class helper ([0023](decisions/0023-plugin-host-split.md), §18.2). |
 | `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend, test-server backend (`remote`, decision 0030; M7), snapshot interpolation (§19). |
 | `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol (`docs/specs/tessera-protocol.md`): message schema, framing, versioning, the sans-IO client and server connection state machines, property values, movement and time-sync helpers, key fingerprints and connect strings. No I/O and no async code; feature `transport` adds the server key files and the rustls/quinn configurations of decision 0030. Shared by the `tessera-net` test-server backend, the test server and the load tools. |
 | `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). |
@@ -654,8 +670,10 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 > one-update overshoot of the residency budget at integration, the re-admission margin
 > of a seam closure, the velocity estimate's sample rules, what a data error in a
 > world-system input does, and the water lookups with `build_water` off) are listed for
-> confirmation in the implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1)
-> (2026-10-07, second set).
+> confirmation in these implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1),
+> all dated 2026-10-07: "streamer defaults", "transient overshoot", "re-admission margin of
+> a seam closure", "lookahead (a) continued", "data errors in world-system inputs" and
+> "`build_water` and the water lookups".
 
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend
@@ -884,8 +902,11 @@ surfaces (0x41), with a reference to a compiled shader record (0x2B).
 - **API:** wgpu 30 (Vulkan, Metal, DX12, GL) via winit windows. WGSL shaders written for
   this project.
 - **Frame structure:** a small, explicit frame graph: depth pre-pass → opaque (terrain,
-  static, skinned) → alpha-tested → sky → transparent → UI → present. Shadows, bloom and
-  other post effects are added as passes later.
+  static, skinned) → alpha-tested → sky → transparent → walker overlays when shown (HUD and
+  walker minimap, `walker.md` §6; under the game UI) → UI (one quad per UI surface,
+  `render.md` §6) → developer overlay (egui frame stats, planned) → software cursor (only
+  when used) → present ([0015](decisions/0015-ui-rendering.md) Decision 1.6). Shadows,
+  bloom and other post effects are added as passes later.
 - **Resources:** texture and buffer uploads from CPU products, with per-frame byte
   budgets. Static meshes share large vertex/index buffers (sub-allocation) to keep draw
   calls cheap. Instancing for repeated static objects.
@@ -963,16 +984,47 @@ Game UI design:
 - **Layout:** absolute rectangles with margins and anchors, as the data describes.
   Plugins position controls absolutely too (Reported API semantics). A flexbox engine is
   not needed for compatibility. Taffy may be used for Tessera's own panels.
-- **Rendering:** the tree produces a 2D draw list (textured quads, nine-slice frames,
-  text runs, clip rects) that `render` draws in the UI pass.
-- **Text:** font rasterisation and shaping with a pure-Rust stack. The fonts the
-  original UI uses are referenced by DID in the data (Reported); whether they can be
-  decoded is OPEN. Tessera bundles only freely licensed fonts as fallback.
+- **Rendering** (Decision, [0015](decisions/0015-ui-rendering.md)):
+  - **CPU canvases.** Art is tiled at native size (no nine-slice scaling) and text is drawn
+    into sparse 32-bit CPU canvases, one per element that owns a surface, byte-exact to the
+    compositor arithmetic of `ui-layout.md` §9.6 and `fonts.md` §8.4. Only damaged
+    rectangles are repainted. `tessera-ui` has no GPU dependency; it hands the client a
+    composition list and the changed rectangles.
+  - **GPU composition.** `render` composes one textured quad per surface in the UI pass
+    (`render.md` §6), with the surface's opacity, scale and rotation.
+  - **Nested surfaces** (plugin controls with a stretch mode, child windows, the minimap
+    marker, portraits) are separate quads. They take their own opacity only and are clipped
+    by their enclosing windows.
+  - **Paint jobs** span frames: a large paint is split into bands within a per-frame paint
+    slice and is never restarted. A window and its nested parts swap to the new picture
+    together, once per generation. A newly shown surface is drawn within 100 ms.
+  - **Cursor:** the OS cursor. It is hidden and grabbed only when the UI declines a
+    mouse-look press (0014 D7).
+  - **Budgets:** U1–U5 of 0015 §6 (main-thread time, GPU time, upload bytes, event frames,
+    memory) are M5 exit criteria. The UI's upload budget is separate from the asset upload
+    budget (§20.3 step 5).
+- **Images** (0015 §4):
+  - All image decoding runs on the asset workers; every decoder has a fuzz target.
+  - Every image becomes one canonical 32-bit ARGB form, plus a source-format tag
+    (*ARGB32*, *alpha-only*, *no alpha*, *other*). The tag decides whether an overlay image
+    draws (`ui-layout.md` §9.6.3).
+  - Plugin `.png` and `.bmp` files are refused with the unsupported-format error.
+  - `SetBackground(path)` fails at call time without decoding: existence is checked
+    against a file index of the whole `Plugins/` tree, which is built by a directory walk on
+    an asset worker; the format is checked by a header probe of at most 64 bytes, cached per
+    path (the stated exception (a) of §21).
+  - Images that canvases draw from are pinned. Others stay in an LRU cache within the
+    decoded-image budget. Past the hard cap, images get the placeholder.
+  - An image with more than 4,096 pixels on an axis is cropped at decode to its top-left
+    4,096 pixels on that axis.
+- **Text:** font records and glyph atlases are decoded and drawn on the CPU into the same
+  canvases (`fonts.md`). Tessera bundles only freely licensed fonts as fallback.
 - **XML:** skins and plugin descriptors are parsed with a strict, bounded pure-Rust XML
   parser (no DTDs, no external entities).
 
-> **OPEN:** the UI layout record grammar beyond the element header, the meaning of the
-> per-element UIData variants, and the font record type. RE tasks in ROADMAP M5.
+The layout record grammar and the per-element UIData variants are in `specs/ui-layout.md`;
+the font record type is in `specs/fonts.md`. Behaviour, widgets, game panels and the chat
+window are in `ui-behaviour.md`, `ui-widgets.md`, `game-panels.md` and `chat-window.md`.
 
 ---
 
@@ -986,6 +1038,14 @@ Game UI design:
   behave as expected.
 - Bindings live in Tessera's own keymap file (TOML, in Tessera's config directory).
   Importing the original client's keymap file read-only is planned.
+- **UI band and sink** (Decision, [0014](decisions/0014-ui-input-bridge.md)): the context
+  stack gains a UI band of owned, prioritised entries above the game contexts (the UI's
+  input maps, `keymap.md` §3.2). UI commands are ordinary actions that carry their command
+  name and ID, with activation filters (press, release, tap, double) computed in the mapper.
+  The mapper offers each resolved event to the UI in order through a synchronous sink; the
+  UI's verdict decides who owns the hold, and a declined command goes on to game code
+  (`keymap.md` §7.8). The sibling rules do not change: `input` and `ui` stay independent,
+  and the client implements the sink (§3).
 
 > **OPEN:** the original keymap file syntax (Reported as undocumented,
 > engine-client-re.md §8). The importer waits for a spec.
@@ -1020,8 +1080,31 @@ Game UI design:
 - **Sandbox:** only the base library (minus `dofile`, `loadfile`, `load` of binary
   chunks), `string`, `table`, `math`. No `io`, `os` (beyond time queries), `debug`,
   `package` loaders or C modules. Memory limit and an instruction-count hook per state.
-- **Threading:** Lua states are not `Send`; all plugin code runs on the main thread in a
-  per-frame time slice.
+- **Plugin-free core** (Decision, [0023](decisions/0023-plugin-host-split.md)): apartment
+  profile and state creation, `Limits`, protected calls and error description, the `pcall`
+  guard, the instruction budget and its hook, text-only compilation, the bounded pattern
+  matcher, the metered finalizer proxy, collector stepping and the neutral Lua-table data
+  reader. It holds no plugin API namespace, `import`, plugins root, shared plugin state,
+  command table, chat-line queue or `.plugindata` file naming. Its host trait covers only
+  the script log and error reports; the plugin `HostApi` lives in `tessera-plugins`
+  (§18.2).
+- **Threading** (Decision, [0014](decisions/0014-ui-input-bridge.md) D8): Lua states are
+  not `Send`.
+  - All plugin code runs on the main thread in frame-loop steps 1 and 7 (§20.3), except the
+    unload of every apartment at client exit, which runs after the last frame. This is
+    what `lua-plugin-api.md` §3.3 and `plugin-runtime.md` §10.3 call "between frames".
+  - Plugin events raised by game or session state (the chat-line event of
+    `lua-plugin-api.md` §11.3, the gameplay views' change events) are queued and delivered
+    in step 7. UI changes driven by game or session code (show and hide, activation,
+    focus, screen resize, `HideWhenField`) are applied in step 7 too, so the plugin
+    notifications they cause run there.
+  - Input handlers (step 1), the `Update` broadcast and the collector step (step 7) are
+    bounded by the per-call instruction budget and are not sliced.
+  - The step-7 deferred work (queued loads, plugin-data callbacks, game-raised events, the
+    logout unload) is sliced by whole items: 2 ms of plugin time per frame, at least one
+    item (except while a load waits for the first `Plugins/` file index,
+    `lua-plugin-api.md` §3.3).
+  - Plugin time is measured separately from the UI's own time (0015 §6, U1).
 
 <a id="plugins-host"></a>
 ### 18.2 Plugin host (`tessera-plugins`)
@@ -1038,10 +1121,20 @@ Game UI design:
   documentation prose are copied or shipped.
 - **Persistence:** plugin data (account, server, character scopes) is stored under
   Tessera's `data/` directory, not in the original client's folders.
-
-> **OPEN (legal):** the plugin API's global namespace names are the original vendor's
-> name. They are needed verbatim for interoperability. `docs/LEGAL.md` must record the
-> interoperability rationale before M5 ships.
+- **Crate** ([0023](decisions/0023-plugin-host-split.md)): `tessera-plugins` holds the
+  plugin API's namespaces, `import`, `NativeApi` and the object model, descriptors, the
+  `PluginManager`, the command table, the request and chat-line queues, the `.plugindata`
+  wrapper over the core's reader, the plugin `HostApi`, the clean-room class helper
+  ([0016](decisions/0016-plugin-class-helper.md)) and the bindings of the plugin UI
+  classes, which create and drive `tessera-ui` elements (`plugins` → `ui`, §3).
+- **`Plugins/` file index:** a virtual file system index of the whole `Plugins/` tree,
+  built by a directory walk on an asset worker when the host starts and again when the
+  plugin manager refreshes its list (`plugin-descriptor.md` §4.2, `lua-plugin-api.md`
+  §4.3, §6.7), and swapped in whole on the main thread. Image paths are checked against it
+  (§15, 0015 §4.4).
+- **Names:** the plugin API's global namespace names are the original vendor's, used
+  verbatim for interoperability only, under the rationale and binding rules of
+  `docs/LEGAL.md` §17 (M5 exit criterion 6).
 
 ---
 
@@ -1193,7 +1286,11 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
 <a id="frame-loop"></a>
 ### 20.3 Frame loop (main thread)
 
-1. Pump window and input events; update input state and actions.
+1. Pump window and input events; the mapper resolves them and offers them to the UI in
+   order (UI input routing and plugin input handlers run here, against the elements'
+   current geometry; events that arrive between redraws are handled in winit's callbacks
+   on arrival and belong to this step of the next frame); offer pending Ends; publish the
+   action snapshot ([0014](decisions/0014-ui-input-bridge.md) D8).
 2. `Session::poll`: apply server events to the entity store (entity ID → transform,
    property set, render/audio components).
 3. Simulation at fixed rates, interpolated for rendering (Decision, see "Simulation steps"
@@ -1204,10 +1301,28 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
    remove collision sets ("Collision-set residency" below).
 6. Animation: collect pose results computed on workers for the previous frame; submit new
    sampling jobs.
-7. Plugins: run Lua `Update` events and timers within their time slice.
-8. UI: process input, layout, build the 2D draw list.
+7. UI tick (`lua-plugin-api.md` §3.3): hover refresh, `MouseHover`, the plugins' `Update`
+   broadcast (plugin timers are `Update` handlers), the rest of the UI's per-frame work;
+   then the plugin host's deferred work, sliced by whole items (2 ms per frame; it
+   includes the plugin events raised by game and session state and the logout unload);
+   then the collector step in every apartment (`plugin-runtime.md` §9.2); then apply the
+   UI's band changes to the mapper. UI changes driven by game or session code (show and
+   hide, activation, focus, screen resize, `HideWhenField`) are applied in this step, so
+   the plugin notifications they cause run here (0014 D8).
+8. UI: layout, paint damaged rectangles within the UI slice, build the composition list.
+   Layout here changes no box that a hit test reads (0014 D8; paint and composition:
+   [0015](decisions/0015-ui-rendering.md)).
 9. Audio: update listener and emitters; send commands to the audio thread.
-10. Render: cull, sort, encode, submit, present.
+10. Render: cull, sort, encode the world passes, then the screen-space passes (walker
+    overlays, the UI pass that draws the composition list, developer overlay, software
+    cursor; §13), submit, present.
+
+At client exit, after the last frame, the plugin host unloads every apartment
+(`lua-plugin-api.md` §6.3); this is the only plugin code outside steps 1 and 7. The frame
+clock behind the plugin API's game-time query (`lua-plugin-api.md` §12) and the UI's hover
+clock advance once per frame, right after present, so step-1 handlers run in winit
+callbacks and the step-7 `Update` broadcast of the same frame see the same value. The UI's
+upload budget (0015 §6, U3) is separate from step 5's asset upload budget.
 
 **Simulation steps** (Decision, M4.5, [0013](decisions/0013-physics-crate.md)). There are two
 fixed-step accumulators inside the frame, both on the main thread, and neither depends on
@@ -1308,7 +1423,19 @@ Rules:
   other threads; moving uploads to a dedicated thread is an optimisation for later, guarded
   by profiling.
 - No blocking I/O on the main thread after start-up. A missing asset is a placeholder for
-  a frame, never a stall.
+  a frame, never a stall. Stated exceptions, each needed because the plugin API's calls are
+  synchronous and must complete or fail before they return:
+  - **(a)** the header probe of `SetBackground(path)`: one synchronous read of at most
+    64 bytes, cached per path ([0015](decisions/0015-ui-rendering.md) §4.4). The
+    `Plugins/` index walk runs on a worker and is not an exception;
+  - **(b)** the synchronous `PluginData.Save` writes and the flush when a Lua state closes
+    (`lua-plugin-api.md` §6.3, §10.6): an unload asked for by the user or a plugin in step 1
+    or 7, the logout unload in step 7, and the unload at client exit after the last frame;
+  - **(c)** the reads of plugin source files from the `Plugins/` tree by `import`
+    (`lua-plugin-api.md` §7.2), including the imports of a plugin's load item in step 7.
+    This is the precedent that 0015 §4.4 cites for (a) ("of the same kind that `import`
+    already needs"); that wording stands, and its reference for it is this exception, not
+    §18.2.
 - Worker pool: a dedicated pool with a priority queue (Decision), not a general
   work-stealing pool, because priority and cancellation matter more than throughput.
 
@@ -1428,8 +1555,8 @@ tiers:
 | 7 | Interiors, portals, PVS | after M3 | `specs/landblock.md` |
 | 8 | Entity storage / ECS choice: **decided**, project-owned store ([0008](decisions/0008-entity-storage.md)) | M4 | ADR 0008 |
 | 9 | Shader-record classification method | M2 | `specs/material.md` |
-| 10 | UI layout grammar, UIData variants, font records | M5 | `specs/ui-layout.md` |
-| 11 | Plugin namespace naming rationale | M5 | `LEGAL.md` |
+| 10 | UI layout grammar, UIData variants, font records: **specified** (`ui-layout.md`, `fonts.md`, Accepted) | M5 | `specs/ui-layout.md`, `specs/fonts.md` |
+| 11 | Plugin namespace naming rationale: **recorded** (`LEGAL.md` §17) | M5 | `LEGAL.md` §17 |
 | 12 | Original keymap file syntax | M5 | `specs/keymap.md` |
 | 13 | Instrument samples and pitch mapping for player music | M6 | `specs/sound.md` |
 | 14 | Sky, weather, time of day, water: **answered** (§10; remaining OPENs non-blocking, in the specs) | M4.5 | `specs/environment.md`, `specs/water.md`, `specs/terrain-texturing.md` |

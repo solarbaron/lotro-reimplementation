@@ -14,6 +14,11 @@ struct ParticleDraw {
     flags: vec4<u32>,
 };
 
+// Set for a fixed blend that draws opaque in a premultiplied pass (`render.md` §6.10, R12):
+// the fragment writes alpha 1 and its colour times the source factor (1 = ZERO, 2 = ONE,
+// 3 = SRCALPHA, 4 = INVSRCALPHA); 0 = the colour and alpha computed.
+override FIXED_OPAQUE: u32 = 0u;
+
 @group(0) @binding(0) var<uniform> draw: ParticleDraw;
 @group(1) @binding(0) var t_particle: texture_2d<f32>;
 @group(1) @binding(1) var s_particle: sampler;
@@ -64,5 +69,22 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     if (draw.flags.y != 0u) {
         rgb = particle_srgb_to_linear(rgb);
     }
-    return vec4<f32>(rgb, clamp(c.a, 0.0, 1.0));
+    let a = clamp(c.a, 0.0, 1.0);
+    switch FIXED_OPAQUE {
+        case 1u: {
+            return vec4<f32>(vec3<f32>(0.0), 1.0);
+        }
+        case 2u: {
+            return vec4<f32>(rgb, 1.0);
+        }
+        case 3u: {
+            return vec4<f32>(rgb * a, 1.0);
+        }
+        case 4u: {
+            return vec4<f32>(rgb * (1.0 - a), 1.0);
+        }
+        default: {
+            return vec4<f32>(rgb, a);
+        }
+    }
 }

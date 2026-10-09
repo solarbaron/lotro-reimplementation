@@ -31,15 +31,16 @@ use crate::instanced::{
     InstancedState, SurfaceKind, WorldModel, common_source, lit_source, mesh_vertex_layout,
     uniform_entry, uniform_stride,
 };
-use crate::material::FixedBlend;
+use crate::material::{FixedAlpha, FixedBlend};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::DEPTH_FORMAT;
 use crate::renderer::{FrameStats, WorldFrame};
 
 const SKY_WGSL: &str = include_str!("shaders/sky.wgsl");
 
-/// A sky pipeline: target format, fixed blend (`None`: source-alpha blend), alpha test.
-type SkyPipeKey = (wgpu::TextureFormat, Option<FixedBlend>, bool);
+/// A sky pipeline: target format, fixed blend with how it writes alpha in the pass
+/// (`None`: source-alpha blend), alpha test.
+type SkyPipeKey = (wgpu::TextureFormat, Option<(FixedBlend, FixedAlpha)>, bool);
 
 /// Largest number of sky objects per pass and frame (the data has at most 136 per day
 /// description, `environment.md` §5.4).
@@ -138,7 +139,7 @@ impl SkyState {
         &mut self,
         ctx: &WorldFrame<'_>,
         models: &mut InstancedState,
-        fixed: Option<FixedBlend>,
+        fixed: Option<(FixedBlend, FixedAlpha)>,
         masked: bool,
     ) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
         let device = ctx.device;
@@ -186,7 +187,15 @@ impl SkyState {
         }
         // Additive and the other fixed blends use their own blend state; the depth write
         // stays off (the sky lies at the far plane).
-        let blend = fixed.map_or(wgpu::BlendState::ALPHA_BLENDING, FixedBlend::blend_state);
+        // A fixed blend that draws opaque in a premultiplied pass (render.md §6.10, R12)
+        // does not blend; the fragment applies `FIXED_OPAQUE`.
+        let (blend, constants) = match fixed {
+            None => (Some(wgpu::BlendState::ALPHA_BLENDING), &[][..]),
+            Some((b, alpha)) => {
+                let p = b.pipeline(alpha);
+                (p.blend, p.constants())
+            }
+        };
         let p = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("tessera-sky"),
             layout: Some(&layout),
@@ -213,10 +222,13 @@ impl SkyState {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some(if masked { "fs_sky_mask" } else { "fs_sky" }),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format: ctx.format,
-                    blend: Some(blend),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -312,10 +324,16 @@ pub(crate) fn build_hook(
                 continue;
             };
             let fixed = match surface.kind {
-                SurfaceKind::Fixed(b) => Some(b),
+                SurfaceKind::Fixed(b) => Some((b, b.alpha_rule(ctx.premultiplied))),
                 _ => None,
             };
-            let masked = matches!(surface.kind, SurfaceKind::Mask | SurfaceKind::TestBlend);
+            // A fixed blend with an alpha test takes the testing stage too (render.md
+            // R-D11).
+            let masked = match surface.kind {
+                SurfaceKind::Mask | SurfaceKind::TestBlend => true,
+                SurfaceKind::Fixed(b) => b.alpha_test.is_some(),
+                _ => false,
+            };
             let Some((pipeline, layout)) = state.pipeline(ctx, models, fixed, masked) else {
                 continue;
             };

@@ -28,7 +28,7 @@ use wgpu::util::DeviceExt;
 use crate::error::{RenderError, Result};
 use crate::frame::{Pass, Rgba};
 use crate::instanced::{uniform_entry, uniform_stride};
-use crate::material::{AlphaMode, FixedBlend};
+use crate::material::{AlphaMode, FixedAlpha, FixedBlend};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
 use crate::renderer::{FrameStats, ResolvedTexture, TextureResolver};
@@ -145,10 +145,11 @@ fn draw_state(alpha: AlphaMode) -> DrawState {
             depth_write: false,
             cutoff: None,
         },
+        // The record's alpha test (`material.md` §11.2) uses the draw's cut-off.
         AlphaMode::Fixed(f) => DrawState {
             blend: BlendKey::Fixed(f),
             depth_write: f.depth_write,
-            cutoff: None,
+            cutoff: f.alpha_test.map(|t| t.value()),
         },
     }
 }
@@ -163,7 +164,7 @@ struct ParticleUniform {
     flags: [u32; 4],
 }
 
-type PipeKey = (wgpu::TextureFormat, BlendKey, bool);
+type PipeKey = (wgpu::TextureFormat, BlendKey, bool, FixedAlpha);
 
 /// Pipelines and shared buffers of the particle path, built lazily.
 #[derive(Debug, Default)]
@@ -183,6 +184,9 @@ pub(crate) struct ParticleFrame<'a> {
     pub format: wgpu::TextureFormat,
     pub view_proj: Mat4,
     pub textures: TextureResolver<'a>,
+    /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
+    /// write alpha by [`FixedBlend::alpha_rule`] (`docs/specs/render.md` §6.10, R12).
+    pub premultiplied: bool,
 }
 
 impl ParticleState {
@@ -253,8 +257,13 @@ impl ParticleState {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         state: DrawState,
+        premultiplied: bool,
     ) -> wgpu::RenderPipeline {
-        let key = (format, state.blend, state.depth_write);
+        let alpha = match state.blend {
+            BlendKey::Fixed(f) => f.alpha_rule(premultiplied),
+            BlendKey::Opaque | BlendKey::Alpha => FixedAlpha::Keep,
+        };
+        let key = (format, state.blend, state.depth_write, alpha);
         if let Some((_, p)) = self.pipelines.iter().find(|(k, _)| *k == key) {
             return p.clone();
         }
@@ -278,10 +287,15 @@ impl ParticleState {
                 })
             })
             .clone();
-        let blend = match state.blend {
-            BlendKey::Opaque => None,
-            BlendKey::Alpha => Some(wgpu::BlendState::ALPHA_BLENDING),
-            BlendKey::Fixed(f) => Some(f.blend_state()),
+        // A fixed blend that draws opaque in a premultiplied pass (render.md §6.10, R12)
+        // does not blend; the fragment applies `FIXED_OPAQUE`.
+        let (blend, constants) = match state.blend {
+            BlendKey::Opaque => (None, &[][..]),
+            BlendKey::Alpha => (Some(wgpu::BlendState::ALPHA_BLENDING), &[][..]),
+            BlendKey::Fixed(f) => {
+                let p = f.pipeline(alpha);
+                (p.blend, p.constants())
+            }
         };
         let attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4, 2 => Float32x2];
         let p = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -312,7 +326,10 @@ impl ParticleState {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_particle"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend,
@@ -463,7 +480,7 @@ pub(crate) fn build_hook(
                 .map(finite_vertex),
         );
         items.push(ParticleItem {
-            pipeline: state.pipeline(device, ctx.format, st),
+            pipeline: state.pipeline(device, ctx.format, st, ctx.premultiplied),
             texture,
             uniform_offset: offset,
             first,
@@ -584,5 +601,11 @@ mod tests {
             ..FixedBlend::ADDITIVE
         };
         assert!(draw_state(AlphaMode::Fixed(fixed)).depth_write);
+        assert_eq!(draw_state(AlphaMode::Fixed(fixed)).cutoff, None);
+        let tested = FixedBlend {
+            alpha_test: Some(crate::material::AlphaThreshold(0.25)),
+            ..fixed
+        };
+        assert_eq!(draw_state(AlphaMode::Fixed(tested)).cutoff, Some(0.25));
     }
 }

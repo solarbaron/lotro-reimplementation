@@ -20,7 +20,7 @@ const _: () = assert!(MAX_FLY_SPEED * 5.0 <= tessera_net::sandbox::MAX_SPEED);
 #[command(name = "tessera-client", version, about)]
 #[command(group(
     clap::ArgGroup::new("headless_task")
-        .args(["screenshot", "fly_path", "duration", "walk_path"])
+        .args(["screenshot", "fly_path", "duration", "ui_script", "walk_path"])
         .multiple(true)
 ))]
 pub struct Args {
@@ -321,7 +321,7 @@ pub struct Args {
     /// a walk file (`docs/checklists/m4-5-visual.md` §2.1 file form) or a Markdown text
     /// holding the walk table (the checklist itself runs all its walks). Fails when a walk
     /// fails its expected outcome. The walks run offline, so `--server` does not apply.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["screenshot", "fly_path", "duration", "showcase", "smoke", "no_data", "server"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["screenshot", "fly_path", "duration", "ui_script", "showcase", "smoke", "no_data", "server"])]
     pub walk_path: Option<PathBuf>,
 
     /// Write the `--walk-path` movement log (one CSV row per 1/60 s step: position, state,
@@ -402,12 +402,57 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub particle_seed: Option<u32>,
 
-    /// A player-music chat command (`/play <name> [<part>] [sync]`, `/playstart`,
-    /// `/playlist`, `/playstop`, `/instrument`), run in order once the archives are open;
-    /// its replies go to the chat log. Repeatable. (The M7 chat line does not route these
-    /// commands yet.)
-    #[arg(long = "music-command", value_name = "LINE")]
-    pub music_commands: Vec<String>,
+    /// A command line for the client's command dispatcher (decision 0020 item 7), for
+    /// example a player-music command (`/play <name> [<part>] [sync]`, `/playstart`,
+    /// `/playlist`, `/playstop`, `/instrument`) or `/help`. Repeatable; the lines run in
+    /// order in the first frame after the archives are open (and the install's command
+    /// words are read); replies go to the chat overlay and the log. A line that would chat
+    /// (plain text, `/say`, ...) is logged and dropped, never sent. The same commands work
+    /// typed in the walker's chat line. `--music-command` is the old name.
+    #[arg(long = "command", visible_alias = "music-command", value_name = "LINE")]
+    pub commands: Vec<String>,
+
+    /// Attach the game UI (M5): native panels, chat, plugin windows, input bridge.
+    #[arg(long)]
+    pub ui: bool,
+
+    /// Open a panel at start, by number (`P1`–`P15`) or layout label (repeatable; implies
+    /// `--ui`).
+    #[arg(long = "open-panel", value_name = "NAME")]
+    pub open_panel: Vec<String>,
+
+    /// Do not open the HUD panels (P1–P5, P11, P14) at start.
+    #[arg(long)]
+    pub no_ui_hud: bool,
+
+    /// User skin to activate by name (overrides `[UI] UserSkin`; implies `--ui`).
+    #[arg(long, value_name = "NAME")]
+    pub skin: Option<String>,
+
+    /// Skins root folder to read instead of `<settings folder>/ui/skins` (read-only).
+    #[arg(long, value_name = "DIR")]
+    pub skins_root: Option<PathBuf>,
+
+    /// Walker HUD text with the game UI (`on` or `off`; checklist runs use `off`).
+    #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
+    pub walker_hud: Option<bool>,
+
+    /// Walker minimap with the game UI (`auto`, `on` or `off`).
+    #[arg(long, value_name = "MODE", value_parser = parse_minimap)]
+    pub walker_minimap: Option<tessera_settings::MinimapMode>,
+
+    /// Cursor kind (`os` or `software`, decision 0015 §2.5).
+    #[arg(long, value_name = "KIND", value_parser = parse_cursor)]
+    pub ui_cursor: Option<tessera_settings::CursorMode>,
+
+    /// Run the scripted UI measurement of decision 0015 §6 (with `--headless`, offscreen;
+    /// implies `--ui`).
+    #[arg(long)]
+    pub ui_script: bool,
+
+    /// Write the U1–U5 report of the run as Markdown to this file (implies `--ui`).
+    #[arg(long, value_name = "FILE")]
+    pub ui_report: Option<PathBuf>,
 }
 
 /// Environment variable the test-server password is read from (else a prompt).
@@ -677,6 +722,22 @@ fn parse_audio(s: &str) -> Result<crate::audio::backend::BackendChoice, String> 
     crate::audio::backend::BackendChoice::parse(s)
 }
 
+fn parse_on_off(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" => Ok(true),
+        "off" | "false" | "no" => Ok(false),
+        _ => Err("expected on or off".into()),
+    }
+}
+
+fn parse_minimap(s: &str) -> Result<tessera_settings::MinimapMode, String> {
+    tessera_settings::MinimapMode::parse(s).ok_or_else(|| "expected auto, on or off".into())
+}
+
+fn parse_cursor(s: &str) -> Result<tessera_settings::CursorMode, String> {
+    tessera_settings::CursorMode::parse(s).ok_or_else(|| "expected os or software".into())
+}
+
 fn parse_spacing(s: &str) -> Result<f32, String> {
     let v: f32 = s.trim().parse().map_err(|e| format!("{e}"))?;
     if tessera_net::sandbox::CROWD_SPACING_RANGE.contains(&v) {
@@ -723,6 +784,17 @@ impl Args {
     #[must_use]
     pub fn walker(&self) -> bool {
         !self.showcase && !self.no_data && !self.smoke
+    }
+
+    /// Whether the game UI is attached to the walker (M5).
+    #[must_use]
+    pub fn ui_enabled(&self) -> bool {
+        self.walker()
+            && (self.ui
+                || !self.open_panel.is_empty()
+                || self.skin.is_some()
+                || self.ui_script
+                || self.ui_report.is_some())
     }
 
     /// Whether the walker renders offscreen (or, for `--walk-path`, runs without a GPU).
@@ -958,11 +1030,13 @@ mod tests {
             "t",
             "--music-command",
             "/play tune",
-            "--music-command",
+            "--command",
             "/playstop",
+            "--music-command",
+            "/help",
         ])
         .unwrap();
-        assert_eq!(m.music_commands, vec!["/play tune", "/playstop"]);
+        assert_eq!(m.commands, vec!["/play tune", "/playstop", "/help"]);
     }
 
     #[test]

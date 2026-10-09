@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Plugin>
+  <Information>
+    <Name>Tunes</Name>
+    <Author>Tess</Author>
+    <Version>0.1</Version>
+    <Description>Synthetic test plugin.</Description>
+  </Information>
+  <Package>Tess.Tunes.Main</Package>
+
+</Plugin>

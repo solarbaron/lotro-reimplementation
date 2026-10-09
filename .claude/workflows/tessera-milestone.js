@@ -25,7 +25,7 @@
 export const meta = {
   name: 'tessera-milestone',
   description: 'Run one Tessera roadmap milestone: plan, dirty-room specs, clean-room build with review/fix, exit check',
-  whenToUse: 'Continuing the roadmap (docs/ROADMAP.md) one milestone at a time; pass args.milestone like "M4" or "M4.5"',
+  whenToUse: 'Continuing the roadmap (docs/ROADMAP.md) one milestone at a time; pass args.milestone like "M4", "M4.5" or "P0"',
   phases: [
     { title: 'Plan', detail: 'read the roadmap milestone, create skeleton crates, emit task graph' },
     { title: 'Specs', detail: 'dirty-room specs confirmed on real data' },
@@ -43,8 +43,12 @@ const M = String(args.milestone).trim().toUpperCase()
 if (/^M8\b/.test(M)) {
   throw new Error('M8 is gated (docs/decisions/0004-server-strategy.md): record the legal review as a new decision and ask the owner first; this workflow will not run it')
 }
-if (!/^M(?:[0-7]|4\.5)$/.test(M)) {
-  throw new Error(`args.milestone must be one of M0..M7 or M4.5 (got "${args.milestone}")`)
+if (/^M9\b/.test(M)) {
+  throw new Error('M9 (extended scripting) starts only after full parity: the P-track (decision 0024) and M8 or its fallback (owner, 2026-10-08); this workflow will not run it')
+}
+// P0..P8: the client-half parity track (docs/decisions/0024-parity-track.md, owner 2026-10-09).
+if (!/^(?:M(?:[0-7]|4\.5)|P[0-8])$/.test(M)) {
+  throw new Error(`args.milestone must be one of M0..M7, M4.5 or P0..P8 (got "${args.milestone}")`)
 }
 const REPO = args.repo
 const GAME = args.game || null
@@ -183,9 +187,18 @@ const results = {}
 for (const k of NODES.keys()) results[k] = await start(k)
 const problems = Object.entries(results).filter(([, r]) => failed(r)).map(([k, r]) => `${k}: ${r == null ? 'no result' : r.error || r.skipped || 'implementer returned nothing'}`)
 if (problems.length) log(`${M}: failed/skipped: ${problems.join('; ')}`)
-const summary = Object.fromEntries(Object.entries(results).map(([k, r]) => [k,
-  failed(r) ? { status: 'FAILED/SKIPPED', detail: r == null ? null : (r.error || r.skipped || 'implementer returned nothing') }
-    : { status: 'done', impl: typeof r === 'object' && 'impl' in r ? r.impl : r, review: r.review }]))
+// The exit verifier is a clean-room session: it gets spec KEYS, files and status only, never
+// the spec writers' returned text (dirty-room output; decision 0021). Implementation results
+// come from clean sessions and may be passed on.
+const summary = Object.fromEntries(Object.entries(results).map(([k, r]) => {
+  const n = NODES.get(k)
+  if (n.kind === 'spec') {
+    return [k, failed(r) ? { kind: 'spec', files: n.item.files, status: 'FAILED/SKIPPED' }
+      : { kind: 'spec', files: n.item.files, status: 'written (read the spec files themselves for their review status)' }]
+  }
+  return [k, failed(r) ? { status: 'FAILED/SKIPPED', detail: r == null ? null : (r.error || r.skipped || 'implementer returned nothing') }
+    : { status: 'done', impl: r.impl, review: r.review }]
+}))
 
 phase('Exit')
 const exit = await agent(`${CTX}\n\n${CLEAN_READ}\n\nFINAL EXIT-CRITERIA VERIFIER for ${M} (docs/ROADMAP.md). Check every ${M} exit criterion with real evidence: commands and numbers, and screenshots viewed with Read for visual criteria. Criteria that need the owner's observation in the original client: verify everything data-side, mark them "data-side done, owner observation pending" and make sure they are listed in docs/checklists/owner-observations.md. Also run: cargo fmt --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace (with TESSERA_GAME_DIR when available); a 60 s fuzz smoke run of new targets; tools/check-content.sh; tools/check-spdx.sh; doc link check. FIX failures in code, tests, tools and non-spec docs; for a spec problem add a "> **OPEN:**" note or report it, do not change spec facts. Tasks that FAILED or were SKIPPED below did not run: their criteria are not met unless you can show otherwise; report them. Update the ${M} status table in docs/ROADMAP.md, the README status, and the "Current state" section of CLAUDE.md. Return the criterion table with evidence and remaining issues.

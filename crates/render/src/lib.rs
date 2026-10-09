@@ -154,6 +154,10 @@
 //! [`ParticleVertex`]es with quads first and triangles after, in the caller's order (no
 //! sorting), with the blend, alpha test and depth write of an [`AlphaMode`], in lit and
 //! unlit world passes.
+//! Game UI (M5): [`Renderer::create_ui_texture`] and
+//! [`Renderer::update_texture_rect`] hold panel canvases, and
+//! [`Frame::ui_pass`] composes them with transform and clip chains; see the
+//! `ui` types ([`UiEntry`], [`UiPass`]) and `docs/specs/render.md` §6.
 //!
 //! Adapter selection honours `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_POWER_PREF` (see [`ContextOptions`]); asynchronous GPU errors are
@@ -179,6 +183,7 @@ mod skin;
 mod sky;
 mod terrain_layers;
 mod texture;
+mod ui;
 mod water;
 
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
@@ -192,7 +197,7 @@ pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
 pub use instanced::{
     FRILL_FADE_IN_SECONDS, FRILL_SECTOR, FRILL_SWAY_MIN, FrillParams, FrillReduction, Instance,
     InstanceBatch, MAX_INSTANCES_PER_PASS, MAX_MODEL_SURFACES, WorldModel, WorldSurface,
-    frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
+    WorldSurfaceOptions, frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
 };
 pub use lighting::{
     FOG_FAR_CAP, FRAME_SHADING_WGSL, FRAME_WGSL, Fog, FrameLighting, Light, LightFields, LightKind,
@@ -200,8 +205,9 @@ pub use lighting::{
     SunShadow,
 };
 pub use material::{
-    AlphaMode, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LightSelection, Lighting,
-    LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines, Opacity, Specular,
+    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss,
+    LightSelection, Lighting, LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
+    Opacity, Specular,
 };
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,
@@ -225,6 +231,12 @@ pub use terrain_layers::{
     TerrainVertices,
 };
 pub use texture::{ColorSpace, Filter, MipChainUpload, MipLevel, TextureId, TextureUpload, Wrap};
+pub use ui::{
+    MAX_UI_CLIPS, MAX_UI_COORD, MAX_UI_ENTRIES, MAX_UI_ROTATIONS, MAX_UI_TEXTURE_DIM,
+    UI_ANGLE_EPSILON, UI_BLEND_ALPHA, UI_BLEND_COLOR, UI_NODE_SCALE_RANGE, UiAddressing,
+    UiCapCounters, UiClip, UiClipMap, UiEntry, UiFilter, UiGeometry, UiPass, UiRect, UiRefusal,
+    UiRotation, UiSource, UiStats, UiViewMode,
+};
 pub use water::{
     MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, WATER_BLOCK, WaterDraw,
     WaterParams, WaterQuad, fresnel as water_fresnel, wave_height as water_wave_height,

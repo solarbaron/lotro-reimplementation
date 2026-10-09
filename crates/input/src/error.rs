@@ -44,6 +44,18 @@ pub enum InputError {
     /// An action or context name is not acceptable.
     #[error("invalid name {0:?}: names are 1-64 characters of a-z, 0-9, '_' and '.'")]
     InvalidName(String),
+    /// A retired `text_entry` action name (`keymap.md` §6.3): the writer
+    /// never writes it, because the strict reader would refuse it and the
+    /// lenient one would rename it to its successor.
+    #[error("action {action:?} of context {context:?} is retired; use {successor:?}")]
+    RetiredAction {
+        /// The context (`text_entry`).
+        context: String,
+        /// The retired action name.
+        action: String,
+        /// The action that replaced it.
+        successor: &'static str,
+    },
     /// An action or context with this name is already registered.
     #[error("{kind} {name:?} is already registered")]
     Duplicate {
@@ -51,6 +63,25 @@ pub enum InputError {
         kind: &'static str,
         /// The name.
         name: String,
+    },
+    /// A context definition is not acceptable (for example `opaque_keys` on
+    /// a game-band context, `keymap.md` §3.1).
+    #[error("context {name:?}: {reason}")]
+    InvalidContext {
+        /// The context name.
+        name: String,
+        /// What is wrong.
+        reason: &'static str,
+    },
+    /// A record of the original client's data (key map, action map) could
+    /// not be decoded (`keymap.md` §12.9, §12.10).
+    #[error("{what}: {source}")]
+    Record {
+        /// Which record.
+        what: String,
+        /// The decoder's error.
+        #[source]
+        source: tessera_formats::FormatError,
     },
     /// A registry limit was reached.
     #[error("too many {kind} (limit {limit})")]
@@ -122,6 +153,35 @@ pub enum KeymapWarning {
         context: String,
         /// Action name.
         action: String,
+    },
+    /// A binding entry is kept in the keymap but disabled when compiled
+    /// against the registry (§5.3: a non-`press` `on` on an axis action, a
+    /// multi-stroke binding in a pass-through context).
+    #[error("{context}.{action}: {binding:?} disabled: {reason}")]
+    Disabled {
+        /// Context name.
+        context: String,
+        /// Action name.
+        action: String,
+        /// The binding as written.
+        binding: String,
+        /// Why.
+        reason: &'static str,
+    },
+    /// A retired action name was migrated (§6.3).
+    #[error(
+        "{context}.{from}: retired action migrated to {to} (old list dropped because {to} is listed: {dropped})"
+    )]
+    Migrated {
+        /// Context name.
+        context: String,
+        /// Old action name.
+        from: String,
+        /// New action name.
+        to: String,
+        /// Whether the old list was dropped because the new name was
+        /// already present.
+        dropped: bool,
     },
     /// The same stroke is both a complete binding and the first stroke of a
     /// longer sequence in one context; the sequence was disabled.

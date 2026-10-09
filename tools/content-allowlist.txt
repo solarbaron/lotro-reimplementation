@@ -9,7 +9,15 @@
 # is a reviewed decision, and a reviewer should be able to agree with the reason alone.
 
 # The plugin API's native package is called `Turbine` (`Turbine.UI`, `Turbine.Gameplay`,
-# `Turbine.UI.Lotro`); existing third-party plugins call it by that name, so the host has
-# to build and refer to it. Interoperability use, not a product name
-# (docs/specs/lua-plugin-api.md, LEGAL.md §10).
-mark crates/script/* turbine  # Lua plugin API namespace required for plugin compatibility
+# `Turbine.UI.Lotro`); existing third-party plugins call it by that name. LEGAL.md §17.2
+# rule 1: the names enter the code as string data in the plugin subsystem only, and the
+# plugin subsystem's tests may also use them (test names, local bindings). Source modules,
+# types and the plugin-free core `crates/script` stay neutral (decision 0023).
+mark crates/plugins/tests/* turbine  # LEGAL §17.2 rule 1: plugin subsystem tests may use the API names
+mark crates/plugins/tests/* lotro  # LEGAL §17.2 rule 1: plugin subsystem tests may use the API names
+
+# The UI fallback font, Noto Sans Regular (SIL OFL 1.1), bundled unmodified by owner
+# decision 0022 and recorded in LEGAL.md §11. Exactly this one path; game fonts are never
+# committed and are loaded from the user's install (fonts.md).
+ext crates/ui/assets/fonts/NotoSans-Regular.ttf *  # decision 0022: bundled OFL-1.1 UI fallback font
+magic crates/ui/assets/fonts/NotoSans-Regular.ttf *  # decision 0022: bundled OFL-1.1 UI fallback font

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (2026-10-07, re-review of the third revision passed), then **Revised** the same day for the non-blocking notes of that review (wording of §14.3 "Black or dim sun" and row W-E12; no behaviour changed); re-review of the fourth revision: **changes requested**, stays **Revised** |
-| **Last updated** | 2026-10-07 (spec writer, dirty room: §11.4 aligned with `mesh.md`; §13–§14 revised, new §14.12 interiors and §14.13 client facts and provenance; second revision of §14.3, §14.5, §14.12 (h), §14.13 and row W20 after the re-review; third revision of §2–§4 notes, §14.3, §14.5 and §14.13; fourth, wording-only revision of §14.3 and row W-E12; see §15) |
+| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); the implementer OPEN of 2026-10-08 in §13.6 (merged from main 2026-10-09) awaits the next revision |
+| **Last updated** | 2026-10-09 (merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
-| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**. §11 unchanged: Accepted. Details in the dirty-room review log (decision 0018). |
+| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**; 2026-10-08 re-review of the fifth revision (Claude review session, spec-writer agent): **passed, Accepted**. §11 unchanged: Accepted. Details in the dirty-room review log (decision 0018). |
 | **Implements into** | `apps/client/src/walker/` (M4.5: `interiors.rs`, `env.rs`, `terrain.rs`, `objects.rs`, `movement/`; M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs` |
 | **Format facts from** | `coordinates.md` (§3, §8–§12), `landblock.md` (§5, §6.3, §8), `entity-descriptor.md` (§5–§9), `setup.md` (§7), `mesh.md` (§8, §11), `material.md` (§9–§12), `terrain.md`, `keymap.md`, `wstate.md` (§11); M4: `appearance.md` (§2–§7), `skeleton-anim.md` (§2, §4, §7, §8), `script-table.md` (§6, §8, §11); M4.5: `landblock.md` (§4.4, §4.11–§4.14), `lighting.md` (§8.1, §8.3, §8.5, §9, §10), `terrain-texturing.md` (§4.8–§4.10, §10), `collision.md` (§5.8.1, §10–§12), `environment.md`, `water.md`, `scenery.md` (§8); the client facts §13–§14 rely on are restated with their provenance in §14.13 |
 
@@ -129,8 +129,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Walk mode: the `tessera-input` walk controller on terrain heights, a third-person camera
   7 m behind the head (wheel zooms 1.5–60 m), kept 0.8 m above the terrain and then aimed at
   the head. Fly mode: the free-fly controller (wheel scales its speed). `Ctrl+F` toggles,
-  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits.
+  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits
+  (without a game UI attached; see the next item).
   Bindings come from Tessera's keymap file over the built-in defaults (`keymap.md` §6).
+- **Escape with a game UI attached** (M5; decision 0014, Consequences "Escape with a UI
+  attached", and its owners list). "Escape quits" holds only while no game UI is attached
+  (the walker of M3 and M4). With a UI attached, Escape gives `menu` (command `EscapeKey`),
+  which is offered to the UI first; when the UI does not consume it, the client's reaction
+  to its press is game code's handling of `EscapeKey` (`game-panels.md` §16: hide the active
+  on-demand panel, otherwise show or hide the main menu), never a quit. How the client is
+  quit while a UI is attached is outside this rule. The HUD help line (`help_text` in
+  `apps/client/src/walker/controls.rs`) labels `menu` "menu" instead of "quit" while a UI is
+  attached, and keeps "quit" without one (0014, Cost).
 
 <a id="s6"></a>
 ## 6. HUD, minimap and places
@@ -145,6 +155,21 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Minimap: north-up, ±320 m around the viewer, from the landblock minimap tiles of resident
   blocks (`landblock.md` §6.3, pixel frame `coordinates.md` §10, active content layer 1)
   drawn as clipped quads; blocks without a tile, or until it loads, show the overview tile.
+- **The walker's overlays with a game UI attached** (M5; decision 0015 Decision 1.6, "Walker
+  overlays with the game UI attached", and its owner question 6, answered "yes"). The HUD text
+  and the walker minimap draw **under** the game UI: after the world passes and before the UI
+  pass (`render.md` §6.9), so they never cover a native panel or a plugin window.
+  - The walker minimap is **off** by default while a game UI is attached, because the game's
+    own minimap (P1 of `ui-layout.md` §17.2) takes its place. The Tessera setting
+    `walker_minimap = auto | on | off` controls it; `auto` (the default) means off with a game
+    UI and on without one. When it is on, it still draws under the UI.
+  - The HUD is switchable with the Tessera setting `walker_hud = on | off` (default `on`, for
+    development). HUD text under semi-transparent panel art would show through it, so the M5
+    visual checklist run (`docs/checklists/m5-visual.md`) and the owner's comparison
+    screenshots use `walker_hud = off`; the scripted performance run of decision 0015 §6 reads
+    `FrameStats` instead of the HUD.
+  - Without a game UI attached nothing changes: there is no UI pass, and both overlays draw on
+    top of the world as described above.
 - Place index (`--place`): every block map of every region with a block-map descriptor is
   read for `Area_DID`; each area, territory and region name maps to the landblocks it covers;
   the target is the centre of the covered landblock nearest to their centroid. Matching is on
@@ -186,6 +211,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 > audio time of the last mixer call). With audio on, the summary also reports the mean and
 > longest audio update, the most audible voices, the underruns during the log and the
 > highest mixer load. The owner of this spec should fold them into the list above.
+
+> **OPEN:** (clean-room implementer, 2026-10-09; engineering choice, no client fact) the
+> `--screenshot` settle wait above is wall-clock (`--settle-timeout`), so real-data tests
+> that assert the settled state failed on a heavily loaded machine although loading was
+> still progressing. Library callers (tests) may now choose a progress wait instead
+> (`tessera_client::headless::run_with` with `SettleWait::Progress`): the settled rule is
+> unchanged (20 consecutive settled frames), but the run gives up only after a given number
+> of consecutive frames in which no loading work finished or arrived (completion and
+> outstanding-work counters of the streamer, terrain, objects, characters including
+> sampled poses, water, frills, sky and resolver), or after a frame cap; no wall-clock
+> limit applies. The command line keeps `--settle-timeout`. The owner of this spec should
+> decide whether to fold this into the list above or expose it on the command line.
 
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
@@ -491,6 +528,12 @@ describe the implementation and list what it leaves open.
   Enter sends on Say, Escape cancels; the HUD shows backend, session state, round-trip
   time, clock offset and the interpolation delay. M5 replaces this with the real chat
   window.
+
+> **OPEN (implementation, 2026-10-08):** the overlay now feeds the client's command
+> dispatcher (decision 0020) in every session, with or without `--server`: plain text is said
+> on Say, `/play` and the other client commands run locally, and an unknown command posts a
+> local error line and sends nothing. The bullet above still says "Enter sends on Say";
+> spec writer: update it as decision 0020 Consequences asks.
 
 > **OPEN:** the motion byte's Backward flag and the Airborne gait, and the `STANCE` and
 > `EMOTE` properties (`tessera-protocol.md` §7.5), do not change a networked character's
@@ -1329,9 +1372,14 @@ collision, the "controllers (30 Hz fixed step)" of §2 and the terrain-height wa
   6 in 201; so 3,856 lie 4–6 landblocks away). The distance is the origin's: a cell's hull
   can reach further. These counts are observations of this install; the walker reads cell
   positions at run time. A step therefore also needs the owner of the mover's current cell, and a
-  scripted walk requires its own landblock (the owner of its cells) at every step. The
-  walk streamer keeps these landblocks resident wherever they lie (one small streamer per
-  pinned landblock) and every view of a step holds them.
+  scripted walk requires its own landblock (the owner of its cells) at every step.
+- **Pinned landblocks (Decision; residency is Tessera's own, the client streams by other
+  rules).** These landblocks (a scripted walk's own landblock, the current cell's owner)
+  are **pinned**: kept resident wherever they lie by one small streamer per pinned
+  landblock, in scripted walks and, while in walk mode on collision, in the interactive
+  walker. Every view of a step, and the view of the placement check of §13.1, holds the
+  installed sets of the pinned landblocks in addition to the 3 × 3 square, also when they
+  lie outside it.
 
 > **OPEN (implementer, 2026-10-06 review):** the 3 × 3 rule does not cover cells placed
 > far from their owner before the mover has entered them: the walker cannot name an
@@ -1339,15 +1387,23 @@ collision, the "controllers (30 Hz fixed step)" of §2 and the terrain-height wa
 > depends on residency (the walk rings keep owners up to about 3 landblocks away; the
 > interactive streamer about 10). Fix: a world-side index of the cell owners whose cell
 > bounds reach each landblock, built from landblock info at boot (`tessera-world`), so
-> that `needed` can name them.
+> that `needed` can name them. (Still open on 2026-10-08: no such index exists.)
 
-> **OPEN (clean-room implementer, 2026-10-07, status after a conformance review; for the
-> spec writer):** the interactive walker now follows "every view of a step holds them":
-> each step's view (and the placement check's) adds the installed sets of the pinned
-> landblocks (the required ones and the current cell's owner) that the 3 × 3 view does not
-> hold, as scripted walks did. It also keeps the current cell's owner resident wherever it
-> lies, with one small streamer per pinned landblock (as the walk streamer), while in walk
-> mode on collision; before, a distant owner relied on the main streamer's rings.
+> **OPEN (implementer, 2026-10-08, status; for the spec writer):** a cell-owner index now
+> exists, in the walker's movement module (`apps/client/src/walker/movement/owners.rs`),
+> not in `tessera-world`, and it is built around the mover rather than at boot: reading
+> every landblock-info record of the owner's install took about 20 s single-threaded (about
+> 1 GB of records, own measurement 2026-10-08). Engineering choices to confirm: the
+> landblock-info records within 8 landblocks (chessboard) of the feet's landblock are read
+> on a background thread and kept while within 16; a cell reaches the landblock holding its
+> origin and that landblock's eight neighbours (its hull is not read; the exact bounds of
+> the resident set then decide what the view holds); a step needs, and every view of it
+> holds (pinned), the owners of the cells reaching the feet's 3 × 3 square other than the
+> square's own landblocks, nearest first, at most 8 (the pin limit is now 17); the step
+> waits while the index does not cover the feet; an owner more than 6 landblocks from its
+> cell's origin is not found (none in this install, row W-C1). Scripted walks and the soak
+> use the same index. The OPEN above can be closed.
+
 - **Waiting.** While a needed set is missing the walker does not step: the frame's
   accumulated time is dropped, the latched input kept, the state unchanged.
 - **Absent landblocks.** A landblock the streamer resolved as failed (no data, or a data
@@ -1431,6 +1487,17 @@ was inside the lake's volume boxes and the walker swam up out of its cell.
   `cell` (`0xXXYY:N` or 0), `water_depth, forward, strafe, jump, walking, stepped_up,
   jumped, snapped, planes, pushed_out, penetration, boundary, terrain` (terrain height
   under the feet), `contacts` (up to 8, `kind@separation`).
+
+> **OPEN (implementer, 2026-10-08):** `m4-5-visual.md` §2.2 was revised from `collision.md`
+> §11.7, and the runner now reads it so: `blocked` is checked at the **first touch** (the
+> first step with forward held after which the capsule lies within 0.01 m of a static,
+> generated or other non-terrain, non-ceiling, non-cell body, searched among all contacts,
+> not only the 8 logged), "never past P + `d`" up to that step, the end point only
+> reported; the feet's height above the terrain in `follow` and `pass`, and above P at the
+> first touch in `blocked`, may exceed the tolerance by *r* · (sec *θ* − 1), *θ* the steepest
+> terrain triangle sampled within the capsule radius *r* of the axis; below it the tolerance
+> is unchanged. The readings above ("`blocked` walks also report the first stop") predate
+> this; please restate them in the next revision of §13.6.
 
 <a id="s13-7"></a>
 ### 13.7 The soak (`m4-5-visual.md` §2.5)
@@ -1520,132 +1587,122 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
 <a id="s14-3"></a>
 ### 14.3 Environment, clock and lighting (Decisions)
 
-- **Clock.** The epoch is OPEN (`environment.md` §6), so the walker starts the game clock
-  at day *n* = 12,240 (the day the clock reads at *G* = 0, `environment.md` §14) and time
-  of day 0.5 (the checklist's performance time) unless `--day N` and `--time-of-day T` set
-  them (*G* from *n* and *t* by `environment.md` §11.1 run backwards); `--time-rate R`
-  (default 1) and `--day-type D` (default 2, `environment.md` §11.2). `--day` takes
-  ±20,000,000 at most (days whose *G* the game clock holds, ±10¹² s, with any calendar of
-  days up to 50,000 s); a day the clock still cannot hold starts the clock on day 12,240
-  with a warning. Keys: `[` and `]` move the time by 1/24 day, `\` stops and restarts the
-  clock (a clock stopped at rate 0 restarts at rate 1), `-` and `=` halve and double the
-  rate, never past 1/64 or the `--time-rate` maximum of 100,000 and never in the wrong
-  direction; while the clock is stopped they change the rate it restarts at. The keys act
-  on both environment records below at once.
+- **Clock (Decision; Tessera's own controls, no client counterpart).** The epoch is OPEN
+  (`environment.md` §6), so the walker starts the game clock at day *n* = 12,240 (the day
+  the clock reads at *G* = 0, `environment.md` §14) and time of day 0.5 (the checklist's
+  performance time) unless `--day N` and `--time-of-day T` set them (*G* from *n* and *t* by
+  `environment.md` §11.1 run backwards); `--time-rate R` (default 1) and `--day-type D`
+  (default 2, `environment.md` §11.2). `--day` takes ±20,000,000 at most (days whose *G* the
+  game clock holds, ±10¹² s, with any calendar of days up to 50,000 s); a day the clock still
+  cannot hold starts the clock on day 12,240 with a warning. Keys: `[` and `]` move *G* by
+  1/24 of the calendar's day length, across midnight into the next or previous day; `\`
+  stops and restarts the clock; `-` and `=` halve and double the rate, never past 1/64 or
+  the `--time-rate` maximum of 100,000 and never in the wrong direction; while the clock is
+  stopped they change the rate it restarts at. A clock restarts at the rate it had before
+  it was stopped, or at rate 1 when that was 0: a clock started with `--time-rate 0` counts
+  as stopped from the start, so `\` starts it at rate 1 on the first press and `-` and `=`
+  change the rate it will start at. The keys act on both environment records below at once.
 - **Two environment records** (`landblock.md` §4.13, `environment.md` §7.1.1, §7.2, §11.6;
   rows W-E1, W-E2, W-E6, W-E7 of §14.13). The walker keeps two environments on the same
   clock and blends both every frame, each on its own: the **outdoor record** from sky key A
   and the **indoor record** from sky key B with the interior overrides. It uses the indoor
-  record while the scene flag outdoor-visible is clear (the camera in an interior cell,
-  §14.12), the outdoor record otherwise; the walker changes between them at once (no blend;
-  this departs from the client's sun-change fade, see "Sun presence" below).
-- **Key A (departs from `landblock.md` §4.13 and `environment.md` §7.1.1; OPEN below).**
-  The walker takes key A only from the block map of the eye's landblock
-  (`Environment_LocalSky`, `environment.md` §7.1). The client asks, at the viewer's
-  position, the landblock-info property set **before** the block map, and uses the value 2
-  when neither has the property; offline the character's own properties (the client's
-  first three steps) never apply. In this install 193 landblock-info property sets carry
-  `Environment_LocalSky` (row W-E3), so those landblocks can get a different sky in the
-  walker. Without a key the walker's outdoor record has no day description (the defaults of
-  `lighting.md` §8.1), where the client would use key 2; every region's block map names a
-  key (`environment.md` §7.1), so this arises only off the block maps.
-
-> **OPEN (spec writer, 2026-10-07, for the walker implementer):** take key A by the lookup
-> of `environment.md` §7.1.1 (landblock-info property set of the eye's landblock, then the
-> block map; for an eye inside a cell, the cell's own set first) and fall back on the value 2.
-
-> **OPEN (spec writer, 2026-10-07, second revision, for the walker and `tessera-world`
-> implementers):** accept key A, key B and `InteriorFogType` only from values of property
-> type 8 or 10 and treat every other stored type as absent (row W-E8).
-
+  record while the scene flag outdoor-visible is clear (§14.12 (c)), the outdoor record
+  otherwise; it changes between them at once (no blend; this departs from the client's
+  sun-change fade, see "Sun presence" below).
+- **Where the records read their properties** (`environment.md` §7.1.1 position lookup,
+  `landblock.md` §4.13; rows W-E1, W-V5). With the camera in an interior cell (§14.12 (a)):
+  that cell's property set, then the landblock-info property set of the cell's **owner**
+  landblock, then the owner's block map (the owner's, Inferred, `landblock.md` L38).
+  Otherwise, also while outdoor-visible is clear without a camera cell (possible only with a
+  `cell_flags` bit-0 cell, none in this install, LI8): the landblock-info property set of the
+  eye's landblock, then its block map; off the grid nothing. The first of these that holds
+  the property gives its value. The character's own properties, which the client asks first
+  for both keys, never apply offline.
+- **Key A** (`environment.md` §7.1.1; rows W-E1, W-E3, W-E8): `Environment_LocalSky` by that
+  lookup, else the value 2. The walker takes key A in every frame, also while the indoor
+  record is in use.
 - **Key B and the interior overrides** (`landblock.md` §4.13, `environment.md` §7.2; rows
-  W-E1, W-E2). Read at the camera's cell (§14.12) with the lookup cell property set, then
-  the landblock-info set of the cell's **owner** landblock, then the owner's block map
-  (`landblock.md` §4.13: the owner's, Inferred, L38). Key B is
-  `Environment_IndoorAmbiance`, else the value 1. The overrides, applied to the indoor
-  record only:
+  W-E1, W-E2): by the same lookup. Key B is `Environment_IndoorAmbiance`, else the value 1.
+  The overrides, applied to the indoor record only:
   - if any of `InteriorUpperAmbientLight`, `InteriorLowerAmbientLight`,
     `InteriorAmbientLight` is present, the up-facing ambient *X* = upper + ambient and the
     down-facing *Y* = lower + ambient replace the keyframe's (an absent colour counts as
     black), every channel limited to at most 1;
-  - `InteriorFogType` present: fog is on exactly when the walker's fog switch is on and
-    the value is 1 (Linear); 0, 2 or any other value switch fog off. Absent: the keyframe's
-    fog on or off;
+  - `InteriorFogType` present: fog is on exactly when the walker's fog switch (its
+    counterpart of the client's distance-fog setting, `environment.md` §11.7) is on and the
+    value is 1 (Linear); 0, 2 or any other value switch fog off. Absent: fog follows the
+    switch, as the keyframe's fog does;
   - `InteriorFogColor`, `InteriorFogNear`, `InteriorFogFar` replace the fog colour, start
     and end.
 
-  The walker re-reads the overrides when the owner landblock changes and otherwise every
-  2.5 s while the camera stays in that landblock's cells (the client: when the position's
-  region, landblock or instance changes, else at most every 2.5 s). A colour property is
-  read as its four stored bytes B, G, R, A (`lighting.md` §4.4) divided by 255 (Decision:
-  the client's conversion to floats was not traced, `landblock.md` §4.13). A colour or a
-  float stored with another type, or a float that is not finite, counts as absent (the
-  client takes the colours only with type 16 and near and far only with type 9, row W-E2).
-- **Stored types of key A, key B and `InteriorFogType` (departs from `environment.md`
-  §7.1.1; no effect on this install; OPEN below).** The walker reads these three as integer
-  keys from a value of any of the types enum (8), property ID (10), DID, int, int64, bool,
-  bitfield or tri-state (`property-system.md` §3), and counts only a float or timestamp as
-  absent. The client counts each of them as present only when the stored value has property
-  type 8 or 10; any other type is treated as absent (`environment.md` §7.1.1 for the two
-  keys; the same test for `InteriorFogType`, row W-E8), so for example an int-typed
-  `InteriorFogType` of 1 leaves the keyframe's fog on or off in the client but turns fog on in
-  the walker. In this install every stored value of the three properties is an enum value
-  (type 8): in cell and landblock-info property sets by an own probe over all records, and in
-  the block maps because a palette value is encoded by its property's registered type
-  (`landblock.md` §5.2) (row W-E9). Since a value's type is always its property's type in
-  the dictionary (`property-system.md` §5.2), the departure can show only with a dictionary
-  that types one of the three properties differently. So the walker and the client read the
-  same keys here.
+  The walker re-reads the overrides when the lookup's landblock changes and otherwise every
+  2.5 s (the client: when the position's region, landblock or instance changes, else at most
+  every 2.5 s). A colour property is read as its four stored bytes B, G, R, A
+  (`lighting.md` §4.4) divided by 255 (Decision: the client's conversion to floats was not
+  traced, `landblock.md` §4.13).
+- **Stored types** (rows W-E2, W-E8): as in the client, key A, key B and `InteriorFogType`
+  count only with property type 8 (enum value) or 10 (property ID), the colours only with
+  type 16, near and far only with type 9; a value of another type, or a float that is not
+  finite, counts as absent. In this install every stored value of the three keys is an enum
+  value (row W-E9).
 - **Frame lighting** from the blended values of the record in use (`lighting.md` §8.1,
-  Tessera Decision there): ambient ½ (*X* + *Y*), hemispheric ½ (*X* − *Y*); in the outdoor
-  record the sun toward −travel with colour *Cd* × *bd* and specular *Cs*, **in every frame**
-  (this departs from the client's sun-present test, next bullet); in the indoor
-  record **no sun or moon** (row W-E7); distance fog near, far and colour after the limits
-  of `lighting.md` §10; the time input = seconds since start (`material.md` §5.3.1).
-  Without a sky library or with `sky` off, the defaults of `lighting.md` §8.1 and no fog.
-- **Sun presence and the sun-change fade (departs from `environment.md` §11.6 and §11.7
-  step 9; rows W-E10, W-E11; OPEN below).** The client gives each environment state a
+  Tessera Decision there): ambient ½ (*X* + *Y*), hemispheric ½ (*X* − *Y*); a main light
+  (the sun or moon, toward −travel, colour *Cd* × *bd*, specular *Cs*) only on the outdoor
+  record and only while the colour and brightness tests of the next bullet find a sun; in
+  the indoor record **no sun or moon** (row W-E7); distance fog with the limits below; the
+  time input = seconds since start (`material.md` §5.3.1).
+  **Decision (no client counterpart: the client always has its sky):** without a sky library
+  or with `sky` off, the frame takes the defaults of `lighting.md` §8.1 with no fog, no
+  interior override is applied, and the indoor record still has no main light.
+- **Sun presence and the sun-change fade (departs in part from `environment.md` §11.6 and
+  §11.7 step 9; rows W-E10–W-E13; OPEN below).** The client gives each environment state a
   "sun present" flag. It is true only on the outdoor record, and there only while all three
   of these hold (row W-E10): the blended keyframe `effect` is the null DID (`environment.md`
   §11.3 step 7); the sun colour is not opaque black (some channel differs from (0, 0, 0, 1)
   by more than 0.0002); the sun brightness *bd* is at least 0.0002. While the flag is false
   the renderer has no main light: no sun term and no sun shadow, one submission path adds
   the default directional light of `lighting.md` §8.5 (its slot a Tessera Decision there),
-  and the water's fake
-  light takes its default (`lighting.md` E18; `render.md` §5.3 fake-light Decision for a
-  pass without a main light). In addition, whenever the flag of the state in use differs
-  from the previous update's, the client fades the state it shows over 5 s of the timer's
-  raw seconds, from the state shown at that moment (held fixed) to the state in use, with
-  the weights and the blend rules of the cross-fade of `environment.md` §11.6 step 4 (a side
-  without a sun counts as black); a further change during the fade restarts it from the
-  state then shown, over the time since the previous change; an immediate update (Inferred:
-  entering the world or a teleport) skips the fade (row W-E11). The walker has neither: it
-  ignores the flag and changes records at once. Consequences:
-  - **Weather keyframes (visible).** 503 of the 7,590 keyframes of this install carry a
-    non-null `effect` (`environment.md` §5.3 table). While such a keyframe's `effect` is
-    the blended one, the walker draws sunlight, sun shadows and a sun-directed water
-    highlight where the client draws none, and when the `effect` starts or ends the client
-    fades the sun out or in over 5 s.
-  - **Black or dim sun.** 154 further keyframes have no `effect` but a sun brightness below
-    0.0002 (exactly 0 in all but one, which holds 0.0001) or an opaque black sun colour
-    (row W-E12). There the walker's sun diffuse term *Cd* × *bd* is black, except in that
-    one keyframe, where it is near black but not exactly (its sun colour is not black); the
-    specular colour *Cs* is opaque black in all of them but that same keyframe. What differs
-    from the client is that the walker still runs the sun-shadow pass and gives the water's
-    fake light the sun's direction and specular colour instead of the default (and, in that
-    one keyframe, a faint sun diffuse term and a non-black sun highlight).
+  and the water's fake light takes its default (`lighting.md` E18; `render.md` §5.3
+  fake-light Decision for a pass without a main light). In addition, whenever the flag of
+  the state in use differs from the previous update's, the client fades the state it shows
+  over 5 s of the timer's raw seconds, from the state shown at that moment (held fixed) to
+  the state in use, with the weights and the blend rules of the cross-fade of
+  `environment.md` §11.6 step 4 (a side without a sun counts as black); a further change
+  during the fade restarts it from the state then shown, over the time since the previous
+  change; an immediate update (Inferred: entering the world or a teleport) skips the fade
+  (row W-E11).
+  The walker, as built: the outdoor record has no main light (no sun term, no sun shadow,
+  the light-0 slot left to the renderer's default directional light) when each of the sun
+  colour's R, G and B lies within 0.0002 of 0 (inclusive) or *bd* is below 0.0002 (a
+  non-finite *bd* counts as below); the indoor record never has one. So the black-sun and
+  dim-sun keyframes (154 without an `effect`, row W-E12) are drawn as in the client.
+  What remains different:
+  - **Weather keyframes (visible).** The walker makes no test on the blended `effect`. 503
+    of the 7,590 keyframes of this install carry a non-null `effect` (`environment.md` §5.3
+    table). While such a keyframe's `effect` is the blended one and its sun passes the
+    colour and brightness tests, the walker draws sunlight, sun shadows and a sun-directed
+    water highlight where the client draws none, and when the `effect` starts or ends the
+    client fades the sun out or in over 5 s.
+  - **Alpha of the sun colour (no effect at this install's keyframes).** `tessera-world`'s
+    blended values keep no alpha of the sun colour, so the walker's colour test reads R, G
+    and B only; the client compares all four channels with (0, 0, 0, 1), so a sun colour
+    with black R, G, B and an alpha other than 1 has a sun in the client and none in the
+    walker. All 6 keyframe sun colours with black R, G, B have alpha 255 (row W-E13), so
+    the tests agree at every keyframe; between keyframes they can differ only while the
+    blended R, G, B are within 0.0002 of black.
   - **Going indoors or out.** Between a sunlit outdoor state and the indoor state (which
     never has a sun) the flag changes, so the client fades ambient, fog and sun over 5 s
     where the walker switches at once. When the outdoor state has no sun at that moment
-    (a weather `effect` running), the flag does not change and the client switches at once
-    too. `landblock.md` §4.13 and `lighting.md` §8.1 (row L37) call the change of record
-    immediate: that is the choice of record, which the fade then smooths (BIN re-check of
-    2026-10-07, row W-E11).
+    (a weather `effect` running, or a black or dim sun), the flag does not change and the
+    client switches at once too. `landblock.md` §4.13 and `lighting.md` §8.1 (row L37) call
+    the change of record immediate: that is the choice of record, which the fade then
+    smooths (BIN re-check of 2026-10-07, row W-E11).
 
-> **OPEN (spec writer, 2026-10-07, third revision, for the walker and `tessera-world`
+> **OPEN (spec writer, 2026-10-07, narrowed 2026-10-08, for the walker and `tessera-world`
 > implementers):** expose the sun-present flag of `environment.md` §11.7 step 9 with each
-> environment record (false on the indoor record) and give the renderer no main light while
-> it is false; replace the immediate change of record by the 5 s sun-change fade of
+> environment record (false on the indoor record), including the test on the blended
+> `effect` and the alpha of the sun colour, and give the renderer no main light while it
+> is false; replace the immediate change of record by the 5 s sun-change fade of
 > `environment.md` §11.6 (row E34 there), skipped at start-up and on a teleport. The flag
 > rests on the blended `effect`, whose choice in `tessera-world` differs from the client
 > today: the keyframe blend takes *kₐ*'s `effect` whenever it is not null, without the
@@ -1653,32 +1710,56 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
 > the old to the new `effect` at weight ½, where §11.6 step 4 keeps the old state's unless
 > it is null. Both have to follow `environment.md` before the flag is used.
 
-> **OPEN (spec writer, 2026-10-07, third revision, for the writers of `landblock.md`
-> §4.13 and `lighting.md` §8.1):** both call the change between the outdoor and the indoor
-> record immediate without mentioning the sun-change fade of `environment.md` §11.6, which
-> applies to it whenever the outdoor state has a sun (row W-E11). Say that the immediate
-> part is the choice of record.
+> **OPEN (implementer, 2026-10-08, remediation pass; status and two conflicts):** the walker
+> now (a) carries "sun present" with each record (`SkyValues::sun_present`, the
+> `environment.md` §11.7 step 9 test including the blended `effect`, false on the indoor
+> track), (b) blends the `effect` by `environment.md` §11.3 step 7 and the sky-key
+> cross-fade by §11.6 steps 1–6 (key changes only, 8 s default, vector light direction,
+> `effect` kept from the old state unless null), and (c) composes the record in use and
+> passes it through the 5 s sun-change fade of §11.6 (E34 with the corrected duration rule,
+> E37), forced on the first update and on every placement by the sandbox (the Tessera
+> Decision of `landblock.md` §4.13). Two points of this section disagree with Accepted
+> specs, and the code follows the other spec: (1) "Where the records read their
+> properties" reads the camera cell's own property set first, but `landblock.md` §4.13
+> (BIN4 (l), L32 corrected 2026-10-08) says the cell's set is **not** part of the lookup;
+> the walker reads the owner's landblock-info set and block map only. (2) "Alpha of the
+> sun colour" assumes the blended sun colour keeps the keyframes' alpha, but
+> `environment.md` §11.3 step 4 gives every blended sun colour alpha 1, so the R, G, B
+> test is the client's test; no alpha is kept. Please restate both bullets (and the
+> departures table) or say why they stand.
 
-- **Fog limits (departs from `lighting.md` §10 and `landblock.md` §4.13; OPEN for the
-  implementer in `landblock.md` §4.15).** The renderer applies one set of limits to every
-  fog it uploads (`render.md` §4.2: end in 20–10,000, start in −10,000 … end − 20). The
-  client caps the keyframe's fog end at 10,000 **before** the interior override and does not
-  cap an overriding `InteriorFogFar` (row W-E6). No `InteriorFogFar` of this install exceeds
-  7,000 (row W-E5), so the walker's fog equals the client's here; data with a larger value
-  would be capped in the walker. Fix: apply the 10,000 cap to the keyframe's end before the
-  override and only the lower limits after it.
+> **OPEN (spec writer, 2026-10-07, for the writers of `landblock.md` §4.13 and
+> `lighting.md` §8.1):** both call the change between the outdoor and the indoor record
+> immediate without mentioning the sun-change fade of `environment.md` §11.6, which applies
+> to it whenever the outdoor state has a sun (row W-E11). Say that the immediate part is the
+> choice of record.
+
+- **Fog limits** (`lighting.md` §10, `landblock.md` §4.13; rows W-E5, W-E6). In the client's
+  order: the walker caps the keyframe's fog end at 10,000 **before** the interior override,
+  an overriding `InteriorFogFar` replaces it **without** that cap, then the end is raised to
+  at least 20 and the start kept within −10,000 … end − 20. A non-finite keyframe end counts
+  as 10,000 and a non-finite start as −10,000 (Decision for malformed values; an override
+  that is not finite counts as absent, above). The renderer applies only the lower limits to
+  the fog it is given (`render.md` §4.2), which leaves these values unchanged, so an
+  overriding end above 10,000 is drawn as stored. (No `InteriorFogFar` of this install
+  exceeds 7,000, row W-E5.)
 - **Sun shadow** (`lighting.md` §9; the renderer's form uses the variants that the
   simple-form Decision there lists, `render.md` §4.4): one map of 2,048 texels over a sphere
   of radius 90 m centred 54 m ahead of the eye (horizontal view direction), fading out by a
-  view depth of 150 m, cast only while the sun's elevation exceeds asin 0.05 and only with
-  the outdoor record (whatever its sun-present flag: departure above). Terrain chunks within 430 m cast; objects at a distance *d* ≤ their shadow
-  distance min(*G*, `d2` × *M_d* × *M_s*) (`mesh.md` §8.7), only while fully faded in
-  (§14.5); characters at *d* ≤ 16 m, the render component's initial `d2` (§11.4 step 4),
-  only while fully faded in. **Both depart from `mesh.md` §8.7–§8.8** (rows W-O1, W-O2;
-  OPEN in §14.5): the client casts while *d* is strictly below the shadow distance and while
-  the object's opacity is above 0.8, and a character's shadow distance is that of its own
-  class like any object's (min(*G*, `d2` × *M_d* × *M_s*), with `d2` × 3 for the player's own
-  character), not a fixed 16 m.
+  view depth of 150 m, cast only while the record in use has a main light (above) and the
+  sun's elevation exceeds asin 0.05 (Decisions: map, sphere, fade and elevation are Tessera's
+  values). Casters:
+  - terrain chunks whose bounding sphere comes within 430 m of the eye (3 × the shadow
+    radius + 160 m; Decision); ceiling chunks never (§14.4);
+  - objects while their fade opacity is **above 0.8** and their unsmoothed distance *d* is
+    **strictly below** their shadow distance min(*G*, `d2` × *M_d* × *M_s*), at any distance
+    while `lod` is off, as the client (`mesh.md` §8.7–§8.8; row W-O1). The opacity the walker
+    tests is the fade alone: the render component's two factors, an inherited opacity and the
+    tint alpha of `mesh.md` §8.8 are taken as 1 (Decision; the walker sets none of them). A
+    fading object is a single mesh draw and casts through the alpha-tested shadow path;
+    instanced batches hold only fully faded-in objects (§14.5);
+  - characters only while their opacity is 1 and *d* ≤ 16 m: **departs** from `mesh.md`
+    §8.5, §8.7–§8.8 (row W-O2; §14.5 "Character shadow distance").
 - **Clear colour** = the fog colour (the background meets the fog at the horizon); the sky
   objects draw over it (§14.8).
 - **Global limit** *G* = `global_limit(E, fog far)` (§11.3, Tessera Decision there: clipped
@@ -1689,45 +1770,35 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   0x400), from outdoors only outdoor ones, plus interior ones with `--interiors` (§14.12);
   range and on/off by the day/night rule of `lighting.md` §8.3 (Tessera Decision there),
   intensity curves evaluated on the material clock, *σ* = 1.
-- **Light lists (Decision, departing from `lighting.md` §8.5).** The client builds each
-  object's list by the rules of `lighting.md` §8.5 (rows W-L1–W-L4): selection radius ρ
-  from Range and Falloff (Range for `Light_GlobalLight`), the squared distance from the light
-  to the object's world box below ρ², key lights at the front, `Light_BakedLandscapeLight`
-  lights never on a terrain or ceiling chunk, the parent switches (a light with
-  `Light_OnlyInfluenceParent` and no parent reaches no object). The walker, as built:
-  - objects and characters use the renderer's automatic selection (`render.md` §4.3), but
-    the walker hands the renderer no reach entries (`Pass::light_reach`), so the selection
-    uses each light's range *R* instead of ρ, does not put key lights first and applies no
-    parent switch;
-  - terrain and ceiling chunks **with** a light map (one of their layers has one) receive a
-    list of their own: the lights that are not `Light_BakedLandscapeLight` whose range
-    sphere touches the chunk's bounding sphere, nearest first;
-  - chunks **without** a light map use the automatic selection without reach entries, so
-    baked lights reach them, against row W-L4.
-  - **instanced batches (departs from `lighting.md` §8.5, row L32; W-L7):** the generated
-    objects drawn instanced (§14.5) share **one** light selection per batch (one batch per
-    landblock, part, detail level and shadow flag), which the renderer makes against the box
-    around all the batch's instances drawn in colour (`render.md` §4.3 "world box", §5.5,
-    departure R-D9 there). The client builds a list for each object against that object's
-    own box. Because the walker hands the renderer no reach entries, the test uses the
-    range *R*, and a box that spans the landblock's instances contains many lights, which
-    are all at squared distance 0; the ties fall to table order, which is nearest the
-    **eye** (the light table above), not nearest the object. So every instance of a batch
-    receives the same table lights (at most 8, or 7 when the pass has a sun or moon light, `render.md` §4.3), chosen near the eye, where in the
-    client each object receives the lights that reach its own box, key lights first. This
-    changes the night rows (`m4-5-visual.md` row L2).
+- **Light lists** (`lighting.md` §8.5; rows W-L1–W-L4, W-L7). The walker hands the renderer
+  a reach entry for every table light (`render.md` §4.3: ρ = Range × (1 − 0.15 × min(Falloff,
+  1)) from the Range in force, Range for `Light_GlobalLight`; the key-light switch; the
+  baked-landscape switch), and every object, character, terrain chunk and ceiling chunk uses
+  the renderer's automatic selection. That selection follows the client: the squared
+  distance from the light to the draw's world box below ρ² (strict), key lights first, then
+  the others (each group nearest first, the Tessera Decision of `lighting.md` §8.5),
+  `Light_BakedLandscapeLight` lights never on a terrain or ceiling chunk, at most 8 lights
+  with light 0; the generated objects drawn instanced get one selection **per instance**
+  against the instance's own box (`render.md` §4.3, §5.5), as the client builds one list per
+  object. What remains different:
+  - **Parent switches (departs from `lighting.md` §8.5 step 3, row W-L2; no effect on this
+    install; OPEN below).** `tessera-world`'s light parameters carry neither
+    `Light_OnlyInfluenceParent` nor `Light_NeverInfluenceParent`, and the walker gives no
+    light a parent, so a light with `Light_OnlyInfluenceParent` set reaches every object in
+    the walker, where in the client a light with that switch and no parent reaches no
+    object. No Light SED of this install's landblock infos sets the switch true (136 store
+    false, row W-L2).
+  - **Height-shaded fallback meshes (Decision).** The fallback meshes of §14.4 are mesh
+    draws, not terrain chunks, so baked-landscape lights reach them; they appear only in the
+    fallback cases listed there.
   - Water receives no table light: its permutations read only the fake light (`water.md`
     §8.2, §8.4 step 6; `render.md` §5.3).
 
-> **OPEN (spec writer, 2026-10-07, for the walker implementer):** give the renderer a reach
-> entry for every table light (`render.md` §4.3: ρ, key light, baked, parent) and hand
-> every terrain and ceiling chunk to the automatic selection, which then follows
-> `lighting.md` §8.5 and row L30 for all of them. For the instanced batches, a selection
-> per instance against the instance's own box is needed (the `render.md` §4.3 OPEN on
-> batch light lists); until then, a batch's reach entries alone do not remove the
-> departure, because one list still serves every instance. In this install 5,090 Light SEDs are key
-> lights and 23,324 baked-landscape lights (`lighting.md` §8.3 census), so both rules
-> change what is lit.
+> **OPEN (spec writer, 2026-10-07, narrowed 2026-10-08, for the `tessera-world` and walker
+> implementers):** expose `Light_OnlyInfluenceParent` and `Light_NeverInfluenceParent` in
+> `tessera-world`'s light parameters and pass them in the reach entries (`render.md` §4.3),
+> so that a parentless light with `Light_OnlyInfluenceParent` set reaches no object (the
+> renderer already applies the rule of row W-L2 to the entries it is given).
 
 - **Baked-landscape lights on the ground** (`lighting.md` §8.6, Tessera Decision there):
   the walker shows them on the terrain only through the stored light maps
@@ -1735,37 +1806,6 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   into a chunk's baked-lighting texture with pass code 0x41 (row W-L5); it runs only in a
   special client mode and, Inferred, not in normal play (`lighting.md` L36), so the stored
   maps are what normal play shows.
-
-> **OPEN (clean-room implementer, 2026-10-07, status of the departures of this section; for
-> the spec writer to fold in):** the walker code now
-> (a) gives the outdoor record no main light (no sun term, no sun shadow, light slot free)
-> when the sun colour is black within 0.0002 per channel (inclusive) or *bd* is below 0.0002
-> (`landblock.md` §4.13). Two parts of the sun-present test of `environment.md` §11.7
-> step 9 remain open: `tessera-world`'s blended values drop the sun colour's alpha, so the
-> colour test is on R, G and B only (for the `tessera-world` implementer: keep the alpha);
-> and the blended-`effect` test and the 5 s sun-change fade are not made (third-revision
-> OPEN above);
-> (b) without a sky library or with `sky` off applies **no** interior override: the frame
-> takes the defaults of `lighting.md` §8.1 with no fog, as the "Frame lighting" bullet says.
-> **Decision** (the spec is silent): the indoor record still has no main light then;
-> (c) `\` restarts a clock started with `--time-rate 0` at rate 1 on the first press (such a
-> clock counts as stopped from the start, so `-` and `=` change its restart rate); `[` and
-> `]` move *G* by 1/24 of the calendar's day length, across midnight;
-> (d) takes key A by the lookup of `environment.md` §7.1.1 (the camera's cell and its
-> owner's landblock-info set and block map; outdoors the eye's landblock-info set, then its
-> block map), else the value 2, and counts key A, key B and `InteriorFogType` only with
-> type 8 or 10. The "Key A" and "Stored types" bullets above describe the former code;
-> (e) applies the fog limits of `environment.md` §11.7 step 5 itself (keyframe end capped
-> at 10,000 before the override, only the lower limits after it); the renderer still limits
-> every uploaded fog end to 10,000 (`render.md` §4.2), so an overriding `InteriorFogFar`
-> above 10,000 is still drawn capped (OPEN for the renderer implementer);
-> (f) hands the renderer a reach entry for every table light (ρ from the Range in force and
-> Falloff, Range with `Light_GlobalLight`; key light; baked into the landscape) and every
-> terrain and ceiling chunk to the automatic selection. The parent switches are not
-> applied: `tessera-world`'s light parameters carry neither `Light_OnlyInfluenceParent`
-> nor `Light_NeverInfluenceParent`, so a parentless light with the first switch still
-> reaches objects (OPEN for the `tessera-world` implementer: expose both switches; the
-> walker then gives such a light ρ = 0).
 
 <a id="s14-4"></a>
 ### 14.4 Terrain
@@ -1801,91 +1841,97 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
 
 - **Ceilings** (`terrain-texturing.md` §4.8): level 0 from the stored triangles, with the
   ceiling light map; they receive the downward ambient *A₀* − *H₀* because their normals
-  point down. No shadow casting (Decision: whether the client's ceiling chunks cast into
-  the sun's map is not specified).
+  point down. No shadow casting (Decision: whether the client draws ceiling chunks into the
+  sun's shadow map was not traced).
 - **Chunks without layers** (`terrain-texturing.md` §4.9; row W-T1). The block's open flag
   is set when the block has no ceiling, or when at some grid sample (*i*, *j*) with
   0 ≤ *i*, *j* ≤ 31 the stored terrain height is strictly below the stored ceiling height.
   A terrain or ceiling chunk that stores no layers is resolved, when the flag is set, as one
   opaque `whole` layer of the table's entry with the smallest `draw_order` (the last met in
   stored order on a tie), without a mask, with the surface's light map, and drawn through
-  the layer pipeline like any other first layer. When the flag is clear, the terrain chunk
-  is not drawn at all (no height-shaded mesh, no shadow) and the ceiling chunk draws
-  nothing.
+  the layer pipeline like any other first layer. When the flag is clear (rule 3), the chunk
+  is left out of the walker's scene entirely, as the client does not add it to its scene:
+  no layered chunk, no height-shaded mesh (one built while layers were off is freed when
+  they are switched back on), no light selection, no shadow, no far-band bake, and it is
+  not counted as a drawn chunk or ceiling.
 - **Height-shaded fallback (Decision).** The M3 height-and-slope mesh, lit with its vertex
-  colours, is drawn for a terrain chunk when layers are switched off (`--disable layers`
-  or `lit`), when the region has no 0x19 table, and when a chunk stores layers but none of
-  them resolves (the client's behaviour for unresolvable layers is not specified). With
-  layers switched off, a closed block's layerless terrain chunk is drawn height-shaded too
-  (the M3 view).
+  colours, is drawn for a terrain chunk in these cases:
+  - layers or lighting switched off (`--disable layers` or `lit`; debugging views, no
+    client counterpart). In these views a chunk that rule 3 hides is drawn height-shaded too
+    (the M3 view);
+  - the region has no 0x19 table, or its table has no entry (so no smallest `draw_order`
+    for a layerless chunk). Neither occurs in this install: every region's descriptor names
+    one of five tables, each with 316 to 1,421 entries (`terrain-texturing.md` §3.1). The
+    client's behaviour with an empty table was not traced;
+  - the chunk stores layers but none of them resolves. This does not occur in this install
+    (no layer key is missing from its table, `terrain-texturing.md` T5); the client's
+    per-chunk routine stops at the first layer that fails and draws the layers before it
+    (`terrain-texturing.md` §8, T38), and the Tessera Decision there skips only the failing
+    layer. A terrain chunk whose layers fail does not affect the block's ceiling, which keeps
+    its own layers and its own rule-3 flag.
+
+  A ceiling gets the same treatment: its height-shaded mesh (the ceiling heights at level 0,
+  the downward normals of `terrain-texturing.md` §4.8, triangles facing down, no shadow) is
+  drawn wherever its layered chunk is not drawn for one of the reasons above (with layers or
+  lighting switched off also a ceiling that rule 3 hides). In the normal view a ceiling that
+  rule 3 hides draws nothing.
 - **Scrolling layers** (`terrain-texturing.md` §6.3): the offset curves of the layers that
   have them are evaluated every frame on the material clock and handed to the renderer.
 - **Far band (Decision; the original's distance bands are OPEN, `terrain-texturing.md`
-  §12).** A block farther than 480 m (`--far-band M`, 0 = off; 40 m hysteresis) is drawn
-  with one opaque layer: its layer stack composited on the CPU, once per block, into a
-  256 × 256 image with a mip chain (`farband.rs`): each layer's albedo × `diffuse_scale`,
-  sampled from the texture's small CPU levels (≤ 64 texels, the level matching the texel
-  footprint), blended "over" by its opacity rule after the discard test
-  (`terrain-texturing.md` §7–§8); missing masks and textures follow the renderer's rules.
-  The far layer is lit like the others (2 × *C′* × Σ, the light map still added);
-  per-layer normal maps and specular highlights are not kept. Reason: one draw per far
-  block instead of one per layer (the walker drew 1,800 layer draws in a forest view; the
-  far band leaves about 200), which the frame budget of criterion 5 needs; at the band's
-  start a baked texel (0.625 m) is about 1.7 pixels at 1080p. Bakes run ahead of need
-  (320 m inside the band) on the terrain workers. Visually the same view with and without
-  the band matched on 2026-10-06 (default spawn, 60 m above the ground). A block in the
-  band keeps only its light map on the GPU; its masks are uploaded when it comes within
-  the band's edge (a chunk waits only for its own masks and light maps, so the ceiling of
-  a far cave block completes while the terrain masks wait). A block that enters the band
-  with no full-layer chunk drawn and no bake yet (a fast flight) is drawn height-shaded
-  until the bake arrives.
+  §12).** A block farther than 480 m (`--far-band M`, 0 = off) is drawn with one opaque
+  layer; it leaves the band at min(40 m, *M* / 2) nearer than *M* (hysteresis; a band of
+  40 m or less still has a positive exit distance). The layer is its layer stack composited
+  on the CPU, once per block, into a 256 × 256 image with a mip chain (`farband.rs`): each
+  layer's albedo × `diffuse_scale` *M*, sampled from the texture's small CPU levels (≤ 64
+  texels, the level matching the texel footprint), blended "over" by its opacity rule after
+  the discard test (`terrain-texturing.md` §7–§8); missing masks and textures follow the
+  renderer's rules; the result is stored in 8 bits per channel (*C* × *M* never exceeds 1:
+  *M* is a colour of four bytes, `terrain-texturing.md` §3.3). The far layer is lit like a
+  first layer with *M* = 1 (2 × *C′* × Σ, the block's light map still added); per-layer
+  normal maps and specular highlights are not kept. The bake runs only for a terrain chunk
+  drawn with its layers (not for one that rule 3 hides or whose layers do not resolve).
+  Reason: one draw per far block instead of one per layer (the walker drew 1,800 layer
+  draws in a forest view; the far band leaves about 200), which the frame budget of
+  criterion 5 needs; at the band's start a baked texel (0.625 m) is about 1.7 pixels at
+  1080p. Bakes run ahead of need (320 m inside the band) on the terrain workers. Visually
+  the same view with and without the band matched on 2026-10-06 (default spawn, 60 m above
+  the ground). A block that enters the band with no full-layer chunk drawn and no bake yet
+  (a fast flight) is drawn height-shaded until the bake arrives.
+  - **Light map in the far band (departs from `terrain-texturing.md` §9.1).** In the full
+    stack the ambient, sun and point-light terms carry *M* but the light-map term does not
+    (2 × *C* × *B*ₗ). The bake folds *M* into the albedo, so in the far band the light-map
+    term is scaled by *M* too. The far layer is exact only where *M* = 1 or the block has
+    no light map. One baked image cannot hold both weightings (Σ *w* *C* and Σ *w* *C* *M*);
+    removing the difference needs a second baked image or an unscaled-albedo input on the
+    renderer's far layer (`render.md` §5.2).
+  - **Masks in the band (Decision; engineering, no visual effect).** A block in the band
+    keeps only its light map on the GPU; its masks are uploaded when it comes within the
+    band's edge (a chunk waits only for its own masks and light maps, so the ceiling of a far
+    cave block completes while the terrain masks wait). Masks uploaded while a block was
+    near are released once the block is back in the band, its bake is drawn and no
+    full-layer chunk is drawn, staged or waiting; they are queued again when it nears. To
+    upload them again without a new read, the walker keeps each uploaded terrain mask's A8
+    texels on the CPU.
 - **Light lists** of chunks: §14.3.
 - **From inside an interior cell** no terrain or ceiling chunk is drawn (§14.12).
 
-> **OPEN (clean-room implementer, 2026-10-07, choices this section leaves unstated; please
-> confirm or replace):**
-> (a) **Empty 0x19 table.** A layerless chunk of an open block whose region table has no
-> entry has no `draw_order` minimum to draw with. The walker treats it like a region
-> without a table (height-shaded fallback), not as `terrain-texturing.md` §4.9 rule 3
-> (which hides only chunks whose open flag is clear).
-> (b) **Ceilings in the fallback views.** The height-shaded fallback above covers terrain
-> chunks only. The walker draws a ceiling's height-shaded mesh (the ceiling heights at
-> level 0, the downward normals of `terrain-texturing.md` §4.8, triangles facing down, no
-> shadow) wherever its layered chunk is not drawn: layers or lighting switched off (then
-> also a ceiling that §4.9 rule 3 hides, as for terrain), no 0x19 table, or ceiling layers
-> that do not resolve. In the normal view a ceiling hidden by rule 3 draws nothing.
-> (c) **Small far bands.** With `--far-band M` the hysteresis is min(40 m, *M* / 2), so a
-> band of 40 m or less still has a positive exit distance.
-> (d) **Light map in the far band (departure).** The bake folds `diffuse_scale` *M* into
-> the albedo and lights the baked layer with *M* = 1. The ambient, sun and point-light
-> terms carry *M* in the full stack too (`terrain-texturing.md` §9), but the light-map term
-> *B*ₗ does not (2 × *C* × *B*ₗ). In the far band it is scaled by *M*. One baked texture
-> cannot hold both weightings (*Σ w C* and *Σ w C M*); fixing this needs a second baked
-> image or a far-layer input for the unscaled albedo.
-> (e) The far-band bake runs only for a terrain chunk drawn with its layers. It does not
-> run for a chunk hidden by §4.9 rule 3, or for one none of whose stored layers resolves.
+> **OPEN (spec writer, 2026-10-08, from the implementer's note of 2026-10-07, for the walker
+> and `tessera-render` implementers):** the far band's light-map departure above; it needs a second baked image or an
+> unscaled-albedo input on the renderer's far layer.
 
-> **OPEN (clean-room implementer, 2026-10-07, status after a conformance review; for the
-> spec writer):**
-> (f) A terrain chunk whose stored layers fail to resolve (a hostile chunk the resolver
-> rejects) no longer takes the block's ceiling with it: the terrain chunk resolves to no
-> layer and is drawn height-shaded (not rule 3), and the ceiling keeps its own layers and
-> its rule-3 flag, so the ceiling fallback of (b) applies only as stated there.
-> (g) Rule 3 in the normal view now leaves the chunk out entirely: a ceiling with no layer
-> to draw gets no layered chunk (no zero-layer draw, no light selection, not counted as a
-> drawn ceiling), and no height-shaded mesh is built or kept for a hidden terrain chunk (one
-> built while layers were off is freed when they are switched back on).
-> (h) **Masks in the band.** Masks uploaded while a block was near are released once the
-> block is back in the band, its bake is drawn and no full-layer chunk is drawn, staged or
-> waiting; they are queued again for upload when it nears. To re-upload them without a
-> new read, the walker keeps each uploaded terrain mask's A8 texels on the CPU (as a far
-> block already does for its masks). Engineering choice; please confirm.
-> (i) On (d): the bake stores *C* × *M* in 8 bits limited to 0–1. That limit never acts:
-> `diffuse_scale` is a colour of four bytes (`terrain-texturing.md` §3.3), so *M* ≤ 1 per
-> channel, and *C* ≤ 1. The light-map departure of (d) remains; the "Far band" bullet's
-> "lit like the others (2 × *C′* × Σ, the light map still added)" is exact only where
-> *M* = 1 or the block has no light map. Removing it needs a second baked image or an
-> unscaled-albedo input on the renderer's far layer (`render.md` §5.2), outside the walker.
+> **OPEN (implementer, 2026-10-08, status; for the spec writer):** the far band's light-map
+> term now follows `terrain-texturing.md` §9.1 without a renderer change. When a block has
+> a light map and one of its layers has a `diffuse_scale` other than white, the bake also
+> composites the stack **without** `diffuse_scale` and multiplies it texel by texel by the
+> light map (sampled as the layer pipeline samples it: clamp, bilinear, at x / 160, y /
+> 160), a second 256 × 256 image with its own mip chain; the far layer binds that image as
+> its emissive texture with *G* = 2 and binds no light map, so it draws 2 × *C′* × Σ
+> (without the light map) + 2 × Σ *w* *C* × *B*ₗ, which is the full stack's light-map
+> term (`render.md` §5.2: emissive is added as *Em* × *G* before fog). Without a light map,
+> or with every `diffuse_scale` white, no second image is made and the far layer binds the
+> light map as before (exact in those cases). The light map is sampled at the bake's
+> resolution, not at the light map's own per pixel, and both terms are stored in 8 bits.
+> The "Light map in the far band" departure above and the §14.13 row can be closed.
 
 <a id="s14-5"></a>
 ### 14.5 Objects (§11.4, `mesh.md` §8.4–§8.7)
@@ -1914,19 +1960,50 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   parts, not to the world box that `mesh.md` §8.6 gives (the union of the stored boxes of
   the level-0 vertex blocks). The sphere's box is at least as large, so objects draw and
   fade slightly beyond *D*.
-- **Fade** (`mesh.md` §8.7): `DrawFade` on the unsmoothed distance to that box; a block
-  not drawn in the previous frame resets its objects' fades. A fading surface blends by
-  its output alpha × the opacity with depth write (`AlphaMode::TestBlend`, `render.md`
-  §4.3; Decision: the original's fade blending is not specified, OPEN §14.11).
-- **Shadow casting (departs from `mesh.md` §8.7–§8.8, rows M27, M40; W-O1; OPEN below).**
-  An object casts into the sun's map only while its fade is complete (opacity 1) and its
-  unsmoothed distance *d* ≤ its shadow distance min(*G*, `d2` × *M_d* × *M_s*). The client
-  casts while the object's opacity (the fade opacity × the render component's factors,
-  `mesh.md` §8.8) is **above 0.8** and *d* is **strictly below** the shadow distance. So in
-  the walker an object fading in starts casting only when the fade ends (about 0.3 s later
-  than the client, with the 1.5 s ramp) and one fading out stops at once, where the client
-  keeps casting until the opacity falls to 0.8. The shadow part is specified; only the
-  blending of the fading surface is not (the Decision above).
+- **Fade** (`mesh.md` §8.7; row W-O3): `DrawFade` on the unsmoothed distance *d* to that
+  box, a linear opacity ramp of 1.5 s whenever *d* crosses *D*. The fade restarts (the
+  object appears or disappears at once) in the first frame after the object becomes active,
+  after a camera move of more than 25 m in one frame, and whenever the object's fade was not
+  updated in the previous frame. The walker updates an object's fade only in the frames in
+  which its draw loop reaches it, so a fade is not updated, and restarts in the next frame,
+  when the object's block was out of view, when the draw cap stopped the frame before it,
+  or when the object was not in the walker's scene (an outdoor object while the camera is in
+  a cell, a generated object with `scenery` off, an object out of reach).
+  **This departs from the client** (row W-O3, BIN (o)): the client runs the fade step of
+  every object of its scene in every frame, in the scene's cull pass and before the frustum
+  and occlusion culls; its fade opacity is the time since the fade began divided by 1.5 s,
+  so a frame without the step would neither pause nor restart it; and it restarts a fade
+  only in the first frame of the object's per-view state, after a camera jump of more than
+  25 m, or on a render-state reset (`mesh.md` §8.6–§8.7). Effect: an object whose fade is
+  running when its block leaves the view, and that comes back into view within the ramp,
+  shows its end state at once in the walker and the rest of the ramp in the client.
+- **Fade blending (Decision: the original's blending of a fading object is not specified,
+  OPEN §14.11).** A fading surface blends by its output alpha × the opacity with depth write
+  (`AlphaMode::TestBlend`, `render.md` §4.3); opaque surfaces become `BLEND_DEPTH_WRITE`,
+  alpha-tested ones `TestBlend` with their threshold, blended and additive ones keep their
+  mode.
+
+> **OPEN (spec writer, 2026-10-08, for the walker implementer):** advance the fade of
+> every object of the walker's scene in every frame, as the smoothed distance below already
+> is (also for objects of blocks out of view and after the draw cap), and restart a fade
+> only in the object's first frame and after a camera move of more than 25 m (row W-O3).
+
+- **Smoothed distance (`mesh.md` §8.6 step 3; row W-O3).** Updated every frame for every
+  object of the walker's scene (active, not a generated object with `scenery` off, in a
+  cell the camera sees), drawn or not: before the fade test and the pixel and frustum culls,
+  for the objects of a block whose box is out of view, and, when the draw cap stops the
+  frame, for the objects after the one that reached the cap and for every later block. This
+  is the client's rule: its smoothing runs in the same per-object step as the fade, for every
+  object of the scene, before the culls (BIN (o)). **Decision:** the walker starts *d_s*
+  again at *d* when an object becomes active again (it is released beyond *D* + 140 m),
+  where the client keeps an object's state while the object stays in its scene; the two
+  differ only for at most a second after the object returns within *D* + 60 m, before it
+  can be drawn at *D*.
+- **Shadow casting** (`mesh.md` §8.7–§8.8, rows M27, M40; W-O1). An object casts into the
+  sun's map while its opacity is above 0.8 and its unsmoothed distance *d* is strictly below
+  its shadow distance min(*G*, `d2` × *M_d* × *M_s*), at any distance while `lod` is off, as
+  the client does. The opacity is the fade alone (Decision, §14.3 "Sun shadow"). A fading
+  object casts through the alpha-tested shadow path of its single mesh draw.
 - **Detail levels** (`mesh.md` §8.4): every kind-1 level of a part is uploaded; the level
   follows the smoothed distance (`mesh.md` §8.6) and *R_d* = `d1` × *M*.
 - **Surfaces** go through the lit pipeline with the inputs of `lighting.md` §4.1
@@ -1937,69 +2014,64 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   keeps its alpha), emissive (3018) and glow mask (3013) with glow colour 2014, fog,
   shadow casting. Characters use the same rules (with their dye in stored values).
   Texture transforms and second colour layers are not drawn (the lit pipeline has none
-  yet, `render.md` §4.1).
+  yet, `render.md` §4.1). Two choices depart from `material.md` §11.3 and `lighting.md` §7:
+  - **Unlit blend pairs (departs from the `material.md` §11.3 rule for unlit records).**
+    The walker draws an unlit record whose most common blend pair is not one of
+    SRCALPHA / INVSRCALPHA, SRCALPHA / ONE or ONE / ZERO (DESTCOLOR / ONE, ZERO / SRCCOLOR,
+    ONE / ONE and others: 21 records, 57 surface records in `material.md` §11.3's census) as
+    a source-alpha blend, and every additive record without depth write, where the
+    `material.md` rule takes the record's own pair and depth write as a fixed-function blend
+    (the renderer offers it as `AlphaMode::Fixed`, `render.md` §4.3);
+  - **Fog of unlit surfaces (departs from `lighting.md` §7 code 0x00).** Every unlit surface
+    is fogged (`LitSurface::fog` set; world models uploaded with the default surface options,
+    whose fog switch is on, `render.md` §5.5), where the client fogs an unlit pass only when
+    the record's program reads the fog inputs.
+
+> **OPEN (spec writer, 2026-10-08, for the walker and `tessera-material` implementers):**
+> draw unlit records with the fixed-function blend and depth write of the `material.md`
+> §11.3 rule (`AlphaMode::Fixed`), and pass each unlit surface's fog switch (whether its
+> record's unlit program reads the fog inputs, `lighting.md` §7) to `LitSurface::fog` and,
+> for world models, through `Renderer::upload_world_model_with` (`render.md` §5.5).
+
 - **Instancing** (`render.md` §5.5): fully faded-in objects whose surfaces need no
   emissive, glow or dye draw as instanced batches, one per landblock, part, detail level
-  and shadow flag; the part's world models are built once its textures are on the GPU.
-  Fading objects and the other surfaces stay single mesh draws.
+  and shadow flag (each instance with its own light list, §14.3); the part's world models
+  are built once its textures are on the GPU. Fading objects and the other surfaces stay
+  single mesh draws.
 - **Characters** (§11.4, §11.4.2): drawn to *D* = min(*G*, 80 × *M_d*), and the player's
   own character to *D* = min(*G*, 3 × 80 × *M_d*) (the ×3 applies to the class value before
   the cap at *G*, as `mesh.md` §8.5 step 4), with the 1.5 s `DrawFade` across *D* (blended
-  like a fading object); `--character-distance` (default 400 m) only caps *D*. A character casts a
-  shadow only while its opacity is 1 and its distance *d* ≤ 16 m (§14.3).
-  Placed figures beyond *D* are handed to the object layer (§10.2). The player's own
-  character is hidden in free-fly mode (the checklist's camera, `m4-5-visual.md` §4.0).
-  **Decision (departing from §11.4.1):** 80 m is the `d0` that the classes
-  `PlayerAvatar`, `Creature` and `Creature2Deg` have in this install (§11.4.2), and the
-  walker uses it as a constant for every character; §11.4.1 says such values are
+  like a fading object; it restarts when the character was not in view in the previous
+  frame, the departure of "Fade" above); `--character-distance` (default 400 m) only caps
+  *D*. A character casts a shadow only while its opacity is 1 and its distance *d* ≤ 16 m
+  (next bullet). Placed figures beyond *D* are handed to the object layer (§10.2). The
+  player's own character is hidden in free-fly mode (the checklist's camera,
+  `m4-5-visual.md` §4.0). **Decision (departing from §11.4.1):** 80 m is the `d0` that the
+  classes `PlayerAvatar`, `Creature` and `Creature2Deg` have in this install (§11.4.2), and
+  the walker uses it as a constant for every character; §11.4.1 says such values are
   observations to be read at run time, and each character's own class is not resolved
-  (OPEN §14.11).
-- **Character shadow distance (departs from `mesh.md` §8.5 steps 3–4, §8.7; rows W-O2,
-  W-K1; OPEN below).** Every character, the player's own included, casts within the fixed
-  16 m (the render component's initial `d2`), with no *M_d* × *M_s* factor, no cap at *G*
-  and no ×3 for the player's own character. The client gives a character the shadow
-  distance of its own class like any object: min(*G*, `d2` × *M_d* × *M_s*), where for the
-  player's own character `d2` (one of `d0` … `d5`) has been multiplied by 3. In this install
-  `PlayerAvatar`, `Creature` and `Creature2Deg` all have `d2` 26 (row W-K1), so at
-  *M_d* = *M_s* = 1 other characters cast to 26 m and the player's own to 78 m (both below
-  *G*), where the walker stops at 16 m. A character entity none of whose property layers
-  holds `Render_LODClass` keeps `d2` 16 in the client too (`mesh.md` row M33), but its
-  shadow distance is still scaled by *M_d* × *M_s* and capped at *G*.
+  (OPEN below).
+- **Character shadow distance (departs from `mesh.md` §8.5 steps 3–4, §8.7–§8.8; rows
+  W-O1, W-O2, W-K1; OPEN below).** Every character, the player's own included, casts within
+  the fixed 16 m (the render component's initial `d2`), with no *M_d* × *M_s* factor, no
+  cap at *G* and no ×3 for the player's own character, and only while its fade is complete
+  (opacity 1) and *d* ≤ 16 m. The client gives a character the shadow distance of its own
+  class like any object: min(*G*, `d2` × *M_d* × *M_s*), where for the player's own
+  character `d2` (one of `d0` … `d5`) has been multiplied by 3, and casts while the opacity
+  is above 0.8 and *d* is strictly below that distance. In this install `PlayerAvatar`,
+  `Creature` and `Creature2Deg` all have `d2` 26 (row W-K1), so at *M_d* = *M_s* = 1 other
+  characters cast to 26 m and the player's own to 78 m (both below *G*), where the walker
+  stops at 16 m. A character entity none of whose property layers holds `Render_LODClass`
+  keeps `d2` 16 in the client too (`mesh.md` row M33), but its shadow distance is still
+  scaled by *M_d* × *M_s* and capped at *G*.
 
-> **OPEN (spec writer, 2026-10-07, widened in the second revision, for the walker
-> implementer):** read each character's LOD-class values from the table at run time (the
-> class of each character entity, §11.4.3, with the player's ×3 of `mesh.md` §8.5 step 4;
-> 80 m only as the fallback for `d0` when the table is missing) and derive from them both
-> the draw distance *D* = min(*G*, `d0` × *M_d*) and the shadow distance min(*G*, `d2` ×
-> *M_d* × *M_s*). Cast shadows, for objects and characters alike, while the opacity of
-> `mesh.md` §8.8 is above 0.8 and *d* is strictly below the shadow distance (rows W-O1, W-O2);
-> a fading object or character then needs a shadow draw while it is blended (the instanced
-> path draws only fully faded-in objects, so this concerns single mesh draws).
-
-> **OPEN (clean-room implementer, 2026-10-07, status and one choice; for the spec writer):**
-> (a) Objects now cast while their fade opacity is above 0.8 and *d* is strictly below the
-> shadow distance. The walker has no render-component opacity factors, so the opacity
-> is the fade alone. A fading single mesh draw casts through the alpha-tested shadow
-> path. Characters share the opacity rule. Their fixed 16 m distance (character layer)
-> is unchanged.
-> (b) **Fade reset (Decision; the section says "a block not drawn in the previous frame").**
-> The walker restarts an object's fade whenever its fade was not updated in the previous
-> frame. That happens when its block was culled, when its block was not reached because
-> the draw cap stopped the frame, or when the object itself was not drawn: an outdoor
-> object while the camera is in a cell, a generated object with `scenery` off, or an
-> object out of reach. Before, a block whose box passed the frustum counted as drawn even
-> when none of its objects was, so the fades of outdoor objects resumed from their values
-> at the moment the camera entered a cell. Blocks after the draw cap also kept a stale
-> "drawn" mark. The distance smoother is still updated only for objects that pass the
-> culls. The spec gives no rule for it.
-
-> **OPEN (clean-room implementer, 2026-10-07, engineering choice after a conformance
-> review; please confirm or replace):** the distance smoother (`mesh.md` §8.6 step 3, "each
-> frame") is now updated every frame for every object in the walker's scene (active, not a
-> generated object with `scenery` off, in a cell the camera sees), drawn or not: before the
-> fade test and the pixel and frustum culls, and also for the objects of a block whose box
-> is out of view. An object culled while the camera travels comes back with a current
-> smoothed distance and detail level. Blocks after the draw cap are still not reached.
+> **OPEN (spec writer, 2026-10-07, narrowed 2026-10-08, for the walker implementer):** read
+> each character's LOD-class values from the table at run time (the class of each character
+> entity, §11.4.3, with the player's ×3 of `mesh.md` §8.5 step 4; 80 m only as the fallback
+> for `d0` when the table is missing) and derive from them both the draw distance
+> *D* = min(*G*, `d0` × *M_d*) and the shadow distance min(*G*, `d2` × *M_d* × *M_s*); let
+> characters cast, as objects already do, while their opacity is above 0.8 and *d* is
+> strictly below the shadow distance (rows W-O1, W-O2).
 
 <a id="s14-6"></a>
 ### 14.6 Water (`water.md` §8–§9)
@@ -2038,35 +2110,24 @@ is not specified). Trade-off of the merge: the fade-in runs from the time the ce
 appeared, not each sector. **Terrain colour** (`scenery.md` §8.3 rule 7, formula OPEN;
 Decision): the mean colour of the smallest level of the top terrain layer's diffuse texture
 at the sector's centre × its `diffuse_scale`; while unknown the sector's terrain-colour
-intensity is 0. Cells out of view or beyond *D* are not queued. Frills are neither streamed
-nor drawn from inside an interior cell (§14.12).
-
-> **OPEN (clean-room implementer, 2026-10-07, engineering choice):** the walker checks once
-> a second whether an uncoloured sector's terrain colour can be found. It rebuilds the
-> sector as soon as the colour is found, however long that takes. The former cap of 10
-> rebuilds, which left a sector at intensity 0 after about 10 s, is gone.
+intensity is 0; **Decision (engineering, no client counterpart):** the walker checks at most
+once a second whether an uncoloured sector's colour can now be found, and rebuilds the
+sector as soon as it is, however long that takes. Cells out of view or beyond *D* are not
+queued. Frills are neither streamed nor drawn from inside an interior cell (§14.12).
 
 <a id="s14-8"></a>
 ### 14.8 Sky (`environment.md` §11.4, §12)
 
 The visible sky objects of the day description in use, each part of its 0x47 object as a
-`SkyObject` with the object's angles and keyframe tint (`render.md` §5.4 placement), in
-the stored order; objects whose models are not built yet are left out. The parts stay
-referenced for the walker's life (a day description holds at most 136 objects, indices
-1–136, `environment.md` §5.4). The day description in use is that of the record in use
-(§14.3): from inside an interior cell the indoor record's, and only while sky-visible is set
-(§14.12). **Departure:** the walker draws the sky objects whatever the fog; the client does
-not draw them while fog is on and the keyframe's `fog_extra` exceeds 0.99
-(`environment.md` §11.7 step 10, §12; row W-Y1).
-
-> **OPEN (spec writer, 2026-10-07, for the walker implementer):** leave the sky objects out
-> while fog is on and the blended `fog_extra` exceeds 0.99 (`environment.md` §11.7 step 10).
-
-> **OPEN (clean-room implementer, 2026-10-07, status; for the spec writer):** done. The
-> walker leaves the sky objects out while fog is on (the keyframe's, or the indoor record's
-> after `InteriorFogType`) and the blended `fog_extra` exceeds 0.99 (`environment.md` §11.7
-> step 10). The "Departure" sentence above and the row "§14.8 sky and fog" of §14.13 still
-> describe the former behaviour; please restate them.
+`SkyObject` with the object's angles and keyframe tint, placed by the client's rotation
+(`render.md` §5.4; `environment.md` §11.4 step 5), in the stored order; objects whose
+models are not built yet are left out. The parts stay referenced for the walker's life (a
+day description holds at most 136 objects, indices 1–136, `environment.md` §5.4). The day
+description in use is that of the record in use (§14.3): from inside an interior cell the
+indoor record's, and only while sky-visible is set (§14.12). As the client, the walker
+leaves the sky objects out while fog is on (the keyframe's, or the indoor record's after
+`InteriorFogType`, §14.3) and the blended `fog_extra` exceeds 0.99 (`environment.md` §11.7
+step 10, §12; row W-Y1).
 
 <a id="s14-9"></a>
 ### 14.9 Default-settings profile (§11.8)
@@ -2132,7 +2193,7 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 | Y2 | pass | not judged | the eye faces a building wall at dawn |
 | Y5 | pass (interior fog values) | failed on 2026-10-06 | interior cell meshes were not drawn. 2026-10-07: interiors are drawn (§14.12) and Y5 renders the IN1 cave; to be re-judged |
 | L1, L3, L4, L6 | L2 checked by the test | pass | sun shadow of the barn, bonfire emissive, glowing crystals, blended cobweb |
-| L2, L7 | L2 pass | not conclusive | the night scenes are lit, but pools of point light (L2) and the warm light-map texels (L7) are not distinct (see the light-list OPEN and the baked-light note of §14.3) |
+| L2, L7 | L2 pass | not conclusive | the night scenes are lit, but pools of point light (L2) and the warm light-map texels (L7) are not distinct (see the baked-light note of §14.3). 2026-10-08: the light lists now follow `lighting.md` §8.5 (§14.3); to be re-rendered and re-judged |
 | L5 | – | judged "fails" on 2026-10-06 | no broad specular highlight on layer 67's paving toward the sun. 2026-10-07: `terrain-texturing.md` §9.4 (T44) gives a faint sheen of about the gloss (mean 0.09 for layer 67), not a broad highlight, so this is the expected look; to be re-judged |
 
 <a id="s14-11"></a>
@@ -2145,9 +2206,9 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 
 > **OPEN (implementer, 2026-10-06):** how the original blends an object fading across its
 > draw distance (`mesh.md` §8.7 gives the 1.5 s opacity ramp, not the blend): Tessera
-> blends by alpha with depth write and casts no shadow while fading. (Spec writer,
-> 2026-10-07: only the blend is unspecified; the shadow rule is `mesh.md` §8.8, opacity above
-> 0.8, and the walker's departure from it is in §14.5 with its own OPEN.)
+> blends by alpha with depth write. (Spec writer, 2026-10-08: only the blend is
+> unspecified; the shadow rule is `mesh.md` §8.8, opacity above 0.8, which objects now
+> follow; characters still depart, §14.5 with its own OPEN.)
 
 > **Answered (implementer, 2026-10-07, `landblock.md` §4.11–§4.14, Revised):** interior
 > cells are drawn; Y5 renders the IN1 cave. The original note: the render meshes of
@@ -2180,7 +2241,8 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 > §4.8 and §4.10: the ceiling normals point down, so a ceiling receives the downward
 > ambient *A₀* − *H₀*, its ceiling light map and the placed lights that reach it and are not
 > baked-landscape lights; the client adds nothing else to ceilings. The walker's remaining
-> differences are the light lists of §14.3 and the normals of §14.4 (OPENs there). The
+> difference is the normals of §14.4 (OPEN there); its light lists follow the client since
+> 2026-10-08 (§14.3). The
 > original note: cave ceilings are almost black under the sky's frame lighting; a face
 > pointing down receives ambient − hemispheric = the ground term *Y* (`lighting.md` §8.1)
 > plus its light map; whether the original adds more to ceilings is not specified.
@@ -2251,7 +2313,9 @@ of `collision.md` §5.8.1, the eye's own landblock first, then by Chebyshev dist
 then by region, x and y; the first that finds a cell names it, and within one landblock the
 lowest cell number wins (Decision). When none does and the walker is in walk mode on
 collision, the mover's cell (§13.4) is taken. The result is the cell number and its owner
-landblock. **Decision:** inside a cell the eye is not kept 0.8 m above the terrain (§5).
+landblock. **Decision:** only the walk-mode third-person camera is kept 0.8 m above the
+terrain (§5), and only outside a cell; free-fly, `--fly-path` and `--camera-loop` cameras are
+never raised.
 
 **(b) Visibility of a landblock's cells (`landblock.md` §4.11–§4.12).** Built from the owner
 landblock's resident bundle when the camera first enters one of its cells, and kept while
@@ -2260,29 +2324,29 @@ that bundle stays resident:
 1. visibility cells: each cell, in stored order, shares the visibility cell of the first
    cell of its group list (`landblock.md` §4.11; the cell itself skipped) that already has one, else gets
    a new one;
-2. portals: for each cell and each neighbour entry *k*, unless the neighbour is in the
-   cell's group list or the entry's 32-bit back-reference is negative (none is, row W-V2),
-   a one-way portal from the cell's visibility cell into the neighbour's, shaped as portal
-   *k* of the cell's 0x01 geometry placed with the cell's frame (taken from the landblock's
-   collision set; `collision.md` §5.5, §5.8). **Departs (no effect on this install):** the
-   client takes the portal named by the entry's `portal` field, not the entry's position
-   (`landblock.md` §4.11, L39); the two are equal in every entry (LI10). OPEN for the
-   implementer in `landblock.md` §4.15;
+2. portals: for each cell and each neighbour entry, unless the neighbour is in the cell's
+   group list or the entry's 32-bit back-reference is negative (none is, row W-V2), a
+   one-way portal from the cell's visibility cell into the neighbour's, shaped as the portal
+   that the entry's `portal` field names in the cell's 0x01 geometry, placed with the cell's
+   frame (taken from the landblock's collision set; `collision.md` §5.5, §5.8), as the
+   client does (`landblock.md` §4.11, L39). The back-reference is the i32 that the
+   decoder's two u16 halves form (equal to the `landblock.md` §4.4 field while `extra_cells`
+   is empty, which it is in every entry of this install);
 3. the potentially visible set of each cell (`landblock.md` §4.12): the cell, its list A, and with
-   `cell_flags` bit 5 the members of the groups its list B names; the cell's own number
-   skipped.
+   `cell_flags` bit 5 the members of the groups its list B names (a list-B key 0xFFFF names
+   no group). **Decision** (malformed lists): the cell's own number, 0xFFFF and numbers that
+   are no cell of the record are skipped and add nothing.
 
 When the owner landblock is not resident, the camera counts as inside with both scene
 flags clear and no interior drawn (Decision).
 
-**(c) Scene flags (`landblock.md` §4.12).** Outdoors: outdoor-visible and sky-visible are
-both set, unless a resident landblock has a cell with `cell_flags` bit 0 (then both clear;
-no cell has it in this install, LI8). Inside: both clear, and sky-visible set when a cell of
-the camera cell's potentially visible set has `cell_flags` bit 4. **Departs (no effect on
-this install):** this is a simplified form of the `landblock.md` §4.12 pass, which visits the
-bit-0 cells with their potentially visible sets (a later bit-4 cell sets sky-visible again)
-and also tests bit 0 of the cells visited from inside; OPEN for the implementer in
-`landblock.md` §4.15.
+**(c) Scene flags (`landblock.md` §4.12 rule 3).** A visited cell with `cell_flags` bit 0
+clears both flags; then, with bit 4, it sets sky-visible. Inside: both flags start clear and
+the camera's cell is visited with its potentially visible set, in the order cell, list A,
+list-B group members, each cell at most once. Outdoors: both start set and every bit-0 cell
+of the resident landblocks is visited with its potentially visible set. **Decision:** the
+landblocks are taken in ascending key order (the client's order was not traced; it matters
+only when bit 0 occurs, and no cell of this install has it, LI8).
 
 **(d) Portal walk (Decision of `landblock.md` §4.11, with these choices).** From the camera
 cell's visibility cell, recursively: every visibility cell reached is drawn; each portal of
@@ -2293,8 +2357,9 @@ against clip-space *w* ≥ 10⁻⁴ before its bounds are taken; a polygon wholl
 is not crossed. An eye within 0.5 m of the portal's plane and inside its bounding box
 widened by 0.5 m passes the view on unchanged (an edge-on doorway the eye stands in has no
 screen area); so does a portal with fewer than three corners or with a non-finite corner.
-Portals are two-sided. At most 32 portals deep and 4,096 portal crossings per frame; a
-visibility cell may be reached again through another portal. No occlusion culling.
+Portals are two-sided. At most 32 portals deep and 4,096 portal crossings per frame (only
+portals actually crossed count, not portals tested and rejected); a visibility cell may be
+reached again through another portal. No occlusion culling.
 
 **(e) What is drawn from inside.** The objects of the owner landblock attached to a cell
 whose visibility cell the walk reached (cell meshes and interior entities), and the
@@ -2308,7 +2373,9 @@ set, from the indoor record (§14.3, §14.8; `landblock.md` §4.12 gives this as
   drawn, inside or out. The client does not switch moving entities by the scene flags but
   culls them with the portal query; a moving entity belongs to the visibility cell of the
   cell it stands in (Inferred there), so the client draws a character only in a visibility
-  cell the camera's walk reaches, and from outdoors only characters standing outdoors.
+  cell the camera's walk reaches, and from outdoors only characters standing outdoors. The
+  walker's avatar placeholder (drawn before the avatar's figure is ready) follows that rule:
+  it is drawn only when the mover's cell, or outdoors, is visible from the camera.
 
 **(f) From outdoors** no interior object is drawn (`landblock.md` §4.12: the outdoor
 visibility cell has no portal into any cell). **Decision (resources):** interior objects are
@@ -2320,9 +2387,12 @@ may lie landblocks away from their owner, §13.3).
 landblock info: its part is the cell's 0x01 geometry record, whose embedded render mesh
 (`collision.md` §5.7 part 11) is decoded and drawn; placed with the cell's position and
 rotation, without `Render_AdjustableScale` (the `landblock.md` §4.14 Decision). Cells numbered 0 or 0xFFFF
-are left out. **Departs:** the two cells whose position has no x, y, z are left out too;
-`landblock.md` §4.4 now places them at the landblock origin with the identity orientation
-(L42; OPEN for the implementer in `landblock.md` §4.15).
+are left out. A cell whose position has no x, y, z offset (two cells in this install) is
+drawn at the landblock origin, and one without an orientation with the identity, as
+`landblock.md` §4.4 gives (L42). **Departs (collision side):** `tessera-physics` still
+refuses to place those two cells in the collision set, so the camera's cell lookup and the
+mover never find them and the portals out of them have no polygon (they pass the view on
+unchanged, (d)); OPEN for the physics implementer in `landblock.md` §4.15.
 **Decision** (`landblock.md` §4.14 OPEN on cell detail levels and distances): drawn out to
 *G* and the object distance cap, always at the finest level.
 - **Appearance (departs from the `landblock.md` §4.14 Decision):** the cell's
@@ -2355,35 +2425,18 @@ cell and interior entity is loaded and drawn whatever the camera's cell, and int
 join the light table from outdoors. Outdoor objects are still not drawn while the camera is
 inside a cell.
 
-**Checked on the install** (`apps/client/tests/interiors_real_data.rs`, 2026-10-07): 49,636
-landblock infos, 104,271 cells, 18,390 visibility cells, 39,692 portals (the census of
-`landblock.md` §4.11), LI7 and LI8 on every record, the IN1 example of `landblock.md` §4.11–§4.12 (26
-portals, all with polygons) and the Y5 eye in cell 9.
+**Checked on the install** (`apps/client/tests/interiors_real_data.rs`, 2026-10-07; on every
+record in debug builds too): 49,636 landblock infos, 104,271 cells, 18,390 visibility cells,
+39,692 portals (the census of `landblock.md` §4.11), LI7 and LI8 on every record, the IN1
+example of `landblock.md` §4.11–§4.12 (26 portals, all with polygons) and the Y5 eye in cell 9,
+found through the walker's own camera-cell lookup (the IN1 start + 1.8 m), with its scene
+flags. `visual_rows_real_data.rs` checks rows T and F1 through the walker's
+`terrain-texturing.md` §4.9 path, row Y5 through the walker's indoor-record lookup (key B 1,
+*X* = *Y*, the fog of the `landblock.md` §4.13 worked example) and key A of rows Y1–Y4
+through the walker's lookup of §14.3. The interiors fuzz target feeds neighbour entries whose
+`portal` field differs from their position and cells with hostile `index_echo` values.
 
-> **OPEN (clean-room implementer, 2026-10-07, status of (b)–(g); for the spec writer):**
-> the departures of (b) 2 (portal by entry position) and (c) (simplified scene flags) are
-> gone, and so is (g)'s for cells without x, y, z, as far as drawing goes. The status note
-> at the end of `landblock.md` §4.15 gives the details and the parts that remain. In (d),
-> only portals actually crossed count toward the 4,096 bound. In (b) 3, 0xFFFF is skipped
-> as well. The census test now runs on every record in debug builds too, and asserts the
-> 26 portals of IN1. `visual_rows_real_data.rs` now checks rows T and F1 through the
-> walker's §4.9 path (`resolve_block_surface`). It checks Y5 through the walker's
-> indoor-record lookup (cell, owner's landblock info, owner's block map: key B 1,
-> *X* = *Y*, the fog of the worked example).
 
-> **OPEN (clean-room implementer, 2026-10-07, status after a conformance review; for the
-> spec writer):** (1) The eye is kept 0.8 m above the terrain only for the walk-mode
-> third-person camera (§5); free-fly, `--fly-path` and `--camera-loop` cameras are no
-> longer raised (inside a cell none is, as (a) says). (2) With outdoor-visible clear and
-> no camera cell, the indoor record's inputs are read at the camera position as
-> `landblock.md` §4.13 says (the landblock info and block map under the eye) instead of
-> taking the defaults; no effect on this install (LI8). (3) `interiors_real_data.rs` now
-> finds the Y5 eye's cell through the walker's own camera-cell lookup (cell 9 at the IN1
-> start + 1.8 m) and checks the scene flags there; `visual_rows_real_data.rs` takes key A
-> of rows Y1–Y4 through the walker's lookup (landblock-info set, block map, else 2,
-> §14.3 OPEN (d)) instead of the streamer's block-map-only lookup. (4) The interiors fuzz
-> target now feeds neighbour entries whose `portal` field differs from their position and
-> cells with hostile `index_echo` values.
 
 <a id="s14-13"></a>
 ### 14.13 Client facts §13–§14 rely on, and their provenance (spec writer, 2026-10-07)
@@ -2427,7 +2480,17 @@ client or frame capture was available; and two Accepted specs read as disagreein
 (`environment.md` §11.6 names going indoors as a case of the fade, `landblock.md` §4.13 calls
 the change of record immediate). Again only offline environment code was read. The
 keyframe inputs of the flag were counted with the repository's `tessera-dattool show` over
-every day description (row W-E12).
+every day description (row W-E12). **Fifth revision (2026-10-08, after the re-review of the
+fourth revision):** question (o) whether the client advances an object's draw-distance fade
+and its smoothed distance for objects that are not drawn in a frame, and whether a frame
+without that step restarts the fade. Read in a private copy of the Ghidra project (same
+build; copy deleted afterwards): the scene's per-frame cull pass, the per-object, per-view
+step it calls for each object of the scene, and the fade step within it (row W-O3). **Why
+M1–M3 were not enough for (o):** a run-time rule with no trace in the data; no running client
+or frame capture was available; `mesh.md` §8.6–§8.7 state when the fade restarts but not
+which objects the step visits. Only offline scene and rendering code was read. A throwaway
+probe with the repository's `tessera-dattool show` over every day description counted the
+alpha of the keyframe sun colours (row W-E13).
 
 | Row | Fact | Used in | Source | Mark |
 |---|---|---|---|---|
@@ -2442,59 +2505,62 @@ every day description (row W-E12).
 | W-M1 | A cell draws the render mesh embedded in its 0x01 record, placed with the cell frame, adjustable scale not applied | §14.12 (g) | `landblock.md` §4.14, `collision.md` §5.7–§5.8 | Spec (BIN2, L35) |
 | W-E1 | Two environment records: outdoor from key A (character's housing hook, local-sky override, local sky; else `Environment_LocalSky` at the position; else 2), indoor from key B (character's indoor-ambiance override, indoor ambiance; else `Environment_IndoorAmbiance` at the position; else 1); position lookup cell, landblock info, block map; the indoor record used while outdoor-visible is clear; each blends on its own | §14.3 | `landblock.md` §4.13, `environment.md` §7.1.1, §11.6 | BIN; the key precedence and the defaults 2 and 1 re-checked 2026-10-07; the position lookup's internals, the choice of record by the flag and the separate blending as those specs report |
 | W-E2 | Interior overrides: upper and lower ambient (absent: opaque black) replace *X* and *Y* when any of the three ambient properties is present, the plain ambient added to both, every channel limited to at most 1; `InteriorFogType` present: fog on iff the fog switch is on and the value is 1, absent: the keyframe's; fog colour, near and far replace (absent: keyframe values); a colour counts only with type 16, near and far only with type 9, `InteriorFogType` only with type 8 or 10 (row W-E8); re-read when the position's region, landblock or instance changes, else at most every 2.5 s | §14.3 | `landblock.md` §4.13, `environment.md` §7.2 | BIN, re-checked 2026-10-07 (the absent near and far are kept as the keyframe's) |
-| W-E3 | `Environment_LocalSky` is stored in 193 landblock-info property sets and 299 cell property sets; `Environment_IndoorAmbiance` in 40 landblock-info sets and 777 cells | §14.3 (key A Decision) | own probe; agrees with `environment.md` §7.1–§7.2 | Confirmed 2026-10-07 |
+| W-E3 | `Environment_LocalSky` is stored in 193 landblock-info property sets and 299 cell property sets; `Environment_IndoorAmbiance` in 40 landblock-info sets and 777 cells | §14.3 (key A, key B) | own probe; agrees with `environment.md` §7.1–§7.2 | Confirmed 2026-10-07 |
 | W-E4 | `InteriorFogType` in landblock-info sets: 0 in 5, 1 in 499, 2 in 37; in cells: 1 in 386, 2 in 389 | §14.3 | own probe | Confirmed 2026-10-07 |
-| W-E5 | `InteriorFogFar` (775 cells, 540 landblock-info sets) lies in 0–7,000; `InteriorFogNear` at most 5,000 | §14.3 (fog-limit Decision) | own probe | Confirmed 2026-10-07 |
+| W-E5 | `InteriorFogFar` (775 cells, 540 landblock-info sets) lies in 0–7,000; `InteriorFogNear` at most 5,000 | §14.3 (fog limits) | own probe | Confirmed 2026-10-07 |
 | W-E6 | Fog limits: the keyframe's fog end is capped at 10,000 first; the interior override then replaces it without that cap; then end ≥ 20, start ≤ end − 20 and ≥ −10,000 | §14.3 | `landblock.md` §4.13, `lighting.md` §10 | BIN, re-checked 2026-10-07 |
 | W-E7 | The indoor record has no main light (sun and moon give no light indoors) | §14.3 | `landblock.md` §4.13 | BIN, re-checked 2026-10-07 |
-| W-E8 | Key A and key B count as present only when the stored value has property type 8 (enum value) or 10 (property ID); `InteriorFogType` is tested the same way (type 8 or 10); a value of another type is reported and treated as absent, so a wrongly typed `InteriorFogType` leaves the keyframe's fog on or off | §14.3 (stored-type departure) | `environment.md` §7.1.1, row E21 (keys); BIN (j) listing of the interior-override reader (`InteriorFogType`) | Spec (BIN-E, Accepted) for the keys; BIN, re-read 2026-10-07, for `InteriorFogType` |
-| W-E9 | Every stored value of `Environment_LocalSky` (299 cell and 193 landblock-info property sets), `Environment_IndoorAmbiance` (777 and 40) and `InteriorFogType` (775 and 541) is an enum value (type 8); a block map's palette value is encoded by its property's registered type (`landblock.md` §5.2), an enum for `Environment_LocalSky`. A property set carries no type tag per value: every value is decoded by the type of its property in the dictionary (`property-system.md` §5.2, §5.3 step 2), as `tessera-formats` does. So the probe confirms the dictionary's type of the three properties (enum), and the stored-type departure of §14.3 can show only with a dictionary that gives one of them another type (another build) | §14.3 (no effect of the stored-type departure) | own probe over all 49,636 landblock infos and their 104,271 cells; `landblock.md` §5.2; `property-system.md` §5.2–§5.3 | Confirmed 2026-10-07 |
+| W-E8 | Key A and key B count as present only when the stored value has property type 8 (enum value) or 10 (property ID); `InteriorFogType` is tested the same way (type 8 or 10); a value of another type is reported and treated as absent, so a wrongly typed `InteriorFogType` leaves the keyframe's fog on or off | §14.3 (stored types) | `environment.md` §7.1.1, row E21 (keys); BIN (j) listing of the interior-override reader (`InteriorFogType`) | Spec (BIN-E, Accepted) for the keys; BIN, re-read 2026-10-07, for `InteriorFogType` |
+| W-E9 | Every stored value of `Environment_LocalSky` (299 cell and 193 landblock-info property sets), `Environment_IndoorAmbiance` (777 and 40) and `InteriorFogType` (775 and 541) is an enum value (type 8); a block map's palette value is encoded by its property's registered type (`landblock.md` §5.2), an enum for `Environment_LocalSky`. A property set carries no type tag per value: every value is decoded by the type of its property in the dictionary (`property-system.md` §5.2, §5.3 step 2), as `tessera-formats` does. So the probe confirms the dictionary's type of the three properties (enum), and the stored-type departure of §14.3 can show only with a dictionary that gives one of them another type (another build) | §14.3 (stored types) | own probe over all 49,636 landblock infos and their 104,271 cells; `landblock.md` §5.2; `property-system.md` §5.2–§5.3 | Confirmed 2026-10-07 |
 | W-E10 | Sun present: true only on the outdoor record, while the blended keyframe `effect` is the null DID, the sun colour differs from opaque black (0, 0, 0, 1) by more than 0.0002 in some channel, and the sun brightness is at least 0.0002; always false on the indoor record; where false the renderer has no main light (no sun term, no sun shadow; one submission path adds the default directional light of `lighting.md` §8.5; the water's default fake light, `lighting.md` E18). 503 of the install's 7,590 keyframes carry a non-null `effect` | §14.3 (sun-presence departure) | `environment.md` §11.7 step 9, §11.3 step 7, rows E24, E28, §5.3 table (census); `lighting.md` §8.5, E18 | Spec (BIN-E, Accepted; census Confirmed there); the test re-checked 2026-10-07 (BIN (n)) |
 | W-E11 | Sun-change fade: each update the client takes the outdoor record's state while the landscape is visible and not forced indoor, else the indoor record's; when that state's sun-present flag differs from the one of the previous update and the update is not immediate, the shown state fades from the state shown at that moment (held fixed) to the state in use over 5 s of the raw timer, or, when a fade is already running, over the time since the previous change (at least 0.0002 s); weight ½ + ½ sin(π (*s* − ½)) and the blend of `environment.md` §11.6 step 4; an immediate update ends the fade. So a change between a sunlit outdoor state and the indoor state is faded; the choice of record itself is immediate | §14.3 (sun-presence departure, record change) | `environment.md` §11.6 (row E34); `landblock.md` §4.13 | Spec (BIN-E, Accepted); the record choice, the trigger on the state in use and the fade re-checked 2026-10-07 (BIN (n)) |
 | W-E12 | Sun-present inputs per keyframe over all 963 day descriptions (7,590 keyframes): `effect` not null in 503; sun brightness below 0.0002 in 558 (557 exactly 0, one 0.0001: a keyframe without `effect` whose sun colour and specular colour are not black, the one exception among the 154); sun colour opaque black in 6; at least one of the three in 657; 154 without an `effect`, of which 153 also have an opaque black specular colour. Blended values between keyframes are not counted | §14.3 (consequences of the sun-presence departure) | own probe with the repository's `tessera-dattool show` over every 0x1A record, re-run for the exact values below 0.0002; agrees with the `environment.md` §5.3 census (503, 558; its 558 count includes the one 0.0001) | Confirmed 2026-10-07 |
+| W-E13 | Sun colours of all 7,590 keyframes (963 day descriptions): 6 have R, G and B all 0, and all 6 have alpha 255; the alpha of the others varies (0 in 222, 255 in 5,390, other values in the rest) | §14.3 (sun-colour alpha departure) | own probe with the repository's `tessera-dattool show` over every 0x1A record | Confirmed 2026-10-08 |
 | W-L1 | Selection radius ρ = Range × (1 − 0.15 × min(Falloff, 1)), Range for `Light_GlobalLight` | §14.3 | `lighting.md` §8.5 step 1 | Spec (BIN) |
 | W-L2 | A light reaches an object when the squared distance from the light to the object's world box is below ρ² (strict); key lights are inserted at the front, others appended; for the light's parent the never-parent switch is tested, for every other object the only-parent switch, whether or not the light has a parent, so a light with `Light_OnlyInfluenceParent` and no parent reaches no object (one special light record's parent is looked up separately, not traced). No Light SED of landblock info sets `Light_OnlyInfluenceParent` true (136 store false) | §14.3 | `lighting.md` §8.5 steps 2–4, row L34; census own probe | BIN, re-checked 2026-10-07; census Confirmed 2026-10-07 |
 | W-L3 | Only objects drawn in the current frame are candidates, and objects carrying any of three scene flags are skipped | none (the walker hands the renderer only drawn objects) | `lighting.md` §8.5 step 2, row L34 | BIN, re-checked 2026-10-07 |
 | W-L4 | A light with `Light_BakedLandscapeLight` is skipped for every terrain and ceiling chunk (the landscape-chunk object kind), light map or not (L30) | §14.3 | `lighting.md` §8.3, §8.5 step 3 | BIN, re-checked 2026-10-07 |
 | W-L5 | The client's light-map bake draws each baked-landscape light that reaches a chunk with pass code 0x41 into an off-screen target of at most 1,024 × 1,024 and sums the results into the chunk's baked-lighting texture; it runs only after a re-bake flag that a special client mode raises (Inferred: not in normal play) | §14.3 | `lighting.md` §8.6, rows L35, L36 | BIN; the 0x41 draw and the target size re-checked 2026-10-07, the trigger as `lighting.md` reports |
-| W-L7 | The client builds a light list **for each object** drawn in the frame, against that object's own world box (key lights first, then the others in processing order); no list is shared between objects | §14.3 (instanced-batch departure) | `lighting.md` §8.5, row L32 | Spec (BIN) |
+| W-L7 | The client builds a light list **for each object** drawn in the frame, against that object's own world box (key lights first, then the others in processing order); no list is shared between objects | §14.3, §14.5 (per-instance light lists) | `lighting.md` §8.5, row L32 | Spec (BIN) |
 | W-L6 | Light SEDs of landblock info: 40,727 with the interior flag, 32,984 without; `Light_BakedLandscapeLight` true on 23,103 outdoor and 221 interior ones | §14.12 (i) | own probe | Confirmed 2026-10-07 |
 | W-T1 | Chunks without layers: the open flag and the one-layer rule | §14.4 | `terrain-texturing.md` §4.9, `landblock.md` §3.15 | Spec (BIN (r), census Confirmed) |
 | W-T2 | Grid vertex normals: average of the unit triangle normals, not renormalised; ceiling rule mirrored | §14.4 (Decision) | `terrain-texturing.md` §4.10, `landblock.md` §3.14 | Spec (BIN (s), BIN2 (g)) |
 | W-T3 | Ceiling chunks: ceiling heights and normals, `Landblock_CeilingLightMap`, layers as the terrain's | §14.4 | `terrain-texturing.md` §4.8 | Spec (BIN (d)) |
 | W-K1 | Character classes `PlayerAvatar`, `Creature`, `Creature2Deg` have `d0` 80 in this install; the render component's initial values `d0` … `d7` = 200, 60, 16, 80, 1000, 1000, −1, 1100 in record order (`mesh.md` row M35). The three classes (keys 0x10000014, 0x10000008, 0x10000004 of mapper 0x2300008D here) all have `d2` 26 | §14.3, §14.5 | §11.4, §11.4.2 of this file; `d2` from the record 0x32000000 (all 32 entries) | Spec (BIN; census Confirmed); `d2` Confirmed 2026-10-07 |
-| W-O1 | An object casts shadows only while its opacity (the fade opacity × the render component's two factors × the inherited opacity where `Render_InheritOpacity` × the tint alpha, which is 1) is **above 0.8** and its unsmoothed distance is **strictly below** min(*G*, `d2` × *M_d* × *M_s*); no distance limit while distance-based levels are off | §14.3, §14.5 (shadow departure) | `mesh.md` §8.7 `d2` row, §8.8, rows M27, M40, M46 | Spec (BIN, Accepted) |
+| W-O1 | An object casts shadows only while its opacity (the fade opacity × the render component's two factors × the inherited opacity where `Render_InheritOpacity` × the tint alpha, which is 1) is **above 0.8** and its unsmoothed distance is **strictly below** min(*G*, `d2` × *M_d* × *M_s*); no distance limit while distance-based levels are off | §14.3, §14.5 (shadow casting; characters' departure) | `mesh.md` §8.7 `d2` row, §8.8, rows M27, M40, M46 | Spec (BIN, Accepted) |
 | W-O2 | Characters are entities like any other: their shadow distance comes from their own class, min(*G*, `d2` × *M_d* × *M_s*); for the player's own character `d0` … `d5` (so `d2` too) are 3 × the entry; an entity whose property layers never hold `Render_LODClass` keeps `d2` 16 | §14.3, §14.5 (character-shadow departure) | `mesh.md` §8.5 steps 3–4, §8.7, rows M33, M45 | Spec (BIN, Accepted) |
+| W-O3 | The client's scene cull pass runs, each frame and for every object of the scene, before the frustum and occlusion culls, one per-object, per-view step that smooths the distance (`mesh.md` §8.6) and advances the draw-distance fade; the fade's opacity is (time since the fade began) / 1.5 s, so it does not depend on the step running in every frame; the fade restarts (appear or disappear at once) only in the first frame of the object's per-view state, when the camera moved more than 25 m, or on a render-state reset. One culling mode, not traced, can skip the step for objects that fail an earlier visibility query | §14.5 (fade departure; smoothed distance) | BIN (o); `mesh.md` §8.6–§8.7 (rows M24, M36) | BIN 2026-10-08 (the culling mode not traced) |
 | W-S1 | Frill groups, distances, reduction and fade-in; the first part's first draw entry | §14.7 | `scenery.md` §8.2–§8.5 | Spec (BIN) |
 | W-W1 | Water parameters, shading and the fake light; water reads no table light | §14.3, §14.6 | `water.md` §8–§9 | Spec (BIN) |
 | W-Y1 | Sky objects: rotation (first about +Z by −*B*, then about +Y by −*A*), tint as `Render_Color` and `Render_Opacity`, not drawn while fog is on and `fog_extra` > 0.99; at most 136 per day description | §14.8 | `environment.md` §5.4, §11.4, §11.7 step 10, §12 | Spec (BIN-E, Accepted) |
 
-**Departures, in one place** (each is labelled where it occurs):
+**Departures, in one place** (each is labelled where it occurs; state of the code on
+2026-10-08):
 
 | Where | The walker | The client | Resolution |
 |---|---|---|---|
 | §13.4 | keeps the current cell, then portal neighbours, then the first set in view order | lookup after every step, lowest number among all containing cells | Decision |
-| §14.3 key A | block map only; no key → no day description | landblock-info set before the block map; else 2 | OPEN for the implementer |
-| §14.3 sun presence | the outdoor record always has a main light (sun or moon) | no main light while the blended `effect` is not null, the sun colour is opaque black or *bd* < 0.0002 (W-E10) | OPEN for the walker and `tessera-world` implementers (§14.3); visible during the 503 weather keyframes |
+| §14.3 sun presence | no test on the blended `effect`; the sun-colour test reads R, G, B only | no main light while the blended `effect` is not null, or the sun colour (all four channels) is opaque black, or *bd* < 0.0002 (W-E10) | OPEN for the walker and `tessera-world` implementers (§14.3); the `effect` part is visible during the 503 weather keyframes; the alpha part has no effect at this install's keyframes (W-E13) |
 | §14.3 record change | outdoor ↔ indoor at once | 5 s sun-change fade whenever the sun-present flag of the state in use changes, so on every change between a sunlit outdoor state and the indoor state (W-E11) | OPEN for the walker and `tessera-world` implementers (§14.3) |
-| §14.3 fog | caps an overriding fog end at 10,000 | caps only the keyframe's end | OPEN for the implementer (`landblock.md` §4.15); no effect on this install (W-E5) |
-| §14.3 key A, key B, `InteriorFogType` types | any integer-like stored type counts | only type 8 or 10 (W-E8) | OPEN for the implementer; no effect on this install (W-E9) |
-| §14.3 light lists | no reach entries (range *R*, no key-first, no parent switch); own list for light-mapped chunks; baked lights on chunks without a light map | `lighting.md` §8.5 for every object | OPEN for the implementer |
-| §14.3 light lists of instanced batches | one selection per batch (landblock, part, level, shadow flag) against the box around all its instances; without reach entries the ties fall to table order, nearest the eye | one list per object against its own box (W-L7) | OPEN for the walker and render implementers (§14.3; `render.md` §4.3, R-D9) |
-| §14.3, §14.5 shadows while fading | objects and characters cast only at opacity 1 | cast while opacity > 0.8 (W-O1) | OPEN for the implementer (§14.5) |
-| §14.3, §14.5 shadow distance test | *d* ≤ the shadow distance | *d* strictly below (W-O1) | OPEN for the implementer (§14.5); differs only at equality |
-| §14.3, §14.5 character shadow distance | a fixed 16 m for every character, the player's own included; no *M_d* × *M_s*, no cap at *G*, no ×3 | min(*G*, `d2` × *M_d* × *M_s*) of the character's own class, `d2` × 3 for the player's own (W-O2; `d2` 26 in the three character classes, W-K1) | OPEN for the implementer (§14.5) |
+| §14.3 parent switches | `Light_OnlyInfluenceParent` and `Light_NeverInfluenceParent` not passed; no light has a parent | a parentless light with `Light_OnlyInfluenceParent` reaches no object (W-L2) | OPEN for the `tessera-world` and walker implementers (§14.3); no effect on this install (W-L2) |
+| §14.3, §14.5 character shadows | a fixed 16 m for every character, the player's own included (no *M_d* × *M_s*, no cap at *G*, no ×3); only at opacity 1 and *d* ≤ 16 m | min(*G*, `d2` × *M_d* × *M_s*) of the character's own class, `d2` × 3 for the player's own; while opacity > 0.8 and *d* strictly below (W-O1, W-O2; `d2` 26 in the three character classes, W-K1) | OPEN for the implementer (§14.5) |
 | §14.4 normals | unit central-difference normals | `terrain-texturing.md` §4.10 averages | OPEN for the implementer |
+| §14.4 far band | light-map term × `diffuse_scale` in the baked far layer | light-map term not × `diffuse_scale` (`terrain-texturing.md` §9.1); the far band itself is Tessera's (the original's bands OPEN) | OPEN for the walker and render implementers (§14.4) |
 | §14.5 distance box | box around the parts' bounding sphere | union of the level-0 vertex blocks' stored boxes | Decision |
-| §14.5 characters | `d0` 80 m as a constant for the draw distance | each character's class | OPEN for the implementer |
-| §14.12 (b) portal polygon | portal at the entry's position | portal named by the entry's `portal` field | OPEN (`landblock.md` §4.15); no effect on this install |
-| §14.12 (c) scene flags | simplified bit-0 handling | the full `landblock.md` §4.12 pass | OPEN (`landblock.md` §4.15); no effect on this install |
+| §14.5 fade restart | a fade restarts after any frame in which the object's fade was not updated (block out of view, draw cap, object not in the scene); characters after a frame out of view | the fade step runs for every object of the scene each frame; restart only in the state's first frame, after a camera jump > 25 m or a render-state reset (W-O3) | OPEN for the implementer (§14.5) |
+| §14.5 character draw distance | `d0` 80 m as a constant | each character's class | OPEN for the implementer (§14.5) |
+| §14.5 unlit blend pairs | other pairs drawn as source-alpha blend; additive without depth write | the record's own pair and depth write (`material.md` §11.3 rule, a Tessera Decision there; 21 records, 57 surface records) | OPEN for the walker and material implementers (§14.5) |
+| §14.5 unlit fog | every unlit surface fogged | fog only when the record's unlit program reads the fog inputs (`lighting.md` §7 code 0x00) | OPEN for the walker and material implementers (§14.5) |
 | §14.12 (e) characters | always drawn | culled by the portal query | OPEN for the implementer (`landblock.md` §4.15) |
-| §14.12 (g) cells without x, y, z | left out | at the landblock origin, identity orientation | OPEN for the implementer (`landblock.md` §4.15) |
+| §14.12 (g) cells without x, y, z | drawn at the landblock origin, but refused by the collision cell placement (camera lookup, mover, portal polygons) | at the landblock origin, identity orientation, everywhere (L42) | OPEN for the physics implementer (`landblock.md` §4.15) |
 | §14.12 (g) cell appearance | `Appearance_InstanceList` not applied | applied (`landblock.md` §4.14: private copy with the changes) | OPEN for the implementer (here and `landblock.md` §4.15) |
 | §14.12 (i) lights | interior lights only from inside, outdoor only from outside | not traced | Decision |
-| §14.8 sky and fog | sky objects drawn whatever the fog | hidden while fog is on and `fog_extra` > 0.99 | OPEN for the implementer |
-| §14.8 sky placement | the renderer's rotation (`render.md` §5.4) | `environment.md` §11.4 step 5 | OPEN for the render implementer (`render.md` §5.7) |
+
+Withdrawn on 2026-10-08 because the code now follows the client (rows kept in the change log
+only): key A lookup, stored types of the keys, black or dim sun, fog limits, light lists
+without reach entries, one light list per instanced batch, object shadows while fading and
+the ≤ test, portal polygon by entry position, simplified scene flags, sky objects whatever
+the fog, sky placement.
 
 ---
 
@@ -2512,9 +2578,12 @@ every day description (row W-E12).
 | 2026-10-06 | New §14: world fidelity in the walker (M4.5; clean-room implementer): the lit world pass with texture layers, ceilings and the far band, objects by LOD class with fades, detail levels, lit surfaces and instancing, water, frills, sky, the clock and its controls, the switches, the default-settings profile as adopted, new frame-log columns and options, the checklist rows as rendered (§14.10a; performance in `docs/perf/reference-machine.md`), and the terrain job ranking, upload-budget start and far-band mask deferral found by the M3 flights. |
 | 2026-10-06 | New §13: walk mode on collision (M4.5; clean-room implementer): the physics walker on its fixed 1/60 s step, the mover, collision-set residency (the feet's 3 × 3 landblocks; absent landblocks as a solid boundary), cell tracking through portals, water masked inside cells, scripted walks (`--walk-path`, `--walk-log`) and the 1,000-walk soak, with their first results. Supersedes §2's "controllers (30 Hz fixed step)" and §5's terrain-height walk mode when collision is built. |
 | 2026-10-06 | Review round of §14 (clean-room implementer): the change log moves to §15 (anchor `s12` kept); §14.2 walker keys yield to keymap bindings; §14.3 pause and rate keys, `--day` range, baked lights on ceilings without a light map; §14.4 chunks without layers drawn height-shaded, masks kept A8 until upload and capped at 1,024, a chunk waits only for its own images (a far cave block's ceiling never completed, so the walker never settled near one); §14.5 part priorities (visible/prefetch), the activation pass reruns on a cap, switch or setting change, characters by class distance with a fade; §14.7 frills: anchor-free sector groups, nearest-first builds, cells merged per frill values, distance rules per sector, the first part's first draw entry; §14.9 characters row; §14.10a F1 no longer passes (OPEN); §14.11 OPENs updated; §13.9 avatar OPEN answered. |
+| 2026-10-06 | Spec writer, applying the accepted decisions 0014 (owners list, "`walker.md` §5"; Consequences "Escape with a UI attached"; Cost) and 0015 (Decision 1.6; owner question 6): §5 gains the Escape rule with a game UI attached (`menu` becomes game code's `EscapeKey` handling, `game-panels.md` §16; the help label reads "menu"); §6 gains the overlay rule with a game UI attached (under the UI; `walker_minimap` off by default; `walker_hud` switchable and off in checklist runs). Tessera rules only; no format fact changed. |
 | 2026-10-07 | Clean-room implementer (M4.5 close-out, released under incident 0018): §14.4 pointer to `terrain-texturing.md` §4.9 (chunks without layers); §14.11: the interior-cell OPEN answered by `landblock.md` §4.11–§4.14 and a note on the walker's interior choices, the F1 OPEN answered, two notes on the M3-b late landblock and the streamer's lookahead. (Row added by the spec writer; the additions themselves carried no row.) |
 | 2026-10-07 | Spec writer (dirty room), answering the first review and the re-review of §13–§14 and incident 0018 (decision 0018, owner decision A): header review record shortened (details moved to the dirty-room review log); §13.2, §13.6, §13.7 references qualified with their spec; §13.3 cell-owner figures sourced (row W-C1, own probe) and the distance stated as the cell origin's; §13.4 rewritten as a Decision that departs from `collision.md` §12.3 step 8 and the §5.8.1 tie-break, with the view's set order defined; §13.8 marked a dated snapshot; §14.3 rewritten: two environment records (`landblock.md` §4.13), key A Decision and OPEN, key B and the interior overrides with the `InteriorFogType` condition, no sun indoors, fog-limit Decision, light table sides, the light lists as built against `lighting.md` §8.5 (OPEN), water without table lights, baked lights on the ground (Decision); §14.4: vertex-normal Decision and OPEN (`terrain-texturing.md` §4.10), ceilings, chunks without layers by §4.9 (replaces the height-shaded rule and the pointer OPEN), height-shaded fallback as a Decision; §14.5: distance-box Decision (`mesh.md` §8.6), character-distance Decision and OPEN, interior objects; §14.6 one-normal-layer Decision; §14.7 sector-box Decision; §14.8 136 objects cited (`environment.md` §5.4), sky from inside, the `fog_extra` departure and OPEN; §14.10 HUD and interior test; §14.10a marked a dated snapshot, rows T15/T16, F1, Y5, L5 annotated; §14.11: the interiors note moved to §14.12, cave-ceiling and L5 OPENs answered, the late-landblock notes merged into one performance note; new §14.12 (interiors, Decisions and departures) and §14.13 (client facts with provenance; BIN rows re-checked in an own copy of the Ghidra project, census rows from an own probe; table of departures). Status of §13–§14: Review. |
 | 2026-10-07 | Spec writer (dirty room), §11 (non-blocking notes of the §11 re-review, and `mesh.md` §19): §11.4 step 1 says the draw test uses the unsmoothed distance (`mesh.md` row M25; the implementer OPEN there answered); §11.4 step 4 and row W20 give `d6` −1 and `d7` 1,100 in record order (`mesh.md` row M35); new OPEN for the `tessera-world` initial values. §11 status: Accepted → Revised. |
 | 2026-10-07 | Spec writer (dirty room), second revision of §13–§14 answering the re-review of the same day (changes requested): §14.3 the stored-type rule of key A, key B and `InteriorFogType` labelled a departure with no effect on this install, with an OPEN (rows W-E8, W-E9; the "wrong type counts as absent" sentence now covers colours and floats only); §14.3 sun-shadow bullet: object and character shadows labelled as departing from `mesh.md` §8.7–§8.8; §14.3 light lists: instanced batches share one selection per batch, labelled as departing from `lighting.md` §8.5 (L32), with its effect on the night rows and the OPEN extended; §14.5: shadow casting while fading and the ≤ test split out of the fade-blend Decision as a departure, character shadow distance (fixed 16 m) labelled as a departure, the character OPEN widened to the shadow distance, the ×3 and the opacity rule; §14.11 fade-blend OPEN annotated; §14.12 (h): an interior entity is also unattached when its landblock's bundle has no collision set; §14.13: second-revision note under the BIN source, W-E2 states each override's accepted type, new rows W-E8, W-E9, W-L7, W-O1, W-O2, W-K1 gains `d2` 26 of the three character classes (Confirmed from 0x32000000), five new rows in the departures table. Row W20 (§11) cites `mesh.md` row M35 as a second source (no fact changed). Status of §13–§14: Review. |
 | 2026-10-07 | Spec writer (dirty room), third revision of §13–§14 answering the re-review of the second revision (changes requested: one blocking item, three non-blocking): §14.3 new bullet "Sun presence and the sun-change fade": the walker's main light in every outdoor frame labelled a departure from the sun-present test of `environment.md` §11.7 step 9 (blended `effect` null, sun not opaque black, *bd* ≥ 0.0002), with its consequences (503 weather keyframes visible; in 154 further keyframes with a black or dim sun only the shadow pass and the water's fake light differ), and the walker's immediate change of record labelled a departure from the 5 s sun-change fade of `environment.md` §11.6; the "Two environment records", "Frame lighting" and "Sun shadow" bullets point to it; two OPENs (walker and `tessera-world` implementers, including the `effect` choice of `tessera-world` against `environment.md` §11.3 step 7 and §11.6 step 4; writers of `landblock.md` §4.13 and `lighting.md` §8.1 on the word "immediate"); "Sun shadow" now says the renderer's form uses the variants the `lighting.md` §9 Decision lists. §14.5: the player's character distance written min(*G*, 3 × 80 × *M_d*). §2, §3, §4: notes on what §13.1, §14.1, §14.4, §14.5 and §14.12 supersede and what stays in force (the 1.5 px cull, texture cap, GPU budget). §14.13: BIN question (n) with its reason, new rows W-E10 (sun-present test), W-E11 (sun-change fade; record choice re-checked in the client) and W-E12 (keyframe census of the flag's inputs, own probe), W-E9 states that a value's type is its property's dictionary type, two new rows in the departures table. No section number or anchor changed. Status of §13–§14: Review. |
 | 2026-10-07 | Spec writer (dirty room), fourth, wording-only revision of §13–§14 after the acceptance, applying the non-blocking note of that review on row W-E12; no fact about the walker's behaviour changed: §14.3 "Black or dim sun" says a sun brightness below 0.0002 (exactly 0 in all but one keyframe, which holds 0.0001), and that in that one keyframe the walker's sun diffuse term is near black but not exactly; row W-E12 gives 557 keyframes at exactly 0 and one at 0.0001 (own probe re-run over all 963 day descriptions) and notes that the `environment.md` §5.3 count of 558 includes it. No section number or anchor changed. Status of §13–§14: Accepted → Revised. |
+| 2026-10-08 | Spec writer (dirty room), fifth revision of §13–§14 answering the re-review of the fourth revision (changes requested: B1 stale body, B2 fog contradiction with `render.md`, B3 choices only in OPENs; N1 sun-colour alpha), checked against the code of the remediation worktree: §13.3 the pinned landblocks in every view as a Decision (implementer status OPEN folded); §14.3 rewritten to the current code: key A by the position lookup with fallback 2, key B and the overrides by the same lookup (also with outdoor-visible clear and no camera cell), stored types as the client, the black/dim-sun test now made (remaining departures: no `effect` test, sun-colour alpha, no 5 s fade; new row W-E13, own probe), fog limits in the client's order with the renderer's lower limits only (consistent with `render.md` §4.2; the fog departure is withdrawn), object shadows as the client (opacity above 0.8, strictly below the shadow distance; opacity factors taken as 1, Decision), reach entries for every light and the automatic selection for every draw with per-instance lists (remaining departure: parent switches, no effect here), the clock keys, the no-sky case and the 430 m terrain casters labelled Decisions; §14.4: ceiling-shadow, rule-3, fallback (empty or missing table, unresolved layers: not in this install), far-band hysteresis, far-band bake and mask parking as Decisions, the far-band light-map term labelled a departure (implementer OPENs folded); §14.5: the fade restart labelled a departure from the client (new BIN question (o), row W-O3: the client advances fade and smoothed distance for every object of the scene each frame, the fade is time-based), the smoothed distance confirmed as the client's rule, object shadows as the client, character shadows still departing (OPEN narrowed), new departures for unlit blend pairs and unlit fog (OPEN); §14.7 the colour retry as a Decision; §14.8 the sky-fog rule and the client's sky rotation (departures withdrawn, OPENs removed); §14.10a rows L2/L7 annotated; §14.11 annotations updated; §14.12 (a) camera raise, (b) portal by `portal` field, PVS skip rules, (c) full scene-flag pass with the landblock-order Decision, (d) crossing count, (e) avatar placeholder, (g) cells without x, y, z drawn at the origin (collision side still departs), test notes (implementer OPENs folded); §14.13 BIN source (o), rows W-E13 and W-O3, "Used in" columns updated, departures table rewritten (eleven rows withdrawn, four added). No section number or anchor changed. Status of §13–§14: Revised (Accepted text changed). |
+| 2026-10-09 | Merge of main into remediation-2: main's 2026-10-06 M5 rules (§5, §6) and its implementer OPENs (§7 frame-log columns, §10 chat overlay, §13.6 first touch) kept beside the fifth revision; header status combined. No fact changed. |

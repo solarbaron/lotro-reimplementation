@@ -27,13 +27,12 @@ use tessera_client::walker::movement::run::{
     LOG_HEADER, WalkSession, run_walk, summary_line, write_log,
 };
 
-/// Walks failing for the causes listed in the OPEN of `m4-5-visual.md` §2.4 (first run,
-/// 2026-10-06; `walker.md` §13.8): blocked-walk end points after sliding round obstacles
-/// (WL2, GN2–GN4), no generated body (GN1), steep starts and ends (CV1, CV2) and the
-/// 0.05 m rule on a slope (FR1). ST2 and FR3 (controller faults) pass since the M4.5
-/// verification, SL1–SL3 (state 6 at steep bands) since 2026-10-07. Shorten it as the
-/// causes are settled.
-const KNOWN_OPEN: [&str; 8] = ["WL2", "GN1", "GN2", "GN3", "GN4", "CV1", "CV2", "FR1"];
+/// Walks failing for the causes listed in the OPENs of `m4-5-visual.md` §2.4. Empty since
+/// 2026-10-08: GN1 and GN2 have stop points derived under the first-touch rule of
+/// `collision.md` §11.7 (checklist §1, TOUCH), CV2 a path on walkable floor (§1, CAVE), and
+/// §2.2 measures `blocked` at the first touch and allows the capsule's rest offset on slopes.
+/// List a walk here again only with an OPEN in §2.4 that names its cause.
+const KNOWN_OPEN: [&str; 0] = [];
 
 fn install() -> Option<PathBuf> {
     match std::env::var_os("TESSERA_GAME_DIR") {

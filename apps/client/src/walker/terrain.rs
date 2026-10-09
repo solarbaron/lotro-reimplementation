@@ -75,7 +75,7 @@ use tessera_world::{
 
 use super::UploadBudget;
 use super::env::material_curve;
-use super::farband::{BAKE_SIZE, SmallChain, bake, mip_chain, reduce_mask};
+use super::farband::{BAKE_SIZE, LIGHT_GLOW, SmallChain, bake, mip_chain, reduce_mask};
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
 use super::interiors;
 use super::jobs::JobRunner;
@@ -203,6 +203,9 @@ pub struct BlockInputs {
     pub tables: HashMap<u8, Arc<TerrainTypeTable>>,
     /// The LOD-class table (`walker.md` §11.4).
     pub lod_classes: Option<Arc<LodClasses>>,
+    /// The looks of interior cells (`landblock.md` §4.14; `None`: cells keep their default
+    /// look).
+    pub looks: Option<Arc<super::looks::CellLooks>>,
 }
 
 impl std::fmt::Debug for BlockInputs {
@@ -249,6 +252,7 @@ impl BlockInputs {
             source: Some(Arc::clone(ctx.source())),
             tables,
             lod_classes,
+            looks: None,
         }
     }
 }
@@ -481,6 +485,9 @@ pub struct BlockProduct {
     pub images: Vec<(Did, BlockImage)>,
     /// The terrain chunk's masks reduced for the far-band bake ([`super::farband`]).
     pub bake_masks: HashMap<Did, AlphaMask>,
+    /// The terrain chunk's light map, decoded, for the far-band bake's light-map image
+    /// ([`super::farband::Baked::light`]).
+    pub bake_light_map: Option<Arc<RgbaImage>>,
 }
 
 /// The signature of a built terrain mesh: own level, effective edge levels, which edge
@@ -547,6 +554,7 @@ enum Job {
         layers: Arc<ChunkLayers>,
         diffuse: HashMap<Did, SmallChain>,
         masks: Arc<HashMap<Did, AlphaMask>>,
+        light_map: Option<Arc<RgbaImage>>,
     },
     /// The height-shaded mesh of a ceiling (`walker.md` §14.4 fallback, ceilings).
     ShadedCeiling {
@@ -590,7 +598,7 @@ enum Output {
     Bake {
         key: LandblockKey,
         generation: u64,
-        chain: Result<Vec<RgbaImage>, String>,
+        chain: Result<BakedChains, String>,
     },
     ShadedCeiling {
         key: LandblockKey,
@@ -615,16 +623,25 @@ enum ShadedCeiling {
     Failed,
 }
 
+/// The mip chains of a far-band bake ([`super::farband::Baked`]).
+struct BakedChains {
+    /// The albedo × `diffuse_scale` composite.
+    albedo: Vec<RgbaImage>,
+    /// The light-map term without `diffuse_scale`, when the bake made one.
+    light: Option<Vec<RgbaImage>>,
+}
+
 /// The far-band bake of a block.
 enum Bake {
     /// Not asked for yet.
     None,
     /// Baking on a worker.
     Pending,
-    /// Baked image waiting for upload budget.
-    Waiting(Vec<RgbaImage>),
-    /// On the GPU: texture and bytes.
-    Ready(TextureId, u64),
+    /// Baked images waiting for upload budget.
+    Waiting(BakedChains),
+    /// On the GPU: the albedo texture, the light-map-term texture (drawn as the far
+    /// layer's emissive term, [`LIGHT_GLOW`]) and their bytes.
+    Ready(TextureId, Option<TextureId>, u64),
     /// Failed (the block stays in the near band's form).
     Failed,
 }
@@ -704,6 +721,8 @@ struct Slot {
     shaded_ceiling: ShadedCeiling,
     /// Masks for the far-band bake, dropped once baked.
     bake_masks: Option<Arc<HashMap<Did, AlphaMask>>>,
+    /// The terrain light map for the far-band bake, dropped once baked.
+    bake_light_map: Option<Arc<RgbaImage>>,
     bake: Bake,
     /// The block is in the far band (with hysteresis).
     far: bool,
@@ -735,6 +754,7 @@ impl Slot {
             ceiling: None,
             shaded_ceiling: ShadedCeiling::None,
             bake_masks: None,
+            bake_light_map: None,
             bake: Bake::None,
             far: false,
             scrolling: Vec::new(),
@@ -781,8 +801,11 @@ impl Slot {
             renderer.destroy_texture(id);
         }
         self.parked.clear();
-        if let Bake::Ready(id, _) = std::mem::replace(&mut self.bake, Bake::None) {
+        if let Bake::Ready(id, light, _) = std::mem::replace(&mut self.bake, Bake::None) {
             renderer.destroy_texture(id);
+            if let Some(light) = light {
+                renderer.destroy_texture(light);
+            }
         }
         if let Some(objects) = objects {
             objects.release(&self.shared);
@@ -800,6 +823,21 @@ impl Slot {
         }
         self.ready = None;
         self.failed = None;
+    }
+
+    /// Frees the ceiling's height-shaded mesh, built or uploaded (a ceiling that
+    /// [`Self::ceiling_out_of_scene`] leaves out). A build still running is left to finish;
+    /// it is freed in the next frame.
+    fn drop_shaded_ceiling(&mut self, renderer: &mut Renderer<'_>) {
+        match std::mem::replace(&mut self.shaded_ceiling, ShadedCeiling::None) {
+            ShadedCeiling::Ready(id, _) => {
+                renderer.destroy_mesh(id);
+            }
+            ShadedCeiling::Waiting(_) | ShadedCeiling::None => {}
+            other @ (ShadedCeiling::Pending | ShadedCeiling::Failed) => {
+                self.shaded_ceiling = other;
+            }
+        }
     }
 
     /// Whether a full-layer terrain chunk is drawn, staged or waiting for its upload (it
@@ -867,6 +905,14 @@ impl Slot {
     /// (`terrain-texturing.md` §4.9: "not added to the client's scene at all").
     fn terrain_out_of_scene(&self, frame: &TerrainFrame) -> bool {
         frame.layered && frame.lit && self.terrain_hidden()
+    }
+
+    /// Whether the ceiling is left out of the scene in `frame`: §4.9 rule 3 hides it and
+    /// the view is the normal (layered, lit) one. Nothing is kept on the GPU for it, not
+    /// even a height-shaded mesh built in another view (`terrain-texturing.md` §4.9: "not
+    /// added to the client's scene at all").
+    fn ceiling_out_of_scene(&self, frame: &TerrainFrame) -> bool {
+        frame.layered && frame.lit && self.layers.as_ref().is_some_and(|l| l.ceiling_hidden)
     }
 
     /// The ceiling's layers when it is drawn with them: it has a layer to draw and is not
@@ -1212,11 +1258,19 @@ impl TerrainLayer {
                     && c.gpu.as_ref().is_none_or(|g| g.1)
                     && (c.gpu.is_some() || c.prep.is_none())
             });
-            let shaded_done = !s.wants_shaded_ceiling(&self.frame)
-                || matches!(
+            let shaded_done = if s.ceiling_out_of_scene(&self.frame) {
+                // A build from another view still has to land and be freed.
+                matches!(
                     s.shaded_ceiling,
-                    ShadedCeiling::Ready(..) | ShadedCeiling::Failed
-                );
+                    ShadedCeiling::None | ShadedCeiling::Failed
+                )
+            } else {
+                !s.wants_shaded_ceiling(&self.frame)
+                    || matches!(
+                        s.shaded_ceiling,
+                        ShadedCeiling::Ready(..) | ShadedCeiling::Failed
+                    )
+            };
             let terrain_done = if s.terrain_out_of_scene(&self.frame) {
                 s.mesh.is_none()
             } else {
@@ -1499,6 +1553,7 @@ impl TerrainLayer {
                 layers: Arc::clone(&layers.terrain),
                 diffuse,
                 masks: Arc::clone(masks),
+                light_map: slot.bake_light_map.clone(),
             };
             if self.runner.submit(job).is_err() {
                 break;
@@ -1511,43 +1566,81 @@ impl TerrainLayer {
             let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
             };
-            let Bake::Waiting(chain) = &slot.bake else {
+            let Bake::Waiting(chains) = &slot.bake else {
                 continue;
             };
-            let bytes: u64 = chain.iter().map(|l| l.pixels.len() as u64).sum();
+            let bytes: u64 = chains
+                .albedo
+                .iter()
+                .chain(chains.light.iter().flatten())
+                .map(|l| l.pixels.len() as u64)
+                .sum();
             if !budget.try_take(bytes) {
                 break;
             }
-            let levels: Vec<tessera_render::MipLevel<'_>> = chain
-                .iter()
-                .map(|l| tessera_render::MipLevel {
-                    width: l.width,
-                    height: l.height,
-                    rgba: &l.pixels,
+            let upload = |renderer: &mut Renderer<'_>, chain: &[RgbaImage], what: &str| {
+                let levels: Vec<tessera_render::MipLevel<'_>> = chain
+                    .iter()
+                    .map(|l| tessera_render::MipLevel {
+                        width: l.width,
+                        height: l.height,
+                        rgba: &l.pixels,
+                    })
+                    .collect();
+                let label = format!("terrain {what} {key}");
+                renderer.upload_texture_mips(&tessera_render::MipChainUpload {
+                    label: Some(&label),
+                    wrap: Wrap::Clamp,
+                    ..tessera_render::MipChainUpload::new(&levels)
                 })
-                .collect();
-            let label = format!("terrain bake {key}");
-            slot.bake = match renderer.upload_texture_mips(&tessera_render::MipChainUpload {
-                label: Some(&label),
-                wrap: Wrap::Clamp,
-                ..tessera_render::MipChainUpload::new(&levels)
-            }) {
-                Ok(id) => {
+            };
+            let albedo = upload(renderer, &chains.albedo, "bake");
+            let light = chains
+                .light
+                .as_deref()
+                .map(|c| upload(renderer, c, "bake light"));
+            slot.bake = match (albedo, light) {
+                (Ok(id), None) => {
                     slot.bake_masks = None;
-                    Bake::Ready(id, bytes)
+                    slot.bake_light_map = None;
+                    Bake::Ready(id, None, bytes)
                 }
-                Err(e) => {
+                (Ok(id), Some(Ok(light))) => {
+                    slot.bake_masks = None;
+                    slot.bake_light_map = None;
+                    Bake::Ready(id, Some(light), bytes)
+                }
+                (albedo, light) => {
+                    // Neither half alone draws the far layer right: free what arrived.
+                    for id in [
+                        albedo.as_ref().ok(),
+                        light.as_ref().and_then(|l| l.as_ref().ok()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        renderer.destroy_texture(*id);
+                    }
+                    let e = albedo
+                        .err()
+                        .or_else(|| light.and_then(Result::err))
+                        .map(|e| e.to_string())
+                        .unwrap_or_default();
                     tracing::debug!(%key, "terrain bake upload failed: {e}");
                     Bake::Failed
                 }
             };
         }
 
-        // What the frame leaves out: the meshes of terrain chunks hidden by §4.9 rule 3
-        // (built in another view), and the masks of blocks back in the far band.
+        // What the frame leaves out: the meshes of terrain chunks and ceilings hidden by
+        // §4.9 rule 3 (built in another view), and the masks of blocks back in the far
+        // band.
         for slot in self.slots.values_mut() {
             if slot.terrain_out_of_scene(frame) {
                 slot.drop_terrain(renderer);
+            }
+            if slot.ceiling_out_of_scene(frame) {
+                slot.drop_shaded_ceiling(renderer);
             }
             slot.park_masks(frame, renderer);
         }
@@ -1772,7 +1865,7 @@ impl TerrainLayer {
                     let Some(layers) = slot.layers.clone() else {
                         continue;
                     };
-                    let Bake::Ready(baked, _) = slot.bake else {
+                    let Bake::Ready(baked, baked_light, _) = slot.bake else {
                         // The bake went away: build the signature again.
                         continue;
                     };
@@ -1787,7 +1880,7 @@ impl TerrainLayer {
                         slot.ready = Some((sig, Built::Chunk(prep), min_h, max_h));
                         break;
                     }
-                    match upload_far_chunk(renderer, key, &prep, baked, light_map) {
+                    match upload_far_chunk(renderer, key, &prep, baked, baked_light, light_map) {
                         Ok(chunk) => {
                             slot.failed = None;
                             stage(
@@ -2003,6 +2096,7 @@ impl TerrainLayer {
                 slot.images = tagged.into_iter().map(|(_, i)| i).collect();
                 slot.bake_masks = (slot.has_terrain_layers() && !slot.terrain_hidden())
                     .then(|| Arc::new(std::mem::take(&mut product.bake_masks)));
+                slot.bake_light_map = slot.bake_masks.as_ref().and(product.bake_light_map.take());
                 self.tiles.insert(key, Arc::clone(&product.block));
                 self.finished.push((key, product));
             }
@@ -2060,7 +2154,7 @@ impl TerrainLayer {
                     return;
                 }
                 slot.bake = match chain {
-                    Ok(c) if !c.is_empty() => Bake::Waiting(c),
+                    Ok(c) if !c.albedo.is_empty() => Bake::Waiting(c),
                     Ok(_) => Bake::Failed,
                     Err(e) => {
                         tracing::warn!(%key, "terrain bake failed: {e}");
@@ -2132,7 +2226,7 @@ impl TerrainLayer {
             if let ShadedCeiling::Ready(_, b) = slot.shaded_ceiling {
                 s.gpu_bytes += b;
             }
-            if let Bake::Ready(_, b) = slot.bake {
+            if let Bake::Ready(_, _, b) = slot.bake {
                 s.gpu_bytes += b;
                 s.baked += 1;
             }
@@ -2519,12 +2613,17 @@ fn far_prep(
 }
 
 /// Uploads a far-band chunk: one opaque layer sampling the baked image at
-/// (x / 160, y / 160), with the block's light map (`walker.md` §14.4).
+/// (x / 160, y / 160) (`walker.md` §14.4). With a light-map-term image (`baked_light`,
+/// [`super::farband::Baked::light`]) the layer draws it as its emissive term with
+/// *G* = [`LIGHT_GLOW`] and binds no light map, so the light-map term is
+/// 2 × Σ *w* *C* × *B*ₗ without `diffuse_scale` (`terrain-texturing.md` §9.1); without
+/// one it binds the block's light map, which is then exact (every *M* white, or none).
 fn upload_far_chunk(
     renderer: &mut Renderer<'_>,
     key: LandblockKey,
     prep: &ChunkPrep,
     baked: TextureId,
+    baked_light: Option<TextureId>,
     light_map: Option<TextureId>,
 ) -> Result<TerrainChunk, tessera_render::RenderError> {
     let v = &prep.vertices;
@@ -2544,11 +2643,21 @@ fn upload_far_chunk(
         alpha_test_ref: 0.0,
         diffuse_color: [1.0; 3],
         specular: None,
-        glow_color: [0.0; 3],
+        glow_color: if baked_light.is_some() {
+            LIGHT_GLOW
+        } else {
+            [0.0; 3]
+        },
         textures: TerrainLayerTextures {
             diffuse: Some(baked),
+            emissive: baked_light,
             ..TerrainLayerTextures::default()
         },
+    };
+    let light_map = if baked_light.is_some() {
+        None
+    } else {
+        light_map
     };
     let label = format!("terrain far {key}");
     renderer.upload_terrain_chunk(&TerrainChunkData {
@@ -2657,17 +2766,22 @@ fn run_job(job: Job) -> Output {
             layers,
             diffuse,
             masks,
+            light_map,
         } => {
             let chain = guarded(|| {
-                let img = bake(
+                let baked = bake(
                     &layers,
                     &block,
                     fixed_block_offset(key.x(), key.y()),
                     &diffuse,
                     &masks,
+                    light_map.as_deref(),
                     BAKE_SIZE,
                 );
-                mip_chain(img)
+                BakedChains {
+                    albedo: mip_chain(baked.albedo),
+                    light: baked.light.map(mip_chain),
+                }
             });
             Output::Bake {
                 key,
@@ -2746,6 +2860,7 @@ pub fn terrain_mesh_data(mesh: TerrainMesh, key: LandblockKey) -> MeshData {
         positions: mesh.positions,
         normals: Some(mesh.normals),
         tangents: None,
+        binormals: None,
         uvs: Some(mesh.uvs),
         colors: Some(mesh.colors),
         indices: Indices::U16(mesh.indices),
@@ -2974,8 +3089,27 @@ pub fn build_block(
     let block = TerrainBlock::from_landblock(&bundle.data);
     let _ = block.lod_errors();
     let overview = overview_tile(&block, shading);
-    let (instances, objects) = block_objects(bundle, inputs.lod_classes.as_deref());
+    let (instances, objects) = block_objects(
+        bundle,
+        inputs.lod_classes.as_deref(),
+        inputs.looks.as_deref(),
+    );
     let (layers, images, bake_masks) = build_layers(bundle, inputs);
+    // The terrain chunk's light map for the far-band bake (its decoded copy in `images`).
+    let bake_light_map = layers
+        .as_ref()
+        .and_then(|l| {
+            l.terrain
+                .layers()
+                .iter()
+                .find_map(|x| x.textures().light_map)
+        })
+        .and_then(|did| {
+            images.iter().find_map(|(d, img)| match img {
+                BlockImage::Rgba(i) if *d == did => Some(Arc::new(i.clone())),
+                _ => None,
+            })
+        });
     BlockProduct {
         block: Arc::new(block),
         overview,
@@ -2984,6 +3118,7 @@ pub fn build_block(
         layers,
         images,
         bake_masks,
+        bake_light_map,
     }
 }
 
@@ -3000,6 +3135,7 @@ pub fn build_block(
 pub fn block_objects(
     bundle: &LandblockBundle,
     classes: Option<&LodClasses>,
+    looks: Option<&super::looks::CellLooks>,
 ) -> (Vec<Instance>, Vec<ObjectInfo>) {
     let mut instances = Vec::new();
     let mut objects = Vec::new();
@@ -3069,7 +3205,7 @@ pub fn block_objects(
             cell,
         });
     }
-    cell_objects(bundle, &mut instances, &mut objects);
+    cell_objects(bundle, looks, &mut instances, &mut objects);
     (instances, objects)
 }
 
@@ -3108,9 +3244,12 @@ fn entity_cell(bundle: &LandblockBundle, pos: Vec3) -> u16 {
 /// `landblock.md` §4.14), placed by the cell's position and rotation without its
 /// adjustable scale (§4.14 Tessera Decision). A cell whose position has no x, y, z offset
 /// (or no orientation) is placed at the landblock origin (with the identity), as §4.4 gives
-/// (L42); cells numbered 0 or 0xFFFF are left out (LI8).
+/// (L42); cells numbered 0 or 0xFFFF are left out (LI8). A cell whose
+/// `Appearance_InstanceList` changes its look is drawn through its look's part id
+/// (`landblock.md` §4.14 Tessera Decision; [`super::looks`]).
 fn cell_objects(
     bundle: &LandblockBundle,
+    looks: Option<&super::looks::CellLooks>,
     instances: &mut Vec<Instance>,
     objects: &mut Vec<ObjectInfo>,
 ) {
@@ -3142,8 +3281,11 @@ fn cell_objects(
         else {
             break;
         };
+        let part = looks.map_or(c.geometry.0, |l| {
+            l.part_for(c.geometry, c.properties.as_ref())
+        });
         instances.push(Instance {
-            part: c.geometry.0,
+            part,
             model: Mat4::from_rotation_translation(rot, pos),
             scale: 1.0,
             figure: None,
@@ -3672,6 +3814,7 @@ mod tests {
             source: None,
             tables: HashMap::new(),
             lod_classes: None,
+            looks: None,
         })
     }
 
@@ -3766,6 +3909,7 @@ mod tests {
             source: None,
             tables: HashMap::from([(region, Arc::clone(table))]),
             lod_classes: None,
+            looks: None,
         }
     }
 
@@ -3826,7 +3970,7 @@ mod tests {
     /// Review finding (terrain.rs ceiling jobs, `signature`): a ceiling and a terrain
     /// chunk hidden by §4.9 rule 3 get no chunk, no mesh and no draw in the normal view
     /// (`terrain-texturing.md` §4.9 rule 3); with layers off both are drawn height-shaded,
-    /// and switching layers on again frees the terrain mesh.
+    /// and switching layers on again frees both meshes.
     #[test]
     fn rule_three_chunks_are_left_out_of_the_scene() {
         use tessera_formats::landblock::SurfaceChunk;
@@ -3875,11 +4019,11 @@ mod tests {
         let slot = &layer.slots[&k];
         assert!(slot.mesh.is_none(), "freed again in the normal view");
         assert!(slot.ceiling.is_none());
-        assert_eq!(
-            renderer.mesh_stats().meshes,
-            1,
-            "only the shaded ceiling stays"
+        assert!(
+            matches!(slot.shaded_ceiling, ShadedCeiling::None),
+            "the shaded ceiling is freed too"
         );
+        assert_eq!(renderer.mesh_stats().meshes, 0, "nothing stays on the GPU");
         layer.clear(&mut renderer, &mut objects);
         layer.shutdown();
     }
@@ -3905,7 +4049,7 @@ mod tests {
         let bake_id = renderer.upload_texture(&texel).expect("bake");
         slot.own.insert(mask, (mask_id, 4));
         slot.parked.push((mask, img.clone()));
-        slot.bake = Bake::Ready(bake_id, 4);
+        slot.bake = Bake::Ready(bake_id, None, 4);
         let mesh = renderer
             .upload_mesh(&shaded_ceiling_mesh(
                 &TerrainBlock::flat(1_000),
@@ -3950,6 +4094,122 @@ mod tests {
         slot.far = false;
         assert!(!slot.images_done(&band), "and are uploaded when it nears");
         slot.release(&mut renderer, None);
+    }
+
+    /// `walker.md` §14.4, far band: a bake of a block with a light map and a non-white
+    /// `diffuse_scale` carries the light-map term as a second chain (drawn as the far
+    /// layer's emissive term without `diffuse_scale`, `terrain-texturing.md` §9.1); without
+    /// a light map it has none.
+    #[test]
+    fn far_bakes_carry_the_light_map_term() {
+        use tessera_formats::landblock::{GridSurface, SurfaceChunk, SurfaceLayer};
+        use tessera_formats::terrain_type::{Argb, TerrainType};
+        use tessera_terrain::resolve_chunk;
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                diffuse: Did(0x4000_0001),
+                diffuse_scale: Argb(0xFF80_8080),
+                u_scale: 0.1,
+                v_scale: 0.1,
+                ..TerrainType::default()
+            }],
+        )
+        .expect("table");
+        let chunk = SurfaceChunk {
+            layers: vec![SurfaceLayer {
+                material: 0,
+                whole: true,
+                ..SurfaceLayer::default()
+            }],
+            ..SurfaceChunk::default()
+        };
+        let layers = Arc::new(
+            resolve_chunk(
+                &chunk,
+                &VertexFlags::default(),
+                GridSurface::Terrain,
+                &table,
+                None,
+                &ResolveOptions::default(),
+            )
+            .expect("layers"),
+        );
+        let white = RgbaImage {
+            width: 1,
+            height: 1,
+            pixels: vec![255; 4],
+        };
+        let job = |light_map: Option<Arc<RgbaImage>>| Job::Bake {
+            key: key(5, 5),
+            generation: 1,
+            block: Arc::new(TerrainBlock::flat(1_000)),
+            layers: Arc::clone(&layers),
+            diffuse: HashMap::from([(Did(0x4000_0001), SmallChain::from(vec![white.clone()]))]),
+            masks: Arc::new(HashMap::new()),
+            light_map,
+        };
+        let Output::Bake {
+            chain: Ok(with), ..
+        } = run_job(job(Some(Arc::new(white.clone()))))
+        else {
+            panic!("bake failed");
+        };
+        let light = with.light.as_ref().expect("a light-map chain");
+        assert_eq!(light.len(), with.albedo.len(), "both with a full mip chain");
+        // White texture, white light map: the albedo carries M (128), the light term not.
+        assert_eq!(&with.albedo[0].pixels[..4], &[128, 128, 128, 255]);
+        assert_eq!(&light[0].pixels[..4], &[255, 255, 255, 255]);
+        let Output::Bake {
+            chain: Ok(without), ..
+        } = run_job(job(None))
+        else {
+            panic!("bake failed");
+        };
+        assert!(without.light.is_none());
+    }
+
+    /// A far chunk drawn with the light-map-term image uploads, and releasing the block
+    /// frees both baked textures.
+    #[test]
+    fn far_chunks_draw_the_light_map_term_as_emissive() {
+        let Some(mut renderer) = headless() else {
+            return;
+        };
+        let k = key(5, 5);
+        let block = TerrainBlock::flat(1_000);
+        let (table, whole, _) = layer_fixture();
+        let layers = tessera_terrain::resolve_chunk(
+            &whole,
+            &VertexFlags::default(),
+            tessera_formats::landblock::GridSurface::Terrain,
+            &table,
+            None,
+            &ResolveOptions::default(),
+        )
+        .expect("layers");
+        let normals = VertexNormals::compute(&block, &Neighbours::NONE);
+        let tri = triangulate(&block, Lod::FINEST, EdgeLods([Some(Lod::FINEST); 4]));
+        let prep = far_prep(&block, &normals, k, &layers, &tri);
+        let texel = TextureUpload::rgba8(1, 1, &[255, 255, 255, 255]);
+        let before = renderer.texture_count();
+        let albedo = renderer.upload_texture(&texel).expect("albedo");
+        let light = renderer.upload_texture(&texel).expect("light");
+        let lm = renderer.upload_texture(&texel).expect("light map");
+        upload_far_chunk(&mut renderer, k, &prep, albedo, Some(light), Some(lm))
+            .expect("far chunk with the light-map term");
+        upload_far_chunk(&mut renderer, k, &prep, albedo, None, Some(lm))
+            .expect("far chunk with the light map");
+        renderer.destroy_texture(lm);
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        slot.bake = Bake::Ready(albedo, Some(light), 8);
+        slot.release(&mut renderer, None);
+        assert_eq!(
+            renderer.texture_count(),
+            before,
+            "both baked textures freed"
+        );
     }
 
     fn prepared(k: LandblockKey) -> PreparedMesh {

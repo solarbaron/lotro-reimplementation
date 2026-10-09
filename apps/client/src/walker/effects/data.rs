@@ -285,6 +285,7 @@ pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
         BlendMode::AlphaBlend => AlphaMode::Blend,
         BlendMode::Additive if b.depth_write => AlphaMode::Fixed(FixedBlend {
             depth_write: true,
+            alpha_test: test.map(tessera_render::AlphaThreshold),
             ..FixedBlend::ADDITIVE
         }),
         BlendMode::Additive => AlphaMode::Additive,
@@ -300,6 +301,7 @@ pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
                     dst,
                     op,
                     depth_write: b.depth_write,
+                    alpha_test: test.map(tessera_render::AlphaThreshold),
                 }),
                 _ => AlphaMode::Blend,
             }

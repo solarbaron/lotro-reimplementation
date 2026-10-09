@@ -12,12 +12,13 @@ use tessera_formats::gameplay::common::build::{array, did, entry, set, structure
 use tessera_formats::gameplay::common::{ClassIndex, ClassTree, Pid};
 use tessera_formats::gameplay::items::{
     Binding, BindingFlags, COPY_LABELS, DERIVED_LABELS, DpsTable, DurationMap, ENTITY_STAMP_LABELS,
-    EffectListKind, ItemClassKind, ItemClasses, ItemKind, ItemPropertyCategory, ItemSchema,
-    ItemSetView, ItemView, ItemWeenieKinds, ModEntryKind, Progression, RelicView, SetMembership,
-    ValueTable, WeaponTimingTable, WeaponTimings, WearControl, armour_value, damage_range,
-    entity_labels, equipment_category_keys, item_references, item_value, legacy_effects,
-    mod_entry_is_well_formed, property_category, round_half_up, runic_list, set_directory,
-    truncate, weapon_damage, weapon_timing_table_dids,
+    EffectListKind, ImbuedLegacyView, ItemClassKind, ItemClasses, ItemKind, ItemPropertyCategory,
+    ItemSchema, ItemSetView, ItemView, ItemWeenieKinds, LegacyGroup, LegendaryTitleView,
+    ModEntryKind, Progression, RelicView, SetMembership, TransmutationRecipeView, ValueTable,
+    WeaponTimingTable, WeaponTimings, WearControl, armour_value, damage_range, entity_labels,
+    equipment_category_keys, examination_list, examination_properties, item_references, item_value,
+    legacy_effects, merge_list, mod_entry_is_well_formed, property_category, round_half_up,
+    runic_list, set_directory, truncate, weapon_damage, weapon_timing_table_dids,
 };
 use tessera_formats::{Did, EnumMapper, FormatError, PropertyEntry, PropertyValue, Record};
 
@@ -73,6 +74,20 @@ fn classification_example() {
     assert!(c.is_item_like(&tree, 50) && !c.is_item_like(&tree, 10));
     assert_eq!(ItemClasses::from_item_base(&tree, 25), Some(c));
     assert_eq!(ItemClasses::from_item_base(&tree, 10), None);
+
+    // Decision F51: a tie goes to the child that holds the `BankFillItem` record's class,
+    // else to the lowest index; references of class P itself count for no child.
+    let tie = || {
+        std::iter::repeat_n(40, 10)
+            .chain(std::iter::repeat_n(50, 10))
+            .chain(std::iter::repeat_n(20, 30))
+    };
+    let lowest = ItemClasses::discover(&tree, tie()).expect("tie resolved");
+    assert_eq!((lowest.item_parent, lowest.item_base), (20, 25));
+    let hinted = ItemClasses::discover_with_bank_fill(&tree, tie(), Some(50)).unwrap();
+    assert_eq!(hinted.item_base, 50);
+    let unrelated = ItemClasses::discover_with_bank_fill(&tree, tie(), Some(10)).unwrap();
+    assert_eq!(unrelated.item_base, 25);
 
     // Through a class index: unindexed DIDs are ignored.
     let mut index = ClassIndex::new();
@@ -724,7 +739,16 @@ fn item_view_groups_and_kinds() {
         ]),
         ItemKind::RecipeScroll
     );
-    assert_eq!(kind(vec![e(p.recipe, did(0x7000_0001))]), ItemKind::General);
+    // Rule 4 step 1 (Decision F51): either recipe-scroll label is enough.
+    assert_eq!(
+        kind(vec![e(p.recipe, did(0x7000_0001))]),
+        ItemKind::RecipeScroll
+    );
+    // Any one of the six weapon labels.
+    assert_eq!(
+        kind(vec![e(p.weapon_speed, PropertyValue::Enum(2))]),
+        ItemKind::Weapon
+    );
     assert_eq!(
         kind(vec![e(p.package_trophy_list, did(0))]),
         ItemKind::Package
@@ -737,8 +761,34 @@ fn item_view_groups_and_kinds() {
         ItemKind::TextItem
     );
     assert_eq!(
+        kind(vec![e(p.text_title, PropertyValue::Int(0))]),
+        ItemKind::TextItem
+    );
+    // Door labels without `WeenieType` `Door` give no kind (step 2 needs the label).
+    assert_eq!(
         kind(vec![e(p.players_can_close, PropertyValue::Bool(true))]),
-        ItemKind::Door
+        ItemKind::General
+    );
+    // Property-modifying tokens: any of the 11 labels, at any depth (§2.1 row 3924).
+    assert_eq!(
+        kind(vec![e(p.spm_sku, PropertyValue::Int(1))]),
+        ItemKind::PropertyToken
+    );
+    assert_eq!(
+        kind(vec![e(
+            p.mod_property_mod_properties,
+            array(vec![e(
+                p.spm_property_mod,
+                structure(vec![e(p.spm_target, PropertyValue::Int(3))])
+            )])
+        )]),
+        ItemKind::PropertyToken
+    );
+    // The recipe-list label is found only when searched at every depth (F54); a
+    // top-level copy is found too.
+    assert_eq!(
+        kind(vec![e(m.crafting_recipe_list, array(vec![]))]),
+        ItemKind::MultiRecipeScroll
     );
     assert_eq!(
         kind(vec![e(p.key_ring, PropertyValue::Bool(true))]),
@@ -781,6 +831,7 @@ fn weenie_type_labels_give_kinds() {
             (7, "Clothing"),
             (8, "Key"),
             (2, "Letter"),
+            (10, "Door"),
         ],
     );
     let kinds = ItemWeenieKinds::from_mapper_chain(&[own, base]);
@@ -788,7 +839,7 @@ fn weenie_type_labels_give_kinds() {
     assert_eq!(kinds.kind(2), Some(ItemKind::TextItem));
     assert_eq!(kinds.kind(1), None);
     assert_eq!(kinds.kind(3), Some(ItemKind::TravelPoint));
-    assert_eq!(kinds.len(), 8);
+    assert_eq!(kinds.len(), 9);
     assert!(ItemWeenieKinds::default().is_empty());
 
     let with = |key: u32, extra: Vec<PropertyEntry>| {
@@ -805,6 +856,24 @@ fn weenie_type_labels_give_kinds() {
     assert_eq!(kind(&with(7, vec![])), ItemKind::Wearable);
     assert_eq!(kind(&with(1, vec![])), ItemKind::General);
     assert_eq!(kind(&with(99, vec![])), ItemKind::General);
+    // Step 2: `Door` with a door label is a door, without one an interactive object (F45).
+    assert_eq!(kind(&with(10, vec![])), ItemKind::InteractiveObject);
+    assert_eq!(
+        kind(&with(10, vec![e(p.action_handler, did(0x7000_0005))])),
+        ItemKind::Door
+    );
+    assert_eq!(
+        kind(&with(
+            10,
+            vec![e(p.physics_no_pathmaps, PropertyValue::Bool(true))]
+        )),
+        ItemKind::Door
+    );
+    // A key without the key-ring label is placed by its `WeenieType` (step 3).
+    assert_eq!(
+        kind(&with(1, vec![e(p.key_ring, PropertyValue::Bool(true))])),
+        ItemKind::Key
+    );
     // A label without a kind falls through to the worn-look list.
     assert_eq!(
         kind(&with(1, vec![e(p.worn_appearance_list, array(vec![]))])),
@@ -820,7 +889,7 @@ fn weenie_type_labels_give_kinds() {
         ItemView::new(&with(4, vec![]), &s).signature_kind(),
         ItemKind::General
     );
-    assert_eq!(ItemKind::ALL.len(), 13);
+    assert_eq!(ItemKind::ALL.len(), 15);
 }
 
 // §5.2–§5.4, §5.10, §5.11 groups.
@@ -888,6 +957,26 @@ fn item_view_reads_requirements_slots_and_raw_groups() {
         ),
         e(r.min_glory_rank, PropertyValue::Int(6)),
         e(r.required_craft_tier, PropertyValue::Enum(2)),
+        // F47: race entries are bare enums; barring arrays hold bare DIDs.
+        e(
+            r.required_races,
+            array(vec![
+                entry(0x3000_0023, PropertyValue::Enum(23)),
+                entry(0x3000_0023, PropertyValue::Int(1)), // mistyped: skipped
+                entry(0x3000_0023, PropertyValue::Enum(81)),
+            ]),
+        ),
+        e(
+            r.barring_trait_array,
+            array(vec![
+                e(r.barring_trait, did(0x7000_1100)),
+                e(r.barring_trait, did(0)),
+            ]),
+        ),
+        e(
+            r.barring_skill_array,
+            array(vec![e(r.barring_skill, did(0x7000_1200))]),
+        ),
     ]);
     let v = ItemView::new(&item, &s);
     let slots = v.slots();
@@ -919,7 +1008,9 @@ fn item_view_reads_requirements_slots_and_raw_groups() {
     let req = v.requirements();
     assert_eq!(req.min_level, Some(30));
     assert_eq!(req.classes, vec![23, 162]);
-    assert!(req.races.is_empty());
+    assert_eq!(req.races, vec![23, 81]);
+    assert_eq!(req.barring_traits, vec![Did(0x7000_1100), Did(0)]);
+    assert_eq!(req.barring_skills, vec![Did(0x7000_1200)]);
     let f = req.faction.expect("faction");
     assert_eq!((f.faction, f.tier), (Some(Did(0x7000_0D00)), Some(4)));
     assert_eq!(req.required_traits.len(), 1);
@@ -931,6 +1022,41 @@ fn item_view_reads_requirements_slots_and_raw_groups() {
     assert_eq!(req.min_glory_rank, Some(6));
     assert_eq!(req.craft_tier, Some(2));
     assert_eq!(req.required_effect, None);
+    assert_eq!(req.required_traits[0].virtue_rank_max, None);
+
+    // §5.10, §14: absent struct fields take the dictionary default on request.
+    let bare = set(vec![
+        e(
+            r.required_trait_array,
+            array(vec![entry(
+                0x3000_0021,
+                structure(vec![e(r.required_trait, did(0x7000_0E00))]),
+            )]),
+        ),
+        e(
+            r.quest_requirements,
+            array(vec![entry(
+                0x3000_0022,
+                structure(vec![e(r.quest_id, did(0x7000_0F00))]),
+            )]),
+        ),
+    ]);
+    let defaults: HashMap<u32, PropertyValue> = [
+        (id(r.required_virtue_rank), PropertyValue::Int(-1)),
+        (id(r.quest_operator), PropertyValue::Enum(3)),
+        (id(r.quest_status), PropertyValue::Enum(0x3000_0000)),
+    ]
+    .into_iter()
+    .collect();
+    let bv = ItemView::new(&bare, &s);
+    let stored = bv.requirements();
+    assert_eq!(stored.required_traits[0].virtue_rank, None);
+    assert_eq!(stored.quests[0].operator, 0);
+    assert_eq!(stored.quests[0].status, None);
+    let filled = bv.requirements_or_default(&defaults);
+    assert_eq!(filled.required_traits[0].virtue_rank, Some(-1));
+    assert_eq!(filled.quests[0].operator, 3);
+    assert_eq!(filled.quests[0].status.map(|q| q.0), Some(0x3000_0000));
 }
 
 #[test]
@@ -965,23 +1091,24 @@ fn wear_timing_and_duration_tables() {
                 PropertyValue::Float(0.75),
             )]),
         ),
-        // Read by field type: first enum, first number.
+        // F48: every entry is read by its labelled key and value fields.
         e(
             t.wear_state_array,
-            array(vec![
-                entry(
-                    0x3000_000D,
-                    structure(vec![
-                        entry(0x3000_00F1, PropertyValue::Float(1.0)),
-                        entry(0x3000_00F2, PropertyValue::Enum(2)),
-                    ]),
-                ),
-                entry(
-                    0x3000_000D,
-                    structure(vec![entry(1, PropertyValue::Enum(2))]),
-                ),
-                entry(0x3000_000D, PropertyValue::Int(5)),
-            ]),
+            array(vec![keyed(
+                t.wear_state_key,
+                2,
+                t.wear_state_value,
+                PropertyValue::Float(1.0),
+            )]),
+        ),
+        e(
+            t.wear_skill_gate_array,
+            array(vec![keyed(
+                t.wear_skill_gate_enum,
+                1,
+                t.wear_skill_gate_value,
+                PropertyValue::Float(0.5),
+            )]),
         ),
     ]);
     let w = WearControl::from_set(&wear, t).unwrap();
@@ -989,8 +1116,19 @@ fn wear_timing_and_duration_tables() {
     assert_eq!(w.max_structure_points(6), None);
     assert_eq!(w.durability_value(3), Some(0.75));
     assert_eq!(w.wear_state_value, vec![(2, 1.0)]);
+    assert_eq!(w.skill_gate, vec![(1, 0.5)]);
     assert!(w.repair_cost_quality.is_empty());
     assert!(WearControl::from_set(&set(vec![]), t).is_err());
+    // An entry without its labelled fields is an error.
+    let mut bad = wear.clone();
+    bad.entries.push(e(
+        t.wear_repair_cost_array,
+        array(vec![entry(
+            0x3000_000D,
+            structure(vec![entry(0x3000_00F2, PropertyValue::Enum(2))]),
+        )]),
+    ));
+    assert!(WearControl::from_set(&bad, t).is_err());
 
     let timing = set(vec![
         e(t.timing_category, PropertyValue::Bitfield64(1 << 7)),
@@ -1022,24 +1160,66 @@ fn wear_timing_and_duration_tables() {
 
     let cooldowns = set(vec![e(
         t.cooldown_map,
-        array(vec![entry(
-            0x3000_000F,
-            structure(vec![
-                entry(0x3000_00F3, PropertyValue::Enum(9)),
-                entry(0x3000_00F4, PropertyValue::Float(30.0)),
-            ]),
-        )]),
+        array(vec![
+            keyed(
+                t.cooldown_type,
+                9,
+                t.cooldown_value,
+                PropertyValue::Float(30.0),
+            ),
+            // Without the labelled seconds field: skipped.
+            entry(
+                0x3000_000F,
+                structure(vec![e(t.cooldown_type, PropertyValue::Enum(8))]),
+            ),
+        ]),
     )]);
-    let map = DurationMap::from_set(&cooldowns, t.cooldown_map);
+    let map = DurationMap::cooldown(&cooldowns, t);
     assert_eq!(map.seconds(9), Some(30.0));
     assert_eq!(map.seconds(0), Some(0.0));
     assert_eq!(map.seconds(8), None);
     assert!(map.covers(0) && map.covers(9) && !map.covers(8));
-    assert!(
-        DurationMap::from_set(&set(vec![]), t.decay_map)
-            .rows
-            .is_empty()
-    );
+    assert!(DurationMap::decay(&set(vec![]), t).rows.is_empty());
+    let decay = set(vec![e(
+        t.decay_map,
+        array(vec![keyed(
+            t.decay_type,
+            4,
+            t.decay_value,
+            PropertyValue::Float(3600.0),
+        )]),
+    )]);
+    assert_eq!(DurationMap::decay(&decay, t).seconds(4), Some(3600.0));
+
+    // §6.4, F53: the examination list is the exam PIDs followed by the merge PIDs, and an
+    // examination carries the listed properties the object holds, in list order.
+    let control = set(vec![
+        e(
+            t.exam_property_array,
+            array(vec![
+                entry(1, PropertyValue::PropertyId(0x1000_0A01)),
+                entry(1, PropertyValue::PropertyId(0x1000_0A02)),
+            ]),
+        ),
+        e(
+            t.merge_property_array,
+            array(vec![entry(1, PropertyValue::PropertyId(0x1000_0A03))]),
+        ),
+    ]);
+    let list = examination_list(&control, t);
+    assert_eq!(list, vec![0x1000_0A01, 0x1000_0A02, 0x1000_0A03]);
+    assert_eq!(merge_list(&control, t), vec![0x1000_0A03]);
+    let object = set(vec![
+        entry(0x1000_0A03, PropertyValue::Int(7)),
+        entry(0x1000_0B00, PropertyValue::Int(1)),
+        entry(0x1000_0A01, PropertyValue::Int(5)),
+    ]);
+    let carried: Vec<u32> = examination_properties(&object, &list)
+        .iter()
+        .map(|e| e.pid)
+        .collect();
+    assert_eq!(carried, vec![0x1000_0A01, 0x1000_0A03]);
+    assert!(examination_properties(&set(vec![]), &list).is_empty());
 }
 
 #[test]
@@ -1073,7 +1253,7 @@ fn auxiliary_records() {
     )]);
     let effects = legacy_effects(&legacy, a);
     assert_eq!(effects[0].effect, Some(Did(0x7000_5000)));
-    assert_eq!(effects[0].weight, Some(3.0));
+    assert_eq!(effects[0].weight, Some(3));
 
     // A relic's modifiers use the `combat` reader: a −1 floor is open.
     let m = &s.modifiers;
@@ -1100,6 +1280,135 @@ fn auxiliary_records() {
     let mods = v.mods();
     assert_eq!(mods[0].range.floor, None);
     assert!(mods[0].applies_at(Some(1)) && !mods[0].applies_at(Some(51)));
+}
+
+// §7.2, §7.3 (F49): transmutation recipes and the legendary tables.
+#[test]
+fn legendary_tables_and_transmutation() {
+    let s = schema();
+    let l = &s.legacy;
+    let recipe = set(vec![
+        e(l.transmutation_cost, PropertyValue::Int(58_500)),
+        e(l.transmutation_category, PropertyValue::Enum(4)),
+        e(
+            l.transmutation_outputs,
+            array(vec![entry(
+                0x3000_0030,
+                structure(vec![
+                    e(l.transmutation_output_relic, did(0x7000_6000)),
+                    e(l.transmutation_output_weight, PropertyValue::Int(1)),
+                ]),
+            )]),
+        ),
+        e(l.transmutation_can_produce_items, PropertyValue::Bool(true)),
+        e(l.transmutation_icon_override, did(0x4100_0002)),
+    ]);
+    let r = TransmutationRecipeView::new(&recipe, &s);
+    assert_eq!(r.currency_cost(), Some(58_500));
+    assert_eq!(r.category(), Some(4));
+    assert_eq!(r.outputs().len(), 1);
+    assert_eq!(r.outputs()[0].output, Some(Did(0x7000_6000)));
+    assert_eq!(r.outputs()[0].weight, Some(1));
+    assert_eq!(r.can_produce_items(), Some(true));
+    assert_eq!(r.icon_override(), Some(Did(0x4100_0002)));
+    assert_eq!(r.title_override(), None);
+
+    let pair = |a: Pid, x: PropertyValue, b: Pid, y: PropertyValue| {
+        entry(0x3000_0031, structure(vec![e(a, x), e(b, y)]))
+    };
+    let group = set(vec![
+        e(
+            l.progression_list_array,
+            array(vec![pair(
+                l.progression_list,
+                did(0x7000_6100),
+                l.progression_list_weight,
+                PropertyValue::Int(50),
+            )]),
+        ),
+        e(
+            l.pull_count_list,
+            array(vec![
+                pair(
+                    l.pull_count_amount,
+                    PropertyValue::Int(1),
+                    l.pull_count_weight,
+                    PropertyValue::Int(100),
+                ),
+                pair(
+                    l.pull_count_amount,
+                    PropertyValue::Int(2),
+                    l.pull_count_weight,
+                    PropertyValue::Int(0),
+                ),
+            ]),
+        ),
+    ]);
+    let g = LegacyGroup::from_set(&group, l);
+    assert_eq!(g.lists[0].list, Some(Did(0x7000_6100)));
+    assert_eq!(g.lists[0].weight, Some(50));
+    assert_eq!(g.pull_counts.len(), 2);
+    assert_eq!(g.pull_counts[1].amount, Some(2));
+
+    let fx = &s.effects;
+    let title = set(vec![
+        e(l.title_category, PropertyValue::Enum(2)),
+        e(l.title_tier, PropertyValue::Enum(3)),
+        e(l.title_slayer_genus, PropertyValue::Bitfield32(0)),
+        e(l.title_damage_type, PropertyValue::Enum(8)),
+        e(
+            l.runic_effect_list,
+            array(vec![entry(
+                0x3000_0032,
+                structure(vec![e(fx.effect_id, did(0x7000_6200))]),
+            )]),
+        ),
+    ]);
+    let t = LegendaryTitleView::new(&title, &s);
+    assert_eq!(
+        (t.category(), t.tier(), t.damage_type()),
+        (Some(2), Some(3), Some(8))
+    );
+    assert_eq!(t.slayer_genus(), Some(0));
+    assert_eq!(t.effects().len(), 1);
+    assert!(t.mods().is_empty());
+    assert_eq!(t.name(), None);
+
+    let imbued = set(vec![
+        e(l.imbued_effect, did(0x7000_6300)),
+        e(l.widget_initial_max_level, PropertyValue::Int(46)),
+        e(l.widget_absolute_max_level, PropertyValue::Int(83)),
+        e(l.widget_category, PropertyValue::Enum(1)),
+        e(
+            l.classic_transform,
+            structure(vec![
+                e(
+                    l.tier_transform_array,
+                    array(vec![
+                        e(l.unlocked_levels, PropertyValue::Int(0)),
+                        e(l.unlocked_levels, PropertyValue::Int(5)),
+                    ]),
+                ),
+                e(
+                    l.legacy_type_name_array,
+                    array(vec![e(
+                        l.legacy_property_name,
+                        PropertyValue::PropertyId(0x1000_0C01),
+                    )]),
+                ),
+            ]),
+        ),
+    ]);
+    let i = ImbuedLegacyView::new(&imbued, &s);
+    assert_eq!(i.effect(), Some(Did(0x7000_6300)));
+    assert_eq!(
+        (i.initial_max_level(), i.absolute_max_level()),
+        (Some(46), Some(83))
+    );
+    assert_eq!(i.category(), Some(1));
+    assert_eq!(i.tier_transform(), vec![0, 5]);
+    assert_eq!(i.legacy_type_names(), vec![0x1000_0C01]);
+    assert_eq!(i.tooltip(), (None, None));
 }
 
 #[test]

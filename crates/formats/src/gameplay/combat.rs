@@ -13,10 +13,10 @@
 //! | [`CombatPids`] and its groups | §3.1 (labels resolved at run time) |
 //! | [`Progression`], [`ProgressionSource`], [`evaluate_progression`] | §4 |
 //! | [`ModEntry`], [`ModOp`], [`LevelRange`], [`mod_entries`], [`mod_arrays`], [`ranged_groups`], [`sandbox_combine`] | §5 |
-//! | [`Effect`], [`EffectDuration`], [`VitalAmount`], [`EffectReference`], [`EffectControl`] | §6 |
+//! | [`Effect`], [`EffectDuration`], [`VitalAmount`], [`VitalModifiers`], [`EffectReference`], [`EffectControl`] | §6 |
 //! | [`Skill`], [`AttackHook`], [`VitalCost`], [`DetectionVolume`], [`Induction`], [`Channelling`] | §7 |
 //! | [`Trait`], [`TraitTree`], [`TraitCell`], [`SparseDidProgression`], [`TraitControl`] | §4.6, §8 |
-//! | [`ClassTable`], [`AdvancementLine`], [`MonsterPlayTable`] | §9 |
+//! | [`ClassTable`], [`AvailableSkillEntry`], [`AdvancementLine`], [`MonsterPlayTable`] | §9 |
 //! | [`CombatControl`], [`DpsTable`], [`ValueTable`], [`ThresholdPolicy`], [`BattleStatistic`] | §10 |
 //! | [`CombatObject`], [`read_combat_object`] | all families |
 //!
@@ -656,6 +656,19 @@ crate::property_ids! {
         per_interval_random = "Effect_VitalOverTime_ChangePerIntervalRandom",
         per_interval_variable = "Effect_VitalOverTime_ChangePerIntervalVariable",
         per_interval_variance = "Effect_VitalOverTime_ChangePerIntervalVariance",
+        // Modifier lists and critical multipliers per stem, by full label (§6.4, C57).
+        instant_modifier_list = "Effect_InstantVital_InitialChange_ModifierList",
+        instant_additive_modifier_list = "Effect_InstantVital_Additive_InitialChange_ModifierList",
+        instant_critical_multiplier = "Effect_InstantVital_Critical_Multiplier",
+        instant_critical_multiplier_mod_list = "Effect_InstantVital_CriticalMultiplierModList",
+        initial_modifier_list = "Effect_VitalOverTime_InitialChange_ModifierList",
+        initial_additive_modifier_list = "Effect_VitalOverTime_AdditiveInitialChange_ModifierList",
+        initial_critical_multiplier = "Effect_VitalOverTime_InitialChange_Critical_Multiplier",
+        initial_critical_multiplier_mod_list = "Effect_VitalOverTime_InitialChange_Critical_Multiplier_ModList",
+        per_interval_modifier_list = "Effect_VitalOverTime_ChangePerInterval_ModifierList",
+        per_interval_additive_modifier_list = "Effect_VitalOverTime_AdditiveChangePerInterval_ModifierList",
+        per_interval_critical_multiplier = "Effect_VitalOverTime_ChangePerInterval_Critical_Multiplier",
+        per_interval_critical_multiplier_mod_list = "Effect_VitalOverTime_ChangePerInterval_Critical_Multiplier_ModList",
     }
 }
 
@@ -679,6 +692,15 @@ crate::property_ids! {
         startup_spellcraft = "Effect_StartupEffectSpellcraft",
         startup_damage_qualifier = "Effect_StartupEffectDamageQualifier",
         bare_effect = "Effect_WSLEffect",
+        // §6.5 applied-effect structs (`Effect_Aura_Applied_Effect_Data` and its two
+        // siblings): the struct name without `_Data` holds the effect DID, that name with
+        // `_Spellcraft` the spellcraft (C58, D6).
+        aura_applied_effect = "Effect_Aura_Applied_Effect",
+        aura_applied_spellcraft = "Effect_Aura_Applied_Effect_Spellcraft",
+        area_applied_effect = "Effect_Area_Applied_Effect",
+        area_applied_spellcraft = "Effect_Area_Applied_Effect_Spellcraft",
+        apply_over_time_effect = "Effect_ApplyOverTime_Applied_Effect",
+        apply_over_time_spellcraft = "Effect_ApplyOverTime_Applied_Effect_Spellcraft",
     }
 }
 
@@ -918,9 +940,28 @@ crate::property_ids! {
         line_entry_list = "AdvLine_EntryList",
         line_entry = "AdvLine_Entry",
         line_data_id = "AdvLine_DataID",
+        // §9.1 `AdvTable_AvailableSkillEntry` fields (C58).
+        skill_entry_skill = "AdvTable_Skill",
+        skill_entry_level = "AdvTable_Level",
+        skill_entry_prerequisite = "AdvTable_PrerequisiteSkill",
+        skill_entry_rank = "AdvTable_Rank",
+        skill_entry_training_cost = "AdvTable_TrainingCost",
+        skill_entry_shortcut_index = "AdvTable_AdvancedCharacterShortcutIndex",
         monster_level = "MonsterPlay_MonsterLevel",
         monster_skill_list = "MonsterPlay_SkillList",
         monster_trait_list = "MonsterPlay_TraitList",
+        // §9.2 monster-play entry structs (C58).
+        monster_virtue_list = "MonsterPlay_VirtueList",
+        monster_skill = "MonsterPlay_Skill",
+        monster_skill_cost = "MonsterPlay_SkillCost",
+        monster_skill_min_level = "MonsterPlay_SkillMinLevel",
+        monster_skill_min_rank = "MonsterPlay_SkillMinRank",
+        monster_trait = "MonsterPlay_Trait",
+        monster_trait_min_level = "MonsterPlay_TraitMinLevel",
+        monster_trait_min_rank = "MonsterPlay_TraitMinRank",
+        monster_trait_trainable = "MonsterPlay_TraitTrainable",
+        monster_virtue_start_rank = "MonsterPlay_VirtueStartRank",
+        monster_virtue_max_rank = "MonsterPlay_VirtueMaxRank",
     }
 }
 
@@ -1823,9 +1864,10 @@ pub enum ModEntryKind {
     Inline,
     /// The value comes from `Mod_Progression`.
     ProgressionDriven,
-    /// Both an inline value and a progression (M1 says never).
+    /// Both an inline value and a progression (M1 says never). **Decision D6:** evaluated
+    /// from the progression.
     Conflicting,
-    /// Neither (M1 says never).
+    /// Neither (M1 says never). **Decision D6:** produces no pair and is skipped (logged).
     Valueless,
 }
 
@@ -1893,8 +1935,20 @@ impl ModEntry {
             match (value.is_some(), progression.is_some()) {
                 (true, false) => ModEntryKind::Inline,
                 (false, true) => ModEntryKind::ProgressionDriven,
-                (true, true) => ModEntryKind::Conflicting,
-                (false, false) => ModEntryKind::Valueless,
+                (true, true) => {
+                    tracing::debug!(
+                        modified,
+                        "modifier entry with an inline value and a progression; the progression is used (D6)"
+                    );
+                    ModEntryKind::Conflicting
+                }
+                (false, false) => {
+                    tracing::debug!(
+                        modified,
+                        "modifier entry with neither a value nor a progression; skipped (D6)"
+                    );
+                    ModEntryKind::Valueless
+                }
             }
         };
         Self {
@@ -1914,10 +1968,14 @@ impl ModEntry {
         }
     }
 
-    /// Whether readers skip the entry (empty or field-less, §5.2).
+    /// Whether readers skip the entry: empty or field-less (§5.2), or with neither a value
+    /// nor a progression (Decision D6).
     #[must_use]
     pub fn is_skipped(&self) -> bool {
-        matches!(self.kind, ModEntryKind::Empty | ModEntryKind::FieldLess)
+        matches!(
+            self.kind,
+            ModEntryKind::Empty | ModEntryKind::FieldLess | ModEntryKind::Valueless
+        )
     }
 
     /// The operator, resolved by label through `mapper` with the key fallback.
@@ -1937,9 +1995,9 @@ impl ModEntry {
     }
 
     /// The entry's value (§5.6 steps 1 and 3): the inline value, else the progression
-    /// evaluated at `index` (and `inner` for a progression of progressions). `None` for
-    /// skipped entries and when the progression gives none. Level ranges and modifier lists
-    /// are not applied here.
+    /// evaluated at `index` (and `inner` for a progression of progressions); an entry with
+    /// both uses the progression (Decision D6). `None` for skipped entries and when the
+    /// progression gives none. Level ranges and modifier lists are not applied here.
     #[must_use]
     pub fn resolve_value<S: ProgressionSource + ?Sized>(
         &self,
@@ -1950,7 +2008,9 @@ impl ModEntry {
         if self.is_skipped() {
             return None;
         }
-        if let Some(v) = &self.value {
+        if self.kind != ModEntryKind::Conflicting
+            && let Some(v) = &self.value
+        {
             return Some(v.clone());
         }
         evaluate_progression(source, self.progression?, index, inner)
@@ -2205,6 +2265,10 @@ pub enum EffectRefKind {
     Toggle,
     /// A struct with `Effect_StartupEffectID`.
     Startup,
+    /// An applied-effect struct of §6.5: `Effect_Aura_Applied_Effect`,
+    /// `Effect_Area_Applied_Effect` or `Effect_ApplyOverTime_Applied_Effect` with its
+    /// `…_Spellcraft` field (C58, Decision D6).
+    Applied,
     /// A DID entry outside such a struct: `Effect_WSLEffect` or a bare `Skill_Effect` (and
     /// the other ID labels when they occur alone).
     Bare,
@@ -2232,7 +2296,8 @@ pub struct EffectReference {
 }
 
 impl EffectReference {
-    /// Whether this is a placeholder (effect DID 0).
+    /// Whether this is a placeholder: effect DID 0, which means "none" in every reference
+    /// property (§3.4, C56); readers skip it.
     #[must_use]
     pub fn is_placeholder(&self) -> bool {
         self.effect.is_null()
@@ -2272,23 +2337,49 @@ fn visit_effect_refs(
 ) {
     match &e.value {
         PropertyValue::Struct(s) => {
+            // ID field, kind and spellcraft field, tried in this order (Decision D6).
             let id_fields = [
-                (pids.generator_id, EffectRefKind::Generator),
-                (pids.skill_effect, EffectRefKind::SkillEffectData),
-                (pids.toggle_effect, EffectRefKind::Toggle),
-                (pids.startup_id, EffectRefKind::Startup),
+                (
+                    pids.generator_id,
+                    EffectRefKind::Generator,
+                    pids.generator_spellcraft,
+                ),
+                (
+                    pids.skill_effect,
+                    EffectRefKind::SkillEffectData,
+                    pids.skill_spellcraft,
+                ),
+                (
+                    pids.toggle_effect,
+                    EffectRefKind::Toggle,
+                    pids.toggle_spellcraft,
+                ),
+                (
+                    pids.startup_id,
+                    EffectRefKind::Startup,
+                    pids.startup_spellcraft,
+                ),
+                (
+                    pids.aura_applied_effect,
+                    EffectRefKind::Applied,
+                    pids.aura_applied_spellcraft,
+                ),
+                (
+                    pids.area_applied_effect,
+                    EffectRefKind::Applied,
+                    pids.area_applied_spellcraft,
+                ),
+                (
+                    pids.apply_over_time_effect,
+                    EffectRefKind::Applied,
+                    pids.apply_over_time_spellcraft,
+                ),
             ];
             let found = id_fields
                 .iter()
-                .find_map(|&(p, k)| s.did(p).map(|d| (p, k, d)));
-            if let Some((id_pid, kind, effect)) = found {
-                let spellcraft = match kind {
-                    EffectRefKind::Generator => s.float(pids.generator_spellcraft),
-                    EffectRefKind::SkillEffectData => s.float(pids.skill_spellcraft),
-                    EffectRefKind::Toggle => s.float(pids.toggle_spellcraft),
-                    EffectRefKind::Startup => s.float(pids.startup_spellcraft),
-                    EffectRefKind::Bare => None,
-                };
+                .find_map(|&(p, k, sp)| s.did(p).map(|d| (p, k, sp, d)));
+            if let Some((id_pid, kind, spellcraft_pid, effect)) = found {
+                let spellcraft = s.float(spellcraft_pid);
                 out.push(EffectReference {
                     kind,
                     top,
@@ -2320,6 +2411,9 @@ fn visit_effect_refs(
                 pids.generator_id,
                 pids.startup_id,
                 pids.toggle_effect,
+                pids.aura_applied_effect,
+                pids.area_applied_effect,
+                pids.apply_over_time_effect,
             ];
             if bare.iter().any(|p| p.is(e.pid)) {
                 out.push(EffectReference {
@@ -2468,6 +2562,43 @@ impl VitalAmount {
     }
 }
 
+/// The modifier lists and critical multiplier of one vital-amount stem (`combat-data.md`
+/// §6.4, C57), read by full label (the labels follow no single pattern). All lists hold
+/// `Effect_ModifierPropertyList_Entry` PIDs (zeros removed); the multiplier is f32 with
+/// dictionary default 1.0 (`None` here when not stored).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VitalModifiers {
+    /// The stem's modifier list.
+    pub modifier_list: Vec<u32>,
+    /// The stem's additive modifier list.
+    pub additive_modifier_list: Vec<u32>,
+    /// The stem's critical multiplier, as stored.
+    pub critical_multiplier: Option<f32>,
+    /// The modifier list of the critical multiplier.
+    pub critical_multiplier_mod_list: Vec<u32>,
+}
+
+impl VitalModifiers {
+    fn read<A: PropertyAccess + ?Sized>(set: &A, labels: [Pid; 4]) -> Self {
+        let [list, additive, critical, critical_list] = labels;
+        Self {
+            modifier_list: pid_list(set, list),
+            additive_modifier_list: pid_list(set, additive),
+            critical_multiplier: set.float(critical),
+            critical_multiplier_mod_list: pid_list(set, critical_list),
+        }
+    }
+
+    /// Whether nothing is stored.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.modifier_list.is_empty()
+            && self.additive_modifier_list.is_empty()
+            && self.critical_multiplier.is_none()
+            && self.critical_multiplier_mod_list.is_empty()
+    }
+}
+
 /// Aura data (`combat-data.md` §6.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(missing_docs)]
@@ -2568,6 +2699,12 @@ pub struct Effect {
     pub over_time_initial: Option<VitalAmount>,
     /// Per-interval amount of a vital change over time.
     pub over_time_per_interval: Option<VitalAmount>,
+    /// Modifier lists and critical multiplier of the instant-vital stem (§6.4, C57).
+    pub instant_vital_modifiers: VitalModifiers,
+    /// Modifier lists and critical multiplier of the over-time initial stem.
+    pub over_time_initial_modifiers: VitalModifiers,
+    /// Modifier lists and critical multiplier of the over-time per-interval stem.
+    pub over_time_per_interval_modifiers: VitalModifiers,
     /// `Effect_BaseVital_VitalType` or `Effect_VitalOverTime_VitalType`.
     pub vital_type: Option<u32>,
     /// `Effect_DamageType` key.
@@ -2673,6 +2810,33 @@ impl Effect {
                     v.per_interval_variance,
                 ],
                 e,
+            ),
+            instant_vital_modifiers: VitalModifiers::read(
+                set,
+                [
+                    v.instant_modifier_list,
+                    v.instant_additive_modifier_list,
+                    v.instant_critical_multiplier,
+                    v.instant_critical_multiplier_mod_list,
+                ],
+            ),
+            over_time_initial_modifiers: VitalModifiers::read(
+                set,
+                [
+                    v.initial_modifier_list,
+                    v.initial_additive_modifier_list,
+                    v.initial_critical_multiplier,
+                    v.initial_critical_multiplier_mod_list,
+                ],
+            ),
+            over_time_per_interval_modifiers: VitalModifiers::read(
+                set,
+                [
+                    v.per_interval_modifier_list,
+                    v.per_interval_additive_modifier_list,
+                    v.per_interval_critical_multiplier,
+                    v.per_interval_critical_multiplier_mod_list,
+                ],
             ),
             vital_type: set
                 .enum_key(e.base_vital_type)
@@ -3223,7 +3387,8 @@ pub struct Trait {
     pub required_character_level: Option<i64>,
     /// `Mod_Array` entries (§5).
     pub modifiers: Vec<ModEntry>,
-    /// Every DID inside `Trait_Skill_Array` (granted skills).
+    /// The `Trait_Skill` DID elements of `Trait_Skill_Array` (granted skills; an array of
+    /// bare DIDs, §8.1, C58), null DIDs skipped.
     pub skills: Vec<Did>,
     /// Every effect reference of the record (§6.3).
     pub references: Vec<EffectReference>,
@@ -3261,7 +3426,7 @@ impl Trait {
             point_cost_progression: set.did_nonnull(t.point_cost_progression),
             required_character_level: set.integer(t.required_character_level),
             modifiers: mod_entries(set, &pids.modifier),
-            skills: dids_inside(set, t.skill_array),
+            skills: set.dids(t.skill_array).collect(),
             references: effect_references(set, &pids.effect_ref),
         })
     }
@@ -3486,8 +3651,44 @@ pub struct ClassTable {
     pub available_skills: Vec<Did>,
     /// Every DID inside `AdvTable_AvailableMountSkillEntryList`.
     pub available_mount_skills: Vec<Did>,
+    /// The `AdvTable_AvailableSkillEntry` structs of `AdvTable_AvailableSkillEntryList`, typed
+    /// (§9.1, C58).
+    pub skill_entries: Vec<AvailableSkillEntry>,
+    /// The `AdvTable_AvailableSkillEntry` structs of `AdvTable_AvailableMountSkillEntryList`.
+    pub mount_skill_entries: Vec<AvailableSkillEntry>,
     /// `AdvTable_Trait_WC` of each `AdvTable_ClassCharacteristic_List` entry.
     pub characteristic_traits: Vec<Did>,
+}
+
+/// One `AdvTable_AvailableSkillEntry` (`combat-data.md` §9.1, C58). Every field is present
+/// in every entry of the observed install; an absent or mistyped field reads as `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AvailableSkillEntry {
+    /// `AdvTable_Skill` (null included).
+    pub skill: Option<Did>,
+    /// `AdvTable_Level`.
+    pub level: Option<i32>,
+    /// `AdvTable_PrerequisiteSkill` (null included).
+    pub prerequisite: Option<Did>,
+    /// `AdvTable_Rank`.
+    pub rank: Option<i32>,
+    /// `AdvTable_TrainingCost`.
+    pub training_cost: Option<i32>,
+    /// `AdvTable_AdvancedCharacterShortcutIndex`.
+    pub shortcut_index: Option<i32>,
+}
+
+impl AvailableSkillEntry {
+    fn from_struct(s: &PropertyStruct, c: &ClassTablePids) -> Self {
+        Self {
+            skill: s.did(c.skill_entry_skill),
+            level: s.int(c.skill_entry_level),
+            prerequisite: s.did(c.skill_entry_prerequisite),
+            rank: s.int(c.skill_entry_rank),
+            training_cost: s.int(c.skill_entry_training_cost),
+            shortcut_index: s.int(c.skill_entry_shortcut_index),
+        }
+    }
 }
 
 fn pairs<A: PropertyAccess + ?Sized>(
@@ -3544,6 +3745,14 @@ impl ClassTable {
             derived_stats,
             available_skills: dids_inside(set, c.available_skills),
             available_mount_skills: dids_inside(set, c.available_mount_skills),
+            skill_entries: set
+                .structs(c.available_skills)
+                .map(|s| AvailableSkillEntry::from_struct(s, c))
+                .collect(),
+            mount_skill_entries: set
+                .structs(c.available_mount_skills)
+                .map(|s| AvailableSkillEntry::from_struct(s, c))
+                .collect(),
             characteristic_traits: find_structs(set, c.characteristics, c.characteristic_trait)
                 .into_iter()
                 .filter_map(|s| s.did_nonnull(c.characteristic_trait))
@@ -3581,6 +3790,49 @@ pub struct MonsterPlayTable {
     pub skills: Vec<Did>,
     /// Every DID inside `MonsterPlay_TraitList`.
     pub traits: Vec<Did>,
+    /// The `MonsterPlay_SkillEntry` structs of `MonsterPlay_SkillList`, typed (C58).
+    pub skill_entries: Vec<MonsterPlaySkill>,
+    /// The `MonsterPlay_TraitEntry` structs of `MonsterPlay_TraitList`, typed (C58).
+    pub trait_entries: Vec<MonsterPlayTrait>,
+    /// The `MonsterPlay_VirtueEntry` structs of `MonsterPlay_VirtueList`, typed (C58).
+    pub virtue_entries: Vec<MonsterPlayVirtue>,
+}
+
+/// One `MonsterPlay_SkillEntry` (`combat-data.md` §9.2, C58).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MonsterPlaySkill {
+    /// `MonsterPlay_Skill` (null included).
+    pub skill: Option<Did>,
+    /// `MonsterPlay_SkillCost`.
+    pub cost: Option<i32>,
+    /// `MonsterPlay_SkillMinLevel`.
+    pub min_level: Option<i32>,
+    /// `MonsterPlay_SkillMinRank`.
+    pub min_rank: Option<i32>,
+}
+
+/// One `MonsterPlay_TraitEntry` (`combat-data.md` §9.2, C58).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MonsterPlayTrait {
+    /// `MonsterPlay_Trait` (null included).
+    pub trait_did: Option<Did>,
+    /// `MonsterPlay_TraitMinLevel`.
+    pub min_level: Option<i32>,
+    /// `MonsterPlay_TraitMinRank`.
+    pub min_rank: Option<i32>,
+    /// `MonsterPlay_TraitTrainable`.
+    pub trainable: Option<bool>,
+}
+
+/// One `MonsterPlay_VirtueEntry` (`combat-data.md` §9.2, C58).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MonsterPlayVirtue {
+    /// `MonsterPlay_Trait` (null included).
+    pub trait_did: Option<Did>,
+    /// `MonsterPlay_VirtueStartRank`.
+    pub start_rank: Option<i32>,
+    /// `MonsterPlay_VirtueMaxRank`.
+    pub max_rank: Option<i32>,
 }
 
 impl MonsterPlayTable {
@@ -3591,6 +3843,32 @@ impl MonsterPlayTable {
             level: set.integer(c.monster_level),
             skills: dids_inside(set, c.monster_skill_list),
             traits: dids_inside(set, c.monster_trait_list),
+            skill_entries: set
+                .structs(c.monster_skill_list)
+                .map(|s| MonsterPlaySkill {
+                    skill: s.did(c.monster_skill),
+                    cost: s.int(c.monster_skill_cost),
+                    min_level: s.int(c.monster_skill_min_level),
+                    min_rank: s.int(c.monster_skill_min_rank),
+                })
+                .collect(),
+            trait_entries: set
+                .structs(c.monster_trait_list)
+                .map(|s| MonsterPlayTrait {
+                    trait_did: s.did(c.monster_trait),
+                    min_level: s.int(c.monster_trait_min_level),
+                    min_rank: s.int(c.monster_trait_min_rank),
+                    trainable: s.boolean(c.monster_trait_trainable),
+                })
+                .collect(),
+            virtue_entries: set
+                .structs(c.monster_virtue_list)
+                .map(|s| MonsterPlayVirtue {
+                    trait_did: s.did(c.monster_trait),
+                    start_rank: s.int(c.monster_virtue_start_rank),
+                    max_rank: s.int(c.monster_virtue_max_rank),
+                })
+                .collect(),
         }
     }
 }

@@ -48,15 +48,19 @@ fn sky_shade(in: SkyOut) -> SkyShaded {
     }
     var out: SkyShaded;
     out.color = base.rgb * m.rgb;
-    out.alpha = clamp(surface_opacity(base) * m.a, 0.0, 1.0);
     out.opacity = surface_opacity_texel(base);
+    // A fixed blend reads the opacity source, not x M.alpha (material.md §11.3); the
+    // keyframe opacity (tint alpha, Render_Opacity) still scales it.
+    let a = select(surface_opacity(base) * m.a, out.opacity * sky.tint.a,
+        surface_flag(SF_FACTOR_OPACITY));
+    out.alpha = clamp(a, 0.0, 1.0);
     return out;
 }
 
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let s = sky_shade(in);
-    return vec4<f32>(frame_output(s.color), s.alpha);
+    return frame_blend_output(frame_output(s.color), s.alpha);
 }
 
 @fragment
@@ -65,5 +69,5 @@ fn fs_sky_mask(in: SkyOut) -> @location(0) vec4<f32> {
     if (surface_alpha_test(s.opacity)) {
         discard;
     }
-    return vec4<f32>(frame_output(s.color), s.alpha);
+    return frame_blend_output(frame_output(s.color), s.alpha);
 }

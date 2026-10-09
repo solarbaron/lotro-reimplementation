@@ -1126,6 +1126,11 @@ fn economy_family_census_and_invariants() {
                     "runic level runic lists",
                     t.entries.iter().filter(|e| e.runic_list.is_some()).count(),
                 );
+                // E2: every entry stores its level (E-I5 checks the value).
+                add(
+                    "runic level stored levels",
+                    t.entries.iter().filter(|e| e.level_stored).count(),
+                );
             }
             EconomyRecord::RunicList(t) => add("runic list entries", t.entries.len()),
             EconomyRecord::RunicTreasureGroup(t) => {
@@ -1183,6 +1188,7 @@ fn economy_family_census_and_invariants() {
         ("world-event directory conditions", 12),
         ("runic level entries", 1_200),
         ("runic level runic lists", 1_050),
+        ("runic level stored levels", 1_200),
         ("runic list entries", 842),
         ("runic group relics", 450),
         ("runic group pull counts", 136),

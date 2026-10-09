@@ -49,6 +49,9 @@ const LIT_SRGB_GLOSS: u32 = 4096u;
 const LIT_SRGB_EMISSIVE: u32 = 8192u;
 const LIT_SRGB_GLOW: u32 = 16384u;
 const LIT_SRGB_OPACITY: u32 = 32768u;
+// A fixed-function blend (AlphaMode::Fixed): the output alpha a blend factor reads is the
+// opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
+const LIT_FACTOR_OPACITY: u32 = 65536u;
 
 const SOURCE_ONE: u32 = 0u;
 const SOURCE_BASE: u32 = 1u;
@@ -83,6 +86,8 @@ struct VsIn {
     @location(2) tangent: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) color: vec4<f32>,
+    // The stored binormal (+V), zero when the mesh has none (GpuVertex::binormal).
+    @location(13) binormal: vec4<f32>,
 };
 
 struct SkinIn {

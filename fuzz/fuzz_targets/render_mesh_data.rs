@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `tessera-render` mesh input (`docs/specs/render.md` §2.1): `MeshData::prepare` /
 //! `validate` on arbitrary streams (lengths that disagree, out-of-range indices, bad,
+//! binormals with or without tangents,
 //! overlapping or duplicated submesh ranges, NaN/infinite attributes), with and without
 //! wireframe edges, plus `compute_normals`, `compute_tangents`, `flip_winding` and the
 //! procedural shape builders. Nothing may panic; an accepted mesh has a consistent,
 //! finite summary whose size is linear in the input.
 //!
-//! Input layout: a 6-byte header (vertex count, index count, submesh count, flags), then
-//! the bytes every stream reads its values from (cycled when short).
+//! Input layout: a 6-byte header (vertex count, index count, submesh count, flags, length
+//! flags; bit 4 of the length flags adds a binormal stream, bit 5 lengthens it), then the
+//! bytes every stream reads its values from (cycled when short).
 
 #![no_main]
 
@@ -74,6 +76,11 @@ fuzz_target!(|data: &[u8]| {
                 .map(|_| [b.coord(), b.coord(), b.coord(), b.coord()])
                 .collect()
         }),
+        binormals: (head[5] & 16 != 0).then(|| {
+            (0..opt_len(32))
+                .map(|_| [b.coord(), b.coord(), b.coord()])
+                .collect()
+        }),
         uvs: (flags & 4 != 0).then(|| (0..opt_len(4)).map(|_| [b.coord(), b.coord()]).collect()),
         colors: (flags & 8 != 0).then(|| {
             (0..opt_len(8))
@@ -132,7 +139,7 @@ fuzz_target!(|data: &[u8]| {
         }
         assert_eq!(
             prepared.gpu_bytes(),
-            u64::from(info.vertex_count) * 40
+            u64::from(info.vertex_count) * 48
                 + u64::from(info.index_count + info.edge_index_count) * 4
         );
         assert!(!info.submeshes.is_empty());
@@ -149,6 +156,9 @@ fuzz_target!(|data: &[u8]| {
             assert!(s.sphere.radius >= 0.0);
         }
         assert_eq!(info.has_tangents, m.tangents.is_some());
+        assert_eq!(info.has_binormals, m.binormals.is_some());
+        // Binormals are accepted only together with tangents.
+        assert!(!info.has_binormals || info.has_tangents);
     }
 
     let mut n = m.clone();
@@ -156,6 +166,7 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(n.normals.as_ref().map(Vec::len), Some(n.positions.len()));
     if n.compute_tangents() {
         assert_eq!(n.tangents.as_ref().map(Vec::len), Some(n.positions.len()));
+        assert!(n.binormals.is_none());
         assert!(
             n.tangents
                 .iter()

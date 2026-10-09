@@ -25,11 +25,12 @@ use std::sync::Mutex;
 
 use tessera_dat::{ArchiveKind, Entry};
 use tessera_formats::gameplay::common::{
-    ObjectRoot, Pid, PropertyAccess, UNIQUEDB_LABEL, ValueExt,
+    ObjectRoot, Pid, PropertyAccess, UNIQUEDB_LABEL, ValueExt, enum_mapper_of,
 };
 use tessera_formats::gameplay::map::{
-    DUNGEON_QUEST_NOTES_LABEL, House, HouseList, HousingHook, MAP_NOTES_LABEL, MapKind,
-    MapNotesTable, MapPids, NEIGHBORHOOD_DIRECTORY_LABEL, Neighbourhood, NeighbourhoodGate,
+    DUNGEON_QUEST_NOTES_LABEL, HOUSING_CONTROL_LABEL, House, HouseList, HousingControl,
+    HousingControlPids, HousingHook, LandmarkProperties, MAP_NOTES_LABEL, MapKind, MapNotesTable,
+    MapPids, MapWeenieKeys, NEIGHBORHOOD_DIRECTORY_LABEL, Neighbourhood, NeighbourhoodGate,
     NeighbourhoodTemplate, NoteFiling, PLACES_TABLE_LABEL, PlaceIssue, PlacesTable, PositionValues,
     QuestNoteInfo, QuestNotesTable, RIPCORDS_LABEL, RouteAction, StableMaster,
     TRAVEL_WEB_DIRECTORY_LABEL, TravelDestination, TravelHop, TravelMode, TravelPad, TravelRoute,
@@ -112,6 +113,8 @@ struct Env {
     store: ObjectStore,
     dict: PropertyDictionary,
     pids: MapPids,
+    /// The `WeenieType` key labelled `Landmark` (§2.3).
+    weenie: MapWeenieKeys,
 }
 
 impl Env {
@@ -130,7 +133,25 @@ impl Env {
             "undefined labels: {:?}",
             pids.missing()
         );
-        Some(Self { store, dict, pids })
+        // §2.3: the `WeenieType` labels, from the mapper the dictionary names.
+        let mut chain = Vec::new();
+        let mut at = enum_mapper_of(&dict, pids.weenie_type).expect("WeenieType has a mapper");
+        let mut seen = BTreeSet::new();
+        while !at.is_null() && seen.insert(at) && chain.len() < 32 {
+            let Some(m) = store.game_data().enum_mapper(at).expect("enum mapper") else {
+                break;
+            };
+            at = m.base;
+            chain.push(m);
+        }
+        let weenie = MapWeenieKeys::from_mapper_chain(&chain);
+        assert!(weenie.landmark.is_some(), "WeenieType label Landmark");
+        Some(Self {
+            store,
+            dict,
+            pids,
+            weenie,
+        })
     }
 
     fn read(&self, did: Did) -> Option<Vec<u8>> {
@@ -178,7 +199,7 @@ impl Env {
     fn zone_kind(&self, cache: &mut HashMap<Did, Option<MapKind>>, did: Did) -> Option<MapKind> {
         *cache.entry(did).or_insert_with(|| {
             self.object_set(did)
-                .and_then(|s| classify_set(&s, &self.pids))
+                .and_then(|s| classify_set(&s, &self.pids, &self.weenie))
                 .filter(|k| matches!(k, MapKind::Area | MapKind::Dungeon))
         })
     }
@@ -1086,7 +1107,7 @@ fn scan_objects(env: &Env, places: &PlacesTable, dids: &[Did]) -> Scan {
             scan.note_type_only.push(object);
         }
         collect_edges(&rec.set, object, &edge_pids, &mut scan.edges);
-        if let Some(kind) = classify_set(&rec.set, p) {
+        if let Some(kind) = classify_set(&rec.set, p, &env.weenie) {
             scan.kinds.insert(object, kind);
             if !matches!(kind, MapKind::Landmark | MapKind::Area | MapKind::Dungeon) {
                 scan.sets.insert(object, rec.set);
@@ -1142,11 +1163,46 @@ fn check_kinds(env: &Env, scan: &Scan, places: &PlacesTable, heads: &SegmentHead
         );
     }
     c.eq("UI_Map_GameMap sets (§7)", 1_300, scan.game_maps);
-    c.eq("stand-alone sets (§7)", 1_616, scan.standalone);
+    // MD46: 1,616 in the game-logic archive and 2 in the English one, all archives read.
+    c.eq(
+        "stand-alone sets in all archives (§7)",
+        1_618,
+        scan.standalone,
+    );
     c.eq(
         "sets with Landmark_Music, of them without MapNote_Type",
-        (2_733, 0),
+        (2_731, 0),
         (scan.landmark_music, scan.music_without_type),
+    );
+    // §6.2 (MD49): the three landmark-only properties are stored together or not at all.
+    let landmark_props: Vec<LandmarkProperties> = scan
+        .kinds
+        .iter()
+        .filter(|&(_, &k)| k == MapKind::Landmark)
+        .filter_map(|(&d, _)| env.object_set(d))
+        .map(|s| LandmarkProperties::read(&s, p))
+        .collect();
+    let all_three = landmark_props
+        .iter()
+        .filter(|l| {
+            l.music.is_some()
+                && l.mounted_combat_allow.is_some()
+                && l.mounted_combat_disallow.is_some()
+        })
+        .count();
+    let none = landmark_props
+        .iter()
+        .filter(|l| **l == LandmarkProperties::default())
+        .count();
+    assert_eq!(
+        all_three + none,
+        landmark_props.len(),
+        "§6.2: landmark-only properties stored together or not at all"
+    );
+    c.eq(
+        "landmarks with all three, with none",
+        (2_731, 2),
+        (all_three, none),
     );
     c.finish();
 
@@ -1606,6 +1662,93 @@ fn check_kinds(env: &Env, scan: &Scan, places: &PlacesTable, heads: &SegmentHead
         })
         .count();
     c.eq("ripcords naming a property", 348, with_property);
+    // MD48: every field in every record, typed.
+    let ripcords: Vec<tessera_formats::gameplay::map::Ripcord> = of_kind(scan, MapKind::Ripcord)
+        .into_iter()
+        .map(|(_, s)| tessera_formats::gameplay::map::Ripcord::read(s, p))
+        .collect();
+    let typed = ripcords
+        .iter()
+        .filter(|r| {
+            r.ui_element_id.is_some()
+                && r.ui_element_layout.is_some_and(|d| d.0 >> 24 == 0x22)
+                && r.disable_editing.is_some()
+                && r.name.is_some()
+                && r.help.is_some()
+        })
+        .count();
+    let table_fields = ripcords
+        .iter()
+        .filter(|r| r.table_property.is_some() && r.array_element.is_some())
+        .count();
+    c.eq(
+        "ripcords with every field; with the two table fields",
+        (348, 7),
+        (typed, table_fields),
+    );
+    c.finish();
+
+    // §9.7 (MD47, MD49): the housing-control record.
+    let mut c = Census::new("housing control (§9.7)");
+    let hp = HousingControlPids::resolve(&env.dict);
+    assert!(
+        hp.missing().is_empty(),
+        "undefined labels: {:?}",
+        hp.missing()
+    );
+    let hc_did = env
+        .store
+        .weenie(HOUSING_CONTROL_LABEL)
+        .expect("WEENIECONTENT")
+        .expect("housing control");
+    let hc = HousingControl::read(&env.object_set(hc_did).expect("set"), &hp);
+    c.eq(
+        "type entries, value tiers, hook rotations",
+        (37, 10, 14),
+        (
+            hc.house_types.len(),
+            hc.value_tiers.len(),
+            hc.hook_rotations.len(),
+        ),
+    );
+    c.eq(
+        "personal and kinship groups, permission icons",
+        (3, 5, 6),
+        (
+            hc.personal_groups.len(),
+            hc.kinship_groups.len(),
+            hc.permission_icons.len(),
+        ),
+    );
+    c.eq(
+        "type entries with mount tokens",
+        21,
+        hc.house_types
+            .iter()
+            .filter(|t| t.mount_tokens.is_some())
+            .count(),
+    );
+    assert!(
+        hc.house_types
+            .iter()
+            .all(|t| t.house_type.is_some() && t.price.is_some() && t.upkeep.is_some()),
+        "§9.7: every type entry has its type, price and upkeep"
+    );
+    assert!(
+        hc.value_tiers
+            .iter()
+            .all(|t| t.tier.is_some() && t.price_modifier.is_some() && t.upkeep_modifier.is_some()),
+        "§9.7: every value tier has its two modifiers"
+    );
+    c.eq(
+        "intervals",
+        (Some(604_800), Some(86_400), Some(86_400)),
+        (
+            hc.upkeep_interval,
+            hc.purchase_personal_interval,
+            hc.purchase_kinship_interval,
+        ),
+    );
     c.finish();
 }
 
@@ -1694,7 +1837,11 @@ fn check_edges(env: &Env, scan: &Scan, heads: &SegmentHeads) {
         &edges("QuestEvent_LandmarkDID"),
         MapKind::Landmark,
     );
-    c.eq("quest landmark references", 3_419, landmarks);
+    c.eq(
+        "quest landmark references naming a landmark",
+        3_419,
+        landmarks,
+    );
     let homes = by_kind(
         "Travel_PlayerHomeLocationArray",
         &edges("Travel_PlayerHomeLocationArray"),
@@ -1716,8 +1863,15 @@ fn check_edges(env: &Env, scan: &Scan, heads: &SegmentHeads) {
         .filter(|&&d| kind_of(d) == Some(MapKind::HousingHook))
         .count();
     c.eq("weenie SEDs placing a housing hook", 32_338, hooks);
+    // MI14: `QuestEvent_LandmarkDID` may name no record (a warning, Tessera rule of §2.4;
+    // 15 values here, MD45); every other edge names a record.
     for (what, n) in dangling.take() {
-        c.eq(&format!("{what}: values naming no record"), 0, n);
+        let expected = if what == "QuestEvent_LandmarkDID" {
+            15
+        } else {
+            0
+        };
+        c.eq(&format!("{what}: values naming no record"), expected, n);
     }
 
     // Map links of zones (§7): 0x78 sets holding `UI_Map_GameMap`.
@@ -1781,7 +1935,7 @@ fn check_edges(env: &Env, scan: &Scan, heads: &SegmentHeads) {
     );
 
     // §2.3 landmarks: the class of the recognised ones, and how many sets with
-    // `MapNote_Type` but no `Landmark_Music` share it (§14.4 OPEN).
+    // `MapNote_Type` but no `Landmark_Music` share it (2 here, MD44).
     let landmarks: Vec<Did> = scan
         .kinds
         .iter()

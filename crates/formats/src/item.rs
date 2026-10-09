@@ -115,8 +115,10 @@ pub struct ItemVisual {
     /// `Inventory_PaperdollParentingLocation`: a `HoldingLocation` key.
     pub paperdoll_parenting_location: Option<u32>,
     /// `Item_EquipmentCategory`, read as its full bit pattern (`PropertyValue::as_bits`):
-    /// the stored values are bit masks with bits above 31 in use (`appearance.md` §15
-    /// OPEN on whether it is a bitfield).
+    /// the property is a 64-bit bitfield (type code 14, a u64 bit mask,
+    /// `property-system.md` §4.1) in which bit *k* − 1 stands for enum key *k* (§7.3), with
+    /// bits above 31 in use. `appearance.md` §15 (the `Item_EquipmentCategory` storage OPEN,
+    /// answered 2026-10-07) confirms the bitfield reading.
     pub equipment_category: Option<u64>,
     /// `Item_ClothingColor`: default dye code of the first channel (§4.9).
     pub clothing_color: Option<f32>,

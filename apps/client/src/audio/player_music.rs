@@ -5,7 +5,7 @@
 //!
 //! | Part | Spec | Here |
 //! |---|---|---|
-//! | Command syntax: `/play`, `/playstart`, `/playlist`, stop, debug instrument | `abc-dialect.md` §11; `instruments.md` §12 | [`command`] |
+//! | Command syntax: `/play`, `/playstart`, `/playlist`, stop, debug instrument | `abc-dialect.md` §11; `instruments.md` §12 | [`command`]; the words are client built-ins of the command dispatcher (decision 0020), which calls [`PlayerMusic::run_tokens`] |
 //! | Music folders: the original's settings folder `Music/` (read-only), then Tessera's own | `abc-dialect.md` §3.1; `install-layout.md` §8.1 | [`music_folders`], [`find_in_folders`] |
 //! | No part given: the reader's "none" (the first X:) | `abc-dialect.md` §5.3, §11 OPEN (1) | [`MusicCommand::Play`] |
 //! | Solo start 0.7 s after the command; synced start waits for `/playstart` | §8.5; `instruments.md` §12 OPEN (d) | [`PlayerMusic`] |
@@ -70,7 +70,7 @@ use tessera_text::{
     Strings, TableSource, Value, Values, select_language,
 };
 
-pub use self::command::{CommandError, MusicCommand, parse_command};
+pub use self::command::{CommandError, MusicCommand, MusicWord, parse_args};
 use super::backend::{self, BackendChoice, PrefsChoice, SettingsChoice};
 use super::loader::fetch;
 use super::scripts::{PROPERTY_DICTIONARY, ROOT_DID_MAP, mapper};
@@ -125,8 +125,6 @@ pub struct MusicConfig {
     /// and puts first in [`Self::folders`] (`install-layout.md` §8.1): `--game-dir`, or the
     /// install the archives were opened from.
     pub settings_lookup: Option<PathBuf>,
-    /// Chat commands run once the archives are open (`--music-command`, in order).
-    pub commands: Vec<String>,
     /// The avatar's items (`--avatar`, DIDs with prefix 0x70–0x76 or 0x79), in equip order.
     pub items: Vec<u32>,
     /// The avatar's object (`--avatar <DID>`), whose script closure holds the music
@@ -150,7 +148,6 @@ impl Default for MusicConfig {
             data_root: None,
             folders: Vec::new(),
             settings_lookup: None,
-            commands: Vec::new(),
             items: Vec::new(),
             avatar: None,
             instrument: None,
@@ -164,8 +161,8 @@ impl MusicConfig {
     /// The settings of the command line: the audio choices of
     /// [`super::config_from_args`], the avatar's items and object from `--avatar`, the
     /// music folders (Tessera's data folder `data_root`; the settings folder of
-    /// `--game-dir` is looked up at start-up) and the `--music-command` lines. Reads no
-    /// file.
+    /// `--game-dir` is looked up at start-up). Reads no file. (The `--command` lines go to
+    /// the command dispatcher, decision 0020 item 7.)
     #[must_use]
     pub fn from_args(args: &crate::cli::Args, data_root: &Path) -> Self {
         let audio = super::config_from_args(args);
@@ -187,7 +184,6 @@ impl MusicConfig {
             data_root: Some(data_root.to_path_buf()),
             folders: vec![data_root.join(TESSERA_MUSIC_FOLDER)],
             settings_lookup: args.game_dir.clone(),
-            commands: args.music_commands.clone(),
             items,
             avatar,
             instrument: None,
@@ -331,38 +327,14 @@ impl Messages {
     /// `string-table.md` §10.1). `None` when the set has no language archive.
     #[must_use]
     pub fn open(set: &Arc<ArchiveSet>, language: Option<&str>) -> Option<Self> {
-        let locals: Vec<(String, usize)> = set
-            .members()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, m)| match &m.id.kind {
-                ArchiveKind::Local(lang) if m.id.part == 0 => Some((lang.clone(), i)),
-                _ => None,
-            })
-            .collect();
-        let names: Vec<&str> = locals.iter().map(|(n, _)| n.as_str()).collect();
-        let chosen = select_language(&names, language)?.to_owned();
-        let member = locals.iter().find(|(n, _)| *n == chosen).map(|&(_, i)| i)?;
-        let m = set.get(member)?;
-        let locale = Locale {
-            name: chosen,
-            language_id: LanguageId(m.archive.header().subset),
-            path: m.path.clone(),
-        };
-        let named = named_tables(set);
-        let table = named.by_key(MESSAGE_TABLE_KEY);
+        let strings = local_strings(set, language)?;
+        let table = strings.named_tables().by_key(MESSAGE_TABLE_KEY);
         if table.is_none() {
             tracing::info!(
                 key = format_args!("{MESSAGE_TABLE_KEY:#010x}"),
                 "player music: no message table; Tessera's own texts are used"
             );
         }
-        let strings = Strings::new(LocalTables {
-            set: Arc::clone(set),
-            member,
-        })
-        .with_locale(locale)
-        .with_named_tables(named);
         Some(Self { strings, table })
     }
 
@@ -400,6 +372,39 @@ impl Messages {
         let text = text.trim();
         (!text.is_empty()).then(|| text.to_owned())
     }
+}
+
+/// The string tables of the selected language archive of `set` (`language`, else
+/// English, `string-table.md` §10.1) with the named-table map (§9.1). `None` when the set
+/// has no language archive. Blocking (reads the archives): not for the frame thread.
+pub fn local_strings(set: &Arc<ArchiveSet>, language: Option<&str>) -> Option<Strings> {
+    let locals: Vec<(String, usize)> = set
+        .members()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| match &m.id.kind {
+            ArchiveKind::Local(lang) if m.id.part == 0 => Some((lang.clone(), i)),
+            _ => None,
+        })
+        .collect();
+    let names: Vec<&str> = locals.iter().map(|(n, _)| n.as_str()).collect();
+    let chosen = select_language(&names, language)?.to_owned();
+    let member = locals.iter().find(|(n, _)| *n == chosen).map(|&(_, i)| i)?;
+    let m = set.get(member)?;
+    let locale = Locale {
+        name: chosen,
+        language_id: LanguageId(m.archive.header().subset),
+        path: m.path.clone(),
+    };
+    let named = named_tables(set);
+    Some(
+        Strings::new(LocalTables {
+            set: Arc::clone(set),
+            member,
+        })
+        .with_locale(locale)
+        .with_named_tables(named),
+    )
 }
 
 /// The named string tables through the root DID map (`string-table.md` §9.1); empty when
@@ -893,24 +898,13 @@ impl PlayerMusic {
     /// item, the volumes and the settings folder) runs on a background thread at the next
     /// player-music command, or at [`Self::load_now`]; commands wait for it. `install` is
     /// the opened install's directory: without `--game-dir` its settings folder's `Music`
-    /// is looked up at start-up. Reads no file. Then the `--music-command` lines
-    /// ([`MusicConfig::commands`]) are given, once.
+    /// is looked up at start-up. Reads no file.
     pub fn attach_data(&mut self, set: Arc<ArchiveSet>, install: &Path) {
         if self.config.game_dir.is_none() {
             self.config.game_dir = Some(install.to_path_buf());
             self.config.settings_lookup = Some(install.to_path_buf());
         }
         self.pending_set = Some(set);
-        self.run_config_commands();
-    }
-
-    /// Gives the `--music-command` lines (once; later calls do nothing).
-    fn run_config_commands(&mut self) {
-        for line in std::mem::take(&mut self.config.commands) {
-            if !self.command(&line) {
-                self.say(format!("Music: not a player-music command: {line}"));
-            }
-        }
     }
 
     /// Starts start-up now: with the archives given by [`Self::attach_data`] if they have
@@ -1006,17 +1000,31 @@ impl PlayerMusic {
         self.data.as_ref().and_then(|d| d.messages.as_ref())
     }
 
-    /// Handles a chat line. Returns `false` when it is not a player-music command (the
-    /// caller passes it on).
-    pub fn command(&mut self, line: &str) -> bool {
-        let Some(parsed) = parse_command(line) else {
-            return false;
-        };
+    /// The entry point of the command dispatcher (decision 0020 item 2): runs `word` with
+    /// its argument tokens (`chat-window.md` §7.3, the command word excluded). A refused
+    /// command gives a "Music: usage: ..." line.
+    pub fn run_tokens(&mut self, word: MusicWord, args: &[String]) {
         self.stats.commands += 1;
-        match parsed {
+        match parse_args(word, args) {
             Ok(cmd) => self.run(cmd),
             Err(e) => self.say(format!("Music: {e}")),
         }
+    }
+
+    /// Runs a typed line with the `/` prefix through the client's command-line pipeline
+    /// (`crate::commands::line`, `chat-window.md` §7.2–§7.4) when its command word is a
+    /// player-music word, for tests and tools without a dispatcher. Returns `false` when
+    /// it is not a player-music command (nothing happens then).
+    pub fn command(&mut self, line: &str) -> bool {
+        let Ok(Some(inv)) =
+            crate::commands::line::prepare(line, crate::commands::line::DEFAULT_PREFIX, "", "")
+        else {
+            return false;
+        };
+        let Some(word) = MusicWord::from_name(&inv.word).filter(|_| !inv.plain) else {
+            return false;
+        };
+        self.run_tokens(word, inv.args_tokens());
         true
     }
 
@@ -2280,26 +2288,27 @@ mod tests {
     }
 
     #[test]
-    fn configured_commands_run_once() {
+    fn lines_use_the_command_pipeline() {
         let d = folder_with(&[("tune.abc", TUNE)]);
         let mut m = PlayerMusic::new(MusicConfig {
             folders: vec![d.path().to_path_buf()],
-            commands: vec!["/playlist".into(), "hello".into()],
             ..MusicConfig::default()
         });
-        m.run_config_commands();
-        m.run_config_commands();
+        assert!(!m.command("hello"), "plain text is not a music command");
+        assert!(!m.command("/"), "prefix only");
+        assert!(m.command("//PLAYLIST"), "doubled prefix, any letter case");
         assert!(m.wait_idle(WAIT));
         let lines = m.take_lines();
-        assert!(
-            lines
-                .iter()
-                .any(|l| l == "Music: not a player-music command: hello")
-        );
         assert_eq!(
             lines.iter().filter(|l| l.contains("(1 songs)")).count(),
             1,
             "{lines:?}"
+        );
+        // The chat-window.md §7.3 tokens: an unmatched quote re-emits the previous token.
+        assert!(m.command("/play \"open quote"));
+        assert_eq!(
+            m.take_lines(),
+            vec![format!("Music: usage: {}", command::USAGE_PLAY)]
         );
     }
 }

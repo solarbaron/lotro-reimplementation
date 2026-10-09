@@ -265,6 +265,21 @@ threat model and an escape test in `scripttool test` before the first slice ship
 - §5.4 wording: 'A throttled script's half-rate tick at 8 frames per second comes every 250 ms' means a client running at 8 fps (half rate gives one tick every 2 frames, which is 250 ms). Reword it, because 8 ticks per second would be every 125 ms.
 - Partially loaded apartments at a backend switch: say what happens to 6a items of a load that is still in progress (snapshot or compile items not yet run) when a switch is queued. Are they dropped, or are their states counted among the 17 apartments and closed? The gate says no apartment is created until the new session closes.
 
+## Owner scheduling decision (2026-10-08)
+Extended scripting is not a priority. The milestone planned here as **M5.5** moves to the end
+of the roadmap as **M9**. It starts only after full parity with the original client and
+compatibility with the server (M8), or, if the M8 gate fails, after client parity with
+Tessera's own server.
+
+What does not change:
+- The design and its slices, in their order (1a, 1b, 2, 3).
+- The Accepted specs.
+- The rule that ext scripts never run against an official server.
+- The core/plugins split M5 made for it (decision 0023).
+
+Where this record says "M5.5", read "M9 (slice 1a)". The external Lua fork is created only
+when M9 starts, after the owner confirms it.
+
 ## Context
 
 - **What the owner asked for.** "Much more extended scripting support that would allow

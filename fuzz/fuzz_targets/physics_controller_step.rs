@@ -28,8 +28,8 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::Setup;
 use tessera_formats::setup::{CollisionBox, CollisionCapsule, CollisionSphere, Frame, Quaternion};
 use tessera_physics::controller::{
-    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind, LiquidWater,
-    MAX_SPEED, MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
+    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind, MAX_SPEED,
+    MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
     MovementState, MoverState, NoWater, PlayerMovementRecord, StepEnv, StepOutcome, WaterContact,
     WaterQuery,
 };
@@ -462,21 +462,21 @@ fuzz_target!(|data: &[u8]| {
         }),
         ..MoverState::at(view.to_region(local), b.f())
     };
-    // The water at a few points: the set, the view and the generic query agree, and the
-    // surface (the top of the contiguous liquid, `water.md` §7.4) is never below the point.
+    // The water at a few points of the set and the view: no panic, and the surface (the
+    // top of the contiguous liquid, `water.md` §7.4) is finite and never below the point.
+    // (The set and the view forward to `LiquidWater`, so comparing them with it proves
+    // nothing; the containment oracle is in `crates/physics/tests/controller.rs`, where
+    // no point lies on a box face, which hostile boxes here could not guarantee.)
     for _ in 0..4 {
         let q = [b.small() - 2.0, b.small() - 2.0, b.small() - 4.0];
-        let w = set.water_at(q);
-        assert_eq!(w, LiquidWater(&set).water_at(q));
-        if let Some(w) = w {
+        if let Some(w) = set.water_at(q) {
             assert!(w.surface.is_finite() && w.surface >= q[2], "{q:?} {w:?}");
             assert!(w.flags.liquid);
         }
         let v = [q[0] + offset[0], q[1] + offset[1], q[2] + offset[2]];
-        let vw = view.water_at(v);
-        assert_eq!(vw, LiquidWater(&view).water_at(v));
-        if let Some(w) = vw {
+        if let Some(w) = view.water_at(v) {
             assert!(w.surface.is_finite() && w.surface >= v[2], "{v:?} {w:?}");
+            assert!(w.flags.liquid);
         }
     }
     let mut c = Controller::new(config, Arc::new(record), pids, conditions, start);

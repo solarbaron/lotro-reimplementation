@@ -498,8 +498,9 @@ pub struct CellPortals {
     pub index: u16,
     /// The 0x01 geometry it places.
     pub geometry: Did,
-    /// Its placement in the landblock frame (`None` for a cell without a position offset,
-    /// `landblock.md` §4.4 OPEN, or with an unusable rotation).
+    /// Its placement in the landblock frame (a cell without a position offset lies at the
+    /// landblock origin, `landblock.md` §4.4 L42; `None` for an unusable rotation or an
+    /// offset out of range).
     pub placement: Option<CellPlacement>,
     /// Whether the geometry was available (decoded).
     pub geometry_available: bool,

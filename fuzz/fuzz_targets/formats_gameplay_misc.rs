@@ -3,7 +3,8 @@
 //! `docs/specs/misc-records.md`) on arbitrary bytes: image compositors and their
 //! composition (§3), UI scenes (§4), imposter tables (§5), compute shaders and their DXBC
 //! container (§6), script channels (§7), the name-filter and taboo tables (§9, §10) and the
-//! compression-dictionary envelope (§11).
+//! compression-dictionary envelope (§11), and the percentage display of modifier values
+//! (§13.1).
 //!
 //! Input: byte 0 picks the decoder, the rest is the payload. UI-scene descriptors use a
 //! total synthetic schema. A decoded compositor is composed with synthetic images whose
@@ -20,7 +21,7 @@ use std::collections::HashMap;
 
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::gameplay::misc::*;
-use tessera_formats::{Did, PropertyType, Record, RgbaImage};
+use tessera_formats::{Did, PropertyType, PropertyValue, Record, RgbaImage};
 
 fn total(pid: u32) -> Option<PropertyType> {
     Some(PropertyType::from_code(pid % 24))
@@ -163,6 +164,23 @@ fuzz_target!(|input: &[u8]| {
             );
             let _ = opacity_byte(f32::from_bits(w(44)));
             let _ = imposter_atlas_grid(w(48));
+            // §13.1 (X4): the percentage display of a modifier value.
+            let (multiply, flag) = (px[3] & 1 == 0, px[3] & 2 == 0);
+            let v = f32::from_bits(w(52));
+            let d = modifier_value_display(&PropertyValue::Float(v), multiply, flag)
+                .expect("a float is shown");
+            assert_eq!(d.percent_template, flag);
+            assert_eq!(d.direction.is_some(), flag && multiply);
+            if !flag {
+                assert_eq!(d.number.to_bits(), f64::from(v).to_bits());
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            let i = modifier_value_display(&PropertyValue::Int(w(56) as i32), multiply, flag)
+                .expect("an int is shown");
+            assert!(i.direction.is_none());
+            #[allow(clippy::cast_possible_wrap)]
+            let expected = f64::from(w(56) as i32);
+            assert_eq!(i.number.to_bits(), expected.to_bits());
         }
     }
 });

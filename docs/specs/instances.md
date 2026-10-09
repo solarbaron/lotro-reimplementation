@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-07) |
-| **Last updated** | 2026-10-07 |
+| **Status** | **Accepted** (2026-10-08, revision of the 2026-10-07 Accepted text) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec reviewer, not the author session) |
-| **Review record** | 2026-10-07: first review and re-review (separate sessions) requested changes; both rounds answered by the writer (§19). Second re-review of the second revision, 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the dirty-room review log (decision 0018). |
+| **Review record** | 2026-10-07: first review and re-review (separate sessions) requested changes; both rounds answered by the writer (§19). Second re-review of the second revision, 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the dirty-room review log (decision 0018). 2026-10-08: revised by the writer to answer the implementer notes (§19). Review of the revision, 2026-10-08 (a fresh session, not the writer or an earlier reviewer): **passed**, Accepted; details in the dirty-room review log. |
 | **Implements into** | `crates/formats` / `crates/props` (typed views of the records below, read from their property sets), `crates/wstate` (the object-state forms of §13, optional), `apps/explorer` (instance cards, §14.4), `apps/client` (the instance-finder lists of §7 and §15.1, the skirmish statistics panel of §6.4 and §15.1, the distant-battle unit display of §8.4 and §15.1); a later server or sandbox backend (`crates/net`) consumes §15.2 |
 | **Companion specs** | [`property-system.md`](property-system.md) §3–§5 (type codes, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels), §8 (DID maps); [`wstate.md`](wstate.md) §3–§5 (object-state records, root class at offset 4, native codecs); [`wlib.md`](wlib.md) (class indices, ancestry); [`quests.md`](quests.md) §7.1 (roles, `QuestDispenser_PrivateEncounterTemplate`), §7.9 (scene records, class 1468), §8.1–§8.3 (permission struct and quest requirements), §9.6 (medals), §14 (world events, world-event lists); [`map-data.md`](map-data.md) §3 (named places, place-key lookup), §10 (properties that name places), §11 (ripcords); [`economy.md`](economy.md) §4.7, §4.10, §4.13 (species and skirmish loot); [`creatures.md`](creatures.md) §2.1 (class 4026, distant-battle unit groups); [`sound.md`](sound.md) (sound-info records, prefix 0x2A); [`misc-records.md`](misc-records.md) §13.5 (property-response maps) |
 
@@ -69,9 +69,9 @@ How sources are marked:
 
 | Key | Source |
 |---|---|
-| OBS | Observed in the user's install (Steam, client data current) on 2026-10-07, read-only. Probes used the project's own decoders (`tessera-dat`, `tessera-props`, `tessera-wstate`, `tessera-formats`, from the commit current that day) as tools. Covered: the root class of all 383,343 object records of `client_gamelogic.dat` (383,332 with prefix 0x70, 11 singletons with prefix 0x76); every property set with prefix 0x79 (383,332) and 0x78 (1,616), all decoding with no failure; the object state of every record of every class of §2.1 (all decode, none partial); the property dictionary (0x34000000, 27,546 definitions); the class library (0x56000000); the WEENIECONTENT DID map (0x2800000E, 316 entries); the EMAPPER map (0x28000001); every enum mapper named in §3.3; the content-layer DID map 0x28000012; all 49,636 landblock-info records of the cell archives (static entities, links, instance property sets). **Revision probes** (same install, same day, after the first review): the census sums of §2.1; the flag byte of all 4,628 class-161 positions of the templates; the attribute order of the world-join object form; the order and kind bits of all 557 fellowship-maker entries against the templates; the top-level property counts of all 96 class-3725 records; the DB-object-type code and target of every DID value in the records of §2.1; the mapper or DID map of every field of §3.3; the holders of every characteristic property of §3.4 over all 0x79 and 0x78 sets; the labelled templates, manager entities and trait lists of §4.12, §5.3 and §6.2; all record pairs of class 2727. **Second revision probes** (same install, same day, after the re-review): every `IntroVO` value of every 0x70 record's property set; the stored group order of the world-join control against its 164-element object-form array and against the template order of the 557 fellowship-maker entries; the key set and bitsets of the fellowship-maker flag-bit map; the key sets of all 735 enum mappers of the install's archives. |
+| OBS | Observed in the user's install (Steam, client data current) on 2026-10-07, read-only. Probes used the project's own decoders (`tessera-dat`, `tessera-props`, `tessera-wstate`, `tessera-formats`, from the commit current that day) as tools. Covered: the root class of all 383,343 object records of `client_gamelogic.dat` (383,332 with prefix 0x70, 11 singletons with prefix 0x76); every property set with prefix 0x79 (383,332) and 0x78 (1,616), all decoding with no failure; the object state of every record of every class of §2.1 (all decode, none partial); the property dictionary (0x34000000, 27,546 definitions); the class library (0x56000000); the WEENIECONTENT DID map (0x2800000E, 316 entries); the EMAPPER map (0x28000001); every enum mapper named in §3.3; the content-layer DID map 0x28000012; all 49,636 landblock-info records of the cell archives (static entities, links, instance property sets). **Revision probes** (same install, same day, after the first review): the census sums of §2.1; the flag byte of all 4,628 class-161 positions of the templates; the attribute order of the world-join object form; the order and kind bits of all 557 fellowship-maker entries against the templates; the top-level property counts of all 96 class-3725 records; the DB-object-type code and target of every DID value in the records of §2.1; the mapper or DID map of every field of §3.3; the holders of every characteristic property of §3.4 over all 0x79 and 0x78 sets; the labelled templates, manager entities and trait lists of §4.12, §5.3 and §6.2; all record pairs of class 2727. **Second revision probes** (same install, same day, after the re-review): every `IntroVO` value of every 0x70 record's property set; the stored group order of the world-join control against its 164-element object-form array and against the template order of the 557 fellowship-maker entries; the key set and bitsets of the fellowship-maker flag-bit map; the key sets of all 735 enum mappers of the install's archives. **Third revision probes** (same install, 2026-10-08, after the implementer notes): the full label of every stored property path of every class of §2.1 (§3.5); the dictionary definitions (type, enum source, default, children) of the run-time fields of §3.6; the definition and key set of the mapper named by `FellowshipMaker_PlayerConfiguration` and its EMAPPER label, compared with the key set of the fellowship-maker flag-bit map (§10.2). |
 | LC | LotroCompanion `lotro-tools` (no licence file; all rights reserved): the private-encounter and instance-tree loaders. Read for facts only (which class is a template, which properties name the instance-finder lists). No code or prose copied. |
-| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-07), read in the dirty room on 2026-10-07 with a headless, read-only copy of the shared Ghidra project. **Questions:** (1) which properties of this family the client reads at all; (2) how the client chooses the featured instance, the level-scaling level and the template of an instance group; (3) how the skirmish statistics panel computes its derived values; (4) how the client builds the cosmetic display of a distant-battle unit; (5) what the phasing-box flags do on the client. **Method:** a whole-program search for the PIDs of all 1,322 dictionary properties of the family prefixes (§2.2) as immediate operands, then decompilation of the functions that hold property look-ups (a PID passed as the second argument of a property-read call). **Why M1–M3 were not enough:** the data cannot show which fields the client consumes or how it combines them; no published source covers these questions; a running client shows only the result on screen. Only user-interface, data-loading and entity-display code was read. Network messages, login, launcher and anti-tamper code were not read; the world-join request properties of §7.4 were deliberately left alone because they belong to client–server messages (decision 0004). |
+| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-07), read in the dirty room on 2026-10-07 with a headless, read-only copy of the shared Ghidra project. **Questions:** (1) which properties of this family the client reads at all; (2) how the client chooses the featured instance, the level-scaling level and the template of an instance group; (3) how the skirmish statistics panel computes its derived values; (4) how the client builds the cosmetic display of a distant-battle unit; (5) what the phasing-box flags do on the client. **Method:** a whole-program search for the PIDs of all 1,322 dictionary properties of the family prefixes (§2.2) as immediate operands, then decompilation of the functions that hold property look-ups (a PID passed as the second argument of a property-read call). **Why M1–M3 were not enough:** the data cannot show which fields the client consumes or how it combines them; no published source covers these questions; a running client shows only the result on screen. Only user-interface, data-loading and entity-display code was read. Network messages, login, launcher and anti-tamper code were not read; the world-join request properties of §7.4 were deliberately left alone because they belong to client–server messages (decision 0004). **Second session, 2026-10-08** (same build and hash, a fresh read-only copy of the shared project, deleted afterwards), to answer the implementer notes: (6) the integer width and value-type tests of B1, B2 and B4 (machine instructions of the arithmetic read, not only the decompiled form); (7) how the client treats instance groups without a label or with a repeated label (B3); (8) the details of the distant-battle removal list (B5): which figures go, value-type tests, list growth and shrinking, first display; (9) the value-type test of the phasing flags (B6); (10) whether the client derives fellowship-maker flag words (B8). Only data-loading, user-interface and entity-display functions and the generic property-array value class were read. **Why M1–M3 were not enough:** these are choices the client makes at run time on values the data does not hold (character statistics, run-time lists); the data has no case that exercises them. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -92,7 +92,7 @@ How sources are marked:
 | I15 | Big-battle control, distant-battle scripts, distant-battle units and formation control (§8) | OBS | Confirmed |
 | I16 | Distant-battle unit: composition = units repeated by offset count; offsets lie inside the formation dimensions; dimension width ≤ the width class's actual width (§8.4) | OBS | Confirmed (96 of 96). Derived by this spec writer. |
 | I17 | Session-play control, fellowship-maker control, phasing box, dialog singletons (§9–§12) | OBS | Confirmed |
-| I18 | Fellowship-maker object form: 557 candidate entries, their order, flag word bits (kind bits disjoint in this install), per-flag bitsets, encounter → size → tier → entry map (§10.2) | OBS | Confirmed (557 of 557 entries, 107 of 107 templates in the stated order, 20 of 20 bitsets, key set of the flag-bit map 20 of 20; the rule behind the key set is OPEN). Derived by this spec writer. |
+| I18 | Fellowship-maker object form: 557 candidate entries, their order, flag word bits (kind bits disjoint in this install), per-flag bitsets, encounter → size → tier → entry map (§10.2) | OBS | Confirmed (557 of 557 entries, 107 of 107 templates in the stated order, 20 of 20 bitsets, key set of the flag-bit map 20 of 20; the key set is the key set of the `FellowshipMakerConfiguration` mapper, row I29). Derived by this spec writer. |
 | I19 | Object-form correspondences of templates and controls, including the flag bytes of the template landblock positions and the stored attribute order of the world-join control and the label-ascending order of its grouped templates (§13) | OBS | Confirmed (all records of each class; 4,628 of 4,628 positions; 164 of 164 finder positions). Derived by this spec writer. |
 | I20 | Reference graph (§14.1–§14.3) | OBS | Confirmed |
 | I21 | DID targets: declared DB-object-type codes of the DID fields, the fields that are not type 0x45, and that every non-zero 0x45 value names an existing 0x70 record (§3.2) | OBS | Confirmed (all DID values of the records of §2.1; 0 dangling; `IntroVO` 942 values, 908 non-zero, all prefix 0x2A) |
@@ -101,13 +101,17 @@ How sources are marked:
 | I24 | Labelled templates `NewbieCinematicEncounter` and `PublicAreaDefaultEncounter` (§4.12) | OBS | Confirmed |
 | I25 | Manager entities: ancestry, property-set size, object form (§5.3) | OBS | Confirmed (3 of 3) |
 | I26 | Skill-trainer trait lists: sizes, targets, object form, NPC holders (§6.2) | OBS | Confirmed (3 of 3 lists, 25 NPCs) |
-| B1 | Featured instance = featured list entry number *n*, *n* from a world property (§15.1) | BIN | BIN only |
-| B2 | Level-scaling level and its world-property override (§15.1) | BIN | BIN only |
-| B3 | Instance group + group size → template (§15.1) | BIN | BIN only |
-| B4 | Derived skirmish statistics and best-time aggregation (§15.1) | BIN | BIN only; the stored data it reads is Confirmed |
-| B5 | Distant-battle unit display: fields read, defaults, removal list, bounding box (§15.1) | BIN | BIN only |
-| B6 | Phasing-box flags on the client (§15.1) | BIN | BIN only |
+| I27 | Full labels of every abbreviated label and every array-element label of §4–§12 (§3.5) | OBS (dictionary and every stored path) | Confirmed 2026-10-08 (every abbreviation of the spec resolves to exactly one label of the class concerned) |
+| I28 | Value types, enum sources and dictionary defaults of the run-time fields the client reads (§3.6) | OBS (dictionary) | Confirmed 2026-10-08 |
+| I29 | The flag word of a fellowship-maker entry is a bitfield of the mapper labelled `FellowshipMakerConfiguration` (key *k* = bit *k* − 1); the flag-bit map's 20 keys are exactly that mapper's 20 non-zero keys (§10.2) | OBS; BIN (B8: the client's configuration properties use this mapper) | Confirmed 2026-10-08 (20 of 20 keys; the 13 bits used in the 557 entries agree with the key labels) |
+| B1 | Featured instance = featured list entry number *n*, *n* from a world property; only a 32-bit integer value counts (§15.1) | BIN | BIN only |
+| B2 | Level-scaling level and its world-property override; only 32-bit integer values count (§15.1) | BIN | BIN only |
+| B3 | Instance group + group size → template; groups without a label are ignored, a repeated label keeps the first group (§15.1) | BIN | BIN only |
+| B4 | Derived skirmish statistics (32-bit integer or 32-bit float arithmetic) and best-time aggregation (§15.1) | BIN (2026-10-08: arithmetic read at instruction level) | BIN only; the stored data it reads is Confirmed |
+| B5 | Distant-battle unit display: fields read, defaults, removal list (which figures go, growth and shrinking, first display), bounding box (§15.1) | BIN | BIN only |
+| B6 | Phasing-box flags on the client; only boolean values count (§15.1) | BIN | BIN only |
 | B7 | 253 of the 330 stored family properties are never named in the client, among them the template timers, landblock lists, content layer, lock sizes and reset days, distant-battle script fields and formation parameters (§15.1) | BIN (negative search) | BIN only; see the caveat in §15.1 |
+| B8 | The client's fellowship-maker panel uses entry flag words as given (kind mask of the six `Type_…` bits) and does not derive them from template fields in the code examined (§10.2) | BIN | BIN only |
 
 ---
 
@@ -330,7 +334,7 @@ Enum and bitfield fields name their mapper (or DID map) in the property definiti
 | `PrivateEncounterTemplate_SkyLocalNameOverride` | 0x230000E9 | 647 | `SkyLocalName` | §4.8 |
 | `PrivateEncounterTemplate_DisallowedMapNoteType` (bitfield 14) | 0x230000D7 | 47 | `MapNoteType` | one bit (§4.8) |
 | `PrivateEncounterTemplate_RequiredRaceEntry` | 0x2300000B | 123 | `SpeciesType` | 4 keys |
-| `SkirmishControl_SkirmishStat`, `Skirmish_*_Stat`, `SkirmishControl_BlockedStat` | 0x230002F4 | 25 (0–24) | `SkirmishStat` | §6.4 |
+| `SkirmishControl_SkirmishStat`, `SkirmishStats_StatProperty_SkirmishStat`, `Skirmish_DerivedStat`, `Skirmish_Primary_Stat`, `Skirmish_Secondary_Stat`, `SkirmishControl_BlockedStat` | 0x230002F4 | 25 (0–24) | `SkirmishStat` | §6.4 |
 | `Mod_Op` (in `Skirmish_Stat_Op`) | 0x23000046 | 12 | `PropertyOp` | 2 divide, 7 add (§15.1 B4) |
 | `SkirmishControl_Skirmish_TraitNature` | 0x23000057 | 34 | `TraitNature` | 8–11 |
 | `BigBattleControl_Medal` | 0x230003BB | 6: 0 none, 1 … 5 (lowest to highest medal) | `QuestMedal` | 1–5 |
@@ -343,6 +347,8 @@ Enum and bitfield fields name their mapper (or DID map) in the property definiti
 | `BattleStat_UpdatePolicy` | 0x23000392 | 5: 0 none, 1 set, 2 add, 3 minimum, 4 maximum | `BattleStatUpdatePolicyType` | 1, 2, 4 |
 | `…_Medal_Alert`, `PrivateEncounter_EntryFilter_Alert` | 0x23000033 | 65 | `Alert` | |
 | `…_RejectErrorType`, `…_MaxRank_Error`, `Required_BillingTokens_Error` | 0x230000BF | 1,673 | `ErrorType` | |
+| `FellowshipMaker_PlayerConfiguration`, `FellowshipMakerUI_Configuration` (bitfield 18); the flag words of §10.2 | 0x23000343 | 21: keys 0–21 except 15 | `FellowshipMakerConfiguration` | §10.2 (key *k* = bit *k* − 1) |
+| `DistantBattleUnit_Removal_ScriptKey`, `BigBattleControl_Quest_RelatedEntityHighlightScript`, `DistantBattleUnit_FireMissileScript` | 0x23000097 | 11,373 | `FX` | stored: §8.1, §8.4; run time: §15.1 B5 |
 
 <a id="s3-4"></a>
 ### 3.4 Identifying a record's kind (Confirmed)
@@ -372,6 +378,90 @@ kind and of no other root class (checked over all 0x79 and 0x78 sets):
 
 Classes with an empty property set (3399, 3423, 3576, the dialogs) are identified by root
 class or WEENIECONTENT label only.
+
+<a id="s3-5"></a>
+### 3.5 Full labels (Confirmed, every stored path)
+
+The tables of §2.4 and §4–§12 shorten labels: `…_X` stands for a label that ends in `_X`, and
+`A[]` / `B` names B as the element label of array A. Every shortened label resolves to exactly
+one label of the class concerned (checked against the dictionary and every stored path of
+every record of §2.1). The full labels, in the order of the sections, are below. Braces list
+the fields of a struct; "element" is the label that each array entry carries. Readers look
+fields up by these labels (via the dictionary, `property-system.md` §2), never by suffix or
+by value type: two fields of one struct can share a value type and an enum mapper (for
+example both fields of `SkirmishControl_GroupSize_To_GroupTier`).
+
+| § | Container | Full labels |
+|---|---|---|
+| 2.4 | chest locks | `PrivateEncounter_RaidChestLock_PullCountBeforeLock`, `PrivateEncounter_RaidChestLock_PullCountBeforeSoftLock`, `PrivateEncounter_RaidChestLock_ResetDays`, `PrivateEncounter_RaidChestLock_SoftLockEnabled` |
+| 2.4 | trainer overrides | `SkirmishControl_SkirmishTrainer_RequiredTrait_Override`, `SkirmishControl_SkirmishBard_RequiredTrait_Override` (one NPC each), `Skirmish_SkillTrainer_OverrideDefault_OnlyEarnedSkirmishTraits_ButtonValue` |
+| 3.3 | enum fields | `PrivateEncounterTemplate_ContentLayer`; `WorldJoin_Capped_EncounterCategory`; `WorldJoin_Seasonal_EncounterCategory_Entry`; `BigBattleControl_Medal_Alert`; `PrivateEncounter_EntryFilter_RejectErrorType`; `SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank_Error` |
+| 4.2 | template flags | `PrivateEncounterTemplate_MountedCombatDisallowed`, `PrivateEncounterTemplate_MountedCombatAllowed`, `PrivateEncounterTemplate_IsCinematicEncounter`, `PrivateEncounterTemplate_DynamicAreaInstance` |
+| 4.3 | `PrivateEncounterTemplate_SuccessTeleportLocationArray` | element `PrivateEncounterTemplate_SuccessTeleportLocationStruct` {`PrivateEncounterTemplate_RequiredRaceEntry`, `PrivateEncounterTemplate_SuccessTeleportLocation`, `PrivateEncounterTemplate_SuccessTeleportSceneDID`} |
+| 4.3 | `PrivateEncounterTemplate_DynamicTelepadInfo` | {`PrivateEncounterTemplate_DynamicTelepad_Array` (element `PrivateEncounterTemplate_DynamicTelepad`), `PrivateEncounterTemplate_DynamicTelepad_ZoneEvent`} |
+| 4.3 | `PrivateEncounterTemplate_ContainedLandBlockArray` | element `PrivateEncounterTemplate_ContainedLandBlock` |
+| 4.6 | quest arrays | `PrivateEncounterTemplate_QuestToBestow_Array` (element `PrivateEncounterTemplate_QuestToBestow`); `PrivateEncounterTemplate_RandomBestowalQuests_Array` (element `PrivateEncounterTemplate_RandomQuest_Struct` {`PrivateEncounterTemplate_NumQuestsToBestow`, `PrivateEncounterTemplate_QuestToBestow_Array`}); `PrivateEncounterTemplate_QuestTrackerFilter_Array` (element `PrivateEncounterTemplate_QuestTrackerFilter`); `PrivateEncounterTemplate_AssociatedQuest_List` (element `PrivateEncounterTemplate_AssociatedQuest`) |
+| 4.6 | `PrivateEncounterTemplate_EpicQuestInfo` | {`PrivateEncounterTemplate_EpicQuest`, `PrivateEncounterTemplate_EpicQuestObjective`}; featured quests `PrivateEncounterTemplate_FeaturedInstance_Cap_Quest`, `PrivateEncounterTemplate_FeaturedInstance_NonCap_Quest` |
+| 4.7 | both permission blobs | `Usage_QuestRequirements` and `Usage_QuestRequirements_OrList` (element `Usage_QuestRequirement` {`Usage_QuestID`, `Usage_Operator`, `Usage_QuestStatus`}); `Usage_WorldEvent_AllConditionList` (element `WorldEvent_Condition` {`WorldEvent_WorldEvent`, `WorldEvent_Operator`, `WorldEvent_ConditionValue`}); `Usage_RequiredClassList` (element `Usage_ClassType`); `Usage_SessionPlayerCanUse`; `Usage_MonsterPlayerCanUse` |
+| 4.9 | awards | `PrivateEncounterTemplate_PaperItemAwardArray` (element `PrivateEncounterTemplate_PaperItemAwardEntry` {`PrivateEncounterTemplate_PaperItemAwardType`, `PrivateEncounterTemplate_RatioArray` (element `PrivateEncounterTemplate_RatioEntry` {`PrivateEncounterTemplate_AwardCurrency`, `PrivateEncounterTemplate_AwardRatio`})}); `PrivateEncounterTemplate_RandomEffectsArray` (element `PrivateEncounterTemplate_RandomEffect`) |
+| 4.10 | skirmish fields | `Skirmish_Template_MinLevelScale`, `Skirmish_Template_MaxLevelScale`, `Skirmish_Template_MaxLevelScale_Override_PropertyName`, `Skirmish_Template_MinLevelScale_Override_PropertyName`, `Skirmish_Template_DifficultyRestrictionLevel`, `Skirmish_Template_DifficultyRestrictionTier`, `Skirmish_Template_IsTutorial`, `Skirmish_Template_Highest_Time_Is_Best_Time`; `Skirmish_Template_TierMin_ConfigerationArray` and `Skirmish_Template_Valid_Configurations` (element `Skirmish_Template_Configuration` {`Skirmish_DifficultyTier`, `Skirmish_GroupSize`}); `Required_BillingTokens` (element `Required_Token_PropertyName`) |
+| 4.11 | `PrivateEncounterTemplate_TeamConfig_Array` | element `PrivateEncounterTemplate_TeamConfig_Struct` {`PrivateEncounterTemplate_TeamNumber`, `PrivateEncounterTemplate_TeamName`, `PrivateEncounterTemplate_StartingPosition`, `PrivateEncounterTemplate_InstanceMilestone`} |
+| 5.1 | control arrays | `PrivateEncounter_Control_LockArray` (element `PrivateEncounter_Control_LockStruct` {`PrivateEncounter_Control_LockSize`, `PrivateEncounter_Control_LockResetDays`}); elements of the template and filter lists: `PrivateEncounter_Control_LockableEncounterDataID`, `PrivateEncounter_Control_RestrictMaxPlayersExclusionEntry`, `PrivateEncounter_Control_PvMP_Challenge_Encounter`, `PrivateEncounter_EntryFilter`, `PrivateEncounter_EntryFilters_IgnoredEncounter` |
+| 6.1 | match parameters | `SkirmishMatchParams_Level_Min`, `SkirmishMatchParams_Level_Max`, `SkirmishMatchParams_GroupSize_Min`, `SkirmishMatchParams_GroupSize_Max`, `SkirmishMatchParams_DifficultyTier_Min`, `SkirmishMatchParams_DifficultyTier_Max` |
+| 6.3 | `SkirmishControl_DifficultyMultiplier_Array` | element `SkirmishControl_DifficultyToMultiplier` {`SkirmishControl_DifficultyTier`, `SkirmishControl_SkirmishPoint_Multiplier`} |
+| 6.3 | `SkirmishControl_GroupSizeMultiplier_Array` | element `SkirmishControl_GroupSizeToMultiplier` {`SkirmishControl_GroupSize`, `SkirmishControl_SkirmishPoint_Multiplier`} |
+| 6.3 | `SkirmishControl_GroupTier_Array` | element `SkirmishControl_GroupSize_To_GroupTier` {`SkirmishControl_GroupSize_StructVal` (the group size), `SkirmishControl_GroupTier_StructVal` (its size band)}; both are enums of mapper `SkirmishGroupSize` |
+| 6.3 | `SkirmishControl_ZoneEvents` | {`SkirmishControl_ZoneEvent_Difficulty`, `SkirmishControl_ZoneEvent_GroupSize`, `SkirmishControl_ZoneEvent_GroupTier`, `SkirmishControl_ZoneEvent_Level`} |
+| 6.3 | traits | `SkirmishControl_SkirmishPanel_RequiredTrait`, `SkirmishControl_SkirmishTrainer_RequiredTrait`, `SkirmishControl_SkirmishBard_RequiredTrait`, `SkirmishControl_WorldJoin_RequiredTrait`, `SkirmishControl_WorldJoin_TutorialCompletedTrait`; `SkirmishControl_SkirmishTraitPools` and `SkirmishControl_LandscapeSkirmishTraitPools` (element `SkirmishControl_Skirmish_TraitNature`) |
+| 6.3 | `SkirmishControl_SkirmishTraitGates` | element `SkirmishControl_SkirmishTraitGate` {`SkirmishControl_SkirmishTraitGate_MaxRank`, `SkirmishControl_SkirmishTraitGate_MaxRank_WebstoreItem`}; defaults `SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank`, `SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank_Error`, `SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank_WebstoreItem` |
+| 6.3 | statistics lists | `SkirmishControl_BlockedStats_List` (element `SkirmishControl_BlockedStat`); `SkirmishControl_SkirmishGRSEnum_PropertyList` (element `SkirmishControl_GRSEnum_PropertyName`); `SkirmishControl_SkirmishStat_To_GRSEnum_PropertyName_Hash` (element `SkirmishControl_SkirmishStat_To_GRSEnum_PropertyName_Struct` {`SkirmishControl_SkirmishStat`, `SkirmishControl_GRSEnum_PropertyName`}) |
+| 6.3 | `SkirmishStats_StatProperty_Conversion_Hash` | element `SkirmishStats_StatProperty_HashEntry` {`SkirmishStats_StatProperty_FullPropertyName`, `SkirmishStats_StatProperty_SkirmishStat`, `SkirmishStats_StatProperty_SkirmishGroupSize`, `SkirmishStats_StatProperty_OnLevel`} |
+| 6.3 | `Skirmish_Stats` | element `Skirmish_Stat` {`Skirmish_DerivedStat`, `Skirmish_Primary_Stat`, `Skirmish_Stat_Operations` (element `Skirmish_Stat_Op` {`Skirmish_Secondary_Stat`, `Mod_Op`}), `Skirmish_Stat_Scale`} |
+| 7.1 | world-join lists | `WorldJoin_AvailablePETemplates_Array` and `WorldJoinControl_FeaturedInstance_Array` (element `WorldJoin_AvailablePETemplate` in both); `WorldJoinControl_InstanceGroups` (element `WorldJoinControl_Instance_Grouping` {`WorldJoinControl_Instance_Group_Label`, `WorldJoinControl_Grouped_Instance_List` (element `WorldJoinControl_Grouped_Instance`)}); `WorldJoin_Seasonal_EncounterCategory_Array` (element `WorldJoin_Seasonal_EncounterCategory_Entry`) |
+| 7.4 | run-time properties | all carry the prefix `WorldJoin_` (for example `WorldJoin_DifficultyTier`, `WorldJoin_RequesterIID`) |
+| 8.1 | `BigBattleControl_Medal_Info_Hash` | element `BigBattleControl_Medal_Info_Struct` {`BigBattleControl_Medal`, `BigBattleControl_TraitPointsToGrant`, `BigBattleControl_CashOut_PointsRequired`, `BigBattleControl_CashOut_CurrentPoints`, `BigBattleControl_Medal_BonusProp`, `BigBattleControl_FTT_ForCashOut_Loot`, `BigBattleControl_Medal_Alert`, `BigBattleControl_RewardForwarding_GOP`, `BigBattleControl_RewardForwarding_Value`} |
+| 8.1 | quest hashes | `BigBattleControl_Quest_RewardValue_Hash` (element `BigBattleControl_Quest_RewardValue_Struct` {`BigBattleControl_Quest`, `BigBattleControl_QuestPointValue`}); `BigBattleControl_Quest_To_Encounter_Hash` (element `BigBattleControl_Quest_To_Encounter_Pair` {`BigBattleControl_Quest`, `BigBattleControl_Encounter`}) |
+| 8.1 | colour and location arrays | `BigBattleControl_QuestColorToMedalElement_Array` (element **`BigBattleControl_ColorToMedalElement_Struct`**, which does not repeat the array's name, {`BigBattleControl_Quest_Color`, `BigBattleControl_Medal_Element`}); `BigBattleControl_LocationToZoneEvent_Array` (element `BigBattleControl_LocationToZoneEvent_Struct` {`BigBattleControl_BigBattleWaveLocation`, `BigBattleControl_LocationZoneEvent`}) |
+| 8.3 | `DistantBattle_Wave_List` | element `DistantBattle_Wave` {`DistantBattle_AllowedFlank_List` (element `DistantBattle_AllowedFlank`), `DistantBattle_DBU_Count`, `DistantBattle_DBU_Siege_Count`, `DistantBattle_WaveRequirements` {`DistantBattle_DBUs_Remaining`, `DistantBattle_DelayAfterConditionsMet`, `DistantBattle_Wave_RequiredZoneEvent`}, `DistantBattle_ZoneEvent_FullClear`, `DistantBattle_NoSecondaryQuest`} |
+| 8.3 | `DistantBattle_Objective_List` | element `DistantBattle_Objective` {`DistantBattle_Objective_Quest`, `DistantBattle_Objective_ZoneEvent`, `DistantBattle_AllowedFlank`, `DistantBattle_DBU_Count`, `DistantBattle_Wave_Count`} |
+| 8.3 | weighted lists | `DistantBattleUnit_WeightedList` and `DistantBattleUnit_Siege_WeightedList` (element `DistantBattleUnit_WeightingPair` {`DistantBattleUnit_Entry`, `DistantBattleUnit_Weight`}) |
+| 8.4 | `DistantBattleUnit_EntityComposition` | element `DistantBattleUnit_EntityStruct` {`DistantBattleUnit_Formation_Unit`, `DistantBattleUnit_CosmeticEntity`, `DistantBattleUnit_Entity_Offset_Array` (element `DistantBattleUnit_Entity_Offset`), `DistantBattleUnit_VisualRadius`, `DistantBattleUnit_Formation_Jitter`, `Appearance_ClassList` (element `Appearance_KeyInfo` {`Appearance_Key`, `Appearance_AprFile`, `Appearance_Modifier`})} |
+| 8.4 | `DistantBattleUnit_Formation` | element `DistantBattleUnit_FormationGroup` {`DistantBattleUnit_Formation_Unit`, `DistantBattleUnit_Formation_Jitter`, `DistantBattleUnit_Formation_Priority`, `DistantBattleUnit_Formation_LateralDepth`, `DistantBattleUnit_Formation_PosteriorDepth`, `DistantBattleUnit_Formation_LateralWidth_Ratio`, `DistantBattleUnit_Formation_LayoutCalculator`} |
+| 8.4 | other unit fields | `DistantBattleUnit_Composition` (element `DistantBattleUnit_SpawnUnit`); `DistantBattleUnit_SpawnRate`, `DistantBattleUnit_SpawnRate_Variance`; `DistantBattleUnit_Min_Activator_Count`, `DistantBattleUnit_Max_Activator_Count`; `DistantBattleUnit_StartFollowDistance`, `DistantBattleUnit_StopFollowDistance`; `DistantBattleUnit_Missile_RequiredArcherUnit`, `DistantBattleUnit_Missile_RequiredArcherUnit_CurrentCount`; `BigBattle_Interactive_Aim_Vertical`, `BigBattle_Interactive_Impulse_Max`, `BigBattle_Interactive_Impulse_Max_Base` |
+| 8.5 | `DistantBattleUnit_FormationControl_Width_Lookup` | element **`DistantBattleUnit_FormationControl_Width_Struct`** {`DistantBattleUnit_Formation_Width`, `DistantBattleUnit_FormationControl_ActualWidth`} |
+| 8.7 | statistic records | `UI_Table_ColumnDesc_NameOverride`, `UI_Table_ColumnDesc_TooltipOverride` |
+| 9 | `SessionPlay_AllowedSlotCount_List` | element `SessionPlay_AllowedSlotCount_Entry` {`SessionPlay_DID`, `SessionPlay_AllowedSlotCount`}; messages `SessionPlay_SessionCrashedMessage`, `SessionPlay_SessionFailedToStartMessage`, `SessionPlay_SessionResumptionMessage`, `SessionPlay_UnableToResumeMessage` |
+| 10.1 | fellowship-maker arrays | `FellowshipMakerControl_ValidEncounterSizeArray` (element `FellowshipMakerControl_EncounterSize`); `FellowshipMakerControl_MatchTimeWorldPropertyBySizeArray` (element `FellowshipMakerControl_MatchTimeWorldPropertyBySizeEntry` {`FellowshipMakerControl_EncounterSize`, `FellowshipMakerControl_MatchTimeWorldPropertyName`}); `FellowshipMakerControl_BonusEffectThreshold_Array` (element `FellowshipMakerControl_BonusEffectThreshold_Entry` {`FellowshipMakerControl_BonusEffect`, `FellowshipMakerControl_BonusEffect_Threshold`}); `FellowshipMakerControl_ExcludedEncounterArray` (element `FellowshipMakerControl_EncounterDID`); `FellowshipMakerControl_DeserterEffect`, `FellowshipMakerControl_OnFMTeleportEffect` |
+| 14.3 | landblock content | `DistantBattleUnit_Rotation`, `DistantBattleUnit_CreationLocation`, `DistantBattleUnit_MissileTargetWeight`, `PrivateEncounter_SetLock`, `PrivateEncounter_SetLockOnDeath` |
+| 15.1 | `DistantBattleUnit_Composition_Removed_List` | element `DistantBattleUnit_Composition_Removal_Entry` {`DistantBattleUnit_Formation_Unit`, `DistantBattleUnit_Removal_Count`, `DistantBattleUnit_Removal_ScriptKey`, `DistantBattleUnit_Removal_ScriptParameters`} |
+
+<a id="s3-6"></a>
+### 3.6 Value types of the fields the client reads at run time (Confirmed; client tests BIN)
+
+Some fields of §15.1 are not stored in the records of §2.1 (run-time state that a server
+sends) or are read with a type test. Their dictionary definitions, and the value type the
+client accepts:
+
+| Field | Type | Enum source | Dictionary default | What the client accepts (§15.1) |
+|---|---|---|---|---|
+| `Skirmish_DerivedStat` | 8 | `SkirmishStat` | none | stored keys 17–21; the client finds the statistic definition of a derived key through its script library, not by a native property read (B4, B7) |
+| `Skirmish_Primary_Stat`, `Skirmish_Secondary_Stat`, `Mod_Op` | 8 | `SkirmishStat`, `SkirmishStat`, `PropertyOp` | none, none, 0 | an enum (8) or PID (10) value, read as a 32-bit key (B4) |
+| `Skirmish_Stat_Scale` | 15 | — | 1 | a 32-bit integer (15); absent → 1; a value of another type makes the client skip the entry's operation list (B4) |
+| `WE_Featured_Instance_Driver`, `WE_skirmish_template_levelscalinglevel_override` (world properties), `Skirmish_Template_LevelScalingLevel` | 15 | — | none, none, 0 | a 32-bit integer (15) only; a 64-bit integer (19) or any other type counts as absent (B1, B2) |
+| `WorldJoinControl_Instance_Group_Label` | 8 | `WJInstanceGroup` | 0 | an enum (8) or PID (10) value; an absent label is **not** replaced by the default (B3) |
+| `DistantBattleUnit_Composition_Removed_List` | 12 | — | none | an array of `DistantBattleUnit_Composition_Removal_Entry` structs (11) |
+| `DistantBattleUnit_Formation_Unit` | 20 (DB type 0x45) | — | none | a non-zero DID (B5) |
+| `DistantBattleUnit_Removal_Count` | 15 | — | 1 | a 32-bit integer (15), taken as unsigned; anything else counts as 1 (B5) |
+| `DistantBattleUnit_Removal_ScriptKey` | 8 | `FX` (0x23000097) | none | absent counts as 0, "no script" (B5) |
+| `DistantBattleUnit_Removal_ScriptParameters` | 11 (open struct) | — | none | passed to the removal script unchanged (B5) |
+| `DistantBattleUnit_GroundClampEntities` | 21 | — | true | a boolean (21), non-zero is true; absent or any other type counts as true (B5) |
+| `DistantBattleUnit_CaptureQualityOverride` | 8 | 0x230003F4 | 0xFFFFFFFF | absent counts as 0xFFFFFFFF, automatic (B5) |
+| `DistantBattleUnit_FormationControl_SpacingBetweenGroups`, `DistantBattleUnit_FormationControl_ActualWidth` | 9 | — | 0.0, 0.0 | not read by the client (B7) |
+| `PhasingBox_DelayRefreshOfLinkedEntities`, `PhasingBox_UpdateOnlyOnCreation`, `Phasing_ForcePhasingRefresh_OnEnterWorld` | 21 | — | false | a boolean (21), non-zero is true; absent or any other type counts as false (B6) |
+| `FellowshipMaker_PlayerConfiguration`, `FellowshipMakerUI_Configuration` | 18 | `FellowshipMakerConfiguration` (0x23000343) | none | the flag-word bits of §10.2 (B8) |
+
+The dictionary also defines `DistantBattleUnit_Removal_TargetActivator` (instance ID, 7); it
+is not a child of the removal entry and the client does not name it.
 
 ---
 
@@ -1046,21 +1136,32 @@ root's attributes (attribute names are hashes, so position and native class iden
    are not valid sizes, and for each size over its `Skirmish_Template_DifficultyTierArray` in
    stored order (size first, then tier; 107 of 107 templates, including the 2 whose stored
    sizes are not ascending).
-2. **Flag word bits** (557 of 557 entries agree with the template data):
+2. **Flag word bits.** The flag word is a bitfield of the enum mapper labelled
+   `FellowshipMakerConfiguration` (0x23000343 here; it is the mapper named by the definitions
+   of `FellowshipMaker_PlayerConfiguration` and `FellowshipMakerUI_Configuration`, §3.3,
+   §3.6). As for every 32-bit bitfield (§5.1), mapper key *k* is bit *k* − 1. The mapper has
+   21 keys: 0 (no bit) and 1–21 except 15. Its key labels (needed for interoperability: an
+   implementation finds the bits by label at run time, Confirmed 2026-10-08) and the
+   condition that sets each bit in this install (557 of 557 entries agree with the template
+   data):
 
-   | Bits | Meaning |
-   |---|---|
-   | 0x1 | the template is a skirmish (`WorldJoin_EncounterType` 3) |
-   | 0x2 | the template's category is the capped category (§7.1) |
-   | 0x4 | none of the other four kind conditions (a classic instance) |
-   | 0x80000 | the template is a big battle (names a distant-battle script) |
-   | 0x100000 | the template's category is seasonal |
-   | 0x20, 0x40, 0x80 | group size 2, 3, 6 (the valid sizes, in order) |
-   | 0x80 << *t* (0x100 … 0x1000) | difficulty tier *t* = 1 … 5 |
+   | Bit (key) | Key label | Set when (Derived, this install) |
+   |---|---|---|
+   | 0x1 (1) | `Type_Skirmish` | the template is a skirmish (`WorldJoin_EncounterType` 3) |
+   | 0x2 (2) | `Type_Instance` | the template's category is the capped category (§7.1) |
+   | 0x4 (3) | `Type_ScalingInstance` | none of the other kind conditions (a classic instance) |
+   | 0x8 (4) | `Type_NonScalingInstance` | never set in this install |
+   | 0x10, 0x20, 0x40, 0x80 (5–8) | `Size_Size1`, `Size_Size2`, `Size_Size3`, `Size_Size6` | the entry's group size is 1, 2, 3, 6; only sizes 2, 3 and 6 (the valid sizes) occur |
+   | 0x100 … 0x2000 (9–14) | `Tier_Tier1` … `Tier_Tier6` | the entry's difficulty tier is 1 … 6 (tiers 1–5 occur) |
+   | 0x8000 … 0x40000 (16–19) | `Tier_Tier7` … `Tier_Tier10` | tier 7 … 10 (none occurs); bit 0x4000 (key 15) has no label and is skipped |
+   | 0x80000 (20) | `Type_BigBattles` | the template is a big battle (names a distant-battle script) |
+   | 0x100000 (21) | `Type_Seasonal` | the template's category is seasonal |
 
-   Every entry has exactly one of the five kind bits, one size bit and one tier bit. For each
-   template the entries are exactly the products of its tiers and those of its group sizes
-   that are valid sizes (107 of 107).
+   The six `Type_…` bits (0x18000F together) are the kind bits. Every entry has exactly one
+   kind bit, one size bit and one tier bit. For each template the entries are exactly the
+   products of its tiers and those of its group sizes that are valid sizes (107 of 107). A
+   size or tier without a key label (group sizes 12 and 24, tiers above 10) cannot be
+   expressed in a flag word.
 
    **Kind bits are disjoint in this install.** No template meets two of the kind conditions:
    of the 166 templates with `WorldJoin_EncounterCategory`, 22 are skirmishes, 5 capped,
@@ -1068,9 +1169,18 @@ root's attributes (attribute names are hashes, so position and native class iden
    kind bits are 0x1 (171), 0x2 (24), 0x4 (330), 0x80000 (13) and 0x100000 (19). Bit 0x4
    marks a template that meets none of the other four conditions.
 
-   > **OPEN:** Which kind bit a template gets when it meets several conditions (for example a
-   > seasonal skirmish or a capped big battle). The data has no such template, so the
-   > precedence cannot be observed; a writer that meets one should warn.
+   The client does not derive flag words: its fellowship-maker panel takes the flag word of
+   each candidate entry as given and tests it against the six kind bits together (§15.1 B8).
+   Which kind bit a template gets when it meets several conditions (for example a seasonal
+   skirmish or a capped big battle) is therefore decided only by whoever builds the index;
+   the data has no such template.
+
+   **Tessera Decision (index writers):** a template that meets more than one kind condition
+   gets no entries and a warning (`Type_NonScalingInstance` is never set, since no condition
+   for it is known); a group size without a `Size_…` label and a tier without a `Tier_…`
+   label are skipped with a warning (the template's other sizes and tiers still get entries). The bits
+   are taken from the mapper by label, never from the formula of an earlier revision
+   (0x80 << *t* holds only for tiers 1–6).
 
    > **OPEN:** Which finder templates get entries. 107 of the 164 finder templates have
    > entries. Of the other 57, 33 have no valid size and 1 is the fellowship maker's excluded
@@ -1078,19 +1188,14 @@ root's attributes (attribute names are hashes, so position and native class iden
    > and still have none; the data examined does not show what sets them apart.
 3. **Per-flag bitsets**: a map from a flag bit to a bitset over the 557 entries; bit *i* is
    set exactly when entry *i*'s flag word has that flag (20 of 20). A bitset stores only up to
-   its last set bit. **Key set (Confirmed):** exactly 20 keys, every single bit from 0x1 to
-   0x100000 (bit positions 0–20) except 0x4000 (bit 14). The 13 bits that occur in some
-   entry's flag word (0x1, 0x2, 0x4, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800, 0x1000,
-   0x80000, 0x100000) map to non-empty bitsets; the other 7 keys (0x8, 0x10, 0x2000, 0x8000,
-   0x10000, 0x20000, 0x40000) map to an empty bitset (bit count 0), not to a null reference.
-   No key outside that range and no multi-bit key occurs.
-
-   > **OPEN:** The rule that chooses the key set. It is not "every bit up to the highest used
-   > bit" (0x4000 is skipped), and it does not follow the tier formula of item 2 (0x80 << 7 =
-   > 0x4000 would be tier 7, while 0x40000 would be tier 11). No enum mapper of the install
-   > has these keys (all 735 mappers checked). A writer that rebuilds this map should emit
-   > exactly the 20 keys above, with an empty bitset for a key no entry uses, until the rule
-   > is known.
+   its last set bit. **Key set (Confirmed):** one key per non-zero key of the
+   `FellowshipMakerConfiguration` mapper, as a bit value (key *k* → bit *k* − 1): exactly 20
+   keys, every single bit from 0x1 to 0x100000 except 0x4000, which has no mapper key (20 of
+   20). The 13 bits that occur in some entry's flag word (0x1, 0x2, 0x4, 0x20, 0x40, 0x80,
+   0x100, 0x200, 0x400, 0x800, 0x1000, 0x80000, 0x100000) map to non-empty bitsets; the other
+   7 keys (0x8, 0x10, 0x2000, 0x8000, 0x10000, 0x20000, 0x40000) map to an empty bitset (bit
+   count 0), not to a null reference. A writer that rebuilds this map emits one key per
+   non-zero mapper key, with an empty bitset for a bit no entry uses.
 4. **Encounter map**: template DID → (size key 2, 3 or 6 → (tier → entry index)), 121
    templates (14 with an empty map); every index points at an entry with that template, size
    bit and tier bit (557 of 557).
@@ -1217,6 +1322,13 @@ class as well, `wstate.md` §5.3):
 
 The position is the finder's sort index.
 
+Every group of this install has a label and the labels are distinct, so the data does not
+show where a group without a label, or a second group with the same label, would go. The
+client ignores a group without a label and keeps only the first group of a repeated label
+(§15.1 B3). **Tessera Decision (writers of this array):** leave a group without a label out
+of the grouped part (the client could never find it), and place groups with equal labels in
+their stored order, each with its list in stored order, warning in both cases.
+
 ---
 
 <a id="s14"></a>
@@ -1317,20 +1429,34 @@ Build all reverse indices once by walking every property set; never assume a fix
 
 **B1. Featured instance.** The client reads `WorldJoinControl_FeaturedInstance_Array` from the
 world-join control and the integer world property `WE_Featured_Instance_Driver`. If the
-property is absent, not an integer, or below 1, there is no featured instance. Otherwise the
+property is absent, not a 32-bit integer value (type 15; a 64-bit integer value, type 19,
+counts as "not an integer"), or below 1, there is no featured instance. Otherwise the
 featured template is element *n* − 1 of the array (*n* the property's value); if that element
 does not exist or is not a DID, there is none.
 
 **B2. Level-scaling level.** For a template, the client reads
-`Skirmish_Template_LevelScalingLevel` (an integer; absent or not an integer → 0). If the value
-is below 1 it is the result. Otherwise, if the world property
-`WE_skirmish_template_levelscalinglevel_override` exists and is an integer, its value is the
-result; else the template's value is.
+`Skirmish_Template_LevelScalingLevel` (a 32-bit integer, type 15; absent or any other type,
+including a 64-bit integer, → 0). If the value is below 1 it is the result. Otherwise, if the
+world property `WE_skirmish_template_levelscalinglevel_override` exists and is a 32-bit
+integer (type 15), its value is the result; else the template's value is. All values are
+signed 32-bit.
 
 **B3. Template of an instance group.** Given a group key and a group size, the client finds
 the group with that `WorldJoinControl_Instance_Group_Label` and walks its
 `…_Grouped_Instance_List` in stored order; the result is the first template whose
 `Skirmish_Template_GroupSizeArray` contains the size; if none does, there is no template.
+
+The client builds its label → group table from `WorldJoinControl_InstanceGroups` in stored
+order and uses it for every group look-up (also for the set of grouped templates and their
+labels):
+
+- a group whose `WorldJoinControl_Instance_Group_Label` is absent is ignored (the dictionary
+  default 0 is **not** applied); a label value must be an enum (type 8) or PID (type 10)
+  value, otherwise the group is ignored;
+- a group whose `WorldJoinControl_Grouped_Instance_List` is absent or not an array is
+  ignored;
+- when two groups carry the same label, the first one in stored order is kept and the later
+  one is ignored.
 
 **B4. Skirmish statistics panel.** For a derived statistic (`Skirmish_Stats` entry):
 
@@ -1342,8 +1468,23 @@ the group with that `WorldJoinControl_Instance_Group_Label` and walks its
 
 Before step 2 the client chooses the arithmetic: floating point when the primary statistic or
 any secondary statistic is a float statistic or any operation is a divide; integer
-arithmetic otherwise (step 3 then multiplies integers). When the panel combines a statistic over several group sizes or both
-level classes, it adds the values, except for best time (key 16): a time at or below
+arithmetic otherwise (step 3 then multiplies integers). Widths (read at instruction level):
+floating point is IEEE 754 single precision (32-bit), with integer statistics converted to
+single precision before each operation; integer arithmetic is signed 32-bit two's
+complement, so add, subtract and multiply wrap around on overflow (no saturation, no wider
+intermediate). Integer arithmetic never divides, because a divide selects floating point.
+The scale is a 32-bit integer (type 15; absent → 1), converted to single precision in
+floating-point mode. A scale stored with another value type makes the client stop reading
+the entry before its operations, leaving the derived statistic without operations and with
+an undefined scale; **Tessera Decision:** treat such an entry as malformed and ignore it,
+with a warning.
+
+Reading a `Skirmish_Stat` entry: the primary statistic, each secondary statistic and each
+`Mod_Op` must be an enum (type 8) or PID (type 10) value; reading the operation list stops
+at the first operation that is not a struct or whose secondary statistic or `Mod_Op` is
+missing or of another type (the operations before it are kept).
+
+When the panel combines a statistic over several group sizes or both level classes, it adds the values, except for best time (key 16): a time at or below
 `SkirmishStats_CONSTANT_FASTEST_POSSIBLE_SKIRMISH_TIME` counts as "no time"; among real
 times the smallest wins, or the largest when the template has
 `Skirmish_Template_Highest_Time_Is_Best_Time`; a real time always beats "no time".
@@ -1360,13 +1501,38 @@ The panel also loads `SkirmishControl_BlockedStats_List`.
    cosmetic figure of the entity descriptor per offset, with the appearance keys applied;
 2. reads `DistantBattleUnit_CaptureQualityOverride` (absent → automatic, 0xFFFFFFFF) and
    passes it with the figures;
-3. reads `DistantBattleUnit_GroundClampEntities` (absent → **true**) and sets the figures'
-   ground clamping; it re-applies the flag whenever the property changes;
+3. reads `DistantBattleUnit_GroundClampEntities` (absent or not a boolean → **true**) and
+   sets the figures' ground clamping; it re-applies the flag whenever the property changes;
 4. watches `DistantBattleUnit_Composition_Removed_List`: each element is a struct with
    `DistantBattleUnit_Formation_Unit`, `DistantBattleUnit_Removal_Count` (absent → 1),
    `DistantBattleUnit_Removal_ScriptKey` and `…_Removal_ScriptParameters`; for each element it
    removes that many figures of the group whose `Formation_Unit` matches and plays the removal
-   script on them. When the list grows, only the new elements are applied;
+   script on them. When the list grows, only the new elements are applied. In detail:
+   - **Which elements.** On every change of the property the client compares the new list
+     with the value it had just before the change and applies the elements at positions
+     *old length* … *new length* − 1. A list that shrinks or keeps its length applies
+     nothing; the next change is again compared with the value just before it, so after a
+     shrink the count restarts at the shorter length. A value that is not an array counts as
+     length 0.
+   - **First display.** When the unit's figures are first built, the elements already in the
+     list are applied (positions 0 … length − 1) before the figures are created, without
+     removal scripts.
+   - **One element.** An element whose `Formation_Unit` is absent, not a DID or 0 is
+     skipped. The count is a 32-bit integer read as unsigned (type 15; any other type → 1).
+     Every group of `DistantBattleUnit_EntityComposition` whose `Formation_Unit` equals the
+     element's unit (in this install units are distinct within a record, §8.4) loses up to
+     *count* figures: the client takes offsets off the **end** of that group's
+     `DistantBattleUnit_Entity_Offset_Array`, last stored first, and the figures standing at
+     those offsets disappear. A count larger than the offsets left removes them all (a
+     negative count, read as a very large unsigned number, therefore removes all); a count
+     of 0 removes none. The shortened offset arrays are written back into the entity's
+     `DistantBattleUnit_EntityComposition`, so a later rebuild of the figures does not bring
+     them back.
+   - **Script.** If no group matched, nothing happens. Otherwise, after a change (not at
+     first display), the client plays the removal script `DistantBattleUnit_Removal_ScriptKey`
+     with `…_Removal_ScriptParameters` once for the element, on the removed figures; with no
+     script key (absent or 0) the removed figures are dropped at once. When no figure was
+     removed (count 0, or no offsets left) no script plays;
 5. builds a box from `DistantBattleUnit_Formation_Dimensions` (*a*, *b*, *c*) and the unit's
    position (*x*, *y*, *z*): half-width *h* = (*b* − *a*) × 0.5; the box spans *x* − *h* … *x* + *h*,
    *y* … *y* + *c* and *z* … *z* + 1. (When the property is absent the box is the point.)
@@ -1374,11 +1540,12 @@ The panel also loads `SkirmishControl_BlockedStats_List`.
 The client reads none of `DistantBattleUnit_Formation`, its parameters, `Composition`,
 `Formation_Width`, the formation control record, spawn rates or activator counts (B7).
 
-> **OPEN:** Which figures are removed first, how a figure is placed from its offset (frame,
-> heading, jitter, ground clamping), what the box of step 5 is used for, and which messages
-> fill the removal list (protocol, decision 0004).
+> **OPEN:** How a figure is placed from its offset (frame, heading, jitter, ground
+> clamping), what the box of step 5 is used for, and which messages fill the removal list
+> (protocol, decision 0004). (Which figures are removed first is answered in step 4.)
 
-**B6. Phasing boxes.** The client keeps a phasing manager that tracks boxes (entities with the
+**B6. Phasing boxes.** The three phasing flags count only as boolean values (type 21,
+non-zero is true); absent or of any other type they are false. The client keeps a phasing manager that tracks boxes (entities with the
 phasing-box flags) and the entities linked to each box. When a box's evaluated state
 changes, the manager refreshes the linked entities at once, unless the box has
 `PhasingBox_DelayRefreshOfLinkedEntities`. A box with `PhasingBox_UpdateOnlyOnCreation` is
@@ -1401,9 +1568,19 @@ instance-finder and statistics user interfaces; the others (among them
 fields, `PrivateEncounterTemplate_DisallowedMapNoteType`, `…_TeamName`) were not examined:
 many hits are user-interface element identifiers or struct offsets that share the value.
 Caveat: code that reaches a property through a computed or data-driven PID does not show up
-in such a search, and object-form data (§13) cannot be searched this way. With that caveat,
-entering, scaling, locking and ending instances are server behaviour; the client receives
-their results.
+in such a search, and object-form data (§13) cannot be searched this way (`Skirmish_DerivedStat`
+is such a case: the client finds the statistic definition of a derived key through its
+script library, B4). With that caveat, entering, scaling, locking and ending instances are
+server behaviour; the client receives their results.
+
+**B8. Fellowship-maker flag words.** The client's fellowship-maker panel works on candidate
+entries that each carry a template and a flag word of the `FellowshipMakerConfiguration`
+mapper (§10.2 item 2). It lists an entry only when the flag word has at least one of the six
+kind bits (mask 0x18000F). Each row of the panel carries its entry's flag word in the
+bitfield `FellowshipMakerUI_Configuration`; a row that stands for an instance group (§7.1)
+carries the bitwise or of the flag words of the group's entries. In the functions examined the client never computes a flag word
+from template fields; how the entries reach the panel belongs to client–server messages and
+was not examined (decision 0004).
 
 <a id="s15-2"></a>
 ### 15.2 What only a server decides (OPEN)
@@ -1457,7 +1634,7 @@ fixtures and may warn (not fail) when real data breaks one.
 | N-I8 | The world-join object form lists the available templates in stored order, then the grouped ones group by group in ascending label order (each group's list in stored order), and maps each to its position. |
 | N-I9 | Each distant-battle script is named by exactly one template; each big-battle template is in the `BigBattles` set. |
 | N-I10 | Distant-battle unit: composition multiset = each group's unit repeated per offset; the units of `Formation` and `EntityComposition` are the same set, with equal jitter per unit; offsets have second component 0 and lie inside the dimensions; dimension width ≤ the actual width of the width class. |
-| N-I11 | Fellowship-maker index: every entry's flag word has one kind bit, one size bit and one tier bit; entries are in the order of §10.2 item 1 (finder order of templates as in N-I8, then sizes, then tiers, each in stored order); the per-flag map has exactly the 20 keys of §10.2 item 3; each per-flag bitset marks exactly the entries with that flag; every encounter-map index points at a matching entry. |
+| N-I11 | Fellowship-maker index: every entry's flag word has one kind bit, one size bit and one tier bit; entries are in the order of §10.2 item 1 (finder order of templates as in N-I8, then sizes, then tiers, each in stored order); the flag bits are those of the `FellowshipMakerConfiguration` mapper (key *k* = bit *k* − 1) and the per-flag map has one key per non-zero mapper key (20 here, §10.2 item 3); each per-flag bitset marks exactly the entries with that flag; every encounter-map index points at a matching entry. |
 | N-I12 | The skirmish conversion hash has one entry per (statistic, size, on-level) for 19 statistics, 6 sizes and both level classes. |
 
 ---
@@ -1514,8 +1691,22 @@ the template's first entry has index *i*, its encounter map is {2: {1: *i*, 2: *
 
 A unit has two groups: unit 0x70F00300 with 40 offsets and unit 0x70F00301 with 10. The
 removal list becomes [(0x70F00300, count absent, script *k*)]: the client removes 1 figure of
-the first group and plays script *k*. The list then grows by [(0x70F00301, 4, script *k*)]: the
-client removes 4 figures of the second group; the first element is not applied again.
+the first group (the one at offset 40, the last stored) and plays script *k*. The list then
+grows by [(0x70F00301, 4, script *k*)]: the client removes the figures at offsets 10, 9, 8 and
+7 of the second group; the first element is not applied again. The list then shrinks to its
+first element: nothing happens. It grows again to [(0x70F00300, …), (0x70F00301, 20, no
+script)]: the element at position 1 is applied again, and the 6 figures left in the second
+group are dropped at once, without a script. The entity's offset arrays now hold 39 and 0
+offsets.
+
+<a id="s17-7"></a>
+### 17.7 Integer arithmetic of a derived statistic
+
+A synthetic `Skirmish_Stat` with an int primary statistic of value 2,000,000,000, one
+operation (add, an int statistic of value 2,000,000,000) and scale 1 uses integer arithmetic
+(no float statistic, no divide). The sum wraps: 4,000,000,000 − 2³² = −294,967,296. With
+`Mod_Op` 8 (multiply) on values 70,000 and 70,000 the result is 4,900,000,000 − 2³² =
+605,032,704.
 
 ---
 
@@ -1536,41 +1727,18 @@ client removes 4 figures of the second group; the first element is not applied a
 <a id="implementer-notes"></a>
 ## Implementer notes (clean room, `crates/formats/src/instance`)
 
-Choices made where the spec is silent, pending answers:
+The implementers' notes of 2026-10-07 were answered by the 2026-10-08 revision. Each note is
+kept here in short form with its answer; the answers are in the numbered sections, which are
+authoritative.
 
-> **OPEN:** Several struct fields are named only by suffix (`…_DifficultyToMultiplier`
-> {`…_DifficultyTier`, `…_SkirmishPoint_Multiplier`}, the group-size multiplier, the trait
-> gates {`…_MaxRank`, `…_MaxRank_WebstoreItem`}, the statistic-to-GRS hash, the conversion
-> hash {`…_FullPropertyName`, `…_SkirmishStat`, `…_SkirmishGroupSize`, `…_OnLevel`},
-> `…_QuestPointValue`, `…_Encounter`, `…_LocationZoneEvent`, `…_Weight`, the fellowship
-> maker's match-time and bonus-threshold entries). Please give their full labels. The
-> implementation tells them apart by value type, and the two enums of the conversion hash by
-> the mapper their definition names (`SkirmishStat` versus `SkirmishGroupSize`, §3.3); the
-> group-tier map {`…_GroupSize_StructVal`, `…_GroupTier_StructVal`} is not read because both
-> fields may be enums of the same mapper. Abbreviations expanded by the parent prefix
-> (`SkirmishMatchParams_Level_Max`, `Skirmish_Template_MaxLevelScale`,
-> `PrivateEncounterTemplate_DynamicAreaInstance`, `…_ContainedLandBlock`,
-> `DistantBattle_Wave_Count`, and the like) were confirmed only by their presence, with the
-> stated type, in the dictionary.
-
-> **OPEN:** The value types of `Skirmish_DerivedStat`,
-> `DistantBattleUnit_Composition_Removed_List` and its `…_Removal_Count` and
-> `…_Removal_ScriptKey`, `DistantBattleUnit_FormationControl_SpacingBetweenGroups`,
-> `DistantBattleUnit_FormationControl_ActualWidth` and the three phasing flags are not
-> stated; the implementation reads them as any integral or numeric type.
-
-> **OPEN:** §10.2 item 2 gives size bits for three valid sizes and tier bits for tiers 1–5
-> only. The matching-index builder skips (and reports) a fourth valid size or a tier outside
-> 1–5, and gives no entries (with a warning) to a template that meets several kind
-> conditions, until the precedence is known.
-
-> **OPEN:** B4 does not give the integer width of the panel's integer arithmetic; the
-> implementation uses 64-bit integers that saturate. B1 and B2 say "an integer": both 32-
-> and 64-bit integer property values are accepted. An instance group without a label is
-> placed after the labelled groups, in stored order, in the finder order (§13.3 does not
-> cover it). In the removal tracker (B5 step 4) a count larger than the figures left
-> removes the rest, an element whose unit matches no group removes nothing, and a list
-> that shrinks applies nothing and restarts the count at its new length.
+| Note (short form) | Answer | Where |
+|---|---|---|
+| Struct fields named only by suffix; full labels wanted. The group-tier map was not read because both of its fields may be enums of the same mapper. Expansions such as `SkirmishMatchParams_Level_Max` were checked only against the dictionary. | Full labels of every shortened label and array element are listed. Both group-tier fields are indeed enums of mapper `SkirmishGroupSize`; they have distinct labels (`SkirmishControl_GroupSize_StructVal`, `SkirmishControl_GroupTier_StructVal`), so read them by label. Telling fields apart by value type or mapper is not needed and not safe. The expansions the note lists are correct. | §3.5 |
+| Value types of `Skirmish_DerivedStat`, the removal list and its count and script key, the two formation-control floats and the three phasing flags. | Stated, with the dictionary default and the value types the client accepts. The client's type tests are strict (for example only type 21 counts as a phasing flag, only type 15 as a removal count). | §3.6, §15.1 B4–B6 |
+| Size bits only for three valid sizes and tier bits only for tiers 1–5; a fourth valid size or another tier is skipped; a template meeting several kind conditions gets no entries. | The flag word is a bitfield of mapper `FellowshipMakerConfiguration`: size bits exist for sizes 1, 2, 3, 6 and tier bits for tiers 1–10 (bit 0x4000 skipped). This replaces the 0x80 << *t* formula. Skipping a size or tier without a label, and giving no entries to a template with several kind conditions, is confirmed as a **Tessera Decision**: the client takes flag words as given (B8) and the data has no such template. | §10.2 items 2–3, §15.1 B8 |
+| Integer width of B4 (64-bit saturating chosen); B1/B2 accept 32- and 64-bit integers. | **Client behaviour differs:** B4 integer arithmetic is signed 32-bit and wraps; floating point is single precision. B1 and B2 accept only type 15 (32-bit) values; a 64-bit integer counts as absent. | §15.1 B1, B2, B4 |
+| A group without a label goes after the labelled groups in the finder order. | **Changed:** the client ignores a group without a label and keeps the first group of a repeated label. Tessera Decision for writers of the finder order: leave an unlabelled group out and keep groups with equal labels in stored order, warning in both cases. | §13.3, §15.1 B3 |
+| Removal tracker: a count larger than the figures left removes the rest; an element matching no group removes nothing; a shrinking list applies nothing and restarts the count at its new length. | **Confirmed as client behaviour**, with more detail: figures go from the end of the group's offset array, a non-integer count counts as 1, the count is unsigned, existing elements are applied silently when the unit is first shown, and no script plays when nothing was removed. | §15.1 B5 step 4 |
 
 ---
 
@@ -1583,3 +1751,4 @@ Choices made where the spec is silent, pending answers:
 | 2026-10-07 | Revision after the first review (status stays Review). §2.1: record total 1,833 (was 1,834), 17-class subtotal 1,821 (was 1,822); per-class rows and byte totals unchanged. §3.2: table of the non-0x45 DID fields with their type codes, `ScriptTable_DBScriptTable` added. §4.1: the second "other" template carries `WorldJoin_EncounterType` 4 without a category. §4.10: tier-array distribution scoped to class 2651, team templates added; key-4 count explained. §5.3: 36 top-level properties (was 34), exact ancestry. §6.1: band-overlap paragraph replaces "adjacent bands share no level"; new OPEN on overlapping tier bands. §8.4: 53–56 top-level properties (was 60), with the 52 common and the optional ones. §10.2: entry order stated (Confirmed); stored order of the 17 root attributes; kind bits disjoint in this install, precedence OPEN; new OPEN on which finder templates get entries. §13.1: flag bytes 0xCB / 0x8B (was "203" for all). §13.3: attributes listed in stored order (map, set, array). §16 N-I11 includes the order. §17.5 follows the stated order. Provenance: OBS revision probes; rows I1, I12, I18, I19 extended; new rows I21–I26 for §3.2, §3.3, §3.4, §4.12, §5.3, §6.2. |
 | 2026-10-07 | Second revision, after the re-review (status stays Review). §13.3 item 3, §10.2 item 1, §7.1, N-I8, N-I11: the grouped templates of the finder order follow ascending `WorldJoinControl_Instance_Group_Label`, each group's list in stored order, not the stored group order (was "in group order"). §3.2, §4.8: `IntroVO` has 942 values, 908 non-zero and 34 zero (was "908 values"). §10.2 item 3: the flag-bit map has exactly the 20 single-bit keys 0x1 … 0x100000 except 0x4000, 7 of them with empty bitsets (was "20 bits, 0x1 … 0x100000"); new OPEN on the rule behind the key set. Provenance: second-round OBS probes; rows I14, I18, I19, I21 extended. |
 | 2026-10-07 | Second re-review passed; status Accepted (reviewer). No text change besides the header. |
+| 2026-10-08 | Revision answering the implementer notes (status Revised; review pending). New §3.5 (full labels of every shortened label and array element) and §3.6 (value types, defaults and the client's type tests of the run-time fields). §3.3: rows for the `FellowshipMakerConfiguration` and `FX` mappers; derived, primary and secondary statistics named. §10.2 item 2: the flag word is a bitfield of mapper `FellowshipMakerConfiguration` (key *k* = bit *k* − 1); bits for sizes 1, 2, 3, 6 and tiers 1–10 (was: sizes 2, 3, 6 and tiers 1–5 by 0x80 << *t*); kind-precedence OPEN replaced by a Tessera Decision; item 3: the rule behind the 20 keys of the flag-bit map is the mapper's key set (OPEN closed). §13.3: Tessera Decision for groups without a label or with a repeated label. §15.1: B1, B2 accept only 32-bit integers (type 15); B3 ignores groups without a label and keeps the first of a repeated label; B4 integer arithmetic is signed 32-bit and wraps, floating point is single precision, operation-reading rules; B5 step 4 removal details (end of the offset array, unsigned count, growth and shrinking, first display, scripts); B5 ground clamping and B6 phasing flags need a boolean value; new B8 (the client takes fellowship-maker flag words as given). §16 N-I11 follows the mapper. §17.6 extended; new §17.7. Implementer notes answered (table). Provenance: OBS third revision probes; BIN second session (questions 6–10); rows I18, B1–B6 extended; new rows I27–I29, B8. |

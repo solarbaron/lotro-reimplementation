@@ -12,13 +12,17 @@
 //! N4 and N6 sit on content layers the walker hides by default, so their runs activate
 //! those layers (`--content-layers`).
 //!
+//! The walker waits for the spot to settle as long as loading progresses, counted in
+//! frames, not for a wall-clock time ([`SettleWait::Progress`]): a loaded machine makes the
+//! run slower, not different. It gives up only when nothing loads for a minute of frames.
+//!
 //! Only DIDs, counts and coordinates are printed; screenshots go to a temporary directory.
 
 use std::sync::Arc;
 
 use clap::Parser as _;
 use tessera_client::Args;
-use tessera_client::headless::{self, HeadlessReport};
+use tessera_client::headless::{self, HeadlessReport, SettleWait};
 use tessera_client::walker::figures::tag_parts;
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_net::Rotation;
@@ -36,6 +40,25 @@ const SPOTS: [(u32, u64, Option<u32>); 7] = [
     (0x8022_35F6, 0x0423_5F60_0000_001D, None),
 ];
 
+/// Frames per second of the paced headless loop.
+const FPS: u64 = 60;
+
+/// How the walker waits for a spot: give up after this many frames without any loading
+/// progress, or after this many frames in all. One job of the 432-figure spot (a figure
+/// assembly, a landblock bundle) can take many seconds on a loaded machine and much longer
+/// in an unoptimised build; neither limit is reached by a run that keeps loading.
+fn settle_wait() -> SettleWait {
+    let (stall_s, max_s) = if cfg!(debug_assertions) {
+        (900, 4 * 3600)
+    } else {
+        (60, 3600)
+    };
+    SettleWait::Progress {
+        stall_frames: stall_s * FPS,
+        max_frames: max_s * FPS,
+    }
+}
+
 fn run(dir: &std::ffi::OsStr, extra: &[String]) -> Option<HeadlessReport> {
     let data = tempfile::tempdir().expect("tempdir");
     let mut argv: Vec<String> = [
@@ -46,17 +69,13 @@ fn run(dir: &std::ffi::OsStr, extra: &[String]) -> Option<HeadlessReport> {
         dir.to_str().expect("utf-8 game dir"),
         "--data-dir",
         data.path().to_str().expect("utf-8 temp path"),
-        "--settle-timeout",
-        // The 432-figure spot takes longer than a minute to assemble and pose in an
-        // unoptimised build; a release build settles it in seconds.
-        if cfg!(debug_assertions) { "900" } else { "60" },
     ]
     .iter()
     .map(|s| (*s).to_owned())
     .collect();
     argv.extend(extra.iter().cloned());
     let args = Args::try_parse_from(argv).expect("valid args");
-    match headless::run(&args) {
+    match headless::run_with(&args, settle_wait()) {
         Ok(r) => Some(r),
         Err(e) => {
             if e.chain().any(|c| {
@@ -132,6 +151,7 @@ fn npc_spots_are_spawned_where_the_data_places_them() {
             .map(|l| format!("{l:#x}"))
             .collect::<Vec<_>>()
             .join(",");
+        let t0 = std::time::Instant::now();
         let Some(report) = run(
             &dir,
             &[
@@ -160,7 +180,7 @@ fn npc_spots_are_spawned_where_the_data_places_them() {
         eprintln!(
             "{info:#010x} IID {iid:#018x}: at ({:.2}, {:.2}, {:.2}) heading {:.4} (data \
              ({:.2}, {:.2}, {:.2}) {:.4}); {} placed figures, {} animated characters, figures \
-             {} ready / {} failed; settled {}; shown {}",
+             {} ready / {} failed; settled {} after {} frames ({:.1} s); shown {}",
             got.position[0],
             got.position[1],
             got.position[2],
@@ -174,6 +194,8 @@ fn npc_spots_are_spawned_where_the_data_places_them() {
             report.characters.figures_ready,
             report.characters.figures_failed,
             report.settled,
+            report.frames,
+            t0.elapsed().as_secs_f64(),
             got.figure_shown
         );
         assert_eq!(got.region, key.region());
@@ -190,7 +212,11 @@ fn npc_spots_are_spawned_where_the_data_places_them() {
             "{info:#010x}: heading {} vs {want_heading}",
             got.heading
         );
-        assert!(report.settled, "{info:#010x}: the spot did not settle");
+        assert!(
+            report.settled,
+            "{info:#010x}: the spot did not settle (no loading progress, or the frame limit); waiting for {:?}",
+            report.unsettled
+        );
         // Settled also counts failed figures: the spot's own figure must be drawn as a
         // character (`walker.md` §8.1).
         assert!(

@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-ui"
+description = "Game UI: retained element tree from UI layout records, layout, behaviour and focus, skins, text, sparse CPU canvases and the composition list (no GPU)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Pure-Rust outline rasteriser for Tessera's own fallback font (text::fallback; fonts.md §11
+# item 4). Apache-2.0; already in the lock file through egui.
+ab_glyph = { version = "0.2.32", default-features = false, features = ["std"] }
+# Decoded UI images (ui_image::UiImage, SourceTag) for the painter and the image cache.
+tessera-material.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Font records (font::Font, Glyph) and A8 render surfaces for the glyph atlases (text::atlas).
+tessera-formats.workspace = true
+# Skins (skin): the settings folder (install-layout.md §8) and drive-letter paths through a
+# Wine prefix (skin-definition.md D12).
+tessera-install.workspace = true
+# Skins (skin): the art-asset and element label chains, the base art table and the game
+# skins, read through the property layer (skin-definition.md §5, §6.1, §6.2).
+tessera-props.workspace = true
+
+# Skins (skin::art): open skin image files with O_NONBLOCK so a FIFO cannot block an asset
+# worker. MIT OR Apache-2.0; already in the lock file.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Partition-invariance property tests of the painter (tests/paint_*.rs).
+proptest.workspace = true
+# Real-data test of the painter only (tests/paint_real_data.rs): render surfaces by DID.
+tessera-formats.workspace = true
+tessera-props.workspace = true
+# Skin tests (tests/skin_*.rs): synthetic skin folders in temporary directories.
+tempfile = "3"
+# Real-data test of the element tree (tests/ui_real_data.rs): the archive set of the
+# user's install, read-only.
+tessera-dat.workspace = true
+
+# Painter micro-benchmark for the U1 probe gap (decision 0015 §6); a plain binary.
+[[bench]]
+name = "paint_probe"
+harness = false
+
+# Frame-loop step 8 (`Ui::paint`) on a synthetic UI shaped like decision 0015 §6's scripted
+# run (U1, U4 (b)); a plain binary.
+[[bench]]
+name = "paint_frame"
+harness = false
+
+[lints]
+workspace = true

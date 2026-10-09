@@ -370,6 +370,12 @@ fn compositor_controls() {
             .is_some_and(|d| d.prefix() == IMAGE_COMPOSITOR_PREFIX)
     }));
     assert!(controls.iter().all(|c| matches!(c.min_value, Some(0 | 1))));
+    // X3: the layer name is an enum key and the control property a PID.
+    assert!(
+        controls
+            .iter()
+            .all(|c| c.layer_key.is_some() && c.control_property.is_some())
+    );
     eprintln!(
         "compositor controls: {} in {descriptors} descriptors",
         controls.len()
@@ -408,8 +414,7 @@ fn ui_scenes() {
             0x001, 0x002, 0x004, 0x008, 0x010, 0x020, 0x040, 0x080, 0x100, 0x200, 0x400
         ]
         .map(bit),
-        // Bit 0x010: 3,026, as the flag-word census below implies; the bit table of §4.2
-        // says 3,051 (spec OPEN filed).
+        // Bit 0x010: 3,026, as the flag-word census below implies (U2, corrected).
         [0, 3051, 323, 2969, 3026, 0, 0, 2099, 3041, 0, 0]
     );
     assert_eq!(
@@ -762,6 +767,14 @@ fn bare_property_sets() {
             BareSetFamily::GameMap => {
                 let v = GameMapView::from_set(&rec.set, &classifier.pids).expect("game map");
                 light_maps += usize::from(v.has_light_map);
+                // X3: the fields have their dictionary types.
+                assert!(
+                    v.image.is_some()
+                        && v.scale.is_some()
+                        && v.pixel_offset.iter().all(Option::is_some)
+                        && v.block_offset.iter().all(Option::is_some),
+                    "§12.2: typed game-map fields"
+                );
             }
             BareSetFamily::LocalSky => {
                 use tessera_formats::gameplay::common::PropertyAccess;
@@ -1088,14 +1101,29 @@ fn metadata_objects() {
             .map(|d| sets[d].iter().count()),
     );
     assert_eq!(sizes, BTreeMap::from([(1, 109), (2, 1)]));
-    // §13.7: 124 objects carry `Version_*` properties, the VersionSystem control among
-    // them (the classifier leaves controls out; spec OPEN filed on the wording).
+    // §13.7 (X2): 124 objects carry `Version_*` properties: 123 members and the
+    // VersionSystem control, which the classifier leaves out.
     assert_eq!(count(MetadataFamily::Version) + 1, 124);
     let vs_set = control(controls.version_system);
     assert!(vs_set.iter().any(|e| classifier.version.contains(&e.pid)));
     assert_eq!(classifier.classify(&vs_set), None);
+    assert!(classifier.is_version_control(&vs_set));
     let vs = VersionSystemView::from_set(&vs_set, p);
     assert_eq!(vs.updates.len(), 93);
     assert_eq!(vs.always_run_on_players.len(), 2);
     assert!(vs.current.is_some());
+    // 92 structs carry `Version_SingletonList`, one the account list (one DID).
+    assert_eq!(vs.account_updates.len(), 1);
+    assert_eq!(vs.account_updates[0].1.len(), 1);
+    // The candidates (155 + 2 distinct DIDs) cover every member; 34 are not members.
+    let version_members: BTreeSet<Did> =
+        members[&MetadataFamily::Version].iter().copied().collect();
+    let candidates = vs.member_candidates();
+    assert_eq!(candidates.len(), 157);
+    let candidate_set: BTreeSet<Did> = candidates.iter().copied().collect();
+    assert!(
+        version_members.is_subset(&candidate_set),
+        "§13.7: the control names every member"
+    );
+    assert_eq!(candidate_set.len() - version_members.len(), 34);
 }

@@ -104,6 +104,8 @@ pub struct OffscreenTarget {
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
+    /// Non-sRGB view for the UI pass (render.md §6.4), when available.
+    ui_view: Option<wgpu::TextureView>,
 }
 
 impl OffscreenTarget {
@@ -205,6 +207,9 @@ pub struct FrameStats {
     pub particle_draws: u32,
     /// Particle vertices drawn.
     pub particle_vertices: u32,
+    /// UI pass and UI texture statistics (render.md §6), kept apart from
+    /// asset uploads.
+    pub ui: crate::ui::UiStats,
 }
 
 struct SurfaceState<'w> {
@@ -404,6 +409,8 @@ pub struct Renderer<'w> {
     /// Cloned into every surface [`Frame`]; strong count > 1 means a surface
     /// texture is still alive and the surface must not be reconfigured.
     frame_token: Arc<()>,
+    /// UI pass state (`crate::ui`).
+    ui: crate::ui::UiState,
 }
 
 const MAX_DEPTH_CACHE: usize = 4;
@@ -639,6 +646,9 @@ pub(crate) struct WorldFrame<'a> {
     pub textures: TextureResolver<'a>,
     /// Id of the renderer (handles of other renderers are skipped).
     pub owner: u64,
+    /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
+    /// write alpha by [`crate::material::FixedBlend::alpha_rule`].
+    pub premultiplied: bool,
 }
 
 /// What a render-world module needs to create retained GPU objects.
@@ -793,7 +803,7 @@ impl<'w> Renderer<'w> {
                 desired_maximum_frame_latency: 2,
                 present_mode,
                 alpha_mode,
-                view_formats: Vec::new(),
+                view_formats: crate::ui::surface_view_formats(ctx, format),
             },
             dirty: true,
         })
@@ -885,6 +895,7 @@ impl<'w> Renderer<'w> {
             .min(device.limits().max_buffer_size)
             .min(u64::from(u32::MAX));
         let [r, g, b, a] = config.clear_color.map(f64::from);
+        let ui = crate::ui::UiState::new(device);
         let mut renderer = Self {
             owner,
             present_mode: config.present_mode,
@@ -935,6 +946,7 @@ impl<'w> Renderer<'w> {
             clear_color: wgpu::Color { r, g, b, a },
             frame_index: 0,
             frame_token: Arc::new(()),
+            ui,
         };
         renderer.apply_surface_config()?;
         renderer.ctx.errors.check()?;
@@ -1132,6 +1144,22 @@ impl<'w> Renderer<'w> {
             serial,
             PaletteData::new(self.palette_align, self.palette_budget),
         )
+    }
+
+    /// Borrow the parts the UI pass works with (`crate::ui`).
+    pub(crate) fn ui_parts(&mut self) -> crate::ui::UiParts<'_> {
+        crate::ui::UiParts {
+            ctx: &self.ctx,
+            textures: &mut self.textures,
+            texture_layout: &self.shared.texture,
+            samplers: &self.samplers,
+            ui: &mut self.ui,
+        }
+    }
+
+    /// The UI state and the surface format, if any (`crate::ui`).
+    pub(crate) fn ui_ref(&self) -> (&crate::ui::UiState, Option<wgpu::TextureFormat>) {
+        (&self.ui, self.surface.as_ref().map(|s| s.config.format))
     }
 
     /// The GPU context (device, queue, adapter info).
@@ -1351,6 +1379,7 @@ impl<'w> Renderer<'w> {
         size: (u32, u32),
         target: &wgpu::TextureView,
         scene_copy: bool,
+        premultiplied: bool,
     ) -> Result<Vec<Arc<dyn PassHook>>> {
         let selector = LightSelector::new(frame, reach);
         let copy_view = if scene_copy {
@@ -1376,6 +1405,7 @@ impl<'w> Renderer<'w> {
                 exclude: Some(target),
             },
             owner: self.owner,
+            premultiplied,
         };
         let WorldDraws {
             terrain,
@@ -1456,7 +1486,21 @@ impl<'w> Renderer<'w> {
 
     /// Overwrite all texels of an existing texture (same size). Textures with a mip
     /// chain cannot be updated ([`RenderError::InvalidTexture`]).
+    ///
+    /// UI textures are refused with [`RenderError::InvalidTexture`]: they
+    /// take B, G, R, A bytes through [`Self::update_texture_rect`], in call
+    /// order with copies and clears (render.md §6.3). Pending UI texture
+    /// operations are submitted first, so that this later write is not
+    /// overtaken by an earlier `update_texture_rect` of the same texture.
     pub fn update_texture(&mut self, id: TextureId, rgba: &[u8]) -> Result<()> {
+        if self.ui.textures.contains_key(&id) {
+            return Err(RenderError::InvalidTexture(
+                "UI textures are written with update_texture_rect (B, G, R, A)".into(),
+            ));
+        }
+        if !self.ui.ops.is_empty() {
+            self.ui.ops.flush(&self.ctx, &self.ui.clear_pipeline)?;
+        }
         self.textures.update(&self.ctx.queue, id, rgba)
     }
 
@@ -1475,6 +1519,13 @@ impl<'w> Renderer<'w> {
             return false;
         }
         self.material_bgs.retain(|key, _| !key.contains(&id));
+        // Pending UI operations may use the texture: submit them first.
+        if !self.ui.ops.is_empty()
+            && let Err(e) = self.ui.ops.flush(&self.ctx, &self.ui.clear_pipeline)
+        {
+            tracing::warn!("UI operations dropped: {e}");
+        }
+        self.ui.forget(id);
         self.lit_material_bgs.retain(|key, _| !key.0.contains(&id));
         self.textures.remove(id)
     }
@@ -1936,12 +1987,15 @@ impl<'w> Renderer<'w> {
                         AlphaMode::Mask { .. } => LitKind::Mask,
                         AlphaMode::TestBlend { .. } => LitKind::TestBlend,
                         AlphaMode::Blend => LitKind::Blend,
-                        AlphaMode::Additive => LitKind::Fixed(FixedBlend::ADDITIVE),
-                        AlphaMode::Fixed(b) => LitKind::Fixed(b),
+                        AlphaMode::Additive => LitKind::Fixed(
+                            FixedBlend::ADDITIVE,
+                            FixedBlend::ADDITIVE.alpha_rule(pass.premultiplied),
+                        ),
+                        AlphaMode::Fixed(b) => LitKind::Fixed(b, b.alpha_rule(pass.premultiplied)),
                     };
                     let blended = matches!(
                         kind,
-                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(_)
+                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(..)
                     );
                     let key = LitKey {
                         format,
@@ -2172,6 +2226,7 @@ impl<'w> Renderer<'w> {
             )));
         }
         let format = format.wgpu();
+        let view_formats = crate::ui::offscreen_view_formats(&self.ctx, format);
         let (texture, gpu_error) = with_error_scope(&self.ctx.device, || {
             self.ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("tessera-offscreen"),
@@ -2187,13 +2242,14 @@ impl<'w> Renderer<'w> {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
+                view_formats,
             })
         });
         if let Some(e) = gpu_error {
             return Err(RenderError::Gpu(e));
         }
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_view = crate::ui::ui_view(&texture, view_formats);
         Ok(OffscreenTarget {
             owner: self.owner,
             texture,
@@ -2201,6 +2257,7 @@ impl<'w> Renderer<'w> {
             width,
             height,
             format,
+            ui_view,
         })
     }
 
@@ -2250,6 +2307,10 @@ impl<'w> Renderer<'w> {
         });
         let (width, height, format) =
             (state.config.width, state.config.height, state.config.format);
+        let ui = crate::ui::FrameUi::new(crate::ui::ui_view(
+            &texture.texture,
+            &state.config.view_formats,
+        ));
         let token = Arc::clone(&self.frame_token);
         let (serial, palettes) = self.new_frame_parts();
         Ok(Some(Frame {
@@ -2262,6 +2323,7 @@ impl<'w> Renderer<'w> {
             passes: Vec::new(),
             serial,
             palettes,
+            ui,
         }))
     }
 
@@ -2282,6 +2344,7 @@ impl<'w> Renderer<'w> {
             passes: Vec::new(),
             serial,
             palettes,
+            ui: crate::ui::FrameUi::new(target.ui_view.clone()),
         })
     }
 
@@ -2327,6 +2390,7 @@ impl<'w> Renderer<'w> {
             mut passes,
             serial,
             palettes,
+            ui: frame_ui,
         } = frame;
 
         if passes.is_empty() {
@@ -2479,6 +2543,7 @@ impl<'w> Renderer<'w> {
                                 (width, height),
                                 &view,
                                 copy,
+                                pass.premultiplied,
                             )?;
                             pass.hooks.splice(0..0, hooks);
                         }
@@ -2505,6 +2570,7 @@ impl<'w> Renderer<'w> {
                             white: (&self.white_view.0, &self.white_view.1),
                             exclude: Some(&view),
                         },
+                        premultiplied: pass.premultiplied,
                     };
                     if let Some(h) = crate::particles::build_hook(
                         &mut self.particle_state,
@@ -2620,6 +2686,15 @@ impl<'w> Renderer<'w> {
                 .get(&self.ctx.device, &self.shared, format, false);
         }
         let depth_view = needs_depth.then(|| self.depth_view(width, height));
+        let ui_plan = self.ui.prepare(
+            &self.ctx,
+            &self.textures,
+            &frame_ui,
+            &view,
+            format,
+            width,
+            height,
+        )?;
 
         // ---- record -----------------------------------------------------------------
         let mut stats = FrameStats {
@@ -2627,6 +2702,7 @@ impl<'w> Renderer<'w> {
             passes: u32::try_from(passes.len()).unwrap_or(u32::MAX),
             palettes: palettes.count,
             palette_bytes: palette_bytes.len() as u64,
+            ui: ui_plan.stats,
             shadow_map_size: self.shadow_map.1,
             ..FrameStats::default()
         };
@@ -2639,6 +2715,7 @@ impl<'w> Renderer<'w> {
         let mut depth_cleared = false;
         let mut warned_missing = false;
         for (i, pass) in passes.iter().enumerate() {
+            self.ui.record(&ui_plan, i, &mut encoder);
             let is_world = matches!(pass.space, PassSpace::World { .. });
             let frame_offset = frame_offsets.get(i).copied().flatten();
             if let Some((offset, true)) = frame_offset {
@@ -2879,6 +2956,10 @@ impl<'w> Renderer<'w> {
             }
         }
 
+        self.ui.record(&ui_plan, passes.len(), &mut encoder);
+        self.ui.record_cursor(&ui_plan, &mut encoder);
+        // UI texture operations go first, in call order (render.md §6.3).
+        self.ui.ops.flush(&self.ctx, &self.ui.clear_pipeline)?;
         self.ctx.queue.submit(Some(encoder.finish()));
         drop(view);
         if let FrameTarget::Surface(texture, token) = target {

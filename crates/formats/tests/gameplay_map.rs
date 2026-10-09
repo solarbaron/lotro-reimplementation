@@ -7,8 +7,9 @@
 use proptest::prelude::*;
 use tessera_formats::gameplay::common::build::{array, did, entry, set, structure};
 use tessera_formats::gameplay::map::{
-    MapKind, MapNote, MapNotesTable, MapPids, NoteFiling, NoteInvalid, PlaceIssue, PlacesTable,
-    QuestNoteInfo, QuestNotesTable, RouteAction, TravelRoute, TravelSegment, TravelWeb, bit_keys,
+    HousingControl, HousingControlPids, LandmarkProperties, MapKind, MapNote, MapNotesTable,
+    MapPids, MapWeenieKeys, NoteFiling, NoteInvalid, PlaceIssue, PlacesTable, QuestNoteInfo,
+    QuestNotesTable, Ripcord, RouteAction, TravelRoute, TravelSegment, TravelWeb, bit_keys,
     bucket_count, classify_map_kind, classify_set, distance_squared, fold_key_unit, is_null_text,
     place_bucket, place_key_hash, position_flags_consistent, position_is_valid, route_pattern,
     text_is_valid,
@@ -709,6 +710,9 @@ fn pids() -> (MapPids, impl Fn(&str) -> u32) {
 fn kinds_and_travel_views() {
     let (p, id) = pids();
     assert!(p.missing().is_empty());
+    // The `WeenieType` key labelled `Landmark` (§2.3); 0x4D is invented.
+    let wk = MapWeenieKeys::from_labels([(0x10, "Door"), (0x4D, "Landmark")]);
+    assert_eq!(wk.landmark, Some(0x4D));
 
     // §13.5: station W with home D1 selling route R for 500.
     let w = set(vec![
@@ -724,7 +728,7 @@ fn kinds_and_travel_views() {
             )]),
         ),
     ]);
-    assert_eq!(classify_set(&w, &p), Some(MapKind::TravelWeb));
+    assert_eq!(classify_set(&w, &p, &wk), Some(MapKind::TravelWeb));
     let web = TravelWeb::read(&w, &p).unwrap();
     assert_eq!(web.home, Did(0x7000_00D1));
     assert_eq!(web.offers.len(), 1);
@@ -744,7 +748,7 @@ fn kinds_and_travel_views() {
         ),
         entry(id("Usage_MinLevel"), PropertyValue::Int(20)),
     ]);
-    assert_eq!(classify_set(&r, &p), Some(MapKind::TravelRoute));
+    assert_eq!(classify_set(&r, &p, &wk), Some(MapKind::TravelRoute));
     let route = TravelRoute::read(&r, &p).unwrap();
     assert_eq!(route.destination, Did(0x7000_00D2));
     assert_eq!(route.mode, Some(Did(0x7000_00E1)));
@@ -760,7 +764,7 @@ fn kinds_and_travel_views() {
         id("TravelSegment_HeadName"),
         PropertyValue::String("head".into()),
     )]);
-    assert_eq!(classify_set(&seg, &p), Some(MapKind::TravelSegment));
+    assert_eq!(classify_set(&seg, &p, &wk), Some(MapKind::TravelSegment));
     assert!(TravelSegment::read(&seg, &p).is_well_formed());
     let both = set(vec![
         entry(
@@ -778,7 +782,7 @@ fn kinds_and_travel_views() {
         id("TravelPad_Location"),
         PropertyValue::String("key".into()),
     )]);
-    assert_eq!(classify_set(&pad, &p), Some(MapKind::TravelPad));
+    assert_eq!(classify_set(&pad, &p, &wk), Some(MapKind::TravelPad));
     // An NPC with a pad location and a station is not a pad.
     let npc = set(vec![
         entry(
@@ -787,7 +791,7 @@ fn kinds_and_travel_views() {
         ),
         entry(id("TravelWebWC"), did(0x7000_0099)),
     ]);
-    assert_eq!(classify_set(&npc, &p), None);
+    assert_eq!(classify_set(&npc, &p, &wk), None);
     let sm = tessera_formats::gameplay::map::StableMaster::read(&npc, &p).unwrap();
     assert_eq!(sm.station, Some(Did(0x7000_0099)));
     assert_eq!(sm.pad.as_deref(), Some("key"));
@@ -796,13 +800,13 @@ fn kinds_and_travel_views() {
         id("TravelHop_Delay"),
         PropertyValue::Float(0.0),
     )]);
-    assert_eq!(classify_set(&hop, &p), Some(MapKind::TravelHop));
+    assert_eq!(classify_set(&hop, &p, &wk), Some(MapKind::TravelHop));
 
     let house = set(vec![
         entry(id("House_NeighborhoodTemplate"), did(0x7000_0071)),
         entry(id("House_Type"), PropertyValue::Enum(3)),
     ]);
-    assert_eq!(classify_set(&house, &p), Some(MapKind::House));
+    assert_eq!(classify_set(&house, &p, &wk), Some(MapKind::House));
     let h = tessera_formats::gameplay::map::House::read(&house, &p).unwrap();
     assert_eq!((h.template, h.house_type), (Did(0x7000_0071), Some(3)));
 
@@ -817,36 +821,212 @@ fn kinds_and_travel_views() {
         ),
     ]);
     assert_eq!(
-        classify_set(&template, &p),
+        classify_set(&template, &p, &wk),
         Some(MapKind::NeighbourhoodTemplate)
     );
     let tv = tessera_formats::gameplay::map::NeighbourhoodTemplate::read(&template, &p).unwrap();
     assert_eq!(tv.boundaries[0].landblock(), Some((3, 4)));
 
-    assert_eq!(classify_set(&set(vec![]), &p), None);
+    assert_eq!(classify_set(&set(vec![]), &p, &wk), None);
     // `classify_map_kind` never reports a pad; `classify_set` does.
-    assert_eq!(classify_map_kind(&pad, &p), None);
+    assert_eq!(classify_map_kind(&pad, &p, &wk), None);
 
     // Zones (WS §11.1).
     let zone = |label: &str| set(vec![entry(id(label), did(0x7000_0001))]);
     assert_eq!(
-        classify_set(&zone("Area_Territory"), &p),
+        classify_set(&zone("Area_Territory"), &p, &wk),
         Some(MapKind::Area)
     );
     assert_eq!(
-        classify_set(&zone("Area_Region"), &p),
+        classify_set(&zone("Area_Region"), &p, &wk),
         Some(MapKind::Territory)
     );
     assert_eq!(
         classify_set(
             &set(vec![entry(id("Area_RegionID"), PropertyValue::Enum(2))]),
-            &p
+            &p,
+            &wk
         ),
         Some(MapKind::Region)
     );
     assert_eq!(
-        classify_set(&zone("Dungeon_Name"), &p),
+        classify_set(&zone("Dungeon_Name"), &p, &wk),
         Some(MapKind::Dungeon)
+    );
+
+    // §2.3 (MD44): a landmark is `WeenieType` `Landmark` with `MapNote_Type`; the music is
+    // optional (MD49), and without the mapper key no set is a landmark.
+    let landmark = |music: bool| {
+        let mut entries = vec![
+            entry(id("WeenieType"), PropertyValue::Enum(0x4D)),
+            entry(id("MapNote_Type"), PropertyValue::Bitfield32(1)),
+        ];
+        if music {
+            entries.push(entry(id("Landmark_Music"), PropertyValue::Enum(7)));
+            entries.push(entry(
+                id("Landmark_OverrideMountedCombat_Allow"),
+                PropertyValue::Bool(true),
+            ));
+        }
+        set(entries)
+    };
+    assert_eq!(
+        classify_set(&landmark(true), &p, &wk),
+        Some(MapKind::Landmark)
+    );
+    assert_eq!(
+        classify_set(&landmark(false), &p, &wk),
+        Some(MapKind::Landmark)
+    );
+    assert_eq!(
+        classify_set(&landmark(true), &p, &MapWeenieKeys::default()),
+        None
+    );
+    let no_note = set(vec![
+        entry(id("WeenieType"), PropertyValue::Enum(0x4D)),
+        entry(id("Landmark_Music"), PropertyValue::Enum(7)),
+    ]);
+    assert_eq!(classify_set(&no_note, &p, &wk), None);
+    let lp = LandmarkProperties::read(&landmark(true), &p);
+    assert_eq!(
+        (
+            lp.music,
+            lp.mounted_combat_allow,
+            lp.mounted_combat_disallow
+        ),
+        (Some(7), Some(true), None)
+    );
+    assert_eq!(
+        LandmarkProperties::read(&landmark(false), &p),
+        LandmarkProperties::default()
+    );
+
+    // §11 (MD48): ripcord field types.
+    let rc = set(vec![
+        entry(
+            id("RipCord_WorldProperty"),
+            PropertyValue::PropertyId(0x1000_0777),
+        ),
+        entry(
+            id("RipCord_WorldPropertyTableProperty"),
+            PropertyValue::PropertyId(0x1000_0778),
+        ),
+        entry(id("RipCord_UIElement_ID"), PropertyValue::Enum(0x1000_0055)),
+        entry(id("RipCord_UIElement_Layout"), did(0x2200_0012)),
+        entry(
+            id("RipCord_DisableEditingInAdminPanel"),
+            PropertyValue::Bool(false),
+        ),
+        entry(id("RipCord_Name"), PropertyValue::String("n".into())),
+    ]);
+    assert_eq!(classify_set(&rc, &p, &wk), Some(MapKind::Ripcord));
+    let r = Ripcord::read(&rc, &p);
+    assert_eq!(r.world_property, Some(0x1000_0777));
+    assert_eq!(r.table_property, Some(0x1000_0778));
+    assert_eq!(r.array_element, None);
+    assert_eq!(r.ui_element_id, Some(0x1000_0055));
+    assert_eq!(r.ui_element_layout, Some(Did(0x2200_0012)));
+    assert_eq!(r.disable_editing, Some(false));
+    assert_eq!(r.name.as_deref(), Some("n"));
+}
+
+// §9.7 (MD47): the housing-control record, read by its full labels.
+#[test]
+fn housing_control_view() {
+    let id = |l: &str| {
+        0x2000
+            + u32::try_from(
+                HousingControlPids::LABELS
+                    .iter()
+                    .position(|x| *x == l)
+                    .unwrap(),
+            )
+            .unwrap()
+    };
+    let names = move |l: &str| HousingControlPids::LABELS.contains(&l).then(|| id(l));
+    let p = HousingControlPids::resolve(&names);
+    assert!(p.missing().is_empty());
+    let hc = set(vec![
+        entry(
+            id("HousingControl_HouseTypeInfoArray"),
+            array(vec![entry(
+                0x9990,
+                structure(vec![
+                    entry(id("HousingControl_HouseType"), PropertyValue::Enum(3)),
+                    entry(id("HousingControl_HousePrice"), PropertyValue::Int(1_000)),
+                    entry(id("HousingControl_HouseUpkeep"), PropertyValue::Int(100)),
+                    entry(id("HousingControl_Icon32"), did(0x4100_0003)),
+                ]),
+            )]),
+        ),
+        entry(
+            id("HousingControl_HouseValueTierArray"),
+            array(vec![entry(
+                0x9991,
+                structure(vec![
+                    entry(id("HousingControl_HouseValueTier"), PropertyValue::Enum(2)),
+                    entry(
+                        id("HousingControl_HouseValueTier_PriceModifier"),
+                        PropertyValue::Float(1.5),
+                    ),
+                    entry(
+                        id("HousingControl_HouseValueTier_UpkeepPriceModifier"),
+                        PropertyValue::Float(2.0),
+                    ),
+                ]),
+            )]),
+        ),
+        entry(
+            id("HousingControl_HousingGroupInfo_Kinship"),
+            array(vec![entry(
+                0x9992,
+                structure(vec![
+                    entry(
+                        id("HousingControl_HousingGroupInfo_Group"),
+                        PropertyValue::Enum(1),
+                    ),
+                    entry(
+                        id("HousingControl_HousingGroupInfo_DefaultPermission"),
+                        PropertyValue::Bitfield32(0b101),
+                    ),
+                ]),
+            )]),
+        ),
+        entry(
+            id("HousingControl_UpkeepInterval"),
+            PropertyValue::Int(604_800),
+        ),
+        entry(
+            id("HousingControl_MithrilToWritConversionRate"),
+            PropertyValue::Float(0.5),
+        ),
+        entry(id("HousingControl_ForSaleSignDataID"), did(0x7000_0123)),
+        entry(
+            id("HousingControl_NeighborhoodContentLayer"),
+            PropertyValue::Enum(9),
+        ),
+    ]);
+    let h = HousingControl::read(&hc, &p);
+    assert_eq!(h.house_types.len(), 1);
+    let t = h.house_types[0];
+    assert_eq!(
+        (t.house_type, t.price, t.upkeep),
+        (Some(3), Some(1_000), Some(100))
+    );
+    assert_eq!(t.icons[2], Some(Did(0x4100_0003)));
+    assert_eq!(t.mount_tokens, None);
+    assert_eq!(h.value_tiers[0].price_modifier, Some(1.5));
+    assert_eq!(h.value_tiers[0].upkeep_modifier, Some(2.0));
+    assert!(h.personal_groups.is_empty());
+    assert_eq!(h.kinship_groups[0].default_permission, Some(0b101));
+    assert_eq!(h.kinship_groups[0].cant_change_permission, None);
+    assert_eq!(h.upkeep_interval, Some(604_800));
+    assert_eq!(h.writ_conversion_rate, Some(0.5));
+    assert_eq!(h.for_sale_sign, Some(Did(0x7000_0123)));
+    assert_eq!(h.neighborhood_content_layer, Some(9));
+    assert_eq!(
+        HousingControl::read(&set(vec![]), &p),
+        HousingControl::default()
     );
 }
 

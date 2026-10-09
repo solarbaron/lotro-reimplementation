@@ -14,10 +14,11 @@
 //! | [`MapNote::radar_shows`] | The radar's range test | §4.7 |
 //! | [`QuestNotesTable`], [`QuestNote`], [`QuestNoteInfo`] | The dungeon quest-note table (0x0E400000 here) | §5 |
 //! | [`MapPids`], [`MapNoteProperties`], [`bit_key`] | Map-note properties of game objects, bit-to-key rule | §6 |
-//! | [`MapKind`], [`classify_map_kind`], [`ZoneMapData`] | Record kinds of this spec, recognised by their properties; zone map links | §2.3, §7 |
+//! | [`MapKind`], [`classify_map_kind`], [`MapWeenieKeys`], [`LandmarkProperties`], [`ZoneMapData`] | Record kinds of this spec, recognised by their properties; zone map links | §2.3, §6.2, §7 |
 //! | [`TravelWeb`], [`TravelDestination`], [`TravelRoute`], [`TravelSegment`], [`TravelHop`], [`TravelPad`], [`TravelMode`], [`TravelVersioning`], [`StableMaster`], [`route_pattern`] | The travel network | §8 |
 //! | [`Neighbourhood`], [`NeighbourhoodTemplate`], [`HouseList`], [`House`], [`NeighbourhoodGate`], [`HousingHook`] | Neighbourhoods and housing | §9 |
 //! | [`for_each_place_reference`] | String properties whose value is a place key | §10 |
+//! | [`HousingControl`], [`HousingControlPids`] | The housing-control record | §9.7 |
 //! | [`Ripcord`] | RIPCORDS records | §11 |
 //! | [`position_flags_consistent`] | The flag rules of positions (MI4) | §12, `property-system.md` §4.6 |
 //!
@@ -1110,6 +1111,10 @@ property_ids! {
         note_game_specific = "MapNote_GameSpecific",
         content_layers = "Entity_ContentLayers",
         landmark_music = "Landmark_Music",
+        // §2.3 landmark recognition and §6.2 landmark-only properties (MD44, MD49)
+        weenie_type = "WeenieType",
+        landmark_mounted_combat_allow = "Landmark_OverrideMountedCombat_Allow",
+        landmark_mounted_combat_disallow = "Landmark_OverrideMountedCombat_Disallow",
         // §5.2 quest-dispenser properties
         role_constraint = "QuestDispenser_RoleConstraint",
         active_quests = "QuestDispenser_ActiveQuests",
@@ -1218,6 +1223,7 @@ property_ids! {
         ripcord_help = "RipCord_Help",
         ripcord_ui_element_id = "RipCord_UIElement_ID",
         ripcord_ui_element_layout = "RipCord_UIElement_Layout",
+        ripcord_disable_editing = "RipCord_DisableEditingInAdminPanel",
     }
 }
 
@@ -1244,7 +1250,8 @@ pub enum MapKind {
     TravelMode,
     /// The travel-versioning record (`TravelVersioning_DestinationPairArray`).
     TravelVersioning,
-    /// A landmark (`MapNote_Type`, `Landmark_Music`).
+    /// A landmark: `WeenieType` label `Landmark` together with `MapNote_Type` (MD44; see
+    /// [`MapWeenieKeys`]).
     Landmark,
     /// A neighbourhood (`Neighborhood_NeighborhoodTemplate`).
     Neighbourhood,
@@ -1270,13 +1277,56 @@ pub enum MapKind {
     Dungeon,
 }
 
+/// `WeenieType` label of a landmark (§2.3).
+pub const WEENIE_LANDMARK: &str = "Landmark";
+
+/// The `WeenieType` enum keys the kinds of §2.3 need, read from the enum mapper the
+/// dictionary names for `WeenieType` (and its base chain; `property-system.md` §7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MapWeenieKeys {
+    /// The key labelled [`WEENIE_LANDMARK`]; `None` when the mapper has no such label, in
+    /// which case no set is classified as a landmark.
+    pub landmark: Option<u32>,
+}
+
+impl MapWeenieKeys {
+    /// Finds the keys among (key, label) pairs; for a label listed twice the first key wins.
+    #[must_use]
+    pub fn from_labels<'a>(labels: impl IntoIterator<Item = (u32, &'a str)>) -> Self {
+        let mut out = Self::default();
+        for (key, label) in labels {
+            if label == WEENIE_LANDMARK && out.landmark.is_none() {
+                out.landmark = Some(key);
+            }
+        }
+        out
+    }
+
+    /// Finds the keys in a mapper and its base chain, nearest first.
+    #[must_use]
+    pub fn from_mapper_chain<M: std::borrow::Borrow<crate::enum_mapper::EnumMapper>>(
+        chain: &[M],
+    ) -> Self {
+        Self::from_labels(
+            chain
+                .iter()
+                .flat_map(|m| m.borrow().names().iter().map(|(k, n)| (*k, n.as_str()))),
+        )
+    }
+}
+
 /// The kind of `set` (§2.3) by its properties, trying the rules in the order of
 /// [`MapKind`]'s variants. Never returns [`MapKind::TravelPad`]: a pad is a set whose
 /// **only** property is `TravelPad_Location`, which needs the set's entry count; use
 /// [`classify_set`] for a [`PropertySet`]. `None` for other sets, including NPCs that carry
-/// `TravelPad_Location` among other properties.
+/// `TravelPad_Location` among other properties. A landmark needs `weenie`'s landmark key
+/// (§2.3: `Landmark_Music` alone is not a sufficient test).
 #[must_use]
-pub fn classify_map_kind<A: PropertyAccess + ?Sized>(set: &A, p: &MapPids) -> Option<MapKind> {
+pub fn classify_map_kind<A: PropertyAccess + ?Sized>(
+    set: &A,
+    p: &MapPids,
+    weenie: &MapWeenieKeys,
+) -> Option<MapKind> {
     use MapKind as K;
     let rules: [(bool, MapKind); 19] = [
         (
@@ -1299,7 +1349,10 @@ pub fn classify_map_kind<A: PropertyAccess + ?Sized>(set: &A, p: &MapPids) -> Op
         (set.has(p.mode_path_node_distance), K::TravelMode),
         (set.has(p.versioning_pairs), K::TravelVersioning),
         (
-            set.has(p.note_type) && set.has(p.landmark_music),
+            weenie
+                .landmark
+                .is_some_and(|k| set.enum_key(p.weenie_type) == Some(k))
+                && set.has(p.note_type),
             K::Landmark,
         ),
         (set.has(p.neighborhood_template), K::Neighbourhood),
@@ -1320,11 +1373,36 @@ pub fn classify_map_kind<A: PropertyAccess + ?Sized>(set: &A, p: &MapPids) -> Op
 /// [`classify_map_kind`] for a property set, recognising a pad first: a set whose only
 /// property is `TravelPad_Location` (§2.3).
 #[must_use]
-pub fn classify_set(set: &PropertySet, p: &MapPids) -> Option<MapKind> {
+pub fn classify_set(set: &PropertySet, p: &MapPids, weenie: &MapWeenieKeys) -> Option<MapKind> {
     if set.len() == 1 && set.has(p.pad_location) {
         return Some(MapKind::TravelPad);
     }
-    classify_map_kind(set, p)
+    classify_map_kind(set, p, weenie)
+}
+
+/// The landmark-only properties of §6.2 (MD49): `Landmark_Music` and the two
+/// `Landmark_OverrideMountedCombat_…` booleans, stored together in most landmarks and all
+/// absent in a few; a reader treats each as optional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LandmarkProperties {
+    /// `Landmark_Music` key.
+    pub music: Option<u32>,
+    /// `Landmark_OverrideMountedCombat_Allow`.
+    pub mounted_combat_allow: Option<bool>,
+    /// `Landmark_OverrideMountedCombat_Disallow`.
+    pub mounted_combat_disallow: Option<bool>,
+}
+
+impl LandmarkProperties {
+    /// Reads the three properties.
+    #[must_use]
+    pub fn read<A: PropertyAccess + ?Sized>(set: &A, p: &MapPids) -> Self {
+        Self {
+            music: set.enum_key(p.landmark_music),
+            mounted_combat_allow: set.boolean(p.landmark_mounted_combat_allow),
+            mounted_combat_disallow: set.boolean(p.landmark_mounted_combat_disallow),
+        }
+    }
 }
 
 /// The map-data links of a zone (§7): the 0x78 sets holding `UI_Map_GameMap`.
@@ -2043,44 +2121,297 @@ pub fn for_each_place_reference<'a>(
     });
 }
 
-/// A ripcord record (§11).
+/// A ripcord record (§11; field types MD48).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Ripcord {
     /// `RipCord_WorldProperty`: the world property switched (a PID).
     pub world_property: Option<u32>,
-    /// `RipCord_WorldPropertyTableProperty` (second ripcord class), as an integer.
-    pub table_property: Option<u64>,
-    /// `RipCord_WorldPropertyArrayElement` (second ripcord class), as an integer.
-    pub array_element: Option<u64>,
-    /// `RipCord_Category`.
+    /// `RipCord_WorldPropertyTableProperty` (second ripcord class; a PID).
+    pub table_property: Option<u32>,
+    /// `RipCord_WorldPropertyArrayElement` (second ripcord class; a PID).
+    pub array_element: Option<u32>,
+    /// `RipCord_Category` key.
     pub category: Option<u32>,
     /// `RipCord_Name`.
     pub name: Option<String>,
     /// `RipCord_Help`.
     pub help: Option<String>,
-    /// `RipCord_UIElement_ID`, as an integer.
-    pub ui_element_id: Option<u64>,
-    /// `RipCord_UIElement_Layout`, as an integer.
-    pub ui_element_layout: Option<u64>,
+    /// `RipCord_UIElement_ID`: a UI element key (enum).
+    pub ui_element_id: Option<u32>,
+    /// `RipCord_UIElement_Layout`: the UI layout holding the element (a DID).
+    pub ui_element_layout: Option<Did>,
+    /// `RipCord_DisableEditingInAdminPanel`.
+    pub disable_editing: Option<bool>,
 }
 
 impl Ripcord {
-    /// Reads the view. Fields whose value type the spec does not give are read as the
-    /// integer bit pattern of a scalar ([`PropertyValue::as_bits`]).
+    /// Reads the view; a field of another value type reads as absent.
     #[must_use]
     pub fn read<A: PropertyAccess + ?Sized>(set: &A, p: &MapPids) -> Self {
-        let bits = |pid| set.get_pid(pid).and_then(PropertyValue::as_bits);
         Self {
-            world_property: set
-                .property_ref(p.ripcord_world_property)
-                .or_else(|| bits(p.ripcord_world_property).and_then(|b| u32::try_from(b).ok())),
-            table_property: bits(p.ripcord_table_property),
-            array_element: bits(p.ripcord_array_element),
+            world_property: set.property_ref(p.ripcord_world_property),
+            table_property: set.property_ref(p.ripcord_table_property),
+            array_element: set.property_ref(p.ripcord_array_element),
             category: set.enum_key(p.ripcord_category),
             name: set.string(p.ripcord_name).map(str::to_owned),
             help: set.string(p.ripcord_help).map(str::to_owned),
-            ui_element_id: bits(p.ripcord_ui_element_id),
-            ui_element_layout: bits(p.ripcord_ui_element_layout),
+            ui_element_id: set.enum_key(p.ripcord_ui_element_id),
+            ui_element_layout: set.did(p.ripcord_ui_element_layout),
+            disable_editing: set.boolean(p.ripcord_disable_editing),
+        }
+    }
+}
+
+property_ids! {
+    /// Labels of the housing-control record (§9.7, MD47).
+    pub struct HousingControlPids {
+        house_type_info_array = "HousingControl_HouseTypeInfoArray",
+        house_type = "HousingControl_HouseType",
+        house_price = "HousingControl_HousePrice",
+        house_upkeep = "HousingControl_HouseUpkeep",
+        icon = "HousingControl_Icon",
+        icon16 = "HousingControl_Icon16",
+        icon32 = "HousingControl_Icon32",
+        icon_large = "HousingControl_Icon_Large",
+        icon_panorama = "HousingControl_Icon_Panorama",
+        mount_tokens = "HousingControl_SkillDeco_Mount_Tokens",
+        value_tier_array = "HousingControl_HouseValueTierArray",
+        value_tier = "HousingControl_HouseValueTier",
+        value_tier_price_modifier = "HousingControl_HouseValueTier_PriceModifier",
+        value_tier_upkeep_modifier = "HousingControl_HouseValueTier_UpkeepPriceModifier",
+        hook_rotation_array = "HousingControl_HookRotationArray",
+        hook_category = "HousingControl_HookCategory",
+        rotation_type = "HousingControl_RotationType",
+        group_info_personal = "HousingControl_HousingGroupInfo_Personal",
+        group_info_kinship = "HousingControl_HousingGroupInfo_Kinship",
+        group = "HousingControl_HousingGroupInfo_Group",
+        group_default_permission = "HousingControl_HousingGroupInfo_DefaultPermission",
+        group_cant_change_permission = "HousingControl_HousingGroupInfo_CantChangePermission",
+        permission_icons_list = "HousingControl_PermissionTypeIcons_List",
+        permission_type = "HousingControl_PermissionType",
+        permission_icon = "HousingControl_PermissionTypeIcon",
+        permission_active_icon = "HousingControl_PermissionTypeActiveIcon",
+        permission_inactive_icon = "HousingControl_PermissionTypeInactiveIcon",
+        upkeep_interval = "HousingControl_UpkeepInterval",
+        purchase_personal_interval = "HousingControl_PurchasePersonalHouseInterval",
+        purchase_kinship_interval = "HousingControl_PurchaseKinshipHouseInterval",
+        max_players_per_instance = "HousingControl_MaxPlayersPerNeighborhoodInstance",
+        min_level_to_buy = "HousingControl_MinLevelToBuyHouse",
+        initial_upkeep_credits = "HousingControl_InitialUpkeepCredits",
+        max_upkeep_credits = "HousingControl_MaxUpkeepCredits",
+        permissions_max_entries = "HousingControl_Permissions_MaxEntries",
+        restoral_upkeep_multiplier = "HousingControl_HouseRestoralUpkeepMultiplier",
+        maximum_restoral_fee_multiplier = "HousingControl_MaximumRestoralFeeMultiplier",
+        premium_abandon_refund_percent = "HousingControl_PremiumAbandonRefundPercent",
+        premium_foreclosure_refund_percent = "HousingControl_PremiumForeclosureRefundPercent",
+        writ_conversion_rate = "HousingControl_MithrilToWritConversionRate",
+        absolute_banking_restriction = "HousingControl_AbsoluteBankingRestriction",
+        for_sale_sign = "HousingControl_ForSaleSignDataID",
+        storage_keeper = "HousingControl_StorageKeeperDataID",
+        mount_skill_deco_token = "HousingControl_MountSkillDecoTokenDataID",
+        pet_skill_deco_token = "HousingControl_PetSkillDecoTokenDataID",
+        premium_writ = "HousingControl_PremiumWritDataID",
+        premium_writ_icon = "HousingControl_PremiumWritIcon",
+        neighborhood_content_layer = "HousingControl_NeighborhoodContentLayer",
+    }
+}
+
+/// One `HousingControl_HouseTypeInfoEntry` (§9.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HouseTypeInfo {
+    /// `HousingControl_HouseType` key.
+    pub house_type: Option<u32>,
+    /// `HousingControl_HousePrice`.
+    pub price: Option<i32>,
+    /// `HousingControl_HouseUpkeep`.
+    pub upkeep: Option<i32>,
+    /// `HousingControl_Icon`, `…_Icon16`, `…_Icon32`, `…_Icon_Large`, `…_Icon_Panorama`.
+    pub icons: [Option<Did>; 5],
+    /// `HousingControl_SkillDeco_Mount_Tokens` (in some entries only).
+    pub mount_tokens: Option<i32>,
+}
+
+/// One `HousingControl_HouseValueTierEntry` (§9.7). The dictionary also defines a storage
+/// price modifier, but it is not a field of the entry and is never stored (MD47).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HouseValueTier {
+    /// `HousingControl_HouseValueTier` key.
+    pub tier: Option<u32>,
+    /// `HousingControl_HouseValueTier_PriceModifier`.
+    pub price_modifier: Option<f32>,
+    /// `HousingControl_HouseValueTier_UpkeepPriceModifier`.
+    pub upkeep_modifier: Option<f32>,
+}
+
+/// One `HousingControl_HookRotationEntry` (§9.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HookRotation {
+    /// `HousingControl_HookCategory` bits (64-bit bitfield).
+    pub hook_category: Option<u64>,
+    /// `HousingControl_RotationType` key.
+    pub rotation_type: Option<u32>,
+}
+
+/// One `HousingControl_HousingGroupInfo_Struct` (§9.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HousingGroupInfo {
+    /// `HousingControl_HousingGroupInfo_Group` key.
+    pub group: Option<u32>,
+    /// `HousingControl_HousingGroupInfo_DefaultPermission` bits.
+    pub default_permission: Option<u64>,
+    /// `HousingControl_HousingGroupInfo_CantChangePermission` bits.
+    pub cant_change_permission: Option<u64>,
+}
+
+/// One `HousingControl_PermissionTypeIcons_Struct` (§9.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PermissionTypeIcons {
+    /// `HousingControl_PermissionType` bits.
+    pub permission_type: Option<u64>,
+    /// `HousingControl_PermissionTypeIcon`, `…ActiveIcon`, `…InactiveIcon`.
+    pub icons: [Option<Did>; 3],
+}
+
+/// The housing-control record (§9.7, MD47): price and upkeep tables and the system's
+/// limits, as stored. The unit of the three intervals is OPEN (§9.7); the price formula is
+/// Reported only, so none is applied here.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HousingControl {
+    /// `HousingControl_HouseTypeInfoArray` entries.
+    pub house_types: Vec<HouseTypeInfo>,
+    /// `HousingControl_HouseValueTierArray` entries.
+    pub value_tiers: Vec<HouseValueTier>,
+    /// `HousingControl_HookRotationArray` entries.
+    pub hook_rotations: Vec<HookRotation>,
+    /// `HousingControl_HousingGroupInfo_Personal` entries.
+    pub personal_groups: Vec<HousingGroupInfo>,
+    /// `HousingControl_HousingGroupInfo_Kinship` entries.
+    pub kinship_groups: Vec<HousingGroupInfo>,
+    /// `HousingControl_PermissionTypeIcons_List` entries.
+    pub permission_icons: Vec<PermissionTypeIcons>,
+    /// `HousingControl_UpkeepInterval` (unit OPEN).
+    pub upkeep_interval: Option<i32>,
+    /// `HousingControl_PurchasePersonalHouseInterval` (unit OPEN).
+    pub purchase_personal_interval: Option<i32>,
+    /// `HousingControl_PurchaseKinshipHouseInterval` (unit OPEN).
+    pub purchase_kinship_interval: Option<i32>,
+    /// `HousingControl_MaxPlayersPerNeighborhoodInstance`.
+    pub max_players_per_instance: Option<i32>,
+    /// `HousingControl_MinLevelToBuyHouse`.
+    pub min_level_to_buy: Option<i32>,
+    /// `HousingControl_InitialUpkeepCredits`.
+    pub initial_upkeep_credits: Option<i32>,
+    /// `HousingControl_MaxUpkeepCredits`.
+    pub max_upkeep_credits: Option<i32>,
+    /// `HousingControl_Permissions_MaxEntries`.
+    pub permissions_max_entries: Option<i32>,
+    /// `HousingControl_HouseRestoralUpkeepMultiplier`.
+    pub restoral_upkeep_multiplier: Option<f32>,
+    /// `HousingControl_MaximumRestoralFeeMultiplier`.
+    pub maximum_restoral_fee_multiplier: Option<f32>,
+    /// `HousingControl_PremiumAbandonRefundPercent`.
+    pub premium_abandon_refund_percent: Option<f32>,
+    /// `HousingControl_PremiumForeclosureRefundPercent`.
+    pub premium_foreclosure_refund_percent: Option<f32>,
+    /// `HousingControl_MithrilToWritConversionRate`.
+    pub writ_conversion_rate: Option<f32>,
+    /// `HousingControl_AbsoluteBankingRestriction`.
+    pub absolute_banking_restriction: Option<f32>,
+    /// `HousingControl_ForSaleSignDataID`.
+    pub for_sale_sign: Option<Did>,
+    /// `HousingControl_StorageKeeperDataID`.
+    pub storage_keeper: Option<Did>,
+    /// `HousingControl_MountSkillDecoTokenDataID`.
+    pub mount_skill_deco_token: Option<Did>,
+    /// `HousingControl_PetSkillDecoTokenDataID`.
+    pub pet_skill_deco_token: Option<Did>,
+    /// `HousingControl_PremiumWritDataID`.
+    pub premium_writ: Option<Did>,
+    /// `HousingControl_PremiumWritIcon`.
+    pub premium_writ_icon: Option<Did>,
+    /// `HousingControl_NeighborhoodContentLayer` key (a content layer).
+    pub neighborhood_content_layer: Option<u32>,
+}
+
+impl HousingControl {
+    /// Reads the record; fields of another value type read as absent.
+    #[must_use]
+    pub fn read<A: PropertyAccess + ?Sized>(set: &A, p: &HousingControlPids) -> Self {
+        let groups = |list| {
+            set.structs(list)
+                .map(|s| HousingGroupInfo {
+                    group: s.enum_key(p.group),
+                    default_permission: s.bitfield(p.group_default_permission),
+                    cant_change_permission: s.bitfield(p.group_cant_change_permission),
+                })
+                .collect()
+        };
+        Self {
+            house_types: set
+                .structs(p.house_type_info_array)
+                .map(|s| HouseTypeInfo {
+                    house_type: s.enum_key(p.house_type),
+                    price: s.int(p.house_price),
+                    upkeep: s.int(p.house_upkeep),
+                    icons: [
+                        s.did(p.icon),
+                        s.did(p.icon16),
+                        s.did(p.icon32),
+                        s.did(p.icon_large),
+                        s.did(p.icon_panorama),
+                    ],
+                    mount_tokens: s.int(p.mount_tokens),
+                })
+                .collect(),
+            value_tiers: set
+                .structs(p.value_tier_array)
+                .map(|s| HouseValueTier {
+                    tier: s.enum_key(p.value_tier),
+                    price_modifier: s.float(p.value_tier_price_modifier),
+                    upkeep_modifier: s.float(p.value_tier_upkeep_modifier),
+                })
+                .collect(),
+            hook_rotations: set
+                .structs(p.hook_rotation_array)
+                .map(|s| HookRotation {
+                    hook_category: s.bitfield(p.hook_category),
+                    rotation_type: s.enum_key(p.rotation_type),
+                })
+                .collect(),
+            personal_groups: groups(p.group_info_personal),
+            kinship_groups: groups(p.group_info_kinship),
+            permission_icons: set
+                .structs(p.permission_icons_list)
+                .map(|s| PermissionTypeIcons {
+                    permission_type: s.bitfield(p.permission_type),
+                    icons: [
+                        s.did(p.permission_icon),
+                        s.did(p.permission_active_icon),
+                        s.did(p.permission_inactive_icon),
+                    ],
+                })
+                .collect(),
+            upkeep_interval: set.int(p.upkeep_interval),
+            purchase_personal_interval: set.int(p.purchase_personal_interval),
+            purchase_kinship_interval: set.int(p.purchase_kinship_interval),
+            max_players_per_instance: set.int(p.max_players_per_instance),
+            min_level_to_buy: set.int(p.min_level_to_buy),
+            initial_upkeep_credits: set.int(p.initial_upkeep_credits),
+            max_upkeep_credits: set.int(p.max_upkeep_credits),
+            permissions_max_entries: set.int(p.permissions_max_entries),
+            restoral_upkeep_multiplier: set.float(p.restoral_upkeep_multiplier),
+            maximum_restoral_fee_multiplier: set.float(p.maximum_restoral_fee_multiplier),
+            premium_abandon_refund_percent: set.float(p.premium_abandon_refund_percent),
+            premium_foreclosure_refund_percent: set.float(p.premium_foreclosure_refund_percent),
+            writ_conversion_rate: set.float(p.writ_conversion_rate),
+            absolute_banking_restriction: set.float(p.absolute_banking_restriction),
+            for_sale_sign: set.did(p.for_sale_sign),
+            storage_keeper: set.did(p.storage_keeper),
+            mount_skill_deco_token: set.did(p.mount_skill_deco_token),
+            pet_skill_deco_token: set.did(p.pet_skill_deco_token),
+            premium_writ: set.did(p.premium_writ),
+            premium_writ_icon: set.did(p.premium_writ_icon),
+            neighborhood_content_layer: set.enum_key(p.neighborhood_content_layer),
         }
     }
 }

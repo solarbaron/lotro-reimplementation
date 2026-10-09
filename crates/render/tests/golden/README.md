@@ -26,6 +26,13 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `sky_morning.png`, `sky_evening.png` | `crates/render/tests/sky_golden.rs` | the sky (M4.5) at two times of day: a vertex-coloured dome, an additive sun disc and a blended cloud layer placed by their angles and tinted, over fogged ground |
 | `frill_sector.png` | `crates/render/tests/instanced_golden.rs` | instanced scenery and frills (M4.5): a 10 × 10-unit frill sector of 625 alpha-tested clumps (sway, terrain colour, distance scale) beside three instanced rocks casting the sun's shadow |
 | `particles_fountain.png` | `crates/render/tests/particles_golden.rs` | the particle pipeline: one synthetic particle system simulated by `tessera-particles` for 2 s (seed 1234): a fountain of textured quads under gravity with scale and colour keys, a 2 × 2 atlas with random start frames and a fade-in, and rising spinning triangles, alpha-blended and depth-tested against an opaque ground and pillar |
+| `ui_tile.png` | `crates/render/tests/ui_golden.rs` | UI pass: a 32 × 32 canvas tiled 1 : 1 and at node scale 1.5 (render.md §6.13 T7) |
+| `ui_clip.png` | same | a nested entry cut at its root's edge, unrotated and with the root at z = 30 (T8) |
+| `ui_clip_chain.png` | same | clip chains: own-surface child turned by 30, mode-0 child with the parent turned, mode-0 and own-surface children past the parent (T9) |
+| `ui_external.png` | same | premultiplied `Rgba8Unorm` external content at 1 : 1, scaled and rotated, over dark and light backgrounds (T10) |
+| `ui_round_minimap.png` | same | a disc-alpha radar canvas over an opaque background (T11, P1 check 1) |
+| `ui_p1.png` | same | a P1-shaped radar: root, radar, rim cut only by the root, marker at heading 45 (render.md §6.14) |
+| `ui_filters.png` | same | scaled linear and nearest, alpha threshold at opacity 1 and 0.5, z, x and y rotations, opacity |
 | `../../../../apps/client/tests/golden/test_scene.png` | `apps/client/tests/scene_golden.rs` | the client's M0 test scene without game data |
 | `../../../../apps/client/tests/golden/test_scene_surface.png` | same | the same scene with a synthetic stand-in for a decoded surface |
 
@@ -50,6 +57,7 @@ TESSERA_BLESS=1 cargo test -p tessera-render --test water_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test sky_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test instanced_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test particles_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test ui_golden
 TESSERA_BLESS=1 cargo test -p tessera-client --test scene_golden
 ```
 
@@ -82,3 +90,6 @@ same RTX 2070 Super Max-Q (Vulkan, NVIDIA 615.71) on 2026-10-06 and verified on 
 `particles_fountain` was blessed on the reference machine's RTX 2070 Super Max-Q (Vulkan) on
 2026-10-08 and verified on llvmpipe GL (Mesa 26.1.8: 0 outliers, one pixel beyond ±4 at the
 same position).
+The `ui_*` images were blessed on the hardware Vulkan adapter and verified on Mesa lavapipe
+(Mesa 24.2) and on llvmpipe GL (Mesa 26.1). They render into `Rgba8Unorm` targets, so GL's
+linear fallback of `render.md` §6.4 (which applies to sRGB targets only) does not change them.

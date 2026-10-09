@@ -24,7 +24,8 @@ use tessera_render::{
     AlphaMode, Camera, ColorSpace, Filter, Fog, FrameLighting, FrillParams, FrillReduction,
     Instance, InstanceBatch, LitSurface, MAX_INSTANCES_PER_PASS, Material, MeshData, MeshDraw,
     OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage, SkyDraw, SkyObject,
-    Submesh, SunLight, SunShadow, TextureId, TextureUpload, WorldModel, WorldSurface, Wrap,
+    Submesh, SunLight, SunShadow, TextureId, TextureUpload, WorldModel, WorldSurface,
+    WorldSurfaceOptions, Wrap,
 };
 
 const WIDTH: u32 = 320;
@@ -1242,6 +1243,108 @@ fn instanced_tangents_are_used_as_given() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// render.md §5.5 "as the lit mesh pipeline", lighting.md §7 code 0x00: an unlit world surface
+/// is fogged only when its fog switch is on; a lit one always is (§2.1).
+#[test]
+fn unlit_world_surfaces_follow_their_fog_switch() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // Fog complete at 20 from the eye, starting 10,000 before it: the tile, 10 below the
+    // eye, is fogged by 0.999.
+    let fogged = FrameLighting {
+        ambient: [0.5; 3],
+        fog: Some(Fog {
+            near: -10_000.0,
+            far: 20.0,
+            color: [1.0, 0.0, 0.0],
+        }),
+        ..dark()
+    };
+    let mut draw = |unlit: bool, fog: bool| {
+        let surface = WorldSurface {
+            unlit,
+            base_color: [0.0, 1.0, 0.0, 1.0],
+            ..WorldSurface::default()
+        };
+        let model =
+            r.upload_world_model_with(&tile(), &[surface], &[WorldSurfaceOptions { fog }])?;
+        let batch = InstanceBatch::new(model, vec![Instance::new(Mat4::IDENTITY)]);
+        let (img, _) = draw_overhead(&mut r, vec![batch], fogged.clone(), vec![])?;
+        Ok::<_, RenderError>(at(&img, Vec3::ZERO))
+    };
+    let red = [255, 0, 0, 255];
+    assert_eq!(draw(true, true)?, red, "unlit, fog on");
+    assert_eq!(draw(true, false)?, [0, 255, 0, 255], "unlit, fog off");
+    assert_eq!(draw(false, true)?, red, "lit, fog on");
+    assert_eq!(draw(false, false)?, red, "lit surfaces are always fogged");
+    // upload_world_model uses the default options: fog on.
+    let model = r.upload_world_model(
+        &tile(),
+        &[WorldSurface {
+            unlit: true,
+            ..WorldSurface::default()
+        }],
+    )?;
+    let batch = InstanceBatch::new(model, vec![Instance::new(Mat4::IDENTITY)]);
+    let (img, _) = draw_overhead(&mut r, vec![batch], fogged, vec![])?;
+    assert_eq!(at(&img, Vec3::ZERO), red, "default options");
+    Ok(())
+}
+
+/// material.md §11.3, rule for unlit records: a fixed blend's factors read the opacity source
+/// (here the base alpha, or 1 when that alpha is the gloss); M.alpha and the instance tint's
+/// alpha do not enter. `Additive` keeps opacity × M.alpha.
+#[test]
+fn fixed_blends_of_world_surfaces_read_the_opacity_source() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let half = upload(&mut r, 1, 1, &[255, 255, 255, 128], Wrap::Repeat)?;
+    let mut draw = |alpha, gloss: bool, m_alpha: f32, tint_alpha: f32| {
+        let surface = WorldSurface {
+            unlit: true,
+            alpha,
+            base_color: [1.0, 1.0, 1.0, m_alpha],
+            gloss_from_base_alpha: gloss,
+            ..WorldSurface::textured(half)
+        };
+        let model = r.upload_world_model(&tile(), &[surface])?;
+        let instance = Instance {
+            tint: [1.0, 1.0, 1.0, tint_alpha],
+            ..Instance::new(Mat4::IDENTITY)
+        };
+        let (img, _) = draw_overhead(
+            &mut r,
+            vec![InstanceBatch::new(model, vec![instance])],
+            dark(),
+            vec![],
+        )?;
+        Ok::<_, RenderError>(at(&img, Vec3::ZERO)[0])
+    };
+    let fixed = AlphaMode::Fixed(tessera_render::FixedBlend::ADDITIVE);
+    let near = |got: u8, want: u8, what: &str| {
+        assert!(got.abs_diff(want) <= 2, "{what}: {got} vs {want}");
+    };
+    near(draw(fixed, false, 0.5, 0.5)?, 128, "Fixed: base alpha only");
+    near(
+        draw(fixed, true, 0.5, 0.5)?,
+        255,
+        "Fixed: no opacity source, 1",
+    );
+    near(
+        draw(AlphaMode::Additive, false, 0.5, 1.0)?,
+        64,
+        "Additive: × M.alpha",
+    );
+    near(
+        draw(AlphaMode::Additive, true, 0.5, 0.5)?,
+        64,
+        "Additive: M.alpha × tint alpha",
+    );
+    Ok(())
+}
+
 /// material.md §11.2–§11.3: a base alpha that is the gloss is not an opacity: no alpha test,
 /// output alpha M.alpha.
 #[test]
@@ -1467,6 +1570,64 @@ fn mirrored_frills_flip_the_bitangent() -> Result<(), RenderError> {
         "scenery {:?}",
         at(&img, b)
     );
+    Ok(())
+}
+
+/// render.md §4.8 (departure R-D10) through §5.5: a world model with a stored binormal
+/// stream uses the stored binormal as **B** (here −y, the opposite of w × cross(N₀, T) =
+/// +y), for scenery and frills alike, upright and mirrored.
+#[test]
+fn world_models_use_the_stored_binormal() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let tilt = upload(&mut r, 1, 1, &[128, 204, 230, 255], Wrap::Repeat)?;
+    let surfaces = [WorldSurface {
+        normal_texture: Some(tilt),
+        two_sided: true,
+        ..WorldSurface::default()
+    }];
+    let mut stored = tile();
+    stored.binormals = Some(vec![[0.0, -1.0, 0.0]; 4]);
+    let derived = r.upload_world_model(&tile(), &surfaces)?;
+    let stored = r.upload_world_model(&stored, &surfaces)?;
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::new(0.0, -1.0, 1.0).normalize(),
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..dark()
+    };
+    let mirror_x = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let (a, b) = (Vec3::new(-1.5, 0.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
+    let instances = vec![small_tile(a, Mat4::IDENTITY), small_tile(b, mirror_x)];
+    let params = FrillParams {
+        animation_intensity: 0.0,
+        terrain_color_intensity: 0.0,
+        ..FrillParams::default()
+    };
+    // N = n.x T − n.y B + n.z N₀ with n ≈ (0, 0.6, 0.8): toward −y with the derived B
+    // (2 × 0.5 × N · L ≈ 0.99), toward +y with the stored one (≈ 0.14).
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(derived, instances.clone())],
+        lighting.clone(),
+        vec![],
+    )?;
+    assert!(at(&img, a)[0] > 230, "derived {:?}", at(&img, a));
+    for batch in [
+        InstanceBatch::new(stored.clone(), instances.clone()),
+        InstanceBatch::frills(stored.clone(), instances.clone(), params),
+    ] {
+        let (img, _) = draw_overhead(&mut r, vec![batch], lighting.clone(), vec![])?;
+        let (up, mirrored) = (at(&img, a), at(&img, b));
+        assert!((20..60).contains(&up[0]), "stored {up:?}");
+        assert!(
+            up[0].abs_diff(mirrored[0]) <= 2,
+            "upright {up:?}, mirrored {mirrored:?}"
+        );
+    }
     Ok(())
 }
 

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Plugin>
+  <Information>
+    <Name>Waypoint</Name>
+    <Author>Other</Author>
+    <Version>0.1</Version>
+    <Description>Synthetic test plugin.</Description>
+  </Information>
+  <Package>Other.Waypoint.Main</Package>
+  <Configuration Apartment="Waypoint" />
+</Plugin>

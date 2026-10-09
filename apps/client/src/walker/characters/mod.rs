@@ -61,6 +61,7 @@ use tessera_net::{Appearance, Body, EntityId, Event};
 use tessera_render::glam::{Mat4, Quat, Vec3};
 use tessera_render::{Frame, MeshDraw, MeshId, Renderer, SkinPalette};
 use tessera_world::WorldPos;
+use tessera_world::draw_distance::{LodClasses, LodValues};
 
 use self::catalog::WeenieRole;
 use self::figure::{FigureAsset, FigureContext, FigureKey, FigureRequest, build_figure};
@@ -107,16 +108,14 @@ impl Default for CharacterConfig {
     }
 }
 
-/// Characters cast the sun's shadow within this distance (metres): the render
-/// component's initial `d2` (`walker.md` §11.4 step 4, `mesh.md` §8.7 shadow distance at
-/// the built-in settings). Tessera Decision: the class of each character's own entity is
-/// not resolved for this (`walker.md` §14.11 OPEN).
-pub const CHARACTER_SHADOW_DISTANCE: f32 = tessera_world::draw_distance::COMPONENT_DEFAULTS[2];
-
-/// `d0` of the character classes (`walker.md` §11.4.2: `PlayerAvatar`, `Creature` and
-/// `Creature2Deg` all have 80 m). Tessera Decision: used for every character until each
-/// entity's own class is resolved (`walker.md` §14.11 OPEN).
+/// `d0` of the character classes when the LOD-class table is missing (`walker.md` §14.5
+/// OPEN: "80 m only as the fallback for `d0` when the table is missing"; §11.4.2:
+/// `PlayerAvatar`, `Creature` and `Creature2Deg` all have 80 m in this install).
 pub const CHARACTER_D0: f32 = 80.0;
+
+/// Opacity above which a character casts the sun's shadow (`mesh.md` §8.8, row W-O1), as
+/// objects do.
+pub const SHADOW_OPACITY: f32 = 0.8;
 
 /// What the character layer's distance rules need of a frame (`walker.md` §11.4).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,6 +124,8 @@ pub struct CharacterFrame {
     pub g: f32,
     /// The object draw-distance multiplier *M_d* (§11.2).
     pub multiplier: f32,
+    /// The shadow-distance multiplier *M_s* (`mesh.md` §8.7).
+    pub shadow_multiplier: f32,
     /// Frame time, seconds.
     pub dt: f32,
     /// Camera travel since the previous frame, metres (fade reset beyond 25 m).
@@ -138,6 +139,7 @@ impl Default for CharacterFrame {
         Self {
             g: 2_080.0,
             multiplier: 1.0,
+            shadow_multiplier: 1.0,
             dt: 1.0 / 60.0,
             camera_moved: 0.0,
             lod: true,
@@ -145,21 +147,58 @@ impl Default for CharacterFrame {
     }
 }
 
-/// A character's draw distance *D* = min(*G*, `d0` × *M_d*) (`walker.md` §11.4 step 1;
-/// `d0` × 3 for the player's own character, step 3), capped at `cap`; the cap alone when
+/// A character's LOD values (`walker.md` §11.4, §11.4.3; `mesh.md` §8.5): its class's
+/// entry of the table (`classes`), `d0` … `d5` × 3 for the player's own character
+/// ([`LodClasses::values`]: a character without a class keeps the component's initial
+/// values without the ×3). Without the table, the component's initial values with `d0` =
+/// [`CHARACTER_D0`], × 3 for the player's own character.
+#[must_use]
+pub fn character_lod(classes: Option<&LodClasses>, class: Option<u32>, player: bool) -> LodValues {
+    match classes {
+        Some(t) => t.values(class, player),
+        None => {
+            let mut v = LodValues::default();
+            v.0[0] = CHARACTER_D0;
+            if player { v.for_player() } else { v }
+        }
+    }
+}
+
+/// A character's draw distance *D* = min(*G*, `d0` × *M_d*) of its LOD values `lod`
+/// (`walker.md` §11.4 step 1; [`character_lod`]), capped at `cap`; the cap alone when
 /// per-class distances are off. Non-finite inputs fall back to the cap.
 #[must_use]
-pub fn character_draw_distance(frame: &CharacterFrame, cap: f32, player: bool) -> f32 {
+pub fn character_draw_distance(frame: &CharacterFrame, cap: f32, lod: &LodValues) -> f32 {
     if !frame.lod {
         return cap;
     }
-    let scale = if player {
-        tessera_world::draw_distance::PLAYER_SCALE
-    } else {
-        1.0
-    };
-    let d = (CHARACTER_D0 * scale * frame.multiplier).min(frame.g);
+    let d = (lod.d0() * frame.multiplier).min(frame.g);
     if d.is_finite() { d.min(cap) } else { cap }
+}
+
+/// A character's shadow distance min(*G*, `d2` × *M_d* × *M_s*) of its LOD values (`mesh.md`
+/// §8.7, row W-O2), infinite while per-class distances are off. A product that is not a
+/// number gives *G*.
+#[must_use]
+pub fn character_shadow_distance(frame: &CharacterFrame, lod: &LodValues) -> f32 {
+    if !frame.lod {
+        return f32::INFINITY;
+    }
+    let s = lod.0[2] * frame.multiplier * frame.shadow_multiplier;
+    if s.is_nan() { frame.g } else { s.min(frame.g) }
+}
+
+/// Whether a character casts the sun's shadow (`mesh.md` §8.7–§8.8, rows W-O1, W-O2): while
+/// its opacity is above [`SHADOW_OPACITY`] and its distance is strictly below its shadow
+/// distance ([`character_shadow_distance`]), as objects do.
+#[must_use]
+pub fn character_casts(
+    frame: &CharacterFrame,
+    lod: &LodValues,
+    opacity: f32,
+    distance: f32,
+) -> bool {
+    opacity > SHADOW_OPACITY && distance < character_shadow_distance(frame, lod)
 }
 
 /// Counters and timings for the HUD and the frame log.
@@ -169,6 +208,8 @@ pub struct CharacterStats {
     pub entities: usize,
     /// Entities with an animation component.
     pub animated: usize,
+    /// Of `animated`: entities whose animation instance has a sampled pose.
+    pub posed: usize,
     /// Characters drawn last frame.
     pub drawn: usize,
     /// Sampling jobs submitted last frame.
@@ -205,6 +246,20 @@ pub struct CharAnim {
     loco: Locomotion,
 }
 
+/// Where a character stands, for the visibility test of `landblock.md` §4.11 ("Moving
+/// entities"): the caller decides from it the cell the character belongs to and whether
+/// the camera's portal walk reaches that cell's visibility cell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CharacterSite {
+    /// The placed figure's tag ([`super::figures::figure_tag`]), for a figure of the
+    /// landblock data.
+    pub tag: Option<u64>,
+    /// The user's own character.
+    pub player: bool,
+    /// Its position (feet).
+    pub position: WorldPos,
+}
+
 /// Caller-side per-entity data (a `Column`, decision 0008).
 #[derive(Debug, Clone)]
 struct Actor {
@@ -227,8 +282,11 @@ struct Actor {
     seed: u32,
     /// The 1.5 s fade across the draw distance (`mesh.md` §8.7).
     fade: tessera_world::draw_distance::DrawFade,
-    /// In view in the previous frame (a character coming into view appears at once).
+    /// Its fade was advanced in the current frame (cleared at the start of each draw pass).
     seen: bool,
+    /// Its fade was advanced in the previous frame: otherwise the fade restarts (the first
+    /// frame of its state; `walker.md` §14.5 row W-O3).
+    seen_before: bool,
 }
 
 struct GpuPart {
@@ -375,6 +433,8 @@ pub struct CharacterLayer {
     hide_player: bool,
     /// The distance rules of the frame.
     distances: CharacterFrame,
+    /// The LOD-class table (`walker.md` §11.4.3; `None`: missing).
+    lod_classes: Option<Arc<LodClasses>>,
 }
 
 impl std::fmt::Debug for CharacterLayer {
@@ -431,6 +491,7 @@ impl CharacterLayer {
             shadows: false,
             hide_player: false,
             distances: CharacterFrame::default(),
+            lod_classes: None,
         }
     }
 
@@ -562,11 +623,6 @@ impl CharacterLayer {
     /// Recomputes [`CharacterLayer::shown_figures`] for a viewer at `eye`: the placed
     /// figures within the character draw distance (beyond it the object layer draws them).
     fn collect_shown(&mut self, eye: Option<WorldPos>) {
-        let max_d = f64::from(character_draw_distance(
-            &self.distances,
-            self.config.draw_distance,
-            false,
-        ));
         let mut shown = std::mem::take(&mut self.shown);
         shown.clear();
         for (e, a) in self.actors.iter() {
@@ -583,6 +639,12 @@ impl CharacterLayer {
             if let Some(eye) = eye
                 && let Some(t) = self.store.transform(e)
             {
+                let lod = character_lod(self.lod_classes.as_deref(), self.class_of(a.slot), false);
+                let max_d = f64::from(character_draw_distance(
+                    &self.distances,
+                    self.config.draw_distance,
+                    &lod,
+                ));
                 let d = (t.position[0] - eye.x)
                     .hypot(t.position[1] - eye.y)
                     .hypot(t.position[2] - eye.z);
@@ -967,6 +1029,7 @@ impl CharacterLayer {
             seed: seed_of(id),
             fade: tessera_world::draw_distance::DrawFade::new(),
             seen: false,
+            seen_before: false,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -1384,6 +1447,11 @@ impl CharacterLayer {
         let mut s = CharacterStats {
             entities: self.store.len(),
             animated: self.store.animated().count(),
+            posed: self
+                .store
+                .animated()
+                .filter(|(_, a, _)| self.scheduler.has_pose(a.instance))
+                .count(),
             gpu_bytes: self.mesh_bytes,
             ..self.stats
         };
@@ -1421,8 +1489,29 @@ impl CharacterLayer {
         self.distances = frame;
     }
 
+    /// Sets the LOD-class table the characters' distances come from (`walker.md` §11.4.3;
+    /// `None`: the table is missing, [`character_lod`]).
+    pub fn set_lod_classes(&mut self, classes: Option<Arc<LodClasses>>) {
+        self.lod_classes = classes;
+    }
+
+    /// The LOD class of the figure in slot `slot` once it is built (`None` before, or
+    /// without a class).
+    fn class_of(&self, slot: Option<u32>) -> Option<u32> {
+        match slot
+            .and_then(|s| self.slots.get(s as usize))
+            .map(|s| &s.state)
+        {
+            Some(SlotState::Ready(g)) => g.asset.lod_class,
+            _ => None,
+        }
+    }
+
     /// Uploads the palettes of the visible characters into `frame` and returns their draws
-    /// (module docs, step 4). `camera` is the eye in `anchor`'s frame.
+    /// (module docs, step 4). `camera` is the eye in `anchor`'s frame; `visible` says
+    /// whether a character is in a visibility cell the camera sees (`landblock.md` §4.11
+    /// "Moving entities"; tested after its fade advanced).
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_draws(
         &mut self,
         frame: &mut Frame,
@@ -1430,12 +1519,18 @@ impl CharacterLayer {
         camera: Vec3,
         frustum: &Frustum,
         objects: &ObjectLayer,
+        visible: &dyn Fn(&CharacterSite) -> bool,
         out: &mut Vec<MeshDraw>,
     ) {
         let t = Instant::now();
         let cap = self.config.draw_distance;
         let df = self.distances;
         let mut drawn = 0usize;
+        // A fade not advanced in the previous frame restarts (`walker.md` §14.5 W-O3).
+        for (_, a) in self.actors.iter_mut() {
+            a.seen_before = a.seen;
+            a.seen = false;
+        }
         for (e, render, tf) in self.store.renderables() {
             let Some(a) = self.actors.get(e) else {
                 continue;
@@ -1482,21 +1577,39 @@ impl CharacterLayer {
             let center = world.transform_point3(g.center);
             let radius = g.radius * scale;
             let distance = ((center - camera).length() - radius).max(0.0);
-            let max_d = character_draw_distance(&df, cap, is_player);
+            let lod = character_lod(self.lod_classes.as_deref(), g.asset.lod_class, is_player);
+            let max_d = character_draw_distance(&df, cap, &lod);
             let in_view = frustum.sphere_visible(center, radius);
             let Some(a) = self.actors.get_mut(e) else {
                 continue;
             };
-            // `walker.md` §11.4 step 1: the 1.5 s fade across D (`mesh.md` §8.7).
-            let opacity = a
-                .fade
-                .update(distance, max_d, df.dt, df.camera_moved, !a.seen, df.lod);
-            a.seen = in_view;
+            // `walker.md` §11.4 step 1: the 1.5 s fade across D (`mesh.md` §8.7), advanced
+            // for every character of the scene before the view test (§14.5 W-O3).
+            let opacity = a.fade.update(
+                distance,
+                max_d,
+                df.dt,
+                df.camera_moved,
+                !a.seen_before,
+                df.lod,
+            );
+            a.seen = true;
             if opacity <= 0.0 || !in_view {
                 continue;
             }
-            // A fading character casts no shadow (as fading objects, `walker.md` §14.5).
-            let casts = self.shadows && opacity >= 1.0 && distance <= CHARACTER_SHADOW_DISTANCE;
+            // `landblock.md` §4.11 "Moving entities": culled by the visibility cell of its
+            // cell like any drawn object, after its fade advanced (W-O3).
+            let site = CharacterSite {
+                tag: a.tag,
+                player: is_player,
+                position: WorldPos::new(a.region, tf.position[0], tf.position[1], tf.position[2]),
+            };
+            if !visible(&site) {
+                continue;
+            }
+            // `mesh.md` §8.7–§8.8: opacity above 0.8, strictly within the class's shadow
+            // distance (rows W-O1, W-O2).
+            let casts = self.shadows && character_casts(&df, &lod, opacity, distance);
             // The sampled pose, or the reference pose of a figure without an animator.
             let pose: Option<PoseView<'_>> = match self.store.anim(e) {
                 Some(anim) => self
@@ -1613,27 +1726,61 @@ mod tests {
     #[test]
     fn character_distances_follow_the_class_g_and_the_multiplier() {
         let f = CharacterFrame::default();
-        assert_eq!(character_draw_distance(&f, 400.0, false), 80.0);
-        assert_eq!(character_draw_distance(&f, 400.0, true), 240.0);
+        // Without the table: d0 80 (× 3 for the player's own character).
+        let npc = character_lod(None, None, false);
+        let player = character_lod(None, None, true);
+        assert_eq!(character_draw_distance(&f, 400.0, &npc), 80.0);
+        assert_eq!(character_draw_distance(&f, 400.0, &player), 240.0);
         // `--object-draw-distance UltraHigh` (M_d 2): 160 m, not the old fixed 80 m.
         let ultra = CharacterFrame {
             multiplier: 2.0,
             ..f
         };
-        assert_eq!(character_draw_distance(&ultra, 400.0, false), 160.0);
+        assert_eq!(character_draw_distance(&ultra, 400.0, &npc), 160.0);
         // Fog pulls G in: G wins.
         let fog = CharacterFrame { g: 60.0, ..f };
-        assert_eq!(character_draw_distance(&fog, 400.0, false), 60.0);
+        assert_eq!(character_draw_distance(&fog, 400.0, &npc), 60.0);
         // The option is a cap.
-        assert_eq!(character_draw_distance(&ultra, 50.0, false), 50.0);
+        assert_eq!(character_draw_distance(&ultra, 50.0, &npc), 50.0);
         // Per-class distances off: the cap alone; hostile values: the cap.
         let off = CharacterFrame { lod: false, ..f };
-        assert_eq!(character_draw_distance(&off, 400.0, false), 400.0);
+        assert_eq!(character_draw_distance(&off, 400.0, &npc), 400.0);
         let nan = CharacterFrame {
             multiplier: f32::NAN,
             ..f
         };
-        assert_eq!(character_draw_distance(&nan, 400.0, false), 400.0);
+        assert_eq!(character_draw_distance(&nan, 400.0, &npc), 400.0);
+    }
+
+    /// `walker.md` §14.5 (rows W-O1, W-O2, W-K1): a character's shadow distance is its
+    /// class's min(G, d2 × M_d × M_s), × 3 for the player's own; it casts while its opacity
+    /// is above 0.8 and its distance strictly below that.
+    #[test]
+    fn character_shadows_follow_the_class() {
+        let f = CharacterFrame::default();
+        // A class with d2 = 26 (the three character classes of this install, W-K1).
+        let mut class = LodValues::default();
+        class.0[0] = 80.0;
+        class.0[2] = 26.0;
+        assert_eq!(character_shadow_distance(&f, &class), 26.0);
+        assert_eq!(character_shadow_distance(&f, &class.for_player()), 78.0);
+        assert!(character_casts(&f, &class, 0.81, 25.9));
+        assert!(!character_casts(&f, &class, 0.8, 10.0), "opacity above 0.8");
+        assert!(!character_casts(&f, &class, 1.0, 26.0), "strictly below");
+        // M_s and G.
+        let half = CharacterFrame {
+            shadow_multiplier: 0.5,
+            ..f
+        };
+        assert_eq!(character_shadow_distance(&half, &class), 13.0);
+        let fog = CharacterFrame { g: 20.0, ..f };
+        assert_eq!(character_shadow_distance(&fog, &class), 20.0);
+        // Per-class distances off: at any distance.
+        let off = CharacterFrame { lod: false, ..f };
+        assert!(character_casts(&off, &class, 1.0, 1.0e6));
+        // No class: the component's initial d2 (16), scaled and capped all the same.
+        let none = character_lod(None, None, false);
+        assert_eq!(character_shadow_distance(&f, &none), 16.0);
     }
 
     #[test]

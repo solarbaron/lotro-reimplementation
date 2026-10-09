@@ -21,6 +21,8 @@ members = [
     "crates/havok",
     "crates/anim",
     "crates/entity",
+    "crates/ui",
+    "crates/plugins",
     "crates/physics",
     "crates/protocol",
     "crates/wvm",
@@ -62,6 +64,8 @@ tessera-input = { path = "crates/input" }
 tessera-havok = { path = "crates/havok" }
 tessera-anim = { path = "crates/anim" }
 tessera-entity = { path = "crates/entity" }
+tessera-ui = { path = "crates/ui" }
+tessera-plugins = { path = "crates/plugins" }
 tessera-physics = { path = "crates/physics" }
 tessera-protocol = { path = "crates/protocol" }
 tessera-server = { path = "apps/server" }
@@ -85,8 +89,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # M7 networking candidates (decision 0030 picks the transport; entries nobody uses are not
 # resolved). TLS stays on rustls with the ring provider: aws-lc-sys carries the OpenSSL
-# licence, which deny.toml rejects, so default features are off.
-argon2 = "0.6"
+# licence, which deny.toml rejects, so default features are off. argon2 defaults are off
+# too, so each member lists exactly the features it uses.
+argon2 = { version = "0.6", default-features = false }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }

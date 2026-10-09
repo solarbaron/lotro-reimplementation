@@ -57,17 +57,25 @@ pub enum AlphaMode {
     /// additive light passes; lerping an additive effect toward the fog colour would
     /// brighten fogged distance). Outside lit passes it draws as [`AlphaMode::Blend`].
     ///
-    /// The same as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`]. An additive surface
-    /// whose render state writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE
-    /// shaders have depth write on) uses [`AlphaMode::Fixed`] with `depth_write` set.
+    /// The same blend state as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`], but the
+    /// source alpha is the output alpha as for [`AlphaMode::Blend`] (opacity × *M*.alpha,
+    /// so a caller can fade the surface by *M*.alpha), where [`AlphaMode::Fixed`] reads the
+    /// opacity source alone (`material.md` §11.3). An additive surface whose render state
+    /// writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE shaders have depth write
+    /// on) uses [`AlphaMode::Fixed`] with `depth_write` set.
     Additive,
     /// The fixed-function blend state of an unlit record (`material.md` §11.3 rule for
     /// unlit records: the most common (src, dst, op) triple of the record's render-state
     /// blocks, the D3D factor codes of §7.6 mapped by the caller, depth write from the
-    /// same block). No alpha test; drawn with the blended draws, sorted back to front; casts
-    /// no shadow. The opacity a factor reads is the output alpha (opacity × *M*.alpha, as
-    /// for [`AlphaMode::Blend`]). In lit passes fog follows [`FixedBlend`]'s fog rule.
-    /// Outside lit passes it draws as [`AlphaMode::Blend`].
+    /// same block), with the record's alpha test when it has one ([`FixedBlend::alpha_test`],
+    /// `material.md` §11.2); drawn with the blended draws, sorted back to front; casts no
+    /// shadow. The opacity a factor reads (SRCALPHA and INVSRCALPHA) is the opacity
+    /// source of `material.md` §11.2, or 1 without one (§11.3, rule for unlit records):
+    /// [`LitSurface::opacity`] for meshes, the base alpha unless it is the gloss for world
+    /// surfaces; *M*.alpha (the instance tint included) and the vertex alpha do not enter.
+    /// Sky objects still scale it by their keyframe opacity (`render.md` §5.4). In lit
+    /// passes fog follows [`FixedBlend`]'s fog rule. Outside lit passes it draws as
+    /// [`AlphaMode::Blend`].
     Fixed(FixedBlend),
 }
 
@@ -84,7 +92,7 @@ pub enum BlendFactor {
     SrcColor,
     /// 1 − the source colour.
     OneMinusSrcColor,
-    /// The source alpha (the surface's output alpha).
+    /// The source alpha (the surface's opacity, as [`AlphaMode::Fixed`] says).
     SrcAlpha,
     /// 1 − the source alpha.
     OneMinusSrcAlpha,
@@ -113,9 +121,53 @@ pub enum BlendOp {
     Max,
 }
 
+/// The alpha-test threshold of a fixed blend (`material.md` §11.2: parameter 1043, used
+/// when 4004 is on and an opacity source exists): fragments whose opacity is at most the
+/// threshold are discarded. Compared and hashed by its bits, so it can key pipelines. A
+/// value that is not finite acts as 0.5.
+#[derive(Debug, Clone, Copy)]
+pub struct AlphaThreshold(pub f32);
+
+impl AlphaThreshold {
+    /// The threshold the shaders compare with (0.5 for a value that is not finite).
+    #[must_use]
+    pub fn value(self) -> f32 {
+        if self.0.is_finite() { self.0 } else { 0.5 }
+    }
+}
+
+impl PartialEq for AlphaThreshold {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for AlphaThreshold {}
+
+impl PartialOrd for AlphaThreshold {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AlphaThreshold {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl std::hash::Hash for AlphaThreshold {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 /// A fixed-function blend state ([`AlphaMode::Fixed`]): colour = op(src · `src`, dst ·
-/// `dst`), and whether the surface writes depth. The target's alpha channel is kept
-/// (Tessera's choice; the presented image is opaque).
+/// `dst`), whether the surface writes depth and its alpha test. The target's alpha channel
+/// is kept (Tessera's choice; the presented image is opaque), also in a pass with
+/// `Pass::premultiplied_alpha`, except for SRCALPHA / INVSRCALPHA, ADD (source-over) and
+/// the opaque draws with destination factor ZERO (`docs/specs/render.md` §6.10 "Fixed
+/// blends", R12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FixedBlend {
     /// Source factor.
@@ -126,6 +178,58 @@ pub struct FixedBlend {
     pub op: BlendOp,
     /// Depth write (`depth_write` of the render-state block, `material.md` §7.6, §11.3).
     pub depth_write: bool,
+    /// The record's alpha test (`material.md` §11.2, `render.md` §4.8 R-D11): `None` when
+    /// the record has none (4004 off or no opacity source). It tests the opacity source, as
+    /// for lit surfaces (§11.2); a discarded fragment writes neither colour nor depth.
+    pub alpha_test: Option<AlphaThreshold>,
+}
+
+/// How a fixed blend state writes the target's alpha (`docs/specs/render.md` §6.10 "Fixed
+/// blends", R12). The colour written never depends on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum FixedAlpha {
+    /// Keep the destination alpha (source factor zero, destination factor one, add):
+    /// every fixed blend outside premultiplied passes, and inside them every blend but the
+    /// two below.
+    Keep,
+    /// Source-over (`One` / `OneMinusSrcAlpha`, add): SRCALPHA / INVSRCALPHA, ADD in a
+    /// premultiplied pass.
+    Over,
+    /// Write alpha 1, as opaque draws do: destination factor ZERO with a source factor that
+    /// does not read the destination (ZERO, ONE, SRCALPHA, INVSRCALPHA), ADD, in a
+    /// premultiplied pass. Such a blend never reads the destination, so the pipeline draws
+    /// without blending and its fragment shader applies the source factor
+    /// ([`FixedPipeline::fixed_opaque`]).
+    Opaque,
+}
+
+/// Name of the pipeline-overridable constant of the lit, instanced and sky shaders
+/// (`frame_shading.wgsl`) that makes a fixed blend draw opaque.
+pub(crate) const FIXED_OPAQUE: &str = "FIXED_OPAQUE";
+
+/// How a fixed-blend pipeline is built ([`FixedBlend::pipeline`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FixedPipeline {
+    /// Blend state of the colour target; `None`: no blending (the fragment replaces the
+    /// target).
+    pub blend: Option<wgpu::BlendState>,
+    /// Value of the shaders' [`FIXED_OPAQUE`] override: 0 = the fragment writes the
+    /// colour and alpha it computed; otherwise it writes alpha 1 and the colour times the
+    /// source factor, 1 = ZERO, 2 = ONE, 3 = SRCALPHA, 4 = INVSRCALPHA.
+    pub fixed_opaque: u32,
+}
+
+impl FixedPipeline {
+    /// The pipeline-overridable constants of the fragment stage.
+    pub(crate) fn constants(&self) -> &'static [(&'static str, f64)] {
+        match self.fixed_opaque {
+            1 => &[(FIXED_OPAQUE, 1.0)],
+            2 => &[(FIXED_OPAQUE, 2.0)],
+            3 => &[(FIXED_OPAQUE, 3.0)],
+            4 => &[(FIXED_OPAQUE, 4.0)],
+            _ => &[],
+        }
+    }
 }
 
 /// How fog acts on an [`AlphaMode::Fixed`] surface in lit passes (Tessera Decision,
@@ -150,22 +254,62 @@ impl FixedBlend {
         dst: BlendFactor::One,
         op: BlendOp::Add,
         depth_write: false,
+        alpha_test: None,
     };
 
-    /// The wgpu blend state: the colour by the factors and operation (factors ONE for
-    /// min and max, which ignore them), the alpha channel kept.
-    pub(crate) fn blend_state(self) -> wgpu::BlendState {
+    /// The threshold the shaders compare with: the alpha test's, or −1 (no test).
+    #[must_use]
+    pub(crate) fn cutoff(self) -> f32 {
+        self.alpha_test.map_or(-1.0, AlphaThreshold::value)
+    }
+
+    /// How this blend writes alpha in a pass with (`premultiplied`) or without the
+    /// premultiplied option (`docs/specs/render.md` §6.10 "Fixed blends", R12).
+    pub(crate) fn alpha_rule(self, premultiplied: bool) -> FixedAlpha {
+        use BlendFactor as F;
+        if !premultiplied || self.op != BlendOp::Add {
+            return FixedAlpha::Keep;
+        }
+        match (self.src, self.dst) {
+            (F::SrcAlpha, F::OneMinusSrcAlpha) => FixedAlpha::Over,
+            (F::Zero | F::One | F::SrcAlpha | F::OneMinusSrcAlpha, F::Zero) => FixedAlpha::Opaque,
+            _ => FixedAlpha::Keep,
+        }
+    }
+
+    /// The pipeline of this blend: the colour by the factors and operation (factors ONE
+    /// for min and max, which ignore them), the alpha by `alpha` (from
+    /// [`Self::alpha_rule`]). Every pipeline built here is checked against R12 by a unit
+    /// test of `ui::api`.
+    pub(crate) fn pipeline(self, alpha: FixedAlpha) -> FixedPipeline {
+        use BlendFactor as F;
+        if alpha == FixedAlpha::Opaque {
+            // Destination factor ZERO and ADD: colour = source × source factor, no
+            // destination read; alpha 1.
+            let fixed_opaque = match self.src {
+                F::Zero => 1,
+                F::One => 2,
+                F::SrcAlpha => 3,
+                F::OneMinusSrcAlpha => 4,
+                // `alpha_rule` gives `Opaque` for these four only; blend as usual otherwise.
+                _ => return self.pipeline(FixedAlpha::Keep),
+            };
+            return FixedPipeline {
+                blend: None,
+                fixed_opaque,
+            };
+        }
         let factor = |f: BlendFactor| match f {
-            BlendFactor::Zero => wgpu::BlendFactor::Zero,
-            BlendFactor::One => wgpu::BlendFactor::One,
-            BlendFactor::SrcColor => wgpu::BlendFactor::Src,
-            BlendFactor::OneMinusSrcColor => wgpu::BlendFactor::OneMinusSrc,
-            BlendFactor::SrcAlpha => wgpu::BlendFactor::SrcAlpha,
-            BlendFactor::OneMinusSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
-            BlendFactor::DstAlpha => wgpu::BlendFactor::DstAlpha,
-            BlendFactor::OneMinusDstAlpha => wgpu::BlendFactor::OneMinusDstAlpha,
-            BlendFactor::DstColor => wgpu::BlendFactor::Dst,
-            BlendFactor::OneMinusDstColor => wgpu::BlendFactor::OneMinusDst,
+            F::Zero => wgpu::BlendFactor::Zero,
+            F::One => wgpu::BlendFactor::One,
+            F::SrcColor => wgpu::BlendFactor::Src,
+            F::OneMinusSrcColor => wgpu::BlendFactor::OneMinusSrc,
+            F::SrcAlpha => wgpu::BlendFactor::SrcAlpha,
+            F::OneMinusSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
+            F::DstAlpha => wgpu::BlendFactor::DstAlpha,
+            F::OneMinusDstAlpha => wgpu::BlendFactor::OneMinusDstAlpha,
+            F::DstColor => wgpu::BlendFactor::Dst,
+            F::OneMinusDstColor => wgpu::BlendFactor::OneMinusDst,
         };
         let (operation, minmax) = match self.op {
             BlendOp::Add => (wgpu::BlendOperation::Add, false),
@@ -179,17 +323,25 @@ impl FixedBlend {
         } else {
             (factor(self.src), factor(self.dst))
         };
-        wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor,
-                dst_factor,
-                operation,
-            },
-            alpha: wgpu::BlendComponent {
+        let alpha = if alpha == FixedAlpha::Over {
+            wgpu::BlendComponent::OVER
+        } else {
+            wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::Zero,
                 dst_factor: wgpu::BlendFactor::One,
                 operation: wgpu::BlendOperation::Add,
-            },
+            }
+        };
+        FixedPipeline {
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor,
+                    dst_factor,
+                    operation,
+                },
+                alpha,
+            }),
+            fixed_opaque: 0,
         }
     }
 
@@ -458,10 +610,11 @@ pub enum LightSelection {
     /// whose squared distance to the draw's world box is below the square of their
     /// selection radius ρ ([`crate::LightReach`]), without lights baked into the landscape
     /// on terrain chunks and with the parent switches applied; key lights first, each group
-    /// nearest first (Tessera Decision of §8.5); then one directional light; at most
-    /// [`crate::MAX_DRAW_LIGHTS`] in all with light 0 counted: 7 from the table (light 0 is
-    /// the sun or, without one, the default directional light), 8 when a key directional
-    /// table light takes light 0 in a pass without a sun.
+    /// nearest first (Tessera Decision of §8.5); in a pass without a sun the first key
+    /// directional light (light 0); then one other directional light (the extra slot,
+    /// §8.2); at most [`crate::MAX_DRAW_LIGHTS`] in all with light 0 counted: 7 from the
+    /// table (light 0 is the sun or, without one, the default directional light), 8 when a
+    /// key directional table light takes light 0 in a pass without a sun.
     #[default]
     Auto,
     /// No light from the table (the sun and ambient still apply).
@@ -612,7 +765,10 @@ mod tests {
     /// target alpha kept); min and max ignore the factors.
     #[test]
     fn fixed_blend_states() {
-        let add = FixedBlend::ADDITIVE.blend_state();
+        let add = FixedBlend::ADDITIVE
+            .pipeline(FixedAlpha::Keep)
+            .blend
+            .expect("blends");
         assert_eq!(add.color.src_factor, wgpu::BlendFactor::SrcAlpha);
         assert_eq!(add.color.dst_factor, wgpu::BlendFactor::One);
         assert_eq!(add.color.operation, wgpu::BlendOperation::Add);
@@ -623,11 +779,30 @@ mod tests {
             dst: BlendFactor::Zero,
             op: BlendOp::Max,
             depth_write: true,
+            alpha_test: None,
         };
-        let s = max.blend_state();
+        let s = max.pipeline(FixedAlpha::Keep).blend.expect("blends");
         assert_eq!(s.color.src_factor, wgpu::BlendFactor::One);
         assert_eq!(s.color.dst_factor, wgpu::BlendFactor::One);
         assert_eq!(s.color.operation, wgpu::BlendOperation::Max);
+    }
+
+    /// `render.md` R-D11: the alpha test of a fixed blend; thresholds compare by bits.
+    #[test]
+    fn fixed_blend_alpha_test() {
+        assert_eq!(FixedBlend::ADDITIVE.cutoff(), -1.0);
+        let tested = FixedBlend {
+            alpha_test: Some(AlphaThreshold(0.25)),
+            ..FixedBlend::ADDITIVE
+        };
+        assert_eq!(tested.cutoff(), 0.25);
+        assert_ne!(tested, FixedBlend::ADDITIVE);
+        let nan = FixedBlend {
+            alpha_test: Some(AlphaThreshold(f32::NAN)),
+            ..FixedBlend::ADDITIVE
+        };
+        assert_eq!(nan.cutoff(), 0.5);
+        assert_eq!(nan, nan);
     }
 
     /// The fog rule fades a blended contribution toward what leaves the destination
@@ -640,6 +815,7 @@ mod tests {
                 dst,
                 op,
                 depth_write: false,
+                alpha_test: None,
             }
             .fog_rule()
         };

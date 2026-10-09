@@ -105,7 +105,8 @@ impl Census {
     }
 
     /// A spec statement this census does not reproduce, filed as an OPEN note in the spec.
-    /// Reported, never failing.
+    /// Reported, never failing. (No such statement is open after the 2026-10-09 revision.)
+    #[allow(dead_code)]
     fn note(
         &mut self,
         what: impl Into<String>,
@@ -687,8 +688,7 @@ fn progressions(inst: &Install, c: &mut Census) {
             (2, 6),
             (19, 6),
             (5, 5),
-            // The spec lists 8 (5), which makes its list sum to 1,342 for 1,338 records;
-            // see the OPEN note in combat-data.md §4.1.
+            // Length 8 occurs once (C53).
             (8, 1),
             (10, 5),
             (101, 4),
@@ -705,11 +705,6 @@ fn progressions(inst: &Install, c: &mut Census) {
         &lengths
             .remove(&ProgressionKind::FloatArray)
             .unwrap_or_default(),
-    );
-    c.note(
-        "§4.1 float arrays of length 8 (the spec's list sums to 1,342 for 1,338 records)",
-        5,
-        1,
     );
     c.map(
         "§4.1 linear point counts",
@@ -875,6 +870,11 @@ fn effects(inst: &Install, c: &mut Census) {
     let mut vital_refs: BTreeMap<(&'static str, u32), u64> = BTreeMap::new();
     let mut combos_725: BTreeMap<String, u64> = BTreeMap::new();
     let mut combos_755: BTreeMap<String, u64> = BTreeMap::new();
+    // C57: class-725 sources with the variance left out, variance presence, and the
+    // per-stem modifier lists and critical multipliers by full label.
+    let mut combos_725_nv: BTreeMap<String, u64> = BTreeMap::new();
+    let mut variances: BTreeMap<&'static str, u64> = BTreeMap::new();
+    let mut stem_lists: BTreeMap<String, u64> = BTreeMap::new();
     let mut class_props: BTreeMap<(&'static str, u32), u64> = BTreeMap::new();
     let mut aura_types: BTreeMap<u32, u64> = BTreeMap::new();
     let mut struct_elems: BTreeMap<&'static str, u64> = BTreeMap::new();
@@ -1092,6 +1092,51 @@ fn effects(inst: &Install, c: &mut Census) {
         };
         if class == 725 {
             bump(&mut combos_725, parts(eff.instant_vital));
+            bump(
+                &mut combos_725_nv,
+                parts(eff.instant_vital.map(|mut a| {
+                    a.variance = None;
+                    a
+                })),
+            );
+        }
+        for (label, amount) in [
+            ("725 initial", eff.instant_vital.filter(|_| class == 725)),
+            (
+                "755 initial",
+                eff.over_time_initial.filter(|_| class == 755),
+            ),
+            (
+                "755 per interval",
+                eff.over_time_per_interval.filter(|_| class == 755),
+            ),
+        ] {
+            if amount.is_some_and(|a| a.variance.is_some()) {
+                bump(&mut variances, label);
+            }
+        }
+        // The counts of C57 are records of the stem's class (725 or 755).
+        for (stem, m, stem_class) in [
+            ("instant", &eff.instant_vital_modifiers, 725),
+            ("initial", &eff.over_time_initial_modifiers, 755),
+            ("per interval", &eff.over_time_per_interval_modifiers, 755),
+        ] {
+            if class != stem_class {
+                continue;
+            }
+            for (part, present) in [
+                ("modifier list", !m.modifier_list.is_empty()),
+                ("additive list", !m.additive_modifier_list.is_empty()),
+                ("critical multiplier", m.critical_multiplier.is_some()),
+                (
+                    "critical multiplier list",
+                    !m.critical_multiplier_mod_list.is_empty(),
+                ),
+            ] {
+                if present {
+                    bump(&mut stem_lists, format!("{stem} {part}"));
+                }
+            }
         }
         if class == 755 {
             // The §6.4 grouping does not count the variance (it reproduces with it left out).
@@ -1318,6 +1363,55 @@ fn effects(inst: &Install, c: &mut Census) {
         combos_755.values().sum::<u64>() - main_755,
     );
     eprintln!("vital-over-time source combinations: {combos_755:?}");
+    let c725nv: BTreeMap<&str, u64> = combos_725_nv
+        .iter()
+        .map(|(k, v)| (k.as_str(), *v))
+        .collect();
+    c.map(
+        "§6.4 instant-vital sources without the variance (class 725, C57)",
+        &[
+            ("progression", 788),
+            ("constant", 229),
+            ("variable", 52),
+            ("constant+progression", 19),
+            ("constant+variable", 5),
+            ("progression+variable", 4),
+            ("none", 4),
+            ("random", 1),
+            ("progression+random", 1),
+        ],
+        &c725nv,
+    );
+    c.map(
+        "§6.4 variance present (C57)",
+        &[
+            ("725 initial", 262),
+            ("755 initial", 143),
+            ("755 per interval", 281),
+        ],
+        &variances,
+    );
+    // Non-empty lists after zero padding is removed; a stored but all-zero list would
+    // read as absent here.
+    let stems: BTreeMap<&str, u64> = stem_lists.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    c.map(
+        "§6.4 per-stem modifier lists and critical multipliers (C57)",
+        &[
+            ("instant modifier list", 526),
+            ("instant additive list", 22),
+            ("instant critical multiplier", 1_103),
+            ("instant critical multiplier list", 304),
+            ("initial modifier list", 1_117),
+            ("initial additive list", 1),
+            ("initial critical multiplier", 2_438),
+            ("initial critical multiplier list", 185),
+            ("per interval modifier list", 2_140),
+            ("per interval additive list", 12),
+            ("per interval critical multiplier", 2_438),
+            ("per interval critical multiplier list", 357),
+        ],
+        &stems,
+    );
     for ((label, cl), expected) in [
         (("Effect_Aura_Type", 709), 617),
         (("Effect_Aura_Radius", 709), 602),
@@ -1404,6 +1498,24 @@ fn effects(inst: &Install, c: &mut Census) {
         4_954,
         r("Bare in Effect_WSLEffect") + r("Bare in Effect_WSLEffect (placeholder)"),
     );
+    c.eq(
+        "§6.3 Effect_WSLEffect zero values (C56)",
+        2_649,
+        r("Bare in Effect_WSLEffect (placeholder)"),
+    );
+    // §6.5, D6: the applied-effect structs are effect references (C58).
+    for (container, expected) in [
+        ("Effect_Aura_Applied_Effect_Data", 734),
+        ("Effect_Area_Applied_Effect_Data", 578),
+        // 1,365 + 1,070 in class 708 and 20 in the class-3124 combination arrays.
+        ("Effect_ApplyOverTime_Applied_Effect_Data", 2_455),
+    ] {
+        c.eq(
+            format!("§6.5 applied-effect references in {container}"),
+            expected,
+            r(&format!("Applied in {container}")),
+        );
+    }
     eprintln!("effect references by kind and container: {refs:?}");
 
     // §6.6 effect control object.
@@ -1793,6 +1905,7 @@ fn traits(inst: &Install, c: &mut Census) {
         ("Trait_Rank_Overlay_Progression", t.rank_overlay_progression),
         ("EffectGenerator_TraitEffectList", t.effect_list),
     ];
+    let mut granted_skills = 0u64;
     for &did in &dids {
         let l = inst.load(did);
         let set = &l.record.properties;
@@ -1800,6 +1913,7 @@ fn traits(inst: &Install, c: &mut Census) {
             *presence.entry(label).or_default() += present(set, p);
         }
         let tr = Trait::read(&l.record, pids).unwrap_or_else(|e| panic!("{did}: {e}"));
+        granted_skills += tr.skills.len() as u64;
         overlay_nonzero += u64::from(tr.rank_overlay_progression.is_some());
         if let Some(cl) = tr.rank_overlay_progression.and_then(|d| inst.class_of(d)) {
             bump(&mut overlay, cl);
@@ -1838,6 +1952,8 @@ fn traits(inst: &Install, c: &mut Census) {
         }
     }
     let n = dids.len() as u64;
+    // §8.1 (C58): `Trait_Skill_Array` holds bare `Trait_Skill` DIDs.
+    c.eq("§8.1 Trait_Skill_Array DIDs", 135, granted_skills);
     let p = |k: &str| presence.get(k).copied().unwrap_or(0);
     for label in [
         "Trait_Name",
@@ -1967,14 +2083,20 @@ fn traits(inst: &Install, c: &mut Census) {
     }
     c.eq("§4.6 sparse entries", 270, pairs);
     c.inv("§4.6 sparse entries name traits", to_traits, pairs);
-    // combat-data.md §4.6 says all 270 name class-3438 traits; see the OPEN note there.
-    c.note(
-        "§4.6 sparse entries naming point-based (class 3438) traits",
-        270,
+    // C54: the 270 targets are traits of two classes (1477 and 1483 here), none
+    // point-based.
+    c.eq(
+        "§4.6 sparse entries naming point-based traits",
+        0,
         sparse_targets
             .get(&Some(inst.classes.point_based_trait))
             .copied()
             .unwrap_or(0),
+    );
+    c.eq(
+        "§4.6 trait classes named by sparse entries",
+        2,
+        sparse_targets.keys().filter(|k| k.is_some()).count() as u64,
     );
     eprintln!("sparse DID progression targets by class: {sparse_targets:?}");
     c.inv("§4.6 sparse keys lie in 5–120", keys_ok, pairs);
@@ -2031,6 +2153,7 @@ fn tables(inst: &Install, c: &mut Census) {
 
     let (mut levels_ok, mut formulas_ok, mut terms_ok) = (0u64, 0u64, 0u64);
     let (mut skill_entries, mut mount_entries, mut characteristics) = (0u64, 0u64, 0u64);
+    let (mut typed_entries, mut complete_entries) = (0u64, 0u64);
     let tables: Vec<Did> = inst.index.dids_of_class(inst.classes.class_table).to_vec();
     for &did in &tables {
         let l = inst.load(did);
@@ -2049,6 +2172,17 @@ fn tables(inst: &Install, c: &mut Census) {
             }));
         skill_entries += set.elements(ct.available_skills).len() as u64;
         mount_entries += set.elements(ct.available_mount_skills).len() as u64;
+        for e in t.skill_entries.iter().chain(&t.mount_skill_entries) {
+            typed_entries += 1;
+            complete_entries += u64::from(
+                e.skill.is_some()
+                    && e.level.is_some()
+                    && e.prerequisite.is_some()
+                    && e.rank.is_some()
+                    && e.training_cost.is_some()
+                    && e.shortcut_index.is_some(),
+            );
+        }
         characteristics += t.characteristic_traits.len() as u64;
     }
     let n = tables.len() as u64;
@@ -2057,6 +2191,12 @@ fn tables(inst: &Install, c: &mut Census) {
     c.inv("§9.1 7 terms per formula, values 0–4.5", terms_ok, n);
     c.eq("§9.1 available skill entries", 551, skill_entries);
     c.eq("§9.1 available mount skill entries", 36, mount_entries);
+    c.inv(
+        "§9.1 skill entries with all six fields (C58)",
+        complete_entries,
+        typed_entries,
+    );
+    c.eq("§9.1 typed skill entries", 587, typed_entries);
     c.eq(
         "§9.1 class characteristics naming a trait",
         297,
@@ -2066,6 +2206,7 @@ fn tables(inst: &Install, c: &mut Census) {
     // §9.2 monster play, §9.3 lines.
     let virtue_list = inst.pid("MonsterPlay_VirtueList");
     let (mut levels_ok, mut skills, mut traits, mut virtues) = (0u64, 0u64, 0u64, 0u64);
+    let (mut mp_typed, mut mp_complete) = (0u64, 0u64);
     let mp: Vec<Did> = inst.index.dids_of_class(inst.classes.monster_play).to_vec();
     for &did in &mp {
         let l = inst.load(did);
@@ -2075,11 +2216,40 @@ fn tables(inst: &Install, c: &mut Census) {
         skills += set.elements(ct.monster_skill_list).len() as u64;
         traits += set.elements(ct.monster_trait_list).len() as u64;
         virtues += set.elements(virtue_list).len() as u64;
+        mp_typed += (t.skill_entries.len() + t.trait_entries.len() + t.virtue_entries.len()) as u64;
+        mp_complete += t
+            .skill_entries
+            .iter()
+            .filter(|e| {
+                e.skill.is_some()
+                    && e.cost.is_some()
+                    && e.min_level.is_some()
+                    && e.min_rank.is_some()
+            })
+            .count() as u64
+            + t.trait_entries
+                .iter()
+                .filter(|e| {
+                    e.trait_did.is_some()
+                        && e.min_level.is_some()
+                        && e.min_rank.is_some()
+                        && e.trainable.is_some()
+                })
+                .count() as u64
+            + t.virtue_entries
+                .iter()
+                .filter(|e| e.trait_did.is_some() && e.start_rank.is_some() && e.max_rank.is_some())
+                .count() as u64;
     }
     c.inv("§9.2 monster level 1–160", levels_ok, mp.len() as u64);
     c.eq("§9.2 monster-play skill entries", 525, skills);
     c.eq("§9.2 monster-play trait entries", 687, traits);
     c.eq("§9.2 monster-play virtue entries", 84, virtues);
+    c.inv(
+        "§9.2 monster-play entries with every field (C58)",
+        mp_complete,
+        mp_typed,
+    );
     for (class, expected, family) in [
         (2390u32, 120u64, CombatFamily::Skill),
         (2399, 154, CombatFamily::Trait),

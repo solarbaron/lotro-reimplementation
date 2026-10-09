@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author): first review and a re-review by a session that neither wrote the spec nor made the first review |
-| **Review record** | First review 2026-10-07: changes requested. Re-review 2026-10-07 (not the author, not the first reviewer): **passed**, Accepted; all four requested changes made, P27–P29 and the §11.3 housing schedules re-checked over every record. Full record in the review log (decision 0018). |
+| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author) |
+| **Review record** | 2026-10-07: changes requested. 2026-10-07 re-review: passed (Accepted). 2026-10-08 revision (§3, §8.4, §8.5): review pending. 2026-10-08 review of the revision (spec reviewer, not the author): changes requested (one Confirmed fact of §8.5 contradicted on re-check); status stays Revised. 2026-10-09 revision (§8.2, §8.5, §19.6, P31): review pending. 2026-10-09 re-review (spec reviewer, not the author or an earlier reviewer): **passed**, Accepted. Details in the review log (decision 0018). |
 | **Implements into** | `crates/props` / `crates/formats` (typed views of the records below, read from their property sets); `crates/wstate` (the meaning of native class 3053, §8.4); a later server or sandbox backend (`crates/net`: character creation, default property set, name generation, level and pip rules, §4.6, §8.5, §9, §10, §17); `apps/client` (the local player's default property set, §4.6); `apps/explorer` (race, nationality, class and avatar-template cards, §5–§7) |
 | **Companion specs** | [`property-system.md`](property-system.md) §2–§5 (dictionary, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum, bitfield and PID display), §8 (DID maps); [`wstate.md`](wstate.md) §3–§5 (object-state records, the root class at offset 4, native codecs, in particular classes 11, 17, 18, 35, 39, 104 and 3053); [`wlib.md`](wlib.md) (class indices, ancestry, function IDs §6.4); [`records.md`](records.md) §7–§8 (enum mappers, DID maps); [`misc-records.md`](misc-records.md) §9 (name-filter table), §14 (WEENIECONTENT); [`creatures.md`](creatures.md) §2–§3 (template subtree, mirror properties); [`appearance.md`](appearance.md) §2–§3 (playable bodies, character-creation controls); [`skeleton-anim.md`](skeleton-anim.md) §2.2 (race-table walk); [`combat-data.md`](combat-data.md) §4 (progressions), §8.6 (trait control), §9.1 (class advancement tables), §10.3 (threshold policies); [`economy.md`](economy.md) §8 (store helpers); [`quests.md`](quests.md) §13.1 (factions); [`string-table.md`](string-table.md) §9 (resolving a StringInfo) |
 
@@ -51,7 +51,9 @@ says so in an OPEN callout and, where Tessera's sandbox needs a rule anyway, giv
 |---|---|
 | OBS | Observed in the user's install (Steam, data current on 2026-10-07), 2026-10-07, with throwaway probes in the dirty scratch area built on a snapshot of the project's own decoders. **Every census covers all records of the classes named**: all 383,332 object records (prefix 0x70) were classified by root class; every record of every class in §2.1 was decoded on both halves (0x70 and 0x79); reference censuses cover every DID value in every 0x79 and 0x78 property set of `client_gamelogic.dat` plus every DID map under the root DID map. Counts are observations of this install and must be read at run time. |
 | LC | LotroCompanion `lotro-tools` and `lotro-core` source (third-party extraction tools, read for facts only; no code or prose copied): which properties their race, nationality, pip, starting-gear and experience-table extractors read, and how they index an experience table. Marked **Reported** unless the data confirms it. |
-| BIN | **M4 under decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 with a headless disassembler/decompiler in the dirty room (a copy of the shared analysis project, deleted afterwards), by address range only. **Questions:** (b1) does native code read the property IDs of the race, nationality, name-generation, name-rule, pip and control records of this spec (instruction-immediate search for 77 property IDs, two of which, 0xA9 and 0x630, are too small to search meaningfully; string search); (b2) how the client builds and applies a phonetic-shift table (trimming, case, which entry wins, what an unresolved replacement means); (b3) how the client computes a pip's effective maximum. **Why M1–M3 were not enough:** the shift tables contain overlapping entries stored in no consistent order (20 of 233 overlapping pairs are stored general-first), 526 replacement strings name string-table tokens that do not exist, and one match string carries trailing white space, so the data alone cannot say which entry wins or what a missing string means; the pip records name a "maximum modifier" property without saying how it combines; no published source states either (M2); no running client is available to this session (M3). **Results:** (b1) the IDs occur as immediates in the shift-table loader (§8.4), the pip routines (§10.4) and some user-interface routines that were not analysed (character-creation stage and action, race key, gender list, selection entity and cameras, nationality list, account-type restriction entries, outfit minimum level, pip texts and threshold index); the syllable, category, option and race-to-category property IDs occur nowhere except two of them in user-interface code; no string in the executable contains the five-letter placeholder of §8.2; (b2) answered in §8.4; (b3) answered in §10.4. The generator's own procedure (choosing options and syllables) runs in the class library's script bytecode and was not read. Nothing from network, login, launcher or anti-tamper code was read. |
+| BIN | **M4 under decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 with a headless disassembler/decompiler in the dirty room (a copy of the shared analysis project, deleted afterwards), by address range only. **Questions:** (b1) does native code read the property IDs of the race, nationality, name-generation, name-rule, pip and control records of this spec (instruction-immediate search for 77 property IDs, two of which, 0xA9 and 0x630, are too small to search meaningfully; string search); (b2) how the client builds and applies a phonetic-shift table (trimming, case, which entry wins, what an unresolved replacement means); (b3) how the client computes a pip's effective maximum. **Why M1–M3 were not enough:** the shift tables contain overlapping entries stored in no consistent order (20 of 233 overlapping pairs are stored general-first), 526 replacement strings name string-table tokens that do not exist, and one match string carries trailing white space, so the data alone cannot say which entry wins or what a missing string means; the pip records name a "maximum modifier" property without saying how it combines; no published source states either (M2); no running client is available to this session (M3). **Results:** (b1) the IDs occur as immediates in the shift-table loader (§8.4), the pip routines (§10.4) and some user-interface routines that were not analysed (character-creation stage and action, race key, gender list, selection entity and cameras, nationality list, account-type restriction entries, outfit minimum level, pip texts and threshold index); the syllable, category, option and race-to-category property IDs occur nowhere except two of them in user-interface code; no string in the executable contains the five-letter placeholder of §8.2; (b2) answered in §8.4; (b3) answered in §10.4. The generator's own procedure (choosing options and syllables) runs in the class library's script bytecode and was not read in this pass (it was read on 2026-10-08, WLB). Nothing from network, login, launcher or anti-tamper code was read. |
+| WLB | **Class-library script code** of the install, read on 2026-10-08: the bytecode chunk of record 0x56000000 (`client_gamelogic.dat`) disassembled in the dirty room with the rules of [`wlib-bytecode.md`](wlib-bytecode.md) §2–§6. This is data of the install (method M1), not the executable. Read: the bodies of class 3044 (slots 0, 50, 84–86, 89, 90, 94–96), class 3047 (slots 0–2) and class 3048 (slots 0–2, 4–7) of this install, and a sweep of all 18,323 bodies for native calls of class 3053. Behaviour is restated in words; nothing of the code is reproduced. |
+| BIN2 | **M4 under decision 0011, second pass.** Same client build 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-08 in a private copy of the shared analysis project (headless decompiler, deleted after use) and with an import-table and call-site scan of the read-only executable, by address range only. Natives were located with the registration pairing of `wlib-bytecode.md`'s BIN row. **Questions:** (b4) what the native functions called by the generator's script code (WLB) do: the weighted pick and its reset, the integer random range, the string case changes, substring and comparison, and the arguments of the shift application; (b5) how the client's character-creation code uses the generator (attempts and checks); (b6) how the shift rule compares and counts characters (string type, comparison routine, locale). **Why M1–M3 were not enough:** the script code passes values to these natives by function ID only; their behaviour, the calling user-interface code and the locale exist only in the executable; no published source describes them (M2); no running client is available to this session (M3). **Results:** §8.4 (text model) and §8.5. The name check that the creation screen calls was identified as a call only; its rules were not read. Nothing from network, login, launcher or anti-tamper code was read. |
 | DEC | Tessera's own choices where neither data, client nor published sources say anything. Each is marked **Decision** and is not a claim about the original. |
 
 Marks: **Confirmed** = observed in the user's install over every record of the kind named, on
@@ -89,10 +91,19 @@ the client executable under M4; **Decision** = a Tessera choice.
 | P27 | Avatar-template compiled halves: one import of DB type 69, 35 (1654) or 36 (1653) items, no link section and no available-property section, in all 138 (§4.7) | OBS (all 138 records) | Confirmed 2026-10-07 |
 | P28 | Level-table directory and stat directory: property halves; compiled halves (class key → class table with 12 imports; property ID → stat object and key 1–7 → stat object with 7 imports); stat objects' properties; the two stat objects with empty property halves and an empty u32 array (§7.5, §7.6) | OBS (every record of classes 855, 1454, 1453, 1455, 1456, 1459, 1460, 3434, 3435) | Confirmed 2026-10-07 |
 | P29 | Manager entities: class subtree, `WeenieType` key 1, `Entity_CreationType` key 8, `PhysObj`, `SeeMeVisibilityMask`, the ten repository version ints and two further version ints of 2407; compiled half one script object holding three null references (0xFFFFFFFF), no imports (§14) | OBS (both records) | Confirmed 2026-10-07 |
+| P30 | Lists and value types in the records of this spec: no null entries; 111 list properties (100 distinct paths) over the 318 records of the classes of §2.1, 853 and 1486, every list with one element PID; the longest list has 463 elements (§3.1) | OBS (every record, 2026-10-08) | Confirmed 2026-10-08 |
+| P31 | Generator procedure: category map, weighted option draw, uniform syllable draw with case-insensitive repeat rejection (at most 101 draws per part, counted separately for each part), joins with the option's shift tables tried in order until one applies, case normalisation, failure yields the empty string (§8.5) | WLB; BIN2 (b4) | Confirmed (WLB + BIN) 2026-10-08; draw limit re-checked 2026-10-09 |
+| P32 | Creation screen: generate and check, at most 100 attempts (§8.5) | BIN2 (b5) | BIN only |
+| P33 | Text model of the shift rule and of the generator's case changes: UTF-16 code units; the C runtime's case-insensitive comparison and case conversion under the locale the client sets at start-up (§8.4) | BIN2 (b6) | BIN only |
+| P34 | The generator's compiled half equals its property half: per category the options in stored order, each with its syllable-table keys and shift-table keys in stored order, and a weighted table whose element *i* holds option *i*'s weight (21 of 21 categories) (§8.5) | OBS | Confirmed 2026-10-08 |
+| P35 | Every shift-table text that resolves is ASCII (all four fields of all 1,289 entries; 526 replacement tokens absent, §8.2) (§8.4) | OBS (the resolved texts of the P12 census) | Confirmed 2026-10-08 |
+| P36 | Native function 1 of class 3053 is called by exactly one script body (class 3048, slot 5 here); native function 3 by none (§8.4) | WLB (all 18,323 bodies) | Confirmed 2026-10-08 |
 | D1 | Building a new character's default property set (§4.6) | DEC | Decision |
-| D2 | Name assembly order and option choice (§8.5) | DEC | Decision |
+| D2 | The sandbox's random generator and name check inside the client's generation procedure; weights below 1 and empty totals (§8.5) | DEC | Decision |
 | D3 | Class display order by class priority (§7.3) | DEC | Decision |
 | D4 | Sandbox pip drift (§10.5) | DEC | Decision |
+| D5 | List cap and type mismatches in Tessera's typed views (§3) | DEC | Decision |
+| D6 | Case folding and counting beyond ASCII in the shift rule and the generator (§8.4) | DEC | Decision |
 
 ---
 
@@ -269,11 +280,28 @@ are observations.
 - Directory records whose lists name other object records (classes 855, 858, 861, 1454) carry
   an import list of DB type 69 entries for the named records (`wstate.md` §3.2).
 
-> **OPEN:** (implementer note, engineering choice, not a format fact) The spec gives no upper
-> bound for the lists a reader keeps from these records. Tessera's typed views
-> (`crates/wstate/src/character/`) reject a list of more than 65,536 entries
-> (`MAX_VIEW_ENTRIES`; the largest observed list has 463 entries, §8.2) and treat a present
-> property of an unexpected type as an error. A reviewer may confirm or change the cap.
+<a id="s3-1"></a>
+### 3.1 List sizes and value types (Confirmed P30; Decision D5)
+
+This answers the implementer note of 2026-10-07.
+
+- **What the client does.** The client's property-set reader bounds a list only by the bytes
+  left in the record (`property-system.md` §4.11, §5.3); it has no count limit of its own.
+- **What the data holds.** Over all 318 records of the classes of §2.1 and of classes 853
+  and 1486 there are no null entries (none occurs in any record, `property-system.md` §5.2),
+  and the longest list has 463 elements (a syllable
+  table, §8.2); the next longest have 236 (trait control) and 200 (a shift table).
+- **Types.** A value always has the type that the dictionary gives its PID
+  (`property-system.md` §5.2), and in each of the 111 list properties of these records (counted per class and path) all
+  elements carry one and the same PID. A typed view can therefore meet a type other than the
+  one in this spec's tables only when another build's dictionary changes a definition, or
+  in a hostile record. The client has no general rule for that case; the one reader of this
+  spec read under BIN that meets a foreign type treats it as absent (§10.4, an actor's
+  value, not a record).
+- **Decision D5 (Tessera):** a typed view of these records rejects a list of more than
+  65,536 elements and reports a present property whose dictionary type differs from the
+  type in this spec's tables as an error. Both are Tessera choices, not client behaviour.
+  The cap is more than 100 times the longest observed list.
 
 ---
 
@@ -726,7 +754,7 @@ Option:
 
 | Property | Type | Content |
 |---|---|---|
-| `NameGenerationCategory_Option_Weight` | int | 1–100; the sums per category are 5, 10 (13 categories), 99, 100 (4) and 103, so weights are relative |
+| `NameGenerationCategory_Option_Weight` | int | 1–100; the sums per category are 5 (2 categories), 10 (13), 99 (1), 100 (4) and 103 (1), so weights are relative |
 | `NameGenerationCategory_Option_SyllableTables` | array of `NameGenerationCategory_Option_SyllableTable` (enum 0x23000313) | 2 tables (31 options), 3 (29), 4 (4); the parts of the name in order |
 | `NameGenerationCategory_Option_PhoneticShiftsTables` | array of `NameGenerationCategory_Option_PhoneticShiftsTable` (enum 0x23000314) | Exactly 1 entry in all 64 |
 
@@ -774,8 +802,8 @@ it, so those entries never match (the client compares it literally, §8.4).
 **Valid-name rules.** `RandomNameGeneration_ValidNameRules`: 3 entries
 `RandomNameGeneration_ValidNameRule` (enum 0x230000B2): keys 1, 2, 0x10000003 (§8.1).
 
-**Compiled half.** 9,135 items: per race a sex-to-category map, per category its options
-(class-3047 objects), the syllable strings (codec 199 StringInfo items), 13 compiled shift
+**Compiled half.** 9,135 items: per race a sex-to-category map, per category a class-3047 object
+(its options as class-3048 objects and a weighted table of native class 175, §8.5), the syllable strings (codec 199 StringInfo items), 13 compiled shift
 tables (native class 3053, §8.4) and the set of valid rules.
 
 <a id="s8-3"></a>
@@ -826,47 +854,100 @@ equal their source definitions under these rules (1,289 of 1,289 entries; P14).
 So a longer end match beats a shorter one even when the shorter one has a longer start match,
 and stored order never decides. Replacements are inserted with their stored case.
 
-> **OPEN:** (implementer note) "Without regard to case" and "number of characters" are not
-> defined beyond ASCII. All observed texts are ASCII (P13), so the choice has no effect on
-> this install; Tessera compares characters through their Unicode lower-case mapping and
-> counts Unicode scalar values. Whether the client folds case only for ASCII and counts
-> UTF-16 code units is not settled here.
+<a id="s8-4-1"></a>
+**Text model** (answers the implementer note of 2026-10-07; P33, P35, D6).
+
+- The client holds these texts as UTF-16 strings. Every length of this section (|*E*|, |*S*|,
+  the left and right lengths, "the last |*E*| characters") counts **UTF-16 code units**.
+- "Without regard to case" is the C runtime's case-insensitive wide-string comparison,
+  code unit by code unit. Its folding depends on the C locale, which the client sets for all
+  categories at start-up from its language setting (one of four named Windows language
+  locales; the C locale is not used). In such a locale letters beyond ASCII fold by the
+  runtime's tables. The case changes of §8.5 step 5 use the same runtime and locale.
+- Every text of the generator in this install is ASCII: the syllables (P13) and every shift
+  text that resolves (P35). ASCII-only folding therefore gives the client's results on this
+  install.
+- **Decision D6 (Tessera):** count UTF-16 code units, and fold (or change the case of) each
+  code unit by its simple one-to-one Unicode case mapping; a code unit with no one-to-one
+  mapping, a surrogate included, stays as it is. On ASCII text this equals the client;
+  beyond ASCII it approximates the Windows runtime and is not a claim about it.
 
 In the client this is native function 1 of class 3053 (function ID 0x0BED0001, `wlib.md`
-§6.4); the table is built by native function 3 (0x0BED0003). Both are called from script
-bytecode (BIN only).
+§6.4); the table is built by native function 3 (0x0BED0003) (BIN). Function 1 is called by
+exactly one script function of the class library, the option's join step of §8.5; function 3
+is called by no script function of this install, because the generator's compiled half
+already holds the 13 built tables (WLB, P36).
 
 <a id="s8-5"></a>
-### 8.5 Generating a name (OPEN; Decision D2)
+### 8.5 Generating a name (Confirmed (WLB + BIN2), P31–P34; Decision D2)
 
-> **OPEN:** The generator's procedure runs in the class library's script bytecode and was not
-> read: how an option is drawn (weight over sum is the obvious reading), whether syllables are
-> drawn uniformly, whether shifts are applied between the name built so far and the next
-> syllable or between neighbouring syllables, whether a name is retried when it fails a
-> valid-name rule, and which random generator is used. Reading the bytecode of the class-3044
-> functions that call 0x0BED0001 would settle it.
+This section answers Q5 and the implementer note of 2026-10-07 on Decision D2.
 
-**Decision D2 (Tessera):**
+The generator runs in the class library's script code (class 3044 and the classes of its
+compiled half: 3047 for a category, 3048 for an option) and calls native functions of the
+client. It reads the generator's **compiled half** (§8.2). In this install the compiled half
+equals the property half for all 21 categories (P34), so a reader takes the values from the
+property half.
 
-1. Map (species, sex) to a category (§8.2).
-2. Draw one option of the category with probability weight ÷ (sum of the category's weights).
-3. Draw one string uniformly from each of the option's syllable tables, in order.
-4. Start with the first string as *A*. For each further string *B*: apply the option's shift
-   table to (*A*, *B*) once (§8.4), then set *A* to *A* followed by *B*.
-5. The result is *A*. If it fails the sandbox's own name checks, start again at step 2, at most
-   20 times.
+**The client's procedure** for one name, given (species, sex) (P31):
 
-> **OPEN:** (implementer note, choices inside Decision D2) Tessera reads "at most 20 times" as
-> the first attempt plus at most 20 restarts (21 attempts), never draws an option whose
-> weight is below 1, and uses the first entry of
-> `NameGenerationCategory_Option_PhoneticShiftsTables` if an option ever names more than one
-> (all 64 observed name exactly one, §8.2).
+1. **Category.** Look up (species, sex) in the race-to-category entries. Without an entry,
+   generation fails.
+2. **Option.** Draw one option of the category by weight. With *W* the sum of the category's
+   weights, option *i* is chosen with probability *wᵢ* ÷ *W*; an option of weight 0 is never
+   chosen. (The client draws an integer *r* uniformly from 1 to *W* inclusive and walks the
+   weighted tree of `economy.md` §9.2; which option a given *r* selects follows the tree,
+   not the stored order. The draw restores the table before each pick, so options are drawn
+   independently for every name.) A category without options fails.
+3. **Parts.** For each syllable-table key of the option, in stored order, draw one string:
+   an index uniformly from 0 to *n* − 1 inclusive, *n* being the table's number of strings
+   (a duplicate string counts twice), and resolve it to text. A drawn text that equals,
+   without regard to case (§8.4), a part already drawn for this name is rejected and drawn
+   again. At most **101 draws** are made for one part (the first draw and up to 100 redraws;
+   the limit is counted separately for each part); if all 101 are rejected, or the key has no
+   table, or the table is empty, generation fails.
+4. **Join.** Start with an empty name *A*. For each part *B* in order: apply the option's
+   shift tables to (*A*, *B*) by §8.4, trying the option's
+   `NameGenerationCategory_Option_PhoneticShiftsTable` keys in stored order and stopping at
+   the first table that applies an entry (a key with no definition acts as a table without
+   entries); then append *B* to *A*. So the shift sits between the name built so far and the
+   next part, and at most one entry is applied per join. The join is made for the first part
+   too, with *A* empty. By §8.4 step 2 an entry can then match only if its trimmed *E* is
+   empty; every trimmed *E* of this install has 1–3 letters (§8.2), so here the first part is
+   never shifted.
+
+   > **OPEN:** an entry whose *E* is empty after trimming does not occur in this install, so
+   > the client's result for it (whether it matches every *A*, the empty one included) was not
+   > observed. Tessera applies §8.4 as stated: such an entry matches every *A*.
+5. **Case.** Change the whole name to lower case, then its first character to upper case.
+6. A failed generation yields the empty string.
+
+**The creation screen** (BIN only, P32): the random-name action generates a name, passes a
+lower-cased copy to the client's name check together with a rule selector held by the
+screen, and repeats until a name passes, making **at most 100 attempts** in all (the first
+and 99 repeats). If none passes it reports failure and leaves the last generated name. The
+name check's rules were not read (Q4). The generator's `RandomNameGeneration_ValidNameRules`
+are not read by the generation code (they are read by user-interface code that was not
+traced). A second entry point takes the category from a game object instead of (species,
+sex); it was not traced further.
+
+**Decision D2 (Tessera):** the sandbox follows the client's procedure above with these
+substitutions, which are Tessera choices:
+
+1. Random numbers come from Tessera's own uniform generator (the client's generator is not
+   specified here); draws that are uniform over the stated ranges satisfy the procedure.
+2. The sandbox's own name check (§8.6) takes the place of the client's, with the same limit of
+   100 attempts in all.
+3. An option weight below 1 (none observed) is never drawn; a category whose weights sum to
+   0 fails generation (the client's behaviour there was not established).
 
 <a id="s8-6"></a>
 ### 8.6 Validating a typed name
 
 The data holds the rule sets (`misc-records.md` §9) but not their semantics (OPEN there).
-Tessera's sandbox applies its own rules. The original rejects names server-side.
+Tessera's sandbox applies its own rules. The original rejects names server-side; its
+creation screen also runs a client-side name check on generated names (§8.5, BIN only),
+whose rules were not read (Q4).
 
 ---
 
@@ -1447,6 +1528,12 @@ Each is Confirmed on all records of the kind in this install (P-rows) unless mar
 - **PC16** Allegiance control and allegiance records agree (§12.4).
 - **PC17** (BIN) A phonetic-shift application changes at most one end of *A* and one start of
   *B*, and only when both match.
+- **PC18** The generator's compiled half equals its property half (P34): per category the
+  options, their syllable-table and shift-table keys in stored order, and the weights.
+- **PC19** Every syllable string and every resolvable shift text is ASCII (P13, P35).
+- **PC20** (WLB + BIN) A generated name is empty or has an upper-case first character and
+  lower-case further characters (§8.5 step 5), and no two of its parts, as drawn before the
+  shifts, are equal without regard to case (step 3).
 
 ---
 
@@ -1518,6 +1605,23 @@ States [(absent, absent), (1, 3), (4, 7), (8, 8)] with `Pip_Max` 8 read as bands
 > **OPEN (Q15):** Which of the two indices the state-index property holds is not settled (§10.3);
 > a test must not assume either.
 
+<a id="s19-6"></a>
+### 19.6 Generating a name
+
+Category with options (weights 3, 0, 2): option 1 is drawn with probability 3/5, option 2
+never, option 3 with probability 2/5. Option 3 names syllable tables T1 = [`Dor`, `Bel`] and
+T2 = [`dor`, `in`] and shift tables [key 9 (undefined), the table of §19.1].
+
+- Part 1: `Dor` is drawn from T1. Join with the empty name: nothing applies; *A* = `Dor`.
+- Part 2: `dor` is drawn from T2 and rejected (equal to `Dor` without regard to case); `in` is
+  drawn and accepted. Join: key 9 has no table and applies nothing; the §19.1 table has no
+  entry with *E* matching the end of `Dor`; *A* = `Dorin`.
+- Case step: `dorin` → `Dorin`.
+
+With parts `Kalia` and `ero` the second table applies entry #2 of §19.1, giving
+`Kaliyero`; with parts `KAL` and `in` (no match) the case step gives `Kalin`. A part table
+whose every string equals an earlier part makes 101 rejected draws, and the name is empty.
+
 ---
 
 <a id="s20"></a>
@@ -1529,7 +1633,7 @@ States [(absent, absent), (1, 3), (4, 7), (8, 8)] with `Pip_Max` 8 read as bands
 | Q2 | Meaning of the class priority (display order or default) | §7.3 | M3 |
 | Q3 | Advanced-start procedure | §7.2 | server logic |
 | Q4 | Name-rule numbers (22, 0) and name-filter semantics | §8.1 | bytecode or server |
-| Q5 | Generator procedure (option draw, syllable draw, join scope, retries) | §8.5 | class-library bytecode of class 3044 |
+| Q5 | Generator procedure (option draw, syllable draw, join scope, retries) | §8.5 | **Answered 2026-10-08** (WLB + BIN2). Left open: the client's random generator and its name check (Q4) |
 | Q6 | Experience index rule for tables whose element 1 is not 0 | §9.2 | client panels (M3) |
 | Q7 | Group modifier key and use | §9.3 | server logic |
 | Q8 | Rested-experience units and rule | §9.4 | server logic |
@@ -1540,6 +1644,7 @@ States [(absent, absent), (1, 3), (4, 7), (8, 8)] with `Pip_Max` 8 read as bands
 | Q13 | Which state properties the client reads | §15 | protocol (gated) |
 | Q14 | Nationality dye-map override effect | §6.2 | M3 (creation screen) |
 | Q15 | Whether the threshold state index is written, its base (0 or 1) and its value outside every band | §10.3, §19.5 | server logic; M3 |
+| Q16 | The client's result for a shift entry whose *E* is empty after trimming (none in this install) | §8.5 step 4 | a future install holding such an entry; M3 |
 
 ---
 
@@ -1561,3 +1666,6 @@ States [(absent, absent), (1, 3), (4, 7), (8, 8)] with `Pip_Max` 8 read as bands
 | 2026-10-07 | First version (Review). Census of the 33-class group (224 records) and 19 further classes (81 records) over all records; avatar templates (answers `creatures.md` §2.1 OPEN); race and nationality tables; class creation fields; name-rule control and random-name generator with the client's phonetic-shift rule (BIN + OBS; answers the field meanings of native class 3053); experience tables and level controls; pips with the effective-maximum rule (BIN); account, bank, wardrobe, outfit, colour, guild, kinship, pedigree, allegiance and trait-configuration controls; state-property census; reference graph; invariants PC1–PC17; synthetic examples. |
 | 2026-10-07 | Answers the first review (status stays Review). §8.2: the definition structs' key properties `RandomNameGeneration_SyllableTable_Key` and `RandomNameGeneration_PhoneticShiftsTable_Key` named, each definition holds exactly key and list (P12 widened). OPEN callouts at the place of use for Q2 (§7.3), Q3 (§7.2), Q11 (§12.1) and Q14 (§6.2); new Q15 (threshold state index written or not, base, value outside every band) with callouts in §10.3 and §19.5 and a §20 row. Provenance: P19 covers §9.7; new P27 (§4.7), P28 (§7.5, §7.6), P29 (§14), each re-checked over every record of its classes. No fact changed. |
 | 2026-10-07 | Re-review passed; status Accepted. No content change. |
+| 2026-10-08 | Revision (status Revised; Accepted text changed), answering the implementer notes of 2026-10-07 and Q5. §3: client list bound and value types stated, new §3.1 text with census P30 and Decision D5 (cap 65,536, type mismatch is an error). §8.4: new text model (UTF-16 code units; the runtime's case-insensitive comparison under the start-up locale; P33, P35) with Decision D6 replacing the implementer's scalar-value and full-lower-case choice; the statement that native function 3 is called from script code is corrected (P36). §8.5 rewritten: the client's generation procedure (P31, P34) replaces most of Decision D2; changes against the old D2: shift tables tried in order until one applies (not only the first), repeated parts rejected (100 draws per part), case normalisation, failure yields the empty string, at most 100 attempts in all (not 21). §8.2 compiled-half sentence corrected (3047 = category, 3048 = option). §8.6 notes the client-side check. New provenance keys WLB and BIN2, rows P30–P36, D5, D6; D2 narrowed. Invariants PC18–PC20; example §19.6; §20 Q5 answered. |
+| 2026-10-09 | Revision (status stays Revised), answering the review of 2026-10-08. §8.5 step 3, P31 and §19.6: a part gets at most **101** draws (the first and up to 100 redraws, counted per part), not 100; re-checked on the part-draw body with the operand order of `wlib-bytecode.md` §5.10 (compare-and-branch). §8.2: option-weight sums corrected to 5 (2 categories), 10 (13), 99 (1), 100 (4), 103 (1), 21 in all. §8.5 step 4: the join is made for the first part too; it never applies there only because no trimmed *E* is empty in this install; OPEN added for an empty trimmed *E* (§20 Q16). |
+| 2026-10-09 | Re-review of the 2026-10-09 revision passed; status Accepted. No content change. |

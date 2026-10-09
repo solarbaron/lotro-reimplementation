@@ -220,6 +220,8 @@ pub(crate) struct MeshLayouts {
     shader: wgpu::ShaderModule,
 }
 
+/// The M2 pipelines read the first five attributes of `GpuVertex`; they derive the
+/// bitangent and skip the stored binormal at offset 40 (render.md §2.1).
 const VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4
 ];

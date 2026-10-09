@@ -265,6 +265,13 @@ pub struct LightReach {
     pub only_influence_parent: bool,
     /// `Light_NeverInfluenceParent`: does not reach its parent.
     pub never_influence_parent: bool,
+    /// The world position (in the pass's frame) of a **directional** table light, for the
+    /// light-list walk (`lighting.md` §8.5, L39: the walk tests a directional light that is
+    /// among the walked lights with its own position and ρ like a point light, and orders
+    /// it by step 4). Used only together with a usable `radius`; otherwise a directional
+    /// light reaches every draw (`render.md` §4.3 Decision). Point lights use their table
+    /// position and ignore this field.
+    pub position: Option<Vec3>,
 }
 
 impl LightReach {
@@ -284,6 +291,7 @@ impl LightReach {
             parent: None,
             only_influence_parent: fields.only_influence_parent,
             never_influence_parent: fields.never_influence_parent,
+            position: None,
         }
     }
 

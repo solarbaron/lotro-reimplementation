@@ -115,3 +115,25 @@ the released close-out work is split across two commits, and the first one is mi
 The tree after `6607d43` is the one the full checks ran on. Published history is not
 rewritten (`docs/CLEAN_ROOM.md` §10 step 3), so this note stands as the correct description
 of `ecc814b`.
+
+## Audit 3 (2026-10-08)
+A clean-room audit (default mode) of `08647e6..f539d77` returned **BLOCK**, for these
+reasons:
+- **The release itself (finding 1):** the close-out code released in `ecc814b` and `6607d43`
+  was written by sessions whose prompts held dirty-room reports. The commits' attestation
+  (`CLEAN_ROOM.md` §9 item 4) cannot be given for it. §10 prescribes reverting and
+  re-implementing. The owner's decision A keeps the code instead, so this finding records
+  that decision; it is not a new defect.
+- **Code ahead of its specs:** when the code was committed, its specs were not yet Accepted
+  (`CLEAN_ROOM.md` §5.2).
+- **A dirty-room citation in clean code:** `crates/world/src/scenery/generate.rs` cites the
+  dirty-room review record of the 2026-10-07 revision. It is to be removed by a clean
+  session.
+- **Code that disagrees with an Accepted spec:** `crates/physics/src/geometry/flags.rs`
+  reads `Entity_CreationType` differently from Accepted `collision.md` §9.3 item 3. It is to
+  be fixed by a clean session.
+
+Since then, remediation rounds 1 and 2 had fresh, unexposed clean sessions review and change
+this code against the Accepted specs. The specs it relies on are now Accepted, so a full
+re-implementation from them by unexposed sessions is possible at any time if the owner
+wants the attestation restored.

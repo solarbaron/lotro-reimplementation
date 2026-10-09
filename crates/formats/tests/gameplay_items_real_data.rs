@@ -10,7 +10,7 @@
 //! Counts are reported, never asserted. Both passes run on several threads; a debug build
 //! still takes minutes, a `--release` build well under one.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -20,10 +20,11 @@ use tessera_formats::gameplay::common::{
 };
 use tessera_formats::gameplay::items::{
     COPY_LABELS, DpsTable, DurationMap, EffectListKind, ItemClassKind, ItemClasses, ItemKind,
-    ItemSchema, ItemSetView, ItemView, ItemWeenieKinds, Progression, SetMembership, ValueTable,
-    WeaponStats, WeaponTimingTable, WeaponTimings, WearControl, armour_value, control_labels,
-    entity_labels, item_references, item_value, mod_entry_is_well_formed, set_directory,
-    weapon_damage, weapon_timing_table_dids,
+    ItemSchema, ItemSetView, ItemView, ItemWeenieKinds, LegacyGroup, LegendaryTitleView,
+    Progression, SetMembership, ValueTable, WeaponStats, WeaponTimingTable, WeaponTimings,
+    WearControl, armour_value, control_labels, entity_labels, examination_list, item_references,
+    item_value, legacy_effects, merge_list, mod_entry_is_well_formed, set_directory, weapon_damage,
+    weapon_timing_table_dids,
 };
 use tessera_formats::item::{ItemPids as VisualPids, ItemVisual};
 use tessera_formats::{Did, EnumMapper, PropertyDictionary, PropertySet, PropertyValue};
@@ -244,6 +245,13 @@ struct Census {
     worn_mirrors: BTreeMap<u32, usize>,
     worn_mirror_mismatch: Vec<Did>,
     worn_list_unread: Vec<Did>,
+    /// F47: (requirement holders, race entries, of them not bare enums).
+    races: (usize, usize, usize),
+    /// F47: (trait-requirement structs, of them with an int virtue rank).
+    trait_requirements: (usize, usize),
+    /// §7.3 targets named by items: legendary titles and legacy-group overrides.
+    titles: BTreeSet<Did>,
+    groups: BTreeSet<Did>,
 }
 
 fn add_maps<K: Ord>(a: &mut BTreeMap<K, usize>, b: BTreeMap<K, usize>) {
@@ -300,6 +308,13 @@ impl Census {
         add_maps(&mut self.worn_mirrors, o.worn_mirrors);
         self.worn_mirror_mismatch.extend(o.worn_mirror_mismatch);
         self.worn_list_unread.extend(o.worn_list_unread);
+        self.races.0 += o.races.0;
+        self.races.1 += o.races.1;
+        self.races.2 += o.races.2;
+        self.trait_requirements.0 += o.trait_requirements.0;
+        self.trait_requirements.1 += o.trait_requirements.1;
+        self.titles.extend(o.titles);
+        self.groups.extend(o.groups);
     }
 }
 
@@ -342,6 +357,29 @@ fn check_record(
     } else {
         c.item_like += 1;
     }
+
+    // F47: requirement value types.
+    let rp = &ctx.schema.requirements;
+    let races = set.elements(rp.required_races);
+    if !races.is_empty() {
+        c.races.0 += 1;
+        c.races.1 += races.len();
+        c.races.2 += races
+            .iter()
+            .filter(|e| !matches!(e.value, PropertyValue::Enum(_)))
+            .count();
+    }
+    let req = v.requirements();
+    c.trait_requirements.0 += req.required_traits.len();
+    c.trait_requirements.1 += req
+        .required_traits
+        .iter()
+        .filter(|t| t.virtue_rank.is_some())
+        .count();
+    c.titles
+        .extend(v.advancement_title().filter(|d| !d.is_null()));
+    c.groups
+        .extend(v.progression_group().filter(|d| !d.is_null()));
 
     // IT3 copies.
     for &(copy, source, label) in ctx.copy_pids {
@@ -680,8 +718,22 @@ fn items_census_and_invariants() {
     );
 
     // §2.4: the item classes.
-    let classes = ItemClasses::discover_from_index(&*library, &index, references.iter().copied())
-        .expect("item classes discovered");
+    // Decision F51: a tie between children goes to the one holding `BankFillItem`.
+    let bank_class = store
+        .weenie(control_labels::BANK_FILL_ITEM)
+        .expect("weenie map")
+        .and_then(|d| index.root_class(d));
+    let classes = ItemClasses::discover_with_bank_fill(
+        &*library,
+        references.iter().filter_map(|&d| index.root_class(d)),
+        bank_class,
+    )
+    .expect("item classes discovered");
+    assert_eq!(
+        Some(classes),
+        ItemClasses::discover_from_index(&*library, &index, references.iter().copied()),
+        "§2.4: no tie on this install"
+    );
     let count_under = |ancestor: u32| {
         references
             .iter()
@@ -791,12 +843,29 @@ fn items_census_and_invariants() {
     };
     let cooldowns = sets
         .props(control(control_labels::COOLDOWN_CONTROL))
-        .map(|s| DurationMap::from_set(&s, tp.cooldown_map))
+        .map(|s| DurationMap::cooldown(&s, tp))
         .unwrap_or_default();
     let decays = sets
         .props(control(control_labels::ITEM_DECAY_CONTROL))
-        .map(|s| DurationMap::from_set(&s, tp.decay_map))
+        .map(|s| DurationMap::decay(&s, tp))
         .unwrap_or_default();
+    // §6.4 (F53): the examination list is the exam PIDs followed by the merge PIDs.
+    let inventory = sets
+        .props(control(control_labels::INVENTORY_CONTROL))
+        .expect("inventory control set");
+    let exam = examination_list(&inventory, tp);
+    let merge = merge_list(&inventory, tp);
+    eprintln!(
+        "items: examination list {} PIDs ({} exam + {} merge)",
+        exam.len(),
+        exam.len() - merge.len(),
+        merge.len()
+    );
+    assert!(
+        exam.ends_with(&merge),
+        "§6.4: the merge PIDs close the list"
+    );
+    assert!(!merge.is_empty() && exam.len() > merge.len());
     eprintln!(
         "items: wear control {} structure-point rows, {} durability rows, {}/{}/{} other \
          rows; {} timing tables ({} entries); {} cooldown rows; {} decay rows",
@@ -1009,8 +1078,8 @@ fn items_census_and_invariants() {
     );
 
     // IT12: every mirror equals its list, and every list-bearing record of a class with
-    // mirrors has one (§3.3). Which classes have mirrors is reported, not asserted
-    // (`items.md` §3.3 OPEN, implementer: §3.3 says only the worn-apparel class does).
+    // mirrors has one (§3.3; the apparel class and the weapons with a list, F46). Which
+    // classes have mirrors is reported, not asserted.
     assert!(
         c.worn_mirror_mismatch.is_empty(),
         "IT12: {:?}",
@@ -1030,11 +1099,10 @@ fn items_census_and_invariants() {
         );
     }
 
-    // §2.1 / §2.4 rule 4: every item class has one dominant kind (all but a handful of its
-    // records); the kinds whose signature §2.1 marks "all, exclusive" cover their class
-    // whole; every kind occurs; and no kind other than General (several classes of plain
-    // items) and Door (doors and interactive objects share the label, §2.4 OPEN) dominates
-    // two classes.
+    // §2.1 / §2.4 rule 4 (Decision F51): every item class has one dominant kind (all but a
+    // handful of its records); the kinds whose signature §2.1 marks "all, exclusive" cover
+    // their class whole; every kind occurs; and no kind other than General (several classes
+    // of plain items) dominates two classes.
     let mut dominant: BTreeMap<ItemKind, Vec<u32>> = BTreeMap::new();
     for (&class, &total) in &c.per_class {
         let (kind, n) = c
@@ -1053,15 +1121,30 @@ fn items_census_and_invariants() {
     for kind in ItemKind::ALL {
         assert!(c.kinds.contains_key(&kind), "kind {kind:?} occurs");
         let classes = dominant.get(&kind).map_or(0, Vec::len);
-        if !matches!(kind, ItemKind::General | ItemKind::Door) {
+        if kind != ItemKind::General {
             assert!(classes <= 1, "{kind:?} dominates {classes} classes");
         }
     }
+    let off_kind: usize = c
+        .per_class
+        .keys()
+        .map(|class| {
+            let per: Vec<usize> = c
+                .kinds
+                .values()
+                .filter_map(|m| m.get(class).copied())
+                .collect();
+            per.iter().sum::<usize>() - per.iter().max().copied().unwrap_or(0)
+        })
+        .sum();
+    eprintln!("items: §2.4 rule 4 places {off_kind} items outside their class's kind (spec: 6)");
     for kind in [
         ItemKind::Weapon,
         ItemKind::RecipeScroll,
+        ItemKind::MultiRecipeScroll,
         ItemKind::Package,
         ItemKind::TextItem,
+        ItemKind::PropertyToken,
     ] {
         let per = c.kinds.get(&kind).cloned().unwrap_or_default();
         assert_eq!(per.len(), 1, "{kind:?} spans one root class: {per:?}");
@@ -1091,6 +1174,66 @@ fn items_census_and_invariants() {
         behaviour_bad.len()
     );
     assert!(behaviour_bad.is_empty(), "IT13: {behaviour_bad:?}");
+
+    // F47: race entries are bare enums; trait requirements carry an int virtue rank.
+    eprintln!(
+        "items: F47 {} items with races ({} entries, {} not enums); {} trait-requirement \
+         structs, {} with an int virtue rank",
+        c.races.0, c.races.1, c.races.2, c.trait_requirements.0, c.trait_requirements.1
+    );
+    assert_eq!(c.races.2, 0, "F47: race entries are bare enums");
+    assert_eq!(
+        c.trait_requirements.0, c.trait_requirements.1,
+        "F47: every trait requirement has an int virtue rank"
+    );
+
+    // §7.3 (F49): legendary titles and legacy groups named by items, and the legacy tables
+    // the groups name.
+    let mut table_dids = BTreeSet::new();
+    let mut titles_ok = 0usize;
+    for &t in &c.titles {
+        let Some(set) = sets.props(t) else { continue };
+        let v = LegendaryTitleView::new(&set, &schema);
+        titles_ok += usize::from(
+            v.name().is_some()
+                && v.category().is_some()
+                && v.tier().is_some()
+                && v.slayer_genus().is_some()
+                && v.damage_type().is_some(),
+        );
+    }
+    let mut pulls = 0usize;
+    for &g in &c.groups {
+        let Some(set) = sets.props(g) else { continue };
+        let group = LegacyGroup::from_set(&set, &schema.legacy);
+        pulls += group.pull_counts.len();
+        table_dids.extend(group.lists.iter().filter_map(|l| l.list));
+    }
+    let mut weights = (0usize, 0usize);
+    for &t in &table_dids {
+        let Some(set) = sets.props(t) else { continue };
+        for e in legacy_effects(&set, &schema.aux) {
+            weights.0 += 1;
+            weights.1 += usize::from(e.weight.is_some());
+        }
+    }
+    eprintln!(
+        "items: F49 {} titles ({} with all five fields), {} legacy groups ({} pull counts), \
+         {} legacy tables ({} effects, {} with an int weight)",
+        c.titles.len(),
+        titles_ok,
+        c.groups.len(),
+        pulls,
+        table_dids.len(),
+        weights.0,
+        weights.1
+    );
+    assert_eq!(
+        titles_ok,
+        c.titles.len(),
+        "F49: every title has its five fields"
+    );
+    assert_eq!(weights.0, weights.1, "F49: every legacy weight is an int");
 
     // IT11 and §9.9: sets.
     let dir_set = sets

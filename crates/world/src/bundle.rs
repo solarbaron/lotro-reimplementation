@@ -61,7 +61,8 @@
 //! asset store's cache, so the next load of the landblock builds it again. Data failures of
 //! world-system inputs are absorbed where the input is read (the record supplies nothing
 //! and the part is built without it, complete); a data error that reaches the bundle
-//! anyway leaves that part out, is a problem that is not transient, and the bundle stays
+//! anyway leaves that part out, is a problem that is unreadable but not transient (an input
+//! failure of a world system is always [`BundleProblem::unreadable`]), and the bundle stays
 //! complete (`landblock.md` §8.1, OPEN on data errors in world-system inputs).
 //!
 //! [`LandblockBundle::heap_bytes`], the residency charge of the streamer, follows
@@ -218,7 +219,9 @@ pub struct BundleProblem {
     pub what: &'static str,
     /// The `landblock.md` §9 category of a decoder failure.
     pub category: Option<FailureCategory>,
-    /// The record exists but could not be read (I/O or archive error).
+    /// The record exists but could not be read (I/O or archive error). For a problem of a
+    /// world system (`did` is the landblock-data DID), an input of that system could not be
+    /// read, whether for the data's reason or not ([`Self::transient`] tells them apart).
     pub unreadable: bool,
     /// The failure is not the data's (a read refused by the pipeline's state rather than
     /// the archive, [`WorldError::is_data_error`] false): the bundle is not the data's
@@ -583,6 +586,13 @@ impl LandblockBundle {
     #[must_use]
     pub fn terrain_height(&self, x: f32, y: f32) -> Option<f32> {
         self.data.terrain_height(x, y)
+    }
+
+    /// Unit upward normal of the terrain triangle at block-local (x, y) (`landblock.md`
+    /// §3.11).
+    #[must_use]
+    pub fn terrain_normal(&self, x: f32, y: f32) -> Option<[f32; 3]> {
+        self.data.terrain_normal(x, y)
     }
 
     /// Entities that pass the draw rule, then generated objects that do.
@@ -1218,6 +1228,20 @@ fn system_problem(
     });
 }
 
+/// Records the failure of a world system to read its inputs (the static clearance list,
+/// the water). The problem is always [`BundleProblem::unreadable`], whether the failure is
+/// the data's or not, so the same kind of failure carries the same flags; it is
+/// [`BundleProblem::transient`] when the error is not the data's (`data_error` false).
+fn input_problem(
+    problems: &mut Vec<BundleProblem>,
+    did: Did,
+    what: &'static str,
+    data_error: bool,
+    message: String,
+) {
+    system_problem(problems, did, what, true, !data_error, message);
+}
+
 /// Builds the world-system parts of a bundle in the order of `collision.md` §9.4 (module
 /// docs, items 1–5). No failure here fails the job (`landblock.md` §8.1): a failure that is
 /// not the data's leaves the part out or builds it without that input and records a
@@ -1244,6 +1268,28 @@ fn build_world_parts(
         .generate_scenery
         .then(|| ctx.region(key.region()).and_then(|r| r.scenery.clone()))
         .flatten();
+    // `scenery.md` §4.1, Tessera Decision on pipeline failures of the region tables: a
+    // landblock built while its region's tables are unavailable for a reason that is not the
+    // data's gets no scenery and is incomplete, so it is built again on its next load. The
+    // region is still waiting for its retry only when `region` above failed that way (a
+    // data fault or a success settles it).
+    if opts.generate_scenery
+        && tables.is_none()
+        && ctx.scenery_retry_pending().any(|r| r == key.region())
+    {
+        system_problem(
+            problems,
+            key.data_did(),
+            "scenery",
+            false,
+            true,
+            format!(
+                "scenery tables of region {} unavailable for a reason that is not the data's; \
+                 scenery left out, landblock incomplete",
+                key.region()
+            ),
+        );
+    }
     let scenes = systems.scenes.as_ref().filter(|_| tables.is_some());
     let collision = systems.collision.as_ref().filter(|_| opts.build_collision);
     // The water tables serve scenery's water plane whatever `build_water` says. The
@@ -1286,12 +1332,11 @@ fn build_world_parts(
                 &systems.object_properties,
             )
             .map_err(|e| {
-                system_problem(
+                input_problem(
                     problems,
                     key.data_did(),
                     "scenery",
-                    true,
-                    !e.is_data_error(),
+                    e.is_data_error(),
                     format!("static list not built, scenery left out: {e}"),
                 );
             })
@@ -1405,15 +1450,8 @@ fn build_world_parts(
                 // liquid boxes out, the collision set below is then dry, and the bundle
                 // stays complete (`landblock.md` §8.1, OPEN on data errors in world-system
                 // inputs).
-                let transient = !e.is_data_error();
-                system_problem(
-                    problems,
-                    key.data_did(),
-                    "water",
-                    transient,
-                    transient,
-                    e.to_string(),
-                );
+                let data_error = e.is_data_error();
+                input_problem(problems, key.data_did(), "water", data_error, e.to_string());
             }
         }
         stages.mark("water");
@@ -1714,6 +1752,30 @@ mod tests {
             ..none
         };
         assert!(!draw_rule(p, None, shown, Some(&visual(1, never)), &active));
+    }
+}
+
+#[cfg(test)]
+mod problem_tests {
+    use super::{BundleProblem, Did, input_problem};
+
+    #[test]
+    fn input_failures_carry_the_same_unreadable_flag_data_error_or_not() {
+        // The static clearance list and the water report through the same rule: a data
+        // error and one that is not the data's are both unreadable; only `transient`
+        // differs.
+        let did = Did(0x8001_0A14);
+        let mut problems: Vec<BundleProblem> = Vec::new();
+        for what in ["scenery", "water"] {
+            input_problem(&mut problems, did, what, true, "data error".into());
+            input_problem(&mut problems, did, what, false, "refused".into());
+        }
+        assert_eq!(problems.len(), 4);
+        for pair in problems.chunks(2) {
+            assert!(pair[0].unreadable && !pair[0].transient, "{:?}", pair[0]);
+            assert!(pair[1].unreadable && pair[1].transient, "{:?}", pair[1]);
+            assert!(pair.iter().all(|p| p.category.is_none() && p.did == did));
+        }
     }
 }
 

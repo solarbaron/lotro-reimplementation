@@ -231,6 +231,10 @@ pub struct FigureAsset {
     /// effects attached to it (`particle-runtime.md` §6.1); `None` when the setup does not
     /// read.
     pub points: Option<Arc<crate::walker::effects::data::AttachPoints>>,
+    /// The figure's `Render_LODClass` (`walker.md` §11.4.3, W22): the first found in the
+    /// placement's instance set, then along the 0x47 entity chain from the figure's entity;
+    /// `None` when no level holds it (the component's initial values apply, `mesh.md` §8.5).
+    pub lod_class: Option<u32>,
     /// Problems, for the log.
     pub notes: Vec<String>,
     /// Worker time.
@@ -556,6 +560,7 @@ pub fn build_figure(
         notes.push("unusable model scale; drawn at 1".into());
         1.0
     };
+    let lod_class = figure_lod_class(ctx, req.instance.as_deref(), &c.chain);
     Ok(FigureAsset {
         skeleton,
         parts,
@@ -565,9 +570,51 @@ pub fn build_figure(
         shape,
         model_scale,
         points,
+        lod_class,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,
     })
+}
+
+/// Most 0x47 levels of a figure's entity chain read for its `Render_LODClass`.
+const MAX_LOD_CLASS_LEVELS: usize = 16;
+
+/// The `Render_LODClass` of a figure (`walker.md` §11.4.3, the Tessera Decision W22 there):
+/// the first value found in the placement's instance set, then in the property sets of the
+/// 0x47 levels of `chain` (nearest first). An enum value gives its key, a bit-like value its
+/// low 32 bits; anything else, or nothing found, gives `None`.
+fn figure_lod_class(
+    ctx: &FigureContext,
+    instance: Option<&PropertySet>,
+    chain: &[Did],
+) -> Option<u32> {
+    let data = &ctx.catalog.data;
+    let registry = data.registry().ok()?;
+    let pid = registry.pid("Render_LODClass")?;
+    let class_of = |v: &tessera_formats::PropertyValue| match v {
+        tessera_formats::PropertyValue::Enum(k) => Some(*k),
+        other => other.as_bits().and_then(|b| u32::try_from(b).ok()),
+    };
+    if let Some(v) = instance.and_then(|s| s.get(pid)) {
+        return class_of(v);
+    }
+    for did in chain
+        .iter()
+        .filter(|d| d.prefix() == 0x47)
+        .take(MAX_LOD_CLASS_LEVELS)
+    {
+        let Ok(Some(bytes)) = data.read(*did) else {
+            continue;
+        };
+        let Ok(e) = tessera_formats::setup::EntityDescriptor::parse(&bytes, registry.dictionary())
+        else {
+            continue;
+        };
+        if let Some(v) = e.properties.get(pid) {
+            return class_of(v);
+        }
+    }
+    None
 }
 
 /// Decodes, flattens and prepares one part mesh; skinned when `bones` is given, its

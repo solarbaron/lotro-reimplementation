@@ -128,6 +128,9 @@ pub struct Pass {
     pub(crate) world: WorldDraws,
     /// Particle draws ([`Pass::particles`]), lit and unlit world passes.
     pub(crate) particles: Vec<crate::particles::ParticleDraw>,
+    /// Set by `Pass::premultiplied_alpha`: fixed blend states write alpha by
+    /// `docs/specs/render.md` §6.10 "Fixed blends" (R12).
+    pub(crate) premultiplied: bool,
 }
 
 /// The render-world draws queued on one pass (`docs/specs/render.md` §5).
@@ -166,6 +169,7 @@ impl Pass {
             hooks: Vec::new(),
             world: WorldDraws::default(),
             particles: Vec::new(),
+            premultiplied: false,
         }
     }
 
@@ -398,6 +402,8 @@ pub struct Frame {
     pub(crate) serial: u64,
     /// Skinning palettes of this frame, uploaded by `end_frame`.
     pub(crate) palettes: PaletteData,
+    /// UI passes, software cursor and non-sRGB view (`crate::ui`).
+    pub(crate) ui: crate::ui::FrameUi,
 }
 
 impl Frame {

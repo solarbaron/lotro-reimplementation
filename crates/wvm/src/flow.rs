@@ -7,7 +7,8 @@ use crate::instr::Instruction;
 use crate::opcode::{Control, FrameOp};
 
 /// Bodies with more local cells than this are not analysed by [`definite_assignment`]
-/// (Tessera's bound; the shipped data have at most 52, `wlib-bytecode.md` §2).
+/// (Tessera's bound, allowed by `wlib-bytecode.md` §12 as long as the skipped bodies are
+/// reported; the shipped data have at most 52, §2).
 pub const MAX_ANALYSED_LOCALS: i32 = 64;
 
 /// A read of a local that is not assigned on every path to it.
@@ -28,8 +29,9 @@ pub struct AssignmentReport {
     pub reads: Vec<UnassignedRead>,
     /// Bodies analysed.
     pub analysed: usize,
-    /// Bodies skipped because they have more than [`MAX_ANALYSED_LOCALS`] locals.
-    pub skipped: usize,
+    /// Starts of the bodies skipped because they have more than [`MAX_ANALYSED_LOCALS`]
+    /// locals, in body order (§12: a bounded V16 reports which bodies it skipped).
+    pub skipped: Vec<u32>,
 }
 
 impl AssignmentReport {
@@ -75,7 +77,7 @@ fn local_mask(index: i32, cells: u8, locals: i32) -> u64 {
 pub fn analyse_body(code: &CodeBlock, body: &Body, rep: &mut AssignmentReport) {
     let locals = body.local_cells();
     if locals > MAX_ANALYSED_LOCALS {
-        rep.skipped += 1;
+        rep.skipped.push(body.start);
         return;
     }
     rep.analysed += 1;

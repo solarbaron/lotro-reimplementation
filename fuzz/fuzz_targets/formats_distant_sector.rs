@@ -8,7 +8,9 @@
 //!
 //! Nothing may panic. An accepted record follows the decoder rules of §3.11 (sample counts,
 //! chunk windows, water indices, mode and mask); the accessors and the invariant report run
-//! on it; re-encoding (when every entity property is null) is stable.
+//! on it, as do the sprite rules of §4.8 and §5.6, the far-placement registration of §4.9
+//! and the normal check of §4.3 (without landblock records); re-encoding (when every
+//! entity property is null) is stable.
 //!
 //! Run with a memory cap so that allocation blow-ups count as failures, e.g.
 //! `cargo fuzz run formats_distant_sector -- -malloc_limit_mb=512 -rss_limit_mb=1024`.
@@ -19,8 +21,9 @@ use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::landblock::{
-    ALL_LANDBLOCKS_MASK, SECTOR_BLOCK_SAMPLES, SECTOR_TERRAIN_SAMPLES, SectorChunk, SectorMesh,
-    SectorRecord, SectorSample, chunk_index, vertex_block,
+    ALL_LANDBLOCKS_MASK, FarPlacements, SECTOR_BLOCK_SAMPLES, SECTOR_TERRAIN_SAMPLES, SectorChunk,
+    SectorMesh, SectorRecord, SectorSample, chunk_index, sprite_fade_parameter, sprite_is_mirrored,
+    vertex_block,
 };
 use tessera_formats::{Did, PropertyType};
 
@@ -114,6 +117,25 @@ fn check(rec: &SectorRecord) {
     for e in &rec.entities {
         let _ = (e.kind(), e.view_distance());
     }
+    for sp in rec.sprites.iter().take(64) {
+        let h = sp.heading_degrees();
+        assert!(h.is_nan() || (0.0..360.0).contains(&h));
+        let (size, _) = sp.billboard_size(1.0, 0.1);
+        let at = sp.viewer_frame(rec.origin().unwrap_or((0, 0)), (1, 1));
+        let _ = sprite_fade_parameter(sp, at, size, 1080.0, 1.0, 1.0);
+        let _ = sprite_is_mirrored(sp, at);
+    }
+    let mut placements = FarPlacements::new();
+    let added = placements.register(rec);
+    assert_eq!(
+        placements.register(rec),
+        0,
+        "a second registration adds nothing"
+    );
+    assert_eq!(placements.len(), added);
+    let check = rec.check_normals(|_, _| None);
+    assert_eq!(check.terrain.samples, check.terrain.uncomputable);
+    assert_eq!(check.ceiling.samples, check.ceiling.uncomputable);
     let _ = (rec.key(), rec.region(), rec.deviations());
     let _ = rec.water_list_follows_rules();
     if rec.entities.iter().all(|e| e.property.is_none()) {

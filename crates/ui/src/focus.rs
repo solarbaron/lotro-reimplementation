@@ -538,7 +538,7 @@ impl Ui {
         let set_caret = |ui: &mut Ui, v: usize| {
             if let Some(e) = ui.el_mut(t) {
                 e.text.caret = v;
-                e.dirty = true;
+                ui.note_paint_dirty(t);
             }
         };
         match &*c.name {

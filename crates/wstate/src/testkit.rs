@@ -810,6 +810,7 @@ pub const GAME_CONTROL_PROPERTIES: &[(&str, u32)] = &[
     ("CollectionControl_CollectionList", 12),
     ("Collection_DID_PieceList", 12),
     ("Usage_RequiredRaces", 12),
+    ("Usage_SetPropertyUsageData_Array", 12),
     ("PaperItemServicesArray", 12),
     ("RandomItemReward_Silver_Category", 12),
     ("RandomItemReward_Gold_Category", 12),
@@ -864,7 +865,6 @@ pub const GAME_CONTROL_PROPERTIES: &[(&str, u32)] = &[
     // Integers (15).
     ("Trait_Tier", 15),
     ("Trait_Cost_To_Slot", 15),
-    ("Mount_Control_Flank_Heading", 15),
     ("PerkControl_Channel_Interval", 15),
     ("PerkControl_Channel_Cap", 15),
     ("Perk_SessionPointCost", 15),
@@ -899,6 +899,7 @@ pub const GAME_CONTROL_PROPERTIES: &[(&str, u32)] = &[
     ("Mount_Control_OutsideLeashDistance_Timeout", 9),
     ("Mount_Control_SteedXP_Percent_Mounted", 9),
     ("Mount_Control_SteedXP_Percent_UnMounted", 9),
+    ("Mount_Control_Flank_Heading", 9),
     ("Mount_Control_Flank_LeftArc", 9),
     ("Mount_Control_Flank_RightArc", 9),
     ("Trait_Appearance_APR_Value", 9),
@@ -966,6 +967,7 @@ pub const GAME_CONTROL_PROPERTIES: &[(&str, u32)] = &[
     ("Alert_IsOverflow", 21),
     ("Skill_IsDefaultAttack", 21),
     // StringInfo (13).
+    ("Name", 13),
     ("Perk_Name", 13),
     ("Perk_Desc", 13),
     ("Collection_Name", 13),

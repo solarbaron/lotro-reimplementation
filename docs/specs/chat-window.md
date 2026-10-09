@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision 2, 2026-10-06; accepted after revision for decisions 0014/0015) |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (revision 3, 2026-10-09; accepted after review of the dispatcher answers in §6.5 and §10 items 2, 3, 11–13 and the new row CW42). Before: Revised (revision 3, awaiting review); Accepted (revision 2, 2026-10-06) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Review of revision 2, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| **Review record** | Review of revision 3, 2026-10-09 (independent review session, CLEAN_ROOM.md §5.3; reviewed the diff against main: §1 tags OBS2 and D20, row CW42, the two §6.5 callouts, §10 items 2, 3, 11–13, the two answered §10 callouts, change log): **passed**, Accepted. Spot check: CW42 reproduced read-only in the owner's install on 2026-10-09 (the token-0x04DA4989 entries of 0x25000200 and 0x250001AB compared without printing their text: equal, one piece, no `;`, `:` or `,`, so one name under §7.1). Cross-references checked: D20 items 1–7, `tessera-protocol.md` §5.2 (`TEXT` 1–1,024), CW20, CW27a, §6.2 submit steps, §6.3, §7.2–§7.4. Non-blocking notes: (1) §10 item 11, submit order: the condition says it holds for every Tessera handler; say explicitly that plugin handlers are covered too (LPA gives a plugin no access to the entry text or the channel mode). (2) §10 item 12, positions: the equivalence argument for §7.2 step 4 rests on this install's one-character BMP prefix (CW27a); since the prefix is read at run time, state what Tessera does if an install's prefix has several characters or one outside the BMP. (3) The first §6.5 answered callout still names implementation modules (`tessera-ui`, `game::chat`); harmless, could say "Tessera". Earlier: review of revision 2, 2026-10-06: passed, Accepted (full record in the review log, decision 0018). |
 | **Implements into** | `apps/client` (native chat panel P2 of `ui-layout.md` §17, entry line, command dispatch), `crates/ui` (`tessera-ui`: chat-log list, tab list, entry line widgets), `crates/plugins` (`Shell.IsCommand`, `Shell.AddCommand`, `ShellCommand:Execute` arguments, `Shell.WriteLine` lines), `crates/settings` (Tessera's own store of the chat-window configuration), `crates/net` sandbox backend (local echo of channel lines) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, panel P2, resolution of base elements; **UL**), [`ui-behaviour.md`](ui-behaviour.md) (focus, key routing, text-entry keys, list scrolling; **UB**), [`fonts.md`](fonts.md) §9.3 (chat line font and colour; **FO**), [`lua-plugin-api.md`](lua-plugin-api.md) §6.6, §9.3, §11 (shell and chat API; **LPA**), [`keymap.md`](keymap.md) §8, §12 (Tessera actions, original input commands; **KM**), [`string-table.md`](string-table.md) (StringInfo, templates, markup; **ST**), [`property-system.md`](property-system.md) (property sets, bitfields, game-object property sets; **PS**), [`records.md`](records.md) §7–§8 (enum mappers, DID maps; **REC**), [`sound.md`](sound.md) (sound records), [`install-layout.md`](install-layout.md) §8 (per-user settings folder; **IL**), [`ui-widgets.md`](ui-widgets.md) §5, §6, §8 (Scrollable, Scrollbar, ListBox; **UW**). Tessera decision records (Accepted 2026-10-06): [`0014-ui-input-bridge.md`](../decisions/0014-ui-input-bridge.md) (UI commands as key-map actions, the UI band, frame loop; **IB**) and [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (UI paint and composition; **UR**) |
 
@@ -77,6 +77,8 @@ counts.
 | CEN | The plugin API usage census (`plugin-api-usage.md`, the dirty-room census behind it): which names published plugins pass to `Shell.IsCommand` (counted, not quoted). |
 | UL, UB, FO, LPA, KM, ST, PS, REC | The companion specs named in the header. Facts taken from them keep their marks. |
 | IB, UR | The accepted Tessera decision records 0014 and 0015 (header). They decide Tessera's behaviour only and are the source of no fact about the original; they are cited by §6.2–§6.4 and §10 (revision 2). |
+| OBS2 | The owner's Steam install, read in place and read-only on 2026-10-09 (revision 3) with the repository's `tessera-dattool strings` as a tool and a throwaway comparison in the dirty-room scratch area: the entries with token 0x04DA4989 of the string tables 0x25000200 (`CommandSetup`) and 0x250001AB (`Commands`) compared piece by piece (the text was compared, not reproduced). |
+| D20 | The accepted Tessera decision record [0020](../decisions/0020-chat-command-routing.md) (one client-side command dispatcher). Source of no fact about the original; cited by §10 items 2, 3 and 11–13 (revision 3). |
 
 Marks: **Confirmed** = observed in the install's data (or, for CW38, in the census) for every
 record of the kind; **BIN** = rests on the disassembly, even where the data holds the values the
@@ -141,6 +143,7 @@ Confirmed) and *N*b (what the client does with it, BIN).
 | CW39 | `ShellCommand:Execute(command, arguments)`: `command` = first token as typed, `arguments` = §7.4 arguments (§9) | BIN; LPA P61 | BIN |
 | CW40 | The instant-message tab, sessions and their lists use `IMTabTemplate`, `IMLogElement`, `IMSessionsListboxItemTemplate` (§4.6) | OBS | Confirmed (layout); behaviour OPEN |
 | CW41 | Lines whose mask has more than one type bit (the `ChatModeReply` line, mask 0x21): style from the highest set bit that has a style entry (FO §9.3 step 1), appended once to every log whose mask shares any bit with it, a feedback sound only on an exact whole-mask match; the reply line and the unknown-command line are handed with their 64-bit mask to the same game-script entry point, which delivers them back to the chat (§2, §4.3, §5.1, §5.6, §6.2, §7.6) | BIN (post routine to the script hand-over, the log's receive handler, the style and sound lookups); FO §9.3 | BIN; the script's hand-back Probable (Q17) |
+| CW42 | The `CommandSetup` entry and the `Commands` entry with token 0x04DA4989 hold the same text, a single name, in this install (English); so the default channel word of §7.2 is the only name of the `Say` row of the mode table (§6.5, §10 item 3) | OBS2 | Confirmed (this install, 2026-10-09) |
 
 ---
 
@@ -781,20 +784,22 @@ remembers its own channel (Probable: the restore reads a value the tab holds; th
 > `Tell` word gets its target (the next word cannot be part of the switch because step 1 stops
 > at a space); and what the channel button's menu does (Q3).
 
-> **OPEN (implementation, M5 clean room):** until Q12 is settled, `tessera-ui`
+> **Answered (2026-10-09, revision 3, Tessera rule; was OPEN, implementation, M5 clean room):**
+> confirmed as the Tessera rule while Q12 is open. Until Q12 is settled, `tessera-ui`
 > (`game::chat`) takes as the command word *C* of a mode (§6.2 step 2) the first name of the
 > first ordinary row (not a reply or tell-again word) of that chat type in the mode table, or
 > no word when there is none. The `OutputTextType` label shows the channel's display name
 > when Tessera has one for the mode, else that command word (with the tell target after it
 > for `Tell`); the original's template 0x04F7C6D9 is not used.
 
-> **OPEN (implementation, M5 clean room, 2026-10-08):** until Q12 names the game-state test,
-> `apps/client` (`panels::chat`, `ChatSetup::load_texts`) reads only the 26 fixed rows of the
-> mode table from the install and leaves out **both** variant groups (types 32, 13, 11 and 12, 13),
-> so §10 item 3 registers no channel word of a variant row and `IsCommand` answers false for
-> them. The `Say` row's names are registered even when its `Commands` entry differs from the
-> `CommandSetup` default word of §7.2 (both tokens are 0x04DA4989; the spec does not say whether
-> the two entries hold the same text).
+> **Answered (2026-10-09, revision 3; was OPEN, implementation, M5 clean room, 2026-10-08):**
+> until Q12 names the game-state test, Tessera reads only the 26 fixed rows of the mode table
+> and leaves out both variant groups; this is now the Tessera rule of §10 item 3. The two
+> entries with token 0x04DA4989 (`CommandSetup` default word and the `Commands` entry of the
+> `Say` row) hold the same text in this install (CW42), so registering the `Say` row's names
+> and the default word gives one name. Both are still read from the install at run time and
+> registered separately, because another language or a later build may hold different texts;
+> the registry's first-registration rule (§7.1) makes a repeat a no-op.
 
 <a id="s6-6"></a>
 ### 6.6 Key-repeat guard (Confirmed: CW25a; BIN: CW25b)
@@ -1064,17 +1069,41 @@ These are Tessera's rules, not facts about the original.
    (there are no tells in the sandbox); `GOP_FullIRCMode` is ignored until tells exist. Tab
    context menus offer only: rename, filter toggles by chat type (type 25 `Unfiltered` is not
    offered, because bit 24 would admit every unfiltered line, §4.3), new tab, close tab.
-2. **Lines in the sandbox.** Tessera's own system messages are type 8 `Log` lines. Plain text
-   submitted for a channel is echoed locally as a line of the channel's chat type, formatted
-   with Tessera's own wording (the original's channel templates are game text and server
-   behaviour); it is also delivered to `Turbine.Chat.Received`, at the time item 9 states.
-3. **Registry.** Tessera keeps one registry with the rules of §7.1. Its own built-in commands
-   (help, the plugin-manager command of LPA §6.4, and its other own commands) are registered
-   under Tessera's names **and**, where the original has the same command, under every name of the original's
-   `Commands` entry read from the user's install: the plugin-manager entry (token 0x073F0613),
-   the help entry (token 0x0DA3EC70) and the channel entries of the mode table of §6.5 (which
-   Tessera implements as the local echo of item 2). No other original command name is
-   registered; `IsCommand` answers false for them (difference recorded in §13 Q15).
+2. **Lines in the sandbox and on a test server** (revised 2026-10-09 for D20). Tessera's own
+   informational lines (help, player-music messages, notices) are type 8 `Log` lines; its
+   refusals and the unknown-command line are type 1 `Error` lines. Plain text submitted for a
+   channel runs as that channel's command through the client's dispatcher (§7.2 step 5, D20
+   item 2); the channel command hands it to the world session (the sandbox backend, or the test
+   server with `--server`), never to a log directly. The sandbox echoes it back as a session
+   line of the channel's chat type (D20 item 3), formatted with Tessera's own wording (the
+   original's channel templates are game text and server behaviour); that line reaches the logs
+   (§4.3) and `Turbine.Chat.Received` like every session line, at the time item 9 states. The
+   window keeps no local echo of its own. Without a session the line is refused with a type 1
+   line and nothing is sent.
+3. **Registry** (revised 2026-10-09 for D20). Tessera keeps one registry, owned by the
+   client's command dispatcher (D20 items 1 and 6), with the rules of §7.1. Its own built-in
+   commands (help, the plugin-manager command of LPA §6.4, the channel commands of D20 item 2,
+   player music and its other own commands) are registered under Tessera's names **and**, where
+   the original has the same command, under every name of the original's `Commands` entry read
+   from the user's install: the plugin-manager entry (token 0x073F0613), the help entry (token
+   0x0DA3EC70), and the channel entries of the **26 fixed rows** of the mode table of §6.5
+   (Tessera implements them as the channel commands of item 2). The `CommandSetup` default
+   channel word (token 0x04DA4989) is registered as a `Say` word too, so plain text always finds
+   its command; in this install it is the same name as the `Say` row's (CW42), and the second
+   registration is then a no-op. Neither variant group of §6.5 is registered while Q12 (the
+   game-state test that picks one) is open, so `IsCommand` answers false for their words. No
+   other original command name is registered; `IsCommand` answers false for them (difference
+   recorded in §13 Q15).
+   **When the names arrive.** The Tessera names are registered at start-up. The install's
+   names are registered as soon as the dispatcher has read the `Commands` and `CommandSetup`
+   tables, after the archives open. Plugins are loaded only after that read has finished or
+   failed, so a plugin can never take an original name (D20 item 6: client names are
+   registered before any plugin loads); start-up command lines wait for it as well (D20 item
+   7). If a table cannot be read, only the Tessera names exist, the prefix is `/` (D20 item 1)
+   and a warning is logged. The plugin host keeps no command table of its own: `Shell.AddCommand`,
+   `RemoveCommand` and `IsCommand` reach this registry with the owner of the calling apartment
+   (D20 item 6), and the plugin-manager command is a client built-in that calls the plugin
+   manager.
 4. **Parser.** Tessera implements §7.2–§7.4 exactly, including the two tokenizer quirks, so
    that plugins and Tessera's commands see the original's command word and arguments. The
    command prefix, the substitution marker and the default channel word are read from the
@@ -1123,36 +1152,71 @@ These are Tessera's rules, not facts about the original.
    bindings of the same keys (without the push, Page Up and Page Down would reach the camera
    zoom). The default keys are those of `keymap.md` §8 as revised for decision 0014.
 
-> **OPEN (implementation, client command dispatcher, 2026-10-08):** decision 0020 is
-> implemented in `apps/client/src/commands/` before the M5 chat window exists. These choices
-> were made where this spec and the decision are silent; please confirm or correct:
-> (a) **Mode-table variants.** Only the 26 fixed rows of §6.5 are registered; neither
-> variant group is, because the game-state test that picks one is OPEN (Q12). `IsCommand`
-> therefore answers false for the variant words.
-> (b) **When the install's names arrive.** The client built-ins are registered under their
-> Tessera names at start-up; the install's names (help, plugin manager, channel words, and
-> the `CommandSetup` default channel word, which is registered as a `Say` word so that plain
-> text always finds it) are registered when the background read of the two tables finishes,
-> after the archives open. A plugin that registered one of those names earlier keeps it
-> (first registration wins). `--command` lines wait for that read.
-> (c) **Case folding** is Rust's Unicode lower-casing, not a locale's (§8.2).
-> (d) **Positions.** The tokenizer counts UTF-16 code units as §7.3 states (so a character
-> outside the BMP right after a closing quote is two units and is kept); the leading-character
-> removal of §7.2 step 4 and §7.4 step 5 compares whole characters.
-> (e) **Bounds and wording.** Lines over 4096 bytes are refused with a type 1 line; channel
-> text over the protocol's chat length is refused locally. `tell` takes the first token of
-> the arguments as the name (in double quotes when it has spaces) and the trimmed rest as the
-> text. Tessera's own lines: "This channel is not available here.", "There is no one to reply
-> to." (reply and tell-again words), "There is no one to tell in the sandbox.", "Not
-> connected: chat not sent", "Not in the world: chat not sent". A `--command` line that
-> resolves to a channel command is logged, shown as a type 8 line and dropped.
-> (f) **History.** Lines typed in the walker overlay are added to the §6.3 history; the
-> overlay has no line up or down yet. Start-up lines are not added.
-> (g) **Plugins before M5.** `tessera-script` still keeps its own command table: a word the
-> client registry does not hold is offered to the plugin manager's line entry point before
-> the unknown-command line is posted, and `/plugins` calls that entry point with
-> `/plugins <arguments>`. The client answers `HostApi::is_builtin_command` and
-> `builtin_commands` from the registry, so plugins cannot take client names.
+11. **The entry line on the dispatcher** (D20 item 1; answers the implementer OPEN of
+   2026-10-09). The chat window owns no registry, line pipeline or history; §6.3 and §7.1–§7.5
+   are the dispatcher's, and the walker overlay before M5 used the same dispatcher.
+   - **Order of a submit.** The window does §6.2 submit steps 1–2 (it reads the text and takes
+     the mode's command word *C* and target *G*), then step 5 (it clears the entry and restores
+     the mode from the shown tab), and then hands the text, *C* and *G* to the dispatcher, which
+     does steps 3–4 (§7.2 and, on result 3, the §7.6 line). The window never sees the result
+     code. This moves the original's step 5 before steps 3–4. The difference cannot be seen as
+     long as no command handler reads or changes the entry text or the window's channel mode,
+     which holds for every Tessera handler; a handler that needs either must be run before
+     step 5 instead.
+   - **When the line runs.** In frame-loop step 1 of IB D8, right after the input event (or
+     pending offer) that submitted it, once the UI is no longer borrowed, with the world session
+     of that frame (`--server` or the sandbox). Command lines of quickslot aliases run after
+     step 7 of the same frame, as plain submissions in the `Say` mode with the default word as
+     *C* and no target.
+   - **Where the replies go.** Lines the dispatcher posts (the §7.6 line, help, refusals,
+     player-music messages) are appended to the logs in step 7 of the same frame, by §4.3 with
+     the masks of item 2 (type 1 or type 8), and are delivered to `Turbine.Chat.Received` like
+     Tessera's notices (item 9).
+   - **Mode words.** The window takes its mode table (§6.5) from the dispatcher's one read of the
+     install's tables, so it offers only mode words that the registry holds. A typed word that
+     the registry does not hold gives the §7.6 line; nothing is sent.
+12. **Parser details** (D20 item 1; answers items (c)–(e) of the implementer OPEN of
+   2026-10-08).
+   - **Case folding.** Names are compared after Unicode default lower-casing, without a locale.
+     The original folds case under the C-runtime locale of its language (§8.2, Probable). For
+     the letters of English, French and German command names the two agree; they can differ only
+     for characters outside those alphabets (for example a dotted capital I), a known
+     difference.
+   - **Positions.** The tokenizer counts UTF-16 code units, as §7.3 states. The removal of
+     leading characters in §7.2 step 4 and §7.4 step 5 may compare whole characters: the result
+     is the same for every line. In §7.4 step 5 an unquoted *W* is followed by a whitespace
+     character, which never occurs in *W*, so the removal stops at the end of *W* in both
+     counts, and a quoted *W* leaves the opening quote, which is not in *W*; in §7.2 step 4 the
+     prefix is one character of the Basic Multilingual Plane (CW27a).
+   - **Bounds.** A line longer than 4,096 bytes of UTF-8, from any source, is refused with a
+     type 1 line before §7.2 runs, so it does not reach the history (the entry's 384 characters,
+     CW20, stay below the bound). Channel text longer than the Tessera protocol's `TEXT` limit
+     (1,024 bytes, `tessera-protocol.md` §5.2) is refused locally with a type 1 line and not sent.
+   - **`tell` (Tessera name).** The first token of the arguments (§7.3; in double quotes when
+     the name has spaces) is the recipient; the text is the rest of the arguments after that
+     token and the whitespace that follows it, trimmed at both ends.
+   - **Wording.** The refusal lines (channel not available, no reply target, no recipient in the
+     sandbox, not connected, not in the world) are in Tessera's own words; only their types are
+     normative here. A start-up command line (D20 item 7) that resolves to a channel command is
+     logged, shown as a type 8 line and dropped.
+13. **History sources** (answers item (f) of the implementer OPEN of 2026-10-08). Every
+   submission that reaches §7.2 step 1 is added to the history (§6.3), whatever its source:
+   the chat entry, the walker overlay before M5, a quickslot alias. Start-up command lines are
+   the one exception (they are not the player's typing). Browsing works only in the chat entry
+   (the overlay had no line up or down).
+
+> **Answered (2026-10-09, revision 3; was OPEN, implementation, client command dispatcher,
+> 2026-10-08):** (a) only the 26 fixed rows are registered while Q12 is open: §10 item 3.
+> (b) when the install's names arrive: §10 item 3, with one correction: plugins load only
+> after the dispatcher's read of the tables has finished or failed, so the case "a plugin that
+> registered one of those names earlier keeps it" cannot arise. (c), (d), (e): §10 item 12.
+> (f): §10 item 13. (g) is superseded by D20 item 6 as written into §10 item 3: the plugin host
+> keeps no command table, and the plugin-manager command is a client built-in.
+
+> **Answered (2026-10-09, revision 3; was OPEN, implementation, chat window on the
+> dispatcher, 2026-10-09):** (a), (b), (c), (e): §10 item 11 (confirmed; the submit order is
+> allowed under the condition stated there). (d): §10 item 2 (the window's local echo is
+> replaced by the session's echo; without a session the line is refused).
 
 ---
 
@@ -1329,6 +1393,7 @@ apply them.
 | Date | Change |
 |---|---|
 | 2026-10-06 | Revision 2, corrections after review (status stays Revised, awaiting review; no fact about the original changed; section numbers kept). **§10 item 9:** queued `Received` delivery now skips the apartments named by the skip rule of `lua-plugin-api.md` §11.3 (so a `WriteLine` in a `Received` handler never reaches its own apartment and an echoing plugin cannot feed itself); LPA §11.3 is the single statement of that rule and governs; the earlier "this spec does not settle it" is withdrawn; `WriteLine` lines named among the queued lines. **§6.2:** a declined command going on to game code cites IB D7 instead of IB Options 4. **§14:** the LPA §11.3 timing row mentions the skip rule. |
+| 2026-10-09 | Revision 3 (status Accepted → Revised, awaiting review; spec writer, dirty room). Answers the implementer OPENs of 2026-10-08 (client command dispatcher, items (a)–(g)) and 2026-10-09 (chat window on the dispatcher, items (a)–(e)) in §10 and the two implementation OPENs of §6.5 (the `tessera-ui` command-word rule, confirmed as a Tessera rule while Q12 is open, and the 2026-10-08 mode-table note); the four callouts are marked Answered. **New data fact:** CW42 (OBS2): the `CommandSetup` and `Commands` entries with token 0x04DA4989 hold the same single name in this install. **Revised Tessera rules:** §10 item 2 (plain text goes through the dispatcher to the session, whose echo is the line shown; no local echo; refusal without a session; line types of Tessera's own lines), §10 item 3 (only the 26 fixed mode-table rows; the default word registered as a `Say` word; the install's names registered after the tables are read and before any plugin loads; no plugin-host command table). **New Tessera rules:** §10 item 11 (submit order and its condition, timing in the frame loop, quickslot aliases, where replies go, one shared read of the mode table), item 12 (case folding, code-unit positions and why whole-character removal is equivalent, bounds, `tell` arguments, wording), item 13 (history sources). New provenance tags OBS2 and D20. No fact about the original changed; section numbers kept. |
 | 2026-10-06 | Revision 2 (status Accepted → Revised, awaiting review; applies the accepted decision records [0014](../decisions/0014-ui-input-bridge.md) (**IB**) and [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers kept). **Reworded Tessera rule:** §10 item 5, the mapping of the entry's Tessera actions: `open_chat` = `AcceptInput`, `menu` = `EscapeKey`, `text_line_up/down` = `CursorPreviousLine/NextLine` replace the retired `text_submit`, `text_cancel` and `text_history_prev/next` (IB D2). **Cross-references added:** §6.2 (the commands come from `text_entry` with focus and from Tessera's `ui.chat_log` without it; a declined command goes on to game code unchanged), §6.3 (history reads the line actions), §6.4 (Subset modifier policy lets Shift or Ctrl reach the window), §9 and §10 item 2 (plugin delivery time). **New Tessera items:** §10 item 9 (`Turbine.Chat.Received` is queued and delivered in frame-loop step 7, IB D8, Known difference 21; the interaction with LPA §9.6 is left to IB open review item 1) and §10 item 10 (paging without entry focus through `ui.chat_log`, IB D5, Known difference 17). **New OPEN:** Q19 (which input map supplies the paging commands without entry focus), §6.2 and §13. **§1:** provenance tag IB, UR; header companion entry. **§14:** the `keymap.md` §8 row now records the change; new row for `lua-plugin-api.md` §11.3. UR requires no change here (the chat log's repaint is its content event). |
 | 2026-10-06 | Revision 1 after review (status stays Review, submitted for re-review). **B1:** layout 0x22000034 has 19 top-level elements (§1 OBS, CW1, §3.1). **B2:** marks redefined (Confirmed = data only); rows CW2, CW4, CW7, CW8, CW12, CW15, CW16, CW19, CW24, CW25, CW27, CW32, CW35 split into *a* (Confirmed) and *b* (BIN); CW22 reworded (reset on addition, not on every submission); headings of §3.1, §3.3, §3.5, §4.1, §4.3, §4.6, §5.2, §5.4, §5.6, §6.5, §6.6, §7.2, §7.4, §7.6, §8.1 name the split rows. **B3:** new BIN pass (same build): per-log any-bit test with the delivered mask including bit 24, at most once per tab, a suppression flag and a refill routine (§4.3, CW9 now BIN, Q4 narrowed); style of a multi-bit mask by FO §9.3 step 1 (§5.1 step 2); whole-mask exact sound match (§5.6, CW19b); the reply and unknown-command lines leave through one game-script hand-over (§6.2, §7.6, CW41); §2 term; §10 items 1 and 8; §11.8; CW-I15, CW-I16; new OPENs Q17, Q18; notes for LPA §11.3 and FO §9.3 in §14. **B4:** CW-I14 and CW-I9 restricted to submissions that reach the history; §6.2 step 1, §6.3 and §7.2 step 1 say that an empty submit or a result-2 run leaves the browsing index unchanged; §11.4 example. **Non-blocking:** IL and UW in the header and §3.4; Q2 and §13 cite UL §9.6/§9.6.1; §3.2 cites UL §9.2; §5.5 cites UB §4.7 (wheel) and UW §5, §6, §8; `CursorNextPage` and `CursorPreviousPage` go through the list box's clamped scroll-to (UW §5.3; `keep_in_bounds` default true, not set in the layout), so a negative target becomes 0 (CW18). |
 | 2026-10-06 | First version (status Review). Chat windows, pool and defaults (§3), tabs and filters (§4), log (§5), entry line, history, channel modes and key-repeat guard (§6), command-line pipeline, tokenizer, arguments, substitutions and results (§7), built-in names and `IsCommand` (§8), plugin view (§9), Tessera decisions (§10), examples (§11), invariants (§12), OPEN list (§13), notes for other specs (§14). OBS on the owner's install and BIN on client 4906.0071.1794.4035, 2026-10-06. Answers M5 critique item A8. |

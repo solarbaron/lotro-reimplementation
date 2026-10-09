@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Worked examples (§11) and invariants (§12) of `docs/specs/chat-window.md` on synthetic
-//! data. All values and command words are invented.
+//! data. All values and command words are invented. The command line itself (registry,
+//! pipeline, history; §7, §11.1–§11.5) belongs to the client's command dispatcher (decision
+//! 0020) and is tested there; here the window hands submitted lines out and browses a
+//! history it is given.
 
 mod ui_common;
-
-use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 use tessera_formats::did::Did;
 use tessera_formats::property::{PropertyArray, PropertyEntry, PropertyValue};
 use tessera_formats::string_info::{StringInfo, StringSource};
 use tessera_ui::game::GameVocab;
-use tessera_ui::game::chat::command::{
-    MAX_SUBSTITUTIONS, RESULT_NO_REGISTRY, RESULT_NOTHING, RESULT_UNKNOWN, arguments, is_ws,
-    split_names,
-};
+use tessera_ui::game::chat::command::split_names;
 use tessera_ui::game::chat::entry::{GuardVerdict, at_bottom, page_targets};
 use tessera_ui::game::chat::mask::{LineStyle, log_takes, reported_type};
 use tessera_ui::game::chat::{
-    ChannelModes, Chat, ChatConfig, CommandHost, CommandInfo, CommandLine, CommandOutcome,
-    CommandRegistry, FeedbackSounds, KeyRepeatGuard, ModeKind, OpacityTable, StyleMap, TabConfig,
-    TextInputOutcome, WindowConfig, execute, tokenize,
+    ChannelModes, Chat, ChatConfig, CommandOutcome, CommandSetup, EntryHistory, EntryLine,
+    FeedbackSounds, KeyRepeatGuard, ModeKind, OpacityTable, StyleMap, TabConfig, TextInputOutcome,
+    WindowConfig,
 };
 use tessera_ui::game::{GameError, chat::entry::GUARD_SOUND};
 use tessera_ui::{Ui, UiEvent};
@@ -40,206 +38,72 @@ fn arr(pid: u32, elems: Vec<PropertyValue>) -> PropertyValue {
     })
 }
 
-/// A host over a registry that records every call.
-#[derive(Default)]
-struct Host {
-    reg: CommandRegistry,
-    calls: Vec<(String, String, Vec<String>)>,
-    available: bool,
-    subs: BTreeMap<String, String>,
-    sub_calls: usize,
-}
-
-impl Host {
-    fn new() -> Self {
-        let mut h = Self {
-            available: true,
-            ..Self::default()
-        };
-        h.reg.register(
-            "foo",
-            CommandInfo {
-                id: 1,
-                substitutes: true,
-            },
-        );
-        h.reg.register(
-            "S",
-            CommandInfo {
-                id: 2,
-                substitutes: false,
-            },
-        );
-        h
-    }
-}
-
-impl CommandHost for Host {
-    fn available(&self) -> bool {
-        self.available
-    }
-
-    fn lookup(&self, word: &str) -> Option<CommandInfo> {
-        self.reg.lookup(word)
-    }
-
-    fn run(&mut self, _info: CommandInfo, word: &str, args: &str, tokens: &[String]) -> i32 {
-        self.calls
-            .push((word.to_string(), args.to_string(), tokens.to_vec()));
-        1
-    }
-
-    fn substitute(&mut self, token: &str) -> Option<String> {
-        self.sub_calls += 1;
-        self.subs.get(token).cloned()
-    }
-}
-
 fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|x| (*x).to_string()).collect()
 }
 
-// ----- §11.1–§11.5 -------------------------------------------------------------------------
-
-#[test]
-fn example_11_1_arguments_of_a_plugin_command() {
-    let mut cl = CommandLine::default();
-    let mut h = Host::new();
-    let r = cl.run_line("/FOO  a \"b c\"  ", "", "", &mut h);
-    assert_eq!(r, 1);
-    assert_eq!(cl.history.lines, s(&["/FOO  a \"b c\"  "]));
-    assert_eq!(
-        h.calls,
-        vec![("FOO".into(), "a \"b c\"".into(), s(&["FOO", "a", "b c"]))]
-    );
-    // A doubled prefix is accepted; a bare prefix is nothing to run.
-    assert_eq!(cl.run_line("//foo x", "", "", &mut h), 1);
-    assert_eq!(cl.run_line("/", "", "", &mut h), RESULT_NOTHING);
-    assert_eq!(cl.run_line("/nope", "", "", &mut h), RESULT_UNKNOWN);
+/// A history double in the shape of §6.3 (newest first, browsing index), standing in for
+/// the client dispatcher's history; lines are added by the test as the dispatcher would.
+#[derive(Debug, Default)]
+struct Hist {
+    lines: Vec<String>,
+    index: i32,
 }
 
-#[test]
-fn example_11_2_plain_text() {
-    let mut cl = CommandLine::default();
-    let mut h = Host::new();
-    assert_eq!(cl.run_line(" hello ", "S", "", &mut h), 1);
-    assert_eq!(cl.history.lines, s(&[" hello "]));
-    assert_eq!(
-        h.calls,
-        vec![("S".into(), "hello".into(), s(&["S", "hello"]))]
-    );
-    // Without a mode word the default word is used (unknown here).
-    assert_eq!(cl.run_line("x", "", "", &mut h), RESULT_UNKNOWN);
-    // A tell target sits between the word and the text.
-    h.calls.clear();
-    cl.run_line("hi there", "S", "Bob", &mut h);
-    assert_eq!(h.calls[0].1, "Bob hi there");
-    // No registry or game context: result 2, nothing added to the history.
-    h.available = false;
-    let before = cl.history.clone();
-    assert_eq!(cl.run_line("zzz", "S", "", &mut h), RESULT_NO_REGISTRY);
-    assert_eq!(cl.history, before);
-    h.available = true;
-    assert_eq!(cl.run_line("", "S", "", &mut h), RESULT_NOTHING);
-    assert_eq!(cl.run_line("  \t", "S", "", &mut h), RESULT_NOTHING);
-}
-
-#[test]
-fn example_11_3_tokenizer_quirks() {
-    assert_eq!(tokenize("a   b"), s(&["a", "b"]));
-    assert_eq!(tokenize("x \"a b\"c"), s(&["x", "a b"]));
-    assert_eq!(tokenize("x \"a b\"cd"), s(&["x", "a b", "cd"]));
-    assert_eq!(tokenize("go \"hi there"), s(&["go", "go", "hi", "there"]));
-    assert_eq!(tokenize("\" a \" b"), s(&[" a ", "b"]));
-    assert!(tokenize("\"\"").is_empty());
-    assert_eq!(tokenize("\"hi"), s(&["hi"]));
-    assert_eq!(tokenize("ab\"c"), s(&["ab\"c"]));
-    assert_eq!(tokenize("\"a\"\"b\""), s(&["a", "\"b\""]));
-    let mut h = Host::new();
-    assert_eq!(execute("\"\"", &mut h), RESULT_NOTHING);
-    assert_eq!(execute("", &mut h), RESULT_NO_REGISTRY);
-    // A quoted command word: nothing is stripped from the arguments.
-    execute("\"foo\" x", &mut h);
-    assert_eq!(h.calls[0].1, "\"foo\" x");
-}
-
-#[test]
-fn example_11_4_history() {
-    let mut cl = CommandLine::default();
-    let mut h = Host::new();
-    for t in ["/foo a", "/foo b", "/foo a"] {
-        cl.run_line(t, "", "", &mut h);
+impl Hist {
+    fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            index: -1,
+        }
     }
-    assert_eq!(cl.history.lines, s(&["/foo a", "/foo b"]));
-    let hist = &mut cl.history;
-    assert_eq!(hist.older(), Some("/foo a"));
-    assert_eq!(hist.older(), Some("/foo b"));
-    assert_eq!(hist.older(), Some("/foo b"));
-    assert_eq!(hist.newer(), Some("/foo a"));
-    assert_eq!(hist.newer(), None);
-    for i in 0..25 {
-        cl.run_line(&format!("/foo {i}"), "", "", &mut h);
+
+    fn add(&mut self, l: &EntryLine) {
+        self.lines.retain(|x| *x != l.text);
+        self.lines.insert(0, l.text.clone());
+        self.index = -1;
     }
-    assert_eq!(cl.history.lines.len(), 19);
-    assert_eq!(cl.history.lines[0], "/foo 24");
 }
 
+impl EntryHistory for Hist {
+    fn older(&mut self) -> Option<String> {
+        let count = i32::try_from(self.lines.len()).unwrap();
+        self.index = (self.index + 1).min(count - 1);
+        usize::try_from(self.index)
+            .ok()
+            .and_then(|k| self.lines.get(k).cloned())
+    }
+
+    fn newer(&mut self) -> Option<String> {
+        self.index -= 1;
+        if self.index < 0 {
+            self.index = -1;
+            return None;
+        }
+        usize::try_from(self.index)
+            .ok()
+            .and_then(|k| self.lines.get(k).cloned())
+    }
+}
+
+/// The submitted line of an outcome (and adds it to `h`, as the dispatcher does).
+fn submitted(out: CommandOutcome, h: &mut Hist) -> EntryLine {
+    match out {
+        CommandOutcome::Submitted(l) => {
+            h.add(&l);
+            l
+        }
+        other => panic!("not a submit: {other:?}"),
+    }
+}
+
+// ----- §7.1 name lists ---------------------------------------------------------------------
+
 #[test]
-fn example_11_5_is_command() {
-    let mut reg = CommandRegistry::default();
-    let info = CommandInfo {
-        id: 1,
-        substitutes: true,
-    };
-    reg.register("foo", info);
-    assert_eq!(reg.register_list(" abc ;ab, ,", info), s(&["abc", "ab"]));
-    assert!(reg.is_command("FOO"));
-    assert!(!reg.is_command("/foo"));
-    assert!(reg.is_command("ab"));
-    assert!(!reg.is_command(" foo"));
-    assert!(!reg.is_command(""));
-    assert!(!reg.register("Foo", info), "already held");
+fn name_lists_split_like_add_command() {
     assert_eq!(split_names("a:b;c,d"), s(&["a", "b", "c", "d"]));
-    reg.unregister_id(1);
-    assert!(reg.is_empty());
-}
-
-/// Values that fan out into several tokens each, ending in empty text, cost bounded work:
-/// the whole expansion asks for at most `MAX_SUBSTITUTIONS` values.
-#[test]
-fn substitution_fan_out_is_bounded() {
-    let mut cl = CommandLine::default();
-    let mut h = Host::new();
-    let levels = 14;
-    for i in 0..levels {
-        let next = format!(";l{}", i + 1);
-        h.subs.insert(format!(";l{i}"), next.repeat(4));
-    }
-    h.subs.insert(format!(";l{levels}"), String::new());
-    let t = std::time::Instant::now();
-    cl.run_line("x ;l0 y", "S", "", &mut h);
-    assert!(h.sub_calls <= MAX_SUBSTITUTIONS, "{}", h.sub_calls);
-    assert!(t.elapsed().as_secs() < 5);
-    assert_eq!(h.calls.len(), 1);
-}
-
-#[test]
-fn substitutions_expand_with_a_recursion_guard() {
-    let mut cl = CommandLine::default();
-    let mut h = Host::new();
-    h.subs.insert(";t".into(), "X;t".into());
-    h.subs.insert(";a".into(), ";b".into());
-    h.subs.insert(";b".into(), "B".into());
-    cl.run_line("hi ;t ;a ;zz ;", "S", "", &mut h);
-    assert_eq!(h.calls[0].1, "hi X;t B ;zz ;");
-    // A command whose handler does not allow substitution keeps the tokens.
-    h.calls.clear();
-    cl.run_line("/S ;b", "", "", &mut h);
-    assert_eq!(h.calls[0].1, ";b");
-    // A plugin command allows it.
-    h.calls.clear();
-    cl.run_line("/foo ;b", "", "", &mut h);
-    assert_eq!(h.calls[0].1, "B");
+    assert_eq!(split_names(" abc ;ab, ,"), s(&["abc", "ab"]));
+    assert!(split_names(" ;,: ").is_empty());
 }
 
 // ----- masks, styles, sounds (§4.3, §5.1, §5.6, §11.8, CW-I15, CW-I16) ----------------------
@@ -419,14 +283,14 @@ fn key_repeat_guard() {
 
 #[test]
 fn channel_mode_words() {
-    let cl = CommandLine::default();
+    let setup = CommandSetup::default();
     let m = ChannelModes::new(
         &[
             ("s, say".into(), 5, ModeKind::Plain),
             ("f".into(), 11, ModeKind::Plain),
             ("r".into(), 6, ModeKind::Reply),
         ],
-        &cl.setup,
+        &setup,
     );
     assert_eq!(m.switch_word(" /f ").map(|r| r.chat_type), Some(11));
     assert_eq!(m.switch_word(";say").map(|r| r.chat_type), Some(5));
@@ -565,9 +429,8 @@ fn chat_ui_parts(cap: i32, with_log: bool) -> (Ui, Chat, ChatConfig) {
             ("S".into(), 5, ModeKind::Plain),
             ("fel".into(), 11, ModeKind::Plain),
         ],
-        &chat.command_line.setup,
+        &chat.setup,
     );
-    chat.texts.unknown_command = "unknown".into();
     chat.texts.no_reply_target = "no reply".into();
     chat.texts.channel_names.insert(11, "Fellowship".into());
     let lit = |t: &str| {
@@ -681,7 +544,7 @@ fn example_11_6_line_cap_and_bottom_and_cw_i10() {
     let (_, (_, o)) = ui.scroll_state(list).unwrap();
     assert_eq!(o, 0, "a log scrolled up stays put");
     // Paging.
-    let mut h = Host::new();
+    let mut h = Hist::new();
     ui.activate(chat.windows[0].root);
     assert_eq!(
         chat.command(&mut ui, "CursorNextPage", false, false, &mut h),
@@ -720,46 +583,55 @@ fn type_text(ui: &mut Ui, chat: &mut Chat, t: &str) {
 #[test]
 fn entry_line_commands_submit_history_and_modes() {
     let (mut ui, mut chat) = chat_ui(128);
-    let mut h = Host::new();
+    let mut h = Hist::new();
     let entry = chat.windows[0].entry.unwrap();
     // Escape without focus goes on to game code.
     assert_eq!(
         chat.command(&mut ui, "EscapeKey", false, false, &mut h),
         CommandOutcome::NotHandled
     );
-    // Enter opens the line; text; Enter submits.
+    // Enter opens the line; text; Enter submits: the line is handed out as typed, with
+    // the mode's word, and the entry is cleared (§6.2 submit, decision 0020 item 1).
     assert_eq!(
         chat.command(&mut ui, "AcceptInput", false, false, &mut h),
         CommandOutcome::Handled
     );
     assert!(chat.entry_focused(&ui));
     type_text(&mut ui, &mut chat, "/foo  x ");
-    assert_eq!(
+    let l = submitted(
         chat.command(&mut ui, "AcceptInput", false, false, &mut h),
-        CommandOutcome::Submitted(1)
+        &mut h,
     );
-    assert_eq!(h.calls.last().unwrap().1, "x");
+    assert_eq!(
+        l,
+        EntryLine {
+            text: "/foo  x ".into(),
+            mode: 5,
+            word: "S".into(),
+            target: String::new(),
+        }
+    );
     assert!(!chat.entry_focused(&ui));
     assert_eq!(ui.text_of(entry), "");
-    // CW-I14: the browsing index is −1 after a submit that reached the history.
-    assert_eq!(chat.command_line.history.index, -1);
-    // Plain text goes to the mode's word.
+    // Plain text carries the mode's word too; the window posts nothing itself (the
+    // dispatcher posts the unknown-command line, §7.6).
+    let lines_before = lines(&ui, &chat, 0).len();
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     type_text(&mut ui, &mut chat, "hello");
-    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
-    assert_eq!(h.calls.last().unwrap().0, "S");
-    // An unknown command posts the unknown-command line (mask 0x1, tab 1 only).
+    let l = submitted(
+        chat.command(&mut ui, "AcceptInput", false, false, &mut h),
+        &mut h,
+    );
+    assert_eq!((l.text.as_str(), l.word.as_str()), ("hello", "S"));
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     type_text(&mut ui, &mut chat, "/nope");
-    assert_eq!(
+    submitted(
         chat.command(&mut ui, "AcceptInput", false, false, &mut h),
-        CommandOutcome::Submitted(3)
+        &mut h,
     );
-    assert_eq!(
-        lines(&ui, &chat, 0).last().map(String::as_str),
-        Some("unknown")
-    );
-    // History browsing; an empty submit keeps the index (§11.4).
+    assert_eq!(lines(&ui, &chat, 0).len(), lines_before);
+    // History browsing reads the history it is given; an empty submit keeps the index
+    // (§11.4).
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     chat.command(&mut ui, "CursorPreviousLine", false, false, &mut h);
     assert_eq!(ui.text_of(entry), "/nope");
@@ -773,7 +645,7 @@ fn entry_line_commands_submit_history_and_modes() {
         chat.command(&mut ui, "AcceptInput", false, false, &mut h),
         CommandOutcome::Handled
     );
-    assert_eq!(chat.command_line.history.index, 1);
+    assert_eq!(h.index, 1);
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     chat.command(&mut ui, "CursorPreviousLine", false, false, &mut h);
     assert_eq!(ui.text_of(entry), "/foo  x ");
@@ -788,21 +660,17 @@ fn entry_line_commands_submit_history_and_modes() {
     chat.command(&mut ui, "START_COMMAND", false, false, &mut h);
     assert_eq!(ui.text_of(entry), "/");
     // Mode switch on a space: "/fel " switches to type 11 and clears the line.
-    h.reg.register(
-        "fel",
-        CommandInfo {
-            id: 3,
-            substitutes: false,
-        },
-    );
     type_text(&mut ui, &mut chat, "fel ");
     assert_eq!(chat.mode, 11);
     assert_eq!(ui.text_of(entry), "");
     let out = tessera_ui::game::find_below(&ui, chat.windows[0].root, OUT).unwrap();
     assert_eq!(ui.text_of(out), "Fellowship");
     type_text(&mut ui, &mut chat, "hi");
-    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
-    assert_eq!(h.calls.last().unwrap().0, "fel");
+    let l = submitted(
+        chat.command(&mut ui, "AcceptInput", false, false, &mut h),
+        &mut h,
+    );
+    assert_eq!((l.mode, l.word.as_str()), (11, "fel"));
     assert_eq!(chat.mode, 11, "the tab remembers its mode");
     // ChatModeReply without a target posts the reply line with mask 0x21.
     assert_eq!(
@@ -813,6 +681,36 @@ fn entry_line_commands_submit_history_and_modes() {
         lines(&ui, &chat, 0).last().map(String::as_str),
         Some("no reply")
     );
+}
+
+/// The `Tell` mode hands its target out with the line (§6.2 submit step 2).
+#[test]
+fn tell_mode_hands_out_the_target() {
+    let (mut ui, mut chat) = chat_ui(128);
+    let mut h = Hist::new();
+    chat.modes = ChannelModes::new(
+        &[
+            ("S".into(), 5, ModeKind::Plain),
+            ("t".into(), 6, ModeKind::Plain),
+        ],
+        &chat.setup,
+    );
+    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+    type_text(&mut ui, &mut chat, "/t ");
+    assert_eq!(chat.mode, 6);
+    chat.target = "Bram".into();
+    type_text(&mut ui, &mut chat, "hi there");
+    let l = submitted(
+        chat.command(&mut ui, "AcceptInput", false, false, &mut h),
+        &mut h,
+    );
+    assert_eq!(
+        (l.mode, l.word.as_str(), l.target.as_str(), l.text.as_str()),
+        (6, "t", "Bram", "hi there")
+    );
+    // An empty entry submits nothing.
+    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+    assert_eq!(chat.submit(&mut ui), None);
 }
 
 #[test]
@@ -837,7 +735,7 @@ fn tab_click_selects_through_the_game_event() {
 #[test]
 fn key_repeat_guard_in_the_entry() {
     let (mut ui, mut chat) = chat_ui(128);
-    let mut h = Host::new();
+    let mut h = Hist::new();
     chat.guard = Some(KeyRepeatGuard::default());
     let entry = chat.windows[0].entry.unwrap();
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
@@ -854,7 +752,7 @@ fn key_repeat_guard_in_the_entry() {
 #[test]
 fn key_repeat_guard_reports_its_sound() {
     let (mut ui, mut chat) = chat_ui(128);
-    let mut h = Host::new();
+    let mut h = Hist::new();
     chat.guard = Some(KeyRepeatGuard::default());
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     let mut outcomes = vec![chat.text_input(&mut ui, 'a', 0.0)];
@@ -942,7 +840,7 @@ fn opening_is_transactional() {
 #[test]
 fn commands_do_not_steal_another_elements_focus() {
     let (mut ui, mut chat) = chat_ui(8);
-    let mut h = Host::new();
+    let mut h = Hist::new();
     let list = chat.windows[0].tabs[0].list.unwrap();
     for i in 0..20 {
         chat.post_line(&mut ui, 0x80, &format!("l{i}"));
@@ -977,63 +875,6 @@ fn commands_do_not_steal_another_elements_focus() {
 // ----- invariants (§12) ----------------------------------------------------------------------
 
 proptest! {
-    #[test]
-    fn cw_i9_history(lines in proptest::collection::vec("[a-c]{0,2}", 0..60)) {
-        let mut cl = CommandLine::default();
-        let mut h = Host::new();
-        let mut last = None;
-        for l in &lines {
-            cl.run_line(l, "S", "", &mut h);
-            if !l.is_empty() { last = Some(l.clone()); }
-            prop_assert!(cl.history.lines.len() <= 19);
-            let mut seen = std::collections::BTreeSet::new();
-            for x in &cl.history.lines { prop_assert!(seen.insert(x.clone())); }
-        }
-        prop_assert_eq!(cl.history.lines.first().cloned(), last);
-    }
-
-    #[test]
-    fn cw_i11_arguments_trimmed(text in "[ a-z\t\"/;\r\n\u{c}]{0,40}") {
-        let mut h = Host::new();
-        for w in tokenize(&text) {
-            h.reg.register(&w, CommandInfo { id: 9, substitutes: true });
-        }
-        execute(&text, &mut h);
-        for (_, a, _) in &h.calls {
-            prop_assert!(!a.starts_with(is_ws) && !a.ends_with(is_ws));
-        }
-        let t = text.trim_matches(is_ws);
-        if let Some(w) = tokenize(t).first() {
-            let a = arguments(t, w);
-            prop_assert!(!a.starts_with(is_ws) && !a.ends_with(is_ws));
-        }
-    }
-
-    #[test]
-    fn cw_i12_is_command_case(name in "[a-zA-Z]{1,8}", other in "[a-zA-Z]{1,8}") {
-        let mut reg = CommandRegistry::default();
-        reg.register(&name, CommandInfo { id: 1, substitutes: true });
-        prop_assert!(reg.is_command(&name.to_uppercase()));
-        prop_assert!(reg.is_command(&name.to_lowercase()));
-        prop_assert_eq!(reg.is_command(&other.to_uppercase()), reg.is_command(&other.to_lowercase()));
-        let prefixed = format!("/{name}");
-        prop_assert!(!reg.is_command(&prefixed));
-    }
-
-    #[test]
-    fn cw_i13_tokens(text in "[ a-z\t\r\n\u{c}\"]{0,60}") {
-        let toks = tokenize(&text);
-        prop_assert!(toks.iter().all(|t| !t.is_empty()));
-        if !text.contains('"') {
-            let split: Vec<String> = text
-                .split(is_ws)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect();
-            prop_assert_eq!(toks, split);
-        }
-    }
-
     #[test]
     fn cw_i15_any_common_bit(l in any::<u64>(), m in any::<u64>()) {
         prop_assert_eq!(log_takes(m, l), m & l != 0);

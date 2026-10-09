@@ -173,11 +173,14 @@ pub fn graphics_prefs() -> tessera_settings::GraphicsPrefs {
 pub fn walker_config(args: &Args) -> WalkerConfig {
     let distances = distance_settings(args);
     // The far ring is the landscape extent E (`walker.md` §11.3, §11.8) unless
-    // `--view-blocks` sets it.
-    let far = args.view_blocks.map_or_else(
-        || f64::from(distances.landscape_extent()),
-        |b| f64::from(b) * LANDBLOCK_SIZE,
-    );
+    // `--view-blocks` sets it. With the far view on, full-detail terrain covers the
+    // original's 3 × 3 near field (`far-view.md` §2, §3.2, Tessera Decision FD9) and the
+    // sectors draw the rest out to E; `--view-blocks` keeps a larger full-detail ring.
+    let far = match (args.view_blocks, args.far_view) {
+        (Some(b), _) => f64::from(b) * LANDBLOCK_SIZE,
+        (None, true) => crate::walker::farview::NEAR_FIELD_RING,
+        (None, false) => f64::from(distances.landscape_extent()),
+    };
     let rings = RingConfig {
         near: (3.0 * LANDBLOCK_SIZE).min(far),
         mid: (6.0 * LANDBLOCK_SIZE).min(far),
@@ -243,6 +246,19 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             settle_timeout: Duration::from_secs(args.settle_timeout),
         }),
         audio: crate::audio::config_from_args(args),
+        effects: crate::walker::effects::EffectConfig {
+            enabled: !args.no_particles,
+            interiors: args.interiors,
+            seed: args.particle_seed.unwrap_or_else(|| {
+                if args.walker_headless() {
+                    1
+                } else {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(1, |d| d.as_secs() as u32)
+                }
+            }),
+        },
         systems: systems(args),
         clock: ClockConfig {
             day: args.day.unwrap_or(crate::walker::env::DEFAULT_DAY),
@@ -258,6 +274,19 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         // The collision mover takes the avatar's float height (`walker.md` §13.2).
         avatar: args.avatar.clone().unwrap_or_default(),
         far_band: args.far_band,
+        far_view: crate::walker::farview::FarViewConfig {
+            enabled: args.far_view,
+            near_field: if args.view_blocks.is_some() {
+                crate::walker::farview::NearFieldMode::Ring
+            } else {
+                crate::walker::farview::NearFieldMode::Original
+            },
+            settings: tessera_world::far_view::FarViewSettings {
+                far_radius: distances.landscape.groups(),
+                ..tessera_world::far_view::FarViewSettings::default()
+            },
+            ..crate::walker::farview::FarViewConfig::default()
+        },
         hud: !args.no_hud,
         camera: match (&args.camera_loop, args.turn_rate) {
             (Some(path), _) => Some(CameraPlan::Loop {

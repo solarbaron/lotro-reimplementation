@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The chat windows on the element tree (`chat-window.md` §3–§6, §10): windows from the
 //! element pool, tabs and their logs, appending lines, the unread marker, the entry line's
-//! commands, the channel-mode switch, opacity, and paging.
+//! commands, the channel-mode switch, opacity, and paging. A submitted entry line is handed
+//! out as an [`EntryLine`] for the client's command dispatcher (decision 0020 item 1).
 
 use std::collections::BTreeMap;
 
@@ -17,7 +18,7 @@ use crate::vocab::input_maps;
 
 use super::super::vocab::GameVocab;
 use super::super::{GameError, find_below, set_image, subtree};
-use super::command::{CommandHost, CommandLine, RESULT_UNKNOWN};
+use super::command::{CommandSetup, EntryHistory, EntryLine};
 use super::config::{ChatConfig, TabConfig};
 use super::entry::{
     ChannelModes, GuardVerdict, KeyRepeatGuard, SAY, TELL, at_bottom, page_targets,
@@ -42,15 +43,13 @@ pub const OPACITY_DRAW_MODE: u32 = 4;
 /// Mask of the reply line (§6.2: types 1 and 6).
 pub const REPLY_MASK: u64 = 0x21;
 
-/// Mask of the unknown-command line (§7.6: type 1).
+/// Mask of the unknown-command line (§7.6: type 1; the client's dispatcher posts it).
 pub const ERROR_MASK: u64 = 0x1;
 
 /// Game text the chat window shows, resolved from the user's install by the client
 /// (string tables named in `chat-window.md`), or Tessera's own wording.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChatTexts {
-    /// `CommandSetup` token 0x04FE7F13 (§7.6).
-    pub unknown_command: String,
     /// `Chat` token 0x00CC89CC (§6.2 `ChatModeReply` without a target).
     pub no_reply_target: String,
     /// Display names of channels by chat type, for the `OutputTextType` label (§6.5).
@@ -118,8 +117,8 @@ pub struct Chat {
     pub sounds: FeedbackSounds,
     /// Background opacities (§3.5).
     pub opacity: OpacityTable,
-    /// The command line and its history.
-    pub command_line: CommandLine,
+    /// The `CommandSetup` texts (the prefix of `START_COMMAND`, the mode words).
+    pub setup: CommandSetup,
     /// The mode table.
     pub modes: ChannelModes,
     /// The channel mode (a chat type).
@@ -132,20 +131,19 @@ pub struct Chat {
     pub guard: Option<KeyRepeatGuard>,
     /// Game text.
     pub texts: ChatTexts,
-    /// The result of the last submitted line.
-    pub last_result: Option<i32>,
     pool: Vec<(i32, u32)>,
 }
 
 /// What the chat window did with a command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
     /// Not handled: the command goes on to game code (decision 0014 D7).
     NotHandled,
     /// Handled.
     Handled,
-    /// A line was submitted with this result (§7.4).
-    Submitted(i32),
+    /// A line was submitted (§6.2 submit): the caller runs it through the client's
+    /// command dispatcher (decision 0020 item 1).
+    Submitted(EntryLine),
 }
 
 /// What [`Chat::text_input`] did with a typed character.
@@ -172,14 +170,13 @@ impl Chat {
             styles: StyleMap::default(),
             sounds: FeedbackSounds::default(),
             opacity: OpacityTable::default(),
-            command_line: CommandLine::default(),
+            setup: CommandSetup::default(),
             modes: ChannelModes::default(),
             mode: SAY,
             previous_mode: SAY,
             target: String::new(),
             guard: None,
             texts: ChatTexts::default(),
-            last_result: None,
             pool: Vec::new(),
         }
     }
@@ -685,13 +682,16 @@ impl Chat {
     /// here too. While another element has keyboard focus that element is the target: this
     /// method then returns [`CommandOutcome::NotHandled`] for every command, so that a
     /// focused plugin text box or editable text keeps its Enter and its paging keys.
+    ///
+    /// Line up and down browse `history`, the client's one history (§6.3); a submitted line
+    /// comes back as [`CommandOutcome::Submitted`] for the caller to dispatch.
     pub fn command(
         &mut self,
         ui: &mut Ui,
         name: &str,
         shift: bool,
         ctrl: bool,
-        host: &mut dyn CommandHost,
+        history: &mut dyn EntryHistory,
     ) -> CommandOutcome {
         let focused = self.entry_focused(ui);
         let entry = self.entry();
@@ -705,7 +705,7 @@ impl Chat {
                 };
                 if focused {
                     ui.set_focus(None);
-                    let r = self.submit(ui, host);
+                    let r = self.submit(ui);
                     return r.map_or(CommandOutcome::Handled, CommandOutcome::Submitted);
                 }
                 ui.set_focus(Some(e));
@@ -727,7 +727,7 @@ impl Chat {
                 ui.set_focus(Some(e));
                 // Q10 Tessera rule: START_COMMAND opens with the prefix typed.
                 let pre = if name == "START_COMMAND" {
-                    self.command_line.setup.prefix.clone()
+                    self.setup.prefix.clone()
                 } else {
                     String::new()
                 };
@@ -752,9 +752,9 @@ impl Chat {
                     return CommandOutcome::Handled;
                 }
                 let t = if name == "CursorPreviousLine" {
-                    self.command_line.history.older().map(str::to_string)
+                    history.older()
                 } else {
-                    self.command_line.history.newer().map(str::to_string)
+                    history.newer()
                 };
                 if let Some(t) = t {
                     self.set_entry_text(ui, &t);
@@ -772,10 +772,13 @@ impl Chat {
         }
     }
 
-    /// Submit (§6.2): runs the entry text through the command line, posts the
-    /// unknown-command line on result 3, clears the entry and restores the tab's mode.
-    /// Returns the result, or `None` for an empty entry (nothing else changes).
-    pub fn submit(&mut self, ui: &mut Ui, host: &mut dyn CommandHost) -> Option<i32> {
+    /// Submit (§6.2): takes the entry text with the channel mode's command word and tell
+    /// target (steps 1–2), clears the entry and restores the tab's mode (step 5), and
+    /// returns the line. Running it (steps 3–4: the command line of §7.2 and the
+    /// unknown-command line of §7.6) is the client's command dispatcher's work (decision
+    /// 0020 item 1), so the window never parses it. `None` for an empty entry (nothing
+    /// else changes).
+    pub fn submit(&mut self, ui: &mut Ui) -> Option<EntryLine> {
         let e = self.entry()?;
         let text = ui.text_of(e);
         if text.is_empty() {
@@ -787,15 +790,15 @@ impl Chat {
         } else {
             String::new()
         };
-        let r = self.command_line.run_line(&text, &word, &target, host);
-        if r == RESULT_UNKNOWN {
-            let t = self.texts.unknown_command.clone();
-            self.post_line(ui, ERROR_MASK, &t);
-        }
+        let line = EntryLine {
+            text,
+            mode: self.mode,
+            word,
+            target,
+        };
         self.set_entry_text(ui, "");
         self.restore_mode(ui);
-        self.last_result = Some(r);
-        Some(r)
+        Some(line)
     }
 
     /// A typed character for the focused entry (§6.5, §6.6): the key-repeat guard (when on),

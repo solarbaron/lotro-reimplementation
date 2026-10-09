@@ -76,18 +76,23 @@
 //! | [`screenshot`] | PNG output for `--screenshot` |
 //! | [`fonts`] | UI fonts from the system (none are embedded) |
 //! | [`scene`] | Mesh-viewer scenes built on workers: parts, materials, textures |
+//! | [`script_view`] | Text display of script-graph nodes (record view of 0x07/0x0C, per-instance script view) |
 //! | [`geometry`] | Mesh level → renderer streams; texture compositions (pure) |
 //! | [`viewport`] | The render thread (offscreen `tessera-render`) and the orbit camera |
 //! | [`mesh_view`] | The 3D view's UI: toolbar, viewport, part list, material inspector |
 //! | [`character`] | Character viewer data (M4): bodies, assembled figures, clips, clip catalogue (workers) |
-//! | [`anim_view`] | The character view's UI: body, equipment, sliders, clip browser, playback |
+//! | [`anim_view`] | The character view's UI: body, equipment, sliders, clip browser, playback, mount viewer, drama player |
+//! | [`drama_play`] | The character view's drama player (`npc-drama.md` §11 item 4): preparation on workers, the T1/T2/T5 run on the UI thread |
+//! | [`mount_view`] | Mount viewer data (`mounts.md` §10): the rider's mount state, the MeshFX branch, the mount figure and its clip (workers) |
 //! | [`sheet`] | `--sheet`: the character view rendered headless into a contact sheet |
+//! | [`particle_view`] | particle preview of 0x39 records in the gameplay view (play, pause, restart, seed) and `--particles DID --sheet` |
 //! | [`charspec`] | Text forms of `--character`, `--wear`, `--clip`, `--time`, `--sliders` |
 //! | [`world`] | M4.5 world data on workers: world context, landblock products, sky products with their timelines |
 //! | [`timeline`] | Sky timelines from decoded records (pure, bounded) |
 //! | [`world_view`] | The landblock and sky views |
 //! | `world_records` | Record-view tables of the M4.5 world records |
 //! | [`collision_overlay`] | Collision overlays of the 3D view from `tessera-physics` geometry |
+//! | [`decal_preview`] | Decal previews of the 3D view for landblock-info records (box, axes, preview mesh with the decal's material) |
 //! | [`gameplay`] | The "Gameplay" view: item, skill, effect, trait, creature, quest, vendor, loot, recipe, map and particle cards from `tessera_formats::gameplay` (workers) |
 
 #![warn(missing_docs)]
@@ -99,7 +104,9 @@ pub mod charspec;
 pub mod cli;
 pub mod collision_overlay;
 pub mod data;
+pub mod decal_preview;
 pub mod decoders;
+pub mod drama_play;
 mod error;
 pub mod fonts;
 pub mod frame_stats;
@@ -110,11 +117,14 @@ pub mod history;
 pub mod image_ops;
 pub mod index;
 pub mod mesh_view;
+pub mod mount_view;
+pub mod particle_view;
 pub mod persist;
 pub mod query;
 pub mod richtext;
 pub mod scene;
 pub mod screenshot;
+pub mod script_view;
 pub mod search;
 pub mod sheet;
 pub mod timeline;

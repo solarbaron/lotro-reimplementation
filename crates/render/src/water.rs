@@ -13,6 +13,12 @@
 //! refraction standing in for the reflection, Fresnel, specular with the sparkle term, the
 //! water colour and overbright, then distance fog. Output alpha 1, written with source ONE
 //! and destination ZERO, depth written, both faces drawn (§8.4 Tessera rule).
+//!
+//! A draw may carry the far view's far-draw fade (`far-view.md` §7.2, FD1; the far view
+//! applies it to the sector water as a Tessera choice, `far-view.md` §8 OPEN): the fragment
+//! is blended toward the undistorted scene copy by *a* = 1 − sat((*d* − *s*) × *r*), *d* the
+//! distance to the eye, and discarded where *a* < 0.001 (without a scene copy: where
+//! *a* < 0.5).
 
 use std::fmt;
 use std::sync::Arc;
@@ -21,6 +27,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::error::{RenderError, Result};
+use crate::far_view::FarFadeParams;
 use crate::frame::Pass;
 use crate::instanced::{
     lit_source, max_uniform_bytes, sampler_entry, texture_entry, uniform_entry, uniform_stride,
@@ -166,6 +173,8 @@ pub struct WaterDraw {
     /// normal-layer coordinates are (position − *O*) / 160. Tessera rule: (0, 0) in the
     /// region frame.
     pub block_offset: [f32; 2],
+    /// The far-draw fade (`far-view.md` §7.2; module docs). Default: no fade.
+    pub fade: FarFadeParams,
 }
 
 impl WaterDraw {
@@ -182,6 +191,7 @@ impl WaterDraw {
             params,
             subdivisions: 1,
             block_offset: [0.0; 2],
+            fade: FarFadeParams::default(),
         }
     }
 }
@@ -219,6 +229,8 @@ struct WaterUniform {
     shoreline_color: [f32; 4],
     /// 1 / width, 1 / height, Oₓ, Oᵧ.
     screen: [f32; 4],
+    /// Far-draw fade start *s*, inverse range *r* (0: no fade), unused ×2.
+    fade: [f32; 4],
 }
 
 /// Largest Fresnel exponent and specular power uploaded (the lit pipelines' cap); values
@@ -246,6 +258,7 @@ impl WaterUniform {
         subdivisions: u32,
         ctx: &WorldFrame<'_>,
         offset: [f32; 2],
+        fade: FarFadeParams,
     ) -> Self {
         let f = |v: f32, d: f32| if v.is_finite() { v } else { d };
         let d = WaterParams::default();
@@ -294,6 +307,12 @@ impl WaterUniform {
                 1.0 / ctx.size.1.max(1) as f32,
                 f(offset[0], 0.0),
                 f(offset[1], 0.0),
+            ],
+            fade: [
+                f(fade.start, f32::MAX),
+                f(fade.inv_range, 0.0).max(0.0),
+                0.0,
+                0.0,
             ],
         }
     }
@@ -531,6 +550,7 @@ pub(crate) fn build_hook(
             n,
             ctx,
             draw.block_offset,
+            draw.fade,
         );
         let bind_group = match maps.iter().position(|m| *m == key) {
             Some(i) => i,
@@ -663,6 +683,24 @@ pub fn wave_height(params: &WaterParams, x: f32, y: f32, t: f32) -> (f32, f32, f
     (h, dx, dy)
 }
 
+/// CPU twin of the far-draw fade of a water fragment at distance `d` from the eye (module
+/// docs): *a* = 1 − sat((*d* − *s*) × *r*) with the values as the pipeline uploads them
+/// (a non-finite start means no fade, a non-finite or negative inverse range 0).
+#[must_use]
+pub fn water_fade(fade: FarFadeParams, d: f32) -> f32 {
+    let s = if fade.start.is_finite() {
+        fade.start
+    } else {
+        f32::MAX
+    };
+    let r = if fade.inv_range.is_finite() {
+        fade.inv_range.max(0.0)
+    } else {
+        0.0
+    };
+    1.0 - ((d - s) * r).clamp(0.0, 1.0)
+}
+
 /// `s` reduced to [−π, π).
 fn wrap_pi(s: f32) -> f32 {
     let tau = std::f32::consts::TAU;
@@ -725,8 +763,27 @@ mod tests {
 
     #[test]
     fn layouts_match_the_wgsl() {
-        assert_eq!(size_of::<WaterUniform>(), 176);
+        assert_eq!(size_of::<WaterUniform>(), 192);
         assert_eq!(size_of::<QuadGpu>(), 32);
+    }
+
+    #[test]
+    fn far_draw_fade_matches_the_far_terrain() {
+        let f = FarFadeParams {
+            start: 1_920.0,
+            inv_range: 1.0 / 160.0,
+        };
+        assert_eq!(water_fade(f, 0.0), 1.0);
+        assert_eq!(water_fade(f, 1_920.0), 1.0);
+        assert!((water_fade(f, 2_000.0) - 0.5).abs() < 1e-6);
+        assert_eq!(water_fade(f, 2_080.0), 0.0);
+        assert_eq!(water_fade(f, 9_000.0), 0.0);
+        // No fade by default, and hostile values never fade or produce NaN.
+        assert_eq!(water_fade(FarFadeParams::default(), 1.0e9), 1.0);
+        for (start, inv_range) in [(f32::NAN, 1.0), (0.0, f32::NAN), (0.0, -1.0)] {
+            let a = water_fade(FarFadeParams { start, inv_range }, 100.0);
+            assert_eq!(a, 1.0, "{start} {inv_range}");
+        }
     }
 
     #[test]

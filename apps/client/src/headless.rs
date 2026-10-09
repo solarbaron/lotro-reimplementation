@@ -13,6 +13,7 @@ use tessera_render::{OffscreenFormat, Renderer, RendererConfig};
 
 use crate::cli::Args;
 use crate::runtime::{Runtime, deadline_after, refuse_install_path};
+use crate::wait::StallCounter;
 use crate::walker::SKY;
 use crate::walker::framelog::Summary;
 use crate::walker_host::{WalkerHost, capture, save_png};
@@ -67,6 +68,11 @@ pub struct HeadlessReport {
     pub characters: crate::walker::characters::CharacterStats,
     /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
     pub audio: Option<crate::audio::AudioReport>,
+    /// The far view's counters of the last frame (`--far-view on`).
+    pub far_view: Option<crate::walker::farview::FarViewStats>,
+    /// Particle effects at the end (`particle-runtime.md`): owners, systems, drawn
+    /// vertices of the last frame and the most of any frame.
+    pub particles: crate::walker::effects::EffectStats,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -289,35 +295,6 @@ pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport>
     out.map(|()| report)
 }
 
-/// Counts consecutive frames whose progress snapshot equals the previous one.
-#[derive(Debug)]
-struct StallCounter<P> {
-    last: Option<P>,
-    stalled: u64,
-}
-
-impl<P> Default for StallCounter<P> {
-    fn default() -> Self {
-        Self {
-            last: None,
-            stalled: 0,
-        }
-    }
-}
-
-impl<P: PartialEq> StallCounter<P> {
-    /// Records this frame's snapshot; returns the frames in a row without a change.
-    fn observe(&mut self, p: P) -> u64 {
-        if self.last.as_ref() == Some(&p) {
-            self.stalled = self.stalled.saturating_add(1);
-        } else {
-            self.last = Some(p);
-            self.stalled = 0;
-        }
-        self.stalled
-    }
-}
-
 fn finish(
     args: &Args,
     rt: &mut Runtime,
@@ -352,6 +329,12 @@ fn finish(
         tracing::info!("viewer at: {d}");
     }
     report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    report.far_view = walker.far_view_stats();
+    if let Some(f) = &report.far_view {
+        tracing::info!(?f, "far view at the end");
+    }
+    report.particles = walker.effects().stats();
+    tracing::info!("particles: {}", walker.effects().hud_line());
     if let Some(a) = &report.audio {
         crate::audio::log_report(a);
     }
@@ -412,17 +395,6 @@ fn keep(first: &mut Option<anyhow::Error>, r: anyhow::Result<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stall_counter_resets_on_any_change() {
-        let mut c = StallCounter::default();
-        assert_eq!(c.observe(1), 0, "the first snapshot is progress");
-        assert_eq!(c.observe(1), 1);
-        assert_eq!(c.observe(1), 2);
-        assert_eq!(c.observe(2), 0, "a change is progress");
-        assert_eq!(c.observe(1), 0, "also a change back");
-        assert_eq!(c.observe(1), 1);
-    }
 
     #[test]
     fn a_new_pose_counts_as_progress() {

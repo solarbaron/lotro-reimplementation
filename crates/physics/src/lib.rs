@@ -7,7 +7,7 @@
 //! | Module | Purpose |
 //! |---|---|
 //! | [`geometry`] | Terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries, cell volumes and point-in-cell, per-landblock collision sets, Tessera's bounding-volume hierarchy and capsule sweeps |
-//! | [`controller`] | The character controller: parameter layering, float height, contacts, step-up, fixed 1/60 s step, water states |
+//! | [`controller`] | The character controller: parameter layering, float height, contacts, step-up, fixed 1/60 s step, water states; the war-steed controller (`mounts.md` §5) |
 //!
 //! Layer L3 (`docs/ARCHITECTURE.md` §3.1): depends only on `tessera-formats` and
 //! `tessera-props`.

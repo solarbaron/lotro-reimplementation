@@ -25,6 +25,7 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `water.png` | `crates/render/tests/water_golden.rs` | water pipeline (M4.5): a terrain basin with a pillar flooded by a flat and a subdivided waving quad, three scrolling normal layers, refraction of the scene copy, Fresnel, specular and sparkle |
 | `sky_morning.png`, `sky_evening.png` | `crates/render/tests/sky_golden.rs` | the sky (M4.5) at two times of day: a vertex-coloured dome, an additive sun disc and a blended cloud layer placed by their angles and tinted, over fogged ground |
 | `frill_sector.png` | `crates/render/tests/instanced_golden.rs` | instanced scenery and frills (M4.5): a 10 × 10-unit frill sector of 625 alpha-tested clumps (sway, terrain colour, distance scale) beside three instanced rocks casting the sun's shadow |
+| `particles_fountain.png` | `crates/render/tests/particles_golden.rs` | the particle pipeline: one synthetic particle system simulated by `tessera-particles` for 2 s (seed 1234): a fountain of textured quads under gravity with scale and colour keys, a 2 × 2 atlas with random start frames and a fade-in, and rising spinning triangles, alpha-blended and depth-tested against an opaque ground and pillar |
 | `ui_tile.png` | `crates/render/tests/ui_golden.rs` | UI pass: a 32 × 32 canvas tiled 1 : 1 and at node scale 1.5 (render.md §6.13 T7) |
 | `ui_clip.png` | same | a nested entry cut at its root's edge, unrotated and with the root at z = 30 (T8) |
 | `ui_clip_chain.png` | same | clip chains: own-surface child turned by 30, mode-0 child with the parent turned, mode-0 and own-surface children past the parent (T9) |
@@ -55,6 +56,7 @@ TESSERA_BLESS=1 cargo test -p tessera-render --test terrain_layers_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test water_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test sky_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test instanced_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test particles_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test ui_golden
 TESSERA_BLESS=1 cargo test -p tessera-client --test scene_golden
 ```
@@ -85,6 +87,9 @@ same RTX 2070 Super Max-Q (Vulkan, NVIDIA 615.71) on 2026-10-06 and verified on 
 24.2 (outliers: `terrain_layers` 24, `water` 26, `sky_morning` 0, `sky_evening` 0,
 `frill_sector` 6, all within the 160-pixel budget) and on llvmpipe GL (Mesa 26.1.8).
 
+`particles_fountain` was blessed on the reference machine's RTX 2070 Super Max-Q (Vulkan) on
+2026-10-08 and verified on llvmpipe GL (Mesa 26.1.8: 0 outliers, one pixel beyond ±4 at the
+same position).
 The `ui_*` images were blessed on the hardware Vulkan adapter and verified on Mesa lavapipe
 (Mesa 24.2) and on llvmpipe GL (Mesa 26.1). They render into `Rgba8Unorm` targets, so GL's
 linear fallback of `render.md` §6.4 (which applies to sRGB targets only) does not change them.

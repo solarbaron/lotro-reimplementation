@@ -20,9 +20,10 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tessera_client::avatar::AvatarSpec;
+use tessera_client::wait::{LoadWait, ProgressWait};
 use tessera_client::walker::movement::run::{WalkSession, wait_blocks};
 use tessera_client::walker::movement::soak::{
     SOAK_SEED, SOAK_WALKS, SoakOutcome, SoakPlanner, SoakWalk, find_start, land_landblocks,
@@ -30,6 +31,16 @@ use tessera_client::walker::movement::soak::{
 };
 use tessera_client::walker::movement::{PhysicsWalker, run::yaw_of};
 use tessera_world::{LANDBLOCK_SIZE, RingConfig};
+
+/// How long a wait for collision sets may last: as long as loading progresses. It gives up
+/// after this many polls (about 1 ms apart, longer on a loaded machine) in a row in which
+/// no loading work started or finished and the missing sets stayed the same, or after this
+/// many polls in all (`walker.md` §7, implementer note on progress waits).
+const LOAD_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(900_000, 14_400_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(120_000, 3_600_000))
+};
 
 fn install() -> Option<PathBuf> {
     match std::env::var_os("TESSERA_GAME_DIR") {
@@ -110,7 +121,6 @@ fn soak_of_random_walks_never_falls_through() {
     let (tx, rx) = mpsc::sync_channel::<SoakWalk>(4 * runners);
     let rx = Arc::new(Mutex::new(rx));
     let results: Arc<Mutex<Vec<(SoakWalk, SoakOutcome)>>> = Arc::new(Mutex::new(Vec::new()));
-    let timeout = Duration::from_secs(300);
     let mut no_start: Vec<usize> = Vec::new();
 
     std::thread::scope(|s| {
@@ -125,7 +135,7 @@ fn soak_of_random_walks_never_falls_through() {
                         Ok(w) => w,
                         Err(_) => break,
                     };
-                    let out = run_soak_walk(&walk, &mut world, &session.setup, timeout);
+                    let out = run_soak_walk(&walk, &mut world, &session.setup, LOAD_WAIT);
                     results.lock().expect("results").push((walk, out));
                 }
             });
@@ -149,7 +159,7 @@ fn soak_of_random_walks_never_falls_through() {
             let around: Vec<_> = (-1..=1)
                 .flat_map(|dy| (-1..=1).filter_map(move |dx| block.offset(dx, dy)))
                 .collect();
-            wait_blocks(&probe, &mut world, &around, timeout).expect("start landblocks load");
+            wait_blocks(&probe, &mut world, &around, LOAD_WAIT).expect("start landblocks load");
             let shape = session.setup.shape;
             let walk = planner
                 .plan(|key, xy| find_start(&world, &shape, key, xy))

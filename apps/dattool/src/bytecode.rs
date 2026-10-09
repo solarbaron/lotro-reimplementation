@@ -139,6 +139,7 @@ pub fn run(out: &mut Out, ctx: &Ctx, o: &Opts) -> Result<ExitCode> {
             "library_findings": rep.finding_count,
             "shared_bodies": rep.shared_bodies,
             "unassigned_local_reads": da.reads.iter().map(|r| json!({"body": r.body, "offset": r.offset, "local": r.local})).collect::<Vec<_>>(),
+            "assignment_skipped_bodies": da.skipped,
         }))?;
     } else {
         let w = &mut out.w;
@@ -196,6 +197,17 @@ pub fn run(out: &mut Out, ctx: &Ctx, o: &Opts) -> Result<ExitCode> {
                 "  body {:#x} offset {:#x} local {}",
                 r.body, r.offset, r.local
             )?;
+        }
+        if !da.skipped.is_empty() {
+            writeln!(
+                w,
+                "bodies not analysed for assignment (more than {} local cells): {}",
+                tessera_wvm::flow::MAX_ANALYSED_LOCALS,
+                da.skipped.len()
+            )?;
+            for b in &da.skipped {
+                writeln!(w, "  body {b:#x}")?;
+            }
         }
         writeln!(w)?;
         let mut t = Table::new(&[

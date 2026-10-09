@@ -354,6 +354,28 @@ fn definite_assignment_finds_the_unassigned_read() {
 }
 
 #[test]
+fn definite_assignment_reports_skipped_bodies() {
+    // §12: a bounded V16 must name the bodies it skipped. Body 0 has 65 local cells
+    // (one above the bound), body 2 has one.
+    let mut a = Asm::new();
+    a.enter(65 * 8, 0).op(0x9D).op(0x11);
+    let start2 = a.here();
+    a.enter(8, 0).op(0x9D).op(0x11);
+    let code = CodeBlock::decode(a.finish(), [0, start2]).expect("valid");
+    let rep = definite_assignment(&code);
+    assert_eq!(rep.analysed, 1);
+    assert_eq!(rep.skipped, vec![0]);
+    assert_eq!(
+        rep.reads,
+        vec![UnassignedRead {
+            body: start2,
+            offset: start2 + 8,
+            local: 0
+        }]
+    );
+}
+
+#[test]
 fn address_counts_as_store() {
     let mut a = Asm::new();
     a.enter(8, 0).op_k(0x52, 0).op(0x0A).op(0x9D).op(0x11);
@@ -565,6 +587,13 @@ fn opcode_table() {
         .filter(|&o| Opcode(o as u8).name() != "invalid")
         .count();
     assert_eq!(named, 220);
+    // §1: one distinct label per valid opcode.
+    let labels: std::collections::HashSet<&str> = (0u16..=255)
+        .map(|o| Opcode(o as u8))
+        .filter(|op| op.is_valid())
+        .map(Opcode::name)
+        .collect();
+    assert_eq!(labels.len(), 220, "labels are not distinct");
     for o in 0u16..=255 {
         let op = Opcode(o as u8);
         assert_eq!(op.layout().is_some(), op.is_valid());

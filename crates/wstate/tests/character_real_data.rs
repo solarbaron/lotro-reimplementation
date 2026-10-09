@@ -611,26 +611,105 @@ fn player_character_census() {
         draws = draws.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         draws % n.max(1)
     };
+    // §8.5: the client's procedure under Decision D2; PC20 on every generated name.
     let mut generated = 0;
+    let mut produced = 0usize;
     for &(species, sex) in &race_pairs {
-        if tessera_wstate::character::generate_name(
+        let g = tessera_wstate::character::generate_name(
             &generator,
             &names_text,
             species,
             sex,
             &mut rnd,
             |_| true,
-        )
-        .is_some()
-        {
+        );
+        if g.accepted {
             generated += 1;
         }
+        for _ in 0..50 {
+            let name = tessera_wstate::character::generate_name_once(
+                &generator,
+                &names_text,
+                species,
+                sex,
+                &mut rnd,
+            );
+            assert!(!name.is_empty(), "§8.5: generation succeeds here");
+            let mut chars = name.chars();
+            let first = chars.next().expect("not empty");
+            assert!(
+                first.is_ascii_uppercase() && chars.all(|c| c.is_ascii_lowercase()),
+                "PC20: case form of a generated name"
+            );
+            produced += 1;
+        }
     }
+    eprintln!("§8.5: {produced} names generated, all in the PC20 case form");
     assert_eq!(
         generated,
         race_pairs.len(),
         "D2: a name for every (species, sex)"
     );
+
+    // PC19: every resolvable shift text is ASCII (all syllables were checked under PC9).
+    for t in names_text.shifts.values() {
+        for (_, e, _, s, l, r) in t.canonical_entries() {
+            assert!(
+                [e, s, l, r].iter().all(|x| x.is_ascii()),
+                "PC19: shift texts are ASCII"
+            );
+        }
+    }
+
+    // PC18 (partly): the compiled half holds one category object per category and one
+    // option object per option, and its weighted tables carry the categories' weights in
+    // option order. Which attributes link them is not stated (§8.5 implementer OPEN), so
+    // the tables are compared as a multiset.
+    let mut compiled_weights: Vec<Vec<u32>> = state
+        .items()
+        .iter()
+        .filter_map(|i| match i.as_native() {
+            Some(tessera_wstate::Native::WeightedTable(v, _)) => {
+                Some(v.iter().map(|e| e.weight).collect())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut property_weights: Vec<Vec<u32>> = generator
+        .categories
+        .iter()
+        .map(|c| {
+            c.options
+                .iter()
+                .map(|o| u32::try_from(o.weight).expect("weights are positive"))
+                .collect()
+        })
+        .collect();
+    compiled_weights.sort();
+    property_weights.sort();
+    assert_eq!(
+        compiled_weights, property_weights,
+        "PC18: weighted tables of the compiled half"
+    );
+    let option_count: usize = generator.categories.iter().map(|c| c.options.len()).sum();
+    let mut by_class: BTreeMap<u32, usize> = BTreeMap::new();
+    for i in state.items() {
+        if let Some(c) = i.class() {
+            *by_class.entry(c).or_insert(0) += 1;
+        }
+    }
+    eprintln!(
+        "PC18: {} categories, {option_count} options; compiled objects of classes 3047 / 3048 here: {:?} / {:?}",
+        generator.categories.len(),
+        by_class.get(&3047),
+        by_class.get(&3048)
+    );
+    assert_eq!(
+        by_class.get(&3047),
+        Some(&generator.categories.len()),
+        "PC18: categories"
+    );
+    assert_eq!(by_class.get(&3048), Some(&option_count), "PC18: options");
 
     // §9, PC12.
     let xp = XpGlobals::from_properties(

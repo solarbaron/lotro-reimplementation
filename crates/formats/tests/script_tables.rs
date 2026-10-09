@@ -158,6 +158,13 @@ const PID_BIG: u32 = 0x1000_0141;
 const PID_BIG_ELEMENT: u32 = 0x1000_0142;
 /// `Script_CombinationType` (an enum; `Overriding` = 1, `Additive` = 2; §8.2).
 const PID_COMBINATION: u32 = 0x1000_0143;
+// Mount mesh (`mounts.md` §4.4, §11.4): the rider's fields and the MeshFX fields they drive.
+const PID_MOUNT_TYPE: u32 = 0x1000_0150;
+const PID_SPECIES: u32 = 0x1000_0151;
+const PID_SLOT_ENTITY: u32 = 0x1000_0152;
+const PID_SLOT_SCALE: u32 = 0x1000_0153;
+const PID_FX_ENTITY: u32 = 0x1000_0154;
+const PID_FX_SCALE: u32 = 0x1000_0155;
 const STARTUP: u32 = 5;
 const WALKING: u32 = 1;
 const RUNNING: u32 = 2;
@@ -174,6 +181,9 @@ fn schema(pid: u32) -> Option<PropertyType> {
         PID_DB_TABLE => PropertyType::DidRef,
         PID_STARTUP_NAMES => PropertyType::Array,
         PID_COMBINATION => PropertyType::Enum,
+        PID_MOUNT_TYPE | PID_SPECIES => PropertyType::Enum,
+        PID_SLOT_ENTITY => PropertyType::DidRef,
+        PID_SLOT_SCALE => PropertyType::Vector3,
         _ => return None,
     })
 }
@@ -555,6 +565,10 @@ fn node_kinds_and_payloads_round_out() {
         d => panic!("{d:?}"),
     }
     assert_eq!(roots[3].particle_flag, Some(true));
+    let p = roots[3].particle().expect("Particle node data");
+    assert_eq!(p.particle_id, Did(0x3900_0001));
+    assert_eq!(p.effect_did(), Some(Did(0x3900_0001)));
+    assert!(!p.drop_effect && !p.should_fade && p.redirect_property == 0);
     match &roots[4].data {
         NodeData::Run(r) => assert_eq!(r.script, 0x1000_0042),
         d => panic!("{d:?}"),
@@ -573,6 +587,141 @@ fn node_kinds_and_payloads_round_out() {
             .root_cause(),
         FormatError::UnknownProperty { .. }
     ));
+}
+
+/// The data of a Light node (§5.3) with the light-glow stored values of
+/// `instance-scripts.md` §6.3: range `range`, white diffuse and specular, constant
+/// intensity 0.5, falloff 1, fade time 0.25, baked shadows allowed.
+fn light_data(range: f32) -> B {
+    B::new()
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0) // Direction
+        .f32(range)
+        .bytes(&[255, 255, 255, 255]) // LightDiffuse
+        .u32(1)
+        .f32(0.5) // LightDiffuseIntensity: subtype 1, one value
+        .bytes(&[250, 251, 252, 253]) // LightSpecular
+        .f32(1.0) // LightFalloff
+        .u8(0) // ProjectorEnabled
+        .u32(0) // ProjectorTexture
+        .u32(0)
+        .u32(0)
+        .u32(0) // ProjectorYaw, Pitch, Roll: subtype 0
+        .u8(0) // CoronaEnabled
+        .u32(0x4100_0007) // CoronaTexture
+        .f32(2.0)
+        .f32(3.0)
+        .f32(0.75) // CoronaFadeSpeed, Size, Opacity
+        .u8(1) // CoronaOcclusion
+        .f32(0.5) // CoronaOcclusionSize
+        .u8(0) // KeyLight
+        .u8(1) // ShadowCaster
+        .u8(1) // Light_AllowBakedShadows
+        .f32(0.0) // Lifespan
+        .f32(0.25) // FadeTime
+        .f32(0.0)
+        .f32(0.0)
+        .f32(1.5) // Offset
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(0)
+        .u8(1) // the five flags
+        .u32(9) // HoldingLocation
+}
+
+/// The data of a MeshFX node (§5.2): entity, holding location, bone offset, scale,
+/// `UseParentScale`, one appearance, target property.
+fn mesh_fx_data(entity: u32, location: u32, offset: [f32; 3], scale: f32, parent: bool) -> B {
+    B::new()
+        .u32(entity)
+        .u8(1) // AttachToParent
+        .u8(0) // AllowPhysics
+        .f32(0.25)
+        .f32(0.25)
+        .f32(0.25)
+        .f32(0.25) // the four times
+        .u32(location)
+        .f32(offset[0])
+        .f32(offset[1])
+        .f32(offset[2])
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0) // yaw, pitch, roll
+        .u8(0) // RemoveRotation
+        .u32(0) // BoneType
+        .u32(0x1000_0077) // Behavior
+        .u8(1) // Persistent
+        .u8(0) // OnWater
+        .u8(u8::from(parent)) // UseParentScale
+        .u8(0) // UseParticleScale
+        .u8(1) // IgnoreChildScale
+        .f32(scale)
+        .f32(scale)
+        .f32(scale)
+        .vle(1)
+        .u32(0x2000_0001)
+        .u32(4)
+        .f32(1.0)
+        .u32(0x1000_5000) // MeshIIDTargetProperty
+}
+
+#[test]
+fn light_and_mesh_fx_nodes_decode_every_field() {
+    let light = node(13, light_data(10.0), base(1), &[]);
+    let fx = node(
+        41,
+        mesh_fx_data(0x4700_0001, 7, [0.0, 0.0, -0.3], 1.05, true),
+        base(2),
+        &[],
+    );
+    let data = table(1, &[], &[(STARTUP, vec![light, fx])]);
+    let t = ScriptTable::parse_expecting(&data, 0x0700_0001u32, &schema).unwrap();
+    let roots = &t.script(STARTUP).unwrap().roots;
+    let NodeData::Light(l) = &roots[0].data else {
+        panic!("{:?}", roots[0].data)
+    };
+    assert_eq!(l.range, 10.0);
+    assert_eq!(l.diffuse, [255; 4]);
+    assert_eq!(l.specular, [250, 251, 252, 253]);
+    assert_eq!(l.diffuse_intensity.subtype, 1);
+    assert_eq!(l.diffuse_intensity.values, vec![0.5]);
+    assert_eq!(l.falloff, 1.0);
+    assert_eq!(l.projector_yaw.subtype, 0);
+    assert_eq!(l.corona_texture, Did(0x4100_0007));
+    assert_eq!(
+        (l.corona_fade_speed, l.corona_size, l.corona_opacity),
+        (2.0, 3.0, 0.75)
+    );
+    assert!(l.corona_occlusion && !l.key_light && l.shadow_caster && l.allow_baked_shadows);
+    assert_eq!(l.fade_time, 0.25);
+    assert_eq!(l.offset, [0.0, 0.0, 1.5]);
+    assert!(l.global_light && !l.run_on_local_player_only);
+    assert_eq!(l.holding_location, 9);
+    assert_eq!(roots[0].base.node_id, 1, "the base block follows the data");
+
+    let NodeData::MeshFx(m) = &roots[1].data else {
+        panic!("{:?}", roots[1].data)
+    };
+    assert_eq!(m.entity, Did(0x4700_0001));
+    assert!(m.attach_to_parent && !m.allow_physics && m.persistent);
+    assert_eq!(m.holding_location, 7);
+    assert_eq!(m.bone_offset, [0.0, 0.0, -0.3]);
+    assert_eq!(m.behavior, 0x1000_0077);
+    assert!(m.use_parent_scale && !m.use_particle_scale && m.ignore_child_scale);
+    assert_eq!(m.scale, [1.05; 3]);
+    assert_eq!(m.appearances.len(), 1);
+    assert_eq!(m.appearances[0].appearance, Did(0x2000_0001));
+    assert_eq!(m.appearances[0].key, 4);
+    assert_eq!(m.mesh_iid_target_property, 0x1000_5000);
+    assert_eq!(roots[1].base.node_id, 2);
+
+    // Truncated data fails instead of panicking.
+    for cut in [1, 20, 60] {
+        let short = &data[..data.len().saturating_sub(cut)];
+        assert!(ScriptTable::parse_expecting(short, 0x0700_0001u32, &schema).is_err());
+    }
 }
 
 #[test]
@@ -2848,4 +2997,164 @@ fn appearance_nodes_are_listed_and_picked_by_seed() {
     let ids: Vec<u32> = res.appearances.iter().map(|a| a.node_id).collect();
     assert_eq!(ids, vec![10, 21]);
     assert!(res.appearances.iter().all(|a| a.picked));
+}
+
+// --- MeshFX candidates and the mount mesh (`mounts.md` §4.4, §11.4) ---
+
+const MESH_SCRIPT: u32 = 0x1000_0500;
+const CHANNELLING: u32 = 0x1000_0501;
+const SPECIES_A: u32 = 7;
+const SPECIES_B: u32 = 8;
+const GOAT: u32 = 0x4;
+const MOUNT_ENTITY: u32 = 0x4700_0099;
+
+/// The synthetic table of §11.4: `Mounted_Player_Cosmetic_Mesh` is a Switch on the mount
+/// type with a goat case, a When on the slot entity (not the null DID), then a species
+/// Switch: species A gets a node of stored scale 1.05 that does not drive `Scale`, the
+/// default a node that drives it. `Startup` holds a WhenRunning on the channelling script
+/// whose Running port starts a clip.
+fn mount_world() -> HashMap<Did, Vec<u8>> {
+    let fx_a = node(
+        41,
+        mesh_fx_data(0, 0, [0.0; 3], 1.05, false),
+        base_full(11, 1.0, &[(PID_FX_ENTITY, PID_SLOT_ENTITY)]),
+        &[],
+    );
+    let fx_default = node(
+        41,
+        mesh_fx_data(0, 0, [0.0; 3], 1.0, false),
+        base_full(
+            12,
+            1.0,
+            &[
+                (PID_FX_ENTITY, PID_SLOT_ENTITY),
+                (PID_FX_SCALE, PID_SLOT_SCALE),
+            ],
+        ),
+        &[],
+    );
+    let species = switch(
+        10,
+        PID_SPECIES,
+        &[
+            switch_case(&[(PID_SPECIES, SPECIES_A)], &[fx_a]),
+            default_port_pair(&[fx_default]),
+        ],
+    );
+    let not_null = port(
+        24,
+        Some(
+            B::new()
+                .u32(PID_SLOT_ENTITY)
+                .u32(0)
+                .u32(0)
+                .u32(3) // NotEqual
+                .u32(0)
+                .u32(0),
+        ),
+        &[species],
+    );
+    let when = node(
+        63,
+        B::new().u32(PID_SLOT_ENTITY).u8(1).u8(0).u8(0),
+        base(9),
+        &[not_null],
+    );
+    let by_type = switch(
+        8,
+        PID_MOUNT_TYPE,
+        &[switch_case(&[(PID_MOUNT_TYPE, GOAT)], &[when])],
+    );
+    let running = node(
+        14,
+        B::new().u8(1).u32(CHANNELLING).u8(0).u8(1),
+        base(20),
+        &[
+            port(11, None, &[anim(21, CLIP_WALK, 10, 0.0, &[])]), // Running
+            port(10, None, &[anim(22, CLIP_IDLE, 10, 0.0, &[])]), // NotRunning
+        ],
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            1,
+            &[],
+            &[(STARTUP, vec![running]), (MESH_SCRIPT, vec![by_type])],
+        ),
+    );
+    m
+}
+
+fn mount_vocab() -> ScriptVocabulary {
+    ScriptVocabulary {
+        mesh_fx: tessera_formats::script_table::resolve::MeshFxFieldPids {
+            entity: Some(PID_FX_ENTITY),
+            scale: Some(PID_FX_SCALE),
+            ..Default::default()
+        },
+        ..vocab()
+    }
+}
+
+fn rider(species: u32, entity: u32) -> EntityScripts {
+    let mut properties = PropertyState::new();
+    properties.set(PID_MOUNT_TYPE, PropertyValue::Enum(GOAT));
+    properties.set(PID_SPECIES, PropertyValue::Enum(species));
+    properties.set(PID_SLOT_ENTITY, PropertyValue::DidRef(Did(entity)));
+    properties.set(PID_SLOT_SCALE, PropertyValue::Vector3([0.925; 3]));
+    EntityScripts {
+        class_table: Some(Did(CLASS)),
+        startup_scripts: vec![MESH_SCRIPT],
+        properties,
+        ..EntityScripts::default()
+    }
+}
+
+#[test]
+fn worked_example_mount_scale() {
+    use tessera_formats::gameplay::mounts::MountMesh;
+    let m = mount_world();
+    let mut r = ClipResolver::new(&schema, mount_vocab(), fetch(&m));
+    // Species A on the goat: the stored 1.05; the effect's 0.925 is ignored.
+    let res = r
+        .resolve_with_state(
+            &rider(SPECIES_A, MOUNT_ENTITY),
+            rider(SPECIES_A, MOUNT_ENTITY).properties,
+        )
+        .unwrap();
+    let mesh = MountMesh::choose(&res.mesh_fx, MESH_SCRIPT).unwrap();
+    assert_eq!(mesh.entity, Did(MOUNT_ENTITY));
+    assert_eq!(mesh.scale, [1.05; 3]);
+    assert!(!mesh.scale_driven);
+    assert_eq!(mesh.node_id, 11);
+    assert_eq!(res.mesh_fx[0].scripts, vec![MESH_SCRIPT]);
+    // Another species: the default node drives the scale: 0.925.
+    let e = rider(SPECIES_B, MOUNT_ENTITY);
+    let res = r.resolve_with_state(&e, e.properties.clone()).unwrap();
+    let mesh = MountMesh::choose(&res.mesh_fx, MESH_SCRIPT).unwrap();
+    assert_eq!(mesh.scale, [0.925; 3]);
+    assert!(mesh.scale_driven);
+    // `UseParentScale` is off in these nodes: the rider's model scale does not apply.
+    assert_eq!(mesh.draw_scale([1.2; 3]), [0.925; 3]);
+    let t = mesh.local_transform([1.0; 3]);
+    assert_eq!((t[0], t[5], t[10], t[15]), (0.925, 0.925, 0.925, 1.0));
+    // A rider without an entity (the null DID): the When node stops the branch.
+    let e = rider(SPECIES_A, 0);
+    let res = r.resolve_with_state(&e, e.properties.clone()).unwrap();
+    assert!(res.mesh_fx.is_empty());
+    assert_eq!(MountMesh::choose(&res.mesh_fx, MESH_SCRIPT), None);
+}
+
+#[test]
+fn running_keys_select_when_running_branches() {
+    let m = mount_world();
+    let mut r = ClipResolver::new(&schema, mount_vocab(), fetch(&m));
+    let mut e = rider(SPECIES_A, MOUNT_ENTITY);
+    e.startup_scripts.clear();
+    let res = r.resolve_with_state(&e, e.properties.clone()).unwrap();
+    assert_eq!(res.clips(), vec![Did(CLIP_IDLE)], "not running");
+    e.running = vec![CHANNELLING];
+    let res = r.resolve_with_state(&e, e.properties.clone()).unwrap();
+    assert_eq!(res.clips(), vec![Did(CLIP_WALK)], "running before Startup");
 }

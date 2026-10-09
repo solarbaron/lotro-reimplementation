@@ -355,6 +355,14 @@ input. A record that leaves bytes over or runs short under the newest grammar is
 Answered 2026-10-08 (implementer OPEN of 2026-10-08 on mask bits above bit 8 and on the
 encoder's null properties): the two rules above; the client's behaviour is §3.5.
 
+> **OPEN:** (implementer note, `crates/formats/src/landblock/sector.rs`, 2026-10-09;
+> engineering choices, for review) (1) Under the Tessera rule of §3.2 the decoder keeps only
+> the stored index count *m*, not the index bytes; the fixture encoder writes *m* zero u16
+> values back, so re-encoding is byte-exact only for records with *m* = 0 (all records of
+> this install). (2) The checker of the §4.3 normal rule (DL-I14) computes in 64-bit floats;
+> the census finds the counts of §4.3 exactly (every sample within one step). Are these
+> acceptable?
+
 ---
 
 <a id="s4"></a>
@@ -572,6 +580,8 @@ type, two builders), which suggests the far entries are handled like ordinary pl
 
 <a id="s5"></a>
 ## 5. Client behaviour (BIN unless marked)
+
+Run-time use (radii, near field, far-terrain shading, sprite fades, far entities, horizon fill): [`far-view.md`](far-view.md).
 
 <a id="s5-1"></a>
 ### 5.1 Which sectors are loaded

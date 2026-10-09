@@ -1133,6 +1133,42 @@ pub fn record_product_stamped(
         type_name: Did(did).kind().name().to_owned(),
         ..RecordProduct::default()
     };
+    if matches!(did >> 24, 0x07 | 0x0C) {
+        // Script tables and scriptlets: the node display shared with the per-instance
+        // script view (`instance-scripts.md` §9.6 item 1).
+        let registry = ctx.game.registry()?;
+        let dict = registry.dictionary();
+        let labels = crate::gameplay::card::Labels {
+            registry: Some(registry),
+            game: Some(&ctx.game),
+            strings: ctx.strings.as_ref(),
+        };
+        let script_id =
+            tessera_formats::gameplay::common::Pid::resolve(dict, "ScriptTable_ScriptID");
+        let pid = |p: u32| labels.pid_name(p);
+        let key = |k: u32| labels.enum_key(script_id, k);
+        let names = crate::script_view::NodeNames {
+            pid: &pid,
+            key: &key,
+        };
+        let (summary, rows) = crate::script_view::record_rows(did, bytes, dict, &names)?;
+        p.type_name = if did >> 24 == 0x07 {
+            "script table".into()
+        } else {
+            "scriptlet".into()
+        };
+        p.summary = summary;
+        p.columns = vec!["script", "node"];
+        p.link_column = Some(1);
+        p.rows = rows
+            .into_iter()
+            .map(|(script, line)| RecordRow {
+                link: crate::script_view::dids_in_line(&line).first().copied(),
+                cells: vec![script, line],
+            })
+            .collect();
+        return Ok(p);
+    }
     let decoded = if did >> 24 == 0x01 {
         let registry = ctx.game.registry()?;
         AnyRecord::decode_with_stamp(did, bytes, stamp, &**registry)?

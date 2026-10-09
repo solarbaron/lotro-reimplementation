@@ -906,6 +906,12 @@ property half.
    again. At most **101 draws** are made for one part (the first draw and up to 100 redraws;
    the limit is counted separately for each part); if all 101 are rejected, or the key has no
    table, or the table is empty, generation fails.
+
+   > **OPEN:** (implementer note, 2026-10-09) What the client does when a drawn syllable
+   > string does not resolve to text (every syllable of this install resolves, PC9). Tessera
+   > leaves unresolvable strings out of the table when it resolves the generator's texts, so
+   > *n* counts only resolvable strings and such a string is never drawn (an engineering
+   > choice; it cannot change a result on this install).
 4. **Join.** Start with an empty name *A*. For each part *B* in order: apply the option's
    shift tables to (*A*, *B*) by §8.4, trying the option's
    `NameGenerationCategory_Option_PhoneticShiftsTable` keys in stored order and stopping at
@@ -1534,6 +1540,15 @@ Each is Confirmed on all records of the kind in this install (P-rows) unless mar
 - **PC20** (WLB + BIN) A generated name is empty or has an upper-case first character and
   lower-case further characters (§8.5 step 5), and no two of its parts, as drawn before the
   shifts, are equal without regard to case (step 3).
+
+> **OPEN:** (implementer note, `crates/wstate/src/character`, 2026-10-09) PC18 cannot be
+> checked element by element: the spec does not say which attributes of a class-3047
+> (category) and a class-3048 (option) object hold the options, the syllable-table keys,
+> the shift-table keys and the weighted table, nor how a category object is tied to its
+> category key. The real-data census therefore checks a weaker form: the compiled half holds
+> as many class-3047 objects as categories (21) and class-3048 objects as options (64), and
+> its 21 weighted tables (native class 175) carry, as a multiset, the categories' weight
+> sequences in option order. Which attributes hold these fields?
 
 ---
 

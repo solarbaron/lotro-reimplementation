@@ -1740,6 +1740,15 @@ authoritative.
 | A group without a label goes after the labelled groups in the finder order. | **Changed:** the client ignores a group without a label and keeps the first group of a repeated label. Tessera Decision for writers of the finder order: leave an unlabelled group out and keep groups with equal labels in stored order, warning in both cases. | §13.3, §15.1 B3 |
 | Removal tracker: a count larger than the figures left removes the rest; an element matching no group removes nothing; a shrinking list applies nothing and restarts the count at its new length. | **Confirmed as client behaviour**, with more detail: figures go from the end of the group's offset array, a non-integer count counts as 1, the count is unsigned, existing elements are applied silently when the unit is first shown, and no script plays when nothing was removed. | §15.1 B5 step 4 |
 
+> **OPEN:** (implementer note, 2026-10-09; engineering choices of the 2026-10-08 revision's
+> implementation, for review) (1) The flag bits are taken from the mapper's key labels; a
+> key above 32 has no bit in a 32-bit flag word and is ignored, and a template whose kind
+> condition has no labelled `Type_…` bit gets no entries and a warning (like a template with
+> several kind conditions). (2) An element of the removal list that is not a struct keeps its
+> position and is skipped like an element without a unit. (3) A removal script key stored with
+> a type other than an enum counts as 0, "no script" (§3.6 gives only the absent case). Are
+> these acceptable?
+
 ---
 
 <a id="changelog"></a>

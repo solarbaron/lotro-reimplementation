@@ -531,7 +531,7 @@ impl Ui {
             && let Some(b) = e.base.as_mut()
         {
             b.draw_mode = n;
-            e.dirty = true;
+            self.note_paint_dirty(k);
         }
         self.painter.touched = true;
         Ok(())
@@ -605,7 +605,7 @@ impl Ui {
             && e.overlay != ov
         {
             e.overlay = ov;
-            e.dirty = true;
+            self.note_paint_dirty(k);
         }
         self.painter.touched = true;
     }
@@ -674,6 +674,10 @@ impl Ui {
                 e.rotation = angles;
             }
             self.painter.touched = true;
+            // A surface that already held a rotation keeps its coverage region (decision
+            // 0015 Decision 1.7), so only its composition entry changes.
+            let first = crate::paint::holds_rotation(held) != crate::paint::holds_rotation(angles);
+            self.painter.rotation_changed(t, first);
         }
         if let Some(p) = self.pd_mut(k) {
             p.rotation = angles;

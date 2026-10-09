@@ -16,18 +16,24 @@
 //! | [`items`] | item records and tables | `items.md` |
 //! | [`combat`] | skills, effects, traits, progressions | `combat-data.md` |
 //! | [`creatures`] | templates, AI tables, spawning, encounter table (0x14) | `creatures.md` |
+//! | [`drama`] | NPC drama lists, actions, scripted fights, starting idles, playback rules | `npc-drama.md` |
 //! | [`quests`] | quests, deeds, dialogue, quest map notes (0x0E400000) | `quests.md` |
 //! | [`economy`] | loot, crafting, vendors, barter, currency | `economy.md` |
 //! | [`map`] | places, map notes, travel, housing | `map-data.md` |
+//! | [`mounts`] | mount effects, mount types, rider fields, durability, template mount stats, landblock riders | `mounts.md` |
 //! | [`particles`] | particle systems (0x39), fork systems (0x44) | `particles.md` |
 //! | [`misc`] | compositors, UI scenes, imposters, filters, metadata objects | `misc-records.md` |
+//! | [`world_logic`] | quest-state phasing, logic boxes, world-event wiring, travel hooks, property responses, version objects | `world-logic.md` |
 
 pub mod combat;
 pub mod common;
 pub mod creatures;
+pub mod drama;
 pub mod economy;
 pub mod items;
 pub mod map;
 pub mod misc;
+pub mod mounts;
 pub mod particles;
 pub mod quests;
+pub mod world_logic;

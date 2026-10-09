@@ -1,26 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Regression tests for review findings on the native panels (synthetic data only; every
-//! value and word is invented): chat lines that `tessera-ui` posts itself reach the plugin
-//! queue, the unknown-command line reaches the logs from `run_line`, the chat window can be
-//! destroyed and reopened, `set_chat` / `reset_chat` with an open window, Tessera's own
-//! plugin manager behind `toggle` / `hide` / `is_shown` / Escape, bound buttons and the
-//! minimap's `MapZoom` routing, P15's store button, apartments, help and the queue cap.
+//! value and word is invented): lines typed into the chat window's entry reach the client's
+//! one command dispatcher and the right sink (decision 0020 item 1: player music, the
+//! session, plugin commands, `/plugins`, help, the unknown-command line, the shared
+//! history), chat lines that `tessera-ui` posts itself reach the plugin queue, the chat
+//! window can be destroyed and reopened, `set_chat` / `reset_chat` with an open window,
+//! Tessera's own plugin manager behind `toggle` / `hide` / `is_shown` / Escape, bound
+//! buttons and the minimap's `MapZoom` routing, P15's store button, apartments and the
+//! queue cap.
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
-use tessera_client::panels::chat::{ChatPanel, ChatSetup, MAX_OUTGOING, ShellCommands};
+use tessera_client::audio::player_music::{MusicConfig, PlayerMusic};
+use tessera_client::commands::Outcome;
+use tessera_client::net::PlayerLocation;
+use tessera_client::panels::chat::{CHAT_ERROR, CHAT_LOG, ChatPanel, ChatSetup, MAX_OUTGOING};
 use tessera_client::panels::{
-    NativePanels, NoMaps, NoShell, PanelCatalog, PanelId, PanelRef, PanelsError, PluginControl,
-    PluginRow, Services,
+    NativePanels, NoMaps, PanelCatalog, PanelId, PanelRef, PanelsError, PluginControl, PluginRow,
+    Services,
 };
+use tessera_client::plugins::{CommandSink, Plugins};
+use tessera_client::walker::WalkerSession;
 use tessera_formats::Did;
 use tessera_formats::property::{PropertyEntry, PropertyValue};
 use tessera_formats::ui_layout::{ElementDesc, StateBlock, UiLayout};
+use tessera_net::ChatChannel;
 use tessera_ui::events::{Message, MsgArg};
-use tessera_ui::game::chat::command::RESULT_UNKNOWN;
 use tessera_ui::game::chat::window::REPLY_MASK;
-use tessera_ui::game::chat::{CommandOutcome, ModeKind};
+use tessera_ui::game::chat::{CommandOutcome, EntryLine, NoHistory};
 use tessera_ui::game::escape::EscapeOutcome;
 use tessera_ui::game::{GameAction, GameLayouts, GameVocab};
 use tessera_ui::{ElementKey, MemoryEnv, Ui, UiEvent, Vocab};
@@ -213,7 +222,6 @@ fn fixture(with_chat: bool) -> (Ui, NativePanels) {
         .resolve_with(&mut |l| (l == "BuyNowButton").then_some(STORE_TYPE));
     if with_chat {
         let mut setup = ChatSetup::sandbox();
-        setup.texts.unknown_command = "unknown".to_string();
         setup.texts.no_reply_target = "no reply".to_string();
         panels.set_chat(setup).unwrap();
     }
@@ -246,11 +254,10 @@ impl PluginControl for FakePlugins {
 }
 
 macro_rules! services {
-    ($maps:ident, $plugins:ident, $shell:ident) => {
+    ($maps:ident, $plugins:ident) => {
         Services {
             maps: &mut $maps,
             plugins: &mut $plugins,
-            shell: &mut $shell,
         }
     };
 }
@@ -273,51 +280,218 @@ fn click_message(source: ElementKey, source_id: u32) -> UiEvent {
     }
 }
 
+/// A session double that records what the dispatcher's channel commands send.
+#[derive(Debug, Default)]
+struct Recorder {
+    sent: Vec<(ChatChannel, String)>,
+}
+
+impl WalkerSession for Recorder {
+    fn player_location(&self) -> Option<PlayerLocation> {
+        None
+    }
+    fn send_move(&mut self, _: Instant, _: tessera_net::Location, _: f32, _: tessera_net::Vec3) {}
+    fn send_chat(&mut self, _: Instant, channel: &ChatChannel, text: &str) -> bool {
+        self.sent.push((channel.clone(), text.to_owned()));
+        true
+    }
+}
+
+/// An original test plugin with one shell command, `greet`.
+const GREET_DESCRIPTOR: &str = "<?xml version=\"1.0\"?><Plugin><Information><Name>Greet</Name>\
+    <Author>Tessera</Author><Version>1.0</Version></Information>\
+    <Package>Tessera.Greet.Main</Package></Plugin>";
+const GREET_MAIN: &str = r#"
+local cmd = Turbine.ShellCommand()
+function cmd:Execute(name, args)
+    Turbine.Shell.WriteLine("greeted " .. name .. " [" .. tostring(args) .. "]")
+end
+Turbine.Shell.AddCommand("greet", cmd)
+"#;
+
+/// The client's plugin host over a temporary `Plugins/` folder holding the `Greet` plugin
+/// (loaded), with player music and the game UI's chat queue on.
+fn plugin_host(dir: &std::path::Path) -> Plugins {
+    let plugins_dir = dir.join("Plugins");
+    std::fs::create_dir_all(plugins_dir.join("Tessera").join("Greet")).unwrap();
+    std::fs::write(
+        plugins_dir.join("Tessera").join("Greet.plugin"),
+        GREET_DESCRIPTOR,
+    )
+    .unwrap();
+    std::fs::write(
+        plugins_dir.join("Tessera").join("Greet").join("Main.lua"),
+        GREET_MAIN,
+    )
+    .unwrap();
+    let mut p = Plugins::start(&plugins_dir, dir.join("data"), &["Greet".to_owned()]);
+    p.set_music(PlayerMusic::new(MusicConfig::default()));
+    let deadline = Instant::now() + std::time::Duration::from_secs(30);
+    while p.manager().loaded_plugins().is_empty() && Instant::now() < deadline {
+        p.pump();
+        std::thread::yield_now();
+    }
+    assert_eq!(p.manager().loaded_plugins().len(), 1, "Greet loads");
+    // As `UiHost::attach_plugins` does: the client's own lines go to the chat window.
+    p.set_ui_driven(true);
+    let mut drain = Vec::new();
+    p.take_lines(&mut drain);
+    let _ = p.take_local_chat();
+    p
+}
+
+/// Types `text` into the chat window's entry (opening it first) and presses Enter, as the
+/// UI host offers the keys (`chat-window.md` §6.2): the submitted line.
+fn type_and_submit(
+    ui: &mut Ui,
+    chat: &mut ChatPanel,
+    plugins: &mut Plugins,
+    text: &str,
+) -> EntryLine {
+    if !chat.chat.entry_focused(ui) {
+        assert_eq!(
+            chat.command(ui, "AcceptInput", false, false, plugins.history_mut()),
+            CommandOutcome::Handled
+        );
+    }
+    for ch in text.chars() {
+        chat.text_input(ui, ch, 0.0);
+    }
+    match chat.command(ui, "AcceptInput", false, false, plugins.history_mut()) {
+        CommandOutcome::Submitted(line) => line,
+        other => panic!("{text:?} not submitted: {other:?}"),
+    }
+}
+
+/// Decision 0020 item 1: the M5 chat window keeps no registry of its own; its entry line
+/// feeds the client's one command dispatcher. `/play` reaches player music (never the
+/// session), plain text the session's `Say` channel, a plugin's shell command the plugin,
+/// `/plugins` the plugin manager, `/help` the listing, an unknown word the unknown-command
+/// line (nothing sent); the replies are the window's lines, and line up recalls the
+/// dispatcher's history.
 #[test]
-fn run_line_unknown_command_reaches_the_log_and_the_queue_once() {
+fn chat_window_lines_reach_the_dispatcher_and_their_sinks() {
     let (mut ui, mut panels) = fixture(true);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut fake) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, fake);
     panels.open(&mut ui, PanelId::Chat, &mut sv).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut plugins = plugin_host(dir.path());
+    let mut session = Recorder::default();
     let chat = panels.chat.as_mut().unwrap();
-    let before = log_len(&ui, chat);
-    assert_eq!(
-        chat.run_line(&mut ui, "/zzznosuchcommand", &mut shell, &mut plugins),
-        RESULT_UNKNOWN
-    );
-    assert_eq!(
-        log_len(&ui, chat),
-        before + 1,
-        "chat-window.md §7.6, §10 item 6"
-    );
-    assert_eq!(chat.take_outgoing(), vec![(1, "unknown".to_string())]);
-    // The submit path: `Chat::submit` posts it, the panel only queues it (not twice).
     let entry = chat.chat.windows[0].entry.expect("entry");
-    ui.set_text(entry, Some("/zzz".to_string()));
+    let now = Instant::now();
+
+    // `/play`: a client built-in; player music runs it, the session gets nothing.
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "/play tune");
+    assert_eq!(ui.text_of(entry), "", "the entry is cleared");
     assert_eq!(
-        chat.submit(&mut ui, &mut shell, &mut plugins),
-        Some(RESULT_UNKNOWN)
+        (line.text.as_str(), line.mode, line.word.as_str()),
+        ("/play tune", 5, "say")
     );
-    assert_eq!(log_len(&ui, chat), before + 2);
-    assert_eq!(chat.take_outgoing(), vec![(1, "unknown".to_string())]);
+    assert_eq!(
+        plugins.submit_entry(&line, Some(&mut session), now),
+        Outcome::Ran
+    );
+    assert_eq!(plugins.music_mut().unwrap().stats().commands, 1);
+    assert!(session.sent.is_empty(), "music never reaches the session");
+
+    // Plain text: the window's channel mode (`Say`) sends it on the session.
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "hello there");
+    assert_eq!(
+        plugins.submit_entry(&line, Some(&mut session), now),
+        Outcome::Ran
+    );
+    assert_eq!(
+        session.sent,
+        vec![(ChatChannel::Say, "hello there".to_owned())]
+    );
+
+    // A plugin's shell command (`Shell.AddCommand`) and the plugin manager command.
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "/Greet  a  b ");
+    assert_eq!(
+        plugins.submit_entry(&line, Some(&mut session), now),
+        Outcome::Ran
+    );
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "/plugins list");
+    assert_eq!(
+        plugins.submit_entry(&line, Some(&mut session), now),
+        Outcome::Ran
+    );
+    let mut out = Vec::new();
+    plugins.take_lines(&mut out);
+    let texts: Vec<&str> = out.iter().map(|l| l.text.as_str()).collect();
+    assert!(texts.contains(&"greeted Greet [a  b]"), "{texts:?}");
+    assert!(texts.contains(&"Available plugins:"), "{texts:?}");
+
+    // An unknown command: the unknown-command line, nothing sent; the dispatcher's lines
+    // are shown in the window (as `UiHost::chat_io` shows them in step 7).
+    let _ = plugins.take_local_chat();
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "/nosuch x");
+    assert_eq!(
+        plugins.submit_entry(&line, Some(&mut session), now),
+        Outcome::Unknown
+    );
+    assert_eq!(session.sent.len(), 1, "nothing more was sent");
+    let local = plugins.take_local_chat();
+    assert_eq!(
+        local,
+        vec![(
+            CHAT_ERROR,
+            "Unknown command. Type /help for a list.".to_owned()
+        )]
+    );
+    let before = log_len(&ui, chat);
+    for (t, text) in &local {
+        chat.show(&mut ui, *t, text);
+    }
+    assert_eq!(log_len(&ui, chat), before + 1);
+    assert!(chat.take_outgoing().is_empty(), "shown, not queued twice");
+
+    // `/help`: the listing as type 8 lines, the music commands among them.
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "/help");
+    assert_eq!(plugins.submit_entry(&line, None, now), Outcome::Ran);
+    let local = plugins.take_local_chat();
+    assert!(local.iter().all(|(t, _)| *t == CHAT_LOG), "{local:?}");
+    assert!(local.iter().any(|(_, l)| l.contains("/play")), "{local:?}");
+    assert!(local.iter().any(|(_, l)| l.contains("/greet")), "{local:?}");
+
+    // Without a session, plain text is refused locally.
+    let line = type_and_submit(&mut ui, chat, &mut plugins, "anyone?");
+    assert_eq!(plugins.submit_entry(&line, None, now), Outcome::Ran);
+    assert_eq!(
+        plugins.take_local_chat(),
+        vec![(CHAT_ERROR, "Not connected: chat not sent".to_owned())]
+    );
+
+    // Line up browses the dispatcher's one history (§6.3), newest first.
+    let h = plugins.history_mut();
+    assert_eq!(
+        chat.command(&mut ui, "AcceptInput", false, false, h),
+        CommandOutcome::Handled
+    );
+    for want in ["anyone?", "/help", "/nosuch x"] {
+        chat.command(
+            &mut ui,
+            "CursorPreviousLine",
+            false,
+            false,
+            plugins.history_mut(),
+        );
+        assert_eq!(ui.text_of(entry), want);
+    }
+    plugins.shutdown();
 }
 
 #[test]
 fn chat_mode_reply_line_is_queued_for_the_plugins() {
     let (mut ui, mut panels) = fixture(true);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     panels.open(&mut ui, PanelId::Chat, &mut sv).unwrap();
     let chat = panels.chat.as_mut().unwrap();
     let before = log_len(&ui, chat);
-    let out = chat.command(
-        &mut ui,
-        "ChatModeReply",
-        false,
-        false,
-        &mut shell,
-        &mut plugins,
-    );
+    let out = chat.command(&mut ui, "ChatModeReply", false, false, &mut NoHistory);
     assert_eq!(out, CommandOutcome::Handled);
     assert_eq!(log_len(&ui, chat), before + 1);
     assert_eq!(
@@ -326,15 +500,15 @@ fn chat_mode_reply_line_is_queued_for_the_plugins() {
         "§10 items 8-9, Q18"
     );
     // Commands that post nothing queue nothing.
-    let _ = chat.command(&mut ui, "EscapeKey", false, false, &mut shell, &mut plugins);
+    let _ = chat.command(&mut ui, "EscapeKey", false, false, &mut NoHistory);
     assert!(chat.take_outgoing().is_empty());
 }
 
 #[test]
 fn chat_window_can_be_destroyed_and_opened_again() {
     let (mut ui, mut panels) = fixture(true);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let k1 = panels.open(&mut ui, PanelId::Chat, &mut sv).unwrap();
     assert!(panels.toggle(&mut ui, PanelId::Chat, &mut sv).is_ok());
     panels.destroy(&mut ui, PanelId::Chat);
@@ -357,8 +531,8 @@ fn chat_window_can_be_destroyed_and_opened_again() {
 #[test]
 fn set_chat_refuses_an_open_window_and_reset_chat_replaces_it() {
     let (mut ui, mut panels) = fixture(true);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let k1 = panels.open(&mut ui, PanelId::Chat, &mut sv).unwrap();
     let created = ui.element_count();
     assert_eq!(
@@ -367,7 +541,7 @@ fn set_chat_refuses_an_open_window_and_reset_chat_replaces_it() {
     );
     assert!(ui.exists(k1));
     let mut setup = ChatSetup::sandbox();
-    setup.texts.unknown_command = "other".to_string();
+    setup.texts.no_reply_target = "other".to_string();
     let k2 = panels
         .reset_chat(&mut ui, setup, &mut sv)
         .unwrap()
@@ -379,7 +553,7 @@ fn set_chat_refuses_an_open_window_and_reset_chat_replaces_it() {
     let chat = panels.chat.as_mut().unwrap();
     assert_eq!(chat.primary_root(), Some(k2));
     assert_eq!(chat.post_system(&mut ui, "x"), 1);
-    assert_eq!(chat.setup().texts.unknown_command, "other");
+    assert_eq!(chat.setup().texts.no_reply_target, "other");
     // Hidden P2: reset does not reopen it.
     panels.hide(&mut ui, PanelId::Chat);
     assert_eq!(
@@ -394,8 +568,8 @@ fn set_chat_refuses_an_open_window_and_reset_chat_replaces_it() {
 #[test]
 fn own_plugin_manager_window_behind_the_panel_api() {
     let (mut ui, mut panels) = fixture(false);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     assert!(
         panels
             .toggle(&mut ui, PanelId::PluginManager, &mut sv)
@@ -445,8 +619,8 @@ fn own_plugin_manager_window_behind_the_panel_api() {
 #[test]
 fn bound_buttons_and_map_zoom_route_to_panels() {
     let (mut ui, mut panels) = fixture(false);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let toolbar = panels.open(&mut ui, PanelId::Toolbar, &mut sv).unwrap();
     panels.bind_button(&mut ui, 0x1000_0B01, PanelId::QuestLog);
     let acts = panels.handle_event(&mut ui, &click_message(toolbar, 0x1000_0B01), &mut sv);
@@ -479,8 +653,8 @@ fn bound_buttons_and_map_zoom_route_to_panels() {
 #[test]
 fn bag_store_button_is_hidden() {
     let (mut ui, mut panels) = fixture(false);
-    let (mut maps, mut plugins, mut shell) = (NoMaps, FakePlugins::default(), NoShell);
-    let mut sv = services!(maps, plugins, shell);
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
     let bag = panels.open(&mut ui, PanelId::Bag, &mut sv).unwrap();
     let all = tessera_ui::game::subtree(&ui, bag);
     let store: Vec<_> = all
@@ -519,85 +693,6 @@ fn unload_without_apartment_targets_default() {
         .unload_selected(&mut ui, &mut plugins)
         .unwrap();
     assert_eq!(plugins.calls.borrow().as_slice(), ["unload Default"]);
-}
-
-/// A shell with one plugin command `foo` (id 7) with short and long help.
-#[derive(Default)]
-struct HelpShell;
-
-impl ShellCommands for HelpShell {
-    fn lookup(&self, word: &str) -> Option<u32> {
-        word.eq_ignore_ascii_case("foo").then_some(7)
-    }
-
-    fn names(&self) -> Vec<String> {
-        vec!["foo".to_string()]
-    }
-
-    fn short_help(&mut self, _id: u32) -> String {
-        "does foo".to_string()
-    }
-
-    fn help(&mut self, _id: u32) -> String {
-        "foo: the long help".to_string()
-    }
-}
-
-#[test]
-fn help_list_long_help_builtins_and_list_apartments() {
-    let mut ui = Ui::new(Box::new(MemoryEnv::default()), Vocab::default(), (800, 600));
-    let mut setup = ChatSetup::sandbox();
-    setup.help_entry = "aide".to_string();
-    setup.modes.push(("fel".to_string(), 11, ModeKind::Plain));
-    let mut chat = ChatPanel::new(GameVocab::default(), Did(CHAT), setup);
-    let mut shell = HelpShell;
-    let mut plugins = FakePlugins::default();
-    for (n, apt) in [("A", ""), ("B", "default"), ("C", "Own")] {
-        plugins.rows.borrow_mut().push(PluginRow {
-            name: n.to_string(),
-            version: "1".to_string(),
-            apartment: apt.to_string(),
-            ..PluginRow::default()
-        });
-    }
-    // Built-in names for the plugin host (LPA §11.1 AddCommand / GetCommands).
-    for n in ["help", "aide", "plugins", "say", "fel"] {
-        assert!(chat.builtin_names().iter().any(|b| b == n), "{n}");
-        assert!(chat.is_builtin(&n.to_uppercase()));
-    }
-    assert!(!chat.is_builtin("foo") && !chat.is_builtin(""));
-    assert_eq!(chat.run_line(&mut ui, "/help", &mut shell, &mut plugins), 1);
-    let out = chat.take_outgoing();
-    assert!(out[0].1.contains("foo (does foo)"), "{out:?}");
-    assert_eq!(
-        chat.run_line(&mut ui, "/help FOO", &mut shell, &mut plugins),
-        1
-    );
-    assert_eq!(chat.take_outgoing()[0].1, "FOO: foo: the long help");
-    assert_eq!(
-        chat.run_line(&mut ui, "/help plugins", &mut shell, &mut plugins),
-        1
-    );
-    assert!(chat.take_outgoing()[0].1.contains("manager"));
-    assert_eq!(
-        chat.run_line(&mut ui, "/help nope", &mut shell, &mut plugins),
-        0
-    );
-    assert_eq!(chat.take_outgoing()[0].0, 1, "an Error line");
-    // `/plugins list`: no apartment and `default` (any case) are the Default apartment.
-    assert_eq!(
-        chat.run_line(&mut ui, "/plugins list", &mut shell, &mut plugins),
-        1
-    );
-    let out: Vec<String> = chat.take_outgoing().into_iter().map(|(_, t)| t).collect();
-    assert_eq!(
-        out,
-        vec![
-            "A 1 (available)".to_string(),
-            "B 1 (available)".to_string(),
-            "C 1 [Own] (available)".to_string()
-        ]
-    );
 }
 
 #[test]

@@ -253,6 +253,9 @@ impl PaintOp {
 #[derive(Debug, Clone, Default)]
 pub struct DisplayList {
     ops: Vec<PaintOp>,
+    /// [`PaintOp::area`] of each operation, computed once when it is pushed (the painter
+    /// reads it for every band). For a nested marker, its coverage region.
+    areas: Vec<Rect>,
     nested: usize,
 }
 
@@ -284,8 +287,20 @@ impl DisplayList {
             }
             _ => {}
         }
+        let area = match &op {
+            PaintOp::Nested { coverage, .. } => *coverage,
+            o => o.area(),
+        };
         self.ops.push(op);
+        self.areas.push(area);
         Ok(())
+    }
+
+    /// For each operation, the canvas area it may change ([`PaintOp::area`]); for a nested
+    /// marker, its coverage region. Same order and length as [`DisplayList::ops`].
+    #[must_use]
+    pub fn areas(&self) -> &[Rect] {
+        &self.areas
     }
 
     /// The operations in drawing order.

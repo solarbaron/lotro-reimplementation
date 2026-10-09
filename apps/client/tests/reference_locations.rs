@@ -24,7 +24,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_dat::{ArchiveSet, SetOptions};
@@ -34,6 +33,23 @@ use tessera_render::glam::{Mat4, Quat, Vec3};
 use tessera_world::{
     BundleOptions, LandblockKey, LocReport, LocalPos, StreamConfig, WStateAreaNames, WorldContext,
     WorldPos, WorldStreamer, yaw,
+};
+
+/// Settling the streamer waits as long as loading progresses: it gives up after this many
+/// updates (about 1 ms apart, longer on a loaded machine) in a row without any loading
+/// work starting or finishing, or after this many updates in all
+/// ([`tessera_world::WorldStreamer::settle_on_progress`]; `walker.md` §7, implementer note
+/// on progress waits).
+const SETTLE_STALL: u64 = if cfg!(debug_assertions) {
+    900_000
+} else {
+    120_000
+};
+/// See [`SETTLE_STALL`].
+const SETTLE_MAX: u64 = if cfg!(debug_assertions) {
+    14_400_000
+} else {
+    3_600_000
 };
 
 /// One row of the checklist (§2.2 joined with §2.3).
@@ -312,7 +328,7 @@ fn reference_locations_match_the_data() {
             row.height,
         );
         assert!(
-            w.settle(pos, Duration::from_secs(120)),
+            w.settle_on_progress(pos, SETTLE_STALL, SETTLE_MAX),
             "{}: never settled",
             row.id
         );

@@ -21,12 +21,23 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tessera_audio::abc::{self, AbcError, AbcErrorKind, PartRequest, Position, StartMode};
 use tessera_client::audio::backend::BackendChoice;
 use tessera_client::audio::player_music::{MusicConfig, PlayerMusic, error_text, fallback_error};
+use tessera_client::wait::{LoadWait, ProgressWait};
 use tessera_dat::{ArchiveSet, SetOptions};
+
+/// How long the player-music waits last: as long as start-up, jobs and queued commands
+/// progress. A wait gives up after this many polls (about 2 ms apart, longer on a loaded
+/// machine) in a row in which nothing finished, or after this many polls in all
+/// ([`PlayerMusic::wait_settled`]). Start-up and each command job are single steps, so the
+/// stall limit is at least as long as the longest of them may take.
+const MUSIC_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(900_000, 7_200_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(150_000, 1_800_000))
+};
 
 /// An original test tune: a scale with a chord and a tie, two parts.
 const TUNE: &str = "X:1\nT:Tessera Test Air\nM:3/4\nL:1/8\nQ:1/4=100\nK:D\n\
@@ -59,7 +70,7 @@ fn play_an_original_tune_on_the_offline_backend() {
 
     // 1. Start-up (at the first command).
     assert!(m.command("/instrument"));
-    assert!(m.wait_idle(Duration::from_secs(300)), "start-up finished");
+    assert!(m.wait_settled(MUSIC_WAIT), "start-up finished");
     let data = m.data().expect("start-up data");
     let table = data.table.as_ref().expect("instrument table").clone();
     let msg_table = data
@@ -108,7 +119,7 @@ fn play_an_original_tune_on_the_offline_backend() {
     assert!(low != fallback_error(&synthetic) && low.contains("77") && low.contains("91"));
     std::fs::write(music.path().join("broken.abc"), BROKEN).expect("write");
     assert!(m.command("/play broken"));
-    assert!(m.wait_idle(Duration::from_secs(60)));
+    assert!(m.wait_settled(MUSIC_WAIT));
     let lines = m.take_lines();
     assert!(
         lines == vec![text.clone()],
@@ -136,7 +147,7 @@ fn play_an_original_tune_on_the_offline_backend() {
     let expected = abc::parse(TUNE.as_bytes(), PartRequest::Unspecified).expect("tune reads");
     let expected_ons: Vec<f64> = expected.note_ons().map(|e| e.time).collect();
     assert!(m.command("/play tessera-test"));
-    assert!(m.wait_idle(Duration::from_secs(120)));
+    assert!(m.wait_settled(MUSIC_WAIT));
     let lines = m.take_lines();
     assert_eq!(
         lines.len(),
@@ -186,7 +197,7 @@ fn play_an_original_tune_on_the_offline_backend() {
 
     // 3. Synced: waits for /playstart, then starts 0.7 s after it.
     assert!(m.command("/play tessera-test 2 sync"));
-    assert!(m.wait_idle(Duration::from_secs(120)));
+    assert!(m.wait_settled(MUSIC_WAIT));
     assert!(m.take_lines().is_empty(), "a synced part waits silently");
     let before = m.schedule_log().count();
     m.render_offline(0.5);
@@ -217,7 +228,7 @@ fn play_an_original_tune_on_the_offline_backend() {
 
     // The stop command: a long performance stops at once.
     assert!(m.command("/play tessera-test"));
-    assert!(m.wait_idle(Duration::from_secs(60)));
+    assert!(m.wait_settled(MUSIC_WAIT));
     m.render_offline(1.0);
     assert!(m.command("/playstop"));
     let ons = m.player_stats().expect("player").note_ons;
@@ -280,7 +291,7 @@ fn equipped_instrument_item_sets_the_type() {
     });
     m.attach_data(Arc::clone(&set), &dir);
     assert!(m.command("/instrument"));
-    assert!(m.wait_idle(Duration::from_secs(300)));
+    assert!(m.wait_settled(MUSIC_WAIT));
     assert_eq!(m.data().and_then(|d| d.equipped), facts.instrument_type);
     assert_eq!(m.instrument(), facts.instrument_type);
     // A debug choice overrides the item; `item` goes back to it.

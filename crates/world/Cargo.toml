@@ -27,6 +27,9 @@ tracing.workspace = true
 # with the collision triangles (ROADMAP M4.5 exit criterion 2). The library does not depend
 # on the terrain mesher.
 tessera-terrain.workspace = true
+# Real-data test only (tests/far_view_real_data.rs): the far-terrain templates' declared
+# parameters (FV-I13). The library does not depend on the material crate.
+tessera-material.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]

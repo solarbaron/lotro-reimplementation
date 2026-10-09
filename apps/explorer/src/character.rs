@@ -27,6 +27,7 @@ use tessera_anim::{
 };
 use tessera_assets::{CancelToken, JobContext, Priority, WorkerPool};
 use tessera_formats::avatar::{RacePids, RaceTable};
+use tessera_formats::gameplay::mounts::MountMesh;
 use tessera_formats::script_table::resolve::{
     ClipCandidate, ClipResolver, MotionState, ScriptVocabulary, collect_entity_scripts,
 };
@@ -235,7 +236,10 @@ pub(crate) fn enum_name<S: tessera_props::RecordSource>(
 }
 
 /// The enum mapper a property's labels come from.
-fn property_mapper<S: tessera_props::RecordSource>(data: &GameData<S>, name: &str) -> Option<Did> {
+pub(crate) fn property_mapper<S: tessera_props::RecordSource>(
+    data: &GameData<S>,
+    name: &str,
+) -> Option<Did> {
     let registry = data.registry().ok()?;
     match registry.enum_source(registry.pid(name)?)? {
         EnumSource::Mapper(m) => Some(m),
@@ -244,7 +248,7 @@ fn property_mapper<S: tessera_props::RecordSource>(data: &GameData<S>, name: &st
 }
 
 /// The key of `label` in the mapper of property `name`.
-fn property_key<S: tessera_props::RecordSource>(
+pub(crate) fn property_key<S: tessera_props::RecordSource>(
     data: &GameData<S>,
     name: &str,
     label: &str,
@@ -542,6 +546,8 @@ pub struct CharacterRequest {
     pub avatar_height: Option<f32>,
     /// Detail level of every part.
     pub lod: u8,
+    /// A mount ridden by the figure (`mounts.md` §10; [`crate::mount_view`]).
+    pub mount: Option<crate::mount_view::MountArg>,
 }
 
 impl CharacterRequest {
@@ -555,6 +561,7 @@ impl CharacterRequest {
             bone_scale: None,
             avatar_height: None,
             lod: 0,
+            mount: None,
         }
     }
 }
@@ -833,8 +840,11 @@ pub struct CharacterProduct {
     pub deformed: bool,
     /// Whole-body scale per axis (`appearance.md` §6.1).
     pub model_scale: [f32; 3],
-    /// Clip selection for idle, walk and run.
+    /// Clip selection for idle, walk and run (with the mount's rider state when mounted).
     pub clips: ClipSelection,
+    /// The mount (`mounts.md` §10), when the request has one and its MeshFX branch spawns
+    /// an entity.
+    pub mount: Option<crate::mount_view::MountProduct>,
     /// Facts for the inspector: (caption, value).
     pub facts: Vec<(String, String)>,
     /// Assembly diagnostics, as text.
@@ -971,17 +981,40 @@ pub fn build_character(
     //    shape and sliders (appearance.md §6.2–§6.4; shared with the client). The Idle
     //    resolution also lists the Appearance nodes the start-up scripts run (§7.4); with
     //    any, the figure is assembled again with them (Random picks seeded with 0: the
-    //    explorer has no placement).
-    let (clips, shape) = match &assembled {
-        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab),
+    //    explorer has no placement). A mounted figure takes the rider state of mounts.md
+    //    §4.1 first (mounts.md §10).
+    let rider_mount = match (req.mount, &assembled) {
+        (Some(m), Some(_)) => match crate::mount_view::rider_mount(ctx, m) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                notes.push(format!("mount: {e}"));
+                None
+            }
+        },
+        (Some(_), None) => {
+            notes.push("mount: a bare setup has no script tables to ride with".into());
+            None
+        }
+        (None, _) => None,
+    };
+    let (clips, shape, mount_mesh) = match &assembled {
+        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab, rider_mount.as_ref()),
         None => (
             ClipSelection {
                 error: Some("a bare setup has no script tables".into()),
                 ..ClipSelection::default()
             },
             FigureShape::default(),
+            None,
         ),
     };
+    if rider_mount.is_some() && mount_mesh.is_none() {
+        notes.push(
+            "mount: the rider's Mounted_Player_Cosmetic_Mesh run starts no MeshFX node with an \
+             entity (mounts.md §4.4, §11.4): nothing to draw"
+                .into(),
+        );
+    }
     if !clips.appearances.is_empty() {
         let again = match (&kept_spec, req.figure) {
             (Some(spec), _) => Some(asm.assemble_character_with(spec, &clips.appearances)),
@@ -1247,6 +1280,65 @@ pub fn build_character(
             });
         }
     }
+    // The mount (mounts.md §10): at the rider's holding location (§4.4 Decision).
+    // Per axis, with the client's limit applied (`appearance.md` §6.1).
+    let rider_scale = assembled
+        .as_ref()
+        .map_or([1.0; 3], AssembledCharacter::model_scale);
+    let mut mount = None;
+    if let (Some(rm), Some(mesh), Some(c)) = (&rider_mount, &mount_mesh, &assembled) {
+        let location = c.setup.holding_location(mesh.holding_location);
+        if let Some(h) = location
+            && !attach_points
+                .iter()
+                .any(|a: &AttachPointDesc| a.key == mesh.holding_location)
+        {
+            attach_points.push(AttachPointDesc {
+                key: h.key,
+                bone: match h.anchor {
+                    Anchor::Bone(b) => i32::try_from(b).unwrap_or(-1),
+                    Anchor::Origin => -1,
+                },
+                frame: AttachFrame {
+                    position: h.frame.position,
+                    scale: h.frame.scale,
+                    rotation_wxyz: [
+                        h.frame.rotation.w,
+                        h.frame.rotation.x,
+                        h.frame.rotation.y,
+                        h.frame.rotation.z,
+                    ],
+                },
+            });
+        }
+        match crate::mount_view::build_mount(
+            ctx,
+            catalog,
+            rm,
+            mesh,
+            rider_scale,
+            location.is_some(),
+            &mut mats,
+            &mut budget,
+            request,
+            job,
+        ) {
+            Ok(built) => {
+                facts.push(("mount".into(), built.product.entity.to_string()));
+                parts.extend(built.parts);
+                part_info.extend(std::iter::repeat_n(
+                    FigurePart::Body {
+                        slot: "mount".into(),
+                        priority: None,
+                        origin: "mount figure (mounts.md §10)".into(),
+                    },
+                    parts.len() - part_info.len(),
+                ));
+                mount = Some(built.product);
+            }
+            Err(e) => notes.push(format!("mount: {e}")),
+        }
+    }
     let attach = match &skeleton {
         Some(s) if !attach_points.is_empty() => {
             let (t, errors) = AttachTable::new_skipping_invalid(&attach_points, s.bone_count());
@@ -1313,6 +1405,7 @@ pub fn build_character(
         deformed: deformation.is_some(),
         model_scale,
         clips,
+        mount,
         facts,
         diagnostics,
         build_ms: started.elapsed().as_millis() as u64,
@@ -1361,7 +1454,7 @@ fn slider_set<S: tessera_props::RecordSource>(
 }
 
 /// Decodes clip `did` and binds it to `skeleton`.
-fn bind_clip(
+pub(crate) fn bind_clip(
     ctx: &DataContext,
     did: Did,
     skeleton: &Arc<Skeleton>,
@@ -1383,29 +1476,35 @@ fn select_clips<S: tessera_props::RecordSource>(
     catalog: &Catalog,
     c: &AssembledCharacter,
     asm_vocab: &AssemblyVocabulary,
-) -> (ClipSelection, FigureShape) {
+    mount: Option<&crate::mount_view::RiderMount>,
+) -> (ClipSelection, FigureShape, Option<MountMesh>) {
     let mut out = ClipSelection::default();
     let mut shape = FigureShape::default();
+    let mut mesh = None;
     let vocab = match ScriptVocabulary::from_data(dict, |d| {
         data.enum_mapper(d).ok().flatten().map(|m| (*m).clone())
     }) {
         Ok(v) => v,
         Err(e) => {
             out.error = Some(format!("script vocabulary: {e}"));
-            return (out, shape);
+            return (out, shape, mesh);
         }
     };
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             out.error = Some(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return (out, shape);
+            return (out, shape, mesh);
         }
     };
     let mut scripts = chain.scripts;
     if let Some(inst) = &c.clip_inputs.instance_properties {
         scripts.add_property_set(inst, &vocab);
     }
+    if let Some(m) = mount {
+        m.apply(&mut scripts);
+    }
+    let moving_mount = mount.is_some_and(|m| crate::mount_view::is_moving_gait(m.gait));
     out.tables = scripts.tables();
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
@@ -1426,11 +1525,22 @@ fn select_clips<S: tessera_props::RecordSource>(
             }
         };
         let layer = match state {
+            StateArg::Idle if moving_mount => catalog.movement_layer.or(catalog.idle_layer),
             StateArg::Idle => catalog.idle_layer,
             _ => catalog.movement_layer,
         };
+        if state == StateArg::Idle
+            && let Some(m) = mount
+            && let Some(k) = m.mesh_script
+        {
+            mesh = MountMesh::choose(&r.mesh_fx, k);
+        }
         let chosen = match layer {
-            Some(l) => r.primary(l),
+            Some(l) => r.primary(l).or_else(|| {
+                moving_mount
+                    .then(|| catalog.idle_layer.and_then(|i| r.primary(i)))
+                    .flatten()
+            }),
             None => r
                 .candidates
                 .iter()
@@ -1469,7 +1579,7 @@ fn select_clips<S: tessera_props::RecordSource>(
             issues: r.issues.len() + r.closure.issues.len(),
         });
     }
-    (out, shape)
+    (out, shape, mesh)
 }
 
 // ---------------------------------------------------------------------------------------

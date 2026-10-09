@@ -722,6 +722,15 @@ impl Runtime<'_> {
                 self.driven_multiplier_changed(sink, id);
             }
         }
+        // A never-ending Particle node follows its redirect property (`particle-runtime.md`
+        // §5.8).
+        let redirect = matches!(
+            self.insts.get(id).map(|i| (&i.kind, i.entity)),
+            Some((KindState::Particle(s), e)) if s.redirect == pid && pid != 0 && e == entity
+        );
+        if redirect && self.alive(id) {
+            self.particle_redirect(sink, id, n);
+        }
         // Switch and When re-evaluation (§6.5, §7).
         let reevaluate = match self.insts.get(id).map(|i| &i.kind) {
             Some(KindState::Switch(s)) if s.persistent && s.target == entity => {

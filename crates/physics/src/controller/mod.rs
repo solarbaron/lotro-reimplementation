@@ -14,6 +14,7 @@
 //! | [`classify`], [`ContactClass`], [`best_support`], [`is_player_instance`] | §11.3 |
 //! | [`Controller`], [`MoveInput`], [`MoverState`], [`StepEnv`], [`STEP_SECONDS`] | §12.2–§12.3; decision 0013 |
 //! | [`WaterQuery`], [`LiquidWater`], [`NoWater`] (and `WaterQuery` for `CollisionSet` / `CollisionView`) | §12.3 step 7, `water.md` §7.4 |
+//! | [`warsteed`] | the war-steed (ramp-up) controller of `mounts.md` §5.3–§5.7 |
 //!
 //! **Using it.** Read the player movement record once ([`PlayerMovementRecord::locate`] or
 //! [`PlayerMovementRecord::from_set`]), build a [`Controller`] with the avatar's capsule and
@@ -28,6 +29,7 @@ mod params;
 mod shape;
 mod state;
 mod step;
+pub mod warsteed;
 mod water;
 
 pub use contact::{

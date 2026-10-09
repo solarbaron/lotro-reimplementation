@@ -45,7 +45,9 @@ use crate::charspec::{
     CharacterArgs, ClipArg, FigureArg, ItemArg, MAX_DYE_CODE, MAX_ITEMS, MAX_TIME, SpeciesArg,
     StateArg, parse_item,
 };
+use crate::drama_play::{DramaPlayArg, DramaRun, PreparedPlay, RunEffect};
 use crate::mesh_view::MeshSettings;
+use crate::mount_view::{MountArg, gait_text};
 use crate::viewport::{DrawRequest, DyeOverride, OrbitView, PoseDraw, Viewport, fit_viewport};
 use crate::views::Action;
 
@@ -314,6 +316,19 @@ struct Instance {
     wanted: u64,
     /// The clip bound in the animator.
     clip: Option<Arc<ClipProduct>>,
+    /// The mount's animated instance (`mounts.md` §10), in the same scheduler.
+    mount: Option<MountInstance>,
+}
+
+/// The animated mount: its own animator and scheduler slot, playing the clip its scripts
+/// start in a loop.
+struct MountInstance {
+    id: InstanceId,
+    animator: Animator,
+    clip: Option<Arc<tessera_anim::BoundClip>>,
+    rate: f32,
+    time: f32,
+    submitted: u64,
 }
 
 impl std::fmt::Debug for Instance {
@@ -391,6 +406,22 @@ pub struct CharacterState {
     /// The record selected when the view first showed: the command line's figure and clip
     /// win over its seed (later selections replace them).
     startup_did: Option<u32>,
+    /// The mount the figure rides (`mounts.md` §10); rebuilds the figure.
+    pub mount: Option<MountArg>,
+    /// Text of the mount-effect box.
+    mount_text: String,
+    /// A drama being prepared on a worker (`npc-drama.md` §11 item 4).
+    drama_job: Option<Job<PreparedPlay>>,
+    /// The drama being played.
+    pub drama: Option<DramaRun>,
+    /// Why the last drama could not be prepared.
+    drama_error: Option<String>,
+    /// The clip a drama emote plays, with its rate.
+    drama_clip: Option<(u32, f32)>,
+    /// A drama request waiting for its worker job.
+    pending_drama: Option<DramaPlayArg>,
+    /// The drama clock's last tick.
+    drama_tick: Option<Instant>,
 }
 
 impl Default for CharacterState {
@@ -446,6 +477,14 @@ impl CharacterState {
             last_rig: None,
             compact: false,
             startup_did: None,
+            mount: None,
+            mount_text: String::new(),
+            drama_job: None,
+            drama: None,
+            drama_error: None,
+            drama_clip: None,
+            pending_drama: None,
+            drama_tick: None,
             args,
         }
     }
@@ -465,6 +504,39 @@ impl CharacterState {
         self.scene_id = None;
         self.last_pose = None;
         self.last_rig = None;
+        self.drama_job = None;
+        self.drama = None;
+    }
+
+    /// Rides mount effect `effect` (`mounts.md` §10) at the current gait; `None` dismounts.
+    pub fn ride(&mut self, effect: Option<u32>) {
+        self.mount = effect.map(|e| MountArg {
+            effect: e,
+            gait: self.mount.and_then(|m| m.gait),
+        });
+        if let Some(e) = effect {
+            self.mount_text = format!("{e:#010x}");
+        }
+    }
+
+    /// Plays drama `arg` (`npc-drama.md` §11 item 4): its figure becomes the view's figure
+    /// when it names one; the drama is prepared on a worker and runs once ready.
+    ///
+    /// A drama without a figure of its own (a spawned object's instance set carries no
+    /// template, `npc-drama.md` §2.2) plays on the figure the view shows: its emotes are
+    /// resolved through that figure's tables.
+    pub fn play_drama(&mut self, mut arg: DramaPlayArg) {
+        match arg.figure {
+            Some(f) => {
+                self.figure = Some(FigureArg::Object(f));
+                self.preview = None;
+            }
+            None => arg.figure = self.shown.as_ref().map(|p| p.did()),
+        }
+        self.drama = None;
+        self.drama_error = None;
+        self.drama_job = None;
+        self.pending_drama = Some(arg);
     }
 
     /// Applies the selected record `did` (see the module documentation), once per DID.
@@ -564,6 +636,7 @@ impl CharacterState {
                 req.sliders.clone_from(&self.sliders);
                 req.bone_scale = self.bone_scale;
                 req.avatar_height = self.avatar_height;
+                req.mount = self.mount;
                 Some(req)
             }
             Err(e) => {
@@ -589,6 +662,11 @@ impl CharacterState {
 
     /// The playback rate of the clip: the script table's rate for a selected state.
     fn clip_rate(&self) -> f32 {
+        if let (ClipChoice::Did(d), Some((c, r))) = (self.clip, self.drama_clip)
+            && d == c
+        {
+            return r;
+        }
         match self.clip {
             ClipChoice::State(s) => self
                 .shown
@@ -722,6 +800,18 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
                 .take()
                 .and_then(|old| old.clip)
                 .filter(|c| c.bound.as_ref().is_some_and(|b| b.skeleton().same_rig(sk)));
+            let mount = product.mount.as_ref().and_then(|m| {
+                let msk = m.skeleton.as_ref()?;
+                let mid = scheduler.add(Arc::clone(msk), None).ok()?;
+                Some(MountInstance {
+                    id: mid,
+                    animator: Animator::new(Arc::clone(msk)),
+                    clip: m.clip.clone(),
+                    rate: m.rate,
+                    time: 0.0,
+                    submitted: 0,
+                })
+            });
             Some(Instance {
                 product: Arc::clone(&product),
                 scheduler,
@@ -730,12 +820,16 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
                 submitted: 0,
                 wanted: 1,
                 clip: keep_clip,
+                mount,
             })
         });
     }
 
+    // A drama (npc-drama.md §11 item 4): prepared on a worker, then run by T1/T2/T5.
+    let drama_loading = drama_step(st, l, egui_ctx);
+
     // The clip.
-    let mut loading = st.job.as_mut().is_some_and(|(_, j)| !j.is_finished());
+    let mut loading = st.job.as_mut().is_some_and(|(_, j)| !j.is_finished()) || drama_loading;
     let want = st.clip_did();
     let rig = product
         .skeleton
@@ -835,6 +929,23 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
                 i.wanted = i.wanted.max(i.submitted + 1);
             }
         }
+        // The mount plays its clip in a loop at its rate (mounts.md §10).
+        if let Some(m) = &mut i.mount
+            && let Some(c) = &m.clip
+        {
+            let dur = c.duration();
+            if st.play.playing {
+                m.time += dt.clamp(0.0, MAX_STEP) * m.rate;
+            }
+            if dur > 0.0 {
+                m.time = m.time.rem_euclid(dur);
+            }
+            let mut p = Playback::new(Arc::clone(c), Wrap::Loop);
+            p.time = m.time;
+            p.root_motion = RootMotionMode::InPlace;
+            let _ = m.animator.play(0, p, 0.0, false);
+            i.wanted = i.wanted.max(i.submitted + 1);
+        }
         // Sampling on the workers.
         i.scheduler.collect();
         if i.wanted > i.submitted {
@@ -842,6 +953,12 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
             if let Ok(Submitted::Queued) = i.scheduler.submit(i.id, &i.animator, frame) {
                 i.submitted = frame;
             }
+        }
+        if let Some(m) = &mut i.mount
+            && m.submitted < i.submitted
+            && let Ok(Submitted::Queued) = i.scheduler.submit(m.id, &m.animator, i.submitted)
+        {
+            m.submitted = i.submitted;
         }
         if i.scheduler
             .pose(i.id)
@@ -854,6 +971,74 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
         loading |= !j.is_finished();
     }
     loading
+}
+
+/// Starts, polls and steps the drama of the view; returns whether it is still preparing.
+fn drama_step(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Context) -> bool {
+    if let Some(arg) = st.pending_drama.take() {
+        let ctx = Arc::clone(&l.ctx);
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |d| d.as_nanos() as u64);
+        st.drama_job = Some(Job::spawn(
+            &l.stores.pool,
+            Priority::Immediate,
+            notify(egui_ctx),
+            move |_| crate::drama_play::prepare(&ctx, &arg, seed),
+        ));
+    }
+    if let Some(j) = &mut st.drama_job {
+        if let Some(e) = j.error() {
+            st.drama_error = Some(e);
+            st.drama_job = None;
+        } else if let Some(p) = j.value() {
+            let seed = p.drama.steps.len() as u64 * 7919 + 17;
+            st.drama = Some(DramaRun::new((*p).clone(), seed));
+            st.drama_job = None;
+            st.drama_tick = None;
+        } else {
+            return true;
+        }
+    }
+    let Some(run) = &mut st.drama else {
+        return false;
+    };
+    let now = Instant::now();
+    let dt = st
+        .drama_tick
+        .replace(now)
+        .map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(MAX_STEP));
+    let effects = run.advance(dt);
+    // The emote's clip length, once the clip is loaded at its rate.
+    if run.wants_emote_duration()
+        && let Some((did, rate)) = st.drama_clip
+        && let Some((key, j)) = &st.clip_job
+        && key.0 == did
+    {
+        if j.peek_failed() {
+            run.emote_duration(0.0);
+        } else if let Some(c) = st.instance.as_ref().and_then(|i| i.clip.as_ref())
+            && c.info.did == did
+        {
+            let d = c.bound.as_ref().map_or(0.0, |b| b.duration());
+            run.emote_duration(d / rate.max(1e-3));
+        }
+    }
+    for e in effects {
+        match e {
+            RunEffect::PlayClip(did, rate, _loops) => {
+                st.drama_clip = Some((did.0, rate));
+                st.clip = ClipChoice::Did(did.0);
+                st.restart();
+            }
+            RunEffect::Idle => {
+                st.drama_clip = None;
+                st.clip = ClipChoice::State(StateArg::Idle);
+                st.restart();
+            }
+        }
+    }
+    false
 }
 
 /// Decides a 0x70–0x76 seed (item or figure) on a worker.
@@ -934,6 +1119,24 @@ fn pose_draw(st: &CharacterState) -> Option<(PoseDraw, bool)> {
     };
     out.palette.clone_from(&pose.skin);
     out.attach.clone_from(&pose.attach);
+    // The mount at the rider's holding location (mounts.md §4.4 Decision).
+    if let Some(mp) = &product.mount
+        && let Some(at) = pose
+            .attach
+            .iter()
+            .find(|(k, _)| *k == mp.mesh.holding_location)
+    {
+        let palette = i
+            .mount
+            .as_ref()
+            .and_then(|m| i.scheduler.pose(m.id))
+            .map(|p| p.skin.clone())
+            .unwrap_or_default();
+        out.mount = Some(crate::viewport::FigurePose {
+            placement: placement * at.1 * mp.local,
+            palette,
+        });
+    }
     if st.bones {
         for (a, b) in crate::character::bone_lines(sk, &pose.model, placement) {
             out.lines.push((a, b, BONE_COLOR));
@@ -997,6 +1200,14 @@ pub(crate) fn character_ready(st: &CharacterState, vp: Option<&Viewport>) -> boo
     }
     if let Some(i) = &st.instance {
         if i.wanted > i.submitted {
+            return false;
+        }
+        if let Some(m) = &i.mount
+            && (m.submitted < i.submitted
+                || i.scheduler
+                    .pose(m.id)
+                    .is_none_or(|p| p.frame != m.submitted))
+        {
             return false;
         }
         if i.scheduler
@@ -1067,7 +1278,7 @@ pub(crate) fn character_view(
             .show(ui, |ui| inspector(ui, st, cur.nav.did, actions));
     }
     viewport_widget(ui, st, settings, vp);
-    if st.play.playing || loading {
+    if st.play.playing || loading || st.drama.as_ref().is_some_and(|d| !d.is_done()) {
         ui.ctx().request_repaint();
     }
 }
@@ -1285,6 +1496,14 @@ fn inspector(ui: &mut Ui, st: &mut CharacterState, did: u32, actions: &mut Vec<A
                         .color(Color32::from_rgb(0xE0, 0xB0, 0x60)),
                 );
             }
+            if st.drama.is_some() || st.drama_job.is_some() || st.drama_error.is_some() {
+                egui::CollapsingHeader::new("Drama (npc-drama.md §11, T1/T2/T5)")
+                    .default_open(true)
+                    .show(ui, |ui| drama_section(ui, st));
+            }
+            egui::CollapsingHeader::new("Mount (mounts.md §10)")
+                .default_open(st.mount.is_some())
+                .show(ui, |ui| mount_section(ui, st, &p, actions));
             egui::CollapsingHeader::new("Clips: idle, walk, run (script tables)")
                 .default_open(true)
                 .show(ui, |ui| clips_section(ui, st, &p, actions));
@@ -1312,6 +1531,142 @@ fn inspector(ui: &mut Ui, st: &mut CharacterState, did: u32, actions: &mut Vec<A
                     });
             }
         });
+}
+
+/// The mount viewer's controls (`mounts.md` §10): the mount effect, the gait set as
+/// `MountMovement_CurrentSpeed` on rider and mount, and the mount's facts.
+fn mount_section(
+    ui: &mut Ui,
+    st: &mut CharacterState,
+    p: &CharacterProduct,
+    actions: &mut Vec<Action>,
+) {
+    ui.horizontal(|ui| {
+        ui.label("mount effect");
+        ui.add(egui::TextEdit::singleline(&mut st.mount_text).desired_width(110.0));
+        let parsed = crate::charspec::parse_item(&st.mount_text)
+            .ok()
+            .map(|i| i.did);
+        if ui
+            .add_enabled(parsed.is_some(), egui::Button::new("Ride"))
+            .on_hover_text("A mount effect (class 2459) ridden by this figure")
+            .clicked()
+        {
+            st.ride(parsed);
+        }
+        if ui
+            .add_enabled(st.mount.is_some(), egui::Button::new("Dismount"))
+            .clicked()
+        {
+            st.ride(None);
+        }
+    });
+    let Some(arg) = st.mount else {
+        ui.label(
+            RichText::new(
+                "Open a mount effect's gameplay card and choose \"ride\", or enter its DID.",
+            )
+            .weak(),
+        );
+        return;
+    };
+    let gaits = p
+        .mount
+        .as_ref()
+        .map(|m| m.gaits.clone())
+        .unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label("gait");
+        egui::ComboBox::from_id_salt("mount-gait")
+            .selected_text(gait_text(&gaits, arg.gait))
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(arg.gait.is_none(), "unset (Neutral)")
+                    .clicked()
+                {
+                    st.mount = Some(MountArg { gait: None, ..arg });
+                }
+                for (k, n) in &gaits {
+                    if ui
+                        .selectable_label(arg.gait == Some(*k), format!("{k} {n}"))
+                        .clicked()
+                    {
+                        st.mount = Some(MountArg {
+                            gait: Some(*k),
+                            ..arg
+                        });
+                    }
+                }
+            });
+    });
+    let Some(m) = &p.mount else {
+        ui.label(RichText::new("no mount drawn: see the notes above").color(WARN_COLOR));
+        return;
+    };
+    egui::Grid::new("mount-facts")
+        .num_columns(2)
+        .striped(true)
+        .show(ui, |ui| {
+            for (k, v) in &m.facts {
+                ui.label(RichText::new(k).weak());
+                ui.label(RichText::new(v).monospace());
+                ui.end_row();
+            }
+        });
+    ui.horizontal_wrapped(|ui| {
+        did_link(ui, m.effect, actions);
+        did_link(ui, m.entity, actions);
+        if let Some(c) = m.clip_did {
+            did_link(ui, c, actions);
+        }
+    });
+    for n in &m.notes {
+        ui.label(RichText::new(n).small().color(WARN_COLOR));
+    }
+}
+
+/// The drama player's state: what runs, the steps and the chat log (T2).
+fn drama_section(ui: &mut Ui, st: &mut CharacterState) {
+    if st.drama_job.is_some() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("preparing the drama …");
+        });
+    }
+    if let Some(e) = &st.drama_error {
+        ui.colored_label(Color32::LIGHT_RED, e);
+    }
+    let mut stop = false;
+    if let Some(run) = &st.drama {
+        ui.label(RichText::new(&run.play.arg.caption).strong());
+        ui.label(format!(
+            "{} · t = {:.1} s · {}",
+            run.current()
+                .map_or_else(|| "—".to_owned(), |d| format!("{:?} {:?}", d.kind, d.name)),
+            run.clock,
+            run.status()
+        ));
+        for n in &run.play.notes {
+            ui.label(RichText::new(n).small().color(WARN_COLOR));
+        }
+        if !run.chat.is_empty() {
+            ui.label(RichText::new("chat (Say, T2)").weak());
+            for c in run.chat.iter().rev().take(8) {
+                ui.label(RichText::new(c).small());
+            }
+        }
+        ui.label(RichText::new("steps").weak());
+        for line in run.log.iter().rev().take(14) {
+            ui.label(RichText::new(line).small().monospace());
+        }
+        stop = ui.button("Stop").clicked();
+    }
+    if stop {
+        st.drama = None;
+        st.drama_clip = None;
+        st.clip = ClipChoice::State(StateArg::Idle);
+        st.restart();
+    }
 }
 
 fn did_link(ui: &mut Ui, did: Did, actions: &mut Vec<Action>) {
@@ -1947,6 +2302,29 @@ fn viewport_widget(
             color,
         );
         y += 18.0;
+    }
+    // Drama texts (T2): speech over the figure, billboards centred.
+    if let Some(run) = &st.drama {
+        let mut sy = rect.top() + rect.height() * 0.18;
+        for o in &run.overhead {
+            let at = if o.billboard {
+                rect.center()
+            } else {
+                pos2(rect.center().x, sy)
+            };
+            let galley = painter.layout(
+                o.text.clone(),
+                egui::FontId::proportional(if o.billboard { 20.0 } else { 15.0 }),
+                Color32::from_rgb(250, 240, 200),
+                rect.width() * 0.6,
+            );
+            let r = Rect::from_center_size(at, galley.size() + vec2(16.0, 10.0));
+            painter.rect_filled(r, 6.0, Color32::from_black_alpha(170));
+            painter.galley(r.min + vec2(8.0, 5.0), galley, Color32::WHITE);
+            if !o.billboard {
+                sy += r.height() + 6.0;
+            }
+        }
     }
     painter.text(
         pos2(rect.left() + 8.0, rect.bottom() - 6.0),

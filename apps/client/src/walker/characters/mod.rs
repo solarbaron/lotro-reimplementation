@@ -302,6 +302,29 @@ struct GpuPart {
     bytes: u64,
 }
 
+/// What the particle effects of a placed figure need of it (`particle-runtime.md` §6):
+/// its frame, render scale, whether it is drawn, its current model-space pose and its
+/// attachment points.
+#[derive(Debug, Clone)]
+pub struct FigureEffectView {
+    /// Region.
+    pub region: u8,
+    /// Region-global position.
+    pub position: [f64; 3],
+    /// Rotation.
+    pub rotation: Quat,
+    /// Render scale per axis (model scale × placement scale, as drawn; `appearance.md`
+    /// §6.1).
+    pub scale: Vec3,
+    /// Drawn by this layer at the last update (`shown_figures`, `walker.md` §10.2).
+    pub drawn: bool,
+    /// Model-space bone matrices of the current pose (the sampled pose, else the reference
+    /// pose; empty without a skeleton).
+    pub model: Vec<Mat4>,
+    /// The setup's holding locations and bones.
+    pub points: Option<Arc<crate::walker::effects::data::AttachPoints>>,
+}
+
 /// The reference pose of a figure that has a skeleton but no animator: skinning palette
 /// and holding-location transforms (`skeleton-anim.md` §8.4 with the reference pose).
 #[derive(Debug, Default)]
@@ -500,6 +523,51 @@ impl CharacterLayer {
             WorldPos::new(a.region, t.position[0], t.position[1], t.position[2]),
             a.heading,
         ))
+    }
+
+    /// The placed figure with `tag` as the particle effects see it, once its figure is on
+    /// the GPU (`None` before, or when no such figure is placed).
+    #[must_use]
+    pub fn figure_effect_view(&self, tag: u64) -> Option<FigureEffectView> {
+        let (e, a) = self.actors.iter().find(|(_, a)| a.tag == Some(tag))?;
+        let render = self.store.render(e)?;
+        let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+        else {
+            return None;
+        };
+        let tf = self.store.transform(e)?;
+        let scale = Vec3::from_array(g.asset.model_scale) * tf.scale[0];
+        let rot = Quat::from_array(tf.rotation);
+        let model = match self.store.anim(e) {
+            Some(anim) => self
+                .scheduler
+                .pose(anim.instance)
+                .map(|p| p.model.clone())
+                .unwrap_or_default(),
+            None => g
+                .asset
+                .skeleton
+                .as_ref()
+                .map(|s| s.reference_model().to_vec())
+                .unwrap_or_default(),
+        };
+        Some(FigureEffectView {
+            region: a.region,
+            position: tf.position,
+            rotation: if rot.is_finite() && rot.length_squared() > 0.0 {
+                rot.normalize()
+            } else {
+                Quat::IDENTITY
+            },
+            scale: if scale.is_finite() && scale.min_element() > 0.0 {
+                scale
+            } else {
+                Vec3::ONE
+            },
+            drawn: !a.hidden && self.shown.contains(&tag),
+            model,
+            points: g.asset.points.clone(),
+        })
     }
 
     /// The entities whose figure the data places, with their tags (tests, diagnostics).

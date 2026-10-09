@@ -18,7 +18,7 @@
 //! | [`RaceDirectory`], [`RaceRecord`], [`GenderEntry`], [`check_choice`] | race directory and tables, creation check | §5 |
 //! | [`NationalityDirectory`], [`NationalityRecord`] | nationality tables | §6 |
 //! | [`ClassCreationInfo`], [`ClassPriority`], [`LevelTableDirectory`] | class creation fields, class priority | §7 |
-//! | [`NameRuleControl`], [`NameGenerator`], [`ShiftTable`], [`generate_name`] | names and the phonetic-shift rule | §8 |
+//! | [`NameRuleControl`], [`NameGenerator`], [`ShiftTable`], [`generate_name_once`], [`generate_name`] | names, the phonetic-shift rule and its text model, name generation | §8 |
 //! | [`XpGlobals`], [`ExperienceTable`], [`GroupModifierTable`], [`RestedExperienceControl`] | experience and levels | §9 |
 //! | [`PipControl`], [`Pip`], [`ThresholdPolicy`] | class resources | §10 |
 //! | [`BankRepository`], [`BankUpgradeSchedule`], [`AllegianceControl`], [`Allegiance`] | bank schedules, allegiances | §11.3, §12.4 |
@@ -26,9 +26,11 @@
 //! # Hostile input
 //!
 //! The views copy scalars and DIDs out of sets that the property layer has already
-//! decoded within its own bounds. Every list a view keeps is checked against
-//! [`MAX_VIEW_ENTRIES`] before it is collected, a present property of the wrong type is an
-//! error ([`WStateError::BadProperty`]) and nothing indexes by a data-derived value.
+//! decoded within its own bounds. By Decision D5 (§3.1) every list a view keeps is
+//! checked against [`MAX_VIEW_ENTRIES`] before it is collected, and a present property
+//! whose type differs from the spec's tables is an error ([`WStateError::BadProperty`]);
+//! both are Tessera choices, not client behaviour. Nothing indexes by a data-derived
+//! value.
 
 mod controls;
 mod levels;
@@ -46,9 +48,10 @@ pub use controls::{
 };
 pub use levels::{ExperienceTable, GroupModifierTable, RestedExperienceControl, XpGlobals};
 pub use names::{
-    MAX_NAME_ATTEMPTS, NameCategory, NameGenerator, NameOption, NameRuleControl, NameText,
-    RaceCategory, ShiftEntry, ShiftEntryInfo, ShiftGroup, ShiftTable, ShiftTableDefinition,
-    ShiftTriple, SyllableTable, generate_name,
+    GeneratedName, MAX_NAME_ATTEMPTS, MAX_PART_DRAWS, NameCategory, NameGenerator, NameOption,
+    NameRuleControl, NameText, RaceCategory, ShiftEntry, ShiftEntryInfo, ShiftGroup, ShiftTable,
+    ShiftTableDefinition, ShiftTriple, SyllableTable, generate_name, generate_name_once,
+    lower_text, lower_unit, text_eq_ci, upper_unit,
 };
 pub use pips::{AdjustmentKind, Pip, PipAdjustment, PipControl, ThresholdPolicy, ThresholdState};
 pub use race::{
@@ -63,8 +66,9 @@ use tessera_props::{Property, PropertyRegistry, PropertySet, Value};
 
 use crate::error::{Result, WStateError};
 
-/// Most entries a view keeps from one list (the largest observed list holds 463 strings,
-/// §8.2). An implementer choice (`player-character.md` §3 OPEN note).
+/// Most entries a view keeps from one list: Decision D5 of `player-character.md` §3.1
+/// (the largest observed list holds 463 elements; the client itself bounds lists only by
+/// the record's bytes). `game-controls.md` §3.1 keeps the same cap as a Tessera Decision.
 pub const MAX_VIEW_ENTRIES: usize = 1 << 16;
 
 /// The base property name of a mirror property (`creatures.md` §3.2.1, used by

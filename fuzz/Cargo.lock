@@ -2077,6 +2077,7 @@ dependencies = [
  "tessera-install",
  "tessera-material",
  "tessera-mesh",
+ "tessera-world",
  "tessera-wvm",
  "thiserror",
  "tracing",
@@ -2109,6 +2110,7 @@ dependencies = [
  "tessera-material",
  "tessera-mesh",
  "tessera-net",
+ "tessera-particles",
  "tessera-physics",
  "tessera-plugins",
  "tessera-props",
@@ -2189,6 +2191,17 @@ dependencies = [
  "tessera-protocol",
  "thiserror",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-particles"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "tessera-formats",
+ "tessera-material",
+ "thiserror",
  "tracing",
 ]
 

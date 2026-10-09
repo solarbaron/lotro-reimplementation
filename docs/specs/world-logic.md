@@ -545,6 +545,13 @@ Script 0x10000524 `Viewport_Idle` (tables 0x070014AF and 0x070014BB): an opacity
 (0x070014AF: combiner `Add`, opacity 1.0; 0x070014BB: `Replace`, 1.0) and, in 0x070014BB, a
 SetProperty `QuestState_Test` = 1. It is the variant shown in UI viewports.
 
+> **OPEN (implementer, 2026-10-09):** a reader that applies §5 without running the script
+> tables must know which of the five graph shapes a table has, and this section names the
+> tables only by DID. How is the shape recognised from the table's own data (for example by
+> the node kinds and watched properties under `Startup`)? **Tessera's choice:** the library
+> exposes the five shapes (`QuestStateGraph`) and the caller chooses one; the explorer shows the
+> test and both branches without choosing.
+
 <a id="s5-3"></a>
 ### 5.3 The quest-entry callback (OBS, WLB; WL14)
 
@@ -797,6 +804,10 @@ events; `map-data.md` §4.8.6, `quests.md` §14.2) like this:
 when any holds (`map-data.md` §4.8.6, `quests.md` §14.1). A server that evaluates custom
 conditions (§6.5) should use the same test.
 
+> **OPEN (implementer, 2026-10-09):** step 6 compares *c* with the event's minimum and maximum;
+> what an integer event without `WorldEvent_MinIntValue` or `WorldEvent_MaxIntValue` does is
+> not stated. **Tessera's choice:** an absent bound does not restrict.
+
 <a id="s6-8"></a>
 ### 6.8 Skirmish bastions, control points and encounter members
 
@@ -942,6 +953,9 @@ These complete the census of `misc-records.md` §13.7.
 Reading of the data: when a character (or account) last saw an update older than an entry's
 number, the server runs that entry's objects on it once; the two always-run objects run every
 time. Server-side (OPEN §14).
+
+> **OPEN (implementer, 2026-10-09):** the value type of `Version_Number` is not stated.
+> **Tessera's choice:** read it as an enum key or an integer, whichever is stored.
 
 <a id="s9-2"></a>
 ### 9.2 Classes with data

@@ -8,6 +8,180 @@
 | **Budgets** | [Decision 0015](../decisions/0015-ui-rendering.md) §6: U1 UI main-thread time, U2 GPU time of the UI pass at 3840 × 2160, U3 UI upload bytes, U4 event frames, U5 memory |
 | **Run** | The scripted run of 0015 §6, `--ui-script` (`apps/client/src/ui_host/script.rs`), headless, release build, paced at 60 frames per second |
 
+## Step-8 optimisation of `tessera-ui` (2026-10-09, indicative)
+
+The runs below (2026-10-08) found U1, U4 (b) and U4 (f) failing inside `tessera-ui`'s step 8
+(`Ui::paint`). On 2026-10-09 the paint step was profiled and its cost cut **without changing
+its output** (branch `m5-followups`, uncommitted at the time of measuring). **Indicative
+only:** the reference laptop was shared with other agents' builds and tests throughout (load
+averages are given with every figure); the owner's idle re-measurement (O49) still decides
+criterion 7.
+
+### Where the time was
+
+A synthetic frame benchmark (`crates/ui/benches/paint_frame.rs`, below) with temporary
+timers showed that a steady frame with one changed element (the minimap moving, a label
+changing) paid for the **whole tree**, several times over: every frame in which anything
+changed ran the full surface pass of decision 0015 — the surface decision walk
+(Decision 1.1), a second walk per surface for the nested surfaces (Decision 1.7), the damage
+walk of every surface with a `BTreeMap` lookup and insert per element (Decision 1.4), a fresh
+`BTreeMap` of all painted elements, a pass over the whole arena to clear dirty flags, and a
+rebuild of the composition nodes by another walk with a parent-chain search per element
+(Decision 1.6). In addition, every image arrival marked every element with an image dirty,
+so each arrival of a minimap tile repainted every surface; text was drawn again (glyph runs)
+for every element of a surface whenever its display list was rebuilt; and every band of a
+job re-scanned every operation of the display list, recomputing glyph-run bounding boxes.
+
+### What changed (`crates/ui`)
+
+1. **Incremental damage pass** (`surface.rs`, `light_sync`). Paint-dirty elements are
+   recorded when they are marked (`Ui::note_paint_dirty`; the element flag is now set only
+   through it, so no writer can bypass the record). When none of the recorded elements,
+   nor anything below them, takes part in the surface decisions (a surface owner or
+   would-be owner, a root panel, an element with a composition node or external content,
+   the screen root), only their subtrees are walked, with the clip and depth their
+   ancestors give, which finds exactly the damage of the full walk. Everything else (a
+   rotation held for the first time, a Stretch scale, external content, new limits, a
+   destroyed surface) still runs the full pass. A held rotation that turns updates its
+   composition node in place (its coverage region does not change, Decision 1.7).
+2. **Cheaper full pass.** One decision walk also yields the nested surfaces of each surface
+   and the list of elements with composition nodes, so the coverage walk and the
+   composition walk are gone; composition nodes are rebuilt from that list. The painted
+   areas live in a vector indexed by element (a pass stamp marks the elements no longer
+   drawn); dirty flags are cleared from the record, not by a pass over the arena.
+3. **Image arrivals** damage only the elements whose image was still loading when their
+   surface's display list was last built (Decision 1.4, "an image arriving").
+4. **Glyph-run cache:** the text operations of an element are reused while its prepared
+   text (same `Arc`) and its origin, clip and outline are unchanged (`text::draw` is a pure
+   function of them).
+5. **Painter:** a display list stores each operation's area when it is pushed; a job keeps
+   the indices of the operations that meet its damage box and each band scans only those
+   (`painter.rs`, `job.rs`). Upload encoding copies whole tile rows (`canvas.rs`).
+
+**Same output.** `cargo bench -p tessera-ui --bench paint_frame -- --check` hashes every
+frame's composition list and the GPU textures that the frame's `GpuOp`s leave (a CPU model of
+the textures); the hashes of the build before and after the change are equal for every phase
+(start-up, idle, walk, walk with image arrivals, chat, resize). The property test
+`crates/ui/tests/paint_incremental.rs` runs random edits (moves, resizes, visibility,
+text, backgrounds, reparenting, z-order, destruction, rotations of a nested window, Stretch
+resizes, window moves and opacity, image arrivals) on two identical UIs, one with the
+reference paint step (`Ui::set_reference_paint`: full pass every frame, no glyph-run cache,
+everything repainted on image arrival), and requires equal composition lists and textures
+after every frame (1,500 cases run once locally; 64 per test run). Mutating the incremental
+pass, the image-waiter list, the rotation patch or the glyph-run cache key makes it fail. The
+partition invariant of Decision 1.3 is unchanged and still covered by
+`tests/paint_partition.rs` and the `ui_paint` fuzz target (whose banded job now goes through
+the per-job operation subset).
+
+### Frame benchmark (thread CPU time per `Ui::paint`)
+
+`cargo bench -p tessera-ui --bench paint_frame` (release; `-- --frames N`, `-- --check`):
+6,969 synthetic plugin controls in 15 windows at 3840 × 2160 (twelve 600 × 780 panels of
+192 slots with icon, frame and label; a chat window; a minimap window whose 512 × 512 map
+moves every frame, with a coordinate label and a turning child window; a screen-sized window
+with a full background), Tessera's bundled font, synthetic images, a 4 ms wall-clock paint
+slice. Times are the paint call's **thread CPU time** (`CLOCK_THREAD_CPUTIME_ID`), so waiting
+for a core is not counted. Two runs each, 600 frames per phase, load average 4.4–5.1:
+
+| Phase | Before: mean / p99 / max (ms) | After: mean / p99 / max (ms) |
+|---|---|---|
+| start-up (first paints, 61 frames) | 1.70 / 9.63 / 10.56 — 2.12 / 11.33 / 11.68 | 1.34 / 8.27 / 8.64 — 1.31 / 7.89 / 9.19 |
+| walk (map moves, label, turning child) | 3.15 / 4.20 / 5.10 — 4.84 / 7.68 / 8.88 | 0.061 / 0.104 / 1.70 — 0.064 / 0.103 / 2.02 |
+| walk with an image arrival every 10 frames | 5.82 / 10.59 / 10.81 — 5.62 / 10.80 / 11.49 | 0.035 / 0.080 / 1.48 — 0.040 / 0.085 / 1.92 |
+| chat (12 lines change every 6th frame) | 0.87 / 4.98 / 5.18 — 1.18 / 6.12 / 7.89 | 0.30 / 1.92 / 1.93 — 0.31 / 1.93 / 2.77 |
+| resize (`SetSize` on a panel every frame) | 4.98 / 6.66 / 6.79 — 5.45 / 7.69 / 8.10 | 4.31 / 5.48 / 6.13 — 4.07 / 5.56 / 5.94 |
+
+Under a load average of 30–50 the same benchmark gave walk 7.9–9.1 ms before and 0.13–0.15 ms
+after (thread CPU time also grows with load: shared caches and SMT siblings).
+
+### Scripted run, before and after (interleaved)
+
+Same command lines as "How to run it", release builds of the shared worktree without and
+with the change (the "before" binary was built at 2026-10-09 02:04; the "after" binaries were
+built later from the same worktree, so they also contain other agents' uncommitted changes of
+that time outside the paint step; runs a, b and the first
+1920 × 1080 pair used an earlier state of the change, identical except that a Stretch scale
+change and new paint limits also asked for a paint pass; run c and the second 1920 × 1080
+pair are the final state, except that an image arrival with no element waiting for it did
+not yet ask for a paint pass). Each pair ran back to back; load averages at start → end.
+
+| 3840 × 2160 | a: before | a: after | b: before | b: after | c: before | c: after |
+|---|---|---|---|---|---|---|
+| Load average | 25 → 9 | 9 → 7 | 7 → 10 | 10 → 5 | 5.6 → 8 | 8 → 10 |
+| U1 walk mean / p99 (ms) | 1.291 / 10.61 | **0.094 / 0.257** | 3.154 / 35.48 | **0.097 / 0.291** | 1.225 / 4.57 | **0.184** / 1.060 |
+| U1 sweep mean / p99 | 1.156 / 10.28 | 0.087 / 0.385 | 1.146 / 9.59 | 0.085 / 0.398 | 1.800 / 12.99 | 0.134 / 0.641 |
+| U1 1000 Hz sweep mean / p99 | 0.676 / 1.234 | **0.083 / 0.371** | 0.670 / 1.480 | **0.083 / 0.328** | 1.101 / 1.770 | **0.131 / 0.591** |
+| U1 all steady frames mean / p99 | 1.027 / 9.08 | 0.091 / 0.249 | 1.646 / 20.93 | 0.088 / 0.280 | 1.136 / 3.37 | 0.135 / 1.026 |
+| Step 8 mean, walk phase (ms) | 1.189 | 0.066 | 2.954 | 0.068 | 1.169 | 0.136 |
+| U3 steady mean | 77.1 KiB | 12.3 KiB | 69.3 KiB | 12.6 KiB | 54.7 KiB | 9.4 KiB |
+| U4 (a) (ms) | 305.1 | 139.8 | 47.8 | 62.0 | 126.6 | 147.6 |
+| U4 (b) (ms) | 74.56 | 11.00 | 13.98 | 11.22 | 49.18 | 34.56 |
+| U4 (f) (ms) | 6.96 | 7.42 | 5.78 | 7.80 | 5.09 | 5.25 |
+
+| 1920 × 1080 | a: before | a: after | b: before | b: after |
+|---|---|---|---|---|
+| Load average | 5.3 → 8.9 | 8.9 → 8.2 | 10.1 → 6.4 | 6.4 → 3.9 |
+| U1 walk mean / p99 (ms) | 0.919 / 7.73 | 0.351 / 7.12 | 0.769 / 1.53 | **0.089 / 0.268** |
+| U1 1000 Hz sweep mean / p99 | 1.413 / 8.34 | **0.083 / 0.354** | 0.589 / 1.203 | **0.081 / 0.415** |
+| U1 all steady frames mean / p99 | 1.073 / 8.98 | 0.181 / 0.516 | 0.736 / 2.34 | 0.082 / 0.258 |
+| Step 8 mean, walk phase (ms) | 0.878 | 0.230 | 0.731 | 0.062 |
+| U3 steady mean | 27.1 KiB | 17.4 KiB | 26.2 KiB | 11.5 KiB |
+| U4 (a) (ms) | 75.3 | 53.6 | 75.5 | 39.3 |
+| U4 (b) (ms) | 16.93 | 25.58 | 48.84 | 14.65 |
+| U4 (f) (ms) | 8.51 | 9.23 | 10.29 | 4.29 |
+
+Under heavy load (load average 28–66, 3840 × 2160, one pair from 02:04–02:38, the "after"
+binary with temporary counters): U1 walk 9.475 ms mean / 42.65 ms p99 before,
+0.267 / 3.76 ms after; step 8 in the walk phase 9.14 → 0.18 ms; U4 (b) 100.5 → 20.0 ms.
+The counters showed that every walking frame had a change and that the incremental pass
+handled 599 of 600 of them.
+
+### Reading (indicative)
+
+- **U1** (walking and the 1000 Hz sweep): the steady UI time dropped by a factor of 10–30.
+  In three of the five "after" runs every U1 mean and p99 is inside the budget (mean ≤ 0.3 ms,
+  p99 ≤ 1.0 ms); run c at 3840 × 2160 is just over on the walking p99 (1.06 ms), and the first
+  1920 × 1080 run is over on the walking mean and p99 (0.351 / 7.12 ms; its maximum, 23.7 ms,
+  is the same as the "before" run's). Spikes of that kind come from the shared machine: with
+  temporary timers in a later run, trivial sections (the list-layout flush, the composition
+  step for 45 nodes) took 2–5 ms in some frames and well under 0.1 ms in the others. The idle
+  re-measurement (O49) decides.
+- **U4 (b)** still fails (11–35 ms). Two parts remain by design, besides preemption on the
+  loaded machine: the paint slice itself is 4 ms, and the uploads that follow it in the same
+  call are bounded by bytes (the 8 MiB U3 cap), not by time. Timers in the frame benchmark
+  put 8 MiB of upload encoding at 3.5–4 ms on this machine, so a frame that uses both the
+  slice and the cap takes about 8 ms. The copy itself runs at about 9.6 GB/s when measured
+  alone; the rest is probably the fresh 256 KiB buffer of every tile cell (page faults),
+  which a profiler would have to confirm. See the open item below.
+- **U4 (f)**: 4.3–9.2 ms after (5.1–10.3 before); content frames now cost a chat-log or tree
+  repaint plus its upload. Close to the 4 ms bound; judge on the idle machine.
+- **U3** steady upload fell from 55–77 KiB to 9–13 KiB (3840 × 2160): image arrivals no
+  longer repaint every surface. **U5** is unchanged.
+
+### Open items
+
+- **Upload time and the slice (decision 0015 owner).** U4 (b) bounds the UI paint per frame
+  by the 4 ms slice, but uploads up to the U3 cap follow the slice in the same frame and cost
+  up to about 4 ms more here. Either the uploads count against the slice (stop uploading when
+  it is used up and carry the rest, which lengthens U4 (c)–(e)), or the client gives the
+  painter a shorter slice, or U4 (b) excludes upload encoding. Not changed here, because each
+  option changes scheduling or the budget's definition.
+- **Image arrivals under the image cap.** The client draws a placeholder (as `Ready`) when its
+  image cache is at its cap. Such an element no longer repaints when some other image arrives
+  (before, every arrival repainted every image element, so a later repaint could pick up the
+  real image). Decision 1.4 names only "an image arriving" as damage; whether a placeholder
+  drawn because of the cap should be repainted when memory frees up is a question for the
+  owner of the image cache (§4.5).
+- The full surface pass still walks the whole tree in event frames (panel open, resize, scale,
+  rotation held for the first time): the decision walk and the damage walk took about 2.4 and
+  2.3 ms (wall clock, load average about 34) per resize frame of the 6,969-element benchmark
+  scene. A pass limited to the changed root groups would cut it further.
+- `Ui::resize` of a Stretch surface changes the composition (its scale) without asking for a
+  paint pass, as before this change; the composition then waits for the next change anywhere
+  in the UI. Kept as it was (now recorded as structural for that next pass); worth a look by
+  the `tessera-ui` owner.
+
+
 ## How to run it
 
 ```sh

@@ -26,6 +26,7 @@ use tessera_client::audio::backend::BackendChoice;
 use tessera_client::audio::player_music::{MusicConfig, PlayerMusic};
 use tessera_client::net::PlayerLocation;
 use tessera_client::plugins::Plugins;
+use tessera_client::wait::{LoadWait, ProgressWait, wait_until};
 use tessera_client::walker::WalkerSession;
 use tessera_client::walker::chat::{ChatOverlay, dispatch};
 use tessera_dat::{ArchiveSet, SetOptions};
@@ -85,10 +86,27 @@ fn shown(chat: &ChatOverlay) -> Vec<String> {
         .collect()
 }
 
-fn wait_music(plugins: &mut Plugins, secs: u64) -> bool {
+/// How long the player-music waits last: as long as start-up, jobs and queued commands
+/// progress ([`PlayerMusic::wait_settled`]: polls about 2 ms apart; start-up and each
+/// command job are single steps, so the stall limit covers the longest of them).
+const MUSIC_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(900_000, 7_200_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(150_000, 1_800_000))
+};
+
+/// How long the wait for the install's command words lasts (polls 20 ms apart; the words
+/// are read in one step, so only the stall limit and the cap apply).
+const WORDS_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(90_000, 720_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(15_000, 180_000))
+};
+
+fn wait_music(plugins: &mut Plugins) -> bool {
     plugins
         .music_mut()
-        .is_some_and(|m| m.wait_idle(Duration::from_secs(secs)))
+        .is_some_and(|m| m.wait_settled(MUSIC_WAIT))
 }
 
 fn game_dir() -> Option<PathBuf> {
@@ -134,7 +152,7 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             // the first named type other than 0. Both typed in the chat.
             type_line(&mut chat, "/instrument");
             frame(&mut chat, &mut plugins, &mut session);
-            assert!(wait_music(&mut plugins, 300), "start-up finished");
+            assert!(wait_music(&mut plugins), "start-up finished");
             let instrument = plugins
                 .music_mut()
                 .and_then(|m| m.data())
@@ -144,7 +162,7 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             type_line(&mut chat, &format!("/instrument {instrument}"));
             type_line(&mut chat, "/PLAY tessera-chat");
             frame(&mut chat, &mut plugins, &mut session);
-            assert!(wait_music(&mut plugins, 120), "the song was read");
+            assert!(wait_music(&mut plugins), "the song was read");
             frame(&mut chat, &mut plugins, &mut session);
             let m = plugins.music_mut().expect("music");
             let scheduled = m.schedule_log().last().map_or(0, |p| p.note_on_times.len());
@@ -159,12 +177,20 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             assert!(m.stats().commands >= 3);
             // The install's command words (chat-window.md §10 items 3, 4; CW-I6, CW-I7):
             // counts only, no game text.
-            let deadline = Instant::now() + Duration::from_secs(60);
-            while plugins.dispatcher().text().channel_words.is_empty() && Instant::now() < deadline
-            {
+            let _ = wait_until(WORDS_WAIT, Duration::from_millis(20), || {
+                if !plugins.dispatcher().text().channel_words.is_empty() {
+                    return None;
+                }
                 plugins.pump();
-                std::thread::sleep(Duration::from_millis(20));
-            }
+                let t = plugins.dispatcher().text();
+                Some((
+                    t.channel_words.len(),
+                    t.help_names.is_some(),
+                    t.plugins_names.is_some(),
+                    t.default_word.is_some(),
+                    t.unknown_line.is_some(),
+                ))
+            });
             let d = plugins.dispatcher();
             let t = d.text();
             eprintln!(
@@ -191,7 +217,7 @@ fn a_play_line_from_the_chat_starts_the_music_or_says_why_not() {
             eprintln!("TESSERA_GAME_DIR not set: checking the report without game data");
             type_line(&mut chat, "/play tessera-chat");
             frame(&mut chat, &mut plugins, &mut session);
-            assert!(wait_music(&mut plugins, 30), "the song was read");
+            assert!(wait_music(&mut plugins), "the song was read");
             frame(&mut chat, &mut plugins, &mut session);
             let rows = shown(&chat);
             assert!(

@@ -19,7 +19,12 @@
 //! 3. [`ClipResolver::resolve`] builds the property state from the entity's values and the
 //!    [`MotionInputs`] of a [`MotionState`] (§8.4, §11.3 step 2), runs the `Startup` script
 //!    (the `Startup` definitions of every closure table), then the start-up scripts the
-//!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s.
+//!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s, with the bind-space
+//!    deformers and the MeshFX nodes the same runs start ([`MeshFxCandidate`], §5.2; the
+//!    mount mesh of `mounts.md` §4.4).
+//!
+//! [`EntityScripts::running`] marks scripts as running before `Startup` (a mounted rider's
+//! channelling script, read by WhenRunning nodes, §8.4 step 2).
 //!
 //! Every script run (`Startup`, a start-up name, a Run node) runs **all** the definitions
 //! the lookup gathers (§8.2 steps 2–3, T25, T41) in the client's start order: the
@@ -54,8 +59,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::node::{
-    AnimationNode, Node, NodeData, NodeKind, PortPayload, PortType, SWITCH_ALL_BITS_SET,
-    SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
+    AnimationNode, MeshFxNode, Node, NodeData, NodeKind, PortPayload, PortType,
+    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
 use super::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
@@ -155,6 +160,67 @@ impl AppearanceFieldPids {
     }
 }
 
+/// PIDs of the MeshFX (kind 41) fields that driven properties and scriptlet parameters can
+/// set (§5.2; the field labels are `MeshFXScript_*`, `mounts.md` §4.2). Each is `None`
+/// when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MeshFxFieldPids {
+    /// `MeshFXScript_Entity`.
+    pub entity: Option<u32>,
+    /// `MeshFXScript_HoldingLocation`.
+    pub holding_location: Option<u32>,
+    /// `MeshFXScript_BoneOffset`.
+    pub bone_offset: Option<u32>,
+    /// `MeshFXScript_Scale`.
+    pub scale: Option<u32>,
+    /// `MeshFXScript_Behavior`.
+    pub behavior: Option<u32>,
+    /// `MeshFXScript_OffsetRotationYaw`.
+    pub yaw: Option<u32>,
+    /// `MeshFXScript_OffsetRotationPitch`.
+    pub pitch: Option<u32>,
+    /// `MeshFXScript_OffsetRotationRoll`.
+    pub roll: Option<u32>,
+    /// `MeshFXScript_FadeInTime`.
+    pub fade_in_time: Option<u32>,
+}
+
+impl MeshFxFieldPids {
+    /// Looks the field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            entity: p("MeshFXScript_Entity"),
+            holding_location: p("MeshFXScript_HoldingLocation"),
+            bone_offset: p("MeshFXScript_BoneOffset"),
+            scale: p("MeshFXScript_Scale"),
+            behavior: p("MeshFXScript_Behavior"),
+            yaw: p("MeshFXScript_OffsetRotationYaw"),
+            pitch: p("MeshFXScript_OffsetRotationPitch"),
+            roll: p("MeshFXScript_OffsetRotationRoll"),
+            fade_in_time: p("MeshFXScript_FadeInTime"),
+        }
+    }
+
+    /// The PIDs that are defined.
+    fn all(&self) -> impl Iterator<Item = u32> {
+        [
+            self.entity,
+            self.holding_location,
+            self.bone_offset,
+            self.scale,
+            self.behavior,
+            self.yaw,
+            self.pitch,
+            self.roll,
+            self.fade_in_time,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 /// The property IDs and enum keys clip selection needs, looked up by name in the data
 /// (§8.1, §8.4, §11.3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -207,6 +273,8 @@ pub struct ScriptVocabulary {
     pub mesh_deformer: MeshDeformerFieldPids,
     /// Appearance-node field PIDs (§5.1 kind 58; `appearance.md` §7.4).
     pub appearance: AppearanceFieldPids,
+    /// MeshFX field PIDs (§5.2).
+    pub mesh_fx: MeshFxFieldPids,
     /// `Script_CombinationType` (enum 0x2300016D): the per-script property (§2.4) that marks
     /// a definition as overriding (§8.2 step 2). `None` when the dictionary lacks it: then
     /// every definition is additive.
@@ -299,6 +367,7 @@ impl ScriptVocabulary {
             slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
             mesh_deformer: MeshDeformerFieldPids::from_names(dict),
             appearance: AppearanceFieldPids::from_names(dict),
+            mesh_fx: MeshFxFieldPids::from_names(dict),
             combination_type,
             combination_overriding,
         })
@@ -404,6 +473,11 @@ pub struct EntityScripts {
     pub startup_scripts: Vec<u32>,
     /// Scalar property values of all sets; later sets override earlier ones.
     pub properties: PropertyState,
+    /// Script keys that count as running before the evaluation starts (a state the caller
+    /// sets, such as a mounted rider's channelling script, `script-table.md` §8.4 step 2):
+    /// WhenRunning nodes see them running. They are not started by being listed here; list
+    /// a key in `startup_scripts` too to start it.
+    pub running: Vec<u32>,
 }
 
 impl EntityScripts {
@@ -1125,6 +1199,47 @@ impl ClipCandidate {
     }
 }
 
+/// A MeshFX node (kind 41) that would start: an entity spawned and attached to this one
+/// (§5.2; `mounts.md` §4.4), with scriptlet parameters and driven properties applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshFxCandidate {
+    /// The node's fields after the substitution.
+    pub node: MeshFxNode,
+    /// Which fields took a value from a driven property (or a scriptlet parameter); the
+    /// others keep the node's stored value (`mounts.md` §4.4: a node that does not drive
+    /// `Scale` uses its stored scale).
+    pub driven: MeshFxDriven,
+    /// The table whose script started the chain.
+    pub table: Did,
+    /// The scriptlet holding the node, or the null DID for a table node.
+    pub scriptlet: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+    /// The script keys run on the way to this node, outermost first (as
+    /// [`ClipCandidate::scripts`]).
+    pub scripts: Vec<u32>,
+}
+
+/// The fields of a [`MeshFxCandidate`] that took a run-time value.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MeshFxDriven {
+    /// `Entity`.
+    pub entity: bool,
+    /// `HoldingLocation`.
+    pub holding_location: bool,
+    /// `BoneOffset`.
+    pub bone_offset: bool,
+    /// `Scale`.
+    pub scale: bool,
+    /// `Behavior`.
+    pub behavior: bool,
+    /// One of the three rotation offsets.
+    pub rotation: bool,
+    /// `FadeInTime`.
+    pub fade_in_time: bool,
+}
+
 /// The result of [`ClipResolver::resolve`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClipResolution {
@@ -1140,6 +1255,8 @@ pub struct ClipResolution {
     /// (`appearance.md` §7.4: the elements a figure's start-up scripts append to its
     /// appearance after its lists; a later one wins equal-priority ties).
     pub appearances: Vec<AppearanceCandidate>,
+    /// Every MeshFX node that would start (§5.2), in the same start order.
+    pub mesh_fx: Vec<MeshFxCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
     /// Nodes visited.
@@ -1580,9 +1697,10 @@ where
             depth: 0,
             calls: Vec::new(),
             runs: Vec::new(),
-            running: HashSet::new(),
+            running: entity.running.iter().copied().collect(),
             table: Did(0),
             all_branches,
+            mesh_fx: Vec::new(),
         };
         // The `Startup` script: one run of every definition the lookup gathers, so the
         // `Startup` of every closure table (§8.2 start-up), in the client's start order
@@ -1618,6 +1736,7 @@ where
             out,
             deformers,
             appearances,
+            mesh_fx,
             issues,
             visits,
             ..
@@ -1627,6 +1746,7 @@ where
             candidates: out,
             deformers,
             appearances,
+            mesh_fx,
             issues,
             nodes_visited: visits,
         })
@@ -1790,6 +1910,7 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     table: Did,
     /// Run every branch of Switch, When, ScalarBlend and WhenRunning nodes.
     all_branches: bool,
+    mesh_fx: Vec<MeshFxCandidate>,
 }
 
 impl<S, F, B, E> Eval<'_, '_, S, F, B, E>
@@ -2054,6 +2175,10 @@ where
                 property, value, ..
             } => {
                 self.set_property(n, *property, value.as_deref());
+                Ok(())
+            }
+            NodeData::MeshFx(m) => {
+                self.mesh_fx(n, m, scope);
                 Ok(())
             }
             NodeData::MeshDeformer {
@@ -2563,6 +2688,61 @@ where
         }
     }
 
+    /// Registers a MeshFX node (§5.2) with scriptlet parameters, then driven properties,
+    /// applied to its fields (as for animation nodes: the innermost parameter, then the
+    /// run-time value, which wins).
+    fn mesh_fx(&mut self, n: &Node, m: &MeshFxNode, scope: &Scope<'_>) {
+        if self.mesh_fx.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        let pids = self.r.vocab.mesh_fx;
+        let cost = n
+            .base
+            .driven
+            .len()
+            .saturating_add(self.calls.len())
+            .saturating_add(m.appearances.len());
+        if !self.charge(cost) {
+            return;
+        }
+        let mut c = MeshFxCandidate {
+            node: m.clone(),
+            driven: MeshFxDriven::default(),
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
+            scripts: self
+                .calls
+                .iter()
+                .filter_map(|c| match c {
+                    Call::Script(k) => Some(*k),
+                    Call::Scriptlet(_) => None,
+                })
+                .collect(),
+        };
+        for pid in pids.all() {
+            let mut s = Some(scope);
+            while let Some(sc) = s {
+                let entries = sc.params.map_or(0, |p| p.entries.len());
+                if !self.charge(entries.saturating_add(1)) {
+                    return;
+                }
+                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                    apply_mesh_fx_field(&mut c, &pids, pid, v);
+                    break;
+                }
+                s = sc.parent;
+            }
+        }
+        for &(field, source) in &n.base.driven {
+            if let Some(v) = self.state.get(source) {
+                apply_mesh_fx_field(&mut c, &pids, field, v);
+            }
+        }
+        self.mesh_fx.push(c);
+    }
+
     /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
     fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did) {
         if self.deformers.len() >= self.r.limits.max_candidates {
@@ -2831,6 +3011,67 @@ fn apply_field(c: &mut ClipCandidate, pids: &AnimationFieldPids, pid: u32, v: &P
         }
     } else if is(pids.synchronize_timing) {
         c.synchronize_timing = flag().unwrap_or(c.synchronize_timing);
+    }
+}
+
+/// Sets the MeshFX field `field` of `c` from `v` when the value has the field's form;
+/// otherwise the field keeps its value.
+fn apply_mesh_fx_field(
+    c: &mut MeshFxCandidate,
+    pids: &MeshFxFieldPids,
+    field: u32,
+    v: &PropertyValue,
+) {
+    let is = |p: Option<u32>| p == Some(field);
+    let code = || v.as_bits().and_then(|b| u32::try_from(b).ok());
+    #[allow(clippy::cast_possible_truncation)]
+    let float = || v.as_f64().map(|f| f as f32).filter(|f| f.is_finite());
+    let node = &mut c.node;
+    if is(pids.entity) {
+        if let Some(d) = v.as_did() {
+            node.entity = d;
+            c.driven.entity = true;
+        }
+    } else if is(pids.holding_location) {
+        if let Some(k) = code() {
+            node.holding_location = k;
+            c.driven.holding_location = true;
+        }
+    } else if is(pids.bone_offset) {
+        if let PropertyValue::Vector3(o) = v {
+            node.bone_offset = *o;
+            c.driven.bone_offset = true;
+        }
+    } else if is(pids.scale) {
+        let scale = match v {
+            PropertyValue::Vector3(s) => Some(*s),
+            _ => float().map(|f| [f; 3]),
+        };
+        if let Some(s) = scale {
+            node.scale = s;
+            c.driven.scale = true;
+        }
+    } else if is(pids.behavior) {
+        if let Some(k) = code() {
+            node.behavior = k;
+            c.driven.behavior = true;
+        }
+    } else if is(pids.yaw) || is(pids.pitch) || is(pids.roll) {
+        if let Some(f) = float() {
+            if is(pids.yaw) {
+                node.offset_rotation_yaw = f;
+            } else if is(pids.pitch) {
+                node.offset_rotation_pitch = f;
+            } else {
+                node.offset_rotation_roll = f;
+            }
+            c.driven.rotation = true;
+        }
+    } else if is(pids.fade_in_time)
+        && let Some(f) = float()
+    {
+        node.fade_in_time = f;
+        c.driven.fade_in_time = true;
     }
 }
 

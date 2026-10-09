@@ -7,7 +7,9 @@
 
 use crate::did::Did;
 use crate::error::{FormatError, Result};
-use crate::property::{Position, PropertyEntry, PropertySchema, ValueDecoder, read_waveform};
+use crate::property::{
+    Position, PropertyEntry, PropertySchema, ValueDecoder, Waveform, read_waveform,
+};
 use crate::property_set::PropertySet;
 use crate::reader::{Reader, TSize};
 use crate::string_info::StringInfo;
@@ -530,6 +532,335 @@ impl SoundNode {
     }
 }
 
+/// Data of a Light node (kind 13, §5.3): every field in stream order. The field names are
+/// the property names with the common prefix stripped (`LightRange` → `range`, …).
+///
+/// Colours are the four stored bytes as they are (`property-system.md` §4.7 gives their
+/// order); waveforms are kept as decoded (`property-system.md` §4.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LightNode {
+    /// `Direction`.
+    pub direction: [f32; 3],
+    /// `LightRange`.
+    pub range: f32,
+    /// `LightDiffuse` (four stored bytes).
+    pub diffuse: [u8; 4],
+    /// `LightDiffuseIntensity`.
+    pub diffuse_intensity: Waveform,
+    /// `LightSpecular` (four stored bytes).
+    pub specular: [u8; 4],
+    /// `LightFalloff`.
+    pub falloff: f32,
+    /// `ProjectorEnabled`.
+    pub projector_enabled: bool,
+    /// `ProjectorTexture`.
+    pub projector_texture: Did,
+    /// `ProjectorYaw`.
+    pub projector_yaw: Waveform,
+    /// `ProjectorPitch`.
+    pub projector_pitch: Waveform,
+    /// `ProjectorRoll`.
+    pub projector_roll: Waveform,
+    /// `CoronaEnabled`.
+    pub corona_enabled: bool,
+    /// `CoronaTexture`.
+    pub corona_texture: Did,
+    /// `CoronaFadeSpeed`.
+    pub corona_fade_speed: f32,
+    /// `CoronaSize`.
+    pub corona_size: f32,
+    /// `CoronaOpacity`.
+    pub corona_opacity: f32,
+    /// `CoronaOcclusion`.
+    pub corona_occlusion: bool,
+    /// `CoronaOcclusionSize`.
+    pub corona_occlusion_size: f32,
+    /// `KeyLight`.
+    pub key_light: bool,
+    /// `ShadowCaster`.
+    pub shadow_caster: bool,
+    /// `Light_AllowBakedShadows`.
+    pub allow_baked_shadows: bool,
+    /// `LightScript_Lifespan`.
+    pub lifespan: f32,
+    /// `LightScript_FadeTime`.
+    pub fade_time: f32,
+    /// `LightScript_Offset`.
+    pub offset: [f32; 3],
+    /// `LightScript_RunOnLocalPlayerOnly`.
+    pub run_on_local_player_only: bool,
+    /// `LightScript_OnlyInfluenceParent`.
+    pub only_influence_parent: bool,
+    /// `LightScript_NeverInfluenceParent`.
+    pub never_influence_parent: bool,
+    /// `LightScript_NeverCullOrOcclude`.
+    pub never_cull_or_occlude: bool,
+    /// `LightScript_GlobalLight`.
+    pub global_light: bool,
+    /// `LightScript_HoldingLocation`.
+    pub holding_location: u32,
+}
+
+impl LightNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let v3 = |r: &mut Reader<'_>| -> Result<[f32; 3]> { Ok([r.f32()?, r.f32()?, r.f32()?]) };
+        let rgba = |r: &mut Reader<'_>| -> Result<[u8; 4]> { r.array() };
+        Ok(Self {
+            direction: v3(r)?,
+            range: r.f32()?,
+            diffuse: rgba(r)?,
+            diffuse_intensity: read_waveform(r)?,
+            specular: rgba(r)?,
+            falloff: r.f32()?,
+            projector_enabled: r.bool8()?,
+            projector_texture: r.did()?,
+            projector_yaw: read_waveform(r)?,
+            projector_pitch: read_waveform(r)?,
+            projector_roll: read_waveform(r)?,
+            corona_enabled: r.bool8()?,
+            corona_texture: r.did()?,
+            corona_fade_speed: r.f32()?,
+            corona_size: r.f32()?,
+            corona_opacity: r.f32()?,
+            corona_occlusion: r.bool8()?,
+            corona_occlusion_size: r.f32()?,
+            key_light: r.bool8()?,
+            shadow_caster: r.bool8()?,
+            allow_baked_shadows: r.bool8()?,
+            lifespan: r.f32()?,
+            fade_time: r.f32()?,
+            offset: v3(r)?,
+            run_on_local_player_only: r.bool8()?,
+            only_influence_parent: r.bool8()?,
+            never_influence_parent: r.bool8()?,
+            never_cull_or_occlude: r.bool8()?,
+            global_light: r.bool8()?,
+            holding_location: r.u32()?,
+        })
+    }
+}
+
+/// One element of a MeshFX node's `Appearances` list (§5.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshFxAppearanceEntry {
+    /// The appearance record (a 0x20 DID).
+    pub appearance: Did,
+    /// The appearance key.
+    pub key: u32,
+    /// The modifier.
+    pub modifier: f32,
+}
+
+/// Data of a MeshFX node (kind 41, §5.2): the 20 fixed fields, `Scale`, the `Appearances`
+/// list and `MeshIIDTargetProperty`, in stream order. Field names are the
+/// `MeshFXScript_*` names with the prefix stripped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshFxNode {
+    /// `Entity`: the 0x47 entity to spawn (0 when it is driven).
+    pub entity: Did,
+    /// `AttachToParent`.
+    pub attach_to_parent: bool,
+    /// `AllowPhysics`.
+    pub allow_physics: bool,
+    /// `FadeInTime`.
+    pub fade_in_time: f32,
+    /// `LifeTime`.
+    pub life_time: f32,
+    /// `FadeOutTime`.
+    pub fade_out_time: f32,
+    /// `DestroyTime`.
+    pub destroy_time: f32,
+    /// `HoldingLocation`: a `HoldingLocation` key of the parent.
+    pub holding_location: u32,
+    /// `BoneOffset`.
+    pub bone_offset: [f32; 3],
+    /// `OffsetRotationYaw`.
+    pub offset_rotation_yaw: f32,
+    /// `OffsetRotationPitch`.
+    pub offset_rotation_pitch: f32,
+    /// `OffsetRotationRoll`.
+    pub offset_rotation_roll: f32,
+    /// `RemoveRotation`.
+    pub remove_rotation: bool,
+    /// `BoneType`.
+    pub bone_type: u32,
+    /// `Behavior`: the script key started on the spawned entity.
+    pub behavior: u32,
+    /// `Persistent`.
+    pub persistent: bool,
+    /// `OnWater`.
+    pub on_water: bool,
+    /// `UseParentScale`.
+    pub use_parent_scale: bool,
+    /// `UseParticleScale`.
+    pub use_particle_scale: bool,
+    /// `IgnoreChildScale`.
+    pub ignore_child_scale: bool,
+    /// `Scale`.
+    pub scale: [f32; 3],
+    /// `Appearances`.
+    pub appearances: Vec<MeshFxAppearanceEntry>,
+    /// `MeshIIDTargetProperty`: the PID that receives the spawned entity's instance ID.
+    pub mesh_iid_target_property: u32,
+}
+
+impl MeshFxNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let v3 = |r: &mut Reader<'_>| -> Result<[f32; 3]> { Ok([r.f32()?, r.f32()?, r.f32()?]) };
+        let entity = r.did()?;
+        let attach_to_parent = r.bool8()?;
+        let allow_physics = r.bool8()?;
+        let fade_in_time = r.f32()?;
+        let life_time = r.f32()?;
+        let fade_out_time = r.f32()?;
+        let destroy_time = r.f32()?;
+        let holding_location = r.u32()?;
+        let bone_offset = v3(r)?;
+        let offset_rotation_yaw = r.f32()?;
+        let offset_rotation_pitch = r.f32()?;
+        let offset_rotation_roll = r.f32()?;
+        let remove_rotation = r.bool8()?;
+        let bone_type = r.u32()?;
+        let behavior = r.u32()?;
+        let persistent = r.bool8()?;
+        let on_water = r.bool8()?;
+        let use_parent_scale = r.bool8()?;
+        let use_particle_scale = r.bool8()?;
+        let ignore_child_scale = r.bool8()?;
+        let scale = v3(r)?;
+        let n = r.vle()?;
+        let mut appearances = r.alloc_vec(n, 12, usize::MAX)?;
+        for _ in 0..n {
+            let a = MeshFxAppearanceEntry {
+                appearance: r.did()?,
+                key: r.u32()?,
+                modifier: r.f32()?,
+            };
+            r.push(&mut appearances, a, n)?;
+        }
+        Ok(Self {
+            entity,
+            attach_to_parent,
+            allow_physics,
+            fade_in_time,
+            life_time,
+            fade_out_time,
+            destroy_time,
+            holding_location,
+            bone_offset,
+            offset_rotation_yaw,
+            offset_rotation_pitch,
+            offset_rotation_roll,
+            remove_rotation,
+            bone_type,
+            behavior,
+            persistent,
+            on_water,
+            use_parent_scale,
+            use_particle_scale,
+            ignore_child_scale,
+            scale,
+            appearances,
+            mesh_iid_target_property: r.u32()?,
+        })
+    }
+}
+
+/// Data of a Particle node (kind 59; 58 bytes, §5.3; `particle-runtime.md` §5.2). The
+/// fields carry the `ParticleScript_` labels of the master property dictionary; stored
+/// values are kept as they are (the run time sanitises them).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleScriptNode {
+    /// `ParticleScript_ParticleID`: a 0x39 (or 0x44) DID, or 0.
+    pub particle_id: Did,
+    /// `ParticleScript_ForkParticleID`: a 0x44 DID, or 0.
+    pub fork_particle_id: Did,
+    /// `ParticleScript_ShouldFade` (fork effects only).
+    pub should_fade: bool,
+    /// `ParticleScript_FarFadeMinDistance`.
+    pub far_fade_min: f32,
+    /// `ParticleScript_FarFadeMaxDistance`.
+    pub far_fade_max: f32,
+    /// `ParticleScript_CloseFadeMinDistance`.
+    pub close_fade_min: f32,
+    /// `ParticleScript_CloseFadeMaxDistance`.
+    pub close_fade_max: f32,
+    /// `ParticleScript_HoldingLocation`: a `HoldingLocation` enum key, or 0.
+    pub holding_location: u32,
+    /// `ParticleScript_BoneType`: a `BoneType` enum key, or 0.
+    pub bone_type: u32,
+    /// `ParticleScript_BoneOffset`, metres.
+    pub bone_offset: [f32; 3],
+    /// `ParticleScript_DropEffect`.
+    pub drop_effect: bool,
+    /// `ParticleScript_RemoveRotation`.
+    pub remove_rotation: bool,
+    /// `ParticleScript_OnWater`.
+    pub on_water: bool,
+    /// `ParticleScript_ImmediateDisposal`.
+    pub immediate_disposal: bool,
+    /// `ParticleScript_RedirectProperty`: a PID, or 0.
+    pub redirect_property: u32,
+}
+
+impl Default for ParticleScriptNode {
+    /// The defaults of a new node (`particle-runtime.md` §5.2).
+    fn default() -> Self {
+        Self {
+            particle_id: Did(0),
+            fork_particle_id: Did(0),
+            should_fade: true,
+            far_fade_min: 40.0,
+            far_fade_max: 60.0,
+            close_fade_min: 0.0,
+            close_fade_max: 0.0,
+            holding_location: 0,
+            bone_type: 0,
+            bone_offset: [0.0; 3],
+            drop_effect: false,
+            remove_rotation: false,
+            on_water: false,
+            immediate_disposal: false,
+            redirect_property: 0,
+        }
+    }
+}
+
+impl ParticleScriptNode {
+    /// Stored size of the data (§5.3: two DIDs, a bool8, four f32, two u32, a vec3, four
+    /// bool8, a u32).
+    pub const SIZE: usize = 58;
+
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self {
+            particle_id: r.did()?,
+            fork_particle_id: r.did()?,
+            should_fade: r.bool8()?,
+            far_fade_min: r.f32()?,
+            far_fade_max: r.f32()?,
+            close_fade_min: r.f32()?,
+            close_fade_max: r.f32()?,
+            holding_location: r.u32()?,
+            bone_type: r.u32()?,
+            bone_offset: [r.f32()?, r.f32()?, r.f32()?],
+            drop_effect: r.bool8()?,
+            remove_rotation: r.bool8()?,
+            on_water: r.bool8()?,
+            immediate_disposal: r.bool8()?,
+            redirect_property: r.u32()?,
+        })
+    }
+
+    /// The effect DID the node starts (`particles.md` §7.1.1): `ParticleID` when not 0,
+    /// otherwise `ForkParticleID`; `None` when both are 0.
+    #[must_use]
+    pub fn effect_did(&self) -> Option<Did> {
+        [self.particle_id, self.fork_particle_id]
+            .into_iter()
+            .find(|d| !d.is_null())
+    }
+}
+
 /// Kind-specific node data (§5, §6).
 ///
 /// Kinds that clip selection and the sound runtime use are decoded into typed variants;
@@ -636,6 +967,12 @@ pub enum NodeData {
     },
     /// Sound (48): play a sound info (`sound.md` §9.1–§9.2).
     Sound(Box<SoundNode>),
+    /// Light (13): a light while the node runs (§5.3).
+    Light(Box<LightNode>),
+    /// MeshFX (41): spawn an entity attached to this one (§5.2).
+    MeshFx(Box<MeshFxNode>),
+    /// Particle (59): start a particle or fork effect (`particle-runtime.md` §5).
+    Particle(Box<ParticleScriptNode>),
     /// SoundEnvironment (62): register a reverb environment while running (`sound.md` §9.4).
     SoundEnvironment {
         /// `SoundEnvironmentScript_Name`: the environment preset (enum 0x23000080).
@@ -658,6 +995,10 @@ pub enum NodeData {
         /// Length of the data in bytes.
         len: u32,
     },
+    /// A node built from a property tree (an instance script table, `instance-scripts.md`
+    /// §3.3) whose kind has no typed form here: its field values by the PIDs bound to the
+    /// fields, as stored in `ScriptTable_NodeProperties`.
+    Fields(Box<PropertySet>),
 }
 
 /// The case payload of a Switch port of type 5 (§4.3).
@@ -843,8 +1184,9 @@ pub struct Node {
     pub data: NodeData,
     /// The common base block.
     pub base: BaseBlock,
-    /// The extra byte of Particle nodes (kind 59) after the base block (meaning OPEN);
-    /// `None` for every other kind.
+    /// The extra byte of Particle nodes (kind 59) after the base block: the stored
+    /// never-ending classification, 1 = never-ending (`particle-runtime.md` §5.3); `None`
+    /// for every other kind.
     pub particle_flag: Option<bool>,
     /// Output ports in stored order (order is not meaningful, §4.3).
     pub ports: Vec<Port>,
@@ -858,6 +1200,15 @@ impl Node {
     pub fn animation(&self) -> Option<&AnimationNode> {
         match &self.data {
             NodeData::Animation(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The particle data, if this is a Particle node (kind 59).
+    #[must_use]
+    pub fn particle(&self) -> Option<&ParticleScriptNode> {
+        match &self.data {
+            NodeData::Particle(p) => Some(p),
             _ => None,
         }
     }
@@ -955,16 +1306,9 @@ const ENTITY_VFX: &[F] = &[
     U, B, W4, W4, W4, B, Wave, W4, U, Rgba, Wave, Wave, Wave, U, Wave, Rgba, Rgba, Wave, U, V3,
     Wave, Wave, V3, Wave, Rgba, Wave, U,
 ];
-const LIGHT: &[F] = &[
-    V3, W4, Rgba, Wave, Rgba, W4, B, U, Wave, Wave, Wave, B, U, W4, W4, W4, B, W4, B, B, B, W4, W4,
-    V3, B, B, B, B, B, U,
-];
 const STREAK_INFO: &[F] = &[Rgba, V3, V3, U, W4, W4, W4, W4, W4, W4, B, W4, W4, W4];
 const CAMERA_SHAKE: &[F] = &[W4, W4, W4, Wave, Wave, Wave, W4, W4, B];
 const OVERLAY: &[F] = &[U, U, B, Wave, Rgba, U, Wave, Wave, Wave, Wave, B];
-const MESH_FX_FIXED: &[F] = &[
-    U, B, B, W4, W4, W4, W4, U, V3, W4, W4, W4, B, U, U, B, B, B, B, B, V3,
-];
 const FIRE_MISSILE_FIXED: &[F] = &[U, U, V3, W4, W4, W4, W4, W4, W4, B, B, B, B, U];
 const DETECT: &[F] = &[U, U, U, V3, V3, B, W4, B, B, B, B, U, B, B, U, B, B];
 const MOVE_TO: &[F] = &[
@@ -975,7 +1319,6 @@ const BEAM: &[F] = &[
     B, Rgba, Pos, B, U, U, U, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, U, U, V3,
     B, U, U, V3, B, B, W4, W4, W4, W4, U, U, W4, W4, U, U,
 ];
-const PARTICLE: &[F] = &[U, U, B, W4, W4, W4, W4, U, U, V3, B, B, B, B, U];
 const EDIT_MATERIAL: &[F] = &[U, U, U, W4, Wave, Rgba, U, B];
 
 /// Fixed layouts of the kinds that are skipped field by field (§5.1–§5.3). `None` for
@@ -987,7 +1330,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         4 => &[U, Pv, F::PSet],
         9 => &[B, U, B, V3, W4, W4],
         11 => &[B, Wave],
-        13 => LIGHT,
         15 => &[B, B, B],
         16 => STREAK_INFO,
         20 => &[B, U, W4, W4, U, U],
@@ -1009,7 +1351,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         53 => &[U, U, U, U],
         54 => BEAM,
         56 => &[U, U, U, B],
-        59 => PARTICLE,
         60 => EDIT_MATERIAL,
         81 => &[Str, U],
         _ => return None,
@@ -1245,6 +1586,11 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 r.charge(std::mem::size_of::<SoundNode>())?;
                 NodeData::Sound(Box::new(s))
             }
+            59 => {
+                let p = ParticleScriptNode::read(r)?;
+                r.charge(std::mem::size_of::<ParticleScriptNode>())?;
+                NodeData::Particle(Box::new(p))
+            }
             62 => NodeData::SoundEnvironment {
                 name: r.u32()?,
                 priority: r.i32()?,
@@ -1272,15 +1618,15 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 self.fields(r, tail)?;
                 opaque(start, r)
             }
+            13 => {
+                let l = LightNode::read(r)?;
+                r.charge(std::mem::size_of::<LightNode>())?;
+                NodeData::Light(Box::new(l))
+            }
             41 => {
-                self.fields(r, MESH_FX_FIXED)?;
-                let n = r.vle()?;
-                r.ensure_elements(n, 12)?;
-                for _ in 0..n {
-                    r.skip(12)?;
-                }
-                r.skip(4)?;
-                opaque(start, r)
+                let m = MeshFxNode::read(r)?;
+                r.charge(std::mem::size_of::<MeshFxNode>())?;
+                NodeData::MeshFx(Box::new(m))
             }
             45 => {
                 self.fields(r, FIRE_MISSILE_FIXED)?;

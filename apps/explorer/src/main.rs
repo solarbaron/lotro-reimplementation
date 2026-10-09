@@ -18,6 +18,9 @@ fn main() -> anyhow::Result<()> {
         .init();
     let args = Args::try_parse_checked(std::env::args_os()).unwrap_or_else(|e| e.exit());
     if let Some(out) = args.sheet.clone() {
+        if let Some(did) = args.particles {
+            return run_particle_sheet(&args, did, out);
+        }
         return run_sheet(&args, out);
     }
     let size = match (args.width, args.height) {
@@ -46,6 +49,14 @@ fn main() -> anyhow::Result<()> {
             args.select.or(Some(tessera_props::ROOT_DID_MAP.0)),
             args.view
                 .or(Some(tessera_explorer::cli::ViewKind::Character)),
+        )
+    } else if let Some(did) = args.particles {
+        (
+            Some(did),
+            Some(
+                args.view
+                    .unwrap_or(tessera_explorer::cli::ViewKind::Gameplay),
+            ),
         )
     } else {
         (args.select, args.view)
@@ -77,6 +88,46 @@ fn main() -> anyhow::Result<()> {
     let code = tessera_explorer::run(config, persist, size)?;
     if code != 0 {
         std::process::exit(code);
+    }
+    Ok(())
+}
+
+/// The install for headless runs: `--game-dir`, `TESSERA_GAME_DIR`, then the settings.
+fn sheet_game_dir(args: &Args) -> anyhow::Result<std::path::PathBuf> {
+    args.game_dir
+        .clone()
+        .or_else(|| std::env::var_os(tessera_install::GAME_DIR_ENV).map(Into::into))
+        .or_else(|| {
+            tessera_settings::SettingsStore::open_default()
+                .ok()
+                .and_then(|s| s.load().settings.game.active_dir)
+        })
+        .ok_or_else(|| anyhow::anyhow!("no install: give --game-dir or set TESSERA_GAME_DIR"))
+}
+
+/// `--particles DID --sheet`: renders the particle preview headless and prints the report.
+fn run_particle_sheet(args: &Args, did: u32, out: std::path::PathBuf) -> anyhow::Result<()> {
+    let plan = tessera_explorer::particle_view::ParticleSheetPlan {
+        game_dir: sheet_game_dir(args)?,
+        out,
+        did,
+        seed: args.particle_seed,
+        times: args
+            .times
+            .clone()
+            .map_or_else(|| vec![0.5, 1.0, 2.0], |l| l.0),
+        angles: args
+            .angles
+            .clone()
+            .map_or_else(|| vec![args.mesh_angle.unwrap_or([160.0, 15.0])], |l| l.0),
+        tile: args.tile.unwrap_or([320, 320]),
+    };
+    let report = tessera_explorer::particle_view::run_particle_sheet(&plan)?;
+    for l in &report.lines {
+        println!("{l}");
+    }
+    if let Some(w) = &report.written {
+        println!("written {}", w.display());
     }
     Ok(())
 }

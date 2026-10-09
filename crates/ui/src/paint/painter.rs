@@ -167,6 +167,30 @@ impl CanvasSet {
 /// operation in drawing order, clipped to `rect` and to the canvas. Tiles are allocated
 /// only within the set's byte limit ([`CanvasSet::set_byte_limit`]).
 pub fn paint_rect(list: &DisplayList, set: &mut CanvasSet, rect: Rect) {
+    paint_rect_ops(list, None, set, rect);
+}
+
+/// The operations of `list` (indices, ascending) whose area or coverage region meets
+/// `region`: the only ones [`paint_rect`] can draw or split by inside it.
+pub(crate) fn ops_meeting(list: &DisplayList, region: &Rect) -> Vec<u32> {
+    list.areas()
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.intersect(region).is_empty())
+        .filter_map(|(i, _)| u32::try_from(i).ok())
+        .collect()
+}
+
+/// [`paint_rect`] over a subset of the operations: `candidates` (from [`ops_meeting`] for
+/// a region holding `rect`) skips operations that cannot reach the rectangle. The result
+/// is the same as with every operation, because an operation whose area (or marker whose
+/// coverage region) misses the rectangle changes nothing in it.
+pub(crate) fn paint_rect_ops(
+    list: &DisplayList,
+    candidates: Option<&[u32]>,
+    set: &mut CanvasSet,
+    rect: Rect,
+) {
     let rect = rect.intersect(&set.below.bounds());
     if rect.is_empty() {
         return;
@@ -181,7 +205,18 @@ pub fn paint_rect(list: &DisplayList, set: &mut CanvasSet, rect: Rect) {
     // Which canvas owns each pixel of `rect`, updated at each marker.
     let mut owners = OwnerMap::new(rect);
     let mut pieces: Vec<(Option<u32>, Rect)> = Vec::new();
-    for op in list.ops() {
+    let (ops, areas) = (list.ops(), list.areas());
+    let mut all = 0..u32::try_from(ops.len()).unwrap_or(u32::MAX);
+    let mut picked = candidates.map(|c| c.iter().copied());
+    loop {
+        let next = match &mut picked {
+            Some(p) => p.next(),
+            None => all.next(),
+        };
+        let Some(i) = next else { break };
+        let (Some(op), Some(op_area)) = (ops.get(i as usize), areas.get(i as usize)) else {
+            continue;
+        };
         if let PaintOp::Nested { entry, coverage } = op {
             let c = coverage.intersect(&rect);
             if !c.is_empty() {
@@ -189,7 +224,7 @@ pub fn paint_rect(list: &DisplayList, set: &mut CanvasSet, rect: Rect) {
             }
             continue;
         }
-        let area = op.area().intersect(&rect);
+        let area = op_area.intersect(&rect);
         if area.is_empty() {
             continue;
         }

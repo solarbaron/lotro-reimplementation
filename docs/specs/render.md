@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 and §7 **Accepted** (2026-10-07, re-review of the second revision passed), then **Revised** the same day for the two non-blocking notes of that review (wording of §4.4 and row R-D4, a sentence in the §5.3 fake-light row, new row R-E4; no behaviour changed); **Accepted** again (2026-10-07, re-review of the third revision passed); implementer OPENs added after that acceptance, re-review 2026-10-07: **changes requested**, now **Revised**. §6: **M5 UI pass**, **Accepted** (2026-10-08; status and review record in §6). §8: change log |
-| **Last updated** | 2026-10-08 (merge of the M5 branch: §6 UI pass added, change log moved from §6 to §8; earlier, 2026-10-07: spec writer, dirty room: §3, §4.1, §4.3, §4.4, §4.6, §5.1–§5.5, §5.7 revised; new §7 client facts and provenance; change log (then §6) completed; second revision of §4.3, §5.5 and §7 after the re-review; third, wording-only revision of §4.4, §5.3 and §7 after the acceptance) |
-| **Author role** | §1–§5 and the change log (§8, formerly §6): Clean-room implementer of `tessera-render`; §4–§5 revised 2026-10-07 by a spec writer (dirty room), who also wrote §7. §6 (UI pass, M5): Spec writer (dirty room), 2026-10-06, Tessera design from decisions 0014 and 0015; §6.17 implementation notes: clean-room implementer |
+| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 and §7 **Accepted** (2026-10-07, re-review of the second revision passed), then **Revised** the same day for the two non-blocking notes of that review (wording of §4.4 and row R-D4, a sentence in the §5.3 fake-light row, new row R-E4; no behaviour changed); **Accepted** again (2026-10-07, re-review of the third revision passed); implementer OPENs added after that acceptance, re-review 2026-10-07: **changes requested**, now **Revised**. §6: **M5 UI pass**, **Accepted** (2026-10-08), then **Revised** (2026-10-09: the §6.10 implementer OPEN on fixed blends in premultiplied passes answered; review 2026-10-09: **changes requested**; second revision 2026-10-09 answering it; review of the second revision 2026-10-09: **passed**, **Accepted**; status and review record in §6). §8: change log |
+| **Last updated** | 2026-10-09 (spec reviewer: §6 review of the second revision passed, §6 Accepted, §6 status paragraph and header rows; before that, spec writer, dirty room, second revision of §6 after its review: §6 status and intro, §6.1 R10–R11, §6.10 "Client portrait path" OPENs (a)–(c) and D3D9 scope, §6.16 external-content OPEN; first revision the same day: §6.10 alpha of fixed blends in premultiplied passes, §6.1 rows R10–R12, §6 status Revised; earlier, 2026-10-08: merge of the M5 branch: §6 UI pass added, change log moved from §6 to §8; earlier, 2026-10-07: spec writer, dirty room: §3, §4.1, §4.3, §4.4, §4.6, §5.1–§5.5, §5.7 revised; new §7 client facts and provenance; change log (then §6) completed; second revision of §4.3, §5.5 and §7 after the re-review; third, wording-only revision of §4.4, §5.3 and §7 after the acceptance) |
+| **Author role** | §1–§5 and the change log (§8, formerly §6): Clean-room implementer of `tessera-render`; §4–§5 revised 2026-10-07 by a spec writer (dirty room), who also wrote §7. §6 (UI pass, M5): Spec writer (dirty room), 2026-10-06, Tessera design from decisions 0014 and 0015; §6.10 revision, rows R10–R12 and the second revision of §6: spec writer (dirty room), 2026-10-09; §6.17 implementation notes: clean-room implementer |
 | **Reviewer** | §4–§5, §7: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer. §6: Claude review session (spec-writer agent, fresh session, not the writer) |
-| **Review record** | §4–§5: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision (§4–§5, §7): **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a third revision (Revised); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; 2026-10-07 re-review of the text with the implementer's conformance OPENs (Claude review session, spec-writer agent): **changes requested**. §6: 2026-10-08: **passed**, Accepted (record in §6). Details in the dirty-room review log (decision 0018). |
+| **Review record** | §4–§5: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision (§4–§5, §7): **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a third revision (Revised); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; 2026-10-07 re-review of the text with the implementer's conformance OPENs (Claude review session, spec-writer agent): **changes requested**. §6: 2026-10-08: **passed**, Accepted (record in §6); revision of 2026-10-09 (§6.10, §6.1 R10–R12): reviewed 2026-10-09 (Claude review session, spec-writer agent, not the writer): **changes requested** (three blocking items, record in §6); second revision 2026-10-09 answering them: reviewed 2026-10-09 (Claude review session, spec-writer agent, fresh session, not the writer): **passed, Accepted** (two non-blocking notes, record in §6). Details in the dirty-room review log (decision 0018). |
 
 The clean-room implementer of `tessera-render` wrote this file. It holds Tessera's own design
 decisions and the open questions that need spec facts. The client facts that §4–§5 rely on
@@ -830,7 +830,69 @@ and on lavapipe):
 <a id="s6"></a>
 ## 6. UI pass (M5)
 
-Status: **Accepted** (§6 only). Review record: Claude review session (spec-writer agent,
+Status: **Accepted** (§6 only). Review of the second revision: Claude review session
+(spec-writer agent, fresh session, neither the writer nor the reviewer of the first revision),
+2026-10-09: **passed; §6 moved Revised → Accepted.** The three blocking items of the review of
+the first revision are resolved: (1) the §6.16 OPEN now states the decided rule (R12) and keeps
+open only the original's clear, composition and non-D3D9 paths; (2) "What this section is"
+names R11 (OBS) and R10 (BIN, D3D9 path only); (3) "Client portrait path" is scoped to the D3D9
+path, its unknowns are `> **OPEN:**` callouts (a)–(c) tied to the `ui-widgets.md` §12 OPEN, and
+the former "Consequence" bullet is an expected result conditional on OPEN (a) and (b); "Why
+this rule", the answered implementer callout and the effects table say D3D9. The non-blocking
+notes are applied. Every `CLEAN_ROOM.md` §5.3 item holds: functional facts and Tessera rules
+only, no code or listing structure, no copied prose, labels are interoperability identifiers,
+no game text, keys or hostnames, each row marked (R10 BIN with build, question and M1–M3
+reason under decision 0011; R11 Confirmed; R12 DEC), testable consequences concrete, no closed
+gate. Arithmetic re-checked: the "Fixed blends" exceptions, the empty-pixel rows (additive
+exact; modulate, DESTCOLOR / ONE, MIN, REVSUBTRACT black; MAX and SUBTRACT add their source
+term) and the additive consequence min(1, *B* + *a*·*s*). BIN spot check (private Ghidra copy,
+deleted afterwards): of 197 direct render-state calls through the D3D9 device, three set the
+colour-write state, one through a cached wrapper, two to red, green and blue (a reset path that
+also caches it), and none sets the separate alpha-blend states, matching R10's resting mask and
+the "Client portrait path" bullet; the mask draw itself was not re-derived. Non-blocking: in
+the effects table, the "Partly covered" row's "for destination factor ONE with ADD the result
+is again exact" holds only when the source factor does not read the destination (as the
+"Empty" row says; DESTCOLOR / ONE is not exact); the first 2026-10-09 change-log row still calls
+the background colour inside the mask a "known difference", which the second revision made
+conditional (history, superseded by the next row). Before that: **Revised**.
+Second revision, 2026-10-09 (spec writer, dirty room), answering
+the three blocking items of the review below: the §6.16 OPEN on additive and multiply blends is
+rewritten (the alpha rule is decided; what stays open is the original's composition of a
+portrait); the "What this section is" paragraph names R10 (BIN) and R11 (OBS); the unknowns of
+"Client portrait path" (§6.10) are `> **OPEN:**` callouts, and its client claims, the "Why this
+rule" paragraph and the effects table are limited to the client's D3D9 path. The non-blocking
+notes are applied too (R11 counts six properties and says the background colour is set
+explicitly; exception 2 states that ZERO / ZERO draws opaque black; an M3 frame capture is
+named as the check of R10). No Tessera rule changed. Review of the second revision: above.
+First revision, 2026-10-09: the implementer OPEN of §6.10 (how fixed blend
+states write alpha in a premultiplied pass) is answered by a Tessera Decision resting on client
+facts found with method M4 (rows R10–R12; change log §8). Review of
+the first revision: Claude review session (spec-writer agent, fresh session, not the writer),
+2026-10-09: **changes requested; §6 stays Revised.** Passed: no code or listing structure, no
+copied prose, labels are interoperability identifiers, no game text, keys or hostnames, R10 has
+the build, question and M1–M3 reason that decision 0011 requires, no closed gate; the "Fixed
+blends" arithmetic and its effects table check out (empty, opaque and partly covered pixels;
+both exceptions reproduce source-over and opaque results), and the testable consequences are
+concrete. Spot checks matched: the executable's version resource reads 4906.0071.1794.4035; in
+the raw 0x22 records each of the six viewport PIDs of R11 (0x0520, 0x0B93, 0x0176, 0x00C9,
+0x0652, 0x05AF) occurs exactly twice, both in 0x22000033, index 1 with mask 0x40000E4C inside
+`OpponentPanel` and index 0 with mask 0x40000E4B inside `AvatarPanel`, size 62, background
+0xFF000000, `RenderInParent` 1. The BIN behaviour of R10 was not re-derived. Blocking:
+(1) §6.16 still carries the OPEN "what other blend modes (additive, multiply) must write to
+alpha in such a pass is not decided", which the new rule answers; close or rewrite it (the
+change log says no other section changed). (2) The "What this section is" paragraph still says
+that the only data fact re-checked is R7 and that nothing here comes from disassembly; R10 is
+BIN and R11 OBS now. (3) "Client portrait path" leaves unknowns as prose instead of
+`> **OPEN:**` callouts: the clear of the target (not traced), how the parent surface takes the
+pixels (not traced), and the D3D10, D3D11 and OpenGL paths (not examined, yet the "Why this
+rule" paragraph and the "Consequence" bullet state "the original" in general); the
+"Consequence" bullet presents as fact a visible result that depends on the two untraced steps.
+Mark these OPEN (or point to the `ui-widgets.md` §12 OPEN) and scope the claims to the D3D9
+path. Non-blocking: R11 says "all five properties" but names six (index, `RenderInParent`,
+width, height, background colour, mask); say the background colour is set explicitly although
+it equals the dictionary default; exception 2 includes ZERO / ZERO, which writes opaque black,
+say so if intended; an M3 frame capture should confirm R10 when one is available. Before that:
+**Accepted**. Review record: Claude review session (spec-writer agent,
 fresh session, not the writer), 2026-10-08: **passed; §6 moved Review → Accepted.** Every
 `CLEAN_ROOM.md` §5.3 item holds: Tessera rules (DEC) and data facts only, no code or listing
 structure, no copied prose, element and property labels are interoperability identifiers, no
@@ -848,10 +910,13 @@ What this section is. Decision 0015 (UI rendering, "UR" below) §8 asks for a "U
 section in this file, and decision 0014 (UI input bridge, "IB") fixes the frame steps and the
 pointer lock that it depends on. The section turns UR §8, its P1 checks and the amendments
 that UR's open review items ask for into the renderer's contract. Almost all of it is **Tessera design** taken from those Accepted
-decisions. The few facts about the game data are cited by spec section only (`game-panels.md`
-G39–G41, `ui-layout.md` U46), and one was re-checked for this section (row R7). Nothing here
-comes from disassembly. Names of types and functions are suggestions for the implementer; the
-behaviour is the contract.
+decisions. Most facts about the game data are cited by spec section only (`game-panels.md`
+G39–G41, `ui-layout.md` U46); two were observed in the install for this section: row R7
+(re-checked) and row R11 (the portrait census, OBS). One group of client facts comes from
+disassembly (method M4 under decision 0011): row R10, **BIN**, the client's portrait path on its
+built-in D3D9 path only, recorded in §6.10 "Client portrait path" as the background of the
+Tessera Decision R12. Nothing else here comes from disassembly. Names of types and functions are
+suggestions for the implementer; the behaviour is the contract.
 
 Abbreviations: UR = `docs/decisions/0015-ui-rendering.md`, IB =
 `docs/decisions/0014-ui-input-bridge.md`, UL = `ui-layout.md`, UB = `ui-behaviour.md`, UW =
@@ -871,6 +936,9 @@ Abbreviations: UR = `docs/decisions/0015-ui-rendering.md`, IB =
 | R7 | In P1 (layout 0x22000012) `GamePlay_Radar`, `MinimapPlayerMarker` and `Minimap_Frame` carry object mode 1; 18 non-root P1 elements carry a non-zero mode | GP G39, G40; UL U46. Re-checked for this section: all 302 0x22 layouts re-read read-only from the install's directory index on 2026-10-06 and the P1 tree resolved again | OBS, **Confirmed** |
 | R8 | The rim is in its own canvas; the marker's canvas above is empty at every heading (corrections to UR's P1 checks 2 and 4) | GP §8.7.2 "How P1 splits into surfaces", GP17, GP §14 | DEC on data G40, G41 |
 | R9 | Tile-box texture allocated at the job's full size; screenshots leave out the software cursor; the full-canvas size for a cropped canvas | UR open review items ("banded first paint", "software cursor", "cropped canvas") | Tessera rule (this section) |
+| R10 | How the original makes a viewport's image on its built-in D3D9 path (§6.10 "Client portrait path"; the D3D10, D3D11 and OpenGL paths are OPEN there): a viewport without a render-target index draws its scene straight into the frame inside the element's box; one with an index draws into that render target, then writes the alpha of its opacity-mask image into the target's alpha channel alone, replacing it; with `RenderInParent` the result goes to the parent's surface. The D3D9 path's resting colour-write mask is red, green and blue (alpha off) | **BIN** (M4, decision 0011). Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (64-bit; the viewport code and the built-in D3D9 path; the separate D3D10, D3D11 and OpenGL libraries were not examined), analysed 2026-10-09. **Question:** how the alpha of a portrait's image is produced and which channels its scene draws write (the §6.10 OPEN). **Why M1–M3 were not enough:** the data holds only the viewport properties; no published source or research clone describes the path (searched 2026-10-09); a frame capture of the running client (M3) was not available to this session. **Check still wanted:** an M3 frame capture of a portrait (render-state and blend of the mask draw, the target's clear, the parent's composition) | BIN |
+| R11 | Of the 36 viewport instances in the instantiated 0x22 layouts, only the two portraits set a render-target index: `PlayerPortrait` (P4) index 0 and `OpponentPortrait` (P5) index 1. Both set `RenderInParent` true, a 62 × 62 target, background colour 0xFF000000 (opaque black; set explicitly in both records, although it equals the dictionary default, `ui-widgets.md` §12) and an opacity mask (`UICore_Viewport_RenderToTextureOpacityMask`, PID 0x05AF; DID 0x40000E4B for P4 and 0x40000E4C for P5). The other 34 leave all six of these properties (index, `RenderInParent`, width, height, background colour, mask) unset, so their index is the default −1 | OBS: census of all instantiated layout elements (layout records read read-only from the install on 2026-10-06, counted again 2026-10-09) | **Confirmed** |
+| R12 | Fixed blend states keep the destination alpha in a premultiplied pass, with two named exceptions (§6.10 "Fixed blends") | Tessera Decision on R10 | DEC (this revision) |
 
 <a id="s6-2"></a>
 ### 6.2 UI textures
@@ -1093,22 +1161,117 @@ composed as entries (UR Decision 1.7 "External content").
 |-------|--------|
 | Target | `OffscreenFormat::Rgba8Unorm`, sized to the element's layout box (the entry's full canvas; `tex_offset` (0, 0)), and registered with `register_target_texture`. The entry carries the external-content flag. |
 | Colour | Stored values: the lit passes compute stored values (§4.1), and the `Unorm` target keeps them, so `textureLoad` returns them unconverted to the non-sRGB UI view. |
-| Alpha | **Premultiplied.** The target is cleared to (0, 0, 0, 0) in each frame it is drawn. Opaque draws write alpha 1. Source-over draws keep their colour blend and blend alpha with `One`/`OneMinusSrcAlpha`, so colour over the cleared target is premultiplied and empty pixels are transparent. The renderer offers this as an option of a pass drawn into such a target (for example `Pass::premultiplied_alpha()`), which sets the clear and the alpha component of every blend state. |
+| Alpha | **Premultiplied.** The target is cleared to (0, 0, 0, 0) in each frame it is drawn. Opaque draws write alpha 1. Source-over draws keep their colour blend and blend alpha with `One`/`OneMinusSrcAlpha`, so colour over the cleared target is premultiplied and empty pixels are transparent. Fixed blend states (additive, modulate, min, max) keep the destination alpha, with two exceptions ("Fixed blends" below, R12). The renderer offers this as an option of a pass drawn into such a target (for example `Pass::premultiplied_alpha()`), which sets the clear and the alpha component of every blend state. |
 | sRGB refused | An entry whose texture comes from an `Rgba8Srgb` target is refused (§6.5): it would return decoded values into the non-sRGB view and darken the portrait. The client also refuses to register such a target as UI content, as a categorised failure: the portrait draws nothing. |
 | Timing | The target must be drawn earlier in the same frame, or in an earlier submission, than the UI pass that reads it; otherwise the entry shows its previous content. An entry that reads the frame's own colour target is refused (no feedback loop). |
 | M5 scope | The `UICore_Viewport_RenderToTexture…` properties are recorded but not used; Browser and Movie items stay empty (UW §12). |
 
-> **OPEN:** (implementer, merge of M5 with M4.5, 2026-10-08) The M4.5 fixed blend states
-> (`FixedBlend`, used by the lit, instanced and sky pipelines for additive, modulate, min and
-> max surfaces) blend colour by their factors and keep the destination alpha (alpha
-> component `Zero`/`One`), so they do not blend alpha with `One`/`OneMinusSrcAlpha` as the
-> "Alpha" row requires, and `Pass::premultiplied_alpha` does not change them. No portrait
-> pass draws lit content yet. Question: in a premultiplied pass, should every fixed blend
-> state blend alpha with `One`/`OneMinusSrcAlpha` (an additive glow then also covers what is
-> behind the portrait), or should additive and modulate blends keep the destination alpha
-> (colour added over transparent pixels stays additive light), and what do min and max
-> blends write? Until this is settled the renderer's guard test lists `FixedBlend` as the
-> one known exception.
+> **Answered 2026-10-09 (spec writer, dirty room; was OPEN):** (implementer, merge of M5 with
+> M4.5, 2026-10-08) The M4.5 fixed blend states (`FixedBlend`, used by the lit, instanced and
+> sky pipelines for additive, modulate, min and max surfaces) keep the destination alpha, so
+> they do not blend alpha with `One`/`OneMinusSrcAlpha` as the "Alpha" row required, and
+> `Pass::premultiplied_alpha` does not change them. Question: in a premultiplied pass, should
+> every fixed blend state blend alpha with `One`/`OneMinusSrcAlpha`, or should additive and
+> modulate blends keep the destination alpha, and what do min and max blends write?
+> **Answer:** they keep the destination alpha, except the two cases named in "Fixed blends"
+> below (R12). On its D3D9 path the original gives no alpha behaviour to copy, because none of
+> its scene draws decides a portrait's alpha ("Client portrait path", R10; the other graphics
+> paths are OPEN there). The renderer's guard test no longer
+> needs `FixedBlend` as an exception; it checks the rule below instead.
+
+**Fixed blends** (Tessera Decision, R12). In a pass with the premultiplied option, a fixed blend
+state keeps its colour factors and colour operation, and its alpha component keeps the
+destination alpha: source factor `Zero`, destination factor `One`, operation `Add`. This holds
+for every colour operation, `Min` and `Max` included; the alpha component has its own operation,
+so the colour's `Min` or `Max` does not apply to alpha. Two fixed blends are not "fixed" in
+effect and follow the rows above instead:
+1. colour factors SRCALPHA / INVSRCALPHA with operation ADD is source-over: alpha with
+   `One`/`OneMinusSrcAlpha`;
+2. destination factor ZERO with a source factor that does not read the destination (ZERO, ONE,
+   SRCALPHA or INVSRCALPHA), operation ADD, draws opaque: it writes alpha 1, as opaque draws do.
+   This includes ZERO / ZERO, which therefore draws opaque black, as the same blend does in an
+   opaque target; this is intended.
+
+Outside premultiplied passes nothing changes (fixed blends already keep the destination alpha
+there).
+
+What the rule gives when the UI pass composes the target over what lies behind it, *B*
+(premultiplied source-over, §6.7): the stored colour *C* and alpha *A* show as
+*C* + (1 − *A*) · *B*, where *C* is what the fixed blend left in the target.
+
+| Pixel of the target before the draw | Result after composition |
+|---|---|
+| Covered opaquely by the figure (*A* = 1) | The same colour as the blend gives in an opaque target; *B* does not show. |
+| Empty, (0, 0, 0, 0) | The blend's result over black is **added** to *B*. With destination factor ONE, operation ADD and a source factor that does not read the destination (SRCALPHA / ONE, ONE / ONE, ZERO / ONE), this equals drawing the surface straight onto *B*, which is what a client viewport without a render target does on the D3D9 path (R10). |
+| Empty, other blends | Modulate (ZERO / SRCCOLOR, DESTCOLOR / ZERO), DESTCOLOR / ONE, MIN and REVSUBTRACT give black over black and leave *B* unchanged; MAX adds the source colour, and SUBTRACT the source term, to *B*. Drawn straight onto *B* they would act on *B* (darken it, take the minimum or maximum, subtract). This is a known difference of the Tessera rule; it affects only pixels the figure does not cover. |
+| Partly covered (0 < *A* < 1) | The colour blends with the stored premultiplied colour and *A* is unchanged; for destination factor ONE with ADD the result is again exact, for the other blends it lies between the two rows above. |
+
+Why this rule: under R10, on the client's D3D9 path, a scene draw never decides a portrait's
+alpha (its draws write red, green and blue only, and the opacity mask replaces the alpha
+afterwards), so coverage in Tessera comes only from opaque and source-over draws, and additive
+light, the common fixed blend, composes exactly. The alternative (`One`/`OneMinusSrcAlpha` for
+every fixed blend) would make an additive draw over an empty pixel cover what lies behind it by
+its source alpha, which neither of the two D3D9 viewport paths of R10 does. The rule is a
+Tessera Decision and stands whatever the OPENs of "Client portrait path" turn out to be.
+
+Testable consequences:
+- In a premultiplied pass, a fixed blend draw (other than the two exceptions) leaves the alpha
+  of every target pixel unchanged.
+- An additive draw (SRCALPHA / ONE, ADD) of colour *s* and alpha *a* over an empty target,
+  composed by the UI pass at 1 : 1 over a destination *B*, stores min(1, *B* + *a*·*s*) per
+  channel, within ±1/255.
+- Over a pixel an opaque draw covered, any fixed blend gives the same stored colour as the same
+  draw into an opaque target, and alpha stays 1.
+
+**Client portrait path** (BIN, R10; data R11). Recorded so a later revision of `ui-widgets.md`
+§12 can use it; the Tessera rules of this section do not depend on it beyond R12. **Scope:**
+every statement below describes the client's viewport code as it drives the built-in D3D9
+path of the build in R10. The other graphics paths are OPEN (c) below.
+- A viewport whose `UICore_Viewport_RenderToTextureIndex` is −1 (34 of the 36 instances) draws
+  its scene straight into the frame being composed, with the device viewport set to the
+  element's box, over what is already there. No alpha is involved.
+- A viewport with index 0 or 1 (only the two portraits, R11) draws its scene into that render
+  target, in a viewport of the property size (62 × 62 here), with the background colour
+  (0xFF000000 here) passed to the scene draw as its clear colour. Whether and how the target is
+  then cleared with it is OPEN (a). When the viewport has an opacity mask, the client then
+  switches the colour-write mask to **alpha only**, draws the mask image over the whole target
+  with blend factors ONE / ZERO (a copy), and switches the mask back to red, green and blue. So
+  the target's alpha is the mask's alpha, whatever the scene draws did. A viewport with a mask
+  is drawn only when the device reports that it can mask colour writes.
+- With `UICore_Viewport_RenderInParent` true (both portraits) the target is copied to a
+  readable texture and the element's parent surface is marked for repaint over the element's
+  box, so the portrait reaches the screen through the parent's surface. How that surface takes
+  the pixels is OPEN (b).
+- The D3D9 path resets the colour-write mask to red, green and blue (alpha off), and none of
+  its render-state call sites found sets the separate alpha-blend states. Every call site that
+  enables alpha writes through the graphics device (all four channels, or alpha alone) switches
+  back to red, green and blue afterwards.
+
+> **OPEN (a):** the clear of a portrait's render target. The background colour reaches the
+> scene draw as its clear colour, but the clear call was not traced: whether the target is
+> cleared every frame it is drawn, whether the clear covers all four channels or the colour
+> channels only, and whether a frame in which the figure draws nothing still clears it. Part of
+> the `ui-widgets.md` §12 OPEN (the render-to-texture path). An M3 frame capture of a portrait
+> settles it.
+
+> **OPEN (b):** how the parent surface takes a portrait's pixels when
+> `UICore_Viewport_RenderInParent` is true: the blend of that step, whether the colour is
+> treated as straight or premultiplied, and whether the mask's alpha acts as coverage there.
+> Not traced. This is the "how the result is composed into the panel surface" part of the
+> `ui-widgets.md` §12 OPEN; the same M3 frame capture settles it.
+
+> **OPEN (c):** the D3D10, D3D11 and OpenGL paths of the client (separate libraries) were not
+> examined. Whether they keep alpha writes off by default and draw the opacity mask the same
+> way is unknown; R10 and every statement of this block hold for the D3D9 path only.
+
+- Expected visible result (depends on OPEN (a) and (b); not a confirmed fact): if, on the D3D9
+  path, the target is cleared to the background colour in all channels and the parent surface
+  uses the mask's alpha as coverage, a portrait shows its background colour (opaque black on
+  this install) wherever the mask is opaque and the figure draws nothing, and its edge follows
+  the mask. Tessera's portrait (cleared to transparent black, panel art showing where nothing
+  is drawn, the properties recorded but not used; `ui-widgets.md` §12 Tessera rule) would
+  differ there. That difference, if confirmed, belongs to the M5 scope of `ui-widgets.md` §12,
+  not to the renderer's contract in this file.
 
 <a id="s6-11"></a>
 ### 6.11 Cursor and screenshots
@@ -1284,10 +1447,14 @@ nested entry. The data give P1 18 non-root surfaces in two levels:
 > corrected P1 checks 2 and 4 (§6.14) and the threshold order (R4). Owner observation 4 of UR
 > (the nested-surface test plugin) settles the behaviour.
 
-> **OPEN:** The external-content format and alpha convention (UW §12 OPEN). This section
-> requires source-over draws in a portrait pass to blend alpha with `One`/`OneMinusSrcAlpha`.
-> What other blend modes (additive, multiply) must write to alpha in such a pass is not
-> decided, and no M5 portrait is known to use one.
+> **OPEN:** The original's external-content format and alpha convention (UW §12 OPEN). Tessera's
+> side is decided: a portrait pass is premultiplied (§6.10 "Alpha"), source-over draws blend
+> alpha with `One`/`OneMinusSrcAlpha`, and every other fixed blend (additive, multiply and the
+> rest) keeps the destination alpha except the two cases of §6.10 "Fixed blends" (R12, answered
+> 2026-10-09; this sentence replaced the earlier open question on additive and multiply
+> blends). What stays open is how the original clears a portrait's target and composes it into
+> its parent surface, and its non-D3D9 paths: §6.10 "Client portrait path" OPEN (a) to (c).
+> None of them changes the renderer's contract.
 
 > **OPEN (not renderer work, listed so it is not lost):** what decision 0015 leaves to M5
 > outside this file:
@@ -1437,3 +1604,5 @@ rendering and environment code was read; no network, login, launcher or anti-tam
 | 2026-10-07 | Spec writer (dirty room), second revision answering the re-review of §4–§5 and §7 (changes requested): §4.3 the world-box Decision split in two: the box rule stays tied to `lighting.md` §8.5 OPEN (b); treating an instance batch as one light-list object is a new Decision labelled as departing from the client's per-object lists (L32), with its effect and an implementer OPEN; §5.5 Batches row points to it; §7: new rows R-E3 (the light record and attenuation of `lighting.md` §8.3: range floor 0.0002, colour, specular and attenuation rules, used by the light-record builder, the range floor of uploaded point lights and the CPU reference) and R-L6 (per-object lists), new departure R-D9. Status of §4–§5 and §7: Review. |
 | 2026-10-07 | Spec writer (dirty room), third revision after the acceptance, applying the two non-blocking notes of that review; no fact about the renderer's behaviour changed: §4.4 heading and text say the renderer's shadow lies within the `lighting.md` §9 simple-form Decision, using the variants that Decision now lists (five taps, later fade, fitted map, depth bias, outside lit), and which values are Tessera's; row R-D4 marked as no longer a departure (kept for stable numbering); §5.3 fake-light row: whether a pass has a main light is the caller's, with the client's sun-present rule and a pointer to the walker's departure (`walker.md` §14.3); new row R-E4 for that rule. Status of §4–§5 and §7: Accepted → Revised. |
 | 2026-10-08 | Merge of the M5 branch (spec writer, dirty room): new §6, UI pass (M5; Tessera design from the accepted decisions 0014 and 0015, written 2026-10-06, reviewed and **Accepted** 2026-10-08, record in its status paragraph), placed after §5 and before §7; it does not change §4, §5 or §7. The change log, numbered §6 on the M4.5 side, becomes §8 (anchor `s8`) because the two sides had both used §6; no row or other section changed. Header rows extended for §6. |
+| 2026-10-09 | Spec writer (dirty room): §6.10 implementer OPEN (alpha of fixed blend states in premultiplied passes) answered. New Tessera Decision "Fixed blends" (R12): fixed blends keep the destination alpha in premultiplied passes, except SRCALPHA / INVSRCALPHA ADD (source-over rule) and destination ZERO with a non-destination source factor, ADD (opaque, alpha 1); effects table and testable consequences added; the guard test's `FixedBlend` exception is replaced by that rule. New "Client portrait path" facts (R10, BIN, M4 under decision 0011: build 4906.0071.1794.4035) and the portrait data census (R11, OBS, Confirmed), including the known difference that the original shows the background colour inside the opacity mask. "Alpha" row of §6.10 points to the rule. §6 status Accepted → Revised; review pending. No other section changed. |
+| 2026-10-09 | Spec writer (dirty room), second revision of §6 answering the review of the first (changes requested; three blocking items). (1) §6.16: the OPEN on what additive and multiply blends write to alpha is replaced by the decided rule (§6.10 "Fixed blends", R12) and an OPEN limited to the original's clear, composition and non-D3D9 paths. (2) §6 "What this section is": names R11 (OBS) and R10 (BIN, D3D9 path only) instead of saying that only R7 was re-checked and nothing comes from disassembly. (3) §6.10 "Client portrait path": scoped to the client's D3D9 path; the untraced clear, the parent surface's composition and the D3D10/D3D11/OpenGL paths are now `> **OPEN:**` callouts (a)–(c), pointing to the `ui-widgets.md` §12 OPEN; the "Consequence" bullet becomes an expected result that depends on OPEN (a) and (b); the answered implementer callout, the effects table and "Why this rule" say D3D9. Non-blocking: R11 counts six properties and notes the explicit background colour; exception 2 states ZERO / ZERO draws opaque black (intended); R10 names an M3 frame capture as the check still wanted. §6 status paragraph and header rows updated. No Tessera rule and no client fact changed. §6 stays Revised; review pending. |

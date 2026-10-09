@@ -26,6 +26,7 @@ members = [
     "crates/wvm",
     "crates/audio",
     "crates/scriptgraph",
+    "crates/particles",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -67,6 +68,7 @@ tessera-server = { path = "apps/server" }
 tessera-wvm = { path = "crates/wvm" }
 tessera-audio = { path = "crates/audio" }
 tessera-scriptgraph = { path = "crates/scriptgraph" }
+tessera-particles = { path = "crates/particles" }
 
 anyhow = "1"
 bitflags = "2"

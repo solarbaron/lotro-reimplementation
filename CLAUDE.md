@@ -162,15 +162,16 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
 - `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
+- `crates/particles` — particle runtime: the shared random generator, deterministic simulation of particle systems (0x39) with emitters, caps and controllers, billboard vertices, fork-effect lifetimes (not simulated), effect start/attach/stop/linger rules (`particles.md`, `particle-runtime.md`)
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
 - `crates/net` — transport-agnostic session layer, a local sandbox backend and the test-server backend (`remote`)
 - `crates/protocol` — Tessera's own network protocol: messages, framing, codec, session state machines, key pinning, QUIC setup
-- `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests)
+- `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests, the particle pipeline)
 - `crates/script` — Lua 5.1 plugin host
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
-- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`)
+- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`, particle preview of 0x39 records and `--particles DID --sheet`)
 - `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test; `--server` joins a test server)
 - `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
 - `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests

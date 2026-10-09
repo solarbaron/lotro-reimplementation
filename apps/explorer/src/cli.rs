@@ -314,6 +314,17 @@ pub struct Args {
     #[arg(long, value_name = "WxH", value_parser = crate::charspec::parse_tile)]
     pub tile: Option<[u32; 2]>,
 
+    /// Particle preview of a particle-system descriptor (0x39): opens its gameplay card
+    /// with the preview, or, with `--sheet`, renders the preview headless into a contact
+    /// sheet: one tile per camera angle (rows, `--angles`) and simulated time in seconds
+    /// (columns, `--times`), tile size `--tile`, seed `--particle-seed`.
+    #[arg(long, value_name = "DID", value_parser = parse_did_arg)]
+    pub particles: Option<u32>,
+
+    /// Particle preview and sheet: the seed of the simulation's random stream.
+    #[arg(long, value_name = "N", default_value_t = 1)]
+    pub particle_seed: u32,
+
     /// Hide the archive tree, the DID list and the character view's inspector (character
     /// view screenshots get the window's width; the 3D view keeps its inspector).
     #[arg(long)]
@@ -568,5 +579,9 @@ mod tests {
         assert_eq!(a.select, Some(0x4100_0001));
         assert_eq!(a.view, Some(ViewKind::Texture));
         assert!(a.screenshot.is_some());
+        let p = Args::parse_from(["x", "--particles", "0x39000001", "--particle-seed", "7"]);
+        assert_eq!((p.particles, p.particle_seed), (Some(0x3900_0001), 7));
+        assert_eq!(Args::parse_from(["x"]).particle_seed, 1);
+        assert!(Args::try_parse_from(["x", "--particles", "nope"]).is_err());
     }
 }

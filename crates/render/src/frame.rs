@@ -126,6 +126,8 @@ pub struct Pass {
     /// Draws of the render-world pipelines (terrain layers, water, sky, instanced
     /// scenery), turned into hooks by `Renderer::end_frame` (`docs/specs/render.md` §5).
     pub(crate) world: WorldDraws,
+    /// Particle draws ([`Pass::particles`]), lit and unlit world passes.
+    pub(crate) particles: Vec<crate::particles::ParticleDraw>,
 }
 
 /// The render-world draws queued on one pass (`docs/specs/render.md` §5).
@@ -163,6 +165,7 @@ impl Pass {
             light_reach: Vec::new(),
             hooks: Vec::new(),
             world: WorldDraws::default(),
+            particles: Vec::new(),
         }
     }
 

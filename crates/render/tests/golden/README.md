@@ -25,6 +25,7 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `water.png` | `crates/render/tests/water_golden.rs` | water pipeline (M4.5): a terrain basin with a pillar flooded by a flat and a subdivided waving quad, three scrolling normal layers, refraction of the scene copy, Fresnel, specular and sparkle |
 | `sky_morning.png`, `sky_evening.png` | `crates/render/tests/sky_golden.rs` | the sky (M4.5) at two times of day: a vertex-coloured dome, an additive sun disc and a blended cloud layer placed by their angles and tinted, over fogged ground |
 | `frill_sector.png` | `crates/render/tests/instanced_golden.rs` | instanced scenery and frills (M4.5): a 10 × 10-unit frill sector of 625 alpha-tested clumps (sway, terrain colour, distance scale) beside three instanced rocks casting the sun's shadow |
+| `particles_fountain.png` | `crates/render/tests/particles_golden.rs` | the particle pipeline: one synthetic particle system simulated by `tessera-particles` for 2 s (seed 1234): a fountain of textured quads under gravity with scale and colour keys, a 2 × 2 atlas with random start frames and a fade-in, and rising spinning triangles, alpha-blended and depth-tested against an opaque ground and pillar |
 | `../../../../apps/client/tests/golden/test_scene.png` | `apps/client/tests/scene_golden.rs` | the client's M0 test scene without game data |
 | `../../../../apps/client/tests/golden/test_scene_surface.png` | same | the same scene with a synthetic stand-in for a decoded surface |
 
@@ -48,6 +49,7 @@ TESSERA_BLESS=1 cargo test -p tessera-render --test terrain_layers_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test water_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test sky_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test instanced_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test particles_golden
 TESSERA_BLESS=1 cargo test -p tessera-client --test scene_golden
 ```
 
@@ -76,3 +78,7 @@ The M4.5 world images (`terrain_layers`, `water`, `sky_*`, `frill_sector`) were 
 same RTX 2070 Super Max-Q (Vulkan, NVIDIA 615.71) on 2026-10-06 and verified on Mesa lavapipe
 24.2 (outliers: `terrain_layers` 24, `water` 26, `sky_morning` 0, `sky_evening` 0,
 `frill_sector` 6, all within the 160-pixel budget) and on llvmpipe GL (Mesa 26.1.8).
+
+`particles_fountain` was blessed on the reference machine's RTX 2070 Super Max-Q (Vulkan) on
+2026-10-08 and verified on llvmpipe GL (Mesa 26.1.8: 0 outliers, one pixel beyond ±4 at the
+same position).

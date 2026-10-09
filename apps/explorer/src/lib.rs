@@ -82,6 +82,7 @@
 //! | [`character`] | Character viewer data (M4): bodies, assembled figures, clips, clip catalogue (workers) |
 //! | [`anim_view`] | The character view's UI: body, equipment, sliders, clip browser, playback |
 //! | [`sheet`] | `--sheet`: the character view rendered headless into a contact sheet |
+//! | [`particle_view`] | particle preview of 0x39 records in the gameplay view (play, pause, restart, seed) and `--particles DID --sheet` |
 //! | [`charspec`] | Text forms of `--character`, `--wear`, `--clip`, `--time`, `--sliders` |
 //! | [`world`] | M4.5 world data on workers: world context, landblock products, sky products with their timelines |
 //! | [`timeline`] | Sky timelines from decoded records (pure, bounded) |
@@ -110,6 +111,7 @@ pub mod history;
 pub mod image_ops;
 pub mod index;
 pub mod mesh_view;
+pub mod particle_view;
 pub mod persist;
 pub mod query;
 pub mod richtext;

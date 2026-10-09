@@ -149,6 +149,12 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Particles (`docs/specs/particle-runtime.md` §9): [`Pass::particles`] draws one
+//! [`ParticleDraw`] per draw instance of a particle system, world-space
+//! [`ParticleVertex`]es with quads first and triangles after, in the caller's order (no
+//! sorting), with the blend, alpha test and depth write of an [`AlphaMode`], in lit and
+//! unlit world passes.
+//!
 //! Adapter selection honours `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_POWER_PREF` (see [`ContextOptions`]); asynchronous GPU errors are
 //! captured and returned as [`RenderError::Gpu`] instead of panicking.
@@ -164,6 +170,7 @@ mod lit_pipelines;
 mod material;
 mod mesh;
 mod mesh_pipelines;
+mod particles;
 mod pass_hook;
 mod pipelines;
 mod renderer;
@@ -199,6 +206,9 @@ pub use material::{
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,
     SubmeshInfo,
+};
+pub use particles::{
+    MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_DRAWS_PER_PASS, ParticleDraw, ParticleVertex,
 };
 pub use pipelines::{DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT, LineVertex};
 pub use renderer::{

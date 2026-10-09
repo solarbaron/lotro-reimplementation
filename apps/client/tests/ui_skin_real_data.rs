@@ -108,25 +108,26 @@ fn host_for(b: tessera_client::ui_host::boot::UiBooted) -> UiHost {
     UiHost::from_boot(b, &options)
 }
 
-/// Paints until no job, band or image is outstanding.
+/// The most frames the UI may take to settle after a change.
+const SETTLE_FRAMES: usize = 20_000;
+
+/// Runs frames until the UI has settled ([`UiHost::settled`]: nothing waits for step 7, no
+/// UI asset job is in flight, and the paint scheduler is idle with every surface drawn). At
+/// least one frame runs, so a change made before the call is taken. The paint step works in
+/// time slices, so the number of frames needed depends on the machine's load; a frame that
+/// paints no band is not proof of a finished paint, so only the settled state ends the wait,
+/// bounded by a generous frame count.
 fn settle(host: &mut UiHost, plugins: &mut Plugins) {
-    for _ in 0..2000 {
+    for _ in 0..SETTLE_FRAMES {
         host.step7(plugins, None);
         host.step8(None, plugins);
         host.end_frame(plugins, 0.0);
-        let s = host.last_sample();
-        let busy = host.env().is_some_and(|e| e.borrow().busy());
-        if !busy && s.bands == 0 && s.upload_bytes == 0 {
-            // One more round so arrivals of the last poll are painted.
-            host.step7(plugins, None);
-            host.step8(None, plugins);
-            if host.last_sample().bands == 0 {
-                return;
-            }
+        if host.settled() {
+            return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    panic!("UI did not settle");
+    panic!("UI did not settle in {SETTLE_FRAMES} frames");
 }
 
 fn subtree(ui: &Ui, root: ElementKey) -> Vec<ElementKey> {

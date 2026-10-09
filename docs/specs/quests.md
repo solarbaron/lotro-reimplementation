@@ -215,6 +215,11 @@ emotes; one that needs only the emotes of §12.2 takes them from the emote direc
 > 21st, empty one too. The region directory's `Quest_QuestItemDirectory` (§15) names all 21 and
 > is an equivalent route.
 
+> **OPEN:** (implementer, 2026-10-09; engineering choice, recorded for review)
+> `crates/formats/src/gameplay/quests.rs` (`quest_item_directory_class`) gives no class, with a
+> log line, when the records carrying `Quest_QuestItemDirectory_Array` have more than one root
+> class, rather than choosing one. Confirm or replace.
+
 <a id="s2-2"></a>
 ### 2.2 Discovery at run time
 

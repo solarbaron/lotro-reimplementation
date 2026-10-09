@@ -873,6 +873,11 @@ every template.
 > *Answer:* one level down: `Conjunction_RoleList` → `Conjunction_Role` (array) → its elements,
 > the `Conjunction_Role_ContributionToActionMap` structs (C33).
 
+> **OPEN:** (implementer, 2026-10-09; engineering choices, recorded for review)
+> `crates/formats/src/gameplay/creatures.rs` reads a `Formation_Group` that is not an array as
+> an error, and skips elements of `Formation_Group` and of a `Conjunction_Role` whose label is
+> not `Formation_Follower` or `Conjunction_Role_ContributionToActionMap`. Confirm or replace.
+
 <a id="s5-8"></a>
 ### 5.8 Puppet target package (3761, 82 records)
 

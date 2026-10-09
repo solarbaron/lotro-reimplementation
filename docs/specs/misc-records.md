@@ -1481,6 +1481,14 @@ These are proposals for the owners of those specs; this session edits only this 
 <a id="s19"></a>
 ## 19. Open questions
 
+> **OPEN:** (implementer, 2026-10-09; engineering choices, recorded for review)
+> `crates/formats/src/gameplay/misc.rs`: (1) `modifier_value_display` (§13.1) gives no number
+> for a value that is not a float, int or int64. (2) `VersionSystemView::member_candidates`
+> (§13.7) is the union of the `Version_SingletonList` arrays and `Version_AlwaysRunOnPlayers`
+> and leaves the `AccountVersion_SingletonList` entry out (its object is not a member here).
+> (3) The typed views of §3.7 and §12.2 read a field of another value type as absent. Confirm
+> or replace.
+
 > **OPEN:** script-channel queue modes per caller, the hand-over after a transition script,
 > and any use of `global_transitions` (§7.4).
 

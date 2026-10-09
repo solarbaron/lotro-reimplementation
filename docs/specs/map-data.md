@@ -1432,6 +1432,13 @@ two short paths S1 and S2.
 > has a table of every `HousingControl` label with its type (MD47); the stated
 > `…_StoragePriceModifier` was wrong: it is defined but never stored.
 
+> **OPEN:** (implementer, 2026-10-09; engineering choices where the spec is silent, recorded
+> for review) (a) The landmark rule of §2.3 needs the `WeenieType` key labelled `Landmark`;
+> `crates/formats/src/gameplay/map.rs` (`classify_map_kind`, `MapWeenieKeys`) classifies no set
+> as a landmark when the mapper chain lacks that label, with no fallback to `Landmark_Music`.
+> (b) The `HousingControl` and ripcord views (§9.7, §11) read a field of another value type as
+> absent instead of failing the record. Confirm or replace.
+
 > **Answered (2026-10-09; was OPEN, implementer 2026-10-07; real-data census differs from the spec):** (a) §2.3
 > landmarks: recognising them by `MapNote_Type` and `Landmark_Music` finds 2,731 sets, while
 > §2.3 counts 2,733 landmark records. Measured: 2,731 sets carry `Landmark_Music`, all of them

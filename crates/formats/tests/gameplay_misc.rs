@@ -429,6 +429,25 @@ fn compositor_control_struct() {
             min_value: Some(1),
         }]
     );
+    // X3: fields of another value type read as absent.
+    let wrong = set(vec![entry(
+        1,
+        structure(vec![
+            entry(3, PropertyValue::Int(4)),
+            entry(4, PropertyValue::Enum(77)),
+            entry(5, PropertyValue::Enum(1)),
+        ]),
+    )]);
+    let found = CompositorControl::find_all(&wrong, &pids);
+    assert_eq!(
+        found,
+        vec![CompositorControl {
+            file: None,
+            layer_key: None,
+            control_property: None,
+            min_value: None,
+        }]
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -886,7 +905,8 @@ fn bare_set_families() {
     let v = GameMapView::from_set(&map, &c.pids).unwrap();
     assert_eq!(v.image, Some(Did(0x4100_0001)));
     assert_eq!(v.scale, Some(0.5));
-    assert_eq!(v.pixel_offset, [Some(-3.0), None]);
+    assert_eq!(v.pixel_offset, [Some(-3), None]);
+    assert_eq!(v.fog_of_war, None);
     assert!(v.has_light_map);
     assert_eq!(c.classify(&set(vec![])), BareSetFamily::Empty);
     let one = |pid: u32| set(vec![entry(pid, PropertyValue::Bool(true))]);
@@ -1098,7 +1118,90 @@ fn metadata_views() {
         entry(id(p.version_number), PropertyValue::Enum(3)),
     ]);
     assert_eq!(c.classify(&vs), None);
+    assert!(c.is_version_control(&vs));
+    assert!(!c.is_version_control(&ver));
     let v = VersionSystemView::from_set(&vs, &p);
     assert_eq!(v.updates, vec![(Some(3), vec![Did(0x7000_0040)])]);
     assert_eq!(v.current, Some(3));
+    assert!(v.account_updates.is_empty());
+
+    // §13.7 (X2): one struct carries the account list instead; member candidates are the
+    // union of the singleton lists and `Version_AlwaysRunOnPlayers`, each DID once.
+    let vs = set(vec![
+        entry(
+            id(p.version_number_data_list),
+            array(vec![
+                entry(
+                    1,
+                    structure(vec![
+                        entry(id(p.version_number), PropertyValue::Enum(3)),
+                        entry(
+                            id(p.version_singleton_list),
+                            array(vec![entry(1, did(0x7000_0040)), entry(1, did(0x7000_0041))]),
+                        ),
+                    ]),
+                ),
+                entry(
+                    1,
+                    structure(vec![
+                        entry(id(p.version_number), PropertyValue::Enum(4)),
+                        entry(
+                            id(p.account_version_singleton_list),
+                            array(vec![entry(1, did(0x7000_0050))]),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        entry(
+            id(p.version_always_run_on_players),
+            array(vec![entry(1, did(0x7000_0041)), entry(1, did(0x7000_0060))]),
+        ),
+    ]);
+    assert!(c.is_version_control(&vs));
+    let v = VersionSystemView::from_set(&vs, &p);
+    assert_eq!(v.updates[1], (Some(4), vec![]));
+    assert_eq!(v.account_updates, vec![(Some(4), vec![Did(0x7000_0050)])]);
+    assert_eq!(
+        v.member_candidates(),
+        vec![Did(0x7000_0040), Did(0x7000_0041), Did(0x7000_0060)]
+    );
+}
+
+// §13.1 (X4): the percentage display of a modifier value.
+#[test]
+fn modifier_value_percentages() {
+    let show = |v: PropertyValue, multiply: bool, flag: bool| {
+        modifier_value_display(&v, multiply, flag).expect("numeric")
+    };
+    let f = PropertyValue::Float;
+    // A stored 0.05 with `Add` shows as 5.
+    let d = show(f(0.05), false, true);
+    assert!(d.percent_template && (d.number - 5.0).abs() < 1e-5 && d.direction.is_none());
+    // `Multiply` by 1.05 → 5, increase; by 0.9 → 10, decrease; by exactly 1 → 100, increase.
+    let d = show(f(1.05), true, true);
+    assert!((d.number - 5.0).abs() < 1e-4);
+    assert_eq!(d.direction, Some(ModifierDirection::Increase));
+    let d = show(f(0.9), true, true);
+    assert!((d.number - 10.0).abs() < 1e-4);
+    assert_eq!(d.direction, Some(ModifierDirection::Decrease));
+    let d = show(f(1.0), true, true);
+    assert_eq!(d.number, 100.0);
+    assert_eq!(d.direction, Some(ModifierDirection::Increase));
+    // NaN keeps d = v and takes the decrease form.
+    let d = show(f(f32::NAN), true, true);
+    assert!(d.number.is_nan());
+    assert_eq!(d.direction, Some(ModifierDirection::Decrease));
+    // The product is formed in single precision, then widened.
+    assert_eq!(
+        show(f(0.05), false, true).number,
+        f64::from(0.05f32 * 100.0)
+    );
+    // Without the flag a float is unscaled; ints are always unscaled.
+    let d = show(f(0.05), true, false);
+    assert!(!d.percent_template && d.number == f64::from(0.05f32) && d.direction.is_none());
+    let d = show(PropertyValue::Int(7), true, true);
+    assert!(d.percent_template && d.number == 7.0 && d.direction.is_none());
+    assert_eq!(show(PropertyValue::Int64(-3), false, false).number, -3.0);
+    assert!(modifier_value_display(&PropertyValue::Bool(true), false, true).is_none());
 }

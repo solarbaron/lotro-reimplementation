@@ -1100,6 +1100,13 @@ widgets (`ItemAdvancement_AdvanceableWidget_DPSLUT`, class 4024).
 
 Every entry of the five arrays holds exactly its two fields (OBS3, F48).
 
+> **OPEN:** (implementer, 2026-10-09; engineering choices where the spec is silent, recorded
+> for review) `crates/formats/src/gameplay/items.rs` (`WearControl::from_set`) requires the
+> structure-point and durability arrays and reads the other three as empty when absent; an
+> entry of any of the five arrays without its two labelled fields fails the record. The duration
+> maps of §6.4 (`DurationMap::cooldown`, `::decay`) skip, with a log line, an entry without its
+> key or seconds field. Confirm or replace.
+
 **Roles (Confirmed, client library, F37; settles the former OPEN).** The wear control's
 script object holds its tables as maps; the client library reads two of them, recognisable by
 their keys:
@@ -1351,6 +1358,10 @@ OPEN).** Whether the server uses the same rules is not in the data.
 | 2338 | 421 | Legendary titles: `Name` (StringInfo), `ItemAdvancement_IATitle_Category` (enum, mapper 0x230002C3), `ItemAdvancement_IATitle_Tier` (enum, mapper 0x230002A6; keys 1–3), `ItemAdvancement_Title_SlayerGenusType` (32-bit bitfield, mapper 0x2300000A; 0 in 255 records), `ItemAdvancement_Title_DamageType` (enum, mapper 0x23000028), all in every record; `EffectGenerator_RunicEffectList` (an array of `EffectGenerator_EffectStruct`, §5.9) in 344 and a `Mod_Array` in 105 | items (421 + 181) |
 | 4015 | 329 | Imbued legacies, all fields in every record: `ItemAdvancement_ImbuedLegacy_Effect` (DID → effect), `ItemAdvancement_AdvanceableWidget_InitialMaxLevel` (int; 46 in all) and `…_AbsoluteMaxLevel` (int; 83 in all), `ItemAdvancement_AdvanceableWidget_Icon` and `…_SmallIcon` (DID → 0x41), `ItemAdvancement_AdvanceableWidget_Category` (enum, mapper 0x230003EB), `UI_Examination_Tooltip_0Click_Element` and `…_0Click_Layout` (tooltip layout, `ui-layout.md`), `ItemAdvancement_ImbuedLegacy_ClassicLegacyTransform` (struct of `ItemAdvancement_ImbuedLegacy_TierTransform_Array`, an array of `ItemAdvancement_AdvanceableWidget_UnlockedLevels` ints 0–5, 2,303 in all, and `ItemAdvancement_LegacyTypeName_Array`, an array of `ItemAdvancement_PropertyName` PIDs, 338 in all). The same widget labels occur in 17 records of classes 4024, 4025 and 4048 | `Item_PILI_Legacy_Entry_List` (1,267), the advancement control (333) |
 | 2152 | 1 | The advancement control (label `ItemAdvancementControl`): 42 settings, including level tables, reforge levels, legacy name lists, relic and XP currencies (items) | WEENIECONTENT |
+
+> **OPEN:** (implementer, 2026-10-09) The value types of `UI_Examination_Tooltip_0Click_Element`
+> and `…_0Click_Layout` in the class-4015 records are not given (the table names their role
+> only). `ImbuedLegacyView::tooltip` returns both values as stored. Please state the types.
 
 > **OPEN:** The legendary rules: how legacies are rolled from the class-2139 / class-2134 tables
 > (weights, pull counts), imbuement, reforging, and what the 181 `Item_PILI_*` items do. None of

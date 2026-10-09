@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Revised, **changes requested** (review 2026-10-09 of the branch-side revision of 2026-10-08: §1 K30, §7.4, §15.1 O14.4; blocking items 1–3 in the review record). The text Accepted on main 2026-10-08 (BIN3 row correction included) stands; implementers must not rely on the K30 / §7.4 walking-speed revision until it is re-reviewed. |
+| **Status** | Revised (2026-10-09, writer's revision after the review of 2026-10-09: blocking items 1–3 fixed in §1 K30, §7.4 and §15; the non-blocking note taken into the §7.4 callout). The text Accepted on main 2026-10-08 (BIN3 row correction included) stands; implementers must not rely on the K30 / §7.4 walking-speed revision until it is re-reviewed. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Review 2026-10-08 of the BIN5 revision (2026-10-07): **passed**, Accepted (one non-blocking note carried over). Full record in the review log (decision 0018). Writer's revision 2026-10-08 (BIN3 row, the carried-over note). Narrow review 2026-10-08 of the BIN3 row: **passed**, Accepted. Merge 2026-10-09: the branch-side 2026-10-08 revision (K30, §7.4, §15.1 O14.4) joined the Accepted text; status Revised until a reviewer checks it. Review 2026-10-09 (spec reviewer, a session separate from the writer; CLEAN_ROOM.md §5.3) of the branch-side revision of 2026-10-08 (K30, §7.4 callout, §15.1 O14.4): **changes requested**. Spot check: the walking speeds 2.5 / 2.25 / 2.565 m/s follow from the §7.4 speed rule, the Walking overlay values and the input pairs of `collision.md` §11.8; the decode rule of `collision.md` §11.8 item 5 (on which K30 rests) matches all 256 entries of the client's decode table, located by a read-only data scan of the executable (no disassembly). No code, copied prose, game text or closed-gate material found. Blocking: (1) K30's Mark column reads "BIN", which is neither Confirmed nor Reported as this spec's legend requires; mark it like K27 / K29 ("Confirmed 2026-10-08 (BIN only)"), and state the facts in the Fact column (the input pairs per gait and the resulting speeds) instead of only naming the topic. (2) §7.4, the bullet "Where the player's speeds come from", still says that the keyboard's input vector "was not traced (OPEN below)" and that a full-magnitude walk input would give 5.0 m/s, which contradicts the Answered callout at the end of §7.4; revise that sentence to agree with it. (3) §15 still carries the "OPEN (owner observation O14.4, narrowed 2026-10-07)" callout for the input vector and the walking speed; move it to the Resolved/answered callouts (or mark it confirmation only) so that §15, §7.4 and §15.1 agree. Non-blocking: the §7.4 callout could add, as `collision.md` §11.8 does, that in walk mode the doubled \|*y*\| puts `Slider_Propel` at 1, so the walk clips play at full weight while the body moves at 2.5 m/s. |
+| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Review 2026-10-08 of the BIN5 revision (2026-10-07): **passed**, Accepted (one non-blocking note carried over). Full record in the review log (decision 0018). Writer's revision 2026-10-08 (BIN3 row, the carried-over note). Narrow review 2026-10-08 of the BIN3 row: **passed**, Accepted. Merge 2026-10-09: the branch-side 2026-10-08 revision (K30, §7.4, §15.1 O14.4) joined the Accepted text; status Revised until a reviewer checks it. Review 2026-10-09 (spec reviewer, a session separate from the writer; CLEAN_ROOM.md §5.3) of the branch-side revision of 2026-10-08 (K30, §7.4 callout, §15.1 O14.4): **changes requested**. Spot check: the walking speeds 2.5 / 2.25 / 2.565 m/s follow from the §7.4 speed rule, the Walking overlay values and the input pairs of `collision.md` §11.8; the decode rule of `collision.md` §11.8 item 5 (on which K30 rests) matches all 256 entries of the client's decode table, located by a read-only data scan of the executable (no disassembly). No code, copied prose, game text or closed-gate material found. Blocking: (1) K30's Mark column reads "BIN", which is neither Confirmed nor Reported as this spec's legend requires; mark it like K27 / K29 ("Confirmed 2026-10-08 (BIN only)"), and state the facts in the Fact column (the input pairs per gait and the resulting speeds) instead of only naming the topic. (2) §7.4, the bullet "Where the player's speeds come from", still says that the keyboard's input vector "was not traced (OPEN below)" and that a full-magnitude walk input would give 5.0 m/s, which contradicts the Answered callout at the end of §7.4; revise that sentence to agree with it. (3) §15 still carries the "OPEN (owner observation O14.4, narrowed 2026-10-07)" callout for the input vector and the walking speed; move it to the Resolved/answered callouts (or mark it confirmation only) so that §15, §7.4 and §15.1 agree. Non-blocking: the §7.4 callout could add, as `collision.md` §11.8 does, that in walk mode the doubled \|*y*\| puts `Slider_Propel` at 1, so the walk clips play at full weight while the body moves at 2.5 m/s. Writer's revision 2026-10-09: (1) K30 now states the input pairs and speeds and is marked Confirmed (BIN only); (2) the §7.4 bullet agrees with the Answered callout; (3) the §15 O14.4 callout moved to Resolved; the non-blocking note added to the §7.4 callout. Awaiting re-review. |
 | **Implements into** | `crates/anim` (pose evaluation, track-to-bone binding, blending, root motion, attach transforms, skinning palettes), `crates/render` (skinned pipeline, palette size), `crates/formats` (setup attach tables, `setup.md` §6.2–§6.3), `apps/explorer` (character and animation viewer), `apps/client` (animated avatar) |
 | **Companion specs** | [`havok-data.md`](havok-data.md) (normative for the skeleton and clip containers, their decoding and the curve evaluation of §7 there; this spec starts from decoded skeletons and decoded clip samples). [`setup.md`](setup.md) (the 0x04 setup that carries the skeleton, its attach tables §6.2–§6.3, and part 2 §11–§14 on character setups). [`mesh.md`](mesh.md) §5.7 and §6.2 (vertex bone indices and the per-submesh influence list), §11 (axes). [`property-system.md`](property-system.md) §7–§8 (enum mappers, DID maps). `appearance.md` (M4, species and body assembly, bone sliders, worn parts). `script-table.md` (M4, which clip an entity plays when). |
 
@@ -105,7 +105,7 @@ Legend:
 | K27 | The executable contains no runtime cloth classes (only serialization names of Havok cloth types), never creates a ragdoll instance, and its animation component has no secondary-motion step: capes and skirts move only with their clip tracks (§13) | BIN3 | Confirmed 2026-10-07 (BIN only) |
 | K28 | The player's own movement controller is configured from the game object that the `WEENIECONTENT` DID map labels `PlayerPhysicsControl`: its `PlayerPhysicsControl_BasePlayerParameters`, overlaid in a fixed order by state-dependent parameter structures (troll, mounted, walking, slide, ice, falling, slope, swimming, frozen). The merged `GenericPhysicsController_…MoveSpeed` fields are the per-direction speeds, and the merged `GenericPhysicsController_RampTime` is the slider time *T* of the player's input path (§7.4) | BIN4; OBS3 | Confirmed 2026-10-07 (path, order and field use BIN; values OBS3, read at run time) |
 | K29 | Starting or stopping a clip changes no other clip's overall weight *c*; a layer has no limit on its number of clips (at 1,000 the client logs a warning and still plays the new clip) (§6.5) | BIN5 | Confirmed 2026-10-07 (BIN only) |
-| K30 | The keyboard's input vector per gait and the resulting walking speeds (§7.4, §15.1 O14.4) | `collision.md` §11.8 (BIN questions 60–61, C60–C61, 2026-10-08) | BIN |
+| K30 | The player's input pair (*x*, *y*) per gait: running gives (0, ±1) forward or backward and (±1, 0) sideways; walk mode halves the command values, which the client's quantisation turns into (0, ±0.5) forward or backward and (±0.57, 0) sideways, and which select the Walking overlay. With the §7.4 speed rule, the observed Base and Walking overlays and `Movement_SpeedMultiplier` 1 the ground speeds are: running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s sideways; walking 2.5 m/s forward, 2.25 m/s backward, 2.565 m/s sideways. In walk mode the doubled \|*y*\| puts `Slider_Propel` at 1 (§7.4, §15.1 O14.4) | `collision.md` §11.8 and its rows C60–C61 (BIN questions 60–61, 2026-10-08); speeds computed from K25, K28 and OBS3 | Confirmed 2026-10-08 (BIN only for the input pairs; the decode rule checked against all 256 entries of the client's decode table, `collision.md` C61; overlay speeds OBS3, read at run time) |
 
 ---
 
@@ -891,9 +891,11 @@ are estimates from a heuristic contact test, not stored values.
   only the backward speed (6.0). So with a full forward input (*y* = 1, *x* = 0) and
   `Movement_SpeedMultiplier` 1, a running avatar on the ground moves at 6.5 m/s, close to the
   run clips' natural speed of about 6.6 m/s (89-bone male, table above), and backwards at
-  3.25 m/s (clips: about 2.7 m/s). Which input vector the keyboard produces in run and in walk
-  mode was not traced (OPEN below); a full-magnitude walk input would give 5.0 m/s, more than
-  twice the walk clips' natural speed of about 2 m/s.
+  3.25 m/s (clips: about 2.7 m/s). Walk mode does not give a full-magnitude input: the
+  keyboard's input pair is (0, ±0.5) forward or backward and (±0.57, 0) sideways (K30,
+  `collision.md` §11.8; Answered callout below), so a walking avatar moves at 2.5 m/s
+  forward, 2.25 m/s backward and 2.565 m/s sideways, close to the walk clips' natural speed
+  of about 2 m/s.
 - Consequence: the feet slide whenever the ground speed differs from the clip's natural speed
   (\|`LocomotionDisplacement`\| / duration, `script-table.md` §6.3) × rate; nothing corrects
   it.
@@ -925,7 +927,10 @@ velocity was not traced (the avatar's controller of the list above does not).
 > backward, 5.0 m/s sideways; walking **2.5 m/s** forward, **2.25 m/s** backward, **2.565 m/s**
 > sideways (the table in `collision.md` §11.8). The walking speed is thus close to the walk
 > clips' natural speed of about 2 m/s, and feet slide by the difference (no rate matching,
-> above). A `/loc` timing by the owner is now only a confirmation.
+> above). In walk mode \|*y*\| = 0.5 is doubled for the speed mix and for `Slider_Propel`
+> (`collision.md` §11.8), so `Slider_Propel` is 1 and the walk clips play at full slider
+> weight while the body moves at 2.5 m/s. A `/loc` timing by the owner is now only a
+> confirmation.
 
 ---
 
@@ -1373,9 +1378,11 @@ that has the 2026-10-05 rule.
 > **OPEN** (owner observation, confirmation only): an upper-body attack while running keeps
 > the legs running, the same attack while standing moves the whole body (§6.6).
 
-> **OPEN** (owner observation O14.4, narrowed 2026-10-07): the input vector the keyboard gives
-> in run and walk mode, and so the walking ground speed; the running speed is predicted from
-> the data (6.5 m/s forward, §7.4) and needs only a confirmation.
+> **Resolved** (2026-10-08, BIN, K30; was: OPEN, owner observation O14.4, narrowed
+> 2026-10-07): the keyboard's input pair per gait and so the walking ground speed (§7.4,
+> `collision.md` §11.8). Running 6.5 / 3.25 / 5.0 m/s and walking 2.5 / 2.25 / 2.565 m/s
+> (forward / backward / sideways) with this install's overlays; a `/loc` timing by the owner
+> is a confirmation only (§15.1 O14.4).
 
 > **OPEN:** the slider and speed steps of the `Mounted` controller type (0x10000001), and the
 > use of the root DID map's `PHYSICSCONTROLLER` map (§7.4).
@@ -1505,3 +1512,4 @@ welcome where noted.
 | 2026-10-08 | header; §1 (BIN3 row) | Non-blocking note carried over from the 2026-10-07 re-review and repeated on 2026-10-08: the BIN3 row no longer says that ground speeds are not in the data files, which K28 contradicts. It now says that the named `Movement_…` and `Physics_Avatar…` move-speed properties hold no stored value (OBS2) and points to K28 (the `PlayerPhysicsControl` parameter structures, BIN4, OBS3). No rule changed. Status Revised. | Spec writer (dirty room) |
 | 2026-10-08 | header; §1 (K30); §7.4 (OPEN answered); §15.1 (O14.4) | Owner-observation pass: the keyboard's input vector per gait is now traced in `collision.md` §11.8 (BIN questions 60–61, C60–C61), so the walking speeds are known (2.5 / 2.25 / 2.565 m/s forward / backward / sideways) and O14.4 needs only a confirmation. No other rule changed. | Spec writer (dirty room) |
 | 2026-10-09 (merge) | header | Merge of main into the specs-5 branch: the BIN3 row correction (Accepted on main 2026-10-08) and the branch's owner-observation revision above are both kept; status Revised until the latter is reviewed. No fact changed. | Spec writer (dirty room) |
+| 2026-10-09 (revision after review) | header; §1 (K30); §7.4 (bullet "Where the player's speeds come from", Answered callout); §15 (O14.4 callout) | Review of 2026-10-09 answered. (1) K30 states the facts (input pairs per gait, the resulting running and walking speeds, `Slider_Propel` 1 in walk mode) and is marked Confirmed 2026-10-08 (BIN only), like K27 / K29. (2) The §7.4 bullet no longer says the input vector was not traced or that walking gives 5.0 m/s; it gives the walk-mode pairs and speeds of the callout. (3) The §15 O14.4 OPEN moved to a Resolved callout (confirmation only), so §7.4, §15 and §15.1 agree. Non-blocking note: the §7.4 callout now says that the doubled \|*y*\| puts `Slider_Propel` at 1 in walk mode. No rule changed. Status Revised, awaiting re-review. | Spec writer (dirty room) |

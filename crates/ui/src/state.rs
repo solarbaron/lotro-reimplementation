@@ -36,7 +36,7 @@ impl Ui {
         };
         if let Some(e) = self.el_mut(k) {
             e.state = target;
-            e.dirty = true;
+            self.note_paint_dirty(k);
         }
         // Step 4.
         if pass {

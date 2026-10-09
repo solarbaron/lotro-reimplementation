@@ -126,6 +126,9 @@ pub struct Pass {
     /// Draws of the render-world pipelines (terrain layers, water, sky, instanced
     /// scenery), turned into hooks by `Renderer::end_frame` (`docs/specs/render.md` §5).
     pub(crate) world: WorldDraws,
+    /// Set by `Pass::premultiplied_alpha`: fixed blend states write alpha by
+    /// `docs/specs/render.md` §6.10 "Fixed blends" (R12).
+    pub(crate) premultiplied: bool,
 }
 
 /// The render-world draws queued on one pass (`docs/specs/render.md` §5).
@@ -163,6 +166,7 @@ impl Pass {
             light_reach: Vec::new(),
             hooks: Vec::new(),
             world: WorldDraws::default(),
+            premultiplied: false,
         }
     }
 

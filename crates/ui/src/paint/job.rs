@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use super::display::DisplayList;
 use super::geom::Rect;
-use super::painter::{CanvasSet, paint_rect};
+use super::painter::{CanvasSet, ops_meeting, paint_rect_ops};
 
 /// Rows of one band.
 pub const BAND_ROWS: i32 = 16;
@@ -81,6 +81,8 @@ pub struct PaintJob {
     rects: Vec<Rect>,
     next: usize,
     next_y: i32,
+    /// The snapshot's operations that meet the job's damage box, for every band.
+    candidates: Vec<u32>,
 }
 
 impl PaintJob {
@@ -95,12 +97,15 @@ impl PaintJob {
             .filter(|r| !r.is_empty())
             .collect();
         let next_y = rects.first().map_or(0, |r| r.y0);
+        let damage = rects.iter().fold(Rect::EMPTY, |b, r| b.union(r));
+        let candidates = ops_meeting(&snapshot, &damage);
         Self {
             snapshot,
             size,
             rects,
             next: 0,
             next_y,
+            candidates,
         }
     }
 
@@ -151,7 +156,7 @@ impl PaintJob {
         let r = *self.rects.get(self.next)?;
         let y1 = self.next_y.saturating_add(BAND_ROWS).min(r.y1);
         let band = Rect::new(r.x0, self.next_y, r.x1, y1);
-        paint_rect(&self.snapshot, set, band);
+        paint_rect_ops(&self.snapshot, Some(&self.candidates), set, band);
         if y1 >= r.y1 {
             self.next += 1;
             self.next_y = self.rects.get(self.next).map_or(0, |n| n.y0);

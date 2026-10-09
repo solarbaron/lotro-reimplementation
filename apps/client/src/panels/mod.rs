@@ -11,8 +11,7 @@
 //! **Not wired yet:** no client host constructs [`NativePanels`] so far (the walker host
 //! does not mount the UI); only the library and its tests exist. ROADMAP M5 exit criterion 2
 //! (panels in the walker) therefore cannot be judged on the client until the walker host
-//! opens P1–P15 with [`WorldMaps`] and the plugin host as [`PluginControl`] and
-//! [`ShellCommands`].
+//! opens P1–P15 with [`WorldMaps`] and the plugin host as [`PluginControl`].
 //!
 //! **Gaps recorded as implementation OPENs** (`ui-layout.md` §17.5, items (d) and (e)): P7's
 //! option pages stay empty (the specs do not name the slider and check-box templates or the
@@ -24,7 +23,7 @@
 //! | [`catalog`] | P1–P15, their layout and root labels, lookup by label | UL §17.1 step 1, §17.2 |
 //! | [`census`] | element and art-surface counts of an instantiated panel | UL §17.2 |
 //! | [`maps`] | the minimap and world-map data source over the install (on the asset workers) | GP §8.4.2, §8.5.1 |
-//! | [`chat`] | the chat window P2: setup, registry, built-in commands, local echo | `chat-window.md` §3, §7, §10 |
+//! | [`chat`] | the chat window P2: setup, windows, the entry line handed to the command dispatcher | `chat-window.md` §3, §6, §10; decision 0020 |
 //! | [`plugin_manager`] | the plugin manager P12 (game layout or Tessera's own window) | UL §17.4 P12, LPA §6.4–§6.7 |
 //!
 //! # How the host drives it
@@ -51,7 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub use catalog::{MissingPart, PanelCatalog, PanelId, PanelRef};
 pub use census::{PanelCensus, panel_census};
-pub use chat::{ChatPanel, ChatRequest, ChatSetup, NoShell, ShellCommands};
+pub use chat::{ChatPanel, ChatSetup};
 pub use maps::{NoMaps, WorldMaps};
 pub use plugin_manager::{NoPlugins, PluginControl, PluginManagerPanel, PluginRow};
 
@@ -102,8 +101,6 @@ pub struct Services<'a> {
     pub maps: &'a mut dyn MapSource,
     /// The plugin host.
     pub plugins: &'a mut dyn PluginControl,
-    /// The plugins' `Shell` commands.
-    pub shell: &'a mut dyn ShellCommands,
 }
 
 impl std::fmt::Debug for Services<'_> {
@@ -581,31 +578,7 @@ impl NativePanels {
                 Err(e) => tracing::debug!("{id}: {e}"),
             }
         }
-        self.run_chat_requests(ui, sv, &mut out);
         out
-    }
-
-    /// Runs what chat commands asked for since the last call (`/plugins manager`). The
-    /// host calls this after it gave the chat window a command or a submit.
-    pub fn run_chat_requests(
-        &mut self,
-        ui: &mut Ui,
-        sv: &mut Services<'_>,
-        out: &mut Vec<PanelAction>,
-    ) {
-        let reqs = self
-            .chat
-            .as_mut()
-            .map(ChatPanel::take_requests)
-            .unwrap_or_default();
-        for r in reqs {
-            match r {
-                ChatRequest::OpenPluginManager => match self.open_plugin_manager(ui, sv) {
-                    Ok(_) => out.push(PanelAction::Opened(PanelId::PluginManager)),
-                    Err(e) => tracing::debug!("plugin manager: {e}"),
-                },
-            }
-        }
     }
 
     /// The Escape rule (`game-panels.md` §16) for a `menu` command the UI declined: a press

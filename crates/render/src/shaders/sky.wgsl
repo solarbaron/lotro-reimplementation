@@ -60,7 +60,7 @@ fn sky_shade(in: SkyOut) -> SkyShaded {
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let s = sky_shade(in);
-    return vec4<f32>(frame_output(s.color), s.alpha);
+    return frame_blend_output(frame_output(s.color), s.alpha);
 }
 
 @fragment
@@ -69,5 +69,5 @@ fn fs_sky_mask(in: SkyOut) -> @location(0) vec4<f32> {
     if (surface_alpha_test(s.opacity)) {
         discard;
     }
-    return vec4<f32>(frame_output(s.color), s.alpha);
+    return frame_blend_output(frame_output(s.color), s.alpha);
 }

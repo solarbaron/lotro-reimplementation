@@ -5,7 +5,10 @@
 //!
 //! With a game UI attached (M5, [`crate::ui_host`]) the host also installs the `Turbine.UI`
 //! classes into every new apartment ([`Plugins::set_ui_binding`]), queues chat output for
-//! the chat window ([`Plugins::take_chat`]), reports the frame clock to
+//! the chat window (the plugins' lines: [`Plugins::take_chat`]; the client's own lines,
+//! command replies and player music: [`Plugins::take_local_chat`]), runs the chat window's
+//! entry lines through the dispatcher ([`Plugins::submit_entry`], with the window's channel
+//! mode, and [`Plugins::history_mut`] for line up and down), reports the frame clock to
 //! `Turbine.Engine.GetGameTime` ([`Plugins::set_game_time`]) and leaves the plugin
 //! manager's per-frame work to the UI host's frame-loop step 7 ([`Plugins::set_ui_driven`],
 //! [`Plugins::pump_step7`]). The dispatcher's start-up lines and player music still run in
@@ -28,6 +31,7 @@ use tessera_plugins::{
     PluginManager, ScriptErrorReport,
 };
 
+use crate::commands::line::History;
 use crate::commands::registry::{Handler, Help, Owner};
 use crate::commands::text::CommandText;
 use crate::commands::{Context, Dispatcher, LineKind, LocalLine, Origin, Outcome, PluginCommands};
@@ -341,8 +345,10 @@ pub struct Plugins {
     startup: Startup,
     /// Lines the client posted, for [`CommandSink::take_lines`].
     outbox: VecDeque<LocalLine>,
-    /// The game UI's own command names (its chat window's registry, M5), lower case.
-    ui_names: Vec<String>,
+    /// With a game UI attached ([`Self::set_ui_driven`]): the client's own lines (chat
+    /// type, text) for the chat window, which also hands them to the plugins' `Received`
+    /// ([`Self::take_local_chat`]).
+    local_chat: VecDeque<(u32, String)>,
 }
 
 impl Plugins {
@@ -399,7 +405,7 @@ impl Plugins {
             dispatcher,
             startup: Startup::default(),
             outbox: VecDeque::new(),
-            ui_names: Vec::new(),
+            local_chat: VecDeque::new(),
         }
     }
 
@@ -453,10 +459,42 @@ impl Plugins {
         }
     }
 
-    /// Runs one line through the dispatcher.
+    /// Runs one line through the dispatcher in the `Say` mode (the walker's overlay, the
+    /// start-up lines, tools).
     pub fn submit(
         &mut self,
         line: &str,
+        origin: Origin,
+        session: Option<&mut dyn WalkerSession>,
+        now: Instant,
+    ) -> Outcome {
+        self.run_line(line, "", "", origin, session, now)
+    }
+
+    /// Runs a line submitted in the M5 chat window's entry (`chat-window.md` §6.2 submit)
+    /// through the dispatcher with the window's channel mode: its command word and tell
+    /// target (decision 0020 items 1 and 2). Channel commands use `session`.
+    pub fn submit_entry(
+        &mut self,
+        line: &tessera_ui::game::chat::EntryLine,
+        session: Option<&mut dyn WalkerSession>,
+        now: Instant,
+    ) -> Outcome {
+        self.run_line(
+            &line.text,
+            &line.word,
+            &line.target,
+            Origin::Chat,
+            session,
+            now,
+        )
+    }
+
+    fn run_line(
+        &mut self,
+        line: &str,
+        word: &str,
+        target: &str,
         origin: Origin,
         session: Option<&mut dyn WalkerSession>,
         now: Instant,
@@ -470,7 +508,9 @@ impl Plugins {
             music: self.music.as_mut(),
             plugins: Some(&mut self.manager),
         };
-        let outcome = self.dispatcher.submit(line, &mut ctx, &mut out);
+        let outcome = self
+            .dispatcher
+            .submit_in(line, word, target, &mut ctx, &mut out);
         for l in out {
             self.post(l);
         }
@@ -479,18 +519,30 @@ impl Plugins {
         outcome
     }
 
+    /// The one command history (`chat-window.md` §6.3), which the chat window's line up
+    /// and down browse.
+    pub fn history_mut(&mut self) -> &mut History {
+        self.dispatcher.history_mut()
+    }
+
     /// Posts one line of the client's own: the log, the walker's chat display and, with a
-    /// game UI attached, the chat window (type 1 `Error` or 8 `Log`).
+    /// game UI attached, the chat window's queue (type 1 `Error` or 8 `Log`).
     fn post(&mut self, line: LocalLine) {
-        match line.kind {
+        let chat_type = match line.kind {
             LineKind::Error => {
                 tracing::info!(target: "tessera_client::chat", kind = "error", "{}", line.text);
-                self.host.queue_chat(CHAT_ERROR, &line.text);
+                CHAT_ERROR
             }
             LineKind::Log => {
                 tracing::info!(target: "tessera_client::chat", "{}", line.text);
-                self.host.queue_chat(CHAT_LOG, &line.text);
+                CHAT_LOG
             }
+        };
+        if self.ui_driven {
+            if self.local_chat.len() >= MAX_QUEUED_CHAT {
+                self.local_chat.pop_front();
+            }
+            self.local_chat.push_back((chat_type, line.text.clone()));
         }
         self.push_outbox(line);
     }
@@ -540,14 +592,11 @@ impl Plugins {
         }
     }
 
-    /// The host's command names: the dispatcher's client names and the game UI's own.
+    /// The host's command names: the dispatcher's client names (`Shell.IsCommand`,
+    /// `Shell.GetCommands`, LPA §11.1).
     fn refresh_builtins(&self) {
-        self.host.set_builtin_commands(
-            self.dispatcher
-                .client_names()
-                .into_iter()
-                .chain(self.ui_names.iter().cloned()),
-        );
+        self.host
+            .set_builtin_commands(self.dispatcher.client_names());
     }
 
     /// Routes the player-music commands (`/play`, `/playstart`, `/playlist`, `/playstop`,
@@ -650,18 +699,19 @@ impl Plugins {
             .unwrap_or_else(PoisonError::into_inner) = Some(seconds);
     }
 
-    /// Sets the game UI's own chat command names (`Shell.IsCommand`, LPA §11.1); the
-    /// dispatcher's client names stay registered with them.
-    pub fn set_builtin_commands(&mut self, names: Vec<String>) {
-        self.ui_names = names.into_iter().map(|n| n.to_lowercase()).collect();
-        self.refresh_builtins();
-    }
-
-    /// The client's built-in chat command names (lower case): the dispatcher's and the
-    /// game UI's.
+    /// The client's built-in chat command names (lower case), from the dispatcher's
+    /// registry.
     #[must_use]
     pub fn builtin_commands(&self) -> Vec<String> {
         self.host.builtin_commands()
+    }
+
+    /// The client's own chat lines (type, text) posted since the last call while a game UI
+    /// is attached: command replies (the unknown-command line, help, refusals) and player
+    /// music. The chat window shows them and hands them to the plugins' `Received`
+    /// (`chat-window.md` §10 items 2 and 9).
+    pub fn take_local_chat(&mut self) -> Vec<(u32, String)> {
+        self.local_chat.drain(..).collect()
     }
 
     /// Chat lines (type, text) the plugins wrote since the last call.

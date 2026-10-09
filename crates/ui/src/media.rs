@@ -149,7 +149,7 @@ impl Ui {
                     && e.overlay != ov
                 {
                     e.overlay = ov;
-                    e.dirty = true;
+                    self.note_paint_dirty(k);
                     self.painter.touched = true;
                 }
                 Step::Done
@@ -380,7 +380,7 @@ impl Ui {
             && e.base != b
         {
             e.base = b;
-            e.dirty = true;
+            self.note_paint_dirty(k);
             self.painter.touched = true;
         }
     }
@@ -390,7 +390,7 @@ impl Ui {
             && e.base.is_some()
         {
             e.base = None;
-            e.dirty = true;
+            self.note_paint_dirty(k);
             self.painter.touched = true;
         }
     }
@@ -419,7 +419,7 @@ impl Ui {
             && e.image_offset != (x, y)
         {
             e.image_offset = (x, y);
-            e.dirty = true;
+            self.note_paint_dirty(k);
             self.painter.touched = true;
         }
     }

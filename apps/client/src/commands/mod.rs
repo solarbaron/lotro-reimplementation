@@ -2,8 +2,11 @@
 //! The client's one command dispatcher (decision 0020): the registry of
 //! `chat-window.md` §7.1 and §8.2 ([`registry`]), the line pipeline of §7.2–§7.4
 //! ([`line`]), the words read from the install ([`text`]) and the client's built-in
-//! commands. Every source of typed command text feeds [`Dispatcher::submit`]: the walker's
-//! chat overlay, the start-up lines of `--command`, and (M5) the chat window's entry line.
+//! commands. Every source of typed command text feeds the dispatcher: the walker's chat
+//! overlay and the start-up lines of `--command` through [`Dispatcher::submit`] (the `Say`
+//! mode), and the M5 chat window's entry line through [`Dispatcher::submit_in`] with the
+//! window's channel mode (`chat-window.md` §6.2 submit, §6.5). The window browses the one
+//! history of §6.3 through [`History`]'s [`EntryHistory`] implementation.
 //!
 //! Routes (decision 0020 item 2):
 //!
@@ -25,6 +28,8 @@ use std::time::Instant;
 
 use tessera_net::ChatChannel;
 use tessera_net::model::MAX_CHAT_LEN;
+
+use tessera_ui::game::chat::EntryHistory;
 
 use crate::audio::player_music::{MusicWord, PlayerMusic};
 use crate::walker::WalkerSession;
@@ -372,7 +377,7 @@ impl Dispatcher {
         &mut self.history
     }
 
-    /// The channel word plain text runs (§7.2: the default word when the mode has none).
+    /// The default channel word (§7.2: the word plain text runs when the mode has none).
     fn channel_word(&self) -> &str {
         self.text.default_word.as_deref().unwrap_or("say")
     }
@@ -387,10 +392,27 @@ impl Dispatcher {
     }
 
     /// Runs one submitted line (`chat-window.md` §6.2 submit steps 3–4, §7.2) in the
-    /// overlay's `Say` mode; lines the client posts go to `out`.
+    /// overlay's `Say` mode (the default channel word, no target); lines the client posts
+    /// go to `out`.
     pub fn submit(
         &mut self,
         text: &str,
+        ctx: &mut Context<'_>,
+        out: &mut Vec<LocalLine>,
+    ) -> Outcome {
+        self.submit_in(text, "", "", ctx, out)
+    }
+
+    /// Runs one submitted line in a channel mode (`chat-window.md` §6.2 submit steps 3–4,
+    /// §6.5, §7.2): plain text runs as `word` (the mode's command word *C*; empty: the
+    /// default channel word) with the tell target `target` (*G*, empty outside `Tell`).
+    /// Lines the client posts go to `out` (the unknown-command line among them, decision
+    /// 0020 item 4).
+    pub fn submit_in(
+        &mut self,
+        text: &str,
+        word: &str,
+        target: &str,
         ctx: &mut Context<'_>,
         out: &mut Vec<LocalLine>,
     ) -> Outcome {
@@ -404,7 +426,12 @@ impl Dispatcher {
         if ctx.origin == Origin::Chat {
             self.history.add(text);
         }
-        let prepared = line::prepare(text, &self.text.prefix, self.channel_word(), "");
+        let word = if word.is_empty() {
+            self.channel_word()
+        } else {
+            word
+        };
+        let prepared = line::prepare(text, &self.text.prefix, word, target);
         let inv = match prepared {
             Ok(Some(inv)) => inv,
             Ok(None) => return Outcome::Nothing,
@@ -572,6 +599,18 @@ impl Dispatcher {
             .filter(|e| e.owner == Owner::Client)
             .map(|e| registry::key(&e.name))
             .collect()
+    }
+}
+
+/// The chat window's line up and down (`chat-window.md` §6.3) browse the dispatcher's one
+/// history.
+impl EntryHistory for History {
+    fn older(&mut self) -> Option<String> {
+        History::older(self).map(str::to_owned)
+    }
+
+    fn newer(&mut self) -> Option<String> {
+        History::newer(self).map(str::to_owned)
     }
 }
 
@@ -902,6 +941,131 @@ mod tests {
         );
         assert_eq!(out, [LocalLine::error(TOO_LONG)]);
         assert!(s.sent.is_empty());
+    }
+
+    /// The M5 chat window's lines run in its channel mode (`chat-window.md` §6.2 submit,
+    /// §6.5, §7.2 step 5; decision 0020 item 2): plain text goes to the mode's word with the
+    /// tell target, an empty word is the default word, commands ignore the mode.
+    #[test]
+    fn entry_lines_run_in_the_windows_channel_mode() {
+        let mut d = Dispatcher::new();
+        d.apply_text(CommandText {
+            prefix: "/".into(),
+            default_word: Some("say".into()),
+            unknown_line: None,
+            help_names: None,
+            plugins_names: None,
+            channel_words: vec![
+                ("s;say".into(), Channel::Say),
+                ("t;tell".into(), Channel::Tell),
+                ("f".into(), Channel::Unavailable),
+            ],
+        });
+        let mut s = Recorder {
+            remote: true,
+            ..Recorder::default()
+        };
+        let mut m = PlayerMusic::new(MusicConfig::default());
+        let sub = |d: &mut Dispatcher,
+                   text: &str,
+                   word: &str,
+                   target: &str,
+                   s: &mut Recorder,
+                   m: &mut PlayerMusic| {
+            let mut out = Vec::new();
+            let mut ctx = Context {
+                now: Instant::now(),
+                origin: Origin::Chat,
+                session: Some(s),
+                music: Some(m),
+                plugins: None,
+            };
+            let o = d.submit_in(text, word, target, &mut ctx, &mut out);
+            (o, out)
+        };
+        assert_eq!(sub(&mut d, "hi", "", "", &mut s, &mut m).0, Outcome::Ran);
+        assert_eq!(
+            sub(&mut d, "hi all", "s", "", &mut s, &mut m).0,
+            Outcome::Ran
+        );
+        assert_eq!(
+            sub(&mut d, " psst ", "t", "Bram", &mut s, &mut m).0,
+            Outcome::Ran
+        );
+        // Fellowship-like modes the Tessera protocol lacks: a local error, nothing sent.
+        let (o, out) = sub(&mut d, "hi", "f", "", &mut s, &mut m);
+        assert_eq!(
+            (o, out),
+            (Outcome::Ran, vec![LocalLine::error(CHANNEL_UNAVAILABLE)])
+        );
+        // Commands ignore the mode: `/play` in the Tell mode is music, not a tell.
+        let (o, out) = sub(&mut d, "/play tune", "t", "Bram", &mut s, &mut m);
+        assert_eq!((o, out.len()), (Outcome::Ran, 0));
+        assert_eq!(m.stats().commands, 1);
+        // A mode word the registry does not hold: the unknown-command line, nothing sent.
+        let (o, _) = sub(&mut d, "hi", "nosuch", "", &mut s, &mut m);
+        assert_eq!(o, Outcome::Unknown);
+        assert_eq!(
+            s.sent,
+            [
+                (ChatChannel::Say, "hi".to_owned()),
+                (ChatChannel::Say, "hi all".to_owned()),
+                (
+                    ChatChannel::Tell {
+                        peer: "Bram".into()
+                    },
+                    "psst".to_owned()
+                ),
+            ]
+        );
+        // Every entry line is history, typed text only (§6.3).
+        assert_eq!(
+            d.history().lines().collect::<Vec<_>>(),
+            ["hi", "/play tune", " psst ", "hi all"]
+        );
+        // The window's line up and down read it through `EntryHistory`.
+        let h: &mut dyn EntryHistory = d.history_mut();
+        assert_eq!(h.older().as_deref(), Some("hi"));
+        assert_eq!(h.older().as_deref(), Some("/play tune"));
+        assert_eq!(h.newer().as_deref(), Some("hi"));
+        assert_eq!(h.newer(), None);
+    }
+
+    /// Hostile entry lines (any text, word or target) never panic and never send more
+    /// than the protocol's chat length.
+    #[test]
+    fn hostile_entry_lines() {
+        let mut d = Dispatcher::new();
+        let mut s = Recorder::default();
+        let long = "x".repeat(200_000);
+        let words = ["", "say", "\u{0}", "\"", long.as_str(), "tell"];
+        for text in [
+            "",
+            "/",
+            "//",
+            "/\"",
+            "/plugins load \"",
+            ";;;;",
+            long.as_str(),
+            "/\u{FFFF}\u{10FFFF}",
+            "\"a\"\u{1F600}",
+        ] {
+            for word in words {
+                for target in ["", "\"", long.as_str()] {
+                    let mut out = Vec::new();
+                    let mut ctx = Context {
+                        now: Instant::now(),
+                        origin: Origin::Chat,
+                        session: Some(&mut s),
+                        music: None,
+                        plugins: None,
+                    };
+                    let _ = d.submit_in(text, word, target, &mut ctx, &mut out);
+                }
+            }
+        }
+        assert!(s.sent.iter().all(|(_, t)| t.len() <= MAX_CHAT_LEN));
+        assert!(d.history().lines().count() < line::HISTORY_CAPACITY);
     }
 
     #[test]

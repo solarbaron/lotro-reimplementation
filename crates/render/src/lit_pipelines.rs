@@ -14,7 +14,9 @@ use glam::{Mat4, Vec3};
 use crate::lighting::{
     FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, LightReach, MAX_DRAW_LIGHTS, reference,
 };
-use crate::material::{FixedBlend, FogRule, Gloss, LightSelection, LitSurface, Material, Opacity};
+use crate::material::{
+    FixedAlpha, FixedBlend, FogRule, Gloss, LightSelection, LitSurface, Material, Opacity,
+};
 use crate::mesh::GpuVertex;
 use crate::mesh_pipelines::{Cull, DrawUniform, MeshLayouts};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
@@ -536,8 +538,9 @@ pub(crate) enum LitKind {
     Mask,
     TestBlend,
     Blend,
-    /// Additive and the other fixed blends ([`crate::AlphaMode::Fixed`]).
-    Fixed(FixedBlend),
+    /// Additive and the other fixed blends ([`crate::AlphaMode::Fixed`]), with how they
+    /// write alpha in the pass ([`FixedBlend::alpha_rule`]).
+    Fixed(FixedBlend, FixedAlpha),
     /// Shadow-map depth of an opaque caster.
     Shadow,
     /// Shadow-map depth of an alpha-tested caster.
@@ -726,6 +729,7 @@ impl LitLayouts {
                 cache: None,
             });
         }
+        let mut constants: &[(&str, f64)] = &[];
         let (fs, blend, depth_write) = match key.kind {
             LitKind::Opaque => ("fs_lit_opaque", None, true),
             LitKind::Mask => ("fs_lit_mask", None, true),
@@ -739,15 +743,21 @@ impl LitLayouts {
                 Some(wgpu::BlendState::ALPHA_BLENDING),
                 false,
             ),
-            LitKind::Fixed(b) => (
-                match b.fog_rule() {
-                    FogRule::Lerp => "fs_lit_blend",
-                    FogRule::FadeOut => "fs_lit_additive",
-                    FogRule::TowardWhite => "fs_lit_modulate",
-                },
-                Some(b.blend_state()),
-                b.depth_write,
-            ),
+            LitKind::Fixed(b, alpha) => {
+                // A fixed blend that draws opaque (render.md §6.10, R12) has fog rule
+                // `Lerp`, so its entry point applies `FIXED_OPAQUE`.
+                let fixed = b.pipeline(alpha);
+                constants = fixed.constants();
+                (
+                    match b.fog_rule() {
+                        FogRule::Lerp => "fs_lit_blend",
+                        FogRule::FadeOut => "fs_lit_additive",
+                        FogRule::TowardWhite => "fs_lit_modulate",
+                    },
+                    fixed.blend,
+                    b.depth_write,
+                )
+            }
             // Shadow kinds returned above.
             LitKind::Shadow | LitKind::ShadowMask => ("fs_lit_opaque", None, true),
         };
@@ -781,7 +791,10 @@ impl LitLayouts {
             fragment: Some(wgpu::FragmentState {
                 module: &self.lit_shader,
                 entry_point: Some(fs),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 targets: &targets,
             }),
             multiview_mask: None,

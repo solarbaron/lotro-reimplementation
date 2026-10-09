@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Expected values complete (2026-10-06); scenery rows S1–S11 and walks GN1–GN4 re-derived 2026-10-07 ([§8](#s8)); walker side and owner observations pending |
-| **Last updated** | 2026-10-08 (implementer: §2.2 pass conditions revised from `collision.md` §11.7; OPENs for GN2 and CV2 in §2.4) |
+| **Last updated** | 2026-10-08 (implementer: §2.2 pass conditions revised from `collision.md` §11.7; GN1 and GN2 stop points re-derived under the first-touch rule (TOUCH, [§1](#s1)) and CV2 moved to a walkable path in the same cave; both §2.4 OPENs answered, for the spec writer to confirm; cameras for judging T4, T5, T12, T15, T16, Y2, L2, L5 and L7 on the image ([§4.7](#s4-7)), L5 revised from `terrain-texturing.md` §9.4, OPEN for L7 in [§7](#s7)) |
 | **Author role** | Spec writer (dirty room) |
 | **Review record** | Claude review session (spec-reviewer agent), 2026-10-07, of the re-derivation of 2026-10-07 (§1 GEN row, §2.3–§2.4 GN1–GN4, §4.2 rows S1–S11 and callout, §4.3 intro, §8): **passed.** The rule the rows now follow (`scenery.md` §7.4 step 14b, S36) was re-checked in a separate copy of the Ghidra project. The totals of all 11 landblocks and the list indices of GN1–GN4 (16, 33, 176, 138) agree with the clean-room implementation's generated lists in the writer's scratch output, as do GN1's new tree and position. No game text, keys or code. The companion `scenery.md` revision has changes requested on §7.4 step 15 only (failure causes and frill-layer containment), which no row of this checklist depends on. Second review, Claude review session (spec-reviewer agent, a different session), 2026-10-07: **passed again.** S36 re-checked in a fresh copy of the Ghidra project. Independently of the writer's output, a fresh read-only build of the repository's crates generated the 11 landblocks of §4.2 on the install: totals 25, 315, 165, 309, 151, 111, 445, 166, 221, 80 and 186 as listed; GN1–GN4 at 0-based list indices 16, 33, 176 and 138 with the listed DIDs, positions, headings and scales; the changed nearest objects of S1, S2, S5, S6, S8 and S10 at the listed positions (S8's second at x 126.421, within rounding). The in-view counts and the frill rows were not re-measured. The open issues of `scenery.md` §7.4 step 15 still do not affect any row. |
 | **Serves** | [ROADMAP M4.5](../ROADMAP.md#m4-5-exit) exit criterion 4 (scripted walks on collision and the 1,000-walk soak, [§2](#s2)), criterion 5 (five performance walk spots, [§3](#s3)) and criterion 6 (visual rows, [§4](#s4)); the M3 reference-location check asked for by criterion 1 ([§5](#s5)) |
@@ -33,6 +33,8 @@ either client stay private in a scratch directory (same rules as
 | OBS | The owner's install, data current on 2026-10-06, read in place and read-only by throwaway dirty-room probes. Records decoded for this file: landblock data, block maps, landblock info and landblock properties of regions 1–5 and 14 (all records); 0x66 (all 16,819); 0x01 (all 1,057); 0x02, 0x11, 0x12, 0x19 (all); 0x16; 0x15000007, 0x1A (all 963), 0x35000000; the block-map descriptors 0x18; 0x31/0x30/0x2B for the lighting rows. |
 | GEN | A dirty-room re-implementation of `scenery.md` §6–§7 (static pass) and §8.2 with the Tessera Decision of §8.6 (frill pass), written from the spec text only. It reproduces the synthetic worked example of `scenery.md` §14 exactly (vertex hash 0x7237E00C, the frequency, displacement, heading and scale draws, both quaternions). It reads the landblock's statics and their clearance volumes from landblock info (`scenery.md` §7.4 step 14a). **Corrected 2026-10-07:** until then its footprint test (`scenery.md` §7.4 step 14b) was inverted: it tested only the open markers and skipped the closed ones. The corrected generator follows step 14b, which a BIN re-check confirmed unchanged. Its static-pass lists equal those of the clean-room implementation object for object in all 11 landblocks of [§4.2](#s4-2). Its frill pass keeps the static pass's markers (`scenery.md` §8.2 item 5). The frill records of the six landblocks of [§4.3](#s4-3) are identical under the old and the corrected generator. Rows re-derived: [§8](#s8). |
 | SWEEP | A geometric sweep of the Human male capsule (`collision.md` §10.6: radius 0.35 m, cap centres 0.35 m and 1.45 m above the feet) along a straight horizontal path, with the feet on the terrain (`landblock.md` §3.11) or on the highest walkable surface no more than the step-up height (0.5 m, BasePlayer, `collision.md` §10.3) above the current feet. A contact counts as blocking only when it lies above the step-up height. The collision set is `collision.md` §12.1: all terrain triangles, the 0x66 meshes of every blocking SED (§9.3) and every blocking generated object (§9.4) of the landblock and its eight neighbours, and, for interiors, the cell physics meshes (§5.3) and interior SEDs. Not Tessera's controller: it gives the geometric fact the controller must reproduce. |
+| TOUCH | Implementer derivation, 2026-10-08, with Tessera's own collision queries (`tessera-physics` capsule contacts and sweeps over the collision sets the walker uses, `collision.md` §12.1) on the owner's install, read-only; a throwaway test, not committed. The Human male capsule of SWEEP moves along the start heading in 2 cm steps with the feet on the terrain (F1), refined by bisection to 1 mm. Every contact with a body other than the terrain or ceiling gets its normal by `collision.md` §11.3 (the face normal replaces the contact normal when both are steeper than 45° and the face is the steeper; Tessera's capsule-side orientation, §12.4 (x)). P is the first position where a contact that is **not walkable** (*u* ≤ cos 45°: steep, wall or overhang), at **any height**, has zero separation, unless the step-up of `collision.md` §11.5 from there (back off 0.05 m, rise 0.5502 m, §11.6 item 5, forward 0.05 m plus *L* for *L* = 0, 0.054 and 0.108 m, the run step's remaining length, descend 0.5502 m) lands on walkable support (§11.3.1, crease rule included) **past** the touch. This is the first-touch rule of `collision.md` §11.7 ("A steep contact below the step-up height"); SWEEP differs only in ignoring contacts below the step-up height. With the capsule resting on the terrain instead (its rest offset on a slope, convex radius 0, §12.5), every P moves by at most 0.012 m. |
+| CAVE | Implementer search, 2026-10-08, with Tessera's own decoders (`tessera-formats` landblock data, `tessera-physics` terrain and ceiling meshes, `collision.md` §6.1, §6.4) on the owner's install, read-only; a throwaway test, not committed. Quads whose four ceiling samples are non-zero and whose two terrain and two ceiling triangles are covered by a stored layer (or a `whole` layer, `landblock.md` §3.8.2); straight 15 m paths from every start on a 0.5 m lattice in 15° heading steps, sampled every 0.25 m (0.05 m for the final row), on which every point and every point of two rings (radius 0.35 m and 0.175 m, 16 directions) lies on such quads, the steepest terrain triangle within those rings is at most 40°, and the ceiling-minus-floor distance under the axis (bit-0 ceiling diagonal) is at least 2.6 m. "Same cave": the quads with four non-zero ceiling samples, at least one of them more than 1 m above the floor sample, joined through shared edges. Objects: capsule contacts within 3 m of the path with every body other than terrain and ceiling (detail bodies included). |
 | CELL | The point-in-cell rule of `collision.md` §5.4 and §5.8.1 (tolerance −0.0002), evaluated at the feet raised by 0.05 m. Where two cells contain the point, both are listed. |
 | WAT | `water.md` §6.2 (landblock water), §7.1 (volume entity) and the Tessera rule of §7.4. |
 | ENV | `environment.md` §11.1–§11.3 with the day type *D* = 2 (the Tessera initial value, §11.2) and game day *n* = 12,240 (the day at clock *G* = 0, `environment.md` §14). |
@@ -162,7 +164,7 @@ by more than 0.01 m (criterion 4); position and velocity are finite.
 
 | Kind | Parameters | Passes when |
 |---|---|---|
-| `blocked` | `P` (stop point), `d` | At the **first touch** (the first step with forward held after which the capsule lies within 0.01 m of a blocking object) the feet are within `d` of P horizontally and vertically within 0.05 m below to 0.05 m plus the slope allowance (below) above P, and at no step up to the first touch was the feet's distance along the start heading greater than that of P plus `d`. After the first touch the walker may slide along or round the blocker while forward stays held (`collision.md` §11.7 items 2–3); the end point is reported only. P is where the SWEEP capsule first touches the blocker above the step-up height. |
+| `blocked` | `P` (stop point), `d` | At the **first touch** (the first step with forward held after which the capsule lies within 0.01 m of a blocking object) the feet are within `d` of P horizontally and vertically within 0.05 m below to 0.05 m plus the slope allowance (below) above P, and at no step up to the first touch was the feet's distance along the start heading greater than that of P plus `d`. After the first touch the walker may slide along or round the blocker while forward stays held (`collision.md` §11.7 items 2–3); the end point is reported only. P is where the capsule first touches a face of the blocker that it can neither ride onto nor step over: the TOUCH rule of [§1](#s1) (`collision.md` §11.7). For WL1–WL5 and UB1–UB3, P is SWEEP's, which TOUCH reproduces within 0.005 m; GN1–GN4 use TOUCH (2026-10-08). |
 | `reach` | `E`, `d`, `risers` | The feet end within `d` of E horizontally and within 0.05 m vertically; `risers` lists the vertical steps (m) of the support profile on the way, in order, each below the step-up height, which the walker climbs without a jump. |
 | `noclimb` | `B` (foot of the steep band on the path), `zmax`, `rmax` | The feet never rise above `zmax` (B.z + 0.60 m) and end no farther than `rmax` (distance of B + 0.60 m) from the start, measured horizontally along the path; the state is `Earth_UncontrolledSurface` (6) at least once. The band beyond B is steeper than 50° for at least 3 m (all its triangles between 50° and 85°). |
 | `cells` | `A>B`, `E`, `d` | The cell lookup (`collision.md` §5.8.1) reports A at the start and B at the end; the feet end within `d` of E (horizontal) and 0.05 m (vertical). In the doorway both cells contain the feet; a report of either is allowed there. |
@@ -203,8 +205,8 @@ at least three walks.
 | UB1 | undrawn | 2 | 0x3B91 | 0 | 59.64,64.39,578.19 | `r2 lx474 ly1163 ox59.64 oy64.39 oz578.19` | 0.0 | run | `0:fwd` | 3 | `blocked P=59.64,69.04,578.19 d=0.10` |
 | UB2 | undrawn | 4 | 0x7CBC | 0 | 78.03,89.18,165.80 | `r4 lx995 ly1508 ox78.03 oy89.18 oz165.80 h225.0` | 225.0 | run | `0:fwd` | 3 | `blocked P=74.74,85.89,165.80 d=0.10` |
 | UB3 | undrawn | 14 | 0x1506 | 0 | 36.06,16.63,204.10 | `r14 lx169 ly48 ox36.06 oy16.63 oz204.10 h225.0` | 225.0 | run | `0:fwd` | 3 | `blocked P=32.78,13.35,204.10 d=0.10` |
-| GN1 | generated | 1 | 0x669A | 0 | 130.61,77.52,558.62 | `r1 lx822 ly1235 ox130.61 oy77.52 oz558.62` | 0.0 | run | `0:fwd` | 3 | `blocked P=130.61,82.61,559.19 d=0.15` |
-| GN2 | generated | 4 | 0x1A23 | 0 | 40.97,40.97,192.11 | `r4 lx210 ly282 ox40.97 oy40.97 oz192.11` | 0.0 | run | `0:fwd` | 3 | `blocked P=40.97,46.19,192.12 d=0.15` |
+| GN1 | generated | 1 | 0x669A | 0 | 130.61,77.52,558.62 | `r1 lx822 ly1235 ox130.61 oy77.52 oz558.62` | 0.0 | run | `0:fwd` | 3 | `blocked P=130.61,82.45,559.18 d=0.15` |
+| GN2 | generated | 4 | 0x1A23 | 0 | 40.97,40.97,192.11 | `r4 lx210 ly282 ox40.97 oy40.97 oz192.11` | 0.0 | run | `0:fwd` | 3 | `blocked P=40.97,45.98,192.12 d=0.15` |
 | GN3 | generated | 5 | 0x655A | 0 | 117.96,37.66,441.31 | `r5 lx813 ly721 ox117.96 oy37.66 oz441.31 h90.0` | 90.0 | run | `0:fwd` | 3 | `blocked P=120.52,37.66,441.69 d=0.15` |
 | GN4 | generated | 14 | 0x1FE2 | 0 | 117.03,136.97,435.00 | `r14 lx253 ly1814 ox117.03 oy136.97 oz435.00 h180.0` | 180.0 | run | `0:fwd` | 3 | `blocked P=117.03,131.97,435.76 d=0.15` |
 | ST1 | step | 1 | 0x5B6D | 0 | 47.23,59.12,374.46 | `r1 lx730 ly874 ox47.23 oy59.12 oz374.46 h180.0` | 180.0 | walk | `wp=47.23,49.67` | 6 | `reach E=47.23,49.67,375.64 d=0.15 risers=0.26/0.13` |
@@ -218,7 +220,7 @@ at least three walks.
 | IN3 | interior | 4 | 0xFC85 | 31 | 69.01,-5.38,-93.83 | `r4 lx2016 ly1064 cInside ox69.01 oy-5.38 oz-93.83 h270.0` | 270.0 | walk | `wp=63.01,-5.38` | 3 | `cells 31>35 E=63.01,-5.38,-93.83 d=0.15` |
 | IN4 | interior | 2 | 0xF3EE | 32 | 0.00,-7.00,-91.26 | `r2 lx1944 ly1904 cInside ox0.00 oy-7.00 oz-91.26 h180.0` | 180.0 | walk | `wp=0.00,-13.00` | 3 | `cells 32>39 E=0.00,-13.00,-91.26 d=0.15` |
 | CV1 | cave | 1 | 0xE13A | 0 | 107.61,127.21,209.02 | `r1 lx1805 ly470 ox107.61 oy127.21 oz209.02 h30.0` | 30.0 | walk | `wp=115.11,140.20` | 4 | `follow E=115.11,140.20,208.03 d=0.15 dz=0.05 headroom=3.37` |
-| CV2 | cave | 3 | 0x5B60 | 0 | 18.75,101.57,369.92 | `r3 lx728 ly773 ox18.75 oy101.57 oz369.92 h120.0` | 120.0 | walk | `wp=31.74,94.07` | 4 | `follow E=31.74,94.07,370.97 d=0.15 dz=0.05 headroom=6.41` |
+| CV2 | cave | 3 | 0x5B60 | 0 | 68.99,35.50,371.59 | `r3 lx731 ly769 ox68.99 oy35.50 oz371.59 h300.0` | 300.0 | walk | `wp=56.00,43.00` | 4 | `follow E=56.00,43.00,364.14 d=0.15 dz=0.05 headroom=4.11` |
 | CV3 | cave | 4 | 0xC9AE | 0 | 19.11,63.44,697.15 | `r4 lx1608 ly1395 ox19.11 oy63.44 oz697.15 h195.0` | 195.0 | walk | `wp=15.23,48.95` | 4 | `follow E=15.23,48.95,697.90 d=0.15 dz=0.05 headroom=4.04` |
 | WA1 | water | 1 | 0x9E7F | 0 | 73.22,128.04,337.68 | `r1 lx1267 ly1022 ox73.22 oy128.04 oz337.68 h224.9` | 224.9 | run | `wp=44.99,99.71` | 16 | `wade_swim in=72.58,127.40 swim=70.50,125.31 h=337.255 fh=1.42 d=0.50` |
 | WA2 | water | 2 | 0x5BC7 | 0 | 100.87,125.06,942.79 | `r2 lx733 ly1598 ox100.87 oy125.06 oz942.79 h85.1` | 85.1 | run | `wp=140.72,128.48` | 16 | `wade_swim in=105.00,125.41 swim=114.72,126.25 h=941.177 fh=1.42 d=0.50` |
@@ -294,7 +296,11 @@ the end is 3 m past the portal. Portal sizes are width × height of the portal p
 **Caves** (`landblock.md` §3.5, `collision.md` §6.4). Every quad on the path has drawn
 terrain and drawn ceiling triangles and four non-zero ceiling samples; `Landblock_UseCeiling`
 (block-map key 9) has the value 1. CV1 floor 206.61–209.02, ceiling 212.38–215.59; CV2 floor
-369.20–370.97, ceiling 377.38–379.95; CV3 floor 696.81–697.90, ceiling 701.94–703.00.
+364.14–371.59, ceiling 375.71–385.45; CV3 floor 696.81–697.90, ceiling 701.94–703.00.
+CV2 (CAVE, re-derived 2026-10-08) runs down a passage of the same cave as the former CV2
+path (the same group of joined ceiling quads, 176 quads): the terrain under the path and
+within the capsule radius of it slopes at most 35.6° (walkable, `collision.md` §11.3), the
+fall is 7.45 m over 15 m, and no object of any kind lies within 3 m of the capsule on the way.
 
 **Water** (WAT). No landblock info in any of the four blocks.
 
@@ -356,7 +362,8 @@ them; the row checks that none of them was turned into an entity.
 > revised: the original also slides along a face held forward, at *s* · sin *φ*). GN1
 > passes the same way (first touch 0.127 m from P), with the slope allowance on P.z (the
 > walker touches the tree on a 30–34° cross slope). CV1 and FR1 pass with the slope
-> allowance of §2.2 (43° stretches). GN2 and CV2 stay open (OPENs below).
+> allowance of §2.2 (43° stretches). GN2 and CV2 stay open (OPENs below; both answered the
+> same day).
 
 > **OPEN (implementer, 2026-10-08, GN2):** the walker first touches its tree
 > (generated#33) at y ≈ 46.00, 0.195 m before P (d 0.15), on the trunk's steep foot below
@@ -368,6 +375,21 @@ them; the row checks that none of them was turned into an entity.
 > steep or wall contact at any height, unless a step-up of 0.5502 m, `collision.md` §11.6
 > item 5, lands on walkable support), and check whether P of GN1, GN3 and GN4 changes under
 > it (they pass today, first touches 0.127, 0.003 and 0.015 m from P).
+>
+> **Answered 2026-10-08 (implementer, TOUCH of [§1](#s1); for the spec writer to confirm):**
+> GN2's first non-walkable touch is on the trunk's foot 0.114 m above the feet (contact
+> normal *u* 0.445, about 64° from up) at (40.97, 45.98), 0.209 m before the former P. The
+> step-up from there rises the full 0.5502 m, moves on 0.10–0.16 m and comes down on the
+> foot, 0.20–0.28 m above the ground, where no support contact is walkable, so it fails
+> (with *L* = 0 it lands back at the touch point, which is no progress). New P =
+> 40.97,45.98,192.12. GN1 changes too: its first touch is on the trunk 0.28 m above the feet
+> (*u* 0.195), 0.161 m before the former P, and the step-up fails the same way (it comes
+> down 0.23–0.40 m above the ground on the trunk's foot): new P =
+> 130.61,82.45,559.18. GN3 (the rock face, touched 1.37 m above the feet) and GN4 (the
+> trunk, 0.35 m above the feet, vertical) keep their P within 0.001 m; so do WL1–WL5 and
+> UB1–UB3 (within 0.005 m). Every first touch is with the listed object (generated list
+> indices 16, 33, 176, 138). The walker's first touches are now 0.086, 0.025, 0.003 and
+> 0.024 m from P.
 
 > **OPEN (implementer, 2026-10-08, CV2):** the straight path from start to E runs along a
 > cave bank steeper than the 45° walkable limit for players (`collision.md` §11.3): a clean
@@ -377,6 +399,23 @@ them; the row checks that none of them was turned into an entity.
 > 13.7 m from E; the original would slide too under §11.3. The row needs a new cave path on
 > walkable floor (at most 45°; the slope allowance of §2.2 then covers the capsule's rest
 > offset).
+>
+> **Answered 2026-10-08 (implementer, CAVE of [§1](#s1); for the spec writer to confirm):**
+> the new CV2 starts at (68.99, 35.50) and walks 15 m on heading 300° down a passage of the
+> same cave to (56.00, 43.00), on terrain of at most 35.6° within the capsule radius, under a
+> ceiling whose smallest headroom on the path is 4.11 m (the former path had 6.41 m); see
+> "Caves" above. 625 quads of the block meet the drawn-floor-and-ceiling condition. The path
+> was chosen among the CAVE candidates for a low ceiling (smallest headroom below 12 m, the
+> ceiling at most 25 m above the path's highest floor point) and a floor that changes height
+> on the way, as the former row's did (its line has the largest fall among them, 7.45 m).
+> The walk passes (ends 0.035 m from E, feet within the §2.2 band). For the
+> `tessera-physics` owner,
+> not a checklist issue: walking the same line **uphill** (heading 120° from E), the walker
+> slows from about 3.8 to about 1.2 m/s horizontally once its axis reaches the quad edge
+> x = 60.0, at about (60.0, 40.7), and is counted as blocked at t = 1.28 s. On a single
+> walkable plane of slope *θ* the move of `collision.md` §11.4 keeps 5 cos² *θ* of a 5 m/s
+> horizontal request (3.3 m/s at 35.6°), so the slowdown looks like a property of Tessera's
+> slide (§12.4 (n), (u), (v)) rather than of the original's rules; not examined further.
 
 <a id="s2-5"></a>
 ### 2.5 The 1,000-walk soak: how its landblocks are chosen
@@ -499,6 +538,10 @@ Time *t* = 0.5.
 
 Projections are 3 (XY) unless stated; scales are `u_scale` (= `v_scale` in every row).
 
+Rows T4, T5 and T12 are judged on the image from the cameras of [§4.7](#s4-7) (the camera
+above leaves a placed object, a column plinth or a generated rock between eye and target);
+T15 and T16 keep their camera and add an image without the sky's lighting (§4.7).
+
 <a id="s4-2"></a>
 ### 4.2 Scenery
 
@@ -588,6 +631,9 @@ above the target of row T1; heading 0, pitch +10° (some sky in view).
 | Y4 | 1, 0x7574 | 0x10000070 → 0x1A000000 | 0.0 | 0, 1, 0 | 1,000.0 / 2,500.0, (1, 2, 6) | 0.55, (74, 81, 158) (night); (−0.224, −0.837, 0.500) | 0.20, (125, 121, 147) / (125, 121, 147) |
 | Y5 | 1, 0x91A6, cell 9 (IN1 start) | interior | any | – | **interior fog** from the landblock-info property set 0x802191A6: `InteriorFogType` 1 (Linear), `InteriorFogNear` 0.059, `InteriorFogFar` 90, `InteriorFogColor` stored (2, 14, 11, 255) = R 11, G 14, B 2; `InteriorAmbientLight` stored (8, 25, 8, 255) | – | The cell itself carries no fog properties; the landblock info does (`environment.md` §7.2, §12 last item). Eye at the IN1 start + 1.8 m, heading 90, pitch 0. |
 
+Y2 is judged on the image facing south (heading 180, [§4.7](#s4-7)): at heading 0 the eye
+faces the wall of M3-14's long building 1.5 m away.
+
 Y1 and Y3 use the same sun direction (fact 4 of [§1.1](#s1-1)); the time of day shows in the
 colours and fog. Y2's description has a different sun (7°, 50°) and ambient colour 2
 darker than colour 1 (hemispheric term, `lighting.md` §8.1). Y4 is night: the sun colour
@@ -604,9 +650,47 @@ section: clip at fog far whenever fog is on).
 | L2 | 1, 0x8FF3 | 100.00, 25.00, 617.00; 0, −5 | 0.0 (0x1A000377: fog 0 / 300, ambient 0.20 (190, 228, 195)) | **point lights at night**: Light SEDs #460 at (90.30, 42.41, 621.09), #462 (125.62, 48.18, 621.09), #483 (74.68, 34.44, 621.09), #464 (119.10, 80.34, 621.09), #474 (71.64, 72.15, 621.09), 6.1 m above the ground (615.00); each `LightRange` 10, `LightFalloff` 0.5 (attenuation *k* = 0.05, half strength at 4.5 m, `lighting.md` §8.3), `LightDiffuse` stored (3, 97, 251, 255) = R 251, G 97, B 3 (orange), `Light_BakedLandscapeLight` true. On objects within 10 m they add orange light; on the terrain they do not (Tessera Decision of `lighting.md` §8.3: the block has light map 0x41221577, which carries their light). Fog far 300: no object beyond 300 m is drawn (*G* = 300, `walker.md` §11.3). |
 | L3 | 1, 0x4883 | 92.78, 41.64, 392.73; 0, −10 | 0.0 (0x1A000359: fog 200 / 700, ambient 0.40 (94, 91, 114)) | **emissive**: a camp bonfire (SED 0x80214883 #133, object 0x47005179, setup 0x04003A50) 6 m ahead; its surface 0x310045AE (lit, `ColorAndGloss`) has emissive texture 0x400166F3 (slot 3018) and glow colour (1, 1, 1, 1): it stays bright where the ambient is dark (`lighting.md` §5.9). |
 | L4 | 2, 0x0340 | 128.00, 104.00, 244.53; 30, −15 | 0.5 (0x1A0001F3: one keyframe, sun brightness 0, fog 5 / 900, ambient 0.20 (32, 28, 21)) | **glow and emissive** in a dark place: a crystal cluster (SED 0x80220340 #18, object 0x470069D6, at (132.16, 110.19, 243.69), tilted) with surface 0x3100631F: emissive 0x40018902, glow mask (slot 3013) 0x40018902, glow colour (1, 1, 1, 1), drawn into the glow target (pass 0x08). Also: skull light poles 0x47005D98 near L3 (#297 at (73.22, 37.49, 389.71)) with glow surface 0x310051B1 (glow mask 0x40017652). |
-| L5 | 3, 0x7FBD | 54.98, 57.63, 195.02; 195, −20 | 0.5 (0x1A000000) | **specular**: row T6's terrain layer 67 (specular switch on, gloss from the diffuse alpha, specular colour white, power 8.0) between the eye and the sun (bearing 195°, elevation 30°): a broad highlight on the paving ahead. |
+| L5 | 3, 0x7FBD | 64.59, 53.19, 196.00; 195, −25 (revised 2026-10-08; was 54.98, 57.63, 195.02; 195, −20) | 0.5 (0x1A000000) | **specular**: row T6's terrain layer 67 (specular switch on, gloss from the diffuse alpha, specular colour white, power 8.0) between the eye and the sun (bearing 195°, elevation 30°): **a faint white sheen** on the sunlit paving round the sun's mirror point P (62.80, 46.50, 192.02), 6.9 m ahead in the sunlit strip between two building shadows; `terrain-texturing.md` §9.4 (T44): the gloss is the diffuse alpha, 0–0.20 (mean 0.09), so the term adds about 0.09 per channel (at most 0.2), not a broad highlight, and nothing where the paving is in shadow. Revised by the implementer, 2026-10-08, for the spec writer to confirm (diagnosis in [§4.7](#s4-7)); the former text expected "a broad highlight on the paving ahead", and from the former eye P lay in shadow. |
 | L6 | 1, 0x3F7C | 47.66, 98.54, 452.12; 0, 0 | 0.5 | **blended (translucent) surface**: a cobweb (SED 0x80213F7C #9, object 0x470004F3 at (47.66, 104.54, 450.35)), surface 0x31000493: lit, `ColorAndOpacity` with alpha test off, so it blends by its texture alpha (`material.md` §11.3) and is drawn in the transparent pass. See W8 for an unlit alpha-blended surface. |
-| L7 | 3, 0x9FE8 | 44.36, 23.42, 191.97; 0, −35 | 0.0 (night) | **baked light map** on terrain: row T5's block with `Landblock_LightMap` 0x4116792D added to the layer lighting (`terrain-texturing.md` §10); at night the dim warm texels of the map are the only light other than the ambient. |
+| L7 | 3, 0x9FE8 | 44.36, 23.42, 191.97; 0, −35 | 0.0 (night) | **baked light map** on terrain: row T5's block with `Landblock_LightMap` 0x4116792D added to the layer lighting (`terrain-texturing.md` §10); at night the dim warm texels of the map are the only light other than the ambient. **2026-10-08 (implementer): not judgeable as defined**: the map is black (§10: largest channel 0.010) and the block's day description has no night (§4.7); OPEN in [§7](#s7). |
+
+<a id="s4-7"></a>
+### 4.7 Cameras for judging rows on the image (implementer, 2026-10-08)
+
+On 2026-10-07 nine rows could not be passed on the walker's image: L5 failed, and T4, T5, T12,
+T15, T16, Y2, L2 and L7 could not be judged from their cameras ([ROADMAP M4.5](../ROADMAP.md#m4-5-exit)
+criterion 6). The cameras below were chosen for them with Tessera's walker and its headless
+screenshot path (1600 × 900, free-fly, no HUD, avatar hidden, clock stopped, day 12,240,
+*D* = 2): `apps/client/tests/visual_rows_real_data.rs`, table `CAMERAS`, rendered by
+`row_cameras_render` into the directory named by `TESSERA_VISUAL_SHOTS` (private images, not
+committed; `row_cameras_frame_their_targets` checks that each camera frames its target). Eyes
+are block-local; a comparison image uses the same eye unless the row says otherwise. Sky
+values were evaluated with the walker's own lookup (`camera_sky_key`, `environment.md` §11)
+on the owner's install. Brightness figures are means of 0–255 output values.
+
+| Row | Camera: eye; heading, pitch; *t* | Comparison | Seen | Result |
+|---|---|---|---|---|
+| T4 | 151.42, 64.30, 416.83; 270, −26.6; 0.5 (12 m east of the target, 6 m up) | `--disable layers` | The target lies in a court walled by placed objects; from the eye of §4.1 (west of the target) a wall fills the view at close range. Looking west into the court, one uniform tiled paving covers the ground at and round the target, with no second layer and no mask edge. With layers off the floor becomes the untextured height-shaded mesh, so the paving is the terrain layer. | pass |
+| T5 | 44.36, 37.70, 193.97; 180, −26.6; 0.5 | – | The target lies under a placed curb at the foot of a column plinth (about 0.4 m inside the plinth's footprint, seen top-down). The ground of its triangle shows tiled paving with an ornamented border north of the curb and grass south of it, blended along mask edges, without holes. The scene is dim because of the block's day description (sky key 0x10000030 → 0x1A00022B: ambient brightness 0.30, colours (64, 56, 68) / (35, 26, 24); sun brightness 0.25), not because of the light map: 0x4116792D is black (`terrain-texturing.md` §10) and adds nothing visible. | pass (layers; the light map's DID is checked by the test) |
+| T12 | 132.98, 105.99, 323.65; 270, −26.6; 0.5 | – | Looking west past the generated rock (now to the left of the view): dirt, pebble and cracked-earth layers blend at and round the target, under frills; no holes or seams. | pass |
+| T15 | the row's camera: 111.36, 133.71, 208.47; 30, +30; 0.5 | `--disable sky` (the defaults of `lighting.md` §8.1: ambient 0.7, white) | Near black, mean (5.8, 7.9, 8.3). That is what the specs give: a ceiling receives the downward ambient *Y* plus its ceiling light map and unbaked lights (`terrain-texturing.md` §4.8, §4.10; `lighting.md` §8.1), and this cave's sky key 0x1000021A (→ 0x1A00018B) has ambient brightness 0.05 with colour (57, 82, 91) and no sun, so *Y* ≈ (0.011, 0.016, 0.018). Stretched ×8, the rock layers of the ceiling show with mask edges, and a lighter green-blue area at the left. Without the sky's lighting the same layers draw at mean (85, 87, 93); the ratio of the two images, (0.068, 0.091, 0.090), lies above *Y* / 0.7 = (0.016, 0.023, 0.026), so some light other than *Y* reaches the ceiling (its light map 0x4111307C, or unbaked lights). | pass |
+| T16 | the row's camera: 17.17, 56.20, 698.67; 195, +30; 0.5 | `--disable sky` | Near black, mean (0.8, 1.1, 1.3). Sky key 0x100001ED → 0x1A000278: ambient 0.30, colour 2 (31, 33, 42), so *Y* ≈ (0.036, 0.039, 0.049); the block has no ceiling light map (0x411AF104 is the terrain's). The ratio of the two images, (0.060, 0.062, 0.076), matches *Y* / 0.7 = (0.052, 0.055, 0.070) within the rounding of values of 1–2: the ceiling is lit by *Y* alone, as specified. Stretched ×30, the single layer 426 draws (rock, smeared along the steep ceiling by the XY projection). | pass |
+| Y2 | 33.74, 131.37, 157.20 (M3-14 stand point + 1.8 m); 180, +10; 0.25 | – | Red dawn sky; the distant ridges fade into the dark red fog; the north faces of rocks are lit red-brown by the sun behind the eye (heading 7°, 50° up); the ground is dark under the darker ambient colour 2. Outside the row: east and south of the stand point, window and door frames stand in the air without walls (also at heading 90); for the owner to compare (the row does not depend on it). | pass |
+| L2 | 90.30, 42.41, 630.00 (15 m above the ground under light #460); 0, −89; 0.0 | `--disable lights` | The difference of the two images is orange on objects only (a building wall, the lamp, small rocks within about 10 m) and zero on the terrain: the lights reach objects, not the ground (`lighting.md` §8.3, `terrain-texturing.md` §10). Without the point lights the ground keeps a warm pool round the lamp: red 66 at 1 m from the lamp's foot, falling to about 20 from 8 m on, while blue stays at 15–18; an added light of about the hue (0.29, 0.11, 0) of the light map's pools (§10, OBS5). The fog limit *G* = 300 is not judged from this camera. | pass |
+| L5 | 64.59, 53.19, 196.00; 195, −25; 0.5 (the sun's mirror point P (62.80, 46.50) is on layer 67, in sunlight) | the mirrored camera 61.01, 39.81, 196.00; heading 15, same pitch (P with the sun behind the eye) | Towards the sun the sunlit paving round P is brighter by (21.6, 20.6, 20.1) than from the mirrored camera (200 × 140 px boxes round P; (18.1, 17.8, 16.8) over 400 × 200 px round P): a white sheen of about the size §9.4 gives (gloss mean 0.09); no broad highlight. | pass under the revised row (§4.6) |
+| L7 | the row's camera: 44.36, 23.42, 191.97; 0, −35; 0.0 | the same at *t* 0.5 | The two images are identical (mean absolute difference 0): the block's sky key 0x10000030 gives 0x1A00022B with the same values at *t* 0 and 0.5 (sun brightness 0.25, ambient 0.30), so the block has no night; and its light map 0x4116792D is black (`terrain-texturing.md` §10), so no camera can show warm texels. | not judgeable: row definition (OPEN in [§7](#s7)) |
+
+**L5, diagnosis (2026-10-08): a row-definition problem, not a code bug and not a spec gap.**
+The walker's terrain shader follows `terrain-texturing.md` §9.4 (Accepted 2026-10-07): for
+key 67 the gloss is the diffuse alpha (gloss from normal is off), and the highlight *g* ·
+sat(*n* · **H**)^*p* · *F₀* · *S* is added after the factor 2, with *p* = 8 and *F₀* = the sun's
+specular colour (white, the Tessera Decision of `lighting.md` §8.1) × `specular_colour`
+(white). The row failed for two reasons. (1) It expected "a broad highlight", which §9.4
+rules out (T44: layer 67's diffuse alpha is 0–0.20, mean 0.09: a faint sheen). (2) From the
+row's eye the sun's mirror point on the flat paving lies 5.2 m ahead, at about (53.6, 52.6),
+in the shadow of the buildings to the south (a top-down image at noon shows it), and there
+*S* = 0 removes the term (§9.4; `lighting.md` §9). The row's eye and expectation were
+revised in §4.6 for the spec writer to confirm.
 
 ---
 
@@ -653,6 +737,16 @@ screenshots in the repository.
 > **OPEN:** The day type of the original on a given day (`environment.md` §11.2). Rows
 > Y1–Y4 assume *D* = 2; owner item O26 records what the original shows.
 
+> **OPEN (implementer, 2026-10-08, row L7, for the spec writer):** L7 cannot show what it
+> states. Its light map 0x4116792D is black (`terrain-texturing.md` §10: largest channel
+> 0.010 over all texels), and the block's sky (key 0x10000030 by the walker's lookup,
+> day description 0x1A00022B) gives the same lighting at *t* 0 and 0.5, with a sun of
+> brightness 0.25, so "at night … the only light other than the ambient" does not hold
+> either ([§4.7](#s4-7)). The row needs a block whose light map has non-zero texels and
+> whose day description has a night, or it can be dropped in favour of L2, whose camera of
+> §4.7 shows the light-map pools of block 0x8FF3 (map 0x41221577) on the ground with the
+> point lights switched off.
+
 > **OPEN:** The interior doorway rows cross portals between cells only, because no cell of
 > this install adjoins the landscape ([§1.1](#s1-1) item 1). If a later install adds
 > walk-in interiors, add a row that enters one from outdoors (`collision.md` §5.8.1).
@@ -665,3 +759,5 @@ screenshots in the repository.
 | 2026-10-06 | First version: walks, performance spots, visual rows, M3 reference locations. |
 | 2026-10-07 | **Generated objects re-derived** (spec writer; `scenery.md` footprint revision). The GEN generator of [§1](#s1) had the footprint test of `scenery.md` §7.4 step 14b inverted: it tested only open markers and skipped closed ones. A BIN re-check confirmed step 14b as written. With the corrected generator, the static-pass lists of the 11 landblocks of [§4.2](#s4-2) equal the clean-room implementation's object for object. **§4.2:** every row re-derived with the same eye, heading and cone. Totals: S1 36 → 25, S2 344 → 315, S3 173 → 165, S4 364 → 309, S5 252 → 151, S6 176 → 111, S7 471 → 445, S8 361 → 166, S9 362 → 221, S10 102 → 80, S11 201 → 186. In view: S1 11 → 6, S2 41 → 35, S4 19 → 16, S5 29 → 9, S6 17 → 6, S8 34 → 14, S9 35 → 18, S10 29 → 22 (S3, S7, S11 unchanged). New nearest objects: S1 (both; the second is GN1's tree), S5 (second), S6 (first becomes the former second), S8 (first becomes the former second), S10 (first becomes the former second); S2–S4, S7, S9 and S11 keep both. The OPEN under §4.2 is answered. **§2.3–§2.4:** GN1's former tree (0x470035F3, list index 27) is not placed by the client. GN1 now runs north into tree 0x470035F4 of the same landblock (list index 16), from (130.61, 77.52) to the stop point (130.61, 82.61, 559.19). The terrain on the way slopes 30–34° across the path, below the 45° walkable limit. No object with collision volumes lies within 3 m of the path, and the first contact is the tree. GN2–GN4 keep their object, start and stop point; their list indices change: 40 → 33, 283 → 176, 149 → 138. The GN1 item of the implementer's OPEN in §2.4 is answered. **Unchanged** (checked with the corrected generator): the first contact of every other outdoor walk (WL, UB, ST, SL, CV, WA, FR) and the count of generated objects within 3 m of their paths; the frill records of the six landblocks of [§4.3](#s4-3), identical record for record under the frill rule of `scenery.md` §8.2 item 5 as revised; hence rows F1–F6 and walks FR1–FR3. |
 | 2026-10-08 | **Pass conditions revised from `collision.md` §11.7** (implementer; for the spec writer to confirm). §2.2 `blocked` is measured at the first touch of a blocking object, and the "never past P + d" condition applies up to it; after it the walker may slide along or round the blocker, which the original does too while forward is held (`collision.md` §11.7 items 2–3, "Consequences for walk checks"). New slope allowance *r* · (sec *θ* − 1) for the feet above the terrain in `follow` and `pass` and above P in `blocked` ("Feet above the terrain on a slope"). WL2, GN1, GN3, GN4, CV1 and FR1 now pass (30 of 32). New implementer OPENs in §2.4: GN2's P past the first touch of the trunk's steep foot; CV2's path not walkable. |
+| 2026-10-08 | **GN1, GN2 and CV2 re-derived** (implementer; for the spec writer to confirm; answers both implementer OPENs of §2.4). New provenance tags TOUCH (stop points under the first-touch rule of `collision.md` §11.7, computed with Tessera's own collision queries) and CAVE (search for a cave path on walkable floor) in [§1](#s1); §2.2 `blocked` says which rows use which. GN2: P 40.97,46.19,192.12 → 40.97,45.98,192.12 (first touch on the trunk's steep foot, 0.114 m above the feet; the step-up of §11.5 fails). GN1: P 130.61,82.61,559.19 → 130.61,82.45,559.18 (the same cause, 0.28 m above the feet). GN3, GN4, WL1–WL5 and UB1–UB3: P unchanged (TOUCH within 0.005 m). CV2: new path in the same cave, start 68.99,35.50,371.59, heading 300°, to E 56.00,43.00,364.14, headroom 4.11 (was 18.75,101.57,369.92 to 31.74,94.07,370.97 along a 48–61° bank); "Caves" in §2.4 updated. All 32 walks pass. |
+| 2026-10-08 | **Cameras for criterion 6** (implementer; for the spec writer to confirm). New [§4.7](#s4-7): cameras, comparison images and judgements for the nine rows that could not be passed on the image on 2026-10-07. T4, T5, T12 and Y2 get new cameras (no object between eye and target; Y2 faces south); T15 and T16 keep theirs, with an image without the sky's lighting showing the ceiling layers and the brightness matching the downward ambient; L2 looks down on the ground under light #460, with and without the point lights. **L5 revised** (eye 54.98, 57.63, 195.02; 195, −20 → 64.59, 53.19, 196.00; 195, −25; "a broad highlight" → "a faint white sheen", `terrain-texturing.md` §9.4): from the former eye the sun's mirror point lay in a building's shadow, and §9.4 gives a sheen, not a broad highlight. **L7** not judgeable as defined (black light map, no night in the block's day description): OPEN in [§7](#s7). |

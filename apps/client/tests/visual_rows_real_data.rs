@@ -14,9 +14,11 @@
 //! | Y1–Y4 | sky key A by the walker's lookup (`camera_sky_key`: landblock-info set, block map, else 2) → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
 //! | Y5 | the indoor record's inputs at the IN1 start (cell 9 of 0x802191A6) by the walker's lookup (cell, landblock info, block map): key B 1, ambient *X* = *Y*, linear fog 0.059–90 in R 11, G 14, B 2 (`landblock.md` §4.13 worked example) |
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
+//! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7, [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle |
 //!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
-//! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed.
+//! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed. The images of
+//! `row_cameras_render` are for viewing only and must not be committed.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -543,6 +545,177 @@ fn light_row_places_its_lights() {
         &format!("{} lights in the block", bundle.lights.len()),
     );
     assert!(failed.is_empty(), "rows failing: {failed:?}");
+}
+
+/// A camera from which a visual row is judged on the walker's image (`m4-5-visual.md`
+/// §4.7). Ids with a suffix are the comparison images of their row.
+struct RowCamera {
+    id: &'static str,
+    region: u8,
+    block: u16,
+    /// Eye, block-local metres.
+    eye: [f64; 3],
+    /// Compass heading and pitch (negative looks down), degrees.
+    heading: f64,
+    pitch: f64,
+    /// Time of day (`environment.md` §11.1; day 12,240, day type 2).
+    t: f64,
+    /// Further walker options of this image.
+    extra: &'static [&'static str],
+    /// The point the row is judged at, block-local, where there is one.
+    target: Option<[f64; 3]>,
+}
+
+/// The cameras of `m4-5-visual.md` §4.7 (2026-10-08). T4, T5 and T12 look at their
+/// target from a side with no object in between; T15 and T16 keep the row's camera and
+/// add an image without the sky's lighting (`lighting.md` §8.1 defaults) to show the
+/// ceiling layers; L2 looks down on the ground under light #460, with and without the
+/// point lights; L5 puts the mirror point of the sun on sunlit paving and adds the
+/// mirrored camera with the sun behind it; L7 keeps the row's camera at night and noon.
+#[rustfmt::skip]
+const CAMERAS: [RowCamera; 14] = [
+    RowCamera { id: "T4", region: 2, block: 0x4F32, eye: [151.42, 64.30, 416.83], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([139.42, 64.30, 410.83]) },
+    RowCamera { id: "T5", region: 3, block: 0x9FE8, eye: [44.36, 37.70, 193.97], heading: 180.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([44.36, 27.70, 188.97]) },
+    RowCamera { id: "T12", region: 5, block: 0x4F62, eye: [132.98, 105.99, 323.65], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([124.98, 105.99, 319.65]) },
+    RowCamera { id: "T15", region: 1, block: 0xE13A, eye: [111.36, 133.71, 208.47], heading: 30.0, pitch: 30.0, t: 0.5, extra: &[], target: None },
+    RowCamera { id: "T15-nosky", region: 1, block: 0xE13A, eye: [111.36, 133.71, 208.47], heading: 30.0, pitch: 30.0, t: 0.5, extra: &["--disable", "sky"], target: None },
+    RowCamera { id: "T16", region: 4, block: 0xC9AE, eye: [17.17, 56.20, 698.67], heading: 195.0, pitch: 30.0, t: 0.5, extra: &[], target: None },
+    RowCamera { id: "T16-nosky", region: 4, block: 0xC9AE, eye: [17.17, 56.20, 698.67], heading: 195.0, pitch: 30.0, t: 0.5, extra: &["--disable", "sky"], target: None },
+    RowCamera { id: "Y2", region: 4, block: 0xC755, eye: [33.74, 131.37, 157.20], heading: 180.0, pitch: 10.0, t: 0.25, extra: &[], target: None },
+    RowCamera { id: "L2", region: 1, block: 0x8FF3, eye: [90.30, 42.41, 630.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &[], target: Some([90.30, 42.41, 615.00]) },
+    RowCamera { id: "L2-nolights", region: 1, block: 0x8FF3, eye: [90.30, 42.41, 630.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &["--disable", "lights"], target: Some([90.30, 42.41, 615.00]) },
+    RowCamera { id: "L5", region: 3, block: 0x7FBD, eye: [64.59, 53.19, 196.00], heading: 195.0, pitch: -25.0, t: 0.5, extra: &[], target: Some([62.80, 46.50, 192.02]) },
+    RowCamera { id: "L5-away", region: 3, block: 0x7FBD, eye: [61.01, 39.81, 196.00], heading: 15.0, pitch: -25.0, t: 0.5, extra: &[], target: Some([62.80, 46.50, 192.02]) },
+    RowCamera { id: "L7", region: 3, block: 0x9FE8, eye: [44.36, 23.42, 191.97], heading: 0.0, pitch: -35.0, t: 0.0, extra: &[], target: Some([44.36, 27.70, 188.97]) },
+    RowCamera { id: "L7-noon", region: 3, block: 0x9FE8, eye: [44.36, 23.42, 191.97], heading: 0.0, pitch: -35.0, t: 0.5, extra: &[], target: Some([44.36, 27.70, 188.97]) },
+];
+
+/// Vertical field of view of the walker, degrees (`walker.md` §11.8).
+const FOV_Y: f64 = 45.0;
+/// Aspect ratio of the rendered images (1600 × 900).
+const ASPECT: f64 = 16.0 / 9.0;
+
+#[test]
+fn row_cameras_frame_their_targets() {
+    let half_v = (FOV_Y / 2.0).to_radians();
+    let half_h = (half_v.tan() * ASPECT).atan();
+    for c in &CAMERAS {
+        assert!((0.0..=1.0).contains(&c.t), "{}: time of day", c.id);
+        assert!((-89.0..=89.0).contains(&c.pitch), "{}: pitch", c.id);
+        let Some(target) = c.target else { continue };
+        let (h, p) = (c.heading.to_radians(), c.pitch.to_radians());
+        // Compass heading: 0 = +y (north), 90 = +x (east); Z up.
+        let fwd = [h.sin() * p.cos(), h.cos() * p.cos(), p.sin()];
+        let right = [h.cos(), -h.sin(), 0.0];
+        let up = [
+            right[1] * fwd[2] - right[2] * fwd[1],
+            right[2] * fwd[0] - right[0] * fwd[2],
+            right[0] * fwd[1] - right[1] * fwd[0],
+        ];
+        let d: Vec<f64> = (0..3).map(|i| target[i] - c.eye[i]).collect();
+        let dot = |a: &[f64; 3]| a.iter().zip(&d).map(|(x, y)| x * y).sum::<f64>();
+        let (f, r, u) = (dot(&fwd), dot(&right), dot(&up));
+        assert!(f > 0.0, "{}: target behind the camera", c.id);
+        let (ah, av) = (r.atan2(f), u.atan2(f));
+        assert!(
+            ah.abs() < half_h && av.abs() < half_v,
+            "{}: target {:.1}° right, {:.1}° up of the view axis",
+            c.id,
+            ah.to_degrees(),
+            av.to_degrees()
+        );
+    }
+}
+
+/// Renders every camera of [`CAMERAS`] into `TESSERA_VISUAL_SHOTS` (a private directory
+/// outside the install; the images are viewed, never committed). Skipped unless both
+/// `TESSERA_VISUAL_SHOTS` and `TESSERA_GAME_DIR` are set, or when no GPU adapter exists.
+#[test]
+fn row_cameras_render() {
+    use clap::Parser as _;
+    let Some(out) = std::env::var_os("TESSERA_VISUAL_SHOTS").filter(|d| !d.is_empty()) else {
+        eprintln!("TESSERA_VISUAL_SHOTS not set; skipping");
+        return;
+    };
+    let Some(dir) = install() else { return };
+    let out = PathBuf::from(out);
+    std::fs::create_dir_all(&out).expect("create the image directory");
+    let (out_abs, dir_abs) = (
+        out.canonicalize().expect("image directory"),
+        dir.canonicalize().expect("install directory"),
+    );
+    assert!(
+        !out_abs.starts_with(&dir_abs),
+        "TESSERA_VISUAL_SHOTS must lie outside the install"
+    );
+    let mut unsettled = Vec::new();
+    for c in &CAMERAS {
+        let data = tempfile::tempdir().expect("tempdir");
+        let png = out.join(format!("{}.png", c.id));
+        // The fly camera stands `--eye-height` above the spawn (`walker.md` §1).
+        let spawn = format!(
+            "{},{},{},{:.3},{:.3},{:.3}",
+            c.region,
+            c.block >> 8,
+            c.block & 0xFF,
+            c.eye[0],
+            c.eye[1],
+            c.eye[2] - 1.0
+        );
+        let mut argv: Vec<String> = [
+            "tessera-client",
+            "--game-dir",
+            dir.to_str().expect("utf-8 game dir"),
+            "--data-dir",
+            data.path().to_str().expect("utf-8 temp path"),
+            "--size",
+            "1600x900",
+            "--spawn",
+            &spawn,
+            "--fly",
+            "--eye-height",
+            "1.0",
+            "--heading",
+            &c.heading.to_string(),
+            "--pitch",
+            &c.pitch.to_string(),
+            "--time-of-day",
+            &c.t.to_string(),
+            "--time-rate",
+            "0",
+            "--no-hud",
+            "--settle-timeout",
+            "240",
+            "--screenshot",
+            png.to_str().expect("utf-8 image path"),
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        argv.extend(c.extra.iter().map(|s| (*s).to_owned()));
+        let args = tessera_client::Args::try_parse_from(argv).expect("valid args");
+        match tessera_client::headless::run(&args) {
+            Ok(r) => {
+                eprintln!("{}: {} frames, settled {}", c.id, r.frames, r.settled);
+                if !r.settled {
+                    unsettled.push(c.id);
+                }
+            }
+            Err(e) => {
+                if e.chain().any(|x| {
+                    matches!(
+                        x.downcast_ref::<tessera_render::RenderError>(),
+                        Some(tessera_render::RenderError::NoAdapter { .. })
+                    )
+                }) {
+                    eprintln!("skipping: no GPU adapter: {e:#}");
+                    return;
+                }
+                panic!("{}: walker run failed: {e:#}", c.id);
+            }
+        }
+    }
+    assert!(unsettled.is_empty(), "not settled: {unsettled:?}");
 }
 
 fn report(id: &str, fails: &[String], failed: &mut Vec<String>, ok: &str) {

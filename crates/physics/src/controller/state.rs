@@ -68,9 +68,13 @@ impl MovementState {
         )
     }
 
-    /// The state for a mover out of water (`in_water` false) or in water, with `support`.
+    /// The state for a mover out of water (`water` `None`) or in water, with `support`.
     /// In water, a mover swims (state 2) when it has no support or the water is deeper than
-    /// its float height (`water.md` §7.4, Tessera rule; see [`super::WaterQuery`]).
+    /// its float height (`water.md` §7.4, Tessera rule; see [`super::WaterQuery`]). This is a
+    /// Tessera Decision: the client's state after a controller update differs in four cases
+    /// (`collision.md` §11.3.2 (a), §12.5 row "Water states"; `water.md` §7.4): in water
+    /// shallower than the float height the client gives 5, 6 or 4, in deeper water on walkable
+    /// or steep support 1 or 3.
     #[must_use]
     pub fn from_support(support: Support, water: Option<WaterDepth>) -> Self {
         match water {
@@ -108,4 +112,87 @@ pub struct WaterDepth {
     pub depth: f32,
     /// Whether the surface lies more than the float height above the feet.
     pub swimming: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Float height used by the tests, m.
+    const FLOAT: f32 = 1.2;
+
+    /// Tessera's in-water input for a mover whose feet lie `depth` below the surface of a
+    /// liquid box (`None` outside every liquid box).
+    fn tessera(support: Support, depth: Option<f32>) -> MovementState {
+        let water = depth.map(|d| WaterDepth {
+            depth: d,
+            swimming: d > FLOAT,
+        });
+        MovementState::from_support(support, water)
+    }
+
+    /// The client's state after a controller update (`collision.md` §11.3.2 (a), C49, C64):
+    /// in water only when the mover's `Volume_IsLiquid` is true and the surface lies at least
+    /// the float height minus 0.0002 m above the feet; then 1 / 3 / 2 by support, else 5 / 6 / 4.
+    fn client_after_update(support: Support, depth: Option<f32>) -> MovementState {
+        let in_water = depth.is_some_and(|d| d >= FLOAT - 0.0002);
+        match (in_water, support) {
+            (true, Support::Walkable) => MovementState::WaterControlledSurface,
+            (true, Support::Steep) => MovementState::WaterUncontrolledSurface,
+            (true, Support::None) => MovementState::WaterNoSurface,
+            (false, Support::Walkable) => MovementState::EarthControlledSurface,
+            (false, Support::Steep) => MovementState::EarthUncontrolledSurface,
+            (false, Support::None) => MovementState::EarthNoSurface,
+        }
+    }
+
+    /// `water.md` §7.4 Tessera rule and its four listed differences from the client after
+    /// controller updates (also `collision.md` §12.5 row "Water states").
+    #[test]
+    fn tessera_water_states_and_the_four_differences() {
+        use MovementState as M;
+        use Support as S;
+        let shallow = Some(0.5);
+        let deep = Some(3.0);
+        // Out of water both agree.
+        for s in [S::Walkable, S::Steep, S::None] {
+            assert_eq!(tessera(s, None), client_after_update(s, None));
+        }
+        // The Tessera rule.
+        assert_eq!(tessera(S::Walkable, shallow), M::WaterControlledSurface);
+        assert_eq!(tessera(S::Steep, shallow), M::WaterUncontrolledSurface);
+        assert_eq!(tessera(S::None, shallow), M::WaterNoSurface);
+        for s in [S::Walkable, S::Steep, S::None] {
+            assert_eq!(tessera(s, deep), M::WaterNoSurface, "{s:?}");
+        }
+        // Differences 1–3: shallower than the float height.
+        assert_eq!(
+            client_after_update(S::Walkable, shallow),
+            M::EarthControlledSurface
+        );
+        assert_eq!(
+            client_after_update(S::Steep, shallow),
+            M::EarthUncontrolledSurface
+        );
+        assert_eq!(client_after_update(S::None, shallow), M::EarthNoSurface);
+        // Difference 4: deeper than the float height, on any support.
+        assert_eq!(
+            client_after_update(S::Walkable, deep),
+            M::WaterControlledSurface
+        );
+        assert_eq!(
+            client_after_update(S::Steep, deep),
+            M::WaterUncontrolledSurface
+        );
+        // Without support in deep water both give 2.
+        assert_eq!(client_after_update(S::None, deep), tessera(S::None, deep));
+        // Nothing else differs: the four listed cases cover five (support, depth) pairs, the
+        // fourth naming both walkable and steep support.
+        let differing = [shallow, deep]
+            .iter()
+            .flat_map(|&d| [S::Walkable, S::Steep, S::None].map(|s| (s, d)))
+            .filter(|&(s, d)| tessera(s, d) != client_after_update(s, d))
+            .count();
+        assert_eq!(differing, 5);
+    }
 }

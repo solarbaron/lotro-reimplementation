@@ -48,9 +48,10 @@ use tessera_material::{FallbackReason, LibraryConfig, MaterialLibrary};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, Dye, DyeMask, Gloss, Instance as GpuInstance, InstanceBatch, LitSurface, Material,
-    MeshConfig, MeshData, MeshDraw, MeshId, MipChainUpload, MipLevel, Opacity, Pass, PreparedMesh,
-    Renderer, Specular, TextureId, TextureUpload, WorldModel, WorldSurface, Wrap,
+    AlphaMode, Dye, DyeMask, Gloss, Instance as GpuInstance, InstanceBatch, LiquidMeshDraw,
+    LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, MipChainUpload, MipLevel,
+    Opacity, Pass, PreparedMesh, Renderer, SecondLayer, Specular, TextureId, TextureUpload,
+    UvTransform, WorldModel, WorldSurface, Wrap,
 };
 use tessera_world::draw_distance::{DistanceSmoother, DrawFade, aabb_distance, detail_level};
 use tessera_world::{DistanceSettings, LANDBLOCK_SIZE, LandblockKey, LodValues};
@@ -59,11 +60,12 @@ use super::UploadBudget;
 use super::fallback::{FallbackStats, FallbackTally};
 use super::figures::figure_tag;
 use super::geometry::{
-    AlphaFrom, AlphaKind, GlossFrom, MaterialPlan, TexRequest, VARIANT_ALPHA_ONLY,
+    AlphaFrom, AlphaKind, GlossFrom, MaterialPlan, OWN_TEXTURES, TexRequest, VARIANT_ALPHA_ONLY,
     VARIANT_DYE_MASK, VARIANT_OPAQUE, VARIANT_OWN_ALPHA, compose_texture, downscale_to, dye_mask,
-    image_ok, level_mesh_data, plan_material,
+    image_ok, level_mesh_data, plan_material_with,
 };
 use super::interiors::OUTDOORS;
+use super::liquid::{AnimClock, SurfaceAnim};
 use super::view::{Anchor, Frustum};
 
 /// Frames an unreferenced GPU resource is kept before it may be freed even under budget.
@@ -181,6 +183,9 @@ pub struct LevelAsset {
     gpu_bytes: u64,
     /// One plan per renderer submesh.
     pub plans: Vec<MaterialPlan>,
+    /// Per submesh, what the per-frame evaluation needs when the plan animates its texture
+    /// matrices or is drawn by its own program ([`SurfaceAnim`]).
+    pub anims: Vec<Option<Arc<SurfaceAnim>>>,
 }
 
 /// A decoded part, ready for upload: its detail levels, finest first (`mesh.md` §8.3).
@@ -221,8 +226,13 @@ pub struct PartDecoder {
 }
 
 impl PartDecoder {
-    /// The plan of `surface`, with `look`'s matching groups layered on it.
-    fn plan(&self, surface: Did, look: Option<&super::looks::CellLook>) -> MaterialPlan {
+    /// The plan of `surface`, with `look`'s matching groups layered on it, and what its
+    /// per-frame evaluation needs (texture matrices that animate, an own-program drawing).
+    fn plan(
+        &self,
+        surface: Did,
+        look: Option<&super::looks::CellLook>,
+    ) -> (MaterialPlan, Option<Arc<SurfaceAnim>>) {
         let layering = look.and_then(|l| {
             let key = self.materials.surface_record(surface).ok()?.binding_key;
             l.layering(key, None)
@@ -235,10 +245,25 @@ impl PartDecoder {
             None => self.materials.resolve_surface(surface),
         };
         match resolved {
-            Ok(m) => plan_material(&m),
+            Ok(m) => {
+                // Without the record's bindings the matrices stay still (the plan's
+                // diagnostic says so).
+                let layout = self.materials.texture_matrices(m.shader.did).ok();
+                let plan = plan_material_with(&m, layout.as_deref());
+                let anim = (plan.animated_uv || plan.own.is_some()).then(|| {
+                    Arc::new(SurfaceAnim {
+                        material: m,
+                        layout: layout.unwrap_or_default(),
+                    })
+                });
+                (plan, anim)
+            }
             Err(e) => {
                 tracing::debug!(surface = %format_args!("{:#010x}", surface.0), "material unresolved: {e}");
-                MaterialPlan::unresolved(Some(surface), reason_of_resolve_error(&e))
+                (
+                    MaterialPlan::unresolved(Some(surface), reason_of_resolve_error(&e)),
+                    None,
+                )
             }
         }
     }
@@ -307,16 +332,19 @@ impl Decoder for PartDecoder {
                 Err(e) => return Err(e.into()),
             };
             let data = level_mesh_data(&geo, format!("part {:#010x}/{k}", key.did));
-            let plans = geo
+            let (plans, anims): (Vec<_>, Vec<_>) = geo
                 .parts
                 .iter()
                 .map(|p| {
                     p.surface.map_or(
-                        MaterialPlan::unresolved(None, FallbackReason::NoSurface),
+                        (
+                            MaterialPlan::unresolved(None, FallbackReason::NoSurface),
+                            None,
+                        ),
                         |s| self.plan(s, look.as_deref()),
                     )
                 })
-                .collect();
+                .unzip();
             drop(geo);
             let prepared = data.prepare(&self.mesh_config)?;
             let bytes = prepared.gpu_bytes();
@@ -326,6 +354,7 @@ impl Decoder for PartDecoder {
                 data: Arc::new(data),
                 gpu_bytes: bytes,
                 plans,
+                anims,
             });
         }
         Ok(PartAsset {
@@ -563,6 +592,9 @@ pub struct ObjectFrame {
     /// Load and draw every interior object whatever the camera's cell (`--interiors`,
     /// a debugging view).
     pub all_interiors: bool,
+    /// Seconds on the material clock (`material.md` §5.3.1): animated texture matrices
+    /// and own-program parameters are evaluated at it every frame (`water.md` §8.7).
+    pub time: f64,
 }
 
 /// Whether an object attached to `cell` of block `key` may be loaded in `frame`: outdoor
@@ -588,6 +620,7 @@ impl Default for ObjectFrame {
             camera_moved: 0.0,
             interior: None,
             all_interiors: false,
+            time: 0.0,
         }
     }
 }
@@ -604,6 +637,8 @@ enum PartState {
 struct GpuLevel {
     mesh: MeshId,
     plans: Vec<MaterialPlan>,
+    /// Per plan, what its per-frame evaluation needs ([`LevelAsset::anims`]).
+    anims: Vec<Option<Arc<SurfaceAnim>>>,
     /// The instanced model, once built.
     model: Option<WorldModel>,
     /// Level 0 of a frill part with more than one draw entry: the model of its first draw
@@ -976,10 +1011,12 @@ pub fn linear_to_stored(c: f32) -> f32 {
 pub const SHADOW_MIN_OPACITY: f32 = 0.8;
 
 /// The material and lit inputs of one submesh drawn with `plan` (`lighting.md` §4.1,
-/// `docs/specs/render.md` §4.3), or `None` while its base texture is still loading.
-/// `lit` selects the lit pipeline's inputs (stored-value colours); `fade` the draw-distance
-/// opacity (`mesh.md` §8.7), which turns the surface translucent below 1; `shadow` whether
-/// it casts the sun's shadow.
+/// `docs/specs/render.md` §4.3), or `None` while its base texture or second colour layer
+/// is still loading. `lit` selects the lit pipeline's inputs (stored-value colours); `fade`
+/// the draw-distance opacity (`mesh.md` §8.7), which turns the surface translucent below 1;
+/// `shadow` whether it casts the sun's shadow. The lit inputs carry the plan's texture
+/// matrices at clock 0 (`material.md` §8.4; the caller replaces them every frame when they
+/// animate) and its second colour layer (`material.md` §10.3).
 #[must_use]
 pub fn surface_draw(
     plan: &MaterialPlan,
@@ -1001,6 +1038,17 @@ pub fn surface_draw(
     let ready = |t: Option<TexRequest>| match t.map(texture) {
         Some(TexLookup::Ready(id)) => Some(id),
         _ => None,
+    };
+    // §10.3: the second colour layer; wait for it like the base texture, draw without it
+    // when it failed.
+    let layer2 = match plan.layer2 {
+        None => None,
+        Some((t, add)) => match texture(t) {
+            TexLookup::Ready(id) => Some(SecondLayer { texture: id, add }),
+            TexLookup::Failed => None,
+            TexLookup::Pending if lit => return None,
+            TexLookup::Pending => None,
+        },
     };
     let fade = if fade.is_finite() {
         fade.clamp(0.0, 1.0)
@@ -1083,6 +1131,9 @@ pub fn surface_draw(
         fog: true,
         cast_shadow: shadow && fade > SHADOW_MIN_OPACITY,
         lights: tessera_render::LightSelection::Auto,
+        uv: plan.uv,
+        second_layer: layer2,
+        emissive_uv1: plan.emissive_uv1,
     };
     Some((m, surface))
 }
@@ -1109,7 +1160,11 @@ fn world_surface(plan: &MaterialPlan, texture: &impl Fn(TexRequest) -> TexLookup
             Some(TexLookup::Pending) => None,
         }
     };
-    let (Some(base), Some(normal)) = (look(plan.texture), look(plan.lit.normal)) else {
+    let (Some(base), Some(normal), Some(layer2)) = (
+        look(plan.texture),
+        look(plan.lit.normal),
+        look(plan.layer2.map(|l| l.0)),
+    ) else {
         return ModelSurface::Pending;
     };
     if plan.texture.is_some() && base.is_none() && plan.alpha != AlphaKind::Opaque {
@@ -1139,7 +1194,29 @@ fn world_surface(plan: &MaterialPlan, texture: &impl Fn(TexRequest) -> TexLookup
         gloss_from_normal_alpha: l.gloss == GlossFrom::NormalAlpha && normal.is_some(),
         vertex_colors: false,
         unlit: plan.unlit,
+        second_layer: layer2
+            .zip(plan.layer2)
+            .map(|(texture, (_, add))| SecondLayer { texture, add }),
+        uv: plan.uv,
     })
+}
+
+/// This frame's texture matrices of every surface of `level` (`material.md` §8.4, §5.3.1),
+/// for an instanced batch ([`InstanceBatch::uv`]); `None` when none of them animates.
+fn level_uv(level: &GpuLevel, clock: &mut AnimClock) -> Option<Arc<[[UvTransform; 2]]>> {
+    if !level.plans.iter().any(|p| p.animated_uv) {
+        return None;
+    }
+    let list: Vec<[UvTransform; 2]> = level
+        .plans
+        .iter()
+        .zip(level.anims.iter().chain(std::iter::repeat(&None)))
+        .map(|(p, a)| match a {
+            Some(a) if p.animated_uv => clock.uv(a),
+            _ => p.uv,
+        })
+        .collect();
+    Some(list.into())
 }
 
 /// Counters for the HUD and frame log.
@@ -1239,6 +1316,9 @@ pub struct ObjectLayer {
     fallback: FallbackTally,
     /// The fallback diagnostic of the last frame drawn.
     fallback_stats: FallbackStats,
+    /// Per-frame evaluation of animated texture matrices and own-program materials
+    /// (`water.md` §8.7).
+    anim: AnimClock,
 }
 
 /// Whether instance `inst` of block `key` is a placed figure the character layer draws
@@ -1334,6 +1414,7 @@ impl ObjectLayer {
             draw_frame: 0,
             fallback: FallbackTally::default(),
             fallback_stats: FallbackStats::default(),
+            anim: AnimClock::default(),
         }
     }
 
@@ -1441,6 +1522,16 @@ impl ObjectLayer {
                 e.model_job = Some(self.parts.request(key, Priority::Visible));
             }
         }
+    }
+
+    /// This frame's texture matrices of the surfaces of `part`'s level `level` when one
+    /// of them animates (`material.md` §8.4; for instanced batches drawn outside the object
+    /// layer, after [`ObjectLayer::draw`] started the frame's clock).
+    pub fn animated_uv(&mut self, part: u32, level: usize) -> Option<Arc<[[UvTransform; 2]]>> {
+        let Some(PartState::Ready(g)) = self.gpu_parts.get(&part).map(|e| &e.state) else {
+            return None;
+        };
+        level_uv(g.levels.get(level)?, &mut self.anim)
     }
 
     /// The frill model of `part` (`scenery.md` §8.5 step 3): the first draw entry of its
@@ -1921,6 +2012,7 @@ impl ObjectLayer {
                         levels.push(GpuLevel {
                             mesh: id,
                             plans: la.plans.clone(),
+                            anims: la.anims.clone(),
                             model: None,
                             frill_model: None,
                             frill_failed: false,
@@ -2391,6 +2483,13 @@ impl ObjectLayer {
             _ => None,
         };
         self.fallback.clear();
+        self.anim.begin(frame.time);
+        // *O* of water drawings on placed meshes: the region origin (`water.md` §8.3
+        // Tessera rule); the camera's landblock for curve-valued scales (§8.7.1).
+        let region_offset = {
+            let o = anchor.origin();
+            [-(o[0] as f32), -(o[1] as f32)]
+        };
         let order = std::mem::take(&mut self.order);
         for &(_, key) in &order {
             let Some(b) = self.blocks.get_mut(&key) else {
@@ -2501,11 +2600,60 @@ impl ObjectLayer {
                             capped_at = Some(oi);
                             break 'objects;
                         }
-                        let Some((material, lit)) =
+                        let anim = level.anims.get(i).and_then(Option::as_ref);
+                        // `water.md` §8.5 rule: the records of `material.md` §11.6 are
+                        // drawn by their own programs at the mesh's own triangles.
+                        if let (Some(own), Some(anim), true) = (plan.own, anim, frame.lit) {
+                            let mut ids = [None; OWN_TEXTURES];
+                            let mut pending = false;
+                            for (slot, t) in ids.iter_mut().zip(own.textures) {
+                                match t.map(lookup) {
+                                    Some(TexLookup::Ready(id)) => *slot = Some(id),
+                                    Some(TexLookup::Pending) => pending = true,
+                                    _ => {}
+                                }
+                            }
+                            if pending {
+                                continue;
+                            }
+                            let Some(lf) = self.anim.liquid(anim) else {
+                                continue;
+                            };
+                            let offset = super::liquid::block_offset(
+                                lf.animated_scales,
+                                region_offset,
+                                [camera.x, camera.y],
+                            );
+                            let (normal_map, textures) = super::liquid::draw_textures(ids);
+                            pass.liquid_mesh(LiquidMeshDraw {
+                                mesh: level.mesh,
+                                submesh: Some(u32::try_from(i).unwrap_or(u32::MAX)),
+                                transform: tf,
+                                shading: super::liquid::placed(lf.shading, offset, opacity),
+                                normal_map,
+                                textures,
+                                light_object: None,
+                            });
+                            self.fallback.count(&plan.diag, None, 1);
+                            draws += 1;
+                            continue;
+                        }
+                        let Some((material, mut lit)) =
                             surface_draw(plan, &lookup, frame.lit, opacity, casts)
                         else {
                             continue;
                         };
+                        // `material.md` §8.4, §5.3.1: animated matrices at this frame's clock.
+                        let mut diag = plan.diag;
+                        match anim {
+                            Some(a) if plan.animated_uv => lit.uv = self.anim.uv(a),
+                            None if plan.animated_uv => diag.scrolls = true,
+                            _ => {}
+                        }
+                        if plan.own.is_some() {
+                            // An own-program record on the generic path (no lit pass).
+                            diag.routed = false;
+                        }
                         let reason = plan.diag.fallback.or_else(|| {
                             material.base_texture.is_none().then(|| {
                                 plan.texture
@@ -2513,7 +2661,7 @@ impl ObjectLayer {
                                     .unwrap_or(FallbackReason::TextureComposeFailed)
                             })
                         });
-                        self.fallback.count(&plan.diag, reason, 1);
+                        self.fallback.count(&diag, reason, 1);
                         pass.mesh(
                             MeshDraw::new(level.mesh, tf, material)
                                 .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
@@ -2543,6 +2691,7 @@ impl ObjectLayer {
             let Some(model) = self.model(*part, usize::from(*k)).cloned() else {
                 continue;
             };
+            let mut uv = None;
             if let Some(PartState::Ready(g)) = self.gpu_parts.get(part).map(|e| &e.state)
                 && let Some(level) = g.levels.get(usize::from(*k))
             {
@@ -2550,9 +2699,11 @@ impl ObjectLayer {
                     let reason = plan.diag.fallback.or_else(|| plan.texture.and_then(failed));
                     self.fallback.count(&plan.diag, reason, list.len());
                 }
+                uv = level_uv(level, &mut self.anim);
             }
             let mut batch = InstanceBatch::new(model, list.as_slice());
             batch.cast_shadow = *casts;
+            batch.uv = uv;
             pass.instanced(batch);
             batches += 1;
         }

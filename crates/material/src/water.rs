@@ -13,10 +13,17 @@
 //! [`WaterParams::SPEC_DEFAULTS`]) and is listed in [`WaterMaterial::undeclared`]; one
 //! that it declares with another value type takes that default too and is listed in
 //! [`WaterMaterial::mistyped`].
+//!
+//! The water records belong to program families (`water.md` §8.2 "Program families"):
+//! [`water_family`] tells plain water (§8.3–§8.4), plain water on mesh UV and older bump
+//! water (§8.5.6) and flow-map water (§8.6) apart, and [`WaterMaterial`] carries the
+//! parameters of each ([`FlowParams`], [`BumpParams`]). Every value is evaluated at the time
+//! given, so a renderer that evaluates the material every frame draws curve-valued
+//! parameters as `water.md` §8.7.1 requires.
 
 use tessera_formats::Did;
 
-use crate::interface::ShaderInterface;
+use crate::interface::{ProgramFamily, ShaderInterface};
 use crate::records::{CurveStates, curve_finite};
 use crate::resolve::ResolvedMaterial;
 use crate::vocab::ids;
@@ -67,6 +74,39 @@ pub mod water_ids {
     ];
     /// Every colour id of the §8.2 table.
     pub const COLORS: [u32; 4] = [2006, 2009, 2010, 2011];
+
+    /// `c_WaterBumpTextureScale` (older bump water, `water.md` §8.5.6).
+    pub const BUMP_TEXTURE_SCALE: u32 = 1055;
+    /// `c_WaterBumpSpeed` (older bump water).
+    pub const BUMP_SPEED: u32 = 1056;
+    /// `c_WaterFresnelBumpAmount` (older bump water).
+    pub const FRESNEL_BUMP_AMOUNT: u32 = 1049;
+    /// `c_WaterReflectionAmount` (older bump water).
+    pub const REFLECTION_AMOUNT: u32 = 1052;
+    /// `c_WaterRefractionAmount` (older bump water).
+    pub const REFRACTION_AMOUNT: u32 = 1053;
+    /// `c_WaterDeepColor` (older bump water).
+    pub const DEEP_COLOR: u32 = 2004;
+    /// `c_WaterShallowColor` (older bump water).
+    pub const SHALLOW_COLOR: u32 = 2005;
+    /// `c_WaterShorelineMaxDepth` (flow-map water, `water.md` §8.6.1).
+    pub const SHORELINE_MAX_DEPTH: u32 = 1170;
+    /// `c_WaterFogMinDepth`.
+    pub const FOG_MIN_DEPTH: u32 = 1171;
+    /// `c_WaterFogDepthFactor`.
+    pub const FOG_DEPTH_FACTOR: u32 = 1173;
+    /// `c_WaterFoamOffsetU`, `…V`.
+    pub const FOAM_OFFSET: [u32; 2] = [1182, 1183];
+    /// `c_WaterFoamTileU`, `…V`.
+    pub const FOAM_TILE: [u32; 2] = [1184, 1185];
+    /// `c_WaterDepthOffsetU`, `…V`.
+    pub const DEPTH_OFFSET: [u32; 2] = [1186, 1187];
+    /// `c_NormalWaveRotation` (radians).
+    pub const NORMAL_WAVE_ROTATION: u32 = 1188;
+    /// `c_DepthBasedOpacityOffset`.
+    pub const DEPTH_OPACITY_OFFSET: u32 = 1189;
+    /// `c_FoamAlphaFadeFactor`.
+    pub const FOAM_ALPHA_FADE: u32 = 1190;
 
     /// Whether `id` belongs to the water parameter families of `material.md` §8.6 (flag
     /// byte 1): 1044–1069, 1170, 1171, 1173, 1182–1190, 2004–2011.
@@ -205,13 +245,123 @@ impl WaterParams {
     }
 }
 
+/// The program family of a water record (`water.md` §8.2 "Program families"), recognised
+/// by [`water_family`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WaterFamily {
+    /// Plain water: three scrolling normal layers at world-position coordinates
+    /// (`water.md` §8.3–§8.4).
+    #[default]
+    Plain,
+    /// Plain water on mesh UV: the same drawing with the layers at the mesh's UV set 0
+    /// (`water.md` §8.5.6).
+    PlainUv,
+    /// Older bump water: three layers from 1055 and 1056 on mesh UV (`water.md` §8.5.6).
+    OlderBump,
+    /// Flow-map water (`water.md` §8.6): 1057 and 1058 are cycle rates of a flow map.
+    Flow {
+        /// The record declares normal layers 1 and 2 (1059–1062, 1064, 1065), which the
+        /// Tessera rule of §8.6.4 adds (0x2B0007FD); without them only steps 1–6 of §8.6.2
+        /// apply (0x2B0005EC).
+        normal_layers: bool,
+    },
+}
+
+/// The shader records of plain water on mesh UV (`water.md` §8.2 table, §8.5.6). The spec
+/// gives no interface rule that sets them apart from plain water; Tessera recognises them by
+/// these DIDs (implementer OPEN in `water.md` §14).
+pub const PLAIN_UV_RECORDS: [u32; 3] = [0x2B00_084B, 0x2B00_089A, 0x2B00_0A8D];
+
+/// The water family of `shader`, `None` unless it is a water record (`material.md` §11.6):
+/// a record that declares 1056 is older bump water, one with a flow-map slot (3075) flow-map
+/// water (with normal layers 1 and 2 when it declares 1059), one of [`PLAIN_UV_RECORDS`]
+/// plain water on mesh UV, and every other water record plain water.
+#[must_use]
+pub fn water_family(shader: &ShaderInterface) -> Option<WaterFamily> {
+    if shader.family != ProgramFamily::Water {
+        return None;
+    }
+    Some(if shader.declares(water_ids::BUMP_SPEED) {
+        WaterFamily::OlderBump
+    } else if shader.slot(ids::FLOW).is_some() {
+        WaterFamily::Flow {
+            normal_layers: shader.declares(1059),
+        }
+    } else if PLAIN_UV_RECORDS.contains(&shader.did.0) {
+        WaterFamily::PlainUv
+    } else {
+        WaterFamily::Plain
+    })
+}
+
+/// The flow, foam and depth parameters of flow-map water (`water.md` §8.6.1), evaluated. An
+/// undeclared value is 0.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FlowParams {
+    /// 1182, 1183: foam lookup offset (U, V).
+    pub foam_offset: [f32; 2],
+    /// 1184, 1185: foam tiling (U, V).
+    pub foam_tile: [f32; 2],
+    /// 1186, 1187: offset of the flow map's third-channel lookup (U, V).
+    pub depth_offset: [f32; 2],
+    /// 1188: rotation of the phase coordinates in radians.
+    pub rotation: f32,
+    /// 1189: depth-based opacity offset (Direct3D 10/11 colour, not drawn by the Tessera rule).
+    pub depth_opacity_offset: f32,
+    /// 1190: foam alpha fade factor.
+    pub foam_fade: f32,
+    /// 1170: shoreline maximum depth.
+    pub shoreline_max_depth: f32,
+    /// 1171: fog minimum depth.
+    pub fog_min_depth: f32,
+    /// 1173: fog depth factor.
+    pub fog_depth_factor: f32,
+}
+
+/// The parameters of older bump water (`water.md` §8.5.6), evaluated.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BumpParams {
+    /// 1055 `c_WaterBumpTextureScale` (1 when undeclared).
+    pub texture_scale: f32,
+    /// 1056 `c_WaterBumpSpeed` (0 when undeclared).
+    pub speed: f32,
+    /// 2004 `c_WaterDeepColor` (black when undeclared).
+    pub deep_color: [f32; 4],
+    /// 2005 `c_WaterShallowColor` (white when undeclared).
+    pub shallow_color: [f32; 4],
+}
+
+impl Default for BumpParams {
+    fn default() -> Self {
+        Self {
+            texture_scale: 1.0,
+            speed: 0.0,
+            deep_color: BLACK,
+            shallow_color: WHITE,
+        }
+    }
+}
+
 /// A water surface's material (`water.md` §8.2), evaluated at one time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaterMaterial {
     /// The shader record.
     pub shader: Did,
+    /// The record's program family ([`water_family`]; [`WaterFamily::Plain`] for a record
+    /// that reads water parameters without being a water record).
+    pub family: WaterFamily,
     /// The §8.2 parameters.
     pub params: WaterParams,
+    /// Flow-map parameters (§8.6.1; zero outside the flow-map family).
+    pub flow: FlowParams,
+    /// Older bump water parameters (§8.5.6).
+    pub bump: BumpParams,
+    /// The noise texture of the flow-map programs: the default texture of a sampler no
+    /// binding names (§8.6.1, [`ShaderInterface::unbound_defaults`]); the first one.
+    pub noise_map: Option<Did>,
+    /// Some normal-layer scale (1063–1065) is a curve that changes with time
+    /// (`water.md` §8.7.1 Tessera Decision: *B* from the camera's landblock).
+    pub animated_scales: bool,
     /// Slot 3011: the normal texture of all three normal layers.
     pub normal_map: Option<Did>,
     /// Slot 3075: flow map (flow permutations; formulas OPEN, `water.md` §8.4).
@@ -287,9 +437,37 @@ impl WaterMaterial {
         }
         undeclared.sort_unstable();
         mistyped.sort_unstable();
+        let float =
+            |id: u32, d: f32, states: &mut CurveStates| p.float_at(id, t, states).unwrap_or(d);
+        let flow = FlowParams {
+            foam_offset: water_ids::FOAM_OFFSET.map(|id| float(id, 0.0, states)),
+            foam_tile: water_ids::FOAM_TILE.map(|id| float(id, 0.0, states)),
+            depth_offset: water_ids::DEPTH_OFFSET.map(|id| float(id, 0.0, states)),
+            rotation: float(water_ids::NORMAL_WAVE_ROTATION, 0.0, states),
+            depth_opacity_offset: float(water_ids::DEPTH_OPACITY_OFFSET, 0.0, states),
+            foam_fade: float(water_ids::FOAM_ALPHA_FADE, 0.0, states),
+            shoreline_max_depth: float(water_ids::SHORELINE_MAX_DEPTH, 0.0, states),
+            fog_min_depth: float(water_ids::FOG_MIN_DEPTH, 0.0, states),
+            fog_depth_factor: float(water_ids::FOG_DEPTH_FACTOR, 0.0, states),
+        };
+        let colour = |id: u32, d: [f32; 4]| p.color(id).map_or(d, |c| c.map(curve_finite));
+        let bump = BumpParams {
+            texture_scale: float(water_ids::BUMP_TEXTURE_SCALE, 1.0, states),
+            speed: float(water_ids::BUMP_SPEED, 0.0, states),
+            deep_color: colour(water_ids::DEEP_COLOR, BLACK),
+            shallow_color: colour(water_ids::SHALLOW_COLOR, WHITE),
+        };
+        let animated_scales = water_ids::NORMAL_SCALE
+            .iter()
+            .any(|&id| p.curve(id).is_some_and(crate::FloatCurve::is_animated));
         Some(Self {
             shader: material.shader.did,
+            family: water_family(&material.shader).unwrap_or_default(),
             params,
+            flow,
+            bump,
+            noise_map: material.shader.unbound_defaults.first().copied(),
+            animated_scales,
             normal_map: p.texture(ids::NORMAL),
             flow_map: p.texture(ids::FLOW),
             foam_map: p.texture(ids::FOAM),
@@ -309,7 +487,27 @@ impl WaterMaterial {
     /// Whether every float is finite (always true; for tests and assertions).
     #[must_use]
     pub fn all_finite(&self) -> bool {
-        self.material_alpha.is_finite() && self.params.components().all(f32::is_finite)
+        let f = &self.flow;
+        let b = &self.bump;
+        self.material_alpha.is_finite()
+            && self.params.components().all(f32::is_finite)
+            && f.foam_offset
+                .iter()
+                .chain(&f.foam_tile)
+                .chain(&f.depth_offset)
+                .chain(&[
+                    f.rotation,
+                    f.depth_opacity_offset,
+                    f.foam_fade,
+                    f.shoreline_max_depth,
+                    f.fog_min_depth,
+                    f.fog_depth_factor,
+                    b.texture_scale,
+                    b.speed,
+                ])
+                .chain(&b.deep_color)
+                .chain(&b.shallow_color)
+                .all(|v| v.is_finite())
     }
 }
 

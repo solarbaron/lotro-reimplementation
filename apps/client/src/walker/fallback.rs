@@ -4,9 +4,10 @@
 //! - every submesh draw that ends up without its base-colour texture (the material colour
 //!   over white, or the neutral grey of an unresolved material), by reason
 //!   (`tessera_material::diagnose`) and by surface record;
-//! - the submesh draws of records with programs of their own (water, mirror and
-//!   liquid-distortion records, `material.md` §11.6) that the walker draws through the
-//!   generic path, where their slot-3000 placeholder shows near-white (`water.md` §8.5);
+//! - the submesh draws of records with programs of their own (water, mirror,
+//!   liquid-distortion and lava records, `material.md` §11.6) that the walker draws through
+//!   the generic path, where their slot-3000 placeholder shows near-white (`water.md` §8.5),
+//!   and, apart, those it draws with their own programs (`water.md` §8.5 rule);
 //! - the draws whose texture animation or second colour layer the walker leaves out
 //!   (`walker.md` §14.5; `material.md` §10.3, §8.4).
 //!
@@ -27,10 +28,11 @@ pub const TOP_SURFACES: usize = 8;
 pub const MAX_PAIRS: usize = 4096;
 
 /// The kinds counted as own-program records, in report order.
-const OWN_PROGRAM_KINDS: [MaterialKind; 3] = [
+const OWN_PROGRAM_KINDS: [MaterialKind; 4] = [
     MaterialKind::Water,
     MaterialKind::Mirror,
     MaterialKind::LiquidDistortion,
+    MaterialKind::Lava,
 ];
 
 /// The fallback counters of one frame.
@@ -48,8 +50,11 @@ pub struct FallbackStats {
     /// Submesh draws of own-program records (`material.md` §11.6) drawn through the generic
     /// path.
     pub own_program_draws: usize,
-    /// Those draws per kind (water, mirror, liquid distortion; kinds without draws left out).
+    /// Those draws per kind (water, mirror, liquid distortion, lava; kinds without draws
+    /// left out).
     pub own_program_by_kind: Vec<(MaterialKind, usize)>,
+    /// Submesh draws of own-program records drawn with their own programs.
+    pub own_program_routed: usize,
     /// The own-program surfaces with the most draws: (surface DID, kind, draws), at most
     /// [`TOP_SURFACES`].
     pub own_program_top: Vec<(u32, MaterialKind, usize)>,
@@ -71,8 +76,8 @@ impl FallbackStats {
             s.push_str(&format!(", {r} {n}"));
         }
         s.push_str(&format!(
-            "; own-program records on the generic path {}",
-            self.own_program_draws
+            "; own-program records on the generic path {} (own programs {})",
+            self.own_program_draws, self.own_program_routed
         ));
         for (k, n) in &self.own_program_by_kind {
             s.push_str(&format!(", {k} {n}"));
@@ -94,6 +99,7 @@ pub struct FallbackTally {
     unresolved: usize,
     by_reason: [usize; FallbackReason::ALL.len()],
     own_by_kind: [usize; OWN_PROGRAM_KINDS.len()],
+    own_routed: usize,
     still_scroll_draws: usize,
     second_layer_draws: usize,
 }
@@ -114,6 +120,7 @@ impl FallbackTally {
         self.unresolved = 0;
         self.by_reason = [0; FallbackReason::ALL.len()];
         self.own_by_kind = [0; OWN_PROGRAM_KINDS.len()];
+        self.own_routed = 0;
         self.still_scroll_draws = 0;
         self.second_layer_draws = 0;
     }
@@ -131,7 +138,10 @@ impl FallbackTally {
         if diag.second_layer {
             self.second_layer_draws += n;
         }
-        if let Some(i) = OWN_PROGRAM_KINDS.iter().position(|&k| k == kind)
+        let own = OWN_PROGRAM_KINDS.iter().position(|&k| k == kind);
+        if own.is_some() && diag.routed {
+            self.own_routed += n;
+        } else if let Some(i) = own
             && let Some(c) = self.own_by_kind.get_mut(i)
         {
             *c += n;
@@ -193,6 +203,7 @@ impl FallbackTally {
                 .map(|(k, n)| (*k, n))
                 .collect(),
             own_program_top,
+            own_program_routed: self.own_routed,
             still_scroll_draws: self.still_scroll_draws,
             second_layer_draws: self.second_layer_draws,
         }
@@ -210,6 +221,7 @@ mod tests {
             kind,
             scrolls: kind == MaterialKind::Water,
             second_layer: kind == MaterialKind::Unlit,
+            routed: false,
         }
     }
 
@@ -278,6 +290,26 @@ mod tests {
         );
         t.clear();
         assert_eq!(t.stats(), FallbackStats::default());
+    }
+
+    /// Own-program surfaces drawn by their own programs (`water.md` §8.5 rule) are counted
+    /// apart and never as generic-path draws.
+    #[test]
+    fn routed_own_program_draws_are_counted_apart() {
+        let mut t = FallbackTally::default();
+        let mut d = diag(0x3100_0006, MaterialKind::Lava);
+        d.routed = true;
+        d.scrolls = false;
+        t.count(&d, None, 4);
+        let mut m = diag(0x3100_0007, MaterialKind::Mirror);
+        m.routed = true;
+        t.count(&m, None, 2);
+        t.count(&diag(0x3100_0008, MaterialKind::Lava), None, 1);
+        let s = t.stats();
+        assert_eq!(s.own_program_routed, 6);
+        assert_eq!(s.own_program_draws, 1);
+        assert_eq!(s.own_program_by_kind, vec![(MaterialKind::Lava, 1)]);
+        assert!(s.hud_line().contains("own programs 6"), "{}", s.hud_line());
     }
 
     #[test]

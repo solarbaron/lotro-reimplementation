@@ -23,12 +23,12 @@
 //! Appearance looks of cells (`landblock.md` §4.14) are not applied.
 //!
 //! `water_table_surfaces_and_scroll_speeds` lists the water surfaces of every region's
-//! water table (`water.md` §4) with the parameters the walker's water pipeline uses
-//! (`water.md` §8.2–§8.3, evaluated at rest as the walker does, `walker.md` §14.6): the
-//! normal layers' scroll speeds per second in texture units and in metres per second
-//! (speed × 160 / scale, since a layer's coordinates are position / 160 × scale), the
-//! vertex waves, and whether any of those parameters is an animated curve
-//! (`material.md` §5.3), which an evaluation at rest freezes.
+//! water table (`water.md` §4) with their parameters at rest (`water.md` §8.2–§8.3): the
+//! normal layers' speeds per second in texture units and in metres per second (speed ×
+//! 160 / scale, since a layer's coordinates are position / 160 × scale), the vertex waves,
+//! and whether any of those parameters is an animated curve (`material.md` §5.3). The
+//! walker evaluates them at the clock every frame and draws each record by its family
+//! (`water_materials_real_data.rs` checks the drawn rates against `water.md` §8.7).
 //!
 //! Only counts, DIDs, reasons and summary numbers are printed (`--nocapture`). The
 //! invariants of the plan's diagnostic are asserted, not the counts.
@@ -41,7 +41,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tessera_assets::RecordSource;
-use tessera_client::walker::{MaterialPlan, plan_material};
+use tessera_client::walker::fallback::FallbackTally;
+use tessera_client::walker::{MaterialPlan, plan_material_with};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::collision::CellGeometry;
 use tessera_formats::{Did, RgbaImage};
@@ -194,6 +195,9 @@ fn luminance(c: [f32; 3]) -> f32 {
 #[derive(Clone)]
 struct SurfaceInfo {
     plan: MaterialPlan,
+    /// Textures of the own-program drawing or of the second colour layer that do not
+    /// decode.
+    own_failed: usize,
     shader: Option<Did>,
     /// The final reason: the plan's, else the texture's.
     reason: Option<FallbackReason>,
@@ -218,6 +222,7 @@ fn diagnose(lib: &MaterialLibrary<&ArchiveSet>, s: Did) -> SurfaceInfo {
             let r = reason_of_resolve_error(&e);
             return SurfaceInfo {
                 plan: MaterialPlan::unresolved(Some(s), r),
+                own_failed: 0,
                 shader: lib.surface_record(s).ok().map(|r| r.shader),
                 reason: Some(r),
                 base_mean: None,
@@ -230,7 +235,10 @@ fn diagnose(lib: &MaterialLibrary<&ArchiveSet>, s: Did) -> SurfaceInfo {
             };
         }
     };
-    let plan = plan_material(&m);
+    // The walker's own rule, with the record's texture-matrix bindings (the part decoder's
+    // plan: second layers, animated matrices, own-program drawings).
+    let layout = lib.texture_matrices(m.shader.did).ok();
+    let plan = plan_material_with(&m, layout.as_deref());
     let mut reason = plan.diag.fallback;
     let mut base_mean = None;
     if let Some(t) = plan.texture {
@@ -258,8 +266,17 @@ fn diagnose(lib: &MaterialLibrary<&ArchiveSet>, s: Did) -> SurfaceInfo {
             .find(|e| e.matrix == 0)
             .map(|e| e.transform.scale)
     });
+    // The textures of an own-program drawing and of a second colour layer decode too.
+    let own_failed = plan
+        .own
+        .iter()
+        .flat_map(|o| o.textures.into_iter().flatten())
+        .chain(plan.layer2.map(|l| l.0))
+        .filter(|t| lib.texture(Did(t.did), Some(TEXTURE_CAP)).is_err())
+        .count();
     SurfaceInfo {
         plan,
+        own_failed,
         shader: Some(m.shader.did),
         reason,
         base_mean,
@@ -527,8 +544,9 @@ fn fallback_census_of_the_drawn_world() {
         })
     };
     eprintln!(
-        "\nown-program surfaces (water, mirror, liquid distortion; material.md §11.6) drawn \
-         through the generic path: {} surfaces, {water_draws} submesh draws",
+        "\nown-program surfaces (water, mirror, liquid distortion, lava; material.md §11.6), \
+         which the walker routes to their own programs (water.md §8.5 rule): {} surfaces, \
+         {water_draws} submesh draws",
         ws.len()
     );
     eprintln!(
@@ -695,6 +713,75 @@ fn fallback_census_of_the_drawn_world() {
         );
     }
 
+    // The walker's fallback diagnostic over the whole sample (`walker/fallback.rs`): every
+    // surface's draws counted with its plan, as the object layer counts them each frame
+    // (own-program surfaces routed to their programs, `water.md` §8.5 rule).
+    let mut tally = FallbackTally::default();
+    for (s, u) in &surfaces {
+        if let Some(i) = infos.get(s) {
+            tally.count(&i.plan.diag, i.reason, u.draws);
+        }
+    }
+    let st = tally.stats();
+    let routed_surfaces = infos.values().filter(|i| i.plan.own.is_some()).count();
+    let own_failed: usize = infos.values().map(|i| i.own_failed).sum();
+    let layered: (usize, usize) = surfaces
+        .iter()
+        .filter(|(s, _)| infos.get(*s).is_some_and(|i| i.plan.layer2.is_some()))
+        .fold((0, 0), |a, (_, u)| (a.0 + 1, a.1 + u.draws));
+    let animated: (usize, usize) = surfaces
+        .iter()
+        .filter(|(s, _)| infos.get(*s).is_some_and(|i| i.plan.animated_uv))
+        .fold((0, 0), |a, (_, u)| (a.0 + 1, a.1 + u.draws));
+    eprintln!(
+        "\nwalker diagnostic over the sample: base fallbacks {} draws ({} unresolved), \
+         {:?}; own-program records on the generic path {} draws {:?}; drawn by their own \
+         programs {} draws ({routed_surfaces} surfaces; {own_failed} of their textures or \
+         second layers do not decode); animated texture matrices drawn {animated:?} \
+         (surfaces, draws), still {}; second colour layers drawn {layered:?}, left out {}",
+        st.draws,
+        st.unresolved,
+        st.by_reason,
+        st.own_program_draws,
+        st.own_program_by_kind,
+        st.own_program_routed,
+        st.still_scroll_draws,
+        st.second_layer_draws
+    );
+    // Surfaces whose second layer stays out: only the records `material.md` §10.3 does not
+    // cover.
+    for (s, i) in &infos {
+        if i.plan.diag.second_layer {
+            eprintln!(
+                "  second layer left out: {s} shader {}",
+                i.shader.map_or_else(|| "-".to_owned(), |d| d.to_string())
+            );
+            assert!(
+                i.shader.is_some_and(|d| {
+                    tessera_material::layers::UNCOVERED_RECORDS.contains(&d.0)
+                }),
+                "{s}: a covered two-layer record drawn without its second layer"
+            );
+        }
+    }
+    assert_eq!(
+        st.own_program_draws, 0,
+        "own-program records drawn through the generic path"
+    );
+    assert_eq!(
+        st.still_scroll_draws, 0,
+        "animated texture matrices drawn still"
+    );
+    for i in infos.values() {
+        if i.plan.diag.kind.needs_own_program() && i.plan.diag.kind != MaterialKind::Unresolved {
+            assert!(
+                i.plan.own.is_some(),
+                "{:?}: own-program record not routed",
+                i.shader
+            );
+        }
+    }
+
     assert!(built > 0, "no landblock bundle built");
     assert!(!surfaces.is_empty(), "no surface drawn");
 }
@@ -727,7 +814,8 @@ fn water_table_surfaces_and_scroll_speeds() {
     }
     let lib = MaterialLibrary::new(&*set);
     eprintln!(
-        "water-table surfaces: {} (scroll in texture units per second and m/s = speed x 160 /          scale; waves speed/frequency/amplitude; animated = curve mode other than 1)",
+        "water-table surfaces: {} (scroll in texture units per second and m/s = speed x 160 / \
+         scale; waves speed/frequency/amplitude; animated = curve mode other than 1)",
         by_surface.len()
     );
     let mut animated_surfaces = 0usize;
@@ -785,7 +873,7 @@ fn water_table_surfaces_and_scroll_speeds() {
             w.undeclared.len(),
             animated
         );
-        // The walker's parameters are the material's at rest (walker.md §14.6).
+        // The walker's parameters at clock 0 are the material's at rest.
         assert_eq!(p.normal_speed, w.params.normal_speed);
         assert_eq!(p.normal_scale, w.params.normal_scale);
     }

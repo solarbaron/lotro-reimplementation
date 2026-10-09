@@ -160,6 +160,8 @@ pub enum MaterialKind {
     Mirror,
     /// A liquid-distortion record (`water.md` §8.5.5).
     LiquidDistortion,
+    /// The lava record (`material.md` §11.6 lava row, `water.md` §8.6.5).
+    Lava,
     /// A lit shader record of the generic path (`material.md` §11.3).
     Lit,
     /// An unlit shader record.
@@ -176,6 +178,7 @@ impl MaterialKind {
             Self::Water => "water",
             Self::Mirror => "mirror",
             Self::LiquidDistortion => "liquid-distortion",
+            Self::Lava => "lava",
             Self::Lit => "lit",
             Self::Unlit => "unlit",
             Self::Unresolved => "unresolved",
@@ -189,6 +192,7 @@ impl MaterialKind {
             ProgramFamily::Water => Self::Water,
             ProgramFamily::Mirror => Self::Mirror,
             ProgramFamily::LiquidDistortion => Self::LiquidDistortion,
+            ProgramFamily::Lava => Self::Lava,
             ProgramFamily::Generic if m.features.lit => Self::Lit,
             ProgramFamily::Generic => Self::Unlit,
         }
@@ -199,7 +203,10 @@ impl MaterialKind {
     /// its slot-3000 placeholder.
     #[must_use]
     pub const fn needs_own_program(self) -> bool {
-        matches!(self, Self::Water | Self::Mirror | Self::LiquidDistortion)
+        matches!(
+            self,
+            Self::Water | Self::Mirror | Self::LiquidDistortion | Self::Lava
+        )
     }
 }
 

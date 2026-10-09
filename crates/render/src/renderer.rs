@@ -650,6 +650,8 @@ pub(crate) struct WorldFrame<'a> {
     /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
     /// write alpha by [`crate::material::FixedBlend::alpha_rule`].
     pub premultiplied: bool,
+    /// The mesh arena (placed liquid surfaces draw arena meshes, `crate::water`).
+    pub arena: &'a crate::arena::MeshArena,
 }
 
 /// What a render-world module needs to create retained GPU objects.
@@ -1409,10 +1411,12 @@ impl<'w> Renderer<'w> {
             },
             owner: self.owner,
             premultiplied,
+            arena: &self.arena,
         };
         let WorldDraws {
             terrain,
             water,
+            liquid,
             sky,
             instanced,
             far_terrain,
@@ -1439,7 +1443,7 @@ impl<'w> Renderer<'w> {
         {
             hooks.push(h);
         }
-        if let Some(h) = crate::water::build_hook(&mut self.water_state, water, &ctx)? {
+        if let Some(h) = crate::water::build_hook(&mut self.water_state, water, liquid, &ctx)? {
             hooks.push(h);
         }
         Ok(hooks)
@@ -1734,7 +1738,7 @@ impl<'w> Renderer<'w> {
         Some(bg)
     }
 
-    /// Bind group for the seven lit material textures (cached across frames).
+    /// Bind group for the eight lit material textures (cached across frames).
     fn lit_material_bind_group(&mut self, key: LitTextures) -> Option<wgpu::BindGroup> {
         let frame = self.frame_index;
         if let Some((bg, used)) = self.lit_material_bgs.get_mut(&key) {
@@ -1880,7 +1884,7 @@ impl<'w> Renderer<'w> {
                 debug.normals.map_or(0.0, |n| n.length),
             );
             let (material, uniform) = if let Some(selector) = &selector {
-                // Lit pipeline: seven material textures (lit_pipelines::LIT_TEXTURES).
+                // Lit pipeline: eight material textures (lit_pipelines::LIT_TEXTURES).
                 let l = &draw.lit;
                 let gloss = match l.gloss {
                     Gloss::Texture(id) => self.resolve_texture(Some(id), view, warnings),
@@ -1892,7 +1896,11 @@ impl<'w> Renderer<'w> {
                 };
                 let emissive = self.resolve_texture(l.emissive, view, warnings);
                 let glow = self.resolve_texture(l.glow_mask, view, warnings);
-                let resolved = [base, normal, dye_mask, gloss, emissive, glow, opacity];
+                let layer2 =
+                    self.resolve_texture(l.second_layer.map(|s| s.texture), view, warnings);
+                let resolved = [
+                    base, normal, dye_mask, gloss, emissive, glow, opacity, layer2,
+                ];
                 let key = LitTextures(resolved.map(|t| t.unwrap_or(white)));
                 let material = match materials.lit_index.get(&key) {
                     Some(&i) => i,
@@ -2535,9 +2543,10 @@ impl<'w> Renderer<'w> {
                 if !world.is_empty() {
                     match frame_uniform.as_ref() {
                         Some(fu) => {
-                            let copy = !world.water.is_empty()
+                            let wants_copy = !world.water.is_empty() || !world.liquid.is_empty();
+                            let copy = wants_copy
                                 && self.ensure_scene_copy(&view, (width, height), format);
-                            if !world.water.is_empty() && !copy && !warnings.scene_copy {
+                            if wants_copy && !copy && !warnings.scene_copy {
                                 tracing::warn!(
                                     pass = %pass.label,
                                     "colour target cannot be copied; water refraction \

@@ -7,7 +7,11 @@
 //!   the sun's specular and sparkle, and distance fog;
 //! - pixel checks of the refraction composite (water colour, overbright, under-water fog
 //!   tint and the shoreline blend of §8.4 step 3) against the spec's formulas, distant
-//!   water drawn as many quads in one draw, and hostile input.
+//!   water drawn as many quads in one draw, and hostile input;
+//! - pixel checks of the other program families and own-program records (§8.5–§8.7):
+//!   flow-map water that does not scroll with a neutral flow (WA9), lava as its emissive
+//!   layer at any time (WA16), the mirror alpha (WA15), and placed water and liquid meshes
+//!   drawn by their own programs.
 //!
 //! Regenerate with `TESSERA_BLESS=1 cargo test -p tessera-render --test water_golden`.
 
@@ -234,11 +238,13 @@ fn water_scene(r: &mut Renderer<'static>) -> Result<RgbaImage, RenderError> {
         origin: [0.0, 20.0],
         size: [80.0, 140.0],
         height: level,
+        uv: [0.0, 1.0, 1.0, -1.0],
     }];
     let wavy = [WaterQuad {
         origin: [80.0, 20.0],
         size: [80.0, 140.0],
         height: level,
+        uv: [0.0, 1.0, 1.0, -1.0],
     }];
     let params = WaterParams {
         water_color: [0.75, 0.9, 0.95],
@@ -439,6 +445,7 @@ fn water_over_faded(
                     origin: [0.0, 0.0],
                     size: [4.0, 4.0],
                     height: 0.0,
+                    uv: [0.0, 1.0, 1.0, -1.0],
                 }],
                 normal_map,
                 params,
@@ -662,11 +669,13 @@ fn distant_water_quads_draw_in_one_call_and_hostile_input_is_dropped() -> Result
         origin: [f32::NAN, 0.0],
         size: [160.0, 160.0],
         height: 1.0,
+        uv: [0.0, 1.0, 1.0, -1.0],
     });
     quads.push(WaterQuad {
         origin: [0.0, 0.0],
         size: [0.0, 160.0],
         height: 1.0,
+        uv: [0.0, 1.0, 1.0, -1.0],
     });
     let target = r.create_offscreen_target(64, 64, OffscreenFormat::Rgba8Srgb)?;
     let camera = Camera {
@@ -817,4 +826,281 @@ fn one_draw_per_quad_stays_bounded() -> Result<(), RenderError> {
     assert_eq!(stats.water_quads, draws);
     assert_eq!(stats.draw_calls, draws);
     Ok(())
+}
+
+// ---- own-program drawings (water.md §8.5–§8.7, 2026-10-09) --------------------------------
+
+/// The floor of [`water_over`] (colour `floor_rgb` at z = −1, unlit), then `add` on the pass,
+/// seen top-down from height 100 with `lighting`; the centre pixel and the frame's stats.
+fn scene_px(
+    r: &mut Renderer<'static>,
+    floor_rgb: [f32; 3],
+    lighting: FrameLighting,
+    add: impl FnOnce(&mut tessera_render::Pass),
+) -> Result<([u8; 4], tessera_render::FrameStats), RenderError> {
+    let floor_mesh = r.upload_mesh(&floor(-1.0))?;
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame
+        .pass(
+            "own-program",
+            PassSpace::World {
+                view_proj: top_down(),
+            },
+        )
+        .eye(Vec3::new(2.0, 2.0, 100.0))
+        .clear([0.0, 0.0, 0.0, 1.0])
+        .frame_lighting(lighting)
+        .mesh(
+            MeshDraw::new(
+                floor_mesh,
+                Mat4::IDENTITY,
+                Material {
+                    unlit: true,
+                    alpha: AlphaMode::Opaque,
+                    ..Material::color([floor_rgb[0], floor_rgb[1], floor_rgb[2], 1.0])
+                },
+            )
+            .with_lit(LitSurface {
+                fog: false,
+                ..LitSurface::default()
+            }),
+        );
+    add(pass);
+    let stats = r.end_frame(frame)?;
+    r.destroy_mesh(floor_mesh);
+    Ok((
+        r.read_pixels(&target)?.pixel(8, 8).unwrap_or_default(),
+        stats,
+    ))
+}
+
+fn no_sun(time: f32) -> FrameLighting {
+    FrameLighting {
+        sun: None,
+        time,
+        ..FrameLighting::default()
+    }
+}
+
+fn quad() -> [WaterQuad; 1] {
+    [WaterQuad {
+        origin: [0.0, 0.0],
+        size: [4.0, 4.0],
+        height: 0.0,
+        uv: [0.0, 1.0, 1.0, -1.0],
+    }]
+}
+
+/// A uniform 4 × 4 texture of `rgba`, uploaded linear (sampled values are the stored ones).
+fn solid(r: &mut Renderer<'static>, rgba: [u8; 4]) -> Result<TextureId, RenderError> {
+    upload(r, 4, &texels(4, |_, _| rgba), Wrap::Repeat)
+}
+
+/// A strongly varying normal map (so any scroll of its coordinates shows).
+fn bumpy(r: &mut Renderer<'static>) -> Result<TextureId, RenderError> {
+    upload(
+        r,
+        16,
+        &texels(16, |x, y| {
+            let a = ((x * 37 + y * 101) % 255) as u8;
+            [a, 255 - a, 200, 255]
+        }),
+        Wrap::Repeat,
+    )
+}
+
+/// `water.md` §8.6 (WA9): flow-map water with a neutral flow (no flow map: *F* = 0) is
+/// straight up for any normal map and any time, so 1057 and 1058 never scroll the normal map
+/// as the plain formula of §8.3 would; seen straight down with no tint, no Fresnel term and
+/// no specular colour the colour is the refraction × `WaterColor` × 1066.
+#[test]
+fn flow_water_does_not_scroll_like_plain_water() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.8, 0.4, 0.2];
+    let normal = bumpy(&mut r)?;
+    for layers in [1, 3] {
+        let flow = WaterParams {
+            family: tessera_render::WaterFamily::Flow,
+            normal_speed: [[1.0, 1.0], [0.0, 0.0], [0.0, 0.0]],
+            normal_scale: [10.0, 2.0, 8.0],
+            normal_layers: layers,
+            fog_amount: 0.0,
+            water_color: [0.5, 1.0, 1.0],
+            ..WaterParams::default()
+        };
+        // Layers 1 and 2 still: only the phases change with time.
+        let at = |r: &mut Renderer<'static>, t: f32| {
+            scene_px(r, floor, no_sun(t), |p| {
+                p.water(WaterDraw::new(quad(), Some(normal), flow));
+            })
+        };
+        let (a, _) = at(&mut r, 0.0)?;
+        let (b, _) = at(&mut r, 5.3)?;
+        let (c, _) = at(&mut r, 1234.5)?;
+        if layers == 1 {
+            assert!(close(a, [0.4, 0.4, 0.2]), "flat flow normal: {a:?}");
+        }
+        assert_eq!(
+            a, b,
+            "layers {layers}: the flow phases move nothing with F = 0"
+        );
+        assert_eq!(a, c, "layers {layers}");
+    }
+    Ok(())
+}
+
+/// `water.md` §8.6.5 (WA16): lava with a neutral flow, foam weight 0 and no fog is
+/// clamp(2 × 1066 × (0.8 − 0.5 *E*ₐ) × *E*.rgb) for any colour layers and any time, opaque.
+#[test]
+fn lava_is_its_emissive_layer() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let colour = solid(&mut r, [0, 255, 0, 255])?;
+    for (alpha, scale) in [(0u8, 2.4f32), (255, 0.9)] {
+        let emissive = solid(&mut r, [51, 26, 13, alpha])?;
+        let lava = WaterParams {
+            family: tessera_render::WaterFamily::Lava,
+            normal_speed: [[0.1, 0.1], [0.0; 2], [0.0; 2]],
+            normal_scale: [6.0, 1.0, 1.0],
+            normal_layers: 1,
+            overbright: 1.5,
+            ..WaterParams::default()
+        };
+        let mut seen = Vec::new();
+        for t in [0.0, 7.0, 99.5] {
+            let (px, _) = scene_px(&mut r, [0.0, 0.0, 1.0], no_sun(t), |p| {
+                p.water(WaterDraw {
+                    textures: tessera_render::WaterTextures {
+                        color: [Some(colour), Some(colour)],
+                        emissive: Some(emissive),
+                        ..tessera_render::WaterTextures::default()
+                    },
+                    ..WaterDraw::new(quad(), None, lava)
+                });
+            })?;
+            let want = [0.2, 0.1, 0.05].map(|c: f32| (c * scale).clamp(0.0, 1.0));
+            assert!(close(px, want), "Ea {alpha}, t {t}: {px:?} vs {want:?}");
+            seen.push(px);
+        }
+        assert!(seen.windows(2).all(|w| w[0] == w[1]), "lava does not move");
+    }
+    Ok(())
+}
+
+/// `water.md` §8.5.4 (WA15): a mirror surface's alpha is (bias + (1 − bias) *f*) × diffuse
+/// alpha × material alpha; seen straight down *f* = 0, so with bias 0 the puddle vanishes
+/// and with bias 1 it is the diffuse × the reflection (Tessera rule: the fog colour × the
+/// material colour).
+#[test]
+fn mirror_surfaces_follow_section_8_5_4() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.8, 0.4, 0.2];
+    let plane = r.upload_mesh(&floor_mesh_with_uv(0.0))?;
+    let diffuse = solid(&mut r, [255, 255, 255, 255])?;
+    let lighting = FrameLighting {
+        sun: None,
+        fog: Some(Fog {
+            near: 5_000.0,
+            far: 9_000.0,
+            color: [0.2, 0.4, 0.6],
+        }),
+        ..FrameLighting::default()
+    };
+    for (bias, want) in [(0.0f32, floor), (1.0, [0.1, 0.4, 0.6])] {
+        let mirror = tessera_render::MirrorParams {
+            fresnel_bias: bias,
+            fresnel_exponent: 1.33,
+            color: [0.5, 1.0, 1.0, 1.0],
+            ..tessera_render::MirrorParams::default()
+        };
+        let (px, stats) = scene_px(&mut r, floor, lighting.clone(), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Mirror(mirror),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(diffuse), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+            });
+        })?;
+        assert!(close(px, want), "bias {bias}: {px:?} vs {want:?}");
+        assert!(stats.draw_calls >= 2, "floor and mirror drawn");
+    }
+    r.destroy_mesh(plane);
+    Ok(())
+}
+
+/// `water.md` §8.5 rule item 1: a placed water plane is drawn by the water pipeline at its
+/// own triangles (here the §8.4 composite of `refraction_composite_follows_section_8_4`),
+/// and an unlit liquid-distortion surface (§8.5.5) is its texel × material colour × 1066,
+/// blended by its alpha.
+#[test]
+fn placed_water_and_liquid_meshes_use_their_own_programs() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.8, 0.4, 0.2];
+    let plane = r.upload_mesh(&floor_mesh_with_uv(0.0))?;
+    let tinted = WaterParams {
+        fog_amount: 0.0,
+        water_color: [0.5, 1.0, 1.0],
+        overbright: 1.5,
+        ..WaterParams::default()
+    };
+    let (px, _) = scene_px(&mut r, floor, no_sun(0.0), |p| {
+        p.liquid_mesh(tessera_render::LiquidMeshDraw {
+            mesh: plane,
+            submesh: Some(0),
+            transform: Mat4::IDENTITY,
+            shading: tessera_render::LiquidShading::Water {
+                params: tinted,
+                block_offset: [0.0; 2],
+            },
+            normal_map: None,
+            textures: tessera_render::WaterTextures::default(),
+            light_object: None,
+        });
+    })?;
+    assert!(close(px, [0.6, 0.6, 0.3]), "placed water: {px:?}");
+    let texel = solid(&mut r, [128, 64, 255, 255])?;
+    for (alpha, want) in [(1.0f32, [0.502, 0.251, 1.0]), (0.5, [0.651, 0.3255, 0.6])] {
+        let liquid = tessera_render::DistortionParams {
+            color: [1.0, 1.0, 1.0, alpha],
+            ..tessera_render::DistortionParams::default()
+        };
+        let (px, _) = scene_px(&mut r, floor, no_sun(3.0), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Distortion(liquid),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(texel), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+            });
+        })?;
+        assert!(close(px, want), "liquid alpha {alpha}: {px:?} vs {want:?}");
+    }
+    r.destroy_mesh(plane);
+    Ok(())
+}
+
+/// [`floor`] with texture coordinates 0..1 over the quad.
+fn floor_mesh_with_uv(z: f32) -> MeshData {
+    let mut m = floor(z);
+    m.uvs = Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    m
 }

@@ -7,7 +7,7 @@
 //! at the pass's dynamic offset, the shadow map and its comparison sampler. The shadow
 //! pass binds a frame group without the shadow map (it renders into it). Group 1 is the
 //! draw bind group shared with the M2 mesh pipelines (draw uniform + skinning palette).
-//! Group 2 holds the seven material textures of [`LIT_TEXTURES`].
+//! Group 2 holds the eight material textures of [`LIT_TEXTURES`].
 
 use glam::{Mat4, Vec3};
 
@@ -28,7 +28,10 @@ const SHADOW_WGSL: &str = include_str!("shaders/shadow.wgsl");
 
 /// Material textures of the lit pipeline, in binding order (samplers follow at
 /// `binding + LIT_TEXTURES`).
-pub(crate) const LIT_TEXTURES: usize = 7;
+pub(crate) const LIT_TEXTURES: usize = 8;
+
+/// Binding index of the second colour layer among the material textures.
+pub(crate) const LAYER2_TEXTURE: usize = 7;
 
 /// Depth format of the sun's shadow map (standard depth: 0 nearest the light).
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -47,6 +50,14 @@ pub(crate) mod lit_flag {
     /// The output alpha is the opacity source alone ([`crate::AlphaMode::Fixed`],
     /// `material.md` §11.3).
     pub const FACTOR_OPACITY: u32 = 1 << 16;
+    /// A second colour layer is drawn (`material.md` §10.3).
+    pub const SECOND_LAYER: u32 = 1 << 17;
+    /// The second layer's RGB is added (else multiplied).
+    pub const LAYER_ADD: u32 = 1 << 18;
+    /// The emissive texture reads texture matrix 1 (`material.md` §8.4).
+    pub const EMISSIVE_UV1: u32 = 1 << 19;
+    /// sRGB re-encode bit of the second colour layer (the shift above covers textures 0–6).
+    pub const SRGB_LAYER2: u32 = 1 << 20;
 }
 
 /// The lit shader source.
@@ -153,9 +164,26 @@ pub(crate) fn lit_fields(
     }
     for (i, &srgb) in ctx.srgb.iter().enumerate() {
         if srgb {
-            flags |= 1 << (lit_flag::SRGB_SHIFT + i as u32);
+            flags |= if i == LAYER2_TEXTURE {
+                lit_flag::SRGB_LAYER2
+            } else {
+                1 << (lit_flag::SRGB_SHIFT + i as u32)
+            };
         }
     }
+    // material.md §10.3: the second colour layer, when its texture resolved.
+    if let Some(l) = lit.second_layer
+        && ctx.present[LAYER2_TEXTURE]
+    {
+        flags |= lit_flag::SECOND_LAYER;
+        if l.add {
+            flags |= lit_flag::LAYER_ADD;
+        }
+    }
+    if lit.emissive_uv1 {
+        flags |= lit_flag::EMISSIVE_UV1;
+    }
+    u.uv = crate::material::UvTransform::pack(lit.uv);
     let mut packed = [0u32; 2];
     let count = lights.len().min(MAX_DRAW_LIGHTS);
     for (i, &idx) in lights.iter().take(count).enumerate() {

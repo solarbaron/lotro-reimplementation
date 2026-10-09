@@ -2001,6 +2001,20 @@ open:
 > surface records, on exactly the records of the §11.6 table. A reviewer may want a
 > different grouping; nothing here is the original's behaviour.
 
+> **OPEN (implementer, 2026-10-09, walker and `tessera-render`; engineering choices, no
+> format fact):** (a) The walker evaluates texture matrices 0 and 1 from the record-wide
+> binding table (§7.7 merged table, `TextureMatrixLayout::evaluate`), not per permutation: it
+> draws one colour permutation per surface. (b) The records that §10.3 does not cover
+> (0x2B000077, 0x2B0000B7, 0x2B000810, 0x2B000A0A, 0x2B0009D1) are drawn with their first
+> colour layer only; the fallback diagnostic counts their draws as "second layer left out".
+> (c) The emissive texture reads matrix 1 for the `EmissiveAndOpacity` role and for the three
+> records §8.4 lists (0x2B0009CE, 0x2B0009CF, 0x2B00070D), matrix 0 otherwise (glow masks:
+> matrix 0 always; the glow-pass exceptions of §8.4 do not apply to the colour pass drawn).
+> (d) When a second colour layer is drawn on a blended or alpha-tested surface whose base
+> texture is no opacity source, the second layer's alpha alone is the opacity (the product of
+> §10.3 with a base alpha of 1). (e) A second layer whose texture is still loading holds the
+> draw back like the base texture; one that failed to load is left out.
+
 
 ---
 

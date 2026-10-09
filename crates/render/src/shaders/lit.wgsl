@@ -76,15 +76,25 @@ struct Shaded {
 };
 
 fn lit_shade(in: LitVsOut) -> Shaded {
-    // Sample everything up front (uniform control flow).
-    let base = lit_to_stored(textureSample(t_base, s_base, in.uv), LIT_SRGB_BASE);
-    let normal_tex = lit_to_stored(textureSample(t_normal, s_normal, in.uv), LIT_SRGB_NORMAL);
-    let dye_tex = lit_to_stored(textureSample(t_dye, s_dye, in.uv), LIT_SRGB_DYE);
-    let gloss_tex = lit_to_stored(textureSample(t_gloss, s_gloss, in.uv), LIT_SRGB_GLOSS);
-    let emissive = lit_to_stored(textureSample(t_emissive, s_emissive, in.uv),
+    // Sample everything up front (uniform control flow). Texture matrix 0 for every
+    // texture but the second colour layer (matrix 1) and, where the record says so, the
+    // emissive texture (material.md §8.4).
+    let uv0 = lit_uv0(in.uv);
+    let uv1 = lit_uv1(in.uv);
+    var uv_em = uv0;
+    if (lit_flag(LIT_EMISSIVE_UV1)) {
+        uv_em = uv1;
+    }
+    let layer2 = lit_to_stored(textureSample(t_layer2, s_layer2, uv1), LIT_SRGB_LAYER2);
+    let base = lit_layered(lit_to_stored(textureSample(t_base, s_base, uv0), LIT_SRGB_BASE),
+        layer2);
+    let normal_tex = lit_to_stored(textureSample(t_normal, s_normal, uv0), LIT_SRGB_NORMAL);
+    let dye_tex = lit_to_stored(textureSample(t_dye, s_dye, uv0), LIT_SRGB_DYE);
+    let gloss_tex = lit_to_stored(textureSample(t_gloss, s_gloss, uv0), LIT_SRGB_GLOSS);
+    let emissive = lit_to_stored(textureSample(t_emissive, s_emissive, uv_em),
         LIT_SRGB_EMISSIVE);
-    let glow = lit_to_stored(textureSample(t_glow, s_glow, in.uv), LIT_SRGB_GLOW);
-    let opacity_tex = lit_to_stored(textureSample(t_opacity, s_opacity, in.uv),
+    let glow = lit_to_stored(textureSample(t_glow, s_glow, uv0), LIT_SRGB_GLOW);
+    let opacity_tex = lit_to_stored(textureSample(t_opacity, s_opacity, uv0),
         LIT_SRGB_OPACITY);
     let f = draw.flags.x;
 

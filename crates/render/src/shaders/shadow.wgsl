@@ -29,9 +29,16 @@ fn vs_shadow_skinned(in: VsIn, skin: SkinIn) -> ShadowVsOut {
 
 @fragment
 fn fs_shadow_mask(in: ShadowVsOut) {
-    let base = textureSample(t_base, s_base, in.uv);
-    let emissive = textureSample(t_emissive, s_emissive, in.uv);
-    let opacity = textureSample(t_opacity, s_opacity, in.uv);
+    let uv0 = lit_uv0(in.uv);
+    let uv1 = lit_uv1(in.uv);
+    var uv_em = uv0;
+    if (lit_flag(LIT_EMISSIVE_UV1)) {
+        uv_em = uv1;
+    }
+    let base = lit_layered(textureSample(t_base, s_base, uv0),
+        textureSample(t_layer2, s_layer2, uv1));
+    let emissive = textureSample(t_emissive, s_emissive, uv_em);
+    let opacity = textureSample(t_opacity, s_opacity, uv0);
     // Alpha is never sRGB-encoded, so the samples need no conversion here.
     if (lit_opacity(base, emissive, opacity) <= draw.params.x) {
         discard;

@@ -12,6 +12,11 @@ struct Surface {
     params: vec4<f32>,
     // x = flags (SF_*), y = sRGB re-encode bits (SF_SRGB_*).
     flags: vec4<u32>,
+    // Texture matrices 0 and 1 (material.md §8.4), rows ((a, b, c), (d, e, f)) packed as
+    // (a0, b0, c0, d0), (e0, f0, a1, b1), (c1, d1, e1, f1).
+    uv0: vec4<f32>,
+    uv1: vec4<f32>,
+    uv2: vec4<f32>,
 };
 
 const SF_NORMAL_MAP: u32 = 1u;
@@ -31,14 +36,29 @@ const SF_NO_FOG: u32 = 128u;
 // A fixed-function blend (AlphaMode::Fixed): the opacity a blend factor reads is the opacity
 // texel alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const SF_FACTOR_OPACITY: u32 = 256u;
+// A second colour layer (material.md §10.3): RGB added (SF_LAYER_ADD) or multiplied, the
+// alphas multiplied.
+const SF_SECOND_LAYER: u32 = 512u;
+const SF_LAYER_ADD: u32 = 1024u;
 const SF_SRGB_BASE: u32 = 1u;
 const SF_SRGB_NORMAL: u32 = 2u;
+const SF_SRGB_LAYER2: u32 = 4u;
 
 @group(2) @binding(0) var<uniform> surface: Surface;
 @group(2) @binding(1) var t_base: texture_2d<f32>;
 @group(2) @binding(2) var t_normal: texture_2d<f32>;
 @group(2) @binding(3) var s_base: sampler;
 @group(2) @binding(4) var s_normal: sampler;
+@group(2) @binding(5) var t_layer2: texture_2d<f32>;
+@group(2) @binding(6) var s_layer2: sampler;
+
+// A texture-coordinate pair through packed matrix k (0 or 1) of `p0`..`p2`.
+fn uv_through(p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, k: u32, uv: vec2<f32>) -> vec2<f32> {
+    if (k == 0u) {
+        return vec2<f32>(p0.x * uv.x + p0.y * uv.y + p0.z, p0.w * uv.x + p1.x * uv.y + p1.y);
+    }
+    return vec2<f32>(p1.z * uv.x + p1.w * uv.y + p2.x, p2.y * uv.x + p2.z * uv.y + p2.w);
+}
 
 struct ModelIn {
     @location(0) position: vec3<f32>,
@@ -63,8 +83,25 @@ fn surface_to_stored(c: vec4<f32>, srgb_bit: u32) -> vec4<f32> {
     return vec4<f32>(frame_linear_to_srgb(c.rgb), c.a);
 }
 
+// The base colour at `uv0` with the second colour layer at `uv1` applied (material.md
+// §10.3).
+fn surface_base_at(uv0: vec2<f32>, uv1: vec2<f32>) -> vec4<f32> {
+    let base = surface_to_stored(textureSample(t_base, s_base, uv0), SF_SRGB_BASE);
+    let layer2 = surface_to_stored(textureSample(t_layer2, s_layer2, uv1), SF_SRGB_LAYER2);
+    if (!surface_flag(SF_SECOND_LAYER)) {
+        return base;
+    }
+    var rgb = base.rgb * layer2.rgb;
+    if (surface_flag(SF_LAYER_ADD)) {
+        rgb = base.rgb + layer2.rgb;
+    }
+    return vec4<f32>(rgb, base.a * layer2.a);
+}
+
+// The base colour through the surface's own texture matrices.
 fn surface_base(uv: vec2<f32>) -> vec4<f32> {
-    return surface_to_stored(textureSample(t_base, s_base, uv), SF_SRGB_BASE);
+    return surface_base_at(uv_through(surface.uv0, surface.uv1, surface.uv2, 0u, uv),
+        uv_through(surface.uv0, surface.uv1, surface.uv2, 1u, uv));
 }
 
 fn surface_normal_texel(uv: vec2<f32>) -> vec4<f32> {

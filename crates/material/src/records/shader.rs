@@ -88,6 +88,25 @@ pub struct SamplerState {
 }
 
 impl SamplerState {
+    /// The texture list the sampler holds until a binding sets one (bytes 0–3,
+    /// `default_texture`; 0 = none).
+    #[must_use]
+    pub fn default_texture(&self) -> Did {
+        Did(u32::from_le_bytes([
+            self.raw[0],
+            self.raw[1],
+            self.raw[2],
+            self.raw[3],
+        ]))
+    }
+
+    /// Where the sampler's image comes from (bytes 4–7, `source`): 0 a material texture,
+    /// other values engine-supplied images (`material.md` §7.5).
+    #[must_use]
+    pub fn source(&self) -> u32 {
+        u32::from_le_bytes([self.raw[4], self.raw[5], self.raw[6], self.raw[7]])
+    }
+
     /// Address mode along U (byte 8).
     #[must_use]
     pub fn address_u(&self) -> AddressMode {

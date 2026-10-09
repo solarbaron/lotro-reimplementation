@@ -630,6 +630,76 @@ pub enum LightSelection {
     },
 }
 
+/// An affine texture-coordinate transform (`material.md` §8.4): u′ = `rows[0]` · (u, v, 1),
+/// v′ = `rows[1]` · (u, v, 1). A transform with a non-finite element acts as the identity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvTransform {
+    /// The two rows (m00, m01, m03) and (m10, m11, m13).
+    pub rows: [[f32; 3]; 2],
+}
+
+impl UvTransform {
+    /// The identity.
+    pub const IDENTITY: Self = Self {
+        rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    };
+
+    /// This transform, or the identity when an element is not finite.
+    #[must_use]
+    pub fn sanitized(self) -> Self {
+        if self.rows.iter().flatten().all(|v| v.is_finite()) {
+            self
+        } else {
+            Self::IDENTITY
+        }
+    }
+
+    /// (u, v) transformed (with [`Self::sanitized`]).
+    #[must_use]
+    pub fn apply(self, uv: [f32; 2]) -> [f32; 2] {
+        let r = self.sanitized().rows;
+        [
+            r[0][0] * uv[0] + r[0][1] * uv[1] + r[0][2],
+            r[1][0] * uv[0] + r[1][1] * uv[1] + r[1][2],
+        ]
+    }
+
+    /// Whether this is the identity.
+    #[must_use]
+    pub fn is_identity(self) -> bool {
+        self == Self::IDENTITY
+    }
+
+    /// Both transforms packed into three vectors (the layout of the lit and instanced
+    /// shaders): (a₀, b₀, c₀, d₀), (e₀, f₀, a₁, b₁), (c₁, d₁, e₁, f₁) for rows
+    /// ((a, b, c), (d, e, f)).
+    pub(crate) fn pack(pair: [Self; 2]) -> [[f32; 4]; 3] {
+        let [m0, m1] = pair.map(|m| m.sanitized().rows);
+        [
+            [m0[0][0], m0[0][1], m0[0][2], m0[1][0]],
+            [m0[1][1], m0[1][2], m1[0][0], m1[0][1]],
+            [m1[0][2], m1[1][0], m1[1][1], m1[1][2]],
+        ]
+    }
+}
+
+impl Default for UvTransform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+/// The second colour layer of a surface (`material.md` §10.3): slot 3001, sampled at texture
+/// matrix 1, combined with the base colour by multiplying or adding the RGB; the two alphas
+/// are multiplied into the opacity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SecondLayer {
+    /// The layer's texture.
+    pub texture: TextureId,
+    /// Add the RGB (else multiply).
+    pub add: bool,
+}
+
 /// The inputs of a mesh draw that only lit passes use (`lighting.md` §4.1, §5). Plain
 /// data like [`Material`]; ignored outside lit passes.
 ///
@@ -665,6 +735,16 @@ pub struct LitSurface {
     pub cast_shadow: bool,
     /// Lights from the pass's table.
     pub lights: LightSelection,
+    /// Texture matrices 0 and 1 (`material.md` §8.4): the base colour, normal, dye, gloss,
+    /// opacity and glow textures read matrix 0, the second colour layer matrix 1, the
+    /// emissive texture matrix 0 or 1 ([`LitSurface::emissive_uv1`]). The caller evaluates
+    /// the curves at the clock each frame (`material.md` §5.3.1).
+    pub uv: [UvTransform; 2],
+    /// The second colour layer (`material.md` §10.3).
+    pub second_layer: Option<SecondLayer>,
+    /// The emissive texture reads texture matrix 1 (`material.md` §8.4: `EmissiveAndOpacity`
+    /// and the listed `Emissive` records).
+    pub emissive_uv1: bool,
 }
 
 impl Default for LitSurface {
@@ -679,6 +759,9 @@ impl Default for LitSurface {
             fog: true,
             cast_shadow: true,
             lights: LightSelection::Auto,
+            uv: [UvTransform::IDENTITY; 2],
+            second_layer: None,
+            emissive_uv1: false,
         }
     }
 }

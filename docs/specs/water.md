@@ -1671,6 +1671,26 @@ about π + 0.1 s and π − 0.1 s.
 > (§8.3, W38), which decide how fast the curve-valued scales of 0x3100328B and 0x3100824C move
 > (§8.7.1; Tessera Decision there).
 
+> **OPEN (implementer, 2026-10-09, `tessera-material`, `tessera-render` and the walker;
+> engineering choices, no format fact):** (a) §8.2 tells plain water from plain water on mesh
+> UV (0x2B00084B, 0x2B00089A, 0x2B000A8D) and §8.5.5 the liquid-distortion record whose layers
+> read the world position (0x2B000442) only by DID; no interface rule is given, so Tessera
+> recognises these four records by DID (`tessera_material::water::PLAIN_UV_RECORDS`,
+> `tessera_material::liquid::LIQUID_WORLD_RECORDS`) and every other water record by the
+> interface rules of `material.md` §11.6 (older bump water: declares 1056; flow-map water: a
+> 3075 slot, with layers 1 and 2 when it declares 1059). An interface rule would let a
+> renderer do without fixed DIDs. (b) §8.6.1 names "a sampler without binding" as the noise
+> source; Tessera takes the first non-zero default texture of a sampler that no texture
+> binding names, in permutation and sampler order (at most eight kept per record). (c) The
+> mirror and liquid-distortion drawings of placed meshes multiply the walker's draw-distance
+> fade into the material alpha; the water and lava drawings, which write with ONE / ZERO, do
+> not fade. (d) A water-table entry whose surface is a mirror or liquid-distortion record (none
+> in this install) is drawn as plain water with the 0x2B0000A8 defaults of §8.2. (e) The view
+> depth of §8.6.2 step 7 and of the depth fog is the clip-space *w* of the pixel. (f) Texture
+> lists of these drawings are uploaded as sRGB like every walker texture and re-encoded to the
+> stored values after sampling (flow, foam and noise maps included), so the flow vector of
+> §8.6.2 step 1 reads the stored channels.
+
 ---
 
 <a id="s15"></a>

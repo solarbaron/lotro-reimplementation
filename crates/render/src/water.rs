@@ -14,27 +14,46 @@
 //! water colour and overbright, then distance fog. Output alpha 1, written with source ONE
 //! and destination ZERO, depth written, both faces drawn (§8.4 Tessera rule).
 //!
+//! The same pipeline draws the other water program families of `water.md` §8.2 and the
+//! records with programs of their own (`material.md` §11.6), on landscape quads and on
+//! placed meshes ([`Pass::liquid_mesh`]): plain water on mesh UV and older bump water
+//! (§8.5.6), flow-map water (§8.6: the flow normal with layers 1 and 2, the colour of the
+//! Tessera rule of §8.6.4), lava (§8.6.5: emissive, unlit, opaque), the mirror record of
+//! puddles (§8.5.4, with the Tessera rule's fog-coloured reflection) and the
+//! liquid-distortion records (§8.5.5). The opaque families write with ONE / ZERO like the
+//! plain water; the mirror and liquid draws blend by source alpha and are drawn last, back
+//! to front. Every time-dependent value reads the frame's time input *T* (`water.md` §8.7);
+//! curve-valued parameters are evaluated by the caller at the clock each frame (§8.7.1).
+//!
 //! A draw may carry the far view's far-draw fade (`far-view.md` §7.2, FD1; the far view
 //! applies it to the sector water as a Tessera choice, `far-view.md` §8 OPEN): the fragment
 //! is blended toward the undistorted scene copy by *a* = 1 − sat((*d* − *s*) × *r*), *d* the
 //! distance to the eye, and discarded where *a* < 0.001 (without a scene copy: where
 //! *a* < 0.5).
 
+use std::collections::HashMap;
 use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
+use crate::arena::MeshId;
 use crate::error::{RenderError, Result};
 use crate::far_view::FarFadeParams;
 use crate::frame::Pass;
 use crate::instanced::{
-    lit_source, max_uniform_bytes, sampler_entry, texture_entry, uniform_entry, uniform_stride,
-    world_depth,
+    light_words, lit_source, max_uniform_bytes, mesh_vertex_layout, sampler_entry, texture_entry,
+    uniform_entry, uniform_stride, world_depth,
 };
+use crate::lighting::MAX_DRAW_LIGHTS;
+use crate::lit_pipelines::LightTarget;
+use crate::material::{LightSelection, UvTransform};
+use crate::mesh_pipelines::is_mirrored;
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
-use crate::renderer::{FrameStats, WorldFrame};
+use crate::renderer::{FrameStats, ResolvedTexture, WorldFrame};
 use crate::texture::TextureId;
 
 const WATER_WGSL: &str = include_str!("shaders/water.wgsl");
@@ -52,23 +71,66 @@ pub const MAX_WATER_QUADS: usize = 1 << 16;
 /// are coarsened to stay below; one cell per quad always fits (6 × [`MAX_WATER_QUADS`]).
 pub const MAX_WATER_VERTICES: u64 = 1 << 24;
 
+/// Largest number of placed liquid draws ([`Pass::liquid_mesh`]) per pass and frame; draws
+/// beyond it are dropped (logged), not an error.
+pub const MAX_LIQUID_MESH_DRAWS: usize = 1 << 14;
+
+/// The program family a water draw follows (`water.md` §8.2 "Program families").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WaterFamily {
+    /// Plain water (§8.3–§8.4): three normal layers at *B* × `Scale`ₖ + `Speed`ₖ × *T*.
+    #[default]
+    Plain,
+    /// Plain water on mesh UV (§8.5.6): the layers at UV × `Scale`ₖ + `Speed`ₖ × *T*.
+    PlainUv,
+    /// Older bump water (§8.5.6): layers *U* + (*b*, *b*), 2*U* + 4(*b*, *b*), 4*U* + 8(*b*,
+    /// *b*) with *U* = UV × [`WaterParams::bump`]`[0]`, *b* = `bump[1]` × *T*; the pixel stage
+    /// as §8.4 (Tessera rule).
+    OlderBump,
+    /// Flow-map water (§8.6): [`WaterParams::normal_speed`]`[0]` holds the phase rates 1057
+    /// and 1058, `normal_scale[0]` the scale 1063; with [`WaterParams::normal_layers`] 3 the
+    /// layers 1 and 2 of §8.6.2 step 7 are added.
+    Flow,
+    /// Lava (§8.6.5): the phase rates and scale as for [`WaterFamily::Flow`],
+    /// [`WaterParams::overbright`] the brightness 1066; the colour layers, emissive, flow,
+    /// foam and noise textures of [`WaterTextures`]; no light, opaque.
+    Lava,
+}
+
+/// The flow, foam and depth parameters of the flow-map and lava families (`water.md`
+/// §8.6.1, §8.6.5).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WaterFlowParams {
+    /// 1182, 1183: foam lookup offset.
+    pub foam_offset: [f32; 2],
+    /// 1184, 1185: foam tiling.
+    pub foam_tile: [f32; 2],
+    /// 1186, 1187: offset of the flow map's third-channel lookup.
+    pub depth_offset: [f32; 2],
+    /// 1188: rotation of the phase coordinates (radians).
+    pub rotation: f32,
+}
+
 /// The water parameters of a surface (`water.md` §8.2: the `c_Water…` material
 /// parameters the 0x2B0000A8 programs read). [`Default`] gives that record's shader
 /// defaults; a surface's materials override them. Colours are stored-value RGB.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaterParams {
+    /// The program family.
+    pub family: WaterFamily,
     /// 1044 `c_WaterWaveSpeed`.
     pub wave_speed: f32,
     /// 1045 `c_WaterWaveFrequency`.
     pub wave_frequency: f32,
     /// 1046 `c_WaterWaveAmplitude` (0: no waves).
     pub wave_amplitude: f32,
-    /// 1057–1062: (U, V) scroll speed of normal layers 0, 1, 2 (units per second).
+    /// 1057–1062: (U, V) scroll speed of normal layers 0, 1, 2 (units per second). Flow map
+    /// and lava: layer 0 holds the phase rates (cycles per second).
     pub normal_speed: [[f32; 2]; 3],
     /// 1063–1065: tiling of normal layers 0, 1, 2 (repeats per landblock).
     pub normal_scale: [f32; 3],
-    /// How many normal layers are used (1–3). Records that do not declare layers 1 and 2
-    /// (`water.md` §8.2 OPEN) may set 1.
+    /// How many normal layers are used (1–3). Flow map: 3 adds layers 1 and 2 (§8.6.2
+    /// step 7), 1 stops after step 6.
     pub normal_layers: u32,
     /// 1047 `c_WaterReflectionBumpDistortionAmount`.
     pub reflection_distortion: f32,
@@ -80,7 +142,7 @@ pub struct WaterParams {
     pub fresnel_exponent: f32,
     /// 1054 `c_WaterSpecularPower`.
     pub specular_power: f32,
-    /// 1066 `c_WaterOverbrightAmount`.
+    /// 1066 `c_WaterOverbrightAmount` (lava: the brightness).
     pub overbright: f32,
     /// 1067 `c_WaterFakeSpecularThreshold` (sparkle threshold).
     pub fake_specular_threshold: f32,
@@ -94,12 +156,17 @@ pub struct WaterParams {
     pub fog_color: [f32; 3],
     /// 2011 `c_WaterShorelineColor`.
     pub shoreline_color: [f32; 3],
+    /// Flow-map and lava parameters.
+    pub flow: WaterFlowParams,
+    /// Older bump water: 1055 (texture scale) and 1056 (speed).
+    pub bump: [f32; 2],
 }
 
 impl Default for WaterParams {
     /// The shader defaults of 0x2B0000A8 (`water.md` §8.2 table; decision 0012).
     fn default() -> Self {
         Self {
+            family: WaterFamily::Plain,
             wave_speed: 1.0,
             wave_frequency: 0.2,
             wave_amplitude: 0.0,
@@ -118,8 +185,27 @@ impl Default for WaterParams {
             water_color: [1.0; 3],
             fog_color: [0.0; 3],
             shoreline_color: [1.0; 3],
+            flow: WaterFlowParams::default(),
+            bump: [1.0, 0.0],
         }
     }
+}
+
+/// The textures of a water draw besides its normal map (`water.md` §8.6.1, §8.6.5). An
+/// absent or unknown texture is left out (the drawing treats its input as neutral: no flow,
+/// no foam, phase offset 0, white colour layers, no emissive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WaterTextures {
+    /// Slot 3075: the flow map (sampled with clamped addresses).
+    pub flow: Option<TextureId>,
+    /// Slot 3079: the foam map.
+    pub foam: Option<TextureId>,
+    /// The noise texture of the phase offset.
+    pub noise: Option<TextureId>,
+    /// Slots 3000 and 3001: colour layers (lava), the diffuse image (mirror, liquid).
+    pub color: [Option<TextureId>; 2],
+    /// Slot 3018: the emissive layer (lava).
+    pub emissive: Option<TextureId>,
 }
 
 /// One horizontal water quad (`water.md` §8.1): the rectangle from `origin` to
@@ -132,6 +218,10 @@ pub struct WaterQuad {
     pub size: [f32; 2],
     /// Water height *h* (world z).
     pub height: f32,
+    /// The mesh UV of the quad (`water.md` §8.1): (u, v) at the south-west corner and the
+    /// change (du, dv) to the north-east corner. [`WaterQuad::landblock`] gives one repeat
+    /// per quad, `(0, 1, 1, −1)`; [`WaterQuad::with_sector_uv`] the sector coordinates.
+    pub uv: [f32; 4],
 }
 
 impl WaterQuad {
@@ -143,11 +233,26 @@ impl WaterQuad {
             origin,
             size: [WATER_BLOCK; 2],
             height,
+            uv: [0.0, 1.0, 1.0, -1.0],
         }
     }
 
+    /// The quad with the texture coordinates of `water.md` §8.1: (*i* / 3, 1 − *j* / 3) over
+    /// its 3 × 3 sector, `ix`, `iy` (0–2) the landblock's place in the sector.
+    #[must_use]
+    pub fn with_sector_uv(mut self, ix: u32, iy: u32) -> Self {
+        let (i, j) = ((ix % 3) as f32, (iy % 3) as f32);
+        self.uv = [i / 3.0, 1.0 - j / 3.0, 1.0 / 3.0, -1.0 / 3.0];
+        self
+    }
+
     fn sane(&self) -> Option<Self> {
-        let ok = self.origin.iter().chain(&self.size).all(|v| v.is_finite())
+        let ok = self
+            .origin
+            .iter()
+            .chain(&self.size)
+            .chain(&self.uv)
+            .all(|v| v.is_finite())
             && self.height.is_finite()
             && self.size.iter().all(|&s| s > 0.0);
         ok.then_some(*self)
@@ -175,6 +280,8 @@ pub struct WaterDraw {
     pub block_offset: [f32; 2],
     /// The far-draw fade (`far-view.md` §7.2; module docs). Default: no fade.
     pub fade: FarFadeParams,
+    /// The flow-map, foam, noise, colour and emissive textures (flow-map and lava families).
+    pub textures: WaterTextures,
 }
 
 impl WaterDraw {
@@ -192,8 +299,135 @@ impl WaterDraw {
             subdivisions: 1,
             block_offset: [0.0; 2],
             fade: FarFadeParams::default(),
+            textures: WaterTextures::default(),
         }
     }
+}
+
+/// The parameters of the mirror record (`water.md` §8.5.4), evaluated by the caller at the
+/// clock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MirrorParams {
+    /// 1100: reflection offset by the normal.
+    pub reflection_distortion: f32,
+    /// 1101: Fresnel exponent.
+    pub fresnel_exponent: f32,
+    /// 1102: Fresnel bias.
+    pub fresnel_bias: f32,
+    /// 1103: normal-map tiling.
+    pub normal_scale: f32,
+    /// 1104, 1105: the evaluated speeds *S*; the drawing multiplies them by *T* again.
+    pub normal_speed: [f32; 2],
+    /// 1106: Fresnel bump amount.
+    pub fresnel_bump: f32,
+    /// The material colour 2000 (stored-value RGBA).
+    pub color: [f32; 4],
+}
+
+impl Default for MirrorParams {
+    fn default() -> Self {
+        Self {
+            reflection_distortion: 0.0,
+            fresnel_exponent: 1.0,
+            fresnel_bias: 0.0,
+            normal_scale: 1.0,
+            normal_speed: [0.0; 2],
+            fresnel_bump: 0.0,
+            color: [1.0; 4],
+        }
+    }
+}
+
+/// The parameters of a liquid-distortion record (`water.md` §8.5.5), evaluated by the
+/// caller at the clock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DistortionParams {
+    /// Lit like a lit `ColorAndOpacity` surface (else unlit, × 1066).
+    pub lit: bool,
+    /// The layers read *B* instead of the mesh UV through texture matrix 0.
+    pub world_coordinates: bool,
+    /// 1044–1046: vertex waves (speed, frequency, amplitude), unlit records only.
+    pub waves: [f32; 3],
+    /// 1048: distortion amount.
+    pub distortion: f32,
+    /// 1057–1062: scroll speed (U, V) of layers 0, 1, 2.
+    pub speed: [[f32; 2]; 3],
+    /// 1063–1065: tiling of layers 0, 1, 2.
+    pub scale: [f32; 3],
+    /// 1066: colour scale of the unlit records.
+    pub overbright: f32,
+    /// Texture matrix 0 (`material.md` §8.4).
+    pub matrix: UvTransform,
+    /// The material colour 2000 (stored-value RGBA).
+    pub color: [f32; 4],
+    /// The alpha-test threshold (texel alpha at or below it is discarded), when on.
+    pub alpha_test: Option<f32>,
+    /// Both faces drawn.
+    pub two_sided: bool,
+    /// Depth write.
+    pub depth_write: bool,
+}
+
+impl Default for DistortionParams {
+    fn default() -> Self {
+        Self {
+            lit: false,
+            world_coordinates: false,
+            waves: [0.0; 3],
+            distortion: 0.0,
+            speed: [[0.0; 2]; 3],
+            scale: [1.0; 3],
+            overbright: 1.0,
+            matrix: UvTransform::IDENTITY,
+            color: [1.0; 4],
+            alpha_test: None,
+            two_sided: false,
+            depth_write: false,
+        }
+    }
+}
+
+/// How a placed liquid surface is drawn ([`LiquidMeshDraw`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LiquidShading {
+    /// A water record (any [`WaterFamily`], lava included) at the mesh's own triangles;
+    /// *B* comes from their world positions (`water.md` §8.5 rule item 1).
+    Water {
+        /// The surface's water parameters.
+        params: WaterParams,
+        /// The horizontal offset *O* (`water.md` §8.3).
+        block_offset: [f32; 2],
+    },
+    /// The mirror record (`water.md` §8.5.4).
+    Mirror(MirrorParams),
+    /// A liquid-distortion record (`water.md` §8.5.5).
+    Distortion(DistortionParams),
+}
+
+impl LiquidShading {
+    fn blended(&self) -> bool {
+        !matches!(self, Self::Water { .. })
+    }
+}
+
+/// A placed mesh surface drawn by its own program ([`Pass::liquid_mesh`]; `material.md`
+/// §11.6, `water.md` §8.5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiquidMeshDraw {
+    /// The mesh ([`crate::Renderer::upload_mesh`]).
+    pub mesh: MeshId,
+    /// Which submesh; `None` draws all of them.
+    pub submesh: Option<u32>,
+    /// Local → world transform.
+    pub transform: Mat4,
+    /// The drawing.
+    pub shading: LiquidShading,
+    /// The normal map (3011), or the distortion texture (3026) of a liquid record.
+    pub normal_map: Option<TextureId>,
+    /// The other textures (the mirror's and liquid's diffuse in `color[0]`).
+    pub textures: WaterTextures,
+    /// The caller's object handle for the light selection of lit liquids.
+    pub light_object: Option<u64>,
 }
 
 impl Pass {
@@ -204,12 +438,22 @@ impl Pass {
         self.world.water.push(draw);
         self
     }
+
+    /// Draw a placed surface of a water, mirror, liquid-distortion or lava record with its
+    /// own program (`water.md` §8.5, `material.md` §11.6). Needs a lit pass; drawn in the
+    /// translucent stage after the landscape water, the blended ones back to front.
+    pub fn liquid_mesh(&mut self, draw: LiquidMeshDraw) -> &mut Self {
+        self.world.liquid.push(draw);
+        self
+    }
 }
 
 /// Water uniform (must match `Water` in `water.wgsl`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct WaterUniform {
+    /// Mesh draws: model → world.
+    model: [[f32; 4]; 4],
     /// speed, frequency, amplitude, normal layer count.
     waves: [f32; 4],
     /// layer 0 (u, v), layer 1 (u, v) speeds.
@@ -231,11 +475,42 @@ struct WaterUniform {
     screen: [f32; 4],
     /// Far-draw fade start *s*, inverse range *r* (0: no fade), unused ×2.
     fade: [f32; 4],
+    /// family, textures present, textures sRGB, flags.
+    kind: [u32; 4],
+    flow0: [f32; 4],
+    flow1: [f32; 4],
+    extra0: [f32; 4],
+    extra1: [f32; 4],
+    material: [f32; 4],
+    uv_row0: [f32; 4],
+    uv_row1: [f32; 4],
+    lights: [u32; 4],
 }
 
 /// Largest Fresnel exponent and specular power uploaded (the lit pipelines' cap); values
 /// below 0 become 0 (`docs/specs/render.md` §5.3, implementer note).
 const MAX_WATER_POWER: f32 = 4096.0;
+
+/// Family codes (must match `FAM_*` in `water.wgsl`).
+mod fam {
+    pub const PLAIN: u32 = 0;
+    pub const PLAIN_UV: u32 = 1;
+    pub const BUMP: u32 = 2;
+    pub const FLOW: u32 = 3;
+    pub const LAVA: u32 = 4;
+    pub const MIRROR: u32 = 5;
+    pub const LIQUID: u32 = 6;
+    pub const LIQUID_LIT: u32 = 7;
+}
+
+/// Texture bits (must match `T_*` in `water.wgsl`), in binding order.
+const TEXTURE_BITS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
+
+/// Flag bits (must match `FL_*` in `water.wgsl`).
+mod fl {
+    pub const WORLD_UV: u32 = 1;
+    pub const ALPHA_TEST: u32 = 2;
+}
 
 /// Per-quad instance data (must match `QuadIn` in `water.wgsl`).
 #[repr(C)]
@@ -245,27 +520,65 @@ struct QuadGpu {
     rect: [f32; 4],
     /// height, unused ×3
     height: [f32; 4],
+    /// u, v at the south-west corner, du, dv
+    uv: [f32; 4],
 }
 
-const QUAD_ATTRS: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
+const QUAD_ATTRS: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+
+fn fin(v: f32, d: f32) -> f32 {
+    if v.is_finite() { v } else { d }
+}
+
+/// The textures of one draw, in binding order: normal, flow, foam, noise, colour 0,
+/// colour 1, emissive.
+type DrawTextures = [Option<TextureId>; 7];
+
+fn draw_textures(normal: Option<TextureId>, t: &WaterTextures) -> DrawTextures {
+    [
+        normal, t.flow, t.foam, t.noise, t.color[0], t.color[1], t.emissive,
+    ]
+}
 
 impl WaterUniform {
+    /// The common part: water parameters (or the defaults), the scene copy, the textures
+    /// that resolved (`resolved`: binding order) and the frame size.
     fn new(
         p: &WaterParams,
         scene: bool,
-        normal: Option<bool>,
+        resolved: &[Option<ResolvedTexture>; 7],
         subdivisions: u32,
         ctx: &WorldFrame<'_>,
         offset: [f32; 2],
         fade: FarFadeParams,
     ) -> Self {
-        let f = |v: f32, d: f32| if v.is_finite() { v } else { d };
+        let f = fin;
         let d = WaterParams::default();
         let rgb = |c: [f32; 3], dc: [f32; 3]| [f(c[0], dc[0]), f(c[1], dc[1]), f(c[2], dc[2]), 1.0];
         let sp = |k: usize, i: usize| f(p.normal_speed[k][i], d.normal_speed[k][i]);
         let sc = |k: usize| f(p.normal_scale[k], d.normal_scale[k]);
+        let normal = resolved[0].as_ref().map(|t| t.srgb);
+        let mut present = 0;
+        let mut srgb = 0;
+        for (i, t) in resolved.iter().enumerate() {
+            if let (Some(t), Some(bit)) = (t, TEXTURE_BITS.get(i)) {
+                present |= bit;
+                if t.srgb {
+                    srgb |= bit;
+                }
+            }
+        }
+        let family = match p.family {
+            WaterFamily::Plain => fam::PLAIN,
+            WaterFamily::PlainUv => fam::PLAIN_UV,
+            WaterFamily::OlderBump => fam::BUMP,
+            WaterFamily::Flow => fam::FLOW,
+            WaterFamily::Lava => fam::LAVA,
+        };
+        let fl = &p.flow;
         Self {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
             waves: [
                 f(p.wave_speed, d.wave_speed),
                 f(p.wave_frequency, d.wave_frequency),
@@ -314,8 +627,89 @@ impl WaterUniform {
                 0.0,
                 0.0,
             ],
+            kind: [family, present, srgb, 0],
+            flow0: [
+                f(fl.foam_offset[0], 0.0),
+                f(fl.foam_offset[1], 0.0),
+                f(fl.foam_tile[0], 0.0),
+                f(fl.foam_tile[1], 0.0),
+            ],
+            flow1: [
+                f(fl.depth_offset[0], 0.0),
+                f(fl.depth_offset[1], 0.0),
+                f(fl.rotation, 0.0),
+                0.0,
+            ],
+            extra0: [f(p.bump[0], 1.0), f(p.bump[1], 0.0), 0.0, 0.0],
+            extra1: [0.0; 4],
+            material: [1.0; 4],
+            uv_row0: [1.0, 0.0, 0.0, 0.0],
+            uv_row1: [0.0, 1.0, 0.0, 0.0],
+            lights: [0; 4],
         }
     }
+
+    /// The uniform of a mirror draw (`water.md` §8.5.4).
+    fn mirror(&mut self, m: &MirrorParams) {
+        let f = fin;
+        self.kind[0] = fam::MIRROR;
+        self.extra0 = [
+            f(m.reflection_distortion, 0.0),
+            f(m.fresnel_exponent, 1.0).clamp(0.0, MAX_WATER_POWER),
+            f(m.fresnel_bias, 0.0),
+            f(m.normal_scale, 1.0),
+        ];
+        self.extra1 = [
+            f(m.normal_speed[0], 0.0),
+            f(m.normal_speed[1], 0.0),
+            f(m.fresnel_bump, 0.0),
+            0.0,
+        ];
+        self.material = m.color.map(|c| f(c, 1.0));
+    }
+
+    /// The uniform of a liquid-distortion draw (`water.md` §8.5.5) with its light list.
+    fn distortion(&mut self, d: &DistortionParams, lights: [u32; 3]) {
+        let f = fin;
+        self.kind[0] = if d.lit { fam::LIQUID_LIT } else { fam::LIQUID };
+        let mut flags = 0;
+        if d.world_coordinates {
+            flags |= fl::WORLD_UV;
+        }
+        if d.alpha_test.is_some() {
+            flags |= fl::ALPHA_TEST;
+        }
+        self.kind[3] = flags;
+        // Waves only for the unlit records (§8.5.5 step 2).
+        let amplitude = if d.lit { 0.0 } else { f(d.waves[2], 0.0) };
+        self.waves = [f(d.waves[0], 0.0), f(d.waves[1], 0.0), amplitude, 3.0];
+        let sp = |k: usize, i: usize| f(d.speed[k][i], 0.0);
+        let sc = |k: usize| f(d.scale[k], 1.0);
+        self.speed01 = [sp(0, 0), sp(0, 1), sp(1, 0), sp(1, 1)];
+        self.speed2_scale01 = [sp(2, 0), sp(2, 1), sc(0), sc(1)];
+        self.misc0 = [sc(2), 0.0, f(d.distortion, 0.0), 0.0];
+        self.misc1[2] = f(d.overbright, 1.0);
+        self.extra1 = [d.alpha_test.map_or(-1.0, |t| f(t, 0.5)), 0.0, 0.0, 0.0];
+        self.material = d.color.map(|c| f(c, 1.0));
+        let r = d.matrix.sanitized().rows;
+        self.uv_row0 = [r[0][0], r[0][1], r[0][2], 0.0];
+        self.uv_row1 = [r[1][0], r[1][1], r[1][2], 0.0];
+        self.lights = [lights[0], lights[1], lights[2], 0];
+    }
+}
+
+/// How a water pipeline draws: geometry source, blending, depth write and culling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WaterPipeKey {
+    format: wgpu::TextureFormat,
+    /// Placed meshes (else generated quads).
+    mesh: bool,
+    /// Source alpha / inverse source alpha (mirror and liquid draws).
+    blend: bool,
+    depth_write: bool,
+    /// `None`: both faces; `Some(false)`: back faces culled; `Some(true)`: front faces
+    /// (mirrored transforms).
+    cull: Option<bool>,
 }
 
 /// Pipelines of the water, built lazily.
@@ -324,18 +718,15 @@ pub(crate) struct WaterState {
     layout: Option<wgpu::BindGroupLayout>,
     samplers: Option<(wgpu::Sampler, wgpu::Sampler)>,
     shader: Option<wgpu::ShaderModule>,
-    pipelines: Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    pipeline_layout: Option<wgpu::PipelineLayout>,
+    pipelines: Vec<(WaterPipeKey, wgpu::RenderPipeline)>,
 }
 
 impl WaterState {
-    fn pipeline(
+    fn prepare(
         &mut self,
         ctx: &WorldFrame<'_>,
-    ) -> (
-        wgpu::RenderPipeline,
-        wgpu::BindGroupLayout,
-        (wgpu::Sampler, wgpu::Sampler),
-    ) {
+    ) -> (wgpu::BindGroupLayout, (wgpu::Sampler, wgpu::Sampler)) {
         let device = ctx.device;
         let layout = self
             .layout
@@ -353,6 +744,15 @@ impl WaterState {
                         texture_entry(2),
                         sampler_entry(3),
                         sampler_entry(4),
+                        texture_entry(5),
+                        texture_entry(6),
+                        texture_entry(7),
+                        texture_entry(8),
+                        texture_entry(9),
+                        texture_entry(10),
+                        sampler_entry(11),
+                        sampler_entry(12),
+                        sampler_entry(13),
                     ],
                 })
             })
@@ -378,58 +778,84 @@ impl WaterState {
                 )
             })
             .clone();
-        let shader = self
-            .shader
-            .get_or_insert_with(|| {
-                device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("tessera-water.wgsl"),
-                    source: wgpu::ShaderSource::Wgsl(water_source().into()),
-                })
-            })
-            .clone();
-        if let Some((_, p)) = self.pipelines.iter().find(|(f, _)| *f == ctx.format) {
-            return (p.clone(), layout, samplers);
+        if self.shader.is_none() {
+            self.shader = Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("tessera-water.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(water_source().into()),
+            }));
         }
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tessera-water-layout"),
-            bind_group_layouts: &[Some(ctx.frame_layout), Some(&layout)],
-            immediate_size: 0,
-        });
+        if self.pipeline_layout.is_none() {
+            self.pipeline_layout = Some(device.create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("tessera-water-layout"),
+                    bind_group_layouts: &[Some(ctx.frame_layout), Some(&layout)],
+                    immediate_size: 0,
+                },
+            ));
+        }
+        (layout, samplers)
+    }
+
+    fn pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        key: WaterPipeKey,
+    ) -> Option<wgpu::RenderPipeline> {
+        if let Some((_, p)) = self.pipelines.iter().find(|(k, _)| *k == key) {
+            return Some(p.clone());
+        }
+        let (shader, pl) = (self.shader.as_ref()?, self.pipeline_layout.as_ref()?);
+        let quad_layout = [Some(wgpu::VertexBufferLayout {
+            array_stride: size_of::<QuadGpu>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &QUAD_ATTRS,
+        })];
+        let mesh_layout = [Some(mesh_vertex_layout())];
+        let (entry, buffers): (&str, &[Option<wgpu::VertexBufferLayout<'_>>]) = if key.mesh {
+            ("vs_water_mesh", &mesh_layout)
+        } else {
+            ("vs_water", &quad_layout)
+        };
         let p = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("tessera-water"),
-            layout: Some(&pl),
+            layout: Some(pl),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_water"),
+                module: shader,
+                entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<QuadGpu>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &QUAD_ATTRS,
-                })],
+                buffers,
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: None,
+                cull_mode: match key.cull {
+                    None => None,
+                    Some(false) => Some(wgpu::Face::Back),
+                    Some(true) => Some(wgpu::Face::Front),
+                },
                 ..Default::default()
             },
-            depth_stencil: Some(world_depth(true)),
+            depth_stencil: Some(world_depth(key.depth_write)),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_water"),
+                module: shader,
+                entry_point: Some(if key.blend {
+                    "fs_water_blend"
+                } else {
+                    "fs_water"
+                }),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                // ONE / ZERO: the water composites the scene copy itself (§8.4).
+                // ONE / ZERO: the water composites the scene copy itself (§8.4); the mirror
+                // and liquid draws blend by source alpha (§8.5.4, §8.5.5).
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: ctx.format,
-                    blend: None,
+                    format: key.format,
+                    blend: key.blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview_mask: None,
             cache: None,
         });
-        self.pipelines.push((ctx.format, p.clone()));
-        (p, layout, samplers)
+        self.pipelines.push((key, p.clone()));
+        Some(p)
     }
 }
 
@@ -437,17 +863,29 @@ pub(crate) fn water_source() -> String {
     lit_source(&[WATER_WGSL])
 }
 
+/// What one water item draws.
+#[derive(Debug)]
+enum WaterGeometry {
+    /// Generated quads: instances of the pass's quad buffer and vertices per instance.
+    Quads { quads: Range<u32>, vertices: u32 },
+    /// An arena submesh: the page's buffers and the absolute index range.
+    Mesh {
+        vertices: wgpu::Buffer,
+        indices: wgpu::Buffer,
+        range: Range<u32>,
+    },
+}
+
 struct WaterItem {
+    pipeline: wgpu::RenderPipeline,
     /// Index into the hook's bind groups.
     bind_group: usize,
     offset: u32,
-    quads: std::ops::Range<u32>,
-    vertices: u32,
+    geometry: WaterGeometry,
 }
 
 struct WaterHook {
-    pipeline: wgpu::RenderPipeline,
-    quads: wgpu::Buffer,
+    quads: Option<wgpu::Buffer>,
     bind_groups: Vec<wgpu::BindGroup>,
     items: Vec<WaterItem>,
 }
@@ -483,13 +921,61 @@ fn grid_cells(draws: &[(u64, u32)]) -> Vec<u32> {
         .collect()
 }
 
+/// The per-draw uniforms and bind groups of a hook being built.
+struct Slots<'a> {
+    ctx: &'a WorldFrame<'a>,
+    layout: wgpu::BindGroupLayout,
+    stride: u64,
+    uniforms: Vec<u8>,
+    keys: HashMap<DrawTextures, usize>,
+    sets: Vec<[Option<ResolvedTexture>; 7]>,
+    warned: bool,
+}
+
+impl Slots<'_> {
+    /// The resolved textures of `ids` and the index of their bind group.
+    fn textures(&mut self, ids: DrawTextures) -> ([Option<ResolvedTexture>; 7], usize) {
+        let resolved = ids.map(|id| self.ctx.textures.get(id));
+        if !self.warned && ids.iter().any(|id| self.ctx.textures.is_missing(*id)) {
+            tracing::warn!(?ids, "water texture unknown; drawn without it");
+            self.warned = true;
+        }
+        let key = ids.map(|id| id.filter(|_| self.ctx.textures.get(id).is_some()));
+        let index = match self.keys.get(&key) {
+            Some(&i) => i,
+            None => {
+                self.sets.push(resolved.clone());
+                self.keys.insert(key, self.sets.len() - 1);
+                self.sets.len() - 1
+            }
+        };
+        (resolved, index)
+    }
+
+    fn push(&mut self, u: &WaterUniform) -> Result<u32> {
+        let offset = self.uniforms.len() as u64;
+        let max = max_uniform_bytes(self.ctx.device);
+        if offset + self.stride > max {
+            return Err(RenderError::LimitExceeded {
+                what: "water uniform bytes per pass",
+                requested: offset + self.stride,
+                max,
+            });
+        }
+        self.uniforms.extend_from_slice(bytemuck::bytes_of(u));
+        self.uniforms.resize((offset + self.stride) as usize, 0);
+        Ok(offset as u32)
+    }
+}
+
 pub(crate) fn build_hook(
     state: &mut WaterState,
     draws: Vec<WaterDraw>,
+    liquid: Vec<LiquidMeshDraw>,
     ctx: &WorldFrame<'_>,
 ) -> Result<Option<Arc<dyn PassHook>>> {
     let total: usize = draws.iter().map(|d| d.quads.len()).sum();
-    if total == 0 {
+    if total == 0 && liquid.is_empty() {
         return Ok(None);
     }
     if total > MAX_WATER_QUADS {
@@ -499,7 +985,7 @@ pub(crate) fn build_hook(
             max: MAX_WATER_QUADS as u64,
         });
     }
-    let (pipeline, layout, (repeat, clamp)) = state.pipeline(ctx);
+    let (layout, (repeat, clamp)) = state.prepare(ctx);
     let white = ctx.textures.white();
     let scene = ctx.scene_copy;
     // The valid quads of every draw, back to back.
@@ -514,6 +1000,7 @@ pub(crate) fn build_hook(
                 .map(|q| QuadGpu {
                     rect: [q.origin[0], q.origin[1], q.size[0], q.size[1]],
                     height: [q.height, 0.0, 0.0, 0.0],
+                    uv: q.uv,
                 }),
         );
         ranges.push(start..quads.len() as u32);
@@ -525,57 +1012,181 @@ pub(crate) fn build_hook(
             .map(|(d, r)| (u64::from(r.end - r.start), d.subdivisions))
             .collect::<Vec<_>>(),
     );
-    // One uniform slot per draw in one buffer (dynamic offsets); one bind group per
-    // distinct normal map.
-    let stride = uniform_stride(ctx.device, size_of::<WaterUniform>());
-    let mut uniforms: Vec<u8> = Vec::new();
-    let mut maps: Vec<Option<TextureId>> = Vec::new();
-    let mut views: Vec<Option<crate::renderer::ResolvedTexture>> = Vec::new();
-    let mut items = Vec::with_capacity(draws.len());
-    let mut warned = false;
+    let mut slots = Slots {
+        ctx,
+        layout: layout.clone(),
+        stride: uniform_stride(ctx.device, size_of::<WaterUniform>()),
+        uniforms: Vec::new(),
+        keys: HashMap::new(),
+        sets: Vec::new(),
+        warned: false,
+    };
+    let mut items = Vec::with_capacity(draws.len() + liquid.len());
+    let quad_pipe = state.pipeline(
+        ctx.device,
+        WaterPipeKey {
+            format: ctx.format,
+            mesh: false,
+            blend: false,
+            depth_write: true,
+            cull: None,
+        },
+    );
     for ((draw, range), n) in draws.iter().zip(ranges).zip(cells) {
         if range.is_empty() {
             continue;
         }
-        let normal = ctx.textures.get(draw.normal_map);
-        if draw.normal_map.is_some() && normal.is_none() && !warned {
-            tracing::warn!(id = ?draw.normal_map, "water normal map unknown; flat water");
-            warned = true;
-        }
-        let key = draw.normal_map.filter(|_| normal.is_some());
+        let Some(pipeline) = quad_pipe.clone() else {
+            continue;
+        };
+        let (resolved, bind_group) = slots.textures(draw_textures(draw.normal_map, &draw.textures));
         let u = WaterUniform::new(
             &draw.params,
             scene.is_some(),
-            normal.as_ref().map(|t| t.srgb),
+            &resolved,
             n,
             ctx,
             draw.block_offset,
             draw.fade,
         );
-        let bind_group = match maps.iter().position(|m| *m == key) {
-            Some(i) => i,
-            None => {
-                maps.push(key);
-                views.push(normal);
-                maps.len() - 1
+        let offset = slots.push(&u)?;
+        items.push(WaterItem {
+            pipeline,
+            bind_group,
+            offset,
+            geometry: WaterGeometry::Quads {
+                quads: range,
+                vertices: 6 * n * n,
+            },
+        });
+    }
+
+    // Placed surfaces: opaque families first, then the blended ones back to front.
+    let mut placed: Vec<(bool, f32, &LiquidMeshDraw)> = Vec::with_capacity(liquid.len());
+    let mut dropped = 0usize;
+    for d in &liquid {
+        if placed.len() >= MAX_LIQUID_MESH_DRAWS || !d.transform.is_finite() {
+            dropped += 1;
+            continue;
+        }
+        let Some(mesh) = ctx.arena.get(d.mesh) else {
+            dropped += 1;
+            continue;
+        };
+        let centre = d.transform.transform_point3(mesh.info.sphere.center);
+        let dist = centre.distance_squared(ctx.eye);
+        placed.push((
+            d.shading.blended(),
+            if dist.is_finite() { dist } else { 0.0 },
+            d,
+        ));
+    }
+    if dropped > 0 {
+        tracing::debug!(
+            dropped,
+            "liquid mesh draws dropped (unknown mesh, transform or cap)"
+        );
+    }
+    placed.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+    let mut chosen: Vec<u8> = Vec::with_capacity(MAX_DRAW_LIGHTS);
+    for (blended, _, d) in placed {
+        let Some(mesh) = ctx.arena.get(d.mesh) else {
+            continue;
+        };
+        let Some(page) = ctx.arena.page(mesh.page) else {
+            continue;
+        };
+        let (resolved, bind_group) = slots.textures(draw_textures(d.normal_map, &d.textures));
+        let (mut u, depth_write, cull) = match &d.shading {
+            LiquidShading::Water {
+                params,
+                block_offset,
+            } => (
+                WaterUniform::new(
+                    params,
+                    scene.is_some(),
+                    &resolved,
+                    1,
+                    ctx,
+                    *block_offset,
+                    FarFadeParams::default(),
+                ),
+                true,
+                None,
+            ),
+            LiquidShading::Mirror(m) => {
+                let mut u = WaterUniform::new(
+                    &WaterParams::default(),
+                    scene.is_some(),
+                    &resolved,
+                    1,
+                    ctx,
+                    [0.0; 2],
+                    FarFadeParams::default(),
+                );
+                u.mirror(m);
+                // §8.5.4: depth write on, back faces culled.
+                (u, true, Some(false))
+            }
+            LiquidShading::Distortion(p) => {
+                let mut u = WaterUniform::new(
+                    &WaterParams::default(),
+                    scene.is_some(),
+                    &resolved,
+                    1,
+                    ctx,
+                    [0.0; 2],
+                    FarFadeParams::default(),
+                );
+                let lights = if p.lit {
+                    ctx.lights.select(
+                        LightSelection::Auto,
+                        &LightTarget::placed(mesh.info.aabb, d.transform, d.light_object),
+                        &mut chosen,
+                    );
+                    light_words(&chosen)
+                } else {
+                    [0; 3]
+                };
+                u.distortion(p, lights);
+                (u, p.depth_write, (!p.two_sided).then_some(false))
             }
         };
-        let offset = uniforms.len() as u64;
-        if offset + stride > max_uniform_bytes(ctx.device) {
-            return Err(RenderError::LimitExceeded {
-                what: "water uniform bytes per pass",
-                requested: offset + stride,
-                max: max_uniform_bytes(ctx.device),
+        u.model = d.transform.to_cols_array_2d();
+        let mirrored = is_mirrored(d.transform);
+        let Some(pipeline) = state.pipeline(
+            ctx.device,
+            WaterPipeKey {
+                format: ctx.format,
+                mesh: true,
+                blend: blended,
+                depth_write,
+                cull: cull.map(|_| mirrored),
+            },
+        ) else {
+            continue;
+        };
+        let offset = slots.push(&u)?;
+        let submeshes: Vec<_> = match d.submesh {
+            None => mesh.submeshes.iter().collect(),
+            Some(i) => mesh.submeshes.get(i as usize).into_iter().collect(),
+        };
+        for s in submeshes {
+            let range = mesh.triangles(s);
+            if range.is_empty() {
+                continue;
+            }
+            items.push(WaterItem {
+                pipeline: pipeline.clone(),
+                bind_group,
+                offset,
+                geometry: WaterGeometry::Mesh {
+                    vertices: page.vertex_buffer.clone(),
+                    indices: page.index_buffer.clone(),
+                    range,
+                },
             });
         }
-        uniforms.extend_from_slice(bytemuck::bytes_of(&u));
-        uniforms.resize((offset + stride) as usize, 0);
-        items.push(WaterItem {
-            bind_group,
-            offset: offset as u32,
-            quads: range,
-            vertices: 6 * n * n,
-        });
     }
     if items.is_empty() {
         return Ok(None);
@@ -584,17 +1195,27 @@ pub(crate) fn build_hook(
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("tessera-water"),
-            contents: &uniforms,
+            contents: &slots.uniforms,
             usage: wgpu::BufferUsages::UNIFORM,
         });
     let scene_view = scene.unwrap_or(&white.view);
-    let bind_groups = views
+    let bind_groups = slots
+        .sets
         .iter()
-        .map(|normal| {
-            let normal_view = normal.as_ref().map_or(&white.view, |t| &t.view);
+        .map(|set| {
+            let view = |i: usize| {
+                set.get(i)
+                    .and_then(Option::as_ref)
+                    .map_or(&white.view, |t| &t.view)
+            };
+            let sampler = |i: usize| {
+                set.get(i)
+                    .and_then(Option::as_ref)
+                    .map_or(&white.sampler, |t| &t.sampler)
+            };
             ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("tessera-water"),
-                layout: &layout,
+                layout: &slots.layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -606,7 +1227,7 @@ pub(crate) fn build_hook(
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
+                        resource: wgpu::BindingResource::TextureView(view(0)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -620,20 +1241,56 @@ pub(crate) fn build_hook(
                         binding: 4,
                         resource: wgpu::BindingResource::Sampler(&clamp),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(view(1)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(view(2)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(view(3)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(view(4)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: wgpu::BindingResource::TextureView(view(5)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::TextureView(view(6)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: wgpu::BindingResource::Sampler(sampler(4)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 12,
+                        resource: wgpu::BindingResource::Sampler(sampler(5)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 13,
+                        resource: wgpu::BindingResource::Sampler(sampler(6)),
+                    },
                 ],
             })
         })
         .collect();
-    let buffer = ctx
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("tessera-water-quads"),
-            contents: bytemuck::cast_slice(&quads),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+    let quads = (!quads.is_empty()).then(|| {
+        ctx.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("tessera-water-quads"),
+                contents: bytemuck::cast_slice(&quads),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+    });
     Ok(Some(Arc::new(WaterHook {
-        pipeline,
-        quads: buffer,
+        quads,
         bind_groups,
         items,
     })))
@@ -647,19 +1304,31 @@ impl PassHook for WaterHook {
         let Some((group0, offset)) = ctx.group0 else {
             return;
         };
-        rp.set_pipeline(&self.pipeline);
         rp.set_bind_group(0, group0, &[offset]);
-        rp.set_vertex_buffer(0, self.quads.slice(..));
         for item in &self.items {
             let Some(bg) = self.bind_groups.get(item.bind_group) else {
                 continue;
             };
+            rp.set_pipeline(&item.pipeline);
             rp.set_bind_group(1, bg, &[item.offset]);
-            rp.draw(0..item.vertices, item.quads.clone());
+            match &item.geometry {
+                WaterGeometry::Quads { quads, vertices } => {
+                    let Some(buffer) = &self.quads else { continue };
+                    rp.set_vertex_buffer(0, buffer.slice(..));
+                    rp.draw(0..*vertices, quads.clone());
+                    stats.water_quads = stats.water_quads.saturating_add(quads.end - quads.start);
+                }
+                WaterGeometry::Mesh {
+                    vertices,
+                    indices,
+                    range,
+                } => {
+                    rp.set_vertex_buffer(0, vertices.slice(..));
+                    rp.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                    rp.draw_indexed(range.clone(), 0, 0..1);
+                }
+            }
             stats.draw_calls = stats.draw_calls.saturating_add(1);
-            stats.water_quads = stats
-                .water_quads
-                .saturating_add(item.quads.end - item.quads.start);
         }
     }
 }
@@ -763,8 +1432,20 @@ mod tests {
 
     #[test]
     fn layouts_match_the_wgsl() {
-        assert_eq!(size_of::<WaterUniform>(), 192);
-        assert_eq!(size_of::<QuadGpu>(), 32);
+        assert_eq!(size_of::<WaterUniform>(), 400);
+        assert_eq!(size_of::<QuadGpu>(), 48);
+    }
+
+    #[test]
+    fn sector_coordinates_follow_section_8_1() {
+        let q = WaterQuad::landblock([0.0; 2], 1.0);
+        assert_eq!(q.uv, [0.0, 1.0, 1.0, -1.0]);
+        let s = q.with_sector_uv(2, 1);
+        assert!((s.uv[0] - 2.0 / 3.0).abs() < 1e-6);
+        assert!((s.uv[1] - 2.0 / 3.0).abs() < 1e-6);
+        assert!((s.uv[2] - 1.0 / 3.0).abs() < 1e-6 && (s.uv[3] + 1.0 / 3.0).abs() < 1e-6);
+        // Out-of-range places wrap into the sector.
+        assert_eq!(q.with_sector_uv(5, 4).uv, q.with_sector_uv(2, 1).uv);
     }
 
     #[test]
@@ -888,20 +1569,28 @@ mod tests {
     #[test]
     fn hostile_quads_are_dropped() {
         assert!(WaterQuad::landblock([0.0, 0.0], 1.0).sane().is_some());
+        let q = WaterQuad::landblock([0.0; 2], 0.0);
         assert!(
             WaterQuad {
                 origin: [f32::NAN, 0.0],
                 size: [1.0; 2],
-                height: 0.0
+                ..q
             }
             .sane()
             .is_none()
         );
         assert!(
             WaterQuad {
-                origin: [0.0; 2],
                 size: [-1.0, 1.0],
-                height: 0.0
+                ..q
+            }
+            .sane()
+            .is_none()
+        );
+        assert!(
+            WaterQuad {
+                uv: [f32::INFINITY, 0.0, 1.0, 1.0],
+                ..q
             }
             .sane()
             .is_none()

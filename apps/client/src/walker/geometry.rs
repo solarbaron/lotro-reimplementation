@@ -14,10 +14,16 @@
 use tessera_formats::Did;
 use tessera_formats::RgbaImage;
 use tessera_material::diagnose::{base_reason, opacity_slot};
+use tessera_material::layers::{LayerCombine, SECOND_LAYER_ROLES, second_layer};
 use tessera_material::vocab::ids;
-use tessera_material::{BlendMode, FallbackReason, MaterialKind, ResolvedMaterial};
+use tessera_material::{
+    BlendMode, CurveStates, FallbackReason, LiquidSurface, MaterialKind, ResolvedMaterial,
+    TextureMatrixLayout,
+};
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
-use tessera_render::{AlphaMode, Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
+use tessera_render::{
+    AlphaMode, Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh, UvTransform,
+};
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
 pub const VARIANT_OPAQUE: u32 = 0;
@@ -121,9 +127,13 @@ pub struct PlanDiag {
     /// declared and an animated curve, `material.md` §8.4, §5.3), which the walker does not
     /// draw (`walker.md` §14.5): the texture stands still.
     pub scrolls: bool,
-    /// The material has a second colour layer (3001) with a texture, which the walker does
-    /// not draw (`walker.md` §14.5).
+    /// The material has a second colour layer (3001 with a texture and a second-layer
+    /// role) that the walker leaves out: its record is one that `material.md` §10.3 does
+    /// not cover, or the plan was made without the record's texture-matrix bindings.
     pub second_layer: bool,
+    /// The surface is drawn by its own program (`material.md` §11.6, `water.md` §8.5), not
+    /// the generic path.
+    pub routed: bool,
 }
 
 impl PlanDiag {
@@ -136,8 +146,103 @@ impl PlanDiag {
             kind: MaterialKind::Unresolved,
             scrolls: false,
             second_layer: false,
+            routed: false,
         }
     }
+}
+
+/// Textures of a surface drawn by its own program ([`OwnPlan`]), in the binding order of
+/// the renderer's water pipeline: normal (or distortion) map, flow map, foam map, noise,
+/// colour layer 1, colour layer 2, emissive.
+pub const OWN_TEXTURES: usize = 7;
+
+/// A surface of a record with a program of its own (`material.md` §11.6): water, mirror,
+/// liquid-distortion and lava records. The walker draws it with the renderer's water
+/// pipeline (`water.md` §8.5 rule), its parameters evaluated every frame from the
+/// resolved material (`water.md` §8.7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnPlan {
+    /// The record family.
+    pub kind: MaterialKind,
+    /// The textures the drawing samples ([`OWN_TEXTURES`] order), each with its own alpha.
+    pub textures: [Option<TexRequest>; OWN_TEXTURES],
+}
+
+/// The textures the own-program drawing of `surface` samples, in [`OWN_TEXTURES`] order
+/// (`water.md` §8.2–§8.6: the water records' slot-3000 placeholders are not among them).
+#[must_use]
+pub fn own_textures(surface: &LiquidSurface) -> [Option<TexRequest>; OWN_TEXTURES] {
+    let list = match surface {
+        LiquidSurface::Water(w) => [
+            w.normal_map,
+            w.flow_map,
+            w.foam_map,
+            w.noise_map,
+            None,
+            None,
+            None,
+        ],
+        LiquidSurface::Lava(l) => [
+            None,
+            l.flow_map,
+            l.foam_map,
+            l.noise_map,
+            l.color_layers[0],
+            l.color_layers[1],
+            l.emissive,
+        ],
+        LiquidSurface::Mirror(m) => [m.normal_map, None, None, None, m.diffuse, None, None],
+        LiquidSurface::Distortion(d) => [d.normal_map, None, None, None, d.diffuse, None, None],
+    };
+    // DIDs 0–3 would collide with the variant codes; they are never real.
+    list.map(|d| {
+        d.filter(|d| d.0 > VARIANT_DYE_MASK).map(|d| TexRequest {
+            did: d.0,
+            variant: VARIANT_OWN_ALPHA,
+        })
+    })
+}
+
+/// Shader records whose `Emissive` sampler reads texture matrix 1 in their colour passes
+/// (`material.md` §8.4, MA47).
+pub const EMISSIVE_MATRIX_1_RECORDS: [u32; 3] = [0x2B00_09CE, 0x2B00_09CF, 0x2B00_070D];
+
+/// Texture matrices 0 and 1 of `material` at time `t` (`material.md` §8.4, §5.3.1): the
+/// identity where `layout` binds none.
+#[must_use]
+pub fn texture_matrices_at(
+    material: &ResolvedMaterial,
+    layout: &TextureMatrixLayout,
+    t: f64,
+    states: &mut CurveStates,
+) -> [UvTransform; 2] {
+    let mut out = [UvTransform::IDENTITY; 2];
+    for m in layout.evaluate(&material.params, t, states) {
+        if let Some(slot) = usize::try_from(m.matrix).ok().and_then(|i| out.get_mut(i)) {
+            *slot = UvTransform { rows: m.map.rows }.sanitized();
+        }
+    }
+    out
+}
+
+/// Whether a curve that `layout` binds to texture matrix 0 or 1 changes with time
+/// (`material.md` §5.3): the matrices must then be evaluated every frame.
+#[must_use]
+pub fn texture_matrices_animated(
+    material: &ResolvedMaterial,
+    layout: &TextureMatrixLayout,
+) -> bool {
+    layout
+        .matrices
+        .iter()
+        .filter(|b| b.matrix <= 1)
+        .flat_map(|b| b.params.iter().flatten())
+        .any(|&id| {
+            material
+                .params
+                .curve(id)
+                .is_some_and(tessera_material::FloatCurve::is_animated)
+        })
 }
 
 /// What one submesh needs to be drawn.
@@ -160,6 +265,18 @@ pub struct MaterialPlan {
     pub lit: LitInputs,
     /// Where the plan came from and why it lacks a base texture (diagnostics only).
     pub diag: PlanDiag,
+    /// The second colour layer (`material.md` §10.3): slot 3001 with its own alpha, and
+    /// whether its RGB is added (else multiplied); sampled at texture matrix 1.
+    pub layer2: Option<(TexRequest, bool)>,
+    /// Texture matrices 0 and 1 at clock 0 (`material.md` §8.4); the walker evaluates them
+    /// again every frame when [`MaterialPlan::animated_uv`] is set.
+    pub uv: [UvTransform; 2],
+    /// A curve of texture matrix 0 or 1 changes with time.
+    pub animated_uv: bool,
+    /// The emissive texture reads texture matrix 1 (`material.md` §8.4).
+    pub emissive_uv1: bool,
+    /// The surface is drawn by its own program (`material.md` §11.6).
+    pub own: Option<OwnPlan>,
 }
 
 impl MaterialPlan {
@@ -173,6 +290,11 @@ impl MaterialPlan {
         dye: None,
         lit: LitInputs::FALLBACK,
         diag: PlanDiag::unresolved(0, FallbackReason::ChainFailed),
+        layer2: None,
+        uv: [UvTransform::IDENTITY; 2],
+        animated_uv: false,
+        emissive_uv1: false,
+        own: None,
     };
 
     /// [`MaterialPlan::FALLBACK`] for surface `surface` (`None`: the submesh names none,
@@ -187,8 +309,9 @@ impl MaterialPlan {
         p
     }
 
-    /// Every texture the plan samples: the base texture, the dye mask and the lit
-    /// pipeline's normal, emissive and glow textures.
+    /// Every texture the plan samples: the base texture, the dye mask, the lit
+    /// pipeline's normal, emissive and glow textures, the second colour layer and the
+    /// textures of an own-program drawing.
     pub fn textures(&self) -> impl Iterator<Item = TexRequest> + '_ {
         self.texture
             .into_iter()
@@ -196,13 +319,22 @@ impl MaterialPlan {
             .chain(self.lit.normal)
             .chain(self.lit.emissive)
             .chain(self.lit.glow_mask)
+            .chain(self.layer2.map(|l| l.0))
+            .chain(
+                self.own
+                    .iter()
+                    .flat_map(|o| o.textures.into_iter().flatten()),
+            )
     }
 
     /// Whether the instanced scenery pipeline can draw the plan (`docs/specs/render.md`
-    /// §5.5): it has no emissive, glow or dye input.
+    /// §5.5): it has no emissive, glow or dye input and no program of its own.
     #[must_use]
     pub fn instanceable(&self) -> bool {
-        self.dye.is_none() && self.lit.emissive.is_none() && self.lit.glow_mask.is_none()
+        self.dye.is_none()
+            && self.lit.emissive.is_none()
+            && self.lit.glow_mask.is_none()
+            && self.own.is_none()
     }
 }
 
@@ -223,10 +355,22 @@ pub fn srgb_unit_to_linear(c: f32) -> f32 {
 
 /// Plans the draw of a resolved material (`material.md` §10–§11): the diffuse slot's
 /// texture with the opacity source of the alpha test (else of the blend), the alpha mode,
-/// two-sidedness, the diffuse tint and whether it is lit. Normal maps, specular and dye
-/// are not used by the walker.
+/// two-sidedness, the diffuse tint and whether it is lit. Without the record's
+/// texture-matrix bindings ([`plan_material_with`]) the texture matrices stay the identity.
 #[must_use]
 pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
+    plan_material_with(m, None)
+}
+
+/// [`plan_material`] with `layout`, the texture-matrix bindings of the material's shader
+/// record (`material.md` §7.3, §8.4): texture matrices 0 and 1 at clock 0 and whether they
+/// animate, the second colour layer of `material.md` §10.3, and for the records of
+/// `material.md` §11.6 the own-program drawing with its textures (`water.md` §8.5).
+#[must_use]
+pub fn plan_material_with(
+    m: &ResolvedMaterial,
+    layout: Option<&TextureMatrixLayout>,
+) -> MaterialPlan {
     let f = &m.features;
     let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture).map(|d| d.0);
     // The alpha-test source, else the opacity slot of a transparent blend (the same rule
@@ -266,6 +410,52 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
             (None, None) => None,
         },
     };
+    let kind = MaterialKind::of(m);
+    let empty = TextureMatrixLayout::default();
+    let mut states = CurveStates::new();
+    // §11.6: water, mirror, liquid-distortion and lava records have programs of their own.
+    let own = if kind.needs_own_program() {
+        LiquidSurface::evaluate(m, layout.unwrap_or(&empty), 0.0, &mut states).map(|s| OwnPlan {
+            kind,
+            textures: own_textures(&s),
+        })
+    } else {
+        None
+    };
+    let (uv, animated_uv) = match layout {
+        Some(l) if own.is_none() => (
+            texture_matrices_at(m, l, 0.0, &mut states),
+            texture_matrices_animated(m, l),
+        ),
+        _ => ([UvTransform::IDENTITY; 2], false),
+    };
+    // §10.3: the second colour layer of the generic path.
+    let has_layer2 = m.slot(ids::SECOND_LAYER).is_some_and(|s| {
+        s.texture.is_some_and(|d| d.0 != 0)
+            && s.role
+                .as_deref()
+                .is_some_and(|r| SECOND_LAYER_ROLES.contains(&r))
+    });
+    let layer2 = if own.is_none() && layout.is_some() {
+        second_layer(m)
+            .filter(|(d, _)| d.0 > VARIANT_DYE_MASK)
+            .map(|(d, c)| {
+                (
+                    TexRequest {
+                        did: d.0,
+                        variant: VARIANT_OWN_ALPHA,
+                    },
+                    c == LayerCombine::Add,
+                )
+            })
+    } else {
+        None
+    };
+    let emissive_uv1 = m
+        .slot(ids::EMISSIVE)
+        .and_then(|s| s.role.as_deref())
+        .is_some_and(|r| r == "EmissiveAndOpacity")
+        || EMISSIVE_MATRIX_1_RECORDS.contains(&m.shader.did.0);
     let finite01 = |v: f32, fallback: f32| {
         if v.is_finite() {
             v.clamp(0.0, 1.0)
@@ -281,15 +471,24 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
         BlendMode::AlphaBlend | BlendMode::Additive | BlendMode::Custom => AlphaKind::Blend,
     };
     // An alpha mode without an alpha source would hide or fade the whole surface.
+    // A second colour layer's alpha is an opacity source too (§10.3: the product of the
+    // two alphas is the opacity).
     let alpha = match (alpha, texture) {
-        (AlphaKind::Mask(_) | AlphaKind::Blend, Some(t)) if t.variant == VARIANT_OPAQUE => {
+        (AlphaKind::Mask(_) | AlphaKind::Blend, Some(t))
+            if t.variant == VARIANT_OPAQUE && layer2.is_none() =>
+        {
             AlphaKind::Opaque
         }
         (AlphaKind::Mask(_) | AlphaKind::Blend, None) => AlphaKind::Opaque,
         (a, _) => a,
     };
     let tint = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
-    let lit = lit_inputs(m, texture, alpha, tint);
+    let lit = lit_inputs(m, texture, layer2.is_some(), alpha, tint);
+    let scrolls = own.is_none()
+        && match layout {
+            Some(_) => false,
+            None => f.uv_transform && f.animated,
+        };
     // Gloss in the base alpha of an opaque surface needs that alpha (`material.md`
     // §10.2): the texture keeps its own alpha; the opacity stays 1.
     let texture = match (texture, lit.gloss) {
@@ -315,12 +514,16 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
         diag: PlanDiag {
             surface: m.surface.map_or(0, |d| d.0),
             fallback: base_reason(m),
-            kind: MaterialKind::of(m),
-            scrolls: f.uv_transform && f.animated,
-            second_layer: m
-                .slot(ids::SECOND_LAYER)
-                .is_some_and(|s| s.texture.is_some()),
+            kind,
+            scrolls,
+            second_layer: own.is_none() && has_layer2 && layer2.is_none(),
+            routed: own.is_some(),
         },
+        layer2,
+        uv,
+        animated_uv,
+        emissive_uv1,
+        own,
     }
 }
 
@@ -335,10 +538,13 @@ fn unit(v: f32, fallback: f32) -> f32 {
 
 /// The lit-pipeline inputs of a resolved material (`lighting.md` §4.1; `material.md`
 /// §10.2 gloss roles, §11.2–§11.5 alpha, blend and feature flags). `texture` and `alpha`
-/// are the M2 plan's base texture and alpha use; `tint` the material colour 2000.
+/// are the M2 plan's base texture and alpha use; `layered` whether a second colour layer
+/// multiplies its alpha into the base alpha (`material.md` §10.3); `tint` the material
+/// colour 2000.
 fn lit_inputs(
     m: &ResolvedMaterial,
     texture: Option<TexRequest>,
+    layered: bool,
     alpha: AlphaKind,
     tint: [f32; 4],
 ) -> LitInputs {
@@ -349,8 +555,8 @@ fn lit_inputs(
         did,
         variant: VARIANT_OWN_ALPHA,
     };
-    let opacity_from_base =
-        texture.is_some_and(|t| t.variant != VARIANT_OPAQUE) && !matches!(alpha, AlphaKind::Opaque);
+    let opacity_from_base = texture.is_some_and(|t| layered || t.variant != VARIANT_OPAQUE)
+        && !matches!(alpha, AlphaKind::Opaque);
     let normal = if f.normal_mapped {
         slot_tex(ids::NORMAL)
             .filter(|&d| d > VARIANT_DYE_MASK)

@@ -48,6 +48,8 @@ pub(crate) struct DrawUniform {
     pub lit: [f32; 4],
     /// Lit pipeline only: packed light indices (x, y), light count, lit flags.
     pub lit_lights: [u32; 4],
+    /// Lit pipeline only: texture matrices 0 and 1 ([`crate::UvTransform::pack`]).
+    pub uv: [[f32; 4]; 3],
 }
 
 /// Default alpha-test threshold for a non-finite cutoff.
@@ -179,6 +181,7 @@ impl DrawUniform {
             flags: [flags, mode_index(ctx.shading), dye_source, 0],
             lit: [0.0; 4],
             lit_lights: [0; 4],
+            uv: crate::material::UvTransform::pack([crate::material::UvTransform::IDENTITY; 2]),
         }
     }
 }
@@ -479,8 +482,9 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        // 224 bytes of M2 fields plus the two lit vectors; one 256-byte stride.
-        assert_eq!(size_of::<DrawUniform>(), 256);
+        // 224 bytes of M2 fields, the two lit vectors and the three vectors of the texture
+        // matrices (material.md §8.4).
+        assert_eq!(size_of::<DrawUniform>(), 304);
     }
 
     fn ctx() -> DrawContext {

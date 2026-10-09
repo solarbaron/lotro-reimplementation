@@ -53,6 +53,7 @@ pub(crate) mod geometry;
 pub(crate) mod hud;
 pub mod interiors;
 pub(crate) mod jobs;
+pub mod liquid;
 pub mod looks;
 pub(crate) mod minimap;
 pub mod movement;
@@ -67,7 +68,9 @@ pub mod water;
 
 /// The walker's material plan of a resolved surface, with its fallback diagnostic, for the
 /// real-data fallback probe.
-pub use self::geometry::{MaterialPlan, PlanDiag, TexRequest, plan_material};
+pub use self::geometry::{
+    MaterialPlan, OwnPlan, PlanDiag, TexRequest, plan_material, plan_material_with,
+};
 /// The fallback reason of a failed texture request of the object layer.
 pub use self::objects::texture_failure_reason;
 /// The walker's `terrain-texturing.md` §4.9 path, for the real-data row checks.
@@ -1922,6 +1925,7 @@ impl Walker {
             camera_moved: moved,
             interior: self.camera_cell.map(|(k, _)| k),
             all_interiors: self.config.interiors,
+            time: self.material_time(),
         }
     }
 
@@ -2626,6 +2630,7 @@ impl Walker {
                 self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
             let water_on = self.water_drawn();
+            let material_time = self.material_time();
             let hand_off = self.far_view.as_ref().map(farview::FarViewLayer::hand_off);
             if let (Some(fv), true) = (self.far_view.as_mut(), scene.outdoor_visible) {
                 let c = self.config.distances.object_multiplier();
@@ -2637,6 +2642,7 @@ impl Walker {
                     &mut self.resolver,
                     &mut self.objects,
                     water_on,
+                    material_time,
                 );
             }
             let t1 = Instant::now();
@@ -2689,6 +2695,7 @@ impl Walker {
                     eye,
                     self.ring_extent(),
                     hand_off.as_deref(),
+                    material_time,
                     &mut self.resolver,
                     &mut self.objects,
                 );

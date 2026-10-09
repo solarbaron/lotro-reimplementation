@@ -36,8 +36,7 @@ use tessera_material::ShaderRecord;
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
     DistantSprite, FarFadeParams, FarTerrainData, FarTerrainDraw, FarTerrainMesh, Instance,
-    InstanceBatch, Pass, Renderer, SpriteBatch, SpriteDraw, TextureId, WaterDraw, WaterParams,
-    WaterQuad,
+    InstanceBatch, Pass, Renderer, SpriteBatch, SpriteDraw, TextureId, WaterDraw, WaterQuad,
 };
 use tessera_world::far_view::{
     BuildJob, Cell, FarMesh, FarSprite, FarViewRecords, FarViewSettings, FarViewState, MeshBounds,
@@ -197,13 +196,6 @@ struct SectorGpu {
     atlased: bool,
 }
 
-#[derive(Debug, Clone)]
-struct WaterSurface {
-    params: Option<WaterParams>,
-    normal: Option<TexRequest>,
-    resolved: bool,
-}
-
 /// The far-view layer (module docs).
 pub struct FarViewLayer {
     ctx: Arc<WorldContext>,
@@ -224,7 +216,7 @@ pub struct FarViewLayer {
     detail: Option<TexRequest>,
     horizon: Option<u32>,
     horizon_warned: bool,
-    water: HashMap<Did, WaterSurface>,
+    water: super::water::WaterSurfaces,
     /// Sprite epoch and placement offset of the sprites swapped in last, per sector.
     sprite_offsets: HashMap<SectorKey, (u64, [f32; 2])>,
     stats: FarViewStats,
@@ -427,7 +419,7 @@ impl FarViewLayer {
             detail: None,
             horizon: None,
             horizon_warned: false,
-            water: HashMap::new(),
+            water: super::water::WaterSurfaces::default(),
             sprite_offsets: HashMap::new(),
             stats: FarViewStats::default(),
         }
@@ -833,6 +825,7 @@ impl FarViewLayer {
         resolver: &mut Resolver,
         store: &mut ObjectLayer,
         water: bool,
+        time: f64,
     ) {
         let settings = *self.state.settings();
         let fade = fade_params(&settings);
@@ -959,10 +952,11 @@ impl FarViewLayer {
                     if beyond_fade([o.x, o.y], size, eye, fade) {
                         continue;
                     }
-                    quads
-                        .entry(surface)
-                        .or_default()
-                        .push(WaterQuad::landblock([o.x, o.y], pair.height));
+                    quads.entry(surface).or_default().push(
+                        // §8.1: the landblock's place in its 3 × 3 sector.
+                        WaterQuad::landblock([o.x, o.y], pair.height)
+                            .with_sector_uv(u32::from(x), u32::from(y)),
+                    );
                 }
             }
         }
@@ -973,17 +967,27 @@ impl FarViewLayer {
             pass.distant_sprites(d);
         }
         let mut water_quads = 0usize;
-        let block_offset = {
+        let region_offset = {
             let o = anchor.origin();
             [-(o[0] as f32), -(o[1] as f32)]
         };
+        self.water.begin(time);
         for (surface, list) in quads {
-            let Some((params, normal)) = self.water_surface(surface, resolver, store) else {
+            let super::water::SurfaceState::Ready {
+                params,
+                animated_scales,
+                normal_map,
+                textures,
+                ..
+            } = self.water.surface(surface, resolver, store)
+            else {
                 continue;
             };
             water_quads += list.len();
-            let mut d = WaterDraw::new(list, normal, params);
-            d.block_offset = block_offset;
+            let mut d = WaterDraw::new(list, normal_map, params);
+            d.block_offset =
+                super::liquid::block_offset(animated_scales, region_offset, [eye.x, eye.y]);
+            d.textures = textures;
             // Faded like the far terrain (§7.2, FD1; §8 OPEN, Tessera choice).
             d.fade = fade;
             pass.water(d);
@@ -993,36 +997,6 @@ impl FarViewLayer {
         self.stats.sprite_batches = sprite_batches;
         self.stats.sprites = sprites;
         self.stats.water_quads = water_quads;
-    }
-
-    fn water_surface(
-        &mut self,
-        surface: Did,
-        resolver: &mut Resolver,
-        store: &mut ObjectLayer,
-    ) -> Option<(WaterParams, Option<TextureId>)> {
-        let e = self.water.entry(surface).or_insert(WaterSurface {
-            params: None,
-            normal: None,
-            resolved: false,
-        });
-        if !e.resolved {
-            let m = resolver.water(surface)?;
-            e.resolved = true;
-            e.params = m.as_ref().map(super::water::render_params);
-            e.normal = m.as_ref().and_then(|m| m.normal_map).map(|d| TexRequest {
-                did: d.0,
-                variant: VARIANT_OWN_ALPHA,
-            });
-            if let Some(t) = e.normal {
-                store.acquire(&[t]);
-            }
-        }
-        let normal = match e.normal.map(|t| store.lookup(t)) {
-            Some(TexLookup::Ready(id)) => Some(id),
-            _ => None,
-        };
-        Some((e.params.unwrap_or_default(), normal))
     }
 
     /// The horizon fill (§7.3), drawn only when its horizontal radius reaches 1.25 × *E*.
@@ -1083,11 +1057,7 @@ impl FarViewLayer {
         if let Some(p) = self.horizon.take() {
             store.release_model_parts(&[p]);
         }
-        for (_, e) in self.water.drain() {
-            if let Some(t) = e.normal {
-                store.release(&[t]);
-            }
-        }
+        self.water.release(store);
         self.sprite_offsets.clear();
         self.hand_off = Arc::new(FarHandOff::default());
         self.state.reset();

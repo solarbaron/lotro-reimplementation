@@ -490,7 +490,7 @@ impl FrillLayer {
             }
             let fade = fade_in_opacity(now.saturating_duration_since(cell.born).as_secs_f32());
             for g in &mut cell.groups {
-                let Some(model) = objects.frill_model(g.part) else {
+                let Some(model) = objects.frill_model(g.part).cloned() else {
                     continue;
                 };
                 let counts = sector_counts(&g.spans, camera, dist.far, g.params.reduction);
@@ -505,7 +505,10 @@ impl FrillLayer {
                 // Reduced per sector above.
                 params.reduction = None;
                 instances += list.len();
-                pass.instanced(InstanceBatch::frills(model.clone(), list, params));
+                let mut batch = InstanceBatch::frills(model, list, params);
+                // Animated texture matrices (`material.md` §8.4) at this frame's clock.
+                batch.uv = objects.animated_uv(g.part, 0);
+                pass.instanced(batch);
                 groups += 1;
             }
         }

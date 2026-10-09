@@ -255,17 +255,18 @@ pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport>
             } else {
                 0
             };
-            let timed_out = match progress_wait {
-                None => {
-                    walker.placed()
-                        && now.saturating_duration_since(started)
-                            > Duration::from_secs(args.settle_timeout)
-                }
-                Some((stall_frames, max_frames)) => {
-                    stall.observe(walker.load_progress()) >= stall_frames
-                        || iterations >= max_frames
-                }
+            let stalled = match progress_wait {
+                Some(_) => stall.observe(walker.load_progress()),
+                None => 0,
             };
+            let timed_out = settle_wait_expired(
+                progress_wait,
+                stalled,
+                iterations,
+                walker.placed(),
+                now.saturating_duration_since(started),
+                args.settle_timeout,
+            );
             if settled_frames >= SETTLED_FRAMES || timed_out {
                 report.settled = settled_frames >= SETTLED_FRAMES;
                 if !report.settled {
@@ -383,6 +384,26 @@ fn finish(
     }
 }
 
+/// Whether a screenshot run stops waiting for the settled state (`walker.md` §7 "Settle
+/// wait"): with a progress wait (`Some((stall_frames, max_frames))`, library callers) after
+/// `stall_frames` consecutive frames without loading progress or `max_frames` loop
+/// iterations, start-up included, whatever the wall-clock time; with the command line's
+/// wall-clock limit once the viewer is placed and `settle_timeout` seconds have passed.
+#[must_use]
+fn settle_wait_expired(
+    progress_wait: Option<(u64, u64)>,
+    stalled: u64,
+    iterations: u64,
+    placed: bool,
+    elapsed: Duration,
+    settle_timeout: u64,
+) -> bool {
+    match progress_wait {
+        None => placed && elapsed > Duration::from_secs(settle_timeout),
+        Some((stall_frames, max_frames)) => stalled >= stall_frames || iterations >= max_frames,
+    }
+}
+
 /// Records `r`'s error unless an earlier one is already kept.
 fn keep(first: &mut Option<anyhow::Error>, r: anyhow::Result<()>) {
     if let Err(e) = r
@@ -411,5 +432,47 @@ mod tests {
     #[test]
     fn settle_wait_defaults_to_the_command_line_timeout() {
         assert_eq!(SettleWait::default(), SettleWait::Timeout);
+    }
+
+    /// `walker.md` §7 "Settle wait": the command line gives up on wall-clock time once
+    /// placed; a progress wait ignores wall-clock time and gives up only after the stall
+    /// frames or the frame cap.
+    #[test]
+    fn settle_wait_limits() {
+        let long = Duration::from_secs(10_000);
+        let short = Duration::from_secs(1);
+        // Wall clock (the command line).
+        assert!(
+            !settle_wait_expired(None, 0, 1, false, long, 60),
+            "not placed yet"
+        );
+        assert!(!settle_wait_expired(None, 0, 1, true, short, 60));
+        assert!(settle_wait_expired(None, 0, 1, true, long, 60));
+        // Progress: hours of wall-clock time with progress do not give up.
+        let wait = Some((600, 100_000));
+        assert!(!settle_wait_expired(wait, 599, 5_000, true, long, 60));
+        assert!(settle_wait_expired(wait, 600, 5_000, true, short, 60));
+        // The frame cap counts start-up iterations too, placed or not.
+        assert!(settle_wait_expired(wait, 0, 100_000, false, short, 60));
+        assert!(!settle_wait_expired(wait, 0, 99_999, false, long, 60));
+    }
+
+    /// `walker.md` §7: the command line keeps `--settle-timeout` only; the progress limit
+    /// is a library caller's parameter, not an option.
+    #[test]
+    fn command_line_has_no_progress_wait_option() {
+        use clap::CommandFactory as _;
+        let cmd = crate::cli::Args::command();
+        let longs: Vec<String> = cmd
+            .get_arguments()
+            .filter_map(|a| a.get_long().map(str::to_owned))
+            .collect();
+        assert!(longs.iter().any(|l| l == "settle-timeout"), "{longs:?}");
+        assert!(
+            !longs.iter().any(|l| l.contains("stall")
+                || l.contains("progress")
+                || l.contains("settle-frames")),
+            "{longs:?}"
+        );
     }
 }

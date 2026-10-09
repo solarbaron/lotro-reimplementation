@@ -316,8 +316,9 @@ impl FrameLog {
     /// I/O errors.
     pub fn write_csv(&self, path: &Path) -> std::io::Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
-        // The audio columns (M6) are appended last, after the M4.5 columns, so that readers
-        // of the earlier columns keep working (walker.md §7, OPEN on documenting them).
+        // The audio columns (M6) are appended last, after the M4.5 columns that end in
+        // `frills_draw_ms`, so that readers of the earlier columns keep working (walker.md
+        // §7, "Audio columns").
         writeln!(
             w,
             "frame,t_s,frame_ms,cpu_ms,stream_ms,uploaded_bytes,resident_blocks,resident_bytes,\
@@ -596,6 +597,40 @@ mod tests {
         assert!((s.audio_ms - 0.5).abs() < 1e-12 && (s.max_mixer_load - 0.3).abs() < 1e-12);
         assert!(s.to_string().contains("5 underruns"));
         assert!(!summarize(&rows[..0]).to_string().contains("audio"));
+    }
+
+    /// `walker.md` §7 "Audio columns": the four audio columns come last, right after
+    /// `frills_draw_ms`, and every row has as many fields as the header.
+    #[test]
+    fn audio_columns_come_last() {
+        let mut log = FrameLog::default();
+        log.push(FrameRow {
+            audio_ms: 0.25,
+            audio_voices: 3,
+            audio_underruns: 1,
+            mixer_load: 0.5,
+            ..FrameRow::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("log.csv");
+        log.write_csv(&p).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        let mut lines = text.lines();
+        let header: Vec<&str> = lines.next().unwrap().split(',').collect();
+        let n = header.len();
+        assert_eq!(
+            header[n - 5..],
+            [
+                "frills_draw_ms",
+                "audio_ms",
+                "audio_voices",
+                "audio_underruns",
+                "mixer_load"
+            ]
+        );
+        let row: Vec<&str> = lines.next().unwrap().split(',').collect();
+        assert_eq!(row.len(), n);
+        assert_eq!(row[n - 4..], ["0.2500", "3", "1", "0.5000"]);
     }
 
     #[test]

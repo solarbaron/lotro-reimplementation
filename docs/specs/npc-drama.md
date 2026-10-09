@@ -894,6 +894,12 @@ spawn; `EnableCombat` lets the entity fight while still an NPC. `AI_KungFu_IsNPC
 > repetition), what the health clamp is, the 2 ratios above 1, and the effect of `EnableCombat`.
 > Server-side; no client code reads these properties except `AI_KungFu_IsNPC` (§9.5).
 
+> **OPEN (implementer, 2026-10-09):** the transition fields are written with elisions
+> (`…_HealthRatio`, `…_Transition_AlwaysActive`); the health-ratio label could be read as
+> `AI_KungFu_HealthRatio` or `AI_KungFu_Transition_HealthRatio`. Tessera resolves both and uses
+> the one the install's dictionary defines (only the second resolves here). Please spell the
+> full labels of the transition fields.
+
 ---
 
 <a id="s8"></a>

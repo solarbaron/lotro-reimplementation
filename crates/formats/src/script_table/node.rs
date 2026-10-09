@@ -658,6 +658,10 @@ pub enum NodeData {
         /// Length of the data in bytes.
         len: u32,
     },
+    /// A node built from a property tree (an instance script table, `instance-scripts.md`
+    /// §3.3) whose kind has no typed form here: its field values by the PIDs bound to the
+    /// fields, as stored in `ScriptTable_NodeProperties`.
+    Fields(Box<PropertySet>),
 }
 
 /// The case payload of a Switch port of type 5 (§4.3).

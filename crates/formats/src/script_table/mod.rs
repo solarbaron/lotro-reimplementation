@@ -10,6 +10,9 @@
 //!   scriptlet, scriptlet parameter, run, set property, …) and the kinds the sound runtime
 //!   needs (sound (48) as [`SoundNode`], sound environment (62); `sound.md` §9) are decoded
 //!   into typed [`NodeData`] variants, every other kind is kept as [`NodeData::Opaque`].
+//! - [`instance`]: the per-instance script table `Entity_InstanceScriptTable` (a script table
+//!   written as a property tree), an entity's table set with its instance definitions and
+//!   the lookup of a key through it (`instance-scripts.md`).
 //! - [`resolve`]: a bounded, cycle-safe evaluator that finds the clips an entity plays in a
 //!   given motion state (idle, walk, run, …), following §8 and §11.3.
 //!
@@ -25,6 +28,7 @@
 //!
 //! Spec: `docs/specs/script-table.md`.
 
+pub mod instance;
 mod node;
 mod record;
 pub mod resolve;

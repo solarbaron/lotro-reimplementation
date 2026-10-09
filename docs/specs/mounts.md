@@ -723,6 +723,11 @@ With the template values of §6.1 (`Mount_Movement_Max_Speed` 6.5, `…_Accelera
 war-steed bonuses has *F* = 6.5, *a*y = 0 and *R* = 100. The war-steed effects add to the base
 properties (§2.6); the `_Cached` forms are the forwarded results (§6.2).
 
+> **OPEN (implementer, 2026-10-09):** the strafe slots are not paired with property names
+> (Inferred above). **Tessera's choice:** *S*1 is the layered left strafe speed and *S*2 the
+> right one (`tessera-physics` `controller::warsteed`); every observed layer has equal strafe
+> speeds.
+
 <a id="s5-4"></a>
 ### 5.4 Target velocity and integration (BIN, MT20)
 

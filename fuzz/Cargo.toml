@@ -1173,3 +1173,38 @@ path = "fuzz_targets/formats_gameplay_items.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "formats_drama"
+path = "fuzz_targets/formats_drama.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_instance_scripts"
+path = "fuzz_targets/formats_instance_scripts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_mounts"
+path = "fuzz_targets/formats_mounts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_world_logic"
+path = "fuzz_targets/formats_world_logic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_decals"
+path = "fuzz_targets/world_decals.rs"
+test = false
+doc = false
+bench = false

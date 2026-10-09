@@ -102,6 +102,13 @@ per-instance properties from the instance property set when there is one, so the
 property set is the authoritative per-instance layer; the SED's own copy matters only to a
 reader that ignores the weenie list.
 
+> **OPEN (implementer, 2026-10-09):** Tessera's decoders measure, over the same records, every
+> SED's own property set equal to its instance property set (3,253,844 SEDs, the 9 SEDs that
+> repeat another SED's IID left out) and **no** strict subset, where this section counts
+> 2,298,059 equal and 955,794 strict subsets. Invariant IS8 holds either way. Which comparison
+> gives the 955,794 (for example a count of null entries, or entries compared by another rule)?
+> The real-data test reports the difference and fails on it only under `TESSERA_CENSUS=strict`.
+
 <a id="s2-2"></a>
 ### 2.2 Census by context
 
@@ -392,6 +399,12 @@ in stored order** (this replaces the "Inferred" order of `script-runtime.md` §1
 instance definition runs **in addition to** the class and additional tables' definitions of
 the same key unless it is `Overriding` (2 entries in the install do that).
 
+> **OPEN (implementer, 2026-10-09):** the order in which per-script property sets are merged
+> when several definitions of a key carry the same property is not stated (step 2 merges the
+> instance set first, step 3 the tables' sets). **Tessera's choice:** a property already in the
+> merged set is kept, so the instance definition's settings win over the tables', and the
+> first table in include order wins over later ones.
+
 <a id="s4-5"></a>
 ### 4.5 Building a node from a tree
 
@@ -424,6 +437,11 @@ For a `ScriptTable_Node` struct:
 > `RunScript_QueuingType`. **Decision (Tessera):** an absent field takes its PID's dictionary
 > default when the definition has one (`RunScript_Persistent` true, `RunScript_QueuingType` 3,
 > the other two false), otherwise the zero value of its type (`script-table.md` T28 reading).
+
+> **OPEN (implementer, 2026-10-09):** step 3 creates a port only for a type the node's kind
+> declares, up to the declared number; the declarations per kind (which port types, how many)
+> are not given here or in `script-table.md` §4.3. **Tessera's choice:** every port with a type
+> of 1 or more is kept for every kind (the install's trees hold only the pairs of §3.4).
 
 <a id="s4-6"></a>
 ### 4.6 What runs where
@@ -589,6 +607,12 @@ when its script stops, the node stops and the light goes.
 **The full list of varying fields** is therefore the seven driven fields above, plus
 `m_bLightActivated`, per variant. No other `Light.Script@Entity` member exists in the
 dictionary.
+
+> **OPEN (implementer, 2026-10-09):** the Light node (kind 13) has no typed decoder in
+> Tessera yet (`script-table.md` §5.3 gives its layout only in part), so the stored fields of
+> the table above cannot be read from table 0x07000689 at run time. **Tessera's choice:** the
+> direct rule of §9.4 (`tessera-world` `lighting::glow`) takes the Light node's stored values
+> from its caller; a spec of the Light node's field order would let it read them.
 
 <a id="s6-4"></a>
 ### 6.4 Values when a member is absent

@@ -142,8 +142,6 @@ pub(crate) struct Delivery {
 pub(crate) struct SharedState {
     pub available: Vec<AvailablePlugin>,
     pub loaded: Vec<PluginRow>,
-    /// Lower-case plugin command name → apartment id.
-    pub commands: HashMap<String, u64>,
     pub apartments: Vec<Arc<ApartmentCell>>,
     pub queue: VecDeque<Item>,
     pub delivering: Option<Delivery>,
@@ -336,8 +334,14 @@ impl std::fmt::Debug for Shared {
 /// §5.4).
 #[derive(Default)]
 pub(crate) struct CtxInner {
-    /// Lower-case command name → registry key of the `ShellCommand` table.
-    pub commands: HashMap<String, RegistryKey>,
+    /// The apartment's command objects: handler id (the key of its names in the host's
+    /// command registry) → registry key of the `ShellCommand` table. The names themselves
+    /// live only in the host's registry (`chat-window.md` §10 item 3).
+    pub commands: HashMap<u64, RegistryKey>,
+    /// Names this apartment holds in the host's registry (for the per-apartment cap).
+    pub command_names: usize,
+    /// The next handler id.
+    pub next_handler: u64,
     /// Package names run in this apartment (`lua-plugin-api.md` §7.2 "Run once").
     pub packages_run: HashSet<String>,
     /// Called once when the apartment closes (native objects of embedding layers).

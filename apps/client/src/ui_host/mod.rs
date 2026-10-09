@@ -157,6 +157,9 @@ pub struct UiHost {
     /// Lines submitted in the chat window (and run by quickslot aliases) waiting for the
     /// command dispatcher ([`Self::dispatch_entry_lines`]).
     entry_lines: VecDeque<EntryLine>,
+    /// The generation of the dispatcher's command words the chat window last took
+    /// ([`Plugins::command_text_generation`]; `chat-window.md` §10 item 11).
+    command_text_generation: u64,
     /// The scale the native panels take (`[UI] ui_scale_global`, then the scripted run's
     /// scale changes), and the scale each open root was given.
     native_scale: f32,
@@ -265,6 +268,7 @@ impl UiHost {
             pending_notices: Vec::new(),
             pending_session: Vec::new(),
             entry_lines: VecDeque::new(),
+            command_text_generation: 0,
             native_scale: if options.prefs.scale_global.is_finite()
                 && options.prefs.scale_global > 0.0
             {
@@ -1189,6 +1193,7 @@ impl UiHost {
             };
             panels.update_position(&mut self.ui.borrow_mut(), &input, area, maps);
         }
+        self.sync_command_text(plugins);
         self.chat_io(plugins);
         if plugins.take_manager_request() {
             let _ = self.open_panel(plugins, PanelId::PluginManager);
@@ -1214,6 +1219,25 @@ impl UiHost {
         let e = t.elapsed();
         self.frame.host += e;
         self.frame.step7 += e;
+    }
+
+    /// The chat window takes its command syntax and mode table from the dispatcher's one
+    /// read of the install's tables whenever the dispatcher has taken a new one
+    /// (`chat-window.md` §10 item 11), so it offers only mode words the registry holds.
+    fn sync_command_text(&mut self, plugins: &Plugins) {
+        let generation = plugins.command_text_generation();
+        if generation == self.command_text_generation {
+            return;
+        }
+        if let Some(chat) = self.panels.as_mut().and_then(|p| p.chat.as_mut()) {
+            chat.set_command_text(plugins.command_text());
+            self.command_text_generation = generation;
+            tracing::debug!(
+                generation,
+                modes = chat.setup().modes.len(),
+                "chat window took the dispatcher's command words"
+            );
+        }
     }
 
     /// Chat plumbing of step 7 (`chat-window.md` §10 items 2 and 9). Every line reaches

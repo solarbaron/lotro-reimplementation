@@ -325,6 +325,8 @@ fn plugin_host(dir: &std::path::Path) -> Plugins {
     )
     .unwrap();
     let mut p = Plugins::start(&plugins_dir, dir.join("data"), &["Greet".to_owned()]);
+    // No install: plugins may load (`chat-window.md` §10 item 3).
+    p.data_unavailable();
     p.set_music(PlayerMusic::new(MusicConfig::default()));
     let deadline = Instant::now() + std::time::Duration::from_secs(30);
     while p.manager().loaded_plugins().is_empty() && Instant::now() < deadline {

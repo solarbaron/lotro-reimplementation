@@ -35,7 +35,8 @@ pub fn split_names(entry: &str) -> Vec<String> {
 }
 
 /// The `CommandSetup` texts the window uses (§6.2 `START_COMMAND`, §6.5 mode words; read
-/// at run time from the install by the client).
+/// at run time from the install by the client's command dispatcher, whose one read the
+/// window shares with the registry, `chat-window.md` §10 item 11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSetup {
     /// The command prefix (token 0x0DA28738).

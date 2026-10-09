@@ -29,6 +29,8 @@ struct Rec {
 
 #[derive(Debug)]
 struct Host {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     rec: Mutex<Rec>,
     data: PluginDataLocation,
 }
@@ -40,6 +42,10 @@ impl CoreHost for Host {
 }
 
 impl HostApi for Host {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.rec.lock().unwrap().lines.push(text.to_owned());
     }
@@ -94,6 +100,7 @@ impl Fx {
         .unwrap();
         std::fs::write(plugins.join("Evil/inside.tga"), tga()).unwrap();
         let host = Arc::new(Host {
+            commands: tessera_plugins::CommandTable::new(),
             rec: Mutex::new(Rec::default()),
             data: PluginDataLocation {
                 root: data.clone(),

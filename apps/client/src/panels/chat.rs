@@ -3,18 +3,19 @@
 //! tabs from `GOP_ChatWindows`, the log and the entry line.
 //!
 //! `tessera-ui`'s [`Chat`] does the window work (tabs, filters, log, entry, channel modes);
-//! this module supplies its configuration ([`ChatSetup`], with the install's texts and mode
-//! words from [`ChatSetup::load_texts`]) and keeps every line the window takes (its own
-//! lines and the reply line of §6.2 that `tessera-ui` posts itself) so that the client can
-//! hand them to the plugins' `Turbine.Chat.Received` as deferred work (§10 item 9).
+//! this module supplies its configuration ([`ChatSetup`]: the install's defaults, the
+//! no-reply-target text from [`ChatSetup::load_texts`], and the command syntax and mode
+//! table from the command dispatcher's one read of the `CommandSetup` and `Commands`
+//! tables, [`ChatSetup::apply_command_text`] and [`ChatPanel::set_command_text`], §10
+//! item 11) and keeps every line the window takes (its own lines and the reply line of
+//! §6.2 that `tessera-ui` posts itself) so that the client can hand them to the plugins'
+//! `Turbine.Chat.Received` as deferred work (§10 item 9).
 //!
 //! The window keeps no command registry and parses no command line: a submitted entry line
 //! comes back as an [`EntryLine`] that the client runs through its one command dispatcher
 //! (`crate::commands`, decision 0020 item 1), whose registry holds the built-ins, the
 //! channel words and the plugins' commands; line up and down browse the dispatcher's
 //! history ([`EntryHistory`]).
-
-use std::collections::BTreeMap;
 
 use tessera_formats::property::PropertySchema;
 use tessera_formats::property_set::PropertySetRecord;
@@ -32,6 +33,7 @@ use tessera_ui::{ElementKey, UiEvent};
 use tessera_world::WorldSource;
 
 use super::PanelsError;
+use crate::commands::text::CommandText;
 
 /// Chat type 1 `Error` (`chat-window.md` §9).
 pub const CHAT_ERROR: u32 = 1;
@@ -52,52 +54,10 @@ pub const DEFAULT_OPACITY: i32 = 25;
 /// Further lines are shown but not delivered to plugins, and the drop is logged.
 pub const MAX_OUTGOING: usize = 256;
 
-/// `STRINGTABLE` key of the `CommandSetup` table (`chat-window.md` §7.2).
-pub const COMMAND_SETUP_TABLE_KEY: u32 = 2;
-/// `STRINGTABLE` key of the `Commands` table (`chat-window.md` §6.5, §8.1).
-pub const COMMANDS_TABLE_KEY: u32 = 0x1000_0007;
 /// `STRINGTABLE` key of the `Chat` table (`chat-window.md` §4.6, §6.2).
 pub const CHAT_TABLE_KEY: u32 = 0x1000_004D;
-/// `CommandSetup` token of the command prefix (§7.2 step 4).
-pub const TOKEN_PREFIX: u32 = 0x0DA2_8738;
-/// `CommandSetup` token of the substitution marker (§6.5, §7.5).
-pub const TOKEN_MARKER: u32 = 0x0240_9858;
-/// `CommandSetup` token of the default channel word (§7.2).
-pub const TOKEN_DEFAULT_WORD: u32 = 0x04DA_4989;
 /// `Chat` token of the no-reply-target line (§6.2 `ChatModeReply`).
 pub const TOKEN_NO_REPLY_TARGET: u32 = 0x00CC_89CC;
-
-/// The fixed rows of the mode table (§6.5): `Commands` token, chat type, kind. The two
-/// variant groups are left out (§6.5 OPEN Q12: the game-state test that picks one is not
-/// traced; Tessera rule recorded there).
-pub const MODE_ROWS: [(u32, u32, ModeKind); 26] = [
-    (0x04DA_4989, 5, ModeKind::Plain),
-    (0x0DA4_AC6C, 6, ModeKind::Plain),
-    (0x048C_E78C, 6, ModeKind::Reply),
-    (0x0A48_C3E9, 6, ModeKind::TellAgain),
-    (0x0384_53D4, 11, ModeKind::Plain),
-    (0x07B5_3A04, 23, ModeKind::Plain),
-    (0x06F0_47CE, 15, ModeKind::Plain),
-    (0x0253_3A8E, 46, ModeKind::Plain),
-    (0x0253_3B7E, 47, ModeKind::Plain),
-    (0x0AE9_AEE7, 16, ModeKind::Plain),
-    (0x0AE9_AE73, 18, ModeKind::Plain),
-    (0x0AE9_8903, 27, ModeKind::Plain),
-    (0x040E_21EC, 19, ModeKind::Plain),
-    (0x03AC_BD91, 9, ModeKind::Plain),
-    (0x03AC_BD92, 10, ModeKind::Plain),
-    (0x08B3_A4E1, 28, ModeKind::Plain),
-    (0x08B3_A4E2, 29, ModeKind::Plain),
-    (0x08B3_A4E3, 30, ModeKind::Plain),
-    (0x08B3_A4E4, 31, ModeKind::Plain),
-    (0x08B3_A4E5, 39, ModeKind::Plain),
-    (0x08B3_A4E6, 40, ModeKind::Plain),
-    (0x08B3_A4E7, 41, ModeKind::Plain),
-    (0x08B3_A4E8, 42, ModeKind::Plain),
-    (0x0984_23C4, 38, ModeKind::Plain),
-    (0x06E8_82B4, 44, ModeKind::Plain),
-    (0x0538_82B4, 45, ModeKind::Plain),
-];
 
 /// Everything the chat window needs from the install and Tessera's settings.
 #[derive(Debug, Clone, PartialEq)]
@@ -105,11 +65,12 @@ pub struct ChatSetup {
     /// Windows and tabs (`GOP_ChatWindows`, §3.3).
     pub config: ChatConfig,
     /// The `CommandSetup` texts the window uses (§6.2 `START_COMMAND`, §6.5 mode words),
-    /// read from the install by the client.
+    /// from the command dispatcher's read of the install ([`Self::apply_command_text`]).
     pub command_setup: CommandSetup,
     /// The text of the no-reply-target line and the channel names.
     pub texts: ChatTexts,
-    /// The channel mode rows (§6.5): (`Commands` entry text, chat type, kind).
+    /// The channel mode rows (§6.5): (`Commands` entry text, chat type, kind), from the
+    /// command dispatcher's read of the install ([`Self::apply_command_text`]).
     pub modes: Vec<(String, u32, ModeKind)>,
     /// Background opacity images (§3.5).
     pub opacity: OpacityTable,
@@ -146,8 +107,9 @@ impl ChatSetup {
 
     /// Replaces the configuration and the opacity table with the install's defaults
     /// (§10 item 1, §3.5): `GOP_ChatWindows` of `GameplayOptionDefaults` (`UNIQUEDB` key
-    /// 0x68) and `UI_ChatOpacities` (key 0x1000000C). Texts, modes and command names come
-    /// from string tables: [`ChatSetup::load_texts`].
+    /// 0x68) and `UI_ChatOpacities` (key 0x1000000C). The no-reply-target text comes from
+    /// [`ChatSetup::load_texts`], the command syntax and the modes from the dispatcher's
+    /// read ([`ChatSetup::apply_command_text`]).
     ///
     /// # Errors
     /// [`PanelsError::Record`] when a record is missing, unreadable or undecodable, or
@@ -181,70 +143,62 @@ impl ChatSetup {
 }
 
 impl ChatSetup {
-    /// Reads the chat window's texts and mode words from the install's string tables
-    /// (§10 items 4 and 8; `stringtable` is the `STRINGTABLE` DID map):
+    /// Reads the chat window's own text from the install's string tables (§10 item 8;
+    /// `stringtable` is the `STRINGTABLE` DID map): the no-reply-target line (token
+    /// 0x00CC89CC of the `Chat` table, key 0x1000004D). A missing table or token keeps the
+    /// current text. Returns the number of texts read (0 or 1).
     ///
-    /// - `CommandSetup` (key 2): the command prefix (token 0x0DA28738), the substitution
-    ///   marker (0x02409858) and the default channel word (0x04DA4989);
-    /// - `Chat` (key 0x1000004D): the no-reply-target line (0x00CC89CC);
-    /// - `Commands` (key 0x10000007): the fixed rows of the mode table ([`MODE_ROWS`],
-    ///   §6.5).
-    ///
-    /// The command names (§10 item 3) and the unknown-command line (§7.6) are the command
-    /// dispatcher's, which reads them itself (`crate::commands::text`).
-    ///
-    /// Each text that is found replaces the current one; a missing table or token keeps
-    /// it (so the sandbox's syntax defaults stay when the install lacks one). Returns the
-    /// number of texts read. Message pieces are joined without argument values (all of
-    /// these entries are one piece without arguments in the data, CW27a, CW32a).
+    /// The command prefix, the substitution marker, the default channel word and the mode
+    /// table are **not** read here: the window takes them from the command dispatcher's one
+    /// read of the `CommandSetup` and `Commands` tables (§10 item 11,
+    /// [`Self::apply_command_text`]), so it offers only mode words the registry holds.
     pub fn load_texts(&mut self, source: &dyn WorldSource, stringtable: &DataIdMap) -> usize {
-        let mut tables: BTreeMap<u32, Option<StringTable>> = BTreeMap::new();
-        let mut text = |key: u32, token: u32| -> Option<String> {
-            let t = tables.entry(key).or_insert_with(|| {
-                let did = stringtable.get(key)?.value;
-                let bytes = source.read(did).ok()??;
-                StringTable::parse_expecting(&bytes, did).ok()
-            });
-            t.as_ref()?
-                .get(token)
+        let text = (|| {
+            let did = stringtable.get(CHAT_TABLE_KEY)?.value;
+            let bytes = source.read(did).ok()??;
+            let table = StringTable::parse_expecting(&bytes, did).ok()?;
+            table
+                .get(TOKEN_NO_REPLY_TARGET)
                 .map(tessera_formats::string_table::StringTableEntry::plain_text)
-        };
-        let mut n = 0;
-        let mut set = |slot: &mut String, v: Option<String>| {
-            if let Some(v) = v.filter(|v| !v.is_empty()) {
-                *slot = v;
-                n += 1;
+        })();
+        match text.filter(|t| !t.is_empty()) {
+            Some(t) => {
+                self.texts.no_reply_target = t;
+                1
             }
-        };
-        set(
-            &mut self.command_setup.prefix,
-            text(COMMAND_SETUP_TABLE_KEY, TOKEN_PREFIX),
-        );
-        set(
-            &mut self.command_setup.marker,
-            text(COMMAND_SETUP_TABLE_KEY, TOKEN_MARKER),
-        );
-        set(
-            &mut self.command_setup.default_word,
-            text(COMMAND_SETUP_TABLE_KEY, TOKEN_DEFAULT_WORD),
-        );
-        set(
-            &mut self.texts.no_reply_target,
-            text(CHAT_TABLE_KEY, TOKEN_NO_REPLY_TARGET),
-        );
-        let modes: Vec<(String, u32, ModeKind)> = MODE_ROWS
-            .iter()
-            .filter_map(|(token, chat_type, kind)| {
-                text(COMMANDS_TABLE_KEY, *token)
-                    .filter(|t| !t.is_empty())
-                    .map(|t| (t, *chat_type, *kind))
-            })
-            .collect();
-        if !modes.is_empty() {
-            n += modes.len();
-            self.modes = modes;
+            None => 0,
         }
-        n
+    }
+
+    /// Takes the command syntax and the mode table from the command dispatcher's read of
+    /// the install (§10 item 11): the prefix, the substitution marker and the default
+    /// channel word that were read (an entry that was not keeps the current text), and the
+    /// rows of the 26 fixed mode-table rows that were read (none read: one `Say` row on the
+    /// default word). Returns the number of mode rows.
+    pub fn apply_command_text(&mut self, text: &CommandText) -> usize {
+        self.command_setup.prefix.clone_from(&text.prefix);
+        if let Some(m) = &text.marker {
+            self.command_setup.marker.clone_from(m);
+        }
+        if let Some(w) = &text.default_word {
+            self.command_setup.default_word.clone_from(w);
+        }
+        self.modes = if text.modes.is_empty() {
+            // Without the install's mode table the window has one `Say` row on the default
+            // word, which the registry holds (a Tessera name, or the install's default word
+            // registered as a `Say` word, §10 item 3).
+            vec![(
+                self.command_setup.default_word.clone(),
+                CHAT_SAY,
+                ModeKind::Plain,
+            )]
+        } else {
+            text.modes
+                .iter()
+                .map(|m| (m.names.clone(), m.chat_type, m.kind))
+                .collect()
+        };
+        self.modes.len()
     }
 }
 
@@ -343,6 +297,17 @@ impl ChatPanel {
     #[must_use]
     pub fn setup(&self) -> &ChatSetup {
         &self.setup
+    }
+
+    /// Takes the command syntax and the mode table of the command dispatcher's read of the
+    /// install (§10 item 11, [`ChatSetup::apply_command_text`]) without closing the
+    /// windows: the open entry uses them from its next key on. The current mode of each
+    /// tab is kept.
+    pub fn set_command_text(&mut self, text: &CommandText) {
+        self.setup.apply_command_text(text);
+        self.chat.setup = self.setup.command_setup.clone();
+        self.chat.modes =
+            tessera_ui::game::chat::ChannelModes::new(&self.setup.modes, &self.setup.command_setup);
     }
 
     /// Posts a line of chat type `chat_type` (1–64) to every log that takes it (§4.3) and
@@ -445,5 +410,106 @@ impl ChatPanel {
     /// Routes a UI event (tab clicks).
     pub fn handle_event(&mut self, ui: &mut Ui, ev: &UiEvent) {
         self.chat.handle_event(ui, ev);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::Dispatcher;
+    use crate::commands::registry::Channel;
+    use crate::commands::text::ModeText;
+    use tessera_ui::game::chat::command::split_names;
+
+    fn text() -> CommandText {
+        CommandText {
+            prefix: "#".into(),
+            default_word: Some("talk".into()),
+            marker: Some("%".into()),
+            modes: vec![
+                ModeText {
+                    names: "talk;t".into(),
+                    chat_type: 5,
+                    kind: ModeKind::Plain,
+                    channel: Channel::Say,
+                },
+                ModeText {
+                    names: "whisper".into(),
+                    chat_type: 6,
+                    kind: ModeKind::Plain,
+                    channel: Channel::Tell,
+                },
+                ModeText {
+                    names: "again".into(),
+                    chat_type: 6,
+                    kind: ModeKind::TellAgain,
+                    channel: Channel::TellReply,
+                },
+                ModeText {
+                    names: "band;b".into(),
+                    chat_type: 11,
+                    kind: ModeKind::Plain,
+                    channel: Channel::Unavailable,
+                },
+            ],
+            ..CommandText::default()
+        }
+    }
+
+    /// `chat-window.md` §10 item 11: the window takes its syntax and mode table from the
+    /// dispatcher's one read, and every mode word it offers is a name the registry holds.
+    #[test]
+    fn modes_come_from_the_dispatchers_read() {
+        let mut d = Dispatcher::new();
+        d.apply_text(text());
+        let mut setup = ChatSetup::sandbox();
+        assert_eq!(setup.apply_command_text(d.text()), 4);
+        assert_eq!(setup.command_setup.prefix, "#");
+        assert_eq!(setup.command_setup.marker, "%");
+        assert_eq!(setup.command_setup.default_word, "talk");
+        assert_eq!(
+            setup.modes,
+            [
+                ("talk;t".to_owned(), 5, ModeKind::Plain),
+                ("whisper".to_owned(), 6, ModeKind::Plain),
+                ("again".to_owned(), 6, ModeKind::TellAgain),
+                ("band;b".to_owned(), 11, ModeKind::Plain),
+            ]
+        );
+        let reg = d.registry();
+        for (names, _, _) in &setup.modes {
+            for n in split_names(names) {
+                assert!(reg.is_command(&n), "{n}: a mode word the registry holds");
+            }
+        }
+        // The window's switch words use the read prefix and marker.
+        let modes = tessera_ui::game::chat::ChannelModes::new(&setup.modes, &setup.command_setup);
+        assert_eq!(modes.switch_word("#b").map(|r| r.chat_type), Some(11));
+        assert_eq!(modes.switch_word("%whisper").map(|r| r.chat_type), Some(6));
+        assert!(modes.switch_word("/b").is_none());
+        assert_eq!(modes.command_word(5), "talk");
+    }
+
+    /// Without the install's words (the read failed): Tessera's syntax and one `Say` row
+    /// on the default word, which the registry holds as a Tessera name.
+    #[test]
+    fn defaults_without_the_install() {
+        let d = Dispatcher::new();
+        let mut setup = ChatSetup::sandbox();
+        assert_eq!(setup.apply_command_text(d.text()), 1);
+        assert_eq!(setup.command_setup.prefix, "/");
+        assert_eq!(setup.modes, [("say".to_owned(), CHAT_SAY, ModeKind::Plain)]);
+        assert!(d.registry().is_command("say"));
+        // Only a default word read: one `Say` row on it.
+        let mut setup = ChatSetup::sandbox();
+        let t = CommandText {
+            default_word: Some("talk".into()),
+            ..CommandText::default()
+        };
+        assert_eq!(setup.apply_command_text(&t), 1);
+        assert_eq!(
+            setup.modes,
+            [("talk".to_owned(), CHAT_SAY, ModeKind::Plain)]
+        );
     }
 }

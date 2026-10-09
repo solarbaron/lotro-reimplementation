@@ -33,6 +33,8 @@ struct Rec {
 }
 
 struct Host {
+    /// The host's command registry (the plugin host keeps none).
+    commands: tessera_plugins::CommandTable,
     rec: Mutex<Rec>,
     time: Mutex<f64>,
     data: PluginDataLocation,
@@ -46,6 +48,10 @@ impl CoreHost for Host {
 }
 
 impl HostApi for Host {
+    fn command_table(&self) -> Option<&tessera_plugins::CommandTable> {
+        Some(&self.commands)
+    }
+
     fn write_line(&self, text: &str) {
         self.rec.lock().unwrap().chat.push((0, text.to_owned()));
     }
@@ -208,6 +214,7 @@ impl Fx {
         let plugins = dir.path().join("Plugins");
         std::fs::create_dir_all(&plugins).unwrap();
         let host = Arc::new(Host {
+            commands: tessera_plugins::CommandTable::new(),
             rec: Mutex::new(Rec::default()),
             time: Mutex::new(100.0),
             data: PluginDataLocation {

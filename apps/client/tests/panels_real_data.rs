@@ -432,6 +432,8 @@ fn escape_chat_and_minimap_on_the_install() {
         let mut dispatcher = Dispatcher::new();
         dispatcher.apply_text(CommandText::load(&inst.set, None));
         let chat = panels.chat.as_mut().expect("chat");
+        // The window's modes come from the dispatcher's one read (§10 item 11).
+        chat.set_command_text(dispatcher.text());
         let w = chat.chat.primary().expect("primary window");
         let tabs = chat.chat.windows[w].tabs.len();
         println!("chat: {} window(s), {tabs} tab(s)", chat.chat.windows.len());
@@ -459,12 +461,12 @@ fn escape_chat_and_minimap_on_the_install() {
         let count = |e: &Option<String>| e.as_deref().map_or(0, |e| split_names(e).count());
         println!(
             "chat texts: prefix {} char(s), help names {}, plugin names {}, mode rows {}, \
-             channel rows {}",
+             dispatcher rows {}",
             setup.command_setup.prefix.chars().count(),
             count(&text.help_names),
             count(&text.plugins_names),
             setup.modes.len(),
-            text.channel_words.len()
+            text.modes.len()
         );
         assert_eq!(setup.command_setup.prefix, "/", "CW-I6: U+002F");
         assert_eq!(setup.command_setup.marker, ";", "CW-I6: U+003B");
@@ -472,11 +474,13 @@ fn escape_chat_and_minimap_on_the_install() {
         assert!(text.unknown_line.is_some(), "token 0x04FE7F13");
         assert!(!setup.texts.no_reply_target.is_empty(), "token 0x00CC89CC");
         assert_eq!(setup.modes.len(), 26, "the fixed rows of §6.5");
-        assert_eq!(
-            text.channel_words.len(),
-            26,
-            "the same rows for the dispatcher"
-        );
+        assert_eq!(text.modes.len(), 26, "the same rows for the dispatcher");
+        // Every mode word the window offers is a name the registry holds (§10 item 11).
+        for (names, _, _) in &setup.modes {
+            for name in split_names(names) {
+                assert!(reg.is_command(name), "a mode word the registry holds");
+            }
+        }
         for entry in [&text.help_names, &text.plugins_names] {
             let entry = entry.as_deref().expect("a name list (CW35a)");
             let mut n = 0;
@@ -488,6 +492,7 @@ fn escape_chat_and_minimap_on_the_install() {
         }
         let say = setup.command_setup.default_word.clone();
         assert!(reg.is_command(&say), "the default channel word");
+        drop(reg);
         // Unknown command typed in the entry: the dispatcher's one Error line, from the
         // install (§7.6, §10 item 6).
         let out = submit_typed(&mut ui, chat, &mut dispatcher, "/zzznosuchcommand");

@@ -16,7 +16,8 @@
 //!   `PluginManager`, …) and `Turbine.Gameplay`'s read-only local-player views fed by a
 //!   [`LocalPlayerSource`] the client implements ([`gameplay`]).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
-//!   [`CoreHost`].
+//!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
+//!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
 //! - [`plugindata`]: `.plugindata` naming, keys, writer and the comma rule over the
 //!   core's neutral reader.
 //! - [`vfs`]: the index of the whole `Plugins/` tree and the call-time header probe of
@@ -35,6 +36,7 @@
 mod apartment;
 pub mod api;
 pub mod class_helper;
+pub mod commands;
 mod data_io;
 pub mod descriptor;
 pub mod discovery;
@@ -54,6 +56,7 @@ mod shared;
 pub mod ui;
 pub mod vfs;
 
+pub use commands::{CommandOwner, CommandTable};
 pub use descriptor::{DescriptorError, PluginDescriptor, parse_descriptor};
 pub use discovery::{AvailablePlugin, RefreshReport};
 pub use error::{PluginError, ScriptError};

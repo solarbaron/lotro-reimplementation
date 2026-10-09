@@ -1218,6 +1218,24 @@ These are Tessera's rules, not facts about the original.
 > allowed under the condition stated there). (d): §10 item 2 (the window's local echo is
 > replaced by the session's echo; without a session the line is refused).
 
+> **OPEN (implementation, revision 3 conformance, 2026-10-09; engineering choices, no fact
+> about the original):** §10 items 3 and 11 are implemented in `apps/client` (`commands/`,
+> `plugins.rs`, `panels/chat.rs`, `ui_host/`) and `crates/plugins` (`root_ns/shell.rs`,
+> `HostApi` command methods). Choices made where the spec is silent; please confirm or
+> correct: (a) **`AddCommand` names** reach the registry as the trimmed pieces of LPA §11.1,
+> with no other change (the earlier plugin host also removed a leading `/` and folded case
+> to ASCII; that is gone, so a piece `/x` is stored as `/x`); `IsCommand` passes its argument
+> unchanged (§8.2). (b) **What waits for the tables.** The plugin manager's whole per-frame
+> work (not only the queued loads) waits until the dispatcher's read has finished or failed;
+> with no archives it does not wait. (c) **What the window takes from the read.** Besides the
+> mode table, the command prefix, the substitution marker and the default channel word come
+> from the same read (an entry that was not read keeps Tessera's default); with no mode row
+> read the window has one `Say` row on the default word. The window takes a new read in
+> frame-loop step 7 and keeps each tab's current mode. (d) **Plugin command identity.** Each
+> `ShellCommand` object of an apartment gets one handler key; `RemoveCommand` removes every
+> name of that object; an apartment's unload removes every name it holds. `/help` asks a
+> plugin command's `GetShortHelp` or `GetHelp` when it runs.
+
 ---
 
 <a id="s11"></a>

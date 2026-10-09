@@ -232,10 +232,11 @@ impl Apartment {
         self.call(&f, all)
     }
 
-    /// The `ShellCommand` table registered under `name` (lower case).
-    pub(crate) fn command_table(&self, name: &str) -> Option<Table> {
+    /// The `ShellCommand` table of handler id `handler` (the key of its names in the
+    /// host's command registry).
+    pub(crate) fn command_table(&self, handler: u64) -> Option<Table> {
         let inner = lock(&self.ctx.inner);
-        let key = inner.commands.get(name)?;
+        let key = inner.commands.get(&handler)?;
         self.lua().registry_value::<Table>(key).ok()
     }
 

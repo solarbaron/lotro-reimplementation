@@ -616,8 +616,8 @@ impl Chat {
         }
     }
 
-    /// The `OutputTextType` label (§6.5): the channel's display name, else (Tessera, see
-    /// the implementation note under `chat-window.md` §6.5) the mode's command word.
+    /// The `OutputTextType` label (§6.5): the channel's display name, else (the Tessera
+    /// rule under `chat-window.md` §6.5 while Q12 is open) the mode's command word.
     fn update_label(&self, ui: &mut Ui, w: &ChatWindow) {
         let Some(l) = w.output_label else { return };
         let name = self

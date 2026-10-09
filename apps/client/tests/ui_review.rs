@@ -10,7 +10,8 @@
 //!   §2.5, `render.md` §6.11);
 //! - a scale-factor change during the pointer lock rescales the frozen position
 //!   (`keymap.md` §7.8.9, invariant (h6), client glue);
-//! - the panels' plugin command list never runs a plugin's replacement of
+//! - the command list (the dispatcher's registry, which holds the plugins' commands,
+//!   `chat-window.md` §10 item 3) never runs a plugin's replacement of
 //!   `Turbine.Shell.GetCommands`.
 
 mod ui_common;
@@ -19,7 +20,6 @@ use std::time::{Duration, Instant};
 
 use tessera_client::ui_host::UiHost;
 use tessera_client::ui_host::cursor::{CursorWindow, activation_timing};
-use tessera_client::ui_host::services::plugin_command_names;
 use tessera_input::{MouseButton, RawEvent};
 use tessera_settings::{CursorMode, InputPrefs};
 use ui_common::{Rig, write_plugin};
@@ -94,6 +94,8 @@ fn a_plugin_error_is_an_error_line() {
         dir.path().join("data"),
         &["Broken".to_owned()],
     );
+    // No install: plugins may load (`chat-window.md` §10 item 3).
+    plugins.data_unavailable();
     plugins.set_ui_binding(Some(host.plugin_ui().binding()));
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut lines = Vec::new();
@@ -270,7 +272,7 @@ fn the_command_list_never_runs_plugin_code() {
     rig.wait_loaded(1);
     assert!(rig.said("hijack: ready"), "{:?}", rig.lines());
     let t = Instant::now();
-    let names = plugin_command_names(rig.plugins.manager(), &[]);
+    let names = rig.plugins.command_names();
     assert!(
         t.elapsed() < Duration::from_secs(2),
         "took {:?}",
@@ -278,5 +280,39 @@ fn the_command_list_never_runs_plugin_code() {
     );
     assert!(names.iter().any(|n| n == "reviewcmd"), "{names:?}");
     assert!(names.iter().any(|n| n == "plugins"), "{names:?}");
+    rig.shutdown();
+}
+
+/// A quickslot whose alias runs a plugin command.
+const ALIAS: &str = r#"
+w = Turbine.UI.Window() w:SetSize(400, 300) w:SetPosition(100, 100) w:SetVisible(true)
+q = Turbine.UI.Lotro.Quickslot() q:SetParent(w) q:SetSize(32, 32) q:SetVisible(true)
+q:SetShortcut(Turbine.UI.Lotro.Shortcut(Turbine.UI.Lotro.ShortcutType.Alias, '/aliascmd from the slot'))
+local cmd = Turbine.ShellCommand()
+function cmd:Execute(c, a) Turbine.Shell.WriteLine("alias ran " .. c .. " [" .. a .. "]") end
+Turbine.Shell.WriteLine("alias added " .. Turbine.Shell.AddCommand("aliascmd", cmd))
+"#;
+
+/// `chat-window.md` §10 items 11 and 13: a quickslot alias's command line runs through the
+/// client's dispatcher (the plugin's command lives in the dispatcher's registry, §10 item
+/// 3) and, like every submission that reaches §7.2, is added to the one history.
+#[test]
+fn quickslot_alias_lines_run_through_the_dispatcher_and_reach_the_history() {
+    let mut rig = Rig::new(|p| write_plugin(p, "Review", "Alias", Some("A"), ALIAS));
+    rig.attach(&["Alias"]);
+    rig.wait_loaded(1);
+    assert!(rig.said("alias added 1"), "{:?}", rig.lines());
+    assert!(rig.plugins.command_names().iter().any(|n| n == "aliascmd"));
+    rig.click(110.0, 110.0);
+    let ran = rig.frames_until(50, |r| r.said("alias ran aliascmd [from the slot]"));
+    assert!(ran, "{:?}", rig.lines());
+    let history: Vec<String> = rig
+        .plugins
+        .dispatcher()
+        .history()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(history, ["/aliascmd from the slot"]);
     rig.shutdown();
 }

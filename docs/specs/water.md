@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (2026-10-08; two parallel revisions of that date, each re-reviewed and accepted: the volume-flag, element and monitor answers, rows W18–W20, and the §7.4 revision on entering deep water from BIN2, row W21 (W18 in that revision); merged 2026-10-09 with one disagreement between them recorded as an OPEN in §7.4). First accepted 2026-10-06. |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review sessions (spec reviewer, fresh sessions; separate from the writer's session) |
+| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Re-review of the 2026-10-08 revision (rows W18–W20), 2026-10-08 (fresh reviewer session): **Accepted** (CLEAN_ROOM.md §5.3, every item; W19 spot-checked in the binary). Re-review 2026-10-08 of the parallel §7.4 revision (BIN2, row W21, then W18) (Claude review session, spec-reviewer role, fresh session): **passed**, Accepted; all CLEAN_ROOM.md §5.3 items hold. Spot check: steps 1–4 agree with `collision.md` §10.3 (Swimming row), §11.1 step 9, §11.6 items 3, 4, 7 and §12.4 (p), §12.5; the worked example recomputed (0.098, 0.037, 0.013, 0.003 m, line in the fifth update at 60 per second; 0.19, 0.07, 0.02 m, fourth at 30). Non-blocking: in §7.4 step 3, *v* in 0.4 · (*v* + 20 *t*) is the signed vertical velocity (negative downward), not the "downward speed" the sentence names; the example fixes the sign. Merge of both revisions, 2026-10-09: no fact changed; the merged text has not been reviewed as a whole. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
 | **Companion specs** | [`environment.md`](environment.md) §3 (region descriptor: slots 5 and 6 name the two tables). [`landblock.md`](landblock.md) §3.4 (height conversion), §5 (block maps; keys 3, 4 and 7 are read here), §7 (distant-landscape sector records). [`material.md`](material.md) §4 (surface records 0x31), §5–§8 (shader records 0x2B, parameter entries, labels; §8.6: `c_`-labelled parameters feed the program constant of the same name). [`collision.md`](collision.md) §9–§12 (volumes, movement states, controller). [`scenery.md`](scenery.md) §7.4–§7.5 (height modes and water ranges that read the water plane). [`entity-descriptor.md`](entity-descriptor.md) (placed static entities). [`property-system.md`](property-system.md) §5 (0x78 property sets), §7 (enum mappers). [`records.md`](records.md) §1 (VLE), §2.1 (prefix → DB type table). |
 
@@ -42,7 +42,8 @@ the invariants (§11), not the counts.
 | Tag | Source |
 |---|---|
 | OBS | Observed in the user's install (Steam) on 2026-10-05 by throwaway probes in the dirty-room scratchpad: all 5 records of prefix 0x16 and all 5 of prefix 0x17 decoded to the last byte; all 7 region descriptors; all 390,150 block maps (every key and value) and the minimum and maximum of all 390,150 height grids of regions 1–5 and 14; all 33,159 distant-landscape sector records (kind 5) searched for their water pairs; all 3,244,086 placed static entities of all 49,636 landblock-info records (object DID, position, world-building label); all 40,643 entity descriptors (0x47) and all 1,616 stand-alone property sets (0x78) checked for liquid-volume properties; the 76 surface records (0x31) named by the water tables and their shader records (0x2B). |
-| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone in the dirty room on 2026-10-05. **Questions:** (a) which DB object type the client registers for each DID range (to settle what prefixes 0x16 and 0x17 are); (b) the deserialisers of the water table, the fog-zone table and the region descriptor; (c) how a landblock decides it has water: which block-map keys, how a stored level becomes a height, the presence rule, the plane; (d) who consumes that state: the water-volume entity, the "under water" test, the scenery and encounter passes; (e) how water geometry is built for drawing; (f) how the fog-zone table is looked up. **Why M1–M3 were not enough:** block-map keys 3, 4, 6 and 7 have no descriptor entry in the data (`landblock.md` §5.6), so nothing in the data says which table reads them or how a stored value becomes a height; the earlier specs disagreed about which slot is water (§13); no published source describes these records; no running client is available to this session for M3. Only offline world code was read: nothing about network, login, keys, launcher or anti-tamper. |
+| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone in the dirty room on 2026-10-05. **Questions:** (a) which DB object type the client registers for each DID range (to settle what prefixes 0x16 and 0x17 are); (b) the deserialisers of the water table, the fog-zone table and the region descriptor; (c) how a landblock decides it has water: which block-map keys, how a stored level becomes a height, the presence rule, the plane; (d) who consumes that state: the water-volume entity, the "under water" test, the scenery and encounter passes; (e) how water geometry is built for drawing; (f) how the fog-zone table is looked up. **Why M1–M3 were not enough:** block-map keys 3, 4, 6 and 7 have no descriptor entry in the data (`landblock.md` §5.6), so nothing in the data says which table reads them or how a stored value becomes a height; the earlier specs disagreed about which slot is water (§13); no published source describes these records; no running client is available to this session for M3. Only offline world code was read: nothing about network, login, keys, launcher or anti-tamper. **Second use, 2026-10-08 (same build; Ghidra headless on a copy of the analysed project, deleted afterwards; answering the implementer OPENs of 2026-10-07):** (g) which value types the client's readers of the volume flags accept; (h) the routine that sets a mover's `Entity_Element` and the inputs it reads; (i) how a monitor's `Monitor_Offset` and box corners are read. **Why M1–M3 were not enough:** the dictionary gives each flag one type, so the data never exercises another; the state rule and the monitor reader are run-time behaviour no record stores; no running client or published source is available. Read: the volume-flag readers, the element routine and its support-flag accessors, the monitor-array reader. |
+| BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read with Ghidra in the dirty room on 2026-10-08. **Question (g):** what the player controller does to a mover's downward speed and displacement when the mover enters water (the clean-room OPEN of the M4.5 exit verification in §7.4). Read: the player controller's update, its velocity and displacement routine, its water-surface routine, the move request and the routine that publishes the movement state; the constants they load were read from the executable. **Why M1–M3 were not enough:** the data hold only the layer parameters (`collision.md` §10.3), not how the controller applies them to a mover entering water; no running client is available to this session (M3). Only offline movement code was read: nothing about network, login, keys, launcher or anti-tamper. |
 | SH | The water shader records (prefix 0x2B) of the same install carry the OpenGL back end's programs as text. Those of shader record 0x2B0000A8 (used by 43 of the 76 water surfaces) were read in the dirty room (method M1, data files) and reduced to the words of §8.3–§8.4; the sampler lists of the other five water shader records were read. No program text is reproduced. |
 | LC | LotroCompanion `lotro-tools` (`RegionLoader`, readable source; facts only): names region slot 5 "water" and slot 6 "fog". Reported only; confirmed here by BIN. |
 | ENV, LB, COL, SCN, MAT | `environment.md`, `landblock.md`, `collision.md`, `scenery.md`, `material.md` (same install). |
@@ -74,6 +75,10 @@ where the original's is not known (never a statement about the original).
 | W15 | Block-map key 3 is 0 in every landblock, so no fog zone is active anywhere in this install (§5.4) | OBS | Confirmed |
 | W16 | Shader record 0x2B0000A8 is named by 55 surface records (0x31), 43 of them water surfaces of the tables; its water permutations take positions only and composite the frame-buffer copy, its low-detail permutations sample two colour layers and are lit per vertex by ambient, hemispheric ambient and the per-vertex lights (§8.2) | OBS (all surface records, 2026-10-05); SH (sampler lists, render-state bytes and constant lists of every permutation of 0x2B0000A8) | Confirmed |
 | W17 | The specular direction of §8.4 step 6 is the main light's travel direction when the main light is directional, else an engine default direction (§8.4) | `lighting.md` §4.2, row L24 (BIN-L (g)) | BIN |
+| W18 | The client's readers of `Volume_IsLiquid`, `Volume_IsLava` and `Volume_IsCoin` count a flag as set only when the value found is a Boolean (type 21) and true; all volume flags are Boolean in the dictionary (§7.2) | BIN (g); OBS (dictionary types, 2026-10-08) | BIN (readers); Confirmed (types) |
+| W19 | A mover's `Entity_Element` is 1, 3 or 2 when its own `Volume_IsLiquid` is true (walkable support, other support, no support) and 5, 6 or 4 otherwise; depth and float height are not inputs; every `Volume_IsLiquid` set counts, coin sets included (§7.4; `collision.md` §11.3.2) | BIN (h) | BIN |
+| W20 | A monitor's `Monitor_Offset` (a vector) is added to both box corners; the corners and the offset are used only when they are vectors (§7.1) | BIN (i) | BIN |
+| W21 | The original does not cancel or clamp a downward speed or a falling displacement in water; a mover entering deep water is slowed only by the Swimming layer's gravity and once-per-update damper, and the first update whose displacement rises puts its feet on the float line (§7.4) | BIN2 (g); `collision.md` §11.1 step 9, §11.6 items 3, 4, 7 (BIN) | BIN |
 
 ---
 
@@ -421,6 +426,10 @@ Relative to the water surface *h*: the surface zone is the top 0.5 units, the wa
 > (c) Whether `Entity_Monitors` is inherited along the 0x47 parent chain: Tessera reads it
 > from the nearest level of the chain like other object properties (`scenery.md` §9.2); in
 > this install no placed volume entity inherits its monitors.
+>
+> **Partial answer (2026-10-08, BIN, W20):** (a) the client adds `Monitor_Offset` to both
+> corners of the box, as the Decision does; where the entity's scale is applied relative to
+> that sum was not traced. (b) and (c) were not traced; the Decisions stand.
 
 <a id="s7-2"></a>
 ### 7.2 Volume property sets (Confirmed)
@@ -439,10 +448,13 @@ no landblock water type uses them.
 
 These are the sets `collision.md` §10.4 names for the water movement states.
 
-> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** the table gives
-> every flag as a boolean but does not say what a value of another type means. Tessera
-> (Decision): a flag is set only by a boolean true; an integer, enum or other value counts
-> as not set (the released code read non-zero integers and enum keys as true).
+**Value types (BIN, W18; answers the implementer OPEN of 2026-10-07).** Every reader of these
+flags that was traced (`Volume_IsLiquid` in the movement-state routine and two other places,
+`Volume_IsLava`, `Volume_IsCoin`) counts a flag as set only when the value found is a Boolean
+(type 21) and true; a value of another type reads as not set. The dictionary declares every
+volume flag as Boolean, and each value is decoded with that type (`property-system.md` §5.3),
+so a value of another type does not occur in data read with the dictionary. The implementer's
+Decision is the client's behaviour.
 
 <a id="s7-3"></a>
 ### 7.3 Placed water volumes (Confirmed census)
@@ -465,16 +477,47 @@ the entity when `Monitor_ScaleWithEntity` is true.
 > coin volume counts as water for movement (§7.4) and for the "under water" query is not
 > known. Tessera (Decision): every `Volume_IsLiquid` box is liquid, as the rule of §7.4
 > states.
+>
+> **Answer (2026-10-08, BIN, W19):** for the movement state the client reads only the mover's
+> `Volume_IsLiquid`, so a coin volume counts as water there, as the Decision says. Whether the
+> "is this position under water" query (§6.3, §10) counts it was not traced; the Decision
+> stands for that query.
 
 <a id="s7-4"></a>
-### 7.4 From volumes to movement states (partly OPEN)
+### 7.4 From volumes to movement states (state rule BIN; containment and buoyancy OPEN)
 
 `collision.md` §10.4 lists the mover states Water_ControlledSurface (1), Water_NoSurface (2) and
-Water_UncontrolledSurface (3). The volumes above say *where* water is and how deep; which point
-of the mover is tested against the boxes and how the client switches between the states is not
-traced (`collision.md` Q9). **Tessera rule (Decision):** a mover is in water when its feet are
-inside any liquid box; it swims (state 2) when the water surface is more than its float height
-above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on steep support).
+Water_UncontrolledSurface (3).
+
+**Client rule (BIN, W19, 2026-10-08).** The monitor volumes above apply their property sets to
+the movers inside them, so a mover inside a liquid zone has `Volume_IsLiquid` true. The client
+sets `Entity_Element` from that flag and the support flags of `collision.md` §11.3.1: in liquid,
+1 on walkable support, 3 on other support and 2 without support; out of liquid 5, 6 and 4
+(`collision.md` §11.3.2). The water level, the depth and the float height are not inputs: a
+mover standing on walkable ground inside a liquid volume is in state 1 however deep the water,
+and a mover without support is in state 2 however shallow. Which point or shape of the mover
+the monitors test, and how the float height keeps a swimmer at its depth (the client's
+buoyancy), were not traced (`collision.md` Q9).
+
+> **OPEN (merge of 2026-10-09; RE, `collision.md` Q9):** two parallel readings of 2026-10-08
+> disagree on one input of the state rule. The rule above (BIN (h), W19; `collision.md`
+> §11.3.2) has no depth or float-height input. Step 1 of "Entering deep water at speed" below
+> (BIN2 (g), W21; `collision.md` §11.6 item 7, C49) counts the mover as in water only when the
+> water surface also lies at least its float height minus 0.0002 m above its feet, so a mover
+> in a liquid volume above that depth keeps state 5, 6 or 4. The two give different answers to
+> the no-support OPEN below (state 2 here; state 4 there in water shallower than the float
+> height, `collision.md` §15 row for this section). Both are kept as read until a fresh BIN
+> reading decides (`collision.md` §11.3.2 OPEN); the Tessera rule below does not depend on it.
+
+**Tessera rule (Decision):** a mover is in water when its feet are inside any liquid box; it
+swims (state 2) when the water surface is more than its float height above its feet
+(`collision.md` §11.2), otherwise it wades (state 1, or 3 on steep support); without support it
+swims (the OPEN below). This differs from the client in one case: on walkable support in water
+deeper than the float height Tessera gives 2 where the client gives 1. Tessera keeps its test
+because the client's way of lifting a swimmer off the bottom (the Swimming layer's upward
+gravity of `collision.md` §11.1 step 9, applied in state 1 too, with a buoyancy that was not
+traced) is not known, and Tessera's float line (`collision.md` §12.4 (p)) needs the deep-water
+case to be a swimming state.
 
 > **OPEN (implementer, 2026-10-06, `tessera-physics` controller):** the rule above does not
 > say which state a mover in water **without** support takes when the surface is less than
@@ -485,20 +528,23 @@ above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on ste
 > swimmer above that line sink to it (with gravity −20 the swimming layer would otherwise
 > lift the mover out of the water); the surface is the water plane's level where the liquid
 > boxes end there, else the top of the liquid boxes above the feet.
+>
+> **Answer (2026-10-08, BIN, W19):** the client gives state 2 to every mover in liquid without
+> support, whatever the depth, so Tessera's choice of state 2 is the client's state. The
+> float-line handling stays a Tessera Decision (the client's buoyancy was not traced).
 
-> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** "the top of
-> the liquid boxes above the feet" does not say what happens when stacked liquid boxes leave
-> a dry gap above the feet. The released code searched upward with doubling probes
-> (0.25 m, 0.5 m, 1 m, … up to 2,048 m, then 24 bisections), so its answer depended on the
-> probe spacing. Tessera (Decision): the surface is the top of the **contiguous** liquid
-> above the feet, computed exactly from the heights at which the vertical line through the
-> feet is inside each `Volume_IsLiquid` box: starting at the feet, each box whose span begins
-> at most 1 mm above the top found so far extends it, and a larger dry gap ends the liquid.
-> When a landblock water plane lies over the point and its level is within 1 mm of that top,
-> the surface is the plane's level (the liquid ends at the plane, §6.3). The 1 mm tolerance
-> absorbs the rounding of boxes placed in single precision. Example: feet at 0 with boxes
-> from −1 to 0.6 and from 0.8 to 5 give the surface 0.6. Please state the client's rule or
-> confirm.
+**Water surface for the float line (answers the implementer OPEN of 2026-10-07).** The client
+computes no "surface above the feet" for the state (rule above, BIN); its buoyancy was not
+traced. The surface that Tessera's float line uses is therefore Tessera's own construction, and
+the implementer's rule is confirmed as the Tessera Decision: the surface is the top of the
+**contiguous** liquid above the feet, computed exactly from the heights at which the vertical
+line through the feet is inside each `Volume_IsLiquid` box. Starting at the feet, each box
+whose span begins at most 1 mm above the top found so far extends it, and a larger dry gap ends
+the liquid. When a landblock water plane lies over the point and its level is within 1 mm of
+that top, the surface is the plane's level (the liquid ends at the plane, §6.3). The 1 mm
+tolerance absorbs the rounding of boxes placed in single precision. Example: feet at 0 with
+boxes from −1 to 0.6 and from 0.8 to 5 give the surface 0.6. (The released doubling-probe
+search is replaced.)
 
 > **OPEN (implementer, 2026-10-06, controller review):** `collision.md` §11.1 step 9 applies
 > the Swimming layer (gravity −20) in states 1, 2 and 3. How its upward gravity interacts
@@ -522,14 +568,50 @@ above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on ste
 > lookup at the feet + 0.05 m finds a cell. Please state the client's rule (BIN), and
 > whether placed volumes inside cells (§7.3) still apply there.
 
-> **OPEN (M4.5 exit verification, clean room, 2026-10-06):** how the original slows a mover
-> that enters deep water at speed is not stated. Tessera (Decision, `collision.md` §12.3 OPEN
-> (p)): below the float line the downward speed is cancelled at once, so a mover sliding
-> into a lake at 15 m/s stops within one step instead of diving about 4 m before the lift
-> turns it. This applies to a mover that reaches deep water while in state 6 (sliding down a
-> steep bank into the water, `collision.md` §11.3 mechanism): once its feet pass below the
-> float line the vertical speed is zeroed and the state becomes 2 (swimming); the float line
-> is the surface minus the float height, as above.
+**Entering deep water at speed (BIN2, W21).** This answers the clean-room OPEN of the M4.5
+exit verification (2026-10-06), which asked how the original slows a mover that enters deep
+water at speed. The original has **no** rule that cancels or limits a downward speed in
+water. Its player controller (`collision.md` §11.6) slows such a mover only through the
+parameters of the Swimming layer:
+
+1. The mover counts as in water at the end of an update when its `Volume_IsLiquid` is true
+   and the water surface lies at least its float height minus 0.0002 m above its feet; its
+   state then becomes 1, 3 or 2 by its support (walkable, other, none) (`collision.md` §11.6
+   item 7); W19 reads no depth input, OPEN above). The update in which this happens still ran with the previous layers.
+2. From the next update on, the layering adds Swimming (StealthedSwimming when stealthed)
+   (`collision.md` §11.1 step 9); in this install that gives gravity −20 m/s² and a damper
+   of 0.4 on each world axis (`collision.md` §10.3; read at run time).
+3. Every update subtracts Gravity × *t* from the vertical part of the physics velocity, then
+   multiplies each world component by the damper, once per update whatever *t* is; the
+   displacement uses the result (`collision.md` §11.6 items 3–4). A downward speed *v* thus
+   becomes 0.4 · (*v* + 20 *t*) per update. The horizontal parts of the physics velocity (for
+   example speed gained sliding down a bank) shrink by the same factor; the control velocity
+   is not damped.
+4. A falling displacement is never changed: nothing stops the mover at the float line or at
+   the surface on the way down. Only a displacement that **rises** (and not during a jump) is
+   replaced so that the feet end at the float line in that update, however far below it they
+   are (the move of `collision.md` §11.4 still sweeps that displacement); the vertical physics speed is set to 0 when the line was already within 0.0002 m of
+   the feet (`collision.md` §11.6 item 4).
+
+Example (Swimming values of this install, a mover flagged in water while falling at
+15 m/s): at 60 updates per second it sinks a further 0.098, 0.037, 0.013 and 0.003 m in the
+next four updates (0.15 m in all) and is put on the float line in the fifth; at 30 updates
+per second it sinks 0.19, 0.07 and 0.02 m (0.28 m) and is put on the line in the fourth.
+Because the in-water test needs the feet at or below the float line, and the update that
+sets it moved at the old speed, the feet may already be up to one update's fall below the
+line when it starts (0.25 m at 15 m/s and 60 updates per second). The damper acts once per
+update, so the depth depends on the update rate; at Tessera's 1/60 s step the 60-per-second
+figures apply.
+
+**Tessera's current rule (Decision, until aligned).** `collision.md` §12.4 (p): the water
+takes up any downward speed and displacement at once, so the feet stop at the float line; a
+mover that reaches deep water while sliding (state 6, `collision.md` §11.3 mechanism) has its
+vertical speed zeroed there and takes state 2. This differs from the original, in which the
+mover dives briefly below the line (example above), takes state 1, 2 or 3 by its support, and
+is then placed on the line. `collision.md` §12.5 has no row for this difference yet (its
+"Rising in water" row covers step 4 only); aligning (p) with steps 1–4 belongs to that
+section's implementer OPEN.
+
 ---
 
 <a id="s8"></a>
@@ -822,7 +904,7 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | `material.md` §20.1 (rows "§18 unlit blended records" and "§11.3 unlit") | 0x2B0000A8 described as a `Color`-role record blended by 2000 alpha and lit by ambient, hemispheric and per-vertex lights in pass 0x00; "442 surfaces of the 0x2B0000A8 kind" | Only 55 surface records name 0x2B0000A8 (43 water). The description fits its low-detail permutations only; its water permutations take positions only, composite the frame-buffer copy themselves and (without a depth texture) write with ONE/ZERO (§8.2 table, §8.4). If "of the 0x2B0000A8 kind" means a family of similar records, the count should name that family. For the material owner. |
 | `lighting.md` §4.3 (last sentence) | 0x2B0000A8 is a "two-layer record" whose colour layers read UV set 0 and differ only in the texture matrix | True of its low-detail permutations only; its water permutations read no UV set (positions only, §8.3). For the lighting owner. |
 | `landblock.md` §5.6 | Keys 3, 4, 6, 7, 0x10000012 unresolved | Resolved there (revised the same day): 3 fog zone, 4 water level, 7 water type (this spec), 6 encounter zone. |
-| `collision.md` §10.4 OPEN, Q8; §12.3 step 7 | Where water volumes are placed and how deep water is | §6.2 (landblock water), §7.1 (volume boxes), §7.3 (placed volumes). Switching between water states stays OPEN (§7.4). |
+| `collision.md` §10.4 OPEN, Q8; §12.3 step 7 | Where water volumes are placed and how deep water is | §6.2 (landblock water), §7.1 (volume boxes), §7.3 (placed volumes). The state rule is BIN (§7.4, `collision.md` §11.3.2); the containment test and buoyancy stay OPEN. |
 | `terrain.md` §9 OPEN (water) | No water level to shade the shore against | §6 gives the level per landblock. |
 | `walker.md` §9 OPEN | Water not drawn | §8 gives the geometry and shading. |
 | `material.md` §8.7 OPEN | Water effect-family parameters | §8.2–§8.4 for the parameters the 0x2B0000A8 programs read; the flow, foam and depth parameters stay OPEN. |
@@ -841,8 +923,9 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 > another builder; the reflection pass; the permutation choice; the depth, flow and foam
 > formulas; water draw order (§8.1, §8.4).
 
-> **OPEN:** How a mover is tested against the liquid boxes and how the water states switch
-> (§7.4, `collision.md` Q9).
+> **OPEN:** Which point or shape of a mover the liquid monitor volumes test, and the client's
+> buoyancy (how the float height keeps a swimmer at its depth). The state rule itself is
+> answered (§7.4, BIN, W19; `collision.md` §11.3.2, Q9).
 
 > **OPEN:** The full layout of the distant-landscape sector record (§9, `landblock.md` §7).
 
@@ -857,3 +940,6 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | 2026-10-05 | Revision after review (changes requested). Legend: **Inferred** defined. New rows W16 (0x2B0000A8 users and permutations, OBS + SH) and W17 (fake-light direction, from `lighting.md` §4.2). §8.2: 0x2B0000A8 user count (55 surface records, 43 water) and a permutation table saying which statements cover which permutation; the "other declared water parameters" list no longer includes 2006, which the table already covers. §8.4 step 6: *L* is the main light's travel direction (or an engine default), adopted from `lighting.md` §4.2. §10: scenery row updated. §13: scenery and terrain-texturing rows marked done; correction rows added for `material.md` §20.1 and `lighting.md` §4.3. |
 | 2026-10-06 | Second revision after re-review (changes requested). §8.4 step 6 restated as one formula: the sparkle term 4 · (clamp(*g*ₓ − threshold) + clamp(*g*ᵧ − threshold)) is added to the specular term after the exponent, outside the clamp (SH: the OpenGL water program and all four Direct3D 11 water pixel programs of 0x2B0000A8 agree); *L* is defined in a separate sentence. §8.4 step 1: the sparkle input is the normalised tangent-space normal (was wrongly "unnormalised sum"). §8.2 permutation table and §8.3: the water programs read only the position; the four Direct3D 11 vertex programs also declare a normal and one UV set in their input signature, unused (SH, all four checked). |
 | 2026-10-06 | Movement edit (M4.5 criterion 4). §7.4: the float-line Decision (OPEN (p)) now states the state-6 interaction — a mover that reaches deep water while sliding (state 6) has its downward speed zeroed at the float line and switches to state 2; cross-references `collision.md` §11.3 mechanism and §12.3 OPEN (p). No layout or shading change. |
+| 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07 from the binary (BIN second use, questions (g)–(i)). Status Revised. §7.2: the volume flags count only as Boolean true (W18), confirming the implementer's Decision. §7.4: new client rule (BIN, W19): `Entity_Element` from the mover's `Volume_IsLiquid` and its support flags, with no depth or float-height input; Tessera's float-height test kept as a Decision with the one case where it differs stated; the contiguous-liquid surface of the 2026-10-07 OPEN confirmed as the Tessera Decision for the float line. §7.1: partial answer to the 2026-10-06 OPEN (offset added to both corners, W20). §7.3: coin volumes count as water for the movement state (BIN). §7.4: the 2026-10-06 no-support OPEN answered (state 2 is the client's state). §13 row and §14 OPEN narrowed. New rows W18–W20. |
+| 2026-10-08 | Revision (status Revised). §7.4: the clean-room OPEN of the M4.5 exit verification (how the original slows a mover entering deep water at speed) is answered from BIN2 (g) and closed: no cancelling or clamping of a downward speed or falling displacement in water; the Swimming layer's gravity and once-per-update damper slow the mover, and the first rising update puts the feet on the float line; worked example at 60 and 30 updates per second; Tessera's current rule (`collision.md` §12.4 (p), with the state-6 case) is kept as a Decision until aligned, and its difference from the original is stated. New tag BIN2, row W18 (renumbered W21 in the merge of 2026-10-09). No layout or shading change. |
+| 2026-10-09 | Merge of the two parallel 2026-10-08 revisions: rows W18–W20 and BIN questions (g)–(i) kept; the other revision's tag BIN2 kept and its row W18 renumbered W21 (references in the header and §7.4 updated); header and review record combined; the disagreement between W19 (no float-height input) and BIN2 step 1 of §7.4 (and `collision.md` §11.6 item 7) recorded as an OPEN in §7.4. No fact changed. |

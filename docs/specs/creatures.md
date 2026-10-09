@@ -296,6 +296,12 @@ mirror shows that the two can differ, so the mirror is not a reliable copy of th
 > most likely lies with the server, which no M1–M4 method reaches. Under D1 the base answers its dictionary default and the
 > mirror keeps its own value.
 
+> **OPEN:** (implementer note, `crates/formats/src/gameplay/creatures.rs`) Which pattern
+> applies when a name matches two of the six (for example `ForwardSource_`*X*`_Cached`) is
+> not stated. Tessera takes the first in table order, so such a name is a `_Cached` mirror of
+> `ForwardSource_`*X*, and a lookup may step through two mirrors (at most 8 steps). Confirm or
+> give the rule.
+
 <a id="s3-2-2"></a>
 #### 3.2.2 Class-constant and varying properties (Confirmed, C5)
 
@@ -762,6 +768,14 @@ its own `Attitude_Table`, `Agent_ClassificationFilter`, `Agent_Genus`, `Agent_Sp
 > (player-versus-player state, teams, duels, passivity, invulnerability). Neither is needed
 > to evaluate a table.
 
+> **OPEN:** (implementer note) The exception fields are named here only as `…_Alignment`,
+> `…_Genus`, `…_Species` and `…_Subspecies`, and §6.5 names the repeat and placement fields
+> only as `…_RepeatMinTimes`, `…_RepeatMaxTimes`, `…_ExactPlacementX` (`Y`, `Z`),
+> `…_RandomPlacementMinDist` and `…MaxDist`. Tessera resolves each as the one dictionary label
+> that starts with `ClassificationFilter` (respectively `GeneratorProfile`) and ends with the
+> given suffix, and treats the field as absent when no label or several match; on the
+> 2026-10-07 install every one resolved to exactly one label. Please give the full labels.
+
 <a id="s5-4"></a>
 ### 5.4 Classification (973, 124 records)
 
@@ -807,6 +821,11 @@ One property, `Formation_Group`: a struct of `Formation_Follower` DIDs (685 in a
 1723 in 668, 1724 in 17; up to 10 per record). A template's `Formation_Group_DataID` names the
 group it leads and `Formation_Layout_Type` (enum 0x2300036D) the arrangement.
 
+> **OPEN:** (implementer note) `Formation_Group` is called a struct, but a struct holds each
+> PID at most once (`property-system.md` §4.10) while a formation has up to 10 followers.
+> Tessera collects every `Formation_Follower` DID at any depth under `Formation_Group` (685 on
+> the install, as above). Please state the nesting.
+
 <a id="s5-7"></a>
 ### 5.7 Conjunction (1001, 237 records)
 
@@ -820,6 +839,11 @@ Eight properties each: `Conjunction_Name`, `Conjunction_Description` (StringInfo
 a list of 156 DIDs (`Conjunction_MonsterPlay_ConjunctionList`). Templates reach them
 only through `GameEvent_ConjunctionEventTable` scriptlets; `Conjunction_TableOverride` is null in
 every template.
+
+> **OPEN:** (implementer note) Where the `Conjunction_Role_ContributionToActionMap` entries sit
+> below a `Conjunction_Role` ("below them") is not stated. Tessera takes every struct with
+> that PID at any depth under a role element (9,954 on the install, as above). Please state
+> the nesting.
 
 <a id="s5-8"></a>
 ### 5.8 Puppet target package (3761, 82 records)
@@ -1108,6 +1132,13 @@ sub-profile reached from inside a `PositionSetEntry` stays scoped to that positi
 templates that **can** appear, with their weights and probabilities; which one appears is a
 run-time choice (§6.8).
 
+> **OPEN:** (implementer note) Which weight and probability a candidate carries when several
+> lie on its path is not stated. Tessera reports the weight of the nearest enclosing `OneOf`
+> choice, the nearest `GeneratorProfile_Probability`, and the innermost placement and repeat;
+> a template reached on several paths is listed once per path; entries removed by C17 are
+> left out. A walk visits at most 65,536 profile elements (protection against hostile
+> profile graphs). Confirm or give the rule.
+
 <a id="s6-8"></a>
 ### 6.8 Run-time semantics (Reported; Decisions for the sandbox)
 
@@ -1192,6 +1223,18 @@ own sandbox rule (Decision D3, C17a), not a claim about the original.
 > per mille that an entry spawns (observed values 1–1000); `Repeat` is how many times an entry
 > or a choice is produced; `ExactPlacement` is an offset from the spawn point;
 > `RandomPlacement` an annulus around it. D3 adopts this hypothesis for the sandbox only.
+
+> **OPEN:** (implementer note: engineering choices of `evaluate_profile` where D3 is silent;
+> not claims about the original) (a) A `OneOf` choice without `GeneratorProfile_Weight` counts
+> with weight 1. (b) Absent repeat bounds take the dictionary default of `…_RepeatMinTimes`
+> when it has one, else 1; bounds out of order are swapped and negative bounds count as 0.
+> (c) A probability of 1000 or more succeeds without a random draw, and a `OneOf` with a single
+> eligible choice takes it without a draw. (d) An entry holding both placements uses the exact
+> one; an entry naming both a `WSLEntity` and a `ProfileDefinition` produces the object only;
+> a `PositionSetEntry` holding both an `Entry` and a `OneOf` produces both; a `PositionSetEntry`
+> choice with a weight of 0 or less is removed like an entry (C17). The first three shapes are
+> reported as grammar deviations; none of the four occurs in the install. (e) Besides the
+> 256-object cap, one evaluation visits at most 65,536 profile elements. Confirm or replace.
 
 <a id="s6-9"></a>
 ### 6.9 Patrol paths (Confirmed C18)

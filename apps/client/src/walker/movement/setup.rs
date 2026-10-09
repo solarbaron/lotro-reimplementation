@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the physics walker is built from: the capsule of the avatar's setup times its model
-//! scale (`collision.md` §10.6), the player movement record (§10.3, located by the presence
+//! What the physics walker is built from: the capsule of the avatar's setup times its physics
+//! scale (`collision.md` §10.6, §8.1: z of `Physics_AdjustableScale` × z of `Model_Scale` of
+//! the avatar's 0x47 entity chain, not the render model scale), the player movement record (§10.3, located by the presence
 //! of `PlayerPhysicsControl_BasePlayerParameters`, not by its DID) and the entity conditions
 //! of §11.1 with the float height of §11.2 (`Physics_AvatarFloatHeight` of the avatar's 0x47
 //! entity chain).
@@ -32,11 +33,11 @@ pub const MAX_CONDITION_LEVELS: usize = 16;
 /// Where the capsule came from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShapeSource {
-    /// The single capsule of setup `setup` times model scale `scale` (§10.6).
+    /// The single capsule of setup `setup` times physics scale `scale` (§10.6, §8.1).
     Setup {
         /// The setup.
         setup: Did,
-        /// The model scale applied.
+        /// The physics scale applied.
         scale: f32,
     },
     /// [`CharacterShape::PLAYABLE`] (the body did not assemble, or its setup has no usable
@@ -164,7 +165,15 @@ impl MoverSetup {
                 return;
             }
         };
-        let scale = c.model_scale();
+        let merged = entity_chain_set(&catalog.data, &c.chain, &mut self.notes);
+        self.conditions = merged
+            .as_ref()
+            .map(|m| LayerConditions::from_set(m, &self.pids))
+            .unwrap_or_default();
+        let scale = merged
+            .as_ref()
+            .and_then(|m| catalog.data.registry().ok().map(|r| (m, r)))
+            .map_or(1.0, |(m, r)| entity_physics_scale(m, |n| r.pid(n)));
         match c.setup.capsules.as_slice() {
             [cap] => {
                 match CharacterShape::from_setup_capsule(cap.base[2], cap.length, cap.radius, scale)
@@ -186,20 +195,38 @@ impl MoverSetup {
                 caps.len()
             )),
         }
-        self.conditions = entity_conditions(&catalog.data, &c.chain, &self.pids, &mut self.notes);
     }
 }
 
-/// The conditions of §11.1 from the 0x47 levels of `chain` (nearest first: a property of a
-/// nearer level wins).
-fn entity_conditions(
+/// The physics scale of `collision.md` §8.1 (BIN, C42) from the merged entity set `set`:
+/// `Physics_AdjustableScale` and `Model_Scale`, each used only when it is a vector
+/// ([`tessera_physics::geometry::physics_scale`]). `pid_of` names the properties.
+#[must_use]
+pub fn entity_physics_scale(
+    set: &tessera_props::PropertySet,
+    pid_of: impl Fn(&str) -> Option<u32>,
+) -> f32 {
+    let vector = |name: &str| {
+        pid_of(name)
+            .and_then(|p| set.get(p))
+            .map(|v| v.as_vector3().unwrap_or([1.0; 3]))
+    };
+    tessera_physics::geometry::physics_scale(
+        vector("Physics_AdjustableScale"),
+        vector("Model_Scale"),
+    )
+}
+
+/// The properties of the 0x47 levels of `chain` merged into one set (nearest first: a
+/// property of a nearer level wins), for the conditions of §11.1 and the physics scale of
+/// §8.1; `None` without a property registry.
+fn entity_chain_set(
     data: &Data,
     chain: &[Did],
-    pids: &MovementPids,
     notes: &mut Vec<String>,
-) -> LayerConditions {
+) -> Option<tessera_props::PropertySet> {
     let Ok(registry) = data.registry() else {
-        return LayerConditions::default();
+        return None;
     };
     let mut merged = tessera_props::PropertySet::new();
     for did in chain
@@ -231,7 +258,7 @@ fn entity_conditions(
             }
         }
     }
-    LayerConditions::from_set(&merged, pids)
+    Some(merged)
 }
 
 /// The player movement record: the first 0x79 set of the game-logic archives (ascending

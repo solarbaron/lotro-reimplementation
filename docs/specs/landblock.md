@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07). Revisions of 2026-10-07: interiors, visibility and ceiling normals (§3.14, §4.3, §4.4, §4.11–§4.14); then the review corrections and the facts the released walker code relies on (§3.14, §3.15, §4.2, §4.4, §4.10–§4.15, §8.1). |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (2026-10-08, after review of the implementer-OPEN revision of §4.11 and §4.15: BIN5, L49, L47 wording; see change log). Previously Accepted 2026-10-08 (after review of the editorial revision of §4.13), 2026-10-08 (implementer-OPEN revision: BIN4, L32 corrected, L46–L48, §8.1 rules) and 2026-10-07 (interiors, visibility and ceiling normals; review corrections). |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec-writer agent), each a different session from the writer |
-| **Review record** | 2026-10-05 review: changes requested (addressed). 2026-10-05 re-review: changes requested (addressed). 2026-10-06 third review: changes requested (addressed). 2026-10-06 re-review: passed, Accepted. 2026-10-07 re-review of the interiors revision: changes requested. 2026-10-07 second re-review: changes requested (same corrections; addressed in the second 2026-10-07 revision, change log). 2026-10-07 third re-review (Claude review session, spec-writer agent; a different session from the writer): passed, Accepted. Detailed findings are kept in the dirty-room review log. |
+| **Review record** | 2026-10-05 review: changes requested (addressed). 2026-10-05 re-review: changes requested (addressed). 2026-10-06 third review: changes requested (addressed). 2026-10-06 re-review: passed, Accepted. 2026-10-07 re-review of the interiors revision: changes requested. 2026-10-07 second re-review: changes requested (same corrections; addressed in the second 2026-10-07 revision, change log). 2026-10-07 third re-review (Claude review session, spec-writer agent; a different session from the writer): passed, Accepted. 2026-10-08 review of the 2026-10-08 revision (Claude review session, spec-reviewer agent; a different session from the writer): passed, Accepted. 2026-10-08 re-review of the editorial revision (Claude review session, spec-reviewer agent; a different session from the writer and from the earlier reviewers): passed, Accepted. 2026-10-08 review of the BIN5 revision (§4.11 moving entities, §4.15; Claude review session, spec-reviewer agent; a fresh session that wrote none of it): passed, Accepted. Detailed findings are kept in the dirty-room review log. |
 | **Implements into** | `crates/formats` (landblock data, landblock info, block-map and descriptor decoders), `crates/world` (landblock IDs, bundles, block-map resolution, minimap tiles), `crates/terrain` (height grid, triangulation, surface layers), `apps/explorer` (landblock view), `apps/client` (walker interiors and landscape drawing, §3.15, §4.11–§4.15), `fuzz/` (one target per record kind) |
 | **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). [`environment.md`](environment.md) §7, §11 and [`lighting.md`](lighting.md) §8.1, §10 (the indoor environment record of §4.13 feeds them). [`appearance.md`](appearance.md) §3.2 (appearance lists, §4.14). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
 
@@ -50,10 +50,10 @@ assert the invariants, not the counts.
 
 Legend:
 
-- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05, 2026-10-06 or 2026-10-07 where
+- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05, 2026-10-06, 2026-10-07 or 2026-10-08 where
   the row says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
   unless a sample is stated. For a fact with a BIN source: the data agrees on every record.
-- **BIN**: rests on the disassembly of the client (tags BIN and BIN2 below, or the BIN tags of
+- **BIN**: rests on the disassembly of the client (tags BIN to BIN5 below, or the BIN tags of
   the companion specs named in the row) and has not been checked against every record.
 - **Inferred**: follows from BIN facts by reasoning, not traced directly.
 - **Probable**: supported by a statistical test on the data, but not by an exact rule.
@@ -76,6 +76,9 @@ Legend:
 | OBS2 | Observed in user install 2026-10-07 (Steam) by a throwaway read-only probe: all 49,636 landblock-info records of regions 1–5 and 14 decoded again; all 104,271 cells, their neighbour entries, lists A and B, `extra`, flags and property sets, and all 1,288 cell groups (§4.3) dumped and cross-checked; the portal joins of the landblocks with scaled cells recomputed from the 0x01 geometry; the landblock-data and landblock-properties records of the blocks of checklist rows T5, T15 and T16 read. |
 | BIN3 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, third use. The same client build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5, re-checked on 2026-10-07), read in the dirty room on 2026-10-07 with a headless decompiler session on an own copy of the shared project (deleted afterwards). Nothing outside cell loading, the visibility set-up and the scene renderer's landscape switches was examined. **Questions:** (h) which portal polygon of the 0x01 geometry the client takes for a neighbour entry: the one named by the entry's `portal` field or the one at the entry's position; (i) whether a neighbour, a group member or a cell of a PVS can belong to another landblock; (j) what the outdoor-visible flag switches besides terrain, ceilings and landscape water (for example frills); (k) re-check of the review findings on the scene-flag pass (§4.12) and the PVS walk. **Why M1–M3 were not enough:** `portal` equals the entry position in every entry, so the data cannot tell the two readings apart; which objects a flag switches is not stored anywhere; no running client is available for M3. Output is prose facts only. |
 | OBS3 | Observed in user install 2026-10-07 (Steam) by a throwaway read-only probe: all 390,150 landblock-data records (open flag of §3.15, chunks without layers, triangles per interior grid sample) and all 49,636 landblock-info records (cell numbers, positions without offset or orientation, neighbour `portal` against the entry position, every neighbour, list-A and list-B value against the record's cells); the portal joins of the two cells without an offset recomputed from their 0x01 geometry. |
+| BIN4 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, fourth use. The same client build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-08 with a headless decompiler session on an own read-only copy of the shared project (deleted afterwards). Nothing outside the environment update, the landblock property lookup and the landblock registry was examined (no network, login, launcher or anti-tamper code). **Questions:** (l) which landblock and which property sets the reader of the interior overrides and sky keys of §4.13 consults for a camera in a cell (the implementer OPEN of 2026-10-07); (m) what "changing from one record to the other is immediate" means: how the values that lighting and fog use change when the record in use changes. **Why M1–M3 were not enough:** the data stores the properties on cells, landblock info and block maps but not which of them the client reads; the switch is run-time behaviour; no running client is available for M3 frame captures. Output is prose facts only. |
+| OBS4 | Observed in user install 2026-10-08 (Steam) by a throwaway read-only probe: the property sets of all 104,271 cells and all 49,636 landblock-info records, counting the interior-override and sky-key properties of §4.13. |
+| BIN5 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, fifth use. The same client build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5, re-checked 2026-10-08), read in the dirty room on 2026-10-08 with a headless decompiler session on an own read-only copy of the shared project (deleted afterwards). Nothing outside the scene graph's assignment of drawn objects to visibility cells and its per-frame visible-object pass was examined (no network, login, launcher or anti-tamper code). **Question:** (n) whether a moving entity (a character) is culled by the visibility cells of §4.11 like a static one, and by which cell (the implementer OPEN of 2026-10-07 in §4.15, which the 2026-10-07 text answered only as Inferred). **Why M1–M3 were not enough:** moving entities are not stored in the data, the assignment exists only at run time, and no running client is available for M3 frame captures. Output is prose facts only. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -113,7 +116,7 @@ Legend:
 | L29 | Visibility portals: one per neighbour entry whose neighbour is outside the cell's own group, built from the geometry's portal polygon; 39,692 of 393,842 neighbour entries make a portal, 354,150 lie inside a group (§4.11) | BIN2 (d); OBS2 | BIN; counts Confirmed (2026-10-07) |
 | L30 | Interior cells are never drawn while the camera is outdoors, and the landscape (terrain, ceilings, landscape water) is never drawn while the camera is in an interior cell: no portal leads between the outdoor visibility cell and a cell, and no cell has bit 0 (§4.12) | BIN2 (d); OBS2 (no neighbour entry names cell 0 or 0xFFFF; cell numbers run 2–1,569) | BIN; data Confirmed (2026-10-07) |
 | L31 | Potentially visible cells of a cell: the cell, list A, and the members of every group named in list B (bit-5 cells); every neighbour of a cell is among them (§4.12) | BIN2 (d); OBS2 (neighbours inside the set in 104,271 of 104,271 cells) | BIN; invariant Confirmed (2026-10-07) |
-| L32 | Environment values at a position are looked up in the cell's property set, then the landblock-info property set (§4.7), then the block map (§5.4); two environment records are kept, an outdoor one (sky key `Environment_LocalSky`, default 2) and an indoor one (sky key `Environment_IndoorAmbiance`, default 1), and the indoor one is used while the camera is in a cell (§4.13) | BIN2 (f) | BIN |
+| L32 | Environment values at a position are looked up in a property set attached to the loaded landblock at its creation, then the landblock-info property set (§4.7), then the block map (§5.4), of the landblock named by the position's region, landblock X and Y and instance; the cell's own property set is not consulted (corrected 2026-10-08; the first 2026-10-07 revision put the cell first). Two environment records are kept, an outdoor one (sky key `Environment_LocalSky`, default 2) and an indoor one (sky key `Environment_IndoorAmbiance`, default 1), and the indoor one is used while outdoor-visible is clear (§4.13) | BIN2 (f) (records, sky keys); BIN4 (l) (lookup, corrected) | BIN |
 | L33 | Indoor record: the main directional light (sun or moon) is off; up- and down-facing ambient come from `InteriorUpperAmbientLight` / `InteriorLowerAmbientLight` plus `InteriorAmbientLight`, each channel limited to 1; `InteriorFogType` 1 turns fog on, any other stored value turns it off; `InteriorFogColor`, `InteriorFogNear`, `InteriorFogFar` replace the keyframe values; far ≥ 20, near ≤ far − 20 (§4.13) | BIN2 (f); OBS2 (property counts) | BIN |
 | L34 | A cell draws the render mesh embedded in its 0x01 record, placed with the cell's frame; when the cell has appearance data the client draws a private copy with the appearance applied (§4.14) | BIN2 (d); COL §5.7 | BIN |
 | L35 | The cell scale properties are not part of the placement: applying `Render_AdjustableScale` / `Physics_AdjustableScale` (51 cells not 1.0) breaks all 144 portal joins of the two landblocks that have scaled cells, which match exactly without it (§4.14) | OBS2 | Confirmed (placement, 2026-10-07); render use OPEN |
@@ -127,6 +130,10 @@ Legend:
 | L43 | Cell numbers are unique within a landblock-info record (104,271 cells, no repeat) (§4.4, LI9) | OBS3 | Confirmed (2026-10-07) |
 | L44 | The open flag of a block (§3.15) and the chunks without layers: 6,867 blocks with a ceiling, 3,075 open and 3,792 not; terrain chunks without layers 299,369 (no ceiling) + 818 (open) + 3,237 (not open); ceiling chunks without layers 944 (open) + 3,568 (not open); the raw u16 test and the converted-height test agree in every block; including row and column 32 in the test would change it in 140 blocks | OBS3; `terrain-texturing.md` §4.9, T40 (BIN (r) there, re-checked by both of its 2026-10-07 reviews), T41 | Confirmed (2026-10-07; rule BIN) |
 | L45 | A grid sample's vertex normal averages 4 to 8 triangles (one per neighbouring quad, two when the quad's diagonal runs through the sample); interior terrain samples of all 390,150 records: 4 triangles at 9,201, 5 at 353,168, 6 at 374,206,540, 7 at 358,859, 8 at 6,382 (§3.14) | BIN2 (g); OBS3 | BIN (rule); census Confirmed (2026-10-07). Corrects "up to six" of the first 2026-10-07 revision. |
+| L46 | For a camera in a cell, "the position's landblock" of the §4.13 lookup is the cell's owner: the client looks the landblock up by the position's region, landblock X and Y and instance, with the cell number replaced by the landblock-level value, and without a loaded landblock reads that landblock's info and block-map records directly; the landblock under the camera's x, y plays no part (§4.13) | BIN4 (l); LI3 | BIN (was Inferred, 2026-10-07) |
+| L47 | Switching between the two environment records: both are rebuilt on every update; the values lighting and fog use cross-fade from the previously applied values to the record in use over 5 s, weight ½ + ½ sin(π (t − ½)), whenever the main-light switch of the record in use differs from that of the record applied before and the update is not forced; otherwise they take the record at once. A new change during a fade gives the next fade the smaller of the running fade's duration and the time since the running one started, and at least 0.0002 s (§4.13; wording aligned with `environment.md` E34 on 2026-10-08). `environment.md` §11.6 (E34, E37) is normative for this rule; the main-light switch is its "sun present" (§11.7 step 9) | BIN4 (m); `environment.md` BIN-E (f), BIN-E2 (a) | BIN |
+| L48 | Cells carrying §4.13 properties in their own set: 777 cells in 17 landblock-info records hold `Environment_IndoorAmbiance` (581 where the landblock-info set has none), 775 the four `InteriorFog*` properties, 643 `InteriorUpperAmbientLight` and `InteriorLowerAmbientLight`, 66 `InteriorAmbientLight`, 299 `Environment_LocalSky`; the environment update does not read them (L32) | OBS4; BIN4 (l) | Confirmed (counts, 2026-10-08); BIN (not read) |
+| L49 | Visibility culling of drawn objects, moving ones included: the scene graph gives every drawn object its visibility cells from the cells linked to it in the scene graph (those of its own region, landblock and instance), else from the cell of its own position (the outdoor visibility cell for cell 0 or 0xFFFF, region 0 or landblock X or Y 0xFF; no visibility cell at all for cell 1); it re-does this when the object is first made visible to the visibility system and whenever a cell is linked to or unlinked from it, and keeps retrying while the result is empty; while the visibility query is active an object is drawn only when one of its visibility cells is among those the query returns; the rule makes no distinction between static and moving objects; an object whose model carries a "not culled" flag is left out of the visibility system and is not culled by it (§4.11) | BIN5 (n) | BIN; which objects carry the flag and when the client links cells to a moving object were not traced |
 
 ---
 
@@ -1066,8 +1073,33 @@ entity belongs to is OPEN (`entity-descriptor.md` §4.8). **Tessera Decision** (
 §4.15): an interior entity belongs to the cell of its landblock whose cell volume contains its
 origin, tried at the origin and 0.05 units above and below it (the containment test of
 `collision.md` §5.8.1); one that no cell contains is drawn whenever the camera is in any cell
-of its landblock. Moving entities (characters) are, by the rule above, in the visibility cell
-of the cell they stand in (Inferred; the walker does not follow this yet, §4.15).
+of its landblock.
+
+**Moving entities** (BIN5 (n), L49; answers the implementer OPEN of 2026-10-07, which the
+2026-10-07 text answered only as Inferred). The client's scene graph applies one rule to
+every drawn object and does not distinguish static from moving ones:
+
+1. The object's visibility cells are those of the cells linked to it in the scene graph
+   that share its region, landblock and instance. When no such cell is linked, it is the
+   visibility cell of the cell in the object's own position: the outdoor visibility cell
+   when that cell is 0 or 0xFFFF, or the region is 0, or landblock X or Y is 0xFF (the key
+   rule of "Within one landblock"); no visibility cell at all when that cell is 1 (cell
+   numbers of this install run from 2, L30).
+2. The client redoes step 1 when the object first enters the visibility system and
+   whenever a cell is linked to or unlinked from it; while step 1 gives no visibility cell
+   it retries on every frame.
+3. While the visibility query of the frame is active, an object is drawn only when one of
+   its visibility cells is among those the portal walk reaches.
+4. An object whose model carries a "not culled" flag is kept out of the visibility system
+   and is not culled by it.
+
+So a character standing in a cell is drawn only when the camera's portal walk reaches that
+cell's visibility cell, and a character outdoors only when it reaches the outdoor one. Which
+models carry the "not culled" flag, and when the client links cells to a moving object (for
+example from its collision with cell volumes, `collision.md` §5.8.1), were not traced.
+**Tessera Decision:** a moving entity belongs to the visibility cell of the cell its
+movement code assigns to it (`collision.md` §5.8.1; cell 0 outdoors), and no character
+model is treated as "not culled". The walker does not follow this yet (§4.15).
 
 **Each frame** the cell of the camera's position (§4.12) selects the root visibility cell. The
 library returns what is visible from the root: the objects of the root and of every visibility
@@ -1153,7 +1185,7 @@ visibility-cell keys:
 - Sky-visible set: the sky is drawn; clear: it is not. *(Inferred: indoors the sky drawn is
   that of the indoor record's sky key; OPEN.)*
 - Static and moving entities and cell meshes are not switched by the flags; the portal query
-  culls them.
+  culls them (§4.11 "Moving entities", L49).
 
 **Consequences:**
 
@@ -1167,8 +1199,11 @@ visibility-cell keys:
   starts in the camera's visibility cell and no portal leads to the outdoor one (LI8), nor to
   a cell of another landblock (L38). IN1: none of the 25 cells of cell 9's PVS has bit 4, so
   neither landscape nor sky is drawn there.
-- The change between the two is immediate when the camera's cell changes between 0 and an
-  interior cell (no blend of the environment records, §4.13).
+- When the camera's cell changes between 0 and an interior cell, the flags change in the
+  same update, and with them what is drawn: landscape, frills and sky appear or vanish at
+  once. The environment values (ambient, fog, main light) do not jump with them: they
+  normally cross-fade over 5 s (§4.13, "Switching between the two records"; corrected
+  2026-10-08, this bullet said "immediate").
 
 > **OPEN:** How the client gives the camera position its cell (the camera follows the
 > character and walls push it). Not traced. **Tessera Decision:** the cell lookup of
@@ -1177,15 +1212,37 @@ visibility-cell keys:
 > cell, the character's cell; otherwise outdoors (cell 0). While the camera is in a cell the
 > walker does not keep the eye above the terrain (the terrain is not drawn then).
 
+Audio does not use the camera's cell: the player's indoor state for sound follows the character's own cell (`sound.md` §10.8).
+
 <a id="s4-13"></a>
-### 4.13 The indoor environment: sky key, ambient, fog, sun (BIN2 (f); L32, L33)
+### 4.13 The indoor environment: sky key, ambient, fog, sun (BIN2 (f), BIN4; L32, L33, L46, L47)
 
-**Property lookup at a position.** For a property the client asks, in this order, and takes
-the first source that has it:
+**Property lookup at a position** (BIN4 (l); L32, L46; corrected 2026-10-08). The landblock
+concerned is the one named by the position's region, landblock X and Y and instance: the
+client replaces the position's cell number by the landblock-level value before it looks
+the landblock up, so the cell plays no part. For a camera in a cell these fields name the
+cell's owner (LI3), wherever the cell's geometry lies; the landblock under the camera's x, y
+plays no part. For a property the client asks, in this order, and takes the first source
+that has it:
 
-1. the property set of the cell the position is in, when it is in a cell (§4.4 part 8);
-2. the landblock-info property set of the position's landblock (§4.7);
+1. when that landblock is loaded, a property set that the client attaches to it when it
+   creates the landblock: values handed over with the landblock's creation (Inferred: by
+   the server, for instances) plus three volume properties the client sets itself. None
+   of the properties of this section is among the client's own; an offline client has no
+   other source for this set (Inferred), so Tessera skips this step;
+2. the landblock-info property set of that landblock (§4.7);
 3. the block-map properties of that landblock (§5.4).
+
+When the landblock is not loaded, the client reads steps 2 and 3 from its landblock-info
+and block-map records directly. The result is the same, because the loaded landblock
+holds the landblock-info set laid over the block-map properties.
+
+**The cell's own property set is not part of this lookup** (corrected 2026-10-08; the first
+2026-10-07 revision put it first, as step 1). Cells do carry these properties: 777 cells in
+17 landblock-info records hold `Environment_IndoorAmbiance`, 775 the four `InteriorFog*`
+properties, 643 the upper and lower interior ambient, 66 `InteriorAmbientLight` and 299
+`Environment_LocalSky` (L48, OBS4). The environment update does not read them. Whether
+another part of the client reads them was not traced.
 
 **Two environment records.** On every environment update the client builds two records from
 sky keyframes (`environment.md` §11):
@@ -1200,9 +1257,49 @@ sky keyframes (`environment.md` §11):
   first present; else `Environment_IndoorAmbiance` looked up at the camera position; else the
   value 1.
 
-The indoor record is used while outdoor-visible is clear (§4.12), or when the caller forces
-it; the outdoor record otherwise. Each record blends to new keyframe values on its own
-(`environment.md` §11.2); changing from one record to the other is immediate.
+The indoor record is used while outdoor-visible is clear (§4.12), or when the caller of the
+update asks for it (a request separate from the forced update below); the outdoor record
+otherwise. Each record blends to new keyframe values on its own
+(`environment.md` §11.2).
+
+<a id="s4-13-1"></a>
+**Switching between the two records** (BIN4 (m), L47; replaces "changing from one record to
+the other is immediate" of the 2026-10-07 text, which held only in some cases). The rule is
+the one of `environment.md` §11.6, paragraphs "Sun-change fade" and "Switching between the
+tracks", which are **normative**; the two records of this section are the indoor and outdoor
+tracks there, and "main-light switch" here is "sun present" there (§11.7 step 9). In short:
+
+- Both records are rebuilt on every environment update, whichever is in use, so each keeps
+  blending toward its own keyframes. The update picks the record in use and hands it to the
+  sun-change fade, which produces the **applied** values that lighting and fog read. The
+  switch between the records has no blend of its own.
+- The main-light switch is always off in the indoor record. In the outdoor record it is on
+  only when the record's `effect` is the null DID, its sun colour is not opaque black and its
+  sun brightness is at least 0.0002 (`environment.md` §11.7 step 9).
+- When the switch of the record in use differs from the switch at the previous update and
+  the update is not forced (marked immediate), a 5 s fade with weight ½ + ½ sin(π (*t* − ½))
+  starts from the values applied at that moment; a change during a running fade shortens
+  the next fade as §11.6 states (at least 0.0002 s). During a fade the target is the record
+  picked at each update. A forced update stops a running fade and applies the picked record
+  at once; with no fade running and no switch change, the picked record is applied at once.
+- The blend rules (main light, fog including `fog_extra` counting as 0 for an end whose fog
+  is off, and `effect` with `effect_extra`) are those of `environment.md` §11.6 step 4.
+  Which callers force an update was not traced (Tessera Decision below).
+
+**What this means for the walker's interiors.** Walking from outdoors (cell 0) into a cell
+normally changes the main-light switch from on to off, so ambient, fog and the main light
+cross-fade from the outdoor values to the indoor record over 5 s; walking out fades back.
+The change is immediate only on a forced update or when the outdoor record's main light is
+already off. Stepping in and out again within a running fade gives the second fade the
+smaller of the first fade's duration and the time the first had run (at least 0.0002 s).
+The scene flags of §4.12 do not fade. The same fade also runs
+outdoors whenever the outdoor record's main-light switch changes between keyframes
+(`environment.md` §11.6).
+
+> **Tessera Decision** (forced updates, whose callers were not traced): force the first
+> environment update after start-up and the first update after a teleport (a camera jump the
+> user or a script requests, including a region change), so that no fade runs across a
+> jump.
 
 **Interior overrides** of the indoor record, read with the lookup above at the camera
 position; re-read when the camera's region, landblock or instance changes, when forced, and
@@ -1223,8 +1320,9 @@ otherwise at most every 2.5 s:
   In the outdoor record it is on unless the keyframe light's colour is (0, 0, 0, 1) within
   0.0002 per channel (inclusive: a difference of exactly 0.0002 still counts as that colour)
   or its intensity is **below** 0.0002 (strict: an intensity of exactly 0.0002 keeps the light
-  on; corrected 2026-10-07, the first 2026-10-07 revision said "at most"). A further keyframe
-  condition was not traced.
+  on; corrected 2026-10-07, the first 2026-10-07 revision said "at most"). It is also off
+  when the keyframe's `effect` is not the null DID (`environment.md` §11.7 step 9, which owns
+  this condition).
 - **Fog limits (both records):** the keyframe's fog end is first limited to at most 10,000;
   after the interior override the end is raised to at least 20; the start is limited to at
   most end − 20 and at least −10,000. The 10,000 limit is applied **before** the override,
@@ -1233,32 +1331,26 @@ otherwise at most every 2.5 s:
 - Colour properties are 4 bytes in the order B, G, R, A (`property-system.md` §4.7,
   `lighting.md` §4.4). The conversion to the record's floats was not traced here.
 
-> **OPEN (clean-room implementer, 2026-10-07):** for a camera in a cell, which landblock is
-> "the position's landblock" in steps 2 and 3 of the property lookup: the landblock whose
-> landblock info owns the cell (the landblock its `position` names, LI3), or the landblock
-> under the camera's x, y? They differ for cells placed away from their owner (the
-> implementer measured cell origins up to 6 landblocks from it, `walker.md` §13.3).
-> **Tessera Decision** (`walker.md` §14.11 interiors note): the owner's landblock info and
-> block map.
->
-> **Answered in part (spec writer, 2026-10-07; Inferred, L38):** a position in a cell names
-> the cell's **owner** landblock: cells are keyed by region, landblock, instance and cell
-> number (§4.11), a cell number means nothing without the landblock whose landblock info
-> holds it, and every cell's `position` names its owner (LI3). So steps 2 and 3 read the
-> owner's landblock info and block map, as the Tessera Decision does; the landblock under the
-> camera's x, y plays no part. Not traced directly in the client, hence Inferred.
+> **Answered (spec writer, 2026-10-08; BIN4 (l), L46):** the implementer OPEN of 2026-10-07
+> asked which landblock "the position's landblock" is in steps 2 and 3 for a camera in a
+> cell. It is the owner landblock (the landblock that the cell's `position` names, LI3), as
+> the Tessera Decision of `walker.md` §14.11 chose. The 2026-10-07 answer marked this
+> Inferred; it is now traced (the lookup above). The same trace shows that the cell's own
+> set is not consulted, so a camera in a cell reads the owner's landblock-info set and block
+> map only (implementer OPEN in §4.15).
 
 These facts answer two implementer OPENs of `environment.md`: §7.1 (which sky key wins:
 the order above) and §12 (`InteriorFogType` None and Invalid switch fog off rather than
 leaving the outdoor fog in force). That spec should adopt them.
 
 **Row Y5 worked through (camera in cell 9 of 0x802191A6, IN1 start).** Cell 9 has none of
-the interior properties; the landblock-info set has `InteriorAmbientLight` stored (8, 25, 8,
-255), `InteriorFogType` 1, `InteriorFogNear` 0.059, `InteriorFogFar` 90 and
+the interior properties (and its set would not be read anyway); the landblock-info set has
+`InteriorAmbientLight` stored (8, 25, 8, 255), `InteriorFogType` 1, `InteriorFogNear` 0.059, `InteriorFogFar` 90 and
 `InteriorFogColor` stored (2, 14, 11, 255) (OBS2). Indoor record: *X* = *Y* = the ambient
 colour (R 8, G 25, B 8); fog on (with the distance-fog switch on), linear from 0.059 to 90 units (inside the
 limits) in the fog colour R 11, G 14, B 2; no sun or moon. Key B: no `Environment_IndoorAmbiance` in
-the cell or the landblock-info set, and it is no block-map key, so the value 1.
+the landblock-info set, and it is no block-map key, so the value 1. Walking in from cell 0
+by day, these values are reached by the 5 s fade above.
 
 <a id="s4-14"></a>
 ### 4.14 What a cell draws (BIN2 (d); L34, L35)
@@ -1316,68 +1408,75 @@ differences against the sections named and change the code, or raise an OPEN her
 | Loading | Interior objects (cell meshes and interior entities) are loaded only while the camera is in a cell of their landblock; a debugging switch loads and draws every interior whatever the camera's cell | — |
 | Cell meshes | Finest level, global draw limit, default shadow distance | §4.14 OPEN |
 | Point lights | Inside: interior lights only; outside: outdoor lights only | §4.14 |
-| Indoor record | Overrides read at the camera's cell from the owner landblock (now Inferred to be the client's rule) and re-read on an owner-landblock change or after 2.5 s | §4.13 |
+| Indoor record | Overrides read from the owner landblock's landblock-info set and block map (the client's rule, L46; the cell's own set is **not** read, L32) and re-read on an owner-landblock or instance change, when forced, or after 2.5 s | §4.13 |
+| Record switch | The 5 s main-light cross-fade of §4.13; forced on the first update and after a teleport | §4.13 |
+| Scene flags outdoors | Every bit-0 cell of the resident landblocks visited with its PVS, the landblocks in ascending key order (the client's order was not traced; it matters only when bit 0 occurs) | §4.12 |
+| PVS building | The cell's own number, 0xFFFF and numbers that are no cell of the record add nothing; a list-B key 0xFFFF is no group | §4.12 |
+| Portal bound | Only portals actually crossed count toward the 4,096 per frame | §4.11 |
 | Landscape debug views | The walker leaves out a terrain chunk that §3.15 does not draw only in its normal view (layers and lighting on); with layers or lighting switched off it draws that chunk's M3 height-shaded mesh | §3.15 |
 
-**Known differences between the released code and this spec (OPEN for the implementer):**
+**Known differences between the released code and this spec (OPEN for the implementer).**
+Folded 2026-10-08 from the implementer's status report of 2026-10-07: the walker now takes
+the portal polygon named by `portal`, runs the scene-flag pass of §4.12 rule 3 in full,
+leaves the interior fog end to §4.13, places the render mesh of a cell without x, y, z at
+the landblock origin and culls its avatar placeholder by the cell it stands in; the
+former OPENs on these points are closed.
 
-> **OPEN (implementer):** cells whose `position` has no x, y, z are skipped by the walker
-> (and by the collision cell placement it uses). §4.4 now places them at the landblock origin
-> with the identity orientation (L42); they should be loaded, drawn and collided with there.
+**Closed 2026-10-08** (spec writer's spot check of the walker, physics and renderer code of
+the remediation round, commit 2d76d2f, against this spec): the collision cell placement puts a
+cell whose `position` has no x, y, z at the landblock origin with the identity orientation
+(L42); the renderer no longer limits the fog end it uploads to 10,000, only the keyframe end
+before the override (§4.13; the client's own upload is not limited to 10,000 either: with fog
+off it uploads an end of 20,000 in the main scene path, `lighting.md` §10, BIN-L there); the
+indoor overrides and both sky keys are read from the owner landblock's landblock-info set and
+block map only, not from the camera cell's own set (L32, L48); and the change between the two
+environment records runs the 5 s sun-change fade of §4.13 (L47). The four OPENs on these
+points are closed. Remaining:
 
-> **OPEN (implementer):** the walker draws a cell's render mesh without its appearance data.
-> §4.14 (Tessera Decision there) applies the cell's `Appearance_InstanceList` as
-> `appearance.md` §3.2 does for entities.
+> **OPEN (implementer):** the walker draws a cell's render mesh without its appearance data
+> (the object layer has no per-instance material variants). §4.14 (Tessera Decision there)
+> applies the cell's `Appearance_InstanceList` as `appearance.md` §3.2 does for entities.
+> The client draws a private copy of the mesh with the appearance applied (L34, BIN2), so
+> the released code's choice is not the client's behaviour.
 
-> **OPEN (implementer):** characters and other moving entities are drawn whatever the
-> camera's cell. By §4.11 (Inferred for moving entities) they belong to the visibility cell
-> of the cell they stand in, so from inside, a character standing outdoors is not drawn, and
-> from outside, one standing in a cell is not drawn.
+> **OPEN (implementer):** characters of the character layer are drawn whatever the camera's
+> cell. The client culls moving entities like static ones (§4.11 "Moving entities", BIN5,
+> L49; no longer Inferred): a character belongs to the visibility cell of the cell it
+> stands in, so from inside, a character standing outdoors is not drawn, and from outside,
+> one standing in a cell is not drawn. The released code's choice is therefore not the
+> client's behaviour; follow the Tessera Decision of §4.11.
 
-> **OPEN (implementer):** the walker's scene flags take a simplified form of §4.12: outdoors
-> it clears both flags when any loaded landblock has a cell with bit 0 (instead of visiting
-> those cells with their PVS, rule 3, where a later cell with bit 4 sets sky-visible again);
-> inside it ignores bit 0 of the visited cells. Both give the §4.12 result on every record
-> of this install (no cell has bit 0, LI8). Bring the code in line with rule 3, or keep it
-> and add a test that fails if a cell with bit 0 appears.
-
-> **OPEN (implementer):** the walker limits the overriding interior fog end to 10,000 (it
-> takes the renderer's limits of `lighting.md` §10). §4.13 limits only the keyframe end, before
-> the override. No stored `InteriorFogFar` exceeds 10,000 in this install.
+> **OPEN (implementer, 2026-10-08, status of the two OPENs above; for the spec writer):**
+> (a) **Cell appearance.** The walker applies a cell's `Appearance_InstanceList` to its
+> render mesh: elements in stored order, the toggle record by the cell's own set
+> (`appearance.md` §3.3), the block by `appearance.md` §3.2.1, the groups of every chosen
+> block in one list by ascending priority with ties in application order (§4.10 rule for
+> Tessera), layered on each submesh whose surface binding key matches (`material.md` §9.3);
+> one decoded copy of the mesh per (cell geometry, look). Engineering choices to confirm:
+> parts that a chosen block offers are not drawn on a cell (a cell has no slot table; no
+> chosen block of this install's cell lists has parts: own probe of 2026-10-08 over 81,171
+> elements in 80,825 lists, every chosen block material-only and every group slot `All`);
+> only groups with slot `All` apply (the cell mesh's own slot is not read); with several
+> matching groups the shader override of the last one that has one wins. (b) **Characters.**
+> Characters of the character layer are culled by the camera's portal walk like every drawn
+> object (Tessera Decision of §4.11 "Moving entities"), tested after their draw-distance
+> fade has advanced: the user's character in walk mode on collision belongs to the mover's
+> cell (outdoors without one); a figure placed from the landblock data to the cell its
+> static instance is drawn through (§4.11 Tessera Decision on interior entities), so the
+> figure and its static instance always agree; every other character (sandbox and remote
+> characters, which no collision-based movement code moves) to the cell the containment
+> lookup of `collision.md` §5.8.1 finds at its feet raised by 0.05 units, outdoors when none.
+> Engineering choice to confirm: that lookup for characters without movement code. Both
+> OPENs above, and the matching departures of `walker.md` §14.12 (e), (g) and §14.13, can
+> be closed.
 
 > **OPEN (implementer):** the landblock-info decoder (`crates/formats`) still reads the last
 > six bytes of the fixed neighbour-entry part as three u16 values, which equals §4.4's layout
 > only while `extra_cells` is empty (every entry of this install). §4.4 requires the
 > back-reference as an i32 and `extra_cells` as a counted list; the walker's "negative
-> back-reference" test (bit 15 of the high half) is the sign of that i32. The decoder's
-> field names for the block-pair records, cell groups and links (§4.2, §4.3, §4.6) also
-> still predate the 2026-10-06 renaming.
-
-> **OPEN (implementer):** the walker builds a cell's portal polygon from the neighbour
-> entry's position in the list; the client uses the entry's `portal` field (L39). They are
-> equal in every entry of this install (LI10); use the field, or check the equality when
-> decoding.
-
-> **OPEN (clean-room implementer, 2026-10-07, status of the differences above; for the
-> spec writer to fold into this section):** the walker code now (1) takes the portal
-> polygon named by the entry's `portal` field; (2) runs the scene-flag pass of §4.12 rule 3
-> in full: inside, the camera's cell visited with its PVS in the order cell, list A,
-> list-B group members; outdoors, every bit-0 cell of the resident landblocks visited with
-> its PVS, the landblocks taken in ascending key order (**Decision**: the client's order is
-> not traced; it matters only when bit 0 occurs); (3) skips the cell's own number, 0xFFFF
-> and numbers that are no cell of the record when it builds a PVS (a non-cell adds nothing,
-> **Decision**), and treats a list-B key 0xFFFF as no group; (4) counts toward the 4,096
-> bound only portals actually crossed, not portals tested and rejected; (5) no longer
-> limits an overriding `InteriorFogFar` itself, but the renderer still limits every fog
-> end it uploads to 10,000 (`render.md` §4.2; OPEN for the renderer implementer); (6)
-> places the render mesh of a cell without x, y, z at the landblock origin (L42), while the
-> collision cell placement (`tessera-physics`) still refuses such cells, so the camera
-> cannot be found in them and the portals out of them have no polygon (passed through
-> unchanged, §4.11 Tessera rule); (7) culls the walker's avatar placeholder by the cell it
-> stands in. Still as listed above: the negative back-reference is the i32 of the
-> decoder's two u16 halves (equal while `extra_cells` is empty); cell
-> `Appearance_InstanceList` is not applied (the object layer has no per-instance material
-> variants); characters of the character layer are drawn whatever the camera's cell.
+> back-reference" test is the sign of that i32. The decoder's field names for the
+> block-pair records, cell groups and links (§4.2, §4.3, §4.6) also still predate the
+> 2026-10-06 renaming.
 
 ---
 
@@ -1629,8 +1728,10 @@ For landblock (R, X, Y):
 3. Block map: read `0x801RXXYY` from `client_map_R.dat` and resolve it (§5.4) with the
    region's descriptor (cached per region).
 4. Properties: read `0x804RXXYY` if present (§6).
-5. For seamless normals, also request the heights of the east, north and north-east
-   neighbours (their edge samples equal this block's; §3.3).
+5. Neighbours: seams need the east, north and north-east neighbours (their edge samples
+   equal this block's; §3.3); vertex normals read the edge samples and vertex flags of all
+   eight neighbours (§3.14). Neither is loaded by the bundle job itself; §8.1 rules N1 and
+   R3 say how residency provides them and what a consumer does without them.
 6. Water: decide the landblock's water from the block map (keys 7 and 4) and the height
    grid's minimum with `water.md` §6.2; the fog-zone key 3 needs the east, north and
    north-east neighbours' block maps (`water.md` §5.3).
@@ -1642,209 +1743,175 @@ For landblock (R, X, Y):
    without layers is drawn needs the block's open flag (§3.15).
 
 <a id="s8-1"></a>
-### 8.1 Implementation notes (`tessera-world`, 2026-10-04)
+### 8.1 Implementation notes (`tessera-world`, 2026-10-04; rules restated 2026-10-08)
 
-These record decisions of the clean-room implementation, not facts about the data.
+These record decisions of the clean-room implementation (**Tessera Decisions**), not facts
+about the data or the original client, except where a rule cites a section that states a
+client fact. The 2026-10-08 restatement answers the implementer OPENs of 2026-10-07 that
+stood here: it confirms the choices they described, with the changes marked. The rules carry
+labels so that other specs can cite them.
 
-- **One job per landblock.** The bundle loader reads the data record, the info record
-  (only when the data header names it, LB-E3), the block map and the properties record
-  with their directory stamps in one asset job, then decodes them on the same worker.
-  Only the data record is required; a missing, unreadable (I/O or archive error) or
-  undecodable block map, info or properties record is reported as a bundle problem (with
-  its §9 category when it did not decode) and the bundle is still delivered, so terrain
-  shows. Only a missing or unreadable data record fails the job.
-- **Links and weenies** (§4.6, §4.8) are dropped from the resident bundle unless asked
+**Bundle job**
+
+- **B1 One job per landblock.** The bundle loader reads the data record, the info record
+  (only when the data header names it, LB-E3), the block map and the properties record with
+  their directory stamps in one asset job, then decodes them on the same worker.
+- **B2 Links and weenies** (§4.6, §4.8) are dropped from the resident bundle unless asked
   for; an offline walker ignores them.
-- **Neighbour heights** (step 5) are not copied into a bundle. Consumers read the
-  neighbours' resident bundles (`WorldStreamer::seam_neighbours`). Residency admission
-  provides them: under the budget a near- or mid-ring landblock is admitted only together
-  with its *seam closure* — its desired east, north and north-east neighbours, and theirs
-  in turn while they are near or mid — so once streaming has settled every resident
-  near- or mid-ring landblock admitted under the budget has those neighbours resident.
-  The always-admitted near ring (default) brings the direct east, north and north-east
-  neighbours of each of its landblocks beyond the budget; a mid-ring landblock resident
-  only as such a neighbour gets its own neighbours when the budget allows, so with a
-  binding budget it can lack them. Neighbours that are not desired (past the grid edge,
-  or beyond the far radius when mid = far) are absent, and while streaming a neighbour
-  may arrive a frame or more after the block, so consumers still handle a missing
-  neighbour (one-sided edge normals, remesh on arrival).
-- **Residency admission.** Desired landblocks are admitted nearest first while the
-  cumulative charge fits the residency budget; a resident bundle is charged its real
-  size, an evicted one the size it had, one never loaded the running mean. The first
-  closure that does not fit ends admission, so eviction is strictly farthest first, and
-  re-admitting an evicted bundle needs 1/64 of the budget free, so a bundle on the
-  boundary does not flip at a fixed focus.
-- **Residency charge.** A bundle is charged its decoded grids and surface lists plus four
-  times the stored bytes of its other records (an estimate). On the user's install the
-  process RSS grew by about the charged amount plus the asset cache (see §8.2).
-- **World parts (2026-10-07).** The bundle job also builds the landblock's world systems in
-  the order of `collision.md` §9.4 (terrain collision mesh and water decision, scenery
-  generation, water, collision set); each part's heap bytes are added to the charge,
-  including the static pass's footprint markers that scenery keeps for frill spacing
-  (`scenery.md` §8.2 item 5). These parts follow their own specs; nothing in them changes
-  the records of §3–§6.
-- **Stage times (2026-10-07, diagnostics only).** A bundle job that takes 250 ms or more logs
-  the wall time of each of its stages at debug level. This has no effect on the bundle.
+- **B3 World parts (2026-10-07).** The bundle job also builds the landblock's world systems
+  in the order of `collision.md` §9.4 (terrain collision mesh and water decision, scenery
+  generation, water, collision set), and the Light entities and LOD classes of placed and
+  generated entities. These parts follow their own specs; nothing in them changes the
+  records of §3–§6.
+- **B4 Stage times (diagnostics only).** A bundle job that takes 250 ms or more logs the wall
+  time of each of its stages at debug level. This has no effect on the bundle.
 
-> **OPEN:** Ring radii (near 480, mid 960, far 1,600 units, hysteresis 160) and the
-> 512 MiB residency budget are Tessera defaults. The original's draw distances per detail
-> setting have not been observed; they should replace these defaults once recorded.
+**Records and failures**
 
-> **OPEN (implementer, 2026-10-07, stale default above):** the 512 MiB budget of the note
-> above is out of date. `tessera-world`'s default residency budget is 1 GiB, as
-> ARCHITECTURE §9.2 states since M4.5 (bundles now carry collision sets and scenery), and
-> the walker uses 4,096 MiB (`walker.md` §14.9). Which figure should this section state?
+- **F1 Required and optional records.** Only the data record is required: a missing or
+  unreadable data record fails the job. A **missing** block map is a bundle problem (block
+  maps are dense, LB-E1), and so is a missing info record that the data header names
+  (LB-E3). An **absent** properties record is not a problem (most landblocks have none,
+  LB-E2; step 4); an unreadable or undecodable one is. (Changed 2026-10-08: the former text
+  called every missing optional record a problem.) A bundle with problems is still
+  delivered, so terrain shows; a record that did not decode is reported with its §9
+  category.
+- **F2 Unreadable optional records.** A block map, info or properties record that the record
+  source reports as unreadable counts as the data's condition (archive read errors are data
+  errors in `tessera-assets`): a bundle problem, every world part built without it counts as
+  complete, and the bundle is cached like any other. Accepted consequence: the frame carries
+  only the error text, so a source that refuses an optional record transiently also yields a
+  cached bundle without it.
+- **F3 Non-data failures of world-system inputs.** A world-system input (object chain,
+  clearance volumes, scene record, water volume, region scene tables) that cannot be read for
+  a reason that is not the data's (full work queue, pipeline shutdown, worker panic) does not
+  fail the job. The part is built without that input, or left out (scenery is left out when
+  its static list cannot be built). The bundle is marked **incomplete**, stays resident, and
+  is dropped from the asset store's cache, so the next load of the landblock builds it again;
+  it is not rebuilt while it stays resident (`scenery.md` §4.1 and §7.4 step 15 rely on this
+  rule).
+- **F4 Data errors in world-system inputs.** The readers absorb them: a missing or broken
+  object chain, clearance or water-volume record supplies nothing, the part is built without
+  it and counts as complete, and the bundle is cached. A data error that reaches the bundle
+  job anyway leaves the part out: a static clearance list that fails leaves out scenery
+  generation for the landblock, and water that fails leaves out the landblock water and its
+  liquid boxes, so the collision set is built dry. The bundle records a problem that is not
+  transient, stays complete and is cached; the landblock gets no generated objects (or no
+  water) while the data stays as it is.
+- **F5 Retries.** A request that the pipeline refuses (full queue, shutdown), and a job that
+  ends with an error that is not the data's, are retried while the landblock stays desired:
+  the first retry after 10 ms, the wait doubling with each further consecutive failure up to
+  2 s. A data error or a panic marks the landblock failed until it leaves the rings.
 
-> **OPEN (implementer, 2026-10-07, failure handling; Tessera choices the specs do not
-> state):** the first bullet above says only that an unreadable or undecodable optional
-> record is a bundle problem and that only the data record fails the job. `tessera-world`
-> now does the following. Please confirm these rules or replace them.
-> (a) A block map, info or properties record that the bundle frame reports as unreadable
-> is treated as the data's condition. Archive read errors are data errors in
-> `tessera-assets`. The record is a bundle problem, every world part built without it
-> counts as complete, and the bundle is cached like any other. The frame carries only the
-> error text, not whether the failure was the data's, so a record source that refuses an
-> optional record transiently also yields a cached bundle without that record.
-> (b) A block map that is absent (not unreadable) is a bundle problem, because block maps
-> are dense (§2.3 LB-E1).
-> (c) A world-system input (object chain, clearance volumes, scene record, water volume)
-> that cannot be read for a reason that is not the data's does not fail the job. The part
-> is built without that input, or left out (scenery is left out when its static list
-> cannot be built). The bundle is marked incomplete, stays resident, and is dropped from
-> the asset store's cache, so the next load of the landblock builds it again. It is not
-> rebuilt while it stays resident.
-> (d) A request that the pipeline refuses (full queue, shutdown), and a job that ends with
-> an error that is not the data's, are retried while the landblock stays desired. The
-> first retry waits 10 ms, and the wait doubles with each further consecutive failure up
-> to 2 s. A data error or a panic marks the landblock failed until it leaves the rings.
-> (e) A failed landblock is charged 0 bytes in admission, since it holds nothing. The
-> admission bullet above names charges only for resident, evicted and never-loaded
-> bundles.
+**Residency**
 
-> **OPEN (implementer, 2026-10-07, neighbours; this section is inconsistent):** step 5 and
-> the "Neighbour heights" bullet above use the east, north and north-east neighbours, and
-> admission's seam closure guarantees only those. Step 7 and §3.14 read the edge samples
-> and vertex flags of all **eight** neighbours (X − 1 and Y − 1 included) for the normals of
-> the terrain and ceiling chunks. ARCHITECTURE §10.1 also says "the bundle loader requests
-> the 8 neighbours at low priority". `tessera-world` requests no neighbours from the bundle
-> loader. Under a binding residency budget, the west, south and south-west neighbours of a
-> resident near- or mid-ring landblock may therefore be absent after streaming has
-> settled; consumers draw one-sided normals there and re-mesh when the neighbour arrives.
-> Should admission guarantee all eight neighbours? Doing so makes the closure of any near-
-> or mid-ring landblock the whole connected near and mid area, so admission under the
-> budget would become all or nothing for those rings. Or is "consumers handle a missing
-> neighbour" the rule? The answer should also fix step 5 and ARCHITECTURE §10.1.
+- **R1 Budget and rings.** `tessera-world`'s default residency budget is **1 GiB** (bundles
+  carry collision sets and scenery since M4.5); an application may set its own (the walker
+  uses 4,096 MiB, `walker.md` §14.9). Ring radii: near 480, mid 960, far 1,600 units,
+  hysteresis 160. (Changed 2026-10-08: the former text gave 512 MiB.)
+- **R2 Admission.** Desired landblocks are admitted nearest first while the cumulative
+  charge fits the budget. A resident bundle is charged its real size, an evicted one the size
+  it had, a failed landblock 0 bytes (it holds nothing), and one never loaded the running
+  mean of loaded bundles (512 KiB before the first bundle has loaded). Seam closures (R3) are
+  admitted whole; the first closure that does not fit ends admission, so eviction is strictly
+  farthest first. A closure that contains an evicted bundle is admitted only with 1/64 of the
+  budget free beyond the whole closure's charge (its never-loaded and resident members
+  included); a closure without an evicted member needs no margin. So a bundle on the boundary
+  does not flip at a fixed focus.
+- **R3 Seam closure.** Under the budget a near- or mid-ring landblock is admitted only
+  together with its desired east, north and north-east neighbours, and theirs in turn while
+  they are near or mid, so once streaming has settled every resident near- or mid-ring
+  landblock admitted under the budget has those neighbours resident. The always-admitted
+  near ring brings the direct east, north and north-east neighbours of each of its
+  landblocks beyond the budget; a mid-ring landblock resident only as such a neighbour gets
+  its own neighbours when the budget allows, so with a binding budget it can lack them.
+  Neighbours that are not desired (past the grid edge, or beyond the far radius when mid =
+  far) are absent.
+- **R4 Charge.** A bundle is charged the landblock data's decoded grids and surface lists,
+  four times the stored bytes of its info, block-map and properties records (taken to cover
+  the placed entities, figures, their instance sets and the block-map pairs decoded from
+  them, which are not charged again), and the heap bytes of every world part of B3: terrain
+  collision mesh and water decision, scenery (including the static pass's footprint markers
+  that frills use, `scenery.md` §8.2 item 5), water, collision set, Light entities and LOD
+  classes. On the user's install the process RSS grew by about the charged amount plus the
+  asset cache (§8.2).
+- **R5 Integration overshoot.** A finished bundle becomes resident without a budget check,
+  because admission charged it already. When it turns out larger than charged, the resident
+  bytes may exceed the budget (beyond what the always-admitted near ring adds) until the next
+  update, whose admission charges real sizes and evicts the farthest. This one-update
+  overshoot is accepted.
 
-> **OPEN (implementer, 2026-10-07, lookahead and frill details; ARCHITECTURE §9.2 states
-> none of these, Tessera's current choices in brackets):** please confirm each choice or
-> replace it.
-> (a) Velocity estimate. A step of at most one landblock (160 units) between two updates is
-> never a jump, even when it is faster than 10,000 units per second; without this, clock
-> jitter between very close updates would restart the estimate. The estimate also restarts
-> on a region change. It needs positions spanning at least 50 ms, and a speed below
-> 1 unit per second has no path. A long frame is never a jump: the step is compared with
-> 10,000 units per second times the real time between the updates.
-> (b) "The slowest recent bundle job" is a peak that halves every 30 s without a longer
-> job. One job counts for at most 10 s, and failed jobs count.
-> (c) The urgent part never extends beyond the 4 s path, and slow jobs do not lengthen the
-> path. §9.2's "longer, 1.5 times the slowest recent bundle job" could otherwise exceed it.
-> (d) Corridor hysteresis. A landblock stays on the path, and on its urgent part, until it
-> is the rings' hysteresis margin (one landblock) beyond the near radius of the segment,
-> so a wavering path does not release and re-request the same ahead landblocks every
-> frame. §9.2 says only that ahead landblocks "are released when they leave the path".
-> (e) Ahead bundles. A landblock loaded ahead of the rings is not resident for any lookup
-> (bundle, area, height, water, cells, lights, collision view, seam neighbours, frills)
-> until it enters the rings. Its load state is still visible.
-> (f) Frills. A sector job starts only while the bytes of the held sectors plus the mean
-> sector size times (running jobs + 1) fit the frill budget. Before the first sector is
-> known, one job runs at a time. Sector jobs run at `Visible` priority, and a job that
-> panics leaves an empty sector, not retried while the sector stays in the ring.
+**Neighbours**
 
-> **OPEN (implementer, 2026-10-07, water in the collision set):** ARCHITECTURE §10.3 says
-> the collision set stores the landblock water plane and liquid boxes whenever `world`
-> builds the set. `tessera-world` now builds the landblock water whenever it builds a
-> collision set, whatever its `build_water` option says. The water tables are loaded only
-> when water or scenery is on (`WorldContext`), so with both off a collision set is still
-> dry. Should building collision load the water tables too?
+- **N1 Missing neighbours are the consumer's case.** Residency guarantees only the seam
+  closure of R3 (east, north, north-east), and the bundle loader requests no neighbours. The
+  normals of §3.14 read all eight neighbours; guaranteeing all eight would make the closure
+  of any near- or mid-ring landblock the whole connected near and mid area, so admission
+  would become all or nothing. The client's own normal routine handles a neighbour that is
+  not loaded (it skips every triangle with a corner there and counts the neighbour's quad
+  bit as set, §3.14, BIN2 (g)). So a consumer draws normals from what is resident and
+  recomputes the edge samples of a landblock when any of its eight neighbours arrives or
+  leaves; while streaming, a neighbour may arrive a frame or more after the block. Whether
+  the client recomputes on arrival was not traced. (`ARCHITECTURE.md` §10.1, which says the
+  loader requests the eight neighbours at low priority, should follow this rule; that file
+  is not part of this spec.)
 
-> **OPEN (implementer, 2026-10-07, absent properties record; this section is
-> inconsistent):** the first bullet above reports a *missing* properties record as a bundle
-> problem, while step 4 reads `0x804RXXYY` only "if present" and §2.3 LB-E2 says most
-> landblocks have none (60,450 properties records against 390,150 data records).
-> `tessera-world` follows step 4 and LB-E2: an absent properties record is not a problem
-> (an unreadable or undecodable one is). Should the bullet say "a missing block map or
-> info record named by the header"?
+**Water**
 
-> **OPEN (implementer, 2026-10-07, data errors in world-system inputs; no spec states
-> this):** rule (c) above covers only failures that are not the data's. `tessera-world`
-> absorbs data failures where a world-system input is read: a missing or broken object
-> chain, clearance or water-volume record supplies nothing, the part is built without it
-> and counts as complete, and the bundle is cached. Should a data error reach the bundle
-> job anyway (today's readers do not let one through), the part is left out: a static
-> clearance list that fails leaves out scenery generation for the landblock, and water
-> that fails leaves out the landblock water and its liquid boxes, so the collision set is
-> built dry. The bundle records a problem that is not transient, stays complete and is
-> cached, so the landblock gets no generated objects (or no water) while the data stays
-> as it is. Please confirm, or state what a data error in a world-system input does.
+- **W1 Collision sets carry water.** Building a landblock's collision set always builds the
+  landblock water (plane and liquid boxes, `water.md` §6) for it, and building collision
+  loads the water tables, whatever the water option says. (Changed 2026-10-08: the tables
+  were loaded only when water or scenery was on, so a set could be dry.)
+- **W2 Water option and lookups.** The streamer's water lookups (water at a point, under
+  water, landblock water) answer from the landblock water whenever it was built, so they
+  agree with the character controller, which reads the collision set. The water option
+  (`build_water`) decides whether water surfaces are built for drawing; with collision,
+  water and scenery all off, nothing has water.
 
-> **OPEN (implementer, 2026-10-07, `build_water` and the water lookups; adds to the water
-> OPEN above):** because the landblock water is built with every collision set, the
-> bundle's water also holds it with `build_water` off (when scenery keeps the water tables
-> loaded), and the streamer's water lookups (`water_at`, `is_under_water`,
-> `landblock_water`) answer from it, so they agree with the controller, which reads the
-> set (ARCHITECTURE §10.3, last paragraph). With `build_water` and scenery both off nothing
-> has water. Is that the intended meaning of turning water off, or should the lookups
-> stay dry while the set alone carries the water?
+**Lookahead** (`ARCHITECTURE.md` §9.2 gives the base rule; these are its details)
 
-> **OPEN (implementer, 2026-10-07, residency charge):** `tessera-world` now charges
-> exactly the terms of "Residency charge" and "World parts": the landblock data's grids
-> and surface lists, four times the stored bytes of the info, block-map and properties
-> records (taken to cover the placed entities, figures, their instance sets and the
-> block-map pairs decoded from them, which are no longer charged again), and the heap
-> bytes of the world parts. It counts the Light entities and the LOD classes of placed
-> and generated entities as world parts, since ARCHITECTURE §9.2 lists them among the
-> world systems the bundle job builds and its residency bullet names lights; the
-> "World parts" bullet lists only collision mesh, water decision, scenery, water and
-> collision set. Please confirm that lights and LOD classes are world parts here.
+- **A1 Velocity estimate.** It uses the newest focus position and the oldest one kept: the
+  positions of the last quarter second plus the newest one before them, so when updates are
+  more than a quarter second apart its span is the time between two updates. At most 256
+  positions are kept (above about 1,000 updates per second the span is shorter). It needs
+  positions spanning at least 50 ms; a speed below 1 unit per second has no path. The
+  estimate restarts on a region change and on a jump: a step longer than 10,000 units per
+  second times the real time between the two updates, except that a step of at most one
+  landblock (160 units) is never a jump (clock jitter between very close updates would
+  otherwise restart it), and a long frame is never a jump.
+- **A2 Caller velocity.** A velocity the caller gives replaces the estimate and discards its
+  positions (the estimate starts over when the caller stops giving one); a given velocity
+  that is not finite turns lookahead off for that update. An update whose focus is rejected
+  (not finite, or no valid region) keeps the previous velocity with the previous focus.
+- **A3 Slowest job.** "The slowest recent bundle job" is a peak that halves every 30 s
+  without a longer job; one job counts for at most 10 s, and failed jobs count.
+- **A4 Urgent part.** The urgent part of the path never extends beyond the 4 s path, and
+  slow jobs do not lengthen the path ("1.5 times the slowest recent job" is limited by it).
+- **A5 Corridor hysteresis.** A landblock stays on the path, and on its urgent part, until
+  it is the rings' hysteresis margin (one landblock) beyond the near radius of the segment,
+  so a wavering path does not release and re-request the same landblocks every frame.
+- **A6 Ahead bundles.** A landblock loaded ahead of the rings is not resident for any lookup
+  (bundle, area, height, water, cells, lights, collision view, seam neighbours, frills)
+  until it enters the rings; its load state is visible.
+- **A7 Frill jobs.** A frill sector job starts only while the bytes of the held sectors plus
+  the mean sector size times (running jobs + 1) fit the frill budget; before the first
+  sector is known, one job runs at a time. Sector jobs run at `Visible` priority. A job that
+  panics leaves an empty sector, not retried while the sector stays in the ring. (A sector
+  whose region tables were unavailable for a pipeline reason is generated again,
+  `scenery.md` §4.1.)
 
-> **OPEN (implementer, 2026-10-07, re-admission margin of a seam closure; no spec states
-> this):** the admission bullet gives the 1/64 margin for "re-admitting an evicted
-> bundle", and admission admits seam closures whole. `tessera-world` requires the margin
-> for a whole closure when any member of it is an evicted bundle, its never-loaded and
-> resident members included; a closure without an evicted member needs no margin. Please
-> confirm, or say whether the margin should apply per member.
+**Defaults**
 
-> **OPEN (implementer, 2026-10-07, transient overshoot; no spec states this):**
-> integration makes a finished bundle resident without checking the budget, because
-> admission charged it already (the running mean, or the initial estimate before any
-> bundle has loaded). When the bundle turns out larger, the resident bytes exceed the
-> budget, beyond what the always-admitted near ring adds, until the next update, whose
-> admission charges real sizes and evicts the farthest. Please confirm that this
-> one-update overshoot is acceptable.
+- **D1 Streamer defaults.** Asset-store cache of released bundles 64 MiB (outside the
+  residency budget); at most 32 finished bundles integrated per update, and integration
+  stops after 2 ms of main-thread time (at least one per update); frill sectors held within
+  64 MiB, and at most 64 frill sector jobs started per frill update (the streamer's limit on
+  starting generation jobs, not the walker's "at most 96 per frame" of `walker.md` §14.7,
+  which limits sectors built for drawing); the bundle store queues at most 4,096 job
+  completions between two updates. The never-loaded charge is in R2.
 
-> **OPEN (implementer, 2026-10-07, lookahead (a) continued; ARCHITECTURE §9.2 states none
-> of these):** the velocity estimate uses the newest focus position and the oldest one
-> kept: the positions of the last quarter second plus the newest one before it, so when
-> updates are more than a quarter second apart its span is the time between two updates,
-> longer than "the last quarter second". At most 256 positions are kept, so above about
-> 1,000 updates per second the span is shorter. A velocity the caller gives replaces the
-> estimate and discards its positions (the estimate starts over when the caller stops
-> giving one), a given velocity that is not finite turns lookahead off for that update,
-> and an update whose focus is rejected (not finite, or no valid region) keeps the
-> previous velocity with the previous focus. Please confirm these choices.
-
-> **OPEN (implementer, 2026-10-07, streamer defaults; no spec states these):**
-> `tessera-world`'s other streamer settings default to: asset-store cache of released
-> bundles 64 MiB (outside the residency budget); at most 32 finished bundles integrated
-> per update, and integration stops after 2 ms of main-thread time (at least one per
-> update); a never-loaded bundle is charged 512 KiB until the first bundle has loaded,
-> then the running mean of loaded bundles; frill sectors are held within 64 MiB and at
-> most 64 frill sector jobs start per frill update; the bundle store queues at most 4,096 job
-> completions between two updates. ARCHITECTURE §9.2 says only "a bounded number per
-> frame and within their own byte budget" for frills. The 64 frill jobs per update are the
-> streamer's limit on starting generation jobs, not the walker's "at most 96 per frame" of
-> `walker.md` §14.7, which limits sectors built for drawing. Please confirm or replace
-> these defaults.
+> **OPEN:** The original's draw distances per detail setting have not been observed; they
+> should replace the ring radii of R1 once recorded.
 
 <a id="s8-2"></a>
 ### 8.2 Streaming measurement (`tessera-world`, 2026-10-04)
@@ -1995,10 +2062,24 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
     distance and shadow properties of cell meshes; the meaning of the fourth landscape part
     switched by outdoor-visible (§4.12). *(Answered 2026-10-07: the portal polygon is chosen
     by `portal`, visibility stays inside one landblock, frills are switched by
-    outdoor-visible, the landblock of the indoor property lookup is the owner's (Inferred).)*
+    outdoor-visible. Answered 2026-10-08, BIN4: the landblock of the indoor property lookup
+    is the owner's (traced, L46), the cell's own set is not read (L32), and the switch
+    between the environment records is the 5 s main-light cross-fade of §4.13 (L47).)*
+    Remaining from 2026-10-08: which callers force an environment update (§4.13 Tessera
+    Decision), and whether another part of the client reads the cells' own §4.13
+    properties (L48).
+    *(Answered 2026-10-08, BIN5: moving entities are culled by visibility cell like static
+    ones, L49.)* Remaining from BIN5: which models carry the "not culled" flag, and when the
+    client links cells to a moving object (§4.11).
 11. Ceilings and terrain (§3.14): the graphics-setting condition under which light maps are
     bound; whether the shaders renormalise the vertex normal.
-12. Implementation differences of the released walker (§4.15): seven implementer OPENs.
+12. Implementation differences of the released walker (§4.15): three implementer OPENs
+    remain (cell appearance, character culling, decoder neighbour layout); physics cell
+    placement, the renderer fog limit, the cell set and the record switch were closed on
+    2026-10-08 by the code of the remediation round.
+13. Streaming (§8.1): every implementer OPEN of 2026-10-07 is answered by the labelled
+    Tessera rules B1–D1; only the original's draw distances remain (R1 OPEN), and whether
+    the client recomputes edge normals when a neighbour arrives (N1).
 
 <a id="s12"></a>
 ## 12. Change log
@@ -2012,3 +2093,6 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 | 2026-10-06 | Revision after third review (changes requested, §5.3 item 3). Landblock-info field and part names taken from a published loader replaced by Tessera's own (old names deliberately not repeated here): §4.1 field 3 is now `aux_word`, part 4 "block-pair records" (§4.2, retitled) and part 5 "cell groups" (§4.3, retitled), also in the `flags` bit labels; §4.2 fields 1–6 are now `number_a`, `info_a`, `info_b`, `link_type`, `number_b`, `pair_word`, with an Order column and a plain Meaning column; §4.3 entry fields `lead` and `members`; §4.6 fields 2–4 are now `link_id`, `end_id_1`, `end_id_2`, field 7 `has_pair` and field 8 "block pair", with a new OPEN on the u64 ids; §4.8 entry id is now `object_id`; §9 (`BadFlag`), §10 and §11 item 5 follow. No layout, count or rule changed. New row L24: `link_type` labels now cited from the install's `EntityLinkType` enum mappers 0x230000BE and 0x230001A9 (OBS, Confirmed 2026-10-06) instead of a published loader. L10 notes that the names are Tessera's own. Wrong cross-references fixed: L11 and §2.4 (twice) now point to §4.9 for the trailer rule; L12 points to §4.4 (cells), not §4.5. |
 | 2026-10-07 | Interiors, visibility and ceiling normals (spec writer; M1 and M4 under decision 0011, tags BIN2 and OBS2; answers checklist row Y5 and the dark-ceiling rows T5, T15, T16 of `m4-5-visual.md`). §1: legend adds Inferred; new tags BIN2, OBS2; new rows L25–L37. §0: purpose lists the new sections. §3.13: normals row. New §3.14 (vertex normals of terrain and ceiling chunks; ceiling normals face down; what lights a cave ceiling; landscape drawn only outdoors; OPENs on light-map binding and renormalisation). §4.3: cell groups are visibility groups, `lead` is a key. §4.4: `cell_flags` meanings (bits 0, 2, 4, 5); **correction**: `neighbour_count` is 0 – 6, 24 or 54, not 0 – 10; neighbour entry re-read as u32, u16, i32 back-reference, u32-counted u16 list, u8 (same 15 bytes when the list is empty); lists A and B and `extra` explained; OPEN narrowed. §4.10: LI3 reworded, new LI5–LI8. New §4.11 (visibility cells and portals), §4.12 (inside versus outside; scene flags), §4.13 (indoor environment record, property lookup order, interior overrides, fog limits, no sun indoors; row Y5 worked through), §4.14 (what a cell draws; scale not used for placement). §8: step 7. §10: neighbour size. §11: items 5, 10, 11. For other specs (not edited here): `terrain-texturing.md` §4.8 OPEN (ceiling normals) is answered by §3.14; `environment.md` §7.1 and §12 implementer OPENs are answered by §4.13; `collision.md` §5.8 neighbour layout follows §4.4. |
 | 2026-10-07 | Second 2026-10-07 revision (spec writer; incident 0018 follow-up: every client fact the released walker code relies on is now in the body; M1 and M4 under decision 0011, tags BIN3 and OBS3). Header: long review records moved to the dirty-room review log, short records kept; status Revised, ready for re-review. §1: tags BIN3, OBS3; rows L38–L45. **Review corrections:** §3.14, a sample averages four to eight triangles, not "up to six" (L45, census); §4.13, the main light is off when the intensity is **below** 0.0002 (strict), the colour test inclusive; §4.12, the outdoor branch only for region ≠ 0, landblock X and Y ≠ 0xFF and cell 0, any other position (cell 0xFFFF included) looked up as a cell, both flags clear when none is found (L40); §4.11 key paragraph, region 0 or landblock X or Y 0xFF give the outdoor key; §4.2 and §4.6, a block-pair DID need not name an existing record (0x8025474E). **New facts:** §3.15 (new) the block's open flag and chunks without layers (pointer to `terrain-texturing.md` §4.9, census L44, invariant HM8); §3.13 row; §4.4 cell numbers unique, `portal` selects the polygon, the two cells without an offset lie at the landblock origin with the identity orientation (answers the former OPEN; the advice to skip them is withdrawn); §4.10 LI9, LI10; §4.11 visibility stays in one landblock (L38), a portal is dropped when the neighbour has no visibility cell (L39), the walker's portal-walk rules and interior-entity attachment recorded as Tessera Decisions; §4.12 the visiting rule (bit 0 then bit 4, one level of PVS, 0xFFFF skipped), frills and the whole landscape pass switched by outdoor-visible (L41), no outdoor object drawn from inside; camera-cell Decision stated precisely; §4.13 the fog-end limit precedes the override; the implementer OPEN on the lookup landblock answered in part (owner landblock, Inferred); §4.14 Tessera Decisions for indoor point lights and cell-mesh detail; §4.15 (new) the walker's Tessera rules and seven implementer OPENs where the released code differs; §8 step 7 and §8.1 (world parts, stage-time diagnostics); §11 items 5, 10, 12. No layout changed. |
+| 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07 (spec writer; M4 under decision 0011, tag BIN4; M1, tag OBS4). Status Accepted → Revised. §1: tags BIN4, OBS4; L32 **corrected** (the cell's own property set is not part of the indoor lookup); new rows L46–L48. **§4.13:** the property lookup traced: the landblock named by the position's region, X, Y and instance (the owner for a camera in a cell; the implementer OPEN is answered, no longer Inferred), first a set attached to the loaded landblock at creation, then landblock info, then block map; the cell's set is not read although 777 cells carry such properties; new subsection "Switching between the two records" (anchor `s4-13-1`): "immediate" is replaced by the client's rule, a 5 s sine-eased cross-fade of the applied values whenever the main-light switch of the record in use changes and the update is not forced, with the blend rules; Tessera Decision for forced updates; Row Y5 note. **§4.12:** the consequence bullet on "immediate" corrected (flags switch at once, environment values fade). **§4.15:** the implementer's 2026-10-07 status report folded in; four Tessera rules added to the table (record switch, outdoor flag order, PVS building, portal bound); closed OPENs removed; five remaining and two new implementer OPENs. **§8 step 5 and §8.1:** restated as labelled Tessera rules B1–B4, F1–F5, R1–R5, N1, W1–W2, A1–A7, D1, answering the thirteen implementer OPENs of 2026-10-07 (budget 1 GiB; failure handling confirmed; an absent properties record is not a problem; missing neighbours are the consumer's case; collision sets always carry water and building collision loads the water tables; lookahead, residency charge, re-admission margin, overshoot and defaults confirmed). §11 items 10, 12, 13. No layout changed. |
+| 2026-10-08 | Editorial revision after the review that accepted the 2026-10-08 revision (its non-blocking note on §4.13; spec writer). **§4.13 "Switching between the two records":** `environment.md` §11.6 ("Sun-change fade", "Switching between the tracks") is cited as normative and steps 1–5 and the blend list are reduced to a summary of it; the main-light switch is "sun present" of `environment.md` §11.7 step 9, including its `effect` test; the two values called untraced are `effect` and `effect_extra`; an end whose fog is off also has `fog_extra` 0; the stale note "`environment.md` §11.2 should adopt this" is removed. **Main directional light bullet:** the further keyframe condition is the `effect` test. **L47:** cites `environment.md` §11.6. No rule, layout or section number changed. |
+| 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07/08 in §4.15 (spec writer; M4 under decision 0011, tag BIN5). Status Accepted → Revised. §1: legend names BIN5; new BIN5 row; new **L49**; **L47** wording aligned with `environment.md` E34 (a change during a fade gives the next fade the smaller of the running fade's duration and the time since it started; the third re-review's non-blocking note), and the matching sentence of §4.13 "What this means for the walker's interiors". **§4.11:** new paragraph "Moving entities" (BIN5 (n)): the scene graph assigns visibility cells to every drawn object by one rule, static and moving alike (cells linked to it, else the cell of its own position; outdoor key for cell 0 or 0xFFFF; none for cell 1; redone on entry and on link changes; drawn only when one of its visibility cells is reached; objects whose model carries a "not culled" flag are exempt); replaces the Inferred sentence; Tessera Decision for which cell a moving entity belongs to. **§4.12:** bullet cites L49. **§4.15:** the OPENs on physics cell placement, the renderer fog limit (with the client fact from `lighting.md` §10 that its own upload is not limited to 10,000), the cell set and the record switch are closed (spot check of the remediation code, commit 2d76d2f); the cell-appearance and character OPENs state that the released choices are not the client's behaviour (L34, L49). **§11** items 10 and 12. No layout changed; no section renumbered. |

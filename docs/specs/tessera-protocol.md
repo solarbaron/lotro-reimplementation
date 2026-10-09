@@ -1314,6 +1314,12 @@ For each `MoveInput`, in this order:
 > default `settle_grace_s` to 0. Review R.3's "follows §8.3 steps 1–7" is true of
 > `MovementValidator`, not of the server's use of it.
 
+> **Note** (spec writer, `test-server.md`, 2026-10-08): `test-server.md` §8.3 now runs the
+> grace by skipping only the up and down tests of step 5; *A*ᵤ and *A*_d stay tracked, and its
+> descent credit (a separate pool of at most *S*, cleared at every epoch) counts at most *A*_d
+> of a move's descent. The question above, whether this section allows the grace and the
+> credit, is unchanged.
+
 <a id="s8-4"></a>
 ### 8.4 Epochs, teleports and corrections
 

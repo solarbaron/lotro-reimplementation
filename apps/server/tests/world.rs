@@ -131,6 +131,109 @@ async fn fast_legitimate_slide_is_not_corrected() {
     assert_eq!(s.handle().stats().corrections, 0);
 }
 
+/// [`plain_content`] with `start` a `ground` spawn, so world entry starts the settling grace
+/// (`test-server.md` §8.3).
+fn ground_content() -> Content {
+    Content::parse(
+        "format = 1\n[world]\nid = \"ground\"\ntitle = \"Ground test world\"\nmotd = \"\"\ndefault_spawn = \"start\"\n\
+         [[spawn]]\nname = \"start\"\nregion = 1\nblock = [126, 140]\noffset = [80.0, 20.0, 440.0]\nground = true\n",
+    )
+    .unwrap()
+}
+
+/// Sends of a stepped descent and run-out at the controller's 1/60 s (`collision.md`
+/// §12.3), four steps per 15 Hz send, as average (horizontal, vertical) speeds:
+/// - a fall of `fall_s` seconds from rest (Falling gravity 15 m/s²);
+/// - the landing on a face `angle` degrees steep keeps the velocity's part along it, and
+///   the slide (Slope gravity 10 m/s², no control) goes on to the terminal velocity of
+///   50 m/s and 0.5 s beyond;
+/// - a landing on level walkable ground at 42.7 m/s horizontally (the fastest landing of
+///   `test-server.md` §8.3, more than this face gives) and the run-out with a jump (5.2 m/s)
+///   after every ground step: the ground brakes at 38.5 m/s² (damper left out), the air at
+///   10 m/s² toward 5 m/s;
+/// - 1 s at 6.5 m/s.
+fn fall_slide_run_out(fall_s: f64, angle: f64) -> Vec<(f64, f64)> {
+    const STEP: f64 = 1.0 / 60.0;
+    let mut steps: Vec<(f64, f64)> = Vec::new();
+    let mut vz: f64 = 0.0;
+    for _ in 0..(fall_s / STEP).round() as usize {
+        let next = vz - 15.0 * STEP;
+        steps.push((0.0, (vz + next) / 2.0));
+        vz = next;
+    }
+    let a = angle.to_radians();
+    let mut s = -vz * a.sin();
+    let mut extra = 30;
+    while s < 50.0 || extra > 0 {
+        if s >= 50.0 {
+            extra -= 1;
+        }
+        let next = (s + 10.0 * a.sin() * STEP).min(50.0);
+        let avg = (s + next) / 2.0;
+        steps.push((avg * a.cos(), -avg * a.sin()));
+        s = next;
+    }
+    let (mut v, mut z, mut vz, mut air) = (42.7f64, 0.0f64, 0.0f64, false);
+    while v > 6.5 || air {
+        let (v0, z0) = (v, z);
+        if air {
+            v = (v - 10.0 * STEP).max(5.0);
+            vz -= 15.0 * STEP;
+            z += vz * STEP;
+            if z <= 0.0 {
+                (z, vz, air) = (0.0, 0.0, false);
+            }
+        } else {
+            v = (v - 38.5 * STEP).max(6.5);
+            if v > 6.5 {
+                (vz, air) = (5.2, true);
+            }
+        }
+        steps.push(((v0 + v) / 2.0, (z - z0) / STEP));
+    }
+    steps.extend(std::iter::repeat_n((6.5, 0.0), 60));
+    steps
+        .chunks(4)
+        .map(|c| {
+            let n = 4.0;
+            (
+                c.iter().map(|s| s.0).sum::<f64>() / n,
+                c.iter().map(|s| s.1).sum::<f64>() / n,
+            )
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn slide_right_after_a_ground_spawn_is_not_corrected() {
+    // The default limits with the settling grace: the client finds its ground on a 46° face
+    // below the approximate spawn height, falls onto it for 2 s (30 m), slides to the
+    // terminal velocity and runs out jumping (`test-server.md` §8.3: the credit applies during
+    // the grace as anywhere else).
+    let s = TestServer::start(TestServer::config(), ground_content(), &["alice"]);
+    let (mut a, w) = s.player("alice", "Aldith").await;
+    let speeds = fall_slide_run_out(2.0, 46.0);
+    let (end, corrected) = send_moves(&mut a, w.pose.location, &speeds).await;
+    assert!(corrected.is_none(), "{corrected:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    a.send(&Message::QueryLocation { request_id: 8 }).await;
+    let r = a
+        .world_msg(|m| match m {
+            Message::LocationReport(r) if r.cause == LocationCause::Requested => Some(r.clone()),
+            _ => None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(r.epoch, w.epoch, "no correction started a new epoch");
+    assert!(
+        (r.pose.location.x - end.x).abs() < 1e-6,
+        "{:?}",
+        r.pose.location
+    );
+    assert!(w.pose.location.z - end.z > 100.0);
+    assert_eq!(s.handle().stats().corrections, 0);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn too_fast_move_is_corrected() {
     let s = TestServer::start(strict_config(), plain_content(), &["alice"]);

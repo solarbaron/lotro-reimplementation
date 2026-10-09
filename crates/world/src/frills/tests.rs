@@ -441,19 +441,20 @@ fn sc25_ring_centre() {
 
 #[test]
 fn frill_booleans_follow_rule_8() {
-    // §8.3 rule 8: a stored boolean or an integer-like value; other types count as absent.
+    // §8.3 rule 8 (S52, SC29): only a stored boolean; every other type counts as absent.
     use crate::scenery::value_flag;
     assert_eq!(value_flag(&PropertyValue::Bool(false)), Some(false));
-    assert_eq!(value_flag(&PropertyValue::Int(-2)), Some(true));
-    assert_eq!(value_flag(&PropertyValue::Int(0)), Some(false));
-    assert_eq!(value_flag(&PropertyValue::Enum(1)), Some(true));
-    assert_eq!(value_flag(&PropertyValue::Bitfield64(0)), Some(false));
+    assert_eq!(value_flag(&PropertyValue::Bool(true)), Some(true));
     let wide = tessera_formats::BitfieldAny {
         bits: 72,
         bytes: vec![0, 0, 0, 0, 0, 0, 0, 0, 1],
     };
-    assert_eq!(value_flag(&PropertyValue::BitfieldAny(wide)), Some(true));
     for v in [
+        PropertyValue::Int(-2),
+        PropertyValue::Int(0),
+        PropertyValue::Enum(1),
+        PropertyValue::Bitfield64(0),
+        PropertyValue::BitfieldAny(wide),
         PropertyValue::DidRef(Did(0x4700_0001)),
         PropertyValue::StringToken(5),
         PropertyValue::PropertyId(7),

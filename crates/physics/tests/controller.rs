@@ -16,8 +16,9 @@ use tessera_physics::controller::{
     is_player_instance,
 };
 use tessera_physics::geometry::{
-    BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionSet, CollisionSetBuilder,
-    CollisionView, LiquidBox, LiquidFlags, QueryFilter, ShapeTemplate, Transform, WaterPlane,
+    BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionQuery, CollisionSet,
+    CollisionSetBuilder, CollisionView, LiquidBox, LiquidFlags, QueryFilter, ShapeTemplate,
+    Transform, WaterPlane,
 };
 use tessera_physics::{MAX_STEPS_PER_FRAME, PhysicsError, STEPS_PER_SECOND};
 use tessera_props::{Property, PropertySet, Value};
@@ -2171,14 +2172,46 @@ fn move_to_keeps_scalars_and_steps_compose_movement_only() {
     }
 }
 
-/// Finding: the generic water query made up to ~40 scans of every liquid box. A set and a
-/// view answer the same through their column queries.
+/// Checks the water at `p` against an independent oracle, the boxes' containment test
+/// ([`CollisionQuery::liquid_at`], not the column spans the water query reads): `p` is in
+/// water exactly when a liquid box contains it, the flags are those of the containing
+/// boxes, every height from `p` up to just below the surface is inside liquid, and just
+/// above the surface is not (the scenes have no gaps under 1 mm, `water.md` §7.4). Returns
+/// whether `p` is in water.
+fn water_matches_containment<Q: CollisionQuery + WaterQuery>(q: &Q, p: [f32; 3]) -> bool {
+    let w = q.water_at(p);
+    let flags = q.liquid_at(p);
+    assert_eq!(w.is_some(), flags.liquid, "{p:?} {w:?} {flags:?}");
+    let Some(w) = w else {
+        return false;
+    };
+    assert_eq!(w.flags, flags, "{p:?}");
+    assert!(w.surface.is_finite() && w.surface >= p[2], "{p:?} {w:?}");
+    let below = (w.surface - 2e-3).max(p[2]);
+    let samples = ((below - p[2]) / 0.05).ceil() as u32 + 1;
+    for i in 0..=samples {
+        let z = p[2] + (below - p[2]) * i as f32 / samples as f32;
+        assert!(
+            q.liquid_at([p[0], p[1], z]).liquid,
+            "{p:?} {w:?}: dry at {z}"
+        );
+    }
+    assert!(
+        !q.liquid_at([p[0], p[1], w.surface + 2e-3]).liquid,
+        "{p:?} {w:?}: wet above the surface"
+    );
+    true
+}
+
+/// Finding: the generic water query made up to ~40 scans of every liquid box. The column
+/// query of a set and of a view is checked against the boxes' containment test (the set
+/// and view forward to [`LiquidWater`], so comparing them with it would prove nothing).
 #[test]
-fn column_water_queries_match_the_generic_one() {
+fn column_water_queries_match_containment() {
     let level = -0.5;
     let beach = water_scene(level);
     let mut s = Scene::new();
-    // Boxes without a plane, one of them turned: the bounded search finds their tops.
+    // Boxes without a plane, two of them turned.
     for (k, yaw) in [(0, 0.0_f32), (1, 0.3), (2, 1.2)] {
         let t = Transform::new(
             [20.0 * k as f32, 5.0, 0.0],
@@ -2211,14 +2244,18 @@ fn column_water_queries_match_the_generic_one() {
                 g.unit() * 16.0 - 3.0,
                 g.unit() * 8.0 - 5.0,
             ];
-            let generic = LiquidWater(set).water_at(p);
-            assert_eq!(set.water_at(p), generic, "{p:?}");
-            wet += usize::from(generic.is_some());
+            wet += usize::from(water_matches_containment(set, p));
         }
         assert!(wet > 100, "{wet}");
     }
+    // The beach's surface is the plane's level, bit for bit.
+    assert_eq!(
+        beach.water_at([30.0, 0.0, -3.0]).map(|w| w.surface),
+        Some(level)
+    );
     // Finding: the column search kept at most 64 boxes. 80 thin boxes stacked over one
-    // column, the point inside the highest only: every box counts (`water.md` §7.4).
+    // column, 0.5 m apart, the point inside the highest only: every box counts, and the
+    // surface is that box's top (`water.md` §7.4).
     let mut s = Scene::new();
     for k in 0..80 {
         let z0 = k as f32;
@@ -2239,28 +2276,36 @@ fn column_water_queries_match_the_generic_one() {
     }
     let stack = s.build();
     let p = [0.0, 0.0, 79.25];
-    let generic = LiquidWater(&stack).water_at(p);
-    assert!(generic.is_some());
-    assert_eq!(stack.water_at(p), generic);
+    assert!(water_matches_containment(&stack, p));
+    assert_eq!(stack.water_at(p).map(|w| w.surface), Some(79.5));
     let mut view = CollisionView::new();
     view.push(&stack, [0.0; 3]);
-    assert_eq!(view.water_at(p), LiquidWater(&view).water_at(p));
-    assert!(view.water_at(p).is_some());
-    // The lowest point of the column sees boxes above it but is in the lowest one.
+    assert!(water_matches_containment(&view, p));
+    assert_eq!(view.water_at(p), stack.water_at(p));
+    // The lowest point of the column sees boxes above it, but the dry gap ends its liquid.
     let low = [0.0, 0.0, 0.25];
-    assert_eq!(stack.water_at(low), LiquidWater(&stack).water_at(low));
-    // A view of two sets side by side, shifted.
+    assert!(water_matches_containment(&stack, low));
+    assert_eq!(stack.water_at(low).map(|w| w.surface), Some(0.5));
+    // In a gap: no water.
+    assert!(!water_matches_containment(&stack, [0.0, 0.0, 10.75]));
+    // A view of two sets side by side, shifted; a point of the view answers as the same
+    // point in the set's frame where only one set covers it.
     let mut view = CollisionView::with_origin([100.0, 0.0, 0.0]);
     view.push(&beach, [-100.0, 0.0, 0.0]);
     view.push(&boxes, [60.0, 0.0, 1.0]);
+    let mut wet = 0;
     for _ in 0..2000 {
         let p = [
             g.unit() * 250.0 - 140.0,
             g.unit() * 16.0 - 3.0,
             g.unit() * 8.0 - 5.0,
         ];
-        assert_eq!(view.water_at(p), LiquidWater(&view).water_at(p), "{p:?}");
+        wet += usize::from(water_matches_containment(&view, p));
     }
+    assert!(wet > 100, "{wet}");
+    let in_view = view.water_at([-70.0, 0.0, -3.0]).expect("beach water");
+    let in_set = beach.water_at([30.0, 0.0, -3.0]).expect("beach water");
+    assert_eq!(in_view, in_set);
 }
 
 /// Finding (walk GN1 of `m4-5-visual.md`, 2026-10-07): a slope falling across the path

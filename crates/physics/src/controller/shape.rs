@@ -7,7 +7,7 @@ use crate::geometry::Capsule;
 use super::contact::SUPPORT_MIN_RADIUS;
 
 /// Largest capsule radius accepted, m (Tessera bound; playable capsules are 0.33–0.5 in the
-/// setup and 0.35–0.36 after the model scale, §10.6).
+/// setup and 0.33–0.36 after the physics scale, §10.6).
 pub const MAX_CAPSULE_RADIUS: f32 = 5.0;
 /// Largest capsule length (cap-centre distance) and lower-cap height accepted, m (Tessera
 /// bound; playable values are at most 1.59 in the setup).
@@ -25,9 +25,9 @@ pub struct CharacterShape {
 }
 
 impl CharacterShape {
-    /// The capsule shared, after the model scale, by Hobbit, Human, Dwarf, Stout-axe dwarf,
-    /// River-hobbit and High-elf (§10.6): radius 0.35, lower cap centre 0.35, length 1.10
-    /// (height 1.80).
+    /// The capsule shared, after the physics scale, by Hobbit, Human, Dwarf, Stout-axe
+    /// dwarf, Elf male and River-hobbit (§10.6): radius 0.35, lower cap centre 0.35, length
+    /// 1.10 (height 1.80).
     pub const PLAYABLE: Self = Self {
         lower_cap_z: 0.35,
         length: 1.10,
@@ -57,7 +57,8 @@ impl CharacterShape {
     }
 
     /// The capsule of a setup (`setup.md` §6.4: lower cap centre z, length, radius) times
-    /// the model scale (`appearance.md` §6.1), §10.6.
+    /// the entity's physics scale (`collision.md` §8.1, §10.6; changed 2026-10-08 from the
+    /// render model scale of `appearance.md` §6.1).
     ///
     /// # Errors
     ///
@@ -65,7 +66,7 @@ impl CharacterShape {
     /// [`CharacterShape::new`]) or the scale is not finite and positive.
     pub fn from_setup_capsule(base_z: f32, length: f32, radius: f32, scale: f32) -> Result<Self> {
         if !(scale.is_finite() && scale > 0.0) {
-            return Err(PhysicsError::InvalidInput("character model scale"));
+            return Err(PhysicsError::InvalidInput("character physics scale"));
         }
         Self::new(base_z * scale, length * scale, radius * scale)
     }

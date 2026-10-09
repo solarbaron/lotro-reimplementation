@@ -76,6 +76,7 @@ pub mod scenery;
 pub mod source;
 pub mod streamer;
 pub mod testkit;
+pub mod ui_maps;
 pub mod water;
 
 pub use areas::{AreaName, AreaNameSource, FixedAreaNames, WStateAreaNames};

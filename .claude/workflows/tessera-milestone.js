@@ -183,9 +183,18 @@ const results = {}
 for (const k of NODES.keys()) results[k] = await start(k)
 const problems = Object.entries(results).filter(([, r]) => failed(r)).map(([k, r]) => `${k}: ${r == null ? 'no result' : r.error || r.skipped || 'implementer returned nothing'}`)
 if (problems.length) log(`${M}: failed/skipped: ${problems.join('; ')}`)
-const summary = Object.fromEntries(Object.entries(results).map(([k, r]) => [k,
-  failed(r) ? { status: 'FAILED/SKIPPED', detail: r == null ? null : (r.error || r.skipped || 'implementer returned nothing') }
-    : { status: 'done', impl: typeof r === 'object' && 'impl' in r ? r.impl : r, review: r.review }]))
+// The exit verifier is a clean-room session: it gets spec KEYS, files and status only, never
+// the spec writers' returned text (dirty-room output; decision 0021). Implementation results
+// come from clean sessions and may be passed on.
+const summary = Object.fromEntries(Object.entries(results).map(([k, r]) => {
+  const n = NODES.get(k)
+  if (n.kind === 'spec') {
+    return [k, failed(r) ? { kind: 'spec', files: n.item.files, status: 'FAILED/SKIPPED' }
+      : { kind: 'spec', files: n.item.files, status: 'written (read the spec files themselves for their review status)' }]
+  }
+  return [k, failed(r) ? { status: 'FAILED/SKIPPED', detail: r == null ? null : (r.error || r.skipped || 'implementer returned nothing') }
+    : { status: 'done', impl: r.impl, review: r.review }]
+}))
 
 phase('Exit')
 const exit = await agent(`${CTX}\n\n${CLEAN_READ}\n\nFINAL EXIT-CRITERIA VERIFIER for ${M} (docs/ROADMAP.md). Check every ${M} exit criterion with real evidence: commands and numbers, and screenshots viewed with Read for visual criteria. Criteria that need the owner's observation in the original client: verify everything data-side, mark them "data-side done, owner observation pending" and make sure they are listed in docs/checklists/owner-observations.md. Also run: cargo fmt --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace (with TESSERA_GAME_DIR when available); a 60 s fuzz smoke run of new targets; tools/check-content.sh; tools/check-spdx.sh; doc link check. FIX failures in code, tests, tools and non-spec docs; for a spec problem add a "> **OPEN:**" note or report it, do not change spec facts. Tasks that FAILED or were SKIPPED below did not run: their criteria are not met unless you can show otherwise; report them. Update the ${M} status table in docs/ROADMAP.md, the README status, and the "Current state" section of CLAUDE.md. Return the criterion table with evidence and remaining issues.

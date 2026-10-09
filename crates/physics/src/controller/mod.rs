@@ -51,4 +51,6 @@ pub use step::{
     STEP_UP_MIN_RISE, STEPS_PER_SECOND, SUPPORT_MARGIN, StepEnv, StepOutcome, StepReport,
     WaterContact,
 };
-pub use water::{LIQUID_JOIN_TOLERANCE, LiquidWater, NoWater, WaterQuery, WaterSample};
+pub use water::{
+    LIQUID_JOIN_TOLERANCE, LiquidWater, NoWater, WaterQuery, WaterSample, water_from_spans,
+};

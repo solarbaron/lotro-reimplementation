@@ -24,7 +24,7 @@
 //! 4. **Buoyancy** (in water without walkable support, states 2 and 3; Decision): the
 //!    float line is the water surface minus the float height. Below it (or on it) the
 //!    layer's gravity applies (−20 for swimmers lifts the mover), the water takes up any
-//!    downward speed (§12.3 OPEN (p)) and the feet stop at the line, the upward speed then
+//!    downward speed (§12.4 (p)) and the feet stop at the line, the upward speed then
 //!    zeroed. Above it the gravity's magnitude pulls the mover down (at least
 //!    [`MIN_SINK_ACCELERATION`]) and the feet stop at the line, the speed then zeroed, so a
 //!    swimmer never overshoots it. The speed is limited again afterwards.
@@ -35,12 +35,12 @@
 //!    where it is steeper than walkable and less upward than the contact normal):
 //!    - on walkable support (states 1, 5), a walkable contact keeps its normal, so walkable
 //!      slopes are climbed by the slide itself; a hit whose contact normal does not oppose
-//!      the motion while its triangle's face does slides along the face (a crease, §12.3
-//!      OPEN (n)); a **steep** contact (45°–85° for players) is ridden onto: the motion
+//!      the motion while its triangle's face does slides along the face (a crease, §12.4
+//!      (n)); a **steep** contact (45°–85° for players) is ridden onto: the motion
 //!      keeps its normal, so the capsule can come to rest on the steep face and step 7
 //!      classifies that face underfoot (state 6), while the velocity meets it as a vertical
 //!      wall, so riding onto it gives no upward speed (§11.3 mechanism, §12.3 step 6,
-//!      OPEN (e)–(f)); every other contact (wall, overhang, ignored surface) counts as a
+//!      §12.4 (q)–(s)); every other contact (wall, overhang, ignored surface) counts as a
 //!      vertical wall (its normal's horizontal part), so walls and risers never lift the
 //!      mover;
 //!    - on steep support (states 3, 6), contacts keep their normals and a steep contact
@@ -130,8 +130,8 @@ pub const MAX_STEP_DISPLACEMENT: f32 = 10.0;
 /// A step-up must lift the mover by more than this, m (Tessera Decision): on level ground
 /// the raised move is never taken, so sliding along a wall is never sped up.
 pub const STEP_UP_MIN_RISE: f32 = 0.01;
-/// Slack of the step-up's "climbs in proportion" test, m (§12.4 (k) names no tolerance;
-/// Tessera Decision, implementer OPEN there): the short raised move counts as climbing in
+/// Slack of the step-up's "climbs in proportion" test, m (Tessera Decision, `collision.md`
+/// §12.4 (k)): the short raised move counts as climbing in
 /// proportion when it climbs at least the full move's climb × (move / reach) less this.
 pub const PROPORTION_SLACK: f32 = 1e-3;
 /// Least downward acceleration of a mover above its float line in water, m/s² (Tessera
@@ -687,8 +687,8 @@ impl Controller {
             } else {
                 // Below the line the water takes up any downward speed, so a mover that
                 // slides or falls in at speed stops instead of diving metres below the line
-                // before the lift turns it (`collision.md` §12.3 OPEN (p), Tessera reading
-                // of `water.md` §7.4).
+                // before the lift turns it (`collision.md` §12.4 (p), Tessera reading of
+                // `water.md` §7.4).
                 vz = vz.max(0.0);
                 dz = dz.max(0.0);
                 if feet[2] + dz > t {
@@ -729,14 +729,14 @@ impl Controller {
         feet = result.feet;
         // Keeping the heading (§12.4 (v)) lifts the clipped velocity onto a walkable plane
         // with its horizontal length kept, which can make it longer than the limit of
-        // §12.3 step 3: limit it again (Tessera Decision, implementer OPEN in §12.4).
+        // §12.3 step 3: limit it again (Tessera Decision, `collision.md` §12.4 (y)).
         let mut vel = result.vel;
         limit_speed(&mut vel, speed_limit);
         report.planes = result.planes;
 
         // Ground snap.
         let swimming = element == MovementState::WaterNoSurface;
-        // Rising in the air (§12.3 OPEN (f)); in water the swimming gravity lifts the mover
+        // Rising in the air (§12.4 (f)); in water the swimming gravity lifts the mover
         // and support stays.
         let rising = !grounded && vel[2] > 0.0 && !element.in_water();
         if !report.jumped && !swimming && !rising {
@@ -923,7 +923,7 @@ impl Controller {
             // the motion would leave the motion unclipped, and the next sweep would report
             // the same hit at the same place, stopping the mover dead on a slight terrain
             // crease. On walkable support, slide along the triangle's face instead when the
-            // face opposes the motion (§12.3 OPEN (n)).
+            // face opposes the motion (§12.4 (n)).
             if mode == Mode::Grounded
                 && dot3(remaining, n) >= 0.0
                 && let Some(face) = h.face_normal
@@ -949,7 +949,7 @@ impl Controller {
                 // A steep contact met from walkable support is ridden onto: the motion
                 // slides along it, so the capsule can come to rest on the steep face and
                 // the ground snap and support probe classify that face underfoot (state 6,
-                // `collision.md` §11.3, §12.3 step 6, OPEN (e)–(f)); the velocity meets it
+                // `collision.md` §11.3, §12.3 step 6, §12.4 (q)–(s)); the velocity meets it
                 // as a vertical wall, so riding onto it gives no upward speed.
                 (Mode::Grounded, ContactClass::Steep) => {
                     planes.add(n);
@@ -1171,7 +1171,7 @@ impl Planes {
     /// tolerance) **replaces** it: the latest contact is the one the remaining motion runs
     /// into. Keeping the older normal instead stopped a mover dead at a shallow concave
     /// crease between two walkable triangles whose normals merge, because the motion slid
-    /// along the first one still ran into the second (`collision.md` §12.3 OPEN (u),
+    /// along the first one still ran into the second (`collision.md` §12.4 (u),
     /// Tessera reading).
     fn add(&mut self, n: [f32; 3]) {
         if let Some(m) = self.n[..self.len]

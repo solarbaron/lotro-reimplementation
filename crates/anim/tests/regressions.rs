@@ -152,10 +152,10 @@ fn bone1_angle(anim: &Animator) -> f32 {
     2.0 * q[2].atan2(q[3])
 }
 
-/// Findings 3 and 10: interrupting a fade popped the pose to the fade's incoming clip.
-/// With one overall weight per clip (`skeleton-anim.md` §6.5, K21) an interrupting fade
-/// stops both clips of the old fade at the weights they have and lets them fall linearly
-/// to 0, so the pose stays continuous.
+/// Findings 3 and 10, revised by `script-table.md` §7.1 step 5 and `skeleton-anim.md`
+/// §14.9: interrupting a fade stops the clip still fading out at once (the pose loses its
+/// share), while the clip that was coming in continues from its weight without a jump and
+/// the new clip rises from the complement.
 #[test]
 fn interrupted_fade_is_continuous() {
     let (s, [a, b, c]) = fade_clips();
@@ -169,20 +169,23 @@ fn interrupted_fade_is_continuous() {
     assert!((before - 0.5).abs() < 0.02, "{before}");
     anim.play(0, Playback::new(c.clone(), Wrap::Loop), 1.0, false)
         .unwrap();
+    // a (0 rad) is gone; b (1 rad) at 0.5 and c (2 rad) at 0.5.
     let after = bone1_angle(&anim);
-    assert!((after - before).abs() < 1e-4, "{before} -> {after}");
-    // The stopped clips fall from 0.5 each to 0; the new one rises to 1 on time.
+    assert!((after - 1.5).abs() < 0.02, "{before} -> {after}");
+    // The fade is placed: b is carried at start weight 1, half of the fade already past.
     match &anim.layers()[0].source {
         Some(Source::CrossFade(f)) => {
             let w: Vec<f32> = f.from.iter().map(|(_, w)| *w).collect();
-            assert_eq!(w, vec![0.5, 0.5]);
+            assert_eq!(w, vec![1.0]);
+            assert!((f.elapsed - 0.5).abs() < 1e-6, "{}", f.elapsed);
+            assert!((f.weight() - 0.5).abs() < 1e-6);
         }
         other => panic!("{other:?}"),
     }
-    anim.advance(0.5);
+    anim.advance(0.25);
     let mid = bone1_angle(&anim);
-    assert!(mid > before && mid < 2.0, "{mid}");
-    anim.advance(0.5);
+    assert!(mid > after && mid < 2.0, "{mid}");
+    anim.advance(0.25);
     assert!((bone1_angle(&anim) - 2.0).abs() < 1e-3);
     assert!(matches!(anim.layers()[0].source, Some(Source::Clip(_))));
 
@@ -208,21 +211,23 @@ fn interrupted_fade_is_continuous() {
         let src = anim.layers()[0].source.as_ref().unwrap();
         assert!(src.clip_count() <= MAX_LAYER_CLIPS);
         let after = bone1_angle(&anim);
-        // Dropping the weakest stopped clip (beyond the clip limit) may move the pose a
-        // little.
+        // Interrupting a fade stops its outgoing clip at once (§7.1 step 5), so only the
+        // first fade, started from a plain clip, keeps the pose.
         assert!(after.is_finite());
-        if i < 2 {
+        if i == 0 {
             assert!((after - before).abs() < 1e-4, "{i}: {before} -> {after}");
+        } else {
+            assert!(src.clip_count() <= 2, "{i}: {}", src.clip_count());
         }
         anim.advance(0.03);
     }
 }
 
 /// `skeleton-anim.md` §6.6 step 2 and the §15 answer (3): each clip's weight is its own
-/// ramp, with no cross-fade chain product. Stopped clips at weights 0.1 (b) and nothing
-/// (an empty speed blend) fall linearly while c rises; with nothing below, the
-/// layered-weight rule quantises them and fills a total of at most 0.1 with the
-/// reference pose.
+/// ramp, with no cross-fade chain product. A stopped clip at weight 0.1 (b, from a group)
+/// falls linearly while c rises; with nothing below, the layered-weight rule quantises
+/// them and fills a total of at most 0.1 with the reference pose. A fade from an empty
+/// speed blend stops nothing.
 #[test]
 fn fade_over_empty_source_keeps_later_weights() {
     let (s, [_, b, c]) = fade_clips();
@@ -231,26 +236,19 @@ fn fade_over_empty_source_keeps_later_weights() {
         let mut sb = SpeedBlend::new(vec![(0.0, b.clone()), (1.0, c.clone())]).unwrap();
         sb.set_param(f32::NAN);
         // A fade from an empty speed blend to b, 0.1 of the way in: b has weight 0.1.
-        let inner = CrossFade {
-            elapsed: 0.1,
-            duration: 1.0,
-            ..CrossFade::from_source(
-                Source::Speed(sb),
-                Playback::new(b.clone(), Wrap::Loop),
-                1.0,
-                false,
-            )
-        };
-        assert!(inner.from.is_empty(), "nothing to stop");
+        let empty = CrossFade::from_source(
+            Source::Speed(sb),
+            Playback::new(b.clone(), Wrap::Loop),
+            1.0,
+            false,
+        );
+        assert!(empty.from.is_empty(), "nothing to stop");
+        // b plays at weight 0.1 beside nothing else (not a fade in progress).
+        let inner = Source::Group(vec![(Playback::new(b.clone(), Wrap::Loop), 0.1)]);
         let outer = CrossFade {
             elapsed: w2,
             duration: 1.0,
-            ..CrossFade::from_source(
-                Source::CrossFade(inner),
-                Playback::new(c.clone(), Wrap::Loop),
-                1.0,
-                false,
-            )
+            ..CrossFade::from_source(inner, Playback::new(c.clone(), Wrap::Loop), 1.0, false)
         };
         let mut anim = Animator::new(s.clone());
         anim.set_source(0, Source::CrossFade(outer)).unwrap();

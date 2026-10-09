@@ -1012,20 +1012,71 @@ fn a_given_velocity_replaces_the_estimate_and_its_history() {
 }
 
 #[test]
+fn a_rejected_focus_ignores_a_given_velocity() {
+    // A rejected focus keeps the previous velocity and the estimate's positions, also when
+    // the update gives a velocity (module docs, "Lookahead"; `landblock.md` §8.1 OPEN,
+    // lookahead (a) continued).
+    let ctx = strip();
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            lookahead: Duration::ZERO,
+            ..config()
+        },
+    )
+    .unwrap();
+    let start = centre(10, 3);
+    let mut x = start.x;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while w.velocity().is_none() {
+        assert!(Instant::now() < deadline, "no estimate");
+        x += 2.0;
+        w.update(WorldPos::new(1, x, start.y, 0.0));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let estimate = w.velocity();
+    let samples = w.motion.samples.len();
+    assert!(samples > 0);
+    for bad in [
+        WorldPos::new(1, f64::NAN, start.y, 0.0),
+        WorldPos::new(0, x, start.y, 0.0),
+    ] {
+        let r = w.update_with_velocity(bad, [100.0, 0.0]);
+        assert!(r.focus_rejected, "{bad:?}");
+        assert_eq!(w.velocity(), estimate, "{bad:?}");
+        assert_eq!(w.motion.samples.len(), samples, "{bad:?}");
+        let r = w.update_with_velocity(bad, [f64::NAN, 0.0]);
+        assert!(r.focus_rejected, "{bad:?}");
+        assert_eq!(w.velocity(), estimate, "{bad:?}");
+    }
+    // A given velocity with a valid focus replaces it as before.
+    w.update_with_velocity(WorldPos::new(1, x, start.y, 0.0), [100.0, 0.0]);
+    assert_eq!(w.velocity(), Some([100.0, 0.0]));
+    // And a rejected focus keeps that one too.
+    w.update_with_velocity(WorldPos::new(1, f64::INFINITY, start.y, 0.0), [5.0, 5.0]);
+    assert_eq!(w.velocity(), Some([100.0, 0.0]));
+}
+
+#[test]
 fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
-    // `landblock.md` §8.1, OPEN on closures: the 1/64 re-admission margin applies to a
-    // whole seam closure when any member is an evicted bundle, never-loaded members
-    // included; without an evicted member it does not apply.
+    // `landblock.md` §8.1, rule R2 (re-admission margin): the 1/64 re-admission margin
+    // applies to a whole seam closure when any member is an evicted bundle, never-loaded
+    // members included; without an evicted member it does not apply.
     let ctx = strip();
     let pool = pool();
     let each = 1_000usize;
     let budget = 2 * each + 10;
     assert!(2 * each > budget - budget / READMIT_MARGIN_DIVISOR);
+    // The first update only lays out the rings: with a budget of one byte it admits nothing,
+    // so no job is requested and none can finish and change the size estimate (or a
+    // slot's state) behind the test's back, however fast or slow the machine is.
     let mut w = WorldStreamer::new(
         Arc::clone(&ctx),
         &pool,
         StreamConfig {
-            residency_budget: budget,
+            residency_budget: 1,
             initial_size_estimate: each,
             always_admit_near: false,
             lookahead: Duration::ZERO,
@@ -1034,7 +1085,18 @@ fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
     )
     .unwrap();
     let focus = centre(10, 3);
-    w.update_with_velocity(focus, [0.0, 0.0]);
+    let r = w.update_with_velocity(focus, [0.0, 0.0]);
+    assert_eq!(r.requested, 0, "{r:?}");
+    assert_eq!(r.loading, 0, "{r:?}");
+    assert!(
+        w.slots
+            .values()
+            .all(|s| matches!(s.state, SlotState::Deferred)),
+        "nothing requested"
+    );
+    assert_eq!(w.loaded_sizes, (0, 0));
+    assert_eq!(w.pool.stats().executed, 0, "no job ran");
+    w.config.residency_budget = budget;
     let k = key(10, 3);
     let east = key(11, 3);
     assert_eq!(k.seam_neighbours()[0], Some(east));
@@ -1046,9 +1108,10 @@ fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
     // each charged `each`: the closure of `k` costs 2 × `each`.
     let reset = |w: &mut WorldStreamer, evicted: bool| {
         for (key, slot) in &mut w.slots {
-            if let SlotState::Requested(h) = &slot.state {
-                h.cancel();
-            }
+            assert!(
+                !matches!(slot.state, SlotState::Requested(_) | SlotState::Ready(_)),
+                "{key}: no request in flight or bundle resident"
+            );
             slot.state = if *key == k || *key == east {
                 SlotState::Deferred
             } else {
@@ -1060,15 +1123,19 @@ fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
         if evicted {
             w.slots.get_mut(&k).unwrap().known_size = Some(each);
         }
+        // No bundle was integrated, so the never-loaded charge is `each`.
+        assert_eq!(w.size_estimate(), each);
     };
     reset(&mut w, true);
     let mut report = FrameReport::default();
     w.admit(&order, &mut report, Instant::now());
     assert!(!w.slots[&k].admit && !w.slots[&east].admit);
+    assert_eq!(report.requested, 0, "{report:?}");
     reset(&mut w, false);
     let mut report = FrameReport::default();
     w.admit(&order, &mut report, Instant::now());
     assert!(w.slots[&k].admit && w.slots[&east].admit);
+    assert_eq!(report.requested, 2, "{report:?}");
 }
 
 #[test]

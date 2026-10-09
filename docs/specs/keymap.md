@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Accepted (revision of 2026-10-06 applying [decision 0014](../decisions/0014-ui-input-bridge.md), reviewed the same day) |
 | **Last updated** | 2026-10-06 |
-| **Author role** | §0–§11: Implementer (clean room); everything there is a **Tessera design decision**, not a description of another program. §12–§13 and the 2026-10-05 revisions of §1 and §11: Spec writer (dirty room); §12 describes the original client's key-mapping file and key-map data, with provenance (§1.2). |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Author role** | §0–§11: Implementer (clean room) for Tessera's own design; everything there is a **Tessera design decision**, not a description of another program, **except** the compatibility parts listed in §0 (the command names and default bindings of `pointer` and the UI contexts in §2.2, §8 and §8.1, the activation timing of §7.7, the UI-band ordering rules of §3.2, the push rule of `ScrollableControls_Mouse` in §8.1, the repeat rule of §7.8.6 and "the same command goes on to game code" in §7.8.3), which are written by the spec writer (dirty room) with the provenance of §1.1. The Tessera design added on 2026-10-06 transcribes decision 0014 (IB) and is marked with its section. §12–§13, the 2026-10-05 revisions of §1 and §11, and the 2026-10-06 revision: Spec writer (dirty room); §12 describes the original client's key-mapping file and key-map data, with provenance (§1.2). |
+| **Reviewer** | Claude review session (spec-writer agent, independent session) |
+| **Review record** | Revision 2026-10-06 (decision 0014): independent review session (spec-writer agent, separate session), 2026-10-06: **passed**, Accepted; its ten non-blocking notes were applied the same day. Earlier: re-review 2026-10-06 of the §12 importer text: **passed**, Accepted; first review and re-review 2026-10-05: changes requested (§14). Full records in the review log (decision 0018). |
 | **Implements into** | `crates/input` (`tessera-input`); the importer of §12 also reads records through `crates/dat`/`crates/formats` |
-| **Companion docs** | `docs/ARCHITECTURE.md` §16 (input pipeline), §17 (settings directories), §20.3 (frame loop, 30 Hz fixed tick); `mesh.md` §11 (axes, units, handedness, model facing); `install-layout.md` §8.1 (settings folder), §10 (`--keymap`); `records.md` §1 (VLE, TSize, Pascal string), §7 (enum mappers), §8 (DID maps); `property-system.md` (DID-map groups). |
+| **Companion docs** | `docs/ARCHITECTURE.md` §16 (input pipeline), §17 (settings directories), §20.3 (frame loop, 30 Hz fixed tick); `mesh.md` §11 (axes, units, handedness, model facing); `install-layout.md` §8.1 (settings folder), §10 (`--keymap`); `records.md` §1 (VLE, TSize, Pascal string), §7 (enum mappers), §8 (DID maps); `property-system.md` (DID-map groups).; for the UI bridge: [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**), `ui-behaviour.md` (**UB**), `ui-widgets.md` (**UW**), `lua-plugin-api.md` (**LPA**), `chat-window.md` (**CW**). |
 
 ---
 
@@ -19,12 +19,14 @@
 
 This spec defines Tessera's **own** input model and keymap file format:
 
-- named **actions** and stacked **contexts** (§2, §3);
+- named **actions** and stacked **contexts**, in a game band and a UI band (§2, §3);
 - the device vocabulary and binding syntax: keys, mouse buttons, wheel clicks, gamepad
   buttons, analog axes, modifiers, simultaneous chords and stroke sequences (§4, §5);
 - the TOML keymap file: schema, limits, lenient loading, overrides over built-in defaults,
   location and safe saving (§6);
-- the runtime resolution rules that turn raw events into per-frame action states (§7);
+- the runtime resolution rules that turn raw events into per-frame action states, the
+  activation timing of press, release, tap and double-click bindings, and the synchronous
+  offer protocol through which the game UI sees and consumes actions in order (§7);
 - the built-in actions, contexts and default bindings (§8);
 - the free-fly and walk controllers driven at a fixed time step (§9);
 - the optional winit adapter (§10);
@@ -33,11 +35,27 @@ This spec defines Tessera's **own** input model and keymap file format:
   them into its effective bindings, the meaning class of every command name, and the
   translation of the result into a Tessera keymap.
 
-§0–§11 are **not** a description of another program: nothing in them is taken from another
-program's key map, and the default layout of §8 is a generic choice for a third-person
-walker. §12 is the only part that describes the original client; every fact in it carries a
-provenance row (§1.2), and the importer it specifies never writes the original's file or the
-install.
+§0–§11 are Tessera's own design: nothing in them is taken from another program, **except**
+the parts that reproduce the original client's behaviour for compatibility. Each of those is
+listed here and has its provenance in §1.1:
+
+- the command names of the pointer and UI actions, and the default bindings of `pointer`
+  and the UI contexts (§2.2, §8; from §12.9, §12.14.2, §12.15 and UB §3.2, §5.4, §5.6);
+- the activation timing rules of §7.7 (the five activations, *T*, *W*, *H*, the half-time
+  tap, the half-open nearby rectangle; the third-press reading is Tessera's), from UB §3.3;
+- the UI-band ordering rules of §3.2 (priority order, newest first among equals, the
+  identical-push no-op, the pop at every priority), which reproduce UB §5.2;
+- the push rule of `ScrollableControls_Mouse` (§8.1), from UW §5.7 and §6.9;
+- the repeat rule of §7.8.6 (a hold repeats when its command has toggle type 3), from §12.10;
+- "the same command goes on to game code" (§7.8.3), from UB §5.3 and LPA §13.13.
+
+Everything else new in §0–§11 (the two bands as a mechanism, pass-through, `opaque_keys`,
+the offer protocol, the end queue, move coalescing, the drop rules, the UI-owned mark, the
+modifier policies, the clamps, the settings fallbacks and the defaults marked as Tessera
+choices in §8) is a Tessera design decision, taken in decision 0014 (IB) or its open review, and marked
+with its section. The game-band defaults of §8 are a generic choice for a third-person walker. §12
+describes the original client in full; every fact in it carries a provenance row (§1.2), and
+the importer it specifies never writes the original's file or the install.
 
 ---
 
@@ -54,7 +72,33 @@ install.
 | Simulation runs at a fixed 30 Hz tick, interpolated for rendering | ARCH §20.3 | Decision |
 | World space is `+Z` up | ARCH §11.1 | Decision |
 | World space is right-handed, units are metres, character models face `+Y` | `mesh.md` §11.1–11.2 | Confirmed (data) |
-| Everything else in §2–§11 (syntax, limits, defaults, algorithms, tuning numbers) | Tessera design, this document | Decision |
+| UI commands are keymap actions that carry an InputActions command name; one keymap file, one resolver (§2.2) | IB Decision, D1 | Decision (IB) |
+| The two bands, UI-band entries with owners, the 256-entry limit, queued changes, code access (§3) | IB D5 | Decision (IB) |
+| UI-band ordering: priority, newest first among equals, identical push changes nothing, pop at every priority (§3.2) | UB §5.2 (BIN there; UB §13.9 worked example) | BIN (via UB) |
+| `pass_through`, `opaque_keys`, the band end, the release and modifier-hold rules (§3.3, §7.2) | IB D4, D6 | Decision (IB) |
+| The `on` field and its read-time and compile-time checks (§5.3, §6.3) | IB D3, list item 5 | Decision (IB) |
+| Migration of the retired `text_entry` actions (§6.3) | IB D2, list item 5 | Decision (IB) |
+| Activation bits: press, release, tap within half(*T*), double within *T*, nearby inside the half-open ± half(*W*) × half(*H*) rectangle (§7.7) | UB §3.3 (BIN there), §12.5.7 (K13) | BIN (via UB) |
+| Third-press reading, per-button tracking, recorded presses, *T*/*W*/*H* sources, pixel space, clamps, scale-factor reset, settings fallbacks (§7.7) | IB D3 | Decision (IB) |
+| Press-class and release-class resolution, event order, release after a UI-owned press (§7.2, §7.3) | IB D4 | Decision (IB) |
+| The UI-owned mark on a held button (§7.2.2) | IB open review must-fix 3 | Decision (this revision, from IB) |
+| Wheel motion withheld while a UI-band context binds the wheel, decided per raw event (§7.5) | IB D7 | Decision (IB) |
+| Typed-character routing, keyed on `text`, `opaque` and `opaque_keys` (§7.6) | IB D6 and its open review | Decision (IB) |
+| Offers, verdicts, end queue, band request channel, drops, move coalescing, steps of a call (§7.8) | IB D5, D7, D8 | Decision (IB) |
+| The same command goes on to game code (§7.8.3) | UB §5.3 (BIN there), LPA §13.13; IB Option 4 | BIN (via UB) |
+| Repeat per hold by its command's toggle type 3 (§7.8.6) | §12.10, K43; IB D7, D9 | Confirmed (type-3 set), Decision (per hold) |
+| Frozen position rescaled on a scale change during the pointer lock (§7.8.9) | IB open review; this revision | Decision (this revision) |
+| `pointer` defaults and command names (§8) | UB §3.2 (Confirmed there), K42, K45 | Confirmed |
+| `ui.scroll_mouse` defaults (§8) and push rule (§8.1) | UB §3.2, K42 (bindings); UW §5.7, §6.9 (push, BIN there) | Confirmed, BIN (via UW) |
+| `ui.dialog` defaults (§8) | UB §5.6, K42 | Confirmed |
+| `text_entry` caret, delete, backspace, Escape and Enter defaults; `ui.clipboard` Ctrl+C/X/V (§8) | UB §5.4 (BIN there), K42 | Confirmed |
+| `Ctrl+Insert`, `Shift+Delete`, `Shift+Insert` for copy, cut, paste (§8) | IB list item 2 | Tessera choice (the original's alternative is Super+C/X/V, K42) |
+| Exact `Ctrl+Shift` word and document moves (§8) | IB D2, list item 2 | Tessera choice |
+| The `ui.chat_log` context and its defaults (§8, §8.1) | IB D5, list item 2 | Tessera choice |
+| Built-in `repeat` flags (§8) | K43 | Confirmed (equal to the type-3 set) |
+| Modifier policies of the pointer and UI actions (§2.1, §8) | IB D2 | Decision (IB) |
+| InputMap → context table and push rules other than `ScrollableControls_Mouse` (§8.1) | IB D5 | Decision (IB) |
+| Everything else in §2–§11 (syntax, limits, game-band defaults, algorithms, tuning numbers) | Tessera design, this document | Decision |
 
 <a id="s1-2"></a>
 ### 1.2 The original client's key map (§12)
@@ -63,7 +107,7 @@ Sources:
 
 | Key | Source |
 |---|---|
-| **OBS** | The owner's install and settings folder, read **read-only** on 2026-10-05: the four key-map records (prefix 0x1D) and two action-map records (prefix 0x51) in full; the enum mappers 0x230000AF, 0x23000176, 0x230000B0, 0x2300019E, 0x230001C0, 0x230001C1, 0x230001C2; the DID maps 0x28000000, 0x28000001, 0x2800000A, 0x2800000C; the owner's own key-mapping file (written by the original client, 254 bindings) and the `[Input]` section of the owner's preferences file. Probes were throwaway scripts in the dirty scratch area. |
+| **OBS** | The owner's install and settings folder, read **read-only** on 2026-10-05: the four key-map records (prefix 0x1D) and two action-map records (prefix 0x51) in full; the enum mappers 0x230000AF, 0x23000176, 0x230000B0, 0x2300019E, 0x230001C0, 0x230001C1, 0x230001C2; the DID maps 0x28000000, 0x28000001, 0x2800000A, 0x2800000C; the owner's own key-mapping file (written by the original client, 254 bindings) and the `[Input]` section of the owner's preferences file. Probes were throwaway scripts in the dirty scratch area. **Re-read 2026-10-06** (revision applying decision 0014): the four 0x1D records, both 0x51 records and the mappers 0x230000AF, 0x23000176 and 0x230000B0 were extracted again from the install and parsed with a new throwaway probe (every record parsed with no bytes left over), to confirm the default bindings and toggle types of the UI commands (K42–K46). |
 | **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, 2026-10-05, confined to its key-map reader, writer, merge and binding-selection code, the generic text-tree parser that reader uses, the device-name tables, the XInput translation and the registration of the `[Input]` preferences. **Questions:** (a) the lexical grammar of the key-mapping file; (b) how the four parts and each binding are interpreted, and which errors reject the whole file; (c) the start-up load-and-merge sequence and the conflict rule; (d) the accepted control-name vocabulary; (e) the format the client writes; (f) how one binding is chosen at run time; (g) how XInput pads are presented as controls; (h) the initial values of the `[Input]` preferences. **Why M1–M3 were not enough:** the format is undocumented (research notes: "not found"); the install holds only one file written by the client (M1), which cannot show error handling, case rules, the accepted vocabulary, defaults merging or rejection reasons; black-box tests (M3) would need many edited files fed to the running official client, rewriting the owner's settings each time, and still could not show merge order. The BIN model was then checked against M1 data: rebuilding the owner's file from its user entries and the install's records reproduced it **byte for byte** (§12.17, I1). **Revision session (same build, 2026-10-05)**, answering a review, confined to the same parser, reader and writer code plus the construction of the control-name tables, the string-to-number conversion of node texts, the splitting and writing of activation words, and the loading of the XInput state function. Questions, all within (a), (b), (e) and (g): what an opening bracket with no token before it produces; what bytes 0xFF and 0x00 do; what the original does with extra children of the name node and of device entries, and with empty tokens where numbers, activations and sub-controls are expected; which of the two spellings of each joystick code the writer emits; what the writer emits for a control code without a name and for activations without a word; which XInput state call supplies the pad buttons. Why M1–M3 were not enough: the owner's file uses none of these cases, and feeding hand-edited files to the official client (M3) would rewrite the owner's settings each time and would not show the writer's choice for controls nobody has bound. **Second revision session (same build, 2026-10-06)**, answering the re-review, confined to the same text-tree parser (its node-list loop, directive handler and the check made before parsing), the key-map reader's four part readers, its binding and control-specification readers, and the node accessors they call (child count, child by index, text, number). Questions, all within (a) and (b): what a top-level part without a child list gives; whether children of nodes read only for their text are looked at; how directives are recognised, matched and handled when unknown or without a child; what a device index that is not a number does. Why M1–M3 were not enough: as for the first revision (none of these cases occurs in the owner's file, and M3 would rewrite the owner's settings). Network, login and launcher code were not examined (decision 0004). |
 | **DX** | Public DirectInput 8 and XInput header constants (key, mouse and joystick offset names and values, the two DirectInput system-device GUIDs, XInput button bits). Public C runtime behaviour (text-mode reading, `strtoul`). General engineering knowledge, not dirty (CLEAN_ROOM.md §2). |
 | **PUB** | Public developer discussion of XInput (SDL project forum, "SDL Archaeology: Where does XINPUT_GAMEPAD_EX come from?", read 2026-10-05): the guide button is bit 0x0400, it is reported only by an undocumented extended state call (ordinal 100 of later XInput versions), not by the documented `XInputGetState`, and the oldest XInput version has no such call. Facts only. |
@@ -114,11 +158,19 @@ Sources:
 | K39 | Directives are recognised by the first byte of the node text, at every level, quoted or not; their names are compared without regard to ASCII case; an unknown directive stays in the tree as an ordinary node; `!error` and `!warning` without a child use an empty message; an `!include` file that is missing or fails to parse is only reported (§12.4) | BIN | BIN |
 | K40 | A device index that is not a number makes the control specification invalid, like an index of 256 or more: a binding is dropped, a meta key rejects the file (§12.7) | BIN | BIN |
 | K41 | A file whose first four bytes are all 0xAA is rejected before it is parsed (§12.3 rule 8) | BIN | BIN |
+| K42 | Default bindings of the UI commands (all mask 0 and activation 0x03 unless stated): `Main` (0x1D000001) `SelectLeft` mouse button 0; `SelectDblLeft`, `SelectDblRight` buttons 0 and 1 with 0x60; `TapLeft` button 0 with 0x04; `SelectRight` button 1 with 0x04 (0x1D000000); no binding for `SelectMid`, `SelectDblMid`, `TapMid`, and `TapRight` dropped at the merge (K45). `ScrollableControls_Mouse` `ScrollUp`/`ScrollDown` on the wheel (code 0x08) with `AxisPositive`/`AxisNegative`. `DialogBoxes` (7): the four arrows → `FocusMoveLeft/Right/Up/Down`, Tab → `FocusNext`, Shift+Tab (bit 1) → `FocusPrevious`, Escape → `EscapeKey`. `EditControls` (17 in 0x1D000001, plus one panel toggle on F1 in 0x1D000000): Left/Right → `CursorCharLeft/Right`, Ctrl (bit 2) + Left/Right → `CursorWordLeft/Right`, Up/Down → `CursorPreviousLine/NextLine`, PageUp/PageDown → `CursorPreviousPage/NextPage`, Home/End → `CursorStartOfLine/EndOfLine`, Ctrl+Home/End → `CursorStartOfDocument/EndOfDocument`, Return and numeric Enter → `AcceptInput`, Escape → `EscapeKey`, Delete → `DeleteKey`, Backspace → `BackspaceKey`. `CopyAndPasteControls` (6): C/X/V → `CopyText`/`CutText`/`PasteText` with bit 2 (Ctrl) and again with bit 4 (the Windows keys) (§8, §12.14.2) | OBS (records); §12.8 merge | Confirmed |
+| K43 | Toggle types (table A of 0x51000000) of the UI commands: exactly 16 commands have type 3 (AutoRepeat): `CursorCharLeft/Right`, `CursorWordLeft/Right`, `CursorPreviousLine/NextLine`, `CursorPreviousPage/NextPage`, `BackspaceKey`, `DeleteKey`, `FocusNext`, `FocusPrevious`, `FocusMoveLeft/Right/Up/Down`. `CursorStartOfLine/EndOfLine/StartOfDocument/EndOfDocument`, `EscapeKey`, `AcceptInput`, `TapLeft/Right/Mid`, `Scroll` and the four modifier-click commands are type 2; the six select commands, `ScrollUp`/`ScrollDown`, `CopyText`/`CutText`/`PasteText` and `CameraInstantMouseSteer` are type 1; `AcceptKey` is not in the table (§7.8.6, §8) | OBS | Confirmed |
+| K44 | `Main` (0x1D000001) also binds plain PageUp, PageDown, Home and End to `CursorPreviousPage`, `CursorNextPage`, `CursorStartOfLine` and `CursorEndOfLine`, and these survive the merge; no default binds `CursorStartOfDocument`/`EndOfDocument` outside `EditControls` (§12.14.6, §13) | OBS; §12.8 merge | Confirmed |
+| K45 | `CameraInstantMouseSteer` is bound in `Main` (0x1D000000) to mouse button 1 with mask 0 and activation 0x03; the run commands are `MovementForwardCameraMovement` on button 0 with bit 8 (button 1 held) and `MovementForwardCameraMovementToggleMouseSteer` on button 1 with bit 7 (button 0 held), both 0x03, in `Main`. The two record bindings dropped as conflicts at the merge (§12.8) are `SelectRight` with 0x03 on button 1 (conflicts with `CameraInstantMouseSteer`) and `TapRight` with 0x04 on button 1 (conflicts with `SelectRight` 0x04), both of 0x1D000001 (§12.14.6) | OBS; §12.8 merge | Confirmed |
+| K46 | The four modifier-click commands are bound in `Main` (0x1D000000) with activation 0x06: `DressingRoom` Ctrl (bit 2) + button 0, `AutoLootAll` Shift (bit 1) + button 1, `ItemLinkToChat` Ctrl + button 1, `MultiUseItem` Alt (bit 3) + button 1; `VendorBuyUI` binds `SelectRight` to Shift + button 1 with 0x06 (§11) | OBS | Confirmed |
 
 ---
 
 <a id="s2"></a>
 ## 2. Actions
+
+<a id="s2-1"></a>
+### 2.1 Names, kinds and policies
 
 An **action** is a name that code reacts to (`jump`, `move_forward`). Code registers
 actions in a registry; keymaps refer to them by name.
@@ -133,33 +185,202 @@ actions in a registry; keymaps refer to them by name.
     (mouse motion, wheel); `pressed` = a digital binding is held, or `|value| ≥ 0.5`.
 - **Modifier policy** (per action, set by code):
   - *Exact* (default for buttons): the held modifiers must equal the binding's.
-  - *Subset* (default for axes; used for movement): the binding's modifiers must be held,
-    extra ones are ignored, but any exact match wins (§7.2).
+  - *Subset* (default for axes): the binding's modifiers must be held, extra ones are
+    ignored, but any exact match wins (§7.2).
+
+  The built-in actions use *Subset* for movement (§8), for the nine pointer actions, the
+  caret actions (`text_char_*`, `text_word_*`, `text_line_*`, `text_page_*`,
+  `text_line_start/end`, `text_doc_start/end`), `text_backspace`, `text_delete` and
+  `scroll_up`/`scroll_down`, and *Exact* for the focus actions (`focus_*`), the clipboard
+  actions (`text_copy`, `text_cut`, `text_paste`), `menu`, `open_chat` and every other button
+  action (decision 0014 D2; §8 lists each action's policy). Subset lets a Shift-, Ctrl- or
+  Alt-click still give `select_left` and lets Shift+Left still move the caret, with the
+  modifiers in the offered event (§7.8.2); Exact keeps Ctrl+Shift+Insert from giving both
+  copy and paste.
+- **Repeat flag** (`repeat`, per action, default false): whether the action's holds repeat
+  while the key is held **when no action-map data is present**. With action-map data,
+  repeat is decided per hold by its command (§7.8.6). §8 lists the built-in flags.
+- **Command name** (optional, per action, default none): an InputActions name (§12.11) used
+  for the action's events only when neither the binding entry nor the (context, action)
+  table gives one (§2.2). No built-in action sets it; it exists for actions registered at
+  run time (decision 0014 list item 3).
 - Limits: 1024 actions, 64 contexts per registry.
 - Actions and contexts may also be registered on a running mapper (plugins): the keymap in
-  use is recompiled against the grown registry; active contexts, held buttons and the holds
-  of unchanged bindings are kept, a pending sequence is dropped.
+  use is recompiled against the grown registry; active contexts, UI-band entries, held
+  buttons and the holds of unchanged bindings are kept, a pending sequence is dropped.
+
+<a id="s2-2"></a>
+### 2.2 Command names and IDs of events (decision 0014 D1)
+
+Each hold or pulse that resolution makes (§7.2, §7.3) carries a **command name**, chosen in
+this order; the first that exists wins:
+
+1. the command the binding entry remembers (only imported entries do, §12.15; a saved
+   Tessera keymap does not store it);
+2. the command chosen for the hold's (context, action) pair by the rules of §12.15 from the
+   rows of §12.14.2 (for an axis action the entry's kind and sign choose the row). The
+   table of rows is part of `tessera-input`, as names;
+3. the action's own command name (§2.1);
+4. none.
+
+The **command ID** is the InputActions ID of that name. The client resolves names to IDs at
+run time from the mapper chain (§12.11) and hands the mapper the table; without that data
+(synthetic tests, a missing record) every ID is "none". §8 lists the IDs observed in this
+install for reference only (K42); code never hard-codes them.
+
+- A hold or pulse **with a name** is offered to the UI (§7.8), with or without an ID.
+- A hold or pulse **without a name** (for example the `fly_*` actions, which have no row) is
+  never offered: it goes straight to game code, and plugins cannot see it.
+- The **value** offered is the absolute entry value: 1.0 for button actions and for plain
+  entries. The sign of an axis entry already chose the command (§12.15 rule 2), so it is not
+  repeated in the value.
 
 ---
 
 <a id="s3"></a>
 ## 3. Contexts
 
+<a id="s3-1"></a>
+### 3.1 Fields and the two bands
+
 A **context** is a named group of bindings that can be switched on and off (`movement`,
 `text_entry`). Each has:
 
 | Field | Meaning |
 |---|---|
-| `priority` (signed integer) | Active contexts are consulted from the highest priority down; among equal priorities the most recently activated comes first. |
-| `opaque` | While active, inputs it does not bind do not reach lower contexts (text entry, modal dialogs). |
-| `text` | It receives typed characters when it is the first context in resolution order. |
+| `band` | `game` or `ui`, fixed when the context is registered (§3.4) |
+| `priority` (signed integer) | Game band: active contexts are consulted from the highest priority down; among equal priorities the most recently activated comes first. UI band: used only by `activate` (§3.4); the band's own entries carry their priority (§3.2) |
+| `opaque` | While active, inputs it does not bind do not reach contexts consulted after it, in either band (§3.3) |
+| `opaque_keys` | UI band only: keyboard keys and pad buttons that no UI-band context takes do not reach the game band (§3.3). Registering a game-band context with this flag is an error (Tessera rule: decision 0014 defines the flag only at the band boundary) |
+| `text` | It can receive typed characters (§7.6) |
+| `pass_through` | Its matches fire and are offered, and the input continues to lower contexts unless the UI consumed one of their Starts (§7.2) |
 
-The set of active contexts is the **context stack**. Operations: activate (re-activating
-moves a context to the top of its priority band), deactivate, query.
+The **context stack** has two bands, consulted in this **resolution order**:
 
-- Deactivating a context releases every hold it owns (release edges are reported).
-- Activating an **opaque** context releases holds owned by contexts below it, so movement
-  stops when a chat line opens.
+1. the **UI band**: its contexts in band order (§3.2), each context once, at its first
+   entry;
+2. the **game band**: active game-band contexts by priority as above.
+
+Operations on the game band: activate (re-activating moves a context to the top of its
+priority band), deactivate, query. The UI band has entries pushed and popped by owner
+(§3.2); §3.4 says how the game-band operations act on a UI-band context.
+
+A **pass-through** context holds no multi-stroke binding: such a binding (for example a
+user's `select_left = "G G"` in `pointer`) is disabled with a warning when the keymap is
+compiled, so a pass-through context never starts a pending sequence (§7.2 step 3), which
+would stop an input that should continue (decision 0014 D4).
+
+<a id="s3-2"></a>
+### 3.2 The UI band
+
+The UI band is a list of **entries** (context, owner, priority): the owner is an opaque
+`u64` (in `tessera-ui`, the element that asked for the entry; 0 is reserved for code,
+§3.4), the priority an `i32`. These ordering rules reproduce the original's input-map stack
+(UB §5.2, BIN there; UB §13.9 is the worked example):
+
+- Entries are ordered by priority, highest first. A new entry goes **before** every entry of
+  equal or lower priority, so among equal priorities the newest comes first.
+- Pushing an entry identical to an existing one in context, owner and priority changes
+  nothing and does not move it (unlike game-band reactivation).
+- A pop names (context, owner) and removes that pair's entries at **every** priority.
+
+Tessera rules (decision 0014 D5):
+
+- A context listed several times is consulted once, at its first entry.
+- `tessera-ui` performs the ancestor walk of UB §5.2 itself and asks the client for each
+  push and pop by InputMap name; the client maps the name to a context by §8.1. A map
+  without a context is ignored, with a debug log.
+- At most **256** entries. A push beyond that is refused and logged as a warning. The
+  refusal is not reported back to the caller, the sink or `tessera-ui`, whose record of its
+  pushes then holds one entry the band lacks; that is harmless: the missing entry's context
+  is not consulted for that owner, a later pop of the pair removes whatever entries of it
+  exist (possibly none), and no hold can belong to an entry that was never made. The UI does
+  not retry. Normal use needs about a dozen entries.
+- A push or pop requested during an offer is queued and applied when that offer returns
+  (§7.8.5). Outside offers, pushes and pops are applied at once.
+- When a UI-band context leaves the band completely (its last entry is popped), its holds
+  end (§3.5) and a pending sequence (§7.2 step 1) of that context is dropped.
+- **Pushes and the pending sequence.** A push drops the pending sequence only when it adds
+  the band's **first** `opaque_keys` entry, or the first entry of a context with `opaque`
+  (§3.3), and the sequence's context is consulted after that entry (a game-band context, or a
+  UI-band context below the new entry). Every other push, an identical push included, leaves
+  the sequence alone. Hover pushes of
+  `ui.scroll_mouse` come and go with every pointer movement and must not cancel a sequence;
+  without the rule, a game-band sequence started before a field gained focus outside an
+  offer could be completed by a key typed into the field, because §7.2 step 1 tries the
+  pending sequence before any context.
+
+<a id="s3-3"></a>
+### 3.3 Opacity: `opaque` and `opaque_keys` (decision 0014 D6)
+
+- **`opaque`** has the same meaning in both bands: a context with it ends the pass after it
+  has been tried (§7.2 step 2), so inputs it does not bind reach no context after it. No
+  built-in UI-band context uses it.
+- **`opaque_keys`** covers keyboard keys and pad buttons; mouse buttons, wheel clicks and
+  analog axes always pass. Inside the UI band it does **not** end the pass: a key press is
+  tried against every UI-band context in band order, so a focused field's `text_entry` and
+  `ui.clipboard` and a dialog's `ui.dialog` below them all see it, whatever their push order.
+- **Band end.** If any UI-band entry has `opaque_keys`, a key or pad-button press (and, in
+  release-class resolution, such a release, §7.3.1) that no UI-band context took **ends the
+  pass** at the end of the UI band, as an `opaque` context does. It reaches neither
+  `pointer` nor the game band in that pass. It is not consumed, so if pass 1 ends this way,
+  pass 2 runs and tries the UI band again with subset matches, and ends at the band end
+  again if nothing there takes it. Only after both passes is the input swallowed (invariant
+  (q) depends on this: Shift+Left matches no exact binding in pass 1, and `text_char_left`,
+  Subset, fires in pass 2).
+- **Release on the first `opaque_keys` entry.** A push that takes the band from no
+  `opaque_keys` entry to one ends every **game-band** hold (`pointer` included) whose last
+  stroke contains a key or a pad button. Further `opaque_keys` entries end nothing more,
+  including the same context under another owner or priority (`text_entry` activated by code
+  at (owner 0, priority 100) and pushed by a focused field at priority 50 can coexist). The
+  rule never ends a hold of a UI-band context, wherever it sits relative to the new entry
+  (for example `ui.chat_log` below a field's `text_entry`).
+- **Modifier holds** of the game band are not evaluated while any `opaque_keys` entry is in
+  the band (§7.4).
+- **Typed characters**: §7.6.
+- **Pushing an `opaque` context** (Tessera rule, completing decision 0014 D5 and D6, which no
+  built-in context exercises): a push that adds the first entry of a context with `opaque`
+  ends the holds of every context consulted after that entry, as `activate` of an opaque
+  game-band context does (§3.5).
+
+With a text field focused this gives: W types instead of moving; Ctrl+C reaches
+`ui.clipboard`; Tab reaches `ui.dialog` below the field; a click elsewhere and the run chord
+still work, in either press order.
+
+<a id="s3-4"></a>
+### 3.4 Code access to the bands (decision 0014 D5)
+
+- `register_context` takes the band. The built-in contexts have the bands of §8. A context
+  registered on a running mapper (a plugin's) is in the game band unless its definition asks
+  for the UI band. The band never changes.
+- **Band push** (context, owner, priority) and **band pop** (context, owner) are the UI-band
+  operations of §3.2. A push or pop that names a game-band context is refused with a debug
+  log and changes nothing.
+- **Owner 0** is reserved for code; `tessera-ui` never uses it for an element.
+- On a **UI-band** context:
+  - `activate(c)` is the push (*c*, 0, *c*'s registered priority). Activating it again is that
+    identical push, so it does nothing and does not move the entry;
+  - `deactivate(c)` is the pop (*c*, 0); entries of other owners stay;
+  - `is_active(c)` is true while *c* has any entry;
+  - `set_active(c, on)` compares *on* with whether the entry (*c*, 0) exists.
+- On a **game-band** context the four operations keep their meaning: `activate` moves the
+  context to the top of its priority band and drops a pending sequence, as before. The walk
+  and fly mode helpers (§8) touch game-band contexts only.
+- `handle` (no sink, §7.1) resolves against the band as it stands, whoever made the entries:
+  `activate`, direct band pushes, or offers made by an earlier `handle_with`.
+
+So code that activates `text_entry` with `activate` (`StandardActions`, the `input_runtime`
+fuzz target) keeps working; what `text_entry` does once active changes (§8, invariant (e2)).
+
+<a id="s3-5"></a>
+### 3.5 Holds owned by contexts
+
+- Deactivating a game-band context, or a UI-band context leaving the band completely, ends
+  every hold it owns (release edges are reported for game holds; Ends are offered or queued
+  for offered holds, §7.8.4).
+- Activating an **opaque** game-band context ends the holds owned by contexts below it.
+- In the UI band, only the rules of §3.3 end holds of other contexts on a push (the first
+  `opaque_keys` entry; the first entry of an `opaque` context).
 
 ---
 
@@ -251,14 +472,30 @@ with a warning: `G` and `G H` in one context → `G H` is dropped.
 | Entry | Meaning |
 |---|---|
 | `"text"` | Digital binding (strokes as above), axis value `1.0`. |
-| `{ input = "text", value = v }` | Digital binding with axis value `v` in `-1..=1` (button actions ignore `value`). |
+| `{ input = "text", value = v, on = "w" }` | Digital binding with axis value `v` in `-1..=1` (button actions ignore `value`; default 1) and activation filter `w` (default `press`; §7.7). Both fields are optional. |
 | `{ axis = "Name", scale = s, deadzone = d, invert = b }` | Analog binding. `scale` default 1, `|s| ≤ 10000`; `deadzone` default 0, range `0..=0.95` (absolute axes only); `invert = true` negates `scale` (stored as a negative scale). |
 
 Numbers are stored as 32-bit floats and the ranges are checked on the stored value, so the
 bounds as written (`deadzone = 0.95`) are accepted.
 
-Unknown fields, both or neither of `input`/`axis`, `value` with `axis`, or `scale`/
+Unknown fields, both or neither of `input`/`axis`, `value` or `on` with `axis`, or `scale`/
 `deadzone`/`invert` with `input` make the entry invalid.
+
+**The `on` field** (decision 0014 D3). Its values are `press`, `release`, `tap`, `double` and
+`double_nearby` (§7.7), matched exactly; any other value makes the entry invalid. A plain
+`"text"` entry is `press`. A value other than `press` is allowed only on a **single-stroke
+binding with exactly one button** plus any modifiers, and that button is not a wheel click.
+So a non-`press` `on` on a sequence, on a chord (two or more buttons), on a modifier hold (no
+button), or on a wheel click makes the entry invalid, and `on` with `axis` does too. These
+cases are visible in the entry alone and are caught at **read time** like any invalid entry
+(§6.3): the lenient reader drops the entry with a warning, the strict reader fails, and
+setting the bindings from code (`Keymap::set`) refuses the entry with an error.
+
+One case needs the registry: a non-`press` `on` on an entry of an **axis** action, where a
+zero-length pulse would add nothing to `value`. `Keymap::set` and both readers accept it;
+when the keymap is compiled against the registry the entry is disabled with a warning, like
+the prefix bindings of §5.2. The compiler also disables, with a warning, every multi-stroke
+binding of a pass-through context (§3.1).
 
 ---
 
@@ -279,6 +516,10 @@ sequence_timeout_ms = 1000
 move_forward = ["W", "Up", { input = "S", value = -1.0 }, { axis = "PadLeftY", deadzone = 0.15 }]
 jump = ["Space"]
 autorun = []                  # explicitly unbound
+
+[bindings.pointer]
+select_right = [{ input = "MouseRight", on = "tap" }]
+select_double_right = [{ input = "MouseRight", on = "double_nearby" }]
 
 [bindings."ui.dialog"]        # names containing '.' are quoted
 "myplugin.close" = ["Ctrl+K Ctrl+W"]
@@ -315,7 +556,18 @@ autorun = []                  # explicitly unbound
   same cap applies when compiling against a registry); past that one "truncated" warning is
   added and the rest are dropped.
 - **Strict**: any warning is an error; a newer version is an error.
-- Serialisation is deterministic (sorted context and action names, entry order kept) and
+- **Migration of the retired `text_entry` actions** (decision 0014 D2, list item 5). The
+  lenient reader renames, inside `[bindings.text_entry]` only, `text_submit` to `open_chat`,
+  `text_cancel` to `menu`, `text_history_prev` to `text_line_up` and `text_history_next` to
+  `text_line_down`, keeping the entry list. When the same table already names the new action,
+  the new action's list wins and the old key is dropped. Each rename or drop is a warning.
+  The document then holds only the new names, so the next save writes them. Without this,
+  §6.1's "unknown names are kept" would keep the old overrides but silently stop applying
+  them. The strict reader fails on the old names, because its promise is the exact round
+  trip of what the writer writes, and the writer never writes them. In other contexts the
+  old names are ordinary unknown action names (§6.1).
+- Serialisation is deterministic (sorted context and action names, entry order kept; `on`
+  is written only when it is not `press`, in the inline-table form of §5.3) and
   the strict reader returns exactly the keymap that was written. To keep that promise for
   keymaps built in code: setting an action's bindings normalises every number into its
   range (non-finite `value` → 1, non-finite `scale` → 1, non-finite `deadzone` → 0, others
@@ -360,22 +612,54 @@ The user's file holds **only overrides** of the built-in defaults (§8):
 <a id="s7-1"></a>
 ### 7.1 Frame protocol
 
-1. Raw events are fed in arrival order, each with a monotonic timestamp.
-2. Once per frame, *update* publishes a snapshot of every action.
-3. Readers use the snapshot until the next update.
+1. Raw events are fed in arrival order, each with a monotonic timestamp, through one of two
+   calls: `handle(event, now)`, which offers nothing, or `handle_with(event, now, sink)`,
+   which offers events to the UI through a sink (§7.8). The client uses `handle_with` while
+   a UI is attached; the walker, tests and tools without a UI use `handle`.
+2. With a UI attached, `offer_pending(sink)` is called once per frame after the last raw
+   event and before *update* (one exception: the deferred cursor-left of §7.8.9).
+3. Once per frame, *update* publishes a snapshot of every action.
+4. Readers use the snapshot until the next update.
 
 Edges and relative deltas that occur between two updates appear in the second snapshot;
 a press and release inside one frame yields `presses = 1, releases = 1, pressed = false`.
+The snapshot shows **game holds** only: a hold whose Start the UI consumed (UI-owned,
+§7.8.3) never shows, and typed characters handed to the sink are not in its `text` (§7.6).
+
+The mapper numbers every call of `handle`, `handle_with` and `offer_pending` with a
+**sequence number**, starting at 1 and increasing by one per call; offered events carry it
+(§7.8.2).
 
 Raw events: key (with an auto-repeat flag), mouse button, raw mouse motion, cursor
 position, cursor left, wheel (notches), gamepad button, gamepad axis position, the window
-system's modifier state, typed character, focus lost.
+system's modifier state, typed character, focus lost. A cursor-left event sets the mapper's
+cursor position to unknown.
+
+Besides raw events, the client hands the mapper: the timing values *T*, *W*, *H* (§7.7, again
+after a scale-factor change), the table from command names to IDs (§2.2), the set of command
+IDs of toggle type 3 (§7.8.6), the band pushes and pops made outside offers (§3.2), and, after
+a scale-factor change, the rescaled cursor position (§7.7, §7.8.9), which sets the mapper's
+cursor position without marking a move pending and without offering anything.
 
 <a id="s7-2"></a>
 ### 7.2 Resolving a press
 
-Auto-repeat presses and presses of buttons already held are ignored. At most 64 buttons are
-tracked as held; further presses are ignored. Then:
+**Presses that are not resolved.**
+
+- An OS auto-repeat press never starts, resolves or ends a hold. Under `handle_with` it
+  produces Repeat offers for the key's repeatable offered holds (§7.8.6); otherwise it does
+  nothing.
+- A press of a button already held is ignored. At most 64 buttons are tracked as held;
+  further presses are ignored.
+- Neither kind is recorded for activation timing (§7.7).
+
+Every other press is **resolved**. A resolved press of a key, a mouse button or a pad button
+puts that button in the **held set**, whatever resolution then does with it (consumed,
+passed on, swallowed at the band end, or no binding at all); it leaves the set only as §7.3
+says. Wheel clicks are momentary and never enter the held set. The press's activation conditions (double, nearby) are computed
+first (§7.7), then the press is recorded for timing, then resolution runs. The context
+order (§3.1) is fixed when resolution of the raw event starts; band changes requested by its
+own offers take effect from the next raw event (§7.8.5).
 
 1. **Pending sequence.** If a sequence is waiting and has not timed out, the press is
    tried only against the remaining candidates of that sequence's context at the next
@@ -384,34 +668,126 @@ tracked as held; further presses are ignored. Then:
    not all held yet (a simultaneous chord in progress), leaves the sequence waiting and is
    not resolved further (so `Ctrl+K`, release, `Ctrl+C` and `Ctrl+K Shift+C` work; while a
    sequence waits, a modifier key bound as a plain button does not fire). Any other press
-   cancels the sequence and continues with step 2.
-2. **Two passes over the active contexts** in resolution order (§3): the first pass
-   accepts only *exact-modifier* matches, the second also *subset* matches (for actions
-   with the subset policy). In each pass, the first context that has a binding whose first
-   stroke is completed by this press **consumes** the press. An opaque context ends the
-   pass (inputs below it are never seen).
+   cancels the sequence and continues with step 2. (A pass-through context never has a
+   pending sequence, §3.1.)
+2. **Two passes over the contexts** in resolution order (§3.1). Pass 1 accepts only
+   *exact-modifier* matches; pass 2 also accepts *subset* matches (for actions with the
+   Subset policy). Pass 2 runs only when nothing consumed the press in pass 1. In each pass:
+   - A context **matches** when it has an enabled **press-class** binding whose first stroke
+     is completed by this press and whose `on` accepts it: `press` always, `double` when the
+     press is a double press, `double_nearby` when it is a nearby double press (§7.7). A
+     (context, binding entry) pair that has already fired for this raw event does not match
+     again.
+   - A context that is **not pass-through** and matches **consumes** the press: the pass and
+     the resolution end, and step 3 runs in that context.
+   - A **pass-through** context that matches fires its complete matching bindings at once
+     (§7.2.1 order), and under `handle_with` offers their Starts at once. If the UI consumed
+     at least one of those Starts, the press is consumed there: resolution ends. Otherwise
+     the pass continues with the next context as if the pass-through context had not
+     matched; the holds it made stay. Under `handle` it never consumes.
+   - In pass 2, a pass-through context that fired anything in pass 1 is **skipped**: it
+     counts as not matching. A pass-through context that fired nothing in pass 1 fires its
+     pass-2 matches as usual. So the exact pass prefers exact bindings inside a pass-through
+     context too, as it does inside a normal context, where a pass-1 match ends the
+     resolution and its subset-only bindings never fire.
+   - A context that does not match **ends the pass** when it is `opaque`. After the last
+     UI-band context, the pass ends when any UI-band entry has `opaque_keys` and the pressed
+     button is a key or a pad button (§3.3).
 3. In the consuming context, every matching binding that is complete fires (becomes a
-   *hold*); if none is complete, the matches become the candidates of a new pending
-   sequence with deadline `now + timeout`.
+   *hold*) and, under `handle_with`, is offered (§7.8); if none is complete, the matches
+   become the candidates of a new pending sequence with deadline `now + timeout`.
+
+A press that no context consumed in either pass is not consumed; the holds that
+pass-through contexts made for it stay.
 
 A stroke is *completed by* a press when the pressed button is one of its buttons, all its
-other buttons are held, and the held modifiers (minus those contributed by its own
-buttons) equal its modifiers (exact) or contain them (subset).
+other buttons are held **and not marked** (§7.2.2), and the held modifiers (minus those
+contributed by its own buttons) equal its modifiers (exact) or contain them (subset).
 
 Consequences: a simultaneous chord and a single-button binding in the **same** context both
 fire when the chord completes (the chord does not consume the single binding); in
-different contexts only the higher one fires. Modifiers released while a hold is active do
-not end it.
+different normal contexts only the higher one fires. Modifiers released while a hold is
+active do not end it. Without a sink a pass-through context never hides a lower binding,
+whatever its `on` values; with a sink it hides one only when the UI consumed one of its
+Starts, which takes a hit element or a capture and so never happens while the pointer is
+locked (UB §4.9). So a second right press within *T* over the world fires
+`select_double_right` (declined) and then `mouselook`; a quick second left press while right
+is held fires `select_left` and `select_double_left` (declined, the pointer is locked) and
+then the run chord. Over a panel element the same second right press is consumed by
+`select_double_right` and does not start `mouselook` (§12.14.6, IB difference 14). An exact
+game-band binding of a modifier-click (for example a user's `Shift+MouseLeft`) takes that
+click in pass 1, before `pointer`'s Subset `select_left` matches in pass 2, even over a panel.
+
+<a id="s7-2-1"></a>
+#### 7.2.1 Order of the events of one raw event
+
+The keys, most significant first, are the pass, the context, the activation class, and the
+registration order (decision 0014 D4):
+
+- **At a press:** the bindings that fire, pass 1 before pass 2; within a pass, context by
+  context in resolution order (so a pass-through context's events come before those of the
+  contexts after it); within one context, `press` before `double` before `double_nearby`,
+  then by action registration order, then by entry order.
+- **At a release:** first the Ends of the holds this release ends, in the order those holds
+  began; then the release-class pulses (§7.3.1) by the same keys (pass, context, `release`
+  before `tap`, registration order, entry order). Each pulse is a Start immediately followed
+  by its End.
+- A wheel event gives its clicks one notch at a time; each click is a pulse (§7.5).
+
+This gives the sequence of LPA §13.12.2's worked example.
+
+<a id="s7-2-2"></a>
+#### 7.2.2 The UI-owned mark
+
+After all offers of a resolved press, the pressed button is **marked** when the press
+produced **at least one hold, and every hold it produced is UI-owned** (§7.8.3). Holds dropped
+before their Start was offered (§7.8.5) do not count as produced. A press that produced no
+hold (a key with only a `release` binding, or none, or a press that started a pending
+sequence) is not marked, nor is a press with at least one game hold.
+
+The mark changes only one thing: **chord completion ignores a marked button** (§7.2, the
+definition of "completed by"). A marked button **stays in the held set**: a press of it is
+still ignored as a press of a held button, it still counts toward the 64-button cap, a
+modifier key still counts as held for the modifier state, and its physical release still
+runs release-class resolution (§7.3.1), restricted as stated there. The mark is cleared when
+the button leaves the held set (its physical release, focus loss, `release_all`) and is never
+re-evaluated in between: a hold of the button that ends, or a drag that ends, does not
+remove it. `handle` never marks, because its holds are never UI-owned.
+
+So pressing left and then right over a panel element does not run (the left button is
+marked, the chord `MouseLeft+MouseRight` is not completed, and right gives `mouselook` only),
+and `tap_left` in `pointer` still fires and is offered at the end of a click on a panel
+element. This replaces decision 0014's wording "left out of the held set" (its open review
+must-fix 3).
 
 <a id="s7-3"></a>
 ### 7.3 Holds and releases
 
 A hold remembers the buttons of its binding's **last** stroke and ends when any of them is
-released, when its context is deactivated (or covered by an opaque context, §3), on focus
-loss, or when the keymap is replaced. An action is pressed while it has at least one hold,
-an analog press (§7.5) or a modifier hold (§7.4); edges are counted on transitions of
-that combined state. Wheel clicks are momentary: their hold starts and ends at once.
-At most 256 holds exist at a time.
+released; when its context leaves the stack (a game-band context deactivated or covered by
+an opaque activation, a UI-band context's last entry popped; §3.5); when the first
+`opaque_keys` entry is pushed and it is a game-band hold whose last stroke has a key or a
+pad button (§3.3); on focus loss; on `release_all`; when the keymap is replaced; and when a
+run-time registration changes its binding. An action is pressed while it has at least one
+**game** hold, an analog press (§7.5) or a modifier hold (§7.4); edges are counted on
+transitions of that combined state. A **pulse** is a hold that starts and ends at once:
+wheel clicks (§7.5) and release-class bindings (§7.3.1). At most 256 holds exist at a time.
+
+**Releases.** Only the physical release of a button in the held set does anything. At such
+a release:
+
+1. the holds whose last stroke contains the button end (their Ends are offered in the order
+   the holds began, §7.2.1);
+2. release-class resolution runs (§7.3.1);
+3. the button leaves the held set, and its mark (§7.2.2) is cleared.
+
+The release of a button that is not held changes nothing: no hold ends and no `release` or
+`tap` binding fires (the winit adapter relies on this for the synthetic releases it forwards,
+§10). **Focus loss** and **`release_all`** clear the held set and end every hold, but resolve
+no `release` or `tap` binding: the button was not seen to be released, and a pulse at focus
+loss would act on a window the user has left. Holds ended by `activate`, `deactivate`,
+`set_keymap`, run-time registration and band pushes and pops leave their buttons held, and the
+later physical release resolves release-class bindings as usual.
 
 When a hold ends, buttons that are still held are **not** resolved again: a press consumed
 by a chord in one context does not later start a single-button binding in a lower context.
@@ -419,19 +795,51 @@ Keymaps that want "release one button of the chord, keep the other's action" bin
 single button in the chord's context, where it fires together with the chord (§7.2); the
 defaults do this for `mouselook` (§8).
 
+<a id="s7-3-1"></a>
+#### 7.3.1 Release-class resolution (decision 0014 D4)
+
+At the release of a held button *b* (step 2 above), the **release-class** bindings are
+resolved with the two passes of §7.2 step 2 (exact, then subset), in the context order at
+that moment:
+
+- A binding is a candidate when its `on` is `release`, or `tap` and the release comes at most
+  half(*T*) after the button's last recorded press (§7.7); its only stroke has the button *b*
+  (a non-`press` `on` is allowed only on one-button strokes, §5.3); and the modifiers held at
+  the release match it, exactly (pass 1) or as a subset (pass 2).
+- The pass-through rules, the once-per-(context, entry) rule, the skipping of a pass-through
+  context in pass 2, `opaque` and the `opaque_keys` band end (for a key or pad button) apply
+  as at a press. The first context that is not pass-through and has a candidate fires all its
+  candidates as pulses and consumes the release.
+- **After a UI-owned press.** When *b* is marked (§7.2.2), only UI-band contexts and
+  pass-through contexts are considered; every other game-band context is skipped. So a
+  release-class pulse of a pass-through context that the UI declines continues to no
+  game-band context at such a release. A user's game-band `release` or `tap` binding of
+  `MouseLeft` therefore does not fire when left is released after a press on a panel, and a
+  game-band release binding of Enter does not fire after a text field consumed the Enter
+  press. A press that produced no hold is not marked, so its release resolves against every
+  context as usual.
+- No pending sequence is started, advanced or cancelled by a release.
+
+So `select_right` (`tap`) in `pointer` and `mouselook` (`press`) in the game band both work on
+one right click: the `mouselook` hold ends first, then the pulse fires.
+
 <a id="s7-4"></a>
 ### 7.4 Modifier holds
 
-At each update, for contexts in resolution order up to and including the first opaque one,
-every modifier-hold binding whose modifiers match the held modifiers (exact or subset by
-policy) holds its action. Modifier holds do not consume anything. Held modifiers are the
-union of modifier keys held and the window system's last report.
+At each update, every modifier-hold binding whose modifiers match the held modifiers (exact
+or subset by policy) holds its action, for contexts in resolution order (§3.1) up to and
+including the first opaque one. While any UI-band entry has `opaque_keys`, the evaluation
+stops at the end of the UI band: game-band modifier holds are not evaluated (§3.3).
+Modifier holds do not consume anything and are not offered to the UI (§7.8.2). Held
+modifiers are the union of modifier keys held (marked ones included) and the window
+system's last report.
 
 <a id="s7-5"></a>
 ### 7.5 Analog sources
 
 At each update, each analog axis is routed to the **first** context in resolution order
-that binds it (an opaque context that does not bind it swallows it). In that context:
+that binds it (an opaque context that does not bind it swallows it; `opaque_keys` does not
+affect analog axes). In that context:
 
 - relative axes add `movement × scale` to the `delta` of each bound axis action (button
   actions ignore relative axes);
@@ -440,28 +848,511 @@ that binds it (an opaque context that does not bind it swallows it). In that con
   the largest contribution presses the action at ≥ 0.5 and releases it below 0.4.
 
 Wheel events also generate one momentary `WheelUp`/`WheelDown`/`WheelLeft`/`WheelRight`
-click per whole notch (fractions accumulate; at most 16 clicks per event). Non-finite
-inputs are ignored; one motion event is clamped to ±100000 units; gamepad positions are
-clamped to `-1..=1`; focus loss zeroes them.
+click per whole notch (fractions accumulate; at most 16 clicks per event); each click is
+resolved as a press (§7.2) whose hold is a pulse. Non-finite inputs are ignored; one motion
+event is clamped to ±100000 units; gamepad positions are clamped to `-1..=1`; focus loss
+zeroes them.
+
+**Wheel motion over the UI** (decision 0014 D7). When a wheel raw event is resolved, the
+mapper decides, against the band at that moment, whether its motion is **withheld**: the
+`WheelY` motion is withheld when some UI-band context in the band has an enabled binding
+whose stroke contains `WheelUp` or `WheelDown`, and the `WheelX` motion when one contains
+`WheelLeft` or `WheelRight`. Withheld motion skips `pointer` and the game band when *update*
+routes it (it can reach only a UI-band context that binds the axis; no built-in one does).
+Motion that is not withheld is routed at *update* by the rule above, as before. The event's
+wheel clicks are resolved and offered as usual. The decision is made per raw event under
+`handle` and `handle_with` alike, so a `ui.scroll_mouse` entry pushed or popped between a
+wheel event and *update* does not change where that event's motion goes, and with no UI-band
+entry nothing is withheld. With the defaults: over a scrollable or a scroll bar
+(`ui.scroll_mouse` pushed, §8.1) the wheel scrolls and does not zoom; elsewhere, including over
+a plain native panel, the wheel zooms the camera. Captures get no special case (UW §5.7): when
+the pointer leaves a captured element nothing is hovered, the entry is popped and the wheel
+zooms until the pointer is back.
 
 <a id="s7-6"></a>
 ### 7.6 Text
 
-Typed characters are collected for the frame (at most 4096 bytes, control characters
-dropped) only while the first context in resolution order has `text` set.
+Typed characters (at most 4096 bytes per frame, control characters dropped) are routed by
+the first rule that applies (decision 0014 D6, with its open-review amendment that keys the
+rule on `opaque_keys` too):
+
+1. Walk the UI band in band order. The first context that has `text`, `opaque` or
+   `opaque_keys` decides: if it has `text`, the characters go **to the UI**; otherwise they
+   are dropped (for example `ui.eat_keyboard` pushed above a focused field's `text_entry`).
+2. If no UI-band context has any of the three flags, the game-band rule applies: the
+   characters are collected for the snapshot's `text` only while the first game-band context
+   in resolution order has `text`.
+
+"To the UI" means: under `handle_with` they are offered to the sink (§7.8.2) and are **not**
+added to the snapshot's `text`, so nothing is typed twice; under `handle`, which has no sink,
+they go to the snapshot's `text`, as they did while `text_entry` was first.
+
+<a id="s7-7"></a>
+### 7.7 Activation timing
+
+Which binding fires at a press or a release depends on its `on` value (§5.3). The conditions
+reproduce the original's activation bits (UB §3.3, BIN there; §12.5.7):
+
+| `on` | Class | Fires |
+|---|---|---|
+| `press` (default) | press | a hold from every resolved press to the release |
+| `double` | press | a hold from a **double press** to its release: a press at most *T* ms after the previous recorded press of the same button (DblClickDown) |
+| `double_nearby` | press | as `double`, and the press is **nearby** (NearbyDown) |
+| `release` | release | a pulse at every release of a held button (Up) |
+| `tap` | release | a pulse at a release at most half(*T*) ms after the button's last recorded press (Tap) |
+
+- half(*n*) = *n* ÷ 2 rounded toward zero.
+- **Nearby**: with (*x0*, *y0*) the position recorded with the previous press and (*x*, *y*)
+  the mapper's cursor position at this press, *x0* − half(*W*) ≤ *x* < *x0* + half(*W*) and
+  *y0* − half(*H*) ≤ *y* < *y0* + half(*H*) (left and top inclusive, right and bottom
+  exclusive). An unknown position, either one, is never nearby. With a sink the cursor
+  position is the one of the move flushed before the press (§7.8.7).
+- **Per-button tracking** (Tessera rule): for keys, mouse buttons and pad buttons alike, the
+  mapper keeps the last recorded press time and position of the 64 most recently pressed
+  buttons; a button whose record was evicted has no previous press.
+- **Which presses are recorded** (Tessera rule): only a press that §7.2 resolves, after its
+  own conditions have been computed. An OS auto-repeat press, a press of a button already
+  held and a press made while 64 buttons are held are not recorded. So holding a key with
+  OS repeat never makes its next real press a double press.
+- **Third press** (Tessera reading of the UB §3.3 OPEN): every press is compared with the
+  previous recorded press, so a third press within *T* of the second is again a double press.
+- **Where *T*, *W*, *H* come from** (decision 0014 D3). The client reads them from the
+  platform: the double-click time and rectangle on Windows; on Linux the desktop's
+  double-click time and distance (an X settings or desktop value; a distance *d* gives
+  *W* = *H* = 2*d*); the system interval on macOS. Where the platform gives nothing, the
+  client uses Tessera's settings `[Input]` `double_click_ms` (default 500) and
+  `double_click_px` (default 4). `double_click_px` is the **size of the rectangle**, not a
+  distance: *W* = *H* = `double_click_px`, so the default accepts ± 2 px like the Windows
+  default 4 × 4 (UB §3.3). The settings can also override the platform values (UB §3.3
+  OPEN; its Tessera rule: a key present in the settings file overrides). A plain Wayland
+  compositor such as the reference machine's normally publishes no values, so the fallback
+  applies there. Until the client sets them, the mapper uses 500 ms and 4 × 4 px (Tessera
+  rule). The winit adapter does not read these values (§10).
+- **Pixel space.** Cursor positions, recorded press positions, *W* and *H* are physical
+  pixels of the window's client area, origin top-left (winit's physical position). A
+  platform value given in logical pixels, and `double_click_px`, are multiplied by the
+  window's scale factor and rounded to the nearest integer (halves away from zero);
+  `tessera-ui` converts positions into its own layout space (UB §9). So on a display with
+  scale factor 2 the default becomes *W* = *H* = 8 physical pixels (± 4).
+- **Clamps.** The mapper clamps *T* into 100–5000 ms and *W*, *H* (after scaling) into
+  2–64 px. The lower bound is 2 because half(1) = 0 would make the half-open rectangle empty,
+  so that no press would ever be nearby; with 2 it is 2 × 2 px (*x0* − 1 ≤ *x* < *x0* + 1, and
+  the same for *y*), so a press at the previous position is nearby.
+- **Scale-factor changes.** When the window's scale factor changes at run time, the client
+  reads the platform values again, recomputes *W* and *H* (scaling, rounding, clamping as
+  above) and hands them to the mapper, which also sets every recorded press position to
+  **unknown** (the times stay): positions recorded in the old physical pixels are never
+  compared with new ones, so the first press after a scale change is never nearby. *T* is
+  unaffected. With the new *W* and *H* the client also hands the mapper its current cursor
+  position rescaled by *s*new ÷ *s*old (unknown stays unknown), so a click right after the
+  change with no pointer movement does not carry a position in the old pixels (Tessera rule,
+  this revision); during the pointer lock that position is the rescaled frozen position
+  (§7.8.9).
+
+<a id="s7-8"></a>
+### 7.8 UI offers (decision 0014 D5, D7)
+
+`tessera-input` defines the sink trait and its own event type; it does not depend on
+`tessera-ui`, nor `tessera-ui` on it. The client implements the sink and copies each offered
+event into `tessera-ui`'s command type. Everything runs on the main thread.
+
+<a id="s7-8-1"></a>
+#### 7.8.1 The sink
+
+`handle_with(event, now, sink)` replaces `handle` while a UI is attached. For every offer the
+mapper calls the sink with the offered event and a mutable **band request list** owned by
+the mapper, empty at the start of the offer. The sink returns **Consumed** or **Not
+consumed**. The sink cannot reach the mapper (borrowing enforces it); it asks for band
+changes by appending push (context, owner, priority) and pop (context, owner) requests to the
+list, in the order the UI made them. On the UI side, `tessera-ui` records the pushes and pops
+of its ancestor walk (InputMap name, element, priority) in an outbox, which the client, as the
+sink, translates into the list by §8.1. The sink **may** call window operations during the
+call (cursor grab and hide, cursor warp; §7.8.9): the main thread owns the window.
+
+<a id="s7-8-2"></a>
+#### 7.8.2 What is offered
+
+In arrival order:
+
+- the **Start**, **End** and **Repeat** of every digital hold and pulse that resolution
+  makes (§7.2, §7.3) and that has a command name (§2.2). Each carries: the action; the
+  command name and ID (§2.2); the value (§2.2); the source button; the pointer position (the
+  mapper's cursor position, or unknown); the modifiers held; the timestamp of the raw event;
+  and the sequence number of the call that resolved it (§7.1). Ends from the end queue carry
+  the sequence number of the call that offers them and the timestamp of the last raw event
+  the mapper received (Tessera rule);
+- **typed characters**, by the rule of §7.6;
+- **pointer moved** (coalesced, §7.8.7), **pointer left** and **focus lost**.
+
+**Not offered:** modifier holds (§7.4), analog presses of button actions (§7.5), analog and
+relative contributions to axis actions. They are computed at *update* from levels, not from
+events, and have no place in the event order; plugins do not see their commands (§12.14.6).
+Holds and pulses without a command name are not offered either (§2.2).
+
+<a id="s7-8-3"></a>
+#### 7.8.3 Verdicts and ownership
+
+- The mapper uses only the verdict of a **Start**. The verdicts of an End, a Repeat, a typed
+  character, a move, a pointer-left and a focus-lost offer are ignored: a Repeat changes no
+  hold, no ownership and no snapshot value (inside the UI the verdict of a Repeat decides
+  whether it goes on to the plugins' `KeyDown`).
+- A consumed Start makes the hold **UI-owned**: the snapshot never shows it. A consumed pulse
+  shows no edge.
+- A Start that is not consumed makes a normal **game hold** of the **same** action, with no
+  re-resolution (except the pass-through continuation of §7.2). This reproduces the
+  original, where a command the UI does not consume goes on to game code (UB §5.3, LPA
+  §13.13). So the built-in UI contexts bind the actions that game code already reacts to:
+  Escape gives `menu` and Enter gives `open_chat` in `text_entry` (§8).
+- The UI's consumption rules belong to `tessera-ui` (UB §4.6, §4.7, §5.3; decision 0014 D7),
+  with one exception that the client makes: the `mouselook` Start during an item drag
+  (§7.8.9).
+
+<a id="s7-8-4"></a>
+#### 7.8.4 Ends and the end queue
+
+- **Every offered Start gets exactly one offered End.**
+- **Only offered Starts get Ends.** Each hold records whether its Start was offered. A hold
+  made under `handle` was never offered: its End is never offered or queued, whichever call
+  ends it, and its OS repeats give no Repeat offers. Such a hold stays a game hold.
+- Holds can end outside `handle_with` and `offer_pending`: `activate`, `deactivate`,
+  `set_keymap`, run-time registration, `release_all`, band pushes and pops made outside an
+  offer, and `handle`. The Ends of their offered holds go on the **end queue**, in the order
+  the holds ended. The queue is offered at the start of the next `handle_with` and by
+  `offer_pending`.
+- Ends of holds that end inside `handle_with` or `offer_pending` are offered at once, in the
+  order of §7.2.1 or after the offer that caused them (§7.8.5).
+
+<a id="s7-8-5"></a>
+#### 7.8.5 Applying band requests
+
+- After **every** offer (an End from the end queue, the move, an event of the raw event, or an
+  End offered under this rule) the mapper applies that offer's request list in order and
+  clears it, **before** it offers anything else. It then offers, in the order those holds
+  began, the Ends of the offered holds that the applied requests ended. Each such End is
+  again an offer whose requests are applied the same way before the next event is offered.
+  This terminates, because each such End belongs to a hold that already ended and no hold is
+  made outside resolution.
+- **Drops.** A request can end a hold of the raw event being resolved whose Start has **not
+  been offered yet** (several bindings fired in one context and an earlier offer popped that
+  context or pushed the first `opaque_keys` entry). Such a hold is **dropped**: neither its
+  Start nor its End is offered, it never becomes UI-owned or a game hold, it adds no press or
+  release edge to the snapshot, and it does not count for the mark (§7.2.2). A release-class
+  pulse of that raw event whose context has left the stack before its offer is dropped the
+  same way. So no End is offered before its Start, and no Start is offered for a hold that has
+  already ended.
+- The context order of a raw event is fixed when its resolution starts (§7.2), also for a
+  pass-through continuation. A push or pop applied during that raw event's own offers takes
+  effect from the next raw event; a pop still ends the popped context's holds at once.
+- Outside `handle_with` and `offer_pending` nothing is borrowed: the client calls the band
+  push and pop operations directly (for example when it drains the outbox after the frame's
+  UI tick and again after layout, ARCHITECTURE §20.3), and the Ends they cause go to the end
+  queue, so the band that the next frame's input resolves against already reflects this
+  frame's tick.
+
+<a id="s7-8-6"></a>
+#### 7.8.6 Repeat
+
+- An OS auto-repeat press of a held key produces a **Repeat** offer for each of that key's
+  offered holds that is repeatable, in the order the holds began. Auto-repeat presses still
+  never start or resolve holds, and a Repeat is never a snapshot edge. Pads produce no repeat
+  (no OS repeat).
+- **Repeatability is decided per hold, by the command its Start carried** (§2.2), not per
+  action, because one action can carry several commands (an imported entry keeps its own
+  command, and the rows of one action differ by context and by sign). With action-map data
+  the client hands the mapper the set of command IDs that have toggle type 3 (AutoRepeat) in
+  table A of the default action map (§12.10): a hold is repeatable when its command ID is in
+  the set; a hold with no ID, or an ID not in the set, is not. This is the original's rule
+  (§12.10; K43). Without action-map data, the action's `repeat` flag decides (§2.1, §8).
+- The UI routes a Repeat like a Start (`Element_key_press` again and, if not consumed,
+  `KeyDown` again; LPA §13.12.2 already expects a repeated start).
+
+<a id="s7-8-7"></a>
+#### 7.8.7 Pointer moves are coalesced
+
+- A cursor-position event only records the position and marks a move pending; it offers
+  nothing.
+- With a sink attached, a pending move is offered, at the last recorded position and with
+  the timestamp of the last cursor-position event, **before the mapper resolves** any key,
+  mouse-button, pad-button, wheel, typed-character, cursor-left or focus-lost raw event,
+  whether or not that event will offer anything. It must not depend on that: whether an
+  event offers anything depends on the band, and the band depends on the hover change the
+  move causes (UW §5.7). When the pointer moves onto a list and the wheel turns in the same
+  frame, the move is offered first, so the list's `ui.scroll_mouse` push is applied before
+  the wheel event is resolved.
+- Raw mouse motion, gamepad axis positions and the window system's modifier report do not
+  flush a pending move. `offer_pending` also offers it.
+- So a button, key or wheel event always follows a move to its own position, and a
+  high-rate mouse costs at most one move offer per other raw event plus one per frame.
+- A cursor-left event is offered as **pointer left** (after the flush) and sets the cursor
+  position to unknown. A focus-lost event ends every hold (§7.3); the Ends are offered in the
+  order the holds began, then **focus lost** is offered (Tessera rule: decision 0014 does not
+  order the two).
+
+<a id="s7-8-8"></a>
+#### 7.8.8 Steps of a call
+
+In every step, each offer's band requests are applied when it returns and the Ends they
+cause are offered at once (§7.8.5), before the next offer.
+
+`handle_with(event, now, sink)`:
+
+1. Offer the end queue, in order.
+2. If the raw event is one of the flushing kinds of §7.8.7 and a move is pending, offer the
+   move.
+3. Resolve the raw event against the band as it stands now, which includes every request
+   applied in steps 1 and 2; this context order is fixed for the whole raw event. Offer its
+   events in the order of §7.2.1 as resolution produces them: a pass-through context's
+   events are offered as soon as it fires, and resolution continues after it only after
+   their verdicts. The wheel-motion decision of §7.5 is made here.
+
+`offer_pending(sink)` is steps 1 and 2 without a raw event: it offers the end queue and a
+pending move, with the same request handling. The client calls it once per frame after the
+last raw event and before *update*; the one exception is the deferred cursor-left of §7.8.9,
+which is fed right after an `offer_pending` call that turned the pointer lock off.
+
+`handle(event, now)` offers nothing. It resolves against the band as it stands (§3.4); a
+pass-through context consumes nothing under it; typed characters go to the snapshot (§7.6);
+the wheel-motion decision of §7.5 is made as under `handle_with`; and the Ends of offered
+holds it ends go to the end queue. With no UI-band entry, `handle` gives the snapshot that
+every action had before decision 0014 (invariant (e)).
+
+<a id="s7-8-9"></a>
+#### 7.8.9 Pointer lock and the frozen position (client glue)
+
+The pointer lock of UB §4.9 is the client's state; decision 0014 D7 specifies it. What the
+mapper sees of it:
+
+- The client, as the sink, turns the lock on only after the UI declined a `mouselook` Start
+  and no item drag is in progress; during an item drag it returns Consumed for a declined
+  `mouselook` Start itself (decision 0014 D7, Tessera rule). It turns the lock off after the
+  End of the last `mouselook` hold that turned it on.
+- The **frozen position** *F* is the position carried by the `mouselook` Start (the press
+  position, since the pending move was flushed before the press). While the lock is on the
+  client feeds the mapper **no cursor-position and no cursor-left events**; raw mouse motion
+  and focus-lost events are fed as usual. So the mapper's cursor position stays *F*: every
+  event offered during the lock, and every event of the call whose End turns the lock off,
+  carries *F*, no move becomes pending, and §7.7's nearby test compares presses with *F*.
+- If the last pointer report the client withheld during the lock was a cursor-left, the
+  client feeds that cursor-left as the next raw event right after the call that turned the
+  lock off returns (before *update* when that call was `offer_pending`). It is offered as
+  pointer left after the turning-off End and its `select_right` pulse, which still carry *F*.
+- **Scale-factor change during the lock** (Tessera rule, answering decision 0014's open
+  review item). The lock does **not** end, and *F* is **rescaled**: the client computes
+  *F*′ = *F* × *s*new ÷ *s*old (real-valued; no rounding), clamps it into the new client area,
+  and hands it to the mapper together with the new *W* and *H* as the mapper's cursor
+  position. Setting the position this way marks no move pending and offers nothing. The
+  client also tells `tessera-ui` the new *F*′ and uses it for the warp back when the lock ends.
+  Recorded press positions become unknown as for any scale change (§7.7), so *F*′ does not
+  make the next press nearby. Reasons: the lock is tied to the `mouselook` holds, and ending it
+  while right is held would show the cursor in the middle of a camera turn; keeping *F* in
+  the old physical pixels would hit-test the `select_right` pulse at the end of the lock, and
+  the warp back, at the wrong place.
+
+<a id="s7-9"></a>
+### 7.9 Invariants of the UI bridge
+
+Tests of `tessera-input` check (a)–(w) except the items marked *client glue* or *plugin
+host*, which are checked where those parts live. Synthetic only; "a UI attached" means
+`handle_with` with a scripted sink.
+
+- (a) The UB §13.1 timing sequence fed through the mapper (*T* = 500, *W* = *H* = 4) gives
+  exactly the pulses and holds that UB §13.1's activation bits imply for bindings with
+  `press`, `release`, `tap`, `double` and `double_nearby`.
+- (b) The UB §13.9 push and pop sequence gives that stack: (*MF*, *F*, 50), (*MP*, *P*, 49),
+  (*MP*, *P*, 0); after the pops and the panel's push, (*MP*, *P*, 0).
+- (c) A consumed Start never shows in the snapshot; its End is offered exactly once, also
+  when the hold ends in `deactivate`, `set_keymap` or `release_all`.
+- (d) The LPA §13.12.2 double-click order is produced.
+- (e) With no UI-band entry, `handle` gives the pre-0014 snapshot for every action that
+  existed before, with `pointer` inactive and with it active, for any press timing: also for
+  a second right press within *T* at the same position (`mouselook` starts again) and a second
+  left press within *T* while right is held (`move_forward` +1 again). This holds because a
+  pass-through context consumes only on a UI verdict, and assumes the 256-hold limit is not
+  reached.
+- (e2) Under `handle`, after `activate(text_entry)`: `is_active(text_entry)` is true and the
+  band holds (`text_entry`, 0, 100); activating it again changes nothing; `W` puts `w` into
+  the snapshot's `text` and does not move; Enter gives `open_chat`, Escape gives `menu`;
+  `MouseRight` gives `mouselook` and the wheel changes `zoom`; a held `MouseRight` survives the
+  activation, a held `W` is released. After `deactivate(text_entry)` the band is empty and (e)
+  applies again. A band push naming `movement` changes nothing.
+- (e3) A multi-stroke binding in `pointer`, and a non-`press` `on` on an entry of an axis
+  action, are disabled with a warning when the keymap is compiled.
+- (f) A declined Escape in `text_entry` presses `menu` for game code.
+- (g) With a UI attached and nothing under the pointer, the run chord works in both press
+  orders and `mouselook` survives releasing left; a second right press within *T* at the
+  same position offers `select_double_right` (declined) and starts `mouselook`; a second left
+  press within *T* while right is held offers `select_left` and `select_double_left`
+  (declined) and runs again.
+- (g2) With a UI attached and a hit element under the pointer, a second right press within *T*
+  at the same position offers `select_double_right`, which is consumed, and `mouselook` does
+  not start.
+- (h) Shift+`MouseLeft` gives `select_left`.
+- (h2) *Client glue*, pointer lock: with a UI that consumes every key command (a drag whose
+  icon the container created, with an active panel), a right press offers a consumed
+  `mouselook` Start, the lock stays off, and the next cursor-position event is fed and
+  offered as a move. With no drag and a UI that declines it, the lock turns on after the
+  verdict, no cursor-position or cursor-left event reaches the mapper until the End of the
+  last such `mouselook` hold, and the `select_right` pulse of a quick click carries the press
+  position.
+- (h3) *Client glue*, capture across the lock: left pressed on a hit element, right pressed
+  (lock on), left released: the element gets `MouseUp` and no `MouseClick`, and the capture
+  has ended.
+- (h4) *Client glue*, other item drags: with a drag icon supplied by a plugin control, or a
+  container-made icon and no keyboard target, a right press is routed by the UI and declined
+  (plugins get `KeyDown` for `CameraInstantMouseSteer`), the client returns Consumed, the lock
+  stays off, the snapshot shows no `mouselook`, and the left release drops on the element
+  under the real pointer position.
+- (h5) *Client glue*, cursor-left during the lock: cursor-position and cursor-left events
+  arriving during the lock are withheld; the turning-off End and the `select_right` pulse
+  carry *F*; if the last withheld report was a cursor-left, a pointer-left offer follows
+  them, and nothing is hovered until a position inside the window arrives.
+- (h6) *Client glue*, scale change during the lock: after a change from scale factor 1 to 2
+  with *F* = (100, 50), the lock stays on, the turning-off End and the `select_right` pulse
+  carry (200, 100), and a right press at (200, 100) within *T* of the locking press is not
+  nearby (press positions were reset).
+- (i) With `text_entry` and `ui.clipboard` pushed in either order, `W` types, `Ctrl+C` gives
+  `text_copy`, and `Tab` reaches `ui.dialog` below them.
+- (j) Many cursor-position events followed by a press give one pointer-moved offer at the
+  last position, then the press.
+- (k) A wheel notch with `ui.scroll_mouse` pushed gives `scroll_up` and no `zoom` delta;
+  without it, `zoom` changes. The same holds under `handle` with `ui.scroll_mouse` activated
+  by code (`scroll_up` in the snapshot, no `zoom` delta). A notch resolved while the entry is
+  pushed, followed by its pop before *update*, still gives no `zoom` delta, and the reverse
+  order still changes `zoom`.
+- (k2) *Client glue*, capture and the wheel: with the thumb of a scroll bar captured (left
+  held on it) and the pointer moved off the thumb, the bar has popped `ui.scroll_mouse` and a
+  wheel notch changes `zoom`; with the pointer back on the thumb, it gives `scroll_up` again.
+- (l) With `ui.scroll_mouse` not pushed, a cursor-position event onto a list followed, with no
+  `offer_pending` in between, by a wheel notch gives: the move offer (during which the sink
+  requests the `ui.scroll_mouse` push), then `scroll_up`, and no `zoom` delta. The same holds
+  when the event after the move is a key press that offers nothing: the move is still
+  offered before it.
+- (m) Shift held, `MouseLeft` pressed with `pointer` active and no exact binding anywhere: the
+  `select_left` Start is offered exactly once (pass 2); with no modifier held it is offered
+  exactly once (pass 1), also when no lower context matches.
+- (m2) With a test action bound to exact `Shift+MouseLeft` in `pointer`, a declined
+  Shift-click fires and offers that action (pass 1) and not `select_left`; a lower context's
+  subset binding of `MouseLeft` still fires in pass 2.
+- (n) A band push requested by the sink during an offer of step 3 (§7.8.8) is not consulted
+  for the rest of that raw event (pass-through continuation included) and is consulted for
+  the next raw event; a push requested during the step-2 move offer, or during an End offered
+  in step 1, is consulted for the raw event of that call.
+- (o) A release-class binding in a game-band context that is not pass-through (a test action
+  bound to `MouseLeft` with `on = "release"` in `movement`) fires at a release over the world
+  and does not fire at the release of a left press that the UI consumed; `tap_left` in
+  `pointer` is offered at both releases when each comes within half(*T*) of its press. (Checked
+  against §7.2.2: the consumed press marks left, the marked button stays held, so its release
+  runs release-class resolution restricted to UI-band and pass-through contexts; `tap_left`
+  fires there, the `movement` binding is skipped. Over the world left is not marked:
+  `tap_left` fires and is declined, and resolution continues to `movement`.)
+- (o2) After a left press consumed by the UI, a right press does not complete
+  `MouseLeft+MouseRight` (run) and gives `mouselook` only; a further left press while left is
+  held is ignored; left's release still ends its holds and fires `tap_left` within half(*T*).
+- (p) No End is offered before its Start, and none for a hold made under `handle`. With two
+  bindings of one key in one UI-band context whose first offer pops that context, the second
+  hold is dropped: its Start and End are never offered and the snapshot shows no edge for it.
+- (q) Modifier policies: in `text_entry`, Shift+Left gives `text_char_left`; Ctrl+Shift+Left
+  gives `text_word_left` alone; Shift+Up and Ctrl+Up give `text_line_up`; Ctrl+Tab in
+  `ui.dialog` gives nothing.
+- (r) Clamp: `double_click_px` 1 at scale factor 1 gives *W* = *H* = 2, and a second press at
+  the same position within *T* fires `double_nearby` bindings; one pixel to the right does
+  not.
+- (s) The release of a button that is not held changes nothing (no hold ends, no `release` or
+  `tap` binding fires). With `MouseLeft` held and a `tap` binding on it, focus loss (or
+  `release_all`) ends the holds and fires no `tap`; the button's later physical release is
+  then a release of a button not held.
+- (t) A key with no press-class binding and a game-band `on = "release"` binding fires that
+  binding at its release, also with a UI attached and a UI-band context pushed that does not
+  bind the key and is not `opaque_keys`.
+- (u) With a game-band binding `G G` and its first `G` pressed, pushing `text_entry` (the
+  first `opaque_keys` entry) outside an offer drops the sequence; a second `G` then types `g`
+  and fires nothing. A hover push of `ui.scroll_mouse` between the two presses does not drop
+  it.
+- (v) With action-map data, an OS repeat of a key held by two holds of one action, one
+  carrying a command of toggle type 3 and one of type 0, gives a Repeat for the first hold
+  only. Without data, the action's `repeat` flag decides.
+- (w) OS repeat presses do not update the last press time, so a key held with repeat and
+  then released and pressed again more than *T* after its real press is not a double press.
+  After a scale-factor change, a press at the position of the previous press within *T*
+  fires `double` but not `double_nearby` bindings.
+- (x) *Client glue*, current geometry: a plugin control captured by a left press whose
+  `MouseMove` handler calls `SetPosition` to follow the pointer gets, for two coalesced moves
+  in one frame (one flushed before a key event, one by `offer_pending`), two `MouseMove`
+  events with `X`/`Y` relative to its position after the first, and no `MouseLeave` or
+  `MouseEnter`.
+- (y) *Plugin host*: a chat line posted in step 2, and a system notice posted at the start of
+  the redraw, reach `Turbine.Chat.Received` in that frame's step 7 (or a later one, when the
+  slice is used up), after the `Update` broadcast; a line raised during an apartment's own
+  `Received` dispatch is not delivered to that apartment (LPA §11.3); no plugin code runs in
+  steps 2–6 or 8–10, except as decision 0014 states. At client exit, `Unload` handlers run
+  after the last frame and a `PluginData.Save` they make is written before the process ends.
+
+The fuzz targets cover these paths: `input_keymap` the `on` field (valid and invalid values,
+`on` on a sequence, a chord, a wheel click and an axis action, through both readers and
+`Keymap::set`) and the migration of §6.3; `input_runtime` band pushes and pops with fuzzed
+contexts (game-band ones included), owners (0 included) and priorities up to and past 256
+entries, `handle_with` with a scripted sink returning fuzzed verdicts and appending fuzzed
+requests, `offer_pending`, interleaved `handle` and `handle_with`, fuzzed `on` values
+(including several bindings of one button in one UI-band context), releases of buttons that
+are not held, focus loss and `release_all` with release-class bindings present, and run-time
+changes of *T*, *W* and *H*; it checks (c) and (p) on every run.
+
+<a id="s7-10"></a>
+### 7.10 Worked example (synthetic)
+
+*T* = 500 ms, *W* = *H* = 4 (`double_click_px` 4 at scale factor 1), the defaults of §8,
+`pointer` active, nothing focused, the pointer over a plugin button *B*.
+
+- Left press at 0 ms: `select_left` Start, offered and consumed (hit), so it is UI-owned, the
+  press stops in `pointer` and left is marked. Release at 150 ms: `select_left` End, then the
+  `tap_left` pulse (150 ≤ 250). Press at 300 ms at the same spot: `select_left` Start, then
+  `select_double_left` Start (`double_nearby`). Release at 600 ms: the two Ends in that order,
+  and no tap (300 > 250). The game snapshot shows none of it.
+- The same clicks over the world are declined. The first press continues past `pointer` and
+  finds nothing below it. The game sees `select_left` pressed and released twice, `tap_left`
+  once (at 150 ms), and `select_double_left` once.
+- Right held over the world, then left pressed: `select_left` fires and is declined (the
+  pointer is locked), the press continues, and the run chord in `movement` fires. Releasing
+  left ends run; `mouselook` stays held.
+- Right pressed over the world at 900 ms and released at 1000 ms (a tap: the `select_right`
+  pulse at *F* hits nothing and is declined), pressed again at 1200 ms: 300 ms after the press
+  at 900 ms and, the position being *F*, nearby, so `select_double_right` fires first and is
+  offered; the lock is off and nothing is hit, so it is declined, the press continues, and
+  `mouselook` starts again.
+- A quick right click on *B*: the `mouselook` Start goes to the keyboard target, which does not
+  consume it; the lock turns on at *F*. Release at 100 ms: the `mouselook` End (the lock turns
+  off), then the `select_right` pulse at *F*, so *B* gets `MouseDown`, `MouseUp`, `MouseClick`.
+  A second right press on *B* at 300 ms is within *T* and nearby: `select_double_right` is
+  consumed by *B*, and `mouselook` does not start.
+- The pointer moves from the world onto a list and, in the same frame, the wheel turns one
+  notch. The wheel event first flushes the pending move: the list becomes hovered and
+  requests the `ui.scroll_mouse` push, which is applied before the wheel event is resolved.
+  So `scroll_up` is offered and the wheel's motion is withheld; the camera does not zoom.
+- Escape while a text field without `lose_focus_on_escape` has focus: `menu` from
+  `text_entry` is offered, the field declines it, game code sees `menu` pressed and treats it
+  as `EscapeKey`.
 
 ---
 
 <a id="s8"></a>
 ## 8. Built-in actions, contexts and defaults
 
-| Context | Priority | Flags |
-|---|---|---|
-| `global` | 0 | |
-| `camera` | 10 | |
-| `movement` | 20 | |
-| `fly` | 30 | |
-| `text_entry` | 100 | opaque, text |
+| Context | Band | Priority | Flags | Original input map (§12.5.4) |
+|---|---|---|---|---|
+| `global` | game | 0 | | `Main` |
+| `camera` | game | 10 | | `Main` |
+| `movement` | game | 20 | | `Main` |
+| `fly` | game | 30 | | none |
+| `pointer` | game | 40 | pass_through | `Main` (its mouse-click rows) |
+| `text_entry` | ui | 100 (used only by `activate`) | opaque_keys, text | `EditControls` |
+| `ui.dialog` | ui | 0 | | `DialogBoxes` |
+| `ui.clipboard` | ui | 0 | | `CopyAndPasteControls` |
+| `ui.scroll_mouse` | ui | 0 | | `ScrollableControls_Mouse` |
+| `ui.scroll` | ui | 0 | | `ScrollableControls` |
+| `ui.eat_keyboard` | ui | 0 | opaque_keys | `EatKeyboardInput` (Tessera reading of the name) |
+| `ui.chat_log` | ui | 0 | | none (Tessera context) |
+
+Game-band contexts and actions (Tessera's generic walker defaults):
 
 | Context | Action | Kind (policy) | Default bindings |
 |---|---|---|---|
@@ -486,13 +1377,84 @@ dropped) only while the first context in resolution order has `text` set.
 | fly | `fly_boost` | button (subset) | `Shift` |
 | fly | `fly_slow` | button (subset) | `Alt` |
 | fly | `fly_speed` | axis | `WheelY` |
-| text_entry | `text_submit` | button | `Enter`, `NumpadEnter` |
-| text_entry | `text_cancel` | button | `Escape` |
-| text_entry | `text_backspace` | button | `Backspace` |
-| text_entry | `text_history_prev` / `text_history_next` | button | `Up` / `Down` |
+
+Pointer and UI actions (decision 0014 D2, list item 13). The command is the one §2.2
+reports for the row's (context, action) pair; the ID is the InputActions ID observed in this
+install (K42, K43), for reference and tests only (§2.2). "R" marks the `repeat` flag (§2.1),
+which equals "the command has toggle type 3 in table A" (K43). Every action here is a button
+action.
+
+| Context | Action | Command (ID) | Policy | R | Default bindings |
+|---|---|---|---|---|---|
+| pointer | `select_left` | `SelectLeft` (0x56) | subset | | `MouseLeft` |
+| pointer | `select_double_left` | `SelectDblLeft` (0x33) | subset | | `{ input = "MouseLeft", on = "double_nearby" }` |
+| pointer | `tap_left` | `TapLeft` (0x32) | subset | | `{ input = "MouseLeft", on = "tap" }` |
+| pointer | `select_right` | `SelectRight` (0x4C) | subset | | `{ input = "MouseRight", on = "tap" }` |
+| pointer | `select_double_right` | `SelectDblRight` (0x2E) | subset | | `{ input = "MouseRight", on = "double_nearby" }` |
+| pointer | `select_middle` | `SelectMid` (0xA4) | subset | | none |
+| pointer | `select_double_middle` | `SelectDblMid` (0x93) | subset | | none |
+| pointer | `tap_right` | `TapRight` (0x73) | subset | | none |
+| pointer | `tap_middle` | `TapMid` (0x6E) | subset | | none |
+| ui.scroll_mouse | `scroll_up` / `scroll_down` | `ScrollUp` (0x82) / `ScrollDown` (0x10) | subset | | `WheelUp` / `WheelDown` |
+| ui.dialog | `focus_next` / `focus_prev` | `FocusNext` (0x27) / `FocusPrevious` (0x78) | exact | R | `Tab` / `Shift+Tab` |
+| ui.dialog | `focus_left` / `focus_right` / `focus_up` / `focus_down` | `FocusMoveLeft` (0x26) / `FocusMoveRight` (0x65) / `FocusMoveUp` (0x1E) / `FocusMoveDown` (0x0F) | exact | R | `Left` / `Right` / `Up` / `Down` |
+| ui.dialog | `menu` | `EscapeKey` (0x91) | exact | | `Escape` |
+| text_entry | `menu` | `EscapeKey` (0x91) | exact | | `Escape` |
+| text_entry | `open_chat` | `AcceptInput` (0xA2) | exact | | `Enter`, `NumpadEnter` |
+| text_entry | `text_char_left` / `text_char_right` | `CursorCharLeft` (0x7F) / `CursorCharRight` (0x6C) | subset | R | `Left` / `Right` |
+| text_entry | `text_word_left` / `text_word_right` | `CursorWordLeft` (0xA3) / `CursorWordRight` (0x25) | subset | R | `Ctrl+Left`, `Ctrl+Shift+Left` / `Ctrl+Right`, `Ctrl+Shift+Right` |
+| text_entry | `text_line_up` / `text_line_down` | `CursorPreviousLine` (0x1D) / `CursorNextLine` (0x71) | subset | R | `Up` / `Down` |
+| text_entry | `text_page_up` / `text_page_down` | `CursorPreviousPage` (0x92) / `CursorNextPage` (0x31) | subset | R | `PageUp` / `PageDown` |
+| text_entry | `text_line_start` / `text_line_end` | `CursorStartOfLine` (0x3A) / `CursorEndOfLine` (0x39) | subset | | `Home` / `End` |
+| text_entry | `text_doc_start` / `text_doc_end` | `CursorStartOfDocument` (0x38) / `CursorEndOfDocument` (0x54) | subset | | `Ctrl+Home`, `Ctrl+Shift+Home` / `Ctrl+End`, `Ctrl+Shift+End` |
+| text_entry | `text_backspace` | `BackspaceKey` (0x63) | subset | R | `Backspace` |
+| text_entry | `text_delete` | `DeleteKey` (0x4B) | subset | R | `Delete` |
+| ui.clipboard | `text_copy` | `CopyText` (0xAA) | exact | | `Ctrl+C`, `Ctrl+Insert` |
+| ui.clipboard | `text_cut` | `CutText` (0x08) | exact | | `Ctrl+X`, `Shift+Delete` |
+| ui.clipboard | `text_paste` | `PasteText` (0x64) | exact | | `Ctrl+V`, `Shift+Insert` |
+| ui.chat_log | `text_page_up` / `text_page_down` | as in `text_entry` | subset | R | `PageUp` / `PageDown` |
+| ui.chat_log | `text_doc_start` / `text_doc_end` | as in `text_entry` | subset | | `Ctrl+Home`, `Ctrl+Shift+Home` / `Ctrl+End`, `Ctrl+Shift+End` |
+
+`ui.scroll` and `ui.eat_keyboard` bind nothing by default.
+
+Where the defaults come from:
+
+- **The original's defaults (Confirmed, K42):** the `pointer` rows bound above (UB §3.2), the
+  `ui.scroll_mouse` rows, every `ui.dialog` row (UB §5.6), and in `text_entry` the plain
+  keys of every action and `Ctrl+Left`/`Ctrl+Right`/`Ctrl+Home`/`Ctrl+End` (UB §5.4), Escape,
+  Enter and NumpadEnter; in `ui.clipboard` `Ctrl+C`/`Ctrl+X`/`Ctrl+V` (UB §5.4).
+- **Tessera choices** (decision 0014 list item 2): `Ctrl+Insert`, `Shift+Delete` and
+  `Shift+Insert` (a common platform convention; the original's alternative forms are
+  Super+C/X/V, meta-key bit 4, K42, which Tessera does not bind by default); the exact
+  `Ctrl+Shift` forms of the word and document moves, so that one binding fires under §7.2
+  (Ctrl+Shift+Left gives `text_word_left` alone in pass 1, instead of both `text_char_left`
+  and `text_word_left` in pass 2; §12.14.6); and the whole of `ui.chat_log`, which repeats
+  the `text_entry` keys (no input map is behind it; §8.1).
+- **Policies:** Subset for the pointer, caret, delete, backspace and scroll actions, so the
+  plain defaults also fire with extra modifiers (Shift+Left gives `text_char_left`; Shift+Up
+  and Ctrl+Up give `text_line_up`, as `chat-window.md` §6.4 needs); Exact for the focus and
+  clipboard actions (Ctrl+Tab and Ctrl+Shift+C give no command, §12.14.6).
+- **Repeat flags:** set exactly for the actions whose command has toggle type 3 in this
+  install (K43): the character, word, line and page moves, backspace, delete and the six
+  focus actions. The line-start, line-end, document-start and document-end moves are type 2
+  (Impulse) and do not repeat. With action-map data the data decides per hold (§7.8.6).
+
+**Retired** (decision 0014 D2): `text_submit`, `text_cancel`, `text_history_prev` and
+`text_history_next`. In `text_entry`, Escape gives `menu` and Enter gives `open_chat`, the
+actions game code already handles for `EscapeKey` and `AcceptInput`, so a field that declines
+them behaves like the original, where the command goes on to game code (§7.8.3). History is
+the chat window's reading of `text_line_up`/`text_line_down` (`chat-window.md` §6.3). Saved
+overrides of the old names are migrated (§6.3).
+
+What an active `text_entry` does under `handle` (no sink): keys it does not bind are
+swallowed (`opaque_keys`), typed characters reach the snapshot, and game-band modifier holds
+are not evaluated; mouse buttons, the wheel and analog axes pass it, so `mouselook`, the run
+chord, `zoom` and `look_*` work while typing; activating it ends only the game-band holds
+whose last stroke has a key or a pad button (invariant (e2)).
 
 Mode helpers: *walk mode* activates `global`, `camera`, `movement` and deactivates `fly`;
-*fly mode* activates all four with `fly` on top (its `Space` shadows `jump`).
+*fly mode* activates all four with `fly` on top (its `Space` shadows `jump`). Neither touches
+`pointer` or the UI band: the client activates `pointer` when it attaches a UI.
 
 Look glue: mouse deltas turn the view only while `mouselook` is pressed (or the caller
 captured the cursor). `look_x`/`look_y` use the mouse convention (`+` = right / down) for
@@ -504,6 +1466,31 @@ both look up; mouse or stick right both turn right. The `MouseRight` binding of 
 in `movement` fires together with the `MouseLeft+MouseRight` run chord, so looking stays
 active while running with both buttons and after letting go of the left one, in either
 press order (§7.3).
+
+<a id="s8-1"></a>
+### 8.1 Input maps and UI-band contexts
+
+`tessera-ui` asks for pushes and pops by InputMap name (§3.2); the client maps each name to a
+context by this table (decision 0014 D5). The original's layout data sets no input map on any
+element (UB §5.2), so most push rules are Tessera rules until the OPENs of UB §5.2 and §5.6
+are answered.
+
+| InputMap (§12.5.4) | Tessera context | Pushed by |
+|---|---|---|
+| `Main` | game band (`global`, `camera`, `movement`, `fly`, `pointer`) | never pushed |
+| `DialogBoxes` | `ui.dialog` | a dialog of the engine dialog framework (UB §5.5) while it is the active panel, priority 0 (Tessera rule; UB §5.6 OPEN) |
+| `EditControls` | `text_entry` | a focused editable Text element or plugin `TextBox`, priority 50 (Tessera rule; UB §5.2 OPEN) |
+| `CopyAndPasteControls` | `ui.clipboard` | the same element, right after `EditControls` (Tessera rule; UB §5.2 OPEN); the order inside the band does not matter (§3.3) |
+| `ScrollableControls_Mouse` | `ui.scroll_mouse` | a scrollable, while the hovered element is the scrollable or one of its descendants, for that hovered element, priority 0 (UW §5.7, BIN; pop path by the UW §5.7 Tessera rule); a scroll bar while it is hovered, for itself, priority 0 (UW §6.9, BIN); every hovered plugin control, for itself, priority 0 (Tessera rule, §11 OPEN) |
+| `ScrollableControls` | `ui.scroll` | nobody yet |
+| `EatKeyboardInput` | `ui.eat_keyboard` | nobody yet |
+| none | `ui.chat_log` | the chat window, for itself, priority 0, while it is the active panel (Tessera rule; `chat-window.md` §6.2, Q19). The outbox records it under the Tessera name `ui.chat_log` in place of an InputMap name |
+| `IgnoreRemainingMaps`, `DebugConsole`, `StringTokenDebugger` | none (ignored) | — |
+| `SelectionUI`, `MusicUI`, `MapPanel`, `VendorBuyUI`, `PVPGameplayUI` | none until those panels exist (ignored) | — |
+
+The push rule of `ScrollableControls_Mouse` reproduces the original (UW §5.7, §6.9, BIN
+there): the wheel commands exist only while the pointer is over a scrollable's subtree or a
+scroll bar. Every other row is a Tessera rule.
 
 ---
 
@@ -608,10 +1595,14 @@ sanitised into a sane range each tick.
 ## 10. winit adapter (feature `winit`)
 
 - Keyboard: physical key codes map one-to-one onto §4.1 (unmapped keys are dropped);
-  the repeat flag is passed through; on a press, the event's text yields up to 32 typed
-  characters.
+  OS auto-repeat presses are passed through as key presses with the repeat flag set (the
+  mapper turns them into Repeat offers, §7.8.6, and never into holds, §7.2); on a press, the
+  event's text yields up to 32 typed characters.
 - Window modifier changes, mouse buttons, cursor moves, cursor leaving, and focus loss map
-  to the raw events of §7.1.
+  to the raw events of §7.1. Cursor positions are winit's **physical** positions in the
+  window's client area, origin top-left, passed on unchanged (§7.7, pixel space).
+- The adapter does not read the platform's double-click time and rectangle; the client
+  does, and hands *T*, *W* and *H* to the mapper (§7.7).
 - Wheel: line deltas are notches; pixel deltas are divided by 40 pixels per notch. winit's
   positive horizontal delta scrolls content right, which is a tilt to the **left**, so the
   horizontal value is negated to match `WheelX` `+` = right (§4.3); the vertical value
@@ -625,7 +1616,8 @@ sanitised into a sane range each tick.
 > does not fire edge-triggered actions (`menu`, `open_chat`) or type text, and acts again
 > only after it is released and pressed. The alternative, recording such keys as held
 > without resolving their bindings (so a held movement key resumes at once), would need a
-> new raw event. Confirm or choose.
+> new raw event. Confirm or choose. (A forwarded synthetic release of a key that is not held
+> changes nothing, §7.3.)
 
 ---
 
@@ -658,9 +1650,73 @@ Resolved on 2026-10-05 (kept so that earlier references still lead somewhere):
 > **OPEN:** the walk controller only knows the height field. Collision with static
 > objects, water/swimming, and per-race or mounted speeds come with later milestones.
 
-> **OPEN:** IME composition, key auto-repeat for UI actions, and localised key labels for
-> display are not covered. For comparison: the original marks its auto-repeating text-cursor,
-> delete and focus commands with toggle type 3 (AutoRepeat, §12.10).
+- **Resolved (2026-10-06):** key auto-repeat for UI actions. OS repeat presses become Repeat
+  offers of the holds whose command has toggle type 3, or, without action-map data, of
+  actions with the `repeat` flag (§7.8.6, §8; K43).
+
+> **OPEN:** IME composition and localised key labels for display are not covered (IB Known
+> difference 13; UB §5.4 OPEN).
+
+Open items of the UI bridge (decision 0014; each has a Tessera rule in force until it is
+answered):
+
+> **OPEN:** the order in which the original consults its active input maps, and what
+> `IgnoreRemainingMaps` does (§12.12). Tessera consults the UI band, then the game band, and
+> the first context with a press-class match consumes the press, except pass-through (IB
+> Known difference 1).
+
+> **OPEN:** whether the original fires one binding per input map and event (§12.12's best
+> match) or every matching binding. Tessera fires every matching complete binding of the
+> consuming context (§7.2 step 3; IB Known difference 2).
+
+> **OPEN:** whether plugin controls push `ScrollableControls_Mouse`, and which classes
+> (UW §5.7 OPEN). Tessera pushes it for every hovered plugin control (§8.1), so every plugin
+> `MouseWheel` handler fires and the wheel does not zoom over a plugin window. Owner
+> observation: does the wheel zoom the camera over a plain plugin window in the original?
+
+> **OPEN:** the game-panel input maps `SelectionUI`, `MusicUI`, `MapPanel`, `VendorBuyUI`
+> and `PVPGameplayUI` have no context until those panels exist (§8.1); their default bindings
+> are in the records (§12.8; K46 for `VendorBuyUI`).
+
+> **OPEN:** commands without a Tessera action (quick slots, panel toggles and the like) are
+> neither imported nor offered, so plugins never see their IDs on `KeyDown`. That needs
+> generic command actions (for example a `commands` context); not decided.
+
+> **OPEN:** the four modifier-click commands `DressingRoom`, `AutoLootAll`, `ItemLinkToChat`
+> and `MultiUseItem` (UB §3.1) have no Tessera action yet; until they do, those clicks give
+> `select_left`/`select_right` (Subset). Their defaults are Ctrl+left, Shift+right, Ctrl+right
+> and Alt+right with activation Up/Tap, type 2 (K46). When game panels add them, they belong
+> in `pointer` with exact modifiers and `on = "tap"` (IB Known difference 8).
+
+> **OPEN:** whether a double-select binding swallows a quick re-press of a game binding in
+> the original (§12.14.6, IB Known difference 14). Owner observation: release the right
+> button during mouse-look and press it again at once without moving the mouse, over the
+> world: does the camera keep turning? Same with a quick second left press while right is
+> held: does running continue?
+
+> **OPEN:** whether the Ends of mouse-button commands in a capture's pressed set are
+> delivered during the pointer lock (UB §4.9). Tessera delivers them (IB D7, Known difference
+> 16).
+
+> **OPEN:** which input map supplies the chat log's paging commands while the entry has no
+> focus (`chat-window.md` Q19; IB Known difference 17). The original's `Main` binds plain
+> PageUp, PageDown, Home and End to the page and line commands and nothing to the document
+> commands (K44), which suggests that the paging comes from `Main` through the keyboard
+> target; whether it does depends on the consultation order above. Tessera uses its own
+> context `ui.chat_log` (§8.1).
+
+> **OPEN:** what a right press does during an item drag in the original (UB §7.4 OPEN; IB
+> Known difference 20). Tessera: the client consumes the `mouselook` Start during every item
+> drag that the UI does not already swallow (§7.8.9), so the camera does not turn, the run
+> chord cannot complete, and the pointer does not lock. The right button stays marked after
+> the drag ends (§7.2.2), so neither the camera turn nor running starts until right is
+> pressed again. Owner observation: drag an item from
+> a bag and from a quick slot, press right during the drag and release left over another
+> slot: does the camera turn, is the drag cancelled, does the item land?
+
+> **OPEN:** the original binds the alternative clipboard keys to the Windows keys
+> (Super+C/X/V, K42); Tessera's defaults use Ctrl+Insert, Shift+Delete and Shift+Insert
+> instead (§8, Tessera choice). Owner question: add the Super forms to the defaults?
 
 > **OPEN:** layering. `tessera-input` (L4) depends on its sibling `tessera-settings` (L4) for
 > the read-only install guard and the config directory; ARCH §3 lists no such allowance yet
@@ -674,6 +1730,13 @@ Resolved on 2026-10-05 (kept so that earlier references still lead somewhere):
 > loses them (the defaults stay in effect for such an action). Keeping their raw text for
 > a later save would need a separate "unparsed entries" store.
 
+> **OPEN:** resource bounds the spec does not state (implementation, 2026-10-07, engineering
+> choice for hostile input): the band request list of one offer (§7.8.1) keeps at most 1,024
+> requests, and further ones are dropped with a warning; the importer's node tree (§12.4)
+> holds at most 262,144 nodes, and a file with more is rejected like one past the depth or
+> token limit of §12.14.1 step 2 (a 1 MiB file cannot reach it with non-empty tokens). Confirm
+> or state other values.
+
 The open items of the importer are collected in §12.19.
 
 ---
@@ -682,7 +1745,7 @@ The open items of the importer are collected in §12.19.
 ## 12. Importing the original client's key map
 
 Everything in this section describes the original client and its data. Each statement rests
-on a provenance row of §1.2 (K1–K41). Subsections marked **Decision** are Tessera's choices
+on a provenance row of §1.2 (K1–K46). Subsections marked **Decision** are Tessera's choices
 about how to use those facts.
 
 <a id="s12-1"></a>
@@ -1021,8 +2084,9 @@ with any event or any other binding, so it never conflicts (§12.8) and never ma
 > `Up/`, `/Up`). The importer treats such a token like an unknown word (file rejected).
 
 Values found in the default records: 0x03 in 246 bindings, 0x06 in 5, 0x04 in 3, 0x60 in 2
-(OBS). The meaning column is functional naming; the double-click and tap timings and the
-"close" distance are OPEN (§12.19).
+(OBS). The meaning column is functional naming. How the bits are computed (tap within half
+the double-click time, the double-click time and the "close" rectangle taken from the
+operating system) is stated in UB §3.3 (BIN there) and reproduced by §7.7.
 
 <a id="s12-5-8"></a>
 #### 12.5.8 Sub-controls
@@ -1575,6 +2639,15 @@ BIN only):
    action of the same context keeps), capped at 64 as in §6.3. Nothing is saved (§6.5).
    Tessera actions outside §12.14.2 keep their defaults; shared strokes then resolve by §7.
 
+> **OPEN:** (implementation, 2026-10-07) Step 3 assumes the four default records and the
+> InputActions and InputMap names are present. The spec does not say what an import produces
+> when the install data lacks them (no key-map record found, or an empty name chain): taken
+> literally, every (context, action) of §12.14.2 then has no binding in the effective map, so
+> step 5 writes only default pad entries and unbinds every keyboard and mouse default.
+> `tessera-input` currently refuses to translate in that case: it returns an empty document
+> (Tessera's defaults stay), names what is missing in the report, and lists the install-data
+> problems as warnings. A spec writer should confirm or replace this rule.
+
 <a id="s12-14-2"></a>
 #### 12.14.2 Commands
 
@@ -1602,11 +2675,47 @@ axis actions.
 | `Main` | `ToggleDebugHUD` | global | `toggle_debug` | — |
 | `Main` | `EscapeKey` | global | `menu` | — |
 | `Main` | `AcceptInput` | global | `open_chat` | — |
-| `EditControls` | `AcceptInput` | text_entry | `text_submit` | — |
-| `EditControls` | `EscapeKey` | text_entry | `text_cancel` | — |
+| `Main` | `SelectLeft` | pointer | `select_left` | — |
+| `Main` | `SelectRight` | pointer | `select_right` | — |
+| `Main` | `SelectMid` | pointer | `select_middle` | — |
+| `Main` | `SelectDblLeft` | pointer | `select_double_left` | — |
+| `Main` | `SelectDblRight` | pointer | `select_double_right` | — |
+| `Main` | `SelectDblMid` | pointer | `select_double_middle` | — |
+| `Main` | `TapLeft` | pointer | `tap_left` | — |
+| `Main` | `TapRight` | pointer | `tap_right` | — |
+| `Main` | `TapMid` | pointer | `tap_middle` | — |
+| `ScrollableControls_Mouse` | `ScrollUp` | ui.scroll_mouse | `scroll_up` | — |
+| `ScrollableControls_Mouse` | `ScrollDown` | ui.scroll_mouse | `scroll_down` | — |
+| `DialogBoxes` | `FocusNext` | ui.dialog | `focus_next` | — |
+| `DialogBoxes` | `FocusPrevious` | ui.dialog | `focus_prev` | — |
+| `DialogBoxes` | `FocusMoveLeft`, `FocusMoveRight`, `FocusMoveUp`, `FocusMoveDown` | ui.dialog | `focus_left`, `focus_right`, `focus_up`, `focus_down` (in that order) | — |
+| `DialogBoxes` | `EscapeKey` | ui.dialog | `menu` | — |
+| `EditControls` | `AcceptInput` | text_entry | `open_chat` | — |
+| `EditControls` | `EscapeKey` | text_entry | `menu` | — |
 | `EditControls` | `BackspaceKey` | text_entry | `text_backspace` | — |
-| `EditControls` | `CursorPreviousLine` | text_entry | `text_history_prev` | — |
-| `EditControls` | `CursorNextLine` | text_entry | `text_history_next` | — |
+| `EditControls` | `DeleteKey` | text_entry | `text_delete` | — |
+| `EditControls` | `CursorPreviousLine` | text_entry | `text_line_up` | — |
+| `EditControls` | `CursorNextLine` | text_entry | `text_line_down` | — |
+| `EditControls` | `CursorCharLeft`, `CursorCharRight` | text_entry | `text_char_left`, `text_char_right` | — |
+| `EditControls` | `CursorWordLeft`, `CursorWordRight` | text_entry | `text_word_left`, `text_word_right` | — |
+| `EditControls` | `CursorStartOfLine`, `CursorEndOfLine` | text_entry | `text_line_start`, `text_line_end` | — |
+| `EditControls` | `CursorPreviousPage`, `CursorNextPage` | text_entry **and** ui.chat_log | `text_page_up`, `text_page_down` | — |
+| `EditControls` | `CursorStartOfDocument`, `CursorEndOfDocument` | text_entry **and** ui.chat_log | `text_doc_start`, `text_doc_end` | — |
+| `CopyAndPasteControls` | `CopyText`, `CutText`, `PasteText` | ui.clipboard | `text_copy`, `text_cut`, `text_paste` | — |
+
+Rows with several commands and several actions pair them in order. The three
+`EditControls` rows for `AcceptInput`, `EscapeKey` and the two line moves were retargeted on
+2026-10-06 from the retired `text_submit`, `text_cancel` and `text_history_prev/next`
+(decision 0014 list item 17); no row names a retired action.
+
+**Copy to `ui.chat_log`** (Tessera rule, decision 0014 list item 17). An imported
+`EditControls` binding of `CursorPreviousPage`, `CursorNextPage`, `CursorStartOfDocument` or
+`CursorEndOfDocument` is written to (`text_entry`, the action) **and** to (`ui.chat_log`, the
+same action), keeping its own command, so a user's imported PageUp/PageDown override changes
+both and the chat log pages with the same keys as the entry line. The report lists the copy
+once, as part of the `EditControls` binding. `ui.chat_log` has no input map, so no other
+section feeds it; in particular the `Main` bindings of the page and line commands (K44) are
+not imported (§11 OPEN on the chat log's map).
 
 Not translated, with the reason:
 
@@ -1616,6 +2725,10 @@ Not translated, with the reason:
   such action.
 - `MovementTurnOrStrafeLeft`/`Right` turn the character, and strafe while the character is
   steered with the mouse; they are imported as plain turning.
+- The four modifier-click commands (K46): no Tessera action yet (§11).
+- `Main`'s `CursorPreviousPage`, `CursorNextPage`, `CursorStartOfLine` and `CursorEndOfLine`
+  (K44): no `Main` row (the page commands reach `ui.chat_log` only through the copy rule
+  above).
 - Camera rotation, roll, field-of-view and first-person commands, and every class of §12.11
   not named above: no Tessera action yet. Tessera's `fly_*` actions have no original
   counterpart and keep their defaults.
@@ -1654,14 +2767,43 @@ analog entries take no modifiers (§5.3).
 <a id="s12-14-5"></a>
 #### 12.14.5 Activations and sub-controls
 
-- A binding is translated only when its activation has the Down bit (0x01): `Click`,
-  `Down` and combinations with them. Release-only, tap and double-click bindings have no
-  Tessera form and are dropped.
+- **Activations** translate to `on` (§5.3) by the first row that applies (decision 0014 list
+  item 18):
+
+  | Activation | Tessera `on` |
+  |---|---|
+  | has Down (0x01): `Down`, `Click`, `Analog` and combinations | `press` |
+  | otherwise has DblClickDown (0x08) | `double` |
+  | otherwise has NearbyDown (0x20), for example `MouseDblClick` (0x60) | `double_nearby` |
+  | otherwise has Up (0x02), for example 0x06 (`Up/Tap`) | `release` |
+  | otherwise has Tap (0x04) | `tap` |
+  | DblClickUp only (0x10), NearbyUp only (0x40), 0x50, or 0 | dropped ("activation without a Tessera form") |
+
+  A non-`press` result is kept only when the translated stroke is **one button** plus
+  modifiers and the button is not a wheel click (§5.3). When §12.14.4 rule 2 turns a meta-key
+  bit into a chord button (for example bit 8 into `MouseRight`, or a lone `LShift`) on a
+  binding that translates to `release`, `tap`, `double` or `double_nearby`, the stroke has two
+  buttons and the binding is **dropped** with the reason "activation on a chord"; a wheel
+  click with a non-`press` result is dropped with the reason "activation on a wheel click". A
+  `press` binding with such a chord button is translated as before. A non-`press` result
+  whose target is an **axis** action (for example a release binding of a movement command)
+  is dropped with the reason "activation on an axis action". This is a change for button
+  actions: their release and tap bindings (for example the 0x06 bindings) used to be dropped
+  and are now imported with `on`.
 - Sub-control 0 is the control itself.
-- The mouse wheel (code 0x08): `AxisPositive` bound to a +1 zoom command, or `AxisNegative`
-  bound to a −1 zoom command, becomes `{ axis = "WheelY", scale = 1.0 }`; the opposite pairing
-  becomes scale −1.0. Both directions collapse into one entry. Any other wheel binding is
-  dropped.
+- The mouse wheel (code 0x08), on an **axis** action: `AxisPositive` bound to a +1 zoom
+  command, or `AxisNegative` bound to a −1 zoom command, becomes
+  `{ axis = "WheelY", scale = 1.0 }`; the opposite pairing becomes scale −1.0. Both directions
+  collapse into one entry.
+- The mouse wheel, on a **button** action (Tessera rule, decision 0014 open review "importer
+  gap"): `AxisPositive` becomes a `WheelUp` click entry and `AxisNegative` a `WheelDown` click
+  entry (DirectInput's positive wheel axis is a turn away from the user, as is `WheelUp`,
+  §4.3; DX), with the binding's meta keys as modifiers (§12.14.4) and the activation
+  translated as above (only `press` is kept, since `on` is not allowed on wheel clicks). So
+  the original's `ScrollableControls_Mouse` defaults import as `scroll_up = ["WheelUp"]` and
+  `scroll_down = ["WheelDown"]`.
+- Any other wheel binding (the whole wheel without a sub-control, or a wheel sub-control on an
+  axis action other than zoom) is dropped.
 - Pad hat and trigger sub-controls by §12.6.3; any other sub-control drops the binding.
 
 <a id="s12-14-6"></a>
@@ -1677,6 +2819,45 @@ best-match rule (§12.12) is not reproduced. Consequences:
   **before** the control is pressed (the left-plus-right mouse run).
 - Imported pad bindings use the dead zone of §12.16 when the preferences file is imported,
   else Tessera's 0.15.
+
+From decision 0014 (its Known differences 8, 9, 14 and 19, with the record facts of K45 and
+K46 added in this revision):
+
+- **Modifier-clicks** (IB difference 8). `DressingRoom`, `AutoLootAll`, `ItemLinkToChat` and
+  `MultiUseItem` have no Tessera action yet (§11). Their defaults are Ctrl+left, Shift+right,
+  Ctrl+right and Alt+right with `Up/Tap` (K46). Until they exist, such clicks give
+  `select_left`/`select_right` (Subset policy). When the game panels add them, they belong in
+  `pointer` with exact modifiers, where §7.2's exact pass prefers them.
+- **Right held, then left pressed** (IB difference 9). Tessera fires both `select_left`
+  (pass-through) and the run chord. In the original both bindings are in the same input map,
+  `Main` (K45: `SelectLeft` on button 0, mask 0, 0x03; `MovementForwardCameraMovement` on
+  button 0 with bit 8, 0x03); if the original picks one binding per map and event, §12.12
+  picks the run binding (equal activation, more mask bits). Whether it picks one is OPEN
+  (§11), so this difference is inferred, not established. The UI ignores the `select_left`
+  because the pointer is locked; game code that later reacts to `select_left` (target
+  selection) must ignore it while `mouselook` is held.
+- **Quick second press of a mouse button** (IB difference 14). A second press within *T*, and
+  nearby (during mouse-look always, since the position is frozen), fires the double-select
+  action in `pointer` and, unless the UI consumes it, the game binding below (`mouselook` on
+  right, the run chord on left with right held). In the original `SelectDblRight` (0x60) and
+  `CameraInstantMouseSteer` (0x03) are both on button 1, mask 0, in `Main` (K42, K45), and
+  `SelectDblLeft` (0x60) and the run binding (0x03, bit 8) both on button 0 in `Main`; if the
+  original picks one binding per map and event, §12.12 picks the largest activation, 0x60,
+  so the double-select alone, and the camera would not steer and running would stop, even
+  over the world. Whether it picks one is OPEN (§11), so Tessera consumes only on a UI
+  verdict: over the world the walker keeps its behaviour; over a panel element a quick right
+  re-press is a double click on it and does not start `mouselook`. An owner observation is
+  requested (§11). (Decision 0014 states that no cited spec gave the activation of the
+  default `CameraInstantMouseSteer` binding; K45 now gives it.)
+- **Modifier policies of the UI actions** (IB difference 19). The caret, delete, backspace and
+  scroll actions are Subset, as §12.12's subset matching suggests. Where two Subset bindings
+  of one context both match and neither matches exactly, both fire (§7.2 step 3), where
+  §12.12 picks the one with more mask bits: Ctrl+Alt+Left gives both `text_char_left` and
+  `text_word_left`. The exact Ctrl+Shift defaults of the word and document moves cover the
+  common case; a key map imported from the original has no such bindings, so there
+  Ctrl+Shift+Left gives both actions too. The focus and clipboard actions are Exact, so
+  Ctrl+Tab and Ctrl+Shift+C give no command (while a field has focus they are swallowed by
+  `opaque_keys`), where §12.12 would give `FocusNext` and `CopyText`.
 
 <a id="s12-15"></a>
 ### 12.15 Plugin API action IDs
@@ -1696,7 +2877,10 @@ pair, in table order:
 
 1. **Button actions** (rows whose Value is "—"): the first row's command. So `jump` reports
    `MovementLongJump`, `mouselook` reports `CameraInstantMouseSteer` in both contexts,
-   `text_submit` reports `AcceptInput`.
+   `open_chat` reports `AcceptInput` in both `global` and `text_entry`, `menu` reports
+   `EscapeKey` in `global`, `ui.dialog` and `text_entry`, and each pointer and UI action of §8
+   reports the command of its row (for example `text_page_up` reports `CursorPreviousPage` in
+   `text_entry` and in `ui.chat_log`, whose rows come from the copy rule of §12.14.2).
 2. **Digital entries of axis actions** (`"text"` or `{ input, value }`, §5.3): the first row
    whose Value has the sign of the entry's value (a plain `"text"` entry has value +1,
    §5.3). A value of exactly 0 reports nothing. Rows whose Value is "axis entry" have no
@@ -1784,6 +2968,22 @@ Tessera use yet.
   the trees and results shown.
 - **I8**: the importer opens no file for writing, refuses a source larger than 1 MiB, and never
   touches the settings folder or the install.
+- **I9** (synthetic, §12.14.5): a `Main` `TapLeft` binding (0x04) imports as
+  `{ input = "MouseLeft", on = "tap" }`; `SelectDblRight` with 0x60 as `on = "double_nearby"`;
+  a button action bound with 0x06 as `on = "release"`; a binding with 0x10 only is dropped; a
+  0x04 binding with mask bit 8 is dropped with "activation on a chord"; a 0x06 binding of
+  `MovementForward` is dropped with "activation on an axis action"; `ScrollUp` on
+  `DIMOFS_Z AxisPositive` gives `scroll_up = ["WheelUp"]` and `ScrollDown` with mask 0x1 on
+  `AxisNegative` gives, with the default meta keys, `scroll_down = ["Shift+WheelDown"]`; a wheel sub-control with 0x06 on a
+  button action is dropped with "activation on a wheel click"; an `EditControls`
+  `CursorNextPage` binding on `DIK_PGDN` gives `text_page_down = ["PageDown"]` in both
+  `text_entry` and `ui.chat_log` and is reported once.
+- **I10** (real data, `TESSERA_GAME_DIR`): importing the records alone (no user file) gives,
+  for every action of `pointer`, `ui.scroll_mouse` and `ui.dialog`, exactly the defaults of §8;
+  for `text_entry` and `ui.chat_log` the defaults of §8 without the Tessera-choice
+  `Ctrl+Shift` entries; and for `ui.clipboard` `Ctrl+C`, `Super+C` (and likewise X and V),
+  in that order. Like I2 these are observations of this install: tests report differences
+  and fail only on a structural one.
 
 <a id="s12-18"></a>
 ### 12.18 Worked examples (synthetic)
@@ -1900,8 +3100,9 @@ The record is 77 bytes long. As a binding in a written file it reads
 > **OPEN:** pad value ranges, the stick Y sign, the trigger threshold and the effect of
 > `XInputDetection` (§12.6.3, §12.16).
 
-> **OPEN:** the tap and double-click timings and the "close" distance of `NearbyDown`/
-> `NearbyUp` (§12.5.7).
+- **Resolved (2026-10-06, by reference):** the tap and double-click timings and the "close"
+  distance of `NearbyDown`/`NearbyUp` are the operating system's double-click time and
+  rectangle, with a tap within half that time (UB §3.3, BIN there; §7.7).
 
 > **OPEN:** the role of action-map table C and of its tokens missing from the named string
 > table (§12.10).
@@ -1950,6 +3151,40 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
    key events can carry the IDs of §12.15.
 5. **`docs/ARCHITECTURE.md`** §16 (OPEN on the original keymap syntax) and §25 row 12: answered
    by §12 of this spec (a neutral document; the owner should update it).
+6. **`ui-behaviour.md` §5.4** ("Ctrl+C/X/V (with an alternative meta key)"): the alternative
+   is meta-key bit 4, the Windows keys (K42), so the defaults are Ctrl+C/X/V and
+   Super+C/X/V. §5.4's "with Ctrl for word and document moves" is confirmed (K42).
+7. **`chat-window.md` §6.2, Q19** (which input map supplies the paging commands without
+   entry focus): partly answered by data. The original's `Main` binds plain PageUp and
+   PageDown to `CursorPreviousPage`/`CursorNextPage` (and Home/End to the line start and end
+   commands), but binds nothing to `CursorStartOfDocument`/`CursorEndOfDocument` (K44). So,
+   if `Main` is consulted while the chat window is the keyboard target, PageUp and PageDown
+   page its log without entry focus and Ctrl+Home/Ctrl+End do not. Which maps are consulted,
+   and in what order, stays OPEN (§12.12).
+8. **Decision 0014** (not edited here; for its owner):
+   - Known difference 14 says no cited spec gives the activation of the default
+     `CameraInstantMouseSteer` binding: it is 0x03 on mouse button 1, mask 0, in `Main`, the
+     same map as `SelectDblRight` (0x60) (K45). Under §12.12's one-binding rule the
+     double-select would win; whether the original picks one binding stays OPEN.
+   - Known difference 9's "if both bindings sat in one map": they do, in `Main` (K45).
+   - List item 13 says the "caret, delete, backspace and focus-move actions have `repeat`
+     set". The action map gives toggle type 3 to the character, word, line and page moves,
+     backspace, delete **and all six focus actions** (`FocusNext` and `FocusPrevious`
+     included), but type 2 to the line-start, line-end, document-start and document-end
+     moves (K43). §8 follows the data, since the flags are only the fallback for it.
+   - D7's chord rule ("left out of the held set used to complete chords") is replaced by the
+     mark of §7.2.2, as its open review must-fix 3 asks; D4's "held set" and list item 8 then
+     agree with it.
+   - Open review "Scale-factor change during the pointer lock": answered by §7.8.9 (the lock
+     stays on; *F* is rescaled), and §7.7 rescales the cursor position outside the lock too.
+   - D6's typed-character rule, with its open-review amendment, is refined in §7.6: when the
+     first UI-band context that has `text`, `opaque` or `opaque_keys` has no `text`, the
+     characters are **dropped**, not passed to the game-band rule, so `ui.eat_keyboard`
+     really eats them.
+   - List item 1 counts the third-press reading among the UB §3.3 compatibility parts; it is
+     Tessera's reading of a UB §3.3 OPEN (D3 says so), and §0 and §7.7 mark it that way.
+   - §3.2 also drops a pending sequence on the first entry of an `opaque` context, the
+     counterpart of the `opaque_keys` rule (Tessera rule, this revision).
 
 ---
 
@@ -1962,3 +3197,4 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
 | 2026-10-05 | Spec writer (dirty room): new §12 (the original client's key-mapping file and key-map records: syntax, structure, control vocabulary, errors, effective key map, record layouts, command classes, writer format, import into Tessera, plugin action IDs, related preferences, invariants, examples), §13 and §14; provenance split into §1.1 and §1.2 (K1–K32, with the BIN record); §0 and the header updated; §11 revised (import, plugin IDs, height scale and yaw relation resolved; gamepad and auto-repeat notes extended). §2–§10 unchanged. |
 | 2026-10-05 | Spec writer (dirty room), answering the review of the same day; section numbers unchanged. (1) §12.4: an opening bracket with no token before it makes an empty-text node (K33), with the consequences in §12.7 and Example H. (2) §12.6.3: per-code table of the joystick spellings the writer emits (K27, BIN; the same rule confirmed for the mouse wheel by OBS); §12.6 intro and Example F aligned. (3) §11: the compass heading is clockwise from north per `coordinates.md` §11.4 (row C11); stale OPEN remark removed, check values added. (4a) §12.3 rule 1: a raw-byte reader must apply the text-mode translation first; the three cases where tokens differ are listed; §12.14.1 step 2 applies it. (4b) §12.7: name node and device entries with extra children, children of GUID nodes, duplicate device GUIDs, empty texts in every position (K35, K36). (4c) §12.15: the reported command for entries without a remembered command is defined for button actions, digital and analog entries. (4d) §12.6.3: bits 0x0400/0x0800 are never set in the original (documented XInput call; K28, PUB); `PadMode` for button 10 marked as a Decision with its basis. Also found while answering: byte 0xFF stops tokens and lists and makes a file rejected (§12.3 rules 4, 5, 7; K34; corrects "0x80–0xFF are token bytes"); empty tokens read as number 0 and activation 0; numeric command and section names are converted without whole-token checks (§12.5.9); the writer emits an empty control name for unnamed codes and every virtual-device control and handles word-less activations as stated (§12.13, K37); I6 restricted accordingly, I7 extended; new OPEN on empty activation words. Provenance: BIN row extended with the revision session; new source PUB; rows K33–K37. Status stays Review; Reviewer reset to none yet. |
 | 2026-10-06 | Spec writer (dirty room), answering the re-review of 2026-10-05; section numbers unchanged, status stays Review. (1) §12.5: a `Devices`, `MetaKeys` or `Bindings` part without a child list is an empty part, not an error (K38); §12.7 row added. (2) §12.7: children attached to any node read only for its text or number (device index, control name, sub-control, mask, activation, GUID) are ignored, as are children of a binding after the third; the nodes whose child lists are read are listed (K35 widened). (3) §12.4: directives are recognised by the first byte of the node text after the node is complete, quoted or escaped alike, in every list; names compared without regard to ASCII case; an unknown `!` name stays as an ordinary node; `!error` without a child still rejects the file, `!warning` without a child reports an empty message; a missing or unparsable `!include` file is only reported (K39); §12.7 rows and a paragraph on unknown directives by position; §12.14.1 step 2 states the importer's handling. (4) §12.7: a device index that is not a number makes the control specification invalid: binding dropped and reported, meta key rejects the file (K40). Nit: §12.15 rule 2 states that digital `look_x`/`look_y` entries report nothing. Also found: a file whose first four bytes are all 0xAA is rejected before parsing (§12.3 rule 8, K41; §12.14.1 step 2). I7 and Example H extended. Provenance: BIN row extended with the second revision session; rows K38–K41. |
+| 2026-10-06 | Spec writer (dirty room): revision applying the accepted [decision 0014](../decisions/0014-ui-input-bridge.md) (UI input bridge), its "Changes `keymap.md` must gain" items 1–21 and the open-review amendments that concern this spec; status Review, then Accepted after an independent review the same day (passed; its ten non-blocking notes applied: held-set definition, rescaled cursor position on every scale change, sequence drop on the first `opaque` entry, the marked right button after a drag, K1–K46, §13 item 8 additions). **§0, header, §1.1:** the compatibility exceptions and their provenance; author role extended. **§1.2:** OBS re-read; new rows K42–K46 (default bindings of the UI commands, toggle types, `Main`'s page and line commands, the activation of `CameraInstantMouseSteer` and the merge conflicts, the modifier-click defaults). **§2:** policies, `repeat` flag, optional command name; new §2.2 (command name and ID of an event). **§3:** rewritten as §3.1–§3.5: two bands, UI-band entries and their ordering (UB §5.2), limits, queued changes, pending-sequence rules, `pass_through`, `opaque_keys` with the band end, release and modifier-hold rules, code access, holds. **§5.3, §6.1, §6.3:** the `on` field (read-time and compile-time checks), schema example, migration of the retired `text_entry` names. **§7:** §7.1–§7.6 rewritten (sequence numbers, press-class resolution with pass-through and the band end, event order §7.2.1, the UI-owned **mark** §7.2.2 replacing "left out of the held set" (IB must-fix 3), release-class resolution §7.3.1, modifier holds, wheel-motion withholding per raw event, character routing keyed on `opaque_keys` too); new §7.7 (activation timing), §7.8 (UI offers, including the rescale of the frozen position on a scale change during the lock, a Tessera rule answering IB's open review), §7.9 (invariants (a)–(y), with (o) re-checked against the mark and new (h6), (o2)), §7.10 (worked example). **§8:** context table with bands; pointer and UI actions with commands, observed IDs, policies, repeat flags and defaults; retired actions; new §8.1 (InputMap → context). **§10, §11:** adapter rules; auto-repeat OPEN resolved, IME stays; eleven new OPENs. **§12.14.2:** retargeted rows, new rows, the `ui.chat_log` copy rule. **§12.14.5:** activation translation; the importer wheel rule for button actions. **§12.14.6:** IB differences 8, 9, 14, 19. **§12.15:** examples for the new rows. **§12.17:** I9, I10. **§13:** items 6–8. **Corrected against decision 0014** (data, K43): the built-in `repeat` flags follow the type-3 set (focus next/previous repeat; line and document start/end do not). **Confirmed** by the re-read: every default binding that decision 0014 attributes to the original (UB §3.2, §5.4, §5.6), the 16-command type-3 set, the command IDs of UB §3.1. **New facts:** the original's alternative clipboard keys are Super+C/X/V (K42); `Main` binds PageUp/PageDown/Home/End to the page and line commands (K44); the default `CameraInstantMouseSteer` activation is 0x03 in `Main` (K45). |

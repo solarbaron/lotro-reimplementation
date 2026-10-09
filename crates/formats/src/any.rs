@@ -8,6 +8,7 @@ use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 use crate::error::Result;
+use crate::font::Font;
 use crate::landblock::RegionDescriptor;
 use crate::property::{PropertyDictionary, PropertySchema};
 use crate::record::Record;
@@ -20,6 +21,7 @@ use crate::string_table::StringTable;
 use crate::surface::Surface;
 use crate::terrain_type::TerrainTypeTable;
 use crate::texture_list::TextureList;
+use crate::ui_layout::UiLayout;
 use crate::water::{FogZoneTable, WaterTable};
 
 /// Any record this crate can decode, selected by the DID's type prefix (spec §2.1).
@@ -108,6 +110,10 @@ pub enum AnyRecord<'a> {
     /// 0x0F: region descriptor (`environment.md` §3), also available as
     /// [`crate::landblock::RegionDescriptor::parse`].
     RegionDescriptor(Box<RegionDescriptor>),
+    /// 0x42: font.
+    Font(Font),
+    /// 0x22: UI layout (only from [`AnyRecord::decode_with_schema`]).
+    UiLayout(UiLayout),
 }
 
 impl<'a> AnyRecord<'a> {
@@ -182,6 +188,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::RegionDescriptor => {
                 Self::RegionDescriptor(Box::new(RegionDescriptor::parse_expecting(payload, did)?))
             }
+            DidKind::Font => Self::Font(Font::parse_expecting(payload, did)?),
             _ => return Ok(None),
         }))
     }
@@ -228,6 +235,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::Scriptlet => {
                 Self::Scriptlet(Scriptlet::parse_expecting(payload, did, schema)?)
             }
+            DidKind::UiLayout => Self::UiLayout(UiLayout::parse_expecting(payload, did, schema)?),
             DidKind::CollisionGeometry => Self::CellGeometry(Box::new(
                 CellGeometry::parse_expecting(payload, did, stamp, schema)?,
             )),
@@ -243,7 +251,10 @@ impl<'a> AnyRecord<'a> {
         Self::is_decodable(did)
             || matches!(
                 did.kind(),
-                DidKind::ScriptTable | DidKind::Scriptlet | DidKind::CollisionGeometry
+                DidKind::ScriptTable
+                    | DidKind::Scriptlet
+                    | DidKind::UiLayout
+                    | DidKind::CollisionGeometry
             )
     }
 
@@ -276,6 +287,7 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::CameraState
                 | DidKind::CollisionMesh
                 | DidKind::RegionDescriptor
+                | DidKind::Font
         )
     }
 
@@ -309,6 +321,8 @@ impl<'a> AnyRecord<'a> {
             Self::CameraState { did, .. } | Self::CollisionMesh { did, .. } => *did,
             Self::CellGeometry(r) => r.did,
             Self::RegionDescriptor(r) => r.did,
+            Self::Font(r) => r.did(),
+            Self::UiLayout(r) => r.did(),
         }
     }
 
@@ -343,6 +357,8 @@ impl<'a> AnyRecord<'a> {
             Self::CollisionMesh { .. } => CollisionMesh::NAME,
             Self::CellGeometry(_) => CellGeometry::NAME,
             Self::RegionDescriptor(_) => RegionDescriptor::NAME,
+            Self::Font(_) => Font::NAME,
+            Self::UiLayout(_) => crate::ui_layout::NAME,
         }
     }
 }

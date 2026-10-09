@@ -27,8 +27,8 @@ use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
 
 use super::setup::MoverSetup;
 use super::{
-    BlockReadiness, CollisionWorld, MoveInput, MovementState, PhysicsWalker, PinStreamers,
-    PinnedCollision, STEP_SECONDS, StepRecord, VIEW_RADIUS,
+    BlockReadiness, CellOwnerIndex, CollisionWorld, MoveInput, MovementState, PhysicsWalker,
+    PinStreamers, PinnedCollision, STEP_SECONDS, StepRecord, VIEW_RADIUS,
 };
 use crate::walk_path::{Expect, SETTLE_SECONDS, Walk, WalkScript, steps_for};
 
@@ -75,6 +75,9 @@ pub struct StreamingWorld {
     /// The streamer around the feet.
     pub streamer: WorldStreamer,
     pins: PinStreamers,
+    /// The owners of cells reaching the feet from further away (`walker.md` §13.3),
+    /// pinned with the walker's own pins.
+    owners: CellOwnerIndex,
 }
 
 impl std::fmt::Debug for StreamingWorld {
@@ -90,9 +93,11 @@ impl StreamingWorld {
     /// landblocks get their own streamers, without it only the rings stream.
     #[must_use]
     pub fn new(streamer: WorldStreamer, pool: Option<tessera_assets::WorkerPool>) -> Self {
+        let owners = CellOwnerIndex::from_context(streamer.context());
         Self {
             streamer,
             pins: PinStreamers::new(pool),
+            owners,
         }
     }
 
@@ -106,6 +111,7 @@ impl StreamingWorld {
         PinnedCollision {
             main: &self.streamer,
             pins: &self.pins,
+            owners: Some(&self.owners),
         }
     }
 }
@@ -113,6 +119,10 @@ impl StreamingWorld {
 impl CollisionWorld for StreamingWorld {
     fn readiness(&self, key: LandblockKey) -> BlockReadiness {
         self.world().readiness_of(key)
+    }
+
+    fn cell_owners(&self, feet: LandblockKey) -> Option<Vec<LandblockKey>> {
+        self.owners.owners(feet)
     }
 
     fn view(&self, centre: &WorldPos) -> CollisionView<'_> {
@@ -140,7 +150,16 @@ impl WalkWorld for StreamingWorld {
     fn update(&mut self, focus: &WorldPos, pins: &[LandblockKey]) {
         let _ = self.streamer.update(*focus);
         let context = Arc::clone(self.streamer.context());
-        self.pins.update(&context, pins);
+        let mut pins = pins.to_vec();
+        if let Some(feet) = focus.landblock() {
+            self.owners.update(feet);
+            for k in self.owners.owners(feet).unwrap_or_default() {
+                if !pins.contains(&k) {
+                    pins.push(k);
+                }
+            }
+        }
+        self.pins.update(&context, &pins);
     }
 }
 

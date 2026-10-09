@@ -14,7 +14,7 @@ use tessera_client::net::{RemoteSettings, World};
 use tessera_client::walker::WalkerSession;
 use tessera_net::interp::SampleKind;
 use tessera_net::remote::Password;
-use tessera_net::{EntityId, Location, SessionState, Vec3};
+use tessera_net::{ChatChannel, EntityId, Location, SessionState, Vec3};
 use tessera_protocol::types::{Appearance, Body};
 use tessera_server::accounts::{self, HashParams};
 use tessera_server::characters::{CharacterFile, CharacterRecord, StoredAppearance};
@@ -249,7 +249,12 @@ fn two_clients_see_each_other_move_and_chat() {
     );
 
     // 3. Bob says something; both see it (Alice as a received line, Bob as the echo).
-    WalkerSession::send_chat(worlds[1], Instant::now(), "hello from Bram");
+    WalkerSession::send_chat(
+        worlds[1],
+        Instant::now(),
+        &ChatChannel::Say,
+        "hello from Bram",
+    );
     let mut alice_lines = Vec::new();
     let mut bob_lines = Vec::new();
     run_until(
@@ -399,6 +404,7 @@ fn chat_before_entering_the_world_is_reported_as_not_sent() {
     assert!(!WalkerSession::send_chat(
         &mut world,
         Instant::now(),
+        &ChatChannel::Say,
         "too early"
     ));
     run_one(&mut world, |_| false);
@@ -406,6 +412,7 @@ fn chat_before_entering_the_world_is_reported_as_not_sent() {
     assert!(!WalkerSession::send_chat(
         &mut world,
         Instant::now(),
+        &ChatChannel::Say,
         "too late"
     ));
 }

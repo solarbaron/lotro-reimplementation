@@ -15,7 +15,7 @@ use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::action::is_valid_name;
-use crate::chord::{Chord, bad};
+use crate::chord::{Activation, Chord, bad};
 use crate::device::AnalogAxis;
 use crate::error::{InputError, KeymapWarning, Result};
 
@@ -81,6 +81,16 @@ impl BindingSpec {
     #[must_use]
     pub fn chord(chord: Chord) -> Self {
         Self::Digital { chord, value: 1.0 }
+    }
+
+    /// The activation filter (`on`, §5.3): the chord's for a digital
+    /// binding, `None` for an analog one.
+    #[must_use]
+    pub fn activation(&self) -> Option<Activation> {
+        match self {
+            Self::Digital { chord, .. } => Some(chord.activation()),
+            Self::Analog { .. } => None,
+        }
     }
 
     /// Parse binding text into a digital binding with value `1.0`.
@@ -178,9 +188,21 @@ impl BindingSpec {
 
     fn to_toml(&self) -> String {
         match self {
-            Self::Digital { chord, value } if *value == 1.0 => format!("\"{chord}\""),
+            Self::Digital { chord, value }
+                if *value == 1.0 && chord.activation() == Activation::Press =>
+            {
+                format!("\"{chord}\"")
+            }
             Self::Digital { chord, value } => {
-                format!("{{ input = \"{chord}\", value = {} }}", float(*value))
+                let mut s = format!("{{ input = \"{chord}\"");
+                if *value != 1.0 {
+                    let _ = write!(s, ", value = {}", float(*value));
+                }
+                if chord.activation() != Activation::Press {
+                    let _ = write!(s, ", on = \"{}\"", chord.activation());
+                }
+                s.push_str(" }");
+                s
             }
             Self::Analog {
                 axis,
@@ -213,12 +235,17 @@ pub struct KeymapOptions {
 ///
 /// Equality treats a NaN kept among the unknown top-level keys (§6.1) as
 /// equal to another NaN, so that a keymap equals itself and its own
-/// round trip; binding numbers are always finite (§6.3).
+/// round trip; binding numbers are always finite (§6.3). Equality ignores
+/// the commands that imported entries remember ([`Keymap::entry_command`]),
+/// which a saved keymap does not store (§2.2).
 #[derive(Debug, Clone, Default)]
 pub struct Keymap {
     /// Options.
     pub options: KeymapOptions,
     contexts: BTreeMap<String, BTreeMap<String, Vec<BindingSpec>>>,
+    /// Commands remembered by imported entries (§2.2 rule 1, §12.15),
+    /// aligned with the entries of the pair; never serialized.
+    commands: BTreeMap<(String, String), Vec<Option<String>>>,
     /// Unknown top-level keys, kept so a save does not lose them.
     extra: toml::Table,
 }
@@ -298,20 +325,44 @@ impl Keymap {
     /// # Errors
     ///
     /// [`InputError::InvalidName`] for an invalid name;
+    /// [`InputError::RetiredAction`] for a retired name in `text_entry`
+    /// (§6.3: it could not be read back);
     /// [`InputError::Binding`] when a chord holds a button with no keymap
     /// name (it could not be saved); [`InputError::TooMany`] when the
     /// context or action limit is reached. Nothing changes on error.
     pub fn set(&mut self, context: &str, action: &str, bindings: Vec<BindingSpec>) -> Result<()> {
+        self.set_with_commands(
+            context,
+            action,
+            bindings.into_iter().map(|b| (b, None)).collect(),
+        )
+    }
+
+    /// [`Keymap::set`] for entries that remember the original command they
+    /// were imported from (§2.2 rule 1, §12.15). The commands are kept in
+    /// memory only: a saved keymap does not store them, and equality ignores
+    /// them. Of two duplicate entries the first one's command is kept.
+    ///
+    /// # Errors
+    ///
+    /// As [`Keymap::set`].
+    pub fn set_with_commands(
+        &mut self,
+        context: &str,
+        action: &str,
+        bindings: Vec<(BindingSpec, Option<String>)>,
+    ) -> Result<()> {
         for n in [context, action] {
             if !is_valid_name(n) {
                 return Err(InputError::InvalidName(n.into()));
             }
         }
+        check_not_retired(context, action)?;
         let bindings = bindings
             .iter()
-            .map(|b| {
+            .map(|(b, c)| {
                 let b = b.normalized();
-                b.validate().map(|()| b)
+                b.validate().map(|()| (b, c.clone()))
             })
             .collect::<Result<Vec<_>>>()?;
         if !self.contexts.contains_key(context) && self.contexts.len() >= MAX_KEYMAP_CONTEXTS {
@@ -327,13 +378,36 @@ impl Keymap {
                 limit: MAX_KEYMAP_ACTIONS,
             });
         }
-        actions.insert(action.into(), dedup(bindings));
+        let (list, commands) = dedup_with_commands(bindings);
+        actions.insert(action.into(), list);
+        let key = (context.to_owned(), action.to_owned());
+        if commands.iter().any(Option::is_some) {
+            self.commands.insert(key, commands);
+        } else {
+            self.commands.remove(&key);
+        }
         Ok(())
+    }
+
+    /// The command that entry `index` of `(context, action)` remembers, if
+    /// it was imported (§2.2 rule 1); `None` for entries made any other way.
+    #[must_use]
+    pub fn entry_command(&self, context: &str, action: &str, index: usize) -> Option<&str> {
+        self.commands
+            .get(&(context.to_owned(), action.to_owned()))
+            .and_then(|v| v.get(index))
+            .and_then(Option::as_deref)
+    }
+
+    fn pair_commands(&self, context: &str, action: &str) -> Option<&Vec<Option<String>>> {
+        self.commands.get(&(context.to_owned(), action.to_owned()))
     }
 
     /// Forget `(context, action)` (so an overlay keeps the lower layer's
     /// bindings). Returns whether it was present.
     pub fn remove(&mut self, context: &str, action: &str) -> bool {
+        self.commands
+            .remove(&(context.to_owned(), action.to_owned()));
         let Some(actions) = self.contexts.get_mut(context) else {
             return false;
         };
@@ -371,6 +445,15 @@ impl Keymap {
             // Names in `top` were validated and are within limits.
             let actions = out.contexts.entry(c.into()).or_default();
             actions.insert(a.into(), b.to_vec());
+            let key = (c.to_owned(), a.to_owned());
+            match top.pair_commands(c, a) {
+                Some(v) => {
+                    out.commands.insert(key, v.clone());
+                }
+                None => {
+                    out.commands.remove(&key);
+                }
+            }
         }
         for (k, v) in &top.extra {
             out.extra.insert(k.clone(), v.clone());
@@ -397,6 +480,9 @@ impl Keymap {
                     .entry(c.into())
                     .or_default()
                     .insert(a.into(), b.to_vec());
+                if let Some(v) = self.pair_commands(c, a) {
+                    out.commands.insert((c.to_owned(), a.to_owned()), v.clone());
+                }
             }
         }
         for (c, a, _) in base.iter() {
@@ -458,7 +544,8 @@ impl Keymap {
     /// # Errors
     ///
     /// [`InputError::Keymap`] when `options.sequence_timeout_ms` is outside
-    /// [`SEQUENCE_TIMEOUT_RANGE_MS`]; [`InputError::Toml`] if the preserved
+    /// [`SEQUENCE_TIMEOUT_RANGE_MS`]; [`InputError::RetiredAction`] when
+    /// `text_entry` names a retired action (§6.3); [`InputError::Toml`] if the preserved
     /// unknown keys cannot be serialized; [`InputError::TooLarge`] past
     /// [`MAX_KEYMAP_SIZE`].
     pub fn to_toml_string(&self) -> Result<String> {
@@ -471,7 +558,8 @@ impl Keymap {
         // and diff, so this holds; it is checked so a future path that
         // skips normalization fails loudly instead of writing a file that
         // loses every override on the next load.
-        for (_, _, list) in self.iter() {
+        for (c, a, list) in self.iter() {
+            check_not_retired(c, a)?;
             for b in list {
                 b.validate()?;
             }
@@ -674,7 +762,7 @@ fn io_err(op: &'static str, path: &Path, source: io::Error) -> InputError {
 
 /// Open for reading without blocking on a FIFO (Unix: `O_NONBLOCK`, which
 /// does not change how a regular file reads).
-fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
+pub(crate) fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
     let mut opts = OpenOptions::new();
     opts.read(true);
     #[cfg(unix)]
@@ -790,6 +878,23 @@ fn float(v: f32) -> String {
     } else {
         format!("{s}.0")
     }
+}
+
+fn dedup_with_commands(
+    list: Vec<(BindingSpec, Option<String>)>,
+) -> (Vec<BindingSpec>, Vec<Option<String>>) {
+    let mut out: Vec<BindingSpec> = Vec::with_capacity(list.len().min(MAX_BINDINGS_PER_ACTION));
+    let mut commands = Vec::with_capacity(out.capacity());
+    for (b, c) in list {
+        if out.len() == MAX_BINDINGS_PER_ACTION {
+            break;
+        }
+        if !out.contains(&b) {
+            out.push(b);
+            commands.push(c);
+        }
+    }
+    (out, commands)
 }
 
 fn dedup(list: Vec<BindingSpec>) -> Vec<BindingSpec> {
@@ -914,13 +1019,16 @@ fn parse_bindings(t: toml::Table, km: &mut Keymap, w: &mut Vec<KeymapWarning>) {
             });
             continue;
         }
-        let toml::Value::Table(actions) = v else {
+        let toml::Value::Table(mut actions) = v else {
             push_warning(w, || KeymapWarning::BadSection {
                 key: format!("bindings.{ctx}"),
                 reason: "expected a table".into(),
             });
             continue;
         };
+        if ctx == crate::defaults::contexts::TEXT_ENTRY {
+            migrate_text_entry(&ctx, &mut actions, w);
+        }
         if km.contexts.len() >= MAX_KEYMAP_CONTEXTS {
             push_warning(w, || KeymapWarning::Truncated {
                 what: "contexts".into(),
@@ -992,6 +1100,54 @@ fn parse_bindings(t: toml::Table, km: &mut Keymap, w: &mut Vec<KeymapWarning>) {
     }
 }
 
+/// The retired `text_entry` actions and their successors (§6.3, decision
+/// 0014 D2).
+pub const RETIRED_TEXT_ENTRY_ACTIONS: [(&str, &str); 4] = [
+    ("text_submit", "open_chat"),
+    ("text_cancel", "menu"),
+    ("text_history_prev", "text_line_up"),
+    ("text_history_next", "text_line_down"),
+];
+
+/// Refuse a retired action name in `text_entry` (§6.3): the strict reader
+/// fails on it and the lenient one renames it, so it would not read back.
+fn check_not_retired(context: &str, action: &str) -> Result<()> {
+    if context != crate::defaults::contexts::TEXT_ENTRY {
+        return Ok(());
+    }
+    match RETIRED_TEXT_ENTRY_ACTIONS
+        .iter()
+        .find(|(from, _)| *from == action)
+    {
+        Some((from, to)) => Err(InputError::RetiredAction {
+            context: context.to_owned(),
+            action: (*from).to_owned(),
+            successor: to,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Rename the retired actions of `[bindings.text_entry]` (§6.3). Each
+/// rename or drop is a warning, so the strict reader fails on them.
+fn migrate_text_entry(ctx: &str, actions: &mut toml::Table, w: &mut Vec<KeymapWarning>) {
+    for (from, to) in RETIRED_TEXT_ENTRY_ACTIONS {
+        let Some(old) = actions.remove(from) else {
+            continue;
+        };
+        let dropped = actions.contains_key(to);
+        if !dropped {
+            actions.insert(to.to_owned(), old);
+        }
+        push_warning(w, || KeymapWarning::Migrated {
+            context: ctx.to_owned(),
+            from: from.to_owned(),
+            to: to.to_owned(),
+            dropped,
+        });
+    }
+}
+
 fn parse_entry(item: toml::Value) -> std::result::Result<BindingSpec, String> {
     let reason = |e: InputError| match e {
         InputError::Binding { reason, .. } => reason,
@@ -1011,7 +1167,7 @@ fn parse_entry(item: toml::Value) -> std::result::Result<BindingSpec, String> {
             if let Some(k) = t.keys().find(|k| {
                 !matches!(
                     k.as_str(),
-                    "input" | "value" | "axis" | "scale" | "deadzone" | "invert"
+                    "input" | "value" | "on" | "axis" | "scale" | "deadzone" | "invert"
                 )
             }) {
                 return Err(format!("unknown field `{}`", clip_name(k)));
@@ -1029,11 +1185,28 @@ fn parse_entry(item: toml::Value) -> std::result::Result<BindingSpec, String> {
                     if !(-1.0..=1.0).contains(&value) {
                         return Err("`value` must be in -1..=1".into());
                     }
+                    let on = match t.get("on") {
+                        None => Activation::Press,
+                        Some(toml::Value::String(w)) => {
+                            Activation::from_name(w).ok_or_else(|| {
+                                format!(
+                                    "`on` must be press, release, tap, double or double_nearby, \
+                                     not {:?}",
+                                    clip_name(w)
+                                )
+                            })?
+                        }
+                        Some(_) => return Err("`on` must be a string".into()),
+                    };
+                    let chord = chord.with_activation(on).map_err(reason)?;
                     Ok(BindingSpec::Digital { chord, value })
                 }
                 (None, Some(toml::Value::String(s))) => {
                     if t.contains_key("value") {
                         return Err("`value` needs `input`".into());
+                    }
+                    if t.contains_key("on") {
+                        return Err("`on` needs `input`".into());
                     }
                     let axis = AnalogAxis::from_name(s)
                         .ok_or_else(|| format!("unknown axis {:?}", clip_name(s)))?;
@@ -1446,6 +1619,31 @@ jump = 4
         let eff = base.overlay(&p.keymap);
         assert_eq!(eff.get("movement", "jump"), base.get("movement", "jump"));
         assert_eq!(eff.get("movement", "walk"), Some(&[][..]));
+    }
+
+    /// §6.3: the writer never writes a retired `text_entry` name, so
+    /// `set` refuses one there; elsewhere it is an ordinary name.
+    #[test]
+    fn retired_text_entry_names_are_refused() {
+        let enter = || vec![BindingSpec::parse("Enter").unwrap()];
+        for (old, new) in RETIRED_TEXT_ENTRY_ACTIONS {
+            let mut k = Keymap::new();
+            let e = k.set("text_entry", old, enter()).unwrap_err();
+            assert!(
+                matches!(&e, InputError::RetiredAction { action, successor, .. }
+                    if action == old && *successor == new),
+                "{e}"
+            );
+            let e = k
+                .set_with_commands("text_entry", old, vec![(enter()[0].clone(), None)])
+                .unwrap_err();
+            assert!(matches!(e, InputError::RetiredAction { .. }));
+            assert_eq!(k, Keymap::new(), "nothing changes on error");
+            k.set("text_entry", new, enter()).unwrap();
+            k.set("pointer", old, enter()).unwrap();
+            let out = k.to_toml_string().unwrap();
+            assert_eq!(Keymap::parse(&out).unwrap(), k);
+        }
     }
 
     #[cfg(unix)]

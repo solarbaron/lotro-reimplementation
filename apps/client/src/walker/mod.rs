@@ -19,7 +19,9 @@
 //! 5. GPU uploads of finished products within a per-frame byte and time budget
 //!    ([`UploadBudget`]);
 //! 6. culling and draw recording into one lit world pass: terrain layers, objects (by LOD
-//!    class, faded, instanced), characters, water, sky and frills (`walker.md` §14).
+//!    class, faded, instanced; interior cells with their appearance lists, `looks`),
+//!    characters (culled by the cell they belong to, [`character_cell`]), water, sky and
+//!    frills (`walker.md` §14).
 //!
 //! Start-up work that reads the archives (world context, area names: `boot`; the place
 //! index: `places`) runs on its own threads.
@@ -48,6 +50,7 @@ pub(crate) mod geometry;
 pub(crate) mod hud;
 pub mod interiors;
 pub(crate) mod jobs;
+pub mod looks;
 pub(crate) mod minimap;
 pub mod movement;
 pub(crate) mod objects;
@@ -143,10 +146,11 @@ pub trait WalkerSession {
     fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
         let _ = out;
     }
-    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
-    /// The default sends nothing.
-    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
-        let _ = (now, text);
+    /// Sends `text` on `channel` (a `Tell` carries its peer); `false` when it was not sent
+    /// (not in the world). Only the dispatcher's channel commands call it (decision 0020
+    /// item 2). The default sends nothing.
+    fn send_chat(&mut self, now: Instant, channel: &tessera_net::ChatChannel, text: &str) -> bool {
+        let _ = (now, channel, text);
         false
     }
 }
@@ -256,6 +260,32 @@ const HUD_INTERVAL: Duration = Duration::from_millis(250);
 const MOVE_INTERVAL: Duration = Duration::from_millis(100);
 /// How often the process RSS is sampled.
 const RSS_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The loading state behind [`Walker::settled`] (see [`Walker::load_progress`]): equal
+/// snapshots mean no loading work finished or arrived in between.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LoadProgress {
+    /// The viewer is placed.
+    pub placed: bool,
+    /// Streamer: completed bundle jobs, integrated bundles, failed and retried requests.
+    pub stream: [u64; 4],
+    /// Streamer, last update: landblocks loading, near-ring blocks missing, deferred.
+    pub report: [usize; 3],
+    /// Terrain: built, meshed, layered, incomplete, pending, images waiting, failed.
+    pub terrain: [usize; 7],
+    /// Objects: parts ready, pending, failed; models; textures ready, pending.
+    pub objects: [usize; 6],
+    /// Characters: entities, animated, posed; figures ready, pending, failed.
+    pub characters: [usize; 6],
+    /// Water surfaces still loading.
+    pub water_pending: usize,
+    /// Frill sectors waiting.
+    pub frills_waiting: usize,
+    /// Sky parts all on the GPU or failed.
+    pub sky_settled: bool,
+    /// Resolver lookups outstanding.
+    pub resolver_pending: usize,
+}
 
 /// Per-frame GPU upload allowance (ARCH §8: an upload budget keeps frame times stable).
 #[derive(Debug, Clone, Copy)]
@@ -480,6 +510,8 @@ pub struct WalkerEvents {
     pub screenshot: bool,
     /// The scripted flight reached its end.
     pub flight_done: bool,
+    /// A `menu` press the game UI declined (only while a UI is attached).
+    pub menu: bool,
 }
 
 /// The walker's own keys, read as raw key codes (`walker.md` §14.2–§14.3): `[`, `]`,
@@ -543,6 +575,50 @@ pub fn camera_cell_at(
         .or(mover)
 }
 
+/// How far above a character's feet its cell is looked up (`walker.md` §13.4, the CELL
+/// rule the walker's own mover follows).
+pub const CHARACTER_CELL_RAISE: f64 = 0.05;
+
+/// The cell a character belongs to for visibility (`landblock.md` §4.11 "Moving entities",
+/// Tessera Decision: the cell its movement code assigns, cell 0 outdoors), with its owner
+/// landblock; `None` outdoors:
+/// - the user's character in walk mode on collision: the mover's cell (`player_cell`,
+///   `Some(None)` when the mover is outdoors);
+/// - a placed figure of the landblock data: the cell its static instance is drawn through
+///   (`walker.md` §14.12 (h): containment of its origin), so the figure and its static
+///   instance agree;
+/// - any other character (no collision-based movement code assigns it a cell): the cell
+///   lookup of the resident landblocks at its feet raised by [`CHARACTER_CELL_RAISE`], the
+///   lookup that movement code would run (`collision.md` §5.8.1).
+///
+/// `figure_cell` is [`ObjectLayer::figure_cell`]; `lookup` the cell lookup at a position
+/// (the walker passes [`WorldStreamer::cell_at`]'s owner landblock and cell number).
+#[must_use]
+pub fn character_cell(
+    site: &characters::CharacterSite,
+    player_cell: Option<Option<(LandblockKey, u16)>>,
+    figure_cell: impl Fn(u64) -> Option<(LandblockKey, u16)>,
+    lookup: impl Fn(&WorldPos) -> Option<(LandblockKey, u16)>,
+) -> Option<(LandblockKey, u16)> {
+    if site.player
+        && let Some(cell) = player_cell
+    {
+        return cell;
+    }
+    if let Some(tag) = site.tag
+        && let Some(placed) = figure_cell(tag)
+    {
+        return (placed.1 != OUTDOORS).then_some(placed);
+    }
+    let feet = WorldPos::new(
+        site.position.region,
+        site.position.x,
+        site.position.y,
+        site.position.z + CHARACTER_CELL_RAISE,
+    );
+    lookup(&feet).filter(|(_, c)| *c != OUTDOORS)
+}
+
 /// The walker (module docs).
 pub struct Walker {
     config: WalkerConfig,
@@ -550,6 +626,9 @@ pub struct Walker {
     set: Arc<ArchiveSet>,
     pool: WorkerPool,
     streamer: WorldStreamer,
+    /// The owners of cells reaching the walking character's square from further away
+    /// (`walker.md` §13.3, [`movement::CellOwnerIndex`]).
+    cell_owners: movement::CellOwnerIndex,
     /// The landblocks the collision walk pins (`walker.md` §13.3: the owner of the
     /// mover's cell), streamed wherever they lie.
     pins: movement::PinStreamers,
@@ -643,6 +722,10 @@ pub struct Walker {
     chat: chat::ChatOverlay,
     /// The HUD's network line (M7).
     net_line: Option<String>,
+    /// Draw the HUD text (`walker_hud`, `walker.md` §6).
+    show_hud: bool,
+    /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
+    show_minimap: bool,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -714,11 +797,22 @@ impl Walker {
         let object_arena = mesh_cfg
             .max_total_bytes
             .saturating_sub(terrain_arena_reserve(config.stream.rings.far));
+        // Interior cells drawn with their appearance lists (`landblock.md` §4.14).
+        let cell_looks = match catalog.data.registry() {
+            Ok(r) => looks::CellLooks::new(r.dictionary(), Arc::clone(ctx.source())).map(Arc::new),
+            Err(e) => {
+                tracing::warn!("property registry: {e}; cells without their appearance");
+                None
+            }
+        };
         let terrain = TerrainLayer::new(
             config.terrain_threads.max(1),
             LodSelector::from_fov(720.0, FOV_Y, config.pixel_tolerance),
             mesh_cfg,
-            Arc::new(BlockInputs::from_context(&ctx)),
+            Arc::new(BlockInputs {
+                looks: cell_looks.clone(),
+                ..BlockInputs::from_context(&ctx)
+            }),
         )?;
         let objects = ObjectLayer::new(
             Arc::clone(&set),
@@ -727,6 +821,7 @@ impl Walker {
             mesh_cfg,
             object_arena,
             Some(Arc::new(ContextSchema(Arc::clone(&ctx)))),
+            cell_looks,
         );
         let indoor_pids = match catalog.data.registry() {
             Ok(r) => IndoorPids::from_names(|n| r.dictionary().pid(n)),
@@ -736,7 +831,7 @@ impl Walker {
             }
         };
         let minimap = MinimapLayer::new(Arc::clone(&set), &pool);
-        let characters = CharacterLayer::new(
+        let mut characters = CharacterLayer::new(
             config.characters,
             Arc::new(FigureContext {
                 set: Arc::clone(&set),
@@ -747,6 +842,7 @@ impl Walker {
             }),
             &pool,
         );
+        characters.set_lod_classes(ctx.systems().lod_classes.clone());
         {
             let mut s = lock(&shared);
             s.catalog = Some(Arc::clone(&catalog));
@@ -822,6 +918,7 @@ impl Walker {
         let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
         let resolver = Resolver::new(Arc::clone(&ctx), objects.materials())?;
         let systems = config.systems;
+        let cell_owners = movement::CellOwnerIndex::from_context(&ctx);
         Ok(Self {
             far,
             help,
@@ -831,6 +928,7 @@ impl Walker {
             ctx,
             set,
             pins: movement::PinStreamers::new(Some(pool.clone())),
+            cell_owners,
             pool,
             streamer,
             terrain,
@@ -894,6 +992,54 @@ impl Walker {
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
             net_line: None,
+            show_hud: true,
+            show_minimap: true,
+        })
+    }
+
+    /// The input mapper and its clock (the game UI's step 1, `crate::ui_host`).
+    pub fn mapper_mut(&mut self) -> (&mut tessera_input::InputMapper, std::time::Duration) {
+        self.controls.mapper_mut()
+    }
+
+    /// Attaches or detaches a game UI: Escape then gives `menu` to the UI and game code
+    /// instead of quitting, and the overlays follow `hud` and `minimap` (`walker.md`
+    /// §5–§6; they draw under the UI pass, which is recorded after [`Walker::draw`]).
+    pub fn set_ui_attached(&mut self, on: bool, hud: bool, minimap: bool) {
+        self.controls.set_ui_attached(on);
+        // The help line names `menu` "menu" while a UI is attached (`walker.md` §5).
+        self.help = if on {
+            match self.help.strip_suffix(" quit") {
+                Some(rest) => format!("{rest} menu"),
+                None => self.help.clone(),
+            }
+        } else {
+            match self.help.strip_suffix(" menu") {
+                Some(rest) => format!("{rest} quit"),
+                None => self.help.clone(),
+            }
+        };
+        self.show_hud = hud;
+        self.show_minimap = minimap;
+    }
+
+    /// The viewer's minimap input for the game UI (`game-panels.md` §8.3): region,
+    /// landblock, global coordinates and compass heading; area and coordinate labels are
+    /// not filled yet. `None` before the viewer is placed.
+    #[must_use]
+    pub fn radar_input(&self) -> Option<tessera_ui::game::radar::RadarInput> {
+        let pos = self.focus()?;
+        let key = pos.landblock()?;
+        let compass = (90.0 - self.controls.heading().to_degrees()).rem_euclid(360.0);
+        Some(tessera_ui::game::radar::RadarInput {
+            region: pos.region,
+            x: key.x(),
+            y: key.y(),
+            cell: 0,
+            global: (pos.x as f32, pos.y as f32),
+            heading: compass,
+            has_player: true,
+            ..tessera_ui::game::radar::RadarInput::default()
         })
     }
 
@@ -904,14 +1050,22 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
-        use tessera_input::KeyCode as K;
         // While the chat input is open, keys are typed text, not walker keys.
-        if !self.chat.is_open()
-            && let RawEvent::Key {
-                key,
-                pressed: true,
-                repeat: false,
-            } = event
+        if !self.chat.is_open() {
+            self.world_key(event);
+        }
+        chat::route(&mut self.chat, &mut self.controls, event);
+    }
+
+    /// The walker's own keys ([`Self::input`]) without the chat overlay: what a game UI
+    /// (M5) forwards when no UI element has the keyboard focus.
+    pub fn world_key(&mut self, event: &RawEvent) {
+        use tessera_input::KeyCode as K;
+        if let RawEvent::Key {
+            key,
+            pressed: true,
+            repeat: false,
+        } = event
             && !self.taken_keys.contains(key)
         {
             match key {
@@ -937,7 +1091,6 @@ impl Walker {
                 _ => {}
             }
         }
-        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Switches system `s` on or off at run time.
@@ -1083,6 +1236,58 @@ impl Walker {
         out
     }
 
+    /// A snapshot of the loading work behind [`Walker::settled`]: completion counters and
+    /// outstanding-work counts of every layer it checks. Two snapshots differ when some
+    /// loading work finished or new work arrived; per-frame draw and timing counters are
+    /// left out, so a scene that only renders gives equal snapshots. Headless runs that
+    /// wait for the settled state as long as loading progresses compare them
+    /// ([`crate::headless::SettleWait`]).
+    #[must_use]
+    pub fn load_progress(&self) -> LoadProgress {
+        let st = self.streamer.stats();
+        let t = self.terrain.stats();
+        let o = self.objects.stats();
+        let c = self.characters.stats();
+        LoadProgress {
+            placed: self.controls.placed(),
+            stream: [st.jobs, st.integrated, st.failed, st.retried],
+            report: [
+                self.last_report.loading,
+                self.last_report.near_missing,
+                self.last_report.deferred,
+            ],
+            terrain: [
+                t.built,
+                t.meshed,
+                t.layered,
+                t.incomplete,
+                t.pending,
+                t.images_waiting,
+                t.failed,
+            ],
+            objects: [
+                o.parts_ready,
+                o.parts_pending,
+                o.parts_failed,
+                o.models,
+                o.textures_ready,
+                o.textures_pending,
+            ],
+            characters: [
+                c.entities,
+                c.animated,
+                c.posed,
+                c.figures_ready,
+                c.figures_pending,
+                c.figures_failed,
+            ],
+            water_pending: self.water.stats().pending,
+            frills_waiting: self.frills.stats().waiting,
+            sky_settled: self.env.sky_settled(&self.objects),
+            resolver_pending: self.resolver.pending(),
+        }
+    }
+
     /// The character layer (tests and diagnostics).
     #[must_use]
     pub fn characters(&self) -> &CharacterLayer {
@@ -1095,11 +1300,14 @@ impl Walker {
         self.controls.placed().then(|| self.controls.focus())
     }
 
-    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds.
+    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds. Lines typed
+    /// in the chat overlay go to `commands`, the client's command dispatcher (decision
+    /// 0020), which also gives the lines the client posts.
     pub fn update(
         &mut self,
         renderer: &mut Renderer<'_>,
         world: Option<&mut dyn WalkerSession>,
+        commands: &mut dyn crate::plugins::CommandSink,
         now: Instant,
         dt: f32,
     ) -> WalkerEvents {
@@ -1135,6 +1343,9 @@ impl Walker {
             match placement(loc.cause, self.controls.placed(), self.flight.is_some()) {
                 Placement::Place => {
                     tracing::info!(%r, x = pos.x, y = pos.y, z = pos.z, cause = ?loc.cause, "viewer placed");
+                    // A placement is a jump: no cross-fade or sun-change fade runs across it
+                    // (`landblock.md` §4.13 Tessera Decision, `environment.md` §11.6 step 2).
+                    self.env.mark_immediate();
                     // Placed for the first time: the configured heading; later teleports
                     // keep the session's.
                     let yaw = match (self.controls.placed(), self.config.heading) {
@@ -1193,12 +1404,21 @@ impl Walker {
         }
         let tiles = self.terrain.tiles().clone();
         let ground = |gx: f64, gy: f64| tiles.height_at(gx, gy);
+        // The owners of cells reaching the walking character's square from further away
+        // (`walker.md` §13.3): asked for around its feet before the step needs them.
+        if self.controls.mode() == MoveMode::Walk
+            && let Some(feet) = self.controls.physics().and_then(|p| p.feet().landblock())
+        {
+            self.cell_owners.update(feet);
+        }
         let collision = movement::PinnedCollision {
             main: &self.streamer,
             pins: &self.pins,
+            owners: Some(&self.cell_owners),
         };
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
+        events.menu = ce.menu;
         events.screenshot = ce.screenshot;
         if ce.toggle_debug {
             self.detail = !self.detail;
@@ -1226,12 +1446,20 @@ impl Walker {
         if let Some(focus) = focus {
             let t = Instant::now();
             self.last_report = self.streamer.update(focus);
-            // The pinned landblocks a step needs wherever they lie (`walker.md` §13.3).
+            // The pinned landblocks a step needs wherever they lie (`walker.md` §13.3): the
+            // walker's own, and the owners the cell-owner index names.
             let pins = self
                 .controls
                 .physics()
                 .filter(|_| self.controls.mode() == MoveMode::Walk)
-                .map(movement::PhysicsWalker::pins)
+                .map(|p| {
+                    let collision = movement::PinnedCollision {
+                        main: &self.streamer,
+                        pins: &self.pins,
+                        owners: Some(&self.cell_owners),
+                    };
+                    p.step_pins(&collision)
+                })
                 .unwrap_or_default();
             self.pins.update(self.streamer.context(), &pins);
             self.stream_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -1346,6 +1574,7 @@ impl Walker {
             self.characters.set_distances(characters::CharacterFrame {
                 g: oframe.g,
                 multiplier: oframe.settings.object_multiplier(),
+                shadow_multiplier: oframe.settings.shadow_multiplier(),
                 dt: oframe.dt,
                 camera_moved: oframe.camera_moved,
                 lod: oframe.lod,
@@ -1394,27 +1623,29 @@ impl Walker {
                 .controls
                 .avatar()
                 .or_else(|| placed.then(|| (self.controls.focus(), self.controls.heading())));
+            // `sound.md` §10.8.6 step 1: the walking character's own cell (physics), never
+            // the camera's; in free flight the camera eye's cell lookup.
+            let player_cell = if self.controls.mode() == MoveMode::Walk {
+                self.controls
+                    .physics()
+                    .and_then(movement::PhysicsWalker::cell)
+            } else {
+                camera_cell_at(&self.streamer, &self.controls.eye().0, None)
+            };
             if let Some(audio) = self.audio.as_mut() {
                 audio.update(crate::audio::AudioInput {
                     dt: f64::from(dt),
                     streamer: &self.streamer,
                     eye,
                     player,
+                    player_cell,
                 });
             }
         }
 
         let mut chat_in = Vec::new();
-        let mut unsent = None;
         if let Some(w) = world.as_deref_mut() {
             w.drain_chat(&mut chat_in);
-            while let Some(text) = self.chat.take_outgoing() {
-                if !w.send_chat(now, &text) {
-                    unsent = Some("Not in the world: chat not sent");
-                }
-            }
-        } else if self.chat.take_outgoing().is_some() {
-            unsent = Some("Not connected: chat not sent");
         }
         let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
         if self
@@ -1423,9 +1654,7 @@ impl Walker {
         {
             self.notice = None;
         }
-        if let Some(text) = unsent {
-            self.chat.push_local(text, now);
-        }
+        chat::dispatch(&mut self.chat, commands, &mut world, now);
         let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
         self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
@@ -1652,12 +1881,12 @@ impl Walker {
     }
 
     /// The indoor record's inputs at the camera position (`landblock.md` §4.13): looked up
-    /// at [`env::lookup_target`] (in a cell: the cell's property set, then its owner's
-    /// landblock info and block map; otherwise the landblock info and block map under the
+    /// at [`env::lookup_target`] (in a cell: its owner's landblock info and block map, the
+    /// cell's own set not read, L32; otherwise the landblock info and block map under the
     /// eye); re-read when that landblock changes and otherwise at most every
     /// [`INDOOR_REREAD`].
     fn indoor_inputs(&mut self, now: Instant, eye: &WorldPos) -> IndoorInputs {
-        let (key, cell) = env::lookup_target(self.camera_cell, eye);
+        let (key, _cell) = env::lookup_target(self.camera_cell, eye);
         let Some(key) = key else {
             return IndoorInputs::read(&self.indoor_pids, |_| None);
         };
@@ -1667,11 +1896,8 @@ impl Walker {
         {
             return *inputs;
         }
-        let inputs = env::indoor_inputs_at(
-            self.streamer.bundle(key).map(|b| &**b),
-            cell,
-            &self.indoor_pids,
-        );
+        let inputs =
+            env::indoor_inputs_at(self.streamer.bundle(key).map(|b| &**b), &self.indoor_pids);
         self.indoor = Some((key, now, inputs));
         inputs
     }
@@ -2215,12 +2441,44 @@ impl Walker {
             // The free-fly camera hides the avatar (`m4-5-visual.md` §4.0).
             self.characters
                 .set_hide_player(self.controls.mode() == MoveMode::Fly);
+            // Which objects the camera's cell lets through (`landblock.md` §4.11–§4.12): an
+            // outdoor object only from outdoors; an interior one through a visibility cell
+            // the portal walk reaches.
+            let all_interiors = self.config.interiors;
+            let inside = self.camera_cell.is_some();
+            let drawn = |key: LandblockKey, cell: u16| {
+                if cell == OUTDOORS {
+                    !inside
+                } else {
+                    all_interiors || interior.as_ref().is_some_and(|v| v.draws(key, cell))
+                }
+            };
+            // Characters are culled by the cell they belong to like every drawn object
+            // (`landblock.md` §4.11 "Moving entities", Tessera Decision there).
+            let player_cell = (self.controls.mode() == MoveMode::Walk)
+                .then(|| self.controls.physics().map(movement::PhysicsWalker::cell))
+                .flatten();
+            let streamer = &self.streamer;
+            let objects = &self.objects;
+            let visible = |site: &characters::CharacterSite| {
+                let cell = character_cell(
+                    site,
+                    player_cell,
+                    |tag| objects.figure_cell(tag),
+                    |p| streamer.cell_at(p).map(|(k, c)| (k, c.index)),
+                );
+                match cell {
+                    Some((k, c)) => drawn(k, c),
+                    None => !inside,
+                }
+            };
             self.characters.prepare_draws(
                 frame,
                 &anchor,
                 eye,
                 &frustum,
                 &self.objects,
+                &visible,
                 &mut char_draws,
             );
             let lit = self.systems.on(System::Lit);
@@ -2250,15 +2508,6 @@ impl Walker {
             }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
-            let all_interiors = self.config.interiors;
-            let inside = self.camera_cell.is_some();
-            let drawn = |key: LandblockKey, cell: u16| {
-                if cell == OUTDOORS {
-                    !inside
-                } else {
-                    all_interiors || interior.as_ref().is_some_and(|v| v.draws(key, cell))
-                }
-            };
             self.objects.draw(
                 pass,
                 &anchor,
@@ -2344,14 +2593,20 @@ impl Walker {
                 .clear(SKY);
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
-        if self.config.hud {
+        let hud = self.config.hud && self.show_hud;
+        if hud {
             self.hud.draw(overlay, 10.0, 10.0);
         }
-        // The chat stays visible while its input is open, even without the HUD.
-        if self.config.hud || self.chat.is_open() {
+        // The chat stays visible while its input is open, even without the HUD. With a game
+        // UI attached its chat window shows the chat instead (no second display).
+        if (hud && !self.controls.ui_attached()) || self.chat.is_open() {
             self.chat.draw(overlay, 10.0, h as f32 - 10.0);
         }
-        if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
+        if let (true, Some(pos), Some(anchor)) = (
+            self.config.hud && self.show_minimap,
+            self.focus(),
+            self.anchor,
+        ) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
                 x: w as f32 - size - 14.0,
@@ -2506,6 +2761,73 @@ impl Walker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn characters_belong_to_the_cell_their_movement_assigns() {
+        // `landblock.md` §4.11 "Moving entities", Tessera Decision.
+        let k = LandblockKey::new(1, 0x91, 0xA6).expect("key");
+        let far = LandblockKey::new(1, 0x93, 0xA6).expect("key");
+        let site = |tag: Option<u64>, player: bool| characters::CharacterSite {
+            tag,
+            player,
+            position: WorldPos::new(1, 100.0, 200.0, -10.0),
+        };
+        // The lookup sees the feet raised by 0.05 and finds cell 9 of `far`.
+        let lookup = |p: &WorldPos| {
+            assert!((p.z - (-10.0 + CHARACTER_CELL_RAISE)).abs() < 1e-9);
+            Some((far, 9))
+        };
+        let outdoors = |_: &WorldPos| None;
+        let no_figure = |_: u64| None;
+        // The player in walk mode on collision: the mover's cell, even outdoors.
+        assert_eq!(
+            character_cell(&site(None, true), Some(Some((k, 5))), no_figure, lookup),
+            Some((k, 5))
+        );
+        assert_eq!(
+            character_cell(&site(None, true), Some(None), no_figure, lookup),
+            None,
+            "the mover is outdoors"
+        );
+        // Without a mover the player's cell is looked up like any character's.
+        assert_eq!(
+            character_cell(&site(None, true), None, no_figure, lookup),
+            Some((far, 9))
+        );
+        // A placed figure takes its static instance's cell, outdoors included.
+        let tag = figures::figure_tag(k, 3);
+        let figure = |t: u64| (t == tag).then_some((k, 7));
+        assert_eq!(
+            character_cell(&site(Some(tag), false), None, figure, outdoors),
+            Some((k, 7))
+        );
+        let outside = |t: u64| (t == tag).then_some((k, OUTDOORS));
+        assert_eq!(
+            character_cell(&site(Some(tag), false), None, outside, lookup),
+            None
+        );
+        // A placed figure whose landblock's objects are not in the layer: looked up.
+        assert_eq!(
+            character_cell(&site(Some(tag), false), None, no_figure, lookup),
+            Some((far, 9))
+        );
+        // Any other character: the lookup at its feet; outdoors when none contains it.
+        assert_eq!(
+            character_cell(&site(None, false), None, no_figure, lookup),
+            Some((far, 9))
+        );
+        assert_eq!(
+            character_cell(&site(None, false), None, no_figure, outdoors),
+            None
+        );
+        assert_eq!(
+            character_cell(&site(None, false), None, no_figure, |_: &WorldPos| Some((
+                k, OUTDOORS
+            ))),
+            None,
+            "cell 0 is outdoors"
+        );
+    }
 
     #[test]
     fn keys_the_keymap_binds_are_left_to_it() {

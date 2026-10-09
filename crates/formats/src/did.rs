@@ -461,6 +461,8 @@ impl DidKind {
             | Self::LodClassTable
             | Self::GameTime
             | Self::CollisionMesh
+            | Self::UiLayout
+            | Self::Font
             | Self::Landblock(
                 LandblockKind::Heightmap
                 | LandblockKind::BlockMap
@@ -475,14 +477,11 @@ impl DidKind {
             | Self::ScriptLibrary
             | Self::ScriptStateObject
             | Self::ScriptStateVariant => Evidence::Specified,
-            Self::SingletonTable
-            | Self::KeyMap
-            | Self::Compositor
-            | Self::Font
-            | Self::ActionMap => Evidence::Labelled,
+            Self::SingletonTable | Self::KeyMap | Self::Compositor | Self::ActionMap => {
+                Evidence::Labelled
+            }
             Self::EncounterTable
             | Self::UiScene
-            | Self::UiLayout
             | Self::StringTableReported
             | Self::ImposterTable
             | Self::ComputeShader

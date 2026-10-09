@@ -13,9 +13,9 @@ use tessera_material::records::{CullMode, VALUE_TYPE_COLOR, VALUE_TYPE_CURVE, VA
 use tessera_material::transform::{MAX_TEXTURE_MATRICES, TransformValue};
 use tessera_material::water::water_ids;
 use tessera_material::{
-    CurveState, CurveStates, FloatCurve, FnSource, MaterialLibrary, MaterialRecord, NamedValue,
-    ObjectInputs, ShaderInterface, ShaderRecord, SurfaceInputs, TextureMatrixLayout,
-    TextureTransform, WaterMaterial, WaterParams, program_time,
+    CurveState, CurveStates, DistanceFog, FloatCurve, FnSource, MaterialLibrary, MaterialRecord,
+    NamedValue, ObjectInputs, ShaderInterface, ShaderRecord, SurfaceInputs, TextureMatrixLayout,
+    TextureTransform, UNLIT_FOG_WHEN_UNKNOWN, WaterMaterial, WaterParams, program_time,
 };
 
 // ---------------------------------------------------------------------------------------
@@ -557,6 +557,10 @@ fn lighting_inputs_follow_section_4_1() {
         "flag 0: bound by semantic, not by name"
     );
     assert_eq!(ia.time, 1.0);
+    // lighting.md §2.1: a lit record's base pass always contains distance fog.
+    assert!(a.features.lit);
+    assert_eq!(ia.fog, DistanceFog::Lit);
+    assert!(ia.fog.fogged());
     assert!(SurfaceInputs::is_static(&a));
 
     let b = lib.resolve_surface(Did(0x3100_0022)).unwrap();
@@ -624,6 +628,32 @@ fn unlit_record_without_declarations_gets_defaults() {
     assert!(i.depth_test && i.depth_write);
     assert!(i.alpha_test.is_none());
     assert!(i.named.is_empty());
+    // lighting.md §7 code 0x00: whether the unlit program reads the fog inputs is not
+    // known from the record (material.md §17 OPEN), so the switch takes the Decision.
+    assert_eq!(i.fog, DistanceFog::Unlit { reads_fog: None });
+    assert_eq!(r.distance_fog(), i.fog);
+    assert_eq!(i.fog.fogged(), UNLIT_FOG_WHEN_UNKNOWN);
+}
+
+#[test]
+fn distance_fog_switch() {
+    assert!(DistanceFog::Lit.fogged());
+    assert!(
+        DistanceFog::Unlit {
+            reads_fog: Some(true)
+        }
+        .fogged()
+    );
+    assert!(
+        !DistanceFog::Unlit {
+            reads_fog: Some(false)
+        }
+        .fogged()
+    );
+    assert_eq!(
+        DistanceFog::Unlit { reads_fog: None }.fogged(),
+        UNLIT_FOG_WHEN_UNKNOWN
+    );
 }
 
 // ---------------------------------------------------------------------------------------

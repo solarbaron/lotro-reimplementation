@@ -15,7 +15,9 @@
 //! - [`CrossFade`]: the clips of a layer stopped together while a new clip starts: each
 //!   stopped clip falls linearly from the weight it had to 0 and the new clip rises
 //!   linearly from 0 to 1, over one fade time (a Switch cross-fade, `script-table.md`
-//!   §7.1; a clip's own `RampIn` and `RampOut` when they are equal);
+//!   §7.1; a clip's own `RampIn` and `RampOut` when they are equal). Interrupting a fade
+//!   that is still running follows §7.1 step 5 and `skeleton-anim.md` §14.9: the clips
+//!   still fading out stop at once and the clip coming in carries on from its weight;
 //! - [`SpeedBlend`]: clips at parameter anchors weighted like a scalar blend
 //!   (`script-table.md` §7.3: the weights jump with the parameter), phase-synchronised;
 //! - [`Source::Group`]: several clips playing together on one layer, each with its own
@@ -79,7 +81,8 @@ impl Playback {
     /// `fraction` × duration, so the pose never changes with elapsed time. `fraction` is the
     /// fraction of the whole duration (§6.7 step 2: the held fraction × the played length,
     /// over the duration; [`crate::held_clip_fraction`]); it is limited to `0 ..= 1`
-    /// here, and NaN reads 0 (the §6.7 step 1 Decision).
+    /// here, and a fraction that is not finite reads 0 ([`Playback::set_held_fraction`]:
+    /// NaN by the §6.7 step 1 Decision, ±∞ as a Tessera guard).
     #[must_use]
     pub fn held(clip: Arc<BoundClip>, fraction: f32) -> Self {
         let mut p = Self::new(clip, Wrap::Once);
@@ -90,9 +93,10 @@ impl Playback {
 
     /// Moves a held clip to `fraction` of its duration at once (a changed driving
     /// property, `script-table.md` §6.7 step 3). Unlike [`Playback::set_phase`] the
-    /// fraction 1 is kept as the clip's last pose. A non-finite fraction reads 0: the only
-    /// one the §6.7 rules can produce is NaN on a looping node, whose Tessera Decision is 0
-    /// (§6.7 step 1 and its answer).
+    /// fraction 1 is kept as the clip's last pose. A fraction that is not finite (NaN, ±∞)
+    /// reads 0: the only one the §6.7 rules can produce is NaN on a looping node, whose
+    /// Tessera Decision is 0 (§6.7 step 1 and its answer); ±∞ reading 0 is a Tessera guard
+    /// for other callers ([`crate::held_clip_fraction`] always returns a finite value).
     pub fn set_held_fraction(&mut self, fraction: f32) {
         let d = self.clip.duration();
         self.time = if d > 0.0 && d.is_finite() {
@@ -191,17 +195,24 @@ fn unit(x: f32) -> f32 {
 }
 
 /// The clips of a layer stopped together while a new clip starts, over one fade time
-/// (`skeleton-anim.md` §6.5, K21): each stopped clip's overall weight falls linearly from
-/// the value it had when the fade started to 0, and the new clip's rises linearly from 0
-/// to 1. The stopped clips keep playing (their times advance) until the fade ends; their
-/// own earlier ramps are abandoned.
+/// (`skeleton-anim.md` §6.5, K21; a Switch cross-fade, `script-table.md` §7.1 step 4):
+/// each stopped clip's overall weight falls linearly from the value it had when the fade
+/// started to 0, and the new clip's rises linearly from 0 to 1 (the complement when one
+/// clip is stopped at weight 1). The stopped clips keep playing (their times advance)
+/// until the fade ends; their own earlier ramps are abandoned.
+///
+/// A fade that interrupts another fade still running is **placed** (`script-table.md` §7.1
+/// step 5, `skeleton-anim.md` §14.9, second paragraph; [`CrossFade::from_source`]): its
+/// start lies before the interruption, so [`CrossFade::elapsed`] does not begin at 0.
 #[derive(Debug, Clone)]
 pub struct CrossFade {
-    /// The stopped clips, each with its overall weight when the fade started (`0 ..= 1`).
+    /// The stopped clips, each with its overall weight at the fade's start (`0 ..= 1`; for
+    /// a placed fade, at its placed start).
     pub from: Vec<(Playback, f32)>,
     /// The incoming clip.
     pub to: Playback,
-    /// Seconds since the fade started.
+    /// Seconds since the fade started (for a placed fade, since its placed start, which
+    /// lies before the interruption).
     pub elapsed: f32,
     /// Fade length in seconds (0 = immediate).
     pub duration: f32,
@@ -219,18 +230,40 @@ impl CrossFade {
     /// `duration` seconds; with `sync_phase` the incoming clip starts at the phase of the
     /// source's newest clip. Stopped clips without weight are dropped, and beyond
     /// [`MAX_LAYER_CLIPS`] − 1 stopped clips the weakest are dropped.
+    ///
+    /// When `from` is itself a fade still running (a Switch whose property changes again
+    /// during its cross-fade, `script-table.md` §7.1 step 5, `skeleton-anim.md` §14.9), its
+    /// clips still fading out are stopped at once, and its incoming clip, at weight *w*,
+    /// becomes the one clip fading out: it continues from *w* down to 0 over *w* ×
+    /// `duration` seconds, while `to` rises as the complement from 1 − *w*. (A transition
+    /// port that cuts a fade without this continuity, §7.1 step 2.4, is not modelled here.)
     #[must_use]
     pub fn from_source(from: Source, mut to: Playback, duration: f32, sync_phase: bool) -> Self {
         if sync_phase {
             to.set_phase(from.phase());
         }
+        let duration = finite_or_zero(duration).max(0.0);
         let mut stopped = Vec::with_capacity(MAX_LAYER_CLIPS);
-        from.into_weighted(&mut stopped);
+        let elapsed = match from {
+            Source::CrossFade(x) => {
+                let w = x.weight();
+                if w > 0.0 {
+                    stopped.push((x.to, 1.0));
+                }
+                // Placed so that the carried clip's weight 1 × (1 − elapsed / duration)
+                // is w now.
+                (1.0 - w) * duration
+            }
+            other => {
+                other.into_weighted(&mut stopped);
+                0.0
+            }
+        };
         let mut f = Self {
             from: stopped,
             to,
-            elapsed: 0.0,
-            duration: finite_or_zero(duration).max(0.0),
+            elapsed,
+            duration,
         };
         f.limit_clips();
         f
@@ -507,7 +540,10 @@ impl Source {
     }
 
     /// Moves every clip with a weight into `out` with its current overall weight (a speed
-    /// blend's clips become plain looping playbacks at the shared phase and rate).
+    /// blend's clips become plain looping playbacks at the shared phase and rate; a fade
+    /// is frozen at its weights). Used where clips keep playing beside a new one
+    /// ([`Animator::add`]) and where clips that are not a fade in progress are stopped
+    /// ([`CrossFade::from_source`]).
     fn into_weighted(self, out: &mut Vec<(Playback, f32)>) {
         match self {
             Source::Clip(p) => out.push((p, 1.0)),
@@ -792,8 +828,10 @@ impl Animator {
 
     /// Stops every clip of layer `layer` and starts `next` there, over `fade` seconds
     /// (`skeleton-anim.md` §6.5): each stopped clip's weight falls linearly from its
-    /// current value to 0 and `next` rises linearly from 0 to 1 ([`CrossFade`]). An
-    /// immediate switch when the layer is empty or `fade` ≤ 0.
+    /// current value to 0 and `next` rises linearly from 0 to 1 ([`CrossFade`]). When the
+    /// layer is still in a fade, that fade is interrupted as `script-table.md` §7.1 step 5
+    /// says ([`CrossFade::from_source`]). An immediate switch when the layer is empty or
+    /// `fade` ≤ 0.
     ///
     /// # Errors
     ///

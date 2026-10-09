@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The walker's environment (`walker.md` §14.3): the game clock with its start time and
-//! rate (`environment.md` §11.1, epoch OPEN, so settable), the day description of the sky
-//! key under the camera with its keyframe blending and cross-fade (`tessera-world`'s
-//! [`Environment`]), interior fog of the camera's cell (§7.2, §12), and from them the
-//! frame's lighting: sun or moon with its shadow, ambient and hemispheric terms, distance
-//! fog (`lighting.md` §8.1, §9, §10), the point lights of the Light entities near the eye
-//! (§8.3) and the global distance limit *G* (`walker.md` §11.3). The sky objects of the
-//! description in use are drawn around the camera (`environment.md` §11.4, §12).
+//! rate (`environment.md` §11.1, epoch OPEN, so settable), the outdoor and indoor tracks
+//! (`environment.md` §11.6, `landblock.md` §4.13; `tessera-world`'s [`Environment`], each
+//! with its sky-key cross-fade), the interior overrides of the indoor track (§7.2), the
+//! composed state of the track in use ([`compose_state`], §11.7) smoothed by the 5 s
+//! sun-change fade ([`SunChangeFade`], §11.6 E34, E37), and from it the frame's lighting:
+//! sun or moon with its shadow, ambient and hemispheric terms, distance fog (`lighting.md`
+//! §8.1, §9, §10), the point lights of the Light entities near the eye (§8.3) and the
+//! global distance limit *G* (`walker.md` §11.3). The sky objects of the track in use are
+//! drawn around the camera (`environment.md` §11.4, §12).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -21,7 +23,9 @@ use tessera_render::{
     Fog, FrameLighting, Light, LightReach, Rgba, SkyDraw, SkyObject, SunLight, SunShadow,
 };
 use tessera_world::draw_distance::{FogClip, global_limit};
-use tessera_world::environment::{SkyValues, property_colour};
+use tessera_world::environment::{
+    EnvState, SkyValues, SunChangeFade, outdoor_sun_present, property_colour,
+};
 use tessera_world::lighting::LightRecord;
 use tessera_world::{
     Environment, EnvironmentFrame, LandblockBundle, LandblockKey, SkyLibrary, WorldPos,
@@ -66,7 +70,7 @@ pub const MAX_START_DAY: i64 = 20_000_000;
 /// The sun-present tolerance (`landblock.md` §4.13, `environment.md` §11.7 step 9): a sun
 /// colour within this of black in every channel (inclusive), or a brightness below it, gives
 /// no main light.
-pub const SUN_EPSILON: f32 = 0.0002;
+pub const SUN_EPSILON: f32 = tessera_world::environment::SUN_EPSILON;
 /// Fog end limits (`environment.md` §11.7 step 5, `lighting.md` §10): the keyframe's end is
 /// limited to at most [`FOG_FAR_MAX`] **before** the interior override; after it the end
 /// is raised to at least [`FOG_FAR_MIN`] and the start limited to
@@ -102,20 +106,16 @@ pub fn scaled_rate(rate: f64, factor: f64) -> f64 {
     }
 }
 
-/// Whether the outdoor record has a main light (`landblock.md` §4.13, `environment.md`
-/// §11.7 step 9, colour and brightness tests): off when every channel of the sun colour is
-/// within [`SUN_EPSILON`] of black (inclusive) or the brightness *bd* is below
-/// [`SUN_EPSILON`] (strict; a non-finite brightness counts as below). The walker's
-/// [`SkyValues`] keep no alpha of the sun colour, so the colour test is on R, G and B only,
-/// and the test on the blended `effect` is not made (`walker.md` §14.3 OPENs).
+/// Whether blended keyframe values give the outdoor record a main light by the test of
+/// `environment.md` §11.7 step 9 (`landblock.md` §4.13): the blended `effect` is the null
+/// DID, the sun colour is not black within [`SUN_EPSILON`] (inclusive; the blended colour
+/// has alpha 1, `environment.md` §11.3 step 4) and the brightness *bd* is at least
+/// [`SUN_EPSILON`] (a brightness that is not a number counts as below). The tracks carry the
+/// flag in [`SkyValues::sun_present`], which a sky-key cross-fade keeps on while either side
+/// has a sun (§11.6 step 4).
 #[must_use]
 pub fn sun_present(values: &SkyValues) -> bool {
-    let black = values
-        .sun_colour
-        .iter()
-        .all(|c| c.is_finite() && c.abs() <= SUN_EPSILON);
-    let dim = values.sun_brightness.is_nan() || values.sun_brightness < SUN_EPSILON;
-    !(black || dim)
+    outdoor_sun_present(values.effect, values.sun_colour, values.sun_brightness)
 }
 
 /// Fog start and end after the limits of `environment.md` §11.7 step 5: the keyframe's end
@@ -274,21 +274,22 @@ pub struct Composed {
     pub sky_fogged: bool,
 }
 
-/// The frame lighting of the record in use (`walker.md` §14.3, `landblock.md` §4.13):
-/// `values` are the record's blended values (`None` without a sky library or with `sky`
-/// off: the defaults of `lighting.md` §8.1, no fog and no interior overrides); `indoor`
-/// selects the indoor record, which takes the interior overrides and never has a main
-/// light. The outdoor record has one when [`sun_present`]. `eye` and `forward` place the
-/// shadow map; `time` is the material clock.
+/// `fog_extra` at or below this counts as 0 (`environment.md` §11.7 step 5).
+pub const FOG_EXTRA_MIN: f32 = 0.001;
+
+/// The composed state of the record in use (`walker.md` §14.3, `landblock.md` §4.13,
+/// `environment.md` §11.7): `values` are the record's blended values (`None` without a sky
+/// library or with `sky` off: the defaults of `lighting.md` §8.1, no fog and no interior
+/// overrides); `indoor` selects the indoor record, which takes the interior overrides and
+/// never has a main light. The outdoor record has one while [`SkyValues::sun_present`].
+/// Fog follows the fog switch (and `InteriorFogType` indoors) with the limits of
+/// [`fog_distances`]; `fog_extra` is kept only with fog on and above [`FOG_EXTRA_MIN`].
 #[must_use]
-pub fn compose(
+pub fn compose_state(
     values: Option<&SkyValues>,
     indoor: Option<&IndoorInputs>,
     systems: &Systems,
-    eye: Vec3,
-    forward: Vec3,
-    time: f32,
-) -> Composed {
+) -> EnvState {
     let defaults = SkyValues::defaults();
     let v = values.unwrap_or(&defaults);
     let mut li = v.lighting();
@@ -300,8 +301,6 @@ pub fn compose(
         if let Some((x, y)) = ind.ambient_xy() {
             li.ambient_up = x;
             li.ambient_down = y;
-            li.frame_ambient = std::array::from_fn(|i| 0.5 * (x[i] + y[i]));
-            li.frame_hemispheric = std::array::from_fn(|i| 0.5 * (x[i] - y[i]));
         }
         fog_on = ind.fog_on(fog_on);
         if let Some(c) = ind.fog_colour {
@@ -314,16 +313,55 @@ pub fn compose(
         overrides.and_then(|i| i.fog_near),
         overrides.and_then(|i| i.fog_far),
     );
-    let toward = Vec3::from_array(li.sun_travel) * -1.0;
-    let toward = toward.try_normalize().unwrap_or(Vec3::Z);
-    let fog = fog_on.then_some(Fog {
-        near,
-        far,
-        color: li.fog_colour,
+    let travel = Vec3::from_array(li.sun_travel)
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z);
+    EnvState {
+        // Sun and moon give no light indoors (§4.13), nor a black or dim sun or a weather
+        // effect outdoors (`environment.md` §11.7 step 9).
+        sun_present: indoor.is_none() && v.sun_present,
+        sun_travel: travel.to_array(),
+        sun_colour: v.sun_colour,
+        sun_brightness: v.sun_brightness,
+        sun_specular: v.sun_specular,
+        ambient_up: li.ambient_up,
+        ambient_down: li.ambient_down,
+        fog_on,
+        fog_near: near,
+        fog_far: far,
+        fog_colour: li.fog_colour,
+        fog_extra: if fog_on && v.fog_extra > FOG_EXTRA_MIN {
+            v.fog_extra
+        } else {
+            0.0
+        },
+        effect: v.effect,
+    }
+}
+
+/// The frame lighting of a composed state (`lighting.md` §8.1): ambient ½ (*X* + *Y*),
+/// hemispheric ½ (*X* − *Y*), a main light (colour *Cd* × *bd*, specular *Cs*, toward
+/// −travel) and its shadow only while "sun present", fog while fog is on. `eye` and
+/// `forward` place the shadow map; `time` is the material clock.
+#[must_use]
+pub fn frame_lighting(
+    state: &EnvState,
+    systems: &Systems,
+    eye: Vec3,
+    forward: Vec3,
+    time: f32,
+) -> Composed {
+    let x = state.ambient_up;
+    let y = state.ambient_down;
+    let toward = (Vec3::from_array(state.sun_travel) * -1.0)
+        .try_normalize()
+        .unwrap_or(Vec3::Z);
+    let fog = state.fog_on.then_some(Fog {
+        near: state.fog_near,
+        far: state.fog_far,
+        color: state.fog_colour,
     });
-    // Sun and moon give no light indoors (§4.13), nor a black or dim sun outdoors; no
-    // shadow either.
-    let sun_on = indoor.is_none() && sun_present(v);
+    let sun_on = state.sun_present;
     let shadow =
         (sun_on && systems.on(System::Shadows) && toward.z > SHADOW_MIN_ELEVATION).then(|| {
             let f = Vec3::new(forward.x, forward.y, 0.0)
@@ -339,12 +377,12 @@ pub fn compose(
         });
     let lighting = FrameLighting {
         up: Vec3::Z,
-        ambient: li.frame_ambient,
-        hemispheric: li.frame_hemispheric,
+        ambient: std::array::from_fn(|i| 0.5 * (x[i] + y[i])),
+        hemispheric: std::array::from_fn(|i| 0.5 * (x[i] - y[i])),
         sun: sun_on.then_some(SunLight {
             direction: toward,
-            color: li.sun_colour,
-            specular: li.sun_specular,
+            color: state.sun_colour.map(|c| c * state.sun_brightness),
+            specular: state.sun_specular,
         }),
         fog,
         shadow,
@@ -353,9 +391,29 @@ pub fn compose(
     };
     Composed {
         lighting,
-        fog_colour: li.fog_colour,
-        sky_fogged: fog_on && v.fog_extra > SKY_FOG_EXTRA,
+        fog_colour: state.fog_colour,
+        sky_fogged: state.sky_fogged(),
     }
+}
+
+/// The frame lighting of the record in use without a sun-change fade: [`frame_lighting`]
+/// of [`compose_state`].
+#[must_use]
+pub fn compose(
+    values: Option<&SkyValues>,
+    indoor: Option<&IndoorInputs>,
+    systems: &Systems,
+    eye: Vec3,
+    forward: Vec3,
+    time: f32,
+) -> Composed {
+    frame_lighting(
+        &compose_state(values, indoor, systems),
+        systems,
+        eye,
+        forward,
+        time,
+    )
 }
 
 /// sRGB-encoded unit value to linear light (the clear colour is given linear).
@@ -406,7 +464,7 @@ impl IndoorPids {
 }
 
 /// The inputs of the indoor environment record (`landblock.md` §4.13), read at the camera
-/// position with the lookup order cell, landblock info, block map.
+/// position with the lookup order landblock info, block map ([`lookup_at`]).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct IndoorInputs {
     /// Sky key B: `Environment_IndoorAmbiance`, else [`DEFAULT_INDOOR_SKY_KEY`].
@@ -488,34 +546,24 @@ impl IndoorInputs {
     }
 }
 
-/// The property lookup at a position (`environment.md` §7.1.1, `landblock.md` §4.13,
-/// Tessera Decision there): the first of the cell's own property set (with `cell`, a cell
-/// of `bundle`'s landblock info), the landblock-info property set and the block-map values
-/// of `bundle` that has `pid`. `bundle` is the landblock of the position: for a position in
-/// a cell, the cell's owner (`landblock.md` §4.13, L38).
+/// The property lookup at a position (`landblock.md` §4.13, BIN4 (l), L46; `environment.md`
+/// §7.1.1): the first of the landblock-info property set and the block-map values of
+/// `bundle` that has `pid`. `bundle` is the landblock of the position: for a position in a
+/// cell, the cell's owner (L46). The cell's own property set is **not** read (L32 corrected
+/// 2026-10-08), and the client's run-time landblock set has no offline source (step 1
+/// skipped, Inferred there).
 #[must_use]
-pub fn lookup_at(
-    bundle: Option<&LandblockBundle>,
-    cell: Option<u16>,
-    pid: u32,
-) -> Option<&PropertyValue> {
+pub fn lookup_at(bundle: Option<&LandblockBundle>, pid: u32) -> Option<&PropertyValue> {
     let info = bundle.and_then(|b| b.info.as_ref());
-    cell.and_then(|c| info.and_then(|i| i.cell(c)))
-        .and_then(|c| c.properties.as_ref())
-        .and_then(|p| p.get(pid))
-        .or_else(|| info.and_then(|i| i.properties.get(pid)))
+    info.and_then(|i| i.properties.get(pid))
         .or_else(|| bundle.and_then(|b| b.block_props.value(pid)))
 }
 
-/// The indoor record's inputs with the camera in cell `cell` of `bundle` (its owner
-/// landblock): [`IndoorInputs::read`] over [`lookup_at`].
+/// The indoor record's inputs with the camera in a cell of `bundle` (its owner landblock):
+/// [`IndoorInputs::read`] over [`lookup_at`].
 #[must_use]
-pub fn indoor_inputs_of(
-    bundle: Option<&LandblockBundle>,
-    cell: u16,
-    pids: &IndoorPids,
-) -> IndoorInputs {
-    indoor_inputs_at(bundle, Some(cell), pids)
+pub fn indoor_inputs_of(bundle: Option<&LandblockBundle>, pids: &IndoorPids) -> IndoorInputs {
+    indoor_inputs_at(bundle, pids)
 }
 
 /// Sky key A of the outdoor record (`environment.md` §7.1.1; the character's own
@@ -523,22 +571,19 @@ pub fn indoor_inputs_of(
 /// viewer's position by [`lookup_at`], counted only with type 8 or 10 ([`stored_key`]),
 /// else [`DEFAULT_OUTDOOR_SKY_KEY`].
 #[must_use]
-pub fn outdoor_sky_key(
-    bundle: Option<&LandblockBundle>,
-    cell: Option<u16>,
-    local_sky: Option<u32>,
-) -> u32 {
+pub fn outdoor_sky_key(bundle: Option<&LandblockBundle>, local_sky: Option<u32>) -> u32 {
     local_sky
-        .and_then(|pid| lookup_at(bundle, cell, pid))
+        .and_then(|pid| lookup_at(bundle, pid))
         .and_then(stored_key)
         .unwrap_or(DEFAULT_OUTDOOR_SKY_KEY)
 }
 
 /// Where the property lookup at the camera position reads (`landblock.md` §4.13,
-/// `environment.md` §7.1.1): with the camera in a cell, that cell and its owner landblock
-/// (L38); otherwise no cell and the landblock under the eye (none off the grid). Key A,
-/// key B and the interior overrides all read here, also when outdoor-visible is clear with
-/// no camera cell (§4.12 outdoor branch with a bit-0 cell; none in this install, LI8).
+/// `environment.md` §7.1.1): with the camera in a cell, that cell's owner landblock (L46;
+/// the cell is returned too, but its own set is not read, [`lookup_at`]); otherwise no
+/// cell and the landblock under the eye (none off the grid). Key A, key B and the interior
+/// overrides all read here, also when outdoor-visible is clear with no camera cell (§4.12
+/// outdoor branch with a bit-0 cell; none in this install, LI8).
 #[must_use]
 pub fn lookup_target(
     camera_cell: Option<(LandblockKey, u16)>,
@@ -558,11 +603,10 @@ pub fn camera_sky_key(
     camera_cell: Option<(LandblockKey, u16)>,
     eye: &WorldPos,
 ) -> u32 {
-    let (key, cell) = lookup_target(camera_cell, eye);
+    let (key, _cell) = lookup_target(camera_cell, eye);
     let local_sky = streamer.context().systems().pids.environment.local_sky;
     outdoor_sky_key(
         key.and_then(|k| streamer.bundle(k)).map(|b| &**b),
-        cell,
         local_sky,
     )
 }
@@ -570,25 +614,24 @@ pub fn camera_sky_key(
 /// The indoor record's inputs at [`lookup_target`] (`landblock.md` §4.13):
 /// [`IndoorInputs::read`] over [`lookup_at`] with `bundle` the target landblock's.
 #[must_use]
-pub fn indoor_inputs_at(
-    bundle: Option<&LandblockBundle>,
-    cell: Option<u16>,
-    pids: &IndoorPids,
-) -> IndoorInputs {
-    IndoorInputs::read(pids, |pid| lookup_at(bundle, cell, pid))
+pub fn indoor_inputs_at(bundle: Option<&LandblockBundle>, pids: &IndoorPids) -> IndoorInputs {
+    IndoorInputs::read(pids, |pid| lookup_at(bundle, pid))
 }
 
 /// The reach of a placed light whose range in force is `range` (`lighting.md` §8.5):
 /// selection radius ρ from Range and Falloff (Range with `Light_GlobalLight`), key light,
-/// baked into the landscape; not attached to an object. The parent switches are not
-/// applied: the walker's light records do not carry `Light_OnlyInfluenceParent` (OPEN,
-/// `walker.md` §14.3).
+/// baked into the landscape, and the two parent switches; not attached to an object (the
+/// walker gives no light a parent), so a light with `Light_OnlyInfluenceParent` reaches no
+/// object (row W-L2; the renderer applies the rule, `render.md` §4.3).
 #[must_use]
 pub fn light_reach(params: &tessera_world::LightParams, range: f32) -> LightReach {
     LightReach {
         radius: Some(selection_radius(range, params.falloff, params.global)),
         key_light: params.key_light,
         baked_landscape: params.baked_landscape,
+        parent: None,
+        only_influence_parent: params.only_influence_parent,
+        never_influence_parent: params.never_influence_parent,
         ..LightReach::default()
     }
 }
@@ -596,10 +639,19 @@ pub fn light_reach(params: &tessera_world::LightParams, range: f32) -> LightReac
 /// The walker's environment (module docs).
 pub struct WorldEnv {
     env: Option<Environment>,
-    /// The indoor record's environment (`landblock.md` §4.13): blended on its own from sky
-    /// key B, so the change between the two records is immediate.
+    /// The indoor record's environment (`landblock.md` §4.13, the indoor track of
+    /// `environment.md` §11.6): blended on its own from sky key B; never has a sun.
     indoor: Option<Environment>,
     frame: Option<EnvironmentFrame>,
+    /// The sun-change fade over the state of the record in use (`environment.md` §11.6,
+    /// E34, E37): the only smoothing of the change between the two records.
+    fade: SunChangeFade,
+    /// The raw timer: real seconds since the walker started (`environment.md` §11.6
+    /// *F*raw).
+    raw: f64,
+    /// The next update is immediate (start-up, a teleport; `landblock.md` §4.13 Tessera
+    /// Decision).
+    immediate: bool,
     /// The rate before a pause, while paused.
     paused: Option<f64>,
     curves: HashMap<(LandblockKey, u32), (FloatCurve, CurveState)>,
@@ -621,9 +673,11 @@ impl WorldEnv {
     /// with the clock set from `clock`.
     #[must_use]
     pub fn new(library: Option<Arc<SkyLibrary>>, clock: &ClockConfig) -> Self {
-        let indoor = library
-            .clone()
-            .map(|lib| started_environment(lib, clock, false));
+        let indoor = library.clone().map(|lib| {
+            let mut e = started_environment(lib, clock, false);
+            e.set_indoor(true);
+            e
+        });
         let env = library.map(|lib| started_environment(lib, clock, true));
         // A clock started at rate 0 (`--time-rate 0`) is a stopped clock: `\` restarts
         // it at rate 1 and `-` / `=` change the rate it restarts at (`walker.md` §14.3).
@@ -632,6 +686,9 @@ impl WorldEnv {
             env,
             indoor,
             frame: None,
+            fade: SunChangeFade::new(),
+            raw: 0.0,
+            immediate: true,
             paused: stopped.then_some(0.0),
             curves: HashMap::new(),
             sky_parts: HashSet::new(),
@@ -642,6 +699,17 @@ impl WorldEnv {
     /// The two environments (outdoor and indoor record), for clock changes.
     fn each(&mut self) -> impl Iterator<Item = &mut Environment> {
         self.env.iter_mut().chain(self.indoor.iter_mut())
+    }
+
+    /// Makes the next update immediate (`landblock.md` §4.13 Tessera Decision: the first
+    /// update after start-up and after a teleport): both records switch to their keys at once
+    /// (no sky-key cross-fade, `environment.md` §11.6 step 2) and no sun-change fade runs
+    /// across the jump.
+    pub fn mark_immediate(&mut self) {
+        self.immediate = true;
+        for e in self.each() {
+            e.mark_immediate();
+        }
     }
 }
 
@@ -746,12 +814,14 @@ impl WorldEnv {
     }
 
     /// Advances the clock by `dt` real seconds and returns the frame's environment
-    /// (`landblock.md` §4.13): the outdoor record from `sky_key` (key A,
-    /// [`outdoor_sky_key`]), or, with `indoor` (the camera inside, outdoor-visible clear),
-    /// the indoor record from its key B with the interior overrides and no sun or moon;
-    /// the lighting is [`compose`]d from the record in use. Both records blend every
-    /// frame, each on its own, so the change between them is immediate. `extent` is the
-    /// landscape extent *E*; `eye` and `forward` place the shadow map.
+    /// (`landblock.md` §4.13, `environment.md` §11.6): both records blend every frame, each
+    /// on its own: the outdoor record from `sky_key` (key A, [`outdoor_sky_key`]) and the
+    /// indoor record from its key B with the interior overrides and no sun or moon. The
+    /// record in use (the indoor one with `indoor`, the camera inside with outdoor-visible
+    /// clear) is composed ([`compose_state`]) and passed through the sun-change fade, whose
+    /// result lights the frame: a change of record that changes "sun present" fades over
+    /// 5 s, any other change shows at once. `extent` is the landscape extent *E*; `eye` and
+    /// `forward` place the shadow map.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -778,14 +848,13 @@ impl WorldEnv {
         let outdoor = step(&mut self.env, sky_key);
         let inside = step(&mut self.indoor, Some(key_b));
         let frame = if indoor.is_some() { inside } else { outdoor };
-        let composed = compose(
-            frame.as_ref().map(|f| &f.values),
-            indoor,
-            systems,
-            eye,
-            forward,
-            time,
-        );
+        if dt.is_finite() && dt > 0.0 {
+            self.raw += dt;
+        }
+        let state = compose_state(frame.as_ref().map(|f| &f.values), indoor, systems);
+        let shown = self.fade.apply(state, self.raw, self.immediate);
+        self.immediate = false;
+        let composed = frame_lighting(&shown, systems, eye, forward, time);
         let lighting = composed.lighting;
         let fog = lighting.fog;
         let g = global_limit(
@@ -826,7 +895,8 @@ impl WorldEnv {
     /// `anchor` (`lighting.md` §8.3: day/night variants by the Tessera rule, intensity
     /// curves on the global clock `time`, *σ* = 1), and each light's reach for the
     /// renderer's selection (`lighting.md` §8.5 steps 1, 3 and 4: ρ from Range and Falloff,
-    /// Range for `Light_GlobalLight`; key light; baked into the landscape; no parent).
+    /// Range for `Light_GlobalLight`; key light; baked into the landscape; the parent
+    /// switches, with no parent).
     /// Outdoor lights only with `outdoor`, interior ones only with `interior` (`walker.md`
     /// §14.12 (i): the camera's side of the portal system).
     pub fn lights(
@@ -1106,18 +1176,55 @@ mod tests {
         assert_eq!(f.lighting.ambient, d.frame_ambient);
         assert_eq!(f.lighting.hemispheric, d.frame_hemispheric);
         assert!(f.lighting.fog.is_none() && f.lighting.sun.is_none());
-        // Outdoors again: the sun is back at once.
-        let f = env.update(
-            0.016,
-            None,
-            None,
-            &Systems::all(),
-            2_080.0,
-            Vec3::ZERO,
-            Vec3::X,
-            0.0,
-        );
-        assert!(f.lighting.sun.is_some());
+        // Outdoors again: "sun present" changes, so the sun fades in over 5 s
+        // (`environment.md` §11.6 E37): the old state at the change (weight 0), then a sun.
+        let mut out = |dt: f64| {
+            env.update(
+                dt,
+                None,
+                None,
+                &Systems::all(),
+                2_080.0,
+                Vec3::ZERO,
+                Vec3::X,
+                0.0,
+            )
+        };
+        assert!(out(0.016).lighting.sun.is_none());
+        assert!(out(1.0).lighting.sun.is_some());
+    }
+
+    /// `environment.md` §11.6 "Switching between the tracks" (E37), `landblock.md` §4.13,
+    /// `lighting.md` §8.1 (L40): going indoors by day fades the lighting over 5 s of the raw
+    /// timer, the main light dimming toward black; an immediate update switches at once.
+    #[test]
+    fn the_change_of_record_is_smoothed_by_the_sun_change_fade() {
+        let mut env = WorldEnv::new(Some(library()), &ClockConfig::default());
+        let all = Systems::all();
+        let inside = IndoorInputs {
+            upper: Some([0.0; 3]),
+            lower: Some([0.0; 3]),
+            ..IndoorInputs::default()
+        };
+        let step = |env: &mut WorldEnv, dt: f64, indoor: Option<&IndoorInputs>| {
+            env.update(dt, None, indoor, &all, 2_080.0, Vec3::ZERO, Vec3::X, 0.0)
+        };
+        let out = step(&mut env, 0.016, None);
+        let day_sun = out.lighting.sun.expect("the defaults have a sun");
+        // Into the cell: weight 0 at the change, then the fade runs.
+        let f = step(&mut env, 0.5, Some(&inside));
+        assert_eq!(f.lighting.ambient, out.lighting.ambient);
+        let f = step(&mut env, 2.5, Some(&inside));
+        let sun = f.lighting.sun.expect("the sun stays until the fade ends");
+        assert!(sun.color[0] < day_sun.color[0] && sun.color[0] > 0.0);
+        assert!(f.lighting.ambient[0] < out.lighting.ambient[0] && f.lighting.ambient[0] > 0.0);
+        let f = step(&mut env, 2.6, Some(&inside));
+        assert!(f.lighting.sun.is_none(), "5 s after the change");
+        assert_eq!(f.lighting.ambient, [0.0; 3]);
+        // A teleport (immediate update) switches at once.
+        env.mark_immediate();
+        let f = step(&mut env, 0.016, None);
+        assert_eq!(f.lighting.sun, Some(day_sun));
     }
 
     /// A sky library with only a calendar (no day descriptions): the environment then
@@ -1211,9 +1318,26 @@ mod tests {
         assert!(sun_present(&v), "exactly 0.0002 keeps the light");
         v.sun_brightness = f32::NAN;
         assert!(!sun_present(&v));
+        // A weather effect: no main light either (`environment.md` §11.7 step 9).
+        let mut wet = SkyValues::defaults();
+        wet.effect = Some(tessera_formats::environment::KeyframeEffect {
+            object: Did(0x4700_0009),
+            extra: 0,
+        });
+        assert!(!sun_present(&wet));
+        let c = compose(
+            Some(&wet.with_outdoor_sun()),
+            None,
+            &Systems::all(),
+            Vec3::ZERO,
+            Vec3::X,
+            0.0,
+        );
+        assert!(c.lighting.sun.is_none());
         // No main light means no sun term and no shadow map; the light slot is free.
         let mut black = SkyValues::defaults();
         black.sun_colour = [0.0; 3];
+        let black = black.with_outdoor_sun();
         let c = compose(
             Some(&black),
             None,
@@ -1321,7 +1445,7 @@ mod tests {
             "an int fog type leaves the keyframe's fog"
         );
         assert_eq!(
-            outdoor_sky_key(None, None, Some(1)),
+            outdoor_sky_key(None, Some(1)),
             DEFAULT_OUTDOOR_SKY_KEY,
             "no landblock: the value 2"
         );
@@ -1343,7 +1467,7 @@ mod tests {
         );
         let off = WorldPos::new(0, 0.0, 0.0, 0.0);
         assert_eq!(lookup_target(None, &off).1, None);
-        let ind = indoor_inputs_at(None, None, &IndoorPids::default());
+        let ind = indoor_inputs_at(None, &IndoorPids::default());
         assert_eq!(ind.sky_key, DEFAULT_INDOOR_SKY_KEY);
     }
 
@@ -1361,10 +1485,19 @@ mod tests {
             "0.85 of the range at falloff 1"
         );
         assert!(r.key_light && r.baked_landscape && r.parent.is_none());
+        assert!(!r.only_influence_parent && !r.never_influence_parent);
         let global = tessera_world::LightParams {
             global: true,
-            ..params
+            ..params.clone()
         };
         assert_eq!(light_reach(&global, 20.0).radius, Some(20.0));
+        // The parent switches are passed on (`lighting.md` §8.5 step 3, row W-L2).
+        let only = tessera_world::LightParams {
+            only_influence_parent: true,
+            never_influence_parent: true,
+            ..params
+        };
+        let r = light_reach(&only, 20.0);
+        assert!(r.only_influence_parent && r.never_influence_parent && r.parent.is_none());
     }
 }

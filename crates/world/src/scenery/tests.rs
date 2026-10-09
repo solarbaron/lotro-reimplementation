@@ -1212,8 +1212,8 @@ fn sc19_a_failing_child_abandons_the_vertex_and_leaves_its_marker_open() {
 
 #[test]
 fn a_failure_inside_a_frill_layer_stays_in_the_layer() {
-    // Review record of the 2026-10-07 revision (`scenery.md` §7.4 step 15 OPEN): the scene
-    // that evaluates a frill layer ignores the layer's result. P's frill layer fails at
+    // `scenery.md` §7.4 step 15 (S38, S41): a failure never climbs out of a frill layer; the
+    // scene that evaluates a frill layer ignores the layer's result. P's frill layer fails at
     // its first reference, so its second reference yields nothing; the later sibling Q
     // still yields its frill.
     let (p, q, y) = (Did(0x0200_8400), Did(0x0200_8401), Did(0x0200_8402));
@@ -1259,6 +1259,38 @@ fn a_failure_inside_a_frill_layer_stays_in_the_layer() {
     let (records, stats) = fx.frills(3, 7);
     assert_eq!(records.len(), 1);
     assert_eq!(stats.failed_vertices, 1);
+}
+
+#[test]
+fn the_frill_state_stays_set_after_a_failed_frill_layer() {
+    // `scenery.md` §7.4 step 15 (S41): after a frill layer whose subtree failed, the
+    // enclosing scenes continue as after a successful one and the "under a frill layer"
+    // state stays set, so a later group object of the vertex still becomes a frill record
+    // (§8.1, S26).
+    let p = Did(0x0200_8410);
+    let missing = Did(0x0200_DEAD);
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Scene(missing)])
+    };
+    let fx = Fixture::new(
+        data_one_vertex(),
+        vec![
+            scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Scene(p), SceneChild::Object(OBJ_Y)],
+                None,
+            ),
+            scene(p, vec![], Some(layer)),
+        ],
+    );
+    let (records, stats) = fx.frills(3, 7);
+    assert_eq!(stats.failed_frill_layers, 1);
+    assert_eq!(stats.failed_vertices, 0);
+    assert_eq!(stats.frill_skipped, 0);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].object.object, OBJ_Y);
+    assert!(records[0].late, "made after the frill layer, not inside it");
 }
 
 #[test]
@@ -1363,9 +1395,17 @@ const PID_CYL: u32 = 0x1000_7007;
 const PID_LOW: u32 = 0x1000_7008;
 const PID_RADIUS: u32 = 0x1000_7009;
 const PID_HEIGHT: u32 = 0x1000_700A;
-const PID_CTYPE: u32 = 0x1000_700B;
+/// The creation type: the fixed id the validity check reads (`scenery.md` §7.4 step 14a).
+const PID_CTYPE: u32 = CREATION_TYPE_PID;
 
 fn schema() -> HashMap<u32, tessera_formats::PropertyType> {
+    schema_with_ctype(8)
+}
+
+/// The synthetic schema with the creation type declared as property type `code` (8 enum,
+/// 10 property ID, 15 int): values written with any test value of four bytes decode with
+/// that type (the stored type of `property-system.md` §4.1 is the dictionary's).
+fn schema_with_ctype(code: u32) -> HashMap<u32, tessera_formats::PropertyType> {
     let mut s = testkit::schema();
     for (pid, code) in [
         (PID_F, 9),
@@ -1378,7 +1418,7 @@ fn schema() -> HashMap<u32, tessera_formats::PropertyType> {
         (PID_LOW, 6),
         (PID_RADIUS, 9),
         (PID_HEIGHT, 9),
-        (PID_CTYPE, 8),
+        (PID_CTYPE, code),
     ] {
         s.insert(pid, tessera_formats::PropertyType::from_code(code));
     }
@@ -1479,7 +1519,7 @@ fn all_clearance_pids() -> ClearancePids {
         radius: Some(PID_RADIUS),
         height: Some(PID_HEIGHT),
         phys_obj: Some(testkit::pid::PHYS_OBJ),
-        creation_type: None,
+        creation_type: PID_CTYPE,
     }
 }
 
@@ -1718,6 +1758,23 @@ fn info_of(entities: &[testkit::TestEntity]) -> tessera_formats::LandblockInfo {
     tessera_formats::LandblockInfo::parse(&bytes, Some(31), &schema()).unwrap()
 }
 
+/// A clearance list of one box (−1, −1, 0) … (1, 1, 2), with `min` and `max` as stored.
+fn one_box_list(min: [f32; 3], max: [f32; 3]) -> (u32, testkit::TestValue) {
+    use testkit::TestValue as V;
+    (
+        PID_BOXES,
+        V::Array(vec![(
+            PID_BOX,
+            V::Struct(vec![(PID_MIN, V::Vec3(min)), (PID_MAX, V::Vec3(max))]),
+        )]),
+    )
+}
+
+/// `Entity_CreationType` stored as `value` (its type is the schema's).
+fn ctype(value: u32) -> (u32, testkit::TestValue) {
+    (PID_CTYPE, testkit::TestValue::Enum(value))
+}
+
 #[test]
 fn sc22_static_list_lookup_frames_and_list_ends() {
     use testkit::{TestEntity, TestValue as V};
@@ -1734,21 +1791,21 @@ fn sc22_static_list_lookup_frames_and_list_ends() {
     let game = 0x7000_0401u32;
     let game_set = 0x7900_0401u32;
     let mut src = MemoryWorldSource::new();
-    // The 0x47 object holds the crossed box.
+    // The 0x47 object holds the crossed box and a creation type of class Dynamic.
     src.insert(
         obj,
         testkit::entity_descriptor(
             obj,
             0x1F00_0001,
-            &[(PID_BOXES, V::Array(vec![crossed.clone()]))],
+            &[(PID_BOXES, V::Array(vec![crossed.clone()])), ctype(7)],
             &sch,
         ),
         None,
     );
-    // The game object's set has no clearance list, only `PhysObj`.
+    // The game object's set has no clearance list, only `PhysObj` and a creation type.
     src.insert(
         game_set,
-        testkit::property_set_record(game_set, &[(testkit::pid::PHYS_OBJ, V::Did(obj))]),
+        testkit::property_set_record(game_set, &[(testkit::pid::PHYS_OBJ, V::Did(obj)), ctype(7)]),
         None,
     );
     let cache = ObjectPropertyCache::default();
@@ -1756,12 +1813,12 @@ fn sc22_static_list_lookup_frames_and_list_ends() {
         static_clearances(&info_of(entities), &src, &sch, &pids, &cache).unwrap()
     };
 
-    // (a) Physics at (40, 40, 0) with the crossed box in its own set.
+    // (a) Physics at (40, 40, 0) with the crossed box (and a creation type) in its own set.
     let a = build(&[TestEntity::physics(
         1,
         0x4700_0999,
         [40.0, 40.0, 0.0],
-        vec![(PID_BOXES, V::Array(vec![crossed.clone()]))],
+        vec![(PID_BOXES, V::Array(vec![crossed.clone()])), ctype(7)],
     )]);
     assert_eq!(a.len(), 1);
     assert_eq!(
@@ -1842,108 +1899,284 @@ fn sc22_static_list_lookup_frames_and_list_ends() {
 }
 
 #[test]
-fn static_list_validity_check() {
-    // `entity-descriptor.md` §4.9 validity: no object, creation type 0 (or none on the
-    // chain) and a Weenie whose final class is Static are left out; a game object's
-    // non-unique value is raised to a unique class.
-    use testkit::{TestEntity, TestValue as V};
+fn sc22e_clearance_lists_use_the_levels_of_the_entity_type() {
+    // SC22 (e) (BIN (ab), S45): beyond its own set a Physics or PatrolPoint entity searches
+    // only a 0x47 object's chain, a Weenie only a game object's set and `PhysObj` chain.
+    // Every entity here passes the validity check (`Entity_CreationType` 7 as an enum in
+    // its own set: class Dynamic, so a Weenie is not dropped as Static).
+    use testkit::TestEntity;
     let sch = schema();
-    let pids = ClearancePids {
-        creation_type: Some(PID_CTYPE),
-        ..all_clearance_pids()
-    };
-    let one_box = (
-        PID_BOXES,
-        V::Array(vec![(
-            PID_BOX,
-            V::Struct(vec![
-                (PID_MIN, V::Vec3([-1.0; 3])),
-                (PID_MAX, V::Vec3([1.0; 3])),
-            ]),
-        )]),
-    );
-    let typed = 0x4700_0500u32;
-    let untyped = 0x4700_0501u32;
-    let game_set = 0x7900_0502u32;
+    let pids = all_clearance_pids();
+    let the_box = one_box_list([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
+    let game = 0x7000_0601u32;
+    let game_set = 0x7900_0601u32;
+    let obj = 0x4700_0602u32;
     let mut src = MemoryWorldSource::new();
     src.insert(
-        typed,
-        testkit::entity_descriptor(typed, 0x1F00_0001, &[(PID_CTYPE, V::Enum(3))], &sch),
-        None,
-    );
-    src.insert(
-        untyped,
-        testkit::entity_descriptor(untyped, 0x1F00_0001, &[], &sch),
-        None,
-    );
-    src.insert(
         game_set,
-        testkit::property_set_record(game_set, &[(PID_CTYPE, V::Enum(3))]),
+        testkit::property_set_record(game_set, std::slice::from_ref(&the_box)),
+        None,
+    );
+    src.insert(
+        obj,
+        testkit::entity_descriptor(obj, 0x1F00_0001, std::slice::from_ref(&the_box), &sch),
         None,
     );
     let cache = ObjectPropertyCache::default();
-    let kept = |e: TestEntity| {
-        !static_clearances(&info_of(&[e]), &src, &sch, &pids, &cache)
-            .unwrap()
-            .is_empty()
-    };
     let at = [40.0, 40.0, 0.0];
-    assert!(kept(TestEntity::physics(
-        1,
-        typed,
-        at,
-        vec![one_box.clone()]
-    )));
-    assert!(!kept(TestEntity::physics(
-        2,
-        untyped,
-        at,
-        vec![one_box.clone()]
-    )));
-    assert!(kept(TestEntity::physics(
-        3,
-        untyped,
-        at,
-        vec![one_box.clone(), (PID_CTYPE, V::Enum(5))]
-    )));
-    // The entity's own 0 hides the object's 3.
-    assert!(!kept(TestEntity::physics(
-        4,
-        typed,
-        at,
-        vec![one_box.clone(), (PID_CTYPE, V::Enum(0))]
-    )));
-    // No object (an absent field) or the null DID.
-    assert!(!kept(TestEntity {
-        object: None,
-        ..TestEntity::physics(5, 0, at, vec![one_box.clone(), (PID_CTYPE, V::Enum(3))])
+    let rejects = |e: TestEntity| {
+        let list = static_clearances(&info_of(&[e]), &src, &sch, &pids, &cache).unwrap();
+        list.iter()
+            .any(|s| s.overlaps([40.5, 40.0, 0.0], 0.1, false))
+    };
+    // A Physics entity naming a game object whose set holds the box: placed.
+    assert!(!rejects(TestEntity::physics(1, game, at, vec![ctype(7)])));
+    // A PatrolPoint entity naming a game object: placed too.
+    assert!(!rejects(TestEntity {
+        kind: 23,
+        ..TestEntity::physics(2, game, at, vec![ctype(7)])
     }));
-    assert!(!kept(TestEntity::physics(
-        6,
-        0,
+    // A Weenie naming a 0x47 record that holds the box: placed.
+    assert!(!rejects(TestEntity {
+        kind: 6,
+        ..TestEntity::physics(3, obj, at, vec![ctype(7)])
+    }));
+    // With the box in the entity's own set instead, both are rejected.
+    assert!(rejects(TestEntity::physics(
+        4,
+        game,
         at,
-        vec![one_box.clone(), (PID_CTYPE, V::Enum(3))]
+        vec![ctype(7), the_box.clone()]
     )));
-    // A Weenie: SharedStaticImmobile (3) becomes UniqueDynamicImmobile (8), valid; so does a
-    // game object with no value at all.
-    for (serial, game) in [(7u32, 0x7000_0502u32), (8, 0x7000_0503)] {
-        assert!(kept(TestEntity {
-            kind: 6,
-            ..TestEntity::physics(serial, game, at, vec![one_box.clone()])
-        }));
-    }
-    // Without the PID in the dictionary the creation-type part is not applied.
-    let lenient = all_clearance_pids();
-    assert!(
-        !static_clearances(
-            &info_of(&[TestEntity::physics(9, untyped, at, vec![one_box.clone()])]),
-            &src,
-            &sch,
-            &lenient,
-            &cache,
-        )
-        .unwrap()
-        .is_empty()
+    assert!(rejects(TestEntity {
+        kind: 6,
+        ..TestEntity::physics(5, obj, at, vec![ctype(7), the_box.clone()])
+    }));
+    // The matching combinations reach the other level: a Physics entity naming the 0x47
+    // record and a Weenie naming the game object.
+    assert!(rejects(TestEntity::physics(6, obj, at, vec![ctype(7)])));
+    assert!(rejects(TestEntity {
+        kind: 6,
+        ..TestEntity::physics(7, game, at, vec![ctype(7)])
+    }));
+}
+
+#[test]
+fn sc27_cylinder_heights_are_chosen_top_first() {
+    // SC27 (BIN (x), S51): low point (0, 0, 0), radius 1, height −2 (top = −2), identity
+    // frame, ρ = 0.5 with `spacing_3d`.
+    let s = StaticClearance {
+        position: [0.0; 3],
+        rotation: Quaternion::IDENTITY,
+        boxes: Vec::new(),
+        cylinders: vec![ClearanceCylinder {
+            low_point: [0.0; 3],
+            radius: 1.0,
+            height: -2.0,
+        }],
+    };
+    // z′ = top = −2: 1.6² = 2.56 is not less than 2.25 (a clamp to −2 … 0 would overlap).
+    assert!(!s.overlaps([0.0, 0.0, -0.4], 0.5, true));
+    // z′ = cz = 0: 6.25 is not less than 2.25 (a clamp would give −2 and overlap).
+    assert!(!s.overlaps([0.0, 0.0, -2.5], 0.5, true));
+    // z′ = −2: 0.01 < 2.25.
+    assert!(s.overlaps([0.0, 0.0, -1.9], 0.5, true));
+    // The order of the choice, for both signs of the height.
+    assert_eq!(axis_height(-0.4, 0.0, -2.0), -2.0);
+    assert_eq!(axis_height(-2.5, 0.0, -2.0), 0.0);
+    assert_eq!(axis_height(5.0, 0.0, -2.0), -2.0);
+    assert_eq!(axis_height(1.0, 0.0, 2.0), 1.0);
+    assert_eq!(axis_height(3.0, 0.0, 2.0), 2.0);
+    assert_eq!(axis_height(-1.0, 0.0, 2.0), 0.0);
+}
+
+#[test]
+fn sc28_static_list_validity_check() {
+    // SC28 (BIN (w), (aa), S50): each entity alone in its landblock at (40, 40, 0), with one
+    // box (−1, −1, 0) … (1, 1, 2) in its own set; "kept" means a candidate at (40.5, 40, 0)
+    // with ρ = 0.1 is rejected.
+    use testkit::TestEntity;
+    let the_box = one_box_list([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
+    let at = [40.0, 40.0, 0.0];
+    let obj_none = 0x4700_0701u32; // a 0x47 object without 0x47E
+    let obj_int = 0x4700_0702u32; // a 0x47 object holding 0x47E = 3 (an int with schema 15)
+    let game = 0x7000_0703u32; // its set holds 0x47E = 3 (an int with schema 15)
+    let game_set = 0x7900_0703u32;
+    let game_empty = 0x7000_0704u32; // its set has no 0x47E, its `PhysObj` neither
+    let game_empty_set = 0x7900_0704u32;
+    let pids = all_clearance_pids();
+    // One source per schema: the records hold 0x47E as four raw bytes, typed by the schema.
+    let source = |sch: &HashMap<u32, tessera_formats::PropertyType>| {
+        let mut src = MemoryWorldSource::new();
+        src.insert(
+            obj_none,
+            testkit::entity_descriptor(obj_none, 0x1F00_0001, &[], sch),
+            None,
+        );
+        src.insert(
+            obj_int,
+            testkit::entity_descriptor(obj_int, 0x1F00_0001, &[ctype(3)], sch),
+            None,
+        );
+        src.insert(
+            game_set,
+            testkit::property_set_record(game_set, &[ctype(3)]),
+            None,
+        );
+        src.insert(
+            game_empty_set,
+            testkit::property_set_record(
+                game_empty_set,
+                &[(testkit::pid::PHYS_OBJ, testkit::TestValue::Did(obj_none))],
+            ),
+            None,
+        );
+        src
+    };
+    let kept = |code: u32, e: TestEntity| {
+        let sch = schema_with_ctype(code);
+        let src = source(&sch);
+        let cache = ObjectPropertyCache::default();
+        let list = static_clearances(&info_of_with(&[e], &sch), &src, &sch, &pids, &cache)
+            .expect("static list");
+        list.iter()
+            .any(|s| s.overlaps([40.5, 40.0, 0.0], 0.1, false))
+    };
+    let physics = |serial: u32, object: u32, extra: Vec<(u32, testkit::TestValue)>| {
+        let mut props = vec![the_box.clone()];
+        props.extend(extra);
+        TestEntity::physics(serial, object, at, props)
+    };
+    let weenie = |serial: u32, object: u32, extra: Vec<(u32, testkit::TestValue)>| TestEntity {
+        kind: 6,
+        ..physics(serial, object, extra)
+    };
+    const ENUM: u32 = 8;
+    const PROPERTY_ID: u32 = 10;
+    const INT: u32 = 15;
+
+    // Physics: no `object` field, and object DID 0, are dropped.
+    assert!(!kept(
+        ENUM,
+        TestEntity {
+            object: None,
+            ..physics(1, 0, vec![ctype(3)])
+        }
+    ));
+    assert!(!kept(ENUM, physics(2, 0, vec![ctype(3)])));
+    // An object DID that names no record, with `Entity_CreationType` 3 as an enum: kept.
+    assert!(kept(ENUM, physics(3, 0x4700_0999, vec![ctype(3)])));
+    // No level has 0x47E: dropped.
+    assert!(!kept(ENUM, physics(4, obj_none, vec![])));
+    // The 0x47 object holds 0x47E as an int with value 3: dropped (type 15 gives 0).
+    assert!(!kept(INT, physics(5, obj_int, vec![])));
+    // The own set holds 0x47E as a property ID with value 3: kept.
+    assert!(kept(PROPERTY_ID, physics(6, obj_none, vec![ctype(3)])));
+    // The own enum 0 hides the object's value: dropped.
+    assert!(!kept(ENUM, physics(7, obj_int, vec![ctype(0)])));
+    // Weenie naming a game object whose set holds 0x47E as an int 3: kept (becomes 8).
+    assert!(kept(INT, weenie(8, game, vec![])));
+    // Weenie whose own set holds the enum 0: kept (0 becomes 8).
+    assert!(kept(ENUM, weenie(9, game, vec![ctype(0)])));
+    // Weenie where no level (own set, game object's set, `PhysObj` chain) has 0x47E.
+    assert!(!kept(ENUM, weenie(10, game_empty, vec![])));
+    // A Physics entity naming a game object, own enum 0: kept (the adjustment follows the
+    // object DID, not the entity type).
+    assert!(kept(ENUM, physics(11, game, vec![ctype(0)])));
+    // A Physics entity naming a game object without an own 0x47E: dropped although the
+    // game object's set has it (only the own set is searched).
+    assert!(!kept(ENUM, physics(12, game, vec![])));
+    // A Weenie naming a 0x47 object whose class is Static (3, SharedStaticImmobile):
+    // dropped; one of class Dynamic (7) is kept.
+    assert!(!kept(ENUM, weenie(13, obj_none, vec![ctype(3)])));
+    assert!(kept(ENUM, weenie(14, obj_none, vec![ctype(7)])));
+    // The fixed id is used whatever the dictionary maps the name to.
+    assert_eq!(
+        ClearancePids::from_names(|n| (n == "Entity_CreationType").then_some(0x1234)).creation_type,
+        CREATION_TYPE_PID
+    );
+    assert_eq!(CREATION_TYPE_PID, 0x47E);
+}
+
+/// [`info_of`] decoded with schema `sch`.
+fn info_of_with(
+    entities: &[testkit::TestEntity],
+    sch: &HashMap<u32, tessera_formats::PropertyType>,
+) -> tessera_formats::LandblockInfo {
+    let bytes = testkit::landblock_info(key(), entities);
+    tessera_formats::LandblockInfo::parse(&bytes, Some(31), sch).unwrap()
+}
+
+#[test]
+fn sc29_frill_values_follow_their_stored_types() {
+    // SC29 (§8.3 rule 8; S52, S54): booleans only from stored booleans, floats only from
+    // stored floats; a NaN intensity acts as 0.
+    use crate::frills::{FrillObjectValues, FrillPids, FrillSettings};
+    let (p_opaque, p_anim, p_tint) = (0x1000_7101u32, 0x1000_7102u32, 0x1000_7103u32);
+    let pids = FrillPids {
+        opaque: Some(p_opaque),
+        animation_intensity: Some(p_anim),
+        terrain_color_intensity: Some(p_tint),
+        ..FrillPids::default()
+    };
+    let props = |entries: Vec<(u32, PropertyValue)>| ObjectProperties {
+        levels: vec![ChainLevel {
+            did: Did(0x4700_0801),
+            sets: vec![tessera_formats::PropertySet {
+                size: tessera_formats::TSize::default(),
+                entries: entries
+                    .into_iter()
+                    .map(|(pid, value)| PropertyEntry { pid, value })
+                    .collect(),
+            }],
+        }],
+        incomplete: false,
+    };
+    let on = FrillSettings {
+        terrain_color: true,
+        ..FrillSettings::default()
+    };
+    // `Render_Frill_IsOpaque` stored as an integer 0 counts as absent: opaque (default).
+    let v = FrillObjectValues::resolve(
+        Some(&props(vec![(p_opaque, PropertyValue::Int(0))])),
+        &pids,
+        &on,
+    );
+    assert!(v.opaque);
+    // A NaN animation intensity acts as 0: not animated.
+    let v = FrillObjectValues::resolve(
+        Some(&props(vec![(p_anim, PropertyValue::Float(f32::NAN))])),
+        &pids,
+        &on,
+    );
+    assert_eq!(v.animation_intensity, 0.0);
+    assert!(!v.is_animated());
+    // A NaN terrain-colour intensity with terrain colour on acts as 0.
+    let v = FrillObjectValues::resolve(
+        Some(&props(vec![(p_tint, PropertyValue::Float(f32::NAN))])),
+        &pids,
+        &on,
+    );
+    assert_eq!(v.terrain_color_intensity, 0.0);
+    // An animation intensity stored as an integer 1 counts as absent (default 0).
+    let v = FrillObjectValues::resolve(
+        Some(&props(vec![(p_anim, PropertyValue::Int(1))])),
+        &pids,
+        &on,
+    );
+    assert_eq!(v.animation_intensity, 0.0);
+    // ±∞ clamp to 1 and 0.
+    let v = FrillObjectValues::resolve(
+        Some(&props(vec![
+            (p_anim, PropertyValue::Float(f32::INFINITY)),
+            (p_tint, PropertyValue::Float(f32::NEG_INFINITY)),
+        ])),
+        &pids,
+        &on,
+    );
+    assert_eq!(
+        (v.animation_intensity, v.terrain_color_intensity),
+        (1.0, 0.0)
     );
 }
 
@@ -1962,7 +2195,7 @@ fn water_trait_forms() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Hostile-input regressions (review findings)
+// Hostile-input regressions
 // ---------------------------------------------------------------------------------------
 
 /// Statics that never overlap anything near the block: `n` entities of `boxes` boxes each,
@@ -2380,7 +2613,8 @@ fn static_list_is_capped() {
             (PID_MAX, V::Vec3([1.0; 3])),
         ]),
     );
-    let list = vec![(PID_BOXES, V::Array(vec![one_box.clone(); 300]))];
+    // Every entity passes the validity check (creation type 7 in its own set).
+    let list = vec![(PID_BOXES, V::Array(vec![one_box.clone(); 300])), ctype(7)];
     // 70 entities of 256 boxes (the per-entity cap) each, and one whose boxes come from
     // its object.
     let mut entities: Vec<TestEntity> = (0..70)
@@ -2388,7 +2622,7 @@ fn static_list_is_capped() {
         .collect();
     entities.insert(
         0,
-        TestEntity::physics(99, 0x4700_0301, [30.0, 30.0, 0.0], vec![]),
+        TestEntity::physics(99, 0x4700_0301, [30.0, 30.0, 0.0], vec![ctype(7)]),
     );
     let mut src = MemoryWorldSource::new();
     src.insert(
@@ -2979,4 +3213,106 @@ fn region_table_pipeline_failures_are_reported_for_a_retry() {
             .get(&1)
             .is_some_and(|t| t.terrain_types.is_none())
     );
+}
+
+#[test]
+fn world_context_retries_region_tables_after_a_pipeline_failure() {
+    // A pipeline failure while the context loads a region's tables leaves the region
+    // without them only until a later request loads them (§4.1 implementer note); the
+    // landblocks decoded after that get scenery.
+    let mut world = testkit::SyntheticWorld::rectangle(1, 10..=10, 20..=20);
+    world.scenery = true;
+    let src = Arc::new(FailOne {
+        inner: world.build(),
+        fail: std::sync::Mutex::new(Some((0x1200_0000, true))),
+    });
+    let set = |f: Option<(u32, bool)>| *src.fail.lock().unwrap() = f;
+    let ctx =
+        crate::WorldContext::load(src.clone(), crate::BundleOptions::default()).expect("context");
+    let k = LandblockKey::new(1, 10, 20).expect("key");
+    let bundle = |ctx: &crate::WorldContext| {
+        let bs = crate::BundleSource::new(Arc::clone(ctx.source()));
+        let frame = tessera_assets::RecordSource::read_record(&bs, k.data_did().0).expect("frame");
+        crate::bundle::build_bundle(ctx, k.data_did(), &frame, &|| false).expect("bundle")
+    };
+
+    // As loaded: no tables, a pending retry, and the scene library ready for it.
+    assert!(ctx.regions()[&1].scenery.is_none());
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    assert!(ctx.systems().scenes.is_some());
+    // Still failing: the request finds nothing and keeps the retry. The landblock built
+    // meanwhile has no scenery and is incomplete (§4.1 Tessera Decision), so it is built
+    // again on its next load.
+    assert!(ctx.scenery_tables(1).is_none());
+    let waiting = bundle(&ctx);
+    assert!(waiting.scenery.is_none());
+    assert!(!waiting.is_complete(), "built while the tables wait");
+    assert!(
+        waiting
+            .problems
+            .iter()
+            .any(|p| p.transient && p.what == "scenery"),
+        "{:?}",
+        waiting.problems
+    );
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    // A frill sector built meanwhile is not generated (it is tried again later), whether
+    // from the bundle built while the tables waited or from any other.
+    let mut thinner = DensityThinner::with_seed(3);
+    assert!(
+        crate::streamer::try_build_frill_sector(&ctx, &waiting, 8, 8, 1.0, &mut thinner).is_none()
+    );
+    // The pipeline is back: the next request loads the tables, for good.
+    set(None);
+    // The bundle built while they waited still yields no sector: it is rebuilt first.
+    assert!(
+        crate::streamer::try_build_frill_sector(&ctx, &waiting, 8, 8, 1.0, &mut thinner).is_none()
+    );
+    let b = bundle(&ctx);
+    let sc = b.scenery.as_ref().expect("scenery after the retry");
+    assert!(sc.complete);
+    assert!(b.is_complete());
+    assert!(
+        crate::streamer::try_build_frill_sector(&ctx, &b, 8, 8, 1.0, &mut thinner).is_some(),
+        "generated once the tables are there"
+    );
+    assert!(!b.generated.is_empty());
+    assert!(ctx.region(1).is_some_and(|r| r.scenery.is_some()));
+    assert_eq!(ctx.scenery_retry_pending().count(), 0);
+    set(Some((0x1200_0000, true)));
+    assert!(ctx.scenery_tables(1).is_some(), "remembered once loaded");
+
+    // A data fault on the retry ends it: the region has no scenery for good.
+    let ctx =
+        crate::WorldContext::load(src.clone(), crate::BundleOptions::default()).expect("context");
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    set(Some((0x1200_0000, false)));
+    assert!(ctx.scenery_tables(1).is_none());
+    assert_eq!(ctx.scenery_retry_pending().count(), 0);
+    // A landblock of a region whose tables fail on the data is complete, without scenery.
+    let final_ = bundle(&ctx);
+    assert!(final_.scenery.is_none());
+    assert!(
+        !final_
+            .problems
+            .iter()
+            .any(|p| p.transient && p.what == "scenery"),
+        "{:?}",
+        final_.problems
+    );
+    set(None);
+    assert!(
+        ctx.scenery_tables(1).is_none(),
+        "a data fault is not retried"
+    );
+
+    // Without scenery generation nothing is pending.
+    set(Some((0x1200_0000, true)));
+    let off = crate::WorldContext::load(
+        src.clone(),
+        crate::BundleOptions::default().without_world_systems(),
+    )
+    .expect("context");
+    assert_eq!(off.scenery_retry_pending().count(), 0);
+    assert!(off.scenery_tables(1).is_none());
 }

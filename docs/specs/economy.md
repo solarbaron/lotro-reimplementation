@@ -389,6 +389,12 @@ Filter kinds (elements of `EntityFilter_Array`):
 The definition of `EntityFilter_Array` allows more element kinds (weenie type, player-pet
 flag, alignment, class); none occurs in these records.
 
+> **OPEN:** (implementer, 2026-10-07) The type codes of the `WorldEvent_Condition` fields are
+> not given here or in §4.8: `WorldEvent_Operator` is described as a key (read as an enum,
+> type 8), but the type of `WorldEvent_ConditionValue` (values 0–3) is not stated. Which type
+> code does it have? Until answered, `crates/formats` reads it from an int, an enum or a
+> boolean.
+
 Meaning (Reported, LC): an entry applies to a looter for whom every filter of the entry
 holds; a property-set filter holds when the looter's value of the tested property equals
 one of the listed values; a range filter holds when the value lies between the bounds; a
@@ -462,6 +468,12 @@ The directory is the WEENIECONTENT label `WorldEventLootTableDirectory` (§4.12)
 
 Meaning (Reported, LC): a runic list is a trophy list for relics; a runic treasure group
 first picks a pull count by weight, then picks that many relics by weight.
+
+> **OPEN:** (implementer, 2026-10-07) The table above names no level field for the entries of
+> `RunicLevelLootTable_LootTable`, unlike §4.6 (`LevelBasedLootTable_Level`) and §4.8
+> (`WorldEventLevelLootTable_Level`). Is a level stored in each entry, and under which label?
+> Until answered, `crates/formats` derives the level from the position (entry *i* has level
+> *i* + 1) and checks E-I5 for this table by entry count only.
 
 <a id="s4-10"></a>
 ### 4.10 Skirmish lookups (classes 2728, 2729)
@@ -785,6 +797,24 @@ such costs the stored quantity equals the following:
 Counts: rule 2 with the minimum-usage level: 2,446 costs; with `Item_Level`: 3,119.
 The progression format itself belongs to the progression spec.
 
+> **Answered (2026-10-08, merge; was OPEN, implementer 2026-10-07):** Step 3 gives no type
+> codes, and no progression spec exists yet: what are the types of
+> `Progression_MinimumIndexValue` and of the elements of `FloatProgression_Array` (bare
+> `FloatProgression_FloatValue` floats, or structs holding that field)? Until answered,
+> `crates/formats` reads the minimum index from a 32- or 64-bit int and each element from a
+> float or an int, bare or inside a struct.
+>
+> *Answer:* the progression format is `combat-data.md` §4, which is self-contained: §4.1 (row
+> 1385, float array) gives the elements of `FloatProgression_Array` as bare
+> `FloatProgression_FloatValue` values (f32), and §4.2 gives `Progression_MinimumIndexValue` as
+> an int (absent ⇒ 0); §4.3 gives the index rule.
+
+> **OPEN:** (implementer, 2026-10-07) Step 2 names two places for `Usage_MinLevel` (top
+> level, or inside `DefaultPermissionBlobStruct`) but no precedence when a reward item has
+> both with different values. `crates/formats` takes the top-level property first; with that
+> order all 5,565 look-up costs of the install match the object form, so the data does not
+> contradict it. A value that is not a whole number gives no quantity (no rounding rule).
+
 Profiles with the override (V7, OBS2): its value is one of 22 levels from 18 to 160 (160 in
 35 profiles, 100 in 33, 95 in 24). Of the 2,336 reward structs in the 202 profiles, 2,065
 name an item that has `ItemMunging_MinMungeLevel` and 2,192 an item that has
@@ -1081,6 +1111,20 @@ bits 0–3 take the values 0–3, 6 and 7. The loot species tables (2001, the un
 the same bit positions with `MonsterLevel_ExaminationModStatType` as field 1, `Agent_Species`
 as field 2 and `Agent_Subspecies` as field 3 (264 of 264 and 135 of 135, field 4 = 0 in all);
 the code that builds their lookup keys is not in the client (§11.7).
+
+> **Answered (2026-10-08, merge; was OPEN, implementer 2026-10-07):** The widths of the
+> packed fields are not stated. With the multipliers above, a species key of 2¹² or more
+> spills into the examination-type field (bit 32 and up), and a subspecies key of 2¹⁶ or more
+> collides with the species field (bit 20 and up). What are the field widths (and is the
+> examination type limited to 32 bits)? Until answered, `crates/formats` reports no key for an
+> entry outside those ranges (all observed keys are inside them), and the PVP key only while
+> `Agent_Class` is 0.
+>
+> *Answer:* §9.5.1 (W6): bits 32–63 hold field 1 (the examination type, an unsigned 32-bit
+> number), bits 20–31 field 2 (species, 12 bits), bits 4–19 field 3 (subspecies, 16 bits),
+> bits 0–3 field 4; the class library's packing refuses values above those widths and returns
+> the key 0. That the loot species tables are keyed by that same function is not shown (W6,
+> §14). The position of `Agent_Class` in the PVP key stays OPEN in §14.
 
 ---
 
@@ -1630,3 +1674,4 @@ Data questions:
 | 2026-10-07 | Review revision (status stays Review). Every disputed count re-measured over all records with a fresh probe. (a) OBS row, §1 and §3.4: the 383,343 object records are 383,332 with prefix 0x70 and 11 singletons with prefix 0x76; property sets exist only for the 0x70 records (383,332 at 0x79) plus 1,616 stand-alone 0x78 sets, and the characteristic-property and inbound counts cover all of them; no 0x76 singleton has a class of this spec. §3.4 counts unchanged (all matched). (b) §7: the "Reported by analogy" unit of the money-drop amounts removed; it is now an OPEN in §11.6 (and listed in §14). §11.6: the absence of `LootGen_Money*` properties now covers every property set, not only creatures and containers. (c) §9.2: Type column added (all three words u32). Also corrected in §9.2 and row W2: the index rule's 7,625 tables are not all of this spec's classes; they are 7,441 (1235: 6,418; 2372: 16; 3307: 1,007) plus 184 of classes 2063 (163) and 3044 (21); per-class table counts added. Cosmetic: §4.13 References column now holds each row's total, and the "plus the loot tables of §4.4–§4.10" clause of the 1237 row lists its six counts; every figure in §4.13 re-measured and unchanged. |
 | 2026-10-07 | Second review revision (status stays Review). (d) §14, third data OPEN: the count was wrong as worded. Re-measured over all 1,007 class-3307 records with a fresh probe: 29 (not 27) match neither a stable nor a reverse-stable sort by weight; 2 of the 29 keep equal weights in ascending trophy-list DID order and 2 in descending DID order, leaving 25 that match none of the four orders (the earlier 27 excluded only the ascending-DID order). The breakdown (448 without ties; 518 stable, 12 reverse-stable, 29 neither) is now stated in §9.4. No other change. |
 | 2026-10-08 | Revision (status Accepted → Revised): OPEN closure with fresh probes over all records (OBS2), the class library's code (WL, data) and one M4 question (BIN2). Closed: the order of the class-3308 array (§9.4.1, binary-heap rule, 1,007 of 1,007) and the order of `Vendor_ItemList` (§6.3.1, growing hash set, 1,439 of 1,439), removing the §6.3 OPEN and the third data OPEN of §14. Answered and narrowed: critical-success chance shown while crafting (§11.5.1; remaining OPEN: the server's roll); recipe experience value (§11.5.2; remaining: how it is credited); cooldown keys → CooldownControl durations in seconds (§11.5.3; remaining OPEN: execution time only); purchase price from a vendor (§11.6.1; remaining OPEN: the price a vendor pays). Added facts to the remaining OPENs: munge-override counts (§6.2), trophy-list description and icon in examination (§11.2), the class library's four-field key and classification filter (§9.5.1), profession attribute 5 accessor, class 3399 as a DID set with the reward-once set empty (§14). New §11.7 (functions declared without bodies), invariants E-I16–E-I18, examples §13.6–§13.8, provenance OBS2, WL, BIN2 and rows W5, V5, V6, R3, R4, R5, L7, L8, W6, V7. Owner observations that can settle the remaining behavioural OPENs are named in each. |
+| 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §6.2 (progression types: answered by `combat-data.md` §4.1–§4.3) and §9.5 (packed field widths: answered by §9.5.1); the munge-override OPEN of the base text is replaced by the Accepted §6.2 text. No fact changed; status unchanged. |

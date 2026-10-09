@@ -221,6 +221,7 @@ pub fn triangle_overlay(
             positions,
             normals: Some(normals),
             tangents: None,
+            binormals: None,
             uvs: None,
             colors: None,
             indices: Indices::U32((0..count).collect()),

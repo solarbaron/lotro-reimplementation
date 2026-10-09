@@ -199,3 +199,61 @@ fn run_content_path_is_relative_to_the_working_directory() {
     let (code, _) = terminate(child, &rx);
     assert_eq!(code, Some(0));
 }
+
+/// Finding: the statistics line reported the longest tick since start and cumulative bytes;
+/// §11.1 asks for the longest tick over the interval and bytes per second.
+#[test]
+fn statistics_line_reports_interval_figures() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("data");
+    write_config(&dir, "[log]\nstats_interval_s = 1\n");
+    let mut cmd = bin();
+    cmd.arg("--data-dir")
+        .arg(&dir)
+        .args(["run", "--listen", &format!("127.0.0.1:{}", port(3))]);
+    let (child, mut lines, rx) = start(&mut cmd);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !lines.iter().any(|l| l.contains("stats")) {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(l) => lines.push(l),
+            Err(_) => break,
+        }
+    }
+    let (code, _) = terminate(child, &rx);
+    assert_eq!(code, Some(0));
+    let line = strip_ansi(
+        lines
+            .iter()
+            .find(|l| l.contains("stats"))
+            .unwrap_or_else(|| panic!("no statistics line: {lines:?}")),
+    );
+    for field in [
+        "tick_last_us=",
+        "tick_max_us=",
+        "bytes_in_per_s=",
+        "bytes_out_per_s=",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    for field in ["bytes_in=", "bytes_out="] {
+        assert!(!line.contains(field), "cumulative {field} logged: {line}");
+    }
+}
+
+/// The line without terminal colour sequences (ESC `[` … final letter).
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for d in chars.by_ref() {
+                if d.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

@@ -51,7 +51,7 @@ use crate::datadir::{self, DataDir};
 use crate::names;
 use crate::shared::{
     ConnId, ConnShared, HashJob, HashOutcome, HashResult, Outbound, SessionCmd, SimControl,
-    SimInput, Stats, StopReport, WriteJob, WriterMsg,
+    SimInput, Stats, StatsInterval, StopReport, WriteJob, WriterMsg,
 };
 use crate::workers::HASH_QUEUE;
 
@@ -346,6 +346,7 @@ pub struct Sim {
     tick: u64,
     next_save: u64,
     next_stats: u64,
+    stats_interval: StatsInterval,
     last_overrun_log: u64,
     limits: MovementLimits,
     stopped: bool,
@@ -388,6 +389,7 @@ impl Sim {
             }
         }
         let accounts_generation = accounts.generation();
+        let stats_interval = StatsInterval::new(&stats, now);
         let mut sim = Self {
             config: Arc::clone(&config),
             content: Arc::clone(&content),
@@ -414,6 +416,7 @@ impl Sim {
             tick: 0,
             next_save: now + u64::from(config.world.save_interval_s) * SECOND,
             next_stats: now + u64::from(config.log.stats_interval_s.max(1)) * SECOND,
+            stats_interval,
             last_overrun_log: 0,
             limits,
             stopped: false,
@@ -2111,6 +2114,7 @@ impl Sim {
         if self.config.log.stats_interval_s > 0 && now >= self.next_stats {
             self.next_stats = now + u64::from(self.config.log.stats_interval_s) * SECOND;
             let s = self.stats.snapshot();
+            let interval = self.stats_interval.close(&self.stats, now);
             let per_instance: Vec<u32> = self.instances.iter().map(|i| i.players).collect();
             tracing::info!(
                 connections = s.sim_connections,
@@ -2120,10 +2124,10 @@ impl Sim {
                 entities = s.entities,
                 interest_pairs = s.interest_pairs,
                 tick_last_us = s.tick_last_us,
-                tick_max_us = s.tick_max_us,
+                tick_max_us = interval.tick_max_us,
                 overruns = s.overruns,
-                bytes_in = s.bytes_in,
-                bytes_out = s.bytes_out,
+                bytes_in_per_s = interval.bytes_in_per_s,
+                bytes_out_per_s = interval.bytes_out_per_s,
                 accounted_bytes = s.accounted_bytes,
                 "stats"
             );
@@ -2736,9 +2740,7 @@ pub fn run(mut sim: Sim, rx: &std::sync::mpsc::Receiver<SimInput>, clock: crate:
         sim.tick(start);
         let end = clock.now();
         let took = end.saturating_sub(start);
-        sim.stats.ticks.fetch_add(1, Ordering::Relaxed);
-        sim.stats.tick_last_us.store(took, Ordering::Relaxed);
-        sim.stats.tick_max_us.fetch_max(took, Ordering::Relaxed);
+        sim.stats.record_tick(took);
         k += 1;
         next = tessera_protocol::time::tick_start(k, DEFAULT_TICK_RATE);
         if end > next {

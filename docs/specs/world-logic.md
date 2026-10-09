@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09 (§5.2 recognition of the quest-state test from the table's data, §6.7 absent integer bounds, §9.1 type of `Version_Number`); review of that revision 2026-10-09: **changes requested** (1 blocking item, see Review record); awaiting the writer's fix and a re-review of it. |
+| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09 (§5.2 recognition of the quest-state test from the table's data, §6.7 absent integer bounds, §9.1 type of `Version_Number`); review of that revision 2026-10-09: **changes requested** (1 blocking item, see Review record). Fixed 2026-10-09 by the writer (§5.2.1 and WL24 no longer claim that the parts identify a table; non-blocking notes N1–N3 also taken, new row WL27); awaiting a re-review of the fix. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (fresh dirty-room session, not the writer) |
@@ -90,9 +90,10 @@ says that a number is an algorithm constant (decision 0012).
 | WL20 | Version objects: master list (class 1623), subtree 1621 with 158 objects, 156 of them listed, 2 always-run, 123 with `Version_*` data (§9) | OBS | Confirmed 2026-10-09 |
 | WL21 | Behaviour of counters, timers, generators, custom conditions, event lists, property responses and version objects is not in the client's class library or executable as a rule (beyond §6.7) | WLB (search); BIN (search of immediate PIDs; the few hits checked are error codes that equal a PID by chance) | Confirmed for this build; behaviour server-side (OPEN §14) |
 | WL23 | Three further tables, 0x07001961, 0x0700197E and 0x07001A34, run the same quest-entry callback from `Startup` without a timer and with only a true branch (a light, or the day/night choice of `instance-scripts.md` §6); their users are one 0x47 descriptor that no SED places and two templates of class 796 (§5.1) | OBS2 | Confirmed 2026-10-09 |
-| WL24 | Every quest-state test is built from the six parts of §5.2.1 (timer, quest-ID guard, test override switch, phased-out guard, one or two chained callbacks, leaves); the parts present identify each of the eight tables (§5.2.1) | OBS2 (all 0x07 and 0x0C records) | Confirmed 2026-10-09 |
+| WL24 | Every quest-state test is built from the six parts of §5.2.1 (timer, quest-ID guard, test override switch, phased-out guard, one or two chained callbacks, leaves); the parts present determine how the test is evaluated, and the leaf content is read from each table; two tables may have the same parts (0x0700197E and 0x07001A34 do, and differ only under the true port), so the parts do not identify a table (§5.2.1) | OBS2 (all decoded 0x07 and 0x0C records; 2 undecoded records not searched) | Confirmed 2026-10-09 |
 | WL25 | The integer event's bounds are read with 0 as the value when the event does not store them; both dictionary defaults are 0; 91 of the 699 integer events store no minimum, all store a positive maximum, and every condition on an event without a stored minimum compares a value inside 0 … maximum (§6.7) | WLB2; DICT; OBS2 | Confirmed (WLB) 2026-10-09 |
 | WL26 | `Version_Number` is an enum (type 8) of mapper 0x23000076; all 94 stored values are type-8 values and keys of that mapper (§9.1) | DICT; OBS2 | Confirmed 2026-10-09 |
+| WL27 | Each of the four Switch nodes on `QuestState_Test` (in 0x070014AF, 0x070014BB, 0x070014B0, 0x070014B1) has exactly three value ports, for the values 0, 1 and 2 under operator 3, and no Default port (§5.2.1) | OBS2 (the four nodes, port by port) | Confirmed 2026-10-09 |
 | WL22 | Empty-journal evaluation counts (§4.9) | Tessera computation over OBS data with the rules of §4.3–§4.4 | Computed 2026-10-09 |
 
 ---
@@ -539,9 +540,10 @@ root of their `Startup` script, without a timer, and wire only its **true** port
 | 0x07001A34 | as 0x0700197E (0x10000235 with a sound and a MeshFX node) | one template of class 796 (0x7903290A) |
 
 When the entry fails, these tables do nothing (the false port is not wired), so the light or
-the day/night scripts run only while the quest entry passes. No other table or scriptlet of the
+the day/night scripts run only while the quest entry passes. No other decoded table or scriptlet of the
 install holds a GameCallback driven from a `QuestState_*` property, a Switch on
-`QuestState_Test` or a When on `QuestState_QuestID` (OBS2). (Switches on `QuestState_NPC` occur in
+`QuestState_Test` or a When on `QuestState_QuestID` (OBS2; the 2 records of the two prefixes
+that Tessera's decoder does not read were not searched, as in the OBS row). (Switches on `QuestState_NPC` occur in
 three tables and seven scriptlets, and on `QuestState_PhasedOut` in five more tables; they are not
 quest-entry tests and are outside this section.) Script
 keys: 5 `Startup`, 0x10001CF6 `QuestState_True`, 0x10001CF7 `QuestState_False`, 0x10000524
@@ -582,7 +584,7 @@ pairs set `Usage_QuestID`, `Usage_QuestStatus` and `Usage_Operator` from `QuestS
 |---|---|---|
 | Timer | a Timer node (kind 65) as the `Startup` root; the delay is the payload of its port of type 6 | the test runs once, after the delay |
 | Quest-ID guard | a When node (kind 63) on `QuestState_QuestID` whose test compares with the null DID under operator 3 | without a quest ID nothing runs |
-| Test override | a Switch node (kind 12) on `QuestState_Test` with cases 0, 1 and 2 | 1: the True leaf without a test; 2: the False leaf; 0: continue down the path |
+| Test override | a Switch node (kind 12) on `QuestState_Test` with cases 0, 1 and 2 | 1: the True leaf without a test; 2: the False leaf; 0: continue down the path; absent: as 0; any other value: nothing runs (see below) |
 | Phased-out guard | a Switch node on `QuestState_PhasedOut` with a case for false only | while the entity is phased out nothing runs |
 | Entries | the GameCallback node above; a second GameCallback in its **true** port whose pairs are driven from `QuestState_QuestID_2`, `…Status_2`, `…Operator_2` | one entry, or two entries that must both pass (the first one's false port is the False leaf) |
 | Leaves | what the callbacks' value ports hold: a Run node of 0x10001CF6 (`QuestState_True`) or 0x10001CF7 (`QuestState_False`); or, in the three tables of WL23, other nodes under the true port and nothing under the false port | the True and False effects (§5.4; WL23) |
@@ -601,12 +603,24 @@ and 0x070014BB) are not part of the test. The parts present in each table of the
 | 0x0700197E | none | no | no | no | 1 | true: day/night Scriptlet; false: nothing |
 | 0x07001A34 | none | no | no | no | 1 | true: day/night Scriptlet; false: nothing |
 
-Each combination of parts is different, so the parts identify the table's behaviour. Evaluation
+The parts present determine **how** the test is evaluated; **what** runs is the leaf content read
+from the table itself. Two tables can have the same parts and differ only in their leaves:
+0x0700197E and 0x07001A34 do (WL24). A reader therefore never keys behaviour on the combination
+of parts, and a test must not assume that each combination occurs once. Evaluation
 from the parts: wait for the delay (if any); stop if a quest-ID guard sees the null DID; apply the
 test override (1 → True leaf, 2 → False leaf, 0 → go on); stop if a phased-out guard sees true;
 evaluate the entries in order, the first failing one choosing the False leaf; run the leaf. A
 `Startup` path holding any other node between the root and the callback, or a callback outside
 this pattern, is not a quest-state test for such a reader; it is left to the script runtime.
+
+Value of the test override (WL27, `script-runtime.md` §6.2–§6.3). The Switch reads
+`QuestState_Test` from the entity; when the entity has no value it uses the dictionary default,
+0 (§3.2), and so takes case 0 and runs the test. Each of the four override Switches of the install
+has value ports for 0, 1 and 2 only and no Default port, so a value other than 0, 1 or 2 (none is
+stored in this install, §5.6; only a server could send one) selects no port: neither leaf runs.
+The Switches are persistent (`script-runtime.md` §6.5–§6.6), so a later change of
+`QuestState_Test` on the entity re-selects the case: the running branch is stopped and the new
+case's branch starts (the test runs again when the new value is 0).
 
 > **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the test is recognised by the
 > parts above (OBS2). The interim `QuestStateGraph` with five fixed shapes is replaced by these
@@ -615,7 +629,8 @@ this pattern, is not a quest-state test for such a reader; it is left to the scr
 <a id="s5-3"></a>
 ### 5.3 The quest-entry callback (OBS, WLB; WL14)
 
-Every GameCallback node of the five tables names package **0x70026F0D** (a game-callback object
+Every GameCallback node of the eight tables (the five of the table at the top of §5.1 and the three
+of WL23) names package **0x70026F0D** (a game-callback object
 of class 3172; its `GameCallback_ReturnValue` names `GCParam_BoolRetVal`), has the default value
 `GCParam_BoolRetVal` = false, and three call properties `Usage_QuestID`, `Usage_QuestStatus`,
 `Usage_Operator` stored as 0, which the node's driven pairs replace with the entity's values
@@ -1117,9 +1132,13 @@ fail when they do not hold elsewhere.
 - **WL-I9.** Every path-map box has min ≤ max on each axis (after defaults).
 - **WL-I10.** Every object listed by `Version_SingletonList` or `Version_AlwaysRunOnPlayers` is
   in subtree 1621, and every object of subtree 1621 is listed by one of them.
-- **WL-I11.** Every table whose `Startup` holds a GameCallback driven from `QuestState_QuestID`
-  is one of the eight of §5.2.1, and its path from the `Startup` root to the callback consists
-  only of the parts of §5.2.1.
+- **WL-I11.** Every decoded table whose `Startup` holds a GameCallback driven from
+  `QuestState_QuestID` is one of the eight of §5.2.1, and its path from the `Startup` root to the
+  callback consists only of the parts of §5.2.1 (the 2 records that Tessera's decoder does not
+  read are outside this invariant). The invariant does not require that the eight tables have
+  different combinations of parts: 0x0700197E and 0x07001A34 have the same one.
+- **WL-I14.** Every Switch on `QuestState_Test` has value ports for 0, 1 and 2 and no Default
+  port (WL27).
 - **WL-I12.** Every integer world event stores `WorldEvent_MaxIntValue` > 0; every condition on
   an integer event without a stored minimum (in the 0x78 and 0x79 sets; none of them compares
   with another event) has 0 ≤ *c* ≤ maximum.
@@ -1133,6 +1152,9 @@ Behaviour invariants added 2026-10-09:
   *c* = 11, false.
 - **WL-B10.** For a table with the parts of 0x07001961: entry failing → nothing runs; entry
   passing → the true-port content runs; `QuestState_Test` is not read.
+- **WL-B11.** On an entity whose table has a test override and whose `QuestState_Test` is absent,
+  the test runs (as for 0); with `QuestState_Test` = 3, neither the True nor the False leaf runs;
+  changing it afterwards to 1 runs the True leaf.
 
 Behaviour invariants (for tests of an implementation with synthetic entities):
 
@@ -1248,3 +1270,4 @@ A landblock view should list (all from data, nothing hard-coded):
 |---|---|---|---|
 | 2026-10-09 | all | First version (Review). Box phasing (BIN, WLB), quest-state script tables (data, WLB), world-event condition test (WLB), censuses of all groups over all sets, property-response and version objects, reference graph, invariants, examples, explorer view. | Spec writer (dirty room) |
 | 2026-10-09 | §0 header, §1, §5.1, §5.2.1, §6.7, §9.1, §11 | Revision answering the three implementer OPENs of 2026-10-09: the quest-state test read from its parts (new §5.2.1, WL24), with three further callback tables found by a full search (WL23); absent integer bounds are 0, from the class library (WLB2, WL25), with the census; `Version_Number` is an enum of mapper 0x23000076 (WL26). Invariants WL-I11–I13, WL-B9–B10. Status Revised. | Spec writer (dirty room) |
+| 2026-10-09 | §0 header, §1 (WL24, WL27), §5.1, §5.2.1, §5.3, §11 | Fix of the blocking review item of 2026-10-09: §5.2.1 and WL24 no longer claim that the parts identify a table; the parts determine the evaluation, the leaves are read from the table, and two tables (0x0700197E, 0x07001A34) share a combination. Non-blocking notes: §5.3 counts the eight tables (N1); §5.2.1 states the override for an absent `QuestState_Test` and for other values, from a port-by-port check of the four override Switches (N2, WL27); §5.1, WL24 and WL-I11 name the 2 undecoded records (N3). Invariants WL-I14, WL-B11. Status stays Revised. | Spec writer (dirty room) |

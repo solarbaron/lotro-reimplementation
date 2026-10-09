@@ -627,6 +627,25 @@ fn row_cameras_frame_their_targets() {
     }
 }
 
+/// Frames per second of the paced headless loop.
+const FPS: u64 = 60;
+
+/// How a camera's screenshot waits for the area to settle (`walker.md` §7): as long as
+/// loading progresses, counted in frames rather than wall-clock seconds, so a loaded
+/// machine makes the run slower, not different. It gives up after this many frames
+/// without any loading progress, or after this many frames in all.
+fn settle_wait() -> tessera_client::headless::SettleWait {
+    let (stall_s, max_s) = if cfg!(debug_assertions) {
+        (900, 4 * 3600)
+    } else {
+        (60, 3600)
+    };
+    tessera_client::headless::SettleWait::Progress {
+        stall_frames: stall_s * FPS,
+        max_frames: max_s * FPS,
+    }
+}
+
 /// Renders every camera of [`CAMERAS`] into `TESSERA_VISUAL_SHOTS` (a private directory
 /// outside the install; the images are viewed, never committed). Skipped unless both
 /// `TESSERA_VISUAL_SHOTS` and `TESSERA_GAME_DIR` are set, or when no GPU adapter exists.
@@ -684,8 +703,6 @@ fn row_cameras_render() {
             "--time-rate",
             "0",
             "--no-hud",
-            "--settle-timeout",
-            "240",
             "--screenshot",
             png.to_str().expect("utf-8 image path"),
         ]
@@ -694,7 +711,7 @@ fn row_cameras_render() {
         .collect();
         argv.extend(c.extra.iter().map(|s| (*s).to_owned()));
         let args = tessera_client::Args::try_parse_from(argv).expect("valid args");
-        match tessera_client::headless::run(&args) {
+        match tessera_client::headless::run_with(&args, settle_wait()) {
             Ok(r) => {
                 eprintln!("{}: {} frames, settled {}", c.id, r.frames, r.settled);
                 if !r.settled {

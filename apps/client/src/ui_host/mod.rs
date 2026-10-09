@@ -417,6 +417,23 @@ impl UiHost {
         self.last
     }
 
+    /// Whether the UI has settled: no position, notice or session line waits for step 7,
+    /// no UI asset job is in flight and the paint scheduler is idle (every surface drawn,
+    /// nothing left to paint or upload). Waiting for this is independent of how many
+    /// frames the paint slices need on a loaded machine.
+    #[must_use]
+    pub fn settled(&self) -> bool {
+        let in_flight = self
+            .env
+            .as_ref()
+            .is_some_and(|h| h.borrow().stats().in_flight > 0);
+        self.pending_position.is_none()
+            && self.pending_notices.is_empty()
+            && self.pending_session.is_empty()
+            && !in_flight
+            && self.ui.borrow().paint_settled()
+    }
+
     /// The recorder, when recording.
     #[must_use]
     pub fn recorder(&self) -> Option<&Recorder> {

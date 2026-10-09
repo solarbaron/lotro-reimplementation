@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use super::labels as l;
-use super::{Deviation, Fields, InstanceVocab, dids, enum_keys, first_of_type, structs};
+use super::{Deviation, Fields, InstanceVocab, dids, enum_keys, structs};
 use crate::did::Did;
-use crate::property::{PropertyType, PropertyValue};
+use crate::property::PropertyValue;
 use crate::property_set::PropertySet;
 
 // ------------------------------------------------------------------------ §5.1
@@ -241,10 +241,23 @@ impl SkillTrainerTraits {
 /// One `WorldJoinControl_Instance_Grouping` (§7.1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InstanceGroup {
-    /// `WorldJoinControl_Instance_Group_Label` (mapper `WJInstanceGroup`).
+    /// `WorldJoinControl_Instance_Group_Label` (mapper `WJInstanceGroup`): an enum or PID
+    /// value; absent (or of another type) is `None`, and the dictionary default 0 is **not**
+    /// applied (§3.6, §15.1 B3).
     pub label: Option<u32>,
     /// `WorldJoinControl_Grouped_Instance_List`, stored order.
     pub templates: Vec<Did>,
+    /// Whether `WorldJoinControl_Grouped_Instance_List` is stored as an array (B3: a group
+    /// without one is ignored).
+    pub has_list: bool,
+}
+
+impl InstanceGroup {
+    /// Whether the client uses this group at all (§15.1 B3): it has a label and a list.
+    #[must_use]
+    pub fn is_usable(&self) -> bool {
+        self.label.is_some() && self.has_list
+    }
 }
 
 /// The world-join control (§7.1, label `WorldJoinControl`).
@@ -277,8 +290,11 @@ impl WorldJoinControl {
             available: dids(v.elements(set, l::WJC_AVAILABLE)),
             groups: structs(v.elements(set, l::WJC_GROUPS))
                 .map(|s| InstanceGroup {
-                    label: v.enum_key(s, l::WJC_GROUP_LABEL),
+                    label: v.key(s, l::WJC_GROUP_LABEL),
                     templates: dids(v.elements(s, l::WJC_GROUP_LIST)),
+                    has_list: v
+                        .value(s, l::WJC_GROUP_LIST)
+                        .is_some_and(|x| x.as_array().is_some()),
                 })
                 .collect(),
             featured: v
@@ -416,10 +432,11 @@ pub struct FellowshipMakerControl {
     pub min_level: Option<i32>,
     /// `FellowshipMakerControl_ValidEncounterSizeArray` (group-size keys, stored order).
     pub valid_sizes: Vec<u32>,
-    /// Match-time entries: (encounter-size key, world-property PID). The struct fields are
-    /// told apart by type (one enum, one PID).
+    /// Match-time entries: (`FellowshipMakerControl_EncounterSize`,
+    /// `FellowshipMakerControl_MatchTimeWorldPropertyName`).
     pub match_time: Vec<(Option<u32>, Option<u32>)>,
-    /// Bonus thresholds: (effect, threshold), told apart by type (one DID, one float).
+    /// Bonus thresholds: (`FellowshipMakerControl_BonusEffect`,
+    /// `FellowshipMakerControl_BonusEffect_Threshold`).
     pub bonus_thresholds: Vec<(Option<Did>, Option<f32>)>,
     /// `FellowshipMakerControl_RandomBonusEffect`.
     pub random_bonus_effect: Option<Did>,
@@ -439,23 +456,16 @@ impl FellowshipMakerControl {
             match_time: structs(v.elements(set, l::FM_MATCH_TIME))
                 .map(|s| {
                     (
-                        match first_of_type(s, PropertyType::Enum, None) {
-                            Some(PropertyValue::Enum(k)) => Some(*k),
-                            _ => None,
-                        },
-                        match first_of_type(s, PropertyType::PropertyId, None) {
-                            Some(PropertyValue::PropertyId(p)) => Some(*p),
-                            _ => None,
-                        },
+                        v.enum_key(s, l::FM_ENCOUNTER_SIZE),
+                        v.pid_value(s, l::FM_MATCH_TIME_PROPERTY),
                     )
                 })
                 .collect(),
             bonus_thresholds: structs(v.elements(set, l::FM_BONUS))
                 .map(|s| {
                     (
-                        first_of_type(s, PropertyType::DidRef, None)
-                            .and_then(PropertyValue::as_did),
-                        first_of_type(s, PropertyType::Float, None).and_then(PropertyValue::as_f32),
+                        v.did(s, l::FM_BONUS_EFFECT),
+                        v.float(s, l::FM_BONUS_THRESHOLD),
                     )
                 })
                 .collect(),
@@ -488,7 +498,8 @@ impl PhasingFlags {
         Self::read_fields(set, v)
     }
 
-    /// Reads the flags of any property set or struct (absent = false).
+    /// Reads the flags of any property set or struct. Only a boolean value (type 21)
+    /// counts; absent or of another type is false (§3.6, §15.1 B6).
     #[must_use]
     pub fn read_fields<F: Fields + ?Sized>(f: &F, v: &InstanceVocab) -> Self {
         Self {

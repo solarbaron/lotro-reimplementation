@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Synthetic vocabulary and schema for tests and fuzzing: every label of
 //! [`super::labels::ALL`] gets an invented PID, plus generic PIDs for array elements and
-//! for struct fields that the spec names by suffix only. Nothing here comes from game data.
+//! for fields outside the vocabulary. Nothing here comes from game data.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -29,19 +29,8 @@ pub const P_STRUCT: u32 = 0x2000_0006;
 pub const P_VECTOR: u32 = 0x2000_0007;
 /// Generic boolean PID.
 pub const P_BOOL: u32 = 0x2000_0008;
-/// A second statistic enum PID (a conversion-hash field).
+/// A second generic enum PID (an enum field outside the vocabulary).
 pub const P_STAT: u32 = 0x2000_0009;
-
-/// The type used for labels the spec gives no type for.
-fn fallback(label: &str) -> PropertyType {
-    match label {
-        labels::STAT_DERIVED | labels::DBU_REMOVAL_SCRIPT => PropertyType::Enum,
-        labels::DBU_REMOVED => PropertyType::Array,
-        labels::DBU_REMOVAL_COUNT => PropertyType::Int,
-        labels::FC_SPACING | labels::FC_ACTUAL_WIDTH => PropertyType::Float,
-        _ => PropertyType::Bool,
-    }
-}
 
 /// Names → PIDs for every label.
 #[must_use]
@@ -59,7 +48,7 @@ pub fn schema() -> HashMap<u32, PropertyType> {
     let mut m: HashMap<u32, PropertyType> = labels::ALL
         .iter()
         .zip(LABEL_PID_BASE..)
-        .map(|((l, ty), pid)| (pid, ty.unwrap_or_else(|| fallback(l))))
+        .map(|((_, ty), pid)| (pid, ty.unwrap_or(PropertyType::Bool)))
         .collect();
     for (pid, ty) in [
         (P_DID, PropertyType::DidRef),
@@ -77,14 +66,10 @@ pub fn schema() -> HashMap<u32, PropertyType> {
     m
 }
 
-/// A vocabulary over [`names`], with [`P_STAT`] counted as a statistic enum and
-/// [`P_ENUM`] as a group-size enum.
+/// A vocabulary over [`names`].
 #[must_use]
 pub fn vocab() -> super::InstanceVocab {
-    let mut v = super::InstanceVocab::from_names(&names());
-    v.stat_enums.insert(P_STAT);
-    v.size_enums.insert(P_ENUM);
-    v
+    super::InstanceVocab::from_names(&names())
 }
 
 /// The invented PID of `label` (panics on a label outside [`labels::ALL`]; test use only).
@@ -164,4 +149,40 @@ pub fn enum_array(elem: u32, keys: &[u32]) -> PropertyValue {
             .map(|k| raw(elem, PropertyValue::Enum(*k)))
             .collect(),
     )
+}
+
+/// A synthetic `FellowshipMakerConfiguration` key list for fixtures: the key labels and
+/// keys that `instances.md` §10.2 item 2 lists (key *k* = bit *k* − 1, no key 15). Real
+/// readers take the keys from the install's mapper ([`super::finder::FlagBits::from_mapper`]).
+#[must_use]
+pub fn configuration_keys() -> Vec<(&'static str, u32)> {
+    vec![
+        ("None", 0),
+        ("Type_Skirmish", 1),
+        ("Type_Instance", 2),
+        ("Type_ScalingInstance", 3),
+        ("Type_NonScalingInstance", 4),
+        ("Size_Size1", 5),
+        ("Size_Size2", 6),
+        ("Size_Size3", 7),
+        ("Size_Size6", 8),
+        ("Tier_Tier1", 9),
+        ("Tier_Tier2", 10),
+        ("Tier_Tier3", 11),
+        ("Tier_Tier4", 12),
+        ("Tier_Tier5", 13),
+        ("Tier_Tier6", 14),
+        ("Tier_Tier7", 16),
+        ("Tier_Tier8", 17),
+        ("Tier_Tier9", 18),
+        ("Tier_Tier10", 19),
+        ("Type_BigBattles", 20),
+        ("Type_Seasonal", 21),
+    ]
+}
+
+/// [`super::finder::FlagBits`] over [`configuration_keys`].
+#[must_use]
+pub fn flag_bits() -> super::finder::FlagBits {
+    super::finder::FlagBits::from_keys(configuration_keys())
 }

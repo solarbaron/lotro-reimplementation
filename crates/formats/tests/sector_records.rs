@@ -3,11 +3,16 @@
 //! payloads: the worked examples of §8, the layout rules of §3 and §4, and the hostile-input
 //! rules of §3.11. Every fixture is built here; none comes from game data.
 
+use tessera_formats::LandblockData;
+use tessera_formats::landblock::sector_normals::{
+    NeighbourWindow, NormalSurface, rule_normal, rule_normal_bytes,
+};
 use tessera_formats::landblock::{
-    ALL_LANDBLOCKS_MASK, FailureCategory, InstanceId, LodRange, SECTOR_TERRAIN_SAMPLES,
-    SectorChunk, SectorEntity, SectorMesh, SectorRecord, SectorSample, SectorSprite,
-    SectorWaterPair, StaticEntityType, chunk_index, height_from_raw, imposter_table_did,
-    vertex_block,
+    ALL_LANDBLOCKS_MASK, Ceiling, FailureCategory, FarPlacements, HeightGrid, InstanceId, LodRange,
+    SECTOR_NEAR_RADIUS, SECTOR_TERRAIN_SAMPLES, SectorChunk, SectorEntity, SectorMesh,
+    SectorRecord, SectorSample, SectorSprite, SectorWaterPair, StaticEntityType, chunk_index,
+    height_from_raw, imposter_table_did, sector_radius, sprite_fade_parameter, sprite_is_mirrored,
+    sprite_is_near, vertex_block,
 };
 use tessera_formats::{Did, FormatError, NoSchema, Position, PropertyType, PropertyValue};
 
@@ -117,16 +122,26 @@ fn smallest_record_layout() {
 
 #[test]
 fn chunk_entry_example() {
-    // §8.2: chunk c = 1 (landblock x = 1, y = 0), heights 100.0–150.0, dry.
-    let c = SectorChunk::expected(3, 1, 0, 100.0, 150.0);
+    // §8.2: chunk c = 1 (landblock x = 1, y = 0), lowest stored height 3,277 and highest
+    // 4,915 (100.00763 and 149.99619 by §4.2), dry.
     let mut rec = smallest(DID);
-    rec.terrain.chunks[1] = c;
+    rec.terrain = mesh(ALL_LANDBLOCKS_MASK, |x, y, i, j| match (x, y, i, j) {
+        (1, 0, 0, 0) => 3_277,
+        (1, 0, 32, 32) => 4_915,
+        (1, 0, _, _) => 4_000,
+        _ => (1000 * x + 300 * y + 7 * i + 3 * j) as u16,
+    });
+    let c = rec.terrain.chunks[1];
+    assert_eq!(
+        c,
+        SectorChunk::expected(3, 1, 0, height_from_raw(3_277), height_from_raw(4_915))
+    );
     let bytes = rec.to_bytes().unwrap();
     let at = 49_017 + 66;
     let want: [u8; 66] = [
         0xC3, 0x0C, 0, 0, 0x41, 0x04, 0, 0, //
-        0, 0, 0x20, 0x43, 0, 0, 0, 0, 0, 0, 0xC8, 0x42, //
-        0, 0, 0xA0, 0x43, 0, 0, 0x20, 0x43, 0, 0, 0x16, 0x43, //
+        0, 0, 0x20, 0x43, 0, 0, 0, 0, 0xE8, 0x03, 0xC8, 0x42, //
+        0, 0, 0xA0, 0x43, 0, 0, 0x20, 0x43, 0x06, 0xFF, 0x15, 0x43, //
         0, 0, //
         0xA0, 0x5F, 0, 0, 0, 0x08, 0, 0, //
         0xA0, 0x77, 0, 0, 0, 0x02, 0, 0, //
@@ -138,8 +153,8 @@ fn chunk_entry_example() {
     let got = back.terrain.chunk(1, 0).unwrap();
     assert_eq!(got.vertex_start, 3_267);
     assert_eq!(got.vertex_count, 1_089);
-    assert_eq!(got.min, [160.0, 0.0, 100.0]);
-    assert_eq!(got.max, [320.0, 160.0, 150.0]);
+    assert_eq!(got.min, [160.0, 0.0, 100.00763]);
+    assert_eq!(got.max, [320.0, 160.0, 149.99619]);
     assert_eq!(
         got.lods,
         [
@@ -161,11 +176,27 @@ fn chunk_entry_example() {
             },
         ]
     );
-    // The example's heights are not those of the samples: DL-I5 flags it.
+    // The example's heights are now reachable: the record follows every invariant.
+    assert!(back.deviations().is_empty(), "{:?}", back.deviations());
+}
+
+#[test]
+fn stored_indices_are_skipped() {
+    // §3.2 Tessera rule: the m × 2 index bytes are skipped; the generated list is used.
+    let b = bytes_with(|b| {
+        b[49_013..49_017].copy_from_slice(&2u32.to_le_bytes());
+        b.splice(49_017..49_017, [1, 0, 2, 0]);
+    });
+    let rec = parse(&b).unwrap();
+    assert_eq!(rec.terrain.stored_index_count, 2);
     assert!(
-        back.deviations()
-            .contains(&"DL-I5: terrain chunk z range differs from its samples")
+        rec.deviations()
+            .contains(&"DL-I3: terrain index count not 0")
     );
+    // The encoder writes zeros for skipped bytes and keeps the count.
+    let again = rec.to_bytes().unwrap();
+    assert_eq!(&again[49_013..49_021], &[2, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(parse(&again).unwrap(), rec);
 }
 
 /// `water.md` §6.2 step 6.
@@ -539,4 +570,258 @@ fn every_truncation_fails_cleanly() {
     for n in cut_points {
         assert!(parse(&bytes[..n]).is_err(), "prefix {n}");
     }
+}
+
+// ---------------------------------------------------------------- §4.8, §5.1, §5.6, §4.9
+
+#[test]
+fn sprite_heading_size_fade_and_mirror() {
+    let sprite = SectorSprite {
+        name_key: 600,
+        east: 100.0,
+        height: 250.0,
+        north: 300.0,
+        scale: 2.0,
+        distance: 140.0,
+        byte: 0x40,
+    };
+    // §4.8: byte × 360/256.
+    assert_eq!(sprite.heading_degrees(), 90.0);
+    assert_eq!(SectorSprite { byte: 0, ..sprite }.heading_degrees(), 0.0);
+    assert!(
+        SectorSprite {
+            byte: 255,
+            ..sprite
+        }
+        .heading_degrees()
+            < 360.0
+    );
+    // Size S = value_a × scale, lower edge B = value_b × scale.
+    assert_eq!(sprite.billboard_size(3.0, 0.1), (6.0, 0.2));
+    // §5.6 step 2: sector corner landblock (3, 6), viewer at (4, 7): offset −160 each way.
+    let at = sprite.viewer_frame((3, 6), (4, 7));
+    assert_eq!(at, (-60.0, 140.0));
+    assert!(sprite_is_near(at.0, at.1));
+    assert!(sprite_is_near(-160.0, 320.0));
+    assert!(!sprite_is_near(-160.1, 0.0));
+    assert!(!sprite_is_near(0.0, 320.5));
+    // Near: the stored distance. Far: S × K / M_d with K = (H / φ) / 248.
+    assert_eq!(
+        sprite_fade_parameter(&sprite, at, 6.0, 1240.0, 1.0, 2.0),
+        140.0
+    );
+    let far = sprite.viewer_frame((0, 0), (4, 7));
+    assert!(!sprite_is_near(far.0, far.1));
+    let p = sprite_fade_parameter(&sprite, far, 6.0, 1240.0, 1.0, 2.0);
+    assert!((p - 6.0 * 5.0 / 2.0).abs() < 1e-4, "{p}");
+    // §5.6 step 4: θ = 90°: mirrored exactly when x − 160 > 0 (strictly).
+    assert!(sprite_is_mirrored(&sprite, (161.0, 0.0)));
+    assert!(!sprite_is_mirrored(&sprite, (159.0, 0.0)));
+    // θ = 0: mirrored exactly when y − 160 > 0.
+    let north = SectorSprite { byte: 0, ..sprite };
+    assert!(sprite_is_mirrored(&north, (0.0, 160.5)));
+    assert!(!sprite_is_mirrored(&north, (0.0, 160.0)));
+}
+
+#[test]
+fn radii_of_5_1_and_5_2() {
+    // F = ⌊R / 3⌋ + 1 for the landscape radii 2, 4, 6, 9, 12 of levels 0–4.
+    let f: Vec<u32> = [2, 4, 6, 9, 12].into_iter().map(sector_radius).collect();
+    assert_eq!(f, vec![1, 2, 3, 4, 5]);
+    assert_eq!(SECTOR_NEAR_RADIUS, 1);
+}
+
+#[test]
+fn far_placements_are_keyed_by_instance_id() {
+    let did = 0x8051_03F0;
+    let mut rec = smallest(did);
+    let entity = SectorEntity {
+        entity_type: 7,
+        object: Did(0x4700_1234),
+        iid: InstanceId::new(1, 1, 3, 0xF0, 5),
+        scale: [1.0; 3],
+        position: Position::new(0xC0)
+            .with_region(1)
+            .with_landblock(3, 0xF0)
+            .with_cell(0)
+            .with_offset([10.0, 20.0, 300.0]),
+        property: None,
+        view_distance_sq: 1_000_000.0,
+    };
+    rec.entities.push(entity.clone());
+    rec.entities.push(SectorEntity {
+        object: Did(0x4700_9999),
+        ..entity.clone()
+    });
+    let mut table = FarPlacements::new();
+    assert!(table.is_empty());
+    // The second entry repeats the instance ID: skipped, the first stays.
+    assert_eq!(table.register(&rec), 1);
+    assert_eq!(
+        table.register(&rec),
+        0,
+        "a sector loaded again adds nothing"
+    );
+    assert_eq!(table.len(), 1);
+    assert_eq!(
+        table.get(entity.iid.0).map(|e| e.object),
+        Some(Did(0x4700_1234))
+    );
+}
+
+// ---------------------------------------------------------------- §4.3 normals
+
+fn landblock(x: u8, y: u8, h: impl Fn(i32, i32) -> u16, ceiling: Option<u16>) -> LandblockData {
+    let (gx, gy) = (i32::from(x) * 32, i32::from(y) * 32);
+    let mut d = LandblockData::from_heights(
+        Did(0x8001_0000 | (u32::from(x) << 8) | u32::from(y)),
+        HeightGrid::from_fn(|i, j| h(gx + i as i32, gy + j as i32)),
+    );
+    if let Some(c) = ceiling {
+        d.ceiling = Some(Ceiling {
+            heights: HeightGrid::flat(c),
+            ..Ceiling::default()
+        });
+    }
+    d
+}
+
+#[test]
+fn normal_rule_on_planes() {
+    // A plane rising 10 raw steps per sample eastwards, over a 5 × 5 neighbourhood.
+    let slope = |gx: i32, _gy: i32| (20_000 + 10 * gx) as u16;
+    let blocks: Vec<LandblockData> = (0..5u8)
+        .flat_map(|x| (0..5u8).map(move |y| (x, y)))
+        .map(|(x, y)| landblock(x, y, slope, Some(30_000)))
+        .collect();
+    let get = |x: i32, y: i32| -> Option<&LandblockData> {
+        let (x, y) = (u8::try_from(x).ok()?, u8::try_from(y).ok()?);
+        blocks
+            .iter()
+            .find(|d| d.did.0 & 0xFFFF == (u32::from(x) << 8 | u32::from(y)))
+    };
+    let mut w = NeighbourWindow::default();
+    for (dy, row) in (-1..=1).zip(w.0.iter_mut()) {
+        for (dx, cell) in (-1..=1).zip(row.iter_mut()) {
+            *cell = get(2 + dx, 2 + dy);
+        }
+    }
+    // Analytic: normal ∝ (−dz/dx, 0, 1), dz/dx = 10 raw steps per 5 units.
+    let dzdx = f64::from(height_from_raw(10_010) - height_from_raw(10_000)) / 5.0;
+    let len = (dzdx * dzdx + 1.0).sqrt();
+    for (i, j) in [(0, 0), (16, 9), (32, 32), (0, 32)] {
+        let n = rule_normal(&w, NormalSurface::Terrain, i, j).unwrap();
+        assert!((n[0] + dzdx / len).abs() < 1e-3, "{n:?}");
+        assert!(
+            n[1].abs() < 1e-6 && (n[2] - 1.0 / len).abs() < 1e-3,
+            "{n:?}"
+        );
+    }
+    // A flat ceiling faces down: (127, 0, 127), middle byte ≤ 126.
+    assert_eq!(
+        rule_normal_bytes(&w, NormalSurface::Ceiling, 5, 5),
+        Some([127, 0, 127])
+    );
+    // A flat terrain sample encodes as (127, 255, 127).
+    let flat: Vec<LandblockData> = vec![landblock(0, 0, |_, _| 500, None)];
+    let mut fw = NeighbourWindow::default();
+    fw.0[1][1] = flat.first();
+    assert_eq!(
+        rule_normal_bytes(&fw, NormalSurface::Terrain, 0, 0),
+        Some([127, 255, 127])
+    );
+    // No ceiling grid: nothing to compute.
+    assert_eq!(rule_normal_bytes(&fw, NormalSurface::Ceiling, 3, 3), None);
+
+    // A sector built from the same plane with the rule's bytes checks exact.
+    let mut rec = smallest(0x8051_0303);
+    rec.terrain = mesh(ALL_LANDBLOCKS_MASK, |x, y, i, j| {
+        slope(
+            32 * (1 + x as i32) + i as i32,
+            32 * (1 + y as i32) + j as i32,
+        )
+    });
+    for x in 0..3usize {
+        for y in 0..3usize {
+            let mut w = NeighbourWindow::default();
+            for (dy, row) in (-1..=1).zip(w.0.iter_mut()) {
+                for (dx, cell) in (-1..=1).zip(row.iter_mut()) {
+                    *cell = get(1 + x as i32 + dx, 1 + y as i32 + dy);
+                }
+            }
+            let start = rec.terrain.chunk(x, y).unwrap().vertex_start as usize;
+            for j in 0..33 {
+                for i in 0..33 {
+                    let k = start + 33 * j + i;
+                    rec.terrain.samples[k].normal =
+                        rule_normal_bytes(&w, NormalSurface::Terrain, i, j).unwrap();
+                }
+            }
+        }
+    }
+    let check = rec.check_normals(|x, y| get(x - 2, y - 2));
+    assert_eq!(check.samples(), 9 * 1089);
+    assert_eq!(check.terrain.exact, check.terrain.samples, "{check:?}");
+    assert!(check.holds());
+    // One step off in one component is still within DL-I14; two steps is not.
+    rec.terrain.samples[40].normal[0] += 1;
+    let c = rec.check_normals(|x, y| get(x - 2, y - 2)).terrain;
+    assert_eq!((c.within_one, c.beyond), (1, 0));
+    rec.terrain.samples[40].normal[0] += 1;
+    let c = rec.check_normals(|x, y| get(x - 2, y - 2));
+    assert_eq!(c.terrain.beyond, 1);
+    assert!(!c.holds());
+    // A ceiling in landblock (0, 0) of the sector: mode 2, mask 1, the flat ceiling of the
+    // neighbourhood, normals facing down.
+    rec.terrain.samples[40].normal[0] -= 2;
+    rec.mode = 2;
+    rec.ceiling_mask = 1;
+    let mut ceiling = mesh(1, |_, _, _, _| 30_000);
+    for s in &mut ceiling.samples {
+        s.normal = [127, 0, 127];
+    }
+    rec.ceiling = Some(ceiling);
+    let c = rec.check_normals(|x, y| get(x - 2, y - 2));
+    assert_eq!(c.ceiling.samples, 1089);
+    assert_eq!(c.ceiling.exact, 1089, "{c:?}");
+    assert!(c.holds());
+    // An up-facing stored ceiling normal breaks DL-I14.
+    if let Some(m) = rec.ceiling.as_mut() {
+        m.samples[0].normal = [127, 200, 127];
+    }
+    let c = rec.check_normals(|x, y| get(x - 2, y - 2));
+    assert_eq!(c.ceiling.ceiling_up, 1);
+    assert!(!c.holds());
+}
+
+#[test]
+fn normal_rule_uses_the_neighbours_flag_at_index_0() {
+    // §4.3 step 3: a quad at index 32 reads the neighbour's flag byte at index 0, not the
+    // block's own byte at 32. A bumpy surface makes the diagonal matter.
+    let bumpy = |gx: i32, gy: i32| (20_000 + ((gx * 7919 + gy * 104_729) % 97) * 40) as u16;
+    let own = landblock(1, 1, bumpy, None);
+    let east = landblock(2, 1, bumpy, None);
+    let north = landblock(1, 2, bumpy, None);
+    let ne = landblock(2, 2, bumpy, None);
+    let window = |own: &'_ LandblockData, east: &'_ LandblockData| {
+        let mut w = NeighbourWindow::default();
+        w.0[1][1] = Some(own);
+        w.0[1][2] = Some(east);
+        w.0[2][1] = Some(&north);
+        w.0[2][2] = Some(&ne);
+        rule_normal_bytes(&w, NormalSurface::Terrain, 32, 16)
+    };
+    let base = window(&own, &east);
+    // Changing the block's own byte at (32, 16) changes nothing.
+    let mut own2 = own.clone();
+    own2.vertex_flags.raw_mut()[33 * 32 + 16] ^= 0x80;
+    assert_eq!(window(&own2, &east), base);
+    // Changing the east neighbour's byte at (0, 16) changes the result.
+    let mut east2 = east.clone();
+    east2.vertex_flags.raw_mut()[16] ^= 0x80;
+    assert_ne!(window(&own, &east2), base);
+    // Without the east neighbour the triangles through it are left out, the rest remain.
+    let mut w = NeighbourWindow::default();
+    w.0[1][1] = Some(&own);
+    assert!(rule_normal_bytes(&w, NormalSurface::Terrain, 32, 16).is_some());
 }

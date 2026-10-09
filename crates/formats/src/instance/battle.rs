@@ -6,26 +6,15 @@
 use std::collections::BTreeMap;
 
 use super::labels as l;
-use super::{Deviation, InstanceVocab, dids, enum_keys, first_of_type, nonzero, structs};
+use super::{Deviation, InstanceVocab, dids, enum_keys, nonzero, structs};
 use crate::did::Did;
-use crate::property::{PropertyStruct, PropertyType, PropertyValue};
+use crate::property::{PropertyStruct, PropertyValue};
 use crate::property_set::PropertySet;
 
 /// `DistantBattleUnit_CaptureQualityOverride` when absent: automatic (B5).
 pub const CAPTURE_QUALITY_AUTOMATIC: u32 = 0xFFFF_FFFF;
 /// `DistantBattleUnit_LaneType` when absent: spawn (§3.3).
 pub const LANE_TYPE_DEFAULT: u32 = 2;
-
-fn int_field(s: &PropertyStruct, except: Option<u32>) -> Option<i32> {
-    match first_of_type(s, PropertyType::Int, except)? {
-        PropertyValue::Int(n) => Some(*n),
-        _ => None,
-    }
-}
-
-fn other_did(s: &PropertyStruct, except: Option<u32>) -> Option<Did> {
-    first_of_type(s, PropertyType::DidRef, except).and_then(PropertyValue::as_did)
-}
 
 // ------------------------------------------------------------------------ §8.1
 
@@ -59,13 +48,14 @@ pub struct BigBattleControl {
     pub first_time_medal_bonus: Option<i32>,
     /// `BigBattleControl_Medal_Info_Hash`, stored order.
     pub medals: Vec<MedalInfo>,
-    /// (quest, points) of `BigBattleControl_Quest_RewardValue_Hash`; the point field is
-    /// the struct's integer field.
+    /// (`BigBattleControl_Quest`, `BigBattleControl_QuestPointValue`) of
+    /// `BigBattleControl_Quest_RewardValue_Hash`.
     pub quest_points: Vec<(Option<Did>, Option<i32>)>,
-    /// (quest, encounter) of `BigBattleControl_Quest_To_Encounter_Hash`; the encounter is
-    /// the struct's DID field other than `BigBattleControl_Quest`.
+    /// (`BigBattleControl_Quest`, `BigBattleControl_Encounter`) of
+    /// `BigBattleControl_Quest_To_Encounter_Hash`.
     pub quest_encounters: Vec<(Option<Did>, Option<Did>)>,
-    /// (wave location, world event) of `BigBattleControl_LocationToZoneEvent_Array`.
+    /// (`BigBattleControl_BigBattleWaveLocation`, `BigBattleControl_LocationZoneEvent`) of
+    /// `BigBattleControl_LocationToZoneEvent_Array`.
     pub location_events: Vec<(Option<u32>, Option<Did>)>,
 }
 
@@ -73,7 +63,6 @@ impl BigBattleControl {
     /// Reads the control fields of `set`.
     #[must_use]
     pub fn read(set: &PropertySet, v: &InstanceVocab) -> Self {
-        let quest_pid = v.pid(l::BB_QUEST);
         Self {
             initial_trait_points: v.int(set, l::BB_INITIAL_POINTS),
             refund_progression: v.did(set, l::BB_REFUND),
@@ -90,15 +79,17 @@ impl BigBattleControl {
                 })
                 .collect(),
             quest_points: structs(v.elements(set, l::BB_QUEST_POINTS))
-                .map(|s| (v.did(s, l::BB_QUEST), int_field(s, None)))
+                .map(|s| (v.did(s, l::BB_QUEST), v.int(s, l::BB_QUEST_POINT_VALUE)))
                 .collect(),
             quest_encounters: structs(v.elements(set, l::BB_QUEST_ENCOUNTERS))
-                .map(|s| (v.did(s, l::BB_QUEST), other_did(s, quest_pid)))
+                .map(|s| (v.did(s, l::BB_QUEST), v.did(s, l::BB_ENCOUNTER)))
                 .collect(),
             location_events: structs(v.elements(set, l::BB_LOCATION_EVENTS))
                 .map(|s| {
-                    let loc = v.pid(l::BB_WAVE_LOCATION);
-                    (v.enum_key(s, l::BB_WAVE_LOCATION), other_did(s, loc))
+                    (
+                        v.enum_key(s, l::BB_WAVE_LOCATION),
+                        v.did(s, l::BB_LOCATION_EVENT),
+                    )
                 })
                 .collect(),
         }
@@ -156,7 +147,8 @@ pub struct DistantBattleScript {
     pub waves: Vec<Wave>,
     /// `DistantBattle_Objective_List`.
     pub objectives: Vec<Objective>,
-    /// (unit, weight) of `DistantBattleUnit_WeightedList`; the weight is the integer field.
+    /// (`DistantBattleUnit_Entry`, `DistantBattleUnit_Weight`) of
+    /// `DistantBattleUnit_WeightedList`.
     pub weighted_units: Vec<(Option<Did>, Option<i32>)>,
     /// (unit, weight) of `DistantBattleUnit_Siege_WeightedList`.
     pub weighted_siege_units: Vec<(Option<Did>, Option<i32>)>,
@@ -168,7 +160,7 @@ impl DistantBattleScript {
     pub fn read(set: &PropertySet, v: &InstanceVocab) -> Self {
         let pairs = |label| {
             structs(v.elements(set, label))
-                .map(|s| (v.did(s, l::DBU_ENTRY), int_field(s, None)))
+                .map(|s| (v.did(s, l::DBU_ENTRY), v.int(s, l::DBU_WEIGHT)))
                 .collect()
         };
         Self {
@@ -244,15 +236,21 @@ pub struct FormationGroup {
     pub layout_calculator: Option<Did>,
 }
 
-/// One element of `DistantBattleUnit_Composition_Removed_List` (§15.1 B5 step 4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// One element of `DistantBattleUnit_Composition_Removed_List` (§15.1 B5 step 4, value
+/// types §3.6). An element that is not a struct reads as the default (no unit), which the
+/// client skips; it still counts as a position of the list.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Removal {
-    /// `DistantBattleUnit_Formation_Unit`: the group to remove figures from.
+    /// `DistantBattleUnit_Formation_Unit`: the groups to remove figures from. `None` when
+    /// absent, not a DID or 0 (such an element is skipped).
     pub unit: Option<Did>,
-    /// `DistantBattleUnit_Removal_Count` (absent → 1).
+    /// `DistantBattleUnit_Removal_Count`: a 32-bit integer read as unsigned; absent or of
+    /// another type → 1.
     pub count: u32,
-    /// `DistantBattleUnit_Removal_ScriptKey`.
-    pub script_key: Option<u32>,
+    /// `DistantBattleUnit_Removal_ScriptKey` (mapper `FX`); absent → 0, "no script".
+    pub script_key: u32,
+    /// `DistantBattleUnit_Removal_ScriptParameters`, handed to the removal script unchanged.
+    pub script_parameters: Option<PropertyStruct>,
 }
 
 impl Removal {
@@ -260,9 +258,13 @@ impl Removal {
     #[must_use]
     pub fn read(s: &PropertyStruct, v: &InstanceVocab) -> Self {
         Self {
-            unit: v.did(s, l::DBU_UNIT),
-            count: v.bits32(s, l::DBU_REMOVAL_COUNT).unwrap_or(1),
-            script_key: v.bits32(s, l::DBU_REMOVAL_SCRIPT),
+            unit: nonzero(v.did(s, l::DBU_UNIT)),
+            count: v.int(s, l::DBU_REMOVAL_COUNT).map_or(1, i32::cast_unsigned),
+            script_key: v.enum_key(s, l::DBU_REMOVAL_SCRIPT).unwrap_or(0),
+            script_parameters: v
+                .value(s, l::DBU_REMOVAL_PARAMS)
+                .and_then(PropertyValue::as_struct)
+                .cloned(),
         }
     }
 }
@@ -286,13 +288,15 @@ pub struct DistantBattleUnit {
     pub min_activators: Option<i32>,
     /// `DistantBattleUnit_Activator_Respawn_Time`.
     pub activator_respawn_time: Option<f32>,
-    /// `DistantBattleUnit_GroundClampEntities` as stored.
+    /// `DistantBattleUnit_GroundClampEntities` as stored (a boolean value; another type
+    /// reads as absent, §3.6).
     pub ground_clamp_stored: Option<bool>,
     /// `DistantBattleUnit_CaptureQualityOverride` as stored.
     pub capture_quality_stored: Option<u32>,
     /// `DistantBattleUnit_LaneType` as stored.
     pub lane_type_stored: Option<u32>,
-    /// `DistantBattleUnit_Composition_Removed_List` (run-time state; empty in the data).
+    /// `DistantBattleUnit_Composition_Removed_List` (run-time state; empty in the data),
+    /// one entry per stored element; a value that is not an array reads as empty.
     pub removals: Vec<Removal>,
 }
 
@@ -349,13 +353,26 @@ impl DistantBattleUnit {
             ground_clamp_stored: v.boolean(set, l::DBU_GROUND_CLAMP),
             capture_quality_stored: v.enum_key(set, l::DBU_CAPTURE),
             lane_type_stored: v.enum_key(set, l::DBU_LANE),
-            removals: structs(v.elements(set, l::DBU_REMOVED))
-                .map(|s| Removal::read(s, v))
-                .collect(),
+            removals: Self::read_removals(set, v),
         }
     }
 
-    /// Ground clamping of the figures (B5 step 3: absent → true).
+    /// The removal list of a property set or struct as the client reads it (§15.1 B5
+    /// step 4): one [`Removal`] per element, a non-struct element as the default (skipped
+    /// when applied), a value that is not an array as the empty list.
+    #[must_use]
+    pub fn read_removals<F: super::Fields + ?Sized>(f: &F, v: &InstanceVocab) -> Vec<Removal> {
+        v.elements(f, l::DBU_REMOVED)
+            .iter()
+            .map(|e| {
+                e.value
+                    .as_struct()
+                    .map_or_else(Removal::default, |s| Removal::read(s, v))
+            })
+            .collect()
+    }
+
+    /// Ground clamping of the figures (B5 step 3: absent or not a boolean → true).
     #[must_use]
     pub fn ground_clamp(&self) -> bool {
         self.ground_clamp_stored.unwrap_or(true)
@@ -476,9 +493,11 @@ impl DistantBattleUnit {
     }
 }
 
-/// The figures left per entity group after removals (§15.1 B5 step 4, §17.6). Elements of
-/// the removal list are applied once each: when the list grows only the new elements are
-/// applied.
+/// The figures left per entity group after removals (§15.1 B5 step 4, §17.6).
+///
+/// Figures go from the **end** of a group's offset array, last stored first, so the figures
+/// left in group *g* are always its first [`FigureCounts::remaining`] offsets
+/// ([`FigureCounts::write_back`] shortens the unit's arrays accordingly).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FigureCounts {
     units: Vec<Option<Did>>,
@@ -486,20 +505,48 @@ pub struct FigureCounts {
     applied: usize,
 }
 
-/// One applied removal: the group index and how many figures it removed (with the
-/// removal's script key to play on them).
+/// What the client does with the figures one element removed (§15.1 B5 step 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AppliedRemoval {
+pub enum RemovalEffect {
+    /// Nothing to play: first display, or no figure was removed.
+    Silent,
+    /// No script key (0): the removed figures are dropped at once.
+    DropAtOnce,
+    /// The removal script with this key plays once for the element, on the removed figures
+    /// (with the element's parameters).
+    PlayScript(u32),
+}
+
+/// The figures one group lost to one element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedFigures {
     /// Index of the group in [`DistantBattleUnit::groups`].
     pub group: usize,
-    /// Figures removed (at most the figures left).
-    pub removed: usize,
-    /// The script to play on the removed figures.
-    pub script_key: Option<u32>,
+    /// Indices into the group's offset array of the removed figures, last stored first.
+    pub offsets: Vec<usize>,
+}
+
+/// One applied element of the removal list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedRemoval {
+    /// Position of the element in the list.
+    pub element: usize,
+    /// The figures removed, per matching group (every group whose unit matches).
+    pub removed: Vec<RemovedFigures>,
+    /// What happens to the removed figures.
+    pub effect: RemovalEffect,
+}
+
+impl AppliedRemoval {
+    /// Figures removed in all groups.
+    #[must_use]
+    pub fn figure_count(&self) -> usize {
+        self.removed.iter().map(|r| r.offsets.len()).sum()
+    }
 }
 
 impl FigureCounts {
-    /// All figures of `unit`, none removed.
+    /// All figures of `unit`, none removed, no element applied yet.
     #[must_use]
     pub fn new(unit: &DistantBattleUnit) -> Self {
         Self {
@@ -509,47 +556,98 @@ impl FigureCounts {
         }
     }
 
+    /// The first display of the unit's figures (B5 step 4): the elements already in `list`
+    /// are applied (positions 0 … length − 1) before the figures are created, without
+    /// removal scripts ([`RemovalEffect::Silent`]).
+    #[must_use]
+    pub fn first_display(
+        unit: &DistantBattleUnit,
+        list: &[Removal],
+    ) -> (Self, Vec<AppliedRemoval>) {
+        let mut c = Self::new(unit);
+        let out = list
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| c.apply_element(i, r, true))
+            .collect();
+        c.applied = list.len();
+        (c, out)
+    }
+
     /// Figures left in group `group`.
     #[must_use]
     pub fn remaining(&self, group: usize) -> Option<usize> {
         self.remaining.get(group).copied()
     }
 
-    /// Applies the elements of `list` past the ones already applied. Each removes `count`
-    /// figures (at most those left) from the first group whose unit matches; an element
-    /// whose unit matches no group removes nothing. A list shorter than before (a reset)
-    /// applies nothing and restarts the count at its length.
+    /// A change of the property (B5 step 4): applies the elements at positions *old
+    /// length* … *new length* − 1, *old length* being the list's length just before this
+    /// change. A list that shrinks or keeps its length applies nothing; either way the
+    /// length is remembered for the next change.
     pub fn apply(&mut self, list: &[Removal]) -> Vec<AppliedRemoval> {
-        let mut out = Vec::new();
-        for r in list.iter().skip(self.applied) {
-            let Some(group) = self.units.iter().position(|u| *u == r.unit) else {
-                tracing::debug!(unit = ?r.unit, "removal names no group of the unit");
-                continue;
-            };
-            if let Some(left) = self.remaining.get_mut(group) {
-                let n = usize::try_from(r.count).unwrap_or(usize::MAX).min(*left);
-                *left -= n;
-                out.push(AppliedRemoval {
-                    group,
-                    removed: n,
-                    script_key: r.script_key,
-                });
-            }
-        }
+        let out = list
+            .iter()
+            .enumerate()
+            .skip(self.applied)
+            .filter_map(|(i, r)| self.apply_element(i, r, false))
+            .collect();
         self.applied = list.len();
         out
+    }
+
+    /// One element: skipped without a unit; otherwise every group whose unit equals it
+    /// loses up to `count` figures from the end of its offsets. `None` when no group
+    /// matched (nothing happens).
+    fn apply_element(&mut self, i: usize, r: &Removal, silent: bool) -> Option<AppliedRemoval> {
+        let unit = r.unit?;
+        let want = usize::try_from(r.count).unwrap_or(usize::MAX);
+        let mut removed = Vec::new();
+        for (g, (u, left)) in self.units.iter().zip(self.remaining.iter_mut()).enumerate() {
+            if *u != Some(unit) {
+                continue;
+            }
+            let n = want.min(*left);
+            let offsets = (*left - n..*left).rev().collect();
+            *left -= n;
+            removed.push(RemovedFigures { group: g, offsets });
+        }
+        if removed.is_empty() {
+            tracing::debug!(unit = unit.0, "removal names no group of the unit");
+            return None;
+        }
+        let any = removed.iter().any(|r| !r.offsets.is_empty());
+        let effect = match (silent, any, r.script_key) {
+            (true, _, _) | (false, false, _) => RemovalEffect::Silent,
+            (false, true, 0) => RemovalEffect::DropAtOnce,
+            (false, true, k) => RemovalEffect::PlayScript(k),
+        };
+        Some(AppliedRemoval {
+            element: i,
+            removed,
+            effect,
+        })
+    }
+
+    /// Writes the shortened offset arrays back into `unit`'s entity composition, so a later
+    /// rebuild of the figures does not bring removed ones back (B5 step 4).
+    pub fn write_back(&self, unit: &mut DistantBattleUnit) {
+        for (g, left) in unit.groups.iter_mut().zip(&self.remaining) {
+            g.offsets.truncate(*left);
+        }
     }
 }
 
 // ------------------------------------------------------------------------ §8.5
 
-/// The formation control (§8.5, label `DistantBattleUnitFormationControl`).
+/// The formation control (§8.5, label `DistantBattleUnitFormationControl`). The client
+/// reads none of it (B7).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FormationControl {
-    /// `DistantBattleUnit_FormationControl_SpacingBetweenGroups` (any numeric type).
-    pub spacing_between_groups: Option<f64>,
-    /// (width class, actual width in metres) of each `…_Width_Lookup` entry.
-    pub widths: Vec<(Option<u32>, Option<f64>)>,
+    /// `DistantBattleUnit_FormationControl_SpacingBetweenGroups` (float).
+    pub spacing_between_groups: Option<f32>,
+    /// (`DistantBattleUnit_Formation_Width`, `DistantBattleUnit_FormationControl_ActualWidth`)
+    /// of each `DistantBattleUnit_FormationControl_Width_Struct`.
+    pub widths: Vec<(Option<u32>, Option<f32>)>,
 }
 
 impl FormationControl {
@@ -557,20 +655,19 @@ impl FormationControl {
     #[must_use]
     pub fn read(set: &PropertySet, v: &InstanceVocab) -> Self {
         Self {
-            spacing_between_groups: v.number(set, l::FC_SPACING),
+            spacing_between_groups: v.float(set, l::FC_SPACING),
             widths: structs(v.elements(set, l::FC_WIDTHS))
-                .map(|s| (v.enum_key(s, l::DBU_WIDTH), v.number(s, l::FC_ACTUAL_WIDTH)))
+                .map(|s| (v.enum_key(s, l::DBU_WIDTH), v.float(s, l::FC_ACTUAL_WIDTH)))
                 .collect(),
         }
     }
 
     /// The actual width of width class `class`, if listed.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation)]
     pub fn actual_width(&self, class: u32) -> Option<f32> {
         self.widths
             .iter()
             .find(|(c, _)| *c == Some(class))
-            .and_then(|(_, w)| w.map(|w| w as f32))
+            .and_then(|(_, w)| *w)
     }
 }

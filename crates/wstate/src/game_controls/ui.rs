@@ -29,6 +29,36 @@ pub fn unlocked_key(value: &Value) -> Option<u32> {
     value.iter_set_bits().next().and_then(|b| b.checked_add(1))
 }
 
+/// The top-level array of an item's property set that holds its vital-display unlock
+/// (§7.1, GCI17): a general list of property values, so the unlock is taken by label.
+pub const USAGE_PROPERTY_ARRAY: &str = "Usage_SetPropertyUsageData_Array";
+
+/// The label of the unlock value (§7.1).
+pub const VDO_UNLOCK_LABEL: &str = "VitalDisplayOverride_UnlockedVDOs";
+
+/// The vital-display unlocks of an item (§7.1): every element labelled
+/// [`VDO_UNLOCK_LABEL`] of the item's top-level [`USAGE_PROPERTY_ARRAY`], mapped by
+/// [`unlocked_key`] (`None` for an element that is not a one-bit bitfield). The unlock is
+/// never a top-level property and never inside a struct; elements with other labels (a
+/// quest property in one set of the install) are skipped. Empty when the item has no
+/// such array or the dictionary lacks either label.
+///
+/// # Errors
+///
+/// [`crate::WStateError::BadProperty`] when the array property is not an array,
+/// [`crate::WStateError::TooMany`] past the view limit.
+pub fn item_vdo_unlocks(set: &PropertySet, reg: &PropertyRegistry) -> Result<Vec<Option<u32>>> {
+    let Some(pid) = reg.pid(VDO_UNLOCK_LABEL) else {
+        return Ok(Vec::new());
+    };
+    let f = Fields::new(set, reg, "item usage properties");
+    Ok(f.list("Usage_SetPropertyUsageData_Array")?
+        .iter()
+        .filter(|p| p.pid == pid)
+        .map(|p| unlocked_key(&p.value))
+        .collect())
+}
+
 /// gmVitalDisplayOverrideControl (§7.1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VitalDisplayOverrideControl {
@@ -416,7 +446,8 @@ impl OpenTappingControl {
 }
 
 /// The player-note length the client uses when GuildControl does not hold
-/// `Guild_PlayerNoteMaxLength` (§8.1, BIN).
+/// `Guild_PlayerNoteMaxLength` as an int: absent, or present with another type (§8.1,
+/// BIN q5).
 pub const PLAYER_NOTE_DEFAULT: i32 = 48;
 
 /// GuildControl (§8.1).
@@ -476,8 +507,8 @@ impl GuildControl {
         })
     }
 
-    /// The player-note length limit the client uses: the stored value, else
-    /// [`PLAYER_NOTE_DEFAULT`].
+    /// The player-note length limit the client uses: the stored value when it is an int
+    /// (property type 15), else [`PLAYER_NOTE_DEFAULT`] (§8.1).
     #[must_use]
     pub fn player_note_limit(&self) -> i32 {
         self.player_note_max_length.unwrap_or(PLAYER_NOTE_DEFAULT)

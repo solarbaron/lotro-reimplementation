@@ -1005,18 +1005,32 @@ fn name_generator_view_and_generation() {
         |_| draws.next().unwrap_or(0),
         |_| true,
     );
-    assert_eq!(name.as_deref(), Some("Kaliyero"));
+    assert_eq!(
+        name,
+        GeneratedName {
+            name: "Kaliyero".into(),
+            accepted: true,
+            attempts: 1
+        }
+    );
     let mut draws = [2u32, 1, 1].into_iter();
-    let name = generate_name(
+    let name = generate_name_once(&g, &text, 0x10, 0x1000, |_| draws.next().unwrap_or(0));
+    assert_eq!(name, "Toranndor");
+    // The check sees a lower-cased copy (§8.5, creation screen).
+    let mut seen = Vec::new();
+    let _ = generate_name(
         &g,
         &text,
         0x10,
         0x1000,
-        |_| draws.next().unwrap_or(0),
-        |_| true,
+        |_| 0,
+        |s| {
+            seen.push(s.to_owned());
+            true
+        },
     );
-    assert_eq!(name.as_deref(), Some("Toranndor"));
-    // Rejected every time: MAX_NAME_ATTEMPTS attempts, then nothing.
+    assert_eq!(seen, vec!["kaliyero".to_owned()]);
+    // Rejected every time: MAX_NAME_ATTEMPTS attempts in all, the last name is kept.
     let mut attempts = 0;
     let none = generate_name(
         &g,
@@ -1029,17 +1043,211 @@ fn name_generator_view_and_generation() {
             false
         },
     );
-    assert_eq!(none, None);
     assert_eq!(attempts, MAX_NAME_ATTEMPTS);
+    assert_eq!(MAX_NAME_ATTEMPTS, 100);
     assert_eq!(
-        generate_name(&g, &text, 0x11, 0x1000, |_| 0, |_| true),
-        None
+        none,
+        GeneratedName {
+            name: "Kaliyero".into(),
+            accepted: false,
+            attempts: 100
+        }
     );
+    // No category: generation fails, the empty name never reaches the check.
+    let failed = generate_name(&g, &text, 0x11, 0x1000, |_| 0, |_| panic!("not called"));
+    assert_eq!((failed.name.as_str(), failed.accepted), ("", false));
+    assert_eq!(generate_name_once(&g, &text, 0x11, 0x1000, |_| 0), "");
     // An undefined shift table means no shifts (§8.4 step 1).
     let mut no_shift = text.clone();
     no_shift.shifts = BTreeMap::new();
-    let name = generate_name(&g, &no_shift, 0x10, 0x1000, |_| 0, |_| true);
-    assert_eq!(name.as_deref(), Some("Kaliaero"));
+    let name = generate_name_once(&g, &no_shift, 0x10, 0x1000, |_| 0);
+    assert_eq!(name, "Kaliaero");
+}
+
+/// §19.6: a category with weights 3, 0, 2; option 3 names T1 = [Dor, Bel], T2 = [dor, in]
+/// and the shift tables [9 (undefined), the table of §19.1].
+fn example_19_6() -> (NameGenerator, NameText) {
+    let option = |weight: i32| NameOption {
+        weight,
+        syllable_tables: vec![1, 2],
+        shift_tables: vec![9, 4],
+    };
+    let g = NameGenerator {
+        race_categories: vec![RaceCategory {
+            species: 1,
+            sex: 2,
+            category: 5,
+        }],
+        categories: vec![NameCategory {
+            key: 5,
+            options: vec![option(3), option(0), option(2)],
+        }],
+        ..NameGenerator::default()
+    };
+    let mut text = NameText::default();
+    text.syllables.insert(1, vec!["Dor".into(), "Bel".into()]);
+    text.syllables.insert(2, vec!["dor".into(), "in".into()]);
+    text.shifts.insert(4, example_table());
+    (g, text)
+}
+
+#[test]
+fn generation_example_19_6() {
+    let (g, text) = example_19_6();
+    // Option draw r = 3 selects option 3 (r 0–2 option 1, the weight-0 option never).
+    // Part 1: index 0 (Dor). Part 2: index 0 (dor, rejected), index 1 (in).
+    let mut draws = [3u32, 0, 0, 1].into_iter();
+    let mut calls = 0;
+    let name = generate_name_once(&g, &text, 1, 2, |_| {
+        calls += 1;
+        draws.next().unwrap_or(0)
+    });
+    assert_eq!(name, "Dorin");
+    assert_eq!(calls, 4);
+    // Option probabilities: over every r of 0..5, option 1 three times, option 3 twice.
+    let category = g.category(5).expect("category");
+    let mut counts = [0usize; 3];
+    for r in 0..5 {
+        let o = draw_option_for_test(category, r);
+        counts[o] += 1;
+    }
+    assert_eq!(counts, [3, 0, 2]);
+    // With parts Kalia and ero the second table applies entry #2; with KAL and in nothing
+    // applies and the case step gives Kalin.
+    let mut t2 = text.clone();
+    t2.syllables.insert(1, vec!["Kalia".into()]);
+    t2.syllables.insert(2, vec!["ero".into()]);
+    assert_eq!(generate_name_once(&g, &t2, 1, 2, |_| 0), "Kaliyero");
+    t2.syllables.insert(1, vec!["KAL".into()]);
+    t2.syllables.insert(2, vec!["in".into()]);
+    assert_eq!(generate_name_once(&g, &t2, 1, 2, |_| 0), "Kalin");
+    // A part table whose every string equals an earlier part: 101 rejected draws, then
+    // the empty name.
+    t2.syllables.insert(2, vec!["kal".into(), "Kal".into()]);
+    let mut part_draws = 0u32;
+    let name = generate_name_once(&g, &t2, 1, 2, |n| {
+        if n == 2 {
+            part_draws += 1;
+        }
+        0
+    });
+    assert_eq!(name, "");
+    assert_eq!(part_draws, MAX_PART_DRAWS);
+    // Weights summing to 0 fail generation (Decision D2, substitution 3).
+    let mut zero = g.clone();
+    for o in &mut zero.categories[0].options {
+        o.weight = 0;
+    }
+    assert_eq!(generate_name_once(&zero, &text, 1, 2, |_| 0), "");
+    // A negative weight is never drawn.
+    zero.categories[0].options[2].weight = -4;
+    zero.categories[0].options[1].weight = 1;
+    let mut draws = [0u32, 0, 1].into_iter();
+    assert_eq!(
+        generate_name_once(&zero, &text, 1, 2, |_| draws.next().unwrap_or(0)),
+        "Dorin"
+    );
+    // A key without a table fails generation.
+    let mut missing = text.clone();
+    missing.syllables.remove(&2);
+    assert_eq!(generate_name_once(&g, &missing, 1, 2, |_| 0), "");
+}
+
+/// The option index the weighted draw picks for `r` (stored-order mapping).
+fn draw_option_for_test(c: &NameCategory, r: u32) -> usize {
+    let mut r = r;
+    for (i, o) in c.options.iter().enumerate() {
+        let w = u32::try_from(o.weight).unwrap_or(0);
+        if r < w {
+            return i;
+        }
+        r -= w;
+    }
+    usize::MAX
+}
+
+#[test]
+fn generated_names_have_the_case_form_pc20() {
+    let (g, text) = example_19_6();
+    let mut state = 99u32;
+    for _ in 0..200 {
+        let name = generate_name_once(&g, &text, 1, 2, |n| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) % n
+        });
+        let mut chars = name.chars();
+        if let Some(first) = chars.next() {
+            assert!(first.is_uppercase(), "{name}");
+            assert!(chars.all(char::is_lowercase), "{name}");
+        }
+        // The two parts are never equal without regard to case: never "Dordor".
+        assert_ne!(name, "Dordor");
+    }
+}
+
+#[test]
+fn text_model_d6() {
+    // UTF-16 code units, simple one-to-one mappings.
+    assert_eq!(lower_unit(u16::from(b'K')), u16::from(b'k'));
+    assert_eq!(upper_unit(u16::from(b'k')), u16::from(b'K'));
+    assert_eq!(
+        lower_unit(0x0130),
+        0x0069,
+        "U+0130 has the simple mapping to i"
+    );
+    assert_eq!(
+        upper_unit(0x00DF),
+        0x00DF,
+        "sharp s has no one-to-one upper case"
+    );
+    assert_eq!(upper_unit(0x1F80), 0x1F88);
+    assert_eq!(upper_unit(0x1FB3), 0x1FBC);
+    assert_eq!(lower_unit(0xD835), 0xD835, "a surrogate stays");
+    assert_eq!(upper_unit(0xDC00), 0xDC00);
+    assert_eq!(lower_unit(0x00C9), 0x00E9);
+    assert!(text_eq_ci("ÉLM", "élm"));
+    assert!(!text_eq_ci("elm", "elms"));
+    assert_eq!(lower_text("KALIA"), "kalia");
+    // Lengths count code units: a supplementary character is two.
+    let t = ShiftTable::compile(&[entry("\u{1D504}", "x", "a", "")]);
+    assert_eq!(t.left_lengths, vec![3]);
+    assert!(t.is_well_formed());
+    assert_eq!(t.join("b\u{1D504}", "xy"), "bay");
+    // The case step: whole name lower, first code unit upper.
+    let mut g = NameGenerator {
+        race_categories: vec![RaceCategory {
+            species: 1,
+            sex: 1,
+            category: 1,
+        }],
+        categories: vec![NameCategory {
+            key: 1,
+            options: vec![NameOption {
+                weight: 1,
+                syllable_tables: vec![1, 2],
+                shift_tables: vec![],
+            }],
+        }],
+        ..NameGenerator::default()
+    };
+    let mut text = NameText::default();
+    text.syllables.insert(1, vec!["éLA".into()]);
+    text.syllables.insert(2, vec!["NOR".into()]);
+    assert_eq!(generate_name_once(&g, &text, 1, 1, |_| 0), "Élanor");
+    // §8.5 step 4 OPEN (Q16): an entry whose trimmed E is empty matches every A, the empty
+    // one included, so the first part can be shifted.
+    g.categories[0].options[0].shift_tables = vec![3];
+    text.shifts
+        .insert(3, ShiftTable::compile(&[entry(" ", "é", "", "E")]));
+    assert_eq!(generate_name_once(&g, &text, 1, 1, |_| 0), "Elanor");
+    // Shift tables are tried in order until one applies: table 3 never matches, table 4
+    // does.
+    g.categories[0].options[0].shift_tables = vec![3, 4];
+    text.shifts
+        .insert(3, ShiftTable::compile(&[entry("q", "q", "", "")]));
+    text.shifts
+        .insert(4, ShiftTable::compile(&[entry("a", "n", "o", "")]));
+    assert_eq!(generate_name_once(&g, &text, 1, 1, |_| 0), "Éloor");
 }
 
 #[test]

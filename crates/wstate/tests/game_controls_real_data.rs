@@ -29,13 +29,14 @@ use tessera_props::{PropertyRegistry, PropertySet, Value};
 use tessera_wstate::game_controls::{
     ADVANCEMENT_ATTRIBUTE, AdvancementTable, AggroPingControl, AlertsControl, ClassIndices,
     Collection, CollectionControl, CombatMusicControl, ConsiderationControl, ConsiderationTable,
-    DID_SET_ATTRIBUTE, DID_SET_LABELS, DidSet, DiscoveryDistanceControl, DuelTimings, EntryKind,
-    GAIT_CANTER, GAIT_GALLOP, GAIT_TROT, GAIT_WALK, GuildControl, LoginReward, MANAGER_LABELS,
-    MODIFIER_ATTRIBUTE, ModifierTable, MountDirectory, MountTrait, MountedCombatControl,
-    OpenTappingControl, PaperItemService, PaperItemServices, Perk, PerkControl,
-    RandomItemRewardControl, ResetScheduleControl, SCOPE_LABELS, SlotSchedule, TemplateDiff,
-    TrackingStateControl, VitalDisplayOverride, VitalDisplayOverrideControl, WEAPON_STYLE_LABELS,
-    WeenieIndex, is_default_attack, is_empty_marker, unlocked_key,
+    DID_SET_ATTRIBUTE, DID_SET_LABELS, DidSet, DiscoveryDistanceControl, DuelTimings,
+    ENTITY_NAME_LABEL, EntryKind, GAIT_CANTER, GAIT_GALLOP, GAIT_TROT, GAIT_WALK, GuildControl,
+    LoginReward, MANAGER_LABELS, MODIFIER_ATTRIBUTE, ModifierTable, MountDirectory, MountTrait,
+    MountedCombatControl, OpenTappingControl, PaperItemService, PaperItemServices, Perk,
+    PerkControl, RandomItemRewardControl, ResetScheduleControl, SCOPE_LABELS, SlotSchedule,
+    TemplateDiff, TrackingStateControl, USAGE_PROPERTY_ARRAY, VitalDisplayOverride,
+    VitalDisplayOverrideControl, WEAPON_STYLE_LABELS, WeenieIndex, entity_name, is_default_attack,
+    is_empty_marker, item_vdo_unlocks, unlocked_key,
 };
 use tessera_wstate::testkit::GAME_CONTROL_PROPERTIES;
 use tessera_wstate::{Did, ObjectHeader, ObjectStore, object_dids};
@@ -140,10 +141,23 @@ struct Sweep {
     /// Every PID that holds a value at the top level of some set.
     used_top: HashSet<u32>,
     /// (object, unlocked key or None) of every `VitalDisplayOverride_UnlockedVDOs` value,
-    /// at any depth (the spec does not state where in an item's set it is).
+    /// at any depth.
     vdo_unlocks: Vec<(Did, Option<u32>)>,
     /// How many of those are below the top level.
     vdo_nested: usize,
+    /// How many of those are at depth 1 (GCI17: directly an element of an array).
+    vdo_depth1: usize,
+    /// (object, unlocked key or None) found the client's way, through
+    /// `item_vdo_unlocks` (§7.1).
+    vdo_via_array: Vec<(Did, Option<u32>)>,
+    /// Sets holding `Usage_SetPropertyUsageData_Array` at the top level.
+    usage_array_top: usize,
+    /// Occurrences of `Usage_SetPropertyUsageData_Array` below the top level.
+    usage_array_nested: usize,
+    /// (`RaceTable_Race`, `RaceTable_IsTallRace`) of every set holding the flag at the
+    /// top level, and occurrences of the flag below the top level.
+    tall_flags: Vec<(Option<u32>, Option<bool>)>,
+    tall_nested: usize,
 }
 
 impl Sweep {
@@ -158,6 +172,12 @@ impl Sweep {
         self.used_top.extend(o.used_top);
         self.vdo_unlocks.extend(o.vdo_unlocks);
         self.vdo_nested += o.vdo_nested;
+        self.vdo_depth1 += o.vdo_depth1;
+        self.vdo_via_array.extend(o.vdo_via_array);
+        self.usage_array_top += o.usage_array_top;
+        self.usage_array_nested += o.usage_array_nested;
+        self.tall_flags.extend(o.tall_flags);
+        self.tall_nested += o.tall_nested;
     }
 
     fn of_class(&self, class: u32) -> BTreeSet<Did> {
@@ -220,6 +240,9 @@ fn sweep() -> Option<&'static Sweep> {
         let sets = set_dids(&f.set);
         let data = f.store.game_data();
         let vdo = f.reg.pid("VitalDisplayOverride_UnlockedVDOs");
+        let usage = f.reg.pid(USAGE_PROPERTY_ARRAY);
+        let tall = f.reg.pid("RaceTable_IsTallRace");
+        let race = f.reg.pid("RaceTable_Race");
         let mut total = Sweep::default();
         for part in parallel(&objects, |chunk| {
             let mut s = Sweep::default();
@@ -255,8 +278,27 @@ fn sweep() -> Option<&'static Sweep> {
                             if Some(p.pid) == vdo {
                                 s.vdo_unlocks.push((owner, unlocked_key(&p.value)));
                                 s.vdo_nested += usize::from(depth > 0);
+                                s.vdo_depth1 += usize::from(depth == 1);
+                            }
+                            if Some(p.pid) == usage && depth > 0 {
+                                s.usage_array_nested += 1;
+                            }
+                            if Some(p.pid) == tall && depth > 0 {
+                                s.tall_nested += 1;
                             }
                         });
+                        if usage.is_some_and(|u| set.contains(u)) {
+                            s.usage_array_top += 1;
+                        }
+                        for k in item_vdo_unlocks(&set, &f.reg).expect("usage array") {
+                            s.vdo_via_array.push((owner, k));
+                        }
+                        if let Some(t) = tall.and_then(|t| set.get(t)) {
+                            s.tall_flags.push((
+                                race.and_then(|r| set.get(r)).and_then(Value::as_enum),
+                                t.as_bool(),
+                            ));
+                        }
                     }
                     Err(e) => s.failed_sets.push((did, e.to_string())),
                 }
@@ -489,8 +531,16 @@ fn did_sets_and_managers() {
         }
         differing.extend(d.different);
     }
-    assert_eq!(differing.len(), 1, "GCI4: only the literal name differs");
-    let name_pid = *differing.first().expect("one");
+    // GCI4, GCI19: the one differing property is `Name`, found by label (§3.4).
+    let name_pid = f
+        .reg
+        .pid(ENTITY_NAME_LABEL)
+        .expect("Name in the dictionary");
+    assert_eq!(
+        differing.into_iter().collect::<Vec<_>>(),
+        vec![name_pid],
+        "GCI19: only `Name` differs"
+    );
     let phys = f.reg.pid("PhysObj").expect("PhysObj in the dictionary");
     let mut server_parents = BTreeSet::new();
     for label in [
@@ -522,6 +572,33 @@ fn did_sets_and_managers() {
         assert_eq!(b.len(), 63, "GC8: 63-byte object state");
     }
     assert_eq!(server_parents.len(), 1, "the three share one parent");
+    // §3.4: each of the 17 entities holds exactly one textual property, `Name`.
+    for label in MANAGER_LABELS.iter().copied().chain([
+        "WorldEventServer",
+        "PrivateEncounterServer",
+        "RipCordPersistentUnique",
+    ]) {
+        let s = f.control(label);
+        let textual: Vec<u32> = s
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.value,
+                    Value::StringInfo(_) | Value::String(_) | Value::StringToken(_)
+                )
+            })
+            .map(|p| p.pid)
+            .collect();
+        assert_eq!(
+            textual,
+            vec![name_pid],
+            "§3.4 {label}: one textual property"
+        );
+        assert!(
+            entity_name(&s, &f.reg).expect("Name").is_some(),
+            "§3.4 {label}: Name"
+        );
+    }
     for label in MANAGER_LABELS {
         let did = f.weenie(label);
         let b = f.store.game_data().read(did).expect("r").expect("p");
@@ -760,6 +837,41 @@ fn compiled_tables_traits_unlocks_and_families() {
         1,
         "§7.1: the unlocking items share one class"
     );
+    // GCI17: each unlock is the single element of the item's top-level usage array; the
+    // client's way of finding it (`item_vdo_unlocks`) finds every value of the install.
+    eprintln!(
+        "usage arrays: {} top-level, {} nested; VDO values at depth 1: {}, via the array: {}",
+        s.usage_array_top,
+        s.usage_array_nested,
+        s.vdo_depth1,
+        s.vdo_via_array.len()
+    );
+    assert_eq!(
+        s.vdo_nested,
+        s.vdo_unlocks.len(),
+        "GCI17: none at the top level"
+    );
+    assert_eq!(
+        s.vdo_depth1,
+        s.vdo_unlocks.len(),
+        "GCI17: none inside a struct"
+    );
+    let mut all = s.vdo_unlocks.clone();
+    let mut via = s.vdo_via_array.clone();
+    all.sort_unstable();
+    via.sort_unstable();
+    assert_eq!(
+        via, all,
+        "GCI17: every unlock is an element of the usage array"
+    );
+    assert_eq!(
+        s.usage_array_nested, 0,
+        "§7.1: the usage array is top-level only"
+    );
+    assert_eq!(
+        s.usage_array_top, 112,
+        "§7.1: 112 sets hold the usage array"
+    );
 
     // GCI14 and the family counts of §4.9, §5.10, §8.5.
     let families: [(&str, usize, Option<usize>); 12] = [
@@ -818,9 +930,8 @@ fn view_names_exist_with_their_types() {
             None => missing.push(name),
             Some(pid) => {
                 let found = f.reg.property_type(pid).map(|t| t.code());
-                // The flank heading's stored type is not stated (§5.3.1); the view
-                // accepts an int or a float.
-                if found != Some(ty) && name != "Mount_Control_Flank_Heading" {
+                // GCI18: the flank heading and arcs are floats (§5.3.1).
+                if found != Some(ty) {
                     retyped.push((name, ty, found));
                 }
             }
@@ -854,6 +965,23 @@ fn mount_and_combat_views() {
     for d in &all {
         assert_eq!(f.class_of(*d), idx.skill, "GCI6: {d} is a skill");
     }
+    // §5.1, GC12: the tall flag sits at the top level of the eight species objects of the
+    // race table, nowhere else; four species are tall.
+    let s = sweep().expect("sweep");
+    let races: BTreeSet<u32> = s.tall_flags.iter().filter_map(|t| t.0).collect();
+    let tall = s.tall_flags.iter().filter(|t| t.1 == Some(true)).count();
+    eprintln!(
+        "tall flags: {} sets, {} species, {tall} tall, {} nested",
+        s.tall_flags.len(),
+        races.len(),
+        s.tall_nested
+    );
+    assert_eq!(s.tall_flags.len(), 8, "GC12: eight species objects");
+    assert_eq!(races.len(), 8, "GC12: eight distinct species");
+    assert_eq!(tall, 4, "GC12: four tall species");
+    assert_eq!(s.tall_nested, 0, "GC12: top level only");
+    assert_eq!(dir.skills_for_size(true).len(), 347);
+    assert_eq!(dir.skills_for_size(false).len(), 329);
     // §5.3.1 values and the §5.3.2 rules on them.
     let c = MountedCombatControl::from_properties(&f.control("MountedCombatControl"), &f.reg)
         .expect("control");
@@ -915,6 +1043,16 @@ fn mount_and_combat_views() {
         "§5.3.1: 12 skills"
     );
     assert_eq!(c.flanks.len(), 10);
+    // GCI18: the view reads the flank angles only as floats, so all thirty being present
+    // means all are floats; the tree keys agree between the two arrays.
+    assert!(
+        c.flanks.iter().all(|fl| fl.heading.is_some()
+            && fl.left_arc.is_some()
+            && fl.right_arc.is_some()
+            && fl.position.is_some()),
+        "GCI18: flank fields present as floats"
+    );
+    assert!(c.tree_keys_consistent(), "GCI18: tree keys");
     assert_eq!(c.dye_slots.len(), 5);
     let dye: BTreeSet<u32> = c.dye_slots.iter().filter_map(|d| d.slot).collect();
     assert_eq!(

@@ -8,16 +8,16 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::B;
-use tessera_formats::instance::battle::{FigureCounts, Removal};
+use tessera_formats::instance::battle::{FigureCounts, Removal, RemovalEffect};
 use tessera_formats::instance::finder::{
-    FLAG_CLASSIC, FLAG_MAP_BIT_POSITIONS, MatchingIndex, MatchingRules, MatchingTemplate,
+    FlagBits, MatchKind, MatchingIndex, MatchingRules, MatchingTemplate,
 };
 use tessera_formats::instance::labels as l;
 use tessera_formats::instance::skirmish::combine_best_time;
 use tessera_formats::instance::template::ContainedLandblock;
 use tessera_formats::instance::testkit::{
-    self as tk, P_BOOL, P_DID, P_ENUM, P_FLOAT, P_INT, P_PID, P_STAT, P_STRUCT, P_VECTOR, array,
-    did_array, entry, enum_array, raw, set, strukt,
+    self as tk, P_BOOL, P_ENUM, P_INT, P_STRUCT, P_VECTOR, array, did_array, entry, enum_array,
+    raw, set, strukt,
 };
 use tessera_formats::instance::{
     DistantBattleUnit, InstanceKind, InstanceRecord, InstanceVocab, MatchParams, SkirmishControl,
@@ -392,7 +392,7 @@ fn derived_statistic_worked_example() {
     let sc = derived_points_per_hour();
     let stat = &sc.derived_stats[0];
     assert_eq!(stat.derived, Some(17));
-    let values = |played: f64| {
+    let values = |played: f32| {
         move |k: u32| match k {
             1 => StatValue::Int(120),
             2 => StatValue::Int(30),
@@ -403,33 +403,93 @@ fn derived_statistic_worked_example() {
     let StatValue::Float(r) = stat.evaluate(values(5400.0)) else {
         panic!("divide forces floating point");
     };
-    assert!((r - 100.0).abs() < 1e-9, "{r}");
+    assert!((r - 100.0).abs() < 1e-4, "{r}");
     assert_eq!(stat.evaluate(values(0.0)), StatValue::Float(0.0));
 
     // Integer arithmetic without a divide or float statistic; scale 1 leaves it alone.
     let mut int_stat = stat.clone();
-    int_stat.operations = vec![
-        (Some(2), Some(7)),
-        (Some(3), Some(6)),
-        (Some(4), Some(8)),
-        (Some(5), Some(99)),
-    ];
+    int_stat.operations = vec![(2, 7), (3, 6), (4, 8), (5, 99)];
     int_stat.scale = 1;
-    let r = int_stat.evaluate(|k| StatValue::Int(i64::from(k) * 10));
+    let r = int_stat.evaluate(|k| StatValue::Int(i32::try_from(k).unwrap() * 10));
     // ((10 + 20) − 30) × 40 = 0; the unknown op leaves the value unchanged.
     assert_eq!(r, StatValue::Int(0));
     int_stat.operations.truncate(1);
     int_stat.scale = 2;
     assert_eq!(
-        int_stat.evaluate(|k| StatValue::Int(i64::from(k))),
+        int_stat.evaluate(|k| StatValue::Int(i32::try_from(k).unwrap())),
         StatValue::Int(6)
     );
-    // Saturation instead of overflow.
-    int_stat.operations = vec![(Some(1), Some(8))];
-    assert_eq!(
-        int_stat.evaluate(|_| StatValue::Int(i64::MAX)),
-        StatValue::Int(i64::MAX)
+}
+
+#[test]
+fn derived_statistic_integer_arithmetic_wraps_17_7() {
+    // §17.7: signed 32-bit two's complement, wrapping.
+    let mut stat = derived_points_per_hour().derived_stats[0].clone();
+    stat.scale = 1;
+    stat.operations = vec![(2, 7)];
+    let v = |_| StatValue::Int(2_000_000_000);
+    assert_eq!(stat.evaluate(v), StatValue::Int(-294_967_296));
+    stat.operations = vec![(2, 8)];
+    let v = |_| StatValue::Int(70_000);
+    assert_eq!(stat.evaluate(v), StatValue::Int(605_032_704));
+}
+
+#[test]
+fn derived_statistic_reading_rules_b4() {
+    let v = tk::vocab();
+    let op = |sec: PropertyValue, mod_op: PropertyValue| {
+        raw(
+            P_STRUCT,
+            strukt(vec![
+                entry(l::STAT_SECONDARY, sec),
+                entry(l::MOD_OP, mod_op),
+            ]),
+        )
+    };
+    let read = |scale: Option<PropertyValue>, ops: Vec<tessera_formats::PropertyEntry>| {
+        let mut f = vec![
+            entry(l::STAT_DERIVED, PropertyValue::PropertyId(18)),
+            entry(l::STAT_PRIMARY, PropertyValue::PropertyId(1)),
+            entry(l::STAT_OPERATIONS, array(ops)),
+        ];
+        if let Some(s) = scale {
+            f.push(entry(l::STAT_SCALE, s));
+        }
+        SkirmishControl::read(
+            &set(vec![
+                entry(l::SC_TRAIT_GATES, array(vec![])),
+                entry(l::SC_STATS, array(vec![raw(P_STRUCT, strukt(f))])),
+            ]),
+            &v,
+        )
+        .derived_stats
+    };
+    // Keys may be enum or PID values; reading stops at the first bad operation.
+    let stats = read(
+        None,
+        vec![
+            op(PropertyValue::Enum(2), PropertyValue::Enum(7)),
+            op(PropertyValue::PropertyId(3), PropertyValue::PropertyId(6)),
+            op(PropertyValue::Int(4), PropertyValue::Enum(7)),
+            op(PropertyValue::Enum(5), PropertyValue::Enum(7)),
+        ],
     );
+    assert_eq!(stats.len(), 1);
+    assert_eq!((stats[0].derived, stats[0].primary), (Some(18), Some(1)));
+    assert_eq!(stats[0].operations, vec![(2, 7), (3, 6)]);
+    assert_eq!(stats[0].scale, 1, "absent scale is 1");
+    // An element that is not a struct also ends the list.
+    let stats = read(
+        Some(PropertyValue::Int(3600)),
+        vec![
+            op(PropertyValue::Enum(2), PropertyValue::Enum(7)),
+            raw(P_INT, PropertyValue::Int(1)),
+            op(PropertyValue::Enum(5), PropertyValue::Enum(7)),
+        ],
+    );
+    assert_eq!((stats[0].operations.len(), stats[0].scale), (1, 3600));
+    // A scale of another type: the entry is malformed and left out (Tessera Decision).
+    assert!(read(Some(PropertyValue::Float(2.0)), vec![]).is_empty());
 }
 
 #[test]
@@ -447,13 +507,13 @@ fn conversion_hash_n_i12() {
         raw(
             P_STRUCT,
             strukt(vec![
-                raw(
-                    P_PID,
+                entry(
+                    l::CV_PROPERTY,
                     PropertyValue::PropertyId(0x3000_0000 + stat * 100 + size),
                 ),
-                raw(P_STAT, PropertyValue::Enum(stat)),
-                raw(P_ENUM, PropertyValue::Enum(size)),
-                raw(P_BOOL, PropertyValue::Bool(on)),
+                entry(l::CV_STAT, PropertyValue::Enum(stat)),
+                entry(l::CV_SIZE, PropertyValue::Enum(size)),
+                entry(l::CV_ON_LEVEL, PropertyValue::Bool(on)),
             ]),
         )
     };
@@ -534,6 +594,35 @@ fn finder_order_takes_groups_by_ascending_label() {
     assert_eq!(w.sort_index(Did(0x70F0_9999)), None);
     assert!(w.deviations().is_empty());
 
+    // §13.3 Tessera Decision: a group without a label is left out of the grouped part;
+    // groups with equal labels keep their stored order.
+    let mut odd = w.clone();
+    odd.groups
+        .push(tessera_formats::instance::control::InstanceGroup {
+            label: None,
+            templates: vec![Did(0x70F0_0130)],
+            has_list: true,
+        });
+    odd.groups
+        .push(tessera_formats::instance::control::InstanceGroup {
+            label: Some(1),
+            templates: vec![Did(0x70F0_0140)],
+            has_list: true,
+        });
+    let order: Vec<u32> = odd.finder_order().iter().map(|d| d.0).collect();
+    assert_eq!(
+        order,
+        vec![
+            0x70F0_0001,
+            0x70F0_0002,
+            0x70F0_0110,
+            0x70F0_0140,
+            0x70F0_0120,
+            0x70F0_0100,
+            0x70F0_0101
+        ]
+    );
+
     // N-I7: a featured template outside the available list, a grouped one inside it.
     let mut bad = w.clone();
     bad.featured.push(Some(Did(0x70F0_0100)));
@@ -553,9 +642,11 @@ fn featured_instance_b1() {
         Some(Did(0x70F0_0002))
     );
     assert_eq!(
-        w.featured_instance(Some(&PropertyValue::Int64(2))),
+        w.featured_instance(Some(&PropertyValue::Int(2))),
         Some(Did(0x70F0_0001))
     );
+    // Only a 32-bit integer value counts (type 15); a 64-bit integer is "not an integer".
+    assert_eq!(w.featured_instance(Some(&PropertyValue::Int64(2))), None);
     assert_eq!(w.featured_instance(Some(&PropertyValue::Int(3))), None);
     let mut odd = w.clone();
     odd.featured = vec![None];
@@ -574,6 +665,45 @@ fn instance_group_worked_example() {
     assert_eq!(w.group_template(3, 24, sizes), Some(Did(0x70F0_0101)));
     assert_eq!(w.group_template(3, 3, sizes), None);
     assert_eq!(w.group_template(8, 12, sizes), None);
+
+    // B3: the label → group table ignores a group without a label or without a list and
+    // keeps the first group of a repeated label.
+    let v = tk::vocab();
+    let group = |label: Option<PropertyValue>, list: Option<PropertyValue>| {
+        let mut f = Vec::new();
+        if let Some(lv) = label {
+            f.push(entry(l::WJC_GROUP_LABEL, lv));
+        }
+        if let Some(lv) = list {
+            f.push(entry(l::WJC_GROUP_LIST, lv));
+        }
+        raw(P_STRUCT, strukt(f))
+    };
+    let s = set(vec![entry(
+        l::WJC_GROUPS,
+        array(vec![
+            group(None, Some(did_array(&[0x70F0_0100]))),
+            group(Some(PropertyValue::Enum(5)), Some(PropertyValue::Int(1))),
+            group(
+                Some(PropertyValue::PropertyId(5)),
+                Some(did_array(&[0x70F0_0101])),
+            ),
+            group(
+                Some(PropertyValue::Enum(5)),
+                Some(did_array(&[0x70F0_0100])),
+            ),
+            group(
+                Some(PropertyValue::Float(6.0)),
+                Some(did_array(&[0x70F0_0100])),
+            ),
+        ]),
+    )]);
+    let w = WorldJoinControl::read(&s, &v);
+    let table = w.group_table();
+    assert_eq!(table.len(), 1);
+    assert_eq!(table[&5].templates, vec![Did(0x70F0_0101)]);
+    assert_eq!(w.group_template(5, 24, sizes), Some(Did(0x70F0_0101)));
+    assert_eq!(w.group_template(0, 12, sizes), None, "no default label 0");
 }
 
 #[test]
@@ -602,6 +732,12 @@ fn level_scaling_level_b2() {
         with(Some(100)).effective_level_scaling_level(Some(&not_int)),
         100
     );
+    // A 64-bit integer override does not count (type 15 only).
+    let wide = PropertyValue::Int64(140);
+    assert_eq!(
+        with(Some(100)).effective_level_scaling_level(Some(&wide)),
+        100
+    );
 }
 
 // ---------------------------------------------------------------- §17.5 (§10.2)
@@ -617,6 +753,7 @@ fn fellowship_maker_entries_worked_example() {
         tiers: vec![1, 2],
     };
     let rules = MatchingRules {
+        bits: tk::flag_bits(),
         valid_sizes: vec![2, 3, 6],
         capped: Some(4),
         seasonal: [9, 10].into(),
@@ -639,11 +776,21 @@ fn fellowship_maker_entries_worked_example() {
     assert_eq!(map[&6][&1], i + 2);
     assert_eq!(map[&6][&2], i + 3);
     assert!(!map.contains_key(&1));
-    // Item 3: exactly the 20 keys, 0x4000 absent, unused keys empty.
-    assert_eq!(idx.by_flag.len(), FLAG_MAP_BIT_POSITIONS.len());
+    // Item 3: one key per non-zero mapper key (20), 0x4000 absent, unused keys empty.
+    assert_eq!(idx.by_flag.len(), 20);
     assert!(!idx.by_flag.contains_key(&0x4000));
     assert!(idx.by_flag[&0x8].is_empty());
-    assert_eq!(idx.by_flag[&FLAG_CLASSIC], vec![1, 2, 3, 4]);
+    let classic = rules.bits.kind_bit(MatchKind::Classic).unwrap();
+    assert_eq!(classic, 0x4);
+    assert_eq!(idx.by_flag[&classic], vec![1, 2, 3, 4]);
+    // B8: the panel lists entries with a kind bit; a group row ors its entries' words.
+    assert_eq!(rules.bits.kind_mask(), 0x18_000F);
+    assert!(idx.entries.iter().all(|e| rules.bits.is_listed(e.flags)));
+    assert!(!rules.bits.is_listed(0x20 | 0x100));
+    assert_eq!(
+        idx.group_flags(&[Did(0x70F0_0199), Did(0x70F0_0200)]),
+        0x1 | 0x4 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200
+    );
     assert_eq!(idx.by_flag[&0x20], vec![1, 2]);
     for (bit, marked) in &idx.by_flag {
         for (n, e) in idx.entries.iter().enumerate() {
@@ -655,6 +802,7 @@ fn fellowship_maker_entries_worked_example() {
 #[test]
 fn fellowship_maker_kind_conflicts_and_unencodable() {
     let rules = MatchingRules {
+        bits: tk::flag_bits(),
         valid_sizes: vec![2, 3, 6, 12],
         capped: Some(4),
         seasonal: [4].into(),
@@ -669,16 +817,30 @@ fn fellowship_maker_kind_conflicts_and_unencodable() {
     let wide = MatchingTemplate {
         did: Did(0x70F0_0301),
         group_sizes: vec![12, 2],
-        tiers: vec![6, 1],
+        tiers: vec![11, 6, 1],
         ..MatchingTemplate::default()
     };
-    let idx = MatchingIndex::build(&[both, wide], &rules);
+    let idx = MatchingIndex::build(&[both, wide.clone()], &rules);
     assert_eq!(idx.kind_conflicts, vec![Did(0x70F0_0300)]);
-    assert_eq!(idx.entries.len(), 1);
+    // Size 12 has no Size_ label, tier 11 no Tier_ label; tier 6 now has a bit (0x2000).
     assert_eq!(
         idx.unencodable,
-        vec![(Did(0x70F0_0301), 12), (Did(0x70F0_0301), 6)]
+        vec![(Did(0x70F0_0301), 12), (Did(0x70F0_0301), 11)]
     );
+    let flags: Vec<u32> = idx.entries.iter().map(|e| e.flags).collect();
+    assert_eq!(flags, vec![0x4 | 0x20 | 0x2000, 0x4 | 0x20 | 0x100]);
+    // A kind without a labelled bit gives no entries.
+    let partial = MatchingRules {
+        bits: FlagBits::from_keys(
+            tk::configuration_keys()
+                .into_iter()
+                .filter(|(l, _)| *l != "Type_ScalingInstance"),
+        ),
+        ..rules
+    };
+    let idx = MatchingIndex::build(&[wide], &partial);
+    assert_eq!(idx.unlabelled_kinds, vec![Did(0x70F0_0301)]);
+    assert!(idx.entries.is_empty());
 }
 
 // ---------------------------------------------------------------- §8.4, §17.6 (B5), N-I10
@@ -771,61 +933,155 @@ fn distant_battle_unit_display_and_invariants() {
 
 #[test]
 fn removal_worked_example() {
-    let u = unit();
+    // §17.6.
+    let mut u = unit();
     let mut counts = FigureCounts::new(&u);
     let first = Removal {
         unit: Some(Did(0x70F0_0300)),
         count: 1,
-        script_key: Some(9),
+        script_key: 9,
+        script_parameters: None,
     };
-    let applied = counts.apply(&[first]);
+    let applied = counts.apply(std::slice::from_ref(&first));
     assert_eq!(applied.len(), 1);
-    assert_eq!(
-        (counts.remaining(0), counts.remaining(1)),
-        (Some(39), Some(10))
-    );
+    // The figure at offset 40 (index 39, the last stored) goes, and script 9 plays.
+    assert_eq!(applied[0].removed[0].offsets, vec![39]);
+    assert_eq!(applied[0].effect, RemovalEffect::PlayScript(9));
     let second = Removal {
         unit: Some(Did(0x70F0_0301)),
         count: 4,
-        script_key: Some(9),
+        script_key: 9,
+        script_parameters: None,
     };
-    let applied = counts.apply(&[first, second]);
+    let applied = counts.apply(&[first.clone(), second.clone()]);
     assert_eq!(applied.len(), 1, "the first element is not applied again");
+    assert_eq!(applied[0].element, 1);
+    assert_eq!(applied[0].removed[0].group, 1);
+    assert_eq!(applied[0].removed[0].offsets, vec![9, 8, 7, 6]);
     assert_eq!(
         (counts.remaining(0), counts.remaining(1)),
         (Some(39), Some(6))
     );
-    // Removing more than is left stops at zero; an unknown unit removes nothing.
-    let many = Removal {
+    // The list shrinks to its first element: nothing happens.
+    assert!(counts.apply(std::slice::from_ref(&first)).is_empty());
+    // It grows again: position 1 is applied again; no script key drops the 6 at once.
+    let third = Removal {
         unit: Some(Did(0x70F0_0301)),
-        count: u32::MAX,
-        script_key: None,
+        count: 20,
+        script_key: 0,
+        script_parameters: None,
     };
+    let applied = counts.apply(&[first.clone(), third]);
+    assert_eq!(applied.len(), 1);
+    assert_eq!(applied[0].figure_count(), 6);
+    assert_eq!(applied[0].effect, RemovalEffect::DropAtOnce);
+    counts.write_back(&mut u);
+    assert_eq!(
+        (u.groups[0].offsets.len(), u.groups[1].offsets.len()),
+        (39, 0)
+    );
+    // Nothing left to remove: no script plays.
+    let again = Removal {
+        unit: Some(Did(0x70F0_0301)),
+        count: 1,
+        script_key: 9,
+        script_parameters: None,
+    };
+    let applied = counts.apply(&[first.clone(), first.clone(), again]);
+    assert_eq!(applied[0].effect, RemovalEffect::Silent);
+    // An unknown unit removes nothing and plays nothing; a missing unit is skipped.
     let stray = Removal {
         unit: Some(Did(0x70F0_0999)),
-        ..many
+        ..first.clone()
     };
-    counts.apply(&[first, second, many, stray]);
-    assert_eq!(counts.remaining(1), Some(0));
-    assert_eq!(counts.remaining(2), None);
+    let none = Removal {
+        unit: None,
+        ..first.clone()
+    };
+    let n = counts.apply(&[first.clone(), first.clone(), first.clone(), stray, none]);
+    assert!(n.is_empty());
 }
 
 #[test]
-fn removal_count_defaults_to_one() {
+fn removal_first_display_is_silent_and_matches_every_group() {
+    let mut u = unit();
+    // Two groups with the same unit: both lose figures.
+    u.groups[1].unit = Some(Did(0x70F0_0300));
+    let r = Removal {
+        unit: Some(Did(0x70F0_0300)),
+        count: 3,
+        script_key: 9,
+        script_parameters: None,
+    };
+    let (counts, applied) = FigureCounts::first_display(&u, std::slice::from_ref(&r));
+    assert_eq!(applied.len(), 1);
+    assert_eq!(applied[0].removed.len(), 2);
+    assert_eq!(applied[0].effect, RemovalEffect::Silent);
+    assert_eq!(
+        (counts.remaining(0), counts.remaining(1)),
+        (Some(37), Some(7))
+    );
+    // The elements already shown are not applied again on the next change.
+    let mut counts = counts;
+    assert!(counts.apply(std::slice::from_ref(&r)).is_empty());
+}
+
+#[test]
+fn removal_element_value_types() {
     let v = tk::vocab();
+    let element = |fields: Vec<tessera_formats::PropertyEntry>| raw(P_STRUCT, strukt(fields));
     let s = set(vec![
         entry(l::DBU_RESPAWN, PropertyValue::Float(5.0)),
         entry(
             l::DBU_REMOVED,
-            array(vec![raw(
-                P_STRUCT,
-                strukt(vec![entry(l::DBU_UNIT, d(0x70F0_0300))]),
-            )]),
+            array(vec![
+                element(vec![entry(l::DBU_UNIT, d(0x70F0_0300))]),
+                element(vec![
+                    entry(l::DBU_UNIT, d(0x70F0_0300)),
+                    entry(l::DBU_REMOVAL_COUNT, PropertyValue::Float(4.0)),
+                ]),
+                element(vec![
+                    entry(l::DBU_UNIT, d(0x70F0_0300)),
+                    entry(l::DBU_REMOVAL_COUNT, PropertyValue::Int(-1)),
+                    entry(l::DBU_REMOVAL_SCRIPT, PropertyValue::Enum(12)),
+                    entry(l::DBU_REMOVAL_PARAMS, strukt(vec![])),
+                ]),
+                element(vec![entry(l::DBU_UNIT, d(0))]),
+                raw(P_INT, PropertyValue::Int(3)),
+            ]),
         ),
     ]);
     let u = DistantBattleUnit::read(&s, &v);
-    assert_eq!(u.removals.len(), 1);
-    assert_eq!(u.removals[0].count, 1);
+    assert_eq!(u.removals.len(), 5, "every element keeps its position");
+    assert_eq!(u.removals[0].count, 1, "absent count is 1");
+    assert_eq!(u.removals[1].count, 1, "a count of another type is 1");
+    assert_eq!(
+        u.removals[2].count,
+        u32::MAX,
+        "the count is read as unsigned"
+    );
+    assert_eq!(u.removals[2].script_key, 12);
+    assert!(u.removals[2].script_parameters.is_some());
+    assert_eq!(u.removals[0].script_key, 0, "absent script key is 0");
+    assert_eq!(u.removals[3].unit, None, "unit 0 is no unit");
+    assert_eq!(u.removals[4], Removal::default());
+    // A negative count removes all figures of the group.
+    let mut counts = FigureCounts::new(&unit());
+    let applied = counts.apply(&u.removals);
+    assert_eq!(applied.len(), 3);
+    assert_eq!(counts.remaining(0), Some(0));
+    // A removed list that is not an array reads as empty.
+    let s = set(vec![
+        entry(l::DBU_RESPAWN, PropertyValue::Float(5.0)),
+        entry(l::DBU_REMOVED, PropertyValue::Int(1)),
+    ]);
+    assert!(DistantBattleUnit::read(&s, &v).removals.is_empty());
+    // Ground clamping needs a boolean value; another type counts as true.
+    let s = set(vec![
+        entry(l::DBU_RESPAWN, PropertyValue::Float(5.0)),
+        entry(l::DBU_GROUND_CLAMP, PropertyValue::Int(0)),
+    ]);
+    assert!(DistantBattleUnit::read(&s, &v).ground_clamp());
 }
 
 // ---------------------------------------------------------------- remaining views
@@ -840,8 +1096,11 @@ fn small_views_read_their_fields() {
             array(vec![raw(
                 P_STRUCT,
                 strukt(vec![
-                    raw(P_ENUM, PropertyValue::Enum(1)),
-                    raw(P_PID, PropertyValue::PropertyId(0x3000_0001)),
+                    entry(l::FM_ENCOUNTER_SIZE, PropertyValue::Enum(1)),
+                    entry(
+                        l::FM_MATCH_TIME_PROPERTY,
+                        PropertyValue::PropertyId(0x3000_0001),
+                    ),
                 ]),
             )]),
         ),
@@ -850,8 +1109,8 @@ fn small_views_read_their_fields() {
             array(vec![raw(
                 P_STRUCT,
                 strukt(vec![
-                    raw(P_DID, d(0x70F0_0500)),
-                    raw(P_FLOAT, PropertyValue::Float(0.25)),
+                    entry(l::FM_BONUS_EFFECT, d(0x70F0_0500)),
+                    entry(l::FM_BONUS_THRESHOLD, PropertyValue::Float(0.25)),
                 ]),
             )]),
         ),
@@ -899,7 +1158,7 @@ fn small_views_read_their_fields() {
                 P_STRUCT,
                 strukt(vec![
                     entry(l::BB_QUEST, d(0x70F0_0600)),
-                    raw(P_DID, d(0x70F0_0601)),
+                    entry(l::BB_ENCOUNTER, d(0x70F0_0601)),
                 ]),
             )]),
         ),
@@ -922,6 +1181,45 @@ fn small_views_read_their_fields() {
     };
     assert!(!p.registers_for_updates() && !p.refreshes_immediately());
     assert!(!p.force_refresh_on_enter);
+    // B6: only a boolean value counts; an integer 1 is false.
+    let ph = set(vec![
+        entry(l::PB_UPDATE_ONLY, PropertyValue::Bool(false)),
+        entry(l::PB_DELAY, PropertyValue::Int(1)),
+        entry(l::PH_FORCE_REFRESH, PropertyValue::Int(1)),
+    ]);
+    let Some(InstanceRecord::PhasingBox(p)) = InstanceRecord::read(&ph, &v) else {
+        panic!();
+    };
+    assert!(p.refreshes_immediately() && !p.force_refresh_on_enter);
+
+    // §6.3: the group-tier map, read by its two labels (both enums of one mapper).
+    let sc = set(vec![
+        entry(l::SC_TRAIT_GATES, array(vec![])),
+        entry(
+            l::SC_GROUP_TIERS,
+            array(vec![raw(
+                P_STRUCT,
+                strukt(vec![
+                    entry(l::SC_GT_TIER, PropertyValue::Enum(3)),
+                    entry(l::SC_GT_SIZE, PropertyValue::Enum(2)),
+                ]),
+            )]),
+        ),
+        entry(
+            l::SC_DIFFICULTY_MULT,
+            array(vec![raw(
+                P_STRUCT,
+                strukt(vec![
+                    entry(l::SC_POINT_MULT, PropertyValue::Float(1.25)),
+                    entry(l::SC_DIFF_TIER, PropertyValue::Enum(3)),
+                ]),
+            )]),
+        ),
+    ]);
+    let s = SkirmishControl::read(&sc, &v);
+    assert_eq!(s.group_tier(2), Some(3));
+    assert_eq!(s.group_tier(3), None);
+    assert_eq!(s.difficulty_multiplier(3), Some(1.25));
 }
 
 #[test]
@@ -931,6 +1229,16 @@ fn testkit_schema_covers_the_labels() {
     assert!(v.missing().is_empty());
     assert!(v.type_mismatches(&schema).is_empty());
     let _ = (P_INT, P_BOOL);
+    // The synthetic configuration keys give the bits of §10.2 item 2.
+    let b = tk::flag_bits();
+    assert_eq!(b.keys.len(), 20);
+    assert_eq!(b.sizes.get(&6), Some(&0x80));
+    assert_eq!(b.tiers.get(&7), Some(&0x8000));
+    assert_eq!(b.tiers.get(&10), Some(&0x4_0000));
+    assert_eq!(
+        (b.big_battles, b.seasonal),
+        (Some(0x8_0000), Some(0x10_0000))
+    );
 }
 
 #[test]

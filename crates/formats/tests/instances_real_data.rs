@@ -28,7 +28,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tessera_dat::{ArchiveSet, Entry, SetOptions};
-use tessera_formats::instance::finder::{MatchingIndex, MatchingRules, MatchingTemplate, kind_bit};
+use tessera_formats::instance::finder::{
+    FlagBits, MatchingIndex, MatchingRules, MatchingTemplate, kind_bit,
+};
 use tessera_formats::instance::{
     Deviation, InstanceKind, InstanceRecord, InstanceVocab, MatchParams, Template, TemplateKind,
     decode_instance_set, labels,
@@ -528,6 +530,31 @@ fn instances_census() {
         assert_eq!(c.blocked_stats.len(), 6);
         assert_eq!((c.grs_properties.len(), c.stat_to_grs.len()), (19, 19));
         assert_eq!(c.derived_stats.len(), 5);
+        // §3.5: fields read by their full labels.
+        let tiers: Vec<(Option<u32>, Option<u32>)> =
+            [(1, 1), (2, 3), (3, 3), (6, 6), (12, 12), (24, 12)]
+                .into_iter()
+                .map(|(a, b)| (Some(a), Some(b)))
+                .collect();
+        assert_eq!(c.group_tiers, tiers, "§6.3 group tiers");
+        assert!(
+            c.trait_gates
+                .iter()
+                .all(|(r, d)| r.is_some() && d.is_some())
+        );
+        assert!(
+            c.stat_to_grs
+                .iter()
+                .all(|(s, p)| s.is_some() && p.is_some())
+        );
+        assert!(c.derived_stats.iter().all(|d| d.derived.is_some()
+            && d.primary.is_some()
+            && (1..=6).contains(&d.operations.len())));
+        assert_eq!(
+            c.derived_stats.iter().filter(|d| d.scale == 3600).count(),
+            3,
+            "§6.3: scale 3,600 in three statistics"
+        );
         assert_eq!(c.fastest_possible_time, Some(0.5));
         assert_eq!(c.max_skirmishes_per_week, Some(-1));
     }
@@ -592,6 +619,13 @@ fn instances_census() {
     let (mut waves, mut objectives, mut units_named) = (0, 0, BTreeSet::new());
     for (_, v) in &script_records {
         if let InstanceRecord::DistantBattleScript(s) = v {
+            assert!(
+                s.weighted_units
+                    .iter()
+                    .chain(&s.weighted_siege_units)
+                    .all(|(u, w)| u.is_some() && w.is_some()),
+                "§3.5: DistantBattleUnit_Entry and DistantBattleUnit_Weight"
+            );
             waves += s.waves.len();
             objectives += s.objectives.len();
             for u in s.units() {
@@ -620,6 +654,16 @@ fn instances_census() {
         let targets: BTreeSet<Did> = b.quest_encounters.iter().filter_map(|(_, e)| *e).collect();
         assert_eq!(targets, big_battles, "§8.1 quest → encounter targets");
         assert_eq!(b.location_events.len(), 3);
+        assert!(
+            b.quest_points
+                .iter()
+                .all(|(q, p)| q.is_some() && p.is_some())
+        );
+        assert!(
+            b.location_events
+                .iter()
+                .all(|(l, e)| l.is_some() && e.is_some())
+        );
     }
 
     // §8.4, §8.5, N-I10.
@@ -629,6 +673,7 @@ fn instances_census() {
         unreachable!()
     };
     assert_eq!(form.widths.len(), 7);
+    assert!(form.widths.iter().all(|(c, w)| c.is_some() && w.is_some()));
     let (mut units, mut groups, mut offsets, mut unit_devs) = (0, 0, 0, 0);
     for (d, v) in one(InstanceKind::DistantBattleUnit) {
         let InstanceRecord::DistantBattleUnit(u) = v else {
@@ -676,10 +721,46 @@ fn instances_census() {
         ),
         (3, 5, 1)
     );
+    assert!(f.match_time.iter().all(|(a, b)| a.is_some() && b.is_some()));
+    assert!(
+        f.bonus_thresholds
+            .iter()
+            .all(|(a, b)| a.is_some() && b.is_some())
+    );
     assert_eq!(f.min_level, Some(10));
+
+    // §10.2 item 2, I29: the flag bits come from the mapper named by
+    // `FellowshipMaker_PlayerConfiguration`, by key label.
+    let mapper_did = FlagBits::mapper_did(&dict).expect("configuration mapper");
+    let mapper = tessera_formats::decode_enum_mapper(&set.read(mapper_did.0).expect("mapper"))
+        .expect("mapper decodes");
+    let bits = FlagBits::from_mapper(&mapper);
+    eprintln!(
+        "configuration mapper {:#010x}: {} keys, {} bits, kind mask {:#x}, sizes {:?}, tiers {:?}",
+        mapper_did.0,
+        mapper.names().len(),
+        bits.keys.len(),
+        bits.kind_mask(),
+        bits.sizes,
+        bits.tiers
+    );
+    assert_eq!(
+        mapper.names().len(),
+        21,
+        "§10.2: 21 keys (0 and 1–21 except 15)"
+    );
+    assert_eq!(bits.keys.len(), 20, "§10.2 item 3: 20 non-zero keys");
+    assert!(!bits.keys.contains(&0x4000));
+    assert_eq!(bits.kind_mask(), 0x18_000F, "§15.1 B8: the six Type_ bits");
+    assert_eq!(
+        bits.sizes.keys().copied().collect::<Vec<_>>(),
+        vec![1, 2, 3, 6]
+    );
+    assert_eq!(bits.tiers.len(), 10);
 
     // §10.2 kind bits over the 166 templates with a category.
     let rules = MatchingRules {
+        bits,
         valid_sizes: f.valid_sizes.clone(),
         capped: w.capped,
         seasonal: w.seasonal.iter().copied().collect(),
@@ -726,6 +807,24 @@ fn instances_census() {
         idx.encounters.len()
     );
     assert!(idx.kind_conflicts.is_empty());
+    assert!(idx.unlabelled_kinds.is_empty() && idx.unencodable.is_empty());
+    assert_eq!(
+        idx.by_flag.len(),
+        20,
+        "N-I11: one key per non-zero mapper key"
+    );
+    // N-I11: one kind, one size and one tier bit per entry.
+    let kinds = rules.bits.kind_mask();
+    let sizes = rules.bits.sizes.values().fold(0, |a, b| a | b);
+    let tiers = rules.bits.tiers.values().fold(0, |a, b| a | b);
+    assert!(
+        idx.entries
+            .iter()
+            .all(|e| (e.flags & kinds).count_ones() == 1
+                && (e.flags & sizes).count_ones() == 1
+                && (e.flags & tiers).count_ones() == 1
+                && e.flags & !(kinds | sizes | tiers) == 0)
+    );
 
     for p in problems.iter().take(20) {
         eprintln!("  {p}");

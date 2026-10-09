@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-09: re-review of the §30 revision after the answers to B1 and B2 and the writer's note on N1–N4 (commits 9be154a, ca0a905): passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: Revised (2026-10-09, spec writer: new §30 (the While node, the start outcome of PhysicsImpulse and the avatar's jump path; sources BIN-W and OBS-W, rows R41–R46, OPEN-19 to OPEN-21), the implementer OPEN of §8 answered, pointers in §18 and §29 item 12, §27 items 18–20; blocking items B1 and B2 of two reviews answered, N1–N4 taken up). |
+| **Status** | **Revised** (2026-10-09, spec writer, awaiting review: §30.6 rewritten from the client (BIN-I: the PhysicsImpulse target ports are 8 `ImpulseTarget` and 19 `Impulser`, not 25; one target, one request; the impulser path; what the request carries; when the target applies it; OPEN-20 answered: the node completes on the target's completion notice); §3.1 step 7 and §3.2 made precise and §29 item 19 answered (R47); new rows R47–R51, sources BIN-I and OBS-I, OPEN-22; R44 corrected). Before: **Accepted** (2026-10-09: re-review of the §30 revision after the answers to B1 and B2 and the writer's note on N1–N4 (commits 9be154a, ca0a905): passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: Revised (2026-10-09, spec writer: new §30 (the While node, the start outcome of PhysicsImpulse and the avatar's jump path; sources BIN-W and OBS-W, rows R41–R46, OPEN-19 to OPEN-21), the implementer OPEN of §8 answered, pointers in §18 and §29 item 12, §27 items 18–20; blocking items B1 and B2 of two reviews answered, N1–N4 taken up). |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -69,6 +69,8 @@ the original is unknown, always paired with an OPEN.
 | BIN-O | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), owner-observation pass, 2026-10-08.** Same client build as BIN3, read with the Ghidra 12 decompiler on a private copy of the analysis project, in the dirty scratch area. **Question:** which random source the Random node draws from and how it is seeded (owner observation O12: does a random-appearance figure keep its look between visits). **Why M1–M3 were not enough:** the generator and its seeding are code; the data holds only the weights; the original cannot be observed here. Read: the Random node's port pick, the integer and unit draw helpers, the generator, its two seeding routines and their callers. Nothing about network, login, keys, launcher or anti-tamper. |
 | BIN-W | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), spec writer, 2026-10-09.** Same client build as BIN3, read with the Ghidra 12 decompiler on a private copy of the analysis project (deleted afterwards), in the dirty scratch area. **Questions:** (1) how the While node (kind 50) behaves at run time: when it starts its children, what it watches, when it completes, what `Inverse` and the `Names` list do; (2) whether a PhysicsImpulse node (kind 9) completes at once; (3) which client code writes `Movement_IsJumping`. **Why M1–M3 were not enough:** the data hold the 41 While nodes and the jump scripts but no run-time rule; no published source describes the node; the original cannot be observed here. Read: the While class's field registration, its class object (kind code and instance factory), the instance's start, its property-change handler and stop hook, the listener interface shared by the node instances, the generic value equality and dictionary-default helpers, the PhysicsImpulse instance factory and its start, the Run instance's reply handler, and a search of the code for the property IDs of `Movement_IsJumping` and `Entity_FinalElement` used as constants. Nothing about network, login, keys, launcher or anti-tamper. |
 | OBS-W | Observed 2026-10-09 in the same install (data unchanged) by throwaway probes in the dirty scratch area, with the repository's script-table decoder as a tool: every While node of the 7,524 decodable tables (41 nodes in 17 tables) with its field bytes and ports; every node that sets, tests or is driven by `Movement_IsJumping` in all tables and scriptlets; every Run node that starts `Loc_Jumping`, `Loc_JumpKeyPressed`, `Loc_JumpKeyReleased` or `Jump`; the tables that define script keys 1, 9, 0x1000024F, 0x10000426 and 0x100002C5; the per-script property sets of these keys (re-read over every decodable table in the answer to review item B1); labels of enum mappers 0x23000097 and 0x230000F8. Re-read 2026-10-09 for the answer to the non-blocking review notes: the first children of every While port (§30.5) and the outline of the six `Jump` definitions that set `Movement_IsJumping` (R46). |
+| BIN-I | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), spec writer, 2026-10-09 (second pass).** Same client build as BIN3, read with the Ghidra 12 decompiler on a private copy of the analysis project (deleted afterwards), in the dirty scratch area. **Questions:** (1) whether a node is registered with its parent before or after its kind start, and what the runner's check after each child sees of an instance still starting (§29 item 19); (2) the PhysicsImpulse edge rules left open by §30.6: which target ports it reads, several or no resolved entities, what the request carries, what `IsGlobalSpaceImpulse` changes, when the target applies the request, and when the node completes (OPEN-20). **Why M1–M3 were not enough:** the data hold the nodes and their targets but no run-time rule; the original cannot be observed here, and none of the six nodes with targets runs on the avatar. **Read:** the generic node start, the port runner, the ancestor stop test, the port-group stop, the instance constructor, the arm routine; the PhysicsImpulse class's field registration, field accessors and port declaration list, its factory, start, message handler, and the two request kinds with their field lists, processing at the target, deferred path, apply routine and completion notice; the message dispatch and answer routines. Nothing about network, login, keys, launcher or anti-tamper. |
+| OBS-I | Observed 2026-10-09 in the same install (data unchanged) by a throwaway probe with the repository's script-table decoder as a tool: every PhysicsImpulse node of the 7,524 decodable tables and 28,992 scriptlets (fields, targets with their port and target types, driven pairs, ports). |
 | ST, SND, INS, PS | `script-table.md`, `sound.md`, `instruments.md`, `property-system.md` as companion specs. |
 
 | # | Fact | Sources | Mark |
@@ -104,9 +106,15 @@ the original is unknown, always paired with an OPEN.
 | R41 | While: the test (the watched property's value, prepared as for a Switch, equal to a `Values` entry or to the current value of a `Names` property; reversed by `Inverse`), and the start: the children of the first Default port start only when the test holds, else the node completes at once (§30.2, §30.3) | BIN-W | BIN |
 | R42 | While: re-evaluates on every change of its property on the target and of its `Names` properties on the running entity; while the test holds nothing happens (a finished branch is not restarted, the node does not arm); the first time it fails the branch is stopped with reason 0 and the node completes (§30.4) | BIN-W | BIN |
 | R43 | Census of the 41 While nodes: properties, values, `Names` empty and `Inverse` 0 in all, one Default port each (§30.5) | OBS-W | Confirmed |
-| R44 | PhysicsImpulse at start: the impulse is sent as a request to each target (the running entity unless a Target or Impulser port names others) and the target is added to the instance's pending work; the node does not arm in its start (§30.6) | BIN-W | BIN (start); completion OPEN-20 |
+| R44 | PhysicsImpulse at start: the impulse is sent as a request and the target is added to the instance's pending work; the node does not arm in its start (§30.6). **Corrected 2026-10-09 (BIN-I):** the targets come from target port types 8 and 19, not 25, and only the first entity of each is used, so there is one request (R48) | BIN-W; BIN-I | BIN; completion answered by R51 |
 | R45 | The avatar's jump scripts: `Movement_ActionKey` (key 9) gates and runs `Loc_JumpKeyPressed`, which gates and runs `Loc_Jumping` (Persistent 1); `Loc_Jumping` sets `Movement_IsJumping` true, then a While on it runs a one-pass Sequence (impulse and a persistent Run of `Jump`; a 0.2 s Timer; `Movement_IsJumping` false) (§30.7). Per-script sets: `Loc_JumpKeyPressed` and `Loc_JumpKeyReleased` carry `Script_ClientAuthorative` true, `Script_ReplicateToClient` false and `Script_MaxNumInstances` 2 in every table that defines them; `Loc_Jumping` only `Script_MaxNumInstances` 2; `Movement_ActionKey` none | OBS-W | Confirmed (data); the client code that starts key 9 not traced |
 | R46 | In the client's code the property ID of `Movement_IsJumping` occurs once, as a read in the controller; no code that writes it was found, and no script other than `Loc_Jumping` sets it for the player. The only other setters are six definitions of `Jump` (key 1) in tables outside the avatar's class closures: true in step 1 of a root Sequence, false in the child of a root OnStop (§30.7, OPEN-19) | BIN-W; OBS-W | BIN (search for the constant); Confirmed (scripts) |
+| R47 | Node start (§3.1, §3.2): a new instance holds its parent link from its creation, before its kind start runs; it joins its parent's child list and its port group only after the kind start (step 7). Each start into a port group, and each stop of the group, advances a counter of the group; a new instance whose group counter moved during its start is stopped at once with reason 0 and the start counts as failed; one whose group was already stopped when its start began is stopped with the group's reason; one whose parent or an ancestor stopped meanwhile is stopped with reason 0. The runner's check after each child (§3.2) walks the parent links of the instance being filled, so it sees a stopped ancestor of an instance that is still starting, but not a stopped port group. A start that fails by the group counter ends the runner that made it (refines R2); kind-start failures and skips do not | BIN-I (the generic node start, the port runner, the stop test, the group stop, the instance constructor) | BIN. Answers §29 item 19 |
+| R48 | PhysicsImpulse targets: a target of port type 8 (`ImpulseTarget`) names the entity that receives the impulse and one of port type 19 (`Impulser`) the entity whose frame it is given in; each defaults to the running entity; when such a target is present, its first resolved entity is used; when it resolves to none, nothing is sent (logged) and the instance stays running, unarmed, until it is stopped from above. The node class declares exactly these two target ports, each at most once, and no output port (§30.6 steps 2–3) | BIN-I (the start, the class's port declaration list) | BIN |
+| R49 | The impulse request carries the vector, `ImpulseType`, `IsJump`, a "world frame" flag, a deferral flag (bit 5 of the starting context's flags) and a time (the scheduler's current time plus the context's synchronisation offset). Target = impulser: the vector is `Impulse` × intensity, or the jump vector, in the target's own frame, and `IsGlobalSpaceImpulse` is not read. Otherwise the node first asks the impulser and, on its answer, sends `Impulse` × intensity turned by the impulser's orientation into the world unless `IsGlobalSpaceImpulse` is 1, flagged as world frame (§30.6 steps 4–5) | BIN-I (the start, the impulser-answer handler, the request's field list, the field bindings of the node class) | BIN |
+| R50 | A target on this client applies the request when it receives it, unless the deferral flag is set and the request's time lies after the scheduler's current time on a target with a synchronisation flag (not identified); then it applies it at that time. A world-frame vector is turned into the target's frame. Applied or not (no mover, or the jump rule of `collision.md` §11.10 item 2), the target then sends a completion notice to the starting entity (§30.6 step 6) | BIN-I (the request's processing, the deferred path, the apply routine, the notice) | BIN |
+| R51 | Completion: the completion notice removes the target from the instance's pending work and arms it; with no child it completes (reason 0). A target applied at once on this client answers within the same call, so the node completes in the call that started it (§30.6 step 7) | BIN-I (the notice handler, the arm routine) | BIN. Answers OPEN-20 |
+| R52 | Census of the 37 PhysicsImpulse nodes (31 in tables, 6 in scriptlets): `ImpulseType` 2 and `IsGlobalSpaceImpulse` 0 in all; 18 with `IsJump` (none with a target); 6 with targets (1 with an `ImpulseTarget` only, 5 with an `ImpulseTarget` and an `Impulser`), all with target types This (13) or Property (3); no node has a port (§30.6) | OBS-I | Confirmed 2026-10-09 |
 | C1 | Census of the scope (§0): kinds and field values of Switch, When, Random, Sequence, Timer, Run, WhenRunning, SetProperty, Goto/Label, OnStop, driven pairs (tables in §6–§16) | OBS | Confirmed |
 
 ---
@@ -172,6 +180,15 @@ probability draw read the node copy, so a driven `Probability` counts (§5.2).
    If the port group was stopped while this child was starting, the new instance is stopped
    at once with the group's reason. If the parent itself was stopped meanwhile, the new
    instance is stopped at once (reason 0).
+   *Precisely (revised 2026-10-09, R47):* the instance is created with its parent link before
+   step 6, but joins the parent's list and the port group only here. The checks, in order:
+   (a) the parent or any of its ancestors has been stopped: the new instance is stopped
+   (reason 0) and the port group is stopped too; (b) the port group received another start or
+   was stopped while this child was starting (each start into a group and each stop of it
+   advances a counter of the group): the new instance, if any, is stopped (reason 0) and the
+   start counts as **failed**, even when the node left no instance; unlike a failed kind start,
+   this failure ends the port runner that made the start (§3.2); (c) the group had already been stopped when this start began: the
+   new instance is stopped with the group's reason; (d) otherwise it is registered.
 
 Skipped (steps 1–3) and "no instance" (step 6) are both **completion at once** for the
 parent. A kind start that fails (for example a Sound node with a null sound info,
@@ -185,6 +202,25 @@ each child the runner checks whether the instance it is filling, or any ancestor
 been stopped; if so it starts no further child of that port. This is how a child that changes
 a property its own Switch watches (§14) cuts the rest of its port short. Probability skips and
 failed starts never stop the runner.
+
+*Precisely (revised 2026-10-09, R47):* the runner also stops after a child whose start failed
+by §3.1 step 7 (b), the port group having received another start or been stopped during that
+child's start. This is the path by which the case above is cut short: the Switch's
+re-evaluation stops the case's group and starts the new case into it, so the start of the
+child that set the property reports that failure. Kind-start failures (a Sound with a null
+sound info and the like) and skips do not stop the runner.
+
+The check follows parent links, which an instance has from its creation (§3.1 step 7, R47).
+So it also sees an ancestor that stopped while the instance being filled is itself still in
+its start and not yet registered. It does **not** see a stop of the port group that the
+instance being filled is being started into: in that case the instance's remaining children
+still start, and the instance is stopped together with them when its own start returns
+(§3.1 step 7 (b)). Example: a Collection in a Switch case whose first child sets the Switch's
+property starts its other children as well (a Collection has no port group of its own, so
+nothing reports a failure to its runner); they are then stopped with the Collection, whose
+own start reports the failure and ends the Switch's runner. In a
+While (§30.4) the outcome differs, because the While itself completes when its group is
+stopped and empty, so the Collection's runner finds a stopped ancestor.
 
 <a id="s3-3"></a>
 ### 3.3 Running
@@ -1137,6 +1173,9 @@ of the same name, through a Collection and two When nodes. None is in scope.
 | RI10 | Every transition port in scope has `Wait` 1, `RampIn` 0, `Delay` 0 and no wildcard (837 of 837). | Confirmed |
 | RI11 | No music or ambience Switch in scope has a value or Default port with Delay or RampOut ≠ 0. | Confirmed |
 | RI12 | `SND_music_system_startup` has exactly one defining table in each of the 14 avatar closures. | Confirmed |
+| RI13 | A PhysicsImpulse start sends at most one impulse request, whatever its targets resolve to (added 2026-10-09). | rule (§30.6) |
+| RI14 | A child started while its port group receives another start or is stopped never stays registered: it is stopped when its start returns, and the runner that started it starts no further child (added 2026-10-09). | rule (§3.1 step 7 (b), §3.2) |
+| RI15 | Every PhysicsImpulse node of the install has `ImpulseType` 2 and `IsGlobalSpaceImpulse` 0, and only targets of port types 8 and 19 (37 of 37; added 2026-10-09). | Confirmed |
 
 ---
 
@@ -1278,8 +1317,9 @@ otherwise unchanged.
 16. Run-time duration of effect kinds (§18 OPEN-17).
 17. When and with which seed the second seeding caller reseeds the generator (§8 OPEN-18).
 18. What resets `Movement_IsJumping` after a jump (§30.7 OPEN-19).
-19. When a PhysicsImpulse instance completes (§30.6 OPEN-20).
+19. When a PhysicsImpulse instance completes (§30.6 OPEN-20): **answered** 2026-10-09 (R51).
 20. How the `Names` entries of a While are stored (§30.1 OPEN-21).
+21. Context flag bits 5 and 6, the target's deferral flag, and a stop notice for a deferred impulse (§30.6 OPEN-22).
 
 ---
 
@@ -1299,6 +1339,7 @@ otherwise unchanged.
 | 2026-10-09 | header, §1 (OBS-W, R45), §30.7 items 1–2, OPEN-19 | Answer to blocking item B1 of the 2026-10-09 review of §30: OPEN-19 no longer says that "the jump scripts" carry `Script_ClientAuthorative` true and `Script_ReplicateToClient` false; it names the scripts whose per-script sets hold them (`Loc_JumpKeyPressed` and `Loc_JumpKeyReleased`), re-read over every decodable table; `Loc_Jumping` holds only `Script_MaxNumInstances` 2, `Movement_ActionKey` an empty set. The sets added to §30.7 items 1–2 and R45. No other fact changed. Status Revised, awaiting re-review. | Spec writer (dirty room) |
 | 2026-10-09 | header, §30.7 item 1 | Answer to blocking item B2 of the 2026-10-09 re-review: the sentence about the empty per-script property set now names `Movement_ActionKey` (it followed the clause about `Loc_JumpKeyReleased` and could be read as about that script), and the next sentence names the key it says is started by untraced client code. Wording only; no fact changed. Status Revised, awaiting review. | Spec writer (dirty room) |
 | 2026-10-09 | header, §1 (OBS-W, R46), §30.5, §30.7 items 1–2, consequence d, OPEN-19 | Non-blocking review notes N1–N4 taken up (no blocking item was open): "player locomotion tables" replaced by "the locomotion tables that define `Loc_Jumping`"; the `Jump` definitions outside the avatar's closures that set and clear `Movement_IsJumping` recorded in R46 and as a hint in OPEN-19; consequence d states that a held run of `Movement_ActionKey` refuses a second start; the §30.5 first-children cell split by kind with counts. No BIN fact or Decision changed. Status Revised, awaiting review. | Spec writer (dirty room) |
+| 2026-10-09 | header; §1 (sources BIN-I, OBS-I; rows R44 corrected, new R47–R52); §3.1 step 7; §3.2; §23 RI13–RI15; §27 items 19, 21; §29 item 19; §30.6 | Spec writer, second pass of the day, answering the implementers' open points. **§30.6 rewritten from the client (BIN-I):** the PhysicsImpulse node reads target port types 8 (`ImpulseTarget`) and 19 (`Impulser`), not 25 (**correction**); it uses the first entity of each, so it sends one request; a present port that resolves to nothing fails the start; on the default path the vector is in the target's frame and `IsGlobalSpaceImpulse` is not read; the impulser path; what the request carries; when the target applies it (at once unless deferred); OPEN-20 answered (the node completes on the target's completion notice, in the same call when applied at once); census of the 37 nodes; new OPEN-22. **§3.1 step 7 and §3.2 made precise (R47), answering §29 item 19:** the parent link exists from creation; a start whose port group moved fails and ends the runner; a group stop alone does not stop the runner of an instance still in its start. **Behaviour change for implementers:** the §29 item 19 Decision and the per-entity requests of PhysicsImpulse are replaced. Status Revised, awaiting review. | Spec writer (dirty room) |
 
 ---
 
@@ -1448,6 +1489,33 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     > is not yet registered and the group it is being started into has been stopped, so
     > nothing further starts below it. Was this read from the client, or does the original
     > register the instance before its kind start?
+    >
+    > **Answered** (spec writer, 2026-10-09; BIN-I, R47; §3.1 step 7 and §3.2 made precise).
+    > Read from the client: the original registers the instance with its parent and its port
+    > group **after** its kind start, as §3.1 step 7 says, but creates it with its parent link
+    > first, and the runner's check after each child walks those links. In the While case the
+    > While stops its port group, which is still empty because the Collection is not yet
+    > registered, then arms with no child and no pending work and so **completes in the same
+    > call**; the Collection's runner then finds a stopped ancestor and starts no further
+    > child, and the Collection is stopped at its own step 7. A port group stopped while its
+    > owner keeps running (a Switch changing case because a child set its property) is not
+    > seen by the runner of a child that is still starting: that child's remaining children
+    > do start, and they are stopped with it when its start returns, which then reports a
+    > failure that ends the owner's runner (§3.1 step 7 (b)). **Change for implementers:**
+    > replace the Decision above by the client's rule: the runner stops after a child when the
+    > instance being filled or an ancestor (through parent links set at creation) is stopped,
+    > or when the child's start failed by §3.1 step 7 (b); a group stop alone does not stop
+    > the runner of an instance still in its start.
+    >
+    > **PhysicsImpulse edge rules** (spec writer, 2026-10-09; BIN-I, R48–R51): §30.6 now
+    > states them. **Changes for implementers:** read only targets of port types 8
+    > (`ImpulseTarget`) and 19 (`Impulser`), not every target of the node; use the first
+    > entity of each list and send one request, not one per entity; a present list that
+    > resolves to nothing sends nothing and leaves the instance running until it is stopped
+    > from above (not completion at once); on the default path the vector is in the target's
+    > frame whatever `IsGlobalSpaceImpulse` says; the impulser path of §30.6 step 5 applies
+    > when the two entities differ. Completion at once stays correct for an applied impulse
+    > (OPEN-20 answered).
 
 ---
 
@@ -1542,28 +1610,90 @@ one Default port each, with 1 or 2 children.
 These are observations of this install; a runtime reads the nodes from the data.
 
 <a id="s30-6"></a>
-### 30.6 PhysicsImpulse (9) at run time (R44)
+### 30.6 PhysicsImpulse (9) at run time (R44, R48–R52; revised 2026-10-09)
 
 Fields: `script-table.md` §5.3; what the impulse does to the mover: `collision.md` §11.6
-item 3 and §11.10. After the steps of §3.1, the start:
+item 3 and §11.10. The node class declares exactly two **target ports**, each allowed once,
+and **no output port** (R48): port type 8 (`ImpulseTarget`, the entity that receives the
+impulse) and port type 19 (`Impulser`, the entity in whose frame the impulse is given). Port
+type 25 (`Target`) is not read by this node. *(Corrected 2026-10-09: the first version of this
+section named a Target port of type 25.)* After the steps of §3.1, the start:
 
 1. does nothing and completes at once when bit 6 of the context's flags is set (a flag that
    §2.1 does not name; where it is set was not traced, and the default flags leave it clear);
-2. resolves its targets: the running entity, or the entities that a Target port (type 25) and
-   an Impulser port (type 19) name. None found: nothing is sent and the node completes at once
-   (the client logs it). No jump node of this install has a port;
-3. sends the impulse to each target as a request, like the request of a Run (§12.4 step 2),
-   carrying the vector (`Impulse` × the node's intensity, or for `IsJump` the vertical value
-   of `collision.md` §11.10 item 2, which the intensity does not scale), `ImpulseType`,
-   `IsGlobalSpaceImpulse` and the current scheduler time plus the run's synchronisation
-   offset. Each target is added to the instance's pending work (§3.4);
-4. does not arm.
+2. fixes the **target** and the **impulser**, both the running entity by default. When the
+   node has targets of port type 8, they are resolved (`script-table.md` §4.4) and the
+   **first** resulting entity becomes the target. Then the same for port type 19 and the
+   impulser. Further entities of either list are ignored: a node sends **one** impulse, never
+   one per entity. When a list that is present resolves to no entity, the client logs it,
+   sends nothing and reports a failure code that the node start (§3.1) does not act on: the
+   instance is registered like any other, is never armed and has no pending work, so it
+   **stays running until it is stopped from above** (§3.5) and keeps its parent from
+   completing meanwhile;
+3. reads the request time: the scheduler's current time (§20.1) plus the context's
+   synchronisation offset (§2.1);
+4. **target = impulser** (the default, and every node without targets): sends one impulse
+   request (described below) to the target with the vector
+   - for `IsJump` 0: `Impulse` × the node's intensity (the context's intensity after §3.1
+     step 5), **in the target's own frame**; `IsGlobalSpaceImpulse` is **not read** on this
+     path;
+   - for `IsJump` 1: the vertical vector (0, 0, (`AirTime` + 0.2) × `ExpectedGravity`) of
+     `collision.md` §11.10 item 2, which the intensity does not scale;
+   and adds the target to the instance's pending work (§3.4);
+5. **target ≠ impulser:** first sends a request to the impulser (carrying the request time)
+   and adds the impulser to the pending work. The impulser answers with its frame (position
+   and orientation) at the request time; the answer removes the impulser from the pending
+   work. The node then computes `Impulse` × its intensity (`IsJump` does not change the vector
+   on this path), turns it by the impulser's orientation into the world **unless**
+   `IsGlobalSpaceImpulse` is 1 (then it is taken as a world vector unchanged), and sends the
+   impulse request to the target, flagged as a **world-frame** vector, with the same request
+   time; the target is added to the pending work. An impulser that cannot give its frame
+   answers with a failure; the node then arms and completes without sending an impulse;
+6. does not arm.
 
-> **OPEN-20:** When the PhysicsImpulse instance completes: the answer path of its request was
-> not read, so whether the instance ends in the same call (as a Run's request to the running
-> entity is handled, §12.4 step 2) or later is not known. **Decision (Tessera):** the node
-> applies its impulse during its start and completes at once. On the jump path this changes
-> nothing (§30.7 b).
+**The impulse request** (R49) carries: the vector; `ImpulseType`; `IsJump`; a world-frame
+flag (0 on the path of step 4, 1 on the path of step 5); a **deferral flag**, bit 5 of the
+starting context's flags (clear by default, §2.1; where it is set was not traced); and the
+request time.
+
+**At the target** (R50), when the target entity is present on this client, the request is
+handled when it arrives (synchronously for a request sent during a script start): if the
+deferral flag is set, the target carries a synchronisation flag (not identified) and the
+request time lies after the scheduler's current time, the request waits for a scheduler event
+at that time; otherwise it is applied at once. Applying: a world-frame vector is first turned
+into the target's frame (by the target's current orientation; that it is the inverse turn
+is Inferred from `collision.md` §11.6 item 3, which keeps the stored impulse in the mover's
+frame); then the vector is added to the target mover's stored impulse with the request's `ImpulseType` (`collision.md` §11.10 items 1–2, including the rule that an
+`IsJump` request adds nothing while the stored impulse already has a vertical part). Applied
+or not (no mover, or that rule), the target then sends a **completion notice** to the
+starting entity. A target that is not present on this client is reached through the client's
+message path, which is out of scope here.
+
+**Completion** (R51; answers OPEN-20). The completion notice removes the target from the
+instance's pending work and arms the instance; having no child, it completes (reason 0). With
+the default flags and a target present on this client, the target applies the impulse and its
+notice comes back within the call that started the node, so the node **completes in that same
+call**. A deferred request completes the node when the scheduler reaches the request time.
+Stopping the node earlier (§3.5), except on a teardown stop (reason 2), sends a stop notice to
+each entity still in its pending work.
+
+**Census** (OBS-I, R52): 37 nodes (31 in tables, 6 in scriptlets); `ImpulseType` 2 and
+`IsGlobalSpaceImpulse` 0 in all; 18 have `IsJump` 1, none of them a target (the avatar's
+jump nodes of §30.7 among them); 6 have targets: one an `ImpulseTarget` only, five an
+`ImpulseTarget` of type This (13) and an `Impulser` of type Property (3). No node has a port.
+
+> **OPEN-20 (answered 2026-10-09, R51):** When the PhysicsImpulse instance completes: on the
+> target's completion notice, which comes back in the same call when the target applies the
+> impulse at once (above). The earlier **Decision (Tessera)** ("the node applies its impulse
+> during its start and completes at once") matches the client whenever the deferral flag is
+> clear and the target is present, which is every case of an offline client with the default
+> flags; on the jump path this changes nothing (§30.7 b).
+
+> **OPEN-22:** (a) Where bits 5 and 6 of a context's flags are set (§2.1 names bits 1 and 3
+> only), and which flag of a target allows a deferred request; (b) what a target does with
+> the stop notice of a stopped node (paragraph "Completion") for a request it has deferred.
+> **Decision (Tessera):** treat bits 5 and 6 as clear, so no node is skipped by step 1 and no
+> request is deferred; a stopped node cancels nothing that has already been applied.
 
 <a id="s30-7"></a>
 ### 30.7 The avatar's jump path (data, OBS-W; R45, R46)

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09). History: Accepted 2026-10-09; Revised the same day to answer the three implementer OPENs of 2026-10-09 (§2.1 census, §4.4.1 merge order, §4.5.1 port rule); review of that revision: changes requested (2 blocking items); revised again 2026-10-09 to fix both items and notes N1, N2 (§4.4.1 consequence bullets, §4.5.1 Decision, §9.3 step 3, IS13, Q8, Q9); re-review of 2026-10-09: **pass**, Accepted (Review record). |
+| **Status** | Revised (2026-10-09, spec writer, awaiting review: the implementer OPEN of 2026-10-09 in §4.5.1 on port types of 256 or more answered from the client (BIN3): the port declarations of all 66 node classes were read, every declared type is 1–30; Q8 answered for the lists; rows I20, source BIN3). Before: Accepted (2026-10-09). History: Accepted 2026-10-09; Revised the same day to answer the three implementer OPENs of 2026-10-09 (§2.1 census, §4.4.1 merge order, §4.5.1 port rule); review of that revision: changes requested (2 blocking items); revised again 2026-10-09 to fix both items and notes N1, N2 (§4.4.1 consequence bullets, §4.5.1 Decision, §9.3 step 3, IS13, Q8, Q9); re-review of 2026-10-09: **pass**, Accepted (Review record). |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -64,6 +64,7 @@ referred to by structure, never quoted.
 | BIN | **M4, [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-08. Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, read with the Ghidra 12 decompiler on a private copy of the shared analysis project (deleted after use), address ranges only, in the dirty scratch area. **Questions:** (1) where the client reads `Entity_InstanceScriptTable` and how it turns the property tree into script definitions; (2) how those definitions enter an entity's script lookup (order, kinds, `Script_CombinationType`); (3) how an entity's class and additional tables and start-up scripts are gathered; (4) what a driven field gets when its source property is absent; (5) whether the client treats `@` names specially; (6) which light fields `Light_LODClass` and `Light_DrivenByDayCycle` fill. **Why M1–M3 were not enough:** the data hold the trees and the graphs but not how the client merges them with the entity's tables, which definition wins, or when the tree is applied; no published source describes instance script tables; no running client was available to this session, and observing one (M3) could show a door opening but not the merge rule. **Read:** the script component's set-up from an entity's properties, its activation and its property-change handler for the two properties it watches, the property-tree script parser, the node and target builders, the table-set constructor, copy and include-list setter, the table-set lookup, the script start, the driven-field application at node start, the entity property read's dispatch by `field_b`, the light class's field registration. Nothing of the network, login, launcher or anti-tamper code. |
 | OBS2 | Observed 2026-10-09 in the same install (data files unchanged) by a new throwaway probe written for this revision (the repository's decoders as tools): **all 49,636** landblock-info records again (0 failures), every SED's own property set compared with the instance property set of its IID entry by entry, by stored order and by the set header; **all 7,526** 0x07 tables and **all 28,992** 0x0C scriptlets (7,524 and 28,992 decode), every node's ports counted by kind and port type. |
 | BIN2 | **M4, [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-09, same client build as BIN, read with the Ghidra 12 decompiler on a private copy of the shared analysis project (deleted after use). **Questions:** (8) in which order the per-script property sets of several definitions of one key are merged and which value wins; (9) which port types and how many ports each node kind accepts when a node is built from a tree (§4.5 step 3). **Why M1–M3 were not enough:** the data never hold two definitions of one key whose per-script sets disagree on a property that matters offline, and the declarations are code, not data; no published source covers either. **Read:** the table-set lookup of §4.4, its per-table property merge (recursive over the includes), the property-set merge helper it calls, and the port step of the tree node builder. Question 9 was answered only in part (§4.5). Nothing of the network, login, launcher or anti-tamper code. |
+| BIN3 | **M4, [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-09 (second pass of the day), same client build as BIN, read with the Ghidra 12 decompiler on a private copy of the shared analysis project (deleted after use). **Question:** (10) which port types each node kind declares, and whether any declaration could accept a tree port of type 256 or more (implementer OPEN of 2026-10-09 in §4.5.1; Q8). **Why M1–M3 were not enough:** the declarations are code; the data hold only the ports that exist. **Read:** the node classes' tables of class methods, found by their shared method slots and, for the two classes with another layout, through their class-name strings and registration routines (66 classes, one per node kind of `script-table.md` §5.1), and in each the kind-code method and the port-declaration method. Nothing of the network, login, launcher or anti-tamper code. |
 | ST, SR, PS, ED, LB, LI, EN, SN | `script-table.md`, `script-runtime.md`, `property-system.md`, `entity-descriptor.md`, `landblock.md`, `lighting.md`, `environment.md`, `sound.md` as companion specs. |
 
 | # | Fact | Sources | Mark |
@@ -87,6 +88,7 @@ referred to by structure, never quoted.
 | I17 | The entity property read chooses its store by the definition's `field_b`: 4, 3 and 8 are three stores of the entity, 6 the run-parameter set, 7 and 9 a service lookup (§6.2, §12) | BIN (the read's dispatch) | BIN |
 | I18 | Per-script property sets are merged **first value wins**: a PID already in the merged set is never replaced. The instance definition's set is merged first, then each included table's set in include order, each table before its own includes (depth-first, stored order); a table's includes are not visited for properties once the merged set holds `Script_CombinationType` = 1 (§4.4) | BIN2 (question 8) | BIN |
 | I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists were not enumerated. Observed (kind, port type) pairs over all tables and scriptlets in §4.5 | BIN (step 3 rule); BIN2 (declaration record form); OBS2 (observed pairs) | BIN; per-kind lists OPEN (§13 Q8), selector field OPEN (§13 Q9) |
+| I20 | Each port-declaration entry holds four 32-bit words: a category (0 for an output port, 1 for a target port; meaning Inferred from the types each holds), the port type, the maximum count (all bits set for unlimited) and a word of flags. The declarations of all 66 node classes, listed in §4.5.1, declare only port types 1–30 (values of enum 0x230000A1); 31 kinds declare nothing. So the client creates no tree port of type 31 or more, in particular none of 256 or more (§4.5.1) | BIN3 | BIN. Answers the implementer OPEN of §4.5.1 and Q8 for the lists; the use of the category and flag words in step 3 stays Q9 |
 
 ---
 
@@ -560,6 +562,48 @@ pair is missing from it.
 > it with its subtree and logs it, like a port of type 0. No port of this install has such a
 > type. Does the client accept such ports (the declaration lists would decide), and if so,
 > what should a reader do with them?
+>
+> **Answered** (spec writer, 2026-10-09; BIN3, I20): no. The port type in a declaration entry is
+> a 32-bit word, but the declarations of all 66 node classes name only types 1–30 (table
+> below), so no kind declares a type of 31 or more and the client never creates such a tree
+> port. Dropping it with its subtree and logging it, as Tessera does, is the client's
+> outcome, not only a Decision; a one-byte port type in the node model loses nothing. The
+> same holds for the types 31–255 that fit in a byte: no kind declares them either.
+
+**Port declarations per node kind (BIN3, I20).** "Output" lists the output-port entries
+(category 0), "Target" the target-port entries (category 1), each as *type* (*maximum*), ∞ for
+unlimited. Kinds not listed declare nothing: 1, 3, 7, 13, 16, 18, 28, 30, 32, 33, 35, 37–39,
+41, 43, 44, 47–49, 53, 56, 59–62, 64, 77, 78, 80, 81.
+
+| Kind | Output | Target |
+|---|---|---|
+| 2 Collection, 6 Sequence, 10 OnStop, 17 Random, 20 Math, 25 Label, 36 Animation, 65 Timer | 6 (∞) | — |
+| 4 Execute, 27 GameCallback | 6 (1), 5 (∞) | 25 (∞), 3 (1) |
+| 5 Run | 14 (∞), 27 (1), 9 (∞), 13 (1) | 6 (1), 1 (∞) |
+| 9 PhysicsImpulse | — | 19 (1), 8 (1) |
+| 11 WaveformBlend, 57 ScalarBlend | 6 (∞) | 25 (1) |
+| 12 Switch | 5 (∞), 28 (∞), 6 (1), 22 (1) | 25 (1) |
+| 14 WhenRunning | 11 (1), 10 (1) | 25 (1) |
+| 15 DistanceCheck | 6 (∞), 30 (1) | 25 (1) |
+| 19 Scriptlet | 6 (∞) | 25 (∞) |
+| 21 RemoveObjects, 42 AddObjects | — | 25 (1), 23 (1) |
+| 22 ScriptletParameter, 31 Listener | 6 (1) | — |
+| 23 Raycast | 18 (∞), 29 (∞) | 25 (1), 21 (1) |
+| 26 HeadingCheck | 6 (∞), 30 (1) | 25 (1), 21 (1) |
+| 29 WhileResident | 4 (1), 26 (1) | 25 (1) |
+| 34 Conversation | 6 (1), 2 (∞) | — |
+| 40 SetProperty | — | 6 (1), 23 (1) |
+| 45 FireMissile, 46 Detect, 58 Appearance | — | 25 (1) |
+| 50 While | 6 (1) | 25 (1) |
+| 51 MoveTo | 17 (∞), 6 (1) | 25 (1), 21 (1) |
+| 52 RemoveProperty | — | 6 (1) |
+| 54 Beam | 6 (∞) | 25 (1) |
+| 63 When | 24 (∞), 6 (1), 22 (1) | 25 (1), 7 (1) |
+
+Every (kind, port type) pair of the census above is declared as an output port, and every
+observed count is within its maximum. The Decision below is unchanged: whether step 3 consults
+the category word (a tree port matching only a target entry) and what the flag word does are
+Q9, and on every record of this install the Decision and the declarations keep the same ports.
 
 <a id="s4-6"></a>
 ### 4.6 What runs where
@@ -1105,7 +1149,7 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | Q5 | What the client does with a light's `LODClass` and `DrivenByDayCycle` fields | §6.6, §8.2 | ignore both (as `lighting.md` does today for σ) |
 | Q6 | The Light node's own run-time rules (`LightScript_FadeTime`, `LightScript_Lifespan`, `LightScript_Offset`, holding location) | §6.3 | add and remove the light at once; offset 0 |
 | Q7 | Meaning of `ScriptSystem_TimeofDay_Activation` (378 SED-IID sets, read by no node) | §8.1 | ignore |
-| Q8 | The client's port declarations per node kind (port types and maximum counts), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2): the port step of the tree builder (rule of §4.5.1) and the search for the node classes' declaration methods; the node classes could not be enumerated from the executable in that session | §4.5.1 | keep every port of type 1 or more, any kind, no count limit; count ports outside the observed pairs as census findings (IS13) |
+| Q8 | The client's port declarations per node kind (port types and maximum counts), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2) without success; **answered for the lists** 2026-10-09 (BIN3, I20): §4.5.1 lists every kind's declarations; how step 3 uses the category and flag words is Q9 | §4.5.1 | keep every port of type 1 or more, any kind, no count limit; count ports outside the observed pairs as census findings (IS13) |
 | Q9 | The meaning and the non-default values of the further selector field of a port declaration entry (§4.5.1): which values exist and how a non-default value changes the count check of step 3. Split from Q8 on 2026-10-09 (review note N2); not traced in BIN2 | §4.5.1 | ignore the selector (the Q8 decision keeps the port either way) |
 
 ---
@@ -1118,3 +1162,4 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | 2026-10-08 | First version (spec writer, dirty room): census over every landblock-info record, 0x47, 0x78 and 0x79 set; schema and node mapping of `Entity_InstanceScriptTable`; BIN of the client's table set, start-up order, IST merge, lookup and node building; member overrides as ordinary properties; day and night lights; instance switches; examples; Q1–Q7. Status Review. |
 | 2026-10-09 | Revision (spec writer, dirty room) answering the three implementer OPENs of 2026-10-09. §2.1: recount with a new probe (OBS2); no SED set is a strict subset, the 955,794 were sets in another stored order plus the 9 later SEDs of shared IIDs; I2 and IS8 corrected. §4.4.1 new: per-script property merge, first value wins, descent stopped by an `Overriding` merged value (BIN2, I18, IS12). §4.5.1 new: port declaration rule (BIN2), observed (kind, port type) census over all tables and scriptlets (OBS2), Decision to keep only observed pairs (I19, IS13); per-kind declarations remain OPEN as Q8. §12 notes for `script-runtime.md` §12.2 and `script-table.md` §4.3. Status Revised. |
 | 2026-10-09 | Revision (spec writer, dirty room) answering the review of the same day (changes requested). Blocking (1): §4.4.1 second consequence bullet restricted to a `Script_CombinationType` value merged from an earlier table or the table's own set; new bullet: an `Overriding` instance definition stops the lookup at §4.4 step 2 and no table's set is merged. Blocking (2): §4.5.1 Decision now keeps every tree port of type 1 or more for any kind with no count limit, independent of the census; the observed-pair table is stated as a census of this install; ports outside it are census findings only; §9.3 step 3 and the Q8 decision follow; IS13 restated as a census check that fails only in a strict census mode. N1: §4.4.1 states that null includes are skipped and adds Tessera's visited-set and depth bound for the property walk. N2: the declaration entry's selector field is its own open question, Q9. No new observations. Status stays Revised. |
+| 2026-10-09 | Revision (spec writer, dirty room, second pass of the day) answering the implementer OPEN of 2026-10-09 in §4.5.1 (port types of 256 or more). New source BIN3 and row I20: the port declarations of all 66 node classes read from the client; every declared type is 1–30, so the client never creates a tree port of type 31 or more and dropping it is the client's outcome. §4.5.1 gains the per-kind declaration table; Q8 answered for the lists (the category and flag words stay Q9); the Decision is unchanged. Status Revised, awaiting review. |

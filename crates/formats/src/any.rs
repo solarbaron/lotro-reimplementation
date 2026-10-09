@@ -8,6 +8,7 @@ use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 use crate::error::Result;
+use crate::font::Font;
 use crate::landblock::RegionDescriptor;
 use crate::property::{PropertyDictionary, PropertySchema};
 use crate::record::Record;
@@ -15,10 +16,12 @@ use crate::scenery::{Scene, SceneChoiceTable, TerrainSceneTable};
 use crate::script_table::{ScriptTable, Scriptlet};
 use crate::setup::{Setup, VisualTemplate};
 use crate::sound::SoundRecord;
+use crate::sound_info::SoundInfo;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
 use crate::terrain_type::TerrainTypeTable;
 use crate::texture_list::TextureList;
+use crate::ui_layout::UiLayout;
 use crate::water::{FogZoneTable, WaterTable};
 
 /// Any record this crate can decode, selected by the DID's type prefix (spec §2.1).
@@ -53,6 +56,8 @@ pub enum AnyRecord<'a> {
     TextureList(TextureList),
     /// 0x0A: sound record.
     Sound(SoundRecord<'a>),
+    /// 0x2A: sound info.
+    SoundInfo(SoundInfo),
     /// 0x1F: visual template.
     VisualTemplate(VisualTemplate),
     /// 0x04: setup.
@@ -105,6 +110,10 @@ pub enum AnyRecord<'a> {
     /// 0x0F: region descriptor (`environment.md` §3), also available as
     /// [`crate::landblock::RegionDescriptor::parse`].
     RegionDescriptor(Box<RegionDescriptor>),
+    /// 0x42: font.
+    Font(Font),
+    /// 0x22: UI layout (only from [`AnyRecord::decode_with_schema`]).
+    UiLayout(UiLayout),
 }
 
 impl<'a> AnyRecord<'a> {
@@ -136,6 +145,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::RenderSurface => Self::Surface(Surface::parse_expecting(payload, did)?),
             DidKind::TextureList => Self::TextureList(TextureList::parse_expecting(payload, did)?),
             DidKind::Sound => Self::Sound(SoundRecord::parse_expecting(payload, did)?),
+            DidKind::SoundInfo => Self::SoundInfo(SoundInfo::parse_expecting(payload, did)?),
             DidKind::VisualTemplate => {
                 Self::VisualTemplate(VisualTemplate::parse_expecting(payload, did)?)
             }
@@ -178,6 +188,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::RegionDescriptor => {
                 Self::RegionDescriptor(Box::new(RegionDescriptor::parse_expecting(payload, did)?))
             }
+            DidKind::Font => Self::Font(Font::parse_expecting(payload, did)?),
             _ => return Ok(None),
         }))
     }
@@ -224,6 +235,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::Scriptlet => {
                 Self::Scriptlet(Scriptlet::parse_expecting(payload, did, schema)?)
             }
+            DidKind::UiLayout => Self::UiLayout(UiLayout::parse_expecting(payload, did, schema)?),
             DidKind::CollisionGeometry => Self::CellGeometry(Box::new(
                 CellGeometry::parse_expecting(payload, did, stamp, schema)?,
             )),
@@ -239,7 +251,10 @@ impl<'a> AnyRecord<'a> {
         Self::is_decodable(did)
             || matches!(
                 did.kind(),
-                DidKind::ScriptTable | DidKind::Scriptlet | DidKind::CollisionGeometry
+                DidKind::ScriptTable
+                    | DidKind::Scriptlet
+                    | DidKind::UiLayout
+                    | DidKind::CollisionGeometry
             )
     }
 
@@ -255,6 +270,7 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::RenderSurface
                 | DidKind::TextureList
                 | DidKind::Sound
+                | DidKind::SoundInfo
                 | DidKind::VisualTemplate
                 | DidKind::Setup
                 | DidKind::Appearance
@@ -271,6 +287,7 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::CameraState
                 | DidKind::CollisionMesh
                 | DidKind::RegionDescriptor
+                | DidKind::Font
         )
     }
 
@@ -285,6 +302,7 @@ impl<'a> AnyRecord<'a> {
             Self::Surface(r) => r.did(),
             Self::TextureList(r) => r.did(),
             Self::Sound(r) => r.did(),
+            Self::SoundInfo(r) => r.did(),
             Self::VisualTemplate(r) => r.did(),
             Self::Setup(r) => r.did(),
             Self::Appearance(r) => r.did(),
@@ -303,6 +321,8 @@ impl<'a> AnyRecord<'a> {
             Self::CameraState { did, .. } | Self::CollisionMesh { did, .. } => *did,
             Self::CellGeometry(r) => r.did,
             Self::RegionDescriptor(r) => r.did,
+            Self::Font(r) => r.did(),
+            Self::UiLayout(r) => r.did(),
         }
     }
 
@@ -317,6 +337,7 @@ impl<'a> AnyRecord<'a> {
             Self::Surface(_) => Surface::NAME,
             Self::TextureList(_) => TextureList::NAME,
             Self::Sound(_) => SoundRecord::NAME,
+            Self::SoundInfo(_) => SoundInfo::NAME,
             Self::VisualTemplate(_) => VisualTemplate::NAME,
             Self::Setup(_) => Setup::NAME,
             Self::Appearance(_) => AppearanceRecord::NAME,
@@ -336,6 +357,8 @@ impl<'a> AnyRecord<'a> {
             Self::CollisionMesh { .. } => CollisionMesh::NAME,
             Self::CellGeometry(_) => CellGeometry::NAME,
             Self::RegionDescriptor(_) => RegionDescriptor::NAME,
+            Self::Font(_) => Font::NAME,
+            Self::UiLayout(_) => crate::ui_layout::NAME,
         }
     }
 }

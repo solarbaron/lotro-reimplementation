@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
-| **Review record** | Review 1, 2026-10-07 (separate dirty-room review session, not the author): **changes requested** (three blocking items: a field type in §3.8.1, the cylinder radius override and position offset missing from §3.4.1, the undefined induction arithmetic in §16.1; five minor). Revision 2, 2026-10-07 (spec writer): R1–R8 answered (§21); awaiting re-review. Review 2, 2026-10-07 (separate dirty-room review session, not the author): R1–R8 accepted; **changes requested** (two required items: the cursor distance of §3.4.2 omits the outermost-parent substitution; a modifier-entry count in §3.8.5; four minor). Status stays Review. Full record in the review log (decision 0018). |
+| **Review record** | Review 1, 2026-10-07: changes requested. Review 2, 2026-10-07: changes requested. Review 3, 2026-10-08 (separate dirty-room review session, not the author): **passed**, status Accepted (four minor notes). Details in the review log (decision 0018). |
 | **Implements into** | A gameplay-data layer on `crates/props` and `crates/wstate` (decoders and stores for the record kinds of §4–§12; crate placement is the implementer's choice); the client (cursor, use-range test and cast bar of §3.4 and §3.8.4, cosmetic-pet following of §7.4); `crates/net` sandbox backend (use, channel and defeat flows, §16); `apps/explorer` (hotspot and channelling cards, hotspot overlay, §17); `apps/dattool` (census commands) |
 | **Companion specs** | [`wstate.md`](wstate.md) (object records, bundles, links, available-property lists); [`wlib.md`](wlib.md) (class library, method tables §6.4, bytecode chunk §4.1); [`property-system.md`](property-system.md) (property sets, labels, DID maps §8); [`items.md`](items.md) §5.10 (usage behaviour objects and requirements on items); [`creatures.md`](creatures.md) (templates, generator chain §6); [`combat-data.md`](combat-data.md) (effects, progressions §4, induction and channelling durations §7.9); [`quests.md`](quests.md) §6.3 (effect-application objects, class 700); [`map-data.md`](map-data.md) (map-note and quest-marker tables §4–§5, place keys §3 and §10); [`entity-descriptor.md`](entity-descriptor.md) §4.9 (`Entity_CreationType`); [`collision.md`](collision.md) (ethereality §9.2, entity cylinders); [`appearance.md`](appearance.md) §5.5 (held props) |
 
@@ -62,41 +62,48 @@ Marks:
 |---|---|
 | OBS | User install (Steam), read-only, 2026-10-07. Probes built on a snapshot of the project's own decoders (read-only use) and Python, over: all 383,343 object records (prefixes 0x70 and 0x76) with their root classes and ancestry, and the property sets (0x79) of every 0x70 record; all 0x78 property sets; the class library 0x56000000 (class table, method tables, the bytecode chunk searched for 32-bit PID literals); the property dictionary 0x34000000; the WEENIECONTENT DID map 0x2800000E and the root DID map; every enum mapper named here; all 49,636 landblock-info records (`client_cell_*.dat`: landblock property sets, static entities and their property sets, all instance property sets of the weenie lists, all link property sets). Every object record of §2.1 was decoded completely (no unknown native class). Revision 2 (same day) added probes over all 383,332 0x79 sets for `Physics_GameRadiusOverride` and `Render_AdjustableScale`, over all 1,779 induction and 401 channelling records for the setback and modifier structures, over every `Mod_Entry` in every 0x79 set whose `Mod_Modified` is one of the induction or channelling modifier or ignore properties, and over the two setback progressions. |
 | LC | LotroCompanion `lotro-tools` (read for facts only; no code or prose taken): its cosmetic-pet loader (the chain from a skill's toggle effects through an effect's `Mod_Array` to a cosmetic-entity record and on to a creature template) and its map-marker classifier (crafting facilities appear as items or as hotspots). |
-| BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), analysed headless in the dirty room on 2026-10-07, on a copy of the project's analysis database (deleted after use). **Questions:** (a) which properties decide the distance at which the player may use an object, and how that distance is measured; (b) when the client shows the "out of range" mouse-over cursor; (c) which properties the client reads to show another entity's induction (cast) bar; (d) how the client moves a cosmetic pet that follows its owner; (e) which of the interaction PIDs of §14 occur as constants in the client code at all; (f) which WEENIECONTENT keys the client resolves for usage actions. **Why M1–M3 were not enough:** the data hold the property values but not the formulas, defaults or fallbacks that combine them; several of the properties involved are never stored in the data (`Usage_UsageExpireDist`, `Mouseover_Range`, the induction start and end times), so their use cannot be observed; an in-game observation (M3) could show one cursor change or one cast bar at a time but not the constants or the order of fallbacks. **Read:** a scan of all instructions for the 32-bit IDs of the 757 dictionary names of §14 (most hits in the 0x1000xxxx range turned out to be user-interface element IDs and were discarded after reading the routine), the use-range routine and the entity distance routine it calls, the mouse-over range routine and its two callers, the property getter they use (only to see where it looks), the induction-bar routine, the cosmetic-pet follow routines, and two routines that compare `Usage_Action` with WEENIECONTENT entries. **Revision 2 (same build, 2026-10-07, on a fresh copy of the analysis database, deleted after use):** (g) how the client builds each entity's cylinder for the gap distance (base radius, height and offset, and the radius override); (h) whether native client code computes induction durations from the modifier lists or applies setbacks; (i) what the shortcut-usability routine of §3.4.3 does with the resolved `UsageAction_DoNothing` record. **Why M1–M3 were not enough:** the cylinder is run-time state built from several sources with constants that no record stores; whether the client or the server does the induction arithmetic cannot be seen from the data; the running client is not available to this session. **Read:** the cylinder builder and the base-cylinder routine it calls, the bounding-box helper and the box-centre helper, three constants, the induction-property hits of the (e) scan and the routines around them, the shortcut-usability routine and the list walk it calls. Nothing from network, login, launcher or anti-tamper code was read. |
+| BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), analysed headless in the dirty room on 2026-10-07, on a copy of the project's analysis database (deleted after use). **Questions:** (a) which properties decide the distance at which the player may use an object, and how that distance is measured; (b) when the client shows the "out of range" mouse-over cursor; (c) which properties the client reads to show another entity's induction (cast) bar; (d) how the client moves a cosmetic pet that follows its owner; (e) which of the interaction PIDs of §14 occur as constants in the client code at all; (f) which WEENIECONTENT keys the client resolves for usage actions. **Why M1–M3 were not enough:** the data hold the property values but not the formulas, defaults or fallbacks that combine them; several of the properties involved are never stored in the data (`Usage_UsageExpireDist`, `Mouseover_Range`, the induction start and end times), so their use cannot be observed; an in-game observation (M3) could show one cursor change or one cast bar at a time but not the constants or the order of fallbacks. **Read:** a scan of all instructions for the 32-bit IDs of the 757 dictionary names of §14 (most hits in the 0x1000xxxx range turned out to be user-interface element IDs and were discarded after reading the routine), the use-range routine and the entity distance routine it calls, the mouse-over range routine and its two callers, the property getter they use (only to see where it looks), the induction-bar routine, the cosmetic-pet follow routines, and two routines that compare `Usage_Action` with WEENIECONTENT entries. **Revision 2 (same build, 2026-10-07, on a fresh copy of the analysis database, deleted after use):** (g) how the client builds each entity's cylinder for the gap distance (base radius, height and offset, and the radius override); (h) whether native client code computes induction durations from the modifier lists or applies setbacks; (i) what the shortcut-usability routine of §3.4.3 does with the resolved `UsageAction_DoNothing` record. **Why M1–M3 were not enough:** the cylinder is run-time state built from several sources with constants that no record stores; whether the client or the server does the induction arithmetic cannot be seen from the data; the running client is not available to this session. **Read:** the cylinder builder and the base-cylinder routine it calls, the bounding-box helper and the box-centre helper, three constants, the induction-property hits of the (e) scan and the routines around them, the shortcut-usability routine and the list walk it calls. Nothing from network, login, launcher or anti-tamper code was read. **Revision 3 (same build, 2026-10-08, on a copy of the analysis database, deleted after use):** (j) where the base radius *r*₀, height *h*₀ and scale *s* of §3.4.1 come from; (k) what the client does with a hovered entity and its out-of-range flag; (l) how the follow routine of §7.4 chooses and uses a trail point; (m) what the entity tree is that the outermost-parent rule (§3.4.2) and the shortcut routine (§3.4.3) walk; (n) whether the remaining (e) constant hits for mouse-over and loadout PIDs are property reads. **Why M1–M3 were not enough:** these are run-time rules of the client that no record stores, and the running client is not available to this session. **Read:** the model component's two size functions and the setup reader (to place the two fields), the physics component's scale routine, the mouse-over distance routine, the hover hand-off routines, the follow routine with its trail-point test, size getters, liquid probe and ground placement, the tree walk and the tree iterator, the WEENIECONTENT resolver, and the routines behind the (e) hits for `Mouseover_CursorOutOfRange`, `Mouseover_MouseoverList` and the three loadout PIDs (all four turned out to be user-interface element lookups, not property reads). Nothing from network, login, launcher or anti-tamper code was read. |
+| BC | Class-library bytecode (record 0x56000000, chunk 1) of the user's install, disassembled in the dirty room on 2026-10-08 with the instruction set of [`wlib-bytecode.md`](wlib-bytecode.md) (Accepted), by throwaway probes; this is data (method M1). Read: the hover functions of the mouse-over controller class (class 277 here, functions 1, 2, 3, 5, 9, 13, 18, 21, 25), the usage-action virtual slots 94, 97 and 99 with every override, the entity slots 218 and 305 (common bodies), the activity-collection hover helpers, and a literal scan of the whole code block for the PIDs named in §3.8.5, §3.9.3, §4.6, §5.3, §6 and §14. Native functions are unspecified (`wlib-bytecode.md` §7.1); where this spec says what one returns, that is inferred from its arguments and from the properties read on its result, and says so. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
 | I1 | Census of the 129 root classes and 4,998 object records in scope, and of the 1,816 pipeline records of §3 (§2.1) | OBS | Confirmed 2026-10-07 |
 | I2 | Signature rules that find each group without class indices (§2.2) | OBS | Confirmed 2026-10-07 |
 | I3 | Bundle-mirror rule: the object records of §3–§11 repeat parts of their property set in compiled form; the correspondences of §2.4 hold in every record | OBS | Confirmed 2026-10-07 |
+| I3a | Attribute hashes and types of classes 701, 1626 and 3427 (class attribute lists, `wlib.md` §8) and the value of each attribute in every record (§2.4) | OBS (attribute lists, 2026-10-08; values of the class-701 and class-1626 attributes from the census of I14, 2026-10-07; the player action handler's bundle against its property set, 1 of 1, 2026-10-08) | Confirmed 2026-10-08 |
 | I4 | Every `Usage_Action` value (195,930) names a record of the usage-action subtree; per-class referrer counts (§3.2) | OBS | Confirmed 2026-10-07 |
 | I5 | Mouse-over directory layout; 39 mouse-over types, each with a cursor and an out-of-range cursor (§3.3) | OBS | Confirmed 2026-10-07 |
 | I6 | Use-range test: explicit range, else `Usage_UsageExpireDist`, else `Usage_MinUsageDist` (3.0 when no value) plus 3.0 m; gap distance between the two entities' cylinders, each position moved by its cylinder's offset (§3.4.1) | BIN (a), (g); OBS (neither `Usage_UsageExpireDist` nor any explicit range is stored) | BIN only |
 | I6a | Cylinder of an entity: base radius = *r*₀ × scale + 0.05 m, base height = *h*₀ × scale + 0.1 m, offset = centre of the collision shape's bounding box in the entity's own frame; radius replaced by `Physics_GameRadiusOverride` × the first component of `Render_AdjustableScale` when the override is a float above 0 (§3.4.1) | BIN (g) | BIN only |
+| I6c | *r*₀ and *h*₀ are the horizontal radius and the height of `physics_bounds` of the setup that the entity's model is built from; *s* = z of `Physics_AdjustableScale` × z of `Model_Scale` (each (1, 1, 1) when absent), replaced by 1 when not finite or below 0.0002; the offset is not scaled; with the outermost-parent flag every input comes from the outermost ancestor (§3.4.1, §3.4.2) | BIN (j), (m) | BIN only |
 | I6b | `Physics_GameRadiusOverride` (float, default −1) is stored in 54 top-level 0x79 sets, all of mob templates (class 1723 here), values 0.5–13, all above 0; never nested; 52 of them store `Render_AdjustableScale` with three equal components (0.65–8), 2 do not; 3 landblock instance sets also store it (2, 3, 10) (§3.4.1) | OBS (all 383,332 0x79 sets; all instance sets of all landblock-info records) | Confirmed 2026-10-07 |
 | I7 | Out-of-range cursor: shown when the local player's `Mouseover_Range` is positive and the gap distance to the hovered entity is at least that value (§3.4.2) | BIN (b); OBS (`Mouseover_Range` is never stored) | BIN only |
-| I8 | The client resolves `UsageAction_DoNothing` and `UsageAction_QuestNPC` through WEENIECONTENT keys; it compares the latter with an entity's `Usage_Action`; the shortcut routine discards the resolved `UsageAction_DoNothing` record and tests only that the target has a non-null `Usage_Action` and is in a list held by the local player (§3.4.3) | BIN (f), (i); OBS (labels and keys) | BIN only |
+| I7a | Cursor distance: both cylinders built with the outermost-parent rule; distance 0 when the hovered entity is the local player; no distance when the hovered entity cannot be found (§3.4.2) | BIN (b), (m) | BIN only |
+| I7b | Hover hand-off to class code; mouse-over eligibility (override, visibility, phase, quest item, selectability), activity-collection type, usage-action type rule (pending targeted item, drama, plain) and its overrides (§3.4.4) | BIN (k) for the hand-off; BC for the rules | BC (rules); BIN only (hand-off) |
+| I8 | The client resolves `UsageAction_DoNothing` and `UsageAction_QuestNPC` through WEENIECONTENT keys; it compares the latter with an entity's `Usage_Action`; the shortcut routine discards the resolved `UsageAction_DoNothing` DID (the resolution yields a DID only and opens no record) and tests only that the target has a non-null `Usage_Action` and is the local player or one of its descendants in the client's entity tree, searched depth first (§3.4.3) | BIN (f), (i), (m); OBS (labels and keys) | BIN only |
 | I9 | Context-menu handler, permission and take-permission records: layouts and censuses (§3.5, §3.6) | OBS | Confirmed 2026-10-07 |
 | I10 | Usage-plugin directory: 77 plugins, one per requirement property; directory map keyed by `UsagePlugin_UsagePropertyName`; plugin classes have no attributes and 4–21 functions of their own (§3.7) | OBS | Confirmed 2026-10-07 |
 | I11 | Induction records: layout, census, bundle mirror (§3.8) | OBS | Confirmed 2026-10-07 |
-| I11a | Induction modifier and setback data: `Induction_Duration_AreaChallengeLevelOverride` stored as float in all 1,779; every setback structure holds exactly one of a time (824 structures) or a progression (130); 763 records hold times only, 118 progressions only, none both; time records all use `ModifyStartTime`, progression records 114 `ModifyDuration` and 4 `ModifyStartTime`; event census; the two setback progressions (float, minimum index 1, 10 entries, non-zero only in the first one or two); setback times 0.7–20 and not related to the duration; modifier and ignore properties: types, defaults and the operators effects apply to them (§3.8.1, §3.8.5) | OBS | Confirmed 2026-10-07 |
-| I11b | Native client code does not read the induction modifier lists, the setback array, policy, progression or ignore property, the area-challenge override or the setback count; the induction is timed by the server-sent start and end (§3.8.5) | BIN (e), (h) | BIN only |
+| I11a | Induction modifier and setback data: `Induction_Duration_AreaChallengeLevelOverride` stored as float in all 1,779; every setback structure holds exactly one of a time (824 structures) or a progression (130); 763 records hold times only, 118 progressions only, none both; time records all use `ModifyStartTime`, progression records 114 `ModifyDuration` and 4 `ModifyStartTime`; event census; the two setback progressions (float, minimum index 1, 10 entries, non-zero only in the first one or two); setback times 0.7–20 and not related to the duration; modifier and ignore properties: types, defaults and the operators effects apply to them (§3.8.1, §3.8.5) | OBS (the `Mod_Entry` census of §3.8.5 corrected and re-run over all 0x79 sets on 2026-10-08) | Confirmed 2026-10-07, census 2026-10-08 |
+| I11b | No native routine refers as a constant to the induction modifier lists, the setback array, policy, progression or ignore property, the area-challenge override or the setback count, and the bytecode holds no literal of them except the multiplier-list PID (two sites; the one read only hands the PID on); class 1195's own code only initialises its six attributes and returns the two modifier lists; the induction is timed by the server-sent start and end (§3.8.5) | BIN (e), (h); BC | BIN + BC |
 | I12 | Induction bar: start and end times, title fallback (`Induction_TitleString`, `Channeling_TitleString`, `Skill_Name`) and interruptible flag (§3.8.4) | BIN (c) | BIN only |
 | I13 | Channelling-state records: layout, census, bundle mirror, referrers (§3.9) | OBS | Confirmed 2026-10-07 |
 | I13a | Channelling setback event and time census, ignore property, duration-multiplier properties (4) with their defaults and operators, barred-action census (§3.9.1, §3.9.3) | OBS | Confirmed 2026-10-07 |
 | I14 | Hotspot templates: layout, property census, available-property list, compiled effect list (classes 701, 700, 699, 1626) and its correspondence to `EffectGenerator_HotspotEffectList` (§4.1–§4.5) | OBS | Confirmed 2026-10-07 |
+| I14a | All 76 hotspot `PhysObj` descriptors resolve to setups; every setup has 1 or 2 mesh parts (46 distinct meshes); collision kinds and bounds as §4.6 | OBS (all 2,329 templates and their descriptor chains, 2026-10-08) | Confirmed 2026-10-08 |
 | I15 | Hotspot placement routes: generator profiles, genesis effects, landblock instance sets, map-note and quest-marker rows (§4.6) | OBS; `map-data.md` §4.5, §5.3 | Confirmed 2026-10-07 |
 | I16 | Controller entities (relays, tripwires, property boxes, patrol boxes, managers): census and instance sets (§5) | OBS | Confirmed 2026-10-07 |
 | I17 | Cosmetic loadouts: layout, census, referrers (§6) | OBS | Confirmed 2026-10-07 |
 | I18 | Cosmetic pets and the pet directory: layout, census, bundle mirror (§7.1–§7.3) | OBS | Confirmed 2026-10-07 |
 | I19 | Cosmetic-pet chain skill → toggle effect → `CosmeticEntity_CosmeticPet_ForwardSource` → pet record → creature template (§7.3) | LC (skill-to-effect step); OBS (effect-to-pet and pet-to-template steps, all records) | Effect and template steps Confirmed; skill step Reported |
 | I20 | Client-side following: speed default 5.0 m/s, a trail of the owner's last 40 positions, movement state from the threshold table (§7.4) | BIN (d) | BIN only |
+| I20a | Follow step: hold rule, trail-point test (two clear segments at half the pet's height, distance closest to `CosmeticEntity_Distance`), placement on the owner when no point passes, move limited to pace × step time, heading, liquid and ground placement, `CosmeticEntity_Distance` default 0, thresholds equal to −1 skipped, state 0 = `Slow` (§7.4) | BIN (l); OBS (enum labels) | BIN only |
 | I21 | Defeat records, defeat-effect progressions, landblock and override references (§8) | OBS | Confirmed 2026-10-07 |
 | I22 | Activity collections and activities: layouts, census, bundle mirror (§9) | OBS | Confirmed 2026-10-07 |
 | I23 | Plaques, level-up actions, target markings, trigger responses (§10–§12) | OBS | Confirmed 2026-10-07 |
 | I24 | WEENIECONTENT labels of §13 and their targets | OBS | Confirmed 2026-10-07 |
-| I25 | Dictionary families: defined and stored names (§14); PID literals in the native code and in the bytecode (counts only) | OBS; BIN (e) | Confirmed (counts) |
-| I26 | Tessera rules D1–D12 (§2.2, §16, §17) | Tessera | Decision |
+| I25 | Dictionary families: defined and stored names (§14); PID literals in the native code and in the bytecode (counts only); the (e) hits read in revision 3 that are user-interface element IDs (§14) | OBS; BIN (e), (n); BC | Confirmed (counts) |
+| I26 | Tessera rules D1–D13 (§2.2, §3.4.1, §16, §17) | Tessera | Decision |
 | I27 | Instance-set census of §3.1: 13,527 landblock instance sets with `Usage_*` properties, their static-entity types and the counts of the most common properties | OBS (all instance property sets of all 49,636 landblock-info records) | Confirmed 2026-10-07 |
 
 ---
@@ -239,12 +246,13 @@ reproduce the bundle. This spec gives that only in part:
 
 | Coverage | Bundle parts |
 |---|---|
-| Correspondence, attribute hashes and constant fields given | induction root (§3.8.2) with its containers and DID items; channelling root (§3.9.2); plugin directory (§3.7.2); mouse-over directory map (§3.3); activity-collection root, group and socket objects (§9.2); hotspot root (§4.2) and, in the class-701 object, the four attributes named in §4.3; class-700 elements (§4.3, `quests.md` §6.3); class-699 element data (§4.3); cosmetic-pet `set_u32` (§7.1); pet directory (§7.2); plaques (§10.1); level-up actions (§10.2); target-mark control (§11) |
-| Correspondence given, hashes or constant fields **not** given | the other nine attributes of the class-701 object (§4.3: "null or 0", hashes not listed); the class-1626 objects (§4.3: five u64 attributes, hashes not listed); the player action handler's root reference and its class-3427 objects (§3.5; hashes not listed) |
+| Correspondence, attribute hashes and constant fields given | induction root (§3.8.2) with its containers and DID items; channelling root (§3.9.2); plugin directory (§3.7.2); mouse-over directory map (§3.3); activity-collection root, group and socket objects (§9.2); hotspot root (§4.2), the class-701 object (all 13 attributes, §4.3) and the class-1626 objects (§4.3); class-700 elements (§4.3, `quests.md` §6.3); class-699 element data (§4.3); cosmetic-pet `set_u32` (§7.1); pet directory (§7.2); plaques (§10.1); level-up actions (§10.2); target-mark control (§11); the player action handler's root and its class-3427 objects (§3.5) |
 | Named by class only, values not compared | the activity bundles (classes 1602, 3841, 3825, 1339, 3812/3813, §9.3); the trigger-response bundle (classes 3033, 3034, 3039, 3040, 3042, §12) |
 
-> **OPEN:** A byte-exact bundle writer for the groups of the last two rows: the missing
-> attribute hashes, constant fields and value correspondences. Readers do not need them.
+> **OPEN:** A byte-exact bundle writer for the groups of the last row: their attribute
+> hashes, constant fields and value-by-value correspondences with the property set were not
+> listed (the activity bundles match the set by structure only, §9.3; the trigger-response
+> bundle was not compared, §12). Readers do not need them.
 
 ---
 
@@ -343,8 +351,10 @@ no attributes, except the plaque and level-up classes (one each, §10); the root
 "use" does for a given action is the code in those slots.
 
 > **OPEN (bytecode):** The behaviour of each usage-action class (what the server does on use)
-> lives in the class library's bytecode (`wlib.md` §4.1), which no spec decodes. A Tessera
-> server dispatches by action instead (Decision D2, §16.1).
+> lives in the class library's bytecode. [`wlib-bytecode.md`](wlib-bytecode.md) specifies the
+> instructions but not the native functions the code calls (its §7.1 OPEN), and no spec reads
+> the use functions of these classes. (Their mouse-over functions are read in §3.4.4.) A
+> Tessera server dispatches by action instead (Decision D2, §16.1).
 
 <a id="s3-3"></a>
 ### 3.3 The mouse-over directory (Confirmed, I5)
@@ -373,7 +383,7 @@ the 39 `Mouseover_Type` values and whose values are `property` objects (native c
 holding the matching struct.
 
 <a id="s3-4"></a>
-### 3.4 What the client does (BIN)
+### 3.4 What the client does (BIN, BC)
 
 <a id="s3-4-1"></a>
 #### 3.4.1 Use range (I6)
@@ -397,13 +407,20 @@ player first, the target second). A cylinder has a position (the entity's curren
 cell, landblock and local coordinates, `coordinates.md`), an offset vector *o*, a radius *r*
 and a height *h*, all in metres:
 
-1. **Base radius and height:** *r* = *r*₀ × *s* + 0.05 and *h* = *h*₀ × *s* + 0.1, where
-   *r*₀ and *h*₀ are two values the client obtains from the entity's physical description
-   (source OPEN, below) and *s* is the entity's single physics-object scale factor.
+1. **Base radius and height:** *r* = *r*₀ × *s* + 0.05 and *h* = *h*₀ × *s* + 0.1 (I6c):
+   - *r*₀ is the horizontal radius and *h*₀ the height of `physics_bounds` (`setup.md` §6.5:
+     the eighth and the seventh of its eight floats) of the setup that the entity's model is
+     built from (the setup the entity's 0x47 chain names, `setup.md` §3.1);
+   - *s* is the entity's physics scale: the z component of its `Physics_AdjustableScale`
+     (PID 0x118, vector) times the z component of its `Model_Scale` (PID 0x3C3, vector), each
+     taken as (1, 1, 1) when the entity has no such vector. When the product is not finite, or
+     is below 0.0002, *s* = 1. (The x and y components are not used; the client warns when they
+     differ from z by more than 0.0002.)
 2. **Offset:** *o* is the centre of the axis-aligned bounding box of the entity's collision
-   shape, computed in the entity's own frame with an identity transform (no rotation, no
-   translation): per axis, half the sum of the box's minimum and maximum. The offset is not
-   rotated by the entity's heading.
+   shape (the shape built from that setup's collision volumes), computed in the entity's own
+   frame with an identity transform (no rotation, no translation, no scale): per axis, half
+   the sum of the box's minimum and maximum. The offset is neither rotated by the entity's
+   heading nor multiplied by *s*.
 3. **Radius override:** when the entity's `Physics_GameRadiusOverride` (PID 0x692, float,
    dictionary default −1) is found as a float above 0, *r* is replaced by that value times
    *k*, where *k* is the first (x) component of the entity's `Render_AdjustableScale` (PID
@@ -431,33 +448,47 @@ set over template).
    otherwise *z*₁ − (*z*₂ + *h*₂); clamp at 0.
 5. *d* = √(horizontal² + vertical²).
 
-> **OPEN:** Where *r*₀ and *h*₀ come from. The client asks the entity's physical-description
-> object for them through two functions that were not resolved (they may read the setup's
-> bounds, a field of the 0x47 entity descriptor or the collision shape); how *s* relates to
-> `Physics_AdjustableScale` and `Render_AdjustableScale` was not read either. Until a spec
-> says, Tessera uses for *r*₀ half the larger horizontal extent of the collision shape's
-> bounding box, for *h*₀ its vertical extent, and for *s* the entity's uniform scale
-> (`collision.md` §8); the player uses `collision.md`'s capsule radius and height for *r*₀ and
-> *h*₀.
+The same rule applies to the local player: its *r*₀ and *h*₀ come from the setup of its own
+body model, not from Tessera's movement capsule (`collision.md`).
 
-> **OPEN:** Whether the property lookup of step 3 of the range test falls back to the dictionary default (2.0)
-> before the client's own 3.0. The lookup routes the PID to an entity component; what that
-> component does for an absent value was not read. Every usable template in this install
-> stores the property, so the case does not arise for data-defined objects.
+> **Decision D13 (no setup):** an entity whose model names no setup, or whose setup has no
+> collision (all eight `physics_bounds` floats 0), gets *r*₀ = *h*₀ = 0 and *o* = (0, 0, 0),
+> so its cylinder is radius 0.05 m and height 0.1 m before the override of step 3.
+
+> **OPEN:** Whether the property lookup of step 3 of the range test falls back to the
+> dictionary default (2.0) before the client's own 3.0. The client's property getter routes
+> the PID to one of the entity's property providers and reports "not found" when the provider
+> reports no value; the provider used for `Usage_MinUsageDist` (the same as for every other
+> property of §3.4) was not identified, so whether it substitutes the dictionary default is
+> not known. Every usable template in this install stores the property, so the case does not
+> arise for data-defined objects.
 
 <a id="s3-4-2"></a>
 #### 3.4.2 Cursor (I7)
 
 The client chooses between a mouse-over type's two cursors (§3.3) as follows: it reads
 `Mouseover_Range` from the **local player** (not from the hovered object). When that value
-is absent or not above 0, the in-range cursor is used. Otherwise it computes the gap distance
-from the player to the hovered entity; when that distance could be computed and is at least
-`Mouseover_Range`, the out-of-range cursor is used. `Mouseover_Range` is never stored in the
-data; the server supplies it.
+is absent or not above 0, the in-range cursor is used. Otherwise it computes the cursor
+distance from the player to the hovered entity; when that distance could be computed and is
+at least `Mouseover_Range`, the out-of-range cursor is used. `Mouseover_Range` is never
+stored in the data; the server supplies it. The flag is computed when the cursor enters an
+entity and re-checked periodically while it stays there (§3.4.4).
 
-> **OPEN:** How the client picks the mouse-over type of a hovered entity (the usage action's
-> `Mouseover_Type`, `Mouseover_TargetedActionType` and `Mouseover_DramaActionType`, and the
-> role of `Mouseover_AllowMouseoverOverride` on 92 items) was not read.
+**Cursor distance (I7a).** It is the gap distance of §3.4.1 with one difference: both
+cylinders are built under the **outermost-parent rule**. Each side (the local player and the
+hovered entity) is replaced by the last entity of its parent chain in the client's entity
+tree (the entity itself when it has no parent), and that ancestor supplies everything: the
+position, *r*₀, *h*₀, *s*, the offset, and the `Physics_GameRadiusOverride` and
+`Render_AdjustableScale` lookups. Two special cases: when the hovered entity **is** the local
+player, the distance is 0 at once; when the hovered entity cannot be found, no distance is
+produced (the in-range cursor stays). The use-range test of §3.4.1 does **not** apply this
+rule.
+
+> **OPEN:** Which relation the client's entity tree records (the parent links that the
+> outermost-parent rule follows and whose descendants §3.4.3 searches): item containment,
+> equipment, a rider on a mount, or several of these. The tree's structure was read (each
+> entity holds a link to its parent and a map of its children); the code that creates the
+> links was not.
 
 <a id="s3-4-3"></a>
 #### 3.4.3 Usage-action identity (I8)
@@ -467,14 +498,75 @@ map files under key 0xA (`property-system.md` §8.1). A routine that acts on a s
 resolves key 0x10000042 (`UsageAction_QuestNPC`) and, for an entity that is not a creature,
 goes on only when the entity's `Usage_Action` equals that record. A routine that checks
 whether a shortcut's target is usable (for shortcuts that name an entity) resolves key
-0x10000033 (`UsageAction_DoNothing`) but discards the result in this build: the routine's
-answer is "usable" exactly when the target exists, has a non-null `Usage_Action`, and is
-found in a list of objects attached to the local player's entity. Readers that need these
-actions resolve them the same way (by key or by label), never by DID.
+0x10000033 (`UsageAction_DoNothing`) but discards the result in this build. The resolution
+only looks the key up in the DID map and yields a DID; it opens no record, so it has no
+other effect. The routine's answer is "usable" exactly when the target exists, has a
+non-null `Usage_Action`, and is the local player itself or one of its descendants in the
+client's entity tree (§3.4.2), which the routine searches depth first from the player.
+Readers that need these actions resolve them the same way (by key or by label), never by
+DID.
 
-> **OPEN:** Which list of the local player the shortcut routine searches (its contents, its
-> equipment, or another attachment list), and whether resolving `UsageAction_DoNothing` there
-> has a side effect (for example loading the record). Neither was read.
+The relation that the entity tree records is the OPEN of §3.4.2.
+
+<a id="s3-4-4"></a>
+#### 3.4.4 Mouse-over type and eligibility (I7b)
+
+**Hand-off (BIN).** The client's native code does not choose the mouse-over type. It passes
+the hover to the class library's code through three function IDs (`wlib-bytecode.md` §6.4):
+when the cursor enters an entity, 0x01150001 with the out-of-range flag of §3.4.2 and the
+entity's instance ID; when the periodic re-check finds that the flag changed, 0x01150002
+with the new flag and the value 1; when the cursor leaves, 0x01150003 with the instance ID.
+In this install the three IDs resolve to functions 1, 2 and 3 of class 277 (the mouse-over
+controller). The rules below are that code (BC).
+
+**Rules for a hovered entity *E* (BC).** The controller looks *E* up by its instance ID and
+decides, in this order:
+
+1. **Eligible?** *E* gets a mouse-over when *E*'s `Mouseover_AllowMouseoverOverride` is true
+   (bool, default false). Otherwise:
+   1. when the bit of value 2 is set in the `CanSeeVisibilityMask` of the object that native
+      function 0x00E70001 returns (by inference the local player; the value 2 is the
+      `Hidden` value of `SeeMeVisibilityMask`, §5.3), *E* is eligible;
+   2. otherwise, when *E*'s `QuestState_PhasedOut` is true, it is not;
+   3. otherwise, when *E*'s `Usage_IsQuestItem` is true, *E* is eligible exactly when its
+      `Quest_IsItemQuestSelectable` is true (false when absent);
+   4. otherwise *E* is eligible when it is **selectable**: `IsSelectable` is true and, when
+      *E* holds `ClientIsSelectableOverride`, that value is true as well. (This is the common
+      implementation, shared by 100 entity classes here; other entity classes have their
+      own, OPEN below.)
+
+   An ineligible *E* gets no mouse-over (the controller is called with type 0).
+2. **Activity station.** When *E* has a non-null `MultiUsage_ActivityCollection` (§9.1), the
+   type is that collection's `MultiUsage_Mouseover` (0 when absent), and step 3 is skipped.
+3. **Usage action.** Otherwise *E*'s effective `Usage_Action` names the usage-action record
+   (§3.2); with none, there is no mouse-over. The action computes the type, given *E*:
+   1. When the local player's `Usage_PendingTargetedUsageItem` (int64 instance ID, default
+      0; read from the same object as in step 1.1) is non-zero, an item is waiting for a
+      target. The type is then the `Mouseover_TargetedActionType` of the **pending item's**
+      usage action, provided that *E*'s action has `Usage_TargetActionWithDialog` = true;
+      otherwise (no such item, no action, flag false or property absent) it is 0.
+   2. Otherwise the type is the action's `Mouseover_DramaActionType` when *E*'s
+      `Drama_Performing` is true, and the action's `Mouseover_Type` when it is not; 0 when the
+      action does not hold that property.
+4. The controller then shows the cursor for that type and flag from the mouse-over
+   directory (§3.3).
+
+Of the 92 classes of the usage-action family (the root and its descendants), 85 use rule 3.2 unchanged and 90 use rule 3.1
+unchanged. The exceptions (class indices of this install): for the targeted case, classes
+3058 and 3957 always give 42 (`Disenchant`); for the plain case, classes 1553, 1577, 1580,
+1587, 1589, 2026 and 3687 run extra checks before or after rule 3.2 (1553 reads
+`Loot_ShouldSparkle`; 1577 and 1580 use rule 3.2 and fall back to another function of theirs
+when it gives 0; 1589 and 3687 first run a test on the hovered entity and the local player
+and give 0 when it fails; 1587 runs the same test but also accepts an entity whose
+`Drama_Performing` is true; 2026 has its own branch).
+
+> **OPEN:** The extra checks of the seven overriding classes above and the selectability rules
+> of the entity classes that do not share the common implementation; how the controller's
+> function 9 turns type and flag into the cursor and the mouse-over effect (it also reads
+> `Mouseover_Range`, `Mouseover_Script`, `Mouseover_ActiveScriptID`, `Mouseover_Entity` and
+> `Mouseover_State`), including the use of `Mouseover_CursorHotspotX`/`Y`. These are class
+> code that calls unspecified native functions. Tessera follows rules 1–4 with the common
+> rules for every class and picks the in-range or out-of-range cursor of §3.3 by the flag.
 
 <a id="s3-5"></a>
 ### 3.5 Context-menu handlers (Confirmed, I9)
@@ -502,9 +594,10 @@ option:
 
 `CSM_Player_UIToggleOptions` is an array of structs (`CSM_Player_UIToggleOption_RequiredType`
 enum, `…_String` StringInfo, `…_GOP` a PID, optional `…_Ripcord` DID → ripcord record,
-`map-data.md` §11); two structs here. Its bundle mirror is a `refmap_u32` keyed by the `_GOP`
-PID whose values are class-3427 objects (StringInfo reference, required type, ripcord DID
-or 0).
+`map-data.md` §11); two structs here. Its bundle mirror: the root's reference attribute
+0x06AFFAD3 names a `refmap_u32` keyed by the `_GOP` PID whose values are class-3427 objects
+with three attributes: 0x09E20BDC (reference) → a `string_info` object equal to `…_String`,
+0x02355935 (int) = `…_RequiredType`, 0x00334924 (int) = `…_Ripcord` DID or 0 (I3a).
 
 WEENIECONTENT `ContextMenuSystemGlobals` names one record (class 1727 here) with two
 properties: `CSM_ActionHandler` (→ `DefaultActionHandler`) and `CSM_PlayerActionHandler`
@@ -515,7 +608,10 @@ The dictionary defines 70 `CSM_*` names; 60 are stored, all in these records, an
 
 > **OPEN:** How the client assembles a context menu from a handler (which options appear for
 > which object state, and the role of `CSM_DisplayInactiveOptions`). The texts are data; the
-> option logic is client and script code that was not read.
+> option logic is class code: the context-menu system's click handler (class 4 here,
+> function 1) reads the clicked object's `CSM_ActionHandler`, casts it to the handler root
+> class and reads the handler's `CSM_DisplayInactiveOptions` (BC); that code and the handler
+> classes' own functions were not read further.
 
 <a id="s3-6"></a>
 ### 3.6 Permission and take-permission records (Confirmed, I9)
@@ -537,8 +633,8 @@ with **empty** property sets and no bundle data; their meaning is their class.
 Class 1603 (`UsagePermission_Default`) declares 97 functions of its own (139 slots); the
 permission base class 1615 13, class 1600 7, the take-permission base 1550 8 and class 1547 5.
 
-> **OPEN (bytecode):** What each permission class allows. A Tessera server applies Decision
-> D3 (§16.1).
+> **OPEN (bytecode):** What each permission class allows: the class functions are bytecode
+> that no spec reads (same limits as §3.2.3). A Tessera server applies Decision D3 (§16.1).
 
 <a id="s3-7"></a>
 ### 3.7 Usage plugins and the plugin directory (Confirmed, I10)
@@ -623,8 +719,10 @@ names occur as 32-bit literals in the bytecode chunk (once each, OBS); the nativ
 reads `UsagePluginDirectory_UsagePluginArray` in five routines (BIN e).
 
 > **OPEN (bytecode):** The evaluation rule of each plugin (for example how `Usage_MinLevel`
-> compares, which error it reports, how the comparison plugins apply `Usage_Operator`). A
-> Tessera server implements the rules of Decision D4 (§16.1) until a bytecode spec exists.
+> compares, which error it reports, how the comparison plugins apply `Usage_Operator`). The
+> plugin functions are bytecode that no spec reads, and they call native functions that
+> `wlib-bytecode.md` §7.1 leaves unspecified. A Tessera server implements the rules of
+> Decision D4 (§16.1) until such a reading exists.
 
 <a id="s3-8"></a>
 ### 3.8 Induction actions (Confirmed, I11)
@@ -703,25 +801,37 @@ So the same bar serves induction records (§3.8) and channelling records (§3.9)
 <a id="s3-8-5"></a>
 #### 3.8.5 Duration modifiers and setbacks: what the data show (I11a, I11b)
 
-The client does not compute induction durations or setbacks: native code reads none of the
-modifier lists, the setback array, its policy, progression or ignore property, the
-area-challenge override or `Induction_CurrentSetbackCount` (BIN e, h); the bar follows the
-start and end times the server sends (§3.8.4). The rules live in the server and in the class
-code (bytecode), so only the data side is known:
+The client does not compute induction durations or setbacks: no native routine refers as a
+constant to the modifier lists, the setback array, its policy, progression or ignore
+property, the area-challenge override or `Induction_CurrentSetbackCount` (BIN e, h), and the
+bar follows the start and end times the server sends (§3.8.4). In the class library's code
+none of these PIDs occurs as a literal except the multiplier-list PID (twice: in a skill
+function that only hands the PID on to another function, and in one function of another class that
+was not read), and the induction class's own code
+(class 1195 here) only fills its six attributes (§3.8.2) and returns the two modifier lists
+(BC). The rules therefore live in the server, so only the data side is known:
 
 **Modifier properties.** Every PID in either modifier list is a float property with
 dictionary default 0. The most common are `Skill_InductionDuration_AllSkillsMod` (in 481
 multiplier lists), `Skill_InductionDuration_MonsterSkillsMod` (380 multiplier lists) and
 `Skill_InductionDuration_AllSkillsMod_Add` (17 additive lists). Effects and traits change
 them through `Mod_Entry` structs (`combat-data.md` §5). Over every entry in every 0x79 set
-that modifies one of them: the properties named in multiplier lists receive inline values
-from −1.0 to 2.0 with operator `Add` (287 entries; 1,521 more are progression-driven),
-0 to 1.0 with `Subtract` (116), 0 to 2.0 with `Multiply` (25) and 0.5 with `Set` (1); the
-properties named in additive lists receive −4.5 to −0.25 with `Add` (463 inline, 1
-progression-driven) and 0.2 to 1.5 with `Subtract` (12). One property
-(`Skill_InductionDuration_Loremaster_Trait_LightofHope`) appears in both kinds of list. These
-magnitudes fit "additive list = seconds added" and "multiplier list = a fraction of the
-duration added", but no source states it.
+that modifies one of them (a property in both lists counted with the multiplier group;
+census re-run 2026-10-08):
+
+| Group | Operator | Inline entries (values) | Progression-driven entries |
+|---|---|---|---|
+| multiplier-list properties | `Add` | 287 (−1.0 to 2.0) | 1,521 |
+| | `Subtract` | 116 (0 to 1.0) | 4 |
+| | `Multiply` | 25 (0 to 2.0) | 0 |
+| | `Set` | 1 (0.5) | 0 |
+| additive-list properties | `Add` | 462 (−4.5 to −0.25) | 1 |
+| | `Subtract` | 12 (0.2 to 1.5) | 1 |
+| | `Set` | 1 (0.0) | 0 |
+
+One property (`Skill_InductionDuration_Loremaster_Trait_LightofHope`) appears in both kinds
+of list. These magnitudes fit "additive list = seconds added" and "multiplier list = a
+fraction of the duration added", but no source states it.
 
 **Setbacks.** Event IDs in the 954 structures: `Combat_OnTargetOfHit` (881: in every record
 with an array), `Combat_OnTargetOfCriticalHit` (23), `Combat_OnSelfParry` (18),
@@ -741,17 +851,21 @@ The 130 progression structures name two progression records, both float progress
 `Induction_CurrentSetbackCount` (int, default 0); no induction record stores it. `Induction_Interruptable` is
 false in 31 records that have setbacks, so the two are independent in the data.
 
-> **OPEN:** How the server combines the modifier lists with `Induction_Duration`: which
-> value of the user each PID contributes, whether several multiplier entries add or
-> multiply, and the order of the two lists. Tessera's rule: Decision D9 (§16.1).
+> **OPEN (server):** How the server combines the modifier lists with `Induction_Duration`:
+> which value of the user each PID contributes, whether several multiplier entries add or
+> multiply, and the order of the two lists. Neither the client's native code nor the class
+> library's code computes it (above); only official-server behaviour or an owner observation
+> of cast times with known modifiers would settle it. Tessera's rule: Decision D9 (§16.1).
 
-> **OPEN:** The unit of `Induction_SetbackTime` (seconds, tenths of a second or a percentage
-> of the duration all fit some records), what `ModifyStartTime` and `ModifyDuration` do with
-> it, whether a setback progression is indexed by the setback count, and any limit on the
-> number of setbacks. Tessera's rule: Decision D10 (§16.1).
+> **OPEN (server):** The unit of `Induction_SetbackTime` (seconds, tenths of a second or a
+> percentage of the duration all fit some records), what `ModifyStartTime` and
+> `ModifyDuration` do with it, whether a setback progression is indexed by the setback count,
+> and any limit on the number of setbacks. No client code reads them (above); an owner
+> observation of the cast bar while being hit would settle the unit. Tessera's rule:
+> Decision D10 (§16.1).
 
-> **OPEN:** The meaning of `Induction_Duration_AreaChallengeLevelOverride` (0.0 or 60.0).
-> Tessera ignores it (D9).
+> **OPEN (server):** The meaning of `Induction_Duration_AreaChallengeLevelOverride` (0.0 or
+> 60.0). No client code reads it (above). Tessera ignores it (D9).
 
 <a id="s3-9"></a>
 ### 3.9 Channelling states (Confirmed, I13)
@@ -810,11 +924,15 @@ bits (empty when the array is absent). These two hashes are the same as in induc
 - **Barred actions:** 0x0 in 18 records, `Combat` 23, `Emotes | Combat` 6, `Usage` 1,
   `Combat | Usage` 109, `Emotes | Crafting` 9, `Emotes | Combat | Crafting` 95, all four 140.
 
-> **OPEN:** What a channelling setback does (shortens the remaining time, ends the state, or
-> something else), and the unit of `Channeling_SetbackTime`; how the duration multiplier is
-> applied; which requests each barred-action bit refuses; what the interrupt flags count as
-> movement, swimming or teleport. Server rules and bytecode. Tessera's rules: Decision D12
-> (§16.1).
+> **OPEN (server):** What a channelling setback does (shortens the remaining time, ends the
+> state, or something else), and the unit of `Channeling_SetbackTime`; how the duration
+> multiplier is applied; which requests each barred-action bit refuses; what the interrupt
+> flags count as movement, swimming or teleport. In the class library's code
+> `Channeling_SetbackTime`, `Channeling_SetbackEventsArray` and `Channeling_BarredActions` do
+> not occur as literals; `Channeling_Duration` and `Channeling_Duration_Multiplier_PropertyName`
+> occur once each, in functions of the channelling class, and
+> `Channeling_InterruptedByMovement` in four functions of two other classes, none of which
+> was read (BC). Tessera's rules: Decision D12 (§16.1).
 
 ---
 
@@ -865,12 +983,12 @@ In the 2,246 templates with `EffectGenerator_HotspotEffectList` the bundle holds
 
 | Item | Class | Content |
 |---|---|---|
-| effect generator | 701 (script, 13 attributes) | 0x07D7CE15 → the key multimap; 0x0C9D580F → the element map; 0x035D2793 = 0x00100010 (all); 0x07BB0CF2 = the largest element key; the other 9 attributes null or 0 |
+| effect generator | 701 (script, 13 attributes) | 0x07D7CE15 → the key multimap; 0x0C9D580F → the element map; 0x035D2793 (int) = 0x00100010 (all); 0x07BB0CF2 (int) = the largest element key; the int attribute 0x0BF23944 = 0; the eight reference attributes 0x0377E823, 0x09C0A1D4, 0x0D407C53, 0x0617E478, 0x08F6F088, 0x073C68C8, 0x049EC7B5 and 0x0E683629 null (I3a) |
 | key multimap | 13 `multimap_u32` | one entry per element: key 64, value = the element key |
 | element map | 35 `refmap_u32` | element key → its class-700 object |
 | element | 700 (script, 15 attributes, `quests.md` §6.3) | effect DID (0x8CF9154), spellcraft (0x2712104), its own key (0x8BBFE54), 0xCF31763 = 64, 0x35D2793 = 513; 0x7359352 → a class-699 object or null |
 | element data | 699 (script, 1 attribute 0x097FACFE) | → a `property_set` (native 166) |
-| — | 1626 (script, 5 × u64, all 0) | one per element (0x53151DF) |
+| — | 1626 (script, 5 × u64, all 0: 0x041F1C86, 0x00735FF4, 0x036DFFF6, 0x0F96B506, 0x08DCC216) | one per element (0x53151DF) |
 
 Rules (all 2,246):
 
@@ -964,14 +1082,24 @@ The map-note table names class-1170 entities in 320 rows and the quest-marker ta
 rows (`map-data.md` §4.5, §5.3); those rows carry positions. The remaining templates are
 placed only by the server.
 
-> **OPEN:** How a placed hotspot's area is defined when `Hotspot_Box_*` are zero (2,294
-> templates): presumably `Hotspot_RadiusOverride` (default −1) or the effects' own radii.
-> Server behaviour; not in the data.
+**What a spawned hotspot draws (I14a).** All 76 `PhysObj` descriptors of the hotspot
+templates resolve through their 0x47 chains to setups (`setup.md` §3.1), and every one of
+those setups has mesh parts: 73 descriptors one part, 3 descriptors two parts, 46 distinct
+meshes in all. The two most common kinds are setups with one collision sphere whose
+`physics_bounds` give radius 0.40 m and height 0.80 m (4 descriptors, 1,232 templates) or
+radius 0.15 m and height 0.30 m (15 descriptors, 965 templates);
+by collision kind: one sphere 27 descriptors (2,235 templates), none 21 (38), collision mesh
+17 (29), box 6 (8), capsule 5 (19). The client draws a spawned hotspot like any entity, from these meshes. No client
+code names `Hotspot_EnableVisualization`: its PID is no native constant (BIN e) and no
+literal of the class library's code (BC), so the client does not add a marker of its own for
+it. Tessera draws the descriptor's meshes and ignores the property (an explorer may use it,
+§17).
 
-> **OPEN:** What the 76 hotspot entity descriptors draw. The client draws a spawned hotspot
-> like any entity; whether `Hotspot_EnableVisualization` adds a visible marker was not
-> settled: no native routine refers to its PID as a constant (BIN e), and its PID does not
-> occur in the bytecode (OBS).
+> **OPEN (server):** How a placed hotspot's area is defined when `Hotspot_Box_*` are zero
+> (2,294 templates): presumably `Hotspot_RadiusOverride` (default −1) or the effects' own
+> radii. No client code names `Hotspot_Box_MinExtent`, `Hotspot_Box_MaxExtent` or
+> `Hotspot_RadiusOverride` (no native constant, no literal of the class library's code; BIN
+> e, BC), so the area is applied by the server only.
 
 ---
 
@@ -1020,15 +1148,27 @@ Landblock instance sets (none with a static entity) configure placed controllers
 - `NeverHousekeep` (bool) is stored on 24 controllers, 2,733 class-1210 records, 1,495 items,
   228 travel points, 96 class-3725 records, 15 NPC templates and a few single records.
 - The PID of `SeeMeVisibilityMask` does not occur as a constant in the client's native code
-  (BIN e); `NeverHousekeep` was not searched (its PID, 0xCD, is too small to search for).
+  (BIN e), nor as a literal in the class library's code (BC: its one apparent match is a
+  class index). The companion `CanSeeVisibilityMask` (PID 0x5B4, enum, no default) is read by
+  the class code in one place: the mouse-over eligibility test of §3.4.4, where the bit of
+  value 2 on the local player makes every entity eligible.
+- **Selectable** (BC, the common implementation of §3.4.4 step 1.4): an entity is selectable
+  when `IsSelectable` is true and, when it holds `ClientIsSelectableOverride` (bool), that
+  value is true as well.
+- `NeverHousekeep` (PID 0xCD) is no native constant the scan could tell apart from a small
+  number; in the class library's code the value 0xCD occurs three times as a short constant,
+  each time directly before a message string, which is not the pattern of a property read
+  (BC).
 
-> **OPEN:** What `SeeMeVisibilityMask` = `Hidden` does in the client. The data show only the
-> value. A Tessera client does not draw entities whose effective mask is `Hidden` (Decision
-> D5, §16.2), because every controller and most hotspots carry it and they have no visible
-> function.
+> **OPEN (server or owner observation):** What `SeeMeVisibilityMask` = `Hidden` does in the
+> original client. No client code names the property (above), so the client does not filter
+> by it itself; presumably the server does not send hidden objects to players whose
+> `CanSeeVisibilityMask` lacks the bit (inference). An owner observation can settle whether
+> hidden hotspots and controllers are ever visible to a normal player. A Tessera client does
+> not draw entities whose effective mask is `Hidden` (Decision D5, §16.2).
 
-> **OPEN:** The meaning of `NeverHousekeep` (inferred from the name only, not a source: the
-> server never cleans such objects up). Server-side.
+> **OPEN (server):** The meaning of `NeverHousekeep` (inferred from the name only, not a
+> source: the server never cleans such objects up). No client use was found (above).
 
 ---
 
@@ -1058,13 +1198,19 @@ loadout is named.
 
 **Applying a loadout.** The slots of a loadout use the same names as a creature's own
 `Inventory_Cosmetic_Slot*` properties (`creatures.md` §4.2, `appearance.md` §5.5): applying a
-loadout copies its properties onto the creature. The PIDs of `Inventory_Cosmetic_LoadoutSet`,
-`…_Loadout` and `…_AppliedLoadout` occur as constants in the native client code (BIN e); those
-routines were not read.
+loadout copies its properties onto the creature. The native constants equal to the PIDs of
+`Inventory_Cosmetic_LoadoutSet`, `…_Loadout` and `…_AppliedLoadout` (BIN e) are user-interface
+element IDs, not property reads (BIN n). In the class library's code `…_AppliedLoadout`
+occurs only in one function of class 1199 here (which hands the PID to a native function
+and reads the property), `…_Loadout` not at all, and `…_LoadoutSet` once, in a function that
+otherwise reads loot properties (not read further; BC). No client code was found that picks
+a loadout from the set.
 
-> **OPEN:** How a loadout is chosen from `Inventory_Cosmetic_LoadoutSet` (random per spawn,
-> by state, by script). Server or script behaviour. Tessera picks one uniformly at spawn
-> unless `Inventory_Cosmetic_AppliedLoadout` is set (Decision D6, §16.3).
+> **OPEN (server):** How a loadout is chosen from `Inventory_Cosmetic_LoadoutSet` (random per
+> spawn, by state, by script). No client code was found that chooses (above); by inference the server
+> sets `Inventory_Cosmetic_AppliedLoadout` and the client applies it. Tessera picks one
+> uniformly at spawn unless `Inventory_Cosmetic_AppliedLoadout` is set (Decision D6,
+> §16.3).
 
 ---
 
@@ -1111,27 +1257,69 @@ that gives the pet's look and classification (Confirmed). One pet record is name
 <a id="s7-4"></a>
 ### 7.4 Following (BIN, I20)
 
-The client moves a following pet itself:
+The client moves a following pet itself (I20, I20a). Setup: when a pet entity appears, the
+client reads its `CosmeticEntity_MovementType`: 2 `Following` uses the follow step below,
+1 `Attached` uses another behaviour, which reads `CosmeticEntity_Attached_OwnerHoldingLocation`
+(applied to the owner) and `CosmeticEntity_Attached_HoldingLocation` (applied to the pet) and
+was not read further (no pet record of this install is `Attached`); other values get no
+client movement. For a
+following pet it reads `CosmeticEntity_Distance` *D* (0 when absent) and
+`CosmeticEntity_Following_Speed` from the pet record; a speed that is absent or not above 0
+becomes **5.0** m/s (the dictionary default of 20 is not used). The client keeps a trail of
+the owner's recent positions (cell, landblock, local position and orientation) in a ring of
+at most **40** entries.
 
-- It reads `CosmeticEntity_Distance` and `CosmeticEntity_Following_Speed` from the pet
-  record; a speed that is absent or not above 0 becomes **5.0** m/s.
-- Each step uses a **pace** *v*: the length of the owner's current velocity, or the pet's
-  `CosmeticEntity_Following_Speed` when the owner's velocity is (near) zero.
-- It keeps a trail of the owner's recent positions (a ring of **40** entries), chooses one
-  trail point (its search is bounded by `CosmeticEntity_Distance`), and moves the pet toward
-  it by at most *v* × (step time).
-- It sets the pet's `CosmeticEntity_MovementState` from the threshold table: it walks
-  `CosmeticEntity_Movement_ThresholdMappings` in stored order and takes the state of the
-  **first** entry whose threshold is at most *v*; when none matches, the state is 0. The
-  thresholds are therefore paces in m/s: with the stored order above, `Super` from 15 m/s,
-  `Fast` from 10 m/s (a pet whose owner stands still and whose speed is 10 is `Fast`),
-  `Normal` from 6 m/s, and 0 below.
-- It also reads `CosmeticEntity_Attached_HoldingLocation`, `…_Attached_OwnerHoldingLocation`,
-  `…_Owner` and `…_SourceWrapper`, none of which is stored in the data.
+**Follow step.** Each step has a step time Δt (seconds, from the caller) and a **pace** *v*:
+the length of the owner's current velocity, or the pet's following speed when that length is
+(near) zero. Sizes: for an entity, *ρ* is its setup radius × *s* and *η* its setup height ×
+*s* (the *r*₀, *h*₀ and *s* of §3.4.1, without the 0.05 m and 0.1 m). In order:
 
-> **OPEN:** The exact trail-point choice and how `CosmeticEntity_Distance` enters it, what
-> happens when the owner teleports, and how each movement state maps to an animation.
-> Tessera's rule until then: Decision D7 (§16.3).
+1. When the owner has no valid position, nothing happens. When the pet has none, the pet takes
+   the owner's position and orientation, and the step ends.
+2. **Hold.** When the pet's `Entity_Element` is 1 (`Water_ControlledSurface`), 2
+   (`Water_NoSurface`) or 5 (`Earth_ControlledSurface`), and the distance *d* between pet and
+   owner satisfies (*ρ*_owner + *ρ*_pet) < *d* < *D*, the pet keeps its position, turns to
+   face the owner, its `MoveToController_PerformingMoveTo` becomes false, and the step ends.
+3. **Trail point.** Every stored trail point *P* is tested. With all three positions raised by
+   half the pet's height (*η*_pet / 2), *P* passes when a segment query of the client's physics
+   world (a line-of-sight test) reports no hit between the pet and *P* and none between *P*
+   and the owner. For a
+   passing point the score is | |*P* − owner|² − *D*² |; the point with the smallest score is
+   chosen (scores of 999,999 and more never win; on a tie the point tested first stays). The
+   points are tested in ring order from the ring's start index.
+4. When no point passes, the pet takes the owner's position and orientation, and the step
+   ends. (This is what happens after the owner teleports or moves out of sight.)
+5. **Move.** Let *w* be the vector from the pet to the chosen point. When |*w*| ≤ *v* × Δt the
+   pet moves onto the point (taking the point's cell and landblock). Otherwise, when |*w*| is
+   at least 0.0002 m, the pet moves *v* × Δt along *w* from its own position.
+6. **Heading.** When the pet moved at most 0.02 m in this step, it turns to face the owner and
+   `MoveToController_PerformingMoveTo` becomes false; otherwise it faces along its movement and
+   the flag becomes true. Only the heading (rotation about the vertical) changes.
+7. **Height.** At the new position the client probes for a liquid surface. When one is found
+   and the pet's position lies more than *η*_pet / 2 below it, the pet is raised so that its
+   middle sits at the surface (by the depth minus *η*_pet / 2) and its `Volume_IsLiquid`
+   becomes true. Otherwise `Volume_IsLiquid` becomes false, the pet is placed on the highest
+   surface hit by a downward probe that starts 0.8 m above the new position and reaches at
+   most 50 m down (unchanged when the probe hits nothing), and is then raised by 0.05 m.
+8. **Movement state.** The client walks `CosmeticEntity_Movement_ThresholdMappings` in stored
+   order and takes the `CosmeticEntity_Movement_ThresholdState` of the **first** entry whose
+   threshold is at most *v*, skipping entries whose threshold equals −1 (the dictionary
+   default; within 0.0002) and entries whose state is not an enum value. When no entry
+   matches, the state is 0, which the state mapper labels `Slow`. It sets the pet's
+   `CosmeticEntity_MovementState` to the result. The thresholds are therefore paces in m/s:
+   with the stored order of §7.1, `Super` from 15 m/s, `Fast` from 10 m/s (a pet whose owner
+   stands still and whose speed is 10 is `Fast`), `Normal` from 6 m/s, `Slow` below. Steps 1,
+   2 and 4 end the step before this, so the state changes only when the pet moves along the
+   trail.
+
+The client also reads `CosmeticEntity_Owner` and `CosmeticEntity_SourceWrapper`, which are not
+stored in the data.
+
+> **OPEN:** When the client adds a position to the trail (every step, or only after the owner
+> has moved a minimum distance) and whether the ring's start index is the oldest entry; what
+> the liquid probe of step 7 accepts as a liquid surface; how each movement state maps to an
+> animation (script tables, `script-table.md`). The routine that writes the trail was not
+> found. Tessera's rule for the trail: Decision D7 (§16.3).
 
 ---
 
@@ -1189,10 +1377,11 @@ The dictionary defines 51 `Death_*` names; 15 are stored. The rest (`Death_Reviv
 `Death_RevivePosition`, `Death_VitalPercentageData`, `Death_LastKillerIID`, …) are run-time
 state.
 
-> **OPEN:** The rally-point choice (nearest by place, by area, or as named by the area's
-> defeat record), when the world-event conditions of the 4 conditional records apply, the
-> revive vitals and the use of `Death_DefeatEffectProgression`. Server rules; Tessera's
-> sandbox follows Decision D8 (§16.4).
+> **OPEN (server):** The rally-point choice (nearest by place, by area, or as named by the
+> area's defeat record), when the world-event conditions of the 4 conditional records apply,
+> the revive vitals and the use of `Death_DefeatEffectProgression` (which does not occur as a
+> literal in the class library's code, BC). Server rules; Tessera's sandbox follows Decision
+> D8 (§16.4).
 
 ---
 
@@ -1255,8 +1444,9 @@ native property sets, cooldown data as class-3841 objects, distributed charging 
 `map_u32` of UI state → icon DID bits, clamps as class 3812/3813). Readers use the property
 set.
 
-> **OPEN:** How work units accrue (rate per user per second, what the multiplier properties
-> read), and how a toggle activity ends. Server rules.
+> **OPEN (server):** How work units accrue (rate per user per second, what the multiplier
+> properties read), and how a toggle activity ends. `DistributedCharging_RequiredWorkUnits`
+> does not occur as a literal in the class library's code (BC). Server rules.
 
 ---
 
@@ -1374,7 +1564,11 @@ icon and script names, `UsagePluginDirectory_UsagePluginArray` and many `Usage_*
 requirement names; **not** for `Hotspot_IsHotspot`, `Hotspot_EnableVisualization`,
 `Hotspot_Box_*`, `SeeMeVisibilityMask` or `IsUsable`. (A constant equal to a PID in the
 0x1000xxxx range is not proof of a property read: the same range holds user-interface
-element IDs. Only the routines named in §3.4, §3.8.4 and §7.4 were read.)
+element IDs. Only the routines named in §3.4, §3.8.4 and §7.4 were read. Revision 3 read the
+routines behind the hits for `Mouseover_CursorOutOfRange`, `Mouseover_MouseoverList`,
+`Inventory_Cosmetic_LoadoutSet`, `…_Loadout` and `…_AppliedLoadout`: every one is a
+user-interface element lookup, so none of these five is read as a property by native code;
+`Mouseover_Range` is (§3.4.2).)
 
 ---
 
@@ -1532,7 +1726,9 @@ the entity has `Induction_ActionDID`, the induction of D9–D11; on completion, 
 >    instead when that is above 0), multiplied by the user's value of
 >    `Channeling_Duration_Multiplier_PropertyName` when that PID is non-zero and the value is
 >    above 0. Start and end times are sent as for an induction (§3.8.4). A user is in at most
->    one state; entering another ends the current one as abandoned (step 6).
+>    one state; entering another ends the current one as abandoned, also when its
+>    `Channeling_CanBeAbandoned` is false (that flag only governs the user's own cancel
+>    request, step 6).
 >    `Channeling_AdditionalEffectDID` (at `Channeling_AdditionalEffectSpellcraft` when given)
 >    is applied on entry and removed on exit.
 > 2. **Success.** At the end time the state ends as a success (`Channeling_Success_Script`,
@@ -1574,10 +1770,10 @@ the entity has `Induction_ActionDID`, the induction of D9–D11; on completion, 
 > loadout; otherwise one of `Inventory_Cosmetic_LoadoutSet` chosen uniformly; the chosen
 > loadout's properties overlay the creature's slot properties.
 
-> **Decision D7:** A following pet keeps the owner's last 40 positions, moves toward the
-> oldest of them that is farther than `CosmeticEntity_Distance` from the owner at the pace
-> of §7.4, and stops within `CosmeticEntity_Distance` of the owner; it is placed next to the
-> owner when the separation exceeds 40 m. The movement state follows §7.4.
+> **Decision D7:** A following pet runs the follow step of §7.4. Tessera adds the owner's
+> position to the trail at the end of each client frame in which the owner is at least
+> 0.5 m from the newest stored point (and always when the trail is empty), dropping the
+> oldest point when 40 are stored, and tests the points from oldest to newest.
 
 <a id="s16-4"></a>
 ### 16.4 Defeat
@@ -1630,6 +1826,10 @@ the entity has `Induction_ActionDID`, the induction of D9–D11; on completion, 
 | IN16 | Every `Induction_SetbackStructure` holds `Induction_EventID` and exactly one of `Induction_SetbackTime` and `Induction_SetbackProgression`; within one record all structures hold the same one of the two; no `Induction_EventID` or `Channeling_EventID` repeats within a record. |
 | IN17 | Every `Induction_Duration_AreaChallengeLevelOverride` value is a float; every PID in an induction modifier list names a float property with dictionary default 0; every non-zero `Induction_SetbackIgnoreProp` and `Channeling_SetbackIgnoreProp` names a bool property with default false. |
 | IN18 | (BIN) In §19.2's synthetic setting, a target with `Physics_GameRadiusOverride` = 2.0 and `Render_AdjustableScale` (1.5, 1.5, 1.5) has cylinder radius 3.0 whatever its base radius. |
+| IN19 | Every hotspot template's `PhysObj` resolves through its 0x47 chain to a setup with at least one mesh part. |
+| IN20 | The player action handler's bundle map has exactly the `_GOP` PIDs of `CSM_Player_UIToggleOptions` as keys; each class-3427 value carries that struct's required type and ripcord DID (0 when absent) and a `string_info` equal to its string. |
+| IN21 | (BIN) An entity whose setup has `physics_bounds` radius 0.5 and height 1.8, with `Physics_AdjustableScale` (2, 2, 2) and no `Model_Scale` or radius override, has a cylinder of radius 1.05 m and height 3.7 m (§19.2). |
+| IN22 | (BIN) With threshold mappings [(−1 → `Super`), (6 → `Normal`)] and pace 20 m/s the movement state is `Normal`; with pace 4 m/s it is 0 (`Slow`). |
 
 ---
 
@@ -1666,12 +1866,18 @@ Same target at x = 7, now with `Physics_GameRadiusOverride` = 2.0 and `Render_Ad
 (offset z = 1.0) and it stands at z = 2.5 while the player stands at z = 0 with a zero offset:
 moved heights 0 and 3.5, vertical gap 3.5 − (0 + 1.8) = 1.7, *d* = √(2.21² + 1.7²) = 2.78.
 
+Base cylinder from data: a synthetic entity whose setup's `physics_bounds` give radius 0.5
+and height 1.8, with `Physics_AdjustableScale` (2, 2, 2) and no `Model_Scale`, has *s* = 2 × 1
+= 2, *r* = 0.5 × 2 + 0.05 = 1.05 m and *h* = 1.8 × 2 + 0.1 = 3.7 m. With `Model_Scale`
+(1, 1, 0.5) instead, *s* = 2 × 0.5 = 1 (z components only), *r* = 0.55 m, *h* = 1.9 m.
+
 <a id="s19-3"></a>
 ### 19.3 Pet movement state
 
 Thresholds stored as (15 → `Super`), (10 → `Fast`), (6 → `Normal`); `CosmeticEntity_Following_Speed`
 = 10. Owner running at 12 m/s: pace 12, the first entry with threshold ≤ 12 is 10 → `Fast`.
-Owner walking at 4 m/s: pace 4, no entry → 0. Owner standing still: pace = 10 → `Fast`.
+Owner walking at 4 m/s: pace 4, no entry → 0 (`Slow`). Owner standing still: pace = 10 →
+`Fast`.
 
 <a id="s19-4"></a>
 ### 19.4 Induction duration and setbacks (Decisions D9, D10)
@@ -1682,7 +1888,7 @@ Record: `Induction_Duration` 3.0, additive list [*P*], multiplier list [*Q*, *U*
 *T* = (3.0 − 0.5) × 0.9 = 2.25 s. Started at *t* = 100.0: end 102.25. Hit at *t* = 101.5
 (elapsed 1.5): start moves to 101.0, end 103.25. Had the hit come at *t* = 100.2 instead
 (elapsed 0.2): start moves to min(101.0, 100.2) = 100.2, end 102.45. With policy `ModifyDuration` and a progression whose
-values at indices 1, 2, 3 are 0.6, 0.5, 0: the first hit adds 0.6 s to *T*, the second 0.5 s,
+values at indices 1, 2, 3 are 0.4, 0.3, 0: the first hit adds 0.4 s to *T*, the second 0.3 s,
 later hits nothing.
 
 ---
@@ -1690,24 +1896,26 @@ later hits nothing.
 <a id="s20"></a>
 ## 20. Open questions (summary)
 
-- §3.2.3, §3.6, §3.7.3 (bytecode): behaviour of usage-action, permission and plugin classes.
-- §2.4: byte-exact bundle writer for the groups whose hashes or values are not given.
-- §3.4.1: source of the base radius *r*₀, height *h*₀ and scale *s* of a cylinder;
-  dictionary-default fallback in the range lookup.
-- §3.4.2: how the client chooses the mouse-over type of a hovered entity.
-- §3.4.3: which list the shortcut-usability routine searches; why it resolves
-  `UsageAction_DoNothing`.
-- §3.8.5: induction duration arithmetic (Decision D9), setback units and policies (D10),
-  meaning of `Induction_Duration_AreaChallengeLevelOverride`.
-- §3.9.3: channelling setbacks, duration multiplier, barred actions and interrupts (D12).
-- §3.5: context-menu assembly.
-- §4.6: hotspot area when the box is zero; what hotspot descriptors draw and what
-  `Hotspot_EnableVisualization` does.
-- §5.3: client meaning of `SeeMeVisibilityMask` and of `NeverHousekeep`.
-- §6: how a loadout is chosen.
-- §7.4: details of pet following.
-- §8.3: rally-point choice and revive rules.
-- §9.3: work-unit accrual and toggle activities.
+- §3.2.3, §3.6, §3.7.3 (bytecode): use behaviour of usage-action, permission and plugin
+  classes (class code with unspecified native functions).
+- §2.4: byte-exact writer for the activity and trigger-response bundles.
+- §3.4.1: whether the range lookup falls back to the dictionary default.
+- §3.4.2: which relation the client's entity tree records (also §3.4.3).
+- §3.4.4: extra checks of seven usage-action classes, selectability of entity classes outside
+  the common implementation, and the controller's cursor and effect step.
+- §3.5: context-menu assembly (class code).
+- §3.8.5 (server): induction duration arithmetic (Decision D9), setback unit and policies
+  (D10), meaning of `Induction_Duration_AreaChallengeLevelOverride`.
+- §3.9.3 (server): channelling setbacks, duration multiplier, barred actions and interrupts
+  (D12).
+- §4.6 (server): hotspot area when the box is zero.
+- §5.3: effect of `SeeMeVisibilityMask` = `Hidden` (server or owner observation); meaning of
+  `NeverHousekeep` (server).
+- §6 (server): how a loadout is chosen.
+- §7.4: when trail points are recorded, what the liquid probe accepts, state-to-animation
+  mapping.
+- §8.3 (server): rally-point choice and revive rules.
+- §9.3 (server): work-unit accrual and toggle activities.
 
 ---
 
@@ -1718,3 +1926,5 @@ later hits nothing.
 |---|---|---|
 | 2026-10-07 | all | First version (spec writer, dirty room; OBS over all records of each kind, LC for two facts, BIN questions (a)–(f)). Status Review. |
 | 2026-10-07 | header, §1, §2.4, §3.1, §3.4.1, §3.4.3, §3.8.1, §3.8.5 (new), §3.9.3 (new), §5.3, §16.1, §18, §19.2, §19.4 (new), §20 | Revision 2, answering review 1 (spec writer). R1: `Induction_Duration_AreaChallengeLevelOverride` is a float (I11a). R2: cylinder construction with base constants, bounding-box offset and the `Physics_GameRadiusOverride` × `Render_AdjustableScale` override; gap distance measured from offset positions; OPEN narrowed to *r*₀, *h*₀, *s* (BIN g; I6, I6a, I6b). R3: data facts on modifiers and setbacks (I11a, I11b, I13a), OPEN callouts, Decisions D9–D12. R4: provenance row I27 for the §3.1 census; the two "Reported by name" uses (§3.8.1, §5.3) removed. R5: shortcut routine fact (BIN i) and OPEN. R6: §2.4 coverage table and OPEN. R7: setback structures hold exactly one of time or progression. R8: D4 lists the requirements Tessera evaluates. New invariants IN15–IN18. Status stays Review. |
+| 2026-10-08 | header, §1, §2.4, §3.2.3, §3.4.1–§3.4.3, §3.4.4 (new), §3.5, §3.6, §3.7.3, §3.8.5, §3.9.3, §4.3, §4.6, §5.3, §6, §7.4, §8.3, §9.3, §14, §16.1, §16.3, §18, §19.2–§19.4, §20 | Revision 3 (spec writer). Review 2: Q1 outermost-parent rule and self case of the cursor distance (I7a, §3.4.2); Q2 `Mod_Entry` census corrected and re-run (§3.8.5 table); Q3 "no native routine refers to … as a constant" (§3.8.5, I11b); Q4 D12 entering a state ends the current one regardless of `Channeling_CanBeAbandoned`; Q5 *r*₀/*h*₀/*s* now facts, offset unscaled, Decision D13 for entities without a setup; Q6 synthetic progression values changed. Closed OPENs: source of *r*₀, *h*₀, *s* (setup `physics_bounds`, `Physics_AdjustableScale` × `Model_Scale`, BIN j; I6c); mouse-over type choice (hand-off and rules, BIN k + BC; new §3.4.4, I7b; narrower OPEN kept); shortcut list and resolution side effect (I8; relation OPEN merged into §3.4.2); hotspot descriptors and `Hotspot_EnableVisualization` (I14a); missing class-701, class-1626 and class-3427 attribute hashes (I3a; §2.4 OPEN narrowed to the last row); pet following details (BIN l; I20a; narrower OPEN). Corrected: the (e) constant hits for `Mouseover_CursorOutOfRange`, `Mouseover_MouseoverList` and the loadout PIDs are UI element IDs (§6, §14). New source BC (class-library bytecode read with `wlib-bytecode.md`). Remaining OPENs made precise; server-side ones marked "(server)". New invariants IN19–IN22. Status stays Review. |
+| 2026-10-08 | header | Review 3 (spec reviewer, separate session): passed; status Review → Accepted. No content changed. |

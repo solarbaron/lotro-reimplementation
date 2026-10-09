@@ -269,6 +269,12 @@ are observations.
 - Directory records whose lists name other object records (classes 855, 858, 861, 1454) carry
   an import list of DB type 69 entries for the named records (`wstate.md` §3.2).
 
+> **OPEN:** (implementer note, engineering choice, not a format fact) The spec gives no upper
+> bound for the lists a reader keeps from these records. Tessera's typed views
+> (`crates/wstate/src/character/`) reject a list of more than 65,536 entries
+> (`MAX_VIEW_ENTRIES`; the largest observed list has 463 entries, §8.2) and treat a present
+> property of an unexpected type as an error. A reviewer may confirm or change the cap.
+
 ---
 
 <a id="s4"></a>
@@ -820,6 +826,12 @@ equal their source definitions under these rules (1,289 of 1,289 entries; P14).
 So a longer end match beats a shorter one even when the shorter one has a longer start match,
 and stored order never decides. Replacements are inserted with their stored case.
 
+> **OPEN:** (implementer note) "Without regard to case" and "number of characters" are not
+> defined beyond ASCII. All observed texts are ASCII (P13), so the choice has no effect on
+> this install; Tessera compares characters through their Unicode lower-case mapping and
+> counts Unicode scalar values. Whether the client folds case only for ASCII and counts
+> UTF-16 code units is not settled here.
+
 In the client this is native function 1 of class 3053 (function ID 0x0BED0001, `wlib.md`
 §6.4); the table is built by native function 3 (0x0BED0003). Both are called from script
 bytecode (BIN only).
@@ -843,6 +855,12 @@ bytecode (BIN only).
    table to (*A*, *B*) once (§8.4), then set *A* to *A* followed by *B*.
 5. The result is *A*. If it fails the sandbox's own name checks, start again at step 2, at most
    20 times.
+
+> **OPEN:** (implementer note, choices inside Decision D2) Tessera reads "at most 20 times" as
+> the first attempt plus at most 20 restarts (21 attempts), never draws an option whose
+> weight is below 1, and uses the first entry of
+> `NameGenerationCategory_Option_PhoneticShiftsTables` if an option ever names more than one
+> (all 64 observed name exactly one, §8.2).
 
 <a id="s8-6"></a>
 ### 8.6 Validating a typed name

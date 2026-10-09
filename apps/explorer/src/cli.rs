@@ -34,12 +34,17 @@ pub enum ViewKind {
     /// Sky descriptions (0x15) and day descriptions (0x1A, M4.5): the day-description
     /// choice and the blended keyframe timeline over the game day.
     Sky,
+    /// Gameplay cards (items, skills, effects, traits, creatures, quests, vendors, loot,
+    /// recipes, map data, particles) of game objects, their property sets and the gameplay
+    /// records with their own layout ([`crate::gameplay`]).
+    Gameplay,
 }
 
 impl ViewKind {
     /// Every view, in tab order.
-    pub const ALL: [ViewKind; 11] = [
+    pub const ALL: [ViewKind; 12] = [
         ViewKind::Info,
+        ViewKind::Gameplay,
         ViewKind::Mesh,
         ViewKind::Landblock,
         ViewKind::Sky,
@@ -67,6 +72,7 @@ impl ViewKind {
             Self::Character => "Character",
             Self::Landblock => "Landblock",
             Self::Sky => "Sky",
+            Self::Gameplay => "Gameplay",
         }
     }
 
@@ -85,6 +91,7 @@ impl ViewKind {
             Self::Character => true,
             Self::Landblock => crate::world::landblock_of(did).is_some(),
             Self::Sky => matches!(prefix, 0x15 | 0x1A),
+            Self::Gameplay => crate::gameplay::applies_to(did),
         }
     }
 
@@ -100,6 +107,7 @@ impl ViewKind {
             0x80 if Self::Landblock.applies_to(did) => Self::Landblock,
             0x15 | 0x1A => Self::Sky,
             0x66 | 0x01 => Self::Mesh,
+            0x14 | 0x39 | 0x44 => Self::Gameplay,
             _ if Self::Record.applies_to(did) => Self::Record,
             _ => Self::Hex,
         }
@@ -446,6 +454,11 @@ mod tests {
         }
         assert!(ViewKind::Character.applies_to(0x2800_0000));
         assert_eq!(ViewKind::default_for(0x0500_0001), ViewKind::Character);
+        assert!(ViewKind::Gameplay.applies_to(0x7000_0001));
+        assert!(ViewKind::Gameplay.applies_to(0x7900_0001));
+        assert!(!ViewKind::Gameplay.applies_to(0x4100_0001));
+        assert_eq!(ViewKind::default_for(0x3900_0001), ViewKind::Gameplay);
+        assert_eq!(ViewKind::default_for(0x7000_0001), ViewKind::Props);
     }
 
     #[test]

@@ -1533,6 +1533,47 @@ client removes 4 figures of the second group; the first element is not applied a
 
 ---
 
+<a id="implementer-notes"></a>
+## Implementer notes (clean room, `crates/formats/src/instance`)
+
+Choices made where the spec is silent, pending answers:
+
+> **OPEN:** Several struct fields are named only by suffix (`…_DifficultyToMultiplier`
+> {`…_DifficultyTier`, `…_SkirmishPoint_Multiplier`}, the group-size multiplier, the trait
+> gates {`…_MaxRank`, `…_MaxRank_WebstoreItem`}, the statistic-to-GRS hash, the conversion
+> hash {`…_FullPropertyName`, `…_SkirmishStat`, `…_SkirmishGroupSize`, `…_OnLevel`},
+> `…_QuestPointValue`, `…_Encounter`, `…_LocationZoneEvent`, `…_Weight`, the fellowship
+> maker's match-time and bonus-threshold entries). Please give their full labels. The
+> implementation tells them apart by value type, and the two enums of the conversion hash by
+> the mapper their definition names (`SkirmishStat` versus `SkirmishGroupSize`, §3.3); the
+> group-tier map {`…_GroupSize_StructVal`, `…_GroupTier_StructVal`} is not read because both
+> fields may be enums of the same mapper. Abbreviations expanded by the parent prefix
+> (`SkirmishMatchParams_Level_Max`, `Skirmish_Template_MaxLevelScale`,
+> `PrivateEncounterTemplate_DynamicAreaInstance`, `…_ContainedLandBlock`,
+> `DistantBattle_Wave_Count`, and the like) were confirmed only by their presence, with the
+> stated type, in the dictionary.
+
+> **OPEN:** The value types of `Skirmish_DerivedStat`,
+> `DistantBattleUnit_Composition_Removed_List` and its `…_Removal_Count` and
+> `…_Removal_ScriptKey`, `DistantBattleUnit_FormationControl_SpacingBetweenGroups`,
+> `DistantBattleUnit_FormationControl_ActualWidth` and the three phasing flags are not
+> stated; the implementation reads them as any integral or numeric type.
+
+> **OPEN:** §10.2 item 2 gives size bits for three valid sizes and tier bits for tiers 1–5
+> only. The matching-index builder skips (and reports) a fourth valid size or a tier outside
+> 1–5, and gives no entries (with a warning) to a template that meets several kind
+> conditions, until the precedence is known.
+
+> **OPEN:** B4 does not give the integer width of the panel's integer arithmetic; the
+> implementation uses 64-bit integers that saturate. B1 and B2 say "an integer": both 32-
+> and 64-bit integer property values are accepted. An instance group without a label is
+> placed after the labelled groups, in stored order, in the finder order (§13.3 does not
+> cover it). In the removal tracker (B5 step 4) a count larger than the figures left
+> removes the rest, an element whose unit matches no group removes nothing, and a list
+> that shrinks applies nothing and restarts the count at its new length.
+
+---
+
 <a id="changelog"></a>
 ## 19. Change log
 

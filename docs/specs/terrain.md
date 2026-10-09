@@ -4,14 +4,14 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (review 2026-10-05; content as revised 2026-10-05, see §10) |
-| **Last updated** | 2026-10-05 |
-| **Author role** | §1–§5, §8 and the Tessera Decisions of §6, §7 and §9: Implementer (clean room) of `tessera-terrain`; everything there is a **Tessera Decision**, not a description of the original client. §0, the facts about the original cited in §1 (height rule), §5 (normals note), §6 (mask and light-map orientation), §7 (meaning of the splat layers, splatting inputs) and §9: Spec writer (dirty room), revisions of 2026-10-05; each such fact has a row in §0.2. |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review 2026-10-05: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Status** | Accepted (review 2026-10-08 of the 2026-10-08 revision; changes in §0, §1, §5, §8, §9, see §10) |
+| **Last updated** | 2026-10-08 |
+| **Author role** | §1–§5, §8 and the Tessera Decisions of §6, §7 and §9: Implementer (clean room) of `tessera-terrain`; everything there is a **Tessera Decision**, not a description of the original client. §0, the facts about the original cited in §1 (height rule), §5 (normals), §6 (mask and light-map orientation), §7 (meaning of the splat layers, splatting inputs) and §9: Spec writer (dirty room), revisions of 2026-10-05 and 2026-10-08; each such fact has a row in §0.2. |
+| **Reviewer** | Claude review session (spec-writer agent); 2026-10-08 revision: Claude spec-reviewer session (not its writer) |
+| **Review record** | Re-review 2026-10-05: **passed**, Accepted. Review 2026-10-08 (2026-10-08 revision): **passed**, Accepted. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/terrain`, `fuzz/fuzz_targets/terrain_mesh.rs` |
 | **Format facts from** | `landblock.md` §3 (height grid, scale, split diagonal, surface layers, §3.11 height rule), `coordinates.md` §3, §4, §12, `terrain-texturing.md` (layer meaning, masks, texture coordinates, tangent frame, blending, lighting inputs), `collision.md` §6 (terrain and ceiling triangles, holes), `water.md` (water per landblock) |
-| **Revised** | 2026-10-05 (three revisions by a spec writer, dirty room); see §10. **Implementers re-check `crates/terrain` (and the decoder constant in `crates/formats`) against §1 and §5.** |
+| **Revised** | 2026-10-05 (three revisions by a spec writer, dirty room); 2026-10-08 (spec writer, dirty room); see §10. **Implementers re-check `crates/terrain` against §1 (interpolated queries, wording only) and §5 (vertex normals now follow the original's rule).** |
 
 This file has two kinds of content, kept apart:
 
@@ -23,8 +23,9 @@ This file has two kinds of content, kept apart:
   not stated here first: each is cited from the spec that owns it (`landblock.md`,
   `coordinates.md`, `terrain-texturing.md`, `collision.md`, `water.md`), and §0.2 lists them
   with their provenance marks. Some of them come from dirty-room work in those specs,
-  including disassembly of the client under decision 0011 (BIN); this file adds no new
-  research of its own.
+  including disassembly of the client under decision 0011 (BIN). The 2026-10-08 revision
+  adds research of its own (draw distances, the reference landblock, region borders); its
+  sources are listed in §0.3.
 
 The open questions are collected in §9.
 
@@ -59,10 +60,26 @@ original's behaviour. Values observed in one install are read at run time, never
 | TR13 | The original's terrain lighting: ambient, hemispheric and point lights per vertex (hemispheric per pixel on normal-mapped layers), sun per pixel with a shadow factor, light map added | §9 | `terrain-texturing.md` §9–§10 (T22, T32) | BIN |
 | TR14 | The 17 × 17 coarse grid is the per-vertex scenery word, not a texture selector | §9 | `landblock.md` §3.7, `scenery.md` §3 (T13) | Confirmed |
 | TR15 | Water level of a landblock and water drawing | §9 | `water.md` §6, §8 | as marked there |
+| TR16 | The original's vertex normal of a terrain or ceiling sample: the plain mean of the unit normals of the four to eight grid triangles around the sample (stored diagonals), not renormalised; ceiling rule mirrored, normals pointing down | §5, §9 | `landblock.md` §3.14 (L36), `terrain-texturing.md` §4.10 (T42) | BIN |
+| TR17 | Across a block edge those triangles use the neighbouring blocks' samples and split flags, the diagonal neighbour at a corner; a triangle with a sample in a block that does not exist (or, for a ceiling, has no ceiling) is left out of the mean | §5, §9 | `landblock.md` §3.14 steps 2 and 4, `terrain-texturing.md` §4.10 "Block edges" | BIN |
+| TR18 | Every region with landblock data (1–5 and 14) has a landblock-data record for every (X, Y) with 0 ≤ X, Y ≤ 254 (65,025 per region) and none with X or Y = 255; the only blocks missing an edge or diagonal neighbour are the 1,016 on the region border (X or Y = 0 or 254) | §9 | OBS-T (§0.3) | Confirmed 2026-10-08 (all 390,150 records) |
+| TR19 | Distant-landscape sectors exist only for corner landblocks inside 0–254, so nothing of a region is drawn beyond its border | §9 | `distant-landscape.md` §5.1 | BIN |
+| TR20 | Far radius *R* (landblocks) from the landscape draw-distance graphics option: levels 0, 1, 2, 3, 4 give 2, 4, 6, 9, 12; any other level gives 6; a console override (off by default, value 6) replaces it. Sector radius *F* = ⌊*R* / 3⌋ + 1. The option's built-in initial level is 3; the six overall graphics presets set levels 0, 1, 2, 3, 4, 4 | §9 | BIN-T (a) (§0.3) | BIN |
+| TR21 | The landscape's near radius is 1 landblock (a 3 × 3 grid around the viewer's landblock); it is the near radius *N* of `distant-landscape.md` §5.2 | §9 | BIN-T (b) | BIN |
+| TR22 | The reference landblock of the per-block texture offset and its accumulator are held by the distant-landscape sector manager: the reference is the landblock of the viewer position that drives sector loading and the far LOD (`distant-landscape.md` §5.1–§5.2), replaced whenever that position's landblock or region changes | §9 | BIN-T (c); `terrain-texturing.md` §6.2 | BIN |
+| TR23 | The world manager's load position each frame is the player character's position by default (a console switch, on by default); with the switch off it is a position supplied from outside (the switch's own description says: the camera's). That this position is the one of TR22 is not traced | §9 | BIN-T (c) | BIN; link to TR22 Inferred |
 
 Everything else in §1–§8 (level-of-detail scheme, error bounds, selector and its defaults,
-stitching, normals from central differences, the fallback palette and block UVs, memory
-layout, buffer layout, hostile-input limits) is a **Tessera Decision**.
+stitching, the summation order and provisional sides of §5, the fallback palette and block
+UVs, memory layout, buffer layout, hostile-input limits) is a **Tessera Decision**.
+
+<a id="s0-3"></a>
+### 0.3 Research of the 2026-10-08 revision
+
+| Tag | Source |
+|---|---|
+| OBS-T | **M1.** Throwaway probe in the dirty scratch area reading the directory of every `client_cell_*.dat` archive of the user's install (read-only, in place) on 2026-10-08: the set of landblock-data DIDs 0x800RXXYY per region, their X and Y ranges and, for every block, which of its eight neighbours has a record. |
+| BIN-T | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5 (the build of `terrain-texturing.md` BIN), read on 2026-10-08 with headless Ghidra 12.1.3 on an own copy of the shared project (deleted afterwards). **Questions:** (a) how the client chooses how far terrain is drawn (far radius) from its graphics options; (b) the near radius of the landscape and the size of its landblock grid; (c) which landblock the landscape uses as the reference of the per-block texture offset (`terrain-texturing.md` §6.2 OPEN) and which position drives it. **Read:** the graphics-option registration and the six presets, the far-radius setter of the world manager, the landscape object's initialiser, the sector manager's position update (reference, accumulator, sector discard) and its per-landblock LOD pass, the world manager's per-frame position update and its option registration. **Why M1–M3 were not enough:** radii, the reference choice and the position source are code with no trace in the data; no published source gives them; no running client is available to this session for M3. Nothing about network, login, keys, launcher, patcher or anti-tamper was examined. |
 
 ---
 
@@ -71,27 +88,28 @@ layout, buffer layout, hostile-input limits) is a **Tessera Decision**.
 
 - One `TerrainBlock` per landblock, built from the decoded height grid (33 × 33 u16, X-major,
   `landblock.md` §3.3) and the vertex flags (bit 7 = split diagonal of each quad, §3.6). The
-  ceiling grid of cave blocks is not terrain and is not meshed here (§9).
+  ceiling grid of cave blocks (`landblock.md` §3.5) gets a surface of its own (bit-0
+  diagonals, clockwise from above), its normals (§5) and its layer vertex streams (§7), but
+  no levels of detail: ceilings are drawn at level 0 from their stored triangles (§7,
+  Decision (3)).
 - Heights stay as the stored u16 values and are converted with the rule of `landblock.md`
   §3.4 only when a vertex or a query result is produced: height = stored × 2,000 / 65,535,
   computed as the original client does in 32-bit floats (stored as f32, times 2,000.0, times
   the f32 nearest 1 / 65,535, each product rounded to f32). Because neighbouring blocks store
   equal edge samples (HM7), shared vertices come out bit-identical. (Revised 2026-10-05; the
   former rule stored / 32.768 differs by at most 0.031 units.)
-- **One conversion.** The decoder's conversion of a stored integer (`landblock.md` §3.4) is
-  the reference: a query at a sample, the block's min/max height and the mesh vertex z must
-  equal it bit for bit. Queries interpolate on stored integers in f64, apply the same factor
-  and round once to f32; an interpolated query (clamped to the samples' range) never leaves
-  the block's height bounds.
-> **OPEN:** "apply the same factor and round once to f32" and "equal it bit for bit" cannot
-> both hold under the revised rule of `landblock.md` §3.4, whose two f32 products round
-> twice: a single rounding of stored × 2,000 / 65,535 differs from the rule by 1 ulp for some
-> stored values. The implementation (2026-10-06) keeps bit identity: an interpolated height
-> in stored steps (f64, clamped to the samples' range) is multiplied by 2,000 in f64, rounded
-> to f32, then multiplied in f32 by the f32 nearest 1 / 65,535. At a sample this is exactly
-> the decoder's rule; both steps are monotone, so the height bounds still hold. Slopes,
-> normals (§5) and level error bounds (§3) use the f64 factor 2,000 / 65,535. Confirm or
-> reword this bullet.
+- **One conversion** (Tessera Decision; reworded 2026-10-08, answering the implementer's
+  OPEN of 2026-10-06). The decoder's conversion of a stored integer (`landblock.md` §3.4) is
+  the reference: a query at a sample, the block's min/max height and the mesh vertex z equal
+  it bit for bit. An interpolated query works in two rounding steps, like the decoder's
+  rule: (1) the interpolated height in stored steps, computed in f64 and clamped to the range
+  of the samples it uses, is multiplied by 2,000 in f64 and rounded to f32; (2) that value is
+  multiplied in f32 by the f32 nearest 1 / 65,535. At a sample this is exactly the decoder's
+  rule (a single rounding of stored × 2,000 / 65,535 would differ from it by 1 ulp for some
+  stored values). Both steps are monotone, so an interpolated query never leaves the block's
+  height bounds. Slopes, normals (§5) and the level error bounds (§3) use the f64 factor
+  2,000 / 65,535. (`landblock.md` §3.11 converts the corner samples first and then evaluates
+  the plane; the two orders differ only by floating-point rounding.)
 
 - **Memory.** A block keeps 2,178 bytes of heights and a 128-byte bit set of split diagonals
   (about 2.3 KiB). The per-level error bounds (§3) are computed on first use, so height-only
@@ -176,21 +194,47 @@ Verified on every landblock of the install (§8).
 <a id="s5"></a>
 ## 5. Normals
 
-- Per grid sample, from central differences of stored heights over two cells:
-  dz/dx = (h(i + 1, j) − h(i − 1, j)) × *s* / 10 with *s* = 2,000 / 65,535 (the height factor
-  of `landblock.md` §3.4), likewise for y, normal = normalise(−dz/dx, −dz/dy, 1). (Revised
-  2026-10-05 from 1 / 32.768.) **Tessera Decision**; how the original computes its
-  terrain normals was not traced (§9).
-- On a block edge the sample beyond the edge comes from the edge neighbour's second row or
-  column (only the four edge neighbours are needed; the corner sample uses the east/west
-  neighbour for x and the north/south neighbour for y). The differences are taken on stored
-  integers before any floating-point step, so both blocks compute bit-identical normals for
-  every shared vertex.
-- Without a neighbour the difference is one-sided (scaled to the same span) and the side is
-  reported **provisional** (`VertexNormals::is_provisional`); a streamer recomputes the normals
-  (and the mesh's normal and colour streams) when the neighbour arrives.
+Revised 2026-10-08: the original's rule is now known (TR16, TR17) and Tessera follows it.
+**Implementers re-check `crates/terrain`**: until it follows, the code uses the superseded
+rule at the end of this section.
+
+- **Rule** (the original's, `landblock.md` §3.14, normative there; `terrain-texturing.md`
+  §4.10 states the same). Per grid sample (*i*, *j*) of the terrain surface: take the grid
+  triangles of the four quads that have the sample as a corner, each quad split by its own
+  stored diagonal (bit 7), so a quad contributes one triangle, or two when its diagonal runs
+  through the sample (four to eight triangles in all). Positions are (5 · *a*, 5 · *b*, *h*)
+  with *h* converted by `landblock.md` §3.4. Each triangle's normal is its unit normal
+  facing up; the vertex normal is the plain mean of those unit normals, **not** normalised
+  again (shorter than 1 on a crease).
+- **Ceiling surface**: the mirrored rule of `landblock.md` §3.14 (ceiling heights, bit-0
+  flags, X offsets mirrored while the flag tests are not, normals facing down). It equals
+  the negated terrain rule on a plane and can differ elsewhere.
+- **Block edges.** A triangle that needs a sample beyond the block uses the neighbouring
+  block's data: index −1 is the neighbour's 31, index 33 its 1, and at a corner both indices
+  are mapped, which needs the **diagonal** neighbour as well (eight neighbours in all, not
+  four). Split flags of quads beyond the block come from the neighbour in the same way. A
+  triangle with a sample in a block that does not exist, or (for a ceiling) in a neighbour
+  without a ceiling, is left out of the mean (TR17).
+- **Bit identity at seams** (Tessera Decision): compute each triangle normal from corner
+  positions taken relative to the sample (exact multiples of 5 units across, height
+  differences of converted heights) and add the triangles in a fixed order (quads south-west,
+  south-east, north-west, north-east; within a quad, the order of the `landblock.md` §3.14
+  table). Both blocks that share an edge sample then use the same triangles in the same
+  order and compute bit-identical normals.
+- **Provisional sides** (Tessera Decision). When a needed neighbour block exists in the
+  archive but is not resident yet, its triangles are left out as above and the side is
+  reported **provisional** (`VertexNormals::is_provisional`); a streamer recomputes the
+  normals (and the mesh's normal and colour streams) when the neighbour arrives. Whether the
+  original recomputes in that case was not traced. A side whose neighbour does not exist in
+  the archive (the region border, TR18) is final, not provisional: the original leaves those
+  triangles out for good.
 - Normals are computed on the full grid and shared by every level, so they are also identical
   across LOD transitions.
+- **Superseded rule** (Tessera Decision of 2026-10-04, revised 2026-10-05, retired
+  2026-10-08; kept only because the code still uses it): central differences of stored
+  heights over two cells, dz/dx = (h(i + 1, j) − h(i − 1, j)) × *s* / 10 with *s* = 2,000 /
+  65,535, likewise for y, normal = normalise(−dz/dx, −dz/dy, 1); the four edge neighbours
+  only; one-sided differences without a neighbour; ceilings negated.
 
 <a id="s6"></a>
 ## 6. Shading until splatting: height and slope
@@ -259,8 +303,10 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   and 6,144 + stitch indices). A cheaper GPU layout the API already supports: one full-grid
   vertex buffer per block (1,089 vertices in grid order, never re-uploaded on a level change)
   plus a per-level index list from `triangulate`, whose indices are grid vertex numbers.
-  > **OPEN:** ARCH §10 still states the shared-index-buffer plan; its owner should replace it
-  > with the per-block layout above.
+  > **OPEN:** (documentation, not a fact question; for the owner of `docs/ARCHITECTURE.md`)
+  > ARCH §10 still says "shared index buffers per LOD and stitch pattern" for the terrain
+  > output (as of 2026-10-08); replace it with the per-block layout above. Nothing in the
+  > data or the client bears on it.
 - **Splatting inputs per vertex.** The layer texture coordinates of `terrain-texturing.md`
   §6.1 (TR8) are functions of the vertex position (block-local x, y plus the block's offset of
   `terrain-texturing.md` §6.2, and the height) and the mask coordinates are (x / 160, y / 160),
@@ -316,13 +362,18 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
 - Golden images (`crates/terrain/tests/golden/`): a generated 3 × 3-block patch at mixed
   levels, lit, and top-down with its wireframe; checked on hardware Vulkan, llvmpipe (GL) and
   lavapipe (Vulkan).
-- Real data (`crates/terrain/tests/real_data.rs`, release build, 2026-10-04, this install):
-  all 390,150 landblock-data records of regions 1–5 and 14; 6,242,400 height queries agree
-  with the decoder's rule within 1.3 × 10⁻³ units; all 458,061,498 stored layer triangles are
-  triangles of the level-0 mesh; every block meshed at a pseudo-random level stitched to its
-  neighbours' levels is a valid cover; all 777,240 east/north neighbour pairs share their edge
-  samples, and on the 382,536 pairs with final normals on both sides the two meshes have
-  bit-identical edge vertices, normals and segments. On every eighth block (48,768 blocks)
+- Real data (`crates/terrain/tests/real_data.rs`, release build, this install; figures of
+  the implementer's run of 2026-10-06 with the height rule of `landblock.md` §3.4 as
+  revised, normals by the superseded §5 rule): all 390,150 landblock-data records of regions
+  1–5 and 14; height queries agree with the decoder's rule within 1.22 × 10⁻³ units; all
+  458,061,498 stored layer triangles are triangles of the level-0 mesh; every block meshed at
+  a pseudo-random level stitched to its neighbours' levels is a valid cover; all 777,240
+  east/north neighbour pairs share their edge samples, and on the pairs with final normals on
+  both sides, 382,536 east and 382,536 north seams (765,072), the two meshes have
+  bit-identical edge vertices, normals and segments (0 mismatched pairs). The run of
+  2026-10-04 compared east seams only (its residency window never completed a north
+  neighbour's own neighbours), so its "382,536 seams" were all east pairs; the test now
+  keeps rows y − 1 to y + 2 resident and counts both directions. On every eighth block (48,768 blocks)
   the level error bounds equal the maximum of |level surface − level-0 surface| over the
   2.5-unit raster (all refinement vertices) within 10⁻³ units. Per block on one thread: block
   setup 1.2 µs, level error bounds (lazy) 36 µs, normals 7 µs, level-0 mesh 28 µs.
@@ -347,15 +398,10 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   (meshing, normals, shading, queries, selection, tiles, splat conversion on arbitrary
   inputs).
 
-> **OPEN:** the real-data figures above overstate the seam coverage: before 2026-10-06 the
-> test kept only rows y − 1 to y + 1 resident, so a north neighbour never had all four of its
-> own neighbours loaded and **no north seam was compared**; the 382,536 seams were all east
-> pairs. The test now keeps rows y − 1 to y + 2 and counts both directions. Release run on
-> 2026-10-06 (this install, height rule of `landblock.md` §3.4 as revised): all 390,150
-> blocks, 382,536 east + 382,536 north seams (765,072) bit-identical, 0 mismatched pairs,
-> height queries within 1.22 × 10⁻³ units of the decoder's rule, all 458,061,498 layer
-> triangles on level-0 mesh triangles. The spec writer should update this bullet (and the
-> M3 criterion-3 evidence in `docs/ROADMAP.md`).
+- After the §5 revision of 2026-10-08 the seam comparison needs the diagonal neighbours
+  resident as well (corner samples); the invariant is unchanged: on every pair with final
+  normals on both sides, edge vertices, normals and segments are bit-identical. Normals on
+  the region border (TR18) are final with the outside triangles left out.
 
 <a id="s9"></a>
 ## 9. Open questions
@@ -375,8 +421,8 @@ added to the lighting sum (`terrain-texturing.md` §10, §9.1; BIN). Use (x / 16
 the §6 block UVs.
 
 **Answered 2026-10-05 (was OPEN): height scale.** `landblock.md` §3.4 adopted the client's
-rule stored × 2,000 / 65,535 (BIN); §1 and §5 now use it. The implementation still uses
-stored / 32.768 and must follow (difference ≤ 0.031 units).
+rule stored × 2,000 / 65,535 (BIN); §1 and §5 use it, and the implementation has followed
+since 2026-10-06 (the former stored / 32.768 differed by at most 0.031 units).
 
 **Answered 2026-10-05 (was OPEN): water.** The water level of a landblock comes from its block
 map (keys 7 and 4) and the region's water table: `water.md` §6 gives the level and the "under
@@ -390,21 +436,16 @@ mesh contains all 2,048 triangles, also those over zero ceiling samples, which l
 (TR11, `collision.md` §6.4: Confirmed on all 5,310,848 stored ceiling triangles, BIN for the
 mesh builder). The original builds the ceiling chunk's render mesh with the terrain vertex
 builder from the ceiling height grid and a separate ceiling normal array (TR10,
-`terrain-texturing.md` §4.8). Ceilings are not meshed by `tessera-terrain` (Tessera Decision);
-a renderer draws the stored ceiling-layer triangles.
+`terrain-texturing.md` §4.8). `tessera-terrain` builds the ceiling surface (bit-0
+diagonals), its normals (§5) and its layer vertex streams, and expands `whole` ceiling
+layers to the clockwise bit-0 grid, but makes no levels of detail for it: ceilings are drawn
+at level 0 from their stored ceiling-layer triangles (§7, Decision (3); Tessera Decision).
 
-> **OPEN:** (implementer, 2026-10-06, from the M4.5 code review; for the spec writer) three
-> statements here no longer match §7 or the code. (a) §1 ("the ceiling grid … is not meshed
-> here") and the sentence above ("Ceilings are not meshed by `tessera-terrain`") predate §7:
-> the crate now builds ceiling surfaces (`TerrainBlock::from_ceiling` with the bit-0
-> diagonals, `VertexNormals::ceiling`, ceiling `LayerVertices`) and expands `whole` ceiling
-> layers to the clockwise bit-0 grid; what it does not do is level-of-detail mesh ceilings,
-> which are drawn at level 0 from their stored triangles (§7 Decision (3)). (b) The
-> height-scale answer above says the implementation "still uses stored / 32.768 and must
-> follow": it has followed since 2026-10-06 (stored × 2,000 / 65,535, §1). (c) The header
-> still reads "Last updated 2026-10-05" and Accepted although §7 and §8 carry unreviewed
-> implementer additions of 2026-10-06 (change log); the M4.5 review should record its
-> sign-off or set the status to Review.
+**Answered 2026-10-08 (was OPEN, implementer 2026-10-06): stale statements.** (a) §1 and the
+paragraph above now describe the ceiling surfaces the crate builds; (b) the height-scale
+answer records that the implementation follows the revised rule; (c) the header carries the
+state Revised and this date; the §7 and §8 additions of 2026-10-06 and this revision wait for
+review.
 
 **Answered 2026-10-05 (was described wrongly): terrain triangles in no layer.** In landblocks
 with a ceiling, some terrain grid triangles belong to no layer and the original does not draw
@@ -421,24 +462,72 @@ ambient, hemispheric and point lights are evaluated per vertex (the hemispheric 
 on normal-mapped layers), the sun per pixel with the shadow factor, and the light map is added
 (TR13, `terrain-texturing.md` §9–§10, BIN).
 
-> **OPEN:** Per-block texture origin for layer textures (`terrain-texturing.md` §6.2). The
-> original's rule is known (TR8: the block's place relative to a reference landblock plus an
-> accumulated shift that resets at 2,048 units); which landblock it uses as the reference is
-> not. **Tessera Decision:** the one given in `terrain-texturing.md` §6.2 (camera block as
-> reference; fixed region coordinates acceptable).
+**Partly answered 2026-10-08: per-block texture origin** (`terrain-texturing.md` §6.2). The
+rule is known (TR8: the block's place relative to a reference landblock plus an accumulated
+shift that resets at 2,048 units). The reference landblock and the accumulator belong to the
+distant-landscape sector manager: the reference is the landblock of the viewer position that
+also selects the loaded sectors and the far LOD (`distant-landscape.md` §5.1–§5.2), and it
+is replaced whenever that position's landblock or region changes (TR22, BIN). The world
+manager's per-frame load position is the player character's position by default and an
+outside position (the camera's, by the switch's own description) when a console switch is
+turned off (TR23, BIN); that this is the position the sector manager receives is Inferred,
+the call path between them was not traced. **Tessera Decision** (unchanged,
+`terrain-texturing.md` §6.2): the camera's landblock as the reference, or fixed region
+coordinates; both differ from the original only by whole blocks.
 
-> **OPEN:** Ceiling normals: how the original computes its separate ceiling normal array
-> (`terrain-texturing.md` §4.8, Tessera Decision there).
+> **OPEN:** (a) Confirm the call path from the world manager's load position to the sector
+> manager's reference (TR23 → TR22), so that "the player's landblock, not the camera's" can
+> be stated as BIN. (b) Whether full-detail blocks already built are rebuilt, or keep their
+> old offset, when the accumulator resets (a reset that left built blocks unchanged would
+> show as a texture jump at block edges with scales such as 0.055); answerable by M4 on the
+> per-block build or by the owner watching such a texture while walking 2,048 units in one
+> direction in the original.
 
-> **OPEN:** How the original computes its terrain vertex normals. §5 is a Tessera Decision.
+**Answered 2026-10-08 (was OPEN): ceiling normals.** The original's separate ceiling normal
+array follows the mirrored rule of `landblock.md` §3.14 (bit-0 flags, X offsets mirrored,
+normals facing down, not renormalised; TR16, BIN). §5 now uses it.
 
-> **OPEN:** Draw distance and LOD behaviour of the original client (how far terrain is drawn,
-> how coarse distant terrain gets, how near and far terrain are blended). The selector of §3
-> is a Tessera Decision. Distance bands as far as known: `terrain-texturing.md` §12.
+**Answered 2026-10-08 (was OPEN): the original's terrain vertex normals.** The plain mean of
+the unit normals of the four to eight grid triangles around the sample, with neighbours
+(diagonal ones included) across block edges and no renormalisation (`landblock.md` §3.14,
+`terrain-texturing.md` §4.10; TR16, TR17, BIN). §5 now uses it.
 
-> **OPEN:** Region edges. Blocks at X or Y = 0 or 254 have no neighbour on that side; their
-> edge normals stay one-sided (provisional). No data says how the original treats the edge of
-> the world.
+**Answered 2026-10-08 (was OPEN): region edges.** Every region with landblock data is a
+complete 255 × 255 grid of landblock-data records (X, Y from 0 to 254; none at 255), so the
+only blocks without a neighbour are the 1,016 on the region border (TR18, Confirmed). The
+original leaves a normal's triangles that need a sample beyond the border out of the mean
+(TR17), so the border normals average the triangles inside the block, and nothing lies beyond
+the border: no landblock records and no distant-landscape sectors (TR19). §5 reproduces this
+and marks those sides final, not provisional.
+
+**Partly answered 2026-10-08: draw distance and LOD of the original** (BIN unless marked).
+
+- **How far.** The landscape draw-distance graphics option has five levels (0–4). They give a
+  far radius *R* of 2, 4, 6, 9 or 12 landblocks (any other level: 6); a console override,
+  off by default, replaces *R* by its own value (default 6). The built-in initial level is 3
+  (*R* = 9) until the user's preferences set it; the six overall graphics presets, lowest to
+  highest, set levels 0, 1, 2, 3, 4 and 4 (TR20). Values are a user setting: read Tessera's
+  own setting, do not assume a level.
+- **Distant terrain.** The sector radius of `distant-landscape.md` §5.1 is
+  *F* = ⌊*R* / 3⌋ + 1 sectors around the viewer's sector (TR20); within the loaded sectors each
+  landblock gets far LOD 0–3 by its squared landblock distance to the viewer (≤ 3, ≤ 24,
+  ≤ 99, beyond; `distant-landscape.md` §5.2), each LOD halving the sample spacing of the
+  33 × 33 grid.
+- **Near field.** The landscape's near radius is 1 landblock: its landblock grid is 3 × 3
+  around the viewer's landblock, and the sector manager flags exactly the landblocks with
+  max(|*dx*|, |*dy*|) ≤ 1 as near (*N* = 1 in `distant-landscape.md` §5.2; TR21). **Inferred:**
+  the layered terrain of `terrain-texturing.md` covers those 3 × 3 landblocks and the
+  distant-landscape mesh draws the rest.
+- The selector of §3 (Tessera's own geomipmapping of landblock records at every distance) is
+  a Tessera Decision and does not reproduce this.
+
+> **OPEN:** (a) ER (`terrain-texturing.md` §12) reports full-detail terrain to about 14
+> landblocks; TR21 gives a 3 × 3 landblock near field. Which landblocks the original draws
+> with the full layer stack and which with the distant-landscape mesh needs the owner's
+> observation of the original (for example a frame capture, or the layer detail visible on
+> landblocks two and three blocks from the player at each draw-distance level). (b) How near
+> and far terrain are blended at the seam (the sector overlay of `terrain-texturing.md` §12
+> and the near/far seam-blending graphics option): not traced.
 
 <a id="s10"></a>
 ## 10. Change log
@@ -451,3 +540,5 @@ on normal-mapped layers), the sun per pixel with the shadow factor, and the ligh
 | 2026-10-05 | Spec writer (dirty room), third revision after review. Header: Status "M3 design, implemented" replaced by the CLEAN_ROOM §5.2 state Review; per-section author roles; "Format facts from" adds `collision.md` §6; the introduction no longer claims the file has no facts from dirty-room material and separates Tessera's design from cited facts. New §0 (marks, provenance table TR1–TR15 with the owning spec and mark of every fact about the data or the original). §5, §6, §7: Tessera Decisions labelled; §7 holes text and per-vertex splatting inputs follow `terrain-texturing.md` §4.5 and §6.2. §9: ceiling diagonal and zero samples answered (bit 0, `collision.md` §6.4); "holes at cave mouths" corrected (`collision.md` §6.5); the answered shading model split out of the draw-distance OPEN; separate OPENs for the texture origin (rule now known), ceiling normals, the original's vertex normals and draw distance. |
 | 2026-10-06 | Implementer (clean room), M4.5: §7 layer resolution, vertex streams and texture frame implemented, with five Tessera Decisions (missing keys, level-of-detail lists, ceilings at level 0, non-finite floats, exact right-angle rotations); §8 layer real-data results and the `terrain_layers` fuzz target. Not yet reviewed. |
 | 2026-10-06 | Implementer (clean room), M4.5 code-review fixes: §7 Tessera Decisions (6)–(10) (rejected stored triangles, level-of-detail lists in the surface's winding, shared `whole` lists and per-chunk warnings, logged mask rejection, finite layer transform); §9 OPEN on the stale ceiling and height-scale sentences and the header. Not yet reviewed. |
+| 2026-10-08 | Spec writer (dirty room; M1 probe OBS-T and M4 BIN-T under decision 0011, §0.3). Status Accepted → Revised. §0: rows TR16–TR23, new §0.3. §1: ceiling bullet matches §7; the "one conversion" OPEN answered by stating the implemented two-step rounding as the Tessera Decision. §5: **normals now follow the original's rule** (`landblock.md` §3.14: mean of unit triangle normals, diagonal neighbours at corners, missing-block triangles left out, no renormalisation, mirrored ceiling rule); fixed summation order for bit identity; region-border sides final; the central-difference rule kept as superseded until the code follows. §8: seam figures replaced by the implementer's 2026-10-06 run (east and north seams), OPEN closed; note on diagonal neighbours. §9: OPENs answered — stale statements, ceiling normals, terrain normals, region edges; texture origin and draw distance partly answered (far radius by graphics level, sector radius, near radius 1, reference landblock held by the sector manager, player position as load position) with narrowed OPENs. The M3 criterion-3 evidence in `docs/ROADMAP.md` (east seams only) is for that file's owner to update. |
+| 2026-10-08 | Spec reviewer (not the writer of the 2026-10-08 revision): review passed; Status Revised → Accepted. Record in the review log. |

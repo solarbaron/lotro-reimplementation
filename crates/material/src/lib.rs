@@ -82,6 +82,7 @@ pub mod resolve;
 mod source;
 pub mod texture;
 pub mod transform;
+pub mod ui_image;
 pub mod vocab;
 pub mod water;
 

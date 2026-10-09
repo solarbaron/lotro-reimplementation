@@ -39,6 +39,8 @@ pub struct HeadlessReport {
     pub placed: Vec<PlacedReport>,
     /// Character counters at the end.
     pub characters: crate::walker::characters::CharacterStats,
+    /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
+    pub audio: Option<crate::audio::AudioReport>,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -148,23 +150,32 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             rt.world
                 .as_mut()
                 .map(|w| w as &mut dyn crate::walker::WalkerSession),
+            &mut rt.plugins,
             now,
             dt,
         );
-        let mut frame = renderer.begin_offscreen_frame(&target)?;
-        walker.draw(&renderer, &mut frame);
-        let t_end = Instant::now();
-        let stats = renderer.end_frame(frame)?;
-        walker.record_render_stats(&stats);
-        let t_wait = Instant::now();
-        renderer
-            .context()
-            .wait_idle()
-            .context("waiting for the GPU")?;
-        walker.record_frame_timing(
-            t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
-            t_wait.elapsed().as_secs_f64() * 1e3,
-        );
+        // A renderer error ends the loop through `finish`, which still shuts the walker
+        // down and writes what it can.
+        let drawn = (|| -> anyhow::Result<()> {
+            let mut frame = renderer.begin_offscreen_frame(&target)?;
+            walker.draw(&renderer, &mut frame);
+            let t_end = Instant::now();
+            let stats = renderer.end_frame(frame)?;
+            walker.record_render_stats(&stats);
+            let t_wait = Instant::now();
+            renderer
+                .context()
+                .wait_idle()
+                .context("waiting for the GPU")?;
+            walker.record_frame_timing(
+                t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
+                t_wait.elapsed().as_secs_f64() * 1e3,
+            );
+            Ok(())
+        })();
+        if let Err(e) = drawn {
+            break Err(e);
+        }
         report.frames += 1;
 
         if args.fly_path.is_some() {
@@ -246,6 +257,10 @@ fn finish(
         .collect();
     if let Some(d) = &report.description {
         tracing::info!("viewer at: {d}");
+    }
+    report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    if let Some(a) = &report.audio {
+        crate::audio::log_report(a);
     }
     if first_error.is_none()
         && let Some(path) = &args.screenshot

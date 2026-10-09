@@ -16,6 +16,9 @@ winit = ["dep:winit"]
 [dependencies]
 bitflags.workspace = true
 glam = "0.33"
+# Primitives (VLE, Pascal strings, TSize) for the read-only key-map and
+# action-map record decoders of the importer (keymap.md §12.9, §12.10).
+tessera-formats.workspace = true
 tessera-settings.workspace = true
 thiserror.workspace = true
 toml = "1"
@@ -26,7 +29,10 @@ winit = { version = "0.30", optional = true }
 libc = "0.2"
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile = "3"
+# Real-data tests of the importer only (tests/import_real_data.rs).
+tessera-dat.workspace = true
 
 [lints]
 workspace = true

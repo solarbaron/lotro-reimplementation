@@ -840,7 +840,7 @@ fn bad_marker() {
 #[test]
 fn unknown_native_class_gives_partial_result() {
     let b = example_builder()
-        .object(2, 3053, &[1, 1, 2, 0, 0, 0])
+        .object(2, 4999, &[1, 1, 2, 0, 0, 0])
         .object(3, 225, &[0]);
     let mut b = b;
     b.links = Some({
@@ -856,7 +856,7 @@ fn unknown_native_class_gives_partial_result() {
     assert_eq!(
         s.partial,
         Some(Partial {
-            class: 3053,
+            class: 4999,
             item: 2,
             item_count: 4
         })
@@ -1390,7 +1390,8 @@ fn value_type_codes() {
     }
     assert!(ValueType::from_code(4).is_none());
     assert!(has_codec(225));
-    assert!(!has_codec(3053));
+    assert!(has_codec(3053));
+    assert!(!has_codec(4999));
     assert_eq!(codec_name(160), Some("position"));
     assert!(is_object_did(0x7600_0001u32));
     assert!(!is_object_did(0x7800_0001u32));

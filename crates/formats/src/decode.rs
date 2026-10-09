@@ -24,6 +24,7 @@ use crate::record::Record;
 use crate::script_table::{ScriptTable, Scriptlet};
 use crate::setup::{EntityDescriptor, EntityHeader, Setup, VisualTemplate};
 use crate::sound::SoundRecord;
+use crate::sound_info::SoundInfo;
 use crate::string_info::StringInfo;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
@@ -33,6 +34,7 @@ pub use crate::environment::{
     decode_camera_state, decode_day_description, decode_game_time, decode_lod_class_table,
     decode_sky_description,
 };
+pub use crate::landblock::decode_distant_sector;
 pub use crate::scenery::{decode_scene, decode_scene_choice_table, decode_terrain_scene_table};
 pub use crate::terrain_type::decode_terrain_type_table;
 pub use crate::water::{decode_fog_zone_table, decode_water_table};
@@ -76,6 +78,12 @@ pub fn decode_property_dictionary(data: &[u8]) -> Result<PropertyDictionary> {
 /// Decodes a sound record envelope (prefix 0x0A; `records.md` §9).
 pub fn decode_sound(data: &[u8]) -> Result<SoundRecord<'_>> {
     SoundRecord::parse(data)
+}
+
+/// Decodes a sound-info record (prefix 0x2A; `sound.md` §4, §12.1). Unknown flag bits are
+/// kept ([`SoundInfo::unknown_flags`]).
+pub fn decode_sound_info(data: &[u8]) -> Result<SoundInfo> {
+    SoundInfo::parse(data)
 }
 
 /// Decodes a property-set record (prefixes 0x78–0x7F; `property-system.md` §5.1) with
@@ -197,6 +205,20 @@ pub fn decode_landblock_group(data: &[u8]) -> Result<LandblockGroupRecord> {
 /// Decodes a region descriptor (prefix 0x0F; `environment.md` §3.1).
 pub fn decode_region_descriptor(data: &[u8]) -> Result<RegionDescriptor> {
     RegionDescriptor::parse(data)
+}
+
+/// Decodes a font record (prefix 0x42; `fonts.md` §3).
+pub fn decode_font(data: &[u8]) -> Result<crate::font::Font> {
+    crate::font::Font::parse(data)
+}
+
+/// Decodes a UI layout record (prefix 0x22; `ui-layout.md` §4) with `schema` typing the
+/// embedded property sets.
+pub fn decode_ui_layout<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<crate::ui_layout::UiLayout> {
+    crate::ui_layout::UiLayout::parse(data, schema)
 }
 
 /// Decodes a stand-alone collision mesh (prefix 0x66; `collision.md` §4). `stamp` is the

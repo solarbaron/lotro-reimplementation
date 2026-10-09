@@ -13,6 +13,8 @@
 //! | [`ItemView`], [`ScriptView`], [`Resolved`] | Typed attribute access by name hash, reference resolution, reachability | §8 |
 //! | [`ObjectStore`], [`GameObject`] | Loading through a record source: library lookup, LRU cache bounded by count and bytes, DID items, import lists, property sets | §2, §8.2, §12 |
 //! | [`Geo`], [`GeoIndex`] | Area → territory → region names, dungeons and their map positions, the region-number table, lookup by name | §11 |
+//! | [`character`] | Player-character records: avatar templates, race, nationality and class creation data, names and phonetic shifts, experience tables, pips, bank schedules, allegiances | `player-character.md` |
+//! | [`game_controls`] | WEENIECONTENT entry kinds, empty markers, DID sets, manager entities, compiled-only tables, mount, account, UI and social control views | `game-controls.md` |
 //! | [`testkit`] | Synthetic record builders (tests, fuzzing) | §14 / §15 |
 //!
 //! # Hostile input
@@ -40,7 +42,9 @@
 
 #![warn(missing_docs)]
 
+pub mod character;
 mod error;
+pub mod game_controls;
 pub mod geo;
 mod graph;
 pub mod library;

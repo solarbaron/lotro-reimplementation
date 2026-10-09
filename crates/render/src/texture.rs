@@ -17,14 +17,22 @@ pub struct TextureId {
 }
 
 impl TextureId {
-    /// A handle no renderer ever issues (owner 0).
-    #[cfg(test)]
-    pub(crate) fn dangling() -> Self {
+    /// A handle no renderer ever issues (owner 0): every renderer treats it
+    /// as unknown. Useful as a default value and for checks that never
+    /// resolve the handle (for example `UiEntry::geometry`).
+    #[must_use]
+    pub const fn placeholder() -> Self {
         Self {
             owner: 0,
             index: u32::MAX,
             generation: u32::MAX,
         }
+    }
+
+    /// A handle no renderer ever issues (owner 0).
+    #[cfg(test)]
+    pub(crate) fn dangling() -> Self {
+        Self::placeholder()
     }
 }
 

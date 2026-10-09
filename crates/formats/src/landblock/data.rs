@@ -992,6 +992,20 @@ impl LandblockData {
         )
     }
 
+    /// Unit upward normal of the terrain triangle containing block-local (x, y)
+    /// (`landblock.md` §3.11, the same triangle as [`LandblockData::terrain_height`]).
+    /// x and y are clamped to [0, 160]; `None` for a NaN coordinate.
+    #[must_use]
+    pub fn terrain_normal(&self, x: f32, y: f32) -> Option<[f32; 3]> {
+        triangulated_normal(
+            &self.heights,
+            &self.vertex_flags,
+            GridSurface::Terrain,
+            x,
+            y,
+        )
+    }
+
     /// Ceiling height in world units at block-local (x, y): the §3.11 rule applied to the
     /// ceiling grid with the quad split by **bit 0** of the vertex flags (§3.5). Samples
     /// without a ceiling (stored 0) count as height 0, as in the ceiling collision mesh
@@ -1267,6 +1281,49 @@ pub(crate) fn triangulated_height(
     }
     let sum: f32 = tri.iter().map(|&(w, v)| w.max(0.0) * v).sum();
     Some(sum.clamp(lo, hi))
+}
+
+/// Unit upward normal of the triangle of `surface` that contains block-local (x, y), chosen
+/// as in [`triangulated_height`] (§3.6, §3.11). `None` for a NaN coordinate.
+pub(crate) fn triangulated_normal(
+    heights: &HeightGrid,
+    flags: &VertexFlags,
+    surface: GridSurface,
+    x: f32,
+    y: f32,
+) -> Option<[f32; 3]> {
+    if x.is_nan() || y.is_nan() {
+        return None;
+    }
+    let gx = x.clamp(0.0, LANDBLOCK_SIZE) / GRID_SPACING;
+    let gy = y.clamp(0.0, LANDBLOCK_SIZE) / GRID_SPACING;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (i, j) = (
+        (gx.floor() as usize).min(QUAD_SIDE - 1),
+        (gy.floor() as usize).min(QUAD_SIDE - 1),
+    );
+    #[allow(clippy::cast_precision_loss)]
+    let (fx, fy) = (gx - i as f32, gy - j as f32);
+    let h = |a: usize, b: usize| f64::from(heights.height(a, b).unwrap_or(0.0));
+    let (h00, h10, h01, h11) = (h(i, j), h(i + 1, j), h(i, j + 1), h(i + 1, j + 1));
+    // Rise per grid step along x and y of the chosen triangle's plane.
+    let (rx, ry) = if flags.surface_split_sw_ne(surface, i, j) {
+        if fx >= fy {
+            (h10 - h00, h11 - h10)
+        } else {
+            (h11 - h01, h01 - h00)
+        }
+    } else if fx.min(fy) <= 1.0 - fx.max(fy) {
+        (h10 - h00, h01 - h00)
+    } else {
+        (h11 - h01, h11 - h10)
+    };
+    let d = f64::from(GRID_SPACING);
+    let (nx, ny) = (-rx / d, -ry / d);
+    let len = (nx * nx + ny * ny + 1.0).sqrt();
+    #[allow(clippy::cast_possible_truncation)]
+    let n = [(nx / len) as f32, (ny / len) as f32, (1.0 / len) as f32];
+    n.iter().all(|v| v.is_finite()).then_some(n)
 }
 
 fn read_grid_count(r: &mut Reader<'_>, what: &'static str, expected: usize) -> Result<()> {

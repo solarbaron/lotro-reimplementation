@@ -15,7 +15,14 @@
 > 2026-10-06 and re-verified on 2026-10-07 ([M4.5 status](#m4-5-status)): criteria 1, 2,
 > 3, 7 and 8 pass; 4 (generated-object and cave walks), 6 (visual rows) and 9 (spec
 > reviews) do not; 5 waits for a quiet-machine re-measure of flight M3-b (an indicative
-> run passed), so M4.5 stays open. M7 (own test server and protocol) was built in parallel
+> run passed), so M4.5 stays open. M5 (UI layouts, skins and Lua plugins) was built in
+> parallel on branch `m5` and checked on 2026-10-08 ([M5 status](#m5-status)): criteria 1,
+> 3, 5 and 6 pass, 2 is done on Tessera's side, 4 waits for the owner's plugin install and
+> 7 (UI time budgets) is not met yet. M6 (audio and player music) was built in parallel on
+> branch `m6` and checked on 2026-10-07 ([M6 status](#m6-status)): criteria 1 and 3 pass,
+> 2 passes on Tessera's side (the owner's listening comparison is pending), and 4 passes as
+> an indicative run that is to be repeated on the idle reference machine. M7 (own test
+> server and protocol) was built in parallel
 > on branch `m7` and verified on 2026-10-07 ([M7 status](#m7-status)): criteria 2–4 pass
 > (4 waits for the owner's confirmation before any public test build), criterion 1 passes
 > on one machine and waits for a run between two machines on a LAN. Milestones are ordered by
@@ -72,11 +79,15 @@ like "ARCH §8" refer to it.
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
 | **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
+| **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
 in parallel with M4 once M3's asset and world plumbing exists. M4.5 builds on M3 (streaming,
 terrain), M2 (the material chain) and M4 (the walking avatar, setup collision volumes). M5
 and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
+M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it starts only
+after full parity with the original client and compatibility with the server (M8), or, if
+the M8 gate fails, after client parity with Tessera's own server.
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -375,11 +386,27 @@ fails on such a question (criterion 2).
 | 3 | ✅ | `crates/render/tests/mesh_golden.rs` (opaque, alpha test, alpha blend + order independence, two-sided, dye, normal map, debug views): 8 / 8 pass on Mesa lavapipe (Vulkan, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1`, and 8 / 8 on Mesa llvmpipe (GL, Mesa 26.1.8); at most 2 (lavapipe) and 7 (llvmpipe) outliers of 40,960 pixels against a budget of 102. `render_test_scene` passes on lavapipe too. |
 | 4 | ✅ | `tools/fuzz-smoke.sh -t 60`: `mesh_decode`, `material_records`, `material_resolve`, `formats_surface`, `formats_setup`, `formats_setup_chain`, `formats_appearance`, `render_mesh_data`, `explorer_mesh_scene` each ran 60 s with no finding (0.23 M–8.4 M executions per target). |
 
-Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
-clippy --workspace --all-targets -D warnings`, `cargo test --workspace` with
-`TESSERA_GAME_DIR` set (1,049 passed, 0 failed, 1 ignored), `cargo doc -D warnings`,
-`tools/check-content.sh` and its self-test, `tools/check-spdx.sh` (0 errors) and the
-relative links and anchors of the Markdown docs all pass.
+Repository checks (final verification, 2026-10-07): `cargo fmt --all --check` and the fuzz
+crate's `cargo fmt --check`; `cargo clippy --workspace --all-targets -- -D warnings` with
+default and with all features; the fuzz crate's `cargo clippy --bins --locked -- -D warnings`
+(four lints in the new M6 targets fixed); rustdoc with `-D warnings` on the M6 crates;
+`tools/check-content.sh` (758 files) and `tools/check-spdx.sh` (721 files) clean; a link and
+anchor check of every Markdown file (87 files, 0 broken). `cargo test --workspace
+--no-fail-fast` with `TESSERA_GAME_DIR` set (debug, load average about 50): 2,405 passed, 2
+failed, 2 ignored in 169 suites, plus 2 suites whose binaries another process removed during
+the run (`tessera-dattool` `cli` and `real_data`, 28 / 28 when re-run). The 2 failures are
+load-dependent timeouts outside M6's code and pass when re-run alone:
+`tessera-world` `integration_progresses_when_bookkeeping_exceeds_the_frame_budget` (a 60 s
+settle limit; 64 / 64 in release) and `tessera-client` `walker_real_data::screenshot_at_spawn`
+(the 90 s settle limit; 3 / 3 alone). The M6 real-data tests pass in debug and in release:
+`tessera-formats` `sound_real_data` 2 / 2, `tessera-scriptgraph` `real_data` 2 / 2,
+`tessera-audio` `decode_real_data` 1 / 1, `abc_conformance` 156 / 156, `abc_examples` 33 / 33,
+`instruments_real_data` 1 / 1, `tessera-client` `audio_real_data` 3 / 3 and
+`player_music_real_data` 2 / 2. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on the eight
+new targets, no crash: `formats_sound_info` 1.28 M executions, `audio_decode` 12,929 (and
+17,989 after the codebook change), `audio_engine` 23,156, `audio_abc` 244,182,
+`audio_instruments` 19,071, `scriptgraph_runtime` 3,609 (117 s), `client_audio` 894,479,
+`client_player_music` 3.96 M; rates are low because other builds loaded the laptop.
 
 ---
 
@@ -912,7 +939,7 @@ water, sky and instanced pipelines with mip chains and shadows; the walker on ph
 | 1 | ✅ | `cargo test --release -p tessera-dattool --test real_data` (`census_decodes_every_world_record`): 0x19 5 / 5 (4,688 entries), 0x12 5 / 5, 0x11 5 / 5, 0x02 3,402 / 3,402, 0x66 16,819 / 16,819, 0x01 1,057 / 1,057, 0x16 5 / 5 (125 listed entries), 0x17 5 / 5, 0x15 1 / 1 (30,184 bytes, `environment_real_data`), 0x1A 963 / 963, 0x35 1 / 1 (180 bytes), 0x32 1 / 1 (32 classes), 0x0F 7 / 7 with all eight slots, 0x08 11 / 11; the M2 decoders still give 0x31 13,781, 0x30 24,094, 0x2B 510. CO4 tree walks with no unknown opcode or jump out of range: 16,819 0x66 trees, 1,010 cell physics meshes, 58,546 terrain and 1,095 ceiling trees, 1,280 embedded and 70,956 0x06 mesh levels (3 and 12 renumbered, as `collision.md` §3.5 lists). The M3 landblock tests and `reference_locations` pass with the new height rule (no erratum; largest change 0.030 m at M3-13). |
 | 2 | ✅ | Gated real-data tests, all passing: terrain-texturing §3.5 (1–6) on 5 tables / 4,688 entries; SC7 on 390,150 records (912,038 layers, 88,807,424 quads, all keys); 646,073 drawn-layer masks, all A8; 5,441 light-map properties naming 5,422 DXT1 surfaces. SC1–SC6, SC9, SC10 (3,402 scenes, acyclic, longest path 5; 4,261 objects; 66,191 nodes) and the §12 census exactly (11,921,024 / 11,854,954 / 7,295). CO1–CO11: 5,310,848 ceiling triangles on the bit-0 diagonal, 2,750,134 hole triangles, CO3 393,842 reciprocal links, CO9 one movement record. §9.3: 82,139 undrawn mesh blockers among 97,688 undrawn blocking SEDs, reproduced when the content-layer filter is left out (88,749 with the shared-world filter of §9.3 as written; `collision.md` §9.3 OPEN). Terrain render triangles equal collision triangles in all 390,150 landblocks (and all 6,867 ceilings). WA1–WA5: 89,913 wet, 67,175 fully submerged, 12,925 / 12,925 distant sectors agree. EV1–EV6 hold. |
 | 3 | ✅ | `determinism_real_data`: all 78,114 landblocks with a non-zero coarse grid built twice through the bundle store (1 worker ascending, 14 workers descending), water and collision included: 9,496,701 generated objects, 0 lists differ, 0 incomplete; `scenery_real_data`: 10,121,082 objects, 1 worker 49.3 s, 16 workers 6.9 s, 0 differ. Worked examples reproduced as tests: `scenery.md` §14 and SC11, `collision.md` §14.1–§14.8, `water.md` §12, `environment.md` §14, `terrain-texturing.md` §14, `lighting.md` §14 (CPU and GPU). Controller runs repeat bit for bit (`controller`, `controller_real_data`, the soak's digest); water state and blended sky values are pure functions of their inputs (tests in `tessera-world`). |
-| 4 | ❌ data-side, owner observation pending | **Re-verified 2026-10-07** (`cargo test --release -p tessera-client --test walk_checklist_real_data` with the install): **25 of 32 walks pass**, every walk with 0.0000 m penetration. Met minimums: walls 4 (WL1, WL3–WL5), undrawn blockers 3 (UB1–UB3), steps 3 (ST1–ST3), steep slopes 3 (SL1–SL3: they slide and never climb), interiors 4 (IN1–IN4, expected cells), water entries 4 (WA1–WA4, wade then swim at the §7.4 depth), frill areas 2 (FR2, FR3). **Not met:** generated trees or rocks **1 of 3** (GN3 passes; GN1 passes its stop point and ends 6.39 m from P; GN2 ends 0.296 m from P against d = 0.15, a near miss; GN4 passes its stop point and ends 9.12 m from P) and caves **1 of 2** (CV3 passes; CV1 is 0.132 m off the terrain against 0.05 m, a near miss; CV2 starts 1.25 m off the terrain, is blocked at 1.3 s and ends 13.7 m from E). WL2 (0.104 m against d = 0.10) and FR1 (0.131 m above the terrain) remain near misses. The test's known-open list still names GN3, which now passes. Soak (`walk_soak_real_data`): 1,000 walks of 60 s over the land landblocks of regions 1, 2, 3, 4, 5, 14, 0 skipped, **0 failing (0 fall-throughs, 0 non-finite states)**, deepest 0.0004 m below the terrain; three draws found no valid start and were passed over (r4 (23, 78), r2 (203, 114), r2 (94, 207)); no soak step was in a cell. Comparison with the original: O18, O19. Earlier (2026-10-06): 21 of 32. |
+| 4 | ❌ data-side, owner observation pending | **Re-measured 2026-10-08** (worktree `wt-walks`, `cargo test --release -p tessera-client --test walk_checklist_real_data` with the install), after `m4-5-visual.md` §2.2 was revised from `collision.md` §11.7 (Accepted 2026-10-08): `blocked` is checked at the walker's first touch of the blocker (the original also slides along a face while forward is held), and the feet may sit up to *r* · (sec *θ* − 1) above the terrain on slopes (the capsule's rest offset). **30 of 32 walks pass**, every walk with 0.0000 m penetration; no controller change. Every per-category minimum is met: walls 5 (WL1–WL5; WL2 first touch 0.009 m from P), undrawn blockers 3 (UB1–UB3), generated trees or rocks **3** (GN1 first touch 0.127 m from P, GN3 0.003 m, GN4 0.015 m), steps 3 (ST1–ST3), steep slopes 3 (SL1–SL3), interiors 4 (IN1–IN4), caves **2** (CV1 at most 0.132 m above the terrain on a 43° stretch, inside the slope allowance; CV3), water entries 4 (WA1–WA4), frill areas 3 (FR1–FR3). **Not met** ("all pass"): GN2 (first touch of its tree 0.195 m before P, d = 0.15: the trunk's steep foot below the step-up height stops the walker, as it stops the original by `collision.md` §11.7, but the row's SWEEP ignores it) and CV2 (its path runs along a bank of 48–61°, steeper than walkable, so the walker slides off before the input begins; it ends 13.7 m from E); both rows need re-deriving (implementer OPENs of 2026-10-08 in `m4-5-visual.md` §2.4). The test's known-open list is now GN2 and CV2. Before (2026-10-07): 25 of 32 (WL2 0.104 m end against d = 0.10; GN1, GN4 ended 6.39 m and 9.12 m from P after sliding round the tree; GN2 end 0.296 m; CV1, FR1 0.132 m and 0.131 m above the terrain against 0.05 m; CV2 as now). Soak (`walk_soak_real_data`, 2026-10-08, same tree): 1,000 walks of 60 s, 0 skipped, **0 failing** (0 fall-throughs, 0 non-finite states), deepest 0.0004 m below the terrain, digest 6efa5ae1baaade1c; the same three landblocks passed over. Comparison with the original: O18, O19. Earlier: 25 of 32 (2026-10-07), 21 of 32 (2026-10-06). |
 | 5 | ⏳ (M3-b indicative pass; owner's quiet re-measure pending) | **M3-b re-run once on 2026-10-07, indicative only** (other milestone builds ran beside it, load average 7.8–8.0): `--headless --size 1280x720 --fly-path 2:0:0,2:254:254 --speed 3000`, release: 1,140 frames, longest 37.1 ms, p50 / p99 16.7 / 20.4 ms, **0 frames over 50 ms, 0 frames with near-ring holes**, 9,565 bundles requested and integrated (0 failed, 0 evicted), peak 1,122 landblocks / 1,424 MiB bundles (lookahead included), streamer update at most 8.0 ms. The criterion is not claimed until the owner re-measures M3-b on a quiet machine. 2026-10-06: reference machine, release build of that tree, nothing heavy running besides a browser and btop ([reference-machine.md](perf/reference-machine.md)): walk spots P1–P5, `--headless --unpaced --duration 60 --size 1920x1080`, p99 10.8 / 14.4 / 10.0 / 14.3 / 7.8 ms, 0 frames over 50 ms; M4 crowd of 50 with everything on: 105.8 fps mean, p99 13.7 ms, 51 characters drawn every frame, 1 frame over 16.7 ms. M3 flights with every M4.5 system on (paced 60 fps): M3-a 0 over 50 ms (longest 28.8 ms), 0 holes, peak 1,111 MiB bundles; M3-d 0 over 50 ms (longest 34.5 ms), 0 holes, peak 2,684 MiB of the 4,096 MiB budget; **M3-b 0 over 50 ms (longest 25.8 ms) but one near-ring landblock missing for 5–8 frames near the end of the path in each of 3 runs** (bundles with collision sets and scenery arrive late at 3,000 m/s; `walker.md` §14.11 OPEN). Scenery, water and collision are built on the asset workers, frill sectors as worker tasks. |2026-10-06: reference machine, release build of that tree, nothing heavy running besides a browser and btop ([reference-machine.md](perf/reference-machine.md)): walk spots P1–P5, `--headless --unpaced --duration 60 --size 1920x1080`, p99 10.8 / 14.4 / 10.0 / 14.3 / 7.8 ms, 0 frames over 50 ms; M4 crowd of 50 with everything on: 105.8 fps mean, p99 13.7 ms, 51 characters drawn every frame, 1 frame over 16.7 ms. M3 flights with every M4.5 system on (paced 60 fps): M3-a 0 over 50 ms (longest 28.8 ms), 0 holes, peak 1,111 MiB bundles; M3-d 0 over 50 ms (longest 34.5 ms), 0 holes, peak 2,684 MiB of the 4,096 MiB budget; **M3-b 0 over 50 ms (longest 25.8 ms) but one near-ring landblock missing for 5–8 frames near the end of the path in each of 3 runs** (bundles with collision sets and scenery arrive late at 3,000 m/s; `walker.md` §14.11 OPEN). Scenery, water and collision are built on the asset workers, frill sectors as worker tasks. |
 | 6 | ❌ Tessera side; owner observation pending | **Re-verified 2026-10-07:** `visual_rows_real_data` passes all 6 tests, now with S1–S11 asserting every row's total and both nearest objects (rows re-derived by the spec writer on 2026-10-07, `m4-5-visual.md` §8). The 16 rows that failed or could not be judged on 2026-10-06 were rendered again (1600 × 900, free-fly, no HUD, at each row's eye, heading, pitch and time; private, deleted after viewing). **Now pass on the image:** S1, S5 (the eye stands in a bush; plants and trees of the list drawn), S6, S8, S10 (generated objects drawn on layered ground), F1 (the ground under the frills is drawn with its grass layers instead of height shading), Y5 (the IN1 cave's cell meshes drawn, lit, under the interior fog). **Still fail:** L5 (no broad specular highlight on layer 67's paving toward the sun; `terrain-texturing.md` §9.4 as revised on 2026-10-07, not yet Accepted, expects only a faint sheen, so the row is to be re-judged once that revision is Accepted). **Still not judgeable:** T4 (a placed object between eye and target; a top-down auxiliary view shows paving, probably an object's floor), T12 (an object fills the view; top-down, the dirt layers draw), T5 (the target is beside a building's plinth and the noon scene is dark), T15, T16 (the cave ceilings are nearly black; with `--disable sky` T15's ceiling layers draw), Y2 (the eye faces a building wall at dawn), L2 (night street: a faint orange pool at one side and a few bright white specks on the paving, no distinct pools under the five lights), L7 (the eye faces a plinth; the warm light-map texels are not distinct). Pass on the image now: 45 of 54 rows (2026-10-06: 38). Comparison with the original: O20, O23–O27. |
 | 7 | ✅ | `terrain_layers.png` (3 × 3 splatted patch with masks and a normal map), `water.png`, `sky_morning.png` / `sky_evening.png`, `frill_sector.png` and `lit_mesh.png` (point light, shadow, fog), plus `lit_surfaces.png`: all pass on the RTX 2070 Super Max-Q (Vulkan) and on Mesa lavapipe 24.2 (`VK_DRIVER_FILES`, `TESSERA_REQUIRE_GPU=1`: 44 golden tests over the 8 golden suites, old images unchanged). |
@@ -954,8 +981,8 @@ of ARCHITECTURE §24; the owner items O18–O27 completed against the planner's 
 
 Remaining for M4.5 to close (after the re-verification of 2026-10-07): a maintainer's
 decision on the held diffs (note above the table); the clippy lint in the physics
-controller; generated-object walks GN1, GN2, GN4 and cave walks CV1, CV2 (with the near
-misses WL2 and FR1; `m4-5-visual.md` §2.4 OPEN, `collision.md` §12.3); L5 (to be re-judged
+controller; the walks GN2 and CV2, whose rows need re-deriving (2026-10-08: 30 of 32 pass
+after the §2.2 revision from `collision.md` §11.7; `m4-5-visual.md` §2.4 OPENs); L5 (to be re-judged
 against the revised `terrain-texturing.md` §9.4) and the rows that cannot be judged from
 their checklist cameras (T4, T5, T12, T15, T16, Y2, L2, L7; the dark cave ceilings,
 `terrain-texturing.md` §4.8, §4.10); the owner's quiet-machine re-measure of M3-b; the
@@ -973,19 +1000,24 @@ existing third-party UI plugins that the user has installed.
 **Deliverables**
 
 - `tessera-formats`: UI layout records (elements, states, per-element data variants).
-- `tessera-ui`: retained widget tree, absolute layout with anchors and margins, nine-slice
-  art, text rendering, focus and input routing, skin application.
+- `tessera-ui`: retained widget tree, absolute layout with anchors and margins, art tiled at
+  native size and text drawn into per-surface CPU canvases (composed by `render` in a UI
+  pass, decision 0015), focus and input routing, skin application.
 - `tessera-plugins`: `.plugin` discovery, apartments, import resolution, event dispatch,
   plugin data persistence in Tessera's directories, a first API surface (engine, shell
   commands, chat output, plugin data, UI controls and windows, read-only views of the local
-  player that the sandbox backend can provide).
+  player that the sandbox backend can provide), the clean-room class helper (decision
+  0016). The split of `crates/script` leaves `tessera-script` a plugin-free Lua core, with
+  no plugin API namespace, `import` or chat state (decision 0023).
 - `tessera-client`: native panels for the walker (minimap frame, chat window, a few
   windows), plugin manager window, `/plugins` commands.
 - Optional: importer for the original keymap file if its spec exists (read-only).
 
 **Specs needed:** `ui-layout.md`, `skin-definition.md`, `plugin-descriptor.md`,
-`plugin-api.md` (names, signatures, enums, events, behaviour), `fonts.md` (if font records
-are decodable), `keymap.md` (import section).
+`lua-plugin-api.md` (names, signatures, enums, events, behaviour), `plugin-runtime.md`,
+`plugin-api-usage.md`, `plugin-class-helper.md`, `ui-behaviour.md`, `ui-widgets.md`,
+`game-panels.md`, `chat-window.md`, `fonts.md` (if font records are decodable),
+`keymap.md` (import section), the `render.md` UI pass; decisions 0014–0016 and 0023.
 
 **RE tasks**
 
@@ -1008,7 +1040,84 @@ are decodable), `keymap.md` (import section).
    create their windows and respond to input. Their incompatibilities are recorded.
 5. Sandbox escape tests: plugins cannot read or write outside their tree or data
    directory, cannot load C modules, and cannot exceed memory and instruction limits.
-6. `docs/LEGAL.md` records the plugin-namespace interoperability rationale (ARCH §18 OPEN).
+6. `docs/LEGAL.md` records the plugin-namespace interoperability rationale (LEGAL §17,
+   which replaces the former ARCH §18.2 OPEN).
+7. **UI budgets.** U1–U5 of decision 0015 §6 hold, measured with its scripted run under
+   `docs/perf/reference-machine.md`, at 3840 × 2160 fullscreen and at the window size the
+   compositor gives. Frames with a scroll step or a new chat line (content-event frames) are
+   judged by U4 (b) and (f), not by U1. U2 is a gate only where the adapter has timestamp
+   queries. U1's walking-phase mean is accepted only after the painter probe has measured
+   Mix colour and the erase (0015 §6, "Probe gap").
+
+<a id="m5-status"></a>
+**Status (exit verification 2026-10-08 against the owner's install, release builds, on the
+reference laptop of [decision 0010](decisions/0010-reference-machine-laptop.md) while it was
+loaded by other agents; branch `m5` at `a292f17` plus the uncommitted M5 changes): criteria
+1, 3, 5 and 6 pass; criterion 2 is done on Tessera's side and waits for the owner's
+screenshots; criterion 4 waits for the owner's plugin install; criterion 7 is not met
+(indicative measurements).** Every deliverable exists: the UI layout (0x22) and font (0x42)
+decoders in `tessera-formats`, the UI image decoders in `tessera-material::ui_image`,
+`tessera-ui` (element tree, layout, widgets, behaviour, the input bridge's UI side, CPU
+canvases and the paint scheduler, text and the bundled fallback font, user skins, game and
+chat widgets), the UI pass in `tessera-render` (`render.md` §6), the 0014 input bridge and the
+read-only importer of the original keymap file in `tessera-input`, the 0023 split
+(`tessera-script` a plugin-free core with no dependency on another Tessera crate;
+`tessera-plugins` with the host, the plugin API's UI classes and the clean-room class helper
+of decision 0016), and in `tessera-client` the native panels P1–P15, the chat window, the
+plugin manager window, `/plugins` commands, the UI host and the U1–U5 scripted run.
+Specs used: those listed above, plus decisions 0014–0016 and 0023. **Two specs the
+implementation follows are not Accepted:** `plugin-class-helper.md` (status Review; its third
+review is outstanding) and `render.md` §6 (status Review; no review recorded). Both need their
+review before the code that rests on them is committed.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-formats --test ui_layout_real_data`: 302 / 302 UI layout records decode (2,610,590 bytes, all in the English local archive). `ui-layout.md` §13 categories: 0 records fail to decode, 0 unknown media kinds, 0 base layouts missing, 3 base elements missing from their base layout's top level (in 2 records), 0 base-chain cycles, 0 missing referenced records, 2 missing string-table tokens; widget types are left to `tessera-ui` (35 fallback game types, `ui_real_data`). The §11 census matches the spec (3,144 top-level elements, 16,421 elements, 12,977 states, 35,615 element and 2,083 state property entries; 27,512 non-zero references, all present); 59,067 ID fields all carry an enum label. `font_real_data`: 48 / 48 font records decode, 28,315 glyphs, no §3.3 or atlas issue. |
+| 2 | ✅ data-side, owner observation pending | `cargo test --release -p tessera-client --test panels_real_data --test ui_panels_real_data` (and `tessera-ui` `ui_real_data`): all 15 panels of `ui-layout.md` §17 open from the install by label, every root rectangle equals its §17.3 value at 1024 × 768, 1920 × 1080 and 2560 × 1440 (15 / 15; P15 against the spec, the checklist's P15 rows are stale), 2,904 elements created with 0 resolve failures and 0 refused creations, the per-panel census (elements, text elements, states, art surfaces, fonts, string references) matches §17.2, the object-mode census matches UL22 (92 = 86 Stretch + 6 CanvasResize), Escape opens the main menu, `/plugins manager` opens P12. Tessera's own screenshots (`--ui` HUD set; `--open-panel` P6, P7, P10, P12, P15 at 1920 × 1080; private scratch, deleted) were viewed in this verification and agree with the "Tessera-side self-check" of [m5-visual.md](checklists/m5-visual.md): art at native size, frames closed, labels the game code would fill are empty. The comparison with the original client is owner observation O39. |
+| 3 | ✅ (Tessera side) | `cargo test --release -p tessera-client --test ui_skin_real_data`: a generated skin (CC0 one-colour TGA files in a temporary skins root) changes the checked art of 13 / 13 panels that have skinnable art in their default view (P11 and P14 have none); the panel override moves P6 to (40, 30, 240, 290); a missing skin file shows the placeholder; turning the skin off restores the art. `tessera-ui` `skin_real_data`: the skin tables of the install load (5,625 art-asset labels, 4,742 base-table entries, SI1–SI9 hold). Optional cross-check with a published skin: O41. |
+| 4 | ⏳ owner install pending | No `Plugins` folder exists on the owner's machine (`compat_real_plugins` reports it and passes as a skip). Tessera's synthetic plugin suite passes: `tessera-plugins` `compat_plugins` 12 / 12 (plugins load, create windows, respond to clicks, hover, typing, keys, timers and shell commands), `ui_classes`, `ui_controls`, `ui_input`, `ui_lifetime`, `class_helper` 37 / 37, and `tessera-client` `plugins_suite` 3 / 3. The current incompatibility table (18 rows) is in the module docs of `crates/plugins/tests/compat_plugins.rs`; the visible ones: game-styled windows use a neutral frame (no call yet to build a plugin control from a based layout element), check boxes draw no mark, quickslots draw no icon, `ControlList:Insert`/`Set` append. The 14 plugins of `plugin-api-usage.md` §9: owner observation O40. |
+| 5 | ✅ | `cargo test --release -p tessera-plugins --test escape`: 6 / 6 (path traversal, absolute paths, symlinks, `import` tricks, image paths and plugin-data keys refused; C modules and bytecode refused; memory limits against string, table, `gsub` and format growth; instruction limits against loops, `pcall`/`xpcall` handlers, coroutines, patterns, metamethods and finalizers, per tick and at close); `ui_escape` 7 / 7 (UI-layer paths, refused image formats, hostile numbers, object caps); `sandbox` 6 / 6. |
+| 6 | ✅ | [LEGAL.md §17](LEGAL.md#17-plugin-api-names-interoperability-record) records the plugin-namespace interoperability rationale and its binding rules. This verification enforced §17.2 rule 1 in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
+| 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. Idle re-measurement and the compositor-window run: O49. |
+
+Repository checks in this verification: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets --all-features --locked -D warnings` and `cargo clippy
+--bins --locked -D warnings` in `fuzz/`, `cargo doc --workspace --no-deps` with `-D
+warnings`, `cargo deny check bans licenses sources` (both manifests), `tools/check-spdx.sh`
+(914 files, 0 errors) and the relative links and anchors of the Markdown docs pass. `cargo
+test --workspace`: debug without `TESSERA_GAME_DIR` 2,777 passed, 1 failed (a regression of
+this verification's rename, fixed and re-run: `class_helper` 37 / 37), 6 ignored; release
+with `TESSERA_GAME_DIR` 2,777 passed, 0 failed, 6 ignored (210 test binaries).
+`tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on the 22 new or changed M5 targets: no
+crash, from 15,772 (`ui_paint`) to 11.4 M (`render_ui_entries`) executions; the seven
+targets later touched by lint fixes re-ran 15 s each without a crash. **`tools/check-content.sh`
+fails** on one file: `crates/ui/assets/fonts/NotoSans-Regular.ttf` (`[ext]`, `[magic]`), the
+bundled fallback font of `fonts.md` §11 (SIL OFL 1.1). Shipping it needs an owner decision
+first: an allowlist entry for the font check of `tools/check-content.sh`, a REUSE annotation
+with `LICENSES/OFL-1.1.txt`, and an exception to the "third-party material must never be
+committed" note of `REUSE.toml` (recorded in `docs/LEGAL.md`); otherwise the font must be
+loaded from the system instead. **Settled 2026-10-08** by decision 0022 (owner): the font is
+bundled unmodified under OFL-1.1, with `LICENSES/OFL-1.1.txt`, a `REUSE.toml` annotation, an
+allowlist entry for exactly that path and the exception in `docs/LEGAL.md` §11;
+`tools/check-content.sh` now passes.
+
+Fixed during this verification (mechanical changes only, no behaviour change): neutral
+module and binding names in `tessera-plugins` and its client call site (LEGAL §17.2 rule 1),
+the content allowlist, two rustdoc links, `is_multiple_of` and two other clippy lints in nine
+fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, the
+`plugins_commands` leak-check exemption in `tools/fuzz-smoke.sh`, owner observations
+O39–O49.
+
+Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
+U1/U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, timestamp queries for U2 and the idle
+re-measurement O49 (criterion 7); the reviews of `plugin-class-helper.md` and `render.md` §6;
+the P15 rows of `m5-visual.md`. Open review items the implementers
+could not fix in their own files: the class helper's `Turbine.Log` clock defaults to UTC
+(`crates/plugins/src/host.rs`, client `LogHost`); plugin TextBox read-only flag, caret and
+selection API, child insert position and title bars above a window's top edge need
+`tessera-ui` calls; `ImageRef::File` needs an origin; a `UIScale_Global` setter; the
+`PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
+§21).
 
 ---
 
@@ -1046,6 +1155,54 @@ effects from animation and script events, and the player-music system playing AB
 3. An ABC conformance suite written by us (original tunes) passes: accepted/rejected
    files match the spec, note timing within tolerance.
 4. No audio underruns during a 10-minute world flight on the reference machine.
+
+<a id="m6-status"></a>
+**Status (checked 2026-10-07 against the owner's install, release builds, on the reference
+laptop while other milestone builds loaded it, [decision 0010](decisions/0010-reference-machine-laptop.md)):
+criteria 1 and 3 pass, criterion 2 passes on Tessera's side (owner observation pending),
+criterion 4 passes as an indicative measurement (idle re-measurement pending).** Every deliverable exists: `tessera-formats`
+sound payloads, sound infos and script-table sound nodes; `tessera-scriptgraph` (the script
+graph runtime, `script-runtime.md`); `tessera-audio` with cpal output behind the
+`audio-device` feature and a project-owned mixer ([decision 0019](decisions/0019-audio-backend.md),
+not kira), streaming music, positional emitters, channels and volumes, the ABC reader
+(`abc`) and the instruments with synchronised start (`instruments`); `tessera-client`
+world audio, `[audio]` settings, and the player-music commands `/play <name> [<part>]
+[sync]`, `/playstart`, `/playlist [<filter>]`, `/playstop` and the debug `/instrument`
+(`apps/client/src/audio/player_music.rs`). Specs used: `sound.md`, `script-table.md` (sound
+nodes), `script-runtime.md`, `abc-dialect.md`, `instruments.md`. Commands run with
+`TESSERA_GAME_DIR` set to the read-only install and `CARGO_BUILD_JOBS=6`.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-audio --test decode_real_data -- --nocapture` (final verification, 2026-10-07): 44,337 sound records (`client_local_English.dat` 29,193, `client_sound.dat` 12,621, `client_sound_aux_1.datx` 2,523); **44,329 of 44,329 audio payloads decode (100.00 %, full sweep)**: Ogg Vorbis 40,874, WAV 3,455; 0 failures, 0 invariant violations (SN1–SN4, SN3a), 8 DirectMusic and 0 unknown records counted apart, 155.6 h of audio; played ranges as the spec's census (3,811 streams with *A* > 0, 10,613 with *M* < *N*, 15 ending with an empty packet); 1,521 s wall time on 8 threads under a load average of about 45 (indicative). The 2 payloads an earlier hardening check refused (`0x0A016904`, `0x0A0011DC`) carry a placeholder codebook with no used entry as a residue stage book that their packets never read; the setup walk now accepts it and hands the decoder library a header in which that book has a 1-bit codeword, so a hostile packet that reads it cannot panic the library (`crates/audio/src/decode/setup.rs`, `patch_unused_books`; tests `unread_codebook_without_used_entries_is_accepted`, `codebook_without_used_entries_is_read_without_panic_or_rejected`, `patch_inserts_a_codeword_at_each_unused_book`). |
+| 2 | ✅ data-side, owner observation pending | Rows A1–A5 of [m6-audio.md](checklists/m6-audio.md) pass: headless walker, null backend, region-1 row 120 from landblock 122 to 132 crosses two area borders; `Area_Music` changes at both, the old tracks ramp out over their own `RampOutTime` (4.0 s and 2.0 s), the new tracks play 16–17 ms after each change, 0 underruns. Automated: `cargo test --release -p tessera-client --test audio_real_data` (3 / 3 pass). Final verification (release, under a load average of about 50): `Area_Music` changes at 4.55 s and 9.88 s, ramp-outs of 4.0 s and 2.0 s, new tracks playing 35 ms and 49 ms after each change. Row O1 (does the cross-fade sound like the original's) waits for the owner: [owner-observations.md](checklists/owner-observations.md#o28) O28.1. |
+| 3 | ✅ | `cargo test --release -p tessera-audio --test abc_conformance`: **156 / 156** rows of `abc-dialect.md` §12 pass (accepted, ignored, truncated and refused files as the spec says; note-on times within 1 µs); `--test abc_examples` 33 / 33 (§13 worked examples, §14 invariants). End to end in the client: `cargo test --release -p tessera-client --test player_music_real_data` (2 / 2): start-up builds the instrument table (24 instrument types, 4,760 sound nodes) and finds the message table through the named-string-table map in 0.1 s; an original test tune played with `/play` on the offline backend schedules 10 note-ons at 0, 0.6, 1.2, 1.8, 3.0, 3.6 (×3, a chord), 4.2 and 4.8 s from a start 0.7 s after the command was processed, and renders them with 0 late, 0 missing samples and audible output; `/play … 2 sync` waits until `/playstart` and then starts its 8 note-ons 0.7 s later; `/playstop` silences a running performance; a refused file shows the entry of the user's string table with line and column; the instrument comes from an `--avatar` instrument item (§4.5) or `/instrument`. `--test instruments_real_data`: the table agrees with a live tree walk for 61,440 combinations and a range tune plays through all 23 instruments plus the default set (960 note-ons, 745 distinct samples decoded). |
+| 4 | ✅ indicative | [m6-audio.md](perf/m6-audio.md): a 603 s, 36.8 km headless flight with the device backend (cpal on ALSA through PipeWire, 48 kHz) gave **0 device underruns**, 0 mixer overloads and 0 starved stream blocks over 56,586 mixer callbacks (mixer load mean 4.3 %, p99 14.7 %), 18 area-music changes, main-thread audio 0.035 ms per frame. Made while other builds loaded the laptop (load average 3.1–4.3): to be re-measured on an idle reference machine before the criterion is closed (decision 0010). |
+
+Repository checks at the same time: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo test --workspace` (2,423 passed, 0 failed, 2
+ignored, debug build, without `TESSERA_GAME_DIR`) pass; the M6 real-data tests in release
+with `TESSERA_GAME_DIR` set pass except `decode_real_data` (criterion 1): `tessera-formats`
+`sound_real_data` 2 / 2 and `script_table_real_data` 4 / 4, `tessera-scriptgraph`
+`real_data` 2 / 2, `tessera-audio` `instruments_real_data` 1 / 1, `tessera-client`
+`audio_real_data` 3 / 3 and `player_music_real_data` 2 / 2. `tools/fuzz-smoke.sh -t 60
+client_player_music` (stable libFuzzer): 27.0 M executions, no finding.
+
+Remaining for M6 to close: the idle re-measurement of criterion 4 (decision 0010); the
+owner observations in [owner-observations.md](checklists/owner-observations.md#o28) O28
+(O28.1 is criterion 2's listening comparison, m6-audio.md row O1; the others check
+`sound.md` §16, `script-runtime.md` §26, the ABC checks OC1–OC10 of `abc-dialect.md` §17 and
+Q1, Q2, Q4–Q6 of `instruments.md` §16), and a listening check of `/play` with device output;
+`script-runtime.md` is still in Review status (its OPEN items carry Tessera Decisions). The client has no chat input yet, so the
+player-music commands reach it through `--music-command "<line>"` (repeatable, run in order
+once the archives are open; replies go to the chat log), for example `tessera-client
+--audio device --music-command "/play <name>"` (built with `--features audio-device`) with the song in the settings folder's
+`Music` or `<data dir>/Music`. Commands are processed strictly in order (a `/playstop` or
+`/playstart` given during a `/play`'s read acts after it; `abc-dialect.md` §11 OPEN
+(implementation) (g)); unit tests with a synthetic instrument table cover solo and synced
+starts, stop, ordering and the sample budget without game data. Implementation OPENs from this milestone
+(client commands, instrument choice, the player music's own engine instance) are in
+`abc-dialect.md` §11 and `instruments.md` §12.
 
 ---
 
@@ -1187,6 +1344,29 @@ offline world explorer, a data-file toolkit, and a client for the project's own 
 
 **Exit criteria (Phase 1):** G1–G5 each recorded in `docs/decisions/` with an outcome, and
 a go/no-go decision accepted by the project owner.
+
+---
+
+<a id="m9"></a>
+## M9: Extended scripting (after full parity)
+
+**Placement (owner, 2026-10-08).** Extended scripting is not a priority. It starts only after
+Tessera reaches full parity with the original client and compatibility with the server (M8).
+If the M8 gate fails, it starts after client parity with Tessera's own server (M7). It was
+planned earlier as M5.5, right after M5.
+
+**Plan.** [Decision 0017](decisions/0017-extended-scripting.md) holds the design: Lua 5.1
+"ext" apartments under `Ext`, modules granted by capability, a fail-closed backend gate,
+and slices 1a (core), 1b, 2 and 3. Its specs are written and Accepted: `ext-threat-model.md`,
+`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. Ext scripts never run against an
+official server (decision 0017 §4, LEGAL §9), whatever M8 decides.
+
+**What stays in place until then.** M5 already split `tessera-script` (a plugin-free Lua core)
+from `tessera-plugins` (decision 0023), as decision 0017 asked. M9 therefore does not redo
+that work. The pinned external Lua fork that 0017 needs is created only when M9 starts,
+after the owner confirms it.
+
+**Exit criteria:** those of decision 0017's slice 1a section, re-checked when M9 starts.
 
 ---
 

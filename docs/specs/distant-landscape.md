@@ -326,6 +326,14 @@ input. A record that leaves bytes over or runs short under the newest grammar is
   other value (the client's grammar would accept it).
 - A ceiling mesh's sample count must equal 1,089 × the number of mask bits (DL10).
 
+> **OPEN:** (implementer, 2026-10-08) The spec does not say what a `mode` 2 `ceiling_mask`
+> with bits above bit 8 means (no landblock is named by them; none observed). Tessera's
+> decoder (`crates/formats/src/landblock/sector.rs`) rejects such a record as malformed, the
+> conservative reading of §3.11; whether the client ignores those bits or counts them toward
+> the ceiling sample count is not stated. Also an engineering choice, not a format fact: the
+> encoder (`SectorRecord::to_bytes`, used by tests and the fuzz target) writes entity entries
+> with a null property only, because the crate has no property-value encoder.
+
 ---
 
 <a id="s4"></a>

@@ -251,6 +251,8 @@ fn world_record_kinds_are_decoded() {
         (0x3200_0000, DidKind::LodClassTable, "LOD-class table"),
         (0x3500_0000, DidKind::GameTime, "game time"),
         (0x6600_0001, DidKind::CollisionMesh, "collision mesh"),
+        // Decoded by `crate::SoundInfo` (`sound.md` §4, M6).
+        (0x2A00_0001, DidKind::SoundInfo, "sound info"),
     ];
     for (did, kind, name) in kinds {
         let did = Did(did);
@@ -266,7 +268,6 @@ fn world_record_kinds_are_decoded() {
         (0x14u8, DidKind::EncounterTable, "encounter table"),
         (0x21, DidKind::UiScene, "UI scene"),
         (0x27, DidKind::ImposterTable, "imposter table"),
-        (0x2A, DidKind::SoundInfo, "sound info"),
         (0x2D, DidKind::ComputeShader, "compute shader"),
         (
             0x39,
@@ -305,13 +306,17 @@ fn evidence_follows_the_status_column() {
         assert_eq!(did.kind(), kind, "{did}");
         assert_eq!(kind.evidence(), Evidence::Specified, "{did}");
     }
-    for p in [0x0Eu8, 0x1D, 0x33, 0x42, 0x51] {
+    for p in [0x0Eu8, 0x1D, 0x33, 0x51] {
         let did = Did(u32::from(p) << 24 | 1);
         assert_eq!(did.kind().evidence(), Evidence::Labelled, "{did}");
     }
-    for p in [0x22u8, 0x26] {
+    let did = Did(0x2600_0001);
+    assert_eq!(did.kind().evidence(), Evidence::DbType, "{did}");
+    // UI layouts (0x22, `ui-layout.md`) and fonts (0x42, `fonts.md`) are status C and
+    // decoded by this crate.
+    for p in [0x22u8, 0x42] {
         let did = Did(u32::from(p) << 24 | 1);
-        assert_eq!(did.kind().evidence(), Evidence::DbType, "{did}");
+        assert_eq!(did.kind().evidence(), Evidence::Decoded, "{did}");
     }
     // Registered-only prefixes and unused range members have no record: unknown.
     for p in [

@@ -146,10 +146,11 @@ pub trait WalkerSession {
     fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
         let _ = out;
     }
-    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
-    /// The default sends nothing.
-    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
-        let _ = (now, text);
+    /// Sends `text` on `channel` (a `Tell` carries its peer); `false` when it was not sent
+    /// (not in the world). Only the dispatcher's channel commands call it (decision 0020
+    /// item 2). The default sends nothing.
+    fn send_chat(&mut self, now: Instant, channel: &tessera_net::ChatChannel, text: &str) -> bool {
+        let _ = (now, channel, text);
         false
     }
 }
@@ -383,6 +384,8 @@ pub struct WalkerConfig {
     pub bench: Option<BenchPlan>,
     /// Move forward on its own from the start: `Some(true)` walking, `Some(false)` running.
     pub autorun: Option<bool>,
+    /// World audio (ROADMAP M6); off by default.
+    pub audio: crate::audio::AudioConfig,
     /// Walk on collision (`tessera-physics`, ROADMAP M4.5) when the world builds collision
     /// sets; otherwise, or when false, walk mode follows terrain heights.
     pub collision_walk: bool,
@@ -453,6 +456,7 @@ impl Default for WalkerConfig {
             characters: CharacterConfig::default(),
             bench: None,
             autorun: None,
+            audio: crate::audio::AudioConfig::default(),
             collision_walk: true,
             avatar: crate::avatar::AvatarSpec::default(),
             systems: Systems::all(),
@@ -480,6 +484,8 @@ pub struct WalkerEvents {
     pub screenshot: bool,
     /// The scripted flight reached its end.
     pub flight_done: bool,
+    /// A `menu` press the game UI declined (only while a UI is attached).
+    pub menu: bool,
 }
 
 /// The walker's own keys, read as raw key codes (`walker.md` §14.2–§14.3): `[`, `]`,
@@ -636,6 +642,8 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// World audio (`None` with audio off).
+    audio: Option<crate::audio::WorldAudio>,
     /// The collision walk mode's mover, loading on its own thread.
     mover_job: Option<std::thread::JoinHandle<movement::setup::MoverSetup>>,
     /// The M4.5 systems in effect (`walker.md` §14.2).
@@ -688,6 +696,10 @@ pub struct Walker {
     chat: chat::ChatOverlay,
     /// The HUD's network line (M7).
     net_line: Option<String>,
+    /// Draw the HUD text (`walker_hud`, `walker.md` §6).
+    show_hud: bool,
+    /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
+    show_minimap: bool,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -852,6 +864,15 @@ impl Walker {
             budget_mib = config.stream.residency_budget >> 20,
             "world walker ready"
         );
+        let audio =
+            (config.audio.backend != crate::audio::backend::BackendChoice::Off).then(|| {
+                crate::audio::WorldAudio::new(
+                    config.audio.clone(),
+                    Arc::clone(&set),
+                    pool.clone(),
+                    ctx.options().active_content_layers.clone(),
+                )
+            });
         // The collision walk mode: the mover (capsule, movement record, conditions) loads on
         // its own thread (locating the movement record reads the 0x79 sets).
         let mover_job = if config.collision_walk && ctx.options().build_collision {
@@ -919,6 +940,7 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            audio,
             mover_job,
             systems,
             env,
@@ -944,6 +966,54 @@ impl Walker {
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
             net_line: None,
+            show_hud: true,
+            show_minimap: true,
+        })
+    }
+
+    /// The input mapper and its clock (the game UI's step 1, `crate::ui_host`).
+    pub fn mapper_mut(&mut self) -> (&mut tessera_input::InputMapper, std::time::Duration) {
+        self.controls.mapper_mut()
+    }
+
+    /// Attaches or detaches a game UI: Escape then gives `menu` to the UI and game code
+    /// instead of quitting, and the overlays follow `hud` and `minimap` (`walker.md`
+    /// §5–§6; they draw under the UI pass, which is recorded after [`Walker::draw`]).
+    pub fn set_ui_attached(&mut self, on: bool, hud: bool, minimap: bool) {
+        self.controls.set_ui_attached(on);
+        // The help line names `menu` "menu" while a UI is attached (`walker.md` §5).
+        self.help = if on {
+            match self.help.strip_suffix(" quit") {
+                Some(rest) => format!("{rest} menu"),
+                None => self.help.clone(),
+            }
+        } else {
+            match self.help.strip_suffix(" menu") {
+                Some(rest) => format!("{rest} quit"),
+                None => self.help.clone(),
+            }
+        };
+        self.show_hud = hud;
+        self.show_minimap = minimap;
+    }
+
+    /// The viewer's minimap input for the game UI (`game-panels.md` §8.3): region,
+    /// landblock, global coordinates and compass heading; area and coordinate labels are
+    /// not filled yet. `None` before the viewer is placed.
+    #[must_use]
+    pub fn radar_input(&self) -> Option<tessera_ui::game::radar::RadarInput> {
+        let pos = self.focus()?;
+        let key = pos.landblock()?;
+        let compass = (90.0 - self.controls.heading().to_degrees()).rem_euclid(360.0);
+        Some(tessera_ui::game::radar::RadarInput {
+            region: pos.region,
+            x: key.x(),
+            y: key.y(),
+            cell: 0,
+            global: (pos.x as f32, pos.y as f32),
+            heading: compass,
+            has_player: true,
+            ..tessera_ui::game::radar::RadarInput::default()
         })
     }
 
@@ -954,14 +1024,22 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
-        use tessera_input::KeyCode as K;
         // While the chat input is open, keys are typed text, not walker keys.
-        if !self.chat.is_open()
-            && let RawEvent::Key {
-                key,
-                pressed: true,
-                repeat: false,
-            } = event
+        if !self.chat.is_open() {
+            self.world_key(event);
+        }
+        chat::route(&mut self.chat, &mut self.controls, event);
+    }
+
+    /// The walker's own keys ([`Self::input`]) without the chat overlay: what a game UI
+    /// (M5) forwards when no UI element has the keyboard focus.
+    pub fn world_key(&mut self, event: &RawEvent) {
+        use tessera_input::KeyCode as K;
+        if let RawEvent::Key {
+            key,
+            pressed: true,
+            repeat: false,
+        } = event
             && !self.taken_keys.contains(key)
         {
             match key {
@@ -987,7 +1065,6 @@ impl Walker {
                 _ => {}
             }
         }
-        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Switches system `s` on or off at run time.
@@ -1145,11 +1222,14 @@ impl Walker {
         self.controls.placed().then(|| self.controls.focus())
     }
 
-    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds.
+    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds. Lines typed
+    /// in the chat overlay go to `commands`, the client's command dispatcher (decision
+    /// 0020), which also gives the lines the client posts.
     pub fn update(
         &mut self,
         renderer: &mut Renderer<'_>,
         world: Option<&mut dyn WalkerSession>,
+        commands: &mut dyn crate::plugins::CommandSink,
         now: Instant,
         dt: f32,
     ) -> WalkerEvents {
@@ -1260,6 +1340,7 @@ impl Walker {
         };
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
+        events.menu = ce.menu;
         events.screenshot = ce.screenshot;
         if ce.toggle_debug {
             self.detail = !self.detail;
@@ -1453,17 +1534,40 @@ impl Walker {
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
 
+        // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
+        if self.audio.is_some() {
+            let placed = self.controls.placed();
+            let eye = placed.then(|| {
+                let (e, d) = self.view();
+                (e, [d.x, d.y, d.z])
+            });
+            let player = self
+                .controls
+                .avatar()
+                .or_else(|| placed.then(|| (self.controls.focus(), self.controls.heading())));
+            // `sound.md` §10.8.6 step 1: the walking character's own cell (physics), never
+            // the camera's; in free flight the camera eye's cell lookup.
+            let player_cell = if self.controls.mode() == MoveMode::Walk {
+                self.controls
+                    .physics()
+                    .and_then(movement::PhysicsWalker::cell)
+            } else {
+                camera_cell_at(&self.streamer, &self.controls.eye().0, None)
+            };
+            if let Some(audio) = self.audio.as_mut() {
+                audio.update(crate::audio::AudioInput {
+                    dt: f64::from(dt),
+                    streamer: &self.streamer,
+                    eye,
+                    player,
+                    player_cell,
+                });
+            }
+        }
+
         let mut chat_in = Vec::new();
-        let mut unsent = None;
         if let Some(w) = world.as_deref_mut() {
             w.drain_chat(&mut chat_in);
-            while let Some(text) = self.chat.take_outgoing() {
-                if !w.send_chat(now, &text) {
-                    unsent = Some("Not in the world: chat not sent");
-                }
-            }
-        } else if self.chat.take_outgoing().is_some() {
-            unsent = Some("Not connected: chat not sent");
         }
         let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
         if self
@@ -1472,9 +1576,7 @@ impl Walker {
         {
             self.notice = None;
         }
-        if let Some(text) = unsent {
-            self.chat.push_local(text, now);
-        }
+        chat::dispatch(&mut self.chat, commands, &mut world, now);
         let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
         self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
@@ -2199,6 +2301,9 @@ impl Walker {
                 ),
                 GREY,
             ));
+            if let Some(a) = &self.audio {
+                out.push((a.hud_line(), GREY));
+            }
             if self.flight.is_none() {
                 out.push((
                     format!("{} (fly {:.0} m/s)", self.help, self.controls.fly_speed()),
@@ -2410,14 +2515,20 @@ impl Walker {
                 .clear(SKY);
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
-        if self.config.hud {
+        let hud = self.config.hud && self.show_hud;
+        if hud {
             self.hud.draw(overlay, 10.0, 10.0);
         }
-        // The chat stays visible while its input is open, even without the HUD.
-        if self.config.hud || self.chat.is_open() {
+        // The chat stays visible while its input is open, even without the HUD. With a game
+        // UI attached its chat window shows the chat instead (no second display).
+        if (hud && !self.controls.ui_attached()) || self.chat.is_open() {
             self.chat.draw(overlay, 10.0, h as f32 - 10.0);
         }
-        if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
+        if let (true, Some(pos), Some(anchor)) = (
+            self.config.hud && self.show_minimap,
+            self.focus(),
+            self.anchor,
+        ) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
                 x: w as f32 - size - 14.0,
@@ -2448,6 +2559,8 @@ impl Walker {
         let os = self.objects.stats();
         let cs = self.characters.stats();
         let r = &self.last_report;
+        let audio = self.audio.as_ref().map(|a| a.stats());
+        let engine = audio.and_then(|a| a.engine);
         let ws = self.water.stats();
         let fs = self.frills.stats();
         let fx_row = framelog::FxRow {
@@ -2497,6 +2610,10 @@ impl Walker {
             anim_submit_ms: cs.submit_ms,
             anim_upload_ms: cs.palette_ms,
             anim_worker_ms: cs.worker_ms,
+            audio_ms: audio.map_or(0.0, |a| a.update_ms),
+            audio_voices: engine.map_or(0, |e| e.active_voices),
+            audio_underruns: engine.map_or(0, |e| e.underruns),
+            mixer_load: engine.map_or(0.0, |e| f64::from(e.mixer_load)),
             x: p.x,
             y: p.y,
             z: p.z,
@@ -2536,8 +2653,17 @@ impl Walker {
         Some(describe(&lock(&self.shared), &pos, self.controls.heading()))
     }
 
+    /// World audio, when on.
+    #[must_use]
+    pub fn audio(&self) -> Option<&crate::audio::WorldAudio> {
+        self.audio.as_ref()
+    }
+
     /// Frees GPU resources and stops the workers.
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>) {
+        if let Some(a) = self.audio.as_mut() {
+            a.shutdown();
+        }
         self.characters.shutdown(renderer, &mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);

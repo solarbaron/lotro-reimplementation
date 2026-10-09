@@ -45,11 +45,18 @@
 //!   No write of this crate ever lands inside a game install (recorded game
 //!   directories, `TESSERA_GAME_DIR`, or any directory holding
 //!   `client_general.dat`): the game install is read-only.
+//! * [`UiPrefs`] reads and writes the game-UI preferences of the `[UI]` section
+//!   (skin, walker overlays, cursor, scale, tooltips, U5 budgets, chat window).
+//! * [`InputPrefs`] reads and writes the `[Input]` section (double-click time and
+//!   rectangle, `keymap.md` §7.7).
 //! * [`SCHEMA_VERSION`] and [`migrate()`] form the migration hook for future
 //!   incompatible changes. Unknown keys are preserved with their exact TOML
 //!   type at every level (the root, `[game]`, `[explorer]`, each bookmark
 //!   and each `[windows.<key>]` table), so files written by a newer Tessera
 //!   survive a round trip through an older one.
+//!
+//! * [`AudioSettings`] reads and writes the additive `[audio]` section (kept in
+//!   [`Settings::extra`]) and imports the original client's `[Sound]` volumes read-only.
 //!
 //! All reads are bounded by [`MAX_FILE_SIZE`], the structural depth of a
 //! document by [`MAX_NESTING_DEPTH`], every list by its `MAX_*`
@@ -61,13 +68,24 @@
 /// Re-export of the `toml` crate, for working with [`Settings::extra`] tables.
 pub use toml;
 
+mod audio;
 mod error;
+mod input;
 mod migrate;
 mod model;
 mod nesting;
 mod store;
+mod ui;
 
+pub use audio::{
+    AudioSettings, MAX_CHANNEL_LABEL_LEN, MAX_CHANNEL_VOLUMES, MAX_PLAYING_SOUNDS_LIMIT,
+    SECTION_AUDIO, SoundImport, audio_keys,
+};
 pub use error::{LoadWarning, Result, SettingsError};
+pub use input::{
+    DEFAULT_DOUBLE_CLICK_MS, DEFAULT_DOUBLE_CLICK_PX, DOUBLE_CLICK_MS_RANGE, DOUBLE_CLICK_PX_RANGE,
+    INPUT_SECTION, InputPrefs,
+};
 pub use migrate::{
     MIGRATIONS, Migration, MigrationFn, SCHEMA_VERSION, SCHEMA_VERSION_KEY, migrate, migrate_with,
 };
@@ -81,4 +99,8 @@ pub use nesting::MAX_NESTING_DEPTH;
 pub use store::{
     APP_DIR_NAME, FILE_NAME, LoadStatus, Loaded, MAX_BACKUPS, MAX_FILE_SIZE, SETTINGS_FILE_ENV,
     SettingsStore, check_not_inside_game_dirs, default_path,
+};
+pub use ui::{
+    BUDGET_MIB_RANGE, ChatPrefs, CursorMode, MAX_UI_TEXT_BYTES, MinimapMode, SCALE_RANGE,
+    ScaleFilter, UI_SECTION, USER_SKIN_KEY, UiPrefs,
 };

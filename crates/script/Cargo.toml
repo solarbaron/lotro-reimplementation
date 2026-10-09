@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-script"
-description = "Embedded Lua 5.1 plugin host (sandboxed apartments, plugin descriptors, plugin data)"
+description = "Plugin-free sandboxed Lua 5.1 core: script states from a profile, limits and instruction budget, protected calls, bounded patterns, metered finalizers, collector stepping, a no-execution Lua-table data reader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,12 +10,8 @@ publish.workspace = true
 
 [dependencies]
 mlua = { version = "0.12", features = ["lua51", "vendored", "send"] }
-roxmltree = "0.21"
 thiserror.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-tempfile = "3"
 
 [lints]
 workspace = true

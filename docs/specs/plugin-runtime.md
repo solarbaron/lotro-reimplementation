@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (revision 3, 2026-10-06: applies the Accepted decisions 0014 and 0015, see the change log; repaired twice the same day after its reviews, last two change-log rows; accepted after revision for decisions 0014/0015, review record below) |
+| Status | **Accepted** (revision 3, 2026-10-06: applies the Accepted decisions 0014 and 0015, see the change log; repaired twice the same day after its reviews; accepted after revision for decisions 0014/0015, review record below). **Amended 2026-10-06** for decision 0014's Amendment 1 (§8.4, §10.3, §16 Q11–Q13; last change-log row): Tessera rules only, awaiting review of this change |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent) |
@@ -218,6 +218,19 @@ reference interpreter. "Linux default" means PUC-Rio 5.1 built against glibc on 
 | String ordering | bytewise unsigned | bytewise under the C locale | Same; never use locale collation. |
 | `string.upper/lower`, pattern classes | ASCII only | ASCII only in the C locale | Same (§4.3). |
 | `print` | Writes to the process's standard output, which the windowed client discards | — | `lua-plugin-api.md` §3.2: route to the script log at debug level. |
+
+> **OPEN (implementation, M5, `crates/script`):** the M5 core applies the rows above by
+> replacing the library functions `tostring`, `tonumber`, `string.format`, `math.random`
+> and `math.randomseed` (and `print`, which uses that `tostring`). Conversions done inside
+> the vendored interpreter itself keep the platform's results: the `..` operator and
+> `table.concat` with numbers (`1e20 .. ""` gives `1e+20`), string coercion of number
+> arguments by other library functions, text-to-number coercion in arithmetic
+> (`"0x100000000" + 0` gives 4294967296), and hexadecimal numerals in source text
+> (`0x100000000` gives 4294967296). Matching those needs a patched interpreter, which
+> decision 0023 leaves out of M5. Also unconfirmed: the text `string.format` gives for a
+> non-finite value with `%e`, `%f` or `%g` (the M5 core passes the platform's `inf`/`nan`
+> through), and the result of a hexadecimal text with a leading minus whose magnitude
+> exceeds 32 bits (the M5 core gives 4294967295, the saturated value, without wrapping).
 
 <a id="4-5"></a>
 ### 4.5 Random numbers (R7)
@@ -438,24 +451,24 @@ call on its main thread (R13); where in its frame each kind runs is stated only 
 (`lua-plugin-api.md` §3.3: the UI tick order, input outside the tick; its OPEN on the order
 of the deferred work). The rule lives in decision 0014 D8 and is restated here for the
 plugin host; if the two ever differ, D8 governs and this section must be revised, with
-the two explicit exceptions named below. The autoload loads as deferred items and the
+the explicit exception named below. The autoload loads as deferred items and the
 queuing of interactive loads go beyond D8's text without contradicting it (Tessera readings
-of D8, marked where they appear). Two rules **differ** from D8's text and are explicit
-exceptions to "D8 governs":
+of D8, marked where they appear). One rule **differs** from D8's text and is an explicit
+exception to "D8 governs" (until decision 0014's Amendment 1 of 2026-10-06 there were two;
+that amendment made the second, the skip set of queued `Received` events, part of D8):
 
 - the **wait for the first plugin file index** (below), grounded in the Accepted decision
   0015 §4.4 (the host loads no plugin before the first index is ready). While the head of
   the deferred-work queue is a load and that index is not ready, no item runs in the frame,
   which lifts D8's rule that at least one item runs in each frame (D8 step 7, the slice
-  rule). Where the two Accepted decisions meet, 0015 §4.4 governs for this case only;
-- the **skip set** of queued `Received` events (below). D8 delivers every queued event "to
-  the handlers set at delivery"; the skip set is taken from 0014's open review item 1 and
-  is pending the revision of 0014 that settles that item.
+  rule). Where the two Accepted decisions meet, 0015 §4.4 governs for this case only.
 
 **Placement.** Every host call runs on the main thread, in frame-loop step 1 or step 7, with
 one exception, the unload at client exit (below). No host call runs in steps 2–6
 (session, simulation) or in step 8 onward (UI layout and paint, rendering), and none runs on
-another thread (§10.3). See the OPEN at the end of this section for UI notifications.
+another thread (§10.3). UI notifications that game or session code causes are no exception:
+the UI changes behind them are applied in step 7 (below, "UI changes made outside steps 1
+and 7").
 
 **Step 1, input.** The plugin input handlers (`MouseDown`, `MouseUp`, `MouseClick`,
 `MouseDoubleClick`, `MouseMove`, `MouseEnter`, `MouseLeave`, `MouseWheel`, `KeyDown`, `KeyUp`,
@@ -465,7 +478,8 @@ the window system's callbacks as they arrive; that work, plugin calls included, 
 toward step 1 of the following frame. Input handler calls are never deferred, dropped or cut
 by a per-frame slice.
 
-**Step 7, the tick.** In this order:
+**Step 7, the tick.** It begins with the queued UI changes (below, "UI changes made outside
+steps 1 and 7"), then, in this order:
 
 1. the UI tick of `lua-plugin-api.md` §3.3: if the pointer needs re-evaluating, the hit test
    and the hover refresh (with its `MouseLeave` and `MouseEnter`); then the hover check
@@ -531,32 +545,29 @@ events of the gameplay views (`lua-plugin-api.md` §15), are not delivered when 
 - events that are UI notifications keep the delivery of `lua-plugin-api.md` §9.7 and are not
   queued.
 
-> **OPEN (re-entrancy of `Received`, 0014 open review item 1):** `lua-plugin-api.md` §9.6
-> (BIN) says that a chat line produced while a `Received` dispatch is running (for example by
-> `Shell.WriteLine` in a handler) is not delivered to that apartment's `Received` handlers.
-> Queued as above, such a line would reach that apartment one item later, so a handler that
-> writes a line for every line it receives would feed itself without end and use the whole
-> deferred-work slice in every frame. The decision record lists this as a must-fix item left
-> to M5 and does not fix it. **Tessera rule, pending the revision of 0014 that settles its
-> open review item 1** (an explicit exception to "D8 governs" above; it extends the fix the
-> review proposes, and keeps §9.6):
->
-> - each queued `Received` event carries a **skip set** of apartments. A line raised while a
->   queued `Received` event is being delivered to an apartment gets the skip set of that
->   event plus that apartment (the apartment whose `Received` dispatch is running). A line
->   raised at any other time (a session line, a system notice, a `WriteLine` from an input
->   handler, an `Update` handler or another deferred item) gets an empty skip set;
-> - delivery skips every apartment in the event's skip set; every other apartment gets the
->   line as usual;
-> - so a chain of lines that echoing apartments write in answer to one another visits each
->   apartment at most once: a chain in which each line is written in answer to the one
->   before it has at most as many written lines as there are apartments, so the lines end.
->   This is what §9.6's nested synchronous delivery gives: there, an apartment whose
->   dispatch is still running further up the chain gets no line from below it.
->
-> `lua-plugin-api.md` §11.3 (working tree of 2026-10-06, pending its review) states the
-> same rule, the inherited skip set included, as an interim rule pending the revision of
-> 0014, and tests the two-apartment case in its invariant 65.
+**Skip set of queued `Received` events** (Tessera rule, 0014 D8 as amended on 2026-10-06,
+Amendment 1 item 1; this closes the former OPEN on the re-entrancy of `Received`, Q11).
+`lua-plugin-api.md` §9.6 (BIN) says that a chat line produced while a `Received` dispatch is
+running (for example by `Shell.WriteLine` in a handler) is not delivered to that apartment's
+`Received` handlers. Queued without a further rule, such a line would reach that apartment one
+item later, and a handler that writes a line for every line it receives would feed itself
+without end. So:
+
+- each queued `Received` event carries a **skip set** of apartments. A line raised while a
+  queued `Received` event is being delivered to an apartment gets the skip set of that
+  event plus that apartment (the apartment whose `Received` dispatch is running). A line
+  raised at any other time (a session line, a system notice, a `WriteLine` from an input
+  handler, an `Update` handler or another deferred item) gets an empty skip set;
+- delivery skips every apartment in the event's skip set; every other apartment gets the
+  line as usual;
+- so a chain of lines that echoing apartments write in answer to one another visits each
+  apartment at most once: a chain in which each line is written in answer to the one
+  before it has at most as many written lines as there are apartments, so the lines end.
+  This is what §9.6's nested synchronous delivery gives: there, an apartment whose
+  dispatch is still running further up the chain gets no line from below it.
+
+`lua-plugin-api.md` §11.3 states the same rule and tests the two-apartment case in its
+invariant 65; invariants 20 and 21 below test it here.
 
 **Unload timing** (Tessera rule, 0014 D8; the steps are §8.3).
 
@@ -575,30 +586,42 @@ events of the gameplay views (`lua-plugin-api.md` §15), are not delivered when 
   handler call keeps its instruction budget. No frame follows, so the frame-time rule does
   not apply.
 
-> **OPEN (blocking writes at unload, 0014 open review item):** an unload in step 1 or step 7
-> closes Lua states, and §8.3 step 4 makes `PluginData.Save` write synchronously while a state
-> closes. That is blocking file I/O on the main thread inside a frame, which
-> `docs/ARCHITECTURE.md` §21 does not list as an exception. The decision record notes the
-> gap and does not settle it (an §21 exception, or a flush that does not block the frame).
-> Until it is settled, the close keeps the synchronous write that §8.3 and
-> `lua-plugin-api.md` §10.6 require.
+**Writes at unload** (Tessera rule, 0014 Amendment 1 item 9, `docs/ARCHITECTURE.md` §21
+exception (b); this closes the former OPEN on blocking writes at unload, Q13). An unload in
+step 1 or step 7 closes Lua states, and §8.3 step 4 makes `PluginData.Save` write
+synchronously while a state closes. That blocking file I/O on the main thread is a stated
+exception to ARCHITECTURE §21's no-blocking-I/O rule: the synchronous writes and the flush
+when a Lua state closes, for an unload asked for by the user or a plugin (step 1 or 7), the
+logout unload (step 7) and the client-exit unload (after the last frame). The close keeps the
+synchronous write that §8.3 and `lua-plugin-api.md` §10.6 require.
 
 **Accounting.** Time inside plugin Lua calls is measured as plugin time: the step-1 input
-handlers wherever in the event loop they run, and in step 7 the `Update` broadcast, the
-deferred work and the collector step. Plugin time is kept out of Tessera's own UI budget
+handlers wherever in the event loop they run, and in step 7 the plugin notifications raised
+when the queued UI changes are applied, the `Update` broadcast, the deferred work and the
+collector step. Plugin time is kept out of Tessera's own UI budget
 (row U1 of decision 0015 §6) and out of its paint slice, but it counts toward the frame-time
 rule (no frame over 50 ms). The client-exit unload is plugin time outside any frame.
 
-> **OPEN (UI notifications outside steps 1 and 7, 0014 open review item 2):** the placement
-> rule above holds for every host call this spec names. It does not hold for UI notifications
-> that `lua-plugin-api.md` §9.7 delivers synchronously when game or session code changes the
-> UI outside steps 1 and 7: for example a native panel shown with activation in step 2, which
-> deactivates the active plugin window and takes focus from its `TextBox`, or a window resize
-> or scale change handled in a window-system callback, which re-lays out root panels and
-> raises `SizeChanged` and `PositionChanged`. The decision record leaves open whether such UI
-> changes must be applied in step 7, or whether the rule is widened to include them. Until it
-> is settled, implementers must not assume that no plugin code runs outside steps 1 and 7;
-> each such notification is still one protected host call with its own budget.
+**UI changes made outside steps 1 and 7** (Tessera rule, 0014 D8 as amended on 2026-10-06,
+Amendment 1 item 2; this closes the former OPEN on UI notifications outside steps 1 and 7,
+Q12). `lua-plugin-api.md` §9.7 delivers UI notifications synchronously, so a UI change made
+outside steps 1 and 7 would run plugin handlers there: for example a native panel shown with
+activation by a session event in step 2, which deactivates the active plugin window and takes
+focus from its `TextBox`, or a window resize or scale change handled in a window-system
+callback, which re-lays out root panels and raises `SizeChanged` and `PositionChanged`.
+Decision 0014 settles this by moving the changes, not by widening the placement rule:
+
+- session code (step 2), simulation and game code (steps 3–6) and the window system's size and
+  scale-factor callbacks never make such a UI change directly; they queue a UI change request
+  in `tessera-ui` (show and hide, `HideWhenField`, activation, focus, z-order, moves and
+  resizes, the screen size and scale factor);
+- the queue is applied at the start of step 7, before the hit test and hover refresh, in
+  request order and not sliced; the plugin notifications it raises run there, each one host
+  call with its own instruction budget, and count as plugin time like input handlers;
+- changes made in step 1 or step 7 (input routing, plugin code, the UI tick, deferred work)
+  apply at once, as before; step 8 raises no plugin notification.
+
+So the placement rule above holds for every host call, UI notifications included.
 
 ---
 
@@ -666,6 +689,12 @@ rule (no frame over 50 ms). The client-exit unload is plugin time outside any fr
   input-map changes, layout, paint and rendering (§8.4). It runs in every tick, whatever
   deferred work the 2 ms slice left queued, it is never cut by that slice, and its time
   counts as plugin time.
+
+> **Note (implementation, M5):** a state at its memory cap cannot run the `lua_gc` call
+> itself (the call needs a few bytes). The M5 core therefore lifts the cap by 1 MiB for the
+> duration of the per-tick step; finalizers run in that step can allocate at most that much
+> more. Without that, a state that hit its cap stays at it, because Lua 5.1 has no
+> emergency collection.
 
 <a id="9-3"></a>
 ### 9.3 Finalizers
@@ -771,9 +800,11 @@ on the client's main thread, in frame-loop step 1 (the input handlers) and step 
 with the `Update` broadcast; the deferred work, which includes the plugin events raised by game
 and session state and the logout unload; the collector step), with one exception, the unload
 of every apartment at client exit, which runs after the last frame. It never runs during steps
-2–6 or 8 onward (session, simulation, layout, paint, rendering) and never on another thread;
-the OPEN on UI notifications in §8.4 qualifies this. Host calls always use the apartment's
-main Lua thread (R13). Lua states are never touched from another OS thread.
+2–6 or 8 onward (session, simulation, layout, paint, rendering) and never on another thread.
+UI notifications caused by game or session code follow the same rule, because the UI changes
+behind them are applied at the start of step 7 (§8.4, decision 0014 Amendment 1 item 2).
+Host calls always use the apartment's main Lua thread (R13). Lua states are never touched
+from another OS thread.
 
 <a id="10-4"></a>
 ### 10.4 Coroutines
@@ -982,6 +1013,11 @@ Checkable with synthetic plugins generated by test code (never shipped third-par
 9. **Error values (both):** a handler that raises `error({})` produces a report with an empty
    message; `error(42)` reports `42`; `pcall` around an API call with an invalid argument
    returns false and a string without a `chunk:line:` prefix.
+   > **OPEN (implementation, M5):** with the stock `error`, a number at level 1 gets the
+   > position prefix like a string (`lua_isstring` is true for numbers), so `error(42)` in a
+   > handler file reports `<chunk>:<line>: 42`; only `error(42, 0)` (or a call whose level
+   > has no line) reports `42`. The M5 core keeps the stock rule; confirm in the original
+   > whether the invariant means level 0.
 10. **No rollback (both):** a plugin whose main file creates a window, registers a shell
     command and then raises an error leaves the window shown and the command working;
     `Plugins[name]` is nil; unloading its apartment removes both.
@@ -1019,12 +1055,12 @@ Checkable with synthetic plugins generated by test code (never shipped third-par
     that frame. A single item of 5 ms runs alone and is not interrupted. When a frame's slice
     is used up, the collector step of §9.2 still runs in that frame, and the remaining items
     run in later frames in queue order.
-20. **Tessera only, `Received` re-entrancy (§8.4 OPEN, interim rule):** an apartment whose
+20. **Tessera only, `Received` re-entrancy (§8.4, skip set):** an apartment whose
     `Received` handler calls `Shell.WriteLine` once per line it receives gets each of its own
     written lines **not** delivered to its `Received` handlers, while another apartment's
     handlers get them; a single incoming line therefore causes exactly one written line and
     the deferred-work queue empties.
-21. **Tessera only, two echoing apartments (§8.4 OPEN, interim rule):** apartments `A` and `B`
+21. **Tessera only, two echoing apartments (§8.4, skip set):** apartments `A` and `B`
     each have a `Received` handler that calls `Shell.WriteLine` once per line it receives, and
     apartment `C` has a handler that only counts lines. One session line `L0` arrives. `A`
     and `B` each get `L0` and each write one line (`L1` from `A` with skip set {`A`}, `L1'`
@@ -1122,9 +1158,9 @@ apartment `X`):
 | Q8 | Classification of bytes 0x80–0xFF in `import` names (carried from `lua-plugin-api.md` §7.2) | §7 | Narrowed: a property of the platform's Universal C runtime; Tessera's ASCII rule stands. |
 | Q9 | Whether a plugin whose load failed still receives `Unload` when its apartment is unloaded | §15.5 | BIN on the load-failure path; Tessera: no `Unload` for it. |
 | Q10 | Peak memory of the largest M5 apartments after user interaction | §9.4 | Exit-criterion-4 run records the peak per apartment; revisit the 512 MiB default if any exceeds 256 MiB. |
-| Q11 | `Received` re-entrancy under the step-7 queue of game-raised events (`lua-plugin-api.md` §9.6 against decision 0014 D8) | §8.4 | Revision of decision 0014 (its open review item 1); §8.4 states an interim Tessera rule (skip set inherited along a chain of written lines), an explicit exception to "D8 governs". |
-| Q12 | UI notifications that `lua-plugin-api.md` §9.7 delivers synchronously when game or session code changes the UI outside steps 1 and 7 | §8.4, §10.3 | Revision of decision 0014 (its open review item 2): apply such UI changes in step 7, or widen the placement rule. |
-| Q13 | Synchronous `PluginData.Save` during an unload inside a frame against `docs/ARCHITECTURE.md` §21 | §8.4 | An §21 exception or a non-blocking flush, decided with decision 0014's open review items. |
+| Q11 | `Received` re-entrancy under the step-7 queue of game-raised events (`lua-plugin-api.md` §9.6 against decision 0014 D8) | §8.4 | **Closed 2026-10-06** by decision 0014 Amendment 1 item 1: the skip set, inherited along a chain of written lines, is now D8's rule. |
+| Q12 | UI notifications that `lua-plugin-api.md` §9.7 delivers synchronously when game or session code changes the UI outside steps 1 and 7 | §8.4, §10.3 | **Closed 2026-10-06** by decision 0014 Amendment 1 item 2: such UI changes are queued and applied at the start of step 7. |
+| Q13 | Synchronous `PluginData.Save` during an unload inside a frame against `docs/ARCHITECTURE.md` §21 | §8.4 | **Closed 2026-10-06** by decision 0014 Amendment 1 item 9: ARCHITECTURE §21 exception (b). |
 
 ---
 
@@ -1146,7 +1182,7 @@ Recorded here, not applied, because this session owns only this file.
 | `lua-plugin-api.md` §10.4 | Add the original's read-back behaviour for comma files (§15.4 here). | R21 |
 | `plugin-descriptor.md` §8.2, §10.2 | Autoload: exact-name map, first `Plugin` element with a given `Name` wins; order not file order. | R22 |
 | `lua-plugin-api.md` §3.3, §6.3, §11.3, §15 | Decision 0014's owners list asks that spec's owner to reword "between frames" as D8 does (main thread, frame-loop steps 1 and 7, the client-exit unload after the last frame), to add the game-raised events and the logout unload to its list of deferred work, and to state when unloads and game-raised events run. **Applied** in the working-tree revision of `lua-plugin-api.md` of 2026-10-06, pending its review (its §3.3 Tessera rule and deferred-work list, §6.3, §11.3). §8.4 and §10.3 here follow D8 too. | DEC (0014 D8) |
-| `lua-plugin-api.md` §3.3, §6.2, §11.3 | (1) Name the autoload loads and the interactive loads (`/plugins load`, the manager UI) as step-7 deferred items, and the wait for the first plugin file index (decision 0015 §4.4), as §8.2 and §8.4 here do. (2) In §11.3, let a line raised while a queued `Received` event is delivered inherit that event's skip set plus the delivering apartment (§8.4 OPEN, invariant 21 here), pending the revision of 0014 that settles its open review item 1. **Both applied** in the working-tree revision of `lua-plugin-api.md` of 2026-10-06, pending its review: (1) in its §3.3 deferred-work list and §6.2, (2) in its §11.3 OPEN with its invariant 65. Its §3.3 now also states how the two meet (the head-of-queue wait of §8.4 here, which suspends the at-least-one-item rule), so **all requests of this row are applied**, pending that spec's review. | DEC (0014 D8 and open review item 1; 0015 §4.4) |
+| `lua-plugin-api.md` §3.3, §6.2, §11.3 | (1) Name the autoload loads and the interactive loads (`/plugins load`, the manager UI) as step-7 deferred items, and the wait for the first plugin file index (decision 0015 §4.4), as §8.2 and §8.4 here do. (2) In §11.3, let a line raised while a queued `Received` event is delivered inherit that event's skip set plus the delivering apartment (§8.4 OPEN, invariant 21 here), pending the revision of 0014 that settles its open review item 1. **Both applied** in the working-tree revision of `lua-plugin-api.md` of 2026-10-06, pending its review: (1) in its §3.3 deferred-work list and §6.2, (2) in its §11.3 OPEN with its invariant 65. Its §3.3 now also states how the two meet (the head-of-queue wait of §8.4 here, which suspends the at-least-one-item rule), so **all requests of this row are applied**, pending that spec's review. (3) **New, 2026-10-06:** decision 0014's Amendment 1 makes the skip set D8's rule (item 1), applies UI changes made outside steps 1 and 7 at the start of step 7 (item 2) and steps the frame clock right after present (item 4); LPA §11.3 can drop "interim … until decision 0014 is revised", and the two §3.3 OPENs (UI notifications outside steps 1 and 7; when the frame clock steps) can close with those rules. Not applied there yet. | DEC (0014 D8, open review item 1 and Amendment 1; 0015 §4.4) |
 
 ---
 
@@ -1159,3 +1195,4 @@ Recorded here, not applied, because this session owns only this file.
 | 2026-10-06 | Revision 3 (spec writer, dirty room); status Accepted → Revised, awaiting review of this change. Applies the Accepted decisions 0014 (UI input bridge, D8) and 0015 (UI rendering, §6) to Tessera's rules only; no fact about the original (R1–R27, their marks and the sections that state them) changed. **§2:** a note on Tessera rules taken from decision records (key DEC, no provenance mark). **§3.2:** "Tick" is frame-loop step 7 in Tessera; new term "frame-loop step". **§8.1, §8.2, §8.3:** cross-references to the new §8.4 for the timing of plugin-data callbacks, event handlers, `LoadPlugin` requests, autoload and unloads. **New §8.4** (where host calls run, from 0014 D8): placement in steps 1 and 7 with the client-exit exception; step-7 order; deferred work sliced by whole items at 2 ms; autoload as deferred items (Tessera reading of D8); game-raised plugin events queued to step 7; unload timing (requested, logout, client exit); plugin-time accounting against 0015 §6 U1 and the 50 ms rule; three OPENs taken from 0014's open review items (`Received` re-entrancy against `lua-plugin-api.md` §9.6, with an interim Tessera rule that keeps §9.6; synchronous saves at unload against ARCHITECTURE §21; synchronous UI notifications outside steps 1 and 7). **§9.2:** the collector step's place is now fixed by 0014 D8 (step 7, after the deferred work, every tick, not sliced); the statement that the original's place is unknown is kept. **§10.1:** per-frame rules for plugin code point to §8.4. **§10.3:** "between frames" reworded as 0014 D8 and its owners list require; the original's main-thread fact (R13) is stated separately. **§14:** invariants 18–20. **§16:** Q11–Q13. **§17:** a row for the `lua-plugin-api.md` sections that 0014's owners list addresses. **§12:** the image row of the file table points to decision 0015 §4.3–§4.4 (whole-tree index, 64-byte header read at call time, `.png`/`.bmp` refused, decode on workers). |
 | 2026-10-06 | Repair of revision 3 after its review (spec writer, dirty room); status stays Revised, awaiting review. No fact about the original (R1–R27, their marks) changed. **Header, §2:** decision 0015 is cited for §4.3–§4.4 as well as §6. **§8.2:** autoload as step-7 items labelled a Tessera reading of 0014 D8; new bullets: interactive loads (`/plugins load`, manager UI) are queued step-7 items (Tessera choice), and no plugin loads before the first `Plugins/` index is ready (0015 §4.4). **§8.4:** the "D8 governs" sentence names the rules that go beyond D8 and makes the `Received` skip set an explicit exception, pending the revision of 0014; the tick's first item runs the hit test and hover refresh only if the pointer needs re-evaluating (D8 step 7 item 1); the game-raised `Received` sources now include `Shell.WriteLine` lines and plugin error lines; new paragraph on waiting for the first file index; interactive loads queued like autoload; the interim `Received` rule now gives a line raised during a queued `Received` delivery the delivered event's skip set plus the delivering apartment, so that echoing apartments cannot feed each other (the first pass covered only one apartment). **§10.3:** `lua-plugin-api.md` §3.3 no longer says only "between frames". **§14:** invariant 19 reworded (the fourth item, due at 2.4 ms, does not start); new invariants 21 (two echoing apartments) and 22 (first file index). **§16:** Q11 updated. **§17:** the collector row and the 0014 owners-list row are marked applied in the working-tree `lua-plugin-api.md`, pending its review; a new row asks that spec for the load timing, the index wait and the inherited skip set. |
 | 2026-10-06 | Second repair of revision 3 after its re-review (spec writer, dirty room); status stays Revised, awaiting review. No fact about the original changed; no section number changed. **§8.4:** the "D8 governs" sentence now names two explicit exceptions, the wait for the first file index (grounded in the Accepted decision 0015 §4.4; it lifts D8's "at least one item runs in each frame" while the head of the queue is a load) and the `Received` skip set; the index-wait paragraph is labelled as the first exception; the end of the re-entrancy OPEN no longer says that `lua-plugin-api.md` §11.3 lacks the inherited skip set (its working tree states it, with invariant 65). **§17:** the load-timing and skip-set row is marked applied in the working-tree `lua-plugin-api.md`, pending its review; its only remaining request is that LPA §3.3 state the head-of-queue wait and the suspension of "at least one item". |
+| 2026-10-06 | Amendment for decision 0014's Amendment 1 (spec writer, dirty room); awaiting review of this change. No fact about the original changed; no section number changed. **§8.4:** the interim skip set of queued `Received` events is now D8's rule (0014 Amendment 1 item 1), so the OPEN on `Received` re-entrancy becomes a stated rule and "D8 governs" keeps one explicit exception (the wait for the first file index); the OPEN on UI notifications outside steps 1 and 7 becomes the rule that UI changes made by game or session code and by the window system's size and scale-factor callbacks are queued and applied at the start of step 7 (item 2), and step 7 begins with them; the OPEN on blocking writes at unload becomes ARCHITECTURE §21 exception (b) (item 9). **§10.3:** the qualification by the §8.4 OPEN is replaced by the step-7 rule. **Invariants 20, 21:** labels no longer say "interim". **§16:** Q11–Q13 closed. **§8.4 Accounting:** names the notifications of queued UI changes. **§17:** the LPA row asks LPA §3.3 and §11.3 to close their matching OPENs. |

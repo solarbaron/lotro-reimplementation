@@ -54,9 +54,17 @@ pub struct Runtime {
     remote: Option<crate::net::RemoteSettings>,
     /// System chat lines (sender empty) since the last [`Runtime::take_notices`].
     notices: Vec<String>,
+    /// Session chat lines held for the game UI's chat window ([`Runtime::hold_chat_for_ui`]);
+    /// `None` when no game UI takes them.
+    ui_chat: Option<std::collections::VecDeque<crate::net::ChatLine>>,
+    /// Session lines dropped because [`MAX_HELD_CHAT`] lines were held.
+    ui_chat_dropped: u64,
     character: Option<String>,
     texture_settled: bool,
 }
+
+/// Most session chat lines held for the game UI until it takes them.
+pub const MAX_HELD_CHAT: usize = 256;
 
 /// Tessera's own data folder: `--data-dir`, else `$XDG_DATA_HOME/tessera`, else
 /// `./tessera-data`.
@@ -207,7 +215,11 @@ impl Runtime {
                 tracing::info!(dir = %plugins_dir.display(), "no plugins folder (use --plugins)");
             }
         }
-        let plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        let mut plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        plugins.set_music(crate::audio::player_music::PlayerMusic::new(
+            crate::audio::player_music::MusicConfig::from_args(args, &root),
+        ));
+        plugins.set_startup_commands(args.commands.clone());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -218,6 +230,8 @@ impl Runtime {
             walker_session,
             remote,
             notices: Vec::new(),
+            ui_chat: None,
+            ui_chat_dropped: 0,
             character: None,
             texture_settled: false,
         })
@@ -303,10 +317,15 @@ impl Runtime {
     fn on_loader_event(&mut self, ev: LoaderEvent) -> Option<DecodedTexture> {
         match ev {
             LoaderEvent::NoData { reason } => {
+                self.plugins.data_unavailable();
                 self.status = DataStatus::NoData(reason);
                 self.texture_settled = true;
             }
             LoaderEvent::Opened { root, set, stats } => {
+                if let Some(m) = self.plugins.music_mut() {
+                    m.attach_data(Arc::clone(&set), &root);
+                }
+                self.plugins.attach_data(Arc::clone(&set));
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
             }
@@ -350,7 +369,19 @@ impl Runtime {
                 if line.sender.is_empty() && self.notices.len() < 64 {
                     self.notices.push(line.text.clone());
                 }
-                self.plugins.chat(&line.sender, &line.text);
+                match &mut self.ui_chat {
+                    // With a game UI the chat window is the only path to the plugins
+                    // (`chat-window.md` §10 items 2 and 9): each line reaches `Received`
+                    // once, when the window takes it.
+                    Some(q) => {
+                        if q.len() < MAX_HELD_CHAT {
+                            q.push_back(line);
+                        } else {
+                            self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1);
+                        }
+                    }
+                    None => self.plugins.chat(&line.sender, &line.text),
+                }
             }
             let name = world
                 .player()
@@ -364,9 +395,57 @@ impl Runtime {
         self.plugins.pump();
     }
 
-    /// System messages from the world session since the last call.
+    /// System messages from the world session since the last call (the walker's HUD).
     pub fn take_notices(&mut self) -> Vec<String> {
         std::mem::take(&mut self.notices)
+    }
+
+    /// Holds every session chat line (with or without a sender) for the game UI's chat
+    /// window instead of handing it to the plugins (`true`), from the run's start until the
+    /// window takes them ([`Self::take_ui_chat`]); at most [`MAX_HELD_CHAT`] lines wait.
+    /// `false` (the UI failed or shut down) hands the held lines to the plugins and goes
+    /// back to delivering lines to them directly.
+    pub fn hold_chat_for_ui(&mut self, on: bool) {
+        if on {
+            self.ui_chat
+                .get_or_insert_with(std::collections::VecDeque::new);
+            return;
+        }
+        if let Some(q) = self.ui_chat.take() {
+            for line in q {
+                self.plugins.chat(&line.sender, &line.text);
+            }
+        }
+    }
+
+    /// Whether session chat lines are held for a game UI.
+    #[must_use]
+    pub fn holds_chat_for_ui(&self) -> bool {
+        self.ui_chat.is_some()
+    }
+
+    /// The session chat lines held for the game UI since the last call, in order.
+    pub fn take_ui_chat(&mut self) -> Vec<crate::net::ChatLine> {
+        if self.ui_chat_dropped > 0 {
+            tracing::warn!(
+                dropped = self.ui_chat_dropped,
+                "session chat lines dropped while waiting for the game UI"
+            );
+            self.ui_chat_dropped = 0;
+        }
+        self.ui_chat
+            .as_mut()
+            .map(|q| q.drain(..).collect())
+            .unwrap_or_default()
+    }
+
+    /// Queues a session chat line as if the world session had sent it (tests and tools).
+    pub fn inject_chat(&mut self, line: crate::net::ChatLine) {
+        match &mut self.ui_chat {
+            Some(q) if q.len() < MAX_HELD_CHAT => q.push_back(line),
+            Some(_) => self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1),
+            None => self.plugins.chat(&line.sender, &line.text),
+        }
     }
 
     /// Record the scene plus the world's entities into `frame`.
@@ -437,6 +516,34 @@ mod tests {
             stats: crate::data::ArchiveStats::default(),
         };
         assert!(refuse_install_path(&plain, Some(&status), &install.path().join("a")).is_err());
+    }
+
+    #[test]
+    fn held_chat_waits_for_the_ui_and_is_handed_over_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = Args::try_parse_from([
+            "t",
+            "--no-data",
+            "--data-dir",
+            dir.path().to_str().expect("utf-8"),
+        ])
+        .expect("args");
+        let mut rt = Runtime::start(&args, Instant::now()).expect("runtime");
+        assert!(!rt.holds_chat_for_ui());
+        rt.hold_chat_for_ui(true);
+        for i in 0..(MAX_HELD_CHAT + 3) {
+            rt.inject_chat(crate::net::ChatLine::system(format!("line {i}")));
+        }
+        let lines = rt.take_ui_chat();
+        assert_eq!(lines.len(), MAX_HELD_CHAT, "bounded");
+        assert_eq!(
+            lines[0].text, "line 0",
+            "the first lines (the welcome) are kept"
+        );
+        assert!(rt.take_ui_chat().is_empty());
+        rt.hold_chat_for_ui(false);
+        assert!(!rt.holds_chat_for_ui());
+        rt.shutdown();
     }
 
     #[test]

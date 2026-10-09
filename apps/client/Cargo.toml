@@ -21,6 +21,7 @@ anyhow.workspace = true
 clap.workspace = true
 tessera-anim.workspace = true
 tessera-assets.workspace = true
+tessera-audio.workspace = true
 tessera-dat.workspace = true
 tessera-entity.workspace = true
 tessera-formats.workspace = true
@@ -34,9 +35,14 @@ tessera-net.workspace = true
 tessera-physics.workspace = true
 tessera-props.workspace = true
 tessera-render.workspace = true
-tessera-script.workspace = true
+tessera-plugins.workspace = true
+tessera-scriptgraph.workspace = true
 tessera-settings.workspace = true
 tessera-terrain.workspace = true
+# String resolution for the game UI (src/ui_host).
+tessera-text.workspace = true
+# Native panels (src/panels): the game UI core and its game widgets.
+tessera-ui.workspace = true
 tessera-world.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -52,6 +58,16 @@ unicode-normalization = "0.1"
 [target.'cfg(unix)'.dependencies]
 # Terminal echo off for the test-server password prompt (`--server`).
 rustix = { version = "1", default-features = false, features = ["std", "termios"] }
+
+[features]
+default = []
+## Audio output through the system's device (cpal: ALSA on Linux; decision 0019). Off by
+## default, so that a plain workspace build and `cargo test --workspace` need no system
+## audio libraries (decision 0019, Decision 1 and Consequences). Without it the client runs
+## the null, offline and disabled audio backends only: `--audio auto` falls back to null,
+## `--audio device` turns audio off. Windowed builds with sound:
+## `cargo run --release -p tessera-client --features audio-device`.
+audio-device = ["tessera-audio/device"]
 
 [dev-dependencies]
 tempfile = "3"

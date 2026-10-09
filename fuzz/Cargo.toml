@@ -21,6 +21,7 @@ tessera-formats = { path = "../crates/formats" }
 tessera-install = { path = "../crates/install" }
 tessera-net = { path = "../crates/net" }
 tessera-script = { path = "../crates/script" }
+tessera-plugins = { path = "../crates/plugins" }
 tessera-props = { path = "../crates/props" }
 tessera-text = { path = "../crates/text" }
 tessera-material = { path = "../crates/material" }
@@ -34,9 +35,14 @@ tessera-world = { path = "../crates/world" }
 tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
+tessera-ui = { path = "../crates/ui" }
 tessera-physics = { path = "../crates/physics" }
 tessera-protocol = { path = "../crates/protocol" }
 tessera-server = { path = "../apps/server" }
+tessera-wvm = { path = "../crates/wvm" }
+tessera-audio = { path = "../crates/audio" }
+tessera-scriptgraph = { path = "../crates/scriptgraph" }
+tessera-assets = { path = "../crates/assets" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -179,25 +185,41 @@ test = false
 doc = false
 bench = false
 
-# --- tessera-script (docs/specs/lua-plugin-api.md) ---
-
-[[bin]]
-name = "script_descriptor"
-path = "fuzz_targets/script_descriptor.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "script_plugindata"
-path = "fuzz_targets/script_plugindata.rs"
-test = false
-doc = false
-bench = false
+# --- tessera-script, the plugin-free Lua core (plugin-runtime.md, decision 0023) ---
 
 [[bin]]
 name = "script_pattern"
 path = "fuzz_targets/script_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_reader"
+path = "fuzz_targets/script_reader.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-plugins (plugin-descriptor.md, lua-plugin-api.md) ---
+
+[[bin]]
+name = "plugins_descriptor"
+path = "fuzz_targets/plugins_descriptor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_plugindata"
+path = "fuzz_targets/plugins_plugindata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_commands"
+path = "fuzz_targets/plugins_commands.rs"
 test = false
 doc = false
 bench = false
@@ -351,6 +373,29 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wstate_character"
+path = "fuzz_targets/wstate_character.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_game_controls"
+path = "fuzz_targets/wstate_game_controls.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-wvm (docs/specs/wlib-bytecode.md) ---
+
+[[bin]]
+name = "wvm_code"
+path = "fuzz_targets/wvm_code.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-formats landblock family (docs/specs/landblock.md, entity-descriptor.md) ---
 
 [[bin]]
@@ -377,6 +422,22 @@ bench = false
 [[bin]]
 name = "formats_landblock_properties"
 path = "fuzz_targets/formats_landblock_properties.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_distant_sector"
+path = "fuzz_targets/formats_distant_sector.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats instanced content (docs/specs/instances.md) ---
+
+[[bin]]
+name = "formats_instances"
+path = "fuzz_targets/formats_instances.rs"
 test = false
 doc = false
 bench = false
@@ -528,6 +589,129 @@ bench = false
 [[bin]]
 name = "net_npc_events"
 path = "fuzz_targets/net_npc_events.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: UI layouts and fonts (ui-layout.md §4, fonts.md §3, M5) ---
+
+[[bin]]
+name = "formats_ui_layout"
+path = "fuzz_targets/formats_ui_layout.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_font"
+path = "fuzz_targets/formats_font.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-material: UI image files (skin-definition.md §7, decision 0015 §4, M5) ---
+
+[[bin]]
+name = "material_ui_image"
+path = "fuzz_targets/material_ui_image.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-input: importer of the original client's key map (keymap.md §12, M5) ---
+
+[[bin]]
+name = "input_import"
+path = "fuzz_targets/input_import.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-render: UI composition entries (render.md §6.5-§6.8, M5) ---
+
+[[bin]]
+name = "render_ui_entries"
+path = "fuzz_targets/render_ui_entries.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: painter, composition list and paint scheduler (decision 0015, M5) ---
+
+[[bin]]
+name = "ui_paint"
+path = "fuzz_targets/ui_paint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_paint_compose"
+path = "fuzz_targets/ui_paint_compose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_paint_scheduler"
+path = "fuzz_targets/ui_paint_scheduler.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: glyph atlases, text layout and drawing (fonts.md §4-§8, M5) ---
+
+[[bin]]
+name = "ui_text"
+path = "fuzz_targets/ui_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_text_font"
+path = "fuzz_targets/ui_text_font.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: user skin definitions (skin-definition.md §4, §8, M5) ---
+
+[[bin]]
+name = "ui_skin_definition"
+path = "fuzz_targets/ui_skin_definition.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: element tree, layout, widgets, behaviour, input bridge (ui-layout.md §7-§9, ui-widgets.md, ui-behaviour.md, M5) ---
+
+[[bin]]
+name = "ui_tree"
+path = "fuzz_targets/ui_tree.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: game widgets and chat (game-panels.md, chat-window.md, M5) ---
+
+[[bin]]
+name = "ui_game_command_line"
+path = "fuzz_targets/ui_game_command_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_game_map_data"
+path = "fuzz_targets/ui_game_map_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings_prefs"
+path = "fuzz_targets/settings_prefs.rs"
 test = false
 doc = false
 bench = false
@@ -803,6 +987,189 @@ bench = false
 [[bin]]
 name = "server_files"
 path = "fuzz_targets/server_files.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: sound infos, payload trailer, sound nodes (sound.md §3, §4, §9; M6) ---
+
+[[bin]]
+name = "formats_sound_info"
+path = "fuzz_targets/formats_sound_info.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: sound payload decoding (sound.md §3, §12.2; M6) ---
+
+[[bin]]
+name = "audio_decode"
+path = "fuzz_targets/audio_decode.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: engine driven by arbitrary operations (sound.md §6–§8; decision 0019; M6) ---
+
+[[bin]]
+name = "audio_engine"
+path = "fuzz_targets/audio_engine.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: player-music ABC reader (abc-dialect.md §3–§9, §14; M6) ---
+
+[[bin]]
+name = "audio_abc"
+path = "fuzz_targets/audio_abc.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-scriptgraph: the script-graph runtime on arbitrary graphs and operations (script-runtime.md; M6) ---
+
+[[bin]]
+name = "scriptgraph_runtime"
+path = "fuzz_targets/scriptgraph_runtime.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: instrument table on arbitrary scripts, player on arbitrary events (instruments.md §5–§10; M6) ---
+
+[[bin]]
+name = "audio_instruments"
+path = "fuzz_targets/audio_instruments.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client world audio: game clock, place rules, [Sound] import (sound.md §10.3; M6) ---
+
+[[bin]]
+name = "client_audio"
+path = "fuzz_targets/client_audio.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client player music: /play, /playstart, /playlist commands (abc-dialect.md §11; M6) ---
+
+[[bin]]
+name = "client_player_music"
+path = "fuzz_targets/client_player_music.rs"
+test = false
+doc = false
+bench = false
+
+# --- Fuzz hardening: entry points without a target before (archive names, GameData, object store and
+# geography, world-context loading, explorer search box and hex view). The world-level targets
+# damage a valid synthetic install through fuzz_targets/common/mutate.rs. ---
+
+[[bin]]
+name = "dat_archive_names"
+path = "fuzz_targets/dat_archive_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "props_game_data"
+path = "fuzz_targets/props_game_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_store_geo"
+path = "fuzz_targets/wstate_store_geo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_context"
+path = "fuzz_targets/world_context.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "explorer_query_hex"
+path = "fuzz_targets/explorer_query_hex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_command_line"
+path = "fuzz_targets/client_command_line.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records (items, combat, creatures, quests, economy, map, particles, misc) ---
+
+[[bin]]
+name = "formats_gameplay_common"
+path = "fuzz_targets/formats_gameplay_common.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_particles"
+path = "fuzz_targets/formats_gameplay_particles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_economy"
+path = "fuzz_targets/formats_gameplay_economy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_map"
+path = "fuzz_targets/formats_gameplay_map.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_misc"
+path = "fuzz_targets/formats_gameplay_misc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_quests"
+path = "fuzz_targets/formats_gameplay_quests.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_combat"
+path = "fuzz_targets/formats_gameplay_combat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_creatures"
+path = "fuzz_targets/formats_gameplay_creatures.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_items"
+path = "fuzz_targets/formats_gameplay_items.rs"
 test = false
 doc = false
 bench = false

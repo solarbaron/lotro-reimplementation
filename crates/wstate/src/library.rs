@@ -818,6 +818,20 @@ impl ClassLibrary {
     }
 }
 
+/// The parent map as seen by the gameplay decoders of `tessera-formats`
+/// (`tessera_formats::gameplay::common`): ancestry walks, common ancestors, class rules.
+/// Inherent methods of the same name ([`ClassLibrary::ancestors`], [`ClassLibrary::is_a`],
+/// [`ClassLibrary::depth`]) take precedence and use the precomputed depths.
+impl tessera_formats::gameplay::common::ClassParents for ClassLibrary {
+    fn parent(&self, class: u32) -> Option<u32> {
+        ClassLibrary::parent(self, class)
+    }
+
+    fn step_limit(&self) -> usize {
+        self.parents.len()
+    }
+}
+
 /// L5 and L6 for one attribute list.
 fn check_attributes(def: &ClassDef, attrs: &[Attribute], at: usize) -> Result<()> {
     let what = "attribute lists";

@@ -80,8 +80,6 @@ const MOTION_REFRESH: u64 = SECOND;
 const REST_SNAPSHOTS: u32 = 3;
 /// Spawn names within this distance are named in location descriptions (§8.5).
 const NEARBY_SPAWN: f64 = 160.0;
-/// A bigger vertical allowance used during the settling grace (§8.3).
-const GRACE_VERTICAL: f64 = 1.0e9;
 /// Most account-lockout entries kept (failures are counted for every canonical name, known
 /// or not, so the table must not grow with invented names).
 const MAX_LOCKOUTS: usize = 65_536;
@@ -351,7 +349,6 @@ pub struct Sim {
     next_stats: u64,
     last_overrun_log: u64,
     limits: MovementLimits,
-    grace_limits: MovementLimits,
     stopped: bool,
     rr_start: usize,
 }
@@ -381,14 +378,6 @@ impl Sim {
             window: Duration::from_secs_f64(m.window_s),
             descent_credit: Some(m.slide_reserve),
             ..MovementLimits::default()
-        };
-        // During the settling grace descents are not checked, so they earn no credit
-        // either (otherwise a claimed descent would lift the horizontal check).
-        let grace_limits = MovementLimits {
-            up_speed: GRACE_VERTICAL,
-            down_speed: GRACE_VERTICAL,
-            descent_credit: None,
-            ..limits
         };
         let mut name_index = HashMap::new();
         for (account, file) in &characters {
@@ -425,7 +414,6 @@ impl Sim {
             next_stats: now + u64::from(config.log.stats_interval_s.max(1)) * SECOND,
             last_overrun_log: 0,
             limits,
-            grace_limits,
             stopped: false,
             rr_start: 0,
         };
@@ -1225,15 +1213,13 @@ impl Sim {
         self.players_by_key.insert(key.clone(), eid);
         let grace = at_ground_spawn;
         let grace_us = micros(Duration::from_secs_f64(self.config.movement.settle_grace_s));
-        let limits = if grace {
-            self.grace_limits
-        } else {
-            self.limits
-        };
+        let limits = self.limits;
         if let Some(c) = self.conns.get_mut(&id) {
             c.entity = Some(eid);
             c.character_key = Some(key);
-            c.validator = Some(MovementValidator::new(limits, epoch, pose, now));
+            let mut v = MovementValidator::new(limits, epoch, pose, now);
+            v.set_settling(grace && grace_us > 0);
+            c.validator = Some(v);
             c.grace_until = if grace { now + grace_us } else { 0 };
             c.last_activity = now;
             c.active_pos = pose.location;
@@ -1553,7 +1539,7 @@ impl Sim {
         let reset =
             pose.location.region != old_region || block_distance(old_block, new_block) > r + 1;
         let grace_us = micros(Duration::from_secs_f64(self.config.movement.settle_grace_s));
-        let (epoch, limits) = {
+        let epoch = {
             let Some(c) = self.conns.get_mut(&id) else {
                 return;
             };
@@ -1565,14 +1551,7 @@ impl Sim {
             c.last_teleport = Some(now);
             c.save_at = Some(now + TELEPORT_SAVE_DELAY);
             c.active_pos = pose.location;
-            (
-                epoch,
-                if ground {
-                    self.grace_limits
-                } else {
-                    self.limits
-                },
-            )
+            epoch
         };
         if reset {
             if let Some(c) = self.conns.get_mut(&id) {
@@ -1583,7 +1562,9 @@ impl Sim {
         if let Some(c) = self.conns.get_mut(&id)
             && let Some(v) = c.validator.as_mut()
         {
-            v.set_limits(limits);
+            // A new epoch clears the descent credit (§8.3); the grace runs by skipping the
+            // up and down tests while `grace_until` lies ahead.
+            v.set_settling(ground && grace_us > 0);
             v.start_epoch(epoch, pose, now);
         }
         if let Some(e) = self.entities.get_mut(&eid) {
@@ -1995,11 +1976,9 @@ impl Sim {
             let Some(v) = c.validator.as_mut() else {
                 return;
             };
-            v.set_limits(if grace {
-                self.grace_limits
-            } else {
-                self.limits
-            });
+            // §8.3 settling grace: only the up and down tests are skipped; the horizontal
+            // test with its counted descent and credit applies throughout.
+            v.set_settling(grace);
             match v.check(&m, now) {
                 MoveVerdict::Accepted => {
                     self.stats.moves_accepted.fetch_add(1, Ordering::Relaxed);

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision of 2026-10-07 and its review changes re-reviewed and passed, 2026-10-07) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (revision of 2026-10-08 reviewed and passed, 2026-10-08) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer) |
-| **Review record** | Re-review of the review changes, 2026-10-07: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Review of the 2026-10-08 revision, 2026-10-08: Claude review session (spec-reviewer, a different session from the writer): **passed**, Accepted (reviewer added OPEN callouts in §5.5 and §8.3 for unknowns already named in the text; no facts changed). Earlier: re-review of 2026-10-07, **passed**. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (entity descriptor 0x47, visual template 0x1F, setup 0x04, appearance 0x20 decoders), `crates/mesh` / `crates/assets` (resolving an object to meshes), `crates/anim` (attach tables, §11–§13), `apps/explorer`, `apps/client` |
 | **Companion specs** | `mesh.md` (the 0x06 parts). This spec holds the full 0x20 grammar (§8) that `material.md` §9.3 refers to as a future appearance spec. `property-system.md` §5 (property sets embedded in 0x47; item property sets 0x79), §8 (DID maps). `records.md` §1 (VLE, TSize). `material.md` (0x30 materials, 0x2B shaders named by appearance records). `havok-data.md` (the skeleton tagfile of field 3, §6.1). `skeleton-anim.md` (bone mapping, skinning, conventions, attach-point semantics; part 2 here refers to it). `appearance.md` (M4: species and body assembly, worn-part replacement rules, bone sliders). |
 | **Part 2 (M4)** | §11 skeleton inside setups, §12 character setups versus static ones, §13 held items on bones, §14 part 2 invariants and open questions. Part 2 also settles §6.2 and §6.3. |
@@ -57,7 +57,8 @@ by throwaway probes in the dirty-room scratchpad.
 | DS | `research/notes/data-semantics.md` §6.4 (entity descriptors in landblocks), §7.1 (item → geometry chains), §7.2 (0x20 grammar), §8 (Havok tagfile magic). |
 | PS | `property-system.md` (embedded property-set form, TSize). |
 | APP, COL, MESH | `appearance.md` (§2.1, §4.1–§4.11, §5.1, §6.1, §7.4: slot priorities, block fields, key table, worn versus held, template scale, template appearance sections); `collision.md` (§4 the 0x66 layout, §5 the 0x01 cell geometry, §15 corrections to this spec); `mesh.md` §8.5–§8.10 (LOD classes, one-triangle meshes). Same install. |
-| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05. **Question:** does the client draw the one-triangle placeholder parts of figures (owner item O4)? **Why M1–M3 were not enough:** the parts are ordinary mesh records with no marker; whether something is left out is decided by code; no published source describes it; a frame capture (M3) of the original was not available to this session. Only the mesh loader and the part list of drawn objects were read (with `mesh.md` BIN). **Second session, same build, 2026-10-07** (Ghidra, read-only copy of the project, by address): **questions** (2) how the client reads the 0x47 flag bits and fields, and what `kind` and `block` are; (3) how the 0x47 `extra_sets` combine with the embedded property set, and what happens when one is missing; (4) the stream order and defaults of the 0x1F `vec3`, `value_a` and `value_b`; (5) what frame list B is. **Why M1–M3 were not enough:** only one bit pattern and one order occur in the data, `block` occurs in 25 records with values that fit both an offset and a scale, 63 extra sets do not resolve, and the meaning of a field is not in the bytes; no published source states these; no running client was available. Code read: the entity-descriptor reader, reset routine, property lookup, property-merge routine and debug description; the visual-template reader, its flag computation for writing and its copy into the model component. List B's reader was not found. Nothing of the network, login, launcher or anti-tamper code. **Third session, same build, 2026-10-07** (review changes; Ghidra, read-only copy of the project, by address): **questions** (6) how the routine that gathers a descriptor's whole inherited property set treats each `kind` and each kind of `template` target, and how it differs from the single-property lookup of question 2; (7) for owner item O8, which inputs the render component combines into an entity's scale. **Why M1–M3 were not enough:** the data hold only well-formed chains (every chain ends at a 0x1F) and one `kind` 32 record, so the data cannot show how other targets or kinds are treated; the scale product exists only in code; no running client was available. Code read: the descriptor's whole-set gathering routine and its entry point, the property-set merge, the single-property lookup (again, for comparison), and the render component's scale routine. Nothing of the network, login, launcher or anti-tamper code. |
+| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05. **Question:** does the client draw the one-triangle placeholder parts of figures (owner item O4)? **Why M1–M3 were not enough:** the parts are ordinary mesh records with no marker; whether something is left out is decided by code; no published source describes it; a frame capture (M3) of the original was not available to this session. Only the mesh loader and the part list of drawn objects were read (with `mesh.md` BIN). **Second session, same build, 2026-10-07** (Ghidra, read-only copy of the project, by address): **questions** (2) how the client reads the 0x47 flag bits and fields, and what `kind` and `block` are; (3) how the 0x47 `extra_sets` combine with the embedded property set, and what happens when one is missing; (4) the stream order and defaults of the 0x1F `vec3`, `value_a` and `value_b`; (5) what frame list B is. **Why M1–M3 were not enough:** only one bit pattern and one order occur in the data, `block` occurs in 25 records with values that fit both an offset and a scale, 63 extra sets do not resolve, and the meaning of a field is not in the bytes; no published source states these; no running client was available. Code read: the entity-descriptor reader, reset routine, property lookup, property-merge routine and debug description; the visual-template reader, its flag computation for writing and its copy into the model component. List B's reader was not found. Nothing of the network, login, launcher or anti-tamper code. **Third session, same build, 2026-10-07** (review changes; Ghidra, read-only copy of the project, by address): **questions** (6) how the routine that gathers a descriptor's whole inherited property set treats each `kind` and each kind of `template` target, and how it differs from the single-property lookup of question 2; (7) for owner item O8, which inputs the render component combines into an entity's scale. **Why M1–M3 were not enough:** the data hold only well-formed chains (every chain ends at a 0x1F) and one `kind` 32 record, so the data cannot show how other targets or kinds are treated; the scale product exists only in code; no running client was available. Code read: the descriptor's whole-set gathering routine and its entry point, the property-set merge, the single-property lookup (again, for comparison), and the render component's scale routine. Nothing of the network, login, launcher or anti-tamper code. **Fourth session, same build, 2026-10-08** (Ghidra, read-only copy of the project, by address): **questions** (8) where the 0x1F `vec3`, `value_a` and `value_b` go after a template is copied into the model component, and which code reads them (owner item O8); (9) how the client reads a 0x04 record: frame list B, the `reserved` byte, the collision-volume and part counts, and boxes; (10) how it reads a 0x20 record: the `reserved` word, the `section` byte, the key table and the block body; (11) what the 0x1F appearance and setup sections are (the constant words 33, 2, 1 and 1, 9, 1); (12) what sets the two switches of the render scale's third input. **Why M1–M3 were not enough:** the data hold one value per constant and unlabelled scalars; what a value means, and whether a constant is a count, a flag word or a tag, is decided by code; no published source states it; no running client was available. Code read: the model component's set-up from a template and its getters, the template reader, its chain merge and its appearance-info reader, the property lookup of an entity and its provider registry, three property providers of the model component, the effects component's update of attached effects, the setup reader and the client setup's part-list reader, the appearance-record reader and its block reader, the stream's count reader, the routine that attaches a spawned object and sets the two switches, and the descriptor's debug description (for the `block` frame, §4.4). Nothing of the network, login, launcher or anti-tamper code. |
+| OBS3 | Observed in user install 2026-10-08 by throwaway probes: all 20,474 `extra_sets` DIDs of the 0x47 records and their archives; the `section` byte and entry order of all 4,201 0x20 records; all 1,205 boxes and every volume and part count of the 28,555 setups; the list B headers of all 42 setups that have one; the `vec3`, `value_a` and `value_b` values of all 29,134 templates; the definitions of PIDs 0x112, 0x3C3 and 0x5A0 in the property dictionary. |
 | CNS | Census of 2026-10-05 by throwaway probes (repository decoders used as tools): stub parts of all 28,555 setups; surfaces and materials of all 258 stub meshes. |
 
 | # | Fact | Sources | Mark |
@@ -82,10 +83,19 @@ by throwaway probes in the dirty-room scratchpad.
 | S18 | 0x47 flag bits as the client reads them: 0x01 DID, 0x02 `kind`, 0x04 an 8-byte value, 0x08 `template`, 0x10 `block`, 0x20 a legacy scale, 0x80 property set, 0x200 `extra_sets`, 0x40 a u32, 0x100 a string, 0x400 a flag carried in the word (§4.2) | BIN (question 2); OBS (the three observed words) | BIN (bits that never occur); Confirmed (observed order) |
 | S19 | `kind` is the descriptor's type code; it decides which record kinds the `template` link may name when properties are inherited (§4.3) | BIN (question 2) | BIN (meaning of each value OPEN) |
 | S23 | The client has two inheritance routines with different `kind` rules: the single-property lookup and the whole-set gathering (§4.3). In the gathering, `kind` 1, 2, 3, 5, 7, 9, 19, 21, 23, 31 follow a 0x47 parent (a 0x1F target ends; any other target fails), `kind` 6 follows a game object and then its associated 0x47, every other `kind` inherits nothing; nearer layers overwrite farther ones. In this install both routines give the same result for every descriptor: every `template` chain ends at a 0x1F, every 0x47 parent has `kind` 2, 3 or 7, and the `kind` 32 record names a 0x1F | BIN (question 6); OBS (all 40,643 descriptors and their chains, 2026-10-07) | BIN (rules); Confirmed (chains) |
-| S24 | The render component's scale multiplies `Render_AdjustableScale` (or `Render_AdjustableScale_Checkpointed` when held) by `Model_Scale` and further factors; no input was traced to the 0x1F `vec3` (§5.2) | BIN (question 7); OBS (property census, 2026-10-07) | BIN (partial) |
+| S24 | The render component's scale multiplies `Render_AdjustableScale` (or `Render_AdjustableScale_Checkpointed` when held) by `Model_Scale` and further factors; `Model_Scale` is the template `vec3` (S26, 2026-10-08); the fourth factor's source is not identified (§5.2) | BIN (questions 7, 8); OBS (property census, 2026-10-07) | BIN |
 | S20 | `block` is a frame: position (3 × f32, metres) then rotation (w, x, y, z); identity by default (§4.4) | BIN (question 2); OBS (25 records, rotation always identity; 16 with `kind` 9 and 9 with `kind` 7, recounted 2026-10-07) | BIN (meaning); Confirmed (census) |
 | S21 | The effective property set of a 0x47 is its `extra_sets` in list order, each overwriting earlier values, then its embedded set overwriting them all; a set that cannot be loaded is skipped (§4.4) | BIN (question 3) | BIN |
 | S22 | 0x1F: `value_a` precedes `value_b` in the stream; `vec3`, `value_a` and `value_b` default to 1 and are written only when they differ from 1 by more than 0.0002 (§5.2) | BIN (question 4); OBS (no stored value within 0.0002 of 1) | BIN |
+| S25 | The 63 `extra_sets` DIDs that are not in gamelogic all name one set, 0x78000151, which is in `client_local_English.dat`; with the routing of `property-system.md` §6 all 20,474 resolve (§4.4) | OBS3 | Confirmed |
+| S26 | Template values along a `parent` chain multiply; the model component serves `vec3` as `Model_Scale` (PID 0x3C3), so it multiplies the entity's `Render_AdjustableScale`; `value_a` is the scale an entity gives to the entities attached to it (served to them as `Model_ChildScale`, PID 0x112); `value_b` is the entity's particle-effect scale (served as `Model_ParticleScale`, PID 0x5A0) (§5.2) | BIN (question 8); OBS3 (the three definitions carry the "provided" mark of S27) | BIN |
+| S27 | The client answers a property lookup from a registered provider of the entity's components, instead of the stored property sets, when the definition's `field_d` byte 3 is 1 (§5.2, §15) | BIN (question 8); OBS3 | BIN |
+| S28 | The render scale's third input is the attachment parent's `value_a`; one switch replaces it by 1 and the other by the parent's `Model_ParticleScale`; both are set per attachment by the routine that attaches a spawned object (§5.2) | BIN (questions 8, 12) | BIN |
+| S29 | 0x1F appearance section and setup-section elements are one "appearance-info" structure: a flag word, then up to four u32 fields and an appearance list, each governed by one bit (§5.3, §5.4) | BIN (question 11); OBS (all 29,134 templates fit) | BIN (structure); Confirmed (values) |
+| S30 | 0x04: the collision-volume counts and the part count are VLE; `reserved` is the presence flag of an optional 56-byte block (values above 1 fail the read); list B's first u32 only says whether the list exists and the second is the element count (§6.1, §6.3) | BIN (question 9); OBS3 (all counts below 128; list B header pairs equal) | BIN (rules); Confirmed (census) |
+| S31 | The client keeps a box as half extents and a centre; when the box's min and max are symmetric about the origin within 0.0002 the half extents are the max corner times the frame scale (§6.4) | BIN (question 9); OBS3 (all 1,205 boxes symmetric) | BIN (rule); Confirmed (census) |
+| S32 | 0x20: `reserved` is the count of a u32 list, `section` is the TSize hint of the entry table, `table_tag` the TSize hint of the key table; a block is `variant` and five counted lists (§8.1, §8.3) | BIN (question 10); OBS3 (entries in bucket order of `section` in all 4,201 records; only that hint fits in every record with `section` above 0) | BIN (structure); Confirmed (order) |
+| S33 | `section` census corrected: 0 occurs in 4,113 records, not 4,111 (§8.1) | OBS3 | Confirmed |
 
 ---
 
@@ -317,8 +327,12 @@ built and (a) for single queries.
   (0.4, 0.4, 2.7) in the 16 `kind` 9 records; in the 9 `kind` 7 records (0, 0.6, 0) four
   times and (1, 1, 1), (3, 3, 3), (0, 0, −3), (0, −1.25, 0), (0, 0, 5) once each.
 
-  > **OPEN:** how the frame is applied (relative to what, and by which code). A viewer
-  > ignores the block.
+  > **OPEN:** how the frame is applied (relative to what, and by which code). Narrowed
+  > 2026-10-08 (BIN, fourth session): the only reader found is the debug description,
+  > which prints the frame as a position only when a 64-bit world-placement identifier that
+  > the descriptor holds in memory (not a record field) resolves to a placement, combining the
+  > frame with that placement's cell; this suggests a frame relative to a world placement, but
+  > no code that applies it to an object was found. A viewer ignores the block.
 
 - **`extra_sets`**: 20,274 records; *n* = 1 (20,108), 2 (141), 3 (16), 4 (9). 20,474 DIDs,
   all with prefix 0x78; 20,411 of them exist in gamelogic.
@@ -332,8 +346,11 @@ built and (a) for single queries.
   and skipped, and the others still apply. Inheritance from the `template` chain (§4.3) is a
   separate, later step: a descriptor's effective set masks its parents'.
 
-  > **OPEN:** where the 63 missing 0x78 DIDs live (possibly the localized archive). In the
-  > client they are skipped when they cannot be loaded.
+  **The 63 DIDs not in gamelogic** (OBS3, row S25): all 63 references (in 63 records) name the
+  same set, 0x78000151, which is one of the two 0x78 records of `client_local_English.dat`.
+  With the routing of `property-system.md` §6 (gamelogic first, then the language archive)
+  all 20,474 DIDs resolve. A Tessera loader must route 0x78 DIDs that way; on an install whose
+  language archive lacks the set, the client's rule above (skip it) applies.
 
 - **Property set.** Common PIDs, by records containing them: `Entity_CreationType` (40,091),
   `Render_LODClass` (33,018), `Render_CastLandscapeShadows` (25,867),
@@ -398,7 +415,8 @@ skeletons and bodies (1.16 m), so `value_a` and `value_b` are not plain geometry
 
 `appearance.md` §6.1 (2026-10-05) treats `vec3` as a uniform whole-body scale that combines
 with the entity's `Render_AdjustableScale`, and finds that `value_a` and `value_b` are not
-scales; assembly ignores them.
+scales of the body; assembly ignores them. What the client does with all three is now known
+(below, rows S26–S28; §15 records the correction for `appearance.md`).
 
 **The client's reader (BIN, row S22).** After `flags` and `did`, the client reads, each only
 when its bit is set: `parent` (0x002), `vec3` (0x020), `value_a` (0x040), `value_b` (0x400),
@@ -410,63 +428,130 @@ each one whose value is within 0.0002 of 1 (in this install no stored value is w
 of 1, all 29,134 records, re-checked 2026-10-07). When a model is set up from a template the
 client copies the whole template, these values included, into the model component.
 
-**The render component's scale (BIN, row S24; partial, for owner item O8).** The client
+**Along a `parent` chain the values multiply** (BIN, row S26). When the client resolves a
+template it starts from the values 1, takes the farthest ancestor first and works down to the
+template itself; at each level it multiplies `vec3` (per axis), `value_a` and `value_b` by that
+level's values. In this install no template that has a `parent` stores any of the three
+(flags 0x103 and 0x003, table above), so the effective values are those of the last template
+of the chain.
+
+**What the three values do** (BIN, rows S26–S28). The model component keeps the effective
+values and serves them as properties of the entity. These three properties are marked in the
+property dictionary as *provided* (`field_d` byte 3 = 1, row S27, §15): a lookup of such a PID
+on an entity is answered by the component that registered it, not by the entity's stored
+property sets, so a stored value of these PIDs has no effect on the lookup.
+
+| Template value | Served as (dictionary name, for interoperability) | Effect |
+|---|---|---|
+| `vec3` | `Model_Scale` (PID 0x3C3, a vector) of the entity itself | Input 2 of the render scale below: it **multiplies** the entity's `Render_AdjustableScale` per axis. |
+| `value_a` | `Model_ChildScale` (PID 0x112, a float) of the entities **attached to** this one | Input 3 of an attached entity's render scale: things attached to an entity are scaled by the entity's `value_a`. |
+| `value_b` | `Model_ParticleScale` (PID 0x5A0, a float) of the entity itself | The effects component gives every visual effect attached to the entity a uniform scale equal to this value, next to the entity's final render scale (how an effect combines the two is for the particle specs); other effect code reads the same property. |
+
+`Model_ChildScale` of an entity is its attachment parent's `value_a`, or 1 when the entity has
+no attachment parent (or is its own). Seen from the data: the Hobbit templates carry
+`value_a` 0.65 and `value_b` 0.85, the female Human, Elf, High-elf and River-hobbit templates
+and the Dwarf template `value_a` 0.9; so things these figures carry are drawn at 0.65 or 0.9
+of their own size, and the Hobbits' effects at 0.85. That a held item is attached in this
+sense is an inference (the attachment path of held items was not traced, §13).
+
+**The render component's scale (BIN, rows S24, S28; for owner item O8).** The client
 computes an entity's render scale, per axis, as the product of:
 
 1. `Render_AdjustableScale_Checkpointed` (PID 0xB57) when the entity holds it, otherwise
    `Render_AdjustableScale` (PID 0x33B); (1, 1, 1) when it holds neither;
-2. `Model_Scale` (PID 0x3C3), (1, 1, 1) when absent;
-3. a uniform factor taken from a second object the entity is linked to (by inference the
-   object that holds or carries it; not traced), 1 when there is none; two flags of the
-   render component can replace it by 1 or by another value of that object (not traced);
-4. a vector kept by the render component whose source was not identified, (1, 1, 1) when
-   absent.
+2. `Model_Scale` (PID 0x3C3): the effective template `vec3`, (1, 1, 1) when absent;
+3. a uniform factor: the attachment parent's `value_a` (its `Model_ChildScale`), 1 when the
+   entity has no attachment parent. Two switches of the entity's render component replace it
+   when the entity has a parent: one by 1, the other by the parent's `Model_ParticleScale`
+   (its `value_b`, 1 when the lookup fails); when both are set, the particle scale wins. The routine
+   that attaches a spawned object to a parent sets both switches from two flags of the data
+   that drives that attachment (the record kind that holds those flags was not traced);
+4. a vector kept by the render component, (1, 1, 1) when absent. It sits in a 40-byte object
+   owned by the render component, at the place where a §6.3 frame holds its scale (bytes
+   12–23); the code that fills it was not found.
 
-When the entity is linked to such a second object, the product is then multiplied per axis by
-that object's own final render scale. If any component of the result is not finite, the
-client uses (1, 1, 1); if any component is below 0.0002, it reports this and uses (1, 1, 1). (The property names are the
-dictionary's, given for interoperability.) In this install no entity descriptor's own
-property set holds `Model_Scale` or `Render_AdjustableScale_Checkpointed`, and 1,309 hold
-`Render_AdjustableScale` (census 2026-10-07). None of the inputs above was traced to the
-0x1F `vec3`, so this does not settle whether `vec3` multiplies the entity scale or replaces
-it.
+When the entity has an attachment parent, the product is then multiplied per axis by the
+parent's own final render scale; when the parent's render component is set up, the client
+recomputes the scale of each entity attached to it. If any component of the result is not finite,
+the client uses (1, 1, 1); if any component is below 0.0002, it reports this and uses
+(1, 1, 1). (The property names are the dictionary's, given for interoperability.) In this
+install no entity descriptor's own property set holds `Model_Scale` or
+`Render_AdjustableScale_Checkpointed`, and 1,309 hold `Render_AdjustableScale` (census
+2026-10-07).
 
-> **OPEN:** Meaning of `value_a` and `value_b` (scalars with the neutral value 1; observed
-> 0.05 to 4 and 0.05 to 12.5); whether `vec3` multiplies the entity scale or replaces it (owner
-> observation O8, `appearance.md` §6.1; the property scales multiply each other, see above,
-> but `vec3` was not found among the render scale's inputs; it may be input 4). The code that
-> reads them from the model component was not found.
+> **OPEN:** (1) the source of the render scale's fourth factor (item 4 above); (2) which data
+> record carries the two flags that set the third factor's switches, and for which attached
+> objects they are set; (3) whether held and worn items reach the attachment hierarchy that
+> item 3 uses (§13; owner observation O8 can confirm the visible result: a Hobbit's weapon at
+> 0.65 of its size). Answered 2026-10-08 (BIN): `vec3` multiplies the entity scale; the
+> meaning of `value_a` and `value_b`.
 
 <a id="s5-3"></a>
-### 5.3 Setup section (Confirmed)
+### 5.3 Setup section (Confirmed values; structure BIN)
 
-A TSize (`records.md` §1.3) map with *n* = 1 in every record, whose element is:
+A TSize (`records.md` §1.3) map with *n* = 1 in every record. Each element is a u32 **map
+key** followed by an **appearance-info** (§5.5). In every record the element is:
 
 | Order | Field | Type | Meaning |
 |---|---|---|---|
-| 1 | `key` | u32 | Always 1 |
-| 2 | `type` | u32 | Always 9 (a DID list) |
-| 3 | `count` | u32 | Always 1 |
-| 4 | DIDs | DID × `count` | 0x04 setup DIDs |
+| 1 | map key | u32 | Always 1 |
+| 2 | info `flags` | u32 | Always 9: bits 0x01 and 0x08 (§5.5) |
+| 3 | info `key` | u32 | Always 1 (present because of bit 0x01) |
+| 4 | info `setup` | DID | The 0x04 setup DID (present because of bit 0x08) |
 
-28,583 setup sections name 28,554 distinct setups; every named setup exists. A decoder reads
-`type` and `count` generally (rejecting types other than 9 as unsupported) and uses the
-first DID.
+The bytes are the same as in the earlier reading of this table (`key` 1, `type` 9, `count` 1,
+one DID); that reading is withdrawn (BIN, row S29): the 9 is a flag word and the 1 before the
+DID is the info's own key, not a count. 28,583 setup sections name 28,554 distinct setups;
+every named setup exists. A decoder reads the element as §5.5 says; the setup of the template
+is the `setup` field of its active info (§5.5).
 
 <a id="s5-4"></a>
-### 5.4 Appearance section (Confirmed layout; meaning from `appearance.md`)
+### 5.4 Appearance section (Confirmed values; structure BIN; meaning from `appearance.md`)
+
+One appearance-info (§5.5), without a map key. In every record:
 
 | Order | Field | Type | Meaning |
 |---|---|---|---|
-| 1 | three u32 | u32 × 3 | Always 33, 2, 1 |
-| 2 | `appearance` | DID | 0x20 record (577 of 577 exist) |
-| 3 | modifiers | TSize map, element = u32 key, f32 value | *n* = 1 (571), 2 (4), 46 (2). Key 0x10000034 in 575 sections. |
+| 1 | info `flags` | u32 | Always 33 (0x21): bits 0x01 and 0x20 |
+| 2 | info `key` | u32 | Always 2, the key of a template's **default** info (§5.5) |
+| 3 | list count | u32 | Always 1: the appearance list of bit 0x20 holds one element |
+| 4 | `appearance` | DID | 0x20 record (577 of 577 exist) |
+| 5 | modifiers | TSize map, element = u32 key, f32 value | *n* = 1 (571), 2 (4), 46 (2). Key 0x10000034 in 575 sections. |
 
-These templates attach an appearance to a parent template's geometry. The section is a
-one-record appearance list (`appearance.md` §7.4 step 2): the modifier map's keys are
-`AppearanceKey` values (`ClothingColor` 0x10000034 in 575 sections, `Worn` in 3) and its
+The former "three u32, always 33, 2, 1" are therefore the flag word, the key and the list count
+(BIN, row S29). These templates attach an appearance to a parent template's geometry. The
+section is a one-record appearance list (`appearance.md` §7.4 step 2): the modifier map's keys
+are `AppearanceKey` values (`ClothingColor` 0x10000034 in 575 sections, `Worn` in 3) and its
 values are the modifiers that select a block of that key's entry. Mostly it dyes the parent's
 geometry; 60 such templates sit on skinned setups.
+
+<a id="s5-5"></a>
+### 5.5 Appearance-info structure (BIN; values Confirmed)
+
+The client reads the same structure in three places: the 0x1F appearance section (§5.4), the
+elements of the 0x1F setup section (§5.3) and the fourth list of a 0x20 block (§8.3). Each
+field is present only when its bit is set, in this order:
+
+| Order | Bit | Field | Type | Meaning |
+|---|---|---|---|---|
+| 1 | – | `flags` | u32 | Always present |
+| 2 | 0x01 | `key` | u32 | The info's key. 2 marks a template's default info; in a 0x20 block it is a `MeshTypeID` slot. |
+| 3 | 0x02 | `base` | u32 | Key of another info of the same template (2 = the default info) with which the client combines this info after reading (how was not traced); never present |
+| 4 | 0x04 | (unnamed) | u32 | Not traced; never present |
+| 5 | 0x08 | `setup` | DID | A 0x04 setup DID |
+| 6 | 0x20 | appearance list | u32 count *m*, then *m* × (DID of a 0x20 record, TSize map of u32 key → f32 modifier) | A DID that is already in the list does not create a second element (what happens to its modifiers was not traced) |
+
+Bits 0x10 and 0x40 and above add nothing. Observed flag words: 33 (577 appearance sections),
+9 (all setup-section elements and both block extras of §8.3). A template's **active info** is
+the one whose `setup` names the template's setup: with the single setup-section element of
+every record in this install it is that element. A decoder that meets another flag word can
+still frame the bytes with the table above.
+
+> **OPEN:** how the client picks the active info when a setup section holds several
+> elements (none does in this install), and what the field of bit 0x04 holds; how an info
+> with a `base` (bit 0x02) is combined with the info it names, and what happens to the
+> modifiers of an appearance-list DID that is already in the list (both never occur in this
+> install).
 
 ---
 
@@ -485,17 +570,26 @@ geometry; 60 such templates sit on skinned setups.
 | 5 | `bone_frames` | frame list A | §6.3 |
 | 6 | `placements` | frame list B | §6.3 |
 | 7 | `named_frames` | frame list C | §6.3 |
-| 8 | `boxes` | u8 count, × 64 bytes | §6.4 |
-| 9 | `spheres` | u8 count, × 16 bytes | §6.4 |
-| 10 | `capsules` | u8 count, × 20 bytes | §6.4 |
+| 8 | `boxes` | VLE count, × 64 bytes | §6.4 |
+| 9 | `spheres` | VLE count, × 16 bytes | §6.4 |
+| 10 | `capsules` | VLE count, × 20 bytes | §6.4 |
 | 11 | `collision_mesh` | DID | 0x66 DID or 0 (§6.5) |
-| 12 | `reserved` | u8 | 0 in every record |
+| 12 | `reserved` | u8, then 0 or 56 bytes | Presence flag of an optional block (below); 0 in every record |
 | 13 | `physics_bounds` | f32 × 8 | §6.5 |
-| 14 | `part_count` *p* | u8 | Number of parts |
+| 14 | `part_count` *p* | VLE | Number of parts |
 | 15 | `parts` | DID × *p* | 0x06 mesh DIDs (§6.6) |
 
 A decoder that needs only the parts must still parse fields 4–13 (their sizes vary); reading
 the part list backwards from the end is not reliable.
+
+**The client's reader (BIN, row S30).** The four counts of fields 8, 9, 10 and 14 are VLEs
+(`records.md` §1.2), not bytes; every count in this install is below 128 (largest: 18 boxes,
+10 spheres, 8 capsules, 12 parts), so each takes one byte and the earlier "u8" reading gives
+the same result here. A count larger than the bytes left fails the read. Field 12 is a
+presence flag: 0 means nothing follows; 1 means a block of 14 four-byte values (56 bytes)
+follows, whose meaning was not traced; any other value fails the read. The client also checks
+two stream version numbers that are not part of the record bytes. The part list (field 15) is
+read by the client-side setup class after the shared fields.
 
 <a id="s6-2"></a>
 ### 6.2 `attach_map` (Confirmed layout and meaning)
@@ -549,8 +643,17 @@ one of the three lists.
 - **List B**: unscaled, unrotated positions on large single-part props, such as (0, 0, 2),
   (0, 0, 6.1), (0, −6.7, 0).
 
-> **OPEN:** What list B places (a seat, a spawn or an effect point are candidates). World
-> rendering ignores it.
+**The client's reader (BIN, row S30).** The setup reader reads the lists in the order A, B, C.
+For each, a first u32 of 0 means the list is absent. For list B the client then reads a
+second u32 as the element count (a count larger than the bytes left fails the read) and that
+many elements of a u32 `id` and a 40-byte frame, kept in stored order; the first u32 only
+decides that the list exists. In all 42 setups with list B the two u32 are equal (1 in 36,
+2 in 4, 3 in 2; OBS3). Lists A and C are read as hashed collections (TSize, `records.md`
+§1.3) keyed by `key`. No code that reads list B after loading was found in this session.
+
+> **OPEN:** What list B places (a seat, a spawn or an effect point are candidates) and which
+> client code uses it (its reader is known, above; no user of the stored list was found).
+> World rendering ignores it.
 
 <a id="s6-4"></a>
 ### 6.4 Collision volumes (Confirmed)
@@ -568,6 +671,15 @@ eight local corners rotated by the box frame's rotation (active rotation, (w, x,
 §6.7) and moved by its position give the bounds within 2 × 10⁻³ (recounted 2026-10-05: 864
 setups whose boxes are all unrotated and 126 with a rotated box; the earlier "9 differ" was a
 counting error, §10.1). No box has a scale other than (1, 1, 1).
+
+**How the client keeps a box (BIN, row S31).** On reading, the client turns a box into half
+extents and a centre in the setup frame. When every component of the box's centre
+((min + max) / 2) is within 0.0002 of zero, the half extents are the max corner multiplied per
+axis by the frame scale and the centre is the frame position. Otherwise the half extents are
+(max − min) / 2 multiplied by the scale, and the centre is the frame position plus the local
+centre multiplied per axis by the scale (not rotated). All 1,205 boxes of this install are
+symmetric about their origin within 0.0002 (OBS3), so only the first case occurs and the
+rotation question of the second does not arise.
 
 <a id="s6-5"></a>
 ### 6.5 Collision mesh and physics bounds (Confirmed)
@@ -639,10 +751,11 @@ the identity, so the bind-pose display with identity transforms is exact (`skele
 §4.4, §9.1). An unskinned part never follows a bone: no setup mixes skinned and unskinned
 parts (§12.1).
 
-Whole-body scale: `appearance.md` §6.1 (template `vec3` × entity `Render_AdjustableScale`,
-composition OPEN, applied at the object origin before the world placement). The 0x47 `block`
-is a frame whose use is OPEN (§4.4), and the 0x1F `value_a` / `value_b` stay OPEN (§5.2); a
-viewer ignores them. A part
+Whole-body scale: the render scale of §5.2 (entity `Render_AdjustableScale` × template
+`vec3`, per axis, BIN 2026-10-08), applied at the object origin before the world placement
+(`appearance.md` §6.1). An object attached to another one is further scaled by the parent's
+`value_a` and the parent's final scale (§5.2). The 0x47 `block` is a frame whose use is OPEN
+(§4.4); `value_b` scales the object's particle effects, not its parts (§5.2). A part
 whose mesh holds a single triangle is left out when the setup has several parts (§8.5).
 
 ---
@@ -656,13 +769,23 @@ whose mesh holds a single triangle is left out when the setup has several parts 
 | Order | Field | Type | Meaning |
 |---|---|---|---|
 | 1 | `did` | DID | Own DID |
-| 2 | `reserved` | u32 | 0 in every record |
-| 3 | `section` | u8 | 0 (4,111), 1 (9), 2 (6), 3 (16), 4 (10), 5 (32), 6 (15). Meaning OPEN. |
+| 2 | `reserved` | u32 | Count *m* of a list of further 0x20 DIDs that follows at once (`appearance.md` §4.2, A28: applied before the record's own entry, §4.7 rule 4 there); 0 in every record, so nothing follows |
+| 3 | `section` | u8 | The **TSize hint** (`records.md` §1.3) of the entry table: fields 3 and 4 together are the entry table's TSize. 0 (4,113), 1 (9), 2 (6), 3 (16), 4 (10), 5 (32), 6 (15). |
 | 4 | `entry_count` *n* | VLE | `records.md` §1.2 |
 | 5 | entries | × *n* | §8.2 |
-| 6 | `table_tag` | u8 | 1 in every record |
+| 6 | `table_tag` | u8 | The TSize hint of the key table (fields 6 and 7 are its TSize); 1 in every record |
 | 7 | `table_count` | VLE | Equals *n* in every record |
 | 8 | table | × `table_count` | u32 key, u32 value (§8.4) |
+
+**The client's reader (BIN, row S32; agrees with `appearance.md` A28).** After the DID the
+client reads a u32 count and that many 0x20 DIDs (none in this install), then the entries as a
+hashed collection keyed by `key` (TSize: hint byte, VLE count), then the key table as a second
+hashed collection of (u32 key, 4-byte value). So `section` is a hint byte, not a section
+number: in all 4,201 records the entry keys taken modulo the bucket count of hint `section`
+are in non-decreasing order, and in every record whose `section` is above 0 no other hint fits
+that order (OBS3). The hint follows the rules of `records.md` §1.3 (it is the smallest fitting
+hint in 4,098 records, larger in 103). A reader treats both hint bytes as `records.md` §1.3
+says (accept 0–22, fail at 23 or more), and a byte-exact writer keeps them.
 
 <a id="s8-2"></a>
 ### 8.2 Entry (Confirmed)
@@ -717,6 +840,27 @@ after the last group is a terminator, 0.0 in all 67,166 blocks that have groups;
 `MeshTypeID` key in all 84,261 groups (2 `All` in most); `part_param` is the part's priority.
 Group priorities: 0 (34,598), 1 (26,876), 5 (9,409), 10, 3, … ; part priorities: 1 (43,821),
 10 (17,736), 15 (6,281), 4 (5,230), … ; all whole numbers from 0 to 100.
+
+**The client's framing (BIN, row S32).** The client reads a block as `variant` followed by
+five lists, each a u32 count and that many elements. It reads the same bytes as the table
+above, so a decoder built on that table stays correct; the five-list reading is the one to use
+for new code and for writers:
+
+| List | Elements | Element layout | In this install |
+|---|---|---|---|
+| 1 | groups, 20 bytes | f32 priority, u32 `shader`, u32 `material`, u32 `a`, u32 `b` | as above |
+| 2 | 4 bytes | u32 (not traced) | count 0 in every block; this count is the "0.0" that the table reads as the last `g`, or as `group_param` when there are no groups |
+| 3 | parts, 12 bytes | f32 priority, u32 `slot`, u32 `mesh` | as above |
+| 4 | appearance-infos (§5.5), variable size | flag word and the fields it selects | the two extras: flags 9, `key` = the slot, `setup` = the 0x04 DID |
+| 5 | 56 bytes | u32, u32, a 40-byte frame, u32, u32 (the element of the 0x1F 0x080 list, §5.2) | count 0 in every block; this count is `end` |
+
+So each group's priority is part of that group, which is how `appearance.md` §4.3 already
+reads it; the "terminator" after the last group is the count of list 2; the `type` 9 of an
+extra is an appearance-info flag word; and `end` is the count of list 5. A reader should accept
+non-zero counts in lists 2 and 5 and skip their elements by the sizes above.
+
+> **OPEN:** what the elements of block lists 2 and 5 mean (both lists are empty in every
+> block of this install; their element sizes are known, above).
 
 > **OPEN** (owned by `appearance.md` §4.10): how group priorities combine when several layers
 > set the same material parameter.
@@ -788,10 +932,10 @@ at most three vertices, selects the same 258 records; `mesh.md` MI14).
 | ID | Invariant |
 |---|---|
 | **SI1** | 0x47: `did` equals the record DID; `template` prefix is 0x1F or 0x47; the embedded property set decodes with the dictionary and the record ends exactly after the optional 0x78 list. |
-| **SI2** | 0x1F: flags ⊆ {0x001, 0x002, 0x020, 0x040, 0x100, 0x200, 0x400}; bit 0x001 set; every record has either a `parent` or a setup section, never both; setup section *n* = 1, key 1, type 9, count 1. |
-| **SI3** | 0x04: tagfile magic at offset 8; frame-list headers repeat their count; `reserved` = 0; the record ends exactly after the part list. |
+| **SI2** | 0x1F: flags ⊆ {0x001, 0x002, 0x020, 0x040, 0x100, 0x200, 0x400}; bit 0x001 set; every record has either a `parent` or a setup section, never both; setup section *n* = 1, map key 1, info flags 9, info key 1 (§5.3); appearance section info flags 33, info key 2, list count 1 (§5.4). |
+| **SI3** | 0x04: tagfile magic at offset 8; frame-list headers repeat their count; `reserved` = 0; every box symmetric about its origin within 0.0002 (§6.4); every volume and part count below 128; the record ends exactly after the part list. |
 | **SI4** | Every part DID is an existing 0x06 record; every `collision_mesh` DID an existing 0x66 record. |
-| **SI5** | 0x20: `reserved` = 0; `table_tag` = 1; `table_count` = `entry_count`; block `end` = 0; entry keys unique. |
+| **SI5** | 0x20: `reserved` = 0; `table_tag` = 1; `table_count` = `entry_count`; block `end` = 0; entry keys unique; entry keys taken modulo the bucket count of hint `section` (`records.md` §1.3) are non-decreasing (4,201 of 4,201, 2026-10-08). |
 | **SI6** | Chains terminate (no cycles). Counting every link (entity → entity, entity → template, template → template, template → setup), 0x47 chains are 2 – 6 links long (2: 38,588; 3: 2,029; 4: 12; 5: 6; 6: 8) and 0x1F chains 1 – 2. |
 
 ---
@@ -812,24 +956,31 @@ record does not exist; resolver only), unreadable record (the record exists but 
 read: I/O, inflate or block corruption; resolver only), trailing bytes. None occur in this
 install.
 
-> **OPEN** (narrowed 2026-10-07, BIN): the meaning of each 0x47 `kind` value (its role in
+> **OPEN** (narrowed 2026-10-08): the meaning of each 0x47 `kind` value (its role in
 > property inheritance is known, §4.3, in both inheritance routines); which client features
 > use the single-property lookup and which the whole-set gathering (§4.3); how the `block`
-> frame is applied (§4.4); where the 63
-> missing 0x78 sets live (the client skips them, §4.4). Resolved: the flag bits and field
-> order (§4.2), `block` is a position-and-rotation frame (§4.4), how `extra_sets` combine
-> (§4.4).
+> frame is applied (§4.4). Resolved: the flag bits and field order (§4.2), `block` is a
+> position-and-rotation frame (§4.4), how `extra_sets` combine (§4.4), where the 63 sets not
+> in gamelogic live (the language archive, §4.4, 2026-10-08).
 
-> **OPEN:** 0x1F `value_a` and `value_b` (§5.2; their order and default 1 resolved by BIN
-> on 2026-10-07); whether `vec3` multiplies or replaces the entity scale (O8, `appearance.md`
-> §6.1); the appearance section's three constants (§5.4).
+> **OPEN** (narrowed 2026-10-08): the render scale's fourth factor and the data behind its
+> third factor's switches (§5.2); the active-info choice for several setup-section elements
+> and the field of appearance-info bit 0x04 (§5.5). Resolved 2026-10-08 (BIN): `vec3`
+> multiplies the entity scale, `value_a` scales attached objects, `value_b` scales particle
+> effects (§5.2); the appearance section's three constants are a flag word, a key and a list
+> count (§5.4).
 
-> **OPEN:** 0x04 frame list B (§6.3; its reader was not found in the 2026-10-07 BIN
-> session). (`attach_map`, lists A and C and the tagfile contents are resolved by part 2:
+> **OPEN:** what 0x04 frame list B means and which code uses it (§6.3; its reader is known
+> since 2026-10-08); what the optional 56-byte block of field 12 holds (§6.1; absent in every
+> record). (`attach_map`, lists A and C and the tagfile contents are resolved by part 2:
 > §6.2, §6.3, §11; the 0x66 layout by `collision.md` §4.)
 
-> **OPEN:** 0x20 `section` (§8.1, `appearance.md` §4.2). (Group fields, `part_param` and the
-> key-table values are resolved by `appearance.md` §4.3, §4.8: §8.3–§8.4.)
+> **Resolved (2026-10-08, BIN and OBS3):** 0x20 `section` is the entry table's TSize hint
+> (§8.1); `reserved` is the count of a list of 0x20 DIDs, empty in every record (§8.1,
+> `appearance.md` A28); the block is five counted lists (§8.3). Not traced, and never
+> present: the meaning of the elements of block lists 2 and 5.
+> (Group fields, `part_param` and the key-table values are resolved by `appearance.md` §4.3,
+> §4.8: §8.3–§8.4.)
 
 > **Resolved (2026-10-05, BIN; owner item O4):** one-triangle placeholder parts are not drawn
 > as one of several parts of an object (§8.5, `mesh.md` §8.10).
@@ -891,13 +1042,16 @@ or capsule-only setups, 0 differ). Points for the spec owner:
 > `AppearanceEntry::base_block` returns nothing there; which block a viewer should draw is
 > open.
 
-> **OPEN** (answered in part, 2026-10-05; 0x47 flags answered 2026-10-07, §4.2): the data
-> cannot tell a plain value from a tag or count when only one value ever occurs, so the
-> conservative rejection stays. For 0x47 the client's reader is now known: bits 0x01, 0x02,
-> 0x08 and 0x80 are presence bits of the DID, `kind`, `template` and property set, and every
-> other bit adds a field of known size (§4.2), so rejecting the other bits stays a safe
-> choice, not a necessity. The tagfile
-> magic is a format constant (`havok-data.md` §3.1).
+> **Resolved (2026-10-08, BIN):** every constant on the list is now explained by the client's
+> readers, so a decoder can frame other values instead of rejecting them. 0x47: bits 0x01,
+> 0x02, 0x08, 0x80 are presence bits and every other bit adds a field of known size (§4.2).
+> 0x1F appearance section: 33, 2, 1 are an appearance-info flag word, its key and a list count
+> (§5.4, §5.5). 0x04 `reserved`: a presence flag; 1 adds a 56-byte block, above 1 the client
+> fails the read (§6.1). 0x20 `reserved`: the count of a list of 0x20 DIDs; `table_tag`: a TSize hint
+> (0–22 valid); block `end`: the count of list 5 (56-byte elements); extra `type` 9: an
+> appearance-info flag word (§8.1, §8.3, §5.5). Rejecting unseen values remains allowed as a
+> conservative choice; accepting them with the sizes given is what the client does. The
+> tagfile magic is a format constant (`havok-data.md` §3.1).
 > Original note: Constants the implementation treats as layout-relevant and rejects as
 > unsupported when they differ (conservative, since a different value might be a count or
 > a tag): the 0x47 flag bits 0x8B being set (§4.2), the 0x1F appearance-section words
@@ -1108,7 +1262,8 @@ might look like held items (`appearance.md` §5.1).
 
 A decoder reports SI7, SI8 and SI10 violations as data-quality issues; none occur.
 
-> **OPEN:** frame list B (§6.3); its reader was not found in the 2026-10-07 BIN session.
+> **OPEN:** what frame list B means and which code uses it (§6.3); its reader is known
+> (2026-10-08), no user of the stored list was found.
 
 > **OPEN** (for `script-table.md`, and owner observation): holding-location choice in the
 > world, and stowing (§13.2).
@@ -1116,10 +1271,11 @@ A decoder reports SI7, SI8 and SI10 violations as data-quality issues; none occu
 > **Resolved (2026-10-05, BIN):** one-triangle slot placeholder parts are not drawn when the
 > object has several parts (§8.5; owner item O4).
 
-> **OPEN:** the 0x1F `value_a` and `value_b`, and how `vec3` combines with the entity scale
-> (§5.2; `appearance.md` §6.1, owner item O8). Answered in part (2026-10-07, BIN): stream
-> order, defaults of 1, and that a 0x47 legacy scale is turned into `Render_AdjustableScale`
-> (§4.2); the composition itself was not traced and still needs the owner's observation.
+> **Resolved (2026-10-08, BIN):** the 0x1F `value_a` (scale of attached objects), `value_b`
+> (particle-effect scale) and the composition of `vec3` with the entity scale (it multiplies)
+> (§5.2; `appearance.md` §6.1, owner item O8). Still OPEN in §5.2: the render scale's fourth
+> factor, the data behind the switches of its third, and whether held items are attached in
+> that sense (the owner can confirm the visible result, O8).
 
 
 <a id="s14-1"></a>
@@ -1133,10 +1289,14 @@ reproduces the §14 statistics (378 attach maps, list A in 2,737 setups, list B 
 in 50) and finds the skeleton-independent parts of SI7 and SI8 (unique keys and values, list
 A bones ≥ −1) in every setup; the largest bone index any setup names is 200.
 
-> **OPEN:** SI7, SI8 and SI10 compare indices with the skeleton's bone count, which lives in
-> the tagfile (`havok-data.md`). The formats crate keeps the tagfile opaque, so it checks
-> them only when a caller passes the bone count (`Setup::bone_issue`); the full check
-> belongs to a test that also decodes skeletons.
+> **Resolved (2026-10-08, spec owner):** SI7, SI8 and SI10 are defined against the bone count
+> of the setup's own skeleton (`havok-data.md` §4.2, the reference pose's bone array, §11.1).
+> A decoder that keeps the tagfile opaque checks them only when given that count, as
+> `Setup::bone_issue` does; the full check belongs to a real-data test that also decodes the
+> skeletons. No fact is missing. Original note: SI7, SI8 and SI10 compare indices with the
+> skeleton's bone count, which lives in the tagfile (`havok-data.md`). The formats crate keeps
+> the tagfile opaque, so it checks them only when a caller passes the bone count; the full
+> check belongs to a test that also decodes skeletons.
 
 ---
 
@@ -1150,6 +1310,10 @@ Recorded here instead of editing specs owned by other writers.
 | `appearance.md` §4.4 step 3, §8 step 8, §13 | Whether the original draws a winning stub's triangle is owner item O4; "stubs per the O4 policy (draw or skip)" | Answered by BIN (§8.5 here, `mesh.md` §8.10): one-triangle meshes are left out of the draw list of any object with more than one part, so a stub in a figure is never drawn. |
 | `skeleton-anim.md` §9.2, `setup.md` §8.5 (before 2026-10-05) | "242 three-vertex skinned stub meshes … (`Accessory1` 32, `Crest` 28, `Shoulder`, `Head`, `UpperBody`, `Helmet` 17 each, `Cape` 16 …)" | 258 three-vertex stubs, 234 of them skinned; slots `Accessory1` 33, `Crest` 28, `Helmet` 17, `Head` 17, `Cape` 16, `Shoulder` 16, `LowerBody` 13, `UpperBody` 12, …, `Default` 31 (census of all mesh records, 2026-10-05; §8.5). |
 | `docs/checklists/m2-visual.md` row C6, owner item O4 | Open: is the white triangle drawn by the original? | Not drawn (BIN, §8.5); the owner observation is no longer needed, a frame capture could still confirm it. |
+| `appearance.md` §6.1 (Decision and OPEN O8) | Whether the template `vec3` enters the render scale is OPEN (owner O8); the holder factor *s* is taken as 1 "until its sources are known" | `vec3` enters: the model component serves the effective chain `vec3` as `Model_Scale` (PID 0x3C3), which is input 2 of the render scale, so it multiplies `Render_AdjustableScale` (BIN 2026-10-08, §5.2 here; a High-elf female at about 1.84 m). The holder factor is the holder's `value_a` (served as `Model_ChildScale`, PID 0x112), replaced by 1 or by the holder's `value_b` when the attachment's switches say so (§5.2). |
+| `appearance.md` §6.1, last paragraph | "The template floats `value_a` and `value_b` are not scales …; assembly ignores them." | They are not scales of the figure itself, which is right for assembly; but `value_a` scales the objects attached to the figure and `value_b` its particle effects (served as `Model_ParticleScale`, PID 0x5A0) (§5.2). |
+| `property-system.md` §2.2–§2.3 | `field_b` and `field_d` byte 3: meaning OPEN; "the client's readers and value display never use these fields" | When the client looks a property up on an entity (BIN 2026-10-08): `field_b` selects where the value comes from (4, the value of 23,331 definitions: the entity's own property store; 3 and 8: two other stores of the entity; 7 and 9: a global service; any other value: not found); and inside the entity's own store, a definition whose `field_d` byte 3 is 1 (18 definitions) is answered by a provider registered by one of the entity's components instead of the stored values. Three of the 18 are the model component's (§5.2). Neither field affects decoding. |
+| `appearance.md` §4.2 (A28), §15 | "`setup.md` §8.1 rows 2 and 3 should be revised by that spec's owner" | Done 2026-10-08 (§8.1): row 2 is the DID-list count, row 3 the entry table's TSize hint, whose bucket order the entries follow in all 4,201 records. |
 
 ---
 
@@ -1163,3 +1327,5 @@ Recorded here instead of editing specs owned by other writers.
 | 2026-10-05 | §1 (APP/COL/MESH, BIN, CNS; S2, S14–S17), §2.1, §2.2, §3.3, §4.4, §5.2, §5.4, §7, §8.3, §8.4, §8.5 rewritten, §10, §10.1, §10.2, §12.2, §13.3, §14, new §15, §16 | Owner item O4 answered by BIN: one-triangle parts are left out of multi-part objects (with the stub census of setups and surfaces); corrections of `appearance.md` folded in (group and part priorities, key-table values, slot rule, selection tables, worn versus held, template scale, template appearance sections, null appearance); corrections of `collision.md` folded in (0x01 cell geometry, 0x66 decoded); LOD-class semantics pointed to `mesh.md` §8.5–§8.8. | Spec writer (dirty room) |
 | 2026-10-07 | header, §1 (BIN second session, questions 2–5; S18–S22), §4.2, §4.3, §4.4, §5.2, §7, §10, §10.1, §14, §16 | M4 (decision 0011): the client's 0x47 reader (every flag bit, field order, the legacy scale turned into `Render_AdjustableScale` and `Physics_AdjustableScale`); `kind` is the descriptor's type code and decides what the `template` link may name in property inheritance; `block` is a position-and-rotation frame, not a scale (OPEN narrowed to its use); `extra_sets` merge in list order and the embedded set wins, missing sets are skipped; 0x1F `value_a` precedes `value_b`, all three template values default to 1 (re-checked: no stored value within 0.0002 of 1 in all 29,134 templates; the 25 blocks have identity rotations). List B's reader not found. Status Accepted → Revised. | Spec writer (dirty room) |
 | 2026-10-07 | header, §1 (BIN third session, questions 6–7; S20 corrected; new S23, S24), §4.3, §4.4, §5.2, §16 | Review changes of 2026-10-07. **(1)** `block` census corrected (recount of all 40,643 descriptors): 16 records with `kind` 9 (all (0.4, 0.4, 2.7)) and 9 with `kind` 7 (positions listed per kind); two of the 18 `kind` 9 records have no block. **(2)** §4.3 now gives both inheritance routines: the single-property lookup (as before) and the whole-set gathering, in which `kind` 1, 2, 3, 5, 7, 9, 19, 21, 23, 31 follow a 0x47 parent (a 0x1F ends, any other target fails), `kind` 6 follows a game object (`PhysObj_Override` first) and then its associated 0x47, and every other value inherits nothing; where they differ, and that they agree on every descriptor of this install (all chains end at a 0x1F, all parents `kind` 2, 3 or 7, the `kind` 32 record names a 0x1F). Which callers use which routine is OPEN. Owner item O8, partial: the render scale's inputs (§5.2); `vec3` not found among them. Status stays Revised, awaiting re-review. | Spec writer (dirty room) |
+| 2026-10-08 | header, §1 (BIN fourth session, questions 8–12; OBS3; S24 updated; new S25–S33), §4.4, §5.2, §5.3, §5.4, new §5.5, §6.1, §6.3, §6.4, §7, §8.1, §8.3, §9 (SI2, SI3, SI5), §10, §10.1, §14, §14.1, §15, §16 | OPEN pass. **Closed:** the 63 unresolved `extra_sets` (all name 0x78000151 in the language archive); `vec3` multiplies the entity scale (served as `Model_Scale`), `value_a` scales attached objects (`Model_ChildScale`), `value_b` scales particle effects (`Model_ParticleScale`), template values multiply along a chain, the render scale's third factor and its two switches; the 0x1F appearance and setup sections are one appearance-info structure (constants 33, 2, 1 and 1, 9, 1 explained; the "type 9, count 1" reading of §5.3 withdrawn, same bytes); 0x04 volume and part counts are VLEs, `reserved` is a presence flag of a 56-byte block, list B's reader and header; how the client keeps boxes; 0x20 `reserved` is a DID-list count and `section` the entry table's TSize hint (census corrected to 4,113), the block is five counted lists (same bytes); the implementation-feedback OPENs on constants (§10.1) and on SI7/SI8/SI10 (§14.1). **Narrowed:** list B (reader known, user not found), O8 (fourth render-scale factor, the data behind the switches, whether held items are attached). New, precise: active-info choice for several setup-section elements, appearance-info bit 0x04, the 56-byte block of 0x04. Corrections for `appearance.md` §6.1, §4.2 and `property-system.md` §2.3 in §15. Status Accepted → Revised. | Spec writer (dirty room) |
+| 2026-10-08 | header, §5.5, §8.3 | Review of the 2026-10-08 revision: passed. Two OPEN callouts added for unknowns the text already named as not traced (the `base` combination and duplicate appearance-list DIDs in §5.5; the elements of block lists 2 and 5 in §8.3). No facts changed. Status Revised → Accepted. | Spec reviewer |

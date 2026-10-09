@@ -197,6 +197,14 @@ Notes on the rule:
   MithrilCoins_PaperItem, MordorAdvancementItemGrant, BankFillItem, GroupRefereeEntity and
   the three server entities named above.
 
+> **OPEN:** (implementer note, 2026-10-08) The cross-checks of the class-index table cannot
+> require each role class to have a class-table definition: on the test install the entity
+> base (223 here) occurs only in the parent map. The implementation (`tessera_wstate::
+> game_controls::ClassIndices::check`) therefore checks parentage only (root without
+> parent, child, grandchild, every base below the grandchild, the four plain-object roles
+> below the plain-object base, the manager base below the entity base, the two bases
+> unrelated). Should the spec state that a role class may be undefined in the class table?
+
 The 14 "other empty markers" are: DefaultGeneratorCondition, MonsterLevelDirectory,
 UsagePermission_AlwaysAllow, UsagePermission_Default, UsagePermission_HousingDecorationItem,
 TakePermission_CantTake, SummonFellowSelectCB, ConversationCallback, PerfSetup,
@@ -299,6 +307,13 @@ it with the generic property-set reader; the per-control tables of §4–§8 giv
 No new byte decoder is needed. Each control in this spec has exactly one object in its root
 class, except where a section says otherwise (PetControl's class holds two objects, §7.12).
 
+> **OPEN:** (implementer note, 2026-10-08) Engineering choices of the typed views
+> (`tessera_wstate::game_controls`), not facts of the format: every list a view keeps is
+> capped at 65,536 entries (the player-character cap); a present property of an unexpected
+> type is an error of the view, except for the reads whose client fallback the spec states
+> (§5.3.2, §5.7, §8.1), which treat it as absent; DID lists drop null elements except the
+> consideration lists of §7.5, which keep their 120 positions.
+
 <a id="s3-2"></a>
 ### 3.2 Empty marker objects (Confirmed, GC6)
 
@@ -392,6 +407,11 @@ TrackingManager, ScriptManager and NeighborManager. Each has its own root class.
   their only difference is `PhysObj` (0x47000687 here, the same in the three). They are
   "other entities" (§2.1 row 9) and are not covered by this spec. A reader that needs the
   manager kind uses the parent-class rule of §2.1.
+
+> **OPEN:** (implementer note, 2026-10-08) The property that holds the "literal name" is
+> not labelled here. The census (`crates/wstate/tests/game_controls_real_data.rs`) finds it
+> as the single PID whose value differs between the 13 non-repository managers, and checks
+> GCI4 with that PID; the spec could name the label.
 
 They are hidden, never-housekept server-side entities, one per service. A client has no
 use for them. A Tessera server may treat each label as the identity of the matching
@@ -657,6 +677,14 @@ actor's slot-material property of the trait's slot to the trait's
 
 The flank constraints read as: a position covers the arc from heading + left arc to heading
 + right arc, in degrees relative to the steed's facing (reading consistent with the values).
+
+> **OPEN:** (implementer note, 2026-10-08) The property type of `Mount_Control_Flank_Heading`
+> (the census finds `…_LeftArc` and `…_RightArc` to be floats) and the label of the
+> trait-tree field of a `Mount_Control_Tree_To_Skill_Struct` are not stated. The view
+> accepts an int or a float for the flank fields, and reads the tree key of both struct
+> kinds as
+> `Mount_Control_Trait_Tree`; on the test install that field is present in all three
+> skill-hash entries with the three keys of the tree array.
 
 > **OPEN:** (Q7) How the flank constraints are used (which attacks or effects test a flank
 > position). Server rule; no native reader was found (§2.4).
@@ -956,6 +984,12 @@ the PID stored in a login-reward record's `LoginReward_ControlCategory_PropertyN
 (§6.7), reads that array from this control, and for each tier entry shows the title and
 description and uses the NPC, NPC icon and reward item.
 
+> **OPEN:** (implementer note, 2026-10-08) The tier fields are given elided (`…_Tier_Title`
+> and so on). The implementation reads them as `RandomItemReward_Tier_Title`,
+> `…_Tier_Description`, `…_Tier_NPC`, `…_Tier_NPC_Icon` and `…_Tier_VXP` with the prefix
+> `RandomItemReward`; the census checks that these names exist in the dictionary with the
+> stated types. The spec could spell the full labels.
+
 > **OPEN:** (Q12) The order in which the client lists the tiers and what
 > `RandomItemRewardControl_ChanceToShowRarest` drives (a display choice or a server roll).
 
@@ -1004,6 +1038,12 @@ and 2, which no item unlocks. Why keys 1 and 2 have no unlocking item is not in 
 Data navigation: an item's set bit *b* gives key *b* + 1; the override whose
 `RequiredEnum` is that key gives the UI state to apply to the character's vital display,
 for the character kinds whose flag is true.
+
+> **OPEN:** (implementer note, 2026-10-08) Where in an item's property set
+> `VitalDisplayOverride_UnlockedVDOs` sits is not stated. On the test install none of the
+> 111 values is at the top level of its set; all 111 are nested (inside a struct or array
+> value), one per item. The census reads it at any depth. Which struct or array holds it
+> (and so how a client finds it on an item) should be stated.
 
 > **OPEN:** (Q13) Where the chosen override key is stored on the character, and how the UI
 > state changes the vitals display (frame art, colours). The overrides are not read by
@@ -1264,6 +1304,11 @@ out of scope.
 **Client use (BIN):** the client resolves this control by key (§2.4) and reads
 `Guild_PlayerNoteMaxLength` (an int). This install's control does **not** hold it, and the
 client then uses **48**.
+
+> **OPEN:** (implementer note, 2026-10-08) The spec gives the default only for an absent
+> value. The implementation also uses 48 when the property is present with another type
+> (as §5.3.2 and §5.7 state for their reads); whether the client does the same is not
+> stated.
 
 <a id="s8-2"></a>
 ### 8.2 MailControl (Confirmed, GC29)

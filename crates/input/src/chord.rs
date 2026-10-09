@@ -156,10 +156,89 @@ impl fmt::Display for Stroke {
     }
 }
 
-/// A sequence of strokes.
+/// The activation filter of a digital binding entry, the `on` field of the
+/// keymap file (`keymap.md` §5.3, §7.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub enum Activation {
+    /// A hold from every resolved press to the release (the default).
+    #[default]
+    Press,
+    /// A pulse at every release of a held button.
+    Release,
+    /// A pulse at a release at most half(*T*) after the button's last
+    /// recorded press.
+    Tap,
+    /// A hold from a double press (at most *T* after the previous recorded
+    /// press of the same button) to its release.
+    Double,
+    /// As [`Activation::Double`], and the press is nearby (§7.7).
+    DoubleNearby,
+}
+
+impl Activation {
+    /// Every value, in the §7.2.1 order within a class.
+    pub const ALL: [Self; 5] = [
+        Self::Press,
+        Self::Double,
+        Self::DoubleNearby,
+        Self::Release,
+        Self::Tap,
+    ];
+
+    /// The keymap-file spelling (`press`, `release`, `tap`, `double`,
+    /// `double_nearby`).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Press => "press",
+            Self::Release => "release",
+            Self::Tap => "tap",
+            Self::Double => "double",
+            Self::DoubleNearby => "double_nearby",
+        }
+    }
+
+    /// Parse a keymap-file spelling, matched exactly (§5.3).
+    #[must_use]
+    pub fn from_name(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == text)
+    }
+
+    /// Whether it fires at a release (`release`, `tap`) rather than at a
+    /// press (§7.7 "Class").
+    #[must_use]
+    pub const fn is_release_class(self) -> bool {
+        matches!(self, Self::Release | Self::Tap)
+    }
+
+    /// Rank inside one context at one raw event (§7.2.1): `press` before
+    /// `double` before `double_nearby`; `release` before `tap`.
+    #[must_use]
+    pub(crate) const fn rank(self) -> u8 {
+        match self {
+            Self::Press | Self::Release => 0,
+            Self::Double | Self::Tap => 1,
+            Self::DoubleNearby => 2,
+        }
+    }
+}
+
+impl fmt::Display for Activation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A sequence of strokes, plus the activation filter of the binding entry it
+/// belongs to (§5.3; [`Activation::Press`] unless set with
+/// [`Chord::with_activation`]).
+///
+/// The text form ([`Chord::parse`], `Display`) holds the strokes only; the
+/// keymap file writes a non-`press` activation as the `on` field.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Chord {
     strokes: Vec<Stroke>,
+    on: Activation,
 }
 
 impl Chord {
@@ -168,7 +247,42 @@ impl Chord {
     pub fn single(stroke: Stroke) -> Self {
         Self {
             strokes: vec![stroke],
+            on: Activation::Press,
         }
+    }
+
+    /// The activation filter (§5.3).
+    #[must_use]
+    pub fn activation(&self) -> Activation {
+        self.on
+    }
+
+    /// The same chord with another activation filter.
+    ///
+    /// # Errors
+    ///
+    /// [`InputError::Binding`] when `on` is not [`Activation::Press`] and the
+    /// chord is not a single stroke with exactly one button that is not a
+    /// wheel click (§5.3: such an entry is invalid).
+    pub fn with_activation(mut self, on: Activation) -> Result<Self> {
+        if on != Activation::Press {
+            let one_button = match self.strokes.as_slice() {
+                [s] => match s.buttons() {
+                    [b] => !matches!(b, Button::Wheel(_)),
+                    _ => false,
+                },
+                _ => false,
+            };
+            if !one_button {
+                return Err(bad(
+                    &self.to_string(),
+                    "`on` other than \"press\" needs a single stroke with exactly one button \
+                     that is not a wheel click",
+                ));
+            }
+        }
+        self.on = on;
+        Ok(self)
     }
 
     /// A chord from strokes.
@@ -190,7 +304,10 @@ impl Chord {
                 "a modifier-only stroke cannot be part of a sequence",
             ));
         }
-        Ok(Self { strokes })
+        Ok(Self {
+            strokes,
+            on: Activation::Press,
+        })
     }
 
     /// The strokes in order.

@@ -1212,6 +1212,8 @@ visibility-cell keys:
 > cell, the character's cell; otherwise outdoors (cell 0). While the camera is in a cell the
 > walker does not keep the eye above the terrain (the terrain is not drawn then).
 
+Audio does not use the camera's cell: the player's indoor state for sound follows the character's own cell (`sound.md` §10.8).
+
 <a id="s4-13"></a>
 ### 4.13 The indoor environment: sky key, ambient, fog, sun (BIN2 (f), BIN4; L32, L33, L46, L47)
 

@@ -26,8 +26,8 @@
 //!    lingering and dropped systems; then each owner's 2 s housekeeping (§7.4). The
 //!    runtime advances its timers.
 //! 3. [`EffectLayer::draw`] draws the systems placed in the frame (§8.15 order), each
-//!    instance through the distance fade of `particles.md` §8.13, with its surface's texture
-//!    and blend state (§9.1).
+//!    instance through the distance fade of `particles.md` §8.13, with its surface's
+//!    textures, blend state and program (§9.1, §9.1.1).
 //!
 //! Positions are simulated in region coordinates relative to a base point fixed per region
 //! (so that `f32` values stay small near where the walker started), and moved into the
@@ -37,7 +37,9 @@
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
 //! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are not drawn (the
 //! walker has no post-processing pass, `particles.md` §8.15); `inherit_opacity` (owners
-//! are drawn at opacity 1); point lights and the ambient colour of lit systems (Q8 (b));
+//! are drawn at opacity 1, walker rule (d) of runtime §5.4 and the Q-RT7 Decision); the
+//! frame-buffer distortion program and the soft-particle factor of runtime §9.1.1; point
+//! lights and the ambient colour of lit systems (Q8 (b));
 //! weather systems and the global wind (Q13); beams (Q-RT4); the gameplay event handler
 //! (Q-RT5); frustum culling by record bounds (Q-RT3, optional).
 
@@ -439,11 +441,16 @@ impl FxState {
 
     fn note_texture(&mut self, record: &EffectRecord) {
         if let EffectRecord::Particles {
-            texture: Some(t), ..
+            texture,
+            second_texture,
+            ..
         } = record
-            && self.textures.insert(*t)
         {
-            self.new_textures.push(*t);
+            for t in texture.iter().chain(second_texture) {
+                if self.textures.insert(*t) {
+                    self.new_textures.push(*t);
+                }
+            }
         }
     }
 
@@ -1392,7 +1399,10 @@ impl EffectLayer {
             };
             let EffectRecord::Particles {
                 texture,
+                second_texture,
                 alpha,
+                shading,
+                material,
                 drawable,
                 ..
             } = &*record
@@ -1402,15 +1412,21 @@ impl EffectLayer {
             if !drawable {
                 continue;
             }
-            let tex: Option<TextureId> = match texture.map(|t| objects.texture(t)) {
-                None => None,
+            let mut waiting = false;
+            let mut lookup = |t: &Option<_>| match t.map(|t| objects.texture(t)) {
+                None | Some(TexLookup::Failed) => None,
                 Some(TexLookup::Ready(id)) => Some(id),
                 Some(TexLookup::Pending) => {
-                    pending += 1;
-                    continue;
+                    waiting = true;
+                    None
                 }
-                Some(TexLookup::Failed) => None,
             };
+            let tex: Option<TextureId> = lookup(texture);
+            let tex2: Option<TextureId> = lookup(second_texture);
+            if waiting {
+                pending += 1;
+                continue;
+            }
             systems += 1;
             for inst in &d.instances {
                 if inst.vertices.is_empty() {
@@ -1431,6 +1447,9 @@ impl EffectLayer {
                     texture: tex,
                     alpha: *alpha,
                     tint: [1.0, 1.0, 1.0, inst.opacity],
+                    material: *material,
+                    shading: *shading,
+                    second_texture: tex2,
                 });
             }
         }

@@ -691,6 +691,25 @@ input the output alpha is further multiplied by the soft-particle factor of para
    observation that these unlit programs do multiply the vertex and material alphas into the
    blend's source alpha is offered to the owners of `material.md` and `render.md` (§16).
 
+> **OPEN:** (implementer, 2026-10-09) Engineering choices of the implementation
+> (`crates/particles` `surface.rs`, `crates/render` `particles.rs`, the walker and the
+> explorer) where this section gives no fact for Tessera; confirm or replace:
+> (a) a particle surface whose shader record is not one of the 19 (none in this install) is
+> drawn as the common row of its blend class: *T* × *V* × *M*, alpha *T*.alpha × *V*.alpha ×
+> *M*.alpha, the test on *T*.alpha, one layer, no doubling, fogged when the destination
+> factor is not ONE;
+> (b) 0x2B000084 (frame-buffer distortion) is drawn as its variant without a frame-buffer
+> input, that is not at all, although Tessera could offer a copy of the scene;
+> (c) the soft-particle factor of parameter 1174 is not applied (particle draws get no depth
+> input);
+> (d) the second layer of the two-layer records is sampled at the vertex texture coordinates
+> without texture matrices 0 and 1 (`material.md` §8.4), as Tessera applies no texture
+> matrices to particle draws;
+> (e) the alpha-test reference is the effective 1043 value of the surface's material as
+> resolved once, not the curve evaluated at the clock at every draw; and fog uses the
+> distance fog of the world pass (none in passes without frame lighting, such as the
+> explorer preview).
+
 <a id="s9-2"></a>
 ### 9.2 Order of particles inside a system (BIN)
 

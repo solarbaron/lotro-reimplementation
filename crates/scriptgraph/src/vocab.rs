@@ -163,6 +163,42 @@ pub struct TimerFieldPids {
     pub speed_multiplier: Option<u32>,
 }
 
+/// PIDs of the Particle node fields (`particle-runtime.md` §5.2, §5.4) that driven pairs
+/// may name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParticleFieldPids {
+    /// `ParticleScript_ParticleID`.
+    pub particle_id: Option<u32>,
+    /// `ParticleScript_ForkParticleID`.
+    pub fork_particle_id: Option<u32>,
+    /// `ParticleScript_ShouldFade`.
+    pub should_fade: Option<u32>,
+    /// `ParticleScript_FarFadeMinDistance`.
+    pub far_fade_min: Option<u32>,
+    /// `ParticleScript_FarFadeMaxDistance`.
+    pub far_fade_max: Option<u32>,
+    /// `ParticleScript_CloseFadeMinDistance`.
+    pub close_fade_min: Option<u32>,
+    /// `ParticleScript_CloseFadeMaxDistance`.
+    pub close_fade_max: Option<u32>,
+    /// `ParticleScript_HoldingLocation`.
+    pub holding_location: Option<u32>,
+    /// `ParticleScript_BoneType`.
+    pub bone_type: Option<u32>,
+    /// `ParticleScript_BoneOffset`.
+    pub bone_offset: Option<u32>,
+    /// `ParticleScript_DropEffect`.
+    pub drop_effect: Option<u32>,
+    /// `ParticleScript_RemoveRotation`.
+    pub remove_rotation: Option<u32>,
+    /// `ParticleScript_OnWater`.
+    pub on_water: Option<u32>,
+    /// `ParticleScript_ImmediateDisposal`.
+    pub immediate_disposal: Option<u32>,
+    /// `ParticleScript_RedirectProperty`.
+    pub redirect_property: Option<u32>,
+}
+
 /// The property IDs and enum keys the runtime uses, looked up in the data.
 ///
 /// Every field is optional: a name the dictionary lacks disables the feature that needs it
@@ -192,6 +228,8 @@ pub struct RuntimeVocabulary {
     pub sound: SoundFieldPids,
     /// Timer node fields.
     pub timer: TimerFieldPids,
+    /// Particle node fields.
+    pub particle: ParticleFieldPids,
     /// `SoundEnvironmentScript_Name`.
     pub environment_name: Option<u32>,
     /// `SoundEnvironmentScript_Priority`.
@@ -233,6 +271,23 @@ impl RuntimeVocabulary {
                 loop_count: p("TimerScript_LoopCount"),
                 speed: p("AnimationScript_Speed"),
                 speed_multiplier: p("TimerScript_SpeedMultiplier"),
+            },
+            particle: ParticleFieldPids {
+                particle_id: p("ParticleScript_ParticleID"),
+                fork_particle_id: p("ParticleScript_ForkParticleID"),
+                should_fade: p("ParticleScript_ShouldFade"),
+                far_fade_min: p("ParticleScript_FarFadeMinDistance"),
+                far_fade_max: p("ParticleScript_FarFadeMaxDistance"),
+                close_fade_min: p("ParticleScript_CloseFadeMinDistance"),
+                close_fade_max: p("ParticleScript_CloseFadeMaxDistance"),
+                holding_location: p("ParticleScript_HoldingLocation"),
+                bone_type: p("ParticleScript_BoneType"),
+                bone_offset: p("ParticleScript_BoneOffset"),
+                drop_effect: p("ParticleScript_DropEffect"),
+                remove_rotation: p("ParticleScript_RemoveRotation"),
+                on_water: p("ParticleScript_OnWater"),
+                immediate_disposal: p("ParticleScript_ImmediateDisposal"),
+                redirect_property: p("ParticleScript_RedirectProperty"),
             },
             environment_name: p("SoundEnvironmentScript_Name"),
             environment_priority: p("SoundEnvironmentScript_Priority"),

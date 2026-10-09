@@ -939,3 +939,46 @@ fn stuck_particles_draw_without_a_streak() {
         assert!(c.length() < 1e-4, "quad centred at {c}");
     }
 }
+
+/// `particle-runtime.md` §10.2, Tessera rule without the fork library: a fork effect counts
+/// as active until the `tail_value` rule of `particles.md` §6.5 expires it, and on release
+/// it is destroyed at once instead of lingering (it is local-space and has no instance).
+#[test]
+fn fork_effects_without_the_library() {
+    use tessera_formats::PropertySet;
+    use tessera_formats::gameplay::particles::ForkSystem;
+    use tessera_particles::{ForkEffect, ForkFade};
+    let record = ForkSystem {
+        image: Vec::new(),
+        flag: false,
+        name: String::new(),
+        name_table_hint: 0,
+        name_table: Vec::new(),
+        properties: PropertySet::default(),
+        transform: Vec::new(),
+        resources_hint: 0,
+        resources: Vec::new(),
+        tail_value: 2.0,
+        bounds_min: [0.0; 3],
+        bounds_max: [0.0; 3],
+    };
+    let fork = |now: f64| {
+        Some(Effect::Fork(ForkEffect::new(
+            &record,
+            now,
+            ForkFade::default(),
+        )))
+    };
+    let probe = fork(1.0).expect("fork");
+    assert!(!probe.has_ended(2.9), "active within its window");
+    assert!(probe.has_ended(3.1), "expired after tail_value");
+    let mut mgr = EffectManager::new();
+    mgr.begin_frame(0, 1.0);
+    let (h, k) = mgr
+        .start_attached(1, 0x4400_0001, 1.0, || fork(1.0), AttachSpec::default())
+        .expect("started");
+    assert!(mgr.effect(k).is_some());
+    mgr.stop(1, h, false, 1.5);
+    assert!(mgr.effect(k).is_none(), "destroyed at once");
+    assert!(mgr.lingering().is_empty(), "a fork effect never lingers");
+}

@@ -321,9 +321,9 @@ fn dropped_variant_offsets_twice() {
     assert!(t > 11.75 && t < 11.80, "{t}");
 }
 
-/// Rule §12.7 (the reading in `particle-runtime.md` §12 OPEN): a never-ending effect on the
-/// dropped path is not stopped at placement; it emits and is removed at the first sweep
-/// more than 6 s after it was placed.
+/// Rule §12.7 (`particle-runtime.md`, revised 2026-10-09: the removal-time reading): a
+/// never-ending effect on the dropped path is not stopped at placement; it emits and is
+/// removed at the first lingering sweep more than 6 s after it was placed.
 #[test]
 fn never_ending_dropped_effect_runs_then_goes_after_six_seconds() {
     let mut ps = worked_example();

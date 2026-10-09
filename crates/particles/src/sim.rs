@@ -12,7 +12,15 @@
 //! §3.3), so a system run twice with the same seed and the same inputs gives the same
 //! particles.
 //!
-//! Frames (`particles.md` Q8, Tessera decision recorded in `particle-runtime.md`): a
+//! Keyframes (§8.6.1, BIN third pass): no key is current at creation; every particle
+//! update, the one right after the spawn included, walks the later keys with the age
+//! raised to 0 and makes a key current once that age is at least its `time`; a key applies
+//! its controller, then its channels, then its physics flags; controller 3 draws its point
+//! index at the first update that runs it. A channel without a current key uses scale
+//! (1, 1), opaque white and mass 1, and a particle without a controller key does not move
+//! (rule §10.11).
+//!
+//! Frames (`particles.md` Q8, Tessera Decision of `particle-runtime.md` §9.2): a
 //! world-space system simulates in world coordinates with the first draw instance of the
 //! frame as its frame; a local-space system simulates in its own frame (identity at the
 //! origin) and is drawn through each instance's transform. The anchors of distance
@@ -46,8 +54,8 @@ pub const RESTART_FRAMES: u64 = 100;
 /// Length below which a direction counts as zero (§8.5 step 5).
 const ZERO_DIRECTION: f32 = 1e-6;
 
-/// Engineering limits of the simulation (Tessera choices for hostile records, recorded in
-/// `particle-runtime.md` §12; the data never reaches them).
+/// Engineering limits of the simulation for hostile records (`particle-runtime.md` §12
+/// rule 9; the data never reaches them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimConfig {
     /// Most live particles of one system, all emitters together. Spawning stops at this
@@ -226,6 +234,9 @@ pub struct Particle {
     pub(crate) point: u32,
     /// Controller 1: whether the particle has been placed on its start point.
     pub(crate) path_started: bool,
+    /// Controller 3: the point index is still to be drawn, at the first particle update
+    /// that runs the controller (`particles.md` §8.6.1 step 4).
+    pub(crate) point_pending: bool,
     /// Controller 1: speed (length of the spawn velocity).
     pub(crate) path_speed: f32,
     /// `particle_scale` drawn at spawn.
@@ -834,7 +845,7 @@ fn distance_emission(
     let mut room = ctx.cap().saturating_sub(s.particles.len());
     // World offsets into the simulation frame: unchanged for a world-space system (its
     // frame is the anchor frame), turned back by the anchor's rotation for a local-space
-    // one (`particle-runtime.md` §9.2 OPEN, Tessera choice).
+    // one (`particle-runtime.md` §9.2, Tessera Decision until `particles.md` Q8 (a)).
     let anchor_inv = ctx.anchor.rotation.inverse();
     let frame_rot = ctx.frame.rotation;
     let to_sim = move |v: Vec3| frame_rot * (anchor_inv * v);
@@ -972,9 +983,8 @@ fn spawn(
         Some(v) => v,
         None => line_vector(e, &mut s.curves, t, rng),
     };
-    let raw = shape_point(e, &mut s.curves, et, line, rng);
+    let mut point = shape_point(e, &mut s.curves, et, line, rng);
     // Step 3.
-    let mut point = raw;
     if has_attachment(e) && !e.stick_to_bones {
         if !ctx.desc.world_space {
             ctx.stats.skipped += 1;
@@ -993,13 +1003,14 @@ fn spawn(
         ctx.stats.skipped += 1;
         return;
     }
-    // Step 5.
+    // Step 5. The radial direction of an exploding emitter uses the shape point after the
+    // attachment of step 3 and before `origin` (§8.5.2, BIN third pass).
     let rot = ctx.frame.rotation;
-    let exploding_radial = e.exploding && raw.to_array().iter().any(|c| c.abs() > TOLERANCE);
+    let exploding_radial = e.exploding && point.to_array().iter().any(|c| c.abs() > TOLERANCE);
     let mut d = if !e.exploding {
         rot * Vec3::from_array(s.curves.direction.eval(et, rng))
     } else if exploding_radial {
-        rot * raw
+        rot * point
     } else {
         Vec3::new(
             rng.range(-1.0, 1.0),
@@ -1057,6 +1068,7 @@ fn spawn(
         physics_flags: 0,
         point: 0,
         path_started: false,
+        point_pending: false,
         path_speed: velocity.length(),
         scale,
         streak,
@@ -1067,12 +1079,9 @@ fn spawn(
         spawn_origin: ctx.frame.position,
         spawn_rotation: rot,
     };
-    // The first key is current from creation (`particle-runtime.md` §14.3: a particle
-    // advanced to a negative age moves under its first controller key).
-    if !e.keyframes.is_empty() {
-        visit_key(&mut p, e, &mut s.control, 0, rng);
-        p.visited = 1;
-    }
+    // No key is current at creation (§8.6.1 step 1); the update right after the spawn
+    // walks the keys (step 2), so a first key with `time` 0 is current from it on, also at
+    // a negative age (`particle-runtime.md` §14.3).
     let at = s.last_update;
     if advance(
         &mut p,
@@ -1125,39 +1134,52 @@ fn particle_update(ctx: &mut SpawnCtx<'_>, s: &mut EmitterSim, rng: &mut Ran2) {
     s.last_update = now;
 }
 
-/// Makes key `k` current for the channels its flags name (§8.6.1).
-fn visit_key(p: &mut Particle, e: &Emitter, c: &mut Control, k: usize, rng: &mut Ran2) {
+/// Makes key `k` current for what its flags name (§8.6.1 step 3): the controller switch
+/// (0x100) first, then the scale, colour and mass bits, then the physics flags (0x200).
+/// The point index of controller 3 is not drawn here but at the first particle update that
+/// runs the controller (step 4; controller 1 likewise places its start point there).
+fn visit_key(p: &mut Particle, e: &Emitter, k: usize) {
     let Some(key) = e.keyframes.get(k) else {
         return;
     };
-    let k16 = u32::try_from(k).unwrap_or(u32::MAX);
+    let k32 = u32::try_from(k).unwrap_or(u32::MAX);
+    if key.flags & KEY_CONTROLLER != 0 {
+        p.controller_key = Some(k32);
+        p.path_started = false;
+        p.point_pending = key.motion() == MotionController::PointPlacement;
+    }
     if key.flags & (KEY_SCALE | KEY_SCALE_LERP) != 0 {
-        p.scale_key = Some(k16);
+        p.scale_key = Some(k32);
     }
     if key.flags & (KEY_COLOUR | KEY_COLOUR_LERP) != 0 {
-        p.colour_key = Some(k16);
+        p.colour_key = Some(k32);
     }
     if key.flags & (KEY_MASS | KEY_MASS_LERP) != 0 {
-        p.mass_key = Some(k16);
+        p.mass_key = Some(k32);
     }
     if key.flags & KEY_PHYSICS != 0 {
         p.physics_flags = key.physics_flags;
     }
-    if key.flags & KEY_CONTROLLER != 0 {
-        p.controller_key = Some(k16);
-        p.path_started = false;
-        if key.motion() == MotionController::PointPlacement && !key.points.is_empty() {
-            let count = key.points.len();
-            if let Some(counter) = c.counters.get_mut(k) {
-                p.point = *counter;
-                *counter = if p.physics_flags & PHYSICS_RANDOM_POINT != 0 {
-                    u32::try_from(rng.index(count)).unwrap_or(0)
-                } else {
-                    let next = (*counter as usize + 1) % count;
-                    u32::try_from(next).unwrap_or(0)
-                };
-            }
-        }
+}
+
+/// Controller 3's point index (§8.7), drawn at the first particle update under the key
+/// (§8.6.1 step 4), so it sees the physics flags of the key that set the controller: the
+/// particle takes the key's counter, which then advances by one (wrapping) or, with
+/// physics flag 0x8, is replaced by a uniform index.
+fn draw_point_index(p: &mut Particle, key: &Keyframe, c: &mut Control, k: usize, rng: &mut Ran2) {
+    p.point_pending = false;
+    let count = key.points.len();
+    if count == 0 {
+        return;
+    }
+    if let Some(counter) = c.counters.get_mut(k) {
+        p.point = *counter;
+        *counter = if p.physics_flags & PHYSICS_RANDOM_POINT != 0 {
+            u32::try_from(rng.index(count)).unwrap_or(0)
+        } else {
+            let next = (*counter as usize + 1) % count;
+            u32::try_from(next).unwrap_or(0)
+        };
     }
 }
 
@@ -1283,9 +1305,11 @@ fn advance(
         return false;
     }
     let age = age64 as f32;
-    // Visit the keys the age has reached (key 0 is current from creation).
+    // §8.6.1 step 2: walk the keys after the current one with the age raised to 0; a key
+    // is current once that age is at least its `time`.
+    let walk_age = age.max(0.0);
     while let Some(key) = e.keyframes.get(p.visited as usize) {
-        if !(key.time <= age) {
+        if !(key.time <= walk_age) {
             break;
         }
         let k = p.visited as usize;
@@ -1298,10 +1322,15 @@ fn advance(
             p.base = path_position(p, old, c, frame.rotation, a, key.time - old_time, rng)
                 .unwrap_or(p.position);
         }
-        visit_key(p, e, c, k, rng);
+        visit_key(p, e, k);
         p.visited = p.visited.saturating_add(1);
     }
     let key = p.controller_key.and_then(|i| e.keyframes.get(i as usize));
+    if p.point_pending
+        && let (Some(k), Some(kf)) = (p.controller_key, key)
+    {
+        draw_point_index(p, kf, c, k as usize, rng);
+    }
     let tau = age - key.map_or(0.0, |k| k.time);
     let mass = mass_of(p, e, c, age);
     let a = force(p, c, mass);

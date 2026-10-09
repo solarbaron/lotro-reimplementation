@@ -1,18 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Particle draws (`docs/specs/particle-runtime.md` §9.1): world-space vertices with a
-// particle colour and atlas texture coordinates, the texture of the system's surface, and a
-// colour multiplier (1, 1, 1, opacity) per draw. Colours are in stored-value space: a texture
-// uploaded sRGB is re-encoded after sampling, and an sRGB target is written the decoded
-// value so that it stores the result unchanged (`docs/specs/render.md` §4.1).
+// Particle draws (`docs/specs/particle-runtime.md` §9.1, §9.1.1): world-space vertices with
+// a particle colour and atlas texture coordinates, the texture(s) of the system's surface,
+// and per draw M = material colour 2000 x the draw's tint (1, 1, 1, opacity). The programs
+// of §9.1.1: the alpha test reads the texture's opacity T.a alone (two layers: the product
+// of both alphas); colour = T x V x M (doubled for some records, then fogged for the
+// alpha-blended ones); output alpha = T.a x V.a x M.a, with the texture alpha, the vertex
+// colour or M left out where the program says so. Colours are in stored-value space: a
+// texture uploaded sRGB is re-encoded after sampling, and an sRGB target is written the
+// decoded value so that it stores the result unchanged (`docs/specs/render.md` §4.1).
 
 struct ParticleDraw {
     view_proj: mat4x4<f32>,
-    tint: vec4<f32>,
-    // x: alpha-test cutoff (fragments with alpha <= cutoff are discarded when flags.z = 1).
+    // M: material colour 2000 x the draw's tint (white when the program reads no M).
+    material: vec4<f32>,
+    // x: alpha-test reference (fragments whose tested opacity is <= x are discarded when
+    // flags.z = 1), y: fog near, z: 1 / (fog far - fog near).
     params: vec4<f32>,
-    // x: texture is sRGB, y: target is sRGB, z: alpha test.
+    // xyz: eye position (world).
+    eye: vec4<f32>,
+    // rgb: fog colour, w: 1 when this draw is fogged.
+    fog_color: vec4<f32>,
+    // x: texture is sRGB, y: target is sRGB, z: alpha test, w: program bits
+    // (1 texture alpha, 2 vertex colour, 4 doubled).
     flags: vec4<u32>,
+    // x: second-layer texture is sRGB, y: layers (0 one, 1 product, 2 sum).
+    layers: vec4<u32>,
 };
+
+const PROGRAM_TEXTURE_ALPHA: u32 = 1u;
+const PROGRAM_VERTEX_COLOUR: u32 = 2u;
+const PROGRAM_DOUBLED: u32 = 4u;
 
 // Set for a fixed blend that draws opaque in a premultiplied pass (`render.md` §6.10, R12):
 // the fragment writes alpha 1 and its colour times the source factor (1 = ZERO, 2 = ONE,
@@ -22,6 +39,8 @@ override FIXED_OPAQUE: u32 = 0u;
 @group(0) @binding(0) var<uniform> draw: ParticleDraw;
 @group(1) @binding(0) var t_particle: texture_2d<f32>;
 @group(1) @binding(1) var s_particle: sampler;
+@group(1) @binding(2) var t_layer2: texture_2d<f32>;
+@group(1) @binding(3) var s_layer2: sampler;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -33,6 +52,8 @@ struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) uv: vec2<f32>,
+    // Distance fog factor f (`lighting.md` §10, per vertex).
+    @location(2) fog: f32,
 };
 
 fn particle_srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
@@ -52,6 +73,12 @@ fn vs_particle(v: VsIn) -> VsOut {
     out.position = draw.view_proj * vec4<f32>(v.position, 1.0);
     out.color = v.color;
     out.uv = v.uv;
+    var f = 0.0;
+    if (draw.fog_color.w != 0.0) {
+        let d = length(draw.eye.xyz - v.position);
+        f = clamp((d - draw.params.y) * draw.params.z, 0.0, 1.0);
+    }
+    out.fog = f;
     return out;
 }
 
@@ -61,15 +88,42 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     if (draw.flags.x != 0u) {
         tex = vec4<f32>(particle_linear_to_srgb(tex.rgb), tex.a);
     }
-    let c = tex * in.color * draw.tint;
-    if (draw.flags.z != 0u && c.a <= draw.params.x) {
+    // The second layer is sampled at the same coordinates (`material.md` §8.4: both layers
+    // read the vertex UV pair; Tessera applies no texture matrices to particles).
+    var l2 = textureSample(t_layer2, s_layer2, in.uv);
+    if (draw.layers.x != 0u) {
+        l2 = vec4<f32>(particle_linear_to_srgb(l2.rgb), l2.a);
+    }
+    if (draw.layers.y == 1u) {
+        tex = vec4<f32>(tex.rgb * l2.rgb, tex.a * l2.a);
+    } else if (draw.layers.y == 2u) {
+        tex = vec4<f32>(tex.rgb + l2.rgb, tex.a * l2.a);
+    }
+    // The alpha test reads the texture's opacity alone (§9.1.1 rule 1).
+    if (draw.flags.z != 0u && tex.a <= draw.params.x) {
         discard;
     }
-    var rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let program = draw.flags.w;
+    var v = vec4<f32>(1.0);
+    if ((program & PROGRAM_VERTEX_COLOUR) != 0u) {
+        v = in.color;
+    }
+    var ta = 1.0;
+    if ((program & PROGRAM_TEXTURE_ALPHA) != 0u) {
+        ta = tex.a;
+    }
+    var c = tex.rgb * v.rgb * draw.material.rgb;
+    if ((program & PROGRAM_DOUBLED) != 0u) {
+        c = 2.0 * c;
+    }
+    if (draw.fog_color.w != 0.0) {
+        c = mix(c, draw.fog_color.rgb, in.fog);
+    }
+    var rgb = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
     if (draw.flags.y != 0u) {
         rgb = particle_srgb_to_linear(rgb);
     }
-    let a = clamp(c.a, 0.0, 1.0);
+    let a = clamp(ta * v.a * draw.material.a, 0.0, 1.0);
     switch FIXED_OPAQUE {
         case 1u: {
             return vec4<f32>(vec3<f32>(0.0), 1.0);

@@ -14,6 +14,16 @@
 //! [`ParticleDraw::tint`], normally (1, 1, 1, instance opacity). Billboards are drawn from
 //! both sides with the depth test on.
 //!
+//! What the surface program computes is [`ParticleDraw::shading`] (`particle-runtime.md`
+//! §9.1.1): *M* = [`ParticleDraw::material`] (colour 2000) × the tint; colour = *T* × *V* ×
+//! *M*, doubled where the program doubles it, then fogged (`lighting.md` §10, in world
+//! passes with fog) where the program is fogged; output alpha = *T*.alpha × *V*.alpha ×
+//! *M*.alpha without the factors the program leaves out. The alpha test reads the
+//! texture's opacity alone (two layers: the product of both alphas), with the per-draw
+//! reference of `material.md` §11.2 and *A* = *M*.alpha ([`draw_reference`]). The
+//! soft-particle factor of parameter 1174 is not applied: particle draws get no depth
+//! input.
+//!
 //! Draws are recorded in a world pass's translucent stage, after the opaque surfaces and
 //! the render-world hooks, before the sorted blended meshes. They work in lit and unlit
 //! world passes and are ignored by screen passes.
@@ -61,8 +71,66 @@ pub struct ParticleVertex {
     pub uv: [f32; 2],
 }
 
-/// One draw instance of a particle system ([`Pass::particles`]).
-#[derive(Debug, Clone, Default)]
+/// How a two-layer surface program combines its layers' colours (the alphas multiply).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParticleLayers {
+    /// Layer 1 × layer 2.
+    Product,
+    /// Layer 1 + layer 2.
+    Sum,
+}
+
+/// What a particle surface's program computes (`particle-runtime.md` §9.1.1).
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ParticleShading {
+    /// The alpha test (when the draw's [`AlphaMode`] has one, and the per-draw rule keeps
+    /// it) and the discard of transparent texels in source-alpha blends read the texture's
+    /// opacity; `false`: the program discards nothing.
+    pub tests_texture: bool,
+    /// The texture's alpha is a factor of the output alpha.
+    pub texture_alpha: bool,
+    /// The vertex colour is a factor of colour and alpha.
+    pub vertex_colour: bool,
+    /// *M* (material colour × tint) is a factor of colour and alpha.
+    pub material_colour: bool,
+    /// The colour is doubled.
+    pub doubled: bool,
+    /// The colour is fogged (world passes with fog only).
+    pub fogged: bool,
+    /// A second colour layer ([`ParticleDraw::second_texture`]) and how it combines.
+    pub layers: Option<ParticleLayers>,
+}
+
+impl ParticleShading {
+    /// The common program: *T* × *V* × *M*, alpha *T*.alpha × *V*.alpha × *M*.alpha, the
+    /// test on *T*.alpha, one layer, not doubled, not fogged.
+    pub const STANDARD: Self = Self {
+        tests_texture: true,
+        texture_alpha: true,
+        vertex_colour: true,
+        material_colour: true,
+        doubled: false,
+        fogged: false,
+        layers: None,
+    };
+
+    fn program_bits(self) -> u32 {
+        u32::from(self.texture_alpha)
+            | u32::from(self.vertex_colour) << 1
+            | u32::from(self.doubled) << 2
+    }
+}
+
+impl Default for ParticleShading {
+    fn default() -> Self {
+        Self::STANDARD
+    }
+}
+
+/// One draw instance of a particle system ([`Pass::particles`]). `Default` is an empty
+/// [`ParticleDraw::new`] (white material, standard program).
+#[derive(Debug, Clone)]
 pub struct ParticleDraw {
     /// Quad vertices (four per quad) followed by triangle vertices (three per triangle).
     pub vertices: Vec<ParticleVertex>,
@@ -74,6 +142,13 @@ pub struct ParticleDraw {
     pub alpha: AlphaMode,
     /// Colour multiplier: (1, 1, 1, instance opacity).
     pub tint: Rgba,
+    /// The surface's material colour 2000 (white when not declared); *M* = this × `tint`.
+    pub material: Rgba,
+    /// What the surface program computes.
+    pub shading: ParticleShading,
+    /// The second layer's texture (white when `None` or unknown), read only when
+    /// [`ParticleShading::layers`] is set.
+    pub second_texture: Option<TextureId>,
 }
 
 impl ParticleDraw {
@@ -87,7 +162,16 @@ impl ParticleDraw {
             texture: None,
             alpha: AlphaMode::Blend,
             tint: [1.0; 4],
+            material: [1.0; 4],
+            shading: ParticleShading::STANDARD,
+            second_texture: None,
         }
+    }
+}
+
+impl Default for ParticleDraw {
+    fn default() -> Self {
+        Self::new(Vec::new(), 0)
     }
 }
 
@@ -112,6 +196,64 @@ struct DrawState {
     blend: BlendKey,
     depth_write: bool,
     cutoff: Option<f32>,
+}
+
+impl DrawState {
+    /// Whether the blend's source factor is source alpha (`src_blend` SRCALPHA).
+    fn source_alpha(&self) -> bool {
+        match self.blend {
+            BlendKey::Alpha => true,
+            BlendKey::Fixed(f) => f.src == crate::material::BlendFactor::SrcAlpha,
+            BlendKey::Opaque => false,
+        }
+    }
+}
+
+/// The alpha-test reference of one particle draw (`material.md` §11.2 "What the client
+/// does per draw", applied by `particle-runtime.md` §9.1.1 rule 1 with *A* = *M*.alpha =
+/// material alpha × tint alpha). `test` is the record's reference when its alpha test is
+/// on, `depth_write` and `source_alpha` the permutation's state. Tessera has no
+/// alpha-to-coverage option, so step 1 never applies.
+///
+/// - Alpha test on and depth write on: the reference becomes reference × *A*.
+/// - Alpha test on and depth write off: the test is off for the draw while *A* < 0.9.
+/// - On: ⌊reference × 255⌋ / 255. Off: 0 when the source factor is source alpha (texels
+///   of opacity 0 are discarded), else nothing is discarded (`None`).
+///
+/// A fragment is discarded when its tested opacity is ≤ the returned reference.
+#[must_use]
+pub fn draw_reference(
+    test: Option<f32>,
+    depth_write: bool,
+    source_alpha: bool,
+    a: f32,
+) -> Option<f32> {
+    let off = source_alpha.then_some(0.0);
+    let Some(r) = test.filter(|r| r.is_finite()) else {
+        return off;
+    };
+    let a = if a.is_finite() { a } else { 0.0 };
+    let r = if depth_write {
+        r * a
+    } else if a < 0.9 {
+        return off;
+    } else {
+        r
+    };
+    Some((r * 255.0).floor() / 255.0)
+}
+
+/// The distance fog of a world pass (`lighting.md` §10), for fogged particle programs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ParticleFog {
+    /// The eye position.
+    pub eye: [f32; 3],
+    /// Fog near distance.
+    pub near: f32,
+    /// 1 / (far − near).
+    pub inv_range: f32,
+    /// Fog colour (stored-value space, as the lit passes use it).
+    pub color: [f32; 3],
 }
 
 fn cutoff(c: f32) -> f32 {
@@ -159,9 +301,12 @@ fn draw_state(alpha: AlphaMode) -> DrawState {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct ParticleUniform {
     view_proj: [[f32; 4]; 4],
-    tint: [f32; 4],
+    material: [f32; 4],
     params: [f32; 4],
+    eye: [f32; 4],
+    fog_color: [f32; 4],
     flags: [u32; 4],
+    layers: [u32; 4],
 }
 
 type PipeKey = (wgpu::TextureFormat, BlendKey, bool, FixedAlpha);
@@ -187,6 +332,8 @@ pub(crate) struct ParticleFrame<'a> {
     /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
     /// write alpha by [`FixedBlend::alpha_rule`] (`docs/specs/render.md` §6.10, R12).
     pub premultiplied: bool,
+    /// The pass's distance fog (lit world passes with fog on).
+    pub fog: Option<ParticleFog>,
 }
 
 impl ParticleState {
@@ -223,6 +370,22 @@ impl ParticleState {
                         },
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
@@ -431,20 +594,61 @@ pub(crate) fn build_hook(
             skipped += 1;
             continue;
         }
-        let tint = d.tint.map(|c| if c.is_finite() { c } else { 1.0 });
+        let finite = |c: f32| if c.is_finite() { c } else { 1.0 };
+        let tint = d.tint.map(finite);
+        let material = d.material.map(finite);
+        let sh = d.shading;
         let st = draw_state(d.alpha);
+        let reference = if sh.tests_texture {
+            draw_reference(
+                st.cutoff,
+                st.depth_write,
+                st.source_alpha(),
+                material[3] * tint[3],
+            )
+        } else {
+            None
+        };
+        let m = if sh.material_colour {
+            [0, 1, 2, 3].map(|i| material[i] * tint[i])
+        } else {
+            [1.0; 4]
+        };
         let resolved: ResolvedTexture = ctx
             .textures
             .get(d.texture)
             .unwrap_or_else(|| ctx.textures.white());
+        let second: ResolvedTexture = match sh.layers {
+            Some(_) => ctx.textures.get(d.second_texture),
+            None => None,
+        }
+        .unwrap_or_else(|| ctx.textures.white());
+        let fog = ctx.fog.filter(|_| sh.fogged);
         let uniform = ParticleUniform {
             view_proj: ctx.view_proj.to_cols_array_2d(),
-            tint,
-            params: [st.cutoff.unwrap_or(0.0), 0.0, 0.0, 0.0],
+            material: m,
+            params: [
+                reference.unwrap_or(0.0),
+                fog.map_or(0.0, |f| f.near),
+                fog.map_or(0.0, |f| f.inv_range),
+                0.0,
+            ],
+            eye: fog.map_or([0.0; 4], |f| [f.eye[0], f.eye[1], f.eye[2], 1.0]),
+            fog_color: fog.map_or([0.0; 4], |f| [f.color[0], f.color[1], f.color[2], 1.0]),
             flags: [
                 u32::from(resolved.srgb),
                 u32::from(srgb_target),
-                u32::from(st.cutoff.is_some()),
+                u32::from(reference.is_some()),
+                sh.program_bits(),
+            ],
+            layers: [
+                u32::from(second.srgb),
+                match sh.layers {
+                    None => 0,
+                    Some(ParticleLayers::Product) => 1,
+                    Some(ParticleLayers::Sum) => 2,
+                },
+                0,
                 0,
             ],
         };
@@ -469,6 +673,14 @@ pub(crate) fn build_hook(
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&resolved.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&second.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&second.sampler),
                 },
             ],
         });
@@ -577,8 +789,46 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        assert_eq!(size_of::<ParticleUniform>(), 112);
+        assert_eq!(size_of::<ParticleUniform>(), 160);
         assert_eq!(size_of::<ParticleVertex>(), 36);
+    }
+
+    /// `material.md` §11.2 per draw with *A* = *M*.alpha (`particle-runtime.md` §9.1.1
+    /// rule 1).
+    #[test]
+    fn per_draw_alpha_reference() {
+        // Alpha test off: 0 with a source-alpha blend (opacity-0 texels go), else nothing.
+        assert_eq!(draw_reference(None, false, true, 1.0), Some(0.0));
+        assert_eq!(draw_reference(None, false, true, 0.2), Some(0.0));
+        assert_eq!(draw_reference(None, true, false, 1.0), None);
+        // On, depth write off: kept while A >= 0.9, switched off below.
+        assert_eq!(draw_reference(Some(0.8), false, true, 1.0), Some(0.8));
+        assert_eq!(draw_reference(Some(0.8), false, true, 0.9), Some(0.8));
+        assert_eq!(draw_reference(Some(0.8), false, true, 0.89), Some(0.0));
+        assert_eq!(draw_reference(Some(0.8), false, false, 0.5), None);
+        // On, depth write on: scaled by A, then rounded down to 8 bits.
+        let r = draw_reference(Some(0.8), true, true, 0.5).unwrap();
+        assert!((r - (102.0 / 255.0)).abs() < 1e-6, "{r}");
+        let r = draw_reference(Some(0.65), true, true, 1.0).unwrap();
+        assert!((r - 165.0 / 255.0).abs() < 1e-6, "{r}");
+        // Hostile values: a non-finite A counts as 0, a non-finite reference as no test.
+        assert_eq!(draw_reference(Some(0.8), true, true, f32::NAN), Some(0.0));
+        assert_eq!(draw_reference(Some(f32::NAN), true, true, 1.0), Some(0.0));
+        // The source factor of the draw states.
+        assert!(draw_state(AlphaMode::Blend).source_alpha());
+        assert!(draw_state(AlphaMode::Additive).source_alpha());
+        assert!(!draw_state(AlphaMode::Opaque).source_alpha());
+    }
+
+    #[test]
+    fn program_bits() {
+        assert_eq!(ParticleShading::STANDARD.program_bits(), 0b011);
+        let p = ParticleShading {
+            texture_alpha: false,
+            doubled: true,
+            ..ParticleShading::STANDARD
+        };
+        assert_eq!(p.program_bits(), 0b110);
     }
 
     #[test]

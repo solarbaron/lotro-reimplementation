@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Particle nodes (`particle-runtime.md` §5.4–§5.8, §7.1): start gates, the never-ending
-//! instance, the stop hook with `ImmediateDisposal`, the dropped path and the redirect
-//! property. Every DID, key and PID is invented.
+//! instance, the stop hook with `ImmediateDisposal`, the dropped path, the redirect
+//! property and driven node fields. Every DID, key and PID is invented.
 
 mod common;
 
@@ -180,4 +180,62 @@ fn the_redirect_property_moves_a_never_ending_effect() {
     assert_eq!(sink.particles.len(), 1);
     rt.despawn(&mut sink, E).unwrap();
     assert!(sink.particles.is_empty());
+}
+
+/// §5.4 "Driven node fields" and walker rule (c): a driven `ParticleScript_ParticleID`
+/// takes its source property's value at the start; without a value the stored field is
+/// used; a later change does not reach the running effect (Q-RT8 Decision).
+#[test]
+fn driven_fields_apply_at_the_start_only() {
+    const DRIVEN: u32 = 0x3900_0002;
+    const LATER: u32 = 0x3900_0003;
+    let driven_node = || {
+        let mut n = particle(fx(), Some(true));
+        n.base.driven.push((pid::PARTICLE_ID, pid::EFFECT_SOURCE));
+        n
+    };
+    let effects = |sink: &RecordingSink| -> Vec<Did> {
+        sink.events
+            .iter()
+            .filter_map(|e| match e {
+                SinkEvent::ParticleStarted(_, s) => Some(s.effect),
+                _ => None,
+            })
+            .collect()
+    };
+    // The source property has a value: the driven DID is started.
+    let mut rt = single(vec![(KEY, vec![driven_node()])]);
+    let mut sink = RecordingSink::new();
+    rt.spawn_entity(
+        &mut sink,
+        E,
+        init(vec![(
+            pid::EFFECT_SOURCE,
+            PropertyValue::DidRef(Did(DRIVEN)),
+        )]),
+    )
+    .unwrap();
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    assert_eq!(effects(&sink), vec![Did(DRIVEN)]);
+    // A later change of the source neither restarts nor replaces the running effect.
+    rt.set_property(
+        &mut sink,
+        E,
+        pid::EFFECT_SOURCE,
+        PropertyValue::DidRef(Did(LATER)),
+    )
+    .unwrap();
+    assert_eq!(effects(&sink), vec![Did(DRIVEN)]);
+    assert!(stops(&sink).is_empty());
+    // The next start reads the field again.
+    rt.stop_script(&mut sink, E, KEY).unwrap();
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    assert_eq!(effects(&sink), vec![Did(DRIVEN), Did(LATER)]);
+
+    // No value for the source (the offline walker has no session): the stored field.
+    let mut rt = single(vec![(KEY, vec![driven_node()])]);
+    let mut sink = RecordingSink::new();
+    rt.spawn_entity(&mut sink, E, init(Vec::new())).unwrap();
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    assert_eq!(effects(&sink), vec![Did(FX)]);
 }

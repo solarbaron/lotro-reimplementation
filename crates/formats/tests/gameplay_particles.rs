@@ -8,10 +8,10 @@ mod common;
 use common::B;
 use proptest::prelude::*;
 use tessera_formats::gameplay::particles::{
-    Argb, Curve, CurveVec, EMITTER_MIN_LEN, Emitter, FALLBACK_TIME_STEP, ForkResourceKind,
-    ForkSystem, KEYFRAME_MIN_LEN, KeyedCurve, Keyframe, MAX_EMISSION_CAP, MotionController,
-    PARTICLE_SYSTEM_MIN_LEN, ParticleSystem, Primitive, ScaleMode, SpawnShape, is_fork_system_did,
-    is_particle_system_did,
+    Argb, ChannelState, Curve, CurveVec, EMITTER_MIN_LEN, Emitter, FALLBACK_TIME_STEP,
+    ForkResourceKind, ForkSystem, KEY_CONTROLLER, KEYFRAME_MIN_LEN, KeyedCurve, Keyframe,
+    MAX_EMISSION_CAP, MotionController, PARTICLE_SYSTEM_MIN_LEN, ParticleSystem, Primitive,
+    ScaleMode, SpawnShape, is_fork_system_did, is_particle_system_did,
 };
 use tessera_formats::{Did, FormatError, NoSchema, PropertyType};
 
@@ -369,27 +369,25 @@ fn keyframe_channels() {
         ..Keyframe::default()
     });
     let c = e.channel_state(0.25);
-    let [sx, sy] = c.scale.unwrap();
+    let [sx, sy] = c.scale;
     assert!((sx - 0.4).abs() < 1e-6 && (sy - 0.4).abs() < 1e-6);
-    let col = c.colour.unwrap();
+    let col = c.colour;
     assert_eq!(col, Argb(0xFFFF_8000).to_rgba(), "second key lacks 0x4");
-    assert_eq!(
-        c.mass,
-        Some(-0.1),
-        "no later key with 0x8: current key's mass"
-    );
+    assert_eq!(c.mass, -0.1, "no later key with 0x8: current key's mass");
     assert_eq!(c.controller_key, Some(0));
-    assert_eq!(c.physics_flags, Some(1));
+    assert_eq!(c.physics_flags, 1);
     assert_eq!(c.key, Some(0));
     // At age 1 the second key is current for scale (0x2 counts), colour stays key 0.
     let c = e.channel_state(1.0);
     assert_eq!(c.key, Some(1));
-    assert_eq!(c.scale, Some([1.0, 1.0]));
-    assert_eq!(c.colour, Some(Argb(0xFFFF_8000).to_rgba()));
+    assert_eq!(c.scale, [1.0, 1.0]);
+    assert_eq!(c.scale_key, Some(1));
+    assert_eq!(c.colour, Argb(0xFFFF_8000).to_rgba());
+    assert_eq!(c.colour_key, Some(0));
     // Mass interpolates towards the next key with 0x8.
     e.keyframes[1].flags = 0x8;
     let c = e.channel_state(0.5);
-    assert!((c.mass.unwrap() - (-0.1 * 0.5 + 5.0 * 0.5)).abs() < 1e-6);
+    assert!((c.mass - (-0.1 * 0.5 + 5.0 * 0.5)).abs() < 1e-6);
     assert_eq!(e.channel_target(0, 0x8), 1);
     assert_eq!(e.channel_target(1, 0x8), 1);
     // Controller and physics keys.
@@ -397,18 +395,47 @@ fn keyframe_channels() {
     e.keyframes[1].physics_flags = 0x21;
     let c = e.channel_state(2.0);
     assert_eq!(c.controller_key, Some(1));
-    assert_eq!(c.physics_flags, Some(0x21));
+    assert_eq!(c.physics_flags, 0x21);
     assert_eq!(e.keyframes[1].motion(), MotionController::Static);
     assert!(e.uses_controller(MotionController::Static));
     assert!(e.uses_controller(MotionController::Ballistic));
     assert!(!e.uses_controller(MotionController::Stepped));
-    // No keyframes: no channel.
+    // No keyframes: the values of rule §10.11.
     let mut g = example_emitter();
     g.keyframes.clear();
-    assert_eq!(g.channel_state(0.5).scale, None);
-    assert_eq!(g.channel_state(0.5).mass, None);
-    // Before the first key's time.
-    assert_eq!(e.channel_state(-1.0).key, None);
+    assert_eq!(g.channel_state(0.5), ChannelState::default());
+    assert_eq!(g.channel_state(0.5).scale, [1.0, 1.0]);
+    assert_eq!(g.channel_state(0.5).mass, 1.0);
+    // A negative age is raised to 0 for the key walk (§8.6.1 step 2): the first key
+    // (time 0) is current.
+    assert_eq!(e.channel_state(-1.0).key, Some(0));
+    assert_eq!(e.channel_state(f32::NAN).key, Some(0));
+}
+
+/// §8.6.1 step 2 (BIN third pass): a key is current once the age is **at least** its
+/// `time`; a first key with a later time leaves every channel at the values of rule
+/// §10.11 until the age reaches it.
+#[test]
+fn keyframe_walk_edges_and_channels_without_a_key() {
+    let mut e = example_emitter();
+    e.keyframes[0].time = 0.5;
+    let before = e.channel_state(0.25);
+    assert_eq!(before.key, None);
+    assert_eq!(before, ChannelState::default());
+    assert_eq!(before.colour, [1.0; 4]);
+    assert_eq!(before.physics_flags, 0);
+    assert_eq!(before.controller_key, None);
+    // An equal age counts.
+    assert_eq!(e.channel_state(0.5).key, Some(0));
+    assert_eq!(e.channel_state(0.5).controller_key, Some(0));
+    // A first key without the channel bits: those channels keep the rule's values.
+    let mut f = example_emitter();
+    f.keyframes[0].flags = KEY_CONTROLLER;
+    let c = f.channel_state(1.0);
+    assert_eq!(c.key, Some(0));
+    assert_eq!((c.scale, c.colour, c.mass), ([1.0, 1.0], [1.0; 4], 1.0));
+    assert_eq!((c.scale_key, c.colour_key, c.mass_key), (None, None, None));
+    assert_eq!(c.controller_key, Some(0));
 }
 
 #[test]

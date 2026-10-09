@@ -28,13 +28,16 @@ use tessera_formats::{Did, NodeData, PropertyDictionary, Record as _, ScriptTabl
 use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
 use tessera_material::{BlendMode, MaterialLibrary, ResolvedMaterial};
 use tessera_particles::glam::{Mat4, Quat};
-use tessera_render::{AlphaMode, BlendFactor, BlendOp, FixedBlend};
+use tessera_particles::surface::{LayerCombine, ParticleSurface};
+use tessera_render::{
+    AlphaMode, BlendFactor, BlendOp, FixedBlend, ParticleLayers, ParticleShading,
+};
 use tessera_scriptgraph::{EntityId, ScriptSource};
 use tessera_world::{LandblockBundle, LandblockKey};
 
 use crate::audio::loader::fetch;
 use crate::walker::figures::figure_tag;
-use crate::walker::geometry::{TexRequest, plan_material};
+use crate::walker::geometry::{TexRequest, VARIANT_OWN_ALPHA};
 
 /// The property dictionary's DID (`property-system.md`).
 pub const PROPERTY_DICTIONARY: u32 = tessera_world::context::PROPERTY_DICTIONARY_DID;
@@ -236,17 +239,25 @@ pub struct BlockScan {
 /// A loaded effect record (`particles.md` §4, §6).
 #[derive(Debug)]
 pub enum EffectRecord {
-    /// A 0x39 system with the texture and blend state of its surface (`particle-runtime.md`
-    /// §9.1); `texture` is `None` without a surface texture, `drawable` false without a
-    /// surface (the client draws nothing, `particles.md` §8.11).
+    /// A 0x39 system with the textures, blend state and program of its surface
+    /// (`particle-runtime.md` §9.1, §9.1.1); `texture` is `None` without a surface texture,
+    /// `drawable` false without a surface (the client draws nothing, `particles.md` §8.11)
+    /// and for the frame-buffer distortion program, which Tessera draws as its variant
+    /// without a frame-buffer input (it leaves the target unchanged).
     Particles {
         /// The record.
         desc: Arc<ParticleSystem>,
-        /// The surface's base texture.
+        /// The surface's colour texture (slot 3000) with its own alpha.
         texture: Option<TexRequest>,
+        /// The second colour layer (slot 3001) of a two-layer program.
+        second_texture: Option<TexRequest>,
         /// The surface's blend, alpha test and depth write.
         alpha: AlphaMode,
-        /// Whether the surface resolved.
+        /// What the surface's program computes (§9.1.1).
+        shading: ParticleShading,
+        /// Material colour 2000.
+        material: [f32; 4],
+        /// Whether the system is drawn.
         drawable: bool,
     },
     /// A 0x44 fork effect (not simulated, `particles.md` rule §10.2).
@@ -265,6 +276,25 @@ fn factor(f: MatFactor) -> Option<BlendFactor> {
         MatFactor::DestColor => BlendFactor::DstColor,
         MatFactor::Other(_) => return None,
     })
+}
+
+/// The renderer's program description for a particle surface (`particle-runtime.md`
+/// §9.1.1).
+#[must_use]
+pub fn particle_shading(s: &ParticleSurface) -> ParticleShading {
+    let p = s.program;
+    ParticleShading {
+        tests_texture: p.tests_texture,
+        texture_alpha: p.texture_alpha,
+        vertex_colour: p.vertex_colour,
+        material_colour: p.material_colour,
+        doubled: p.doubled,
+        fogged: p.fogged,
+        layers: p.layers.map(|l| match l {
+            LayerCombine::Product => ParticleLayers::Product,
+            LayerCombine::Sum => ParticleLayers::Sum,
+        }),
+    }
 }
 
 /// The renderer's alpha mode for a particle system's surface material: its blend mode,
@@ -694,22 +724,40 @@ impl EffectData {
                 } else {
                     desc.surface
                 };
-                let (texture, alpha, drawable) = if surface.is_null() {
-                    (None, AlphaMode::Blend, false)
+                let own_alpha = |d: Did| TexRequest {
+                    did: d.0,
+                    variant: VARIANT_OWN_ALPHA,
+                };
+                let resolved = if surface.is_null() {
+                    None
                 } else {
-                    match self.materials.resolve_surface(surface) {
-                        Ok(m) => (plan_material(&m).texture, surface_alpha(&m), true),
-                        Err(e) => {
-                            tracing::debug!(%surface, "particle surface: {e}");
-                            (None, AlphaMode::Blend, false)
+                    self.materials
+                        .resolve_surface(surface)
+                        .map_err(|e| tracing::debug!(%surface, "particle surface: {e}"))
+                        .ok()
+                };
+                Some(match resolved {
+                    Some(m) => {
+                        let look = ParticleSurface::of(&m);
+                        EffectRecord::Particles {
+                            desc: Arc::new(desc),
+                            texture: look.texture.map(own_alpha),
+                            second_texture: look.second_layer.map(own_alpha),
+                            alpha: surface_alpha(&m),
+                            shading: particle_shading(&look),
+                            material: look.material_colour,
+                            drawable: look.is_drawn(),
                         }
                     }
-                };
-                Some(EffectRecord::Particles {
-                    desc: Arc::new(desc),
-                    texture,
-                    alpha,
-                    drawable,
+                    None => EffectRecord::Particles {
+                        desc: Arc::new(desc),
+                        texture: None,
+                        second_texture: None,
+                        alpha: AlphaMode::Blend,
+                        shading: ParticleShading::STANDARD,
+                        material: [1.0; 4],
+                        drawable: false,
+                    },
                 })
             }
             FORK_SYSTEM_PREFIX => ForkSystem::decode(&bytes, &tessera_formats::NoSchema)
@@ -875,5 +923,29 @@ mod tests {
         assert!(p.holding(8).is_none());
         assert_eq!(p.bone(3), Some(0));
         assert_eq!(p.bone(4), None);
+    }
+
+    /// `particle-runtime.md` §9.1.1: the renderer receives the program of the surface's
+    /// shader record.
+    #[test]
+    fn particle_shading_follows_the_surface_program() {
+        use tessera_particles::surface::SurfaceProgram;
+        let surface = |shader: u32| ParticleSurface {
+            program: SurfaceProgram::of(shader).expect("listed"),
+            material_colour: [1.0; 4],
+            texture: None,
+            second_layer: None,
+        };
+        let doubled = particle_shading(&surface(0x2B00_0703));
+        assert!(doubled.doubled && doubled.fogged);
+        assert_eq!(doubled.layers, Some(ParticleLayers::Product));
+        let additive = particle_shading(&surface(0x2B00_0717));
+        assert!(!additive.fogged);
+        assert_eq!(additive.layers, Some(ParticleLayers::Sum));
+        let colour_only = particle_shading(&surface(0x2B00_07F2));
+        assert!(!colour_only.texture_alpha && !colour_only.tests_texture);
+        let no_vertex = particle_shading(&surface(0x2B00_0755));
+        assert!(!no_vertex.vertex_colour && no_vertex.material_colour);
+        assert!(!surface(0x2B00_0084).is_drawn());
     }
 }

@@ -6,8 +6,9 @@
 //! `docs/specs/particle-runtime.md` §3–§9) with its own seeded random stream
 //! (`particle-runtime.md` §12 rule 1), at 30 steps per second, for an owner at the origin
 //! whose attachment points are all at its origin (emitters with a bone or holding location
-//! spawn there), and drawn through the renderer's particle pipeline with the texture and
-//! blend state of the record's surface (`particle-runtime.md` §9.1). The preview renders
+//! spawn there), and drawn through the renderer's particle pipeline with the textures,
+//! blend state and program of the record's surface (`particle-runtime.md` §9.1, §9.1.1).
+//! The preview renders
 //! offscreen on its own thread (like the 3D view's viewport) and shows the frames as an
 //! image; play, pause, restart and the seed control the simulation, dragging orbits the
 //! camera and the wheel zooms.
@@ -21,19 +22,20 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, ColorImage, RichText, TextureHandle, TextureOptions, Ui};
-use tessera_formats::RgbaImage;
 use tessera_formats::gameplay::particles::ParticleSystem;
+use tessera_formats::{Did, RgbaImage};
 use tessera_material::BlendMode;
 use tessera_material::ResolvedMaterial;
 use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
 use tessera_particles::glam::Vec3;
+use tessera_particles::surface::{LayerCombine, ParticleSurface};
 use tessera_particles::{
     CameraView, Environment, OriginAttachments, Placement, Ran2, SystemDraw, SystemSim,
 };
 use tessera_render::{
     AlphaMode, BlendFactor, BlendOp, Camera, ColorSpace, Filter, FixedBlend, Material, MeshData,
-    MeshDraw, MeshId, OffscreenFormat, OffscreenTarget, ParticleDraw, ParticleVertex, Renderer,
-    RendererConfig, TextureId, TextureUpload, Wrap,
+    MeshDraw, MeshId, OffscreenFormat, OffscreenTarget, ParticleDraw, ParticleLayers,
+    ParticleShading, ParticleVertex, Renderer, RendererConfig, TextureId, TextureUpload, Wrap,
 };
 
 use crate::data::DataContext;
@@ -50,6 +52,34 @@ pub const MAX_SHEET_TIME: f32 = 600.0;
 /// Background colour (linear).
 const BACKGROUND: [f32; 4] = [0.045, 0.05, 0.06, 1.0];
 
+/// How the preview draws a surface (`particle-runtime.md` §9.1, §9.1.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreviewLook {
+    /// The surface's blend state.
+    pub alpha: AlphaMode,
+    /// What the surface's program computes.
+    pub shading: ParticleShading,
+    /// Material colour 2000.
+    pub material: [f32; 4],
+    /// `false` for the frame-buffer distortion program, which Tessera draws as its variant
+    /// without a frame-buffer input (it leaves the image unchanged).
+    pub drawn: bool,
+    /// The shader record when it is one of the programs of runtime §9.1.1.
+    pub program: Option<u32>,
+}
+
+impl Default for PreviewLook {
+    fn default() -> Self {
+        Self {
+            alpha: AlphaMode::Blend,
+            shading: ParticleShading::STANDARD,
+            material: [1.0; 4],
+            drawn: true,
+            program: None,
+        }
+    }
+}
+
 /// What the preview needs from the install.
 #[derive(Debug, Clone)]
 pub struct PreviewSource {
@@ -57,12 +87,33 @@ pub struct PreviewSource {
     pub did: u32,
     /// The decoded system.
     pub desc: Arc<ParticleSystem>,
-    /// The surface's diffuse texture.
+    /// The surface's colour texture (slot 3000).
     pub texture: Option<Arc<RgbaImage>>,
-    /// The surface's blend state.
-    pub alpha: AlphaMode,
+    /// The second colour layer (slot 3001) of a two-layer program.
+    pub second_texture: Option<Arc<RgbaImage>>,
+    /// The surface's blend state and program.
+    pub look: PreviewLook,
     /// What could not be resolved.
     pub notes: Vec<String>,
+}
+
+/// The renderer's program description for a particle surface (`particle-runtime.md`
+/// §9.1.1).
+#[must_use]
+pub fn particle_shading(s: &ParticleSurface) -> ParticleShading {
+    let p = s.program;
+    ParticleShading {
+        tests_texture: p.tests_texture,
+        texture_alpha: p.texture_alpha,
+        vertex_colour: p.vertex_colour,
+        material_colour: p.material_colour,
+        doubled: p.doubled,
+        fogged: p.fogged,
+        layers: p.layers.map(|l| match l {
+            LayerCombine::Product => ParticleLayers::Product,
+            LayerCombine::Sum => ParticleLayers::Sum,
+        }),
+    }
 }
 
 fn factor(f: MatFactor) -> Option<BlendFactor> {
@@ -149,19 +200,51 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
     };
     let mut notes = Vec::new();
     let mut texture = None;
-    let mut alpha = AlphaMode::Blend;
+    let mut second_texture = None;
+    let mut look = PreviewLook::default();
     if surface.is_null() {
         notes.push("no surface: the client draws nothing for this system (§8.11)".into());
     } else {
         match ctx.materials.resolve_surface(surface) {
             Ok(m) => {
-                alpha = surface_alpha(&m);
-                match m.diffuse() {
-                    Some(list) => match ctx.materials.texture(list, Some(TEXTURE_CAP)) {
-                        Ok(t) => texture = Some(Arc::clone(&t.image)),
-                        Err(e) => notes.push(format!("texture {list}: {e}")),
-                    },
-                    None => notes.push(format!("surface {surface} has no diffuse texture")),
+                let s = ParticleSurface::of(&m);
+                look = PreviewLook {
+                    alpha: surface_alpha(&m),
+                    shading: particle_shading(&s),
+                    material: s.material_colour,
+                    drawn: s.is_drawn(),
+                    program: s.program.shader,
+                };
+                if s.program.shader.is_none() {
+                    notes.push(format!(
+                        "shader {} is not one of the particle programs of runtime §9.1.1: \
+                         drawn as the common program of its blend",
+                        m.shader.did
+                    ));
+                }
+                if !s.is_drawn() {
+                    notes.push(
+                        "frame-buffer distortion program: drawn as its variant without a \
+                         frame-buffer input, which leaves the image unchanged (runtime §9.1.1)"
+                            .into(),
+                    );
+                }
+                let load = |list: Did, notes: &mut Vec<String>| match ctx
+                    .materials
+                    .texture(list, Some(TEXTURE_CAP))
+                {
+                    Ok(t) => Some(Arc::clone(&t.image)),
+                    Err(e) => {
+                        notes.push(format!("texture {list}: {e}"));
+                        None
+                    }
+                };
+                match s.texture {
+                    Some(list) => texture = load(list, &mut notes),
+                    None => notes.push(format!("surface {surface} has no colour texture")),
+                }
+                if let Some(list) = s.second_layer {
+                    second_texture = load(list, &mut notes);
                 }
             }
             Err(e) => notes.push(format!("surface {surface}: {e}")),
@@ -171,7 +254,8 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
         did,
         desc: Arc::new(desc),
         texture,
-        alpha,
+        second_texture,
+        look,
         notes,
     })
 }
@@ -277,13 +361,17 @@ impl PreviewSim {
     }
 }
 
-/// The renderer's draws for a simulated frame.
+/// The renderer's draws for a simulated frame (none for a surface that is not drawn);
+/// `textures` are the colour texture and the second layer.
 #[must_use]
 pub fn render_draws(
     sys: &SystemDraw,
-    texture: Option<TextureId>,
-    alpha: AlphaMode,
+    textures: [Option<TextureId>; 2],
+    look: PreviewLook,
 ) -> Vec<ParticleDraw> {
+    if !look.drawn {
+        return Vec::new();
+    }
     sys.instances
         .iter()
         .map(|i| ParticleDraw {
@@ -297,9 +385,12 @@ pub fn render_draws(
                 })
                 .collect(),
             quad_vertices: i.quad_vertices,
-            texture,
-            alpha,
+            texture: textures[0],
+            alpha: look.alpha,
             tint: [1.0, 1.0, 1.0, i.opacity],
+            material: look.material,
+            shading: look.shading,
+            second_texture: textures[1],
         })
         .collect()
 }
@@ -358,18 +449,18 @@ fn union_sphere(spheres: &[([f32; 3], f32)]) -> ([f32; 3], f32) {
     (c.to_array(), ((hi - lo).length() * 0.5).clamp(0.5, 500.0))
 }
 
-/// The preview's GPU side: a headless renderer, the surface texture and a ground plane.
+/// The preview's GPU side: a headless renderer, the surface textures and a ground plane.
 pub struct PreviewGpu {
     renderer: Renderer<'static>,
     ground: MeshId,
-    texture: Option<TextureId>,
+    textures: [Option<TextureId>; 2],
     target: Option<(u32, u32, OffscreenTarget)>,
 }
 
 impl std::fmt::Debug for PreviewGpu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PreviewGpu")
-            .field("texture", &self.texture)
+            .field("textures", &self.textures)
             .finish_non_exhaustive()
     }
 }
@@ -389,18 +480,22 @@ impl PreviewGpu {
         Ok(Self {
             renderer,
             ground,
-            texture: None,
+            textures: [None; 2],
             target: None,
         })
     }
 
-    /// Replaces the surface texture (`None`: white).
+    /// Replaces the surface texture of layer `layer` (0: colour, 1: second layer; `None`:
+    /// white). Other layers are ignored.
     ///
     /// # Errors
     ///
     /// When the upload fails.
-    pub fn set_texture(&mut self, image: Option<&RgbaImage>) -> Result<(), String> {
-        if let Some(t) = self.texture.take() {
+    pub fn set_texture(&mut self, layer: usize, image: Option<&RgbaImage>) -> Result<(), String> {
+        let Some(slot) = self.textures.get_mut(layer) else {
+            return Ok(());
+        };
+        if let Some(t) = slot.take() {
             self.renderer.destroy_texture(t);
         }
         if let Some(img) = image {
@@ -413,15 +508,17 @@ impl PreviewGpu {
                     ..TextureUpload::rgba8(img.width, img.height, &img.pixels)
                 })
                 .map_err(|e| e.to_string())?;
-            self.texture = Some(id);
+            if let Some(slot) = self.textures.get_mut(layer) {
+                *slot = Some(id);
+            }
         }
         Ok(())
     }
 
-    /// The uploaded texture.
+    /// The uploaded textures (colour, second layer).
     #[must_use]
-    pub fn texture(&self) -> Option<TextureId> {
-        self.texture
+    pub fn textures(&self) -> [Option<TextureId>; 2] {
+        self.textures
     }
 
     /// Renders `draws` (texture ids already filled) from `camera` into a `w` × `h` image.
@@ -487,7 +584,7 @@ impl PreviewGpu {
 }
 
 enum Cmd {
-    Texture(Option<Arc<RgbaImage>>),
+    Texture(usize, Option<Arc<RgbaImage>>),
     Draw {
         seq: u64,
         draws: Vec<ParticleDraw>,
@@ -530,8 +627,8 @@ impl PreviewThread {
                     let mut draw = None;
                     for c in cmds {
                         match c {
-                            Cmd::Texture(t) => {
-                                if let Err(e) = gpu.set_texture(t.as_deref()) {
+                            Cmd::Texture(layer, t) => {
+                                if let Err(e) = gpu.set_texture(layer, t.as_deref()) {
                                     let _ = rtx.send(Reply::Error(e));
                                 }
                             }
@@ -545,9 +642,10 @@ impl PreviewThread {
                         size,
                     }) = draw
                     {
-                        let tex = gpu.texture();
+                        let [tex, tex2] = gpu.textures();
                         for d in &mut draws {
                             d.texture = tex;
+                            d.second_texture = tex2;
                         }
                         let reply = match gpu.render(draws, &camera, size[0], size[1]) {
                             Ok(img) => Reply::Frame(seq, img),
@@ -651,7 +749,8 @@ impl ParticlePreview {
             Ok(Ok(src)) => {
                 let repaint = ctx.clone();
                 let thread = PreviewThread::spawn(move || repaint.request_repaint());
-                let _ = thread.tx.send(Cmd::Texture(src.texture.clone()));
+                let _ = thread.tx.send(Cmd::Texture(0, src.texture.clone()));
+                let _ = thread.tx.send(Cmd::Texture(1, src.second_texture.clone()));
                 self.thread = Some(thread);
                 self.sim = Some(PreviewSim::new(Arc::clone(&src.desc), self.seed));
                 self.source = Some(src);
@@ -684,7 +783,7 @@ impl ParticlePreview {
             });
             return;
         };
-        let alpha = src.alpha;
+        let look = src.look;
         for n in &src.notes {
             ui.label(RichText::new(n).weak());
         }
@@ -794,7 +893,7 @@ impl ParticlePreview {
                 self.seq += 1;
                 let draws = drawn
                     .as_ref()
-                    .map_or_else(Vec::new, |d| render_draws(d, None, alpha));
+                    .map_or_else(Vec::new, |d| render_draws(d, [None; 2], look));
                 let ppp = ctx.pixels_per_point();
                 let _ = thread.tx.send(Cmd::Draw {
                     seq: self.seq,
@@ -876,14 +975,16 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
         d.time_step,
         d.fast_forward,
         d.world_space,
-        src.alpha,
+        src.look.alpha,
         plan.seed
     ));
     for n in &src.notes {
         report.lines.push(format!("  note {n}"));
     }
     let mut gpu = PreviewGpu::new().map_err(ExplorerError::Worker)?;
-    gpu.set_texture(src.texture.as_deref())
+    gpu.set_texture(0, src.texture.as_deref())
+        .map_err(ExplorerError::Worker)?;
+    gpu.set_texture(1, src.second_texture.as_deref())
         .map_err(ExplorerError::Worker)?;
     let times: Vec<f64> = if plan.times.is_empty() {
         vec![1.0]
@@ -928,7 +1029,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
             counts.push(drawn.as_ref().map_or(0, SystemDraw::vertex_count));
             let draws = drawn
                 .as_ref()
-                .map_or_else(Vec::new, |s| render_draws(s, gpu.texture(), src.alpha));
+                .map_or_else(Vec::new, |s| render_draws(s, gpu.textures(), src.look));
             let img = gpu
                 .render(draws, &camera, tw, th)
                 .map_err(ExplorerError::Worker)?;
@@ -1007,7 +1108,17 @@ mod tests {
         assert!(n > 10, "{n}");
         let cam = OrbitView::new().camera();
         let draw = a.draw(&cam).expect("drawn");
-        assert_eq!(render_draws(&draw, None, AlphaMode::Additive).len(), 1);
+        let additive = PreviewLook {
+            alpha: AlphaMode::Additive,
+            ..PreviewLook::default()
+        };
+        assert_eq!(render_draws(&draw, [None; 2], additive).len(), 1);
+        // The frame-buffer distortion program is not drawn (runtime §9.1.1).
+        let hidden = PreviewLook {
+            drawn: false,
+            ..additive
+        };
+        assert!(render_draws(&draw, [None; 2], hidden).is_empty());
         let mut b = PreviewSim::new(system(), 3);
         b.advance(0.5);
         b.advance(0.5);
@@ -1036,7 +1147,12 @@ mod tests {
         };
         let drawn = sim.draw(&cam).expect("drawn");
         let img = gpu
-            .render(render_draws(&drawn, None, AlphaMode::Blend), &cam, 64, 48)
+            .render(
+                render_draws(&drawn, [None; 2], PreviewLook::default()),
+                &cam,
+                64,
+                48,
+            )
             .expect("rendered");
         assert_eq!(img.size, [64, 48]);
     }

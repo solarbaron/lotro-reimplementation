@@ -66,4 +66,4 @@ pub use sink::{
     SoundPositioner, SoundStart, SoundStartOutcome,
 };
 pub use source::{FetchSource, MemorySource, ScriptSource};
-pub use vocab::{PropertyCatalog, RuntimeVocabulary, SyntheticCatalog};
+pub use vocab::{ParticleFieldPids, PropertyCatalog, RuntimeVocabulary, SyntheticCatalog};

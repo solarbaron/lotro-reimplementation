@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review (first version, 2026-10-09; review 2026-10-09: changes requested, see the review record) |
+| **Status** | Review (first version, 2026-10-09; review 2026-10-09: changes requested; review fixes 2026-10-09, waiting for re-review, see the review record) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | First review, 2026-10-09 (independent review session that wrote no part of this spec; whole spec, new file): **changes requested**, status stays Review. Checked against CLEAN_ROOM.md §5.3: no code or pseudo-code (§5, §6.4, §8.2 are plain steps); no copied prose; no game text (format strings are cited by token and variable ID only); labels and property names are data identifiers needed for interoperability; BIN use is within decision 0011 (offline client UI, no network or login code). Spot checks, read-only against the install-derived dumps: item census of §3.1–§3.2 and §8.3 (151,230 items; 149,695 hover pairs; 1,535 without, all class 796; 148,979 one-click; 150,507 equal pairs; 107,479 compare pairs, 20 zero; layouts 149,684 / 11; all 25 hover-element counts; compare kinds 101,400 / 6,055 / 1,557 / 1,262 / 378 / 20 / 40,558) match; the six name colours and the 32 states of `ColorNameText` (§6.2) match; row-template colours, formats, sizes, margins and states of `Name_Base`, `ArmorValue_Base`, `ItemUniqueness_Base`, `ItemDecay`, `Usage_Cooldown`, `Description_Base`, `ExaminationItemLevel_Base`, `Value_Base`, `Separator_Short_Base` match; all cited `Examination` and `Utils` tokens exist with the stated variable IDs; IV4 holds; worked examples §14.1, §14.4–§14.6 recomputed; binding combinations agree with `items.md` §5.4. **Blocking:** (1) §2 "Tooltip element", §4.1, IT4, IV2, IV3 are stated for every `*_ExamineLayout` element of the examination layout, but that layout has 79 such top-level elements; the stated structure (base `Tooltip_New`, one `ExaminationListBox` child with autofill, entry templates naming top-level elements of the same layout) holds for the 30 elements item records name, not for all 79 (other bases occur, one element fails IV2, one entry template names an element of another layout); and the "330 in one world-event layout" width of §4.1 belongs to an element no item names. Restate the scope (the elements named by item records) or list the exceptions, and make IV2/IV3 testable as scoped. (2) §6.7 step 3: the `Utils` pair format 0x040CF382 has two variables (0x5425, 0x59BF); the spec does not say which receives the level text and which the marker. State it, or add an OPEN with a Tessera rule. (3) §6.4 step 7: the bitfield row cites "the client's list separator (§6.14 OPEN)", but the §6.14 OPEN does not cover a separator; and the "other → the value's generic text" row is undefined. Give the fact or add an OPEN with a Tessera rule for each. (4) Provenance: §6.3 and §6.12–§6.18 state class-library facts (provider classes 1067, 1058, 1059, 1065, 1055, 1092, 1062, 1091, 2808 and the quest-ID provider; row-data properties such as `Examination_DPS`, `Examination_IsGhosted`; source properties such as `Usage_CooldownDuration`, `ItemDecay_Duration`, `Item_EquipmentCategory`), yet IT18 marks those sections Design only, and classes 1062, 1067 and the quest-ID class are missing from the BC source list. Add a BC row (Confirmed, bytecode) for the traced parts, extend the BC list, and keep IT18 for the Tessera rules. **Non-blocking notes:** §2 "for all but 11 items" should read "all but 11 of the 149,695 items with a hover pair"; §6.11 "32-bit product" should state signedness and overflow; §9 "Probable" is outside the provenance vocabulary (cite or mark OPEN); IV7 presumes a currency with `Currency_Value` 1, state that precondition; the OBS row dates the item dump 2026-10-07, check it against `items.md` OBS3. |
+| **Review record** | First review, 2026-10-09 (independent review session that wrote no part of this spec; whole spec, new file): **changes requested**, status stays Review. Checked against CLEAN_ROOM.md §5.3: no code or pseudo-code (§5, §6.4, §8.2 are plain steps); no copied prose; no game text (format strings are cited by token and variable ID only); labels and property names are data identifiers needed for interoperability; BIN use is within decision 0011 (offline client UI, no network or login code). Spot checks, read-only against the install-derived dumps: item census of §3.1–§3.2 and §8.3 (151,230 items; 149,695 hover pairs; 1,535 without, all class 796; 148,979 one-click; 150,507 equal pairs; 107,479 compare pairs, 20 zero; layouts 149,684 / 11; all 25 hover-element counts; compare kinds 101,400 / 6,055 / 1,557 / 1,262 / 378 / 20 / 40,558) match; the six name colours and the 32 states of `ColorNameText` (§6.2) match; row-template colours, formats, sizes, margins and states of `Name_Base`, `ArmorValue_Base`, `ItemUniqueness_Base`, `ItemDecay`, `Usage_Cooldown`, `Description_Base`, `ExaminationItemLevel_Base`, `Value_Base`, `Separator_Short_Base` match; all cited `Examination` and `Utils` tokens exist with the stated variable IDs; IV4 holds; worked examples §14.1, §14.4–§14.6 recomputed; binding combinations agree with `items.md` §5.4. **Blocking:** (1) §2 "Tooltip element", §4.1, IT4, IV2, IV3 are stated for every `*_ExamineLayout` element of the examination layout, but that layout has 79 such top-level elements; the stated structure (base `Tooltip_New`, one `ExaminationListBox` child with autofill, entry templates naming top-level elements of the same layout) holds for the 30 elements item records name, not for all 79 (other bases occur, one element fails IV2, one entry template names an element of another layout); and the "330 in one world-event layout" width of §4.1 belongs to an element no item names. Restate the scope (the elements named by item records) or list the exceptions, and make IV2/IV3 testable as scoped. (2) §6.7 step 3: the `Utils` pair format 0x040CF382 has two variables (0x5425, 0x59BF); the spec does not say which receives the level text and which the marker. State it, or add an OPEN with a Tessera rule. (3) §6.4 step 7: the bitfield row cites "the client's list separator (§6.14 OPEN)", but the §6.14 OPEN does not cover a separator; and the "other → the value's generic text" row is undefined. Give the fact or add an OPEN with a Tessera rule for each. (4) Provenance: §6.3 and §6.12–§6.18 state class-library facts (provider classes 1067, 1058, 1059, 1065, 1055, 1092, 1062, 1091, 2808 and the quest-ID provider; row-data properties such as `Examination_DPS`, `Examination_IsGhosted`; source properties such as `Usage_CooldownDuration`, `ItemDecay_Duration`, `Item_EquipmentCategory`), yet IT18 marks those sections Design only, and classes 1062, 1067 and the quest-ID class are missing from the BC source list. Add a BC row (Confirmed, bytecode) for the traced parts, extend the BC list, and keep IT18 for the Tessera rules. **Non-blocking notes:** §2 "for all but 11 items" should read "all but 11 of the 149,695 items with a hover pair"; §6.11 "32-bit product" should state signedness and overflow; §9 "Probable" is outside the provenance vocabulary (cite or mark OPEN); IV7 presumes a currency with `Currency_Value` 1, state that precondition; the OBS row dates the item dump 2026-10-07, check it against `items.md` OBS3. Review fixes 2026-10-09 (spec writer, dirty room): status stays Review (the spec was never Accepted) until a separate session re-reviews it. (1) Scope restated to the 31 elements item records name (30 in the examination layout, one in 0x220008BE): §2, §4.1, IT4, IV2–IV4; the other 49 `*_ExamineLayout` elements are listed as out of scope with their exceptions; the widths of §4.1 corrected (24 named list boxes carry `max_width` 229, seven carry none; new OPEN with a Tessera rule); row IT19. (2) §6.7 step 3: variable 0x5425 receives the level text, 0x59BF the marker (BC, class-library helper), row IT20. (3) §6.4 step 7: the bitfield join (`Utils` token 0x06756762, ascending bit order, failure on an unlabelled bit) and the "other" types (variable left unset, so the row is empty) are now stated from BIN, row IT21; the any-width bit order is an OPEN with a Tessera rule. (4) New row IT22 (BC, Confirmed) for the class-library parts of §6.3 and §6.12–§6.18, BC source list extended by classes 1062, 1067, 1074; IT18 keeps only the Tessera rules; §6.18 names `Quest_DataID` and the row data of the cooldown and decay providers. Non-blocking notes applied: §2 wording, §6.11 signed 32-bit wrapping product, §9 "Probable" replaced by an OPEN with a Tessera rule, IV7 precondition; the OBS item-dump date (2026-10-07) agrees with `items.md` OBS3. |
 | **Implements into** | `crates/gamedata` (`tessera-gamedata`: the tooltip model of an item record, §3–§8, and the row values of §6), `crates/ui` (the examination tooltip panel: row list assembly §5, placement §9, pinned tooltips §10), `apps/client` (hover over item slots in bags, the paperdoll and plugin item controls), `apps/explorer` (tooltip preview on the item card), the real-data test of decision 0024 P1 exit criterion 2 (§12) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, elements, states, inheritance, the `UILAYOUT` DID map), [`ui-behaviour.md`](ui-behaviour.md) §6 (generic tooltips; this spec answers the "item and examination tooltips" part of its §6.6 OPEN), [`items.md`](items.md) (item properties, value, armour, DPS, damage, binding, sets), [`icon-layers.md`](icon-layers.md) (the composed icon), [`string-table.md`](string-table.md) (StringInfo and format-string variables), [`property-system.md`](property-system.md) (value types, enum mappers, bit ↔ key), [`records.md`](records.md) §8 (DID maps), [`economy.md`](economy.md) §7 (currencies), [`combat-data.md`](combat-data.md) (effects behind stat lines), [`wlib-bytecode.md`](wlib-bytecode.md) (the class library's code), [`scenario-feed.md`](scenario-feed.md) (Accepted on branch `p0`, 2026-10-09; how a scenario supplies items, §11), [`character-panels.md`](character-panels.md) (bags and paperdoll that show these tooltips), [`lua-plugin-api.md`](lua-plugin-api.md) §15 (`ItemInfo`) |
 
@@ -51,8 +51,8 @@ supplies, §11 says what Tessera shows.
 | Key | Source |
 |---|---|
 | **OBS** | The user's install (Steam, client build 4906.0071.1794.4035), read-only, in place. The archives are unchanged since 2026-10-04 (file times re-checked 2026-10-09), so the dumps made from them stand for the install: all 302 UI layout records (prefix 0x22, decoded per `ui-layout.md` §4 with zero leftover bytes, dump of 2026-10-06, re-read with a throwaway probe that decodes property values on 2026-10-09); the property dictionary and the enum mappers (`UIElementID` mapper 0x230000D1 with its base, the state mapper, `UIElementType`); the DID map 0x28000004 (named string tables); every item record (all 151,230, dump of 2026-10-07, `items.md` OBS3) for the census of §3. String tables 0x250001AF (`Examination` in 0x28000004), 0x250001E6 (`Utils`) and 0x250001BD were read for **tokens and variable IDs only**; no text is reproduced here. |
-| **BC** | The class library's code (record 0x56000000), read 2026-10-09 with the repository's `tessera-dattool bytecode` disassembler (`wlib-bytecode.md`, Accepted) and a throwaway probe over `tessera-wstate` for class method tables (function ID rule, `wlib-bytecode.md` §6.4). Data in the user's install (method M1). Classes read (indices of this install): the examination-element base class 1097 and the item-relevant children 1055 (allowed slots), 1058 (DPS), 1059 (damage), 1060 (durability), 1065 (equipment category), 1066 (generic property), 1068 (indestructible), 1073 (name), 1090 (unique), 1091 (cooldown), 1092 (usage requirements), 1093 (value), 2808 (item decay), 3707 (armour), 3796 (item level); the binding class 2779 and its child 2781; the equipment slot query of class 372; the money breakdown of class 404; the sellability test (`items.md` §5.3, F38). |
-| **BIN** | **M4 under the standing authorisation of decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), headless decompiler on a private copy of the shared analysis project (`~/tessera-re/work/specs13-p1`, deleted after use), 2026-10-09, single functions found by instruction search for property and element IDs. **Questions:** (a) which layout and element a tooltip uses for which purpose; (b) how the row list is assembled (removal of rows, separators, widths); (c) how the name row chooses its colour; (d) how a generic property row turns a value into text; (e) how the binding, durability, armour, item-level and worth rows are filled; (f) when comparison tooltips appear and for which equipped items; (g) where a tooltip is placed; (h) pinned tooltips. **Why M1–M3 were not enough:** the layouts and the class library show which rows exist and what data each row receives, but not what the native row widgets do with it (visibility, formatting, colour, assembly, placement); no published source describes the examination system; the running client is not available to this session (owner rows §15 cover the visual checks). Read: the tooltip assembler, the row-list assembly routine, the layout and element selector (two variants, by record and by instance), the comparison routine, the pinned-tooltip toggle, the hover handler that places tooltips, the type registry of the element factory (only to pair the examination widget types with their classes), the fill routines of the name, generic-property, binding, item-level, armour, durability and worth widgets, the name-colour table loader, the quality-to-state natives, the money widget. Nothing from network, login, launcher or anti-tamper code. |
+| **BC** | The class library's code (record 0x56000000), read 2026-10-09 with the repository's `tessera-dattool bytecode` disassembler (`wlib-bytecode.md`, Accepted) and a throwaway probe over `tessera-wstate` for class method tables (function ID rule, `wlib-bytecode.md` §6.4). Data in the user's install (method M1). Classes read (indices of this install): the examination-element base class 1097 and the item-relevant children 1055 (allowed slots), 1058 (DPS), 1059 (damage), 1060 (durability), 1062 (effect lists), 1065 (equipment category), 1066 (generic property), 1067 (icon), 1068 (indestructible), 1073 (name), 1074 (quest ID), 1090 (unique), 1091 (cooldown), 1092 (usage requirements), 1093 (value), 2808 (item decay), 3707 (armour), 3796 (item level), with the text-pair helper the item-level provider calls (re-read 2026-10-09 for the review fixes); the binding class 2779 and its child 2781; the equipment slot query of class 372; the money breakdown of class 404; the sellability test (`items.md` §5.3, F38). |
+| **BIN** | **M4 under the standing authorisation of decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), headless decompiler on a private copy of the shared analysis project (`~/tessera-re/work/specs13-p1`, deleted after use), 2026-10-09, single functions found by instruction search for property and element IDs. **Questions:** (a) which layout and element a tooltip uses for which purpose; (b) how the row list is assembled (removal of rows, separators, widths); (c) how the name row chooses its colour; (d) how a generic property row turns a value into text; (e) how the binding, durability, armour, item-level and worth rows are filled; (f) when comparison tooltips appear and for which equipped items; (g) where a tooltip is placed; (h) pinned tooltips. **Why M1–M3 were not enough:** the layouts and the class library show which rows exist and what data each row receives, but not what the native row widgets do with it (visibility, formatting, colour, assembly, placement); no published source describes the examination system; the running client is not available to this session (owner rows §15 cover the visual checks). Read: the tooltip assembler, the row-list assembly routine, the layout and element selector (two variants, by record and by instance), the comparison routine, the pinned-tooltip toggle, the hover handler that places tooltips, the type registry of the element factory (only to pair the examination widget types with their classes), the fill routines of the name, generic-property, binding, item-level, armour, durability and worth widgets, the bit-to-key list builders and the list-join helper the generic-property widget calls (second pass 2026-10-09, private copy `~/tessera-re/work/specs13-itt`, deleted after use), the name-colour table loader, the quality-to-state natives, the money widget. Nothing from network, login, launcher or anti-tamper code. |
 | **Design** | Tessera rules, marked **Tessera rule**: what Tessera does where the original's behaviour is server data, untraced, or outside P1. Not claims about the original. |
 
 | # | Fact | Source | Mark |
@@ -60,7 +60,7 @@ supplies, §11 says what Tessera shows.
 | IT1 | Item records name their tooltip by six properties: layout and element for the hover (`…_0Click_…`), the one-click (`…_1Click_…`) and the comparison (`…_Compare_…`) tooltip (§3.1) | OBS (all 151,230 items) | Confirmed 2026-10-09 |
 | IT2 | 149,695 items have a hover layout and element, and every pair names a top-level element of that layout; 1,535 items (all class 796) have none (§3.2) | OBS | Confirmed 2026-10-09 |
 | IT3 | The client selects the layout and element by tooltip purpose: comparison → `…_Compare_…`, hover and pinned → `…_0Click_…`, one-click → `…_1Click_…`; an item without the pair gets no tooltip; a hovered UI element's override layout and element take precedence (§3.3) | BIN (a) | BIN |
-| IT4 | Each tooltip element is a frame based on `Tooltip_New` with one child list box of type `ExaminationListBox` whose entry templates, in order, are the rows; the list instantiates every template once (§4) | OBS (all 30 `*_ExamineLayout` top-level elements of the examination layout) | Confirmed 2026-10-09 |
+| IT4 | Each tooltip element an item record names is a frame based on `Tooltip_New` with one child list box of type `ExaminationListBox` whose entry templates, in order, are the rows; the list instantiates every template once (§4.1) | OBS (all 31 elements named by any of the three pairs of any item record: 30 in the examination layout, one in 0x220008BE) | Confirmed 2026-10-09 |
 | IT5 | Row templates: widget type, format token, source property, base colour, state colours, justification and size (§4.2) | OBS | Confirmed 2026-10-09 |
 | IT6 | Row-list assembly: empty rows removed, emptied nested lists removed, list shrunk to the widest row, consecutive separators collapsed, trailing separators removed, wide rows stretched (§5) | BIN (b) | BIN |
 | IT7 | The name row's colour is the colour of a state of the `ColorNameText` element of the `text` layout; for an item the state follows `Item_Quality` (1 Legendary, 2 Rare, 3 Incomparable, 4 Uncommon, 5 Common; any other value the object state) (§6.2) | BIN (c); OBS (state colours, quality mapper) | BIN + Confirmed data |
@@ -74,7 +74,11 @@ supplies, §11 says what Tessera shows.
 | IT15 | Pinned tooltips: toggled per (instance, record), at most 20 at once, layout `PinnedTooltip` (§10) | BIN (h); OBS | BIN + Confirmed data |
 | IT16 | `UI_Examination_Tooltip_Compare_Type` (mapper names `Equipment`, `Recipe`, …) is read by native code, not by the class library (§8.3; corrects the scope of `items.md` F44) | BIN (f); `items.md` F44 | BIN |
 | IT17 | Census of compare kinds over all items (§8.3) | OBS | Confirmed 2026-10-09 |
-| IT18 | Row behaviours not traced (effect lines, requirements text, damage and DPS variables, allowed slots, set lists) and the Tessera rules that stand in for them (§6.12–§6.19) | Design | Decision |
+| IT18 | The Tessera rules that stand in for row behaviours not traced (ghosted icon, damage and DPS variables, `cantuse` test, allowed-slot list, requirement lines, effect and stat lines, set lines, duration format; §6.3, §6.12–§6.18); the class-library facts of those sections are IT22 | Design | Decision |
+| IT19 | Of the 79 `*_ExamineLayout` top-level elements of the examination layout, item records name 30; the other 49 serve other tooltips and differ (bases `Tooltip_Bare`, `Tooltip` or none, a second child, a foreign entry template, other widths). List-box widths of the 31 named elements: `max_width` 229 in 24, absent in seven (design widths 229 and 304) (§4.1) | OBS (all 79 elements, all items) | Confirmed 2026-10-09 |
+| IT20 | The item-level text and the pending-bonus marker are joined by the `Utils` pair format with variable 0x5425 = the level text and 0x59BF = the marker; when either is empty the other is used alone (§6.7) | BC (class 3796 and the helper it calls); OBS (the format has exactly these two variables, 0x5425 placed first) | Confirmed (bytecode) 2026-10-09 |
+| IT21 | Generic rows: bitfield values are listed as the display texts of the set bits' keys in ascending bit order (key = bit index + 1), joined pairwise by the `Utils` list format 0x06756762 (variables 0x5425 = text so far, 0x59BF = next text); a set bit without a display text, or no set bit, leaves the variable unset. Value types without a rule of §6.4 leave the variable unset, so the format does not render and the row is empty (§6.4) | BIN (d), second pass; `string-table.md` G25 | BIN |
+| IT22 | Class-library parts of §6.3 and §6.12–§6.18: the provider class of each row type and the properties its code reads and writes (icon 1067; DPS 1058, damage 1059; equipment category 1065; allowed slots 1055; requirements 1092; effect lists 1062; cooldown 1091; item decay 2808; quest ID 1074) | BC (each class's own method bodies, property IDs as literal operands) | Confirmed (bytecode) 2026-10-09 |
 
 ---
 
@@ -84,8 +88,8 @@ supplies, §11 says what Tessera shows.
 | Term | Meaning |
 |---|---|
 | **Examination tooltip** | The tooltip panel built from an item's examination layout (this spec), as opposed to the plain text tooltip of `ui-behaviour.md` §6.3. |
-| **Examination layout** | The UI layout record an item names (here 0x22000000 for all but 11 items, `UILAYOUT` label `examination`). |
-| **Tooltip element** | A top-level element of that layout, named by the item, whose label ends in `_ExamineLayout`. |
+| **Examination layout** | The UI layout record an item names (here 0x22000000 for all but 11 of the 149,695 items with a hover pair, `UILAYOUT` label `examination`; the 11 name 0x220008BE). |
+| **Tooltip element** | A top-level element of that layout **named by an item record** (hover, one-click or comparison pair); every such label ends in `_ExamineLayout`. The examination layout holds further `*_ExamineLayout` elements for other tooltips (skills, traits, socket panels, …); they are not tooltip elements in this spec's sense (§4.1). |
 | **Row template** | One entry template of the tooltip element's list box: an element of the examination layout (§4.2). |
 | **Row** | One instance of a row template in a live tooltip. |
 | **Widget type** | The row template's `UIElementType` label (for example `ExaminationName`); it selects the client's behaviour for the row. |
@@ -177,7 +181,12 @@ element of its layout (149,695 of 149,695 hover pairs, 148,979 of 148,979 one-cl
 <a id="s4-1"></a>
 ### 4.1 Tooltip element and list box
 
-Every `*_ExamineLayout` element (30 in the examination layout) is based on `Tooltip_New` of
+**Scope.** The statements of this section hold for the **tooltip elements**: the elements that
+any of the three pairs of any item record names (§3.1). Here they are 31: 30 top-level
+elements of the examination layout and `KinshipCharter_ExamineLayout` of 0x220008BE. An
+implementation finds them by walking the item records, not by the label suffix.
+
+Every tooltip element is based on `Tooltip_New` of
 layout 0x22000001 (a frame whose background is `Tooltip_New_Background`, `ui-layout.md` §7)
 and holds one child, `Examination_AutoResizeListbox`, of widget type `ExaminationListBox`,
 at (5, 5) inside the frame:
@@ -186,12 +195,35 @@ at (5, 5) inside the frame:
 |---|---|---|
 | `UICore_ListBox_entry_templates` | 1–55 entries (layout, element) | The row templates, in display order (top to bottom) |
 | `UICore_ListBox_entry_templates_autofill` | true | One row per entry template, created when the tooltip is built |
-| `UICore_Element_max_width` | 229 (304 in the five `IA_*` layouts, 330 in one world-event layout) | Rows wider than this wrap or are cut by their own rules |
+| `UICore_Element_max_width` | 229 in 24 of the 31 list boxes; **absent** in seven: `Weapon_ExamineLayout` and `WeaponCompare_ExamineLayout` (list box designed 229 wide) and the five `IA_*` elements (designed 304 wide) | Rows wider than this wrap or are cut by their own rules |
 | `UICore_Element_min_width` | 20 | |
 | `UICore_Element_notify_on_resize` | true | The frame follows the list's size |
 
 The frame is the list box's size plus its 5-pixel inset on each side (`ui-layout.md` §8:
-edges of the list box are (0, 0, 0, 0); the frame is resized by the client to wrap it).
+edges of the list box are (0, 0, 0, 0); the frame is resized by the client to wrap it). The
+designed frame widths are 239 (list box 229) and 314 (list box 304).
+
+**Entry templates.** The entry templates of the 30 tooltip elements of the examination layout
+name top-level elements of that same layout (771 templates). Those of
+`KinshipCharter_ExamineLayout` name 12 top-level elements of the examination layout and one
+(`KinshipCharter_GuildHistory_Base`) of its own layout 0x220008BE. An implementation resolves
+each entry template by the (layout, element) pair it states, never by assuming the
+tooltip element's own layout.
+
+> **OPEN:** the wrap width of a list box without `UICore_Element_max_width` (the seven list
+> boxes above). The limit pass of `ui-behaviour.md` §9.2.1 applies a maximum only when the
+> property is set, so the original does not cap them by that property; what bounds their text
+> was not traced. **Tessera rule:** such a list box uses its designed width (229 or 304 here)
+> as its maximum width for §5 step 3 and §7.
+
+**Other `*_ExamineLayout` elements (out of scope).** The examination layout holds 79
+top-level elements whose label ends in `_ExamineLayout`; 49 are not named by any item
+record and serve other tooltips (skills, traits, effects, socket panels, social lists and
+others; decision 0024 P2, P3). They do not all share the structure above: 11 are based on
+`Tooltip_Bare`, one on `Tooltip`, one has no base element and its list box sits at (0, 0);
+one has a second child (a decoration field) besides its list box; one has an entry template
+naming an element of another layout; their list boxes' `max_width` values include 231, 330,
+335, 390 and 2048, and one list box has none. Specs for those tooltips state their own structure.
 
 Example, the order of `Armor_ExamineLayout` (52 rows; labels of row templates):
 `NameIcon_Row_Base`, `NeedsReforge_Base`, `ItemAdvancement_AdvanceableItem_Base`,
@@ -386,10 +418,11 @@ answered by this: quality colours the **name**; the icon's background tile is th
 quality cue of the icon.
 
 <a id="s6-3"></a>
-### 6.3 Icon
+### 6.3 Icon (BC class 1067, IT22; Tessera rule IT18)
 
 The `ExaminationIcon` (32 × 32) shows the composed item icon (`icon-layers.md` §3). Its
-provider (class 1067) also reports `Examination_IsGhosted`; when true the field's `ghosted`
+provider (class 1067) writes `Examination_Icon`, `Examination_IconOverlay` and
+`Examination_IsItem` into the row data, and its code also names `Examination_IsGhosted`; when true the field's `ghosted`
 state draws a darkening overlay (layout data: a 0x41 image with draw mode 1 and a colour
 item 0xBF000000).
 
@@ -433,8 +466,26 @@ Widget:
    | int64 | decimal integer |
    | StringInfo | the resolved text |
    | boolean | the `Utils` table's yes or no text (tokens 0x0F3E6915 for true, 0x03918965 for false, table key 0x1000004A) |
-   | bitfield (32, 64, any width) | the display texts of the set bits' keys, joined with the client's list separator (§6.14 OPEN) |
-   | other | the value's generic text |
+   | bitfield (32, 64, any width) | the list text of the set bits (below, IT21) |
+   | DID | handled by step 6 |
+   | any other type (string token, waveform, timestamp, tri-state, vector3, instance ID, property ID, struct, array, colour, position) | none: the variable is **left unset**. A format that has variable 0x5A6195 then does not render (`string-table.md` §7.1, G25: a slot without a value), the text is empty and the row is empty by step 9 (IT21) |
+
+   **List text of a bitfield** (32- and 64-bit forms traced): walk the bits from the lowest
+   to the highest; for each set bit at index *i* (0-based) take key *i* + 1 and its display
+   text in P's mapper (key rule of `property-system.md` §7.3; the space-separated listing
+   there is the client's debug display, not this row). If any set bit's key has no display
+   text, or no bit is set, the variable is left unset (empty row as above). Otherwise the texts are
+   joined in that order: the first text alone, then for each further text the `Utils` list
+   format (token 0x06756762, table key 0x1000004A) with variable 0x5425 = the text so far and
+   0x59BF = the next text. If one of the two is empty the other is taken alone. Item rows
+   that show bitfields this way (all row templates reachable from the 31 tooltip elements):
+   `ItemDecorationCategory_Base` (`Item_Decoration_Category`, 64-bit) and
+   `UsageTargetType_IAWeaponTitles`, `UsageTargetType_IAClassItemTitles`
+   (`Usage_ValidTargetTypes`, 32-bit).
+
+   > **OPEN:** the bit order of the any-width bitfield form (type 22), which goes through a
+   > different list builder that was not read. **Tessera rule:** the same order and join as
+   > the 32- and 64-bit forms.
 
 8. If the format has no variable 0x5A6195 the format text is used as is (flag rows such as
    the barter, reputation and consumable rows show their fixed text when the flag is true).
@@ -485,8 +536,11 @@ Shown for every item (objects of the item base class's ancestor, `items.md` §2.
    if *E* < *L* the text is token 0x0D69E17E with variable 0x9E7DC9C = *E* and 0x50AA9C = *L*;
    if *E* > *L* token 0x07AD68B0 with the same variables. Otherwise token 0x0D5EEEEC with
    0x50AA9C = *L*.
-3. If the item has `Item_Level_Bonus_Pending` true, the marker token 0x054000F3 is appended
-   after the text, joined by the `Utils` table's pair format 0x040CF382.
+3. If the item has `Item_Level_Bonus_Pending` true, the marker text (token 0x054000F3 of
+   the `Examination` table) is joined to the text of step 2 by the `Utils` table's pair
+   format 0x040CF382 (table key 0x1000004A): variable **0x5425 = the level text** of step 2,
+   variable **0x59BF = the marker**. If the level text is empty the marker is shown alone; if
+   the marker is empty the level text alone (IT20).
 
 > **OPEN:** the viewer-effective level *E* of step 2 (a helper of the item-level provider
 > that compares the item with the viewer; not traced). **Tessera rule:** *E* = *L* (step 2
@@ -533,7 +587,9 @@ Provider:
    not sellable, sale value 0, quest item, indestructible, barter item, legendary item,
    purchased store item) → empty row.
 3. *q* = max(1, the instance's `Inventory_Quantity`; 1 for a record). The row value is
-   *v* × *q* (32-bit product).
+   *v* × *q*, a signed 32-bit product that wraps on overflow (two's complement,
+   `wlib-bytecode.md` integer rule); a wrapped result below 1 makes the row empty (widget
+   rule below).
 
 Widget: a value below 1 → empty. Otherwise the row creates the money template
 `MoneyDisplay_ItemWorthTemplate` of the `moneydisplay` layout (a "worth" label, token
@@ -558,12 +614,14 @@ non-zero coin.
 > Example: §14.4.
 
 <a id="s6-12"></a>
-### 6.12 Damage and DPS (BC classes 1058, 1059)
+### 6.12 Damage and DPS (BC classes 1058, 1059, IT22; Tessera rule IT18)
 
 The providers compute the values of `items.md` §9.3–§9.4 (DPS from the DPS table at the
 item's level and quality, damage from DPS, speed and variance, damage type from
-`Combat_DamageType`) and write `Examination_DPS`, `Examination_Damage`,
-`Examination_DamageVariance`, `Examination_DamageType`.
+`Combat_DamageType`) and write `Examination_DPS` (class 1058), `Examination_Damage`,
+`Examination_DamageVariance`, `Examination_DamageType` (class 1059). The code of both names
+`Combat_DPS_LUT`, `Combat_WeaponSpeed`, `Combat_DamageType`, `Item_EquipmentCategory` and
+`Item_Quality` as sources (IT22); the formulas are those of `items.md`.
 
 > **OPEN:** which damage value fills each of the three variables of the damage format
 > (minimum, maximum, damage-type text) and the decimals of the DPS variable. **Tessera rule:**
@@ -571,16 +629,17 @@ item's level and quality, damage from DPS, speed and variance, damage type from
 > integers; damage type = display text of `Combat_DamageType`; DPS with one decimal.
 
 <a id="s6-13"></a>
-### 6.13 Equipment category (BC class 1065)
+### 6.13 Equipment category (BC class 1065, IT22; Tessera rule IT18)
 
-The provider reads `Item_EquipmentCategory`; the row shows the display text of the set
-category key (variable 0x689C009). The `cantuse` state (red) marks a category the viewer
+The provider reads `Item_EquipmentCategory` and writes `Examination_EquipmentCategory` and
+`Examination_StateID`; the row shows the display text of the set category key (variable
+0x689C009). The `cantuse` state (red) marks a category the viewer
 cannot use.
 
 > **OPEN:** the viewer test behind `cantuse`. **Tessera rule:** never red in P1.
 
 <a id="s6-14"></a>
-### 6.14 Allowed slots (BC class 1055)
+### 6.14 Allowed slots (BC class 1055, IT22; Tessera rule IT18)
 
 The provider lists the slots of `Inventory_CompatibleSlot`; each becomes an
 `AllowedSlotsElement` text.
@@ -590,10 +649,12 @@ The provider lists the slots of `Inventory_CompatibleSlot`; each becomes an
 > display text of the slot key (mapper `ContainerSlot`), in ascending key order.
 
 <a id="s6-15"></a>
-### 6.15 Requirements (BC class 1092)
+### 6.15 Requirements (BC class 1092, IT22; Tessera rule IT18)
 
 The provider asks the item's `Usage_Permission` object (`items.md` §5.10) to describe its
-requirements for the viewer; each requirement becomes one `UsageReqsListElement` line, in
+requirements for the viewer and writes them as an array (`Examination_UsageInfo_Array` of
+`Examination_UsageInfo_Struct`, each with `Examination_StringInfo` and `Examination_StateID`);
+each requirement becomes one `UsageReqsListElement` line, in
 state `cantuse` (red) when the viewer does not meet it. The level-range row
 (`ExaminationLevelRangeRestriction_Base`) shows a minimum and maximum level (variables 0x51DE,
 0x5168) for items with a level window.
@@ -605,12 +666,13 @@ state `cantuse` (red) when the viewer does not meet it. The level-range row
 > (§11) fails the line.
 
 <a id="s6-16"></a>
-### 6.16 Effect and stat lines
+### 6.16 Effect and stat lines (BC class 1062, IT22; Tessera rule IT18)
 
 The effect lists (`EffectDisplay_*`: effects on the wearer; `TargetEffectDisplay_*`: on the
 target; `UsageEffectDisplay_*`: on use, with a header line) are filled by the effect-list
-provider (class 1062) from the item's effect lists and stat modifiers (`items.md` §5.8–§5.9),
-one `EffectListElement` per effect, each with the effect's own examination text
+provider (class 1062) from the item's effect lists and stat modifiers (`items.md` §5.8–§5.9)
+into an `Examination_EffectInfo_Array` of `Examination_EffectInfo_Struct` entries, one
+`EffectListElement` per effect, each with the effect's own examination text
 (`combat-data.md`). This is the same machinery as effect tooltips (decision 0024 P2).
 
 > **OPEN (P2):** the effect-line texts. **Tessera rule (P1):** one line per `Mod_Array` entry
@@ -619,7 +681,7 @@ one `EffectListElement` per effect, each with the effect's own examination text
 > effect list with the effect's `Effect_Name`.
 
 <a id="s6-17"></a>
-### 6.17 Item sets
+### 6.17 Item sets (Tessera rule IT18)
 
 The member list shows the set's name and its members (template 0x0687F7C5 per member) and the
 bonus list the tiers (header 0x083A3695 with the count, template 0x040D6175 per bonus); each
@@ -631,14 +693,23 @@ equipment container (§11).
 > names, bonus lines with the count and the bonus effect names, active per `items.md` §7.1.
 
 <a id="s6-18"></a>
-### 6.18 Cooldown, decay, quest, flags
+### 6.18 Cooldown, decay, quest, flags (BC classes 1091, 2808, 1074, IT22; Tessera rule IT18)
 
-- `Usage_Cooldown`: the item's `Usage_CooldownDuration` (seconds through `CooldownControl`,
-  `items.md` §9.8) as a duration text; empty without a cooldown.
-- `ItemDecay`: the item's `ItemDecay_Duration` (seconds through `ItemDecayControl`) as a
-  duration text, red; empty without decay.
-- `QuestID_Base`: the quest the item belongs to (variable 0xA897485 = the quest's name); empty
-  without one.
+- `Usage_Cooldown` (class 1091): the item's `Usage_CooldownDuration` (seconds through
+  `CooldownControl`, `items.md` §9.8) as a duration text; empty without a cooldown. The
+  provider copies `Usage_CooldownDuration`, `Usage_CooldownChannel` and the item's DID
+  (`UI_Examination_Tooltip_DID`) into the row data; another of its methods writes
+  `ExaminationElement_UsageCooldown_Total`, `…_Remaining` and `Examination_StateID`.
+- `ItemDecay` (class 2808): the item's `ItemDecay_Duration` (seconds through
+  `ItemDecayControl`) as a duration text, red; empty without decay. The provider writes
+  `ExaminationElement_ItemDecay_Total` from `ItemDecay_Duration`; its fill method also writes,
+  under conditions that were not traced, `ExaminationElement_ItemDecay_Remaining` and the
+  flags `ItemDecay_Cancelled` and `Inventory_BindOnRaid`.
+- `QuestID_Base` (class 1074): the quest named by the item's `Quest_DataID` (variable
+  0xA897485 = the quest's name, in a format of the `Examination` table), written as
+  `Examination_StringInfo`; empty without `Quest_DataID`. The format is token 0x0A4BF4B4, or
+  0x0C5E3954 when two tests of the examined object (a native test with class index 801 and a
+  virtual method of the object, neither traced) select it. **Tessera rule:** 0x0A4BF4B4.
 - Flag rows: §6.4.
 
 > **OPEN:** the client's duration text format. **Tessera rule:** largest two non-zero units
@@ -733,8 +804,12 @@ native assembler does.
 
 - **When.** An item tooltip appears through the hover rule of `ui-behaviour.md` §6.2 (the
   same delay); an item slot's hover handler requests the examination tooltip instead of a text
-  tooltip (Probable: the item-slot templates name a tooltip layout but no tooltip text,
-  `character-panels.md` §6). Hovered world objects use the same delay (BIN).
+  tooltip. Hovered world objects use the same delay (BIN).
+
+  > **OPEN:** the code path by which an item slot requests the examination tooltip rather
+  > than a text tooltip was not traced (the item-slot templates of `character-panels.md` §6
+  > name a tooltip layout but no tooltip text, which is consistent with it). **Tessera
+  > rule:** every item slot requests the examination tooltip of its item.
 - **Placement** (pointer at (*px*, *py*), cursor size *cw* × *ch*, tooltip size *w* × *h*,
   screen *SW* × *SH*):
   1. *x* = *px* + *cw* when *px* / *SW* < 0.5, else *px* − *w*;
@@ -824,12 +899,12 @@ of rows left empty by §6.20. A failure is a panic, an error escaping the catego
 | ID | Invariant | Status |
 |---|---|---|
 | IV1 | Every item record with both hover properties names a top-level element of the named layout (149,695 of 149,695) | Confirmed 2026-10-09 |
-| IV2 | Every `*_ExamineLayout` element of the examination layout has exactly one child, a list box of type `ExaminationListBox` with autofill true | Confirmed |
-| IV3 | Every entry template of those list boxes names a top-level element of the examination layout | Confirmed |
-| IV4 | Every `*Compare_ExamineLayout` element's first entry is `CurrentlyEquipped_Label` | Confirmed |
+| IV2 | Every tooltip element (§4.1: an element named by any of the three pairs of any item record; 31 here) is based on `Tooltip_New` and has exactly one child, a list box of type `ExaminationListBox` with autofill true. Test: collect the distinct non-zero (layout, element) pairs of all item records and check each; the other `*_ExamineLayout` elements are not tested | Confirmed 2026-10-09 (31 of 31) |
+| IV3 | Every entry template of those list boxes names a top-level element of the layout the template itself states (784 of 784 here: 783 in the examination layout, one in 0x220008BE) | Confirmed 2026-10-09 |
+| IV4 | Every tooltip element whose label ends in `Compare_ExamineLayout` (seven here) has `CurrentlyEquipped_Label` as its first entry | Confirmed |
 | IV5 | `ColorNameText` of the `text` layout has a state for each of the five item-quality state labels and for `Object_ColorName` | Confirmed |
 | IV6 | After assembly (§5) no two separators are adjacent and the last row is not a separator | Design check (synthetic) |
-| IV7 | The coin breakdown of §6.11 reconstructs the amount: Σ count × `Currency_Value` = amount, for every amount 1 … 2³¹ − 1 | Design check |
+| IV7 | Provided the currency list holds a currency with `Currency_Value` 1 (copper here), the coin breakdown of §6.11 reconstructs the amount: Σ count × `Currency_Value` = amount, for every amount 1 … 2³¹ − 1. Without such a currency the remainder below the smallest value is not shown, and the invariant does not apply | Design check |
 | IV8 | Binding rule §6.5 yields exactly one text or none for each of the 2⁴ combinations of the four flags (bound ID 0) | Design check |
 
 ---
@@ -903,6 +978,10 @@ Screen 1920 × 1080, cursor 32 × 32, tooltip 240 × 300, pointer (1500, 200): *
 | Q14 | Anchored mode option | §9 | BIN |
 | Q15 | Pin input | §10 | owner (O81) |
 | Q16 | Instance properties in scenarios | §11 | `scenario-feed.md` owner |
+| Q17 | Wrap width of list boxes without `max_width` | §4.1 | BIN |
+| Q18 | Bit order of any-width bitfields in generic rows | §6.4 | BIN |
+| Q19 | Quest-ID format choice | §6.18 | BC |
+| Q20 | How item slots request the examination tooltip | §9 | BIN |
 
 Owner checks: `docs/checklists/owner-observations.md` O80 (tooltip rows of ten items) and
 O81 (comparison and pinning).
@@ -915,3 +994,4 @@ O81 (comparison and pinning).
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (Review), for decision 0024 P1. Provenance OBS (all layouts, all items), BC (examination providers and helpers of the class library), BIN (assembler, list assembly, name colour, generic rows, binding, worth, armour, durability, comparison, placement, pinning). |
+| 2026-10-09 | Review fixes (status stays Review). §2, §4.1, IT4, IV2–IV4 scoped to the 31 tooltip elements item records name; the other 49 `*_ExamineLayout` elements listed as out of scope; list-box widths corrected and an OPEN with a Tessera rule for list boxes without `max_width` (IT19). §6.7 step 3: variables of the pair format (IT20). §6.4 step 7: bitfield list text and join, the "other" types leave the variable unset (IT21), OPEN for the any-width bit order. New row IT22 (BC) for §6.3, §6.12–§6.18, BC list extended (1062, 1067, 1074), IT18 limited to Tessera rules; §6.18 names `Quest_DataID` and the quest-format choice. §6.11 signed wrapping product; §9 OPEN replaces "Probable"; IV7 precondition; §15 Q17–Q20. |

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Revised (2026-10-09, spec writer: the two non-blocking notes of the first review taken up, §2.1 (DC3 wording, stored order counted) and §6.5 (total 52,028); no rule changed; awaiting review). Before: Accepted (2026-10-09) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (independent dirty-room spec reviewer, not the author) |
@@ -67,7 +67,7 @@ behaviour is not known or not reproduced.
 |---|---|---|---|
 | DC1 | 16,511 Decal SEDs; per region, flags, IID kind, objects, frames as §2.1 | OBS (all SEDs, 2026-10-08) | Confirmed |
 | DC2 | Every Decal SED names one of 140 marker objects (0x47); chains 0x47 → 0x1F (29) or 0x47 → 0x47 → 0x1F (111); none has 0x78 extra sets; `DecalVolume_Material` sits on the first chain level of all 140 (§2.2) | OBS (all 140 objects) | Confirmed |
-| DC3 | Every Decal SED IID has a per-instance property set, and it equals the SED's own set entry for entry (§2.1) | OBS (16,511 of 16,511) | Confirmed |
+| DC3 | Every Decal SED IID has a per-instance property set, and it holds the same entries as the SED's own set (same PIDs and values, same header); the stored order is the same in 14,840 and differs in 1,671 (§2.1) | OBS (16,511 of 16,511); order re-counted 2026-10-09 over all 49,636 landblock-info records | Confirmed |
 | DC4 | The client builds a decal object for a Decal node of the streaming index (`entity-descriptor.md` §9.3), at the node's position and rotation and cell, without any scale (§2.3) | BIN (questions 1, 2); ED E19, E27 | BIN |
 | DC5 | The decal object's parameters come from a property collection filled from the marker object's chain (root parent first, nearer levels overwriting) and then the SED's own property set (overwriting); the per-instance set is not read on this path (§3.2) | BIN (question 2) | BIN; no difference on this install (DC3) |
 | DC6 | The decal class has exactly 20 parameters, one per `DecalVolume_*` property, with the initial values of §3.1 (they equal the dictionary defaults, except the material and LOD distance, which come from `UNIQUEDB` and the LOD table) | BIN (question 1); OBS (dictionary) | BIN; defaults Confirmed |
@@ -102,7 +102,7 @@ behaviour is not known or not reproduced.
 | `flags` (`entity-descriptor.md` §3.2) | 0x19E (object, frame, properties, name): 5,047; 0x59E (the same plus the interior flag 0x400): 11,464 |
 | IID kind byte | 1: 16,510; 4: 1 |
 | Frame | present on all (none at the landblock origin) |
-| Instance property set (ED §4.5.2) | one per Decal SED IID; equal to the SED's own set in all 16,511 |
+| Instance property set (ED §4.5.2) | one per Decal SED IID; the same entries as the SED's own set (same PIDs, values and header) in all 16,511, in the same stored order in 14,840 and in another order in 1,671 |
 | Content-layer test in the shared world (*L* = 1, *I* = 0; ED §4.5.1) | passes 15,502 (15,126 without a list, 376 with a list naming 1 or 2); fails 1,009 |
 | Properties on the SED other than `DecalVolume_*` | `Render_AdjustableScale` and `Physics_AdjustableScale` (all; value 1 on 16,259, 1.4 on 28, 2 on 224), `Entity_ContentLayers` (1,386), `Dungeon_DID` (82), and on 28 SEDs `Appearance_InstanceList`, `Render_CastLandscapeShadows`, `Render_FarViewDistance`, `Render_LODClass`. None of these is a decal parameter (§2.3, §3). |
 
@@ -651,7 +651,7 @@ engine's slope-scale value of that entry.
 
 **Objects.** `Render_DepthBias_Type` selects an entry of the same table for an entity: the
 render component stores the value from the entity's properties (BIN). On Physics SEDs (by the
-entity lookup order) it occurs 51,028 times: 0: 2,567; 1: 64; 2: 42; 3: 20,290; 4: 2,417;
+entity lookup order) it occurs 52,028 times: 0: 2,567; 1: 64; 2: 42; 3: 20,290; 4: 2,417;
 5: 1,188; 6: 272; 7: 1,936; 8: 18,073; 9: 2,080; 10: 1,174; 11: 423; 12: 1,468; 13: 30;
 15: 4 (Confirmed). How the object draws apply it was not traced (OPEN below).
 
@@ -864,3 +864,4 @@ stored as +2.0, +0.8, +0.4.
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (Review). New spec for placed decal volumes, answering `entity-descriptor.md` §9's "decal volumes have no spec yet" (its owner may point the OPEN there to this spec). Census of all Decal SEDs, marker objects, instance sets, receiving properties and depth-bias definitions (OBS 2026-10-08); client behaviour from one BIN session (2026-10-08, questions 1–10). |
+| 2026-10-09 | Non-blocking notes of the first review taken up (spec writer): §6.5, the total of `Render_DepthBias_Type` on Physics SEDs is 52,028 (the per-value counts were right; their sum was misprinted as 51,028); DC3 and the §2.1 table now say that the instance set holds the same entries as the SED's own set, in another stored order in 1,671 of 16,511 (re-counted over all landblock-info records). No rule changed. Status Revised, awaiting review. |

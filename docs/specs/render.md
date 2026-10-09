@@ -610,6 +610,14 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | **Decision**: fake light | *L* = the main light's travel direction (−`sun_dir`) and its specular colour when the pass has a main light; otherwise straight down with a black specular colour (the engine's default direction and specular colour are not given, `lighting.md` E18; OPEN in `water.md`). Whether the pass has a main light is the caller's choice (`FrameLighting::sun`): the client has none while the sun-present flag of `environment.md` §11.7 step 9 is false (blended keyframe `effect` not null, sun colour opaque black, or sun brightness below 0.0002, and always indoors). The walker passes no main light indoors or for a black or dim sun, but makes no test on the blended `effect` (a departure labelled in `walker.md` §14.3); the renderer needs no change for it. |
 | Missing normal map | A flat tangent-space normal (0, 0, 1): no ripples, no sparkle. |
 
+> **OPEN:** (implementer, 2026-10-09; engineering choice) `WaterDraw` gained an optional
+> far-draw fade (`fade`: start *s*, inverse range *r*; default none) for the sector water of
+> the far view (`far-view.md` §8 OPEN): after fog, the colour is blended toward the
+> undistorted scene copy by *a* = 1 − sat((*d* − *s*) × *r*), *d* the distance to the eye,
+> and the fragment is discarded where *a* < 0.001 (without a scene copy: where *a* < 0.5).
+> The uniform slot grew from 176 to 192 bytes. The owner of this spec should fold this into
+> the table above.
+
 <a id="s5-4"></a>
 ### 5.4 Sky (`environment.md` §11.4, §12)
 

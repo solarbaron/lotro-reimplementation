@@ -18,13 +18,24 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tessera_client::avatar::AvatarSpec;
 use tessera_client::runtime::is_inside;
+use tessera_client::wait::{LoadWait, ProgressWait};
 use tessera_client::walk_path::{Category, parse_walk_table};
 use tessera_client::walker::movement::run::{
     LOG_HEADER, WalkSession, run_walk, summary_line, write_log,
+};
+
+/// How long a wait for collision sets may last: as long as loading progresses. It gives up
+/// after this many polls (about 1 ms apart, longer on a loaded machine) in a row in which
+/// no loading work started or finished and the missing sets stayed the same, or after this
+/// many polls in all (`walker.md` §7, implementer note on progress waits).
+const LOAD_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(900_000, 14_400_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(120_000, 3_600_000))
 };
 
 /// Walks failing for the causes listed in the OPENs of `m4-5-visual.md` §2.4. Empty since
@@ -110,7 +121,7 @@ fn every_checklist_walk_passes() {
     let mut failed = Vec::new();
     for walk in &walks {
         let t = Instant::now();
-        match run_walk(walk, &mut world, &session.setup, Duration::from_secs(300)) {
+        match run_walk(walk, &mut world, &session.setup, LOAD_WAIT) {
             Ok(out) => {
                 if let Some(f) = &mut log {
                     write_log(f, &out).expect("log");

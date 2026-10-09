@@ -292,6 +292,15 @@ impl Ui {
         self.painter.note_structure();
     }
 
+    /// Whether painting has settled: no tree change waits for the next paint step and the
+    /// paint scheduler is idle (every surface drawn, no job, upload or generation left).
+    /// Tests wait on this instead of a fixed number of frames, since the paint step works
+    /// in time slices and a loaded machine needs more frames for the same work.
+    #[must_use]
+    pub fn paint_settled(&self) -> bool {
+        !self.painter.touched && self.painter.dirty.is_empty() && self.painter.scheduler.is_idle()
+    }
+
     /// The reference paint step: the full surface pass on every frame with a change
     /// (instead of only the damage of the changed elements when nothing structural
     /// changed), and text drawn again for every display list (no glyph-run cache). Both

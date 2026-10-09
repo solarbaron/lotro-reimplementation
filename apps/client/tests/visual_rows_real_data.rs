@@ -22,7 +22,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_client::walker::env::{
@@ -38,6 +37,23 @@ use tessera_world::frills::DensityThinner;
 use tessera_world::{
     BundleOptions, LandblockKey, RingConfig, StreamConfig, WorldContext, WorldPos, WorldStreamer,
     build_frill_sector, heading_degrees,
+};
+
+/// Settling the streamer waits as long as loading progresses: it gives up after this many
+/// updates (about 1 ms apart, longer on a loaded machine) in a row without any loading
+/// work starting or finishing, or after this many updates in all
+/// ([`tessera_world::WorldStreamer::settle_on_progress`]; `walker.md` §7, implementer note
+/// on progress waits).
+const SETTLE_STALL: u64 = if cfg!(debug_assertions) {
+    900_000
+} else {
+    120_000
+};
+/// See [`SETTLE_STALL`].
+const SETTLE_MAX: u64 = if cfg!(debug_assertions) {
+    14_400_000
+} else {
+    3_600_000
 };
 
 fn install() -> Option<PathBuf> {
@@ -79,7 +95,10 @@ fn world() -> Option<(Arc<WorldContext>, WorldStreamer)> {
 fn settle(w: &mut WorldStreamer, region: u8, block: u16, x: f64, y: f64) -> WorldPos {
     let o = key(region, block).origin();
     let pos = WorldPos::new(region, o[0] + x, o[1] + y, 0.0);
-    assert!(w.settle(pos, Duration::from_secs(120)), "never settled");
+    assert!(
+        w.settle_on_progress(pos, SETTLE_STALL, SETTLE_MAX),
+        "never settled"
+    );
     pos
 }
 

@@ -13,8 +13,27 @@
 
 use clap::Parser as _;
 use tessera_client::Args;
-use tessera_client::headless::{self, HeadlessReport};
+use tessera_client::headless::{self, HeadlessReport, SettleWait};
 use tessera_render::RenderError;
+
+/// Frames per second of the paced headless loop.
+const FPS: u64 = 60;
+
+/// How the screenshot waits for the area to settle (`walker.md` §7): as long as loading
+/// progresses, counted in frames rather than wall-clock seconds, so a loaded machine makes
+/// the run slower, not different. It gives up after this many frames without any loading
+/// progress, or after this many frames in all.
+fn settle_wait() -> SettleWait {
+    let (stall_s, max_s) = if cfg!(debug_assertions) {
+        (900, 4 * 3600)
+    } else {
+        (60, 3600)
+    };
+    SettleWait::Progress {
+        stall_frames: stall_s * FPS,
+        max_frames: max_s * FPS,
+    }
+}
 
 fn run(dir: &std::ffi::OsStr, extra: &[&str]) -> Option<HeadlessReport> {
     let data = tempfile::tempdir().expect("tempdir");
@@ -28,14 +47,12 @@ fn run(dir: &std::ffi::OsStr, extra: &[&str]) -> Option<HeadlessReport> {
         dir.to_str().expect("utf-8 game dir").into(),
         "--data-dir".into(),
         data.path().to_str().expect("utf-8 temp path").into(),
-        "--settle-timeout".into(),
-        if cfg!(debug_assertions) { "900" } else { "90" }.into(),
         "--screenshot".into(),
         shot.to_str().expect("utf-8 temp path").into(),
     ];
     argv.extend(extra.iter().map(|s| (*s).to_owned()));
     let args = Args::try_parse_from(argv).expect("valid args");
-    match headless::run(&args) {
+    match headless::run_with(&args, settle_wait()) {
         Ok(r) => Some(r),
         Err(e) => {
             if e.chain().any(|c| {

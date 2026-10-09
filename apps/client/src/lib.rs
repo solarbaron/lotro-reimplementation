@@ -34,6 +34,7 @@ pub mod runtime;
 pub mod scene;
 pub mod smoke;
 pub mod ui_host;
+pub mod wait;
 pub mod walk_path;
 pub mod walker;
 pub mod walker_host;

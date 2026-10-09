@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use tessera_dat::ArchiveSet;
 use tessera_formats::gameplay::misc::*;
+use tessera_formats::imposter::ImposterTable;
 use tessera_formats::{
     Did, EntityDescriptor, PropertyDictionary, PropertySetRecord, Record, RgbaImage, Surface,
     SurfaceFormat, TextureList,

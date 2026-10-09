@@ -469,6 +469,19 @@ is no near/far split and no LOD for water: **the sector quads are the landscape 
 every distance, the near field included.** This settles the OPEN of `water.md` §8.1 in
 favour of its Tessera rule.
 
+> **OPEN:** (implementer, 2026-10-09) How far the sector water reaches and how it ends is
+> not stated. §7.2 lists the far terrain, ceilings and distant sprites for the far-draw fade,
+> not the water, and this section attaches a sector's water whenever the sector is listed,
+> so read literally the water runs out to the edge of the listed sectors (3*F* to 3*F* + 2
+> landblocks beyond the viewer's landblock) unfaded, while the terrain under it fades out
+> before *E*: from a high eye, water slabs then stand against the sky at the horizon. Open:
+> whether the client fades its sector water with `c_FarDrawFadeParams` (or another value),
+> clips it at some distance, or relies on fog alone. Tessera choice until known: the sector
+> water outside the near field gets the far terrain's fade (FD1, measured from the eye like
+> the terrain's), blended toward what lies behind it, and a landblock quad whose nearest
+> point is farther horizontally than the end of that fade is not drawn
+> (`apps/client/src/walker/farview.rs`, `crates/render/src/water.rs`).
+
 ---
 
 <a id="s9"></a>

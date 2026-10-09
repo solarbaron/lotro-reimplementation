@@ -74,6 +74,7 @@ pub use self::command::{CommandError, MusicCommand, MusicWord, parse_args};
 use super::backend::{self, BackendChoice, PrefsChoice, SettingsChoice};
 use super::loader::fetch;
 use super::scripts::{PROPERTY_DICTIONARY, ROOT_DID_MAP, mapper};
+use crate::wait::{LoadWait, Waiter};
 
 /// The local player's character in the player-music module.
 pub const LOCAL_PLAYER: CharacterId = CharacterId(1);
@@ -1533,6 +1534,37 @@ impl PlayerMusic {
                 return true;
             }
             if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Blocks until start-up, every job and every queued command have finished, or the
+    /// wait gives up: with [`LoadWait::Progress`] only after that many polls (2 ms apart)
+    /// in a row in which nothing finished (start-up, a job, a queued command), or after
+    /// that many polls in all, so a loaded machine waits longer instead of failing. For
+    /// tools and tests; never on the frame thread.
+    pub fn wait_settled(&mut self, limit: LoadWait) -> bool {
+        let mut w = Waiter::new(limit);
+        loop {
+            self.pump();
+            if !self.busy() {
+                return true;
+            }
+            let mark = (
+                self.boot.is_some(),
+                self.job.is_some(),
+                self.queue.len(),
+                self.stats.commands,
+                self.stats.failed_jobs,
+            );
+            if w.give_up(mark) {
+                tracing::warn!(
+                    polls = w.polls(),
+                    stalled = w.stalled(),
+                    "player music: still busy; giving up the wait"
+                );
                 return false;
             }
             std::thread::sleep(Duration::from_millis(2));

@@ -32,6 +32,7 @@ use tessera_world::{LandblockKey, WorldContext, WorldPos};
 use super::run::{WalkWorld, yaw_of};
 use super::setup::MoverSetup;
 use super::{CollisionWorld, MoveInput, PhysicsWalker, STEP_SECONDS};
+use crate::wait::{LoadWait, Waiter};
 use crate::walk_path::steps_for;
 
 /// The seed: the bytes of "M45-SOAK" (§2.5 step 3).
@@ -548,12 +549,14 @@ pub struct SoakOutcome {
     pub end: [f64; 3],
 }
 
-/// Runs `walk` in `world` (§2.5 steps 5–6), waiting at most `timeout` per missing set.
+/// Runs `walk` in `world` (§2.5 steps 5–6); each wait for missing sets is limited by
+/// `wait` (with [`LoadWait::Progress`]: polls about 1 ms apart in which neither the
+/// world's [`WalkWorld::load_progress`] nor the missing landblocks changed).
 pub fn run_soak_walk<W: WalkWorld>(
     walk: &SoakWalk,
     world: &mut W,
     setup: &MoverSetup,
-    timeout: std::time::Duration,
+    wait: LoadWait,
 ) -> SoakOutcome {
     let mut out = SoakOutcome::default();
     let Some(z) = walk.start_z else {
@@ -568,26 +571,28 @@ pub fn run_soak_walk<W: WalkWorld>(
     let shape = setup.shape;
     let filter = QueryFilter::player();
     let mut k = 0u64;
-    let mut waited_since: Option<std::time::Instant> = None;
+    let mut waiting: Option<Waiter<(u64, Vec<LandblockKey>)>> = None;
     while k < steps {
-        if k.is_multiple_of(super::run::STREAM_EVERY) || waited_since.is_some() {
+        if k.is_multiple_of(super::run::STREAM_EVERY) || waiting.is_some() {
             world.update(&walker.feet(), &walker.pins());
         }
         #[allow(clippy::cast_precision_loss)]
         let t = k as f64 * f64::from(STEP_SECONDS);
-        if !walker.pending(world).is_empty() {
-            let since = *waited_since.get_or_insert_with(std::time::Instant::now);
-            if since.elapsed() >= timeout {
+        let missing = walker.pending(world);
+        if !missing.is_empty() {
+            let w = waiting.get_or_insert_with(|| Waiter::new(wait));
+            if w.give_up((world.load_progress(), missing)) {
                 out.skipped = Some(format!(
-                    "sets not installed after {} s at step {k}",
-                    since.elapsed().as_secs()
+                    "sets not installed after {} s ({} polls) at step {k}",
+                    w.elapsed().as_secs(),
+                    w.polls()
                 ));
                 return out;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
             continue;
         }
-        waited_since = None;
+        waiting = None;
         let cmd = script.command(t);
         let Some(rec) = walker.step(&cmd.input, cmd.walking, world) else {
             continue;

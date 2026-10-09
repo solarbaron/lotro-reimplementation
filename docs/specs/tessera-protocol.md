@@ -2282,6 +2282,16 @@ silent or ambiguous. The code follows each note; a reviewer should confirm or co
 > closes it at the next teleport epoch. Spec writer: confirm, or say whether a server must
 > refuse such a configuration instead.
 
+> **OPEN:** (implementer note, 2026-10-10) §8.3 "Server relaxations" item 1 and
+> `test-server.md` §8.3 do not say what happens to an open settling window when the server's
+> limits change during it (`tessera-server` v1 never changes them at runtime; the
+> `MovementValidator` API allows it). Chosen: the window stays measured from the start of the
+> epoch that opened it, with the new length (still at most 10 s); a shorter length may end it
+> at once, a zero length closes it, and a window that has already ended stays closed when the
+> length grows. The allowances and the credit are capped by the new *V* · *W* and *S* at the
+> change rather than at the next `MoveInput`. Spec writer: confirm, or say whether a limit
+> change should leave an open window at its original end.
+
 ---
 
 ### 17.2 Implementer notes (`tessera-net` test-server backend, 2026-10-06)

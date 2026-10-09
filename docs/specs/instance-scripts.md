@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09) |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09: §2.1 census corrected, §4.4 merge order and §4.5 port rule folded in; needs a fresh review of the changed sections. |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
 | **Review record** | 2026-10-09, spec reviewer (fresh session): **pass**, §5.3 checklist met, 9 spot checks independently confirmed (dictionary, 0x47, 0x07000689, 0x0C000FCC, landblock census, BIN); non-blocking notes in the review log (decision 0018). |
@@ -62,12 +62,14 @@ referred to by structure, never quoted.
 |---|---|
 | OBS | Observed 2026-10-08 in the user's install (Steam, client data current on that date) by throwaway probes in the dirty scratch area that use the repository's decoders as tools. **All 49,636** landblock-info records of regions 1–5 and 14 decoded (0 failures): every property set in them (3,253,862 SED sets, 3,768,840 instance property sets, 1,324,469 link sets, 104,271 cell sets, 49,636 landblock sets); **all 40,643** 0x47 entity descriptors, **all 383,332** 0x79 and **all 1,616** 0x78 property sets of `client_gamelogic.dat`; the property dictionary 0x34000000 (all definitions whose name contains `@`, all `ScriptTable_*` definitions and the definitions named in this spec); all 7,526 0x07 and 28,992 0x0C records (7,524 and 28,992 decode, as in `script-table.md` §10.3), scanned for nodes that read the properties of this spec; the enum mappers named in this spec; the WLib class library 0x56000000 (all attribute name hashes). |
 | BIN | **M4, [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-08. Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, read with the Ghidra 12 decompiler on a private copy of the shared analysis project (deleted after use), address ranges only, in the dirty scratch area. **Questions:** (1) where the client reads `Entity_InstanceScriptTable` and how it turns the property tree into script definitions; (2) how those definitions enter an entity's script lookup (order, kinds, `Script_CombinationType`); (3) how an entity's class and additional tables and start-up scripts are gathered; (4) what a driven field gets when its source property is absent; (5) whether the client treats `@` names specially; (6) which light fields `Light_LODClass` and `Light_DrivenByDayCycle` fill. **Why M1–M3 were not enough:** the data hold the trees and the graphs but not how the client merges them with the entity's tables, which definition wins, or when the tree is applied; no published source describes instance script tables; no running client was available to this session, and observing one (M3) could show a door opening but not the merge rule. **Read:** the script component's set-up from an entity's properties, its activation and its property-change handler for the two properties it watches, the property-tree script parser, the node and target builders, the table-set constructor, copy and include-list setter, the table-set lookup, the script start, the driven-field application at node start, the entity property read's dispatch by `field_b`, the light class's field registration. Nothing of the network, login, launcher or anti-tamper code. |
+| OBS2 | Observed 2026-10-09 in the same install (data files unchanged) by a new throwaway probe written for this revision (the repository's decoders as tools): **all 49,636** landblock-info records again (0 failures), every SED's own property set compared with the instance property set of its IID entry by entry, by stored order and by the set header; **all 7,526** 0x07 tables and **all 28,992** 0x0C scriptlets (7,524 and 28,992 decode), every node's ports counted by kind and port type. |
+| BIN2 | **M4, [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-09, same client build as BIN, read with the Ghidra 12 decompiler on a private copy of the shared analysis project (deleted after use). **Questions:** (8) in which order the per-script property sets of several definitions of one key are merged and which value wins; (9) which port types and how many ports each node kind accepts when a node is built from a tree (§4.5 step 3). **Why M1–M3 were not enough:** the data never hold two definitions of one key whose per-script sets disagree on a property that matters offline, and the declarations are code, not data; no published source covers either. **Read:** the table-set lookup of §4.4, its per-table property merge (recursive over the includes), the property-set merge helper it calls, and the port step of the tree node builder. Question 9 was answered only in part (§4.5). Nothing of the network, login, launcher or anti-tamper code. |
 | ST, SR, PS, ED, LB, LI, EN, SN | `script-table.md`, `script-runtime.md`, `property-system.md`, `entity-descriptor.md`, `landblock.md`, `lighting.md`, `environment.md`, `sound.md` as companion specs. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
 | I1 | ISTs occur in 83,200 instance property sets (275 SED-IID, 82,925 server-only), in the own property sets of 275 SEDs and in 8 0x47 descriptors; in no link, cell, landblock, 0x78 or 0x79 set (§2) | OBS | Confirmed 2026-10-08 |
-| I2 | Every SED IID has exactly one instance property set; the SED's own set equals it or is a subset of it (2,298,059 equal, 955,794 subset) (§2.1) | OBS; ED §4.5.2 | Confirmed 2026-10-08 |
+| I2 | Every SED IID has exactly one instance property set. For the 3,253,844 SEDs whose IID is unique in their record, the own set holds exactly the instance set's entries (same PIDs, same values, same header): 2,298,059 in the same stored order, 955,785 in another order; none is a strict subset. Of the 9 IIDs that two SEDs share, the instance set has the entries of the later SED (in another order); the earlier SED's set differs (§2.1) | OBS2 (corrects OBS); ED §4.5.2 | Confirmed 2026-10-09 |
 | I3 | The IST is a struct with `ScriptTable_Scripts` and `ScriptTable_StartupScriptNames`; the schema of §3.2 is the dictionary's child lists, and every value of the install fits it (§3) | OBS (dictionary; 3,047,352 entries in all ISTs) | Confirmed 2026-10-08 |
 | I4 | Node kinds over all ISTs (instance sets and SED own sets, 184,451 nodes): Run 184,329, SetProperty 55, Particle 11, Timer 11, Collection 9, Sequence 8, Scriptlet 6, MeshFX 6, EntityVFX 5, Animation 3, Sound 3, Switch 2, Appearance 2, Random 1; nesting at most one level of children (§3.4) | OBS | Confirmed 2026-10-08 |
 | I5 | 184,214 Link targets name a link; in 182,928 a Script link (type 12) of the same record with that `name` has the IST owner as `end_id_2`; 50 match only as `end_id_1`; 1,236 match no link with the owner as an end (§3.5) | OBS | Confirmed 2026-10-08 |
@@ -83,6 +85,8 @@ referred to by structure, never quoted.
 | I15 | A driven field is written only when the entity property read reports a value; otherwise the node keeps its stored field (§6.4) | BIN (driven application); ED E26 (the read's two sources) | BIN; that the read reports no value for an absent property (no dictionary default) is Inferred, §13 Q2 |
 | I16 | `Light_LODClass` (PID 0x1DC) and `Light_DrivenByDayCycle` (0x707) fill two fields of the client's light object, its level-of-detail class and its day-cycle switch: the light class registers those fields with these PIDs, as it does for the fields of `lighting.md` §8.3 (§6.6, §8.2) | BIN | BIN; their consumers OPEN |
 | I17 | The entity property read chooses its store by the definition's `field_b`: 4, 3 and 8 are three stores of the entity, 6 the run-parameter set, 7 and 9 a service lookup (§6.2, §12) | BIN (the read's dispatch) | BIN |
+| I18 | Per-script property sets are merged **first value wins**: a PID already in the merged set is never replaced. The instance definition's set is merged first, then each included table's set in include order, each table before its own includes (depth-first, stored order); a table's includes are not visited for properties once the merged set holds `Script_CombinationType` = 1 (§4.4) | BIN2 (question 8) | BIN |
+| I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists were not enumerated. Observed (kind, port type) pairs over all tables and scriptlets in §4.5 | BIN (step 3 rule); BIN2 (declaration record form); OBS2 (observed pairs) | BIN; per-kind lists OPEN (§13 Q8) |
 
 ---
 
@@ -94,20 +98,37 @@ referred to by structure, never quoted.
 
 The weenie list of a landblock-info record (`landblock.md` §4.8) holds 3,768,840 instance
 property sets. 3,253,853 carry the IID of a SED of the same record, every SED IID exactly once
-(9 SEDs repeat the IID of another SED of the same record). The remaining 514,987 are
-server-only. For every SED, its own embedded property set is equal to its instance property
-set (2,298,059 SEDs) or a strict subset of it with equal values (955,794); never anything
-else. `entity-descriptor.md` §9.2 (E26) states that an entity built from a SED reads its
-per-instance properties from the instance property set when there is one, so the instance
-property set is the authoritative per-instance layer; the SED's own copy matters only to a
-reader that ignores the weenie list.
+(9 SEDs repeat the IID of another SED of the same record, so 3,253,862 SEDs name 3,253,853
+distinct IIDs). The remaining 514,987 are server-only.
 
-> **OPEN (implementer, 2026-10-09):** Tessera's decoders measure, over the same records, every
-> SED's own property set equal to its instance property set (3,253,844 SEDs, the 9 SEDs that
-> repeat another SED's IID left out) and **no** strict subset, where this section counts
-> 2,298,059 equal and 955,794 strict subsets. Invariant IS8 holds either way. Which comparison
-> gives the 955,794 (for example a count of null entries, or entries compared by another rule)?
-> The real-data test reports the difference and fails on it only under `TESSERA_CENSUS=strict`.
+Comparison of each SED's own embedded property set with the instance property set of its IID
+(OBS2, 2026-10-09):
+
+| SEDs | Own set against the instance set |
+|---|---|
+| 2,298,059 | identical: same entries (PID and value), same stored order, same set header (bucket-count hint and entry count) |
+| 955,785 | same entries and same header, entries in another stored order |
+| 0 | strict subset (fewer entries, all equal) |
+| 9 | the later SED of each IID that two SEDs share: same entries as the instance set, in another order |
+| 9 | the earlier SED of each such IID: differs from the instance set (7 carry a PID the instance set lacks, 2 carry the same PIDs with some other values) |
+
+So for the 3,253,844 SEDs whose IID is unique in their record, the own set and the instance set
+hold the same entries; only the stored order can differ. The order of the entries in a set is
+not meaningful (`property-system.md` §5.5: a set holds each PID at most once and is read by
+PID), so a reader that compares sets compares them as PID-to-value maps. Where two SEDs share an
+IID, the instance set belongs to the **later** SED in record order.
+
+`entity-descriptor.md` §9.2 (E26) states that an entity built from a SED reads its per-instance
+properties from the instance property set when there is one, so the instance property set is
+the authoritative per-instance layer; the SED's own copy matters only to a reader that ignores
+the weenie list.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the earlier census counted as
+> "strict subset" every SED whose own set was not equal **in stored order** to its instance set
+> and whose entries were all found in it; the 955,794 were the 955,785 reordered sets above plus
+> the 9 later SEDs of shared IIDs. No SED's own set is a strict subset of its instance set. The
+> implementer's measurement (all equal as maps, the 18 SEDs of the 9 shared IIDs left out)
+> agrees with this table.
 
 <a id="s2-2"></a>
 ### 2.2 Census by context
@@ -399,11 +420,35 @@ in stored order** (this replaces the "Inferred" order of `script-runtime.md` §1
 instance definition runs **in addition to** the class and additional tables' definitions of
 the same key unless it is `Overriding` (2 entries in the install do that).
 
-> **OPEN (implementer, 2026-10-09):** the order in which per-script property sets are merged
-> when several definitions of a key carry the same property is not stated (step 2 merges the
-> instance set first, step 3 the tables' sets). **Tessera's choice:** a property already in the
-> merged set is kept, so the instance definition's settings win over the tables', and the
-> first table in include order wins over later ones.
+<a id="s4-4-1"></a>
+#### 4.4.1 Merging the per-script property sets (BIN2, I18)
+
+Every merge of a per-script property set into the merged set of step 1 adds only the entries
+whose PID the merged set does not hold yet; an entry whose PID is already there is skipped,
+whatever its value. The merges happen in this order:
+
+1. the instance definition's own per-script set (step 2; when the table set has no own
+   definition of the key, nothing);
+2. then, for each included table in include-list order (step 3): that table's per-script set
+   for the key (nothing when it has none), then, unless the merged set now holds
+   `Script_CombinationType` as an enum or property-ID value equal to 1, the same two steps for
+   each of that table's includes in stored order, recursively (depth-first, pre-order).
+
+Consequences:
+
+- The **first** value of a property in this order is the one the run uses: an instance
+  definition's settings win over every table's, and an earlier table in the closure wins over a
+  later one. Tessera's choice in the implementer note of 2026-10-09 matches the client.
+- `Script_CombinationType` itself follows the same rule. The check that stops the descent into
+  a table's includes reads the **merged** set, so a value of 1 merged from the instance
+  definition or from an earlier table also keeps later tables from adding their includes' sets.
+  The next included table of the entity's own list is still visited (step 3 goes through the
+  whole list).
+- The root gathering of step 3 is a separate walk (`script-runtime.md` §12.2); this rule is
+  about the per-script properties only.
+
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** the merge order and the winning
+> value are given above (BIN2, question 8).
 
 <a id="s4-5"></a>
 ### 4.5 Building a node from a tree
@@ -438,10 +483,60 @@ For a `ScriptTable_Node` struct:
 > default when the definition has one (`RunScript_Persistent` true, `RunScript_QueuingType` 3,
 > the other two false), otherwise the zero value of its type (`script-table.md` T28 reading).
 
-> **OPEN (implementer, 2026-10-09):** step 3 creates a port only for a type the node's kind
-> declares, up to the declared number; the declarations per kind (which port types, how many)
-> are not given here or in `script-table.md` §4.3. **Tessera's choice:** every port with a type
-> of 1 or more is kept for every kind (the install's trees hold only the pairs of §3.4).
+<a id="s4-5-1"></a>
+#### 4.5.1 Port declarations (BIN, BIN2, OBS2; I19)
+
+The node object supplies its kind's port declarations as a list of entries, each with a port
+type, a maximum number of ports of that type (or a marker for "unlimited") and a further
+selector whose non-default values were not traced. Step 3 takes the first entry whose port type
+equals the tree port's type; with the default selector and a finite maximum, it counts the
+ports of that type the node already holds and refuses the port when the count has reached the
+maximum; otherwise it asks the node to create a port of that type. A tree port whose type no
+entry declares is not created. The per-kind lists themselves were not enumerated (BIN2: the
+node classes could not be listed from the executable within this session; §13 Q8).
+
+What the data show (OBS2): every port of every node in all 7,524 decoded tables and 28,992
+scriptlets has one of these (kind, port type) pairs; "nodes" is the number of nodes with at
+least one port of that type, "max" the largest number of ports of that type on one node.
+
+| Kind | Port type: nodes (max) |
+|---|---|
+| 2 Collection | 6: 32,116 (26) |
+| 4 Execute | 5: 625 (2); 6: 566 (1) |
+| 5 Run | 9: 2 (4); 14: 1 (2) |
+| 6 Sequence | 6: 15,140 (44) |
+| 10 OnStop | 6: 2,107 (6) |
+| 11 WaveformBlend | 6: 1 (1) |
+| 12 Switch | 5: 30,070 (696); 6: 21,248 (1); 22: 28 (1); 28: 984 (47) |
+| 14 WhenRunning | 10: 2,338 (1); 11: 2,203 (1) |
+| 15 DistanceCheck | 6: 27 (6) |
+| 17 Random | 6: 26,770 (68) |
+| 19 Scriptlet | 6: 8,826 (294) |
+| 20 Math | 6: 288 (2) |
+| 22 ScriptletParameter | 6: 3,960 (1) |
+| 25 Label | 6: 99 (5) |
+| 26 HeadingCheck | 6: 45 (8); 30: 45 (1) |
+| 27 GameCallback | 5: 182 (2); 6: 26 (1) |
+| 36 Animation | 6: 7,771 (89) |
+| 50 While | 6: 41 (1) |
+| 54 Beam | 6: 1,014 (2) |
+| 57 ScalarBlend | 6: 2,457 (5) |
+| 63 When | 6: 536 (1); 22: 24 (1); 24: 1,254 (13) |
+| 65 Timer | 6: 16,666 (60) |
+
+No other kind holds a port in the binary records. The ports of all ISTs (instance sets, SED
+sets, 0x47 descriptors) use six of these pairs: Collection 6 (13 ports), Sequence 6 (14),
+Switch 5 (2) and 6 (2), Random 6 (2), Timer 6 (10).
+
+> **Decision (Tessera; answers the implementer OPEN of 2026-10-09 as far as the data allow):** a
+> tree port is kept when its (kind, port type) pair is in the table above, with no limit on the
+> count; any other port is dropped, its subtree with it, and logged. On every record of this
+> install this keeps every stored port (each is of an observed pair). The implementer's interim
+> choice (keep every port with a type of 1 or more) also keeps every port of this install; the
+> two rules differ only on data outside the observed pairs, where the client's behaviour is
+> unknown. Until the per-kind lists are known (§13 Q8),
+> either rule passes the invariants; the table rule is preferred because it never keeps a port
+> the client might refuse in a pair it does not use.
 
 <a id="s4-6"></a>
 ### 4.6 What runs where
@@ -844,8 +939,11 @@ For a selected SED or instance property set, a per-instance script view shows:
 - **IS6:** every DID in an IST names an existing record.
 - **IS7:** an IST, a member override or a switch of §2.2 occurs only in instance property sets,
   SED sets, 0x47 descriptors and (for the families shown) 0x79 sets.
-- **IS8:** every SED's own property set equals its instance property set or is a subset of it
-  with equal values.
+- **IS8:** for every SED whose IID is unique in its record, its own property set and its
+  instance property set hold the same entries (compared as PID-to-value maps; the stored order
+  may differ, the set header is equal). Where two SEDs share an IID, the later SED's set holds
+  the instance set's entries. (Revised 2026-10-09; the earlier "equal or subset" wording was
+  weaker than the data.)
 - **IS9:** every `Light.Script@Entity.*` value sits on a Physics SED (or its instance set or a
   server-only set or a 0x47 descriptor); none on a Light SED; for each such property, every
   Physics SED that stores it except 6 places an object whose tables reach 0x07000689 or
@@ -854,6 +952,12 @@ For a selected SED or instance property set, a per-instance script view shows:
   `ScriptSystem_TimeofDay_Activation`.
 - **IS11 (BIN):** an instance definition is looked up before the included tables'
   definitions of the same key and runs with them unless it is `Overriding`.
+- **IS12 (BIN2):** with an instance definition whose per-script set holds
+  `Script_MaxNumInstances` = 3 and an included table whose set for the same key holds 10, the
+  merged value is 3; with the instance set empty, 10; with two included tables holding 4 and 7
+  in include order, 4 (§4.4.1).
+- **IS13 (OBS2):** every port of every node in the decoded 0x07 and 0x0C records and in every
+  IST has a (kind, port type) pair of the §4.5.1 table.
 
 ---
 
@@ -945,7 +1049,11 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 - **`script-runtime.md` §12.2**: the order of an entity's tables is BIN now (class table, then
   additional tables in stored order, repeats and nulls dropped, §4.1); instance definitions
   come first among the kind-2 roots, and an `Overriding` instance definition hides the tables'
-  definitions (§4.4). Start-up order: §4.2.
+  definitions (§4.4). Start-up order: §4.2. "The per-script property sets are merged the same
+  way" there should add the rule of §4.4.1 (BIN2): first value wins, and the descent into a
+  table's includes for properties is stopped by an `Overriding` value in the **merged** set.
+- **`script-table.md` §4.3**: the observed (kind, port type) pairs of §4.5.1 may serve as its
+  port census; the client's per-kind declarations are still open (§13 Q8).
 - **`landblock.md` §4.6** OPEN "which end is which": for Script links (type 12), `end_id_2` is
   the entity whose instance script names the link and `end_id_1` the entity the script runs on
   (182,928 of 184,214 link targets, §3.5).
@@ -968,6 +1076,7 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | Q5 | What the client does with a light's `LODClass` and `DrivenByDayCycle` fields | §6.6, §8.2 | ignore both (as `lighting.md` does today for σ) |
 | Q6 | The Light node's own run-time rules (`LightScript_FadeTime`, `LightScript_Lifespan`, `LightScript_Offset`, holding location) | §6.3 | add and remove the light at once; offset 0 |
 | Q7 | Meaning of `ScriptSystem_TimeofDay_Activation` (378 SED-IID sets, read by no node) | §8.1 | ignore |
+| Q8 | The client's port declarations per node kind (port types, maximum counts, the selector field), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2): the port step of the tree builder (rule of §4.5.1) and the search for the node classes' declaration methods; the node classes could not be enumerated from the executable in that session | §4.5.1 | keep ports of the observed pairs only |
 
 ---
 
@@ -977,3 +1086,4 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | Date | Change |
 |---|---|
 | 2026-10-08 | First version (spec writer, dirty room): census over every landblock-info record, 0x47, 0x78 and 0x79 set; schema and node mapping of `Entity_InstanceScriptTable`; BIN of the client's table set, start-up order, IST merge, lookup and node building; member overrides as ordinary properties; day and night lights; instance switches; examples; Q1–Q7. Status Review. |
+| 2026-10-09 | Revision (spec writer, dirty room) answering the three implementer OPENs of 2026-10-09. §2.1: recount with a new probe (OBS2); no SED set is a strict subset, the 955,794 were sets in another stored order plus the 9 later SEDs of shared IIDs; I2 and IS8 corrected. §4.4.1 new: per-script property merge, first value wins, descent stopped by an `Overriding` merged value (BIN2, I18, IS12). §4.5.1 new: port declaration rule (BIN2), observed (kind, port type) census over all tables and scriptlets (OBS2), Decision to keep only observed pairs (I19, IS13); per-kind declarations remain OPEN as Q8. §12 notes for `script-runtime.md` §12.2 and `script-table.md` §4.3. Status Revised. |

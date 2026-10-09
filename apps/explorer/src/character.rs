@@ -36,7 +36,7 @@ use tessera_havok::{AnimationData, Clip, Envelope, Tagfile, Transform};
 use tessera_mesh::assembly::shape::{FigureShape, FigureSliders, ShapeDriver, figure_shape};
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblySource, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
-    EquippedItem, GameDataSource, Lookup, PartOrigin, RigKind, WieldState,
+    EquippedItem, GameDataSource, Lookup, PartOrigin, RigKind, ScriptAppearance, WieldState,
 };
 use tessera_props::{EnumSource, GameData};
 
@@ -719,6 +719,9 @@ pub struct ClipSelection {
     pub tables: Vec<Did>,
     /// Why selection failed, if it did.
     pub error: Option<String>,
+    /// The Appearance nodes the Idle resolution's start-up scripts run, picked with seed 0
+    /// (`appearance.md` §7.4).
+    pub appearances: Vec<ScriptAppearance>,
 }
 
 impl ClipSelection {
@@ -828,8 +831,8 @@ pub struct CharacterProduct {
     /// Whether the skinned parts were deformed in bind space by the body shape and the
     /// sliders (`appearance.md` §6.4).
     pub deformed: bool,
-    /// Whole-body scale (`appearance.md` §6.1).
-    pub model_scale: f32,
+    /// Whole-body scale per axis (`appearance.md` §6.1).
+    pub model_scale: [f32; 3],
     /// Clip selection for idle, walk and run.
     pub clips: ClipSelection,
     /// Facts for the inspector: (caption, value).
@@ -898,7 +901,8 @@ pub fn build_character(
     cancelled(job)?;
 
     // 1. Assemble (appearance.md §8 steps 1–6, 9).
-    let (title, assembled, setup_parts): (String, Option<AssembledCharacter>, Vec<Did>) =
+    let mut kept_spec: Option<CharacterSpec> = None;
+    let (title, mut assembled, setup_parts): (String, Option<AssembledCharacter>, Vec<Did>) =
         match req.figure {
             Figure::Playable { species, sex } => {
                 let mut spec = CharacterSpec::new(species, sex);
@@ -935,6 +939,7 @@ pub fn build_character(
                     BodyEntry::title,
                 );
                 let c = asm.assemble_character(&spec).map_err(assembly_error)?;
+                kept_spec = Some(spec);
                 (title, Some(c), Vec::new())
             }
             Figure::Object(did) => {
@@ -960,6 +965,39 @@ pub fn build_character(
                 (format!("setup {did}"), None, parts)
             }
         };
+    cancelled(job)?;
+
+    // 3. Clip selection (script-table.md §11.3) and the figure's shape: held clips, body
+    //    shape and sliders (appearance.md §6.2–§6.4; shared with the client). The Idle
+    //    resolution also lists the Appearance nodes the start-up scripts run (§7.4); with
+    //    any, the figure is assembled again with them (Random picks seeded with 0: the
+    //    explorer has no placement).
+    let (clips, shape) = match &assembled {
+        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab),
+        None => (
+            ClipSelection {
+                error: Some("a bare setup has no script tables".into()),
+                ..ClipSelection::default()
+            },
+            FigureShape::default(),
+        ),
+    };
+    if !clips.appearances.is_empty() {
+        let again = match (&kept_spec, req.figure) {
+            (Some(spec), _) => Some(asm.assemble_character_with(spec, &clips.appearances)),
+            (None, Figure::Object(did)) => {
+                Some(asm.assemble_object_with(did, None, &clips.appearances))
+            }
+            _ => None,
+        };
+        if let Some(c) = again {
+            assembled = Some(c.map_err(assembly_error)?);
+        }
+        facts.push((
+            "script appearance".into(),
+            format!("{} elements (§7.4)", clips.appearances.len()),
+        ));
+    }
     cancelled(job)?;
 
     // 2. Skeleton.
@@ -989,18 +1027,6 @@ pub fn build_character(
     };
     let bones = skeleton.as_ref().map_or(0, |s| s.bone_count());
 
-    // 3. Clip selection (script-table.md §11.3) and the figure's shape: held clips, body
-    //    shape and sliders (appearance.md §6.2–§6.4; shared with the client).
-    let (clips, shape) = match &assembled {
-        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab),
-        None => (
-            ClipSelection {
-                error: Some("a bare setup has no script tables".into()),
-                ..ClipSelection::default()
-            },
-            FigureShape::default(),
-        ),
-    };
     notes.extend(shape.notes.iter().take(4).cloned());
     let sliders = slider_set(data, shape.sliders.as_ref());
     // Held clips and the bind-space deformation, by the path the client shares.
@@ -1157,7 +1183,9 @@ pub fn build_character(
         }
     }
 
-    // Held items (skeleton-anim.md §8.4): rigid, placed per frame at the location.
+    // Held items (skeleton-anim.md §8.4): rigid, placed per frame at the location with the
+    // placement of `appearance.md` §5.6 and the scale of §6.1. One attach point per held
+    // part, keyed by its index.
     let mut held = Vec::new();
     let mut attach_points = Vec::new();
     if let Some(c) = attach_src {
@@ -1167,6 +1195,7 @@ pub fn build_character(
                 Anchor::Origin => None,
             };
             let index = held.len();
+            let key = u32::try_from(index).unwrap_or(u32::MAX);
             let mut count = 0;
             for &mesh in &h.parts {
                 if parts.len() >= MAX_FIGURE_PARTS {
@@ -1174,23 +1203,27 @@ pub fn build_character(
                 }
                 cancelled(job)?;
                 let mut part = build(&mut mats, mesh, false, &[], &mut budget);
-                part.attach = Some(h.location);
+                part.attach = Some(key);
                 part.caption = format!("held {} · {mesh}", locations.get(h.location));
                 part_info.push(FigurePart::Held { held: index });
                 parts.push(part);
                 count += 1;
             }
+            let mut frame = h.placement.applied_to(&h.frame);
+            for (s, r) in frame.scale.iter_mut().zip(c.held_scale(h)) {
+                *s *= r;
+            }
             attach_points.push(AttachPointDesc {
-                key: h.location,
+                key,
                 bone: bone.and_then(|b| i32::try_from(b).ok()).unwrap_or(-1),
                 frame: AttachFrame {
-                    position: h.frame.position,
-                    scale: h.frame.scale,
+                    position: frame.position,
+                    scale: frame.scale,
                     rotation_wxyz: [
-                        h.frame.rotation.w,
-                        h.frame.rotation.x,
-                        h.frame.rotation.y,
-                        h.frame.rotation.z,
+                        frame.rotation.w,
+                        frame.rotation.x,
+                        frame.rotation.y,
+                        frame.rotation.z,
                     ],
                 },
             });
@@ -1230,17 +1263,22 @@ pub fn build_character(
             budget.refused
         ));
     }
+    // Per axis, with the client's limit applied (`appearance.md` §6.1).
     let model_scale = assembled
         .as_ref()
-        .map_or(1.0, AssembledCharacter::model_scale);
-    let model_scale = if model_scale.is_finite() && model_scale > 0.0 {
-        model_scale
-    } else {
-        notes.push("the model scale is not usable; drawn at 1.0".into());
-        1.0
-    };
+        .map_or([1.0; 3], AssembledCharacter::model_scale);
     facts.push(("bones".into(), bones.to_string()));
-    facts.push(("model scale".into(), format!("{model_scale:.4}")));
+    facts.push((
+        "model scale".into(),
+        if model_scale[0] == model_scale[1] && model_scale[1] == model_scale[2] {
+            format!("{:.4}", model_scale[0])
+        } else {
+            format!(
+                "({:.4}, {:.4}, {:.4})",
+                model_scale[0], model_scale[1], model_scale[2]
+            )
+        },
+    ));
     cancelled(job)?;
 
     cancelled(job)?;
@@ -1369,8 +1407,9 @@ fn select_clips<S: tessera_props::RecordSource>(
         scripts.add_property_set(inst, &vocab);
     }
     out.tables = scripts.tables();
-    let mut resolver =
-        ClipResolver::new(dict, vocab, |d: Did| data.read(d)).with_dictionary_defaults(dict);
+    let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
+        .with_dictionary_defaults(dict)
+        .with_random_seed(Some(0));
     let mut layer_labels = Labels::of_property(data, "AnimationScript_Layer");
     let mut idle_clips: Vec<Did> = Vec::new();
     for state in StateArg::ALL {
@@ -1406,6 +1445,16 @@ fn select_clips<S: tessera_props::RecordSource>(
         if state == StateArg::Idle {
             idle_clips = r.clips();
             shape = figure_shape(data, asm_vocab, c, &r);
+            out.appearances = r
+                .appearances
+                .iter()
+                .filter(|a| a.picked)
+                .map(|a| ScriptAppearance {
+                    record: a.appearance,
+                    key: a.key,
+                    modifier: a.modifier,
+                })
+                .collect();
         }
         let mut label = |k: u32| layer_labels.get(k);
         out.states.push(StateClips {

@@ -811,6 +811,7 @@ fn appearance() -> AppearanceRecord {
     };
     AppearanceRecord {
         did: Did(0x2000_0100),
+        linked: Vec::new(),
         section: 0,
         entries: vec![
             AppearanceEntry {
@@ -886,13 +887,28 @@ fn appearance_round_trips() {
 #[test]
 fn appearance_rejects_bad_framing() {
     let good = appearance().to_bytes();
-    // reserved word.
+    // The u32 after the DID counts linked records (`appearance.md` §4.2, A28): a count the
+    // bytes cannot hold is truncation, not an allocation.
     let mut d = good.clone();
     d[4] = 1;
+    assert!(AppearanceRecord::parse(&d).is_err());
+    d[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(AppearanceRecord::parse(&d).is_err());
+    // A section byte above 22 is rejected (§4.2: the client's size-class limit).
+    let mut a = appearance();
+    a.section = 23;
     assert!(matches!(
-        AppearanceRecord::parse(&d),
+        AppearanceRecord::parse(&a.to_bytes()),
         Err(FormatError::Unsupported { .. })
     ));
+    a.section = 22;
+    assert!(AppearanceRecord::parse(&a.to_bytes()).is_ok());
+    // Linked records round-trip.
+    let mut a = appearance();
+    a.linked = vec![Did(0x2000_0002), Did(0x2000_0003)];
+    let back = AppearanceRecord::parse(&a.to_bytes()).unwrap();
+    assert_eq!(back.linked, a.linked);
+    assert_eq!(back, a);
     // Duplicate entry keys.
     let mut a = appearance();
     a.entries[1].key = a.entries[0].key;
@@ -1306,7 +1322,8 @@ proptest! {
 
     #[test]
     fn appearances_round_trip(
-        section in any::<u8>(),
+        section in 0u8..=22,
+        linked in proptest::collection::vec(any::<u32>(), 0..3),
         entries in proptest::collection::vec(
             proptest::collection::vec(
                 (any::<i8>(), proptest::collection::vec(any::<[u32; 4]>(), 0..3),
@@ -1316,6 +1333,7 @@ proptest! {
     ) {
         let a = AppearanceRecord {
             did: Did(0x2000_0001),
+            linked: linked.into_iter().map(Did).collect(),
             section,
             entries: entries.into_iter().enumerate().map(|(i, blocks)| AppearanceEntry {
                 key: 0x1000_0000 + i as u32,

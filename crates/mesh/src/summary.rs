@@ -15,8 +15,9 @@ use crate::format::VertexFormat;
 use crate::read::Cursor;
 use crate::record::{MAX_SUBMESH_VERTICES, MeshHeader};
 
-/// Vertex count of a stub mesh (`appearance.md` §4.4: three vertices, one triangle; the
-/// smallest real part has four vertices).
+/// Vertex count of the stub meshes of the reference install (`appearance.md` §4.4: three
+/// vertices, one triangle; the smallest real part has four vertices). The stub test itself
+/// counts triangles ([`MeshSummary::is_stub`]).
 pub const STUB_VERTEX_COUNT: u64 = 3;
 
 /// Size of one submesh block and its index buffer.
@@ -142,12 +143,17 @@ impl MeshSummary {
         self.flags
     }
 
-    /// Whether this is a stub mesh (`appearance.md` §4.4): at most
-    /// [`STUB_VERTEX_COUNT`] vertices in all. A stub that wins a slot leaves it visually
-    /// empty (the slot is hidden).
+    /// Whether this is a stub mesh (`appearance.md` §4.4, §15; `mesh.md` §8.10): the client
+    /// flags a mesh whose detail levels hold exactly **one triangle in total** and never
+    /// draws it as one of several parts. The summary does not read the levels (region D),
+    /// so it counts the triangles of the index buffers (the client's count whenever the
+    /// detail levels draw each index buffer once); on the reference install the client's
+    /// rule flags the same 258 records as the three-vertex test ([`STUB_VERTEX_COUNT`]), and a record with one triangle in its
+    /// first level but more in others (`mesh.md` §8.10) is not a stub. A stub that wins a
+    /// slot leaves it visually empty (the slot is hidden).
     #[must_use]
     pub fn is_stub(&self) -> bool {
-        self.vertex_count() <= STUB_VERTEX_COUNT
+        self.triangle_count() == 1
     }
 
     /// Whether any submesh carries bone influences (`mesh.md` §3.3).

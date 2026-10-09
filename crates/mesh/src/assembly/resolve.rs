@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The assembly algorithm of `appearance.md` §8.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tessera_formats::appearance::{
-    AppearanceBlock, AppearanceKeyInfo, DYE_TOLERANCE, MODIFIER_TOLERANCE, PartSource, SLOT_ALL,
-    SlotTable,
+    AppearanceBlock, AppearanceKeyInfo, PartSource, SLOT_ALL, SlotTable, key_application_order,
 };
-use tessera_formats::avatar::{
-    AvatarBody, parse_slider_values, slider_value_pieces, uniform_scale,
-};
-use tessera_formats::item::{ItemLook, ItemVisual, WornAppearanceRef, worn_block};
-use tessera_formats::{Did, PropertySet, PropertyValue, Setup};
+use tessera_formats::avatar::{AvatarBody, parse_slider_values, scale_vector, slider_value_pieces};
+use tessera_formats::item::{ItemLook, ItemVisual, WORN_MODIFIER};
+use tessera_formats::{AppearanceRecord, Did, PropertySet, PropertyValue, Setup};
 
 use super::source::{AssemblySource, Lookup};
-use super::vocab::AssemblyVocabulary;
+use super::vocab::{AssemblyVocabulary, PlacementScale};
 use super::{
-    AssembledCharacter, AssembledPart, AssemblyError, AssemblyLimits, CharacterSpec, ClipInputs,
-    Diagnostic, DiagnosticCategory as Cat, EquippedItem, HeldPart, LayerKind, ListOrigin,
-    MaterialLayer, ModelScale, PartOrigin, RigKind, SkeletonSource, SliderInputs, SourceRef,
-    WieldState,
+    AssembledCharacter, AssembledPart, AssemblyError, AssemblyLimits, AssemblyOptions,
+    CharacterSpec, ClipInputs, Diagnostic, DiagnosticCategory as Cat, EquippedItem, HeldPart,
+    HeldPlacement, LayerKind, ListOrigin, MAX_LINK_DEPTH, MaterialLayer, ModelScale, PartOrigin,
+    RigKind, ScriptAppearance, SkeletonSource, SliderInputs, SourceRef, WieldState,
 };
 
 /// Assembles figures (`appearance.md` §8) from the records of an [`AssemblySource`].
@@ -52,6 +50,7 @@ pub struct CharacterAssembler<S> {
     source: S,
     vocab: AssemblyVocabulary,
     limits: AssemblyLimits,
+    options: AssemblyOptions,
     /// Tagfile bytes per setup, shared by every figure on that setup (keyed by the
     /// setup's `Arc` so that a replaced setup record is copied again).
     tagfiles: HashMap<Did, (Arc<Setup>, Arc<[u8]>)>,
@@ -68,41 +67,32 @@ struct MeshInfo {
     skinned: bool,
 }
 
-/// Index of a layer set in [`Ctx::sets`].
-type SetId = usize;
-
-/// One appearance block whose parts were offered.
-#[derive(Debug)]
-struct Contribution {
+/// One part offered to the slot table.
+#[derive(Debug, Clone, Copy)]
+struct Offer {
+    mesh: Did,
+    info: MeshInfo,
     source: SourceRef,
     record: Did,
     key: u32,
     variant: f32,
-    /// The block's own material groups.
-    groups: SetId,
-    /// Further layer sets for its parts (dye blocks, material-only list blocks), in
-    /// application order; each set at most once.
-    extra: Vec<SetId>,
 }
 
+/// One (key, modifier) pair of a record in the figure's appearance (§4.7 rule 2).
 #[derive(Debug, Clone, Copy)]
-struct Offer {
-    mesh: Did,
-    contribution: usize,
-    info: MeshInfo,
-}
-
-/// A material-only element of an appearance list (a dye element, or a material-only
-/// block under another key), applied once all parts are known.
-#[derive(Debug)]
-struct PendingLayers {
+struct KeyUse {
+    key: u32,
+    modifier: f32,
+    /// The element that set it last (for diagnostics and part origins).
     source: SourceRef,
-    record: Did,
-    set: SetId,
 }
 
-/// Identifies a layer set: (record, entry key, block index, kind).
-type SetKey = (Did, u32, usize, LayerKind);
+/// A record of the figure's appearance with its keys, in the order they were added.
+#[derive(Debug)]
+struct RecordUse {
+    did: Did,
+    keys: Vec<KeyUse>,
+}
 
 /// Per-assembly state.
 #[derive(Debug)]
@@ -112,20 +102,22 @@ struct Ctx {
     dropped: usize,
     /// Mesh lookups, with the category of a failed one.
     meshes: HashMap<Did, Result<MeshInfo, Cat>>,
-    /// Material layer sets, each built once per distinct block and kind.
-    sets: Vec<Vec<MaterialLayer>>,
-    set_index: HashMap<SetKey, SetId>,
-    /// Layers held in `sets` (bounded by `max_total_layers`).
-    total_layers: usize,
-    contributions: Vec<Contribution>,
+    /// Decoded records of this assembly, with the category of a failed lookup.
+    records: HashMap<Did, Result<Arc<AppearanceRecord>, Cat>>,
+    /// The figure's appearance: records in first-entry order (§4.7 rule 2).
+    uses: Vec<RecordUse>,
+    use_index: HashMap<Did, usize>,
+    /// Elements taken into `uses` (bounded by `max_list_elements`).
+    elements: usize,
+    /// The figure-wide material-group list (§4.10), kept sorted by priority.
+    groups: Vec<MaterialLayer>,
+    group_limit_reported: bool,
+    /// Block applications so far.
+    applications: usize,
     offers: Vec<Offer>,
     table: SlotTable,
     /// Default parts entered (they share `max_parts` with the offers).
     n_defaults: usize,
-    pending: Vec<PendingLayers>,
-    pending_sets: HashSet<SetId>,
-    /// Layer sets for the default parts (unpaired list elements).
-    default_layers: Vec<SetId>,
     held: Vec<HeldPart>,
 }
 
@@ -136,84 +128,18 @@ impl Ctx {
             diags: Vec::new(),
             dropped: 0,
             meshes: HashMap::new(),
-            sets: Vec::new(),
-            set_index: HashMap::new(),
-            total_layers: 0,
-            contributions: Vec::new(),
+            records: HashMap::new(),
+            uses: Vec::new(),
+            use_index: HashMap::new(),
+            elements: 0,
+            groups: Vec::new(),
+            group_limit_reported: false,
+            applications: 0,
             offers: Vec::new(),
             table: SlotTable::new(),
             n_defaults: 0,
-            pending: Vec::new(),
-            pending_sets: HashSet::new(),
-            default_layers: Vec::new(),
             held: Vec::new(),
         }
-    }
-
-    /// The layer set of `block` (one of `blocks`, the blocks of entry `key` of `record`)
-    /// as `kind`: built once per assembly, shared by every list element, item and part
-    /// that uses it. The layers of all sets together stay within `max_total_layers`.
-    #[allow(clippy::too_many_arguments)]
-    fn layer_set(
-        &mut self,
-        source: SourceRef,
-        record: Did,
-        key: u32,
-        blocks: &[AppearanceBlock],
-        block: &AppearanceBlock,
-        kind: LayerKind,
-    ) -> SetId {
-        let index = blocks.iter().position(|b| std::ptr::eq(b, block));
-        let set_key = index.map(|i| (record, key, i, kind));
-        if let Some(id) = set_key.and_then(|k| self.set_index.get(&k)) {
-            return *id;
-        }
-        let room = self
-            .limits
-            .max_total_layers
-            .saturating_sub(self.total_layers);
-        if block.groups.len() > room {
-            self.diag(Cat::LimitExceeded, source, Some(record), Some(key));
-        }
-        let layers: Vec<MaterialLayer> = block
-            .groups_with_priority()
-            .take(room)
-            .map(|(p, g)| MaterialLayer::from_group(kind, p, g, record, block.variant))
-            .collect();
-        self.total_layers += layers.len();
-        let id = self.sets.len();
-        self.sets.push(layers);
-        if let Some(k) = set_key {
-            self.set_index.insert(k, id);
-        }
-        id
-    }
-
-    /// Queues a list element's layer set for pairing (each set once).
-    fn queue_layers(&mut self, source: SourceRef, record: Did, set: SetId) {
-        if self.pending_sets.insert(set) {
-            self.pending.push(PendingLayers {
-                source,
-                record,
-                set,
-            });
-        }
-    }
-
-    /// The layers of `sets` that apply to `slot` (all of them when `slot` is `None`), at
-    /// most `max_layers`, in order.
-    fn layers_for(
-        &self,
-        sets: impl IntoIterator<Item = SetId>,
-        slot: Option<u32>,
-    ) -> Vec<MaterialLayer> {
-        sets.into_iter()
-            .filter_map(|id| self.sets.get(id))
-            .flatten()
-            .filter(|l| slot.is_none_or(|s| layer_applies(l, s)))
-            .take(self.limits.max_layers)
-            .copied()
-            .collect()
     }
 
     fn diag(&mut self, category: Cat, source: SourceRef, did: Option<Did>, key: Option<u32>) {
@@ -228,6 +154,78 @@ impl Ctx {
             self.dropped += 1;
         }
     }
+
+    /// Adds one element to the figure's appearance (§4.7 rule 2): a record named for the
+    /// first time is appended; a record named again keeps its position, and the element's
+    /// key replaces that key's modifier or is added.
+    fn add_element(&mut self, source: SourceRef, record: Did, key: u32, modifier: f32) {
+        if self.elements >= self.limits.max_list_elements {
+            self.diag(Cat::LimitExceeded, source, Some(record), Some(key));
+            return;
+        }
+        self.elements += 1;
+        let use_ = KeyUse {
+            key,
+            modifier,
+            source,
+        };
+        match self.use_index.get(&record) {
+            Some(&i) => {
+                let Some(r) = self.uses.get_mut(i) else {
+                    return;
+                };
+                match r.keys.iter_mut().find(|k| k.key == key) {
+                    Some(k) => *k = use_,
+                    None => r.keys.push(use_),
+                }
+            }
+            None => {
+                self.use_index.insert(record, self.uses.len());
+                self.uses.push(RecordUse {
+                    did: record,
+                    keys: vec![use_],
+                });
+            }
+        }
+    }
+
+    /// Inserts the groups of `block` into the figure-wide list (§4.10): ascending group
+    /// priority, a group after the groups of equal priority already there.
+    fn insert_groups(
+        &mut self,
+        source: SourceRef,
+        record: Did,
+        block: &AppearanceBlock,
+        kind: LayerKind,
+    ) {
+        for (priority, g) in block.groups_with_priority() {
+            if self.groups.len() >= self.limits.max_total_layers {
+                if !self.group_limit_reported {
+                    self.group_limit_reported = true;
+                    self.diag(Cat::LimitExceeded, source, Some(record), None);
+                }
+                return;
+            }
+            let at = self
+                .groups
+                .partition_point(|l| l.priority.total_cmp(&priority) != Ordering::Greater);
+            self.groups.insert(
+                at,
+                MaterialLayer::from_group(kind, priority, g, record, block.variant),
+            );
+        }
+    }
+
+    /// The groups of the figure-wide list that apply to a part in `slot` (`All` or that
+    /// slot; every group when `slot` is `None`), in list order, at most `max_layers`.
+    fn layers_for(&self, slot: Option<u32>) -> Vec<MaterialLayer> {
+        self.groups
+            .iter()
+            .filter(|l| slot.is_none_or(|s| l.group_slot == SLOT_ALL || l.group_slot == s))
+            .take(self.limits.max_layers)
+            .copied()
+            .collect()
+    }
 }
 
 /// What a placed figure brings besides its body.
@@ -236,24 +234,11 @@ struct Input<'a> {
     object_set: Option<PropertySet>,
     instance: Option<&'a PropertySet>,
     spec: Option<&'a CharacterSpec>,
+    scripts: &'a [ScriptAppearance],
 }
 
 fn source_error<E: std::error::Error + Send + Sync + 'static>(e: E) -> AssemblyError {
     AssemblyError::Source(Box::new(e))
-}
-
-/// Applies to `slot`: the group targets `All` or that slot (`appearance.md` §4.10).
-fn layer_applies(layer: &MaterialLayer, slot: u32) -> bool {
-    layer.group_slot == SLOT_ALL || layer.group_slot == slot
-}
-
-/// Whether `source` is an appearance-list element (template section, class or instance
-/// list), whose material-only elements pair with parts of the same record.
-fn is_list_source(source: SourceRef) -> bool {
-    matches!(
-        source,
-        SourceRef::TemplateSection(_) | SourceRef::ClassList(_) | SourceRef::InstanceList(_)
-    )
 }
 
 /// Sort key of a worn item: its lowest `ContainerSlot` bit (`appearance.md` §4.7
@@ -269,14 +254,21 @@ fn as_u32(v: &PropertyValue) -> Option<u32> {
     v.as_bits().and_then(|b| u32::try_from(b).ok())
 }
 
+/// A boolean read: a boolean, or a number other than 0.
+fn as_true(v: &PropertyValue) -> bool {
+    v.as_f64().is_some_and(|x| x != 0.0)
+}
+
 impl<S: AssemblySource> CharacterAssembler<S> {
-    /// An assembler over `source` with `vocab` and the default [`AssemblyLimits`].
+    /// An assembler over `source` with `vocab`, the default [`AssemblyLimits`] and the
+    /// default [`AssemblyOptions`].
     #[must_use]
     pub fn new(source: S, vocab: AssemblyVocabulary) -> Self {
         Self {
             source,
             vocab,
             limits: AssemblyLimits::default(),
+            options: AssemblyOptions::default(),
             tagfiles: HashMap::new(),
         }
     }
@@ -286,6 +278,19 @@ impl<S: AssemblySource> CharacterAssembler<S> {
     pub fn with_limits(mut self, limits: AssemblyLimits) -> Self {
         self.limits = limits;
         self
+    }
+
+    /// The same assembler with other options (the updated-avatar option of §3.3).
+    #[must_use]
+    pub fn with_options(mut self, options: AssemblyOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The options in use.
+    #[must_use]
+    pub fn options(&self) -> AssemblyOptions {
+        self.options
     }
 
     /// The vocabulary in use.
@@ -315,6 +320,20 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         &mut self,
         spec: &CharacterSpec,
     ) -> Result<AssembledCharacter, AssemblyError> {
+        self.assemble_character_with(spec, &[])
+    }
+
+    /// [`CharacterAssembler::assemble_character`] with the Appearance nodes the figure's
+    /// start-up scripts ran (§7.4), applied after the worn items.
+    ///
+    /// # Errors
+    ///
+    /// As [`CharacterAssembler::assemble_character`].
+    pub fn assemble_character_with(
+        &mut self,
+        spec: &CharacterSpec,
+        scripts: &[ScriptAppearance],
+    ) -> Result<AssembledCharacter, AssemblyError> {
         let avatar = self
             .source
             .race_avatar(spec.species, spec.sex)
@@ -323,13 +342,14 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 species: spec.species,
                 sex: spec.sex,
             })?;
-        self.assemble_avatar(avatar, spec)
+        self.assemble_avatar_with(avatar, spec, scripts)
     }
 
     /// Assembles `spec` on the body of `avatar` (a player-avatar game object or a 0x47
     /// entity): the setup's default parts, the avatar's appearance lists with the chosen
     /// styles, the worn items, the held items, sliders and heights. `spec.species` and
-    /// `spec.sex` choose the wardrobe structs of the items.
+    /// `spec.sex` choose the wardrobe structs of the items and the species rows of the
+    /// placements.
     ///
     /// # Errors
     ///
@@ -340,6 +360,20 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         avatar: Did,
         spec: &CharacterSpec,
     ) -> Result<AssembledCharacter, AssemblyError> {
+        self.assemble_avatar_with(avatar, spec, &[])
+    }
+
+    /// [`CharacterAssembler::assemble_avatar`] with script elements (§7.4).
+    ///
+    /// # Errors
+    ///
+    /// As [`CharacterAssembler::assemble_avatar`].
+    pub fn assemble_avatar_with(
+        &mut self,
+        avatar: Did,
+        spec: &CharacterSpec,
+        scripts: &[ScriptAppearance],
+    ) -> Result<AssembledCharacter, AssemblyError> {
         let body = self.body(avatar)?;
         self.assemble_body(
             body,
@@ -348,6 +382,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 object_set: None,
                 instance: None,
                 spec: Some(spec),
+                scripts,
             },
         )
     }
@@ -367,6 +402,22 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         start: Did,
         instance: Option<&PropertySet>,
     ) -> Result<AssembledCharacter, AssemblyError> {
+        self.assemble_object_with(start, instance, &[])
+    }
+
+    /// [`CharacterAssembler::assemble_object`] with the Appearance nodes the figure's
+    /// start-up scripts ran (§7.4 Rule: the random-appearance outfit), applied after the
+    /// lists.
+    ///
+    /// # Errors
+    ///
+    /// As [`CharacterAssembler::assemble_avatar`].
+    pub fn assemble_object_with(
+        &mut self,
+        start: Did,
+        instance: Option<&PropertySet>,
+        scripts: &[ScriptAppearance],
+    ) -> Result<AssembledCharacter, AssemblyError> {
         let body = self.body(start)?;
         let object_set = if matches!(start.prefix(), 0x70..=0x76) {
             self.source
@@ -383,6 +434,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 object_set,
                 instance,
                 spec: None,
+                scripts,
             },
         )
     }
@@ -433,201 +485,154 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         did: Did,
         source: SourceRef,
         key: u32,
-    ) -> Result<Option<Arc<tessera_formats::AppearanceRecord>>, AssemblyError> {
+    ) -> Result<Option<Arc<AppearanceRecord>>, AssemblyError> {
         if did.is_null() {
             cx.diag(Cat::NullAppearance, source, None, Some(key));
             return Ok(None);
         }
-        Ok(match self.source.appearance(did).map_err(source_error)? {
-            Lookup::Found(r) => Some(r),
-            Lookup::Missing => {
-                cx.diag(Cat::AppearanceMissing, source, Some(did), Some(key));
-                None
+        let r = match cx.records.get(&did) {
+            Some(r) => r.clone(),
+            None => {
+                let r = match self.source.appearance(did).map_err(source_error)? {
+                    Lookup::Found(r) => Ok(r),
+                    Lookup::Missing => Err(Cat::AppearanceMissing),
+                    Lookup::Invalid(_) => Err(Cat::AppearanceUndecodable),
+                };
+                cx.records.insert(did, r.clone());
+                r
             }
-            Lookup::Invalid(_) => {
-                cx.diag(Cat::AppearanceUndecodable, source, Some(did), Some(key));
-                None
-            }
-        })
+        };
+        Ok(r.map_err(|cat| cx.diag(cat, source, Some(did), Some(key)))
+            .ok())
     }
 
-    /// Offers every part of `block` to its slot (`appearance.md` §4.4 rule 2) and records
-    /// the block's material groups. Returns the contribution's index.
-    fn offer_block(
+    /// The layer kind of the blocks of `key`.
+    fn kind_of(&self, key: u32) -> LayerKind {
+        if Some(key) == self.vocab.clothing_color {
+            LayerKind::Dye
+        } else if Some(key) == self.vocab.clothing_color_secondary {
+            LayerKind::SecondaryDye
+        } else {
+            LayerKind::Group
+        }
+    }
+
+    /// Applies one (key, modifier) pair of record `did` (`appearance.md` §4.7 rules 1 and
+    /// 4, §3.2.1, §4.10): first the same pair to each linked record (recursively, a record
+    /// already on `path` skipped), then the block the modifier chooses in the record's own
+    /// entry for the key: its groups into the figure-wide list, its parts offered to their
+    /// slots.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_key(
         &mut self,
         cx: &mut Ctx,
-        source: SourceRef,
-        record: Did,
+        did: Did,
         key: u32,
-        blocks: &[AppearanceBlock],
-        block: &AppearanceBlock,
-    ) -> Result<usize, AssemblyError> {
-        if !block.extras.is_empty() {
-            cx.diag(Cat::BlockExtraIgnored, source, Some(record), Some(key));
+        modifier: f32,
+        source: SourceRef,
+        path: &mut Vec<Did>,
+    ) -> Result<(), AssemblyError> {
+        if cx.applications >= cx.limits.max_applications {
+            cx.diag(Cat::LimitExceeded, source, Some(did), Some(key));
+            return Ok(());
         }
-        let groups = cx.layer_set(source, record, key, blocks, block, LayerKind::Group);
-        let c = cx.contributions.len();
-        cx.contributions.push(Contribution {
-            source,
-            record,
-            key,
-            variant: block.variant,
-            groups,
-            extra: Vec::new(),
-        });
+        cx.applications += 1;
+        let top = path.is_empty();
+        let Some(rec) = self.record(cx, did, source, key)? else {
+            return Ok(());
+        };
+        if !rec.linked.is_empty() {
+            path.push(did);
+            for &linked in &rec.linked {
+                if path.contains(&linked) || linked == did {
+                    cx.diag(Cat::LinkedRecordCycle, source, Some(linked), Some(key));
+                    continue;
+                }
+                if path.len() >= MAX_LINK_DEPTH {
+                    cx.diag(Cat::LimitExceeded, source, Some(linked), Some(key));
+                    continue;
+                }
+                self.apply_key(cx, linked, key, modifier, source, path)?;
+            }
+            path.pop();
+        }
+        let kind = self.kind_of(key);
+        let Some(entry) = rec.entry(key) else {
+            // A linked record lacking the key contributes nothing (rule 4).
+            if top {
+                let cat = if kind == LayerKind::Group {
+                    Cat::KeyMissing
+                } else {
+                    Cat::DyeEntryMissing
+                };
+                cx.diag(cat, source, Some(did), Some(key));
+            }
+            return Ok(());
+        };
+        let Some((_, block)) = entry.choose_block(modifier) else {
+            cx.diag(Cat::NoBlock, source, Some(did), Some(key));
+            return Ok(());
+        };
+        let item_own = matches!(source, SourceRef::Item(_)) && kind == LayerKind::Group;
+        if kind != LayerKind::Group && block.variant != modifier {
+            cx.diag(Cat::DyeInexact, source, Some(did), Some(key));
+        }
+        if item_own && top {
+            if block.variant != WORN_MODIFIER {
+                cx.diag(Cat::NoBaseBlock, source, Some(did), Some(key));
+            }
+            if block.parts.is_empty() {
+                cx.diag(Cat::MaterialOnly, source, Some(did), Some(key));
+            }
+        }
+        if !block.extras.is_empty() {
+            cx.diag(Cat::BlockExtraIgnored, source, Some(did), Some(key));
+        }
+        cx.insert_groups(source, did, block, kind);
         for p in &block.parts {
             if cx.n_defaults + cx.offers.len() >= cx.limits.max_parts {
-                cx.diag(Cat::LimitExceeded, source, Some(record), Some(key));
+                cx.diag(Cat::LimitExceeded, source, Some(did), Some(key));
                 break;
             }
             let Some(info) = self.mesh_info(cx, p.mesh, source)? else {
                 // §10: the slot keeps its previous winner.
                 continue;
             };
-            let index = cx.offers.len() as u32;
+            let index = u32::try_from(cx.offers.len()).unwrap_or(u32::MAX);
             cx.table.offer(p.slot, p.mesh, p.priority(), index);
             cx.offers.push(Offer {
                 mesh: p.mesh,
-                contribution: c,
                 info,
+                source,
+                record: did,
+                key,
+                variant: block.variant,
             });
         }
-        Ok(c)
-    }
-
-    /// One appearance-list element (`appearance.md` §3.2, §8 step 3).
-    ///
-    /// A block with parts is offered to the slot table. A material-only block (a dye
-    /// element keyed `ClothingColor` / `ClothingColorSecondary`, or a material-only block
-    /// of a selection table under any other key, §4.11) is queued: its groups go onto the
-    /// parts that list elements naming the same record contributed, else onto the default
-    /// parts (Decision, `appearance.md` §15).
-    ///
-    /// A dye element's modifier picks its block by §3.2.1 rule 1 then rule 2, so modifier
-    /// 0.0 layers the 0.00 block. For worn items code 0.0 means "no dye" (`material.md`
-    /// §12.4); which reading applies to list elements is OPEN (`appearance.md` §15).
-    fn apply_list_element(
-        &mut self,
-        cx: &mut Ctx,
-        source: SourceRef,
-        key: u32,
-        file: Did,
-        modifier: f32,
-    ) -> Result<(), AssemblyError> {
-        let Some(rec) = self.record(cx, file, source, key)? else {
-            return Ok(());
-        };
-        let Some(entry) = rec.entry(key) else {
-            cx.diag(Cat::KeyMissing, source, Some(file), Some(key));
-            return Ok(());
-        };
-        let exact = entry
-            .blocks
-            .iter()
-            .find(|b| (b.variant - modifier).abs() <= MODIFIER_TOLERANCE);
-        let dye_kind = if Some(key) == self.vocab.clothing_color {
-            Some(LayerKind::Dye)
-        } else if Some(key) == self.vocab.clothing_color_secondary {
-            Some(LayerKind::SecondaryDye)
-        } else {
-            None
-        };
-        if let Some(kind) = dye_kind {
-            // §3.2.1 rule 2: the dye rule of material.md §12.4.
-            let Some(block) = exact.or_else(|| entry.dye_block(modifier)) else {
-                cx.diag(Cat::MaterialOnly, source, Some(file), Some(key));
-                return Ok(());
-            };
-            if (block.variant - modifier).abs() > DYE_TOLERANCE {
-                cx.diag(Cat::DyeInexact, source, Some(file), Some(key));
-            }
-            let set = cx.layer_set(source, file, key, &entry.blocks, block, kind);
-            cx.queue_layers(source, file, set);
-            return Ok(());
-        }
-        let block = match exact {
-            Some(b) => b,
-            None => match entry.block_for_modifier(modifier) {
-                Some(b) => {
-                    cx.diag(Cat::BlockFallback, source, Some(file), Some(key));
-                    b
-                }
-                None => {
-                    cx.diag(Cat::MaterialOnly, source, Some(file), Some(key));
-                    return Ok(());
-                }
-            },
-        };
-        if block.parts.is_empty() {
-            if block.groups.is_empty() {
-                cx.diag(Cat::MaterialOnly, source, Some(file), Some(key));
-                return Ok(());
-            }
-            // §4.11: material-only entries apply together with the record's parts.
-            let set = cx.layer_set(source, file, key, &entry.blocks, block, LayerKind::Group);
-            cx.queue_layers(source, file, set);
-            return Ok(());
-        }
-        self.offer_block(cx, source, file, key, &entry.blocks, block)?;
         Ok(())
     }
 
-    /// A worn item (`appearance.md` §8 step 4, §4.9).
-    fn apply_worn(
-        &mut self,
-        cx: &mut Ctx,
-        source: SourceRef,
-        reference: WornAppearanceRef,
-        dyes: [Option<f32>; 2],
-    ) -> Result<(), AssemblyError> {
-        let (file, key) = (reference.appearance, reference.key);
-        let Some(rec) = self.record(cx, file, source, key)? else {
-            return Ok(());
-        };
-        let Some(worn_entry) = rec.entry(key) else {
-            cx.diag(Cat::KeyMissing, source, Some(file), Some(key));
-            return Ok(());
-        };
-        let Some(block) = worn_block(&rec, key) else {
-            cx.diag(Cat::NoBaseBlock, source, Some(file), Some(key));
-            return Ok(());
-        };
-        if block.parts.is_empty() {
-            cx.diag(Cat::MaterialOnly, source, Some(file), Some(key));
-            return Ok(());
-        }
-        let c = self.offer_block(cx, source, file, key, &worn_entry.blocks, block)?;
-        let channels = [
-            (dyes[0], self.vocab.clothing_color, LayerKind::Dye),
-            (
-                dyes[1],
-                self.vocab.clothing_color_secondary,
-                LayerKind::SecondaryDye,
-            ),
-        ];
-        for (code, dye_key, kind) in channels {
-            let (Some(code), Some(dye_key)) = (code, dye_key) else {
-                continue;
-            };
-            let Some(entry) = rec.entry(dye_key) else {
-                cx.diag(Cat::DyeEntryMissing, source, Some(file), Some(dye_key));
-                continue;
-            };
-            let Some(b) = entry.dye_block(code) else {
-                continue;
-            };
-            if (b.variant - code).abs() > DYE_TOLERANCE {
-                cx.diag(Cat::DyeInexact, source, Some(file), Some(dye_key));
-            }
-            let set = cx.layer_set(source, file, dye_key, &entry.blocks, b, kind);
-            if !cx.contributions[c].extra.contains(&set) {
-                cx.contributions[c].extra.push(set);
+    /// Applies the figure's appearance: records in first-entry order, each record's keys in
+    /// key-table order (§4.7 rules 2–3).
+    fn apply_records(&mut self, cx: &mut Ctx) -> Result<(), AssemblyError> {
+        let uses = std::mem::take(&mut cx.uses);
+        let mut path = Vec::new();
+        for r in &uses {
+            let keys: Vec<u32> = r.keys.iter().map(|k| k.key).collect();
+            for i in key_application_order(&keys) {
+                let Some(k) = r.keys.get(i) else {
+                    continue;
+                };
+                path.clear();
+                self.apply_key(cx, r.did, k.key, k.modifier, k.source, &mut path)?;
             }
         }
+        cx.uses = uses;
         Ok(())
     }
 
-    /// Places a held item or prop at `location` of the wearer (`skeleton-anim.md` §8.4).
+    /// Places a held item or prop at `location` of the wearer (`skeleton-anim.md` §8.4)
+    /// with `placement`.
     #[allow(clippy::too_many_arguments)]
     fn place_held(
         &mut self,
@@ -636,18 +641,15 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         source: SourceRef,
         item: Option<Did>,
         entity: Did,
-        location: Option<u32>,
+        location: u32,
         state: WieldState,
+        placement: HeldPlacement,
     ) -> Result<(), AssemblyError> {
         let did = item.or(Some(entity));
         if cx.held.len() >= cx.limits.max_held {
             cx.diag(Cat::LimitExceeded, source, did, None);
             return Ok(());
         }
-        let Some(location) = location else {
-            cx.diag(Cat::NoHoldingLocation, source, did, None);
-            return Ok(());
-        };
         let Some(hl) = wearer.holding_location(location) else {
             cx.diag(Cat::HoldingLocationMissing, source, did, Some(location));
             return Ok(());
@@ -659,11 +661,19 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 return Ok(());
             }
         };
-        let setup_did = chain[chain.len() - 1];
+        let Some(&setup_did) = chain.last() else {
+            cx.diag(Cat::HeldChainBroken, source, Some(entity), None);
+            return Ok(());
+        };
         let Lookup::Found(setup) = self.source.setup(setup_did).map_err(source_error)? else {
             cx.diag(Cat::HeldChainBroken, source, Some(setup_did), None);
             return Ok(());
         };
+        let scale = self
+            .source
+            .held_scale(entity)
+            .map_err(source_error)?
+            .unwrap_or([1.0; 3]);
         cx.held.push(HeldPart {
             source,
             item,
@@ -675,6 +685,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             anchor: hl.anchor,
             frame: hl.frame,
             state,
+            placement,
+            scale,
         });
         Ok(())
     }
@@ -698,6 +710,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         (None, ListOrigin::Entity)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn assemble_body(
         &mut self,
         body: AvatarBody,
@@ -728,7 +741,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 break;
             }
             let info = self.mesh_info(&mut cx, mesh, SourceRef::Setup)?;
-            defaults.push((i as u32, mesh, info));
+            defaults.push((u32::try_from(i).unwrap_or(u32::MAX), mesh, info));
         }
         cx.n_defaults = defaults.len();
         let rig = if defaults
@@ -745,7 +758,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             RigKind::Static
         };
 
-        // Instance properties replace object and entity properties of the same name.
+        // Instance properties replace object and entity properties of the same name: the
+        // figure's own property lookup (§7.4 step 4 Decision, §15).
         let sets: [Option<&PropertySet>; 3] = [
             input.instance,
             input.object_set.as_ref(),
@@ -755,13 +769,25 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             let pid = pid?;
             sets.iter().flatten().find_map(|s| s.get(pid))
         };
+        // §3.3 Tessera rule: the option store answers `GOP_AvatarUpdateVisible` before the
+        // figure's values; other toggle properties read through the figure's lookup, an
+        // absent one false (the dictionary default of the only toggle property in use).
+        let options = self.options;
+        let update_visible = self.vocab.avatar_update_visible;
+        let toggle_true = |pid: u32| {
+            if Some(pid) == update_visible {
+                options.avatar_update_visible
+            } else {
+                prop(Some(pid)).is_some_and(as_true)
+            }
+        };
 
-        // Random appearance (§7.4 Decision): default parts and held props only, so the
-        // appearance lists are skipped.
         let random_appearance = prop(self.vocab.random_appearance_type)
             .and_then(as_u32)
             .filter(|&v| self.vocab.is_random_appearance(v));
-        if let Some(v) = random_appearance {
+        if let Some(v) = random_appearance
+            && input.scripts.is_empty()
+        {
             cx.diag(
                 Cat::RandomAppearance,
                 SourceRef::Figure,
@@ -770,36 +796,52 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             );
         }
 
-        // Step 3: appearance lists (template sections, class list, instance list).
+        // Step 3: the appearance elements (§4.7 rule 2, §8 step 3).
         let (instance_list, instance_list_origin) = self.instance_list(&input);
-        let n_template = body.template_appearance.len();
-        let n_class = body.class_list.len();
-        let elements = if random_appearance.is_some() {
-            Vec::new()
-        } else {
-            body.appearance_files_with_instance(instance_list.as_deref())
-        };
-        for (n, (info, file)) in elements.into_iter().enumerate() {
-            let n32 = n as u32;
-            let source = if n < n_template {
-                SourceRef::TemplateSection(n32)
-            } else if n < n_template + n_class {
-                SourceRef::ClassList(n32 - n_template as u32)
-            } else {
-                SourceRef::InstanceList(n32 - (n_template + n_class) as u32)
-            };
-            if n >= self.limits.max_list_elements {
-                cx.diag(Cat::LimitExceeded, source, Some(file), Some(info.key));
-                break;
+        let mut watched: Vec<u32> = Vec::new();
+        let lists = body
+            .template_appearance
+            .iter()
+            .enumerate()
+            .map(|(n, e)| (SourceRef::TemplateSection(n as u32), e))
+            .chain(
+                body.class_list
+                    .iter()
+                    .enumerate()
+                    .map(|(n, e)| (SourceRef::ClassList(n as u32), e)),
+            )
+            .chain(
+                instance_list
+                    .as_deref()
+                    .unwrap_or(&body.instance_list)
+                    .iter()
+                    .enumerate()
+                    .map(|(n, e)| (SourceRef::InstanceList(n as u32), e)),
+            );
+        for (source, info) in lists {
+            if info.is_ignored() {
+                if info.file.is_null() {
+                    cx.diag(Cat::NullAppearance, source, None, Some(info.key));
+                }
+                continue;
             }
+            if let Some(p) = info.watched_toggle()
+                && !watched.contains(&p)
+                && watched.len() < 64
+            {
+                watched.push(p);
+            }
+            let file = info.file_for(toggle_true);
+            // A player's chosen style replaces the modifier for its key (§8 step 3).
             let modifier = input
                 .spec
                 .and_then(|s| s.styles.iter().take(64).find(|c| c.key == info.key))
                 .map_or(info.modifier, |c| c.modifier);
-            self.apply_list_element(&mut cx, source, info.key, file, modifier)?;
+            cx.add_element(source, file, info.key, modifier);
         }
 
-        // Step 4: worn items in ascending slot order; held items are queued.
+        // Worn items in ascending slot order, each with its dye elements (§4.7 Decision,
+        // §4.9); held items are queued.
         let mut held_queue: Vec<(u32, EquippedItem, ItemVisual, Did)> = Vec::new();
         if let Some(spec) = input.spec {
             let mut order: Vec<(u32, u32, EquippedItem, ItemVisual)> = Vec::new();
@@ -811,8 +853,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 }
                 match self.source.item(item.item).map_err(source_error)? {
                     Lookup::Found(mut v) => {
-                        // The equipped slot replaces the default slot for the order, the
-                        // holding location and the stowing location.
+                        // The equipped slot replaces the default slot for the order and the
+                        // placement script.
                         v.default_slot = item.effective_slot(v.default_slot);
                         order.push((slot_order(v.default_slot), i as u32, *item, v));
                     }
@@ -831,13 +873,24 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                         dye,
                         secondary_dye,
                     } => {
-                        // A chosen dye replaces the default (§4.9); code 0 means none.
+                        cx.add_element(source, reference.appearance, reference.key, WORN_MODIFIER);
+                        // A chosen dye replaces the default (§4.9); code 0 emits no dye
+                        // element (§4.9 Decision).
                         let pick = |chosen: Option<f32>, default: Option<f32>| match chosen {
                             Some(c) => Some(c).filter(|c| *c != 0.0 && !c.is_nan()),
                             None => default,
                         };
-                        let dyes = [pick(item.dye, dye), pick(item.secondary_dye, secondary_dye)];
-                        self.apply_worn(&mut cx, source, reference, dyes)?;
+                        for (code, key) in [
+                            (pick(item.dye, dye), self.vocab.clothing_color),
+                            (
+                                pick(item.secondary_dye, secondary_dye),
+                                self.vocab.clothing_color_secondary,
+                            ),
+                        ] {
+                            if let (Some(code), Some(key)) = (code, key) {
+                                cx.add_element(source, reference.appearance, key, code);
+                            }
+                        }
                     }
                     ItemLook::Held { phys_obj } => held_queue.push((i, item, visual, phys_obj)),
                     ItemLook::Invisible => {
@@ -852,48 +905,68 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             }
         }
 
-        // Material-only list elements: onto the parts that list elements naming the same
-        // record contributed (never onto a worn item's parts, whose dye is its own, §4.9),
-        // else onto the default parts (Decision). Each layer set is stored once and
-        // referenced by index.
-        for d in std::mem::take(&mut cx.pending) {
-            let mut paired = false;
-            for c in cx
-                .contributions
-                .iter_mut()
-                .filter(|c| c.record == d.record && is_list_source(c.source))
-            {
-                c.extra.push(d.set);
-                paired = true;
-            }
-            if !paired {
-                if !matches!(d.source, SourceRef::TemplateSection(_)) {
-                    cx.diag(Cat::UnpairedDye, d.source, Some(d.record), None);
+        // The Appearance nodes the start-up scripts ran (§7.4), after the lists.
+        for (n, e) in input.scripts.iter().enumerate() {
+            let source = SourceRef::Script(n as u32);
+            if e.record.is_null() || e.key == 0 {
+                if e.record.is_null() {
+                    cx.diag(Cat::NullAppearance, source, None, Some(e.key));
                 }
-                cx.default_layers.push(d.set);
+                continue;
             }
+            cx.add_element(source, e.record, e.key, e.modifier);
         }
+
+        // Step 4: apply.
+        self.apply_records(&mut cx)?;
 
         // Steps 5–6: resolve the slots and attach the materials.
-        let parts = self.resolve_parts(&mut cx, &defaults);
+        let parts = Self::resolve_parts(&cx, &defaults);
 
-        // Step 9: held items and NPC props.
+        // Step 9: held items at their placements (§5.4, §5.6).
+        let species = input.spec.map_or(0, |s| s.species);
+        let ranged = input.spec.is_some_and(|s| s.ranged_skill_mode);
+        let secondary_scale = prop(self.vocab.secondary_scale)
+            .and_then(scale_vector)
+            .unwrap_or([1.0; 3]);
         for (i, item, visual, phys_obj) in held_queue {
-            let wield = self.vocab.holding.location(&visual, true);
-            let location = match item.state {
-                WieldState::Wielded => wield,
-                WieldState::Sheathed => self.vocab.stow.location(&visual).or(wield),
-            };
-            self.place_held(
-                &mut cx,
-                &setup,
-                SourceRef::Item(i),
-                Some(item.item),
-                phys_obj,
-                location,
-                item.state,
-            )?;
+            let source = SourceRef::Item(i);
+            let stowed = item.state == WieldState::Sheathed;
+            let row = self.vocab.placement.row(
+                visual.default_slot.unwrap_or(0),
+                visual.equipment_category.unwrap_or(0),
+                species,
+                ranged,
+                stowed,
+            );
+            let placements: Vec<_> = row.map(|r| r.placements.clone()).unwrap_or_default();
+            if placements.is_empty() {
+                cx.diag(Cat::NoPlacement, source, Some(item.item), None);
+                continue;
+            }
+            for p in placements {
+                let scale = match p.scale {
+                    PlacementScale::Fixed(s) => [s; 3],
+                    PlacementScale::SecondaryVector => secondary_scale,
+                };
+                self.place_held(
+                    &mut cx,
+                    &setup,
+                    source,
+                    Some(item.item),
+                    phys_obj,
+                    p.location,
+                    item.state,
+                    HeldPlacement {
+                        offset: p.offset,
+                        rotation: p.rotation,
+                        scale,
+                    },
+                )?;
+            }
         }
+        // NPC props while `NPC_Cosmetic_Inventory_Visible` is true (dictionary default
+        // true; §5.5 Rule).
         let props: Vec<(u8, Did, Option<u32>)> = self
             .vocab
             .npc_items
@@ -905,15 +978,25 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 Some((n as u8 + 1, entity, prop(loc).and_then(as_u32)))
             })
             .collect();
-        for (n, entity, location) in props {
+        let props_visible = prop(self.vocab.npc_props_visible).is_none_or(as_true);
+        if !props_visible && !props.is_empty() {
+            cx.diag(Cat::PropsHidden, SourceRef::Figure, Some(body.entity), None);
+        }
+        for (n, entity, location) in props.into_iter().filter(|_| props_visible) {
+            let source = SourceRef::NpcProp(n);
+            let Some(location) = location else {
+                cx.diag(Cat::NoHoldingLocation, source, Some(entity), None);
+                continue;
+            };
             self.place_held(
                 &mut cx,
                 &setup,
-                SourceRef::NpcProp(n),
+                source,
                 None,
                 entity,
                 location,
                 WieldState::Wielded,
+                HeldPlacement::default(),
             )?;
         }
 
@@ -927,7 +1010,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 .instance
                 .zip(self.vocab.render_scale)
                 .and_then(|(s, p)| s.get(p))
-                .and_then(uniform_scale),
+                .and_then(scale_vector),
         };
         let spec = input.spec;
         let slider_string = spec
@@ -966,6 +1049,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         };
 
         let tagfile = self.shared_tagfile(&setup);
+        let groups = std::mem::take(&mut cx.groups);
         Ok(AssembledCharacter {
             object: body.object,
             entity: body.entity,
@@ -987,6 +1071,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             },
             instance_list_origin,
             random_appearance,
+            watched_properties: watched,
+            groups,
             setup,
             diagnostics: std::mem::take(&mut cx.diags),
             dropped_diagnostics: cx.dropped,
@@ -1011,35 +1097,27 @@ impl<S: AssemblySource> CharacterAssembler<S> {
     }
 
     /// Steps 5–6: the setup's parts in order, each replaced by its slot's winner (once per
-    /// slot), then the winners of slots the setup lacks, with their material layers.
-    fn resolve_parts(
-        &self,
-        cx: &mut Ctx,
-        defaults: &[(u32, Did, Option<MeshInfo>)],
-    ) -> Vec<AssembledPart> {
-        let offered = |cx: &Ctx, slot: u32, offer: usize, priority: f32| {
-            let o = &cx.offers[offer];
-            let c = &cx.contributions[o.contribution];
-            let materials = cx.layers_for(
-                std::iter::once(c.groups).chain(c.extra.iter().copied()),
-                Some(slot),
-            );
-            AssembledPart {
+    /// slot), then the winners of slots the setup lacks; each part with the groups of the
+    /// figure-wide list that match its slot (§4.10).
+    fn resolve_parts(cx: &Ctx, defaults: &[(u32, Did, Option<MeshInfo>)]) -> Vec<AssembledPart> {
+        let offered = |slot: u32, offer: usize, priority: f32| {
+            let o = cx.offers.get(offer)?;
+            Some(AssembledPart {
                 slot,
                 mesh: o.mesh,
                 priority,
                 origin: PartOrigin::Appearance {
-                    source: c.source,
-                    record: c.record,
-                    key: c.key,
-                    variant: c.variant,
+                    source: o.source,
+                    record: o.record,
+                    key: o.key,
+                    variant: o.variant,
                 },
                 hidden: o.info.stub,
                 skinned: o.info.skinned,
-                materials,
-            }
+                materials: cx.layers_for(Some(slot)),
+            })
         };
-        let winner = |cx: &Ctx, slot: u32| {
+        let winner = |slot: u32| {
             cx.table.get(slot).and_then(|w| match w.source {
                 PartSource::Offered(i) => Some((i as usize, w.priority)),
                 PartSource::Default => None,
@@ -1058,15 +1136,17 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                     origin,
                     hidden: false,
                     skinned: false,
-                    materials: cx.layers_for(cx.default_layers.iter().copied(), None),
+                    materials: cx.layers_for(None),
                 });
                 continue;
             };
             default_slots.insert(info.slot);
-            if let Some((offer, priority)) = winner(cx, info.slot) {
+            if let Some((offer, priority)) = winner(info.slot) {
                 // Replaced; a second default part in the same slot disappears with it.
-                if emitted.insert(info.slot) {
-                    parts.push(offered(cx, info.slot, offer, priority));
+                if emitted.insert(info.slot)
+                    && let Some(p) = offered(info.slot, offer, priority)
+                {
+                    parts.push(p);
                 }
                 continue;
             }
@@ -1077,20 +1157,18 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 origin,
                 hidden: info.stub,
                 skinned: info.skinned,
-                materials: cx.layers_for(cx.default_layers.iter().copied(), Some(info.slot)),
+                materials: cx.layers_for(Some(info.slot)),
             });
         }
-        let extra: Vec<(u32, usize, f32)> = cx
-            .table
-            .iter()
-            .filter(|w| !default_slots.contains(&w.slot) && !emitted.contains(&w.slot))
-            .filter_map(|w| match w.source {
-                PartSource::Offered(i) => Some((w.slot, i as usize, w.priority)),
-                PartSource::Default => None,
-            })
-            .collect();
-        for (slot, offer, priority) in extra {
-            parts.push(offered(cx, slot, offer, priority));
+        for w in cx.table.iter() {
+            if default_slots.contains(&w.slot) || emitted.contains(&w.slot) {
+                continue;
+            }
+            if let PartSource::Offered(i) = w.source
+                && let Some(p) = offered(w.slot, i as usize, w.priority)
+            {
+                parts.push(p);
+            }
         }
         parts
     }

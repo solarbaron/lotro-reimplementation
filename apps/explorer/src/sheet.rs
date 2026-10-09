@@ -168,7 +168,7 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
         product.scene.parts.iter().filter(|p| p.skinned).count(),
         product.held.len(),
         product.bones(),
-        product.model_scale,
+        product.model_scale[2],
         product.diagnostics.len()
     ));
     for (k, v) in &product.facts {
@@ -179,8 +179,8 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
             "  bind-pose top (deformed in bind space, unposed) {:.3} m × scale {:.4} = {:.3} m; \
              the pose and held clips change the standing height",
             hi[2],
-            product.model_scale,
-            hi[2] * product.model_scale
+            product.model_scale[2],
+            hi[2] * product.model_scale[2]
         ));
     }
     for h in &product.held {
@@ -442,7 +442,7 @@ pub fn tile(images: &[ColorImage], cols: usize, rows: usize, w: usize, h: usize)
 
 /// The figure placement of a sheet tile (exposed for tests).
 #[must_use]
-pub fn placement(scale: f32) -> Mat4 {
+pub fn placement(scale: [f32; 3]) -> Mat4 {
     PlayState::default().placement_matrix(scale)
 }
 
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(px(2 * GUTTER + 2, GUTTER), Color32::BLUE);
         // The mis-sized third image is left out.
         assert_eq!(px(GUTTER, 2 * GUTTER + 2), Color32::from_gray(8));
-        assert_eq!(placement(2.0).x_axis.x, 2.0);
+        assert_eq!(placement([2.0; 3]).x_axis.x, 2.0);
     }
 
     #[test]

@@ -9,10 +9,13 @@
 //! - [`ItemVisual::look`] decides worn versus held for a wearer (`setup.md` §13.3) and picks
 //!   the wardrobe struct for the wearer's species and sex, with the species fallback of
 //!   `appearance.md` §2.3 ([`WardrobeFallbacks`]).
-//! - [`worn_block`] and [`dye_block`] select the blocks of a wardrobe record (§4.5, §4.9).
-//! - [`HoldingRule`] chooses a held item's holding location (`skeleton-anim.md` §8.5 viewer
-//!   rule); [`npc_held_items`] reads the props of NPC-like figures (§5.5) and
-//!   [`npc_cosmetic_inventory_visible`] their visibility flag (meaning OPEN).
+//! - [`worn_block`] and [`dye_block`] select the blocks of a wardrobe record by the block
+//!   rule of §3.2.1 (§4.5, §4.9).
+//! - [`HoldingRule`] chooses a held item's location in a **paperdoll** view
+//!   (`skeleton-anim.md` §8.5, `appearance.md` §5.3); in the world the stowed and wielded
+//!   placements of §5.6 apply instead (`tessera-mesh` assembly). [`npc_held_items`] reads
+//!   the props of NPC-like figures (§5.5) and [`npc_cosmetic_inventory_visible`] their
+//!   visibility flag (false hides the props, always).
 
 use crate::appearance::{AppearanceBlock, AppearanceRecord};
 use crate::did::Did;
@@ -264,18 +267,23 @@ impl WardrobeFallbacks {
     }
 }
 
-/// The block a worn item draws: the `variant` 1.0 block of the entry for `key`
-/// (`appearance.md` §4.5; every entry a struct finds has one). `None` when the record lacks
-/// the key (a failure category of §10: the item is not drawn for that body) or the entry
-/// has no base block.
+/// The modifier of a worn item's own element (`appearance.md` §4.7 Decision): its wardrobe
+/// record with key `Item_AppearanceKey` and modifier 1.0.
+pub const WORN_MODIFIER: f32 = 1.0;
+
+/// The block a worn item draws: the block modifier [`WORN_MODIFIER`] selects in the entry
+/// for `key` by the rule of `appearance.md` §3.2.1 (the `variant` 1.0 block, which every
+/// entry a struct finds has, §4.5). `None` when the record lacks the key (a failure
+/// category of §10: the item is not drawn for that body) or no block is at or below 1.0.
 #[must_use]
 pub fn worn_block(record: &AppearanceRecord, key: u32) -> Option<&AppearanceBlock> {
-    record.entry(key)?.blocks.iter().find(|b| b.is_base())
+    record.entry(key)?.block_for_modifier(WORN_MODIFIER)
 }
 
 /// The dye block for code `code` in the dye entry `dye_key` (the `ClothingColor` or
 /// `ClothingColorSecondary` entry) of the **same** wardrobe record (§4.9), by the block rule
-/// of `material.md` §12.4. `None` for code 0.0 ("no dye") or a missing entry.
+/// of §3.2.1. `None` for code 0.0 (no dye element, §4.9 Decision), a missing entry or a
+/// code below every block.
 #[must_use]
 pub fn dye_block(record: &AppearanceRecord, dye_key: u32, code: f32) -> Option<&AppearanceBlock> {
     if code == 0.0 {
@@ -284,9 +292,11 @@ pub fn dye_block(record: &AppearanceRecord, dye_key: u32, code: f32) -> Option<&
     record.entry(dye_key)?.dye_block(code)
 }
 
-/// Holding-location choice for held items (`skeleton-anim.md` §8.5 viewer rule,
+/// Holding-location choice for held items in a **paperdoll** view (`skeleton-anim.md` §8.5,
 /// `appearance.md` §5.3): a paperdoll location per equipment slot, replaced by the item's
-/// own parenting location.
+/// own `Inventory_PaperdollParentingLocation`. In the world the placement scripts of
+/// `appearance.md` §5.6 decide instead; `Inventory_ParentingLocation` is read by no script
+/// and has no known role there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HoldingRule {
     /// (`ContainerSlot` bits, `HoldingLocation` key) pairs: the inventory-control object's
@@ -295,21 +305,13 @@ pub struct HoldingRule {
 }
 
 impl HoldingRule {
-    /// The location for `item`: its `Inventory_ParentingLocation` (in the world) or its
-    /// `Inventory_PaperdollParentingLocation` (`world` false) when present, else the
-    /// paperdoll location of the first slot pair whose bits intersect the item's default
-    /// slot. The in-world override never applies in a paperdoll view, nor the paperdoll
-    /// override in the world (`skeleton-anim.md` §8.5). `None` when nothing applies
-    /// (class-slot items and instruments have no location in the data; `appearance.md`
-    /// §5.3 Decision: not drawn).
+    /// The paperdoll location for `item`: its `Inventory_PaperdollParentingLocation` when
+    /// present, else the paperdoll location of the first slot pair whose bits intersect the
+    /// item's default slot. `None` when nothing applies (class-slot items and instruments
+    /// have no location in the data).
     #[must_use]
-    pub fn location(&self, item: &ItemVisual, world: bool) -> Option<u32> {
-        let own = if world {
-            item.parenting_location
-        } else {
-            item.paperdoll_parenting_location
-        };
-        own.or_else(|| {
+    pub fn paperdoll_location(&self, item: &ItemVisual) -> Option<u32> {
+        item.paperdoll_parenting_location.or_else(|| {
             let slot = item.default_slot?;
             self.slot_locations
                 .iter()
@@ -334,9 +336,9 @@ pub struct NpcHeldItem {
 /// … `4` from an NPC or instance property set (`appearance.md` §5.5). Null items are
 /// skipped.
 ///
-/// `NPC_Cosmetic_Inventory_Visible` is **not** applied: the spec names it without giving
-/// it a meaning (`appearance.md` §14 OPEN). Read it with
-/// [`npc_cosmetic_inventory_visible`] and decide in the caller.
+/// `NPC_Cosmetic_Inventory_Visible` is not applied here: read it with
+/// [`npc_cosmetic_inventory_visible`]; while it is false the props are not drawn
+/// (`appearance.md` §5.5 Rule).
 #[must_use]
 pub fn npc_held_items<N: PropertyNames + ?Sized>(set: &PropertySet, names: &N) -> Vec<NpcHeldItem> {
     let mut out = Vec::new();
@@ -363,8 +365,8 @@ pub fn npc_held_items<N: PropertyNames + ?Sized>(set: &PropertySet, names: &N) -
 }
 
 /// The value of `NPC_Cosmetic_Inventory_Visible` in `set` (`appearance.md` §5.5), or `None`
-/// when the set does not carry it (the dictionary default then applies). Its meaning is
-/// OPEN (`appearance.md` §14); [`npc_held_items`] does not apply it.
+/// when the set does not carry it (the dictionary default, true, then applies). False hides
+/// the figure's cosmetic props, always (§5.5 Rule, §14).
 #[must_use]
 pub fn npc_cosmetic_inventory_visible<N: PropertyNames + ?Sized>(
     set: &PropertySet,

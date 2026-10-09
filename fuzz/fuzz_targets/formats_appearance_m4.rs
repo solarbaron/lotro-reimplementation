@@ -33,7 +33,7 @@ use std::convert::Infallible;
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::appearance::{
     AppearanceBlock, AppearanceEntry, AppearanceExtra, AppearanceListPids, AppearancePart,
-    EXTRA_KIND_DID, MaterialGroup, SLOT_ALL, SlotTable,
+    EXTRA_KIND_DID, MaterialGroup, SLOT_ALL, SlotTable, key_application_order,
 };
 use tessera_formats::avatar::{
     AvatarPids, BoneSliderDefinition, BoneSliderPids, MAX_RACE_ENTRIES, RacePids, RaceTable,
@@ -326,8 +326,9 @@ fn check_set(set: &PropertySet) {
         let rule = HoldingRule {
             slot_locations: vec![(0x1_0000, 1), (u64::MAX, 2)],
         };
-        let _ = rule.location(&item, true);
-        let _ = rule.location(&item, false);
+        if let Some(l) = rule.paperdoll_location(&item) {
+            assert!(item.paperdoll_parenting_location == Some(l) || l == 1 || l == 2);
+        }
     }
     let held = npc_held_items(set, &names);
     assert!(held.len() <= 4);
@@ -453,16 +454,27 @@ fn check_appearance(a: &AppearanceRecord) {
     for (i, e) in a.entries.iter().enumerate() {
         let n = e.selection_count();
         assert!(n as usize <= e.blocks.len());
-        for m in [0.0f32, 0.01, 0.5, 1.0, -1.0, f32::NAN] {
-            if let Some(b) = e.block_for_modifier(m) {
-                assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b)));
-            } else {
-                assert!(e.blocks.is_empty());
+        // §3.2.1: the last block passed before the first variant above the modifier;
+        // nothing for −1.0, NaN or a modifier below the first block.
+        for m in [0.0f32, 0.01, 0.5, 1.0, -1.0, -0.5, f32::NAN] {
+            match e.choose_block(m) {
+                Some((i, b)) => {
+                    assert!(std::ptr::eq(&e.blocks[i], b));
+                    let above = |v: f32| v.partial_cmp(&m) == Some(std::cmp::Ordering::Greater);
+                    assert!(!above(b.variant));
+                    assert!(e.blocks[..i].iter().all(|x| !above(x.variant)));
+                    if let Some(next) = e.blocks.get(i + 1) {
+                        assert!(next.variant > m);
+                    }
+                }
+                None => assert!(
+                    e.blocks.is_empty() || m == -1.0 || m.is_nan() || e.blocks[0].variant > m
+                ),
             }
-            match e.dye_block(m) {
-                Some(b) => assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b))),
-                None => assert!(e.blocks.is_empty() || m.is_nan()),
-            }
+            assert_eq!(
+                e.dye_block(m).map(|b| b as *const _),
+                e.block_for_modifier(m).map(|b| b as *const _)
+            );
         }
         if let Some(b) = e.base_block() {
             assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b)));
@@ -477,6 +489,16 @@ fn check_appearance(a: &AppearanceRecord) {
             #[allow(clippy::cast_possible_truncation)] // a handful of entries
             slots.offer_block(b, i as u32);
         }
+    }
+    // §4.7 rule 3: a permutation, ascending (key mod 23), later-added first on ties.
+    let keys: Vec<u32> = a.entries.iter().map(|e| e.key).collect();
+    let order = key_application_order(&keys);
+    let mut seen = order.clone();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..keys.len()).collect::<Vec<_>>());
+    for w in order.windows(2) {
+        let (x, y) = (keys[w[0]] % 23, keys[w[1]] % 23);
+        assert!(x < y || (x == y && w[0] > w[1]));
     }
     let parts: Vec<&AppearancePart> = a
         .entries
@@ -614,9 +636,13 @@ fn synth_appearance(src: &mut Src<'_>) -> AppearanceRecord {
             _ => (e.key, e.selection_count()),
         })
         .collect();
+    let linked = (0..src.below(3))
+        .map(|_| Did(0x2000_0000 | u32::from(src.u8())))
+        .collect();
     AppearanceRecord {
         did: Did(APPEARANCE),
-        section: src.below(7),
+        linked,
+        section: src.below(23),
         entries,
         key_table,
     }

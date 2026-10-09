@@ -5,16 +5,21 @@
 //! The input describes a small world held in a `MapSource`: part meshes (slot, stub or
 //! not, some missing), a setup with holding locations, appearance records (entries,
 //! blocks, parts with arbitrary priorities including NaN and infinities, material groups,
-//! extras), a body with template, class and instance lists naming present, missing and null
-//! records, worn and held items with dyes and wield states, entity chains (some broken),
-//! and an instance property set with NPC props. Some DIDs are marked undecodable. Both entry
-//! points run with tight limits. A stress mode gives blocks many material groups and fills
-//! the lists with many elements naming the same few records (the layer-sharing path).
+//! extras, linked records that may name each other or themselves, §4.7 rule 4), a body
+//! with template, class and instance lists naming present, missing and null records (some
+//! with toggle files and toggle properties, §3.3), worn and held items with dyes, wield
+//! states and slots (the §5.6 placement rows built from synthetic labels), entity chains
+//! (some broken), held-entity scales, script elements (§7.4), and an instance property set
+//! with NPC props, their visibility flag and a scale. Some DIDs are marked undecodable.
+//! Every entry point runs with tight limits and both option values. A stress mode gives
+//! blocks many material groups and fills the lists with many elements naming the same few
+//! records (the merge path of §4.7 rule 2 and the group-list bound).
 //!
 //! Nothing may panic, and the result must respect the limits and the slot rules: at most
 //! one offered part per slot, hidden exactly when the winning mesh is a stub, held parts
 //! only at locations the setup has, diagnostics within the bound, at most `max_parts`
-//! parts.
+//! parts, the figure-wide group list sorted by priority and within its bound, a model
+//! scale that passed the client's check.
 
 #![no_main]
 
@@ -33,8 +38,8 @@ use tessera_formats::{
     Did, PropertyArray, PropertyEntry, PropertySet, PropertyStruct, PropertyValue, Setup, TSize,
 };
 use tessera_mesh::assembly::{
-    AssemblyLimits, AssemblyVocabulary, CharacterAssembler, CharacterSpec, EquippedItem, MapSource,
-    SourceRef, StowRule, StyleChoice, WieldState,
+    AssemblyLimits, AssemblyOptions, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
+    EquippedItem, MapSource, PlacementRule, ScriptAppearance, SourceRef, StyleChoice, WieldState,
 };
 use tessera_mesh::{MeshSummary, SubmeshSummary, VertexFormat};
 
@@ -159,12 +164,15 @@ fn block(b: &mut Bytes<'_>, stress: bool) -> AppearanceBlock {
 fn list(b: &mut Bytes<'_>, stress: bool) -> Vec<AppearanceKeyInfo> {
     let n = if stress { 20 + b.small(60) } else { b.small(5) };
     (0..n)
-        .map(|_| AppearanceKeyInfo {
-            key: b.pick(&KEYS),
-            file: record_did(b),
-            modifier: b.pick(&VARIANTS),
-            toggle_file: None,
-            toggle_property: None,
+        .map(|_| {
+            let toggle = b.chance(2);
+            AppearanceKeyInfo {
+                key: if b.chance(1) { 0 } else { b.pick(&KEYS) },
+                file: record_did(b),
+                modifier: b.pick(&VARIANTS),
+                toggle_file: toggle.then(|| record_did(b)),
+                toggle_property: toggle.then(|| b.pick(&[30u32, 31])),
+            }
         })
         .collect()
 }
@@ -216,16 +224,38 @@ fn vocab() -> AssemblyVocabulary {
         holding: HoldingRule {
             slot_locations: vec![(0x1_0000, LOCATIONS[2]), (0x2_0000, LOCATIONS[3])],
         },
-        // Category bits (key k is bit k − 1): one-handed keys 1, 2; key 3 stowed; key 33
-        // (bit 32) stowed as well.
-        stow: StowRule {
-            primary_slot: 0x1_0000,
-            secondary_slot: 0x2_0000,
-            one_handed: 0x3,
-            primary_one_handed: Some(LOCATIONS[5]),
-            secondary_one_handed: Some(LOCATIONS[0]),
-            by_category: vec![(0x4, LOCATIONS[4]), (1 << 32, LOCATIONS[1])],
-        },
+        // The §5.6 rows with synthetic keys: category bits 0–4 and 32 (keys 1–5, 33).
+        placement: PlacementRule::from_labels(
+            |l| match l {
+                "Weapon_Primary" => Some(0x1_0000),
+                "Weapon_Secondary" => Some(0x2_0000),
+                "Weapon_Ranged" => Some(0x4_0000),
+                _ => None,
+            },
+            |l| match l {
+                "1HSword" => Some(0x1),
+                "2HSword" => Some(0x2),
+                "2HStaff" => Some(0x4),
+                "Orb" => Some(0x8),
+                "Shield" => Some(0x10),
+                "Bow" => Some(1 << 32),
+                _ => None,
+            },
+            |l| (l == "Hobbit").then_some(0x51),
+            |l| match l {
+                "Sheath_LHip" => Some(LOCATIONS[5]),
+                "Sheath_RHip" => Some(LOCATIONS[0]),
+                "Sheath_Back_2H" | "Sheath_Back_2H_Sword" => Some(LOCATIONS[4]),
+                "Sheath_Back_Bow" => Some(LOCATIONS[1]),
+                "Wpn_RHand" => Some(LOCATIONS[2]),
+                "Wpn_LHand" | "Wpn_LOffHand" => Some(LOCATIONS[3]),
+                "Wpn_Forearm" => Some(LOCATIONS[1]),
+                _ => None,
+            },
+        ),
+        avatar_update_visible: Some(30),
+        npc_props_visible: Some(23),
+        secondary_scale: Some(24),
         npc_items: vec![(10, Some(11)), (12, Some(13)), (14, None)],
         idle_animation: Some(20),
         random_appearance_type: Some(21),
@@ -295,10 +325,12 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
                 blocks: (0..b.small(4)).map(|_| block(b, stress)).collect(),
             })
             .collect();
+        let linked = (0..b.small(2)).map(|_| record_did(b)).collect();
         s.appearances.insert(
             did,
             Arc::new(AppearanceRecord {
                 did,
+                linked,
                 section: 0,
                 entries,
                 key_table: vec![],
@@ -310,8 +342,10 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
         entity: Did(0x4700_0001),
         chain: vec![Did(0x4700_0001), SETUP],
         setup: SETUP,
-        template_scale: Some(1.0),
-        entity_scale: None,
+        template_scale: Some([b.pick(&PRIORITIES); 3]),
+        entity_scale: b
+            .chance(3)
+            .then(|| [b.pick(&PRIORITIES), 1.0, b.pick(&PRIORITIES)]),
         template_appearance: list(b, false),
         class_list: list(b, stress),
         instance_list: list(b, stress),
@@ -329,6 +363,9 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
         if b.chance(6) {
             let setup = Did(0x0400_0100 + e);
             s.chains.insert(entity, vec![entity, setup]);
+            if b.chance(3) {
+                s.held_scales.insert(entity, [b.pick(&PRIORITIES); 3]);
+            }
             if b.chance(7) {
                 s.setups.insert(
                     setup,
@@ -382,6 +419,7 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
         }
         spec = spec.wearing(item);
     }
+    spec.ranged_skill_mode = b.chance(3);
     for _ in 0..b.small(2) {
         spec.styles.push(StyleChoice {
             key: b.pick(&KEYS),
@@ -424,6 +462,18 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
         pid: 22,
         value: PropertyValue::Vector3([b.pick(&PRIORITIES); 3]),
     });
+    if b.chance(4) {
+        entries.push(PropertyEntry {
+            pid: 23,
+            value: PropertyValue::Bool(b.chance(4)),
+        });
+    }
+    if b.chance(2) {
+        entries.push(PropertyEntry {
+            pid: 31,
+            value: PropertyValue::Bool(b.chance(4)),
+        });
+    }
     let instance = PropertySet {
         size: TSize {
             hint: 0,
@@ -438,6 +488,16 @@ fuzz_target!(|data: &[u8]| {
     let mut b = Bytes { data, pos: 0 };
     let stress = b.byte() & 0x7 == 0x7;
     let (source, instance, spec) = world(&mut b, stress);
+    let scripts: Vec<ScriptAppearance> = (0..b.small(4))
+        .map(|_| ScriptAppearance {
+            record: record_did(&mut b),
+            key: if b.chance(1) { 0 } else { b.pick(&KEYS) },
+            modifier: b.pick(&VARIANTS),
+        })
+        .collect();
+    let options = AssemblyOptions {
+        avatar_update_visible: b.chance(4),
+    };
     let stubs: HashMap<Did, bool> = source
         .meshes
         .iter()
@@ -458,11 +518,16 @@ fuzz_target!(|data: &[u8]| {
         max_layers: 6,
         max_total_layers: if stress { 2048 } else { 64 },
         max_diagnostics: 32,
+        max_applications: if stress { 256 } else { 32 },
     };
-    let mut asm = CharacterAssembler::new(source, vocab()).with_limits(limits);
+    let mut asm = CharacterAssembler::new(source, vocab())
+        .with_limits(limits)
+        .with_options(options);
     let results = [
         asm.assemble_character(&spec),
+        asm.assemble_character_with(&spec, &scripts),
         asm.assemble_object(AVATAR, Some(&instance)),
+        asm.assemble_object_with(AVATAR, Some(&instance), &scripts),
         asm.assemble_object(AVATAR, None),
     ];
     for c in results.into_iter().flatten() {
@@ -484,6 +549,7 @@ fuzz_target!(|data: &[u8]| {
                             | SourceRef::ClassList(_)
                             | SourceRef::InstanceList(_)
                             | SourceRef::Item(_)
+                            | SourceRef::Script(_)
                     )
                 ));
             }
@@ -492,7 +558,18 @@ fuzz_target!(|data: &[u8]| {
         for h in &c.held {
             assert!(locations.contains(&h.location));
             assert_eq!(h.chain.last(), Some(&h.setup));
+            let s = c.held_scale(h);
+            let _ = h.placement.applied_to(&h.frame);
+            assert!(s.iter().all(|x| !x.is_nan()));
         }
-        let _ = c.model_scale();
+        assert!(c.groups.len() <= limits.max_total_layers);
+        assert!(
+            c.groups
+                .windows(2)
+                .all(|w| w[0].priority.total_cmp(&w[1].priority).is_le()),
+            "the group list is sorted by priority"
+        );
+        let m = c.model_scale();
+        assert!(m.iter().all(|x| x.is_finite() && *x >= 0.0002));
     }
 });

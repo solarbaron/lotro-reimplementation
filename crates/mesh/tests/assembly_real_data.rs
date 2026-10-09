@@ -25,7 +25,8 @@ use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, EnumMapper, LandblockInfo, PropertySet};
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblyError, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
-    DiagnosticCategory as Cat, EquippedItem, GameDataSource, RigKind, SourceRef, WieldState,
+    DiagnosticCategory as Cat, EquippedItem, GameDataSource, RigKind, ScriptAppearance, SourceRef,
+    WieldState,
 };
 use tessera_props::{EnumSource, GameData};
 
@@ -310,70 +311,78 @@ const LAYERED: [(&str, &[u32], &[Expect]); 9] = [
     ),
 ];
 
-/// Held rows H1–H25 (Human M setup 0x04000553): location label and bone, or `None` for
-/// "not drawn".
-/// (row, item, expected location label and bone).
-type HeldRow = (&'static str, u32, Option<(&'static str, u32)>);
+/// Held rows H1–H25 (Human M setup 0x04000553), **wielded** (`appearance.md` §5.6
+/// "Wielded placements"): every attachment's location label and bone; empty for "not
+/// drawn". Changes against the M4 checklist (which followed the §5.3 paperdoll rule and
+/// the item's parenting location): H15 (orb) is attached at `Wpn_RHand` and `Wpn_LHand`,
+/// H17 (bow) at `Wpn_LHand`, H18 (crossbow) at `Wpn_RHand`, H23 at `Wpn_Forearm` (the
+/// item's `Forearm` override takes no part), H24 (instrument) is not drawn.
+/// (row, item, expected (location label, bone) per attachment).
+type HeldRow = (&'static str, u32, &'static [(&'static str, u32)]);
+
+const RHAND: &[(&str, u32)] = &[("Wpn_RHand", 79)];
+const NONE: &[(&str, u32)] = &[];
 
 const HELD: [HeldRow; 25] = [
-    ("H1", 0x7900_066F, Some(("Wpn_RHand", 79))),
-    ("H2", 0x7900_06D1, Some(("Wpn_RHand", 79))),
-    ("H3", 0x7902_722C, Some(("Wpn_RHand", 79))),
-    ("H4", 0x7901_C852, Some(("Wpn_RHand", 79))),
-    ("H5", 0x7903_9DD5, Some(("Wpn_RHand", 79))),
-    ("H6", 0x7903_83A4, Some(("Wpn_RHand", 79))),
-    ("H7", 0x7906_8E0D, Some(("Wpn_LOffHand", 65))),
-    ("H8", 0x7900_06CB, Some(("Wpn_RHand", 79))),
-    ("H9", 0x7901_4A77, Some(("Wpn_RHand", 79))),
-    ("H10", 0x7900_06EF, Some(("Wpn_RHand", 79))),
-    ("H11", 0x7900_0831, Some(("Wpn_RHand", 79))),
-    ("H12", 0x7900_ABD8, Some(("Wpn_RHand", 79))),
-    ("H13", 0x7901_D6D7, Some(("Wpn_RHand", 79))),
-    ("H14", 0x7901_198F, Some(("Wpn_RHand", 79))),
-    ("H15", 0x7901_3A37, Some(("Wpn_RHand", 79))),
-    ("H16", 0x7900_AF50, Some(("Wpn_RHand", 79))),
-    ("H17", 0x7900_1F43, Some(("Sheath_Back_Bow", 16))),
-    ("H18", 0x7902_8A8E, Some(("Wpn_ROffhand", 79))),
-    ("H19", 0x7901_09BA, Some(("Wpn_ROffhand", 79))),
-    ("H20", 0x7901_D692, Some(("Wpn_Forearm", 54))),
-    ("H21", 0x7900_F164, Some(("Wpn_Forearm", 54))),
-    ("H22", 0x7900_06CF, Some(("Wpn_Forearm", 54))),
-    ("H23", 0x7900_6BF8, Some(("Forearm", 54))),
-    ("H24", 0x7900_1298, Some(("Sheath_Back_Bow", 16))),
-    ("H25", 0x7901_5F4E, None),
+    ("H1", 0x7900_066F, RHAND),
+    ("H2", 0x7900_06D1, RHAND),
+    ("H3", 0x7902_722C, RHAND),
+    ("H4", 0x7901_C852, RHAND),
+    ("H5", 0x7903_9DD5, RHAND),
+    ("H6", 0x7903_83A4, RHAND),
+    ("H7", 0x7906_8E0D, &[("Wpn_LOffHand", 65)]),
+    ("H8", 0x7900_06CB, RHAND),
+    ("H9", 0x7901_4A77, RHAND),
+    ("H10", 0x7900_06EF, RHAND),
+    ("H11", 0x7900_0831, RHAND),
+    ("H12", 0x7900_ABD8, RHAND),
+    ("H13", 0x7901_D6D7, RHAND),
+    ("H14", 0x7901_198F, RHAND),
+    ("H15", 0x7901_3A37, &[("Wpn_RHand", 79), ("Wpn_LHand", 65)]),
+    ("H16", 0x7900_AF50, RHAND),
+    ("H17", 0x7900_1F43, &[("Wpn_LHand", 65)]),
+    ("H18", 0x7902_8A8E, RHAND),
+    ("H19", 0x7901_09BA, &[("Wpn_ROffhand", 79)]),
+    ("H20", 0x7901_D692, &[("Wpn_Forearm", 54)]),
+    ("H21", 0x7900_F164, &[("Wpn_Forearm", 54)]),
+    ("H22", 0x7900_06CF, &[("Wpn_Forearm", 54)]),
+    ("H23", 0x7900_6BF8, &[("Wpn_Forearm", 54)]),
+    ("H24", 0x7900_1298, NONE),
+    ("H25", 0x7901_5F4E, NONE),
 ];
 
-/// The H rows stowed (`appearance.md` §5.4 Decision) on Human M: one-handed weapons in the
-/// primary slot at the left hip, in the secondary slot at the right hip, two-handed
-/// weapons, staves, spears and halberds on the back, bows and crossbows in their back
-/// sheaths, shields on the back; orbs, implements, javelins and instruments stay where
-/// they are wielded; class items are not drawn.
+/// The H rows **stowed** (`appearance.md` §5.6 "Stowed placements") on Human M: one-handed
+/// weapons and implements in the primary slot at the left hip, in the secondary slot at the
+/// right hip; two-handed swords at `Sheath_Back_2H_Sword`; other two-handed weapons,
+/// staves, spears and halberds at `Sheath_Back_2H`; bows and javelins at
+/// `Sheath_Back_Bow`, crossbows at `Sheath_Back_Crossbow`; shields stay on the forearm
+/// (skill mode not ranged); orbs, instruments and class items are not drawn.
 const STOWED: [HeldRow; 25] = [
-    ("H1", 0x7900_066F, Some(("Sheath_LHip", 3))),
-    ("H2", 0x7900_06D1, Some(("Sheath_LHip", 3))),
-    ("H3", 0x7902_722C, Some(("Sheath_LHip", 3))),
-    ("H4", 0x7901_C852, Some(("Sheath_LHip", 3))),
-    ("H5", 0x7903_9DD5, Some(("Sheath_LHip", 3))),
-    ("H6", 0x7903_83A4, Some(("Sheath_LHip", 3))),
-    ("H7", 0x7906_8E0D, Some(("Sheath_RHip", 3))),
-    ("H8", 0x7900_06CB, Some(("Sheath_Back_2H_Sword", 16))),
-    ("H9", 0x7901_4A77, Some(("Sheath_Back_2H", 16))),
-    ("H10", 0x7900_06EF, Some(("Sheath_Back_2H", 16))),
-    ("H11", 0x7900_0831, Some(("Sheath_Back_2H", 16))),
-    ("H12", 0x7900_ABD8, Some(("Sheath_Back_2H", 16))),
-    ("H13", 0x7901_D6D7, Some(("Sheath_Back_2H", 16))),
-    ("H14", 0x7901_198F, Some(("Sheath_Back_2H", 16))),
-    ("H15", 0x7901_3A37, Some(("Wpn_RHand", 79))),
-    ("H16", 0x7900_AF50, Some(("Wpn_RHand", 79))),
-    ("H17", 0x7900_1F43, Some(("Sheath_Back_Bow", 16))),
-    ("H18", 0x7902_8A8E, Some(("Sheath_Back_Crossbow", 16))),
-    ("H19", 0x7901_09BA, Some(("Wpn_ROffhand", 79))),
-    ("H20", 0x7901_D692, Some(("Sheath_Back_Shield", 16))),
-    ("H21", 0x7900_F164, Some(("Sheath_Back_Shield", 16))),
-    ("H22", 0x7900_06CF, Some(("Sheath_Back_Shield", 16))),
-    ("H23", 0x7900_6BF8, Some(("Sheath_Back_Shield", 16))),
-    ("H24", 0x7900_1298, Some(("Sheath_Back_Bow", 16))),
-    ("H25", 0x7901_5F4E, None),
+    ("H1", 0x7900_066F, &[("Sheath_LHip", 3)]),
+    ("H2", 0x7900_06D1, &[("Sheath_LHip", 3)]),
+    ("H3", 0x7902_722C, &[("Sheath_LHip", 3)]),
+    ("H4", 0x7901_C852, &[("Sheath_LHip", 3)]),
+    ("H5", 0x7903_9DD5, &[("Sheath_LHip", 3)]),
+    ("H6", 0x7903_83A4, &[("Sheath_LHip", 3)]),
+    ("H7", 0x7906_8E0D, &[("Sheath_RHip", 3)]),
+    ("H8", 0x7900_06CB, &[("Sheath_Back_2H_Sword", 16)]),
+    ("H9", 0x7901_4A77, &[("Sheath_Back_2H", 16)]),
+    ("H10", 0x7900_06EF, &[("Sheath_Back_2H", 16)]),
+    ("H11", 0x7900_0831, &[("Sheath_Back_2H", 16)]),
+    ("H12", 0x7900_ABD8, &[("Sheath_Back_2H", 16)]),
+    ("H13", 0x7901_D6D7, &[("Sheath_Back_2H", 16)]),
+    ("H14", 0x7901_198F, &[("Sheath_Back_2H", 16)]),
+    ("H15", 0x7901_3A37, NONE),
+    ("H16", 0x7900_AF50, &[("Sheath_LHip", 3)]),
+    ("H17", 0x7900_1F43, &[("Sheath_Back_Bow", 16)]),
+    ("H18", 0x7902_8A8E, &[("Sheath_Back_Crossbow", 16)]),
+    ("H19", 0x7901_09BA, &[("Sheath_Back_Bow", 16)]),
+    ("H20", 0x7901_D692, &[("Wpn_Forearm", 54)]),
+    ("H21", 0x7900_F164, &[("Wpn_Forearm", 54)]),
+    ("H22", 0x7900_06CF, &[("Wpn_Forearm", 54)]),
+    ("H23", 0x7900_6BF8, &[("Wpn_Forearm", 54)]),
+    ("H24", 0x7900_1298, NONE),
+    ("H25", 0x7901_5F4E, NONE),
 ];
 
 fn check_winners(
@@ -478,8 +487,9 @@ fn bodies_and_checklist_items_assemble() {
                 c.entity, c.skeleton.setup
             ));
         }
-        if (c.model_scale() - scale).abs() > 1e-3 {
-            failures.push(format!("{row}: scale {} expected {scale}", c.model_scale()));
+        let ms = c.model_scale();
+        if ms.iter().any(|s| (s - scale).abs() > 1e-3) {
+            failures.push(format!("{row}: scale {ms:?} expected {scale}"));
         }
         assert_eq!(c.rig, RigKind::Humanoid, "{row}");
         assert!(c.skeleton.tagfile.len() > 8, "{row}: tagfile");
@@ -509,7 +519,7 @@ fn bodies_and_checklist_items_assemble() {
              sliders {:?}/{} clips [{}] diagnostics [{}]",
             c.entity,
             c.skeleton.setup,
-            c.model_scale(),
+            c.model_scale()[2],
             c.parts.len(),
             c.hidden_slots().count(),
             c.sliders.definitions,
@@ -570,13 +580,13 @@ fn bodies_and_checklist_items_assemble() {
                 "H20 Hobbit".into(),
                 &p1_male,
                 0x7901_D692,
-                Some(("Wpn_Forearm", 17)),
+                &[("Wpn_Forearm", 17)][..],
             ),
             (
                 "H20 Dwarf".into(),
                 &dwarf_m,
                 0x7901_D692,
-                Some(("Wpn_Forearm", 21)),
+                &[("Wpn_Forearm", 21)][..],
             ),
         ]);
     let stowed_rows = STOWED
@@ -591,27 +601,28 @@ fn bodies_and_checklist_items_assemble() {
             .clone()
             .wearing(EquippedItem::new(item).with_state(state));
         let c = asm.assemble_character(&spec).expect("held row");
-        match (want, c.held.as_slice()) {
-            (None, []) => {
-                if c.count(Cat::NoHoldingLocation) != 1 {
-                    failures.push(format!("{row}: expected no location, {:?}", c.diagnostics));
-                }
+        if want.is_empty() {
+            if !c.held.is_empty() || c.count(Cat::NoPlacement) != 1 {
+                failures.push(format!(
+                    "{row}: expected not drawn, held {:?}, diagnostics {:?}",
+                    c.held, c.diagnostics
+                ));
             }
-            (Some((label, bone)), [h]) => {
-                if h.location != location(label) || h.anchor != Anchor::Bone(bone) {
-                    failures.push(format!(
-                        "{row}: location {:#x} anchor {:?}, expected {label} bone {bone}",
-                        h.location, h.anchor
-                    ));
-                }
-                if h.parts.is_empty() {
-                    failures.push(format!("{row}: item setup {} has no parts", h.setup));
-                }
+        } else {
+            let got: Vec<(u32, Anchor)> = c.held.iter().map(|h| (h.location, h.anchor)).collect();
+            let expect: Vec<(u32, Anchor)> = want
+                .iter()
+                .map(|&(l, b)| (location(l), Anchor::Bone(b)))
+                .collect();
+            if got != expect {
+                failures.push(format!(
+                    "{row}: held {got:x?}, expected {want:?}, diagnostics {:?}",
+                    c.diagnostics
+                ));
             }
-            (w, held) => failures.push(format!(
-                "{row}: expected {w:?}, held {held:?}, diagnostics {:?}",
-                c.diagnostics
-            )),
+            if c.held.iter().any(|h| h.parts.is_empty()) {
+                failures.push(format!("{row}: an item setup has no parts"));
+            }
         }
         if c.parts
             .iter()
@@ -913,13 +924,74 @@ fn weenie_objects_and_npc_spots_assemble() {
             p.object,
             c.skeleton.setup,
             c.rig,
-            c.model_scale(),
+            c.model_scale()[2],
             c.instance_list_origin,
             c.parts.len(),
             c.held.len(),
             c.random_appearance,
             diagnostic_summary(&c)
         );
+    }
+
+    // N5 is a random-appearance figure: its outfit comes from the Appearance nodes of its
+    // start-up scripts (§7.4 Rule), picked with a generator seeded from its instance ID
+    // (§7.4 Decision). The picks must be deterministic and must dress the rig.
+    if let Some(p) = rows.iter().find(|p| p.landblock == 0x8021_4F79) {
+        let registry = data.registry().unwrap();
+        let dict = registry.dictionary();
+        let script_vocab = ScriptVocabulary::from_data(dict, |d| {
+            data.enum_mapper(d).ok().flatten().map(|m| (*m).clone())
+        })
+        .expect("script vocabulary");
+        let base = asm
+            .assemble_object(p.object, p.instance.as_ref())
+            .expect("N5 assembles");
+        let picks = |seed: u64| {
+            let mut chain =
+                collect_entity_scripts(base.clip_inputs.start, dict, &script_vocab, |d: Did| {
+                    data.read(d)
+                })
+                .expect("N5 scripts");
+            if let Some(inst) = &base.clip_inputs.instance_properties {
+                chain.scripts.add_property_set(inst, &script_vocab);
+            }
+            let mut resolver = ClipResolver::new(dict, script_vocab.clone(), |d: Did| data.read(d))
+                .with_dictionary_defaults(dict)
+                .with_random_seed(Some(seed));
+            let r = resolver
+                .resolve(&chain.scripts, MotionState::Idle)
+                .expect("N5 resolution");
+            r.appearances
+                .iter()
+                .filter(|a| a.picked)
+                .map(|a| ScriptAppearance {
+                    record: a.appearance,
+                    key: a.key,
+                    modifier: a.modifier,
+                })
+                .collect::<Vec<_>>()
+        };
+        let scripts = picks(p.iid.0);
+        assert_eq!(scripts, picks(p.iid.0), "N5: the picks are deterministic");
+        let c = asm
+            .assemble_object_with(p.object, p.instance.as_ref(), &scripts)
+            .expect("N5 dressed");
+        let dressed = c
+            .parts
+            .iter()
+            .filter(|q| matches!(q.source(), Some(SourceRef::Script(_))))
+            .count();
+        eprintln!(
+            "N5: {} script elements picked, {dressed} parts from them, diagnostics [{}]",
+            scripts.len(),
+            diagnostic_summary(&c)
+        );
+        if scripts.is_empty() || dressed == 0 || c.count(Cat::RandomAppearance) != 0 {
+            failures.push(format!(
+                "N5: random appearance not dressed ({} elements, {dressed} parts)",
+                scripts.len()
+            ));
+        }
     }
 
     // All weenie objects, each with the instance set of its first placement.

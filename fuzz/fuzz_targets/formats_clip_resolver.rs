@@ -1093,9 +1093,29 @@ fuzz_target!(|data: &[u8]| {
         Ok::<_, Infallible>(world.get(&d).cloned())
     })
     .with_limits(limits)
-    .with_defaults(|pid| (pid % 3 == 0).then_some(PropertyValue::Int(0)));
+    .with_defaults(|pid| (pid % 3 == 0).then_some(PropertyValue::Int(0)))
+    // Seeded Random picks for the Appearance candidates (`appearance.md` §7.4); the same
+    // seed must give the same picks.
+    .with_random_seed(Some(u64::from(limits.max_candidates as u32)));
+    let first = r
+        .resolve(&entity, MotionState::Idle)
+        .expect("fetch never fails");
+    let again = r
+        .resolve(&entity, MotionState::Idle)
+        .expect("fetch never fails");
+    let picks = |r: &tessera_formats::script_table::resolve::ClipResolution| {
+        r.appearances
+            .iter()
+            .map(|a| (a.appearance, a.key, a.modifier.to_bits(), a.picked))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(picks(&first), picks(&again), "deterministic picks");
+    for a in &first.appearances {
+        assert!(a.chance.is_nan() || (0.0..=1.0).contains(&a.chance));
+    }
     for state in MotionState::ALL {
         let res = r.resolve(&entity, state).expect("fetch never fails");
+        assert!(res.appearances.len() <= limits.max_candidates);
         assert!(res.nodes_visited <= limits.max_node_visits + 1);
         assert!(res.candidates.len() <= limits.max_candidates);
         for c in &res.candidates {

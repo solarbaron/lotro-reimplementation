@@ -152,7 +152,23 @@ pub fn systems(args: &Args) -> Systems {
     s
 }
 
-/// Walker settings from the command line.
+/// Tessera's `[Graphics]` settings from the user's settings file (never fails; problems are
+/// logged). Reading may copy a damaged file to a backup next to it
+/// (`tessera_settings::SettingsStore::load`); it never writes the game's files.
+#[must_use]
+pub fn graphics_prefs() -> tessera_settings::GraphicsPrefs {
+    let Ok(store) = tessera_settings::SettingsStore::open_default() else {
+        return tessera_settings::GraphicsPrefs::default();
+    };
+    let loaded = store.load();
+    let (p, warnings) = tessera_settings::GraphicsPrefs::from_settings(&loaded.settings);
+    for w in &warnings {
+        tracing::warn!("settings: {w}");
+    }
+    p
+}
+
+/// Walker settings from the command line (and the `[Graphics]` settings).
 #[must_use]
 pub fn walker_config(args: &Args) -> WalkerConfig {
     let distances = distance_settings(args);
@@ -218,6 +234,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             draw_distance: args
                 .character_distance
                 .unwrap_or(CharacterConfig::default().draw_distance),
+            updated_avatars: graphics_prefs().avatar_update_visible,
             ..CharacterConfig::default()
         },
         autorun: args.autorun.as_deref().map(|g| g == "walk"),

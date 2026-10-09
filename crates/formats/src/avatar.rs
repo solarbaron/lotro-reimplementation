@@ -22,7 +22,7 @@ use crate::property::{PropertyNames, PropertySchema, PropertyValue};
 use crate::property_set::{PropertySet, PropertySetRecord, object_property_set_did};
 use crate::record::Record;
 use crate::setup::{
-    ENTITY_PREFIX, EntityDescriptor, ResolveError, TEMPLATE_PREFIX, VisualTemplate,
+    ENTITY_PREFIX, EntityDescriptor, MAX_CHAIN_HOPS, ResolveError, TEMPLATE_PREFIX, VisualTemplate,
     resolve_setup_did,
 };
 
@@ -253,9 +253,9 @@ impl RaceTable {
     }
 }
 
-/// A whole-body scale value: a float, or a vector whose three components are equal (the
-/// form `Render_AdjustableScale` is stored in on the reference install). `None` for other
-/// values, non-finite or non-positive scales.
+/// A whole-body scale value: a float, or a vector whose three components are equal. `None`
+/// for other values, non-finite or non-positive scales. Assembly reads the per-axis form
+/// ([`scale_vector`]); this helper remains for callers that need one number.
 #[must_use]
 pub fn uniform_scale(v: &PropertyValue) -> Option<f32> {
     let s = match v {
@@ -266,13 +266,50 @@ pub fn uniform_scale(v: &PropertyValue) -> Option<f32> {
     (s.is_finite() && s > 0.0).then_some(s)
 }
 
+/// A per-axis scale value (`appearance.md` §6.1: `Render_AdjustableScale` is a Vector3 used
+/// per axis, A27): a vector as stored, or a float taken for all three axes. The value is not
+/// checked here: the render-scale limit applies to the **final** product
+/// ([`checked_render_scale`]).
+#[must_use]
+pub fn scale_vector(v: &PropertyValue) -> Option<[f32; 3]> {
+    match v {
+        PropertyValue::Vector3(x) => Some(*x),
+        PropertyValue::Float(f) => Some([*f; 3]),
+        _ => None,
+    }
+}
+
+/// The smallest render-scale component the client keeps (`appearance.md` §6.1, A27): a
+/// component **strictly below** it, or one that is not finite, makes the whole scale
+/// (1, 1, 1).
+pub const MIN_RENDER_SCALE: f32 = 0.0002;
+
+/// The client's check on a final render scale (`appearance.md` §6.1, BIN2, BIN3): when any
+/// component is not finite, or any is strictly below [`MIN_RENDER_SCALE`] (zero and
+/// negative values included, 0.0002 itself kept), the result is (1, 1, 1); otherwise the
+/// scale as given.
+#[must_use]
+pub fn checked_render_scale(s: [f32; 3]) -> [f32; 3] {
+    if s.iter().any(|c| !c.is_finite()) || s.iter().any(|&c| c < MIN_RENDER_SCALE) {
+        [1.0; 3]
+    } else {
+        s
+    }
+}
+
+/// The per-axis product of two scales.
+#[must_use]
+pub fn scale_product(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] * b[0], a[1] * b[1], a[2] * b[2]]
+}
+
 /// PIDs that [`resolve_avatar_body`] reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AvatarPids {
     /// `PhysObj`: the game object's 0x47 entity.
     pub phys_obj: u32,
-    /// `Render_AdjustableScale`: the entity's whole-body scale (§6.1), stored as a uniform
-    /// vector ([`uniform_scale`]).
+    /// `Render_AdjustableScale`: the entity's whole-body scale (§6.1), a vector used per
+    /// axis ([`scale_vector`]).
     pub render_scale: Option<u32>,
     /// The appearance-list properties (§3.2).
     pub lists: AppearanceListPids,
@@ -311,11 +348,14 @@ pub struct AvatarBody {
     pub chain: Vec<Did>,
     /// The setup: skeleton and default body (`appearance.md` §3.1).
     pub setup: Did,
-    /// The first visual template's uniform `vec3` scale on the chain (§6.1).
-    pub template_scale: Option<f32>,
-    /// The entity's `Render_AdjustableScale` (§6.1).
-    pub entity_scale: Option<f32>,
-    /// Appearance sections of the chain's templates, as list elements (§7.4 step 2).
+    /// The template chain's `vec3`, multiplied per component over every template of the chain
+    /// that has one (`appearance.md` §6.1, BIN2: a template without the field contributes
+    /// 1); `None` when no template has one.
+    pub template_scale: Option<[f32; 3]>,
+    /// The entity's `Render_AdjustableScale` (§6.1), per axis.
+    pub entity_scale: Option<[f32; 3]>,
+    /// Appearance sections of the chain's templates, as list elements, **root template
+    /// first** (`appearance.md` §4.7 rule 2, `setup.md` §5.4; §7.4 step 2).
     pub template_appearance: Vec<AppearanceKeyInfo>,
     /// The entity's `Appearance_ClassList` (§3.2, §7.4 step 3).
     pub class_list: Vec<AppearanceKeyInfo>,
@@ -332,16 +372,22 @@ pub struct AvatarBody {
 }
 
 impl AvatarBody {
-    /// Model scale (§6.1 Decision): template scale (1 if absent) × entity scale (1 if
-    /// absent). Multiply by an instance's own `Render_AdjustableScale` where there is one.
+    /// Model scale per axis (§6.1 Decision), **before** the limit check: template chain
+    /// `vec3` (1 if absent) × entity scale (1 if absent). Multiply by an instance's own
+    /// `Render_AdjustableScale` where there is one, then apply [`checked_render_scale`].
     #[must_use]
-    pub fn model_scale(&self) -> f32 {
-        self.template_scale.unwrap_or(1.0) * self.entity_scale.unwrap_or(1.0)
+    pub fn model_scale(&self) -> [f32; 3] {
+        scale_product(
+            self.template_scale.unwrap_or([1.0; 3]),
+            self.entity_scale.unwrap_or([1.0; 3]),
+        )
     }
 
     /// The appearance elements to apply, in the order of §7.4 and §8 step 3: template
-    /// sections, the class list, then the entity's instance list; each with the record
-    /// chosen by the toggle rule (§3.3 Decision) against the entity's property set.
+    /// sections (root template first), the class list, then the entity's instance list;
+    /// each with the record chosen by the toggle rule (§3.3) against the entity's own
+    /// property set only. Assembly applies the §3.3 Tessera rule instead (the option store
+    /// before the entity's value).
     #[must_use]
     pub fn appearance_files(&self) -> Vec<(AppearanceKeyInfo, Did)> {
         self.appearance_files_with_instance(None)
@@ -404,23 +450,40 @@ where
     drop(bytes);
     let chain = resolve_setup_did(entity, &mut fetch)?;
     let setup = *chain.last().unwrap_or(&entity);
-    let mut template_scale = None;
-    let mut template_appearance = Vec::new();
-    for &d in chain.iter().filter(|d| d.prefix() == TEMPLATE_PREFIX) {
+    let mut template_scale: Option<[f32; 3]> = None;
+    // The template chain (`appearance.md` §6.1, §4.7 rule 2): from the first template of the
+    // entity chain through its `parent` links to the root, including templates above the one
+    // that names the setup (the entity chain stops there). Sections per template, nearest
+    // first; applied root first.
+    let mut sections: Vec<Vec<AppearanceKeyInfo>> = Vec::new();
+    let mut next = chain
+        .iter()
+        .copied()
+        .find(|d| d.prefix() == TEMPLATE_PREFIX);
+    let mut seen: Vec<Did> = Vec::new();
+    while let Some(d) = next.filter(|d| !d.is_null()) {
+        if seen.contains(&d) || seen.len() >= MAX_CHAIN_HOPS {
+            tracing::warn!(template = %d, "template parent chain loops or is too long; cut");
+            break;
+        }
+        seen.push(d);
         let bytes = fetch_existing(&mut fetch, d, entity)?;
         let t = VisualTemplate::parse_expecting(bytes.as_ref(), d).map_err(in_record(d))?;
-        if template_scale.is_none() {
-            template_scale = t.uniform_scale();
+        if let Some(v) = t.vec3 {
+            template_scale = Some(scale_product(template_scale.unwrap_or([1.0; 3]), v));
         }
         if let Some(a) = &t.appearance {
-            template_appearance.extend(a.elements());
+            sections.push(a.elements().collect());
         }
+        next = t.parent.filter(|p| p.prefix() == TEMPLATE_PREFIX);
     }
+    let template_appearance: Vec<AppearanceKeyInfo> =
+        sections.into_iter().rev().flatten().collect();
     let props = desc.properties;
     let entity_scale = pids
         .render_scale
         .and_then(|p| props.get(p))
-        .and_then(uniform_scale);
+        .and_then(scale_vector);
     let mut bone_slider_definitions = None;
     if let Some(pid) = pids.slider_definitions {
         props.walk(|v| {

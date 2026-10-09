@@ -92,23 +92,33 @@ fn block_choice_follows_the_spec_example() {
             .map(|&v| block(v, &[]))
             .collect(),
     };
+    // §3.2.1 (A19): the greatest variant not above the modifier, no tolerance; nothing
+    // for −1.0 or below the first block.
     assert_eq!(e.block_for_modifier(0.02).unwrap().variant, 0.02);
-    assert_eq!(e.block_for_modifier(0.019_999_5).unwrap().variant, 0.02);
     assert_eq!(
-        e.block_for_modifier(1.0).unwrap().variant,
-        0.00,
-        "no 1.0 block: first"
+        e.choose_block(0.019_999_5).map(|(i, _)| i),
+        Some(1),
+        "below the stored 0.02: the second block"
     );
+    assert_eq!(e.block_for_modifier(0.30).unwrap().variant, 0.02);
+    assert_eq!(e.block_for_modifier(1.0).unwrap().variant, 0.80);
+    assert!(e.block_for_modifier(-0.5).is_none());
+    assert!(e.block_for_modifier(-1.0).is_none());
+    assert!(e.block_for_modifier(f32::NAN).is_none());
     assert_eq!(e.selection_count(), 4);
     assert!(e.base_block().is_none());
-    // A base block wins when the modifier finds nothing.
-    let mut with_base = e.clone();
-    with_base.blocks.push(block(1.0, &[]));
-    assert_eq!(with_base.block_for_modifier(0.3).unwrap().variant, 1.0);
-    // Dye rule (material.md §12.4): within 0.005, else the largest at or below, else first.
+    let only_base = AppearanceEntry {
+        key: 2,
+        blocks: vec![block(1.0, &[])],
+    };
+    assert_eq!(only_base.block_for_modifier(1.0).unwrap().variant, 1.0);
+    assert_eq!(only_base.block_for_modifier(2.0).unwrap().variant, 1.0);
+    assert!(only_base.block_for_modifier(0.0).is_none());
+    // Dye codes follow the same rule (§4.9).
     assert_eq!(e.dye_block(0.453).unwrap().variant, 0.45);
     assert_eq!(e.dye_block(0.6).unwrap().variant, 0.45);
-    assert_eq!(e.dye_block(-1.0).unwrap().variant, 0.00);
+    assert_eq!(e.dye_block(0.0).unwrap().variant, 0.00);
+    assert!(e.dye_block(-1.0).is_none());
     assert!(e.dye_block(f32::NAN).is_none());
     let empty = AppearanceEntry::default();
     assert!(empty.block_for_modifier(0.0).is_none());
@@ -145,6 +155,7 @@ fn group_priorities_and_key_table() {
 
     let rec = |table: u32, end: f32| AppearanceRecord {
         did: Did(0x2000_0001),
+        linked: Vec::new(),
         section: 0,
         entries: vec![AppearanceEntry {
             key: 0x1000_0001,
@@ -548,13 +559,12 @@ fn items_resolve_worn_or_held() {
     let rule = HoldingRule {
         slot_locations: vec![(0x1_0000, 0x1000_003B), (0x2_0000, 0x1000_0021)],
     };
-    assert_eq!(rule.location(&sword, true), Some(0x1000_003B));
-    assert_eq!(rule.location(&shield, true), Some(0x1000_0050));
-    assert_eq!(rule.location(&shield, false), Some(0x1000_0051));
-    assert_eq!(rule.location(&ring, true), None);
-    // A javelin-like ranged item with only an in-world override: the override applies in
-    // the world, the slot's paperdoll location in a paperdoll view (`skeleton-anim.md`
-    // §8.5), never the in-world override.
+    // Paperdoll only (`skeleton-anim.md` §8.5, `appearance.md` §5.3): the item's paperdoll
+    // override, else the slot's location; the in-world `Inventory_ParentingLocation` takes
+    // no part (in the world the §5.6 placements apply).
+    assert_eq!(rule.paperdoll_location(&sword), Some(0x1000_003B));
+    assert_eq!(rule.paperdoll_location(&shield), Some(0x1000_0051));
+    assert_eq!(rule.paperdoll_location(&ring), None);
     let javelin = ItemVisual::from_property_set(
         &set(vec![
             entry(P_PHYS_OBJ, PropertyValue::DidRef(Did(0x4700_0004))),
@@ -570,18 +580,17 @@ fn items_resolve_worn_or_held() {
             (0x4_0000, 0x1000_0030),
         ],
     };
-    assert_eq!(rule.location(&javelin, true), Some(0x1000_0029));
-    assert_eq!(rule.location(&javelin, false), Some(0x1000_0030));
-    // An item with only a paperdoll override keeps the slot default in the world.
+    assert_eq!(javelin.parenting_location, Some(0x1000_0029));
+    assert_eq!(rule.paperdoll_location(&javelin), Some(0x1000_0030));
     let mut paperdoll_only = javelin.clone();
     paperdoll_only.parenting_location = None;
     paperdoll_only.paperdoll_parenting_location = Some(0x1000_0031);
-    assert_eq!(rule.location(&paperdoll_only, true), Some(0x1000_0030));
-    assert_eq!(rule.location(&paperdoll_only, false), Some(0x1000_0031));
+    assert_eq!(rule.paperdoll_location(&paperdoll_only), Some(0x1000_0031));
 
     // Wardrobe-record blocks: the 1.0 block of the item's key, dye blocks of the same record.
     let rec = AppearanceRecord {
         did: Did(0x2000_1E54),
+        linked: Vec::new(),
         entries: vec![
             AppearanceEntry {
                 key: 0x1000_0700,
@@ -841,9 +850,9 @@ fn race_table_and_avatar_body_resolve() {
         vec![Did(0x4700_0010), Did(0x1F00_0010), Did(0x0400_0010)]
     );
     assert_eq!(b.setup, Did(0x0400_0010));
-    assert_eq!(b.template_scale, Some(1.05));
-    assert_eq!(b.entity_scale, Some(0.7));
-    assert!((b.model_scale() - 0.735).abs() < 1e-6);
+    assert_eq!(b.template_scale, Some([1.05; 3]));
+    assert_eq!(b.entity_scale, Some([0.7; 3]));
+    assert!(b.model_scale().iter().all(|s| (s - 0.735).abs() < 1e-6));
     assert_eq!(b.bone_slider_definitions, Some(Did(0x7800_0001)));
     assert_eq!(b.slider_values.as_deref(), Some("80ff"));
     assert_eq!(b.class_list.len(), 1);
@@ -961,6 +970,7 @@ fn key_table_check_and_slot_table_are_linear() {
     const N: u32 = 100_000;
     let rec = AppearanceRecord {
         did: Did(0x2000_0001),
+        linked: Vec::new(),
         entries: (0..N)
             .map(|k| AppearanceEntry {
                 key: 0x1000_0000 + k,

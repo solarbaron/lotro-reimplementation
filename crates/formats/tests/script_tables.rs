@@ -2724,3 +2724,128 @@ fn the_most_recently_started_slider_node_is_the_last_deformer() {
     let res = resolve_class(&m, order_vocab());
     assert_eq!(definitions(&res), vec![0x7800_0001, 0x7800_0002]);
 }
+
+/// An Appearance node (kind 58, §5.1): record, key, modifier, persistent.
+fn appearance_node(id: u32, record: u32, key: u32, modifier: f32, p: f32) -> Vec<u8> {
+    node(
+        58,
+        B::new().u32(record).u32(key).f32(modifier).u8(1),
+        base_full(id, p, &[]),
+        &[],
+    )
+}
+
+/// `appearance.md` §7.4: a Switch on a random-appearance type (here the mood property)
+/// whose case is a Collection of two piece groups (Random nodes over Appearance nodes),
+/// plus an optional piece with probability 0.25 and a plain Appearance node outside any
+/// Random. Seeded picks choose one piece per group; the candidates keep the client's start
+/// order (a Collection's ports by ascending ordinal, `script-table.md` §7.5).
+#[test]
+fn appearance_nodes_are_listed_and_picked_by_seed() {
+    const REC: u32 = 0x2000_0001;
+    const KEY: u32 = 0x1000_003A;
+    let shirts = random(
+        40,
+        &[
+            (1, vec![appearance_node(41, REC, KEY, 0.01, 1.0)]),
+            (1, vec![appearance_node(42, REC, KEY, 0.02, 1.0)]),
+        ],
+    );
+    let hair = random(
+        50,
+        &[
+            (1, vec![appearance_node(51, REC + 1, KEY, 0.0, 1.0)]),
+            (3, vec![appearance_node(52, REC + 1, KEY, 0.01, 1.0)]),
+            (0, vec![appearance_node(53, REC + 1, KEY, 0.99, 1.0)]),
+        ],
+    );
+    // Stored with descending ordinals: the hair group (ordinal 1) starts first.
+    let case = ordered_collection(
+        30,
+        &[
+            (3, vec![appearance_node(31, REC + 2, KEY, 1.0, 0.25)]),
+            (2, vec![shirts]),
+            (1, vec![hair]),
+        ],
+    );
+    let root = switch(
+        20,
+        PID_MOOD,
+        &[
+            switch_case(&[(PID_MOOD, 9)], &[case]),
+            default_port_pair(&[appearance_node(21, REC + 3, KEY, 1.0, 1.0)]),
+        ],
+    );
+    let plain = appearance_node(10, REC + 4, KEY, 1.0, 1.0);
+    let mut m = HashMap::new();
+    m.insert(Did(CLASS), table(1, &[], &[(STARTUP, vec![plain, root])]));
+    let mut e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    e.properties.set(PID_MOOD, PropertyValue::Enum(9));
+
+    // Without a seed: every node of the case is listed (static analysis), only the node
+    // outside Random and probability is picked.
+    let mut r = ClipResolver::new(&schema, vocab(), fetch(&m));
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    let ids: Vec<u32> = res.appearances.iter().map(|a| a.node_id).collect();
+    assert_eq!(
+        ids,
+        vec![10, 51, 52, 41, 42, 31],
+        "start order; weight 0 never runs"
+    );
+    let picked: Vec<u32> = res
+        .appearances
+        .iter()
+        .filter(|a| a.picked)
+        .map(|a| a.node_id)
+        .collect();
+    assert_eq!(picked, vec![10]);
+    let a52 = res.appearances.iter().find(|a| a.node_id == 52).unwrap();
+    assert!((a52.chance - 0.75).abs() < 1e-6);
+    assert_eq!(
+        (a52.appearance, a52.key, a52.modifier),
+        (Did(REC + 1), KEY, 0.01)
+    );
+
+    // With a seed: one piece per group, the same picks for the same seed, and over many
+    // seeds every alternative with a weight occurs, the optional piece sometimes.
+    let picks = |seed: u64| {
+        let mut r = ClipResolver::new(&schema, vocab(), fetch(&m)).with_random_seed(Some(seed));
+        let res = r.resolve(&e, MotionState::Idle).unwrap();
+        res.appearances
+            .iter()
+            .filter(|a| a.picked)
+            .map(|a| a.node_id)
+            .collect::<Vec<u32>>()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..64u64 {
+        let p = picks(seed);
+        assert_eq!(p, picks(seed), "seed {seed}: deterministic");
+        assert_eq!(p.first(), Some(&10));
+        assert_eq!(
+            p.iter().filter(|&&n| n == 51 || n == 52).count(),
+            1,
+            "{p:?}"
+        );
+        assert_eq!(
+            p.iter().filter(|&&n| n == 41 || n == 42).count(),
+            1,
+            "{p:?}"
+        );
+        assert!(!p.contains(&53));
+        seen.extend(p);
+    }
+    for n in [41, 42, 51, 52, 31] {
+        assert!(seen.contains(&n), "node {n} never picked: {seen:?}");
+    }
+    // Another type: the Default port's piece.
+    e.properties.set(PID_MOOD, PropertyValue::Enum(1));
+    let mut r = ClipResolver::new(&schema, vocab(), fetch(&m)).with_random_seed(Some(1));
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    let ids: Vec<u32> = res.appearances.iter().map(|a| a.node_id).collect();
+    assert_eq!(ids, vec![10, 21]);
+    assert!(res.appearances.iter().all(|a| a.picked));
+}

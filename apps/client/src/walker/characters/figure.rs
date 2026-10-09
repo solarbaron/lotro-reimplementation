@@ -22,7 +22,14 @@
 //!    vertices deformed once in bind space by the figure's deformation; materials
 //!    resolved with the part's appearance layers (`material.md` §9.3) into the walker's
 //!    material plans; held items' parts prepared rigid, keyed by holding location, with an
-//!    attach table of the wearer's locations (`skeleton-anim.md` §8.4).
+//!    attach table of the wearer's locations (`skeleton-anim.md` §8.4), each with its
+//!    stowed or wielded placement (`appearance.md` §5.6).
+//!
+//! A placed figure's start-up scripts may append Appearance nodes to its look (the
+//! random-appearance outfits, `appearance.md` §7.4): the Idle resolution of step 3 lists
+//! them, its Random nodes picking with a generator seeded from the placement's instance ID
+//! (the §7.4 Decision: a figure keeps its look), and when there are any the figure is
+//! assembled again with them before its parts are built.
 //!
 //! The figure's height and slider values are the avatar entity's (`AC_Avatar_Height` 0 is
 //! the shortest River-hobbit, `appearance.md` §6.2): the session model carries no
@@ -51,8 +58,8 @@ use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
-    AssembledCharacter, CharacterAssembler, CharacterSpec, EquippedItem, GameDataSource,
-    MaterialLayer, WieldState,
+    AssembledCharacter, AssemblyOptions, CharacterAssembler, CharacterSpec, EquippedItem,
+    GameDataSource, MaterialLayer, ScriptAppearance, WieldState,
 };
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh};
 use tessera_net::{Body, Equipped};
@@ -115,6 +122,9 @@ pub struct FigureRequest {
     /// `AC_BoneScale_Test` of a playable body (`appearance.md` §6.2, §6.4); `None` keeps the
     /// avatar entity's.
     pub bone_scale: Option<f32>,
+    /// Seed of the figure's script Random picks (`appearance.md` §7.4 Decision: the placed
+    /// figure's instance ID, so it keeps its look); `None` uses 0.
+    pub seed: Option<u64>,
 }
 
 impl FigureRequest {
@@ -141,6 +151,7 @@ impl FigureRequest {
                 self.avatar_height.map_or(u32::MAX, f32::to_bits),
                 self.bone_scale.map_or(u32::MAX, f32::to_bits),
             ],
+            seed: self.seed,
         }
     }
 }
@@ -153,6 +164,7 @@ pub struct FigureKey {
     instance: Option<u64>,
     static_only: bool,
     shape: [u32; 2],
+    seed: Option<u64>,
 }
 
 /// One part ready for upload.
@@ -166,7 +178,8 @@ pub struct PartAsset {
     pub plans: Vec<MaterialPlan>,
     /// Drawn with the figure's skinning palette.
     pub skinned: bool,
-    /// The holding location of a held item's part (`None`: a body part).
+    /// The attach-table key of a held item's part (`None`: a body part): the index of its
+    /// held part, one attach point per placement (`appearance.md` §5.6).
     pub held: Option<u32>,
 }
 
@@ -225,8 +238,8 @@ pub struct FigureAsset {
     pub deformation: Option<Arc<BindDeformation>>,
     /// The shape inputs it was built from (held clips, body shape, slider values).
     pub shape: FigureShape,
-    /// Whole-body scale (`appearance.md` §6.1).
-    pub model_scale: f32,
+    /// Whole-body scale per axis (`appearance.md` §6.1).
+    pub model_scale: [f32; 3],
     /// The figure's `Render_LODClass` (`walker.md` §11.4.3, W22): the first found in the
     /// placement's instance set, then along the 0x47 entity chain from the figure's entity;
     /// `None` when no level holds it (the component's initial values apply, `mesh.md` §8.5).
@@ -324,6 +337,9 @@ pub struct FigureContext {
     pub mesh_config: MeshConfig,
     /// Decoded clips.
     pub clips: ClipStore,
+    /// Tessera's answers for the options a figure's property lookup reads first
+    /// (`appearance.md` §3.3: the updated-avatar option).
+    pub assembly: AssemblyOptions,
 }
 
 impl FigureContext {
@@ -348,6 +364,7 @@ impl FigureContext {
             materials,
             mesh_config,
             clips: ClipStore::default(),
+            assembly: AssemblyOptions::default(),
         }
     }
 }
@@ -381,8 +398,8 @@ pub fn build_figure(
         .ok_or_else(|| FigureError::Unavailable("no assembly vocabulary".into()))?;
     let source =
         GameDataSource::new(&cat.data).map_err(|e| FigureError::Unavailable(e.to_string()))?;
-    let mut asm = CharacterAssembler::new(source, vocab);
-    let c = match req.body {
+    let mut asm = CharacterAssembler::new(source, vocab).with_options(ctx.assembly);
+    let spec = match req.body {
         Body::Character { species, sex } => {
             let mut spec = CharacterSpec::new(species, sex);
             spec.avatar_height = req.avatar_height;
@@ -397,11 +414,22 @@ pub fn build_figure(
                 item.secondary_dye = e.secondary_dye;
                 spec.items.push(item);
             }
-            asm.assemble_character(&spec)?
+            Some(spec)
         }
-        Body::Object(d) => asm.assemble_object(Did(d.0), req.instance.as_deref())?,
+        Body::Object(_) => None,
         _ => return Err(FigureError::UnsupportedBody),
     };
+    let mut assemble = |scripts: &[ScriptAppearance]| match (&spec, req.body) {
+        (Some(spec), _) => asm.assemble_character_with(spec, scripts),
+        (None, Body::Object(d)) => {
+            asm.assemble_object_with(Did(d.0), req.instance.as_deref(), scripts)
+        }
+        (None, _) => Err(tessera_mesh::assembly::AssemblyError::Body {
+            start: Did(0),
+            reason: "unsupported body".into(),
+        }),
+    };
+    let mut c = assemble(&[])?;
     if cancelled() {
         return Err(FigureError::Cancelled);
     }
@@ -430,10 +458,18 @@ pub fn build_figure(
         }
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
-    let (clips, shape) = match &skeleton {
-        Some(s) => select_clips(ctx, &c, s, &mut notes),
-        None => (FigureClips::default(), FigureShape::default()),
+    let (clips, shape, scripts) = match &skeleton {
+        Some(s) => select_clips(ctx, &c, s, req.seed, &mut notes),
+        None => (FigureClips::default(), FigureShape::default(), Vec::new()),
     };
+    // The Appearance nodes the start-up scripts ran (`appearance.md` §7.4): assembled
+    // after the lists, on the same body and setup.
+    if !scripts.is_empty() {
+        c = assemble(&scripts)?;
+        if cancelled() {
+            return Err(FigureError::Cancelled);
+        }
+    }
     notes.extend(shape.notes.iter().take(4).cloned());
     // Held clips and the bind-space deformation (`appearance.md` §6.4, `script-table.md`
     // §6.7, §6.8), by the path the explorer shares.
@@ -482,10 +518,13 @@ pub fn build_figure(
             Err(e) => notes.push(format!("part {}: {e}", p.mesh)),
         }
     }
-    // Held items: rigid parts at the wearer's holding locations (skeleton-anim.md §8.4).
+    // Held items: rigid parts at the wearer's holding locations (skeleton-anim.md §8.4),
+    // each at its placement (`appearance.md` §5.6) and scaled relative to the figure
+    // (§6.1). One attach point per held part, keyed by its index.
     let mut attach_points = Vec::new();
     if skeleton.is_some() {
-        for h in &c.held {
+        for (index, h) in c.held.iter().enumerate() {
+            let key = u32::try_from(index).unwrap_or(u32::MAX);
             let mut any = false;
             for &mesh in &h.parts {
                 if parts.len() >= MAX_FIGURE_PARTS {
@@ -496,7 +535,7 @@ pub fn build_figure(
                 }
                 match build_part(ctx, mesh, None, &[], None) {
                     Ok(mut part) => {
-                        part.held = Some(h.location);
+                        part.held = Some(key);
                         parts.push(part);
                         any = true;
                     }
@@ -504,20 +543,25 @@ pub fn build_figure(
                 }
             }
             if any {
+                let mut frame = h.placement.applied_to(&h.frame);
+                let rel = c.held_scale(h);
+                for (s, r) in frame.scale.iter_mut().zip(rel) {
+                    *s *= r;
+                }
                 attach_points.push(AttachPointDesc {
-                    key: h.location,
+                    key,
                     bone: match h.anchor {
                         Anchor::Bone(b) => i32::try_from(b).unwrap_or(-1),
                         Anchor::Origin => -1,
                     },
                     frame: AttachFrame {
-                        position: h.frame.position,
-                        scale: h.frame.scale,
+                        position: frame.position,
+                        scale: frame.scale,
                         rotation_wxyz: [
-                            h.frame.rotation.w,
-                            h.frame.rotation.x,
-                            h.frame.rotation.y,
-                            h.frame.rotation.z,
+                            frame.rotation.w,
+                            frame.rotation.x,
+                            frame.rotation.y,
+                            frame.rotation.z,
                         ],
                     },
                 });
@@ -536,12 +580,13 @@ pub fn build_figure(
         }
         _ => None,
     };
+    // `model_scale` applies the client's limit (§6.1); also refuse absurdly large scales.
     let model_scale = c.model_scale();
-    let model_scale = if model_scale.is_finite() && model_scale > 0.0 && model_scale < 100.0 {
+    let model_scale = if model_scale.iter().all(|s| *s < 100.0) {
         model_scale
     } else {
         notes.push("unusable model scale; drawn at 1".into());
-        1.0
+        [1.0; 3]
     };
     let lod_class = figure_lod_class(ctx, req.instance.as_deref(), &c.chain);
     Ok(FigureAsset {
@@ -709,33 +754,36 @@ fn select_clips(
     ctx: &FigureContext,
     c: &AssembledCharacter,
     skeleton: &Arc<AnimSkeleton>,
+    seed: Option<u64>,
     notes: &mut Vec<String>,
-) -> (FigureClips, FigureShape) {
+) -> (FigureClips, FigureShape, Vec<ScriptAppearance>) {
     let cat = &ctx.catalog;
     let data = &cat.data;
     let mut out = FigureClips::default();
     let mut shape = FigureShape::default();
+    let mut appearances = Vec::new();
     let Some(vocab) = cat.scripts.clone() else {
         notes.push("no script vocabulary; not animated".into());
-        return (out, shape);
+        return (out, shape, appearances);
     };
     let Ok(registry) = data.registry() else {
-        return (out, shape);
+        return (out, shape, appearances);
     };
     let dict = registry.dictionary();
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             notes.push(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return (out, shape);
+            return (out, shape, appearances);
         }
     };
     let mut scripts = chain.scripts;
     if let Some(inst) = &c.clip_inputs.instance_properties {
         scripts.add_property_set(inst, &vocab);
     }
-    let mut resolver =
-        ClipResolver::new(dict, vocab, |d: Did| data.read(d)).with_dictionary_defaults(dict);
+    let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
+        .with_dictionary_defaults(dict)
+        .with_random_seed(Some(seed.unwrap_or(0)));
     let mut idle_clips: Vec<Did> = Vec::new();
     let weight = |c: &ClipCandidate| c.blend_weight * c.chance;
     for state in [MotionState::Idle, MotionState::Walk, MotionState::Run] {
@@ -761,6 +809,16 @@ fn select_clips(
             if let Some(asm) = &cat.assembly {
                 shape = figure_shape(data, asm, c, &r);
             }
+            appearances = r
+                .appearances
+                .iter()
+                .filter(|a| a.picked)
+                .map(|a| ScriptAppearance {
+                    record: a.appearance,
+                    key: a.key,
+                    modifier: a.modifier,
+                })
+                .collect();
             if tracing::enabled!(tracing::Level::TRACE) {
                 for c in r.candidates.iter().take(16) {
                     tracing::trace!(
@@ -857,5 +915,5 @@ fn select_clips(
     {
         out.run = None;
     }
-    (out, shape)
+    (out, shape, appearances)
 }

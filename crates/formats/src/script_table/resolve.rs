@@ -30,6 +30,12 @@
 //! candidate and deformer lists are in this order, so "the most recently started" node of
 //! `appearance.md` §6.4 (A33) is the last one of its kind.
 //!
+//! The resolution also lists every Appearance node (kind 58) that would run
+//! ([`ClipResolution::appearances`], `appearance.md` §7.4), in the same order. Its Random
+//! nodes and node probabilities can additionally **pick** with a seeded generator
+//! ([`ClipResolver::with_random_seed`], §7.4 rules): the picked candidates are the
+//! figure's random-appearance outfit. The picks do not change the clip candidates.
+//!
 //! Everything is bounded ([`ResolveLimits`]): table count, include depth, scriptlet and run
 //! nesting, evaluation depth, visited nodes, the work done inside the visits (ports, case
 //! values and parameter bindings scanned) and candidates. A scriptlet that invokes itself
@@ -124,6 +130,31 @@ impl MeshDeformerFieldPids {
     }
 }
 
+/// Field PIDs of the Appearance node (kind 58, §5.1): `AppearanceScript_Appearance`,
+/// `AppearanceScript_Key`, `AppearanceScript_Modifier`, for driven values (`appearance.md`
+/// §7.4: a few nodes take their record, key or modifier from driven properties).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AppearanceFieldPids {
+    /// `AppearanceScript_Appearance`.
+    pub appearance: Option<u32>,
+    /// `AppearanceScript_Key`.
+    pub key: Option<u32>,
+    /// `AppearanceScript_Modifier`.
+    pub modifier: Option<u32>,
+}
+
+impl AppearanceFieldPids {
+    /// Looks the names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        Self {
+            appearance: names.pid_of("AppearanceScript_Appearance"),
+            key: names.pid_of("AppearanceScript_Key"),
+            modifier: names.pid_of("AppearanceScript_Modifier"),
+        }
+    }
+}
+
 /// The property IDs and enum keys clip selection needs, looked up by name in the data
 /// (§8.1, §8.4, §11.3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -174,6 +205,8 @@ pub struct ScriptVocabulary {
     pub slider_definitions: Option<u32>,
     /// MeshDeformer field PIDs (§6.9).
     pub mesh_deformer: MeshDeformerFieldPids,
+    /// Appearance-node field PIDs (§5.1 kind 58; `appearance.md` §7.4).
+    pub appearance: AppearanceFieldPids,
     /// `Script_CombinationType` (enum 0x2300016D): the per-script property (§2.4) that marks
     /// a definition as overriding (§8.2 step 2). `None` when the dictionary lacks it: then
     /// every definition is additive.
@@ -265,6 +298,7 @@ impl ScriptVocabulary {
             slider_values: opt("BoneSlider_ValueArray_String"),
             slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
             mesh_deformer: MeshDeformerFieldPids::from_names(dict),
+            appearance: AppearanceFieldPids::from_names(dict),
             combination_type,
             combination_overriding,
         })
@@ -914,6 +948,70 @@ pub enum DeformerCandidate {
     },
 }
 
+/// An Appearance node (kind 58, §5.1) that a resolution reached (`appearance.md` §7.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppearanceCandidate {
+    /// `AppearanceScript_Appearance` after driven values: a 0x20 record.
+    pub appearance: Did,
+    /// `AppearanceScript_Key` after driven values: an appearance key.
+    pub key: u32,
+    /// `AppearanceScript_Modifier` after driven values.
+    pub modifier: f32,
+    /// `AppearanceScript_Persistent`.
+    pub persistent: bool,
+    /// Whether the seeded picks of [`ClipResolver::with_random_seed`] reach the node: every
+    /// Random node above it picked the port leading to it and every probability draw above
+    /// it succeeded. The figure's look is the picked candidates, in order.
+    pub picked: bool,
+    /// Product of Random shares and node probabilities above it (1 when certain).
+    pub chance: f32,
+    /// The table whose script started the chain.
+    pub table: Did,
+    /// The scriptlet holding the node, or the null DID for a table node.
+    pub scriptlet: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+}
+
+/// The generator of the seeded picks: SplitMix64 (a public-domain 64-bit generator). Any
+/// uniform generator gives the client's distribution (§7.4); this one is small and fully
+/// determined by its seed.
+#[derive(Debug, Clone)]
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A uniform integer in 0 … `n` − 1 (`n` > 0), by rejection so that every value is
+    /// equally likely.
+    fn below(&mut self, n: u64) -> u64 {
+        let zone = u64::MAX - (u64::MAX % n);
+        loop {
+            let v = self.next_u64();
+            if v < zone {
+                return v % n;
+            }
+        }
+    }
+
+    /// A uniform number in [0, 1).
+    fn unit(&mut self) -> f32 {
+        #[allow(clippy::cast_precision_loss)]
+        let v = (self.next_u64() >> 40) as f32;
+        v / 16_777_216.0
+    }
+}
+
 /// One clip an entity would start, with the fields that control playback (§6.1) after
 /// scriptlet parameters and driven properties were applied.
 #[derive(Debug, Clone, PartialEq)]
@@ -1038,6 +1136,10 @@ pub struct ClipResolution {
     /// Every bind-space deformer registered (§6.9), in the same start order: the last
     /// slider deformer is the most recently started one (`appearance.md` §6.4, A33).
     pub deformers: Vec<DeformerCandidate>,
+    /// Every Appearance node (kind 58) that would run, in the same start order
+    /// (`appearance.md` §7.4: the elements a figure's start-up scripts append to its
+    /// appearance after its lists; a later one wins equal-priority ties).
+    pub appearances: Vec<AppearanceCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
     /// Nodes visited.
@@ -1117,6 +1219,9 @@ pub struct ClipResolver<'s, S: ?Sized, F, B, E> {
     defaults: Option<Box<dyn Fn(u32) -> Option<PropertyValue> + Send + Sync + 's>>,
     /// Whether an unset scalar property without a default reads as 0.
     unset_as_zero: bool,
+    /// Seed of the Random-node picks of [`AppearanceCandidate::picked`] (see
+    /// [`ClipResolver::with_random_seed`]).
+    random_seed: Option<u64>,
     _marker: PhantomData<fn() -> (B, E)>,
 }
 
@@ -1148,8 +1253,23 @@ where
             failures: HashMap::new(),
             defaults: None,
             unset_as_zero: false,
+            random_seed: None,
             _marker: PhantomData,
         }
+    }
+
+    /// Makes Random nodes (§7.4) and node probabilities pick, for the
+    /// [`AppearanceCandidate::picked`] flag, with a generator seeded by `seed` and restarted
+    /// for every resolution (so one seed always gives the same picks). Clip candidates are
+    /// unaffected: they still list every Random port with its share. Without a seed nothing
+    /// below a Random node or a node with a probability below 1 counts as picked.
+    ///
+    /// Tessera seeds a placed figure's picks from its instance ID so that the figure keeps
+    /// its look (`appearance.md` §7.4 Decision; the client draws from one global generator).
+    #[must_use]
+    pub fn with_random_seed(mut self, seed: Option<u64>) -> Self {
+        self.random_seed = seed;
+        self
     }
 
     /// Sets where the values of properties that the state does not set come from: normally
@@ -1438,6 +1558,7 @@ where
         }
         let defined: HashSet<u32> = index.keys().map(|&(k, _)| k).collect();
         let startup = self.vocab.startup_key;
+        let rng = self.random_seed.map(SplitMix64::new);
         let mut ev = Eval {
             r: self,
             state,
@@ -1449,6 +1570,8 @@ where
             gathered: HashMap::new(),
             out: Vec::new(),
             deformers: Vec::new(),
+            appearances: Vec::new(),
+            rng,
             issues: Vec::new(),
             reported: HashSet::new(),
             visits: 0,
@@ -1494,6 +1617,7 @@ where
         let Eval {
             out,
             deformers,
+            appearances,
             issues,
             visits,
             ..
@@ -1502,6 +1626,7 @@ where
             closure,
             candidates: out,
             deformers,
+            appearances,
             issues,
             nodes_visited: visits,
         })
@@ -1513,12 +1638,16 @@ where
 struct Ctx {
     weight: f32,
     chance: f32,
+    /// Whether this branch is the one the seeded picks take (see
+    /// [`AppearanceCandidate::picked`]).
+    picked: bool,
 }
 
 impl Ctx {
     const ONE: Self = Self {
         weight: 1.0,
         chance: 1.0,
+        picked: true,
     };
 }
 
@@ -1642,6 +1771,9 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     gathered: HashMap<u32, Arc<[Definition]>>,
     out: Vec<ClipCandidate>,
     deformers: Vec<DeformerCandidate>,
+    appearances: Vec<AppearanceCandidate>,
+    /// The generator of the seeded picks ([`ClipResolver::with_random_seed`]).
+    rng: Option<SplitMix64>,
     issues: Vec<ResolveIssue>,
     /// Issues already in `issues`.
     reported: HashSet<IssueKey>,
@@ -1874,8 +2006,16 @@ where
         if p.is_nan() || p <= 0.0 {
             return Ok(());
         }
+        // A probability below 1 is a draw (§11.3 step 3); only a picked branch draws.
+        let picked = ctx.picked
+            && (p >= 1.0
+                || match self.rng.as_mut() {
+                    Some(rng) => rng.unit() < p,
+                    None => false,
+                });
         let ctx = Ctx {
             chance: ctx.chance * p.min(1.0),
+            picked,
             ..ctx
         };
         self.depth += 1;
@@ -1929,6 +2069,15 @@ where
                 definitions,
             } => {
                 self.slider_deformer(n, values, *definitions);
+                Ok(())
+            }
+            NodeData::Appearance {
+                appearance,
+                key,
+                modifier,
+                persistent,
+            } => {
+                self.appearance(n, (*appearance, *key, *modifier, *persistent), scope, ctx);
                 Ok(())
             }
             // Containers whose children all start: Collection (by ascending ordinal, §7.5),
@@ -2151,10 +2300,37 @@ where
             })
             .collect();
         let total: f64 = ports.iter().map(|(w, _)| f64::from(*w)).sum();
-        for (w, children) in ports {
+        // The seeded pick (§7.4 rules 1–3; ports walked in stored order, which keeps the
+        // distribution): only a picked branch draws. No-repeat memory only matters when a
+        // node runs again, which one resolution never does.
+        let pick = if !ctx.picked {
+            None
+        } else if ports.len() == 1 {
+            Some(0)
+        } else {
+            match self.rng.as_mut() {
+                Some(rng) => {
+                    let t: u64 = ports.iter().map(|(w, _)| u64::from(*w)).sum();
+                    (t > 0).then(|| {
+                        let k = rng.below(t);
+                        let mut sum = 0u64;
+                        ports
+                            .iter()
+                            .position(|(w, _)| {
+                                sum += u64::from(*w);
+                                sum > k
+                            })
+                            .unwrap_or(0)
+                    })
+                }
+                None => None,
+            }
+        };
+        for (i, (w, children)) in ports.into_iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
             let ctx = Ctx {
                 chance: ctx.chance * (f64::from(w) / total) as f32,
+                picked: pick == Some(i),
                 ..ctx
             };
             self.nodes(children, scope, ctx)?;
@@ -2432,6 +2608,57 @@ where
             values,
             values_source,
             table: self.table,
+        });
+    }
+
+    /// Registers an Appearance node (kind 58) with its driven record, key and modifier
+    /// (`appearance.md` §7.4; driven values win, as for animation fields). The modifier is
+    /// the stored one (the node's intensity factor is 1 in the whole install, §7.4).
+    fn appearance(
+        &mut self,
+        n: &Node,
+        (appearance, key, modifier, persistent): (Did, u32, f32, bool),
+        scope: &Scope<'_>,
+        ctx: Ctx,
+    ) {
+        if self.appearances.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        if !self.charge(n.base.driven.len().saturating_add(1)) {
+            return;
+        }
+        let pids = self.r.vocab.appearance;
+        let (mut appearance, mut key, mut modifier) = (appearance, key, modifier);
+        for &(field, source) in &n.base.driven {
+            let Some(v) = self.state.get(source) else {
+                continue;
+            };
+            if Some(field) == pids.appearance {
+                if let Some(d) = v.as_did() {
+                    appearance = d;
+                }
+            } else if Some(field) == pids.key {
+                if let Some(k) = v.as_bits().and_then(|b| u32::try_from(b).ok()) {
+                    key = k;
+                }
+            } else if Some(field) == pids.modifier {
+                #[allow(clippy::cast_possible_truncation)]
+                if let Some(m) = v.as_f64() {
+                    modifier = m as f32;
+                }
+            }
+        }
+        self.appearances.push(AppearanceCandidate {
+            appearance,
+            key,
+            modifier,
+            persistent,
+            picked: ctx.picked,
+            chance: ctx.chance,
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
         });
     }
 

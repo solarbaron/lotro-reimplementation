@@ -211,7 +211,7 @@ impl PlayState {
     /// Moves the placement by extracted motion `m` (`skeleton-anim.md` §7.3) of a figure
     /// drawn at model scale `scale`: the motion was removed from the bones, which are drawn
     /// scaled, so its translation is scaled too (and the feet do not slide).
-    pub fn apply_motion(&mut self, m: MotionDelta, scale: f32) {
+    pub fn apply_motion(&mut self, m: MotionDelta, scale: [f32; 3]) {
         let (p, yaw) = self.placement;
         let np = p + Quat::from_rotation_z(yaw) * (m.translation * usable_scale(scale));
         let (axis, angle) = m.rotation.to_axis_angle();
@@ -234,24 +234,25 @@ impl PlayState {
     }
 
     /// The figure's placement matrix with `scale` (position, yaw about +Z, then the
-    /// uniform model scale at the origin, `appearance.md` §6.1).
+    /// per-axis model scale at the origin, `appearance.md` §6.1).
     #[must_use]
-    pub fn placement_matrix(&self, scale: f32) -> Mat4 {
+    pub fn placement_matrix(&self, scale: [f32; 3]) -> Mat4 {
         let (p, yaw) = self.placement;
         let s = usable_scale(scale);
         let m = Mat4::from_translation(p)
             * Mat4::from_quat(Quat::from_rotation_z(yaw))
-            * Mat4::from_scale(Vec3::splat(s));
+            * Mat4::from_scale(s);
         if m.is_finite() { m } else { Mat4::IDENTITY }
     }
 }
 
-/// `scale` when it is a usable model scale, else 1.
-fn usable_scale(scale: f32) -> f32 {
-    if scale.is_finite() && scale > 0.0 {
-        scale
+/// `scale` when it is a usable model scale (every component finite and positive), else 1.
+fn usable_scale(scale: [f32; 3]) -> Vec3 {
+    let s = Vec3::from_array(scale);
+    if s.is_finite() && s.min_element() > 0.0 {
+        s
     } else {
-        1.0
+        Vec3::ONE
     }
 }
 
@@ -1959,17 +1960,17 @@ fn viewport_widget(
 /// The sphere to frame a figure on: the bind-pose bounds scaled by the model scale, with
 /// the width counted at half (bind poses hold the arms out; animated figures do not).
 #[must_use]
-pub fn frame_sphere(scene: &crate::scene::SceneProduct, scale: f32) -> ([f32; 3], f32) {
-    let s = if scale.is_finite() && scale > 0.0 {
-        scale
-    } else {
-        1.0
-    };
+pub fn frame_sphere(scene: &crate::scene::SceneProduct, scale: [f32; 3]) -> ([f32; 3], f32) {
+    let s = usable_scale(scale).to_array();
     let Some((lo, hi)) = scene.aabb else {
-        return (scene.sphere.0.map(|v| v * s), scene.sphere.1 * s);
+        let max = s[0].max(s[1]).max(s[2]);
+        return (
+            [0, 1, 2].map(|i| scene.sphere.0[i] * s[i]),
+            scene.sphere.1 * max,
+        );
     };
-    let c = [0, 1, 2].map(|i| (lo[i] + hi[i]) * 0.5 * s);
-    let h = [0, 1, 2].map(|i| (hi[i] - lo[i]).abs() * 0.5 * s);
+    let c = [0, 1, 2].map(|i| (lo[i] + hi[i]) * 0.5 * s[i]);
+    let h = [0, 1, 2].map(|i| (hi[i] - lo[i]).abs() * 0.5 * s[i]);
     let r = (h[0] * 0.5).max(h[1]).max(h[2]) * 1.1;
     (c, if r.is_finite() && r > 1e-3 { r } else { 1.0 })
 }
@@ -2167,23 +2168,23 @@ mod tests {
             rotation: Quat::from_rotation_z(0.3),
         };
         let mut p = PlayState::default();
-        p.apply_motion(m, 0.7);
+        p.apply_motion(m, [0.7; 3]);
         assert!((p.placement.0 - Vec3::new(0.0, 0.7 * 3.167, 0.0)).length() < 1e-5);
         assert!((p.placement.1 - 0.3).abs() < 1e-5);
         // The trail starts where the cycle started and ends at the figure.
-        let base = trail_base(p.placement_matrix(0.7), m);
+        let base = trail_base(p.placement_matrix([0.7; 3]), m);
         assert!(base.transform_point3(Vec3::ZERO).length() < 1e-5);
         assert!((base.transform_point3(m.translation) - p.placement.0).length() < 1e-5);
         // Garbage scales count as 1; garbage motion is ignored.
         let mut q = PlayState::default();
-        q.apply_motion(m, f32::NAN);
+        q.apply_motion(m, [f32::NAN; 3]);
         assert!((q.placement.0.y - 3.167).abs() < 1e-5);
         q.apply_motion(
             MotionDelta {
                 translation: Vec3::splat(f32::INFINITY),
                 rotation: Quat::IDENTITY,
             },
-            1.0,
+            [1.0; 3],
         );
         assert!(q.placement.0.is_finite());
     }
@@ -2201,7 +2202,7 @@ mod tests {
         // Regression: a rebuilt instance drew its first frames unscaled in the bind pose
         // with held items at the feet.
         let (a, b, other) = (chain(3), chain(3), chain(4));
-        let placement = PlayState::default().placement_matrix(0.7);
+        let placement = PlayState::default().placement_matrix([0.7; 3]);
         let last = PoseDraw {
             palette: vec![Mat4::from_translation(Vec3::X); 3],
             attach: vec![(5, Mat4::IDENTITY)],
@@ -2261,10 +2262,10 @@ mod tests {
         q.speed = f32::NAN;
         q.advance(0.05, 1.0, 1.0);
         assert!(q.time.is_finite());
-        let m = PlayState::default().placement_matrix(0.7);
+        let m = PlayState::default().placement_matrix([0.7; 3]);
         assert!((m.x_axis.x - 0.7).abs() < 1e-6);
         assert_eq!(
-            PlayState::default().placement_matrix(f32::NAN),
+            PlayState::default().placement_matrix([f32::NAN; 3]),
             Mat4::IDENTITY
         );
     }

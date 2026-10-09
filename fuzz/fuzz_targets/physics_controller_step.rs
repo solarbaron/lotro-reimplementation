@@ -28,8 +28,8 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::Setup;
 use tessera_formats::setup::{CollisionBox, CollisionCapsule, CollisionSphere, Frame, Quaternion};
 use tessera_physics::controller::{
-    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind,
-    MAX_SPEED, MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
+    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind, MAX_SPEED,
+    MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
     MovementState, MoverState, NoWater, PlayerMovementRecord, StepEnv, StepOutcome, WaterContact,
     WaterQuery,
 };

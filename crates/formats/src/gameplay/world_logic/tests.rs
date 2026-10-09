@@ -223,27 +223,263 @@ fn script_set(l: &WorldLogicLabels, test: Option<u32>, quest: u32) -> PropertySe
     set(e)
 }
 
+const STARTUP: u32 = 5;
+const TRUE_KEY: u32 = 0x1000_1CF6;
+const FALSE_KEY: u32 = 0x1000_1CF7;
+const PACKAGE: u32 = 0x7000_0F0D;
+
+mod graph {
+    //! Synthetic node builders for the quest-state tables of §5.2.
+    use super::*;
+    use crate::script_table::{
+        BaseBlock, GameCallbackNode, Node, NodeData, NodeKind, Port, PortPayload, PortType,
+        RunNode, SwitchCase, SwitchNode, TimerNode, WhenTest,
+    };
+
+    pub fn node(kind: NodeKind, data: NodeData, ports: Vec<Port>) -> Node {
+        Node {
+            kind,
+            data,
+            base: BaseBlock::default(),
+            particle_flag: None,
+            ports,
+            targets: Vec::new(),
+        }
+    }
+
+    pub fn run(key: u32) -> Node {
+        node(
+            NodeKind::RUN,
+            NodeData::Run(Box::new(RunNode {
+                script: key,
+                persistent: true,
+                ..RunNode::default()
+            })),
+            Vec::new(),
+        )
+    }
+
+    pub fn timer(delay: f32, children: Vec<Node>) -> Node {
+        node(
+            NodeKind::TIMER,
+            NodeData::Timer(TimerNode::default()),
+            vec![Port {
+                port_type: PortType::DEFAULT,
+                payload: PortPayload::F32(delay),
+                children,
+            }],
+        )
+    }
+
+    fn value(v: bool, children: Vec<Node>) -> Port {
+        Port {
+            port_type: PortType::SWITCH_VALUE,
+            payload: PortPayload::Value(Some(Box::new(PropertyEntry {
+                pid: 0x99,
+                value: PropertyValue::Bool(v),
+            }))),
+            children,
+        }
+    }
+
+    /// A quest-entry callback driven from the first (or `_2`) triple.
+    pub fn callback(l: &WorldLogicLabels, second: bool, t: Vec<Node>, f: Vec<Node>) -> Node {
+        let q = &l.quest;
+        let c = &l.callback;
+        let (a, b, o) = if second {
+            (q.quest_id_2, q.quest_status_2, q.quest_operator_2)
+        } else {
+            (q.quest_id, q.quest_status, q.quest_operator)
+        };
+        let mut n = node(
+            NodeKind::GAME_CALLBACK,
+            NodeData::GameCallback(Box::new(GameCallbackNode {
+                package: Did(PACKAGE),
+                ..GameCallbackNode::default()
+            })),
+            vec![value(true, t), value(false, f)],
+        );
+        n.base.driven = vec![
+            (pid(c.quest_id), pid(a)),
+            (pid(c.quest_status), pid(b)),
+            (pid(c.operator), pid(o)),
+        ];
+        n
+    }
+
+    pub fn switch(property: u32, cases: Vec<(u32, Vec<Node>)>) -> Node {
+        node(
+            NodeKind::SWITCH,
+            NodeData::Switch(SwitchNode {
+                property,
+                persistent: true,
+                autonomous: false,
+                synchronized: false,
+            }),
+            cases
+                .into_iter()
+                .map(|(v, children)| Port {
+                    port_type: PortType::SWITCH_VALUE,
+                    payload: PortPayload::SwitchCase(Box::new(SwitchCase {
+                        values: vec![Some(PropertyEntry {
+                            pid: property,
+                            value: PropertyValue::Enum(v),
+                        })],
+                        operator: 3,
+                        ..SwitchCase::default()
+                    })),
+                    children,
+                })
+                .collect(),
+        )
+    }
+
+    pub fn quest_guard(l: &WorldLogicLabels, children: Vec<Node>) -> Node {
+        node(
+            NodeKind::WHEN,
+            NodeData::Switch(SwitchNode {
+                property: pid(l.quest.quest_id),
+                persistent: false,
+                autonomous: false,
+                synchronized: false,
+            }),
+            vec![Port {
+                port_type: PortType::WHEN_TEST,
+                payload: PortPayload::WhenTest(Box::new(WhenTest {
+                    constant: Some(PropertyEntry {
+                        pid: pid(l.quest.quest_id),
+                        value: PropertyValue::DidRef(Did(0)),
+                    }),
+                    operator: 3,
+                    ..WhenTest::default()
+                })),
+                children,
+            }],
+        )
+    }
+
+    pub fn light() -> Node {
+        node(NodeKind::LIGHT, NodeData::None, Vec::new())
+    }
+
+    pub fn table(roots: Vec<Node>) -> ScriptTable {
+        ScriptTable {
+            did: Did(0x0700_0001),
+            kind: 2,
+            scripts: vec![crate::script_table::Script {
+                key: STARTUP,
+                roots,
+            }],
+            ..ScriptTable::default()
+        }
+    }
+}
+
+/// The parts of a table (§5.2.1).
+fn read_test(
+    l: &WorldLogicLabels,
+    roots: Vec<crate::script_table::Node>,
+) -> Option<QuestStateTest> {
+    QuestStateTest::read(
+        &graph::table(roots),
+        &l.quest,
+        &l.callback,
+        STARTUP,
+        Some(Did(PACKAGE)),
+    )
+}
+
+/// The graph of 0x070014AF (§5.2): timer, quest-ID guard, test override, one entry.
+fn gated_single(l: &WorldLogicLabels) -> QuestStateTest {
+    use graph::*;
+    let cb = callback(l, false, vec![run(TRUE_KEY)], vec![run(FALSE_KEY)]);
+    let sw = switch(
+        pid(l.quest.test),
+        vec![
+            (0, vec![cb]),
+            (1, vec![run(TRUE_KEY)]),
+            (2, vec![run(FALSE_KEY)]),
+        ],
+    );
+    read_test(l, vec![timer(0.2, vec![quest_guard(l, vec![sw])])]).expect("quest-state test")
+}
+
+#[test]
+fn quest_state_tests_are_read_from_their_parts() {
+    use graph::*;
+    let l = labels();
+    let g = gated_single(&l);
+    assert_eq!(g.delay, Some(0.2));
+    assert!(g.quest_id_guard && g.test_override && !g.phased_out_guard);
+    assert_eq!((g.entries, g.package), (1, Did(PACKAGE)));
+    assert_eq!(g.true_leaf, QuestStateLeaf::Run(TRUE_KEY));
+    assert_eq!(g.false_leaf, QuestStateLeaf::Run(FALSE_KEY));
+    // 0x070014BB: two chained entries; the first one's false port is the False leaf.
+    let inner = callback(&l, true, vec![run(TRUE_KEY)], vec![run(FALSE_KEY)]);
+    let outer = callback(&l, false, vec![inner], vec![run(FALSE_KEY)]);
+    let d = read_test(
+        &l,
+        vec![timer(
+            0.2,
+            vec![switch(pid(l.quest.test), vec![(0, vec![outer])])],
+        )],
+    )
+    .unwrap();
+    assert_eq!(d.entries, 2);
+    assert_eq!(d.true_leaf, QuestStateLeaf::Run(TRUE_KEY));
+    // 0x070014B1: the phased-out guard.
+    let cb = callback(&l, false, vec![run(TRUE_KEY)], vec![run(FALSE_KEY)]);
+    let po = switch(pid(l.quest.phased_out), vec![(0, vec![cb])]);
+    let p = read_test(
+        &l,
+        vec![timer(
+            1.0,
+            vec![switch(pid(l.quest.test), vec![(0, vec![po])])],
+        )],
+    )
+    .unwrap();
+    assert!(p.phased_out_guard && p.test_override && !p.quest_id_guard);
+    // WL23 (0x07001961): the callback as the root, only its true port wired.
+    let w = read_test(&l, vec![callback(&l, false, vec![light()], vec![])]).unwrap();
+    assert_eq!(w.delay, None);
+    assert_eq!(w.true_leaf, QuestStateLeaf::Nodes(1));
+    assert_eq!(w.false_leaf, QuestStateLeaf::Nothing);
+    // Another node on the path: not a quest-state test; another package: none either.
+    let cb = callback(&l, false, vec![run(TRUE_KEY)], vec![]);
+    assert!(
+        read_test(
+            &l,
+            vec![timer(1.0, vec![switch(0x4242, vec![(0, vec![cb])])])]
+        )
+        .is_none()
+    );
+    let cb = callback(&l, false, vec![run(TRUE_KEY)], vec![]);
+    assert!(
+        QuestStateTest::read(
+            &table(vec![cb]),
+            &l.quest,
+            &l.callback,
+            STARTUP,
+            Some(Did(1))
+        )
+        .is_none()
+    );
+}
+
 #[test]
 fn worked_example_script_path() {
     let l = labels();
+    let gated = gated_single(&l);
     let s = QuestStateScript::read(&l.quest, &script_set(&l, None, Q));
     let completed = journal(&[], &[Q]);
     let none = MapJournal::default();
     let g = EntryGates::default();
     assert_eq!(
-        s.branch(QuestStateGraph::GatedSingle, |c| c.passes(
-            &completed,
-            &g,
-            |_| false
-        )),
+        s.branch(&gated, |c| c.passes(&completed, &g, |_| false)),
         Some(QuestStateBranch::True)
     );
     assert_eq!(
-        s.branch(QuestStateGraph::GatedSingle, |c| c.passes(
-            &none,
-            &g,
-            |_| false
-        )),
+        s.branch(&gated, |c| c.passes(&none, &g, |_| false)),
         Some(QuestStateBranch::False)
     );
     // Draw after the branch: absent True_Draw reads its default true, False_Draw false.
@@ -269,33 +505,66 @@ fn worked_example_script_path() {
     // QuestState_Test = 1: True without the callback.
     let forced = QuestStateScript::read(&l.quest, &script_set(&l, Some(1), Q));
     assert_eq!(
-        forced.branch(QuestStateGraph::GatedSingle, |_| panic!("not called")),
+        forced.branch(&gated, |_| panic!("not called")),
         Some(QuestStateBranch::True)
     );
-    // WL-B8: QuestState_Test = 2 runs only the False script, whatever the quest.
+    // WL-B8: QuestState_Test = 2 runs only the False leaf, whatever the quest.
     let f = QuestStateScript::read(&l.quest, &script_set(&l, Some(2), Q));
-    for g in [
-        QuestStateGraph::GatedSingle,
-        QuestStateGraph::Double,
-        QuestStateGraph::Single,
-        QuestStateGraph::SingleUnlessPhasedOut,
-    ] {
-        assert_eq!(f.branch(g, |_| true), Some(QuestStateBranch::False));
-    }
-    // The gated graph needs a quest; the unswitched one ignores QuestState_Test.
+    assert_eq!(f.branch(&gated, |_| true), Some(QuestStateBranch::False));
+    // The guard needs a quest; a test without an override ignores QuestState_Test.
     let noq = QuestStateScript::read(&l.quest, &script_set(&l, None, 0));
-    assert_eq!(noq.branch(QuestStateGraph::GatedSingle, |_| true), None);
-    assert_eq!(
-        f.branch(QuestStateGraph::Unswitched, |_| true),
-        Some(QuestStateBranch::True)
-    );
-    // Phased out: the decal graph tests nothing.
+    assert_eq!(noq.branch(&gated, |_| true), None);
+    let plain = QuestStateTest {
+        test_override: false,
+        quest_id_guard: false,
+        ..gated.clone()
+    };
+    assert_eq!(f.branch(&plain, |_| true), Some(QuestStateBranch::True));
+    // Phased out: a test with the guard tests nothing.
     let mut po = QuestStateScript::read(&l.quest, &script_set(&l, None, Q));
     po.phased_out = Some(true);
+    let guarded = QuestStateTest {
+        phased_out_guard: true,
+        ..gated
+    };
+    assert_eq!(po.branch(&guarded, |_| true), None);
+}
+
+/// WL-B10: the parts of 0x07001961: a failing entry runs nothing (the false port is not
+/// wired), a passing one the true-port content; `QuestState_Test` is not read.
+#[test]
+fn wl_b10_true_port_only_tables() {
+    use graph::*;
+    let l = labels();
+    let t = read_test(&l, vec![callback(&l, false, vec![light()], vec![])]).unwrap();
+    let s = QuestStateScript::read(&l.quest, &script_set(&l, Some(2), Q));
+    let fail = s.branch(&t, |_| false).map(|b| t.leaf(b));
+    assert_eq!(fail, Some(QuestStateLeaf::Nothing));
+    let pass = s.branch(&t, |_| true).map(|b| t.leaf(b));
     assert_eq!(
-        po.branch(QuestStateGraph::SingleUnlessPhasedOut, |_| true),
-        None
+        pass,
+        Some(QuestStateLeaf::Nodes(1)),
+        "QuestState_Test not read"
     );
+}
+
+/// WL-B11: with a test override, an absent `QuestState_Test` runs the test (as 0); 3 runs
+/// neither leaf; changing it to 1 afterwards runs the True leaf.
+#[test]
+fn wl_b11_test_override_values() {
+    let l = labels();
+    let t = gated_single(&l);
+    let absent = QuestStateScript::read(&l.quest, &script_set(&l, None, Q));
+    let mut called = false;
+    let _ = absent.branch(&t, |_| {
+        called = true;
+        true
+    });
+    assert!(called, "the test runs when QuestState_Test is absent");
+    let three = QuestStateScript::read(&l.quest, &script_set(&l, Some(3), Q));
+    assert_eq!(three.branch(&t, |_| true), None);
+    let one = QuestStateScript::read(&l.quest, &script_set(&l, Some(1), Q));
+    assert_eq!(one.branch(&t, |_| false), Some(QuestStateBranch::True));
 }
 
 #[test]
@@ -380,6 +649,45 @@ fn worked_example_world_event_conditions() {
     let all = ConditionForm::All(vec![(cond(1, 1, 3), None), (cond(2, 3, 1), None)]);
     let any = ConditionForm::Any(vec![(cond(1, 6, 4), None), (cond(2, 3, 1), None)]);
     assert!(all.holds(&s) && any.holds(&s));
+}
+
+/// WL-B9 (§6.7 step 6, WL25): an integer event with `WorldEvent_MaxIntValue` 10 and no
+/// stored minimum, current value 0: operator 3 with value 0 holds; without a value
+/// (*c* = −1) and with 11 the range check fails.
+#[test]
+fn wl_b9_absent_bounds_read_zero() {
+    struct NoMin;
+    impl WorldEventState for NoMin {
+        fn kind(&self, _: Did) -> Option<WorldEventKind> {
+            Some(WorldEventKind::Integer {
+                min: None,
+                max: Some(10),
+            })
+        }
+        fn value(&self, _: Did) -> Option<i64> {
+            Some(0)
+        }
+    }
+    assert!(world_condition_holds(&NoMin, &cond(1, 3, 0), None));
+    let mut none = cond(1, 3, 0);
+    none.value = None;
+    assert!(!world_condition_holds(&NoMin, &none, None));
+    assert!(!world_condition_holds(&NoMin, &cond(1, 3, 11), None));
+    // No stored maximum either: nothing above 0 is accepted.
+    struct NoBounds;
+    impl WorldEventState for NoBounds {
+        fn kind(&self, _: Did) -> Option<WorldEventKind> {
+            Some(WorldEventKind::Integer {
+                min: None,
+                max: None,
+            })
+        }
+        fn value(&self, _: Did) -> Option<i64> {
+            Some(1)
+        }
+    }
+    assert!(!world_condition_holds(&NoBounds, &cond(1, 1, 1), None));
+    assert!(world_condition_holds(&NoBounds, &cond(1, 1, 0), None));
 }
 
 #[test]

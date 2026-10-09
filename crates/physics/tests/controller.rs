@@ -1205,6 +1205,56 @@ fn jump_impulse_from_the_jump_script() {
     );
 }
 
+/// `collision.md` §11.10 Decision item 1 and the gates: `Movement_IsJumping` is true from
+/// the take-off step until the end of the first step at least 0.2 s later outside the air;
+/// a press meanwhile starts nothing; the next press after the landing jumps again.
+#[test]
+fn movement_is_jumping_holds_until_the_landing() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut c = jumping_controller([0.0, 0.0, 0.0]);
+    run(&set, &mut c, MoveInput::default(), 10);
+    assert!(!c.is_jumping());
+    let jump = MoveInput {
+        jump: true,
+        ..MoveInput::default()
+    };
+    let r = c.step(&jump, &env);
+    assert!(r.jumped && r.jump_started);
+    assert!(c.is_jumping());
+    let mut steps = 0;
+    while c.is_jumping() && steps < 600 {
+        let r = c.step(&jump, &env);
+        assert!(!r.jump_started, "refused while jumping");
+        steps += 1;
+    }
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+    // Cleared in the landing step, about 0.8 s after the take-off.
+    let t = steps as f32 * STEP_SECONDS;
+    assert!((t - 0.8).abs() < 0.06, "cleared after {t} s");
+    let r = c.step(&jump, &env);
+    assert!(r.jump_started, "the next press jumps");
+}
+
+/// `collision.md` §11.10 gate 3: no jump starts while sliding (state 6), even where the
+/// table holds a node for it (`Loc_Jumping` has a case for 6; `Movement_ActionKey` refuses
+/// it). Checked on the gate itself.
+#[test]
+fn no_jump_starts_in_states_four_and_six() {
+    assert!(!MovementState::EarthUncontrolledSurface.allows_jump());
+    assert!(!MovementState::EarthNoSurface.allows_jump());
+    for s in [
+        MovementState::WaterControlledSurface,
+        MovementState::WaterNoSurface,
+        MovementState::WaterUncontrolledSurface,
+        MovementState::EarthControlledSurface,
+    ] {
+        assert!(s.allows_jump(), "{s:?}");
+    }
+}
+
 /// CO61 (`collision.md` §13): the player's input of §11.8 through the layering of §11.1
 /// and the target of §11.6 item 1, with the record's layers (the §10.3 values).
 #[test]

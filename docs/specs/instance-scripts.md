@@ -554,6 +554,13 @@ pair is missing from it.
 > census findings (IS13); such a finding never changes what is kept. On every record of this
 > install the rule keeps every stored port.
 
+> **OPEN** (implementer, 2026-10-09): Tessera's node model stores a port type in one byte
+> (`script-table.md` §4.3 frames it as a u8). A tree port whose type is 256 or more (an enum
+> or property-ID value, so not "taken as 0" by step 3) cannot be represented; Tessera drops
+> it with its subtree and logs it, like a port of type 0. No port of this install has such a
+> type. Does the client accept such ports (the declaration lists would decide), and if so,
+> what should a reader do with them?
+
 <a id="s4-6"></a>
 ### 4.6 What runs where
 

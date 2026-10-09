@@ -24,7 +24,6 @@ use std::time::Instant;
 use tessera_dat::ArchiveKind;
 use tessera_formats::Did;
 use tessera_formats::property::PropertyValue;
-use tessera_formats::script_table::NodeKind;
 use tessera_formats::script_table::resolve::{
     ClipResolver, EntityScripts, MotionState, ScriptVocabulary, collect_entity_scripts,
 };
@@ -226,28 +225,42 @@ impl MoverSetup {
     }
 }
 
-/// The jump table of the entity whose scripts start at `start` (`collision.md` §11.10): the
-/// entity's `Loc_Jumping` script ([`ScriptVocabulary::jump_script`]) is run once for each
+/// The jump table of the entity whose scripts start at `start` (`collision.md` §11.10,
+/// §12.4 (c); `script-runtime.md` §30.7): the jump's key script is run once for each
 /// movement state 1–6 with `Entity_FinalElement` and `Entity_Element` set to the state and
 /// the idle motion inputs, and the `IsJump` PhysicsImpulse node that starts with the
-/// highest chance (the first on a tie) becomes the state's node. `None` when the vocabulary
-/// lacks the script or the property, the scripts cannot be read, or no state has a node.
+/// highest chance (the first on a tie) becomes the state's node.
 ///
-/// Tessera Decisions (recorded as OPEN in `collision.md` §12.5): the jump command starts
-/// `Loc_Jumping`; the character is on foot (nothing else running, so its WhenRunning on the
-/// mounted channelling script reports NotRunning); `Movement_CannotJump` keeps its stored
-/// or dictionary value (false when unset, `script-runtime.md` R27); While nodes pass their
-/// children through (their behaviour is unspecified, `script-runtime.md` §18).
+/// The key script is `Movement_ActionKey` ([`ScriptVocabulary::action_key`]), which runs
+/// `Loc_JumpKeyPressed` and then `Loc_Jumping`, so the gates of §11.10 come from the data
+/// (no jump in states 4 and 6; the stored values of the entity's movement-blocking
+/// properties). `Loc_Jumping` sets `Movement_IsJumping` before its While on that property
+/// starts, so the While's test holds and its branch runs (`script-runtime.md` §30.2–§30.4).
+/// When the entity's tables give no node through `Movement_ActionKey`, `Loc_Jumping`
+/// ([`ScriptVocabulary::jump_script`]) is scanned instead for states 1, 2, 3 and 5 (the
+/// states the key script passes, gate 3). `None` when the vocabulary lacks the scripts or
+/// the property, the scripts cannot be read, or no state has a node.
+///
+/// Readings (`collision.md` §11.10 Decision item 3): the character is on foot (nothing else
+/// running, so `Loc_Jumping`'s WhenRunning on the mounted channelling script reports
+/// NotRunning); unset properties read their dictionary default, else their type's zero
+/// value (`script-runtime.md` R27), so `Movement_IsJumping` and `Movement_CannotJump` read
+/// false. `Movement_IsJumping` itself is the controller's at run time
+/// ([`tessera_physics::Controller::is_jumping`]).
 pub fn load_jump_table(
     data: &Data,
     vocab: &ScriptVocabulary,
     start: Did,
     notes: &mut Vec<String>,
 ) -> Option<JumpTable> {
-    let (Some(key), Some(final_element)) = (vocab.jump_script, vocab.final_element) else {
-        notes.push("jump: no Loc_Jumping key or Entity_FinalElement in the data".into());
+    let Some(final_element) = vocab.final_element else {
+        notes.push("jump: no Entity_FinalElement in the data".into());
         return None;
     };
+    if vocab.action_key.is_none() && vocab.jump_script.is_none() {
+        notes.push("jump: no Movement_ActionKey or Loc_Jumping key in the data".into());
+        return None;
+    }
     let registry = data.registry().ok()?;
     let dict = registry.dictionary();
     let scripts: EntityScripts = match collect_entity_scripts(start, dict, vocab, |d| data.read(d))
@@ -258,45 +271,51 @@ pub fn load_jump_table(
             return None;
         }
     };
-    // `script-runtime.md` R27: an unset property reads as its dictionary default, else as
-    // its type's zero value (so `Movement_CannotJump` reads false). The While node on the
-    // on-foot path has no rule in the specs (`script-runtime.md` §18); §11.10 states that
-    // on foot with `Movement_CannotJump` false the Switch on `Entity_FinalElement` picks the
-    // node, so the scan passes through it.
     let mut resolver = ClipResolver::new(dict, vocab.clone(), |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
-        .unset_reads_as_zero(true)
-        .with_pass_through(&[NodeKind::WHILE]);
-    let mut table = JumpTable::new();
-    for k in 1..=6u32 {
-        let Some(state) = MovementState::from_key(k) else {
-            continue;
-        };
-        let mut props = scripts.properties.clone();
-        MotionState::Idle.inputs().apply(vocab, &mut props);
-        props.set(final_element, PropertyValue::Enum(k));
-        if let Some(pid) = vocab.entity_element {
-            props.set(pid, PropertyValue::Enum(k));
-        }
-        let r = match resolver.resolve_script(&scripts, key, props) {
-            Ok(r) => r,
-            Err(e) => {
-                notes.push(format!("jump: state {k}: {e}"));
-                continue;
-            }
-        };
-        let mut best: Option<(f32, JumpNode)> = None;
-        for c in r.impulses.iter().filter(|c| c.node.is_jump) {
-            let w = c.chance * c.blend_weight;
-            let Some(node) = JumpNode::new(c.node.air_time, c.node.expected_gravity) else {
+        .unset_reads_as_zero(true);
+    let mut scan = |key: u32, states: &[u32], notes: &mut Vec<String>| -> JumpTable {
+        let mut table = JumpTable::new();
+        for &k in states {
+            let Some(state) = MovementState::from_key(k) else {
                 continue;
             };
-            if best.is_none_or(|(b, _)| w > b) {
-                best = Some((w, node));
+            let mut props = scripts.properties.clone();
+            MotionState::Idle.inputs().apply(vocab, &mut props);
+            props.set(final_element, PropertyValue::Enum(k));
+            if let Some(pid) = vocab.entity_element {
+                props.set(pid, PropertyValue::Enum(k));
             }
+            let r = match resolver.resolve_script(&scripts, key, props) {
+                Ok(r) => r,
+                Err(e) => {
+                    notes.push(format!("jump: state {k}: {e}"));
+                    continue;
+                }
+            };
+            let mut best: Option<(f32, JumpNode)> = None;
+            for c in r.impulses.iter().filter(|c| c.node.is_jump) {
+                let w = c.chance * c.blend_weight;
+                let Some(node) = JumpNode::new(c.node.air_time, c.node.expected_gravity) else {
+                    continue;
+                };
+                if best.is_none_or(|(b, _)| w > b) {
+                    best = Some((w, node));
+                }
+            }
+            table.set(state, best.map(|(_, n)| n));
         }
-        table.set(state, best.map(|(_, n)| n));
+        table
+    };
+    if let Some(key) = vocab.action_key {
+        let table = scan(key, &[1, 2, 3, 4, 5, 6], notes);
+        if !table.is_empty() {
+            return Some(table);
+        }
+        notes.push("jump: Movement_ActionKey starts no jump node; scanning Loc_Jumping".into());
     }
+    let key = vocab.jump_script?;
+    let table = scan(key, &[1, 2, 3, 5], notes);
     (!table.is_empty()).then_some(table)
 }
 

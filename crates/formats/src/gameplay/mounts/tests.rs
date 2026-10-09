@@ -217,3 +217,29 @@ fn templates_and_riders() {
             .collect();
     assert_eq!(default_world_mounted_max_speed(st, &defaults), Some(16.0));
 }
+
+/// §11.4 (revised 2026-10-09): a synthetic effect scale (0.9, 1.0, 1.1) scales the mount per
+/// axis; with `UseParentScale` 1 and a rider final scale of (0.7, 0.7, 0.7) the mount is
+/// drawn at (0.63, 0.7, 0.77).
+#[test]
+fn mount_scale_is_per_axis() {
+    let mut mesh = MountMesh {
+        entity: Did(0x4700_0001),
+        holding_location: 1,
+        bone_offset: [0.0; 3],
+        scale: [0.9, 1.0, 1.1],
+        scale_driven: true,
+        use_parent_scale: false,
+        behavior: 0,
+        table: Did(0x0700_0001),
+        node_id: 1,
+    };
+    assert_eq!(mesh.draw_scale([0.7; 3]), [0.9, 1.0, 1.1]);
+    mesh.use_parent_scale = true;
+    let s = mesh.draw_scale([0.7; 3]);
+    for (got, want) in s.iter().zip([0.63f32, 0.7, 0.77]) {
+        assert!((got - want).abs() < 1e-6, "{s:?}");
+    }
+    let t = mesh.local_transform([0.7; 3]);
+    assert!((t[0] - 0.63).abs() < 1e-6 && (t[10] - 0.77).abs() < 1e-6);
+}

@@ -6,14 +6,15 @@
 //! The input after byte 0 is an embedded property set decoded with a total synthetic schema
 //! (type = PID mod 24) whose labels carry the types of §3 (lists arrays, check and condition
 //! entries structs, quests and events DIDs, operators and statuses enums, flags booleans).
-//! Every view reads it; the box test, the script-path branch for every graph shape and the
-//! world-event conditions run against a journal and an event state derived from byte 0;
+//! Every view reads it; the box test, the script-path branch and the
+//! world-event conditions run against a journal and an event state derived from byte 0 (the
+//! script path for every combination of the parts of §5.2.1);
 //! then the set drives the phasing manager as a box with fuzzed targets through the events
 //! E1–E5.
 //!
 //! Nothing may panic. Before E4 every box tests false and every target is phased out
 //! (WL-B1); a box without a check list tests false (WL-B2); a `QuestState_Test` of 2 gives
-//! the False branch for every switched graph (WL-B8).
+//! the False branch for every test with an override (WL-B8).
 //!
 //! Run with a memory cap, e.g.
 //! `cargo fuzz run formats_world_logic -- -malloc_limit_mb=512 -rss_limit_mb=1024`.
@@ -26,8 +27,8 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::gameplay::quests::{EntryGates, MapJournal};
 use tessera_formats::gameplay::world_logic::{
     BranchVisuals, CounterBox, CustomCondition, EventLists, GeneratorMapping, LocalPlayer,
-    LogicBoxMembers, LogicBoxTimer, PathMapVolume, PhasingBox, QuestStateBranch, QuestStateGraph,
-    QuestStateScript, ResponseCallback, ResponseMap, SkirmishValues, TravelHooks,
+    LogicBoxMembers, LogicBoxTimer, PathMapVolume, PhasingBox, QuestStateBranch, QuestStateLeaf,
+    QuestStateScript, QuestStateTest, ResponseCallback, ResponseMap, SkirmishValues, TravelHooks,
     VersionMasterList, WorldEventKind, WorldEventState, WorldLogicLabels, branch_draw,
 };
 use tessera_formats::landblock::InstanceId;
@@ -172,19 +173,24 @@ fuzz_target!(|input: &[u8]| {
     let _ = (b.quests(), b.test::<MapJournal>(true, None));
 
     let script = QuestStateScript::read(q, &set);
-    for g in [
-        QuestStateGraph::GatedSingle,
-        QuestStateGraph::Double,
-        QuestStateGraph::Unswitched,
-        QuestStateGraph::Single,
-        QuestStateGraph::SingleUnlessPhasedOut,
-    ] {
-        let r = script.branch(g, |c| c.passes(&journal, &gates, |_| false));
-        if script.test == Some(2)
-            && g != QuestStateGraph::Unswitched
-            && (g != QuestStateGraph::GatedSingle || script.has_quest())
-        {
+    // Every combination of the parts of `world-logic.md` §5.2.1.
+    for bits in 0u8..16 {
+        let t = QuestStateTest {
+            delay: None,
+            quest_id_guard: bits & 1 != 0,
+            test_override: bits & 2 != 0,
+            phased_out_guard: bits & 4 != 0,
+            entries: 1 + (bits >> 3),
+            package: Did(0),
+            true_leaf: QuestStateLeaf::Nothing,
+            false_leaf: QuestStateLeaf::Nothing,
+        };
+        let r = script.branch(&t, |c| c.passes(&journal, &gates, |_| false));
+        if script.test == Some(2) && t.test_override && (!t.quest_id_guard || script.has_quest()) {
             assert_eq!(r, Some(QuestStateBranch::False));
+        }
+        if let Some(b) = r {
+            let _ = t.leaf(b);
         }
     }
     for br in [QuestStateBranch::True, QuestStateBranch::False] {

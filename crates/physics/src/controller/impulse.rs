@@ -14,13 +14,18 @@
 //! 3. The controller adds the stored impulse once, and clears it at the end of every step,
 //!    so an impulse acts in exactly one step.
 //!
-//! Which jump node runs is data: the avatar's `Loc_Jumping` script picks one by
+//! Which jump node runs is data: the avatar's key script `Movement_ActionKey` runs
+//! `Loc_JumpKeyPressed`, which runs `Loc_Jumping`, and that script picks a node by
 //! `Entity_FinalElement` (on land 0.2 s and 15 m/s², 6.0 m/s; in water 7.5 m/s², 3.0 m/s in
-//! this install). The caller reads those nodes at run time into a [`JumpTable`]; the
-//! controller looks the table up when the jump command arrives ([`super::MoveInput::jump`]).
-//! Tessera Decisions (recorded as OPEN in `collision.md` §12.5): the input path that starts
-//! `Loc_Jumping` is the jump command itself, and `Entity_FinalElement` is read as the
-//! mover's `Entity_Element` at the start of the step.
+//! this install; `collision.md` §11.10, `script-runtime.md` §30.7). The caller reads those
+//! nodes at run time into a [`JumpTable`]; the controller looks the table up when the jump
+//! command arrives ([`super::MoveInput::jump`]), under the gates of §11.10 that do not come
+//! from the table: no jump while `Movement_IsJumping` is true
+//! ([`super::Controller::is_jumping`]) or in states 4 and 6
+//! ([`MovementState::allows_jump`]). The jump command starts the jump (§11.10 Decision item
+//! 3: one take-off per press), and `Entity_FinalElement` is the mover's `Entity_Element` at
+//! the start of the step (every write of it the client's code was found to make copies
+//! `Entity_Element`, C65).
 
 use super::input::INPUT_EPSILON;
 use super::params::MAX_SPEED;

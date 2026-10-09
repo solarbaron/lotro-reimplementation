@@ -76,6 +76,41 @@ struct World {
     /// Objects whose sets carry a property this test reads.
     objects: Vec<Obj>,
     all: BTreeSet<Did>,
+    /// Integer world events (class 1887 here, `world-logic.md` §6.7): (event, stored
+    /// minimum, stored maximum).
+    int_events: Vec<(Did, Option<i64>, Option<i64>)>,
+    /// Every world-event condition at any depth of every object set: (event, stored value,
+    /// compares with another event).
+    conditions: Vec<(Did, Option<i32>, bool)>,
+}
+
+/// The world-event conditions at any depth of `values` (structs holding
+/// `WorldEvent_WorldEvent`), up to a nesting depth of 32.
+fn collect_conditions(
+    w: &tessera_formats::gameplay::quests::WorldEventPids,
+    entries: &[tessera_formats::PropertyEntry],
+    depth: usize,
+    out: &mut Vec<(Did, Option<i32>, bool)>,
+) {
+    use tessera_formats::gameplay::quests::WorldEventCondition;
+    if depth > 32 {
+        return;
+    }
+    for e in entries {
+        match &e.value {
+            tessera_formats::PropertyValue::Struct(st) => {
+                if st.has(w.world_event) {
+                    let c = WorldEventCondition::from_struct(w, st);
+                    out.push((c.world_event, c.value, c.compare_with.is_some()));
+                }
+                collect_conditions(w, &st.fields, depth + 1, out);
+            }
+            tessera_formats::PropertyValue::Array(a) => {
+                collect_conditions(w, &a.elements, depth + 1, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn world() -> Option<&'static World> {
@@ -116,25 +151,56 @@ fn world() -> Option<&'static World> {
             logic.response.map_array,
         ];
         let t0 = std::time::Instant::now();
-        let objects: Vec<Obj> = par_map(&dids, |&did| {
-            let payload = data.read(did).expect("read")?;
+        let world_pids = &logic.world;
+        type Scan = (
+            Option<Obj>,
+            Option<(Did, Option<i64>, Option<i64>)>,
+            Vec<(Did, Option<i32>, bool)>,
+        );
+        let scanned: Vec<Scan> = par_map(&dids, |&did| {
+            let Some(payload) = data.read(did).expect("read") else {
+                return (None, None, Vec::new());
+            };
             let root = ObjectRoot::read_expecting(&payload, did).expect("object root");
-            let set = root
+            let Some(set) = root
                 .property_set_did()
                 .and_then(|s| data.read(s).expect("read set"))
                 .map(|b| {
                     decode_object_properties(did, &b, &dict)
                         .unwrap_or_else(|e| panic!("{did}: {e}"))
-                })?;
-            interesting.iter().any(|p| set.has(*p)).then_some(Obj {
+                })
+            else {
+                return (None, None, Vec::new());
+            };
+            let mut conds = Vec::new();
+            collect_conditions(world_pids, &set.entries, 0, &mut conds);
+            let int = |p: tessera_formats::gameplay::common::Pid| {
+                set.get_pid(p)
+                    .and_then(tessera_formats::PropertyValue::as_f64)
+            };
+            #[allow(clippy::cast_possible_truncation)]
+            let event = (root.root_class == 1887).then(|| {
+                (
+                    did,
+                    int(world_pids.min_int).map(|v| v as i64),
+                    int(world_pids.max_int).map(|v| v as i64),
+                )
+            });
+            let obj = interesting.iter().any(|p| set.has(*p)).then_some(Obj {
                 did,
                 class: root.root_class,
                 set,
-            })
-        })
-        .into_iter()
-        .flatten()
-        .collect();
+            });
+            (obj, event, conds)
+        });
+        let mut objects: Vec<Obj> = Vec::new();
+        let mut int_events = Vec::new();
+        let mut conditions = Vec::new();
+        for (o, e, c) in scanned {
+            objects.extend(o);
+            int_events.extend(e);
+            conditions.extend(c);
+        }
         eprintln!(
             "{} object records, {} with a property of interest, in {:.1?}",
             dids.len(),
@@ -149,6 +215,8 @@ fn world() -> Option<&'static World> {
             logic,
             objects,
             all,
+            int_events,
+            conditions,
         })
     })
     .as_ref()
@@ -371,6 +439,53 @@ fn template_drama_lists() {
     assert!(bad.is_empty(), "{bad:?}");
 }
 
+/// WL-I12 (`world-logic.md` §6.7, WL25): every integer world event stores
+/// `WorldEvent_MaxIntValue` > 0, and every condition on an integer event without a stored
+/// minimum has 0 ≤ *c* ≤ maximum (*c* = −1 when not stored); none of them compares with
+/// another event. Counts are a census.
+#[test]
+fn world_event_bounds() {
+    let Some(w) = world() else { return };
+    let events: BTreeMap<Did, (Option<i64>, Option<i64>)> = w
+        .int_events
+        .iter()
+        .map(|&(d, min, max)| (d, (min, max)))
+        .collect();
+    let no_max: Vec<&Did> = events
+        .iter()
+        .filter(|(_, (_, max))| max.is_none_or(|m| m <= 0))
+        .map(|(d, _)| d)
+        .collect();
+    assert!(
+        no_max.is_empty(),
+        "WL-I12: integer events without a positive maximum {no_max:?}"
+    );
+    let no_min: BTreeSet<Did> = events
+        .iter()
+        .filter(|(_, (min, _))| min.is_none())
+        .map(|(d, _)| *d)
+        .collect();
+    let mut on_no_min = 0u64;
+    let mut bad = Vec::new();
+    for &(event, value, compare) in &w.conditions {
+        if !no_min.contains(&event) {
+            continue;
+        }
+        on_no_min += 1;
+        let max = events.get(&event).and_then(|(_, m)| *m).unwrap_or(0);
+        let c = i64::from(value.unwrap_or(-1));
+        if compare || c < 0 || c > max {
+            bad.push(format!("{event}: c {c}, max {max}, compare {compare}"));
+        }
+    }
+    assert!(bad.is_empty(), "WL-I12: {bad:?}");
+    report(&[
+        ("integer world events (§6.7)", 699, events.len() as u64),
+        ("without a stored minimum", 91, no_min.len() as u64),
+        ("conditions on those events", 36, on_no_min),
+    ]);
+}
+
 #[test]
 fn version_and_response_objects() {
     let Some(w) = world() else { return };
@@ -420,6 +535,31 @@ fn version_and_response_objects() {
         m.is_ascending(),
         "WL-I10: strictly ascending update numbers"
     );
+    // WL-I13 (§9.1, WL26): every `Version_Number` value is a type-8 enum value and a key of
+    // the mapper the property names.
+    let number = w.logic.version.number;
+    if let Some(o) = w.objects.iter().find(|o| o.did == *mdid) {
+        let mut values: Vec<&tessera_formats::PropertyValue> = Vec::new();
+        values.extend(o.set.get_pid(number));
+        for st in o.set.structs(w.logic.version.data_list) {
+            values.extend(st.get_pid(number));
+        }
+        let bad: Vec<String> = values
+            .iter()
+            .filter(|v| match v {
+                tessera_formats::PropertyValue::Enum(k) => label(w, number, *k).is_none(),
+                _ => true,
+            })
+            .map(|v| format!("{v:?}"))
+            .collect();
+        eprintln!("Version_Number values: {}", values.len());
+        assert!(bad.is_empty(), "WL-I13: {bad:?}");
+        report(&[(
+            "Version_Number values (§9.1, WL26)",
+            94,
+            values.len() as u64,
+        )]);
+    }
     let listed: BTreeSet<Did> = m.objects().into_iter().collect();
     let missing: Vec<&Did> = listed.iter().filter(|d| !w.all.contains(d)).collect();
     assert!(

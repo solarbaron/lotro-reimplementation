@@ -58,7 +58,7 @@ pub enum RuntimeIssue {
     },
     /// A Goto found no Label of its name in its record (`script-runtime.md` §15 step 1).
     LabelNotFound(String),
-    /// A GameCallback completed at once: `tessera-formats` keeps its data opaque, so its
-    /// `DefaultValue` is not available (`script-runtime.md` §18 OPEN-11).
+    /// A GameCallback completed at once: how the original evaluates it offline is open
+    /// (`script-runtime.md` §18 OPEN-11), and the runtime does not fire its ports.
     GameCallbackOpaque,
 }

@@ -117,8 +117,7 @@ crate::property_ids! {
 }
 
 crate::property_ids! {
-    /// Scripted-fight labels (§7). The health-ratio field is written `…_HealthRatio` in the
-    /// spec; both readings of the elision are resolved and the defined one is used.
+    /// Scripted-fight labels (§7, full labels in §7.1).
     pub struct KungFuPids {
         start_as_npc = "AI_KungFu_StartAsNPC",
         repeatable = "AI_KungFu_Repeatable",
@@ -128,8 +127,7 @@ crate::property_ids! {
         drama_transition = "AI_KungFu_DramaTransition",
         quest_transition = "AI_KungFu_QuestTransition",
         transition_drama = "AI_KungFu_Transition_Drama",
-        health_ratio = "AI_KungFu_HealthRatio",
-        transition_health_ratio = "AI_KungFu_Transition_HealthRatio",
+        health_ratio = "AI_KungFu_Transition_HealthRatio",
         should_end_combat = "AI_KungFu_ShouldEndCombat",
         always_active = "AI_KungFu_Transition_AlwaysActive",
         suppress_clamp = "AI_KungFu_Transition_SuppressHealthClamp",
@@ -198,14 +196,11 @@ impl DramaLabels {
         out
     }
 
-    /// The health-ratio label that resolves (§7).
+    /// The health-ratio label of the transitions, `AI_KungFu_Transition_HealthRatio`
+    /// (§7.1).
     #[must_use]
     pub fn health_ratio(&self) -> Pid {
-        if self.kung_fu.health_ratio.is_resolved() {
-            self.kung_fu.health_ratio
-        } else {
-            self.kung_fu.transition_health_ratio
-        }
+        self.kung_fu.health_ratio
     }
 }
 

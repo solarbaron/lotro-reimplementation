@@ -218,6 +218,7 @@ impl Runtime<'_> {
             sdepth,
         );
         inst.overrides = overrides;
+        inst.group = tag;
         let id = self.insts.insert(inst);
         if let Some(e) = self.entities.get_mut(&entity) {
             e.instances += 1;
@@ -298,7 +299,11 @@ impl Runtime<'_> {
         })
     }
 
-    /// Whether `id` or one of its ancestors was stopped (or is gone) (§3.2).
+    /// Whether `id` or one of its ancestors was stopped (or is gone) (§3.2). An instance
+    /// still in its start (not yet registered with its parent, §3.1 step 7) counts as
+    /// stopped once the port group it is being started into was stopped: the group's stop
+    /// would have stopped it had it been registered (§30.4: a change inside a While's
+    /// branch stops the branch, so later siblings do not start).
     pub(crate) fn stopped_or_ancestor(&self, id: InstanceId) -> bool {
         let mut cur = id;
         for _ in 0..=self.limits.max_instance_depth.saturating_add(2) {
@@ -307,7 +312,16 @@ impl Runtime<'_> {
                 Some(i) if i.stopped => return true,
                 Some(i) => match i.parent {
                     None => return false,
-                    Some(p) => cur = p,
+                    Some(p) => {
+                        if i.group != 0
+                            && self.insts.get(p).is_some_and(|pi| {
+                                !pi.group_live(i.group) && !pi.children.iter().any(|c| c.id == cur)
+                            })
+                        {
+                            return true;
+                        }
+                        cur = p;
+                    }
                 },
             }
         }
@@ -740,6 +754,18 @@ impl Runtime<'_> {
         };
         if reevaluate && self.alive(id) {
             self.switch_reevaluate(sink, id);
+        }
+        // While re-evaluation (`script-runtime.md` §30.4): its property on the target, its
+        // `Names` properties on the running entity.
+        let while_hit = match self.insts.get(id).map(|i| (&i.kind, i.entity)) {
+            Some((KindState::While(s), running)) => {
+                (pid == s.property && entity == s.target)
+                    || (entity == running && s.names.contains(&pid))
+            }
+            _ => false,
+        };
+        if while_hit && self.alive(id) {
+            self.while_reevaluate(sink, id);
         }
     }
 

@@ -946,7 +946,8 @@ pub struct MountMesh {
     pub scale: [f32; 3],
     /// Whether the scale came from the rider (the node drives `Scale`).
     pub scale_driven: bool,
-    /// `UseParentScale`: the rider's model scale multiplies the scale (Decision of §4.4).
+    /// `UseParentScale`: the rider's final model scale multiplies the scale per axis
+    /// (Decision of §4.4).
     pub use_parent_scale: bool,
     /// `Behavior`: the script started on the spawned mount (`Horsepants_Startup`).
     pub behavior: u32,
@@ -980,11 +981,12 @@ impl MountMesh {
             })
     }
 
-    /// The scale the mount is drawn at (Decision of §4.4): the node's scale, times the
-    /// rider's model scale when `UseParentScale` is set. The rider's model scale is per axis
-    /// (`appearance.md` §6.1) and multiplies the node's scale per axis (the same as one
-    /// uniform factor whenever its components are equal). A rider component that is not
-    /// finite reads as 1; result components that are not finite and positive read as 1.
+    /// The scale the mount is drawn at (Decision of §4.4, revised 2026-10-09): the node's
+    /// `Scale` vector applied per axis (*x*, *y*, *z* of the mount's model space), times the
+    /// rider's final model scale, also per axis (`appearance.md` §6.1), when
+    /// `UseParentScale` is set (MT31: both properties are vector3; no component is chosen).
+    /// A rider component that is not finite reads as 1; result components that are not
+    /// finite and positive read as 1.
     #[must_use]
     pub fn draw_scale(&self, rider_model_scale: [f32; 3]) -> [f32; 3] {
         let mut out = self.scale;

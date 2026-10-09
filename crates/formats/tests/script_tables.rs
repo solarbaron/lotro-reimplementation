@@ -161,6 +161,7 @@ const PID_COMBINATION: u32 = 0x1000_0143;
 const PID_FINAL_ELEMENT: u32 = 0x1000_0160;
 const PID_AIR_TIME: u32 = 0x1000_0161;
 const PID_JUMP_MOD: u32 = 0x1000_0162;
+const PID_IS_JUMPING: u32 = 0x1000_0163;
 // Mount mesh (`mounts.md` §4.4, §11.4): the rider's fields and the MeshFX fields they drive.
 const PID_MOUNT_TYPE: u32 = 0x1000_0150;
 const PID_SPECIES: u32 = 0x1000_0151;
@@ -186,6 +187,7 @@ fn schema(pid: u32) -> Option<PropertyType> {
         PID_COMBINATION => PropertyType::Enum,
         PID_FINAL_ELEMENT => PropertyType::Enum,
         PID_JUMP_MOD | PID_AIR_TIME => PropertyType::Float,
+        PID_IS_JUMPING => PropertyType::Bool,
         PID_MOUNT_TYPE | PID_SPECIES => PropertyType::Enum,
         PID_SLOT_ENTITY => PropertyType::DidRef,
         PID_SLOT_SCALE => PropertyType::Vector3,
@@ -3041,25 +3043,137 @@ fn one_script_run_lists_the_jump_node_of_each_state() {
     assert_eq!(all.impulses[0].node.impulse, [1.0, 2.0, 3.0]);
 }
 
+/// A While node (kind 50, `script-table.md` §5.2): property, `Values` (bool PVs), no
+/// names, `Inverse`; one Default port.
+fn while_node(
+    id: u32,
+    property: u32,
+    values: &[bool],
+    inverse: bool,
+    children: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut data = B::new().u32(property).u8(values.len() as u8);
+    for &v in values {
+        data = data.u32(property).u8(u8::from(v));
+    }
+    node(
+        50,
+        data.u8(0).u8(u8::from(inverse)),
+        base(id),
+        &[port(6, None, children)],
+    )
+}
+
+/// The shape of the avatar's `Loc_Jumping` (`script-runtime.md` §30.7 item 3): a Collection
+/// whose ordinal 1 sets the flag and whose ordinal 4 is a While on it; inside, a one-pass
+/// Sequence: step 1 the jump impulse, step 2 the clear of the flag, step 3 an impulse that
+/// must not start (the While stops its branch at the clear, §30.4).
+fn while_world(inverse: bool) -> HashMap<Did, Vec<u8>> {
+    let jump = impulse_node(41, true, [0.0; 3], 0.2, 15.0, &[]);
+    let late = impulse_node(42, true, [0.0; 3], 0.5, 1.0, &[]);
+    let clear = set_property_node(43, PID_IS_JUMPING, B::new().u8(0));
+    let step = |n: u32, c: Vec<u8>| port(6, Some(B::new().u32(n)), &[c]);
+    let seq = node(
+        6,
+        B::new().u8(0).u32(1),
+        base(44),
+        &[step(1, jump), step(2, clear), step(3, late)],
+    );
+    let w = while_node(45, PID_IS_JUMPING, &[true], inverse, &[seq]);
+    let set = set_property_node(46, PID_IS_JUMPING, B::new().u8(1));
+    let coll = node(
+        2,
+        B::new(),
+        base(47),
+        &[
+            port(6, Some(B::new().u32(4)), &[w]),
+            port(6, Some(B::new().u32(1)), &[set]),
+        ],
+    );
+    let mut m = HashMap::new();
+    m.insert(Did(JUMP_TABLE), table(2, &[], &[(JUMP_KEY, vec![coll])]));
+    m
+}
+
 #[test]
-fn pass_through_kinds_start_their_children() {
-    let m = jump_world();
+fn while_nodes_decode_their_fields() {
+    let m = while_world(false);
+    let t = ScriptTable::parse(&m[&Did(JUMP_TABLE)], &schema).unwrap();
+    let w = &t.scripts[0].roots[0].ports[0].children[0];
+    assert_eq!(w.kind, NodeKind::WHILE);
+    let NodeData::While(d) = &w.data else {
+        panic!("typed While data: {:?}", w.data);
+    };
+    assert_eq!(d.property, PID_IS_JUMPING);
+    assert_eq!(d.values.len(), 1);
+    assert_eq!(
+        d.values[0].as_ref().map(|e| (e.pid, e.value.clone())),
+        Some((PID_IS_JUMPING, PropertyValue::Bool(true)))
+    );
+    assert!(d.names.is_empty() && !d.inverse);
+    assert_eq!(d.name_pids().count(), 0);
+}
+
+#[test]
+fn while_runs_its_branch_while_the_test_holds() {
     let e = EntityScripts {
         class_table: Some(Did(JUMP_TABLE)),
         ..EntityScripts::default()
     };
-    let mut plain = ClipResolver::new(&schema, jump_vocab(), fetch(&m));
-    let r = plain
-        .resolve_script(&e, JUMP_KEY + 1, PropertyState::new())
+    // The Collection sets the flag first (ordinal 1), so the While's test holds and its
+    // branch starts; the clear in step 2 stops the branch: step 3 never starts (§30.4).
+    let m = while_world(false);
+    let mut r = ClipResolver::new(&schema, jump_vocab(), fetch(&m)).unset_reads_as_zero(true);
+    let res = r
+        .resolve_script(&e, JUMP_KEY, PropertyState::new())
         .unwrap();
-    assert!(r.impulses.is_empty(), "a While starts nothing by default");
-    let mut through =
-        ClipResolver::new(&schema, jump_vocab(), fetch(&m)).with_pass_through(&[NodeKind::WHILE]);
-    let r = through
-        .resolve_script(&e, JUMP_KEY + 1, PropertyState::new())
+    assert_eq!(res.impulses.len(), 1, "{:?}", res.impulses);
+    assert_eq!(res.impulses[0].node.air_time, 0.2);
+    // Inverted, the test fails once the flag is set: nothing starts (§30.3 step 4).
+    let m = while_world(true);
+    let mut r = ClipResolver::new(&schema, jump_vocab(), fetch(&m)).unset_reads_as_zero(true);
+    let res = r
+        .resolve_script(&e, JUMP_KEY, PropertyState::new())
         .unwrap();
-    assert_eq!(r.impulses.len(), 1);
-    assert_eq!(r.impulses[0].node.air_time, 0.3);
+    assert!(res.impulses.is_empty(), "{:?}", res.impulses);
+    // The every-branch scan reaches both impulses.
+    let m = while_world(true);
+    let mut r = ClipResolver::new(&schema, jump_vocab(), fetch(&m));
+    assert_eq!(
+        r.reachable(&EntityScripts {
+            class_table: Some(Did(JUMP_TABLE)),
+            startup_scripts: vec![JUMP_KEY],
+            ..EntityScripts::default()
+        })
+        .unwrap()
+        .impulses
+        .len(),
+        2
+    );
+}
+
+#[test]
+fn a_random_node_with_one_port_always_picks_it() {
+    // `script-table.md` §7.4 rule 1: even at weight 0.
+    let m = {
+        let mut m = HashMap::new();
+        let r = random(
+            1,
+            &[(0, vec![impulse_node(2, true, [0.0; 3], 0.2, 15.0, &[])])],
+        );
+        m.insert(Did(JUMP_TABLE), table(2, &[], &[(JUMP_KEY, vec![r])]));
+        m
+    };
+    let e = EntityScripts {
+        class_table: Some(Did(JUMP_TABLE)),
+        ..EntityScripts::default()
+    };
+    let mut r = ClipResolver::new(&schema, jump_vocab(), fetch(&m)).with_random_seed(Some(7));
+    let res = r
+        .resolve_script(&e, JUMP_KEY, PropertyState::new())
+        .unwrap();
+    assert_eq!(res.impulses.len(), 1);
+    assert_eq!(res.impulses[0].chance, 1.0);
 }
 
 /// An Appearance node (kind 58, §5.1): record, key, modifier, persistent.

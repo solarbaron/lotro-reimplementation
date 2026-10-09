@@ -20,9 +20,10 @@
 //! 3–7) are the player controller's and are not repeated here. Server blending (§5.9) is
 //! out of scope.
 //!
-//! The strafe slots *S*1 and *S*2 are read from the left and right strafe speeds (the
-//! pairing is Inferred in §5.3; every observed layer has equal strafe speeds, so it has no
-//! effect on the install's data).
+//! The strafe slots *S*1 and *S*2 are the layered `StrafeLeftMoveSpeed` and
+//! `StrafeRightMoveSpeed` (§5.3, BIN2, MT32): a positive sideways input targets the right
+//! speed, the sideways limits are −left … +right. Every observed layer has equal strafe
+//! speeds, so the pairing has no effect on the install's data.
 
 use super::params::MovementParams;
 

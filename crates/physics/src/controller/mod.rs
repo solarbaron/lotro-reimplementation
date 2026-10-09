@@ -62,11 +62,11 @@ pub use params::{
 pub use shape::{CharacterShape, MAX_CAPSULE_LENGTH, MAX_CAPSULE_RADIUS};
 pub use state::{MovementState, Support, WaterDepth};
 pub use step::{
-    Controller, ControllerConfig, FLOAT_TOLERANCE, MAX_DEPENETRATION, MAX_SLIDE_ITERATIONS,
-    MAX_STEP_DISPLACEMENT, MAX_STEPS_PER_FRAME, MIN_SINK_ACCELERATION, MoveInput, MoverState,
-    PROPORTION_SLACK, SCRATCH_KEEP, SNAP_DISTANCE, STEP_OVER_FRACTION, STEP_SECONDS,
-    STEP_UP_MIN_RISE, STEPS_PER_SECOND, SUPPORT_MARGIN, StepEnv, StepOutcome, StepReport,
-    WaterContact, target_velocity,
+    Controller, ControllerConfig, FLOAT_TOLERANCE, JUMP_HOLD_SECONDS, MAX_DEPENETRATION,
+    MAX_SLIDE_ITERATIONS, MAX_STEP_DISPLACEMENT, MAX_STEPS_PER_FRAME, MIN_SINK_ACCELERATION,
+    MoveInput, MoverState, PROPORTION_SLACK, SCRATCH_KEEP, SNAP_DISTANCE, STEP_OVER_FRACTION,
+    STEP_SECONDS, STEP_UP_MIN_RISE, STEPS_PER_SECOND, SUPPORT_MARGIN, StepEnv, StepOutcome,
+    StepReport, WaterContact, target_velocity,
 };
 pub use water::{
     LIQUID_JOIN_TOLERANCE, LiquidWater, NoWater, WaterQuery, WaterSample, water_from_spans,

@@ -1431,6 +1431,23 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     > property whose only value is its dictionary default is skipped. Please confirm.
     > Related to item 5: setting such a property to its default value is no change of the
     > value the entity reads, so the Switch is not told and does not re-evaluate.
+19. Implementation of §30 (clean room, 2026-10-09): `tessera-formats` decodes the While
+    fields of `script-table.md` §5.2; `tessera-scriptgraph` runs While (§30.2–§30.4) and
+    PhysicsImpulse (§30.6, completing at once by OPEN-20, the request handed to the effect
+    sink); the static clip resolver applies the same While test and stops the branch at a
+    SetProperty that makes it fail; the walker's jump table is read by running
+    `Movement_ActionKey` per state (§30.7), which gives 6.0 m/s for state 5, 3.0 m/s for
+    1–3 and none for 4 and 6 on the reference install.
+    > **OPEN:** (§3.2, §30.4) A node whose start is still in progress when the port group it
+    > is being started into is stopped: §3.1 registers an instance with its parent only in
+    > step 7, after its kind start, so a Collection or Sequence of a While's branch whose own
+    > first child (a SetProperty) makes the While's test fail is not yet in the group that
+    > the While stops, and by §3.2 alone it would go on starting its next children before
+    > step 7 stops it. §30.4 says the later siblings do not start. **Decision (Tessera):**
+    > the runner's check after each child (§3.2) also counts an instance as stopped when it
+    > is not yet registered and the group it is being started into has been stopped, so
+    > nothing further starts below it. Was this read from the client, or does the original
+    > register the instance before its kind start?
 
 ---
 

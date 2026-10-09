@@ -2475,6 +2475,34 @@ Implementation feedback (clean room, 2026-10-09, conformance with the Accepted t
 > (§4.4): every index buffer of all 47,563 meshes is drawn exactly once, and both counts
 > flag the same 258 meshes.
 
+Implementation feedback (clean room, 2026-10-09, conformance with the BIN6/OBS4 revision):
+the single-port Random rule (§7.4), the absent toggle property's dictionary default (§3.3),
+the stowed ranged-slot instrument through the sheathed-instrument script (§5.6, evaluated
+with `Script_Item_PhysObj_Ranged` and `Music_Cached_Instrument_Type`; H24 of
+`m4-visual.md`), the creature cosmetic slots (§5.5), the mounted exception of the stowed
+shield (§5.6) and the dictionary default of an absent driven MeshFX source (§5.7 step 3) are
+implemented in `tessera-formats` and `tessera-mesh`.
+
+> **OPEN** (implementation, §5.6 "Stowed instruments"): the spec names the
+> sheathed-instrument script only by its key 0x10002BA0, without its label in the
+> script-key mapper 0x23000097 (or its base). Tessera uses the key as given; a label would
+> let the key be read from the data at run time like every other script key. Please give
+> the label.
+
+> **OPEN** (implementation, §5.6 gauntlets and "What is normative"): to read the stowed
+> gauntlet effect entity "from the two nodes under the `BattleGauntlets` case of script
+> 0x10000684", or to evaluate the placement scripts directly, a reader needs to know what
+> those scripts switch on: which property the category Switch of 0x10000684 (and of the
+> other five placement scripts) reads, and which value its `BattleGauntlets` case holds
+> (the `Item_EquipmentCategory` key, its bit, or another enum), and which properties the
+> client sets on the figure for them besides `Script_Item_PhysObj_*`. Until then Tessera does
+> not attach the gauntlet effect (the gauntlets themselves are worn, §5.1).
+
+> **OPEN** (implementation, §5.5 creature cosmetic slots): "figures whose
+> `Agent_ClassificationFilter` is `MonsterPlayer` take another branch": is the test an
+> equality with the `MonsterPlayer` key, or a bit test (the property's dictionary type was
+> not stated)? Tessera's choice: equality with the key of the label `MonsterPlayer`.
+
 ---
 
 <a id="s16"></a>

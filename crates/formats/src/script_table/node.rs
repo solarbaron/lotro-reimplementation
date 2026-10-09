@@ -1017,6 +1017,11 @@ pub enum NodeData {
     },
     /// PhysicsImpulse (9): an impulse on the entity's mover (§5.3; `collision.md` §11.10).
     PhysicsImpulse(PhysicsImpulseNode),
+    /// While (50): runs its first Default port while a property test holds (§5.2;
+    /// `script-runtime.md` §30).
+    While(Box<WhileNode>),
+    /// GameCallback (27): calls a game package (§5.2).
+    GameCallback(Box<GameCallbackNode>),
     /// SliderMeshDeformer (81): the bone sliders of a figure (§6.9).
     SliderMeshDeformer {
         /// `BoneSlider_ValueArray_String`: the slider value string as stored.
@@ -1036,6 +1041,46 @@ pub enum NodeData {
     /// §3.3) whose kind has no typed form here: its field values by the PIDs bound to the
     /// fields, as stored in `ScriptTable_NodeProperties`.
     Fields(Box<PropertySet>),
+}
+
+/// The fields of a GameCallback node (kind 27, §5.2).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GameCallbackNode {
+    /// `GameScript_Package`: the game-callback object called.
+    pub package: Did,
+    /// `DefaultValue` (`None` for the null entry).
+    pub default_value: Option<PropertyEntry>,
+    /// `CallProperties`: the values handed to the call (driven pairs of the node replace
+    /// them at run time, `world-logic.md` §5.3).
+    pub call_properties: PropertySet,
+}
+
+/// The fields of a While node (kind 50, §5.2; run-time rules `script-runtime.md` §30).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WhileNode {
+    /// `WhileScript_PropertyName`: the watched property.
+    pub property: u32,
+    /// `Values`: the test matches when the property equals one of these (same PID, equal
+    /// value; `None` for null entries).
+    pub values: Vec<Option<PropertyEntry>>,
+    /// `Names`: properties whose current values the test also matches against. Stored as
+    /// PVs by the layout of §5.2; the runtime uses each entry's PID (`script-runtime.md`
+    /// §30.1 OPEN-21 Decision). Empty in every While of the observed data.
+    pub names: Vec<Option<PropertyEntry>>,
+    /// `WhileScript_Inverse`: the test holds when the value does **not** match.
+    pub inverse: bool,
+}
+
+impl WhileNode {
+    /// The property IDs of the `Names` entries (null entries and PID 0 left out), in stored
+    /// order (`script-runtime.md` §30.1 OPEN-21 Decision: a PV's PID names the property).
+    pub fn name_pids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.names
+            .iter()
+            .flatten()
+            .map(|e| e.pid)
+            .filter(|&p| p != 0)
+    }
 }
 
 /// The case payload of a Switch port of type 5 (§4.3).
@@ -1692,17 +1737,29 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 r.skip(16)?;
                 opaque(start, r)
             }
+            27 => {
+                let package = r.did()?;
+                let default_value = self.pv(r)?;
+                let call_properties = self.property_set(r)?;
+                r.charge(std::mem::size_of::<GameCallbackNode>())?;
+                NodeData::GameCallback(Box::new(GameCallbackNode {
+                    package,
+                    default_value,
+                    call_properties,
+                }))
+            }
             50 => {
-                r.skip(4)?;
-                for _ in 0..2 {
-                    let n = r.u8()?;
-                    r.ensure_elements(u32::from(n), 4)?;
-                    for _ in 0..n {
-                        self.pv(r)?;
-                    }
-                }
-                r.bool8()?;
-                opaque(start, r)
+                let property = r.u32()?;
+                let values = self.pv_list(r)?;
+                let names = self.pv_list(r)?;
+                let inverse = r.bool8()?;
+                r.charge(std::mem::size_of::<WhileNode>())?;
+                NodeData::While(Box::new(WhileNode {
+                    property,
+                    values,
+                    names,
+                    inverse,
+                }))
             }
             64 | 78 => {
                 return Err(FormatError::Unsupported {
@@ -1869,6 +1926,17 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
             }
             _ => PortPayload::None,
         })
+    }
+
+    /// A `u8` count, then that many PVs (the `Values` and `Names` lists of a While, §5.2).
+    fn pv_list(&mut self, r: &mut Reader<'_>) -> Result<Vec<Option<PropertyEntry>>> {
+        let n = r.u8()?;
+        let mut out = r.alloc_vec(u32::from(n), 4, usize::from(n))?;
+        for _ in 0..n {
+            let e = self.pv(r)?;
+            r.push(&mut out, e, u32::from(n))?;
+        }
+        Ok(out)
     }
 
     fn switch_case(&mut self, r: &mut Reader<'_>) -> Result<SwitchCase> {

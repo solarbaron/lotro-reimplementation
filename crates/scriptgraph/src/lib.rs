@@ -26,8 +26,9 @@
 //!   Goto, OnStop, Scriptlet and ScriptletParameter. Sound and SoundEnvironment nodes follow
 //!   `sound.md` §9.2 and §9.4; Animation asks the sink how long it runs; Particle nodes
 //!   follow `particle-runtime.md` §5.4–§5.8 (start gates, the never-ending instance with its
-//!   stop hook and redirect listener) and leave the effect to the sink; other effect kinds
-//!   complete at once (§18).
+//!   stop hook and redirect listener) and leave the effect to the sink; While runs its
+//!   branch while its property test holds and PhysicsImpulse sends its impulse to the sink
+//!   (§30); other effect kinds complete at once (§18).
 //! - [`Runtime::set_property`] re-evaluates Switch and When nodes and updates driven
 //!   fields and intensities synchronously (§20.3); [`Runtime::advance`] moves the one
 //!   scheduler (Timers, Sequence pacing, Switch delays and cross-fades, deferred Runs,
@@ -66,8 +67,8 @@ pub use runtime::{
 };
 pub use sink::{
     AnimationHandle, AnimationOutcome, EffectSink, EntityId, EnvironmentHandle, EnvironmentRequest,
-    NullSink, ParticleHandle, ParticleStart, RecordingSink, SinkEvent, SoundHandle,
-    SoundPositioner, SoundStart, SoundStartOutcome,
+    ImpulseRequest, JUMP_AIR_TIME_OFFSET, NullSink, ParticleHandle, ParticleStart, RecordingSink,
+    SinkEvent, SoundHandle, SoundPositioner, SoundStart, SoundStartOutcome,
 };
 pub use source::{FetchSource, MemorySource, ScriptSource};
 pub use vocab::{PropertyCatalog, RuntimeVocabulary, SyntheticCatalog};

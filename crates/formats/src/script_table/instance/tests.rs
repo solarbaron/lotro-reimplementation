@@ -306,3 +306,136 @@ fn member_override_names() {
     assert!(MemberOverride::parse("Render_Draw").is_none());
     assert!(MemberOverride::parse("A@B").is_none());
 }
+
+/// IS12 (BIN2, §4.4.1): per-script property sets are merged first value wins, the instance
+/// definition's set first, then the included tables in include order, each table before its
+/// own includes; a merged `Script_CombinationType` of 1 stops the descent into includes
+/// for properties only.
+#[test]
+fn is12_per_script_properties_merge_first_value_wins() {
+    let (l, f) = labels();
+    const KEY: u32 = 0x1000_0001;
+    const MAX: u32 = 0x6000;
+    let ct = l.combination_type.id().unwrap();
+    let props = |entries: Vec<(u32, PropertyValue)>| {
+        set(entries.into_iter().map(|(p, v)| entry(p, v)).collect())
+    };
+    let table = |did: u32, includes: Vec<u32>, p: Option<PropertySet>| ScriptTable {
+        did: Did(did),
+        kind: 2,
+        includes: includes.into_iter().map(Did).collect(),
+        scripts: vec![Script {
+            key: KEY,
+            roots: Vec::new(),
+        }],
+        script_properties: p.map(|p| vec![(KEY, p)]).unwrap_or_default(),
+        ..ScriptTable::default()
+    };
+    let max_of = |found: &KeyLookup<'_>| found.properties.get(MAX).cloned();
+    let instance = |p: Option<PropertySet>| {
+        let mut ts = EntityTableSet::default();
+        ts.own.push(OwnDefinition {
+            key: KEY,
+            roots: Vec::new(),
+            properties: p,
+        });
+        ts
+    };
+    let _ = &f;
+
+    // Instance 3, included table 10: 3. Instance set empty: 10.
+    let t10 = table(
+        0x0700_0001,
+        vec![],
+        Some(props(vec![(MAX, PropertyValue::Int(10))])),
+    );
+    let fetch1 = |d: Did| (d == t10.did).then_some(&t10);
+    let mut ts = instance(Some(props(vec![(MAX, PropertyValue::Int(3))])));
+    ts.includes.push(t10.did);
+    assert_eq!(
+        max_of(&ts.lookup(&l, KEY, &fetch1)),
+        Some(PropertyValue::Int(3))
+    );
+    let mut ts = instance(Some(props(vec![])));
+    ts.includes.push(t10.did);
+    assert_eq!(
+        max_of(&ts.lookup(&l, KEY, &fetch1)),
+        Some(PropertyValue::Int(10))
+    );
+
+    // Two included tables holding 4 and 7 in include order: 4.
+    let t4 = table(
+        0x0700_0004,
+        vec![],
+        Some(props(vec![(MAX, PropertyValue::Int(4))])),
+    );
+    let t7 = table(
+        0x0700_0007,
+        vec![],
+        Some(props(vec![(MAX, PropertyValue::Int(7))])),
+    );
+    let tables = [&t4, &t7];
+    let fetch2 = |d: Did| tables.iter().copied().find(|t| t.did == d);
+    let mut ts = instance(None);
+    ts.includes.extend([t4.did, t7.did]);
+    assert_eq!(
+        max_of(&ts.lookup(&l, KEY, &fetch2)),
+        Some(PropertyValue::Int(4))
+    );
+
+    // A combination type of 1 merged from an earlier table stops the property descent into
+    // a later table's includes, but not the root walk; a table including itself (and a null
+    // include) cannot loop.
+    let first = table(
+        0x0700_0011,
+        vec![0x0700_0011, 0],
+        Some(props(vec![(ct, PropertyValue::Enum(1))])),
+    );
+    let second = table(0x0700_0012, vec![0x0700_0013], None);
+    let inner = table(
+        0x0700_0013,
+        vec![],
+        Some(props(vec![(MAX, PropertyValue::Int(9))])),
+    );
+    let tables = [&first, &second, &inner];
+    let fetch3 = |d: Did| tables.iter().copied().find(|t| t.did == d);
+    let mut ts = instance(None);
+    ts.includes.extend([first.did, second.did]);
+    let found = ts.lookup(&l, KEY, &fetch3);
+    assert_eq!(
+        max_of(&found),
+        None,
+        "descent into the second table's includes stopped"
+    );
+    assert_eq!(found.tables, vec![first.did, second.did, inner.did]);
+}
+
+/// §4.5.1 Decision: tree ports of type 1 or more are kept for any kind and any count; a
+/// port of type 0 is dropped with its subtree.
+#[test]
+fn tree_ports_of_type_zero_are_dropped() {
+    let (_, f) = labels();
+    let child = TreeNode {
+        kind: NodeKind::COLLECTION,
+        fields: Vec::new(),
+        driven: Vec::new(),
+        ports: Vec::new(),
+        targets: Vec::new(),
+    };
+    let port = |t: u32| TreePort {
+        port_type: t,
+        payload: Vec::new(),
+        children: vec![child.clone()],
+    };
+    let n = TreeNode {
+        kind: NodeKind::RUN,
+        fields: Vec::new(),
+        driven: Vec::new(),
+        ports: vec![port(0), port(9), port(9), port(9), port(77), port(300)],
+        targets: Vec::new(),
+    };
+    let node = n.to_node(&f, &BTreeMap::new());
+    let types: Vec<u8> = node.ports.iter().map(|p| p.port_type.0).collect();
+    assert_eq!(types, vec![9, 9, 9, 77]);
+    assert!(node.ports.iter().all(|p| p.children.len() == 1));
+}

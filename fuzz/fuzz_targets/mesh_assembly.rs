@@ -39,7 +39,8 @@ use tessera_formats::{
 };
 use tessera_mesh::assembly::{
     AssemblyLimits, AssemblyOptions, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
-    EquippedItem, MapSource, PlacementRule, ScriptAppearance, SourceRef, StyleChoice, WieldState,
+    CosmeticSlotPids, CosmeticSlotVocabulary, EquippedItem, MapSource, PlacementRule,
+    ScriptAppearance, ScriptMeshFx, SourceRef, StyleChoice, WieldState,
 };
 use tessera_mesh::{MeshSummary, SubmeshSummary, VertexFormat};
 
@@ -106,6 +107,10 @@ impl Bytes<'_> {
     }
     fn chance(&mut self, in_8: u8) -> bool {
         self.byte() % 8 < in_8
+    }
+    /// A float from four bytes (any bit pattern, NaN and infinities included).
+    fn float(&mut self) -> f32 {
+        f32::from_le_bytes([self.byte(), self.byte(), self.byte(), self.byte()])
     }
 }
 
@@ -264,6 +269,36 @@ fn vocab() -> AssemblyVocabulary {
         bone_scale: None,
         avatar_height: None,
         slider_values: None,
+        // §5.6 stowed instruments (category bit 5) and §5.5 creature cosmetic slots.
+        instrument_category: 0x20,
+        sheathed_instrument_script: Some(0x1000_2BA0),
+        item_instrument_type: Some(25),
+        cached_instrument_type: Some(26),
+        physobj_ranged: Some(27),
+        cosmetic: CosmeticSlotVocabulary {
+            slots: vec![CosmeticSlotPids {
+                entity: Some(31),
+                holding_location: Some(32),
+                scale: Some(33),
+                yaw: Some(34),
+                pitch: Some(35),
+                roll: Some(36),
+                hide: Some(37),
+            }],
+            is_sheathed: Some(38),
+            sheathed: Some(1),
+            combat_defined: Some(3),
+            combat_violent: Some(39),
+            life_state: Some(40),
+            life_state_down: vec![2],
+            classification: Some(41),
+            monster_player: Some(1),
+            sheath_back_shield: Some(LOCATIONS[0]),
+            left_hand: Some(LOCATIONS[3]),
+            left_off_hand: Some(LOCATIONS[3]),
+            right_hand: Some(LOCATIONS[2]),
+            forearm: Some(LOCATIONS[1]),
+        },
     }
 }
 
@@ -357,6 +392,17 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
     };
     s.bodies.insert(AVATAR, body);
     s.race.insert((SPECIES, SEX), AVATAR);
+    // The sheathed-instrument script's attachments (§5.6), fuzzed.
+    let attachments = (0..b.byte() % 4)
+        .map(|_| ScriptMeshFx {
+            entity: Did(0x4700_0100 + u32::from(b.byte() % 5)),
+            location: b.pick(&LOCATIONS),
+            offset: [b.float(), b.float(), b.float()],
+            rotation: [b.float(), b.float(), b.float()],
+            scale: [b.float(), b.float(), b.float()],
+        })
+        .collect();
+    s.script_mesh_fx.insert((AVATAR, 0x1000_2BA0), attachments);
     // Held entities 0x47000100.. with chains; some broken.
     for e in 0..4u32 {
         let entity = Did(0x4700_0100 + e);

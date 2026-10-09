@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use tessera_formats::Did;
-use tessera_formats::script_table::{AnimationNode, ParticleScriptNode};
+use tessera_formats::script_table::{AnimationNode, ParticleScriptNode, PhysicsImpulseNode};
 
 /// An entity, identified by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -48,6 +48,30 @@ pub struct ParticleStart {
     pub node: ParticleScriptNode,
     /// The node's classification (§5.3): the stored byte, else the sink's answer.
     pub never_ending: bool,
+    /// The node's editor ID (for logs).
+    pub node_id: u32,
+}
+
+/// The constant the client adds to an `IsJump` node's `AirTime` before multiplying by
+/// `ExpectedGravity`, seconds (`collision.md` §11.10 item 2; BIN, decision 0012).
+pub const JUMP_AIR_TIME_OFFSET: f32 = 0.2;
+
+/// A PhysicsImpulse node's request to one target (`script-runtime.md` §30.6 step 3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImpulseRequest {
+    /// The entity whose script runs the node.
+    pub entity: EntityId,
+    /// The entity the impulse acts on (the running entity unless a target names another).
+    pub target: EntityId,
+    /// The node's fields after its driven values (`script-runtime.md` §5).
+    pub node: PhysicsImpulseNode,
+    /// The vector: `Impulse` × the node's intensity, or for an `IsJump` node the vertical
+    /// impulse (0, 0, (`AirTime` + [`JUMP_AIR_TIME_OFFSET`]) × `ExpectedGravity`), which the
+    /// intensity does not scale. Non-finite components are 0.
+    pub vector: [f32; 3],
+    /// The scheduler time of the request, seconds (Tessera keeps no synchronisation
+    /// offset, so this is the runtime's current time).
+    pub time: f64,
     /// The node's editor ID (for logs).
     pub node_id: u32,
 }
@@ -210,6 +234,11 @@ pub trait EffectSink {
     fn entity_removed(&mut self, entity: EntityId) {
         let _ = entity;
     }
+    /// A PhysicsImpulse node sends its impulse to a target (`script-runtime.md` §30.6 step
+    /// 3); the node completes at once (§30.6 OPEN-20 Decision). Default: ignored.
+    fn physics_impulse(&mut self, request: &ImpulseRequest) {
+        let _ = request;
+    }
 }
 
 /// A sink that does nothing: every sound is refused, environments get handle 0.
@@ -249,6 +278,8 @@ pub enum SinkEvent {
     ParticleStarted(ParticleHandle, ParticleStart),
     /// `stop_particle`, with the immediate-disposal flag.
     ParticleStopped(ParticleHandle, bool),
+    /// `physics_impulse`.
+    Impulse(ImpulseRequest),
 }
 
 /// A sink that accepts everything and records what it was asked, for tests and tools.
@@ -399,5 +430,9 @@ impl EffectSink for RecordingSink {
     fn stop_particle(&mut self, handle: ParticleHandle, immediate: bool) {
         self.particles.remove(&handle);
         self.push(SinkEvent::ParticleStopped(handle, immediate));
+    }
+
+    fn physics_impulse(&mut self, request: &ImpulseRequest) {
+        self.push(SinkEvent::Impulse(*request));
     }
 }

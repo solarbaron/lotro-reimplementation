@@ -39,10 +39,12 @@ pub use node::{
     AnimationNode, BaseBlock, MAX_NODE_DEPTH, MAX_TARGET_DEPTH, MIN_NODE_SIZE, MIN_PORT_SIZE,
     MIN_TARGET_SIZE, Node, NodeData, NodeKind, PhysicsImpulseNode, Port, PortPayload, PortType,
     RunNode, RunParameter, SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase,
-    SwitchNode, SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, when_op,
+    SwitchNode, SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, WhileNode,
+    when_op,
 };
 pub use node::{
-    LightNode, MeshFxAppearanceEntry, MeshFxNode, ParticleScriptNode, SoundNode, sound_pid,
+    GameCallbackNode, LightNode, MeshFxAppearanceEntry, MeshFxNode, ParticleScriptNode, SoundNode,
+    sound_pid,
 };
 pub use record::{NodeCensus, Script, ScriptTable, Scriptlet, TABLE_KINDS};
 

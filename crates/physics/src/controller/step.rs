@@ -20,7 +20,11 @@
 //!    power of the step length. Then the stored impulse is added (§11.6 item 3, §11.10):
 //!    the jump command adds the vertical impulse of the jump script's node for the state,
 //!    (`AirTime` + 0.2) × `ExpectedGravity` (6.0 m/s on land, 3.0 m/s in water in this
-//!    install, [`ControllerConfig::jump`]), and every impulse lasts one step. Without a
+//!    install, [`ControllerConfig::jump`]), and every impulse lasts one step. The command is
+//!    refused while `Movement_IsJumping` is true and in states 4 and 6 (§11.10 gates);
+//!    `Movement_IsJumping` is set by the take-off step and cleared at the end of the first
+//!    step that ends at least [`JUMP_HOLD_SECONDS`] after it outside state 4 (§11.10
+//!    Decision item 1), and the float-line rule of step 4 is skipped while it is true. Without a
 //!    jump table the earlier rule applies: on walkable support, a push of the jump
 //!    acceleration × the BasePlayer ramp time ([`PlayerMovementRecord::jump_ramp_time`];
 //!    5.2 m/s). The speed is then limited to the terminal velocity (and [`MAX_SPEED`]).
@@ -115,6 +119,13 @@ use super::water::{LiquidWater, NoWater, WaterQuery};
 pub const STEPS_PER_SECOND: u32 = 60;
 /// Length of one controller step, s (`collision.md` §12.3; decision 0013).
 pub const STEP_SECONDS: f32 = 1.0 / 60.0;
+/// How long `Movement_IsJumping` stays true at least after the take-off step, seconds
+/// (`collision.md` §11.10 Decision item 1; the length of the Timer that `Loc_Jumping` passes
+/// before its clear, `script-runtime.md` §30.7 item 3).
+pub const JUMP_HOLD_SECONDS: f32 = 0.2;
+/// Tolerance of the [`JUMP_HOLD_SECONDS`] comparison against a sum of
+/// [`STEP_SECONDS`] (12 steps make 0.2 s up to rounding).
+const JUMP_TIME_EPSILON: f32 = 1e-4;
 /// Most controller steps per frame; time beyond them is dropped (`collision.md` §12.3).
 pub const MAX_STEPS_PER_FRAME: u32 = 5;
 /// Most sweeps per step (`collision.md` §12.3 step 4).
@@ -414,8 +425,11 @@ pub enum StepOutcome {
 pub struct StepReport {
     /// How it ended.
     pub outcome: StepOutcome,
-    /// A jump started.
+    /// A jump started (the jump command, or any upward impulse, §12.4 (f)).
     pub jumped: bool,
+    /// The jump command took off in this step (`Movement_IsJumping` becomes true,
+    /// §11.10 Decision item 1).
+    pub jump_started: bool,
     /// A step-up was taken.
     pub stepped_up: bool,
     /// The ground snap moved the mover down.
@@ -431,6 +445,7 @@ impl StepReport {
         Self {
             outcome,
             jumped: false,
+            jump_started: false,
             stepped_up: false,
             snapped: false,
             planes: 0,
@@ -474,6 +489,9 @@ pub struct Controller {
     conditions: LayerConditions,
     state: MoverState,
     impulse: StoredImpulse,
+    /// `Movement_IsJumping` (`collision.md` §11.10 Decision item 1): the time since the
+    /// take-off step ended, seconds, while the property is true.
+    jump_time: Option<f32>,
     scratch: Vec<Contact>,
     push_planes: Vec<([f64; 3], f64)>,
 }
@@ -522,9 +540,19 @@ impl Controller {
             conditions,
             state: Self::sanitize_state(start),
             impulse: StoredImpulse::default(),
+            jump_time: None,
             scratch: Vec::new(),
             push_planes: Vec::new(),
         }
+    }
+
+    /// `Movement_IsJumping` (`collision.md` §11.10 Decision item 1): true from the step in
+    /// which the jump command took off until the end of the first step that ends at least
+    /// [`JUMP_HOLD_SECONDS`] after it with `Entity_Element` not 4. While it is true the jump
+    /// command starts nothing and the float-line rule is skipped.
+    #[must_use]
+    pub fn is_jumping(&self) -> bool {
+        self.jump_time.is_some()
     }
 
     /// Adds a PhysicsImpulse node's effect to the stored impulse (`collision.md` §11.10
@@ -645,6 +673,16 @@ impl Controller {
             report = StepReport::new(StepOutcome::Reverted);
         }
         self.state.steps = before.steps.wrapping_add(1);
+        // `Movement_IsJumping` (§11.10 Decision item 1): cleared at the end of the first
+        // step that ends at least 0.2 s after the take-off step, out of the air.
+        if report.jump_started {
+            self.jump_time = Some(0.0);
+        } else if let Some(t) = self.jump_time {
+            let t = t + STEP_SECONDS;
+            self.jump_time = (t + JUMP_TIME_EPSILON < JUMP_HOLD_SECONDS
+                || self.state.element == MovementState::EarthNoSurface)
+                .then_some(t);
+        }
         // §11.10 item 3: the stored impulse acts in one step only.
         self.impulse.clear();
         if self.scratch.capacity() > SCRATCH_KEEP {
@@ -725,21 +763,25 @@ impl Controller {
             None
         };
         let above_line = float_line.is_some_and(|t| feet[2] > t + FLOAT_TOLERANCE);
-        // The jump command: the jump script's node for the state (§11.10), else the
-        // earlier rule below.
-        if input.jump
+        // The jump command (§11.10 gates, §12.3 step 2): refused while `Movement_IsJumping`
+        // is true and in states 4 and 6; then the jump script's node for the state, else
+        // the earlier rule below.
+        let jump = input.jump && self.jump_time.is_none() && element.allows_jump();
+        if jump
             && let Some(node) = self.config.jump.and_then(|t| t.get(element))
+            && self.impulse.add(Impulse::Jump(node))
         {
-            self.impulse.add(Impulse::Jump(node));
+            report.jump_started = true;
         }
         let vz_start;
         if walk_support {
             vz = 0.0;
-            if input.jump && self.config.jump.is_none() {
+            if jump && self.config.jump.is_none() {
                 let j = (params.jump_acceleration * self.record.jump_ramp_time()).min(MAX_SPEED);
                 if j > 0.0 {
                     vz = j;
                     report.jumped = true;
+                    report.jump_started = true;
                 }
             }
             vz_start = vz;
@@ -782,7 +824,7 @@ impl Controller {
 
         // Buoyancy: the feet stop at the float line from either side (not in a jump's step:
         // §11.6 item 4 holds the feet at the line only while not jumping).
-        if let Some(t) = float_line.filter(|_| !report.jumped) {
+        if let Some(t) = float_line.filter(|_| !report.jumped && self.jump_time.is_none()) {
             if above_line {
                 if feet[2] + dz < t {
                     dz = t - feet[2];

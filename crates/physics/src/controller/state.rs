@@ -41,6 +41,20 @@ impl MovementState {
         self as u32
     }
 
+    /// Whether a jump may start in this state: 1, 2, 3 and 5, not 4 (in the air) or 6
+    /// (sliding). The avatar's key script `Movement_ActionKey` passes only these
+    /// `Entity_FinalElement` values (`collision.md` §11.10 gate 3).
+    #[must_use]
+    pub fn allows_jump(self) -> bool {
+        matches!(
+            self,
+            Self::WaterControlledSurface
+                | Self::WaterNoSurface
+                | Self::WaterUncontrolledSurface
+                | Self::EarthControlledSurface
+        )
+    }
+
     /// States 1–3.
     #[must_use]
     pub fn in_water(self) -> bool {

@@ -126,6 +126,28 @@ pub fn data_text(d: &NodeData, names: &NodeNames<'_>) -> String {
             "particle {} fork {} at location {} offset {:?}",
             p.particle_id, p.fork_particle_id, p.holding_location, p.bone_offset
         ),
+        NodeData::While(w) => format!(
+            "while {} {} [{}]{}",
+            (names.pid)(w.property),
+            if w.inverse { "not in" } else { "in" },
+            w.values
+                .iter()
+                .map(|v| v
+                    .as_ref()
+                    .map_or_else(|| "null".to_owned(), |e| value_text(&e.value)))
+                .chain(w.name_pids().map(|p| (names.pid)(p)))
+                .collect::<Vec<_>>()
+                .join(", "),
+            if w.names.is_empty() { "" } else { " (names)" }
+        ),
+        NodeData::GameCallback(g) => format!(
+            "package {} default {} ({} call properties)",
+            g.package,
+            g.default_value
+                .as_ref()
+                .map_or_else(|| "null".to_owned(), |e| value_text(&e.value)),
+            g.call_properties.entries.len()
+        ),
         NodeData::Opaque { len, .. } => format!("({len} bytes of data)"),
         NodeData::Fields(set) => cut(set
             .entries

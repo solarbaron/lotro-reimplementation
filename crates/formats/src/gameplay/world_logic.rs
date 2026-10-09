@@ -10,7 +10,7 @@
 //! | [`WorldLogicLabels`] | Every label this module reads, resolved at run time | §3 |
 //! | [`QuestCheck`], [`PhasingBox`], [`evaluate_check_list`], [`PhasingBox::test`] | The box path: check lists, the box test and the list evaluation | §4.3, §4.4 |
 //! | [`PhasedState`], [`box_visible`], [`PHASING_LINK_TYPE`], [`PHASING_BOX_UNIQUEDB_KEY`] | What a box applies to its targets and to itself; how boxes and their links are recognised | §4.1, §4.2, §4.6, §4.7 |
-//! | [`QuestStateScript`], [`QuestStateGraph`], [`QuestStateBranch`], [`BranchVisuals`] | The quest-state script path: the test, the branch and its visuals | §5 |
+//! | [`QuestStateScript`], [`QuestStateTest`], [`QuestStateLeaf`], [`QuestStateBranch`], [`BranchVisuals`] | The quest-state script path: the test read from a table's parts, the branch and its visuals | §5 |
 //! | [`WorldEventState`], [`WorldEventKind`], [`world_condition_holds`], [`CustomCondition`] | The world-event condition test and the custom conditions of world-property boxes | §6.5, §6.7 |
 //! | [`CounterBox`], [`LogicBoxTimer`], [`LogicBoxMembers`], [`GeneratorMapping`], [`EventLists`], [`SkirmishValues`] | Logic boxes and placed triggers (data only; their rules are server-side) | §6.1–§6.8 |
 //! | [`TravelHooks`], [`PathMapVolume`] | Travel, scene and path-map hooks | §7 |
@@ -33,6 +33,7 @@ use crate::gameplay::quests::{
     EntryGates, QuestJournal, QuestStatus, WorldEventCondition, WorldEventPids, entry_passes,
 };
 use crate::property::{PropertyEntry, PropertyNames, PropertyStruct, PropertyValue};
+use crate::script_table::{Node, NodeData, NodeKind, PortPayload, PortType, ScriptTable};
 
 // ---------------------------------------------------------------------------------------------
 // Labels
@@ -66,6 +67,16 @@ crate::property_ids! {
         selectable_override = "ClientIsSelectableOverride",
         can_see_visibility_mask = "CanSeeVisibilityMask",
         content_layers = "Entity_ContentLayers",
+    }
+}
+
+crate::property_ids! {
+    /// The three call properties of the quest-entry callback (§5.3), which the §5.2.1
+    /// reader finds in the callback's driven pairs.
+    pub struct QuestCallbackPids {
+        quest_id = "Usage_QuestID",
+        quest_status = "Usage_QuestStatus",
+        operator = "Usage_Operator",
     }
 }
 
@@ -262,6 +273,8 @@ crate::property_ids! {
 pub struct WorldLogicLabels {
     /// Box path, script-path test, run-time state.
     pub quest: QuestStatePids,
+    /// The quest-entry callback's call properties (§5.3).
+    pub callback: QuestCallbackPids,
     /// Script-path visuals, `True` variant.
     pub true_visuals: TrueVisualPids,
     /// Script-path visuals, `False` variant.
@@ -288,6 +301,7 @@ impl WorldLogicLabels {
     pub fn resolve<N: PropertyNames + ?Sized>(names: &N) -> Self {
         Self {
             quest: QuestStatePids::resolve(names),
+            callback: QuestCallbackPids::resolve(names),
             true_visuals: TrueVisualPids::resolve(names),
             false_visuals: FalseVisualPids::resolve(names),
             logic: LogicBoxPids::resolve(names),
@@ -305,6 +319,7 @@ impl WorldLogicLabels {
     pub fn unresolved() -> Self {
         Self {
             quest: QuestStatePids::unresolved(),
+            callback: QuestCallbackPids::unresolved(),
             true_visuals: TrueVisualPids::unresolved(),
             false_visuals: FalseVisualPids::unresolved(),
             logic: LogicBoxPids::unresolved(),
@@ -321,6 +336,7 @@ impl WorldLogicLabels {
     pub fn labels() -> impl Iterator<Item = &'static str> {
         QuestStatePids::LABELS
             .iter()
+            .chain(QuestCallbackPids::LABELS)
             .chain(TrueVisualPids::LABELS)
             .chain(FalseVisualPids::LABELS)
             .chain(LogicBoxPids::LABELS)
@@ -337,6 +353,7 @@ impl WorldLogicLabels {
     #[must_use]
     pub fn missing(&self) -> Vec<&'static str> {
         let mut out = self.quest.missing();
+        out.extend(self.callback.missing());
         out.extend(self.true_visuals.missing());
         out.extend(self.false_visuals.missing());
         out.extend(self.logic.missing());
@@ -673,29 +690,201 @@ pub enum QuestStateBranch {
     False,
 }
 
-impl QuestStateBranch {
-    fn of(pass: bool) -> Self {
-        if pass { Self::True } else { Self::False }
+/// What a value port of the quest-entry callback holds (§5.2.1 "Leaves").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuestStateLeaf {
+    /// Nothing is wired: the branch runs nothing.
+    Nothing,
+    /// One Run node of this script key (`QuestState_True` or `QuestState_False` in the five
+    /// tables of §5.1).
+    Run(u32),
+    /// Other nodes (this many): for example the Light or day/night Scriptlet node of the
+    /// tables of WL23.
+    Nodes(usize),
+}
+
+/// A quest-state test read from a table's own `Startup` script by its parts (§5.2.1, WL24):
+/// what the evaluation needs (timer, guards, test override, one or two entries) and what
+/// each branch runs. Two tables may have the same parts and differ in their leaves, so the
+/// parts never identify a table; behaviour comes from the leaves read here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestStateTest {
+    /// The Timer root's delay, seconds (the payload of its port of type 6); `None` without
+    /// a timer.
+    pub delay: Option<f32>,
+    /// A When on `QuestState_QuestID` against the null DID: without a quest ID nothing runs.
+    pub quest_id_guard: bool,
+    /// A Switch on `QuestState_Test` (cases 0, 1, 2).
+    pub test_override: bool,
+    /// A Switch on `QuestState_PhasedOut` with a case for false only.
+    pub phased_out_guard: bool,
+    /// One or two chained entries (the second is driven from the `…_2` properties).
+    pub entries: u8,
+    /// The callback's package (`GameScript_Package`).
+    pub package: Did,
+    /// What runs when the entries pass.
+    pub true_leaf: QuestStateLeaf,
+    /// What runs when an entry fails (the first callback's false port).
+    pub false_leaf: QuestStateLeaf,
+}
+
+/// Deepest path from a `Startup` root to the quest-entry callback that the reader follows
+/// (a Tessera bound; the install's paths have at most four nodes above the callback).
+pub const MAX_QUEST_STATE_PATH: usize = 16;
+
+impl QuestStateTest {
+    /// Reads the test from `table`'s `Startup` script (key `startup_key`), or `None` when
+    /// the table carries none (§5.2.1): a GameCallback whose driven pairs set the three
+    /// call properties from `QuestState_QuestID`, `…Status` and `…Operator` (and, when
+    /// `package` is given, whose package is that one), reached from a `Startup` root through
+    /// nothing but the parts (a Timer root, the quest-ID guard, the test override, the
+    /// phased-out guard). A path holding any other node is left to the script runtime.
+    #[must_use]
+    pub fn read(
+        table: &ScriptTable,
+        quest: &QuestStatePids,
+        call: &QuestCallbackPids,
+        startup_key: u32,
+        package: Option<Did>,
+    ) -> Option<Self> {
+        let script = table.script(startup_key)?;
+        let is_entry = |n: &Node, second: bool| {
+            let NodeData::GameCallback(g) = &n.data else {
+                return false;
+            };
+            if package.is_some_and(|p| p != g.package) {
+                return false;
+            }
+            let (q, s, o) = if second {
+                (
+                    quest.quest_id_2,
+                    quest.quest_status_2,
+                    quest.quest_operator_2,
+                )
+            } else {
+                (quest.quest_id, quest.quest_status, quest.quest_operator)
+            };
+            [
+                (call.quest_id, q),
+                (call.quest_status, s),
+                (call.operator, o),
+            ]
+            .iter()
+            .all(|(field, source)| match (field.id(), source.id()) {
+                (Some(f), Some(src)) => n.base.driven.contains(&(f, src)),
+                _ => false,
+            })
+        };
+        let mut path: Vec<&Node> = Vec::new();
+        let found = script
+            .roots
+            .iter()
+            .find_map(|r| find_path(r, &|n| is_entry(n, false), &mut path, 0))?;
+        let mut out = Self {
+            delay: None,
+            quest_id_guard: false,
+            test_override: false,
+            phased_out_guard: false,
+            entries: 1,
+            package: match &found.data {
+                NodeData::GameCallback(g) => g.package,
+                _ => Did(0),
+            },
+            true_leaf: QuestStateLeaf::Nothing,
+            false_leaf: QuestStateLeaf::Nothing,
+        };
+        for (i, n) in path.iter().enumerate() {
+            let property = match &n.data {
+                NodeData::Switch(sw) => Some(sw.property),
+                _ => None,
+            };
+            if i == 0 && n.kind == NodeKind::TIMER {
+                out.delay = n.ports_of(PortType::DEFAULT).find_map(|p| match p.payload {
+                    PortPayload::F32(t) => Some(t),
+                    _ => None,
+                });
+            } else if n.kind == NodeKind::WHEN && property == quest.quest_id.id() {
+                out.quest_id_guard = true;
+            } else if n.kind == NodeKind::SWITCH && property == quest.test.id() {
+                out.test_override = true;
+            } else if n.kind == NodeKind::SWITCH && property == quest.phased_out.id() {
+                out.phased_out_guard = true;
+            } else {
+                return None;
+            }
+        }
+        let first_true = value_port(found, true);
+        out.false_leaf = leaf(value_port(found, false));
+        let second = first_true.and_then(|c| c.iter().find(|n| is_entry(n, true)));
+        match second {
+            Some(second) => {
+                out.entries = 2;
+                out.true_leaf = leaf(value_port(second, true));
+            }
+            None => out.true_leaf = leaf(first_true),
+        }
+        Some(out)
+    }
+
+    /// The leaf that runs for `branch`.
+    #[must_use]
+    pub fn leaf(&self, branch: QuestStateBranch) -> QuestStateLeaf {
+        match branch {
+            QuestStateBranch::True => self.true_leaf,
+            QuestStateBranch::False => self.false_leaf,
+        }
     }
 }
 
-/// The shapes of the five quest-state Startup graphs (§5.2). Which shape a table has is a
-/// property of its graph; a caller recognises it from the table (the shapes are named after
-/// what their graph does, not after DIDs).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum QuestStateGraph {
-    /// One entry under a When on `QuestState_QuestID` ≠ null and a Switch on
-    /// `QuestState_Test` (0x070014AF here).
-    GatedSingle,
-    /// Two entries, both must pass, under a Switch on `QuestState_Test` (0x070014BB here).
-    Double,
-    /// One entry, no Switch (0x070014CE here).
-    Unswitched,
-    /// One entry under a Switch on `QuestState_Test` (0x070014B0 here).
-    Single,
-    /// One entry under a Switch on `QuestState_Test`, tested only while not phased out
-    /// (0x070014B1 here).
-    SingleUnlessPhasedOut,
+/// Depth-first search for the first node `hit` accepts; `path` holds the nodes above it on
+/// return.
+fn find_path<'a>(
+    n: &'a Node,
+    hit: &dyn Fn(&Node) -> bool,
+    path: &mut Vec<&'a Node>,
+    depth: usize,
+) -> Option<&'a Node> {
+    if hit(n) {
+        return Some(n);
+    }
+    if depth >= MAX_QUEST_STATE_PATH {
+        return None;
+    }
+    path.push(n);
+    for p in &n.ports {
+        for c in &p.children {
+            if let Some(found) = find_path(c, hit, path, depth + 1) {
+                return Some(found);
+            }
+        }
+    }
+    path.pop();
+    None
+}
+
+/// The children of a callback's value port (type 5) whose value is `value`.
+fn value_port(n: &Node, value: bool) -> Option<&[Node]> {
+    n.ports_of(PortType::SWITCH_VALUE)
+        .find_map(|p| match &p.payload {
+            PortPayload::Value(Some(e))
+                if e.value.as_f64().is_some_and(|v| (v != 0.0) == value) =>
+            {
+                Some(p.children.as_slice())
+            }
+            _ => None,
+        })
+}
+
+/// What a value port holds.
+fn leaf(children: Option<&[Node]>) -> QuestStateLeaf {
+    match children.unwrap_or(&[]) {
+        [] => QuestStateLeaf::Nothing,
+        [one] => match &one.data {
+            NodeData::Run(r) if !r.stop => QuestStateLeaf::Run(r.script),
+            _ => QuestStateLeaf::Nodes(1),
+        },
+        many => QuestStateLeaf::Nodes(many.len()),
+    }
 }
 
 /// `QuestState_Test` values (mapper 0x23000329 here): 1 forces True, 2 forces False.
@@ -737,47 +926,41 @@ impl QuestStateScript {
         !self.entry.quest.is_null()
     }
 
-    /// The branch the table's Startup graph runs (§5.2), or `None` when it runs neither
-    /// script. `callback` is the quest-entry callback of §5.3 (false without a local
-    /// player): it is called with the entry to test, only when the graph reaches it.
+    /// The branch a table's quest-state test runs (§5.2.1), or `None` when it runs neither:
+    /// stop when a quest-ID guard sees the null DID; apply the test override (1 → True,
+    /// 2 → False, 0 or absent → go on, any other value → nothing, as the override Switches
+    /// have no Default port, WL27); stop when a phased-out guard sees true; then the entries
+    /// in order, the first failing one choosing False. `callback` is the quest-entry
+    /// callback of §5.3 (false without a local player): it is called with the entry to test,
+    /// only when the evaluation reaches it. The delay is the caller's (the test runs once
+    /// after it). What runs is [`QuestStateTest::leaf`] of the result.
     #[must_use]
     pub fn branch(
         &self,
-        graph: QuestStateGraph,
+        test: &QuestStateTest,
         mut callback: impl FnMut(&QuestCheck) -> bool,
     ) -> Option<QuestStateBranch> {
-        let test = self.test.unwrap_or(0);
-        let forced = match test {
-            QUEST_STATE_TEST_TRUE => Some(Some(QuestStateBranch::True)),
-            QUEST_STATE_TEST_FALSE => Some(Some(QuestStateBranch::False)),
-            0 => None,
-            // A Switch with no case for the value runs nothing.
-            _ => Some(None),
-        };
-        match graph {
-            QuestStateGraph::Unswitched => Some(QuestStateBranch::of(callback(&self.entry))),
-            QuestStateGraph::GatedSingle => {
-                if !self.has_quest() {
-                    return None;
-                }
-                forced.unwrap_or_else(|| Some(QuestStateBranch::of(callback(&self.entry))))
-            }
-            QuestStateGraph::Single => {
-                forced.unwrap_or_else(|| Some(QuestStateBranch::of(callback(&self.entry))))
-            }
-            QuestStateGraph::Double => forced.unwrap_or_else(|| {
-                Some(QuestStateBranch::of(
-                    callback(&self.entry) && callback(&self.entry_2),
-                ))
-            }),
-            QuestStateGraph::SingleUnlessPhasedOut => forced.unwrap_or_else(|| {
-                if self.phased_out.unwrap_or(false) {
-                    None
-                } else {
-                    Some(QuestStateBranch::of(callback(&self.entry)))
-                }
-            }),
+        if test.quest_id_guard && !self.has_quest() {
+            return None;
         }
+        if test.test_override {
+            match self.test.unwrap_or(0) {
+                QUEST_STATE_TEST_TRUE => return Some(QuestStateBranch::True),
+                QUEST_STATE_TEST_FALSE => return Some(QuestStateBranch::False),
+                0 => {}
+                _ => return None,
+            }
+        }
+        if test.phased_out_guard && self.phased_out.unwrap_or(false) {
+            return None;
+        }
+        if !callback(&self.entry) {
+            return Some(QuestStateBranch::False);
+        }
+        if test.entries >= 2 && !callback(&self.entry_2) {
+            return Some(QuestStateBranch::False);
+        }
+        Some(QuestStateBranch::True)
     }
 }
 
@@ -925,12 +1108,12 @@ pub fn branch_draw<A: PropertyAccess + ?Sized, D: PropertyDefaults + ?Sized>(
 /// 1887 here) with their bounds, boolean events (class 1815 here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorldEventKind {
-    /// An integer event: `WorldEvent_MinIntValue` and `WorldEvent_MaxIntValue` (an absent
-    /// bound does not restrict).
+    /// An integer event: `WorldEvent_MinIntValue` and `WorldEvent_MaxIntValue` as stored;
+    /// an absent bound is read as 0 (§6.7 step 6, WL25).
     Integer {
-        /// Minimum.
+        /// Minimum (`None`: not stored, read as 0).
         min: Option<i64>,
-        /// Maximum.
+        /// Maximum (`None`: not stored, read as 0).
         max: Option<i64>,
     },
     /// A boolean event (values 0 and 1).
@@ -977,7 +1160,8 @@ pub fn world_condition_holds<S: WorldEventState + ?Sized>(
     };
     match kind {
         WorldEventKind::Integer { min, max } => {
-            if min.is_some_and(|m| c < m) || max.is_some_and(|m| c > m) {
+            // §6.7 step 6 (WLB2, WL25): a bound the event does not store is 0.
+            if c < min.unwrap_or(0) || c > max.unwrap_or(0) {
                 return false;
             }
             let Some(v) = read() else { return false };
@@ -1615,7 +1799,9 @@ impl ResponseCallback {
 /// The version master list (class 1623 here, §9.1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VersionMasterList {
-    /// `Version_Number`: the current content update (an enum key or integer as stored).
+    /// `Version_Number`: the current content update, an enum key of the mapper the
+    /// property names (type 8, §9.1, WL26); an integer value, which the install never
+    /// stores, is read as well.
     pub current: Option<u32>,
     /// `Version_AlwaysRunOnPlayers`.
     pub always_run: Vec<Did>,

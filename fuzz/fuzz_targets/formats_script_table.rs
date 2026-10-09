@@ -6,7 +6,9 @@
 //! Nothing may panic and nesting stays within the limits of §4.5. An accepted record must
 //! agree with its own census: node counts from walking equal the census, every port of an
 //! animation node with an F32 payload is an event time, the typed Light and MeshFX nodes
-//! sit on nodes of their kinds, and invariant checks run.
+//! sit on nodes of their kinds, While and GameCallback nodes sit on theirs, and invariant
+//! checks run. The quest-state reader of `world-logic.md` §5.2.1 runs on every accepted table
+//! with synthetic labels.
 //!
 //! Run with a memory cap so that allocation blow-ups count as failures, e.g.
 //! `cargo fuzz run formats_script_table -- -malloc_limit_mb=512 -rss_limit_mb=1024`.
@@ -14,6 +16,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use tessera_formats::gameplay::world_logic::{QuestStateTest, WorldLogicLabels};
 use tessera_formats::script_table::{MAX_NODE_DEPTH, Node, NodeCensus, NodeData, NodeKind};
 use tessera_formats::{
     AnyRecord, NoSchema, PropertyType, ScriptTable, Scriptlet, decode_script_table,
@@ -47,6 +50,12 @@ fn check_roots(roots: &[Node], census: &NodeCensus) {
                     assert_eq!(n.kind, NodeKind::MESH_FX);
                     let _ = m.appearances.len();
                 }
+                NodeData::While(w) => {
+                    assert_eq!(n.kind, NodeKind::WHILE);
+                    assert!(w.values.len() <= 255 && w.names.len() <= 255);
+                    let _ = w.name_pids().count();
+                }
+                NodeData::GameCallback(_) => assert_eq!(n.kind, NodeKind::GAME_CALLBACK),
                 _ => {}
             }
         });
@@ -66,6 +75,24 @@ fn check_table(t: &ScriptTable) {
     for s in &t.scripts {
         assert!(t.script(s.key).is_some());
     }
+    // `world-logic.md` §5.2.1 with labels numbered from 1 (small PIDs a fuzzer reaches).
+    let labels = labels();
+    for s in &t.scripts {
+        if let Some(q) = QuestStateTest::read(t, &labels.quest, &labels.callback, s.key, None) {
+            assert!(q.entries == 1 || q.entries == 2);
+        }
+    }
+}
+
+fn labels() -> &'static WorldLogicLabels {
+    static L: std::sync::OnceLock<WorldLogicLabels> = std::sync::OnceLock::new();
+    L.get_or_init(|| {
+        let names: std::collections::HashMap<String, u32> = WorldLogicLabels::labels()
+            .enumerate()
+            .map(|(i, l)| (l.to_owned(), u32::try_from(i).unwrap_or(0) + 1))
+            .collect();
+        WorldLogicLabels::resolve(&names)
+    })
 }
 
 fn check_scriptlet(s: &Scriptlet) {

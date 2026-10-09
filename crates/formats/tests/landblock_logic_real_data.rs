@@ -213,6 +213,10 @@ fn string_infos<'a>(v: &'a PropertyValue, out: &mut Vec<&'a tessera_formats::Str
     }
 }
 
+/// The (kind, port type) pairs the ports of all ISTs use (`instance-scripts.md` §4.5.1):
+/// Collection, Sequence, Random and Timer with type 6, Switch with types 5 and 6.
+const IST_PORT_PAIRS: [(u8, u32); 6] = [(2, 6), (6, 6), (12, 5), (12, 6), (17, 6), (65, 6)];
+
 fn walk_nodes<'a>(roots: &'a [TreeNode], f: &mut impl FnMut(&'a TreeNode)) {
     for r in roots {
         r.walk(f);
@@ -264,26 +268,64 @@ fn landblock(w: &World, info: &LandblockInfo, player: &LocalPlayer<'_, MapJourna
     }
 
     // ---- SEDs: Decal SEDs, own sets against instance sets (I2/IS8), drama on SEDs.
-    for e in &info.entities {
+    // IS8 (revised 2026-10-09): for a SED whose IID is unique in its record, its own set and
+    // its instance set hold the same entries as PID-to-value maps with an equal set header
+    // (the stored order may differ); where two SEDs share an IID, the later SED's set holds
+    // the instance set's entries.
+    let last_of: HashMap<InstanceId, usize> = info
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(n, e)| Some((e.iid?, n)))
+        .collect();
+    for (n, e) in info.entities.iter().enumerate() {
         let own = e.properties.as_ref();
         let inst = e.iid.and_then(|i| weenies.get(&i).copied());
-        if let (Some(own), Some(inst)) = (own, inst)
-            && !e.iid.is_some_and(|i| repeated.contains(&i))
-        {
+        if let (Some(own), Some(inst)) = (own, inst) {
             let inst_map: HashMap<u32, &PropertyValue> =
                 inst.entries.iter().map(|x| (x.pid, &x.value)).collect();
-            let subset = own
-                .entries
-                .iter()
-                .all(|x| inst_map.get(&x.pid) == Some(&&x.value));
-            if !subset {
-                s.fail("IS8 SED set not a subset of its instance set", || {
-                    format!("{:#x}", e.iid.map_or(0, |i| i.0))
-                });
-            } else if own.entries.len() == inst.entries.len() {
-                s.inc("sed.own_equals_instance");
-            } else {
-                s.inc("sed.own_subset_instance");
+            let same_map = own.entries.len() == inst_map.len()
+                && own
+                    .entries
+                    .iter()
+                    .all(|x| inst_map.get(&x.pid) == Some(&&x.value));
+            let same_order = same_map
+                && own
+                    .entries
+                    .iter()
+                    .zip(&inst.entries)
+                    .all(|(a, b)| a.pid == b.pid);
+            let shared = e.iid.is_some_and(|i| repeated.contains(&i));
+            let later = e.iid.is_some_and(|i| last_of.get(&i) == Some(&n));
+            if !shared {
+                if !same_map || own.size != inst.size {
+                    s.fail("IS8 SED set differs from its instance set", || {
+                        format!("{:#x}", e.iid.map_or(0, |i| i.0))
+                    });
+                } else if same_order {
+                    s.inc("sed.own_equals_instance");
+                } else {
+                    s.inc("sed.own_reordered_instance");
+                }
+                let strict_subset = own.entries.len() < inst_map.len()
+                    && own
+                        .entries
+                        .iter()
+                        .all(|x| inst_map.get(&x.pid) == Some(&&x.value));
+                if strict_subset {
+                    s.inc("sed.own_strict_subset_instance");
+                }
+            } else if later {
+                if same_map {
+                    s.inc("sed.shared_later_matches");
+                } else {
+                    s.fail(
+                        "IS8 later SED of a shared IID differs from the instance set",
+                        || format!("{:#x}", e.iid.map_or(0, |i| i.0)),
+                    );
+                }
+            } else if !same_map {
+                s.inc("sed.shared_earlier_differs");
             }
         }
         let decal_props =
@@ -526,6 +568,13 @@ fn landblock(w: &World, info: &LandblockInfo, player: &LocalPlayer<'_, MapJourna
                 s.inc("ist.nodes");
                 if n.kind.0 == 5 {
                     s.inc("ist.run_nodes");
+                }
+                // IS13 (census check): the (kind, port type) pairs of the ISTs, §4.5.1.
+                for p in &n.ports {
+                    s.inc("ist.ports");
+                    if !IST_PORT_PAIRS.contains(&(n.kind.0, p.port_type)) {
+                        s.inc("ist.ports_outside_census");
+                    }
                 }
                 for t in &n.targets {
                     s.inc("ist.targets");
@@ -820,9 +869,22 @@ fn instance_scripts() {
                 "sed.own_equals_instance",
                 2_298_059,
             ),
-            ("instance-scripts §2.1", "sed.own_subset_instance", 955_794),
+            (
+                "instance-scripts §2.1",
+                "sed.own_reordered_instance",
+                955_785,
+            ),
+            ("instance-scripts §2.1", "sed.own_strict_subset_instance", 0),
+            ("instance-scripts §2.1", "sed.shared_later_matches", 9),
+            ("instance-scripts §2.1", "sed.shared_earlier_differs", 9),
             ("instance-scripts §3.4", "ist.entries", 104_531),
             ("instance-scripts §3.4", "ist.targets", 184_221),
+            ("instance-scripts §4.5.1", "ist.ports", 43),
+            (
+                "instance-scripts §4.5.1 IS13",
+                "ist.ports_outside_census",
+                0,
+            ),
             ("instance-scripts §3.5", "ist.link_targets", 184_214),
             ("instance-scripts §3.5", "ist.link_match_end2", 182_928),
             ("instance-scripts §3.5", "ist.link_match_end1_only", 50),

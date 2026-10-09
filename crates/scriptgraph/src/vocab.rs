@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tessera_formats::property::{PropertyDictionary, PropertyNames};
+use tessera_formats::script_table::resolve::ImpulseFieldPids;
 use tessera_formats::{Did, EnumMapper, PropertyType, PropertyValue};
 
 use crate::values::zero_value;
@@ -196,6 +197,8 @@ pub struct RuntimeVocabulary {
     pub environment_name: Option<u32>,
     /// `SoundEnvironmentScript_Priority`.
     pub environment_priority: Option<u32>,
+    /// PhysicsImpulse node fields (`script-runtime.md` §30.6), for driven values.
+    pub impulse: ImpulseFieldPids,
 }
 
 impl RuntimeVocabulary {
@@ -236,6 +239,7 @@ impl RuntimeVocabulary {
             },
             environment_name: p("SoundEnvironmentScript_Name"),
             environment_priority: p("SoundEnvironmentScript_Priority"),
+            impulse: ImpulseFieldPids::from_names(names),
         }
     }
 

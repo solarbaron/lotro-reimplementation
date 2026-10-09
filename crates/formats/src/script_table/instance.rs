@@ -530,13 +530,27 @@ impl TreeNode {
             probability: float(f.probability),
             ..BaseBlock::default()
         };
+        // §4.5.1 Decision: a port of type 1 or more is kept whatever the kind, with no limit
+        // on the count; a port of type 0 is dropped with its subtree and logged. A type
+        // above 255 has no form in the node model (`PortType` is one byte) and is dropped
+        // and logged as well (Tessera reading; no port of the install has one).
         let ports = self
             .ports
             .iter()
-            .map(|p| Port {
-                port_type: PortType(u8::try_from(p.port_type).unwrap_or(0)),
-                payload: port_payload(self.kind, p, f),
-                children: p.children.iter().map(|c| c.to_node(f, defaults)).collect(),
+            .filter_map(|p| match u8::try_from(p.port_type) {
+                Ok(ty) if ty != 0 => Some(Port {
+                    port_type: PortType(ty),
+                    payload: port_payload(self.kind, p, f),
+                    children: p.children.iter().map(|c| c.to_node(f, defaults)).collect(),
+                }),
+                _ => {
+                    tracing::debug!(
+                        kind = self.kind.0,
+                        port_type = p.port_type,
+                        "instance script port dropped (§4.5.1)"
+                    );
+                    None
+                }
             })
             .collect();
         Node {
@@ -738,9 +752,13 @@ impl EntityTableSet {
     /// include order (`script-runtime.md` §12.2: pre-order, each table once, a table whose
     /// definition is `Overriding` not descended into). `table` returns a decoded 0x07 table.
     ///
-    /// Merging of per-script properties: an entry already in the merged set is kept (the
-    /// first definition's settings win; the spec does not state an order, so this is
-    /// Tessera's choice).
+    /// The per-script properties are merged by the separate walk of §4.4.1 (BIN2, I18):
+    /// first value wins (an entry whose PID is already merged is skipped); the instance
+    /// definition's set first, then for each included table in include order its set, then,
+    /// unless the **merged** set now holds `Script_CombinationType` = 1, the same for its
+    /// includes in stored order, depth first. Null includes are skipped; each table is
+    /// visited at most once per walk (Tessera Decision of §4.4.1), so a table that includes
+    /// itself cannot loop.
     #[must_use]
     pub fn lookup<'t>(
         &'t self,
@@ -761,6 +779,11 @@ impl EntityTableSet {
         let mut visited: HashSet<Did> = HashSet::new();
         for &inc in &self.includes {
             out.walk(labels, key, inc, table, &mut visited, 0);
+        }
+        // §4.4.1: the per-script properties, a walk of their own.
+        let mut seen: HashSet<Did> = HashSet::new();
+        for &inc in &self.includes {
+            out.walk_properties(labels, key, inc, table, &mut seen, 0);
         }
         out
     }
@@ -815,7 +838,7 @@ impl<'t> KeyLookup<'t> {
         visited: &mut HashSet<Did>,
         depth: usize,
     ) {
-        if depth >= MAX_TREE_DEPTH || !visited.insert(did) {
+        if did.is_null() || depth >= MAX_TREE_DEPTH || !visited.insert(did) {
             return;
         }
         let Some(t) = table(did) else {
@@ -833,13 +856,41 @@ impl<'t> KeyLookup<'t> {
             list.extend(s.roots.iter());
             if let Some((_, p)) = t.script_properties.iter().find(|(k, _)| *k == key) {
                 overriding = key_field(p, labels.combination_type) == Some(COMBINATION_OVERRIDING);
-                self.merge(p);
             }
         }
         if !overriding {
             for &inc in &t.includes {
                 self.walk(labels, key, inc, table, visited, depth + 1);
             }
+        }
+    }
+
+    /// The per-script property walk of §4.4.1 for one included table: its set for `key`
+    /// (first value wins), then its includes unless the merged set holds
+    /// `Script_CombinationType` = 1.
+    fn walk_properties(
+        &mut self,
+        labels: &InstanceScriptLabels,
+        key: u32,
+        did: Did,
+        table: &dyn Fn(Did) -> Option<&'t ScriptTable>,
+        seen: &mut HashSet<Did>,
+        depth: usize,
+    ) {
+        if did.is_null() || depth >= MAX_TREE_DEPTH || !seen.insert(did) {
+            return;
+        }
+        let Some(t) = table(did) else {
+            return;
+        };
+        if let Some((_, p)) = t.script_properties.iter().find(|(k, _)| *k == key) {
+            self.merge(p);
+        }
+        if key_field(&self.properties, labels.combination_type) == Some(COMBINATION_OVERRIDING) {
+            return;
+        }
+        for &inc in &t.includes {
+            self.walk_properties(labels, key, inc, table, seen, depth + 1);
         }
     }
 }

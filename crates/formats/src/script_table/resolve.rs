@@ -23,8 +23,10 @@
 //!    deformers and the MeshFX nodes the same runs start ([`MeshFxCandidate`], §5.2; the
 //!    mount mesh of `mounts.md` §4.4).
 //! 4. [`ClipResolver::resolve_script`] runs one script key instead (for example the
-//!    avatar's `Loc_Jumping`, `collision.md` §11.10); every resolution also lists the
-//!    PhysicsImpulse nodes that would start ([`ImpulseCandidate`]).
+//!    avatar's jump key `Movement_ActionKey`, `collision.md` §11.10); every resolution also
+//!    lists the PhysicsImpulse nodes that would start ([`ImpulseCandidate`]). While nodes
+//!    follow `script-runtime.md` §30: their branch starts when the test holds and stops at a
+//!    property change that makes it fail.
 //!
 //! [`EntityScripts::running`] marks scripts as running before `Startup` (a mounted rider's
 //! channelling script, read by WhenRunning nodes, §8.4 step 2).
@@ -63,7 +65,8 @@ use std::sync::Arc;
 
 use super::node::{
     AnimationNode, MeshFxNode, Node, NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType,
-    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
+    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, WhileNode,
+    when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
 use super::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
@@ -146,6 +149,13 @@ pub struct ImpulseFieldPids {
 }
 
 impl ImpulseFieldPids {
+    /// Writes the value `v` of the field `pid` (a scriptlet parameter or a driven value)
+    /// into `node`; a PID that names none of the six fields, or a value of the wrong kind,
+    /// changes nothing.
+    pub fn apply(&self, node: &mut PhysicsImpulseNode, pid: u32, v: &PropertyValue) {
+        apply_impulse_field(node, self, pid, v);
+    }
+
     /// Looks the §5.3 field names up; missing names stay `None`.
     #[must_use]
     pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
@@ -337,6 +347,10 @@ pub struct ScriptVocabulary {
     /// The `Loc_Jumping` script key (label of the `ScriptTable_ScriptID` enum): the
     /// avatar's jump script (`collision.md` §11.10). `None` when the enum lacks it.
     pub jump_script: Option<u32>,
+    /// The `Movement_ActionKey` script key (label of the `ScriptTable_ScriptID` enum or its
+    /// base mapper): the key script the jump runs through (`collision.md` §11.10,
+    /// `script-runtime.md` §30.7 item 1). `None` when the enum lacks it.
+    pub action_key: Option<u32>,
     /// `Entity_FinalElement`: the property the jump script switches on (`collision.md`
     /// §11.10).
     pub final_element: Option<u32>,
@@ -403,6 +417,7 @@ impl ScriptVocabulary {
         let combination_type = opt("Script_CombinationType");
         let combination_overriding = combination_type.and_then(|p| label(p, "Overriding").ok());
         let jump_script = label(script_id, "Loc_Jumping").ok();
+        let action_key = label(script_id, "Movement_ActionKey").ok();
         Ok(Self {
             class_script_table: need("Entity_ClassScriptTable")?,
             additional_script_tables: opt("Entity_AdditionalScriptTables"),
@@ -432,6 +447,7 @@ impl ScriptVocabulary {
             combination_type,
             combination_overriding,
             jump_script,
+            action_key,
             final_element: opt("Entity_FinalElement"),
             impulse: ImpulseFieldPids::from_names(dict),
         })
@@ -1421,9 +1437,6 @@ pub struct ClipResolver<'s, S: ?Sized, F, B, E> {
     defaults: Option<Box<dyn Fn(u32) -> Option<PropertyValue> + Send + Sync + 's>>,
     /// Whether an unset scalar property without a default reads as 0.
     unset_as_zero: bool,
-    /// Kinds whose Default-port children start as if the node were a container
-    /// ([`ClipResolver::with_pass_through`]).
-    pass_through: Vec<NodeKind>,
     /// Seed of the Random-node picks of [`AppearanceCandidate::picked`] (see
     /// [`ClipResolver::with_random_seed`]).
     random_seed: Option<u64>,
@@ -1458,7 +1471,6 @@ where
             failures: HashMap::new(),
             defaults: None,
             unset_as_zero: false,
-            pass_through: Vec::new(),
             random_seed: None,
             _marker: PhantomData,
         }
@@ -1514,17 +1526,6 @@ where
     #[must_use]
     pub fn unset_reads_as_zero(mut self, zero: bool) -> Self {
         self.unset_as_zero = zero;
-        self
-    }
-
-    /// Nodes of the kinds in `kinds` that have no evaluation rule here (for example While,
-    /// whose run-time behaviour `script-runtime.md` §18 leaves unimplemented) start the
-    /// children of their Default ports in stored order, instead of nothing. For scans whose
-    /// outcome a spec states for the path as a whole (the jump script of `collision.md`
-    /// §11.10); off (empty) by default. Kinds with a rule here are not affected.
-    #[must_use]
-    pub fn with_pass_through(mut self, kinds: &[NodeKind]) -> Self {
-        self.pass_through = kinds.to_vec();
         self
     }
 
@@ -1826,6 +1827,7 @@ where
             depth: 0,
             calls: Vec::new(),
             runs: Vec::new(),
+            whiles: Vec::new(),
             running: entity.running.iter().copied().collect(),
             table: Did(0),
             all_branches,
@@ -2022,6 +2024,14 @@ struct RunFrame {
     stops: u64,
 }
 
+/// A While node whose branch is being started (`script-runtime.md` §30.3–§30.4): its test
+/// and whether a property change made it fail meanwhile.
+#[derive(Debug, Clone)]
+struct WhileFrame {
+    node: WhileNode,
+    stopped: bool,
+}
+
 /// What makes two issues the same report (see [`ResolveIssue`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum IssueKey {
@@ -2066,6 +2076,9 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// The script runs in progress, outermost first, for stops during a start (§7.5
     /// step 4).
     runs: Vec<RunFrame>,
+    /// The While nodes whose branch is starting, outermost first (`script-runtime.md`
+    /// §30.4): a SetProperty that makes one's test fail stops its branch.
+    whiles: Vec<WhileFrame>,
     running: HashSet<u32>,
     table: Did,
     /// Run every branch of Switch, When, ScalarBlend and WhenRunning nodes.
@@ -2237,12 +2250,18 @@ where
         ctx: Ctx,
     ) -> Result<(), ResolveError<E>> {
         for n in nodes {
-            if self.stopped {
+            if self.stopped || self.while_stopped() {
                 break;
             }
             self.node(n, scope, ctx)?;
         }
         Ok(())
+    }
+
+    /// Whether the branch of an enclosing While was stopped (its test failed, §30.4): the
+    /// frames on the stack enclose the node being started, so nothing more of it starts.
+    fn while_stopped(&self) -> bool {
+        self.whiles.iter().any(|f| f.stopped)
     }
 
     fn children<'a>(
@@ -2374,10 +2393,7 @@ where
             NodeData::None if n.kind == NodeKind::COLLECTION => self.collection(n, scope, ctx),
             NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
             NodeData::Label { .. } => self.children(n, None, scope, ctx),
-            // Kinds the caller asked to pass through (`with_pass_through`).
-            _ if self.r.pass_through.contains(&n.kind) => {
-                self.children(n, Some(PortType::DEFAULT), scope, ctx)
-            }
+            NodeData::While(w) => self.while_node(n, w, scope, ctx),
             // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
@@ -2585,13 +2601,19 @@ where
         if !self.charge(n.ports.len().saturating_mul(2)) {
             return Ok(());
         }
-        let ports: Vec<(u32, &'a [Node])> = n
-            .ports_of(PortType::DEFAULT)
-            .filter_map(|p| match p.payload {
-                PortPayload::U32(w) if w > 0 => Some((w, p.children.as_slice())),
-                _ => None,
-            })
-            .collect();
+        // §7.4 rule 1 (T27, BIN3): a node with exactly one port always picks it, whatever
+        // its weight; otherwise only ports with a positive weight can be picked.
+        let all: Vec<&'a super::node::Port> = n.ports_of(PortType::DEFAULT).collect();
+        let ports: Vec<(u32, &'a [Node])> = if let [only] = all.as_slice() {
+            vec![(1, only.children.as_slice())]
+        } else {
+            all.iter()
+                .filter_map(|p| match p.payload {
+                    PortPayload::U32(w) if w > 0 => Some((w, p.children.as_slice())),
+                    _ => None,
+                })
+                .collect()
+        };
         let total: f64 = ports.iter().map(|(w, _)| f64::from(*w)).sum();
         // The seeded pick (§7.4 rules 1–3; ports walked in stored order, which keeps the
         // distribution): only a picked branch draws. No-repeat memory only matters when a
@@ -2778,7 +2800,98 @@ where
         let v = driven.or_else(|| value.map(|e| &e.value).filter(|v| is_state_value(v)));
         if let Some(v) = v.cloned() {
             self.state.set(property, v);
+            self.while_property_changed(property);
         }
+    }
+
+    /// A property changed during an evaluation: every While whose branch is starting and
+    /// that watches it tests again; the first failing test stops its branch, so the later
+    /// siblings of the change do not start (`script-runtime.md` §30.4).
+    fn while_property_changed(&mut self, property: u32) {
+        if self.all_branches || self.whiles.is_empty() {
+            return;
+        }
+        let cost = self
+            .whiles
+            .iter()
+            .map(|f| f.node.values.len().saturating_add(f.node.names.len()))
+            .fold(self.whiles.len(), usize::saturating_add);
+        if !self.charge(cost) {
+            return;
+        }
+        let failed: Vec<bool> = self
+            .whiles
+            .iter()
+            .map(|f| {
+                !f.stopped
+                    && (f.node.property == property || f.node.name_pids().any(|p| p == property))
+                    && !self.while_holds(&f.node)
+            })
+            .collect();
+        for (f, fail) in self.whiles.iter_mut().zip(failed) {
+            if fail {
+                f.stopped = true;
+            }
+        }
+    }
+
+    /// The test of a While (`script-runtime.md` §30.2): the watched property's value,
+    /// prepared as for a Switch, matches a `Values` entry (same PID, equal value; numbers,
+    /// booleans and bit fields compare as whole values) or, with the same type, the current
+    /// value of a `Names` property; `Inverse` reverses the result. A property without a
+    /// value matches nothing.
+    fn while_holds(&self, w: &WhileNode) -> bool {
+        let matched = self.r.read(&self.state, w.property).is_some_and(|v| {
+            w.values
+                .iter()
+                .flatten()
+                .any(|e| e.pid == w.property && whole_value_equal(&v, &e.value))
+                || w.name_pids().any(|p| {
+                    self.r.read(&self.state, p).is_some_and(|other| {
+                        std::mem::discriminant(&*other) == std::mem::discriminant(&*v)
+                            && whole_value_equal(&v, &other)
+                    })
+                })
+        });
+        matched != w.inverse
+    }
+
+    /// While (50, `script-runtime.md` §30.2–§30.4): when the test holds, the children of the
+    /// first Default port start; otherwise nothing starts. While they start, a property
+    /// change that makes the test fail stops the branch (§30.4). Every-branch mode starts
+    /// the branch unconditionally.
+    #[inline(never)]
+    fn while_node<'a>(
+        &mut self,
+        n: &'a Node,
+        w: &WhileNode,
+        scope: &Scope<'a>,
+        ctx: Ctx,
+    ) -> Result<(), ResolveError<E>> {
+        let Some(port) = n.ports_of(PortType::DEFAULT).next() else {
+            return Ok(());
+        };
+        if self.all_branches {
+            return self.nodes(&port.children, scope, ctx);
+        }
+        if !self.charge(
+            w.values
+                .len()
+                .saturating_add(w.names.len())
+                .saturating_add(1),
+        ) {
+            return Ok(());
+        }
+        if !self.while_holds(w) {
+            return Ok(());
+        }
+        self.whiles.push(WhileFrame {
+            node: w.clone(),
+            stopped: false,
+        });
+        let res = self.nodes(&port.children, scope, ctx);
+        self.whiles.pop();
+        res
     }
 
     fn number(&self, pid: u32) -> Option<f64> {
@@ -2858,7 +2971,8 @@ where
 
     /// Registers a MeshFX node (§5.2) with scriptlet parameters, then driven properties,
     /// applied to its fields (as for animation nodes: the innermost parameter, then the
-    /// run-time value, which wins).
+    /// run-time value, which wins; an absent source reads its dictionary default,
+    /// `appearance.md` §5.7 step 3).
     fn mesh_fx(&mut self, n: &Node, m: &MeshFxNode, scope: &Scope<'_>) {
         if self.mesh_fx.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -2903,9 +3017,11 @@ where
                 s = sc.parent;
             }
         }
+        // `appearance.md` §5.7 step 3 (A36): a driven field takes its source's current
+        // value, an absent source its dictionary default (when the resolver has defaults).
         for &(field, source) in &n.base.driven {
-            if let Some(v) = self.state.get(source) {
-                apply_mesh_fx_field(&mut c, &pids, field, v);
+            if let Some(v) = self.r.read(&self.state, source) {
+                apply_mesh_fx_field(&mut c, &pids, field, &v);
             }
         }
         self.mesh_fx.push(c);
@@ -3373,6 +3489,20 @@ fn case_cost(c: &SwitchCase, value: &PropertyValue) -> usize {
         let other = e.as_ref().map_or(0, |e| bytes(&e.value));
         acc.saturating_add(1).saturating_add(own.max(other))
     })
+}
+
+/// Whole-value equality of two prepared values (`script-runtime.md` §30.2): numbers,
+/// booleans, enums, bit fields, PIDs and DIDs compare by value (a bit field must equal in
+/// every bit, it is not a mask); other values compare as stored.
+fn whole_value_equal(a: &PropertyValue, b: &PropertyValue) -> bool {
+    let wide = |v: &PropertyValue| matches!(v, PropertyValue::BitfieldAny(_));
+    if wide(a) || wide(b) {
+        return wide_case_matches(SWITCH_EQUAL, a, b);
+    }
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
 }
 
 /// Whether a switch case selects `value` (§7.1): any listed value under the operator.

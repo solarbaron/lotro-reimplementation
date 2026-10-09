@@ -96,6 +96,23 @@ pub(crate) struct TimerState {
     pub not_before: f64,
 }
 
+/// State of a While instance (`script-runtime.md` §30.3–§30.4).
+#[derive(Debug, Clone)]
+pub(crate) struct WhileState {
+    /// `WhileScript_PropertyName`.
+    pub property: u32,
+    /// The entity whose property is watched (the running entity unless a target names
+    /// another, §30.3 step 1).
+    pub target: EntityId,
+    /// The `Names` properties, watched on the running entity (§30.1 OPEN-21 Decision).
+    pub names: Vec<u32>,
+    /// The port group of the branch (0 before it starts).
+    pub tag: u32,
+    /// The test failed once: the branch was stopped and the node armed; later changes do
+    /// nothing (§30.4).
+    pub ended: bool,
+}
+
 /// State of a Run instance with `Persistent` = 1 (§12.4).
 #[derive(Debug, Clone)]
 pub(crate) struct RunState {
@@ -137,6 +154,8 @@ pub(crate) enum KindState {
         handle: Option<AnimationHandle>,
         event: Option<EventKey>,
     },
+    /// A While node (§30).
+    While(Box<WhileState>),
     /// A never-ending Particle node (`particle-runtime.md` §5.5 step 5): the effect's handle
     /// (none when nothing started), its target, the `ImmediateDisposal` byte and the
     /// redirect PID it listens to (0 for none, §5.8).
@@ -170,6 +189,8 @@ pub(crate) struct Instance {
     /// Driven values written into this start's node copy: (field PID, value) (§2.2, §5).
     pub overrides: Vec<(u32, PropertyValue)>,
     pub children: Vec<Child>,
+    /// The parent's port group this instance was started into (0: none).
+    pub group: u32,
     pub live_tags: Vec<u32>,
     pub next_tag: u32,
     pub armed: bool,
@@ -211,6 +232,7 @@ impl Instance {
             permission,
             overrides: Vec::new(),
             children: Vec::new(),
+            group: 0,
             live_tags: Vec::new(),
             next_tag: 0,
             armed: false,

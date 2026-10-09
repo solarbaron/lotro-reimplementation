@@ -206,8 +206,10 @@ fn source_set(
     }
 }
 
-/// The clips the figure's tables start for each emote key: the candidates whose run starts
-/// at the key, the most likely one that is not held.
+/// The clips the figure's tables start for each emote key (`npc-drama.md` §11 item 4.2,
+/// Decision T7): among the candidates whose run starts at the key, the one with the largest
+/// blend weight × chance, held clips excluded, ties to the first in table order. A key with
+/// no clip is left out (logged by the caller; the drama goes on with its next facet).
 fn emote_clips(
     ctx: &DataContext,
     figure: Did,
@@ -248,15 +250,18 @@ fn emote_clips(
         scripts.startup_scripts = vec![key];
         match resolver.resolve(&scripts, MotionState::Idle) {
             Ok(r) => {
-                let best = r
+                // §11 item 4.2 (Decision T7): the largest blend weight × chance, held clips
+                // excluded, ties to the first in table order.
+                let mut best: Option<&tessera_formats::script_table::resolve::ClipCandidate> = None;
+                for c in r
                     .candidates
                     .iter()
                     .filter(|c| !c.is_held() && c.scripts.first() == Some(&key))
-                    .max_by(|a, b| {
-                        (a.blend_weight * a.chance)
-                            .partial_cmp(&(b.blend_weight * b.chance))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                {
+                    if best.is_none_or(|b| c.blend_weight * c.chance > b.blend_weight * b.chance) {
+                        best = Some(c);
+                    }
+                }
                 if let Some(c) = best {
                     let rate = Some(c.playback_rate())
                         .filter(|r| r.is_finite() && *r > 0.0)

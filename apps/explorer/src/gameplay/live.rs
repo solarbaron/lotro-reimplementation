@@ -283,6 +283,15 @@ pub(crate) fn live_panel(
                     if ui.small_button(format!("▶ {}", d.caption)).clicked() {
                         actions.push(Action::PlayDrama(Box::new(d.clone())));
                     }
+                    // §11 item 4.1 (Decision T7): without a figure of its own (an instance
+                    // set of a server-placed object names no template) the drama plays on
+                    // the figure the character view shows, through that figure's tables.
+                    if d.figure.is_none() {
+                        ui.label(
+                            RichText::new("(on the shown figure; emotes use its script tables)")
+                                .weak(),
+                        );
+                    }
                 }
             });
         });

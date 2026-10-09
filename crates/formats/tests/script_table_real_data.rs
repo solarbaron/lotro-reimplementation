@@ -294,6 +294,283 @@ fn scriptlets_decode() {
     );
 }
 
+/// `script-runtime.md` §30.1 and §30.5 (R43): every While node decodes to its typed fields,
+/// and the census of this install (41 nodes in 17 tables, `Names` empty, `Inverse` 0, one
+/// Default port and no other port each) is printed and compared; a census difference fails
+/// only with `TESSERA_CENSUS=strict` (a data update may change it).
+#[test]
+fn while_nodes_decode_and_follow_the_census() {
+    use tessera_formats::script_table::{NodeData, PortType};
+    let Some(set) = open_set() else { return };
+    let dict = dictionary(set);
+    let work = entries_with_prefix(set, 0x07);
+    // (tables with a While, nodes, untyped, with names, inverted, other than one Default
+    // port and nothing else)
+    let per = par_each(&work, |(i, e)| {
+        let Ok(payload) = set.member(*i).archive.read_entry(e) else {
+            return [0usize; 6];
+        };
+        let Ok(t) = ScriptTable::parse_expecting(&payload, e.did, dict) else {
+            return [0; 6];
+        };
+        let mut c = [0usize; 6];
+        for sc in &t.scripts {
+            for r in &sc.roots {
+                r.walk(&mut |n, _| {
+                    if n.kind != NodeKind::WHILE {
+                        return;
+                    }
+                    c[1] += 1;
+                    match &n.data {
+                        NodeData::While(w) => {
+                            c[3] += usize::from(!w.names.is_empty());
+                            c[4] += usize::from(w.inverse);
+                        }
+                        _ => c[2] += 1,
+                    }
+                    let defaults = n.ports_of(PortType::DEFAULT).count();
+                    c[5] += usize::from(defaults != 1 || n.ports.len() != 1);
+                });
+            }
+        }
+        c[0] = usize::from(c[1] > 0);
+        c
+    });
+    let mut sum = [0usize; 6];
+    for c in per {
+        for (a, b) in sum.iter_mut().zip(c) {
+            *a += b;
+        }
+    }
+    eprintln!(
+        "While nodes: {} in {} tables; untyped {}, with names {}, inverted {}, other ports {}",
+        sum[1], sum[0], sum[2], sum[3], sum[4], sum[5]
+    );
+    assert_eq!(sum[2], 0, "every While node decodes to its fields");
+    let census = [17, 41, 0, 0, 0, 0];
+    if sum != census {
+        eprintln!("census differs from script-runtime.md §30.5: {sum:?} against {census:?}");
+        assert!(
+            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
+            "census (strict)"
+        );
+    }
+}
+
+/// The (kind, port type) pairs of every port of the decoded tables and scriptlets
+/// (`instance-scripts.md` §4.5.1 table, a census of this install).
+const PORT_PAIRS: [(u8, u8); 32] = [
+    (2, 6),
+    (4, 5),
+    (4, 6),
+    (5, 9),
+    (5, 14),
+    (6, 6),
+    (10, 6),
+    (11, 6),
+    (12, 5),
+    (12, 6),
+    (12, 22),
+    (12, 28),
+    (14, 10),
+    (14, 11),
+    (15, 6),
+    (17, 6),
+    (19, 6),
+    (20, 6),
+    (22, 6),
+    (25, 6),
+    (26, 6),
+    (26, 30),
+    (27, 5),
+    (27, 6),
+    (36, 6),
+    (50, 6),
+    (54, 6),
+    (57, 6),
+    (63, 6),
+    (63, 22),
+    (63, 24),
+    (65, 6),
+];
+
+/// IS13 (`instance-scripts.md` §4.5.1; a census check of this install, not an invariant):
+/// every port of every node of the decoded 0x07 and 0x0C records has a (kind, port type)
+/// pair of the §4.5.1 table. Ports outside it are counted and reported; the count fails the
+/// test only with `TESSERA_CENSUS=strict`. Decoding does not depend on the table.
+#[test]
+fn port_pairs_follow_the_census() {
+    let Some(set) = open_set() else { return };
+    let dict = dictionary(set);
+    let known = |k: u8, t: u8| PORT_PAIRS.contains(&(k, t));
+    let mut outside: BTreeMap<(u8, u8), usize> = BTreeMap::new();
+    let mut ports = 0usize;
+    for prefix in [0x07u8, 0x0C] {
+        let work = entries_with_prefix(set, prefix);
+        let per = par_each(&work, |(i, e)| {
+            let mut out: Vec<(u8, u8)> = Vec::new();
+            let mut n = 0usize;
+            let Ok(payload) = set.member(*i).archive.read_entry(e) else {
+                return (0, out);
+            };
+            let roots: Vec<tessera_formats::script_table::Node> = if prefix == 0x07 {
+                match ScriptTable::parse_expecting(&payload, e.did, dict) {
+                    Ok(t) => t.scripts.into_iter().flat_map(|s| s.roots).collect(),
+                    Err(_) => return (0, out),
+                }
+            } else {
+                match Scriptlet::parse_expecting(&payload, e.did, dict) {
+                    Ok(s) => s.roots,
+                    Err(_) => return (0, out),
+                }
+            };
+            for r in &roots {
+                r.walk(&mut |node, _| {
+                    for p in &node.ports {
+                        n += 1;
+                        if !known(node.kind.0, p.port_type.0) {
+                            out.push((node.kind.0, p.port_type.0));
+                        }
+                    }
+                });
+            }
+            (n, out)
+        });
+        for (n, out) in per {
+            ports += n;
+            for pair in out {
+                *outside.entry(pair).or_default() += 1;
+            }
+        }
+    }
+    let total: usize = outside.values().sum();
+    eprintln!("ports: {ports}; outside the §4.5.1 census: {total} {outside:?}");
+    if total > 0 {
+        assert!(
+            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
+            "IS13 census (strict)"
+        );
+    }
+}
+
+/// `world-logic.md` §5.2.1 over every decoded table: WL-I11 (a table whose `Startup` holds
+/// a GameCallback driven from `QuestState_QuestID` has a quest-state test built only of the
+/// parts) and WL-I14 (every Switch on `QuestState_Test` has value ports for 0, 1 and 2 and
+/// no Default port) always fail the test; the tables found (eight, two of them sharing a
+/// combination of parts) are a census compared under `TESSERA_CENSUS=strict`.
+#[test]
+fn quest_state_tables_follow_their_parts() {
+    use tessera_formats::gameplay::world_logic::{QuestStateTest, WorldLogicLabels};
+    use tessera_formats::script_table::{NodeData, PortPayload, PortType};
+    let Some(set) = open_set() else { return };
+    let dict = dictionary(set);
+    let labels = WorldLogicLabels::resolve(dict);
+    let startup = vocabulary(set).startup_key;
+    let (Some(quest_id), Some(test)) = (labels.quest.quest_id.id(), labels.quest.test.id()) else {
+        eprintln!("QuestState labels missing; skipping");
+        return;
+    };
+    let work = entries_with_prefix(set, 0x07);
+    let per = par_each(&work, |(i, e)| {
+        let Ok(payload) = set.member(*i).archive.read_entry(e) else {
+            return (None, Vec::new(), 0usize);
+        };
+        let Ok(t) = ScriptTable::parse_expecting(&payload, e.did, dict) else {
+            return (None, Vec::new(), 0);
+        };
+        let mut bad = Vec::new();
+        let mut switches = 0usize;
+        for sc in &t.scripts {
+            for r in &sc.roots {
+                r.walk(&mut |n, _| {
+                    if n.kind != NodeKind::SWITCH {
+                        return;
+                    }
+                    let NodeData::Switch(sw) = &n.data else {
+                        return;
+                    };
+                    if sw.property != test {
+                        return;
+                    }
+                    switches += 1;
+                    let mut values: Vec<f64> = n
+                        .ports_of(PortType::SWITCH_VALUE)
+                        .flat_map(|p| match &p.payload {
+                            PortPayload::SwitchCase(c) => c
+                                .values
+                                .iter()
+                                .flatten()
+                                .filter_map(|v| v.value.as_f64())
+                                .collect::<Vec<_>>(),
+                            _ => Vec::new(),
+                        })
+                        .collect();
+                    values.sort_by(f64::total_cmp);
+                    if values != [0.0, 1.0, 2.0] || n.ports_of(PortType::DEFAULT).next().is_some() {
+                        bad.push(format!("WL-I14 {:#010x}", e.did));
+                    }
+                });
+            }
+        }
+        let driven_from_quest = t.script(startup).is_some_and(|sc| {
+            let mut hit = false;
+            for r in &sc.roots {
+                r.walk(&mut |n, _| {
+                    hit |= matches!(n.data, NodeData::GameCallback(_))
+                        && n.base.driven.iter().any(|&(_, src)| src == quest_id);
+                });
+            }
+            hit
+        });
+        let parts = if driven_from_quest {
+            match QuestStateTest::read(&t, &labels.quest, &labels.callback, startup, None) {
+                Some(q) => Some((e.did, q)),
+                None => {
+                    bad.push(format!("WL-I11 {:#010x}", e.did));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        (parts, bad, switches)
+    });
+    let mut tables = Vec::new();
+    let mut bad = Vec::new();
+    let mut switches = 0;
+    for (p, b, n) in per {
+        tables.extend(p);
+        bad.extend(b);
+        switches += n;
+    }
+    tables.sort_by_key(|(d, _)| *d);
+    for (d, q) in &tables {
+        eprintln!(
+            "  {d:#010x}: delay {:?}, quest-ID guard {}, override {}, phased-out guard {}, \
+             entries {}, true {:?}, false {:?}",
+            q.delay,
+            q.quest_id_guard,
+            q.test_override,
+            q.phased_out_guard,
+            q.entries,
+            q.true_leaf,
+            q.false_leaf
+        );
+    }
+    eprintln!(
+        "quest-state tables: {}; Switches on QuestState_Test: {switches}",
+        tables.len()
+    );
+    assert!(bad.is_empty(), "{bad:?}");
+    if (tables.len(), switches) != (8, 4) {
+        eprintln!("census differs from world-logic.md §5.2.1 (8 tables, 4 override Switches)");
+        assert!(
+            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
+            "census (strict)"
+        );
+    }
+}
+
 /// The race table's player avatars (`skeleton-anim.md` §2.2).
 fn race_table(set: &'static ArchiveSet) -> RaceTable {
     let dict = dictionary(set);

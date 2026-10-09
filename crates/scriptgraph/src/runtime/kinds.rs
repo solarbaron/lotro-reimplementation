@@ -37,6 +37,18 @@ fn random_index(u: f64, sum: u64) -> u64 {
     }
 }
 
+/// Whole-value equality of the While test (§30.2): numbers, booleans, enums, PIDs and DIDs
+/// by value; a bit field must equal in all its bits (it is not a mask).
+fn whole_equal(a: &PropertyValue, b: &PropertyValue) -> bool {
+    match (a, b) {
+        (PropertyValue::BitfieldAny(x), PropertyValue::BitfieldAny(y)) => {
+            let at = |s: &[u8], i: usize| s.get(i).copied().unwrap_or(0);
+            (0..x.bytes.len().max(y.bytes.len())).all(|i| at(&x.bytes, i) == at(&y.bytes, i))
+        }
+        _ => crate::values::values_equal(a, b),
+    }
+}
+
 /// Shortest random-offset direction before "straight up" is used (`sound.md` §9.2 step 5).
 const DIRECTION_EPSILON: f32 = 1e-6;
 /// Longest entity parent chain followed for the internal-object mute (§9.2 step 2).
@@ -93,6 +105,11 @@ impl Runtime<'_> {
             NodeKind::ANIMATION => self.animation_start(sink, id, unit, nref),
             NodeKind::PARTICLE => self.particle_start(sink, id, unit, nref),
             NodeKind::SCALAR_BLEND => self.scalar_blend_start(sink, id, unit, nref),
+            NodeKind::WHILE => self.while_start(sink, id, unit, nref),
+            NodeKind::PHYSICS_IMPULSE => {
+                self.impulse_start(sink, id, unit, nref);
+                false
+            }
             NodeKind::GAME_CALLBACK => {
                 self.issue(crate::RuntimeIssue::GameCallbackOpaque);
                 false
@@ -180,6 +197,189 @@ impl Runtime<'_> {
                     }
                 }
             }
+        }
+    }
+
+    // ----- While (§30.1–§30.4) -----
+
+    /// The While's start (§30.3): target, listeners, one test; the first Default port's
+    /// children start into a group when it holds (the node does not arm), otherwise the
+    /// node completes at once.
+    fn while_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) -> bool {
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let NodeData::While(w) = &n.data else {
+            return false;
+        };
+        let Some(entity) = self.insts.get(id).map(|i| i.entity) else {
+            return false;
+        };
+        let target = self
+            .resolve_targets(n, entity)
+            .first()
+            .copied()
+            .unwrap_or(entity);
+        let names: Vec<u32> = w.name_pids().collect();
+        if let Some(i) = self.insts.get_mut(id) {
+            i.kind = KindState::While(Box::new(super::instance::WhileState {
+                property: w.property,
+                target,
+                names: names.clone(),
+                tag: 0,
+                ended: false,
+            }));
+        }
+        // Listen first: a child that changes the property stops the branch (§30.4).
+        self.listen(id, target, w.property);
+        for p in names {
+            self.listen(id, entity, p);
+        }
+        if !self.while_holds(id) {
+            if let Some(i) = self.insts.get_mut(id)
+                && let KindState::While(s) = &mut i.kind
+            {
+                s.ended = true;
+            }
+            self.arm(id);
+            return true;
+        }
+        let Some(port) = n.ports_of(PortType::DEFAULT).map(|(i, _)| i).next() else {
+            // Nothing to run: the node keeps running with no child, as after its branch.
+            return true;
+        };
+        let Some(tag) = self.insts.get_mut(id).map(|i| i.open_group()) else {
+            return false;
+        };
+        if let Some(i) = self.insts.get_mut(id)
+            && let KindState::While(s) = &mut i.kind
+        {
+            s.tag = tag;
+        }
+        self.run_port(sink, unit, nref.unit, nref.node, port, id, tag);
+        true
+    }
+
+    /// The While test (§30.2): the watched value, prepared as for a Switch, equals a
+    /// `Values` entry (same PID, whole-value equality) or, with the same type, the current
+    /// value of a `Names` property; reversed by `Inverse`. No value matches nothing.
+    pub(crate) fn while_holds(&self, id: InstanceId) -> bool {
+        let Some(i) = self.insts.get(id) else {
+            return false;
+        };
+        let KindState::While(s) = &i.kind else {
+            return false;
+        };
+        let Some(w) = i
+            .node
+            .and_then(|r| self.units.get(r.unit as usize)?.node(r.node))
+            .and_then(|n| match &n.data {
+                NodeData::While(w) => Some(w),
+                _ => None,
+            })
+        else {
+            return false;
+        };
+        let value = self
+            .read_value(s.target, &i.params, s.property)
+            .or_else(|| self.unset_value(s.property));
+        let matched = value.as_ref().is_some_and(|v| {
+            w.values
+                .iter()
+                .flatten()
+                .any(|e| e.pid == s.property && whole_equal(v, &e.value))
+                || s.names.iter().any(|&p| {
+                    self.read_value(i.entity, &i.params, p).is_some_and(|o| {
+                        std::mem::discriminant(&o) == std::mem::discriminant(v)
+                            && whole_equal(v, &o)
+                    })
+                })
+        });
+        matched != w.inverse
+    }
+
+    /// A watched property changed (§30.4): while the test holds nothing happens; the first
+    /// time it fails the branch stops with reason 0 and the node arms and completes.
+    pub(crate) fn while_reevaluate(&mut self, sink: &mut dyn EffectSink, id: InstanceId) {
+        let Some((ended, tag)) = self.insts.get(id).and_then(|i| match &i.kind {
+            KindState::While(s) => Some((s.ended, s.tag)),
+            _ => None,
+        }) else {
+            return;
+        };
+        if ended || self.while_holds(id) {
+            return;
+        }
+        if let Some(i) = self.insts.get_mut(id)
+            && let KindState::While(s) = &mut i.kind
+        {
+            s.ended = true;
+        }
+        self.stop_group(sink, id, tag, REASON_STOP);
+        self.arm(id);
+        self.check_complete(sink, id, REASON_STOP);
+    }
+
+    // ----- PhysicsImpulse (§30.6) -----
+
+    /// The PhysicsImpulse start (§30.6): the node's fields after its driven values, one
+    /// request per target to the sink (none found: logged); it completes at once
+    /// (OPEN-20 Decision).
+    fn impulse_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) {
+        let Some(n) = unit.node(nref.node) else {
+            return;
+        };
+        let NodeData::PhysicsImpulse(stored) = &n.data else {
+            return;
+        };
+        let Some((entity, intensity, overrides)) = self
+            .insts
+            .get(id)
+            .map(|i| (i.entity, i.intensity, i.overrides.clone()))
+        else {
+            return;
+        };
+        let mut node = *stored;
+        for (field, v) in &overrides {
+            self.vocab.impulse.apply(&mut node, *field, v);
+        }
+        let finite = |x: f32| if x.is_finite() { x } else { 0.0 };
+        let vector = if node.is_jump {
+            [
+                0.0,
+                0.0,
+                finite((node.air_time + crate::sink::JUMP_AIR_TIME_OFFSET) * node.expected_gravity),
+            ]
+        } else {
+            node.impulse.map(|c| finite(c * intensity))
+        };
+        let targets = self.resolve_targets(n, entity);
+        if targets.is_empty() {
+            tracing::debug!(node = n.base.node_id, "physics impulse: no target");
+            return;
+        }
+        let time = self.sched.now;
+        for target in targets {
+            sink.physics_impulse(&crate::sink::ImpulseRequest {
+                entity,
+                target,
+                node,
+                vector,
+                time,
+                node_id: n.base.node_id,
+            });
         }
     }
 

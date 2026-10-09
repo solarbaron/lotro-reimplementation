@@ -24,6 +24,8 @@ pub struct GameplayViewState {
     pub handle: Option<Handle<GameplayProduct>>,
     /// Row filter (case-insensitive substring of any cell).
     pub filter: String,
+    /// The interactive parts' inputs (day fraction, indoor state, simulated journal).
+    pub live: super::live::LiveState,
 }
 
 impl std::fmt::Debug for GameplayViewState {
@@ -31,6 +33,7 @@ impl std::fmt::Debug for GameplayViewState {
         f.debug_struct("GameplayViewState")
             .field("requested", &self.handle.as_ref().map(Handle::key))
             .field("filter", &self.filter)
+            .field("live", &self.live)
             .finish()
     }
 }
@@ -108,6 +111,16 @@ pub(crate) fn gameplay_view(
     }
     if p.object.is_some() {
         icons(ui, l, cur, checker, actions);
+    }
+    if let Some(live) = &p.live {
+        egui::ScrollArea::vertical()
+            .id_salt("gameplay-live-scroll")
+            .max_height(ui.available_height() * 0.5)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                super::live::live_panel(ui, live, &mut cur.gameplay.live, actions);
+            });
+        ui.separator();
     }
     ui.horizontal(|ui| {
         ui.label("Filter");

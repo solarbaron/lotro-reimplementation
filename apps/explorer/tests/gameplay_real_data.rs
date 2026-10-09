@@ -229,7 +229,7 @@ fn landblock_logic_cards() {
         picked.len(),
         "every landblock-info record gets a card"
     );
-    for want in ["Decals", "Phasing boxes", "Instance scripts", "Dramas"] {
+    for want in ["Decals", "Phasing boxes", "Per-instance scripts", "Dramas"] {
         assert!(
             sections.keys().any(|k| k.starts_with(want)),
             "the sample shows a {want} section"

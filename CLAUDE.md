@@ -173,7 +173,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver, instance script tables (`script_table::instance`), instanced-content views, gameplay views (`gameplay::*`, including `mounts`, `drama` and `world_logic` with the quest entry rule)
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets (typed Light and MeshFX nodes) with the idle/walk/run clip resolver, instance script tables (`script_table::instance`), instanced-content views, gameplay views (`gameplay::*`, including `mounts`, `drama` and `world_logic` with the quest entry rule)
 - `crates/props` — property registry, values, property sets, enum mappers, DID maps
 - `crates/text` — string tables, StringInfo resolution, substitution, markup
 - `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
@@ -197,7 +197,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/plugins` — plugin host on the script core: `.plugin` discovery, apartments, `import`, the compatible plugin API (its UI classes bind `crates/ui` elements), plugin data, the clean-room class helper
 - `crates/ui` — game UI: retained element tree, layout, sparse CPU canvases and painter, damage and paint jobs, composition list; no wgpu, no Lua
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, `logic`, ...)
-- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, gameplay cards with the mount card and the landblock logic card, headless `--sheet`)
+- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes with decal previews, character viewer and animation browser with the mount viewer and the drama player, gameplay cards with the mount card and the landblock logic card (day and night lights, simulated journal, per-instance scripts), script-node record view, headless `--sheet`)
 - `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test; `--server` joins a test server)
 - `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
 - `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests

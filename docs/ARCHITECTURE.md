@@ -208,7 +208,7 @@ Rules:
 | `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol (`docs/specs/tessera-protocol.md`): message schema, framing, versioning, the sans-IO client and server connection state machines, property values, movement and time-sync helpers, key fingerprints and connect strings. No I/O and no async code; feature `transport` adds the server key files and the rustls/quinn configurations of decision 0030. Shared by the `tessera-net` test-server backend, the test server and the load tools. |
 | `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). |
 | `tessera-dattool` (`apps/dattool`) | app | M0 | CLI: `detect`, `info`, `ls`, `stat`, `cat`, `extract`, `strings`, `validate`, later `diff` (§24). |
-| `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). |
+| `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). From census 3 also: the landblock logic card with its interactive parts (day and night lights for a chosen day fraction, a simulated journal for the phasing boxes, per-instance script views with the table set and switches), decal previews in the 3D view (box, axes, preview mesh with the decal's material; `decal_preview`), the mount viewer (rider and mount at `Mount_Connection`, gait selector; `mount_view`) and the drama player (Decisions T1/T2/T5; `drama_play`) in the character view, and the node display of 0x07/0x0C records (`script_view`). |
 | `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19). A library plus a binary, so tests and the load tools run it in-process. Movement design (M4.5): runs server-side movement on `tessera-physics` with the same fixed step as the client (§20.3). It moves exactly like the client only over the same collision sets: on install data these include generated scenery, statics and water, which `world` builds (§10.3, §10.5). |
 | `tessera-loadtest` (`apps/loadtest`) | app | M7 | Headless bot clients built on the `tessera-net` test-server backend: connect storms, walking, chat, churn, cheating and soak scenarios against an in-process or remote `tessera-server`, with desync, leak and latency reports (`test-server.md` §13). |
 
@@ -434,7 +434,7 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 | 0x70–0x77 | object state (WState) | `wstate` | M3 | `wstate.md` |
 | 0x22 | UI layout | `ui_layout` | M5 | `ui-layout.md` |
 | 0x0A | sound info and sound payload | `sound` | M6 | `sound.md` |
-| 0x07 | script tables (VFX, sound, animation events) | `script_table` | M4/M6 | `script-table.md` |
+| 0x07 | script tables (VFX, sound, animation events); typed Light (13) and MeshFX (41) nodes, and the MeshFX nodes a run starts (`resolve`), from census 3 | `script_table` | M4/M6 | `script-table.md` |
 
 > **OPEN:** Kaitai `.ksy` schemas in `tools/kaitai/` as the single machine-readable source
 > for formats, with generated documentation and differential tests. The Rust decoders stay

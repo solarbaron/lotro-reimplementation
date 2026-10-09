@@ -111,6 +111,19 @@ pub struct PoseDraw {
     pub attach: Vec<(u32, Mat4)>,
     /// Overlay lines in world space (bones, trails), drawn over the meshes.
     pub lines: Vec<([f32; 3], [f32; 3], [f32; 4])>,
+    /// The mount the figure rides (`mounts.md` §10): the parts of figure 1
+    /// ([`crate::scene::ScenePart::figure`]) are drawn with this placement and palette, and
+    /// not at all without it.
+    pub mount: Option<FigurePose>,
+}
+
+/// The pose of a second figure of a character scene (the mount).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FigurePose {
+    /// World placement of the figure's model space.
+    pub placement: Mat4,
+    /// Skinning matrices by bone index (empty: bind pose).
+    pub palette: Vec<Mat4>,
 }
 
 impl PoseDraw {
@@ -945,6 +958,17 @@ fn render(
         .map(|p| p.placement)
         .filter(Mat4::is_finite)
         .unwrap_or(Mat4::IDENTITY);
+    let mount = pose
+        .and_then(|p| p.mount.as_ref())
+        .filter(|m| m.placement.is_finite());
+    let mount_palette = match mount {
+        Some(m) if scene.is_some() && !m.palette.is_empty() => Some(
+            frame
+                .skin_palette(&m.palette)
+                .map_err(|e| format!("mount skinning palette: {e}"))?,
+        ),
+        _ => None,
+    };
     let pass = frame.world_pass("mesh-view", &request.camera);
     pass.clear(BACKGROUND).lighting(Lighting::default());
     pass.mesh_debug(MeshDebug {
@@ -978,10 +1002,17 @@ fn render(
                 continue;
             };
             let offset = explode_offset(&g.scene, pi, request.explode);
+            let (base, part_palette) = if part.figure == 0 {
+                (placement, palette)
+            } else {
+                // A part of the mount: drawn only with the mount's pose.
+                let Some(m) = mount else { continue };
+                (m.placement, mount_palette)
+            };
             let Some(held) = held_transform(part.attach, pose) else {
                 continue;
             };
-            let transform = placement
+            let transform = base
                 * held
                 * Mat4::from_translation(offset)
                 * Mat4::from_cols_array(&part.transform);
@@ -1000,7 +1031,7 @@ fn render(
                     );
                 let mut draw = MeshDraw::new(mesh, transform, mat).with_submesh(s.draw);
                 if part.skinned
-                    && let Some(pal) = palette
+                    && let Some(pal) = part_palette
                 {
                     draw = draw.with_skin(pal);
                 }
@@ -1374,6 +1405,7 @@ mod tests {
                 palette,
                 attach,
                 lines,
+                mount: None,
             }))
         };
         let rest = DrawRequest {
@@ -1434,6 +1466,7 @@ mod tests {
                 palette: vec![Mat4::IDENTITY; 2],
                 attach: vec![(7, Mat4::IDENTITY)],
                 lines: Vec::new(),
+                mount: None,
             })),
             ..base.clone()
         };

@@ -10,6 +10,7 @@
 //! mappers, the box physics object and default decal material from the UNIQUEDB map.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tessera_formats::gameplay::common::{Pid, PropertyAccess, enum_mapper_of};
 use tessera_formats::gameplay::drama::{
@@ -18,26 +19,31 @@ use tessera_formats::gameplay::drama::{
 use tessera_formats::gameplay::mounts::{
     MountEffect, MountGroup, RiderInstance, TemplateMountStats, WAR_STEED_MASK,
 };
-use tessera_formats::gameplay::quests::{EntryGates, MapJournal};
+use tessera_formats::gameplay::quests::{EntryGates, MapJournal, QuestRecord};
 use tessera_formats::gameplay::world_logic::{
     BranchVisuals, CounterBox, CustomCondition, EventLists, GeneratorMapping, LocalPlayer,
     LogicBoxTimer, PHASING_BOX_UNIQUEDB_KEY, PathMapVolume, QuestStateBranch, QuestStateScript,
     SkirmishValues, TravelHooks,
 };
 use tessera_formats::landblock::{InstanceId, LandblockInfo, StaticEntityType};
+use tessera_formats::script_table::NodeData;
 use tessera_formats::script_table::instance::{
-    EntityTableSet, InstanceScriptTable, MemberOverride, link_targets,
+    EntityTableSet, INSTANCE_SWITCH_LABELS, InstanceScriptTable, MemberOverride, NodeFieldLabels,
+    link_targets,
 };
-use tessera_formats::{Did, EntityDescriptor, PropertySet};
-use tessera_world::decals::{
-    DEFAULT_MATERIAL_UNIQUEDB_KEY, DecalBox, DecalParams, ReceiverKind, ReceiverTriangle,
-    ReceiverVertex, build_mesh, marker_chain,
+use tessera_formats::{
+    Did, EntityDescriptor, PropertySet, PropertyValue, ScriptTable, Scriptlet, StaticEntity,
 };
+use tessera_world::decals::{build_mesh, marker_chain};
+use tessera_world::lighting::glow::{GlowPids, GlowTableLights, GlowThresholds};
 use tessera_world::phasing::landblock_boxes;
 
 use super::card::{Card, Section, did_text, opt_did_text, opt_text, opt_yes, yes};
+use super::live::{BoxLive, GlowEntity, GlowLive, JournalLive, LiveData, MAX_LIVE, status_text};
 use super::{Built, Cx, Family, GameplayProduct, Object, product};
+use crate::drama_play::{DramaPlayArg, DramaSource};
 use crate::error::ExplorerError;
+use crate::script_view::{NodeNames, dids_in_line, node_lines};
 
 /// Most entities given their own rows per landblock section.
 const MAX_ENTITIES: usize = 400;
@@ -71,6 +77,7 @@ pub(super) fn mount_card(cx: &Cx<'_>, obj: &Object<'_>) -> Option<Built> {
         title: e.name().map(|n| l.text(n)),
         ..Built::default()
     };
+    b.live.ride = Some(obj.did.0);
     let mut s = Section::fields("Mount effect (mounts.md §2)");
     let group = match e.group() {
         MountGroup::Durability => "durability mount",
@@ -355,6 +362,38 @@ pub(super) fn drama_sections(cx: &Cx<'_>, set: &PropertySet, card: &mut Card, ti
     }
 }
 
+/// The dramas of a set that can be played in the character viewer (`npc-drama.md` §11
+/// item 4): every named, instant and idle drama of its list.
+pub(super) fn drama_plays(
+    cx: &Cx<'_>,
+    set: &PropertySet,
+    figure: Option<u32>,
+    source: DramaSource,
+    owner: &str,
+) -> Vec<DramaPlayArg> {
+    let Some(list) = DramaList::read(&cx.s.drama.drama, set) else {
+        return Vec::new();
+    };
+    list.dramas
+        .iter()
+        .filter(|d| !matches!(d.kind, DramaKind::Other(_)))
+        .filter_map(|d| {
+            let name = d.name()?;
+            Some(DramaPlayArg {
+                figure,
+                source,
+                name: name.to_owned(),
+                caption: if owner.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{owner}: {name}")
+                },
+            })
+        })
+        .take(MAX_LIVE)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Quest-state script path (world-logic.md §13 item 3)
 // ---------------------------------------------------------------------------------------------
@@ -371,8 +410,12 @@ pub(super) fn quest_state_sections(cx: &Cx<'_>, set: &PropertySet, card: &mut Ca
     let mut s = Section::fields(format!(
         "Quest-state script path{title} (world-logic.md §5)"
     ));
+    let status_labels = mapper_labels(cx, q.quest_status);
     s.did("quest", Some(sp.entry.quest));
-    s.field("status", format!("{:#010x}", sp.entry.status.0));
+    if !sp.entry.quest.is_null() {
+        s.field("quest name", quest_name(cx, sp.entry.quest));
+    }
+    s.field("status", status_text(sp.entry.status.0, &status_labels));
     s.field("operator", l.enum_key(q.quest_operator, sp.entry.operator));
     if !sp.entry_2.quest.is_null() {
         s.did("quest 2", Some(sp.entry_2.quest));
@@ -395,34 +438,316 @@ pub fn is_landblock_info(did: u32) -> bool {
     did >> 24 == 0x80 && (did >> 20) & 0xF == 2
 }
 
-/// A square through the box centre facing −Y′, larger than the box (`decals.md` §9.3).
-fn preview(b: &DecalBox) -> Vec<ReceiverTriangle> {
-    let [x, y, z] = b.axes;
-    let r = b.terrain_half_width() * 2.0;
-    let n = [-y[0], -y[1], -y[2]];
-    let at = |sx: f32, sz: f32| ReceiverVertex {
-        position: [
-            b.center[0] + x[0] * sx + z[0] * sz,
-            b.center[1] + x[1] * sx + z[1] * sz,
-            b.center[2] + x[2] * sx + z[2] * sz,
-        ],
-        normal: n,
-    };
-    let (a, bb, c, d) = (at(-r, -r), at(r, -r), at(r, r), at(-r, r));
-    vec![
-        ReceiverTriangle {
-            kind: ReceiverKind::Object,
-            vertices: [a, bb, c],
-        },
-        ReceiverTriangle {
-            kind: ReceiverKind::Object,
-            vertices: [a, c, d],
-        },
-    ]
+/// Most lines of the per-instance script views of one landblock card.
+const MAX_SCRIPT_LINES: usize = 20_000;
+/// Most lines of one included table in a per-instance script view.
+const MAX_TABLE_LINES: usize = 400;
+/// Most tables of one entity's closure (include closure).
+const MAX_CLOSURE: usize = 64;
+/// Most quests named in the simulated journal.
+const MAX_QUESTS: usize = 200;
+
+/// The script tables decoded during one card build.
+struct Tables<'c, 'a> {
+    cx: &'c Cx<'a>,
+    cache: HashMap<Did, Option<Arc<ScriptTable>>>,
 }
 
-/// The card of a landblock-info record: decals, gating, logic wiring, instance scripts,
-/// dramas and riders.
+impl<'c, 'a> Tables<'c, 'a> {
+    fn new(cx: &'c Cx<'a>) -> Self {
+        Self {
+            cx,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, did: Did) -> Option<Arc<ScriptTable>> {
+        if let Some(t) = self.cache.get(&did) {
+            return t.clone();
+        }
+        let dict = self.cx.s.registry.dictionary();
+        let t = self
+            .cx
+            .ctx
+            .game
+            .read(did)
+            .ok()
+            .flatten()
+            .and_then(|b| ScriptTable::parse_expecting(&b, did, dict).ok())
+            .map(Arc::new);
+        self.cache.insert(did, t.clone());
+        t
+    }
+
+    /// The include closure of `roots` in pre-order, each table once, bounded.
+    fn closure(&mut self, roots: &[Did]) -> Vec<Did> {
+        let mut out: Vec<Did> = Vec::new();
+        let mut stack: Vec<Did> = roots.iter().rev().copied().collect();
+        while let Some(d) = stack.pop() {
+            if out.contains(&d) || out.len() >= MAX_CLOSURE {
+                continue;
+            }
+            out.push(d);
+            if let Some(t) = self.get(d) {
+                for inc in t.includes.iter().rev() {
+                    stack.push(*inc);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The 0x47 chain of a placed object, nearest first.
+fn chain_sets(cx: &Cx<'_>, object: Did) -> Vec<PropertySet> {
+    let dict = cx.s.registry.dictionary();
+    let mut v = marker_chain(object, |d| {
+        let bytes = cx.ctx.game.read(d).ok().flatten()?;
+        let ed = EntityDescriptor::parse(&bytes, dict).ok()?;
+        Some((ed.properties, Some(ed.header.template)))
+    });
+    v.reverse();
+    v
+}
+
+/// Whether a node of `table` reads property `pid` (a Switch, When or ScalarBlend on it, or
+/// a driven pair with it as source; `instance-scripts.md` §5.3).
+fn reads(table: &ScriptTable, pid: u32) -> bool {
+    let mut found = false;
+    for s in &table.scripts {
+        for r in &s.roots {
+            r.walk(&mut |n, _| {
+                if found {
+                    return;
+                }
+                found = match &n.data {
+                    NodeData::Switch(sw) => sw.property == pid,
+                    NodeData::ScalarBlend { property, .. } => *property == pid,
+                    _ => false,
+                } || n.base.driven.iter().any(|&(_, src)| src == pid);
+            });
+        }
+    }
+    found
+}
+
+/// The values of the entity lookup (per-instance set, then the chain) for `pids`.
+fn lookup_values(
+    layers: &[&PropertySet],
+    pids: impl IntoIterator<Item = u32>,
+) -> Vec<(u32, PropertyValue)> {
+    pids.into_iter()
+        .filter_map(|p| layers.iter().find_map(|l| l.get(p)).map(|v| (p, v.clone())))
+        .collect()
+}
+
+/// The labels of an enum mapper and its bases.
+fn mapper_labels(cx: &Cx<'_>, pid: Pid) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = Vec::new();
+    let mut next = enum_mapper_of(cx.s.registry.dictionary(), pid);
+    for _ in 0..16 {
+        let Some(m) = next.filter(|d| !d.is_null()) else {
+            break;
+        };
+        let Ok(Some(mapper)) = cx.ctx.game.enum_mapper(m) else {
+            break;
+        };
+        for (k, n) in mapper.names() {
+            if !out.iter().any(|(x, _)| x == k) {
+                out.push((*k, n.clone()));
+            }
+        }
+        next = Some(mapper.base);
+    }
+    out
+}
+
+/// A quest's name from its record, or its DID.
+fn quest_name(cx: &Cx<'_>, quest: Did) -> String {
+    cx.object_set(quest)
+        .ok()
+        .and_then(|set| {
+            QuestRecord::new(&cx.s.quests, &set)
+                .ok()
+                .and_then(|r| r.name().map(|n| cx.labels.text(n)))
+        })
+        .unwrap_or_else(|| did_text(quest))
+}
+
+/// The per-instance script view of one entity (`instance-scripts.md` §9.6 items 1–3):
+/// the table set in include order with every script's key, per-script properties and node
+/// tree, the instance definitions, the link targets and the member overrides.
+#[allow(clippy::too_many_arguments)]
+fn ist_view(
+    cx: &Cx<'_>,
+    tables: &mut Tables<'_, '_>,
+    title: &str,
+    layers: &[&PropertySet],
+    ist: &InstanceScriptTable,
+    links: &[String],
+    budget: &mut usize,
+) -> Section {
+    let l = &cx.labels;
+    let dict = cx.s.registry.dictionary();
+    let labels = &cx.s.ist;
+    let mut s = Section::new(
+        format!("Per-instance scripts of {title} (instance-scripts.md §9.6)"),
+        &["line"],
+    );
+    s.preformatted = true;
+    let pid = |p: u32| l.pid_name(p);
+    let key = |k: u32| l.enum_key(labels.script_id, k);
+    let names = NodeNames {
+        pid: &pid,
+        key: &key,
+    };
+    let mut ts = EntityTableSet::gather(labels, layers);
+    ts.merge(ist, &NodeFieldLabels::resolve(dict), dict);
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!(
+        "table set (§4.1): includes [{}]; start-up keys [{}]",
+        ts.includes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+        ts.startup_keys()
+            .iter()
+            .map(|k| key(*k))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    let max = (*budget).min(MAX_SCRIPT_LINES);
+    for inc in &ts.includes {
+        let Some(t) = tables.get(*inc) else {
+            lines.push(format!("[table {inc}: missing or undecodable]"));
+            continue;
+        };
+        lines.push(format!(
+            "[included table {inc}, kind {}, {} scripts, includes [{}]]",
+            t.kind,
+            t.scripts.len(),
+            t.includes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        let table_max = (lines.len() + MAX_TABLE_LINES).min(max);
+        for sc in &t.scripts {
+            if lines.len() >= table_max {
+                lines.push(format!("  … cut at {MAX_TABLE_LINES} lines of this table"));
+                break;
+            }
+            let props = t
+                .script_properties
+                .iter()
+                .find(|(k, _)| *k == sc.key)
+                .map(|(_, p)| property_text(l, p))
+                .unwrap_or_default();
+            lines.push(format!("  script {}{props}", key(sc.key)));
+            for r in &sc.roots {
+                node_lines(r, &names, 2, &mut lines, table_max);
+            }
+        }
+    }
+    lines.push(format!(
+        "[instance definitions (§4.3): {} scripts{}]",
+        ts.own.len(),
+        if ist.replaced > 0 {
+            format!(", {} repeated keys replaced", ist.replaced)
+        } else {
+            String::new()
+        }
+    ));
+    for def in &ts.own {
+        if lines.len() >= max {
+            break;
+        }
+        let props = def
+            .properties
+            .as_ref()
+            .map(|p| property_text(l, p))
+            .unwrap_or_default();
+        lines.push(format!("  script {}{props}", key(def.key)));
+        for r in &def.roots {
+            node_lines(r, &names, 2, &mut lines, max);
+        }
+    }
+    for link in links {
+        lines.push(format!("link target {link}"));
+    }
+    // Member overrides (§5.1, §5.3): value found and where, and the closure tables reading it.
+    let closure = tables.closure(&ts.includes);
+    let mut overrides: Vec<(String, String)> = Vec::new();
+    if let Some(inst) = layers.first() {
+        for e in &inst.entries {
+            let Some(name) = dict.name(e.pid) else {
+                continue;
+            };
+            let Some(m) = MemberOverride::parse(name) else {
+                continue;
+            };
+            let readers: Vec<String> = closure
+                .iter()
+                .filter(|d| tables.get(**d).is_some_and(|t| reads(&t, e.pid)))
+                .map(ToString::to_string)
+                .collect();
+            let (value, _, _) = l.value(e.pid, &e.value);
+            overrides.push((
+                format!("{}@{}", m.owner, m.holder),
+                format!(
+                    "  {} = {value} (instance set); read by [{}]",
+                    m.member,
+                    readers.join(", ")
+                ),
+            ));
+        }
+    }
+    overrides.sort();
+    let mut last = String::new();
+    for (group, line) in overrides {
+        if group != last {
+            lines.push(format!("member overrides of {group} (§5.1)"));
+            last = group;
+        }
+        lines.push(line);
+    }
+    if lines.len() >= max {
+        lines.push(format!("… cut at {max} lines"));
+        s.truncated = true;
+    }
+    *budget = budget.saturating_sub(lines.len());
+    for line in lines {
+        let links = dids_in_line(&line);
+        s.push(vec![line], links);
+    }
+    s
+}
+
+fn property_text(l: &super::card::Labels<'_>, p: &PropertySet) -> String {
+    if p.entries.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = p
+        .entries
+        .iter()
+        .take(8)
+        .map(|e| {
+            let (v, label, _) = l.value(e.pid, &e.value);
+            if label.is_empty() {
+                format!("{} = {v}", l.pid_name(e.pid))
+            } else {
+                format!("{} = {v} ({label})", l.pid_name(e.pid))
+            }
+        })
+        .collect();
+    format!(" {{{}}}", parts.join(", "))
+}
+
+/// The card of a landblock-info record: decals, gating, logic wiring, instance scripts and
+/// switches, light-glow objects, dramas and riders; with the interactive parts (decal
+/// previews, day and night lights, simulated journal, drama player).
 #[allow(clippy::too_many_lines)]
 pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct, ExplorerError> {
     let raw = crate::decoders::read_raw(cx.ctx, did, None)?;
@@ -430,21 +755,22 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
     let info = LandblockInfo::parse_expecting(&raw.bytes, Did(did), Some(raw.entry.stamp), dict)?;
     let mut p = product(did, Family::Logic, "landblock logic");
     let l = &cx.labels;
-    let weenies: HashMap<InstanceId, &PropertySet> = info
-        .weenies
+    let mut live = LiveData::default();
+    let sed_by_iid: HashMap<InstanceId, &StaticEntity> = info
+        .entities
         .iter()
-        .map(|w| (w.iid, &w.properties))
+        .filter_map(|e| e.iid.map(|i| (i, e)))
         .collect();
     let uniquedb = cx.s.uniquedb.as_deref();
     let mut card = Card::default();
+    let mut tables = Tables::new(cx);
 
-    // Decals (decals.md §3, §4.2, §9.3).
-    let default_material = uniquedb
-        .and_then(|m| m.get(DEFAULT_MATERIAL_UNIQUEDB_KEY))
-        .map_or(Did(0), |e| e.value);
+    // Decals (decals.md §3, §4.2, §9.3): the same sources as the mesh view's preview.
+    let decal_sources = crate::decal_preview::landblock_decals(cx.ctx, did)?;
     let mut decals = Section::new(
-        "Decals (decals.md §3, §9.3)",
+        "Decals (decals.md §3, §9.3; preview: the buttons above open the mesh view)",
         &[
+            "choice",
             "IID",
             "material",
             "blend",
@@ -454,54 +780,64 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
             "preview triangles",
         ],
     );
-    for e in info
-        .entities
-        .iter()
-        .filter(|e| e.kind() == Some(StaticEntityType::Decal))
-        .take(MAX_ENTITIES)
-    {
-        let chain = e
-            .object
-            .map(|o| {
-                marker_chain(o, |d| {
-                    let bytes = cx.ctx.game.read(d).ok().flatten()?;
-                    let ed = EntityDescriptor::parse(&bytes, dict).ok()?;
-                    Some((ed.properties, Some(ed.header.template)))
-                })
-            })
-            .unwrap_or_default();
-        let refs: Vec<&PropertySet> = chain.iter().collect();
-        let params =
-            DecalParams::collect(&cx.s.decals, default_material, &refs, e.properties.as_ref());
-        let (centre, tris) = match e.placement {
-            Some(pl) => {
-                let b = DecalBox::new(pl.position, pl.rotation, params.ortho_scale);
-                let m = build_mesh(&params, &b, preview(&b), None);
+    for (i, d) in decal_sources.iter().enumerate() {
+        if i < crate::decal_preview::MAX_DECAL_CHOICES {
+            live.decals.push(d.caption(i));
+        }
+        let (centre, tris) = match &d.volume {
+            Some(b) => {
+                let m = build_mesh(
+                    &d.params,
+                    b,
+                    crate::decal_preview::preview_receiver(b),
+                    None,
+                );
                 (format!("{:.2?}", b.center), m.triangle_count().to_string())
             }
             None => ("—".into(), "—".into()),
         };
         decals.push(
             vec![
-                e.iid.map_or_else(|| "—".into(), iid_text),
-                did_text(params.material),
-                l.enum_key(cx.s.decals.lighting_blend, params.lighting_blend),
-                l.enum_key(cx.s.decals.lod_class, params.lod_class),
-                format!("{:?}", params.ortho_scale),
+                (i + 1).to_string(),
+                d.iid.map_or_else(|| "—".into(), iid_text),
+                did_text(d.params.material),
+                l.enum_key(cx.s.decals.lighting_blend, d.params.lighting_blend),
+                l.enum_key(cx.s.decals.lod_class, d.params.lod_class),
+                format!("{:?}", d.params.ortho_scale),
                 centre,
                 tris,
             ],
-            vec![params.material.0],
+            vec![d.params.material.0],
         );
     }
     card.add(decals);
 
-    // Gating (world-logic.md §13 items 1–2) with the empty journal of D1.
+    // Gating (world-logic.md §13 items 1–2): the boxes, evaluated live with the simulated
+    // journal (the empty journal of D1 by default).
     let q = &cx.s.logic.quest;
     let box_did = uniquedb
         .and_then(|m| m.get(PHASING_BOX_UNIQUEDB_KEY))
         .map(|e| e.value);
     let boxes = landblock_boxes(&info, q, box_did);
+    let status_labels = mapper_labels(cx, q.quest_status);
+    let mut journal = JournalLive {
+        status_labels: status_labels.clone(),
+        ..JournalLive::default()
+    };
+    let mut quest_names: HashMap<Did, String> = HashMap::new();
+    let mut gating = Section::new(
+        "Phasing boxes (world-logic.md §4, §13)",
+        &[
+            "box",
+            "kind",
+            "checks",
+            "operator",
+            "True_Draw",
+            "flags",
+            "test (empty journal of D1)",
+            "targets",
+        ],
+    );
     let empty = MapJournal::default();
     let gates = EntryGates::default();
     let prereq = |_: Did| false;
@@ -510,39 +846,42 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
         gates: &gates,
         prerequisites_pass: &prereq,
     };
-    let mut gating = Section::new(
-        "Phasing boxes (world-logic.md §4, empty journal of D1)",
-        &[
-            "box",
-            "kind",
-            "checks",
-            "operator",
-            "True_Draw",
-            "flags",
-            "test",
-            "targets",
-        ],
-    );
     for (kind, list) in [
         ("SED", &boxes.sed_boxes),
         ("spawn-only (D2)", &boxes.spawn_boxes),
     ] {
         for b in list.iter().take(MAX_ENTITIES) {
-            let checks: Vec<String> = b
-                .fields
-                .checks
+            let mut checks: Vec<String> = Vec::new();
+            for c in b.fields.checks.iter().flatten() {
+                let name = if let Some(n) = quest_names.get(&c.quest) {
+                    n.clone()
+                } else if quest_names.len() < MAX_QUESTS && !c.quest.is_null() {
+                    let n = quest_name(cx, c.quest);
+                    quest_names.insert(c.quest, n.clone());
+                    journal.quests.push((c.quest, n.clone()));
+                    n
+                } else {
+                    did_text(c.quest)
+                };
+                checks.push(format!(
+                    "quest {name} [{}] {} {}",
+                    did_text(c.quest),
+                    l.enum_key(q.quest_operator, c.operator),
+                    status_text(c.status.0, &status_labels)
+                ));
+            }
+            let shown = b.fields.test(true, Some(&player));
+            let targets: Vec<String> = b
+                .targets
                 .iter()
-                .flatten()
-                .map(|c| {
-                    format!(
-                        "{} {} {:#010x}",
-                        did_text(c.quest),
-                        l.enum_key(q.quest_operator, c.operator),
-                        c.status.0
-                    )
+                .map(|t| {
+                    let object = sed_by_iid
+                        .get(t)
+                        .and_then(|e| e.object)
+                        .map_or_else(String::new, |o| format!(" {o}"));
+                    format!("{}{object}", iid_text(*t))
                 })
                 .collect();
-            let shown = b.fields.test(true, Some(&player));
             gating.push(
                 vec![
                     iid_text(b.iid),
@@ -564,11 +903,7 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
                         "targets phased out"
                     }
                     .into(),
-                    b.targets
-                        .iter()
-                        .map(|t| iid_text(*t))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    targets.join(", "),
                 ],
                 b.fields
                     .checks
@@ -577,6 +912,13 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
                     .map(|c| c.quest.0)
                     .collect(),
             );
+            journal.boxes.push(BoxLive {
+                iid: iid_text(b.iid),
+                kind,
+                fields: b.fields.clone(),
+                checks,
+                targets,
+            });
         }
     }
     if boxes.half_links > 0 {
@@ -595,19 +937,32 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
         );
     }
     card.add(gating);
+    if !journal.boxes.is_empty() {
+        live.journal = Some(journal);
+    }
 
-    // Per-entity sections (instance sets): logic wiring, scripts, dramas, riders.
+    // Light-glow objects (instance-scripts.md §6, §9.4): Physics SEDs whose class table has
+    // the day and night Light nodes.
+    live.glow = glow_live(cx, &info, &mut tables);
+
+    // Per-entity sections (instance sets): logic wiring, scripts, switches, dramas, riders.
     let ist_labels = &cx.s.ist;
     let mut wiring = Section::new(
         "Logic wiring (world-logic.md §6, §7)",
         &["IID", "kind", "values"],
     );
-    let mut scripts = Section::new(
-        "Instance scripts (instance-scripts.md §9.6)",
-        &["IID", "key", "roots", "links → targets", "overrides"],
+    let mut switches = Section::new(
+        "Instance switches (instance-scripts.md §8, §9.6 item 4)",
+        &["IID", "switch", "value", "read by (closure tables)"],
     );
+    let switch_pids: Vec<(&str, Pid)> = INSTANCE_SWITCH_LABELS
+        .iter()
+        .map(|n| (*n, Pid::resolve(dict, n)))
+        .collect();
+    let mut script_card = Card::default();
     let mut drama_card = Card::default();
     let mut riders = Section::new("Riders (mounts.md §7)", &["IID", "keys"]);
+    let mut script_budget = MAX_SCRIPT_LINES;
     for w in info.weenies.iter().take(4 * MAX_ENTITIES) {
         let set = &w.properties;
         let id = iid_text(w.iid);
@@ -671,69 +1026,94 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
                 Vec::new(),
             );
         }
-        if let Some(ist) = InstanceScriptTable::read(ist_labels, set) {
-            let layers = [set];
-            let ts = EntityTableSet::gather(ist_labels, &layers);
-            let overrides: Vec<String> = set
-                .entries
-                .iter()
-                .filter_map(|e| {
-                    let name = dict.name(e.pid)?;
-                    MemberOverride::parse(name)
-                        .map(|m| format!("{}@{}.{}", m.owner, m.holder, m.member))
-                })
-                .collect();
-            for sc in &ist.scripts {
-                let links: Vec<String> = sc
-                    .roots
-                    .iter()
-                    .flat_map(|r| r.targets.iter())
-                    .filter_map(|t| t.link_name.as_deref())
+        let sed_object = sed_by_iid.get(&w.iid).and_then(|e| e.object);
+        let has_switch = switch_pids
+            .iter()
+            .any(|(_, pid)| pid.id().is_some_and(|p| set.get(p).is_some()));
+        let ist = InstanceScriptTable::read(ist_labels, set);
+        if ist.is_some() || has_switch {
+            let chain = sed_object.map(|o| chain_sets(cx, o)).unwrap_or_default();
+            let mut layers: Vec<&PropertySet> = vec![set];
+            layers.extend(chain.iter());
+            if has_switch {
+                let ts = EntityTableSet::gather(ist_labels, &layers);
+                let closure = tables.closure(&ts.includes);
+                for (name, pid) in &switch_pids {
+                    let (Some(p), Some(v)) = (pid.id(), pid.id().and_then(|p| set.get(p))) else {
+                        continue;
+                    };
+                    let (value, label, _) = l.value(p, v);
+                    let readers: Vec<Did> = closure
+                        .iter()
+                        .copied()
+                        .filter(|d| tables.get(*d).is_some_and(|t| reads(&t, p)))
+                        .collect();
+                    switches.push(
+                        vec![
+                            id.clone(),
+                            (*name).to_owned(),
+                            if label.is_empty() {
+                                value
+                            } else {
+                                format!("{value} ({label})")
+                            },
+                            readers
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ],
+                        readers.iter().map(|d| d.0).collect(),
+                    );
+                }
+            }
+            if let Some(ist) = &ist {
+                let links: Vec<String> = ist
+                    .link_names()
+                    .into_iter()
                     .map(|n| {
                         let to = link_targets(&info.links, w.iid, n);
                         if to.is_empty() {
-                            format!("{n} → (none)")
+                            format!("{n:?} → (none)")
                         } else {
                             format!(
-                                "{n} → {}",
+                                "{n:?} → {}",
                                 to.iter()
-                                    .map(|t| iid_text(*t))
+                                    .map(|t| {
+                                        let object = sed_by_iid
+                                            .get(t)
+                                            .and_then(|e| e.object)
+                                            .map_or_else(String::new, |o| format!(" ({o})"));
+                                        format!("{}{object}", iid_text(*t))
+                                    })
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )
                         }
                     })
                     .collect();
-                scripts.push(
-                    vec![
-                        id.clone(),
-                        l.enum_key(ist_labels.script_id, sc.key),
-                        sc.roots.len().to_string(),
-                        links.join("; "),
-                        overrides.join(", "),
-                    ],
-                    Vec::new(),
-                );
-            }
-            if !ts.includes.is_empty() {
-                scripts.push(
-                    vec![
-                        id.clone(),
-                        "includes".into(),
-                        String::new(),
-                        String::new(),
-                        ts.includes
-                            .iter()
-                            .map(|d| did_text(*d))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ],
-                    ts.includes.iter().map(|d| d.0).collect(),
-                );
+                if script_budget > 0 {
+                    script_card.add(ist_view(
+                        cx,
+                        &mut tables,
+                        &id,
+                        &layers,
+                        ist,
+                        &links,
+                        &mut script_budget,
+                    ));
+                }
             }
         }
         if set.has(cx.s.drama.drama.list) {
             drama_sections(cx, set, &mut drama_card, &format!(" of {id}"));
+            live.dramas.extend(drama_plays(
+                cx,
+                set,
+                sed_object.map(|o| o.0),
+                DramaSource::Landblock { did, iid: w.iid.0 },
+                &id,
+            ));
         }
         quest_state_sections(cx, set, &mut drama_card, &format!(" of {id}"));
         if let Some(r) = RiderInstance::read(&cx.s.mounts, set) {
@@ -741,18 +1121,164 @@ pub(super) fn landblock_product(cx: &Cx<'_>, did: u32) -> Result<GameplayProduct
             let keys: Vec<String> = s.rows.iter().map(|r| r.cells.join(" ")).collect();
             riders.push(vec![id.clone(), keys.join("; ")], Vec::new());
         }
-        let _ = weenies.len();
     }
     card.add(wiring);
-    card.add(scripts);
+    card.add(switches);
     card.add(riders);
     p.sections = card.sections;
+    p.sections.extend(script_card.sections);
     p.sections.extend(drama_card.sections);
+    live.dramas.truncate(MAX_LIVE);
     p.notes.push(format!(
         "{} static entities, {} instance sets, {} links",
         info.entities.len(),
         info.weenies.len(),
         info.links.len()
     ));
+    if !live.is_empty() {
+        p.live = Some(Arc::new(live));
+    }
     Ok(p)
+}
+
+/// The light-glow objects of `info` (§6.1): Physics SEDs whose placed object's class
+/// table holds the day and night Light nodes (`GlowTableLights::from_table`), with the
+/// thresholds from the table's `Startup` scriptlet (§6.2).
+fn glow_live(cx: &Cx<'_>, info: &LandblockInfo, tables: &mut Tables<'_, '_>) -> Option<GlowLive> {
+    let dict = cx.s.registry.dictionary();
+    let pids = GlowPids::resolve(dict);
+    let present = pids.present_time?;
+    let labels = &cx.s.ist;
+    let weenies: HashMap<InstanceId, &PropertySet> = info
+        .weenies
+        .iter()
+        .map(|w| (w.iid, &w.properties))
+        .collect();
+    let mut by_object: HashMap<Did, Option<(Did, Vec<PropertySet>)>> = HashMap::new();
+    let mut lights: HashMap<Did, Option<GlowTableLights>> = HashMap::new();
+    let mut thresholds: Option<Result<GlowThresholds, String>> = None;
+    let member_pids: Vec<u32> = pids
+        .day
+        .iter()
+        .chain(&pids.night)
+        .chain([&pids.time_override, &pids.ignore_inside_outside])
+        .flatten()
+        .copied()
+        .collect();
+    let startup = Pid::resolve(dict, "ScriptTable_ScriptID");
+    let startup_key = enum_mapper_of(dict, startup).and_then(|m| {
+        tessera_formats::EnumMapper::key_in_chain_from(
+            m,
+            |d| cx.ctx.game.enum_mapper(d).ok().flatten(),
+            "Startup",
+        )
+    });
+    let mut entities = Vec::new();
+    for e in info
+        .entities
+        .iter()
+        .filter(|e| e.kind() == Some(StaticEntityType::Physics))
+    {
+        if entities.len() >= MAX_LIVE {
+            break;
+        }
+        let Some(object) = e.object else { continue };
+        let entry = by_object.entry(object).or_insert_with(|| {
+            let chain = chain_sets(cx, object);
+            let refs: Vec<&PropertySet> = chain.iter().collect();
+            let class = refs
+                .iter()
+                .find_map(|l| l.get_pid(labels.class_table))
+                .and_then(PropertyValue::as_struct)
+                .and_then(|s| s.did_nonnull(labels.db_script_table));
+            class.map(|c| (c, chain))
+        });
+        let Some((class, chain)) = entry.clone() else {
+            continue;
+        };
+        let stored = lights
+            .entry(class)
+            .or_insert_with(|| {
+                let t = tables.get(class)?;
+                let g = GlowTableLights::from_table(&t, &pids);
+                (g.day.is_some() && g.night.is_some()).then_some(g)
+            })
+            .clone();
+        let Some(stored) = stored else { continue };
+        if thresholds.is_none() {
+            // The scriptlet the table's Startup invokes whose day-fraction tests give the
+            // thresholds (§6.2).
+            let t = tables.get(class);
+            let mut found = Err("no light-glow scriptlet in the table's Startup".to_owned());
+            if let (Some(t), Some(k)) = (t, startup_key)
+                && let Some(sc) = t.script(k)
+            {
+                let mut files: Vec<Did> = Vec::new();
+                for r in &sc.roots {
+                    r.walk(&mut |n, _| {
+                        if let NodeData::Scriptlet { file, .. } = &n.data
+                            && !file.is_null()
+                            && !files.contains(file)
+                        {
+                            files.push(*file);
+                        }
+                    });
+                }
+                for f in files {
+                    let s = cx
+                        .ctx
+                        .game
+                        .read(f)
+                        .ok()
+                        .flatten()
+                        .and_then(|b| Scriptlet::parse_expecting(&b, f, dict).ok());
+                    if let Some(th) = s.and_then(|s| GlowThresholds::from_scriptlet(&s, present)) {
+                        found = Ok(th);
+                        break;
+                    }
+                }
+            }
+            thresholds = Some(found);
+        }
+        let inst = e
+            .iid
+            .and_then(|i| weenies.get(&i).copied())
+            .or(e.properties.as_ref());
+        let mut layers: Vec<&PropertySet> = inst.into_iter().collect();
+        layers.extend(chain.iter());
+        entities.push(GlowEntity {
+            iid: e.iid.map_or_else(|| "—".into(), iid_text),
+            object,
+            table: class,
+            values: lookup_values(&layers, member_pids.iter().copied()),
+            stored,
+        });
+    }
+    if entities.is_empty() {
+        return None;
+    }
+    let default_bool = |pid: Option<u32>| {
+        pid.and_then(|p| dict.definition(p))
+            .and_then(|d| match d.default.as_ref() {
+                Some(PropertyValue::Bool(b)) => Some(*b),
+                _ => None,
+            })
+            .unwrap_or(false)
+    };
+    let time_default = pids
+        .time_override
+        .and_then(|p| dict.definition(p))
+        .and_then(|d| d.default.as_ref())
+        .and_then(PropertyValue::as_bits)
+        .and_then(|k| u32::try_from(k).ok());
+    let time_labels = Pid::resolve(dict, "TimeOfDay@Entity.m_eTimeOverride");
+    Some(GlowLive {
+        pids,
+        thresholds: thresholds.unwrap_or_else(|| Err("no light-glow table".into())),
+        time_labels: mapper_labels(cx, time_labels),
+        time_default,
+        ignore_default: default_bool(pids.ignore_inside_outside),
+        activated_defaults: (default_bool(pids.day[7]), default_bool(pids.night[7])),
+        entities,
+    })
 }

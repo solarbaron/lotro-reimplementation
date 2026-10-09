@@ -1140,6 +1140,14 @@ For a selected entity (instance set, static entity or template) the explorer sho
 3. the entity's scripted-fight properties and transitions (§7) and starting-idle properties (§8);
 4. a "play" button that runs T1 under T2/T5 rules in the character viewer.
 
+> **OPEN (implementer, 2026-10-09):** two choices of the explorer's "play" button (item 4)
+> that the Decisions leave to the viewer. (a) A spawned object's instance set names no
+> template (§2.2), so its dramas play on the figure the character view shows, and their emotes
+> are resolved through that figure's script tables. (b) An emote plays the most likely clip
+> (largest blend weight × chance, not a held clip) among the clips whose run starts at the
+> emote's script key; a key that starts no clip on the figure is logged and plays nothing.
+> Both affect only the preview, not T1–T6.
+
 ---
 
 <a id="s12"></a>

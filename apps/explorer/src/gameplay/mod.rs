@@ -19,7 +19,8 @@
 //! | `economy` | loot lists, recipes, barter, vendors, currency | `economy.md` |
 //! | `map` | map kinds, map-note properties, the places, map-note and quest-note tables (0x0E) | `map-data.md` |
 //! | `particle` | particle systems (0x39) and fork systems (0x44) | `particles.md` |
-//! | `logic` | mount effects, template mount stats and riders; drama lists; quest-state script paths; the landblock card of a landblock-info record (decals, phasing boxes, logic wiring, instance scripts, dramas, riders) | `mounts.md` §10, `npc-drama.md` §11, `instance-scripts.md` §9.6, `world-logic.md` §13, `decals.md` §9.3 |
+//! | `logic` | mount effects, template mount stats and riders; drama lists; quest-state script paths; the landblock card of a landblock-info record (decals, phasing boxes, logic wiring, per-instance scripts with the table set, instance switches, light-glow objects, dramas, riders) | `mounts.md` §10, `npc-drama.md` §11, `instance-scripts.md` §9.6, `world-logic.md` §13, `decals.md` §9.3 |
+//! | [`live`] | the interactive parts: decal previews, day and night lights for a chosen day fraction, the simulated journal, the drama player and mount viewer buttons | `decals.md` §9.3, `instance-scripts.md` §9.6, `world-logic.md` §13, `npc-drama.md` §11, `mounts.md` §10 |
 //! | [`view`] | the UI | — |
 //!
 //! Records are recognised as the specs say: combat objects by class ancestry over the
@@ -33,6 +34,7 @@ mod combat;
 mod creature;
 mod economy;
 mod item;
+pub mod live;
 mod logic;
 mod map;
 mod particle;
@@ -65,6 +67,7 @@ use tessera_wstate::{ClassLibrary, LIBRARY_DID};
 
 use card::{Card, Labels, property_section, remaining_section};
 pub use card::{Row, Section};
+pub use logic::is_landblock_info;
 
 use crate::data::DataContext;
 use crate::error::ExplorerError;
@@ -135,6 +138,9 @@ pub struct GameplayProduct {
     pub sections: Vec<Section>,
     /// Classification notes and the errors of typed readers.
     pub notes: Vec<String>,
+    /// The interactive parts (decal previews, day and night lights, simulated journal,
+    /// drama player, mount viewer), evaluated on the UI thread.
+    pub live: Option<Arc<live::LiveData>>,
 }
 
 /// Whether the gameplay view applies to `did`: game objects and their property sets
@@ -280,6 +286,8 @@ pub(crate) struct Built {
     /// Property groups the family reads, shown after its own sections.
     pub groups: Vec<(&'static str, Vec<Pid>)>,
     pub notes: Vec<String>,
+    /// Interactive parts.
+    pub live: live::LiveData,
 }
 
 /// The context of one card build.
@@ -365,6 +373,7 @@ pub(crate) fn product(did: u32, family: Family, kind: impl Into<String>) -> Game
         root_class: None,
         sections: Vec::new(),
         notes: Vec::new(),
+        live: None,
     }
 }
 
@@ -461,6 +470,15 @@ fn object_product(
     map::object_sections(cx, &obj, &mut built.card);
     logic::mount_sections(cx, &obj, &mut built.card);
     logic::drama_sections(cx, obj.set, &mut built.card, "");
+    if let Some(sd) = set_did {
+        built.live.dramas.extend(logic::drama_plays(
+            cx,
+            obj.set,
+            object.map(|d| d.0),
+            crate::drama_play::DramaSource::Set(sd.0),
+            "",
+        ));
+    }
     logic::quest_state_sections(cx, obj.set, &mut built.card, "");
     let mut shown: HashSet<u32> = HashSet::new();
     let mut sections = built.card.sections;
@@ -494,6 +512,7 @@ fn object_product(
         root_class: root,
         sections,
         notes,
+        live: (!built.live.is_empty()).then(|| Arc::new(built.live)),
     })
 }
 

@@ -304,6 +304,10 @@ pub struct ScenePart {
     /// For a held item's part: the `HoldingLocation` key of the wearer whose model
     /// transform places it (`skeleton-anim.md` §8.4).
     pub attach: Option<u32>,
+    /// Which figure of a character scene the part belongs to: 0 the figure itself, 1 the
+    /// mount attached to it (`mounts.md` §10), drawn with the mount's placement and
+    /// palette ([`crate::viewport::PoseDraw::mount`]).
+    pub figure: u8,
 }
 
 /// How the renderer treats a material's alpha.
@@ -810,6 +814,7 @@ fn terrain_part(bundle: &tessera_world::LandblockBundle) -> ScenePart {
         sphere: None,
         skinned: false,
         attach: None,
+        figure: 0,
     };
     let (lo, hi) = positions.iter().fold(
         ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]),
@@ -2059,7 +2064,7 @@ pub(crate) struct Finished {
 // Parts
 // ---------------------------------------------------------------------------------------
 
-const IDENTITY: [f32; 16] = [
+pub(crate) const IDENTITY: [f32; 16] = [
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
 
@@ -2175,6 +2180,7 @@ pub(crate) fn build_part_from(
         sphere: None,
         skinned: false,
         attach: None,
+        figure: 0,
     };
     if budget.exhausted() {
         budget.refused += 1;
@@ -2417,6 +2423,7 @@ fn sphere_part(material: usize, caption: &str) -> ScenePart {
         sphere: Some(([0.0, 0.0, 0.5], 0.5)),
         skinned: false,
         attach: None,
+        figure: 0,
     };
     match data.prepare(&MeshConfig::default()) {
         Ok(p) => part.prepared = Some(Arc::new(p)),
@@ -2593,10 +2600,62 @@ pub fn build_scene_limited(
             cell_record = Some((cell.render_mesh_record(), located.entry.stamp));
             Vec::new()
         }
+        SceneSource::Landblock
+            if crate::gameplay::is_landblock_info(did) && usize::from(req.choice) > 0 =>
+        {
+            // A decal choice of a landblock-info record (decals.md §9.3).
+            let decals = crate::decal_preview::landblock_decals(ctx, did)?;
+            choices = std::iter::once("landblock: terrain and collision".to_owned())
+                .chain(
+                    decals
+                        .iter()
+                        .enumerate()
+                        .take(crate::decal_preview::MAX_DECAL_CHOICES)
+                        .map(|(i, d)| d.caption(i)),
+                )
+                .collect();
+            choice = usize::from(req.choice).min(choices.len().saturating_sub(1));
+            if let Some(d) = choice.checked_sub(1).and_then(|i| decals.get(i)) {
+                let (part, overlays, notes) = crate::decal_preview::preview(d, &mut mats);
+                extra_parts.extend(part);
+                collision.extend(overlays);
+                gathered.notes.extend(notes);
+                if let Some(o) = d.object {
+                    gathered.chain.push("marker object", o.0);
+                }
+                gathered.chain.push("surface record", d.params.material.0);
+            }
+            Vec::new()
+        }
         SceneSource::Landblock => {
             let key = crate::world::landblock_of(did).ok_or_else(|| {
                 ExplorerError::NotApplicable(format!("{did:#010x} is not a landblock record"))
             })?;
+            if crate::gameplay::is_landblock_info(did) {
+                let decals = crate::decal_preview::landblock_decals(ctx, did)?;
+                if !decals.is_empty() {
+                    choices = std::iter::once("landblock: terrain and collision".to_owned())
+                        .chain(
+                            decals
+                                .iter()
+                                .enumerate()
+                                .take(crate::decal_preview::MAX_DECAL_CHOICES)
+                                .map(|(i, d)| d.caption(i)),
+                        )
+                        .collect();
+                    if decals.len() > crate::decal_preview::MAX_DECAL_CHOICES {
+                        gathered.notes.push(format!(
+                            "only the first {} decals can be chosen",
+                            crate::decal_preview::MAX_DECAL_CHOICES
+                        ));
+                    }
+                    gathered.notes.push(format!(
+                        "{} Decal SEDs: choose one in the choice list for its preview \
+                         (decals.md §9.3)",
+                        decals.len()
+                    ));
+                }
+            }
             let bundle = ctx.world.bundle(key, &|| job.is_cancelled())?;
             gathered.chain.push("landblock data", key.data_did().0);
             collision.extend(landblock_overlays(&bundle));
@@ -2941,6 +3000,7 @@ pub(crate) mod tests_support {
                 sphere: Some((sphere.center.to_array(), sphere.radius)),
                 skinned: false,
                 attach: None,
+                figure: 0,
             });
         }
         let checker: Vec<u8> = (0..16 * 16)

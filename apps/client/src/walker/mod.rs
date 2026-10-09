@@ -42,6 +42,7 @@ pub mod chat;
 pub(crate) mod controls;
 pub mod env;
 pub mod farband;
+pub mod farview;
 pub mod figures;
 pub(crate) mod framelog;
 pub mod frills;
@@ -429,6 +430,8 @@ pub struct WalkerConfig {
     /// Terrain blocks farther than this (metres) draw their baked layer stack
     /// (`walker.md` §14.4); 0 draws full layers at every distance.
     pub far_band: f32,
+    /// The far view of `far-view.md` (`--far-view on`).
+    pub far_view: farview::FarViewConfig,
     /// Draw the HUD and the minimap.
     pub hud: bool,
 }
@@ -490,6 +493,7 @@ impl Default for WalkerConfig {
             distances: DistanceSettings::default(),
             camera: None,
             far_band: DEFAULT_FAR_BAND,
+            far_view: farview::FarViewConfig::default(),
             hud: true,
         }
     }
@@ -722,6 +726,8 @@ pub struct Walker {
     chat: chat::ChatOverlay,
     /// The HUD's network line (M7).
     net_line: Option<String>,
+    /// The far view (`--far-view on`).
+    far_view: Option<farview::FarViewLayer>,
     /// Draw the HUD text (`walker_hud`, `walker.md` §6).
     show_hud: bool,
     /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
@@ -912,12 +918,23 @@ impl Walker {
         } else {
             None
         };
-        let far = far_plane(config.stream.rings.far);
+        // With the far view the sectors reach the landscape extent E beyond the ring.
+        let far = far_plane(if config.far_view.enabled {
+            config
+                .stream
+                .rings
+                .far
+                .max(f64::from(config.far_view.settings.extent()))
+        } else {
+            config.stream.rings.far
+        });
         let config_region = config.region;
         let config_bench = config.bench;
         let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
         let resolver = Resolver::new(Arc::clone(&ctx), objects.materials())?;
         let systems = config.systems;
+        let far_view = (config.far_view.enabled)
+            .then(|| farview::FarViewLayer::new(Arc::clone(&ctx), &config.far_view));
         let cell_owners = movement::CellOwnerIndex::from_context(&ctx);
         Ok(Self {
             far,
@@ -992,6 +1009,7 @@ impl Walker {
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
             net_line: None,
+            far_view,
             show_hud: true,
             show_minimap: true,
         })
@@ -1176,6 +1194,7 @@ impl Walker {
             && (!self.frills_drawn() || self.frills.settled())
             && (!self.sky_drawn() || self.env.sky_settled(&self.objects))
             && self.resolver.pending() == 0
+            && self.far_view_settled()
     }
 
     /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
@@ -1232,6 +1251,9 @@ impl Walker {
         }
         if self.resolver.pending() > 0 {
             out.push("resolver");
+        }
+        if !self.far_view_settled() {
+            out.push("far view");
         }
         out
     }
@@ -1580,6 +1602,22 @@ impl Walker {
                 lod: oframe.lod,
             });
             self.last_eye = Some(eye);
+            if let Some(fv) = self.far_view.as_mut() {
+                let ring = self.config.stream.rings.far;
+                let terrain = &self.terrain;
+                let near = farview::near_field_of(
+                    fv.near_mode(),
+                    terrain.keys(),
+                    |k| terrain.drawable(k),
+                    &eye,
+                    ring,
+                    fv.near_radius(),
+                );
+                let view = farview::sprite_view(self.viewport.1, FOV_Y, &self.config.distances);
+                fv.update(renderer, &mut self.objects, Some(&eye), near, view);
+                // The terrain draws this frame and meshes next frame by the new hand-off.
+                self.terrain.set_far_view(Some(fv.hand_off()));
+            }
             let t2 = Instant::now();
             if let Some(k) = eye.landblock() {
                 let radius = (self.config.minimap_radius / LANDBLOCK_SIZE).ceil() as u32 + 1;
@@ -1762,9 +1800,34 @@ impl Walker {
     }
 
     /// The landscape extent in force (`walker.md` §11.3): the far ring's radius, which the
-    /// host sets to *E* of the distance preferences unless `--view-blocks` overrides it.
+    /// host sets to *E* of the distance preferences unless `--view-blocks` overrides it; with
+    /// the far view on, *E* of its settings (`far-view.md` §7.1), whatever the full-detail
+    /// ring.
     fn extent(&self) -> f32 {
+        match &self.far_view {
+            Some(fv) => fv.extent(),
+            None => self.ring_extent(),
+        }
+    }
+
+    /// The radius of the full-detail ring (terrain and landblock water are drawn within it).
+    fn ring_extent(&self) -> f32 {
         self.config.stream.rings.far as f32
+    }
+
+    /// The far view's counters of the last frame (`None` with the far view off).
+    #[must_use]
+    pub fn far_view_stats(&self) -> Option<farview::FarViewStats> {
+        self.far_view.as_ref().map(farview::FarViewLayer::stats)
+    }
+
+    /// Whether the far view is in (true with it off or while the outdoors is not visible).
+    fn far_view_settled(&self) -> bool {
+        !self.scene.outdoor_visible
+            || self
+                .far_view
+                .as_ref()
+                .is_none_or(|fv| fv.settled(&self.objects))
     }
 
     /// Seconds on the material and light clock (`material.md` §5.3.1: since the start).
@@ -1782,7 +1845,7 @@ impl Walker {
             } else {
                 0.0
             },
-            extent: self.extent(),
+            extent: self.ring_extent(),
             far_band: self.config.far_band,
             time: self.material_time(),
         }
@@ -2050,6 +2113,9 @@ impl Walker {
         self.frills.clear(&mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);
+        if let Some(fv) = self.far_view.as_mut() {
+            fv.clear(&mut self.objects);
+        }
         let keys: Vec<LandblockKey> = self.objects.keys().collect();
         for k in keys {
             self.objects.remove(k);
@@ -2181,6 +2247,9 @@ impl Walker {
         out.push((format!("Map {map}"), WHITE));
         let heading = self.controls.heading();
         out.push((loc_text(&pos, heading), GREY));
+        if let Some(fv) = &self.far_view {
+            out.push((fv.hud_line(), GREY));
+        }
         if let Some((k, c)) = self.camera_cell {
             out.push((
                 format!(
@@ -2506,6 +2575,20 @@ impl Walker {
             if scene.outdoor_visible {
                 self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
+            let water_on = self.water_drawn();
+            let hand_off = self.far_view.as_ref().map(farview::FarViewLayer::hand_off);
+            if let (Some(fv), true) = (self.far_view.as_mut(), scene.outdoor_visible) {
+                let c = self.config.distances.object_multiplier();
+                fv.draw(
+                    pass,
+                    &anchor,
+                    eye,
+                    c,
+                    &mut self.resolver,
+                    &mut self.objects,
+                    water_on,
+                );
+            }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
             self.objects.draw(
@@ -2554,7 +2637,8 @@ impl Walker {
                     &self.streamer,
                     &anchor,
                     eye,
-                    self.extent(),
+                    self.ring_extent(),
+                    hand_off.as_deref(),
                     &mut self.resolver,
                     &mut self.objects,
                 );
@@ -2747,6 +2831,9 @@ impl Walker {
         self.env.release(&mut self.objects);
         self.resolver.shutdown();
         self.terrain.shutdown();
+        if let Some(fv) = self.far_view.as_mut() {
+            fv.shutdown();
+        }
         self.clear_all(renderer);
         self.hud.release(renderer);
         self.chat.release(renderer);

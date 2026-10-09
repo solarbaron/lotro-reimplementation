@@ -76,6 +76,7 @@ use tessera_world::{
 use super::UploadBudget;
 use super::env::material_curve;
 use super::farband::{BAKE_SIZE, LIGHT_GLOW, SmallChain, bake, mip_chain, reduce_mask};
+use super::farview::FarHandOff;
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
 use super::interiors;
 use super::jobs::JobRunner;
@@ -1088,6 +1089,9 @@ pub struct TerrainLayer {
     finished: Vec<(LandblockKey, BlockProduct)>,
     order: Vec<(f32, LandblockKey)>,
     frame: TerrainFrame,
+    /// The far view's hand-off (`far-view.md`, [`super::farview`]): blocks it covers are not
+    /// drawn, blocks next to its far field mesh at the finest level.
+    far_view: Option<Arc<FarHandOff>>,
 }
 
 impl std::fmt::Debug for TerrainLayer {
@@ -1215,7 +1219,22 @@ impl TerrainLayer {
             finished: Vec::new(),
             order: Vec::new(),
             frame: TerrainFrame::default(),
+            far_view: None,
         })
+    }
+
+    /// Sets the far view's hand-off (`None`: no far view).
+    pub fn set_far_view(&mut self, hand_off: Option<Arc<FarHandOff>>) {
+        self.far_view = hand_off;
+    }
+
+    /// Whether the layer can draw `key` now: a mesh is on the GPU, or its terrain is
+    /// deliberately out of the scene (§4.9 rule 3). The far view fills the others.
+    #[must_use]
+    pub fn drawable(&self, key: LandblockKey) -> bool {
+        self.slots
+            .get(&key)
+            .is_some_and(|s| s.mesh.is_some() || s.terrain_out_of_scene(&self.frame))
     }
 
     /// Updates the selector for a new viewport height or field of view.
@@ -1421,8 +1440,11 @@ impl TerrainLayer {
         self.frame = *frame;
         self.collect(now, objects);
 
-        // Levels, nearest first.
+        // Levels, nearest first. A block next to the far view's far field meshes at the
+        // finest level, so its edge carries every sample the far stitch joins
+        // (`far-view.md` §5.2).
         self.order.clear();
+        let far_view = self.far_view.clone();
         for (key, slot) in &mut self.slots {
             let Some(block) = &slot.block else { continue };
             let Some(off) = anchor.offset_of(*key) else {
@@ -1430,7 +1452,11 @@ impl TerrainLayer {
             };
             let local = camera - off;
             let d = block.distance_to(local.to_array());
-            slot.lod = Some(self.selector.select(block, d, slot.lod));
+            slot.lod = Some(if far_view.as_ref().is_some_and(|h| h.borders_far(*key)) {
+                Lod::FINEST
+            } else {
+                self.selector.select(block, d, slot.lod)
+            });
             slot.far = in_far_band(slot.far, d, frame.far_band);
             self.order.push((d, *key));
         }
@@ -1958,6 +1984,19 @@ impl TerrainLayer {
         if self.slots.values().all(|s| s.staged.is_none()) {
             return;
         }
+        // Blocks the far view draws (or is about to) are not seam partners: their staged
+        // meshes go in at once and their neighbours ignore them.
+        let far_view = self.far_view.clone();
+        let is_far = |k: &LandblockKey| far_view.as_ref().is_some_and(|h| h.is_far(*k));
+        for (key, slot) in &mut self.slots {
+            if is_far(key)
+                && let Some(new) = slot.staged.take()
+                && let Some(old) = slot.mesh.replace(new)
+                && let GpuKind::Mesh(id) = old.kind
+            {
+                renderer.destroy_mesh(id);
+            }
+        }
         let views: HashMap<LandblockKey, EdgeView> = self
             .slots
             .iter()
@@ -1967,7 +2006,7 @@ impl TerrainLayer {
                     EdgeView {
                         shown: s.mesh.as_ref().map(|m| m.sig.edges),
                         staged: s.staged.as_ref().map(|m| m.sig.edges),
-                        frozen: s.block_failed || s.failed.is_some(),
+                        frozen: s.block_failed || s.failed.is_some() || is_far(k),
                     },
                 )
             })
@@ -1999,7 +2038,12 @@ impl TerrainLayer {
         let mut present = 0u8;
         for side in Side::ALL {
             let (dx, dy) = side.offset();
-            let n = key.offset(dx, dy).and_then(|n| self.slots.get(&n));
+            // A neighbour the far view draws is no seam partner (its edge is the far
+            // stitch's business, `far-view.md` §5.2).
+            let n = key
+                .offset(dx, dy)
+                .filter(|n| !self.far_view.as_ref().is_some_and(|h| h.is_far(*n)))
+                .and_then(|n| self.slots.get(&n));
             if let Some(n) = n
                 && n.block.is_some()
             {
@@ -2284,7 +2328,10 @@ impl TerrainLayer {
                 continue;
             };
             // The landscape extent (`walker.md` §11.3): blocks whose square is farther.
-            if horizontal > frame.extent {
+            // Blocks a far-view batch on the GPU draws are left to it (terrain and ceiling).
+            if horizontal > frame.extent
+                || self.far_view.as_ref().is_some_and(|h| h.is_covered(key))
+            {
                 continue;
             }
             let tf = Mat4::from_translation(off);

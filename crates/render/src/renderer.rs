@@ -393,6 +393,7 @@ pub struct Renderer<'w> {
     /// Render-world pipelines (`docs/specs/render.md` §5).
     terrain_state: TerrainState,
     water_state: WaterState,
+    far_view_state: crate::far_view::FarViewState,
     sky_state: SkyState,
     instanced_state: InstancedState,
     /// Copy of the colour target for water refraction: texture, view, size, format.
@@ -932,6 +933,7 @@ impl<'w> Renderer<'w> {
             lit_material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
             terrain_state: TerrainState::default(),
             water_state: WaterState::default(),
+            far_view_state: crate::far_view::FarViewState::default(),
             sky_state: SkyState::default(),
             instanced_state: InstancedState::default(),
             scene_copy: None,
@@ -1358,7 +1360,8 @@ impl<'w> Renderer<'w> {
     }
 
     /// Build the render-world hooks of one lit pass (`docs/specs/render.md` §5.1), in
-    /// draw order: terrain layers, instanced scenery, sky, water.
+    /// draw order: terrain layers, instanced scenery, sky, far terrain and distant sprites,
+    /// water.
     #[allow(clippy::too_many_arguments)]
     fn world_hooks(
         &mut self,
@@ -1404,6 +1407,8 @@ impl<'w> Renderer<'w> {
             water,
             sky,
             instanced,
+            far_terrain,
+            sprites,
         } = draws;
         let mut hooks: Vec<Arc<dyn PassHook>> = Vec::new();
         if let Some(h) = crate::terrain_layers::build_hook(&mut self.terrain_state, terrain, &ctx)?
@@ -1415,6 +1420,14 @@ impl<'w> Renderer<'w> {
         }
         if let Some(h) =
             crate::sky::build_hook(&mut self.sky_state, &mut self.instanced_state, sky, &ctx)?
+        {
+            hooks.push(h);
+        }
+        // The far view draws after the sky: the far-draw fade (`far-view.md` §6.3 step 3)
+        // and the sprites' fog blend over the sky instead of the clear colour. The sky
+        // writes no depth, so the far terrain still passes its depth test there.
+        if let Some(h) =
+            crate::far_view::build_hook(&mut self.far_view_state, far_terrain, sprites, &ctx)?
         {
             hooks.push(h);
         }

@@ -71,6 +71,7 @@
 //! | [`scenery`] | terrain-scene (0x12) and scene-choice (0x11) tables, scene records (0x02): [`TerrainSceneTable`], [`SceneChoiceTable`], [`Scene`] | `scenery.md` §4–§5 |
 //! | [`water`] | water (0x16) and fog-zone (0x17) tables: [`WaterTable`], [`FogZoneTable`] | `water.md` §4–§5 |
 //! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
+//! | [`imposter`] | imposter tables (0x27): [`ImposterTable`] | `misc-records.md` §5 |
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 //! | [`font`] | fonts (0x42): metrics, glyph table, atlas DIDs | `fonts.md` §3 |
 //! | [`ui_layout`] | UI layouts (0x22): elements, states, media items, labels, base chains | `ui-layout.md` §3–§6, §10–§13 |
@@ -90,6 +91,7 @@ pub mod environment;
 mod error;
 pub mod font;
 pub mod gameplay;
+pub mod imposter;
 pub mod instance;
 pub mod item;
 pub mod landblock;
@@ -140,6 +142,7 @@ pub use enum_mapper::EnumMapper;
 pub use environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 pub use error::{FormatError, Result};
 pub use font::{Font, Glyph};
+pub use imposter::{ImposterEntry, ImposterTable, decode_imposter_table};
 pub use landblock::{
     BlockMap, BlockMapDescriptor, CollisionTree, LandblockData, LandblockGroupRecord,
     LandblockInfo, LandblockProperties, LightMaps, RegionDescriptor, RegionTable, SectorRecord,

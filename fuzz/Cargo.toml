@@ -433,6 +433,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "formats_imposter_table"
+path = "fuzz_targets/formats_imposter_table.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-formats instanced content (docs/specs/instances.md) ---
 
 [[bin]]
@@ -470,6 +477,15 @@ bench = false
 [[bin]]
 name = "world_text"
 path = "fuzz_targets/world_text.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-world far view (docs/specs/far-view.md §4–§5, §9) ---
+
+[[bin]]
+name = "world_far_mesh"
+path = "fuzz_targets/world_far_mesh.rs"
 test = false
 doc = false
 bench = false

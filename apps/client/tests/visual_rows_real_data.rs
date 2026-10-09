@@ -22,7 +22,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_client::walker::env::{
@@ -38,6 +37,23 @@ use tessera_world::frills::DensityThinner;
 use tessera_world::{
     BundleOptions, LandblockKey, RingConfig, StreamConfig, WorldContext, WorldPos, WorldStreamer,
     build_frill_sector, heading_degrees,
+};
+
+/// Settling the streamer waits as long as loading progresses: it gives up after this many
+/// updates (about 1 ms apart, longer on a loaded machine) in a row without any loading
+/// work starting or finishing, or after this many updates in all
+/// ([`tessera_world::WorldStreamer::settle_on_progress`]; `walker.md` §7, implementer note
+/// on progress waits).
+const SETTLE_STALL: u64 = if cfg!(debug_assertions) {
+    900_000
+} else {
+    120_000
+};
+/// See [`SETTLE_STALL`].
+const SETTLE_MAX: u64 = if cfg!(debug_assertions) {
+    14_400_000
+} else {
+    3_600_000
 };
 
 fn install() -> Option<PathBuf> {
@@ -79,7 +95,10 @@ fn world() -> Option<(Arc<WorldContext>, WorldStreamer)> {
 fn settle(w: &mut WorldStreamer, region: u8, block: u16, x: f64, y: f64) -> WorldPos {
     let o = key(region, block).origin();
     let pos = WorldPos::new(region, o[0] + x, o[1] + y, 0.0);
-    assert!(w.settle(pos, Duration::from_secs(120)), "never settled");
+    assert!(
+        w.settle_on_progress(pos, SETTLE_STALL, SETTLE_MAX),
+        "never settled"
+    );
     pos
 }
 
@@ -627,6 +646,25 @@ fn row_cameras_frame_their_targets() {
     }
 }
 
+/// Frames per second of the paced headless loop.
+const FPS: u64 = 60;
+
+/// How a camera's screenshot waits for the area to settle (`walker.md` §7): as long as
+/// loading progresses, counted in frames rather than wall-clock seconds, so a loaded
+/// machine makes the run slower, not different. It gives up after this many frames
+/// without any loading progress, or after this many frames in all.
+fn settle_wait() -> tessera_client::headless::SettleWait {
+    let (stall_s, max_s) = if cfg!(debug_assertions) {
+        (900, 4 * 3600)
+    } else {
+        (60, 3600)
+    };
+    tessera_client::headless::SettleWait::Progress {
+        stall_frames: stall_s * FPS,
+        max_frames: max_s * FPS,
+    }
+}
+
 /// Renders every camera of [`CAMERAS`] into `TESSERA_VISUAL_SHOTS` (a private directory
 /// outside the install; the images are viewed, never committed). Skipped unless both
 /// `TESSERA_VISUAL_SHOTS` and `TESSERA_GAME_DIR` are set, or when no GPU adapter exists.
@@ -684,8 +722,6 @@ fn row_cameras_render() {
             "--time-rate",
             "0",
             "--no-hud",
-            "--settle-timeout",
-            "240",
             "--screenshot",
             png.to_str().expect("utf-8 image path"),
         ]
@@ -694,7 +730,7 @@ fn row_cameras_render() {
         .collect();
         argv.extend(c.extra.iter().map(|s| (*s).to_owned()));
         let args = tessera_client::Args::try_parse_from(argv).expect("valid args");
-        match tessera_client::headless::run(&args) {
+        match tessera_client::headless::run_with(&args, settle_wait()) {
             Ok(r) => {
                 eprintln!("{}: {} frames, settled {}", c.id, r.frames, r.settled);
                 if !r.settled {

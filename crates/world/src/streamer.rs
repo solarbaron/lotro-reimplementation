@@ -894,6 +894,27 @@ impl StreamStats {
             .filter(|&n| n > 0)
             .map_or(Duration::ZERO, |n| (self.read_time + self.decode_time) / n)
     }
+
+    /// A progress mark: the sum of the cumulative work counters (requests issued, jobs
+    /// completed, bundles integrated, evicted or released, requests cancelled, failed or
+    /// retried). Every counter only grows, so the mark changes exactly when some loading
+    /// work started, finished or was given up; waits that give up only when nothing
+    /// progresses compare it ([`WorldStreamer::settle_on_progress`]).
+    #[must_use]
+    pub fn progress(&self) -> u64 {
+        [
+            self.requested,
+            self.jobs,
+            self.integrated,
+            self.evicted,
+            self.released,
+            self.cancelled,
+            self.failed,
+            self.retried,
+        ]
+        .iter()
+        .fold(0u64, |a, &b| a.wrapping_add(b))
+    }
 }
 
 /// A minimap tile of a resident landblock (`coordinates.md` §10, `landblock.md` §6.3).
@@ -1820,13 +1841,7 @@ impl WorldStreamer {
         loop {
             // The focus stands still: nothing is loaded ahead.
             let r = self.update_with_velocity(focus, [0.0; 2]);
-            if r.loading == 0
-                && r.pending == 0
-                && r.waiting_retry == 0
-                && r.requested == 0
-                && r.integrated == 0
-                && r.evicted == 0
-            {
+            if Self::quiet(&r) {
                 return true;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -1834,6 +1849,59 @@ impl WorldStreamer {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// [`WorldStreamer::settle`] without a wall-clock limit: it gives up only after
+    /// `stall_updates` consecutive updates without loading progress
+    /// ([`StreamStats::progress`] unchanged and the same counts loading, pending and
+    /// waiting to retry), or after `max_updates` updates in all. Updates are about a
+    /// millisecond apart, so on a loaded machine (slow jobs, long sleeps) the wait grows
+    /// with the work instead of ending while landblocks still arrive (tools and tests).
+    /// Returns whether it settled.
+    pub fn settle_on_progress(
+        &mut self,
+        focus: WorldPos,
+        stall_updates: u64,
+        max_updates: u64,
+    ) -> bool {
+        let mut last = None;
+        let mut stalled = 0u64;
+        for _ in 0..max_updates.max(1) {
+            let r = self.update_with_velocity(focus, [0.0; 2]);
+            if Self::quiet(&r) {
+                return true;
+            }
+            let mark = (self.stats.progress(), r.loading, r.pending, r.waiting_retry);
+            if last == Some(mark) {
+                stalled = stalled.saturating_add(1);
+                if stalled >= stall_updates {
+                    tracing::warn!(
+                        loading = r.loading,
+                        pending = r.pending,
+                        waiting_retry = r.waiting_retry,
+                        stalled,
+                        "streamer settle: no loading progress; giving up"
+                    );
+                    return false;
+                }
+            } else {
+                last = Some(mark);
+                stalled = 0;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    /// Whether an update at a still focus changed nothing (the settled state of
+    /// [`WorldStreamer::settle`]).
+    fn quiet(r: &FrameReport) -> bool {
+        r.loading == 0
+            && r.pending == 0
+            && r.waiting_retry == 0
+            && r.requested == 0
+            && r.integrated == 0
+            && r.evicted == 0
     }
 
     /// The state of a desired landblock; `None` when it is not desired. A landblock loaded

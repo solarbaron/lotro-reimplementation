@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08; two parallel revisions of that date, each re-reviewed and accepted: the volume-flag, element and monitor answers, rows W18–W20, and the §7.4 revision on entering deep water from BIN2, row W21 (W18 in that revision); merged 2026-10-09 with one disagreement between them recorded as an OPEN in §7.4). First accepted 2026-10-06. |
+| **Status** | **Accepted** (2026-10-09, re-review of the revision answering B1–B2: passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: Revised (2026-10-09, spec writer: revision answering the review of 2026-10-09, B1 (§7.4 Tessera rule lists four differences) and B2 (§7.3 answer reworded to agree with W22), and the non-blocking §14 note). Before: Revised (2026-10-09, spec writer: §7.4 merged OPEN answered by BIN3 (j), new W22, W19 reworded, the no-support answer corrected, step 3 sign of *v* made explicit; review 2026-10-09: **changes requested**, items B1–B2 in the review record). Before: Accepted (2026-10-08; two parallel revisions of that date, each re-reviewed and accepted: the volume-flag, element and monitor answers, rows W18–W20, and the §7.4 revision on entering deep water from BIN2, row W21 (W18 in that revision); merged 2026-10-09 with one disagreement between them recorded as an OPEN in §7.4). First accepted 2026-10-06. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec reviewer, fresh sessions; separate from the writer's session) |
-| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Re-review of the 2026-10-08 revision (rows W18–W20), 2026-10-08 (fresh reviewer session): **Accepted** (CLEAN_ROOM.md §5.3, every item; W19 spot-checked in the binary). Re-review 2026-10-08 of the parallel §7.4 revision (BIN2, row W21, then W18) (Claude review session, spec-reviewer role, fresh session): **passed**, Accepted; all CLEAN_ROOM.md §5.3 items hold. Spot check: steps 1–4 agree with `collision.md` §10.3 (Swimming row), §11.1 step 9, §11.6 items 3, 4, 7 and §12.4 (p), §12.5; the worked example recomputed (0.098, 0.037, 0.013, 0.003 m, line in the fifth update at 60 per second; 0.19, 0.07, 0.02 m, fourth at 30). Non-blocking: in §7.4 step 3, *v* in 0.4 · (*v* + 20 *t*) is the signed vertical velocity (negative downward), not the "downward speed" the sentence names; the example fixes the sign. Merge of both revisions, 2026-10-09: no fact changed; the merged text has not been reviewed as a whole. Full records in the review log (decision 0018). |
+| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Re-review of the 2026-10-08 revision (rows W18–W20), 2026-10-08 (fresh reviewer session): **Accepted** (CLEAN_ROOM.md §5.3, every item; W19 spot-checked in the binary). Re-review 2026-10-08 of the parallel §7.4 revision (BIN2, row W21, then W18) (Claude review session, spec-reviewer role, fresh session): **passed**, Accepted; all CLEAN_ROOM.md §5.3 items hold. Spot check: steps 1–4 agree with `collision.md` §10.3 (Swimming row), §11.1 step 9, §11.6 items 3, 4, 7 and §12.4 (p), §12.5; the worked example recomputed (0.098, 0.037, 0.013, 0.003 m, line in the fifth update at 60 per second; 0.19, 0.07, 0.02 m, fourth at 30). Non-blocking: in §7.4 step 3, *v* in 0.4 · (*v* + 20 *t*) is the signed vertical velocity (negative downward), not the "downward speed" the sentence names; the example fixes the sign. Merge of both revisions, 2026-10-09: no fact changed; the merged text has not been reviewed as a whole. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the BIN3 revision (commit a654745, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **changes requested**. Items that hold: no code or pseudo-code (the update of *v*_z in §7.4 step 3 is a formula), no addresses, middleware class names, copied prose, game text, keys or hostnames; nothing under a closed gate; BIN3 has a provenance row with question, method and why M1–M3 were not enough; W19 and W22 are marked. Spot checks passed (read-only, against the cited sources): W19, W22 and BIN3 agree with `collision.md` §11.3.2 (a) and (b), C28, C49, C64 and BIN question 70 on this branch; §7.4 step 1 cites W22 consistently; the step 3 formula recomputed from Gravity −20 m/s² and damper 0.4 at *t* = 1/60 s and 15 m/s gives the example's 0.098, 0.037, 0.013, 0.003 m and the rise in the fifth update, and the earlier non-blocking note on the sign of *v* is resolved. The binary was not re-read in this review. Blocking: **B1** §7.4 Tessera rule says it differs from the client (after controller updates) "in three cases", but a fourth follows from the stated rules: in water deeper than the float height on support that is not walkable, Tessera's Decision ("swims (state 2) when the water surface is more than its float height above its feet"; `collision.md` §12.3 step 7) gives 2 where the client (W22, table of `collision.md` §11.3.2) gives 3. List all four cases (the matching `collision.md` §12.5 row "Water states" has the same gap). **B2** §7.3, "Answer (2026-10-08, BIN, W19)": "for the movement state the client reads only the mover's `Volume_IsLiquid`" contradicts W22 (after controller updates the in-water input also needs the float-height depth). Reword so it agrees with §7.4 (both routines read `Volume_IsLiquid`, so a coin volume still counts as water for the movement state; the controller's routine adds the depth test). Non-blocking: the §14 OPEN on containment and buoyancy cites only W19 for the answered state rule; add W22. Full records in the review log (decision 0018). Spec writer, 2026-10-09: revision answering B1, B2 and the non-blocking note (see the change log). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of that revision (commit d145d39, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **Accepted** (every item). **B1** resolved: the §7.4 Tessera rule lists four differences after controller updates; checked case by case against the Tessera Decision (§7.4, `collision.md` §12.3 step 7) and the client table with the W22 in-water input (`collision.md` §11.3.2): shallow water gives 1/5, 3/6, 2/4 (Tessera/client) by support, deep water gives 2/1 and 2/3 on walkable and other support, and both give 2 without support in deep water, as stated; `collision.md` §12.5 row "Water states" lists the same four. **B2** resolved: the §7.3 coin-volume answer says both routines read `Volume_IsLiquid` and that the controller's routine adds the float-height test (W22), consistent with W19, W22 and §7.4. Non-blocking §14 note resolved (cites W19 and W22). No remaining text in §7.3, §7.4, §13 or §14 states the superseded "no depth input for the movement state" or "state 2 whatever the depth" without the position-update qualifier. No new facts, so no new provenance needed; no code or pseudo-code, no copied prose, addresses, middleware class names, game text, keys or hostnames; nothing under a closed gate. The binary was not re-read in this review (no new BIN claim). Non-blocking: in the narrow band where the depth lies between the float height minus 0.0002 m and the float height, the client is in water while Tessera wades; both give 1 or 3 with support and 2 without, so no fifth difference arises. |
 | **Implements into** | `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
 | **Companion specs** | [`environment.md`](environment.md) §3 (region descriptor: slots 5 and 6 name the two tables). [`landblock.md`](landblock.md) §3.4 (height conversion), §5 (block maps; keys 3, 4 and 7 are read here), §7 (distant-landscape sector records). [`material.md`](material.md) §4 (surface records 0x31), §5–§8 (shader records 0x2B, parameter entries, labels; §8.6: `c_`-labelled parameters feed the program constant of the same name). [`collision.md`](collision.md) §9–§12 (volumes, movement states, controller). [`scenery.md`](scenery.md) §7.4–§7.5 (height modes and water ranges that read the water plane). [`entity-descriptor.md`](entity-descriptor.md) (placed static entities). [`property-system.md`](property-system.md) §5 (0x78 property sets), §7 (enum mappers). [`records.md`](records.md) §1 (VLE), §2.1 (prefix → DB type table). |
 
@@ -44,6 +44,7 @@ the invariants (§11), not the counts.
 | OBS | Observed in the user's install (Steam) on 2026-10-05 by throwaway probes in the dirty-room scratchpad: all 5 records of prefix 0x16 and all 5 of prefix 0x17 decoded to the last byte; all 7 region descriptors; all 390,150 block maps (every key and value) and the minimum and maximum of all 390,150 height grids of regions 1–5 and 14; all 33,159 distant-landscape sector records (kind 5) searched for their water pairs; all 3,244,086 placed static entities of all 49,636 landblock-info records (object DID, position, world-building label); all 40,643 entity descriptors (0x47) and all 1,616 stand-alone property sets (0x78) checked for liquid-volume properties; the 76 surface records (0x31) named by the water tables and their shader records (0x2B). |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone in the dirty room on 2026-10-05. **Questions:** (a) which DB object type the client registers for each DID range (to settle what prefixes 0x16 and 0x17 are); (b) the deserialisers of the water table, the fog-zone table and the region descriptor; (c) how a landblock decides it has water: which block-map keys, how a stored level becomes a height, the presence rule, the plane; (d) who consumes that state: the water-volume entity, the "under water" test, the scenery and encounter passes; (e) how water geometry is built for drawing; (f) how the fog-zone table is looked up. **Why M1–M3 were not enough:** block-map keys 3, 4, 6 and 7 have no descriptor entry in the data (`landblock.md` §5.6), so nothing in the data says which table reads them or how a stored value becomes a height; the earlier specs disagreed about which slot is water (§13); no published source describes these records; no running client is available to this session for M3. Only offline world code was read: nothing about network, login, keys, launcher or anti-tamper. **Second use, 2026-10-08 (same build; Ghidra headless on a copy of the analysed project, deleted afterwards; answering the implementer OPENs of 2026-10-07):** (g) which value types the client's readers of the volume flags accept; (h) the routine that sets a mover's `Entity_Element` and the inputs it reads; (i) how a monitor's `Monitor_Offset` and box corners are read. **Why M1–M3 were not enough:** the dictionary gives each flag one type, so the data never exercises another; the state rule and the monitor reader are run-time behaviour no record stores; no running client or published source is available. Read: the volume-flag readers, the element routine and its support-flag accessors, the monitor-array reader. |
 | BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read with Ghidra in the dirty room on 2026-10-08. **Question (g):** what the player controller does to a mover's downward speed and displacement when the mover enters water (the clean-room OPEN of the M4.5 exit verification in §7.4). Read: the player controller's update, its velocity and displacement routine, its water-surface routine, the move request and the routine that publishes the movement state; the constants they load were read from the executable. **Why M1–M3 were not enough:** the data hold only the layer parameters (`collision.md` §10.3), not how the controller applies them to a mover entering water; no running client is available to this session (M3). Only offline movement code was read: nothing about network, login, keys, launcher or anti-tamper. |
+| BIN3 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build, read with Ghidra 12 headless on a private copy of the analysis project (deleted afterwards) on 2026-10-09; recorded in `collision.md` §1 as question 70. **Question (j):** whether the routine of W19 and the controller routine of BIN2 that set `Entity_Element` are one routine or two, and which applies after the player controller's updates. **Why M1–M3 were not enough:** both earlier readings were of code; the data holds no state rule; the original cannot be observed here. |
 | SH | The water shader records (prefix 0x2B) of the same install carry the OpenGL back end's programs as text. Those of shader record 0x2B0000A8 (used by 43 of the 76 water surfaces) were read in the dirty room (method M1, data files) and reduced to the words of §8.3–§8.4; the sampler lists of the other five water shader records were read. No program text is reproduced. |
 | LC | LotroCompanion `lotro-tools` (`RegionLoader`, readable source; facts only): names region slot 5 "water" and slot 6 "fog". Reported only; confirmed here by BIN. |
 | ENV, LB, COL, SCN, MAT | `environment.md`, `landblock.md`, `collision.md`, `scenery.md`, `material.md` (same install). |
@@ -76,9 +77,10 @@ where the original's is not known (never a statement about the original).
 | W16 | Shader record 0x2B0000A8 is named by 55 surface records (0x31), 43 of them water surfaces of the tables; its water permutations take positions only and composite the frame-buffer copy, its low-detail permutations sample two colour layers and are lit per vertex by ambient, hemispheric ambient and the per-vertex lights (§8.2) | OBS (all surface records, 2026-10-05); SH (sampler lists, render-state bytes and constant lists of every permutation of 0x2B0000A8) | Confirmed |
 | W17 | The specular direction of §8.4 step 6 is the main light's travel direction when the main light is directional, else an engine default direction (§8.4) | `lighting.md` §4.2, row L24 (BIN-L (g)) | BIN |
 | W18 | The client's readers of `Volume_IsLiquid`, `Volume_IsLava` and `Volume_IsCoin` count a flag as set only when the value found is a Boolean (type 21) and true; all volume flags are Boolean in the dictionary (§7.2) | BIN (g); OBS (dictionary types, 2026-10-08) | BIN (readers); Confirmed (types) |
-| W19 | A mover's `Entity_Element` is 1, 3 or 2 when its own `Volume_IsLiquid` is true (walkable support, other support, no support) and 5, 6 or 4 otherwise; depth and float height are not inputs; every `Volume_IsLiquid` set counts, coin sets included (§7.4; `collision.md` §11.3.2) | BIN (h) | BIN |
+| W19 | One of the client's two routines that set `Entity_Element` (the one the position-update paths call, BIN3 (j)) gives 1, 3 or 2 when the mover's own `Volume_IsLiquid` is true (walkable support, other support, no support) and 5, 6 or 4 otherwise, with no depth or float-height input; every `Volume_IsLiquid` set counts, coin sets included (§7.4; `collision.md` §11.3.2 (b)) | BIN (h); BIN3 (j) | BIN |
 | W20 | A monitor's `Monitor_Offset` (a vector) is added to both box corners; the corners and the offset are used only when they are vectors (§7.1) | BIN (i) | BIN |
 | W21 | The original does not cancel or clamp a downward speed or a falling displacement in water; a mover entering deep water is slowed only by the Swimming layer's gravity and once-per-update damper, and the first update whose displacement rises puts its feet on the float line (§7.4) | BIN2 (g); `collision.md` §11.1 step 9, §11.6 items 3, 4, 7 (BIN) | BIN |
+| W22 | After every update of the player controller the client sets `Entity_Element` by the same table with an in-water input that also needs the water surface at least the float height minus 0.0002 m above the feet; this routine, not W19's, decides the state of a moving player (§7.4; `collision.md` §11.3.2 (a), C64) | BIN2; BIN3 (j) | BIN |
 
 ---
 
@@ -478,8 +480,12 @@ the entity when `Monitor_ScaleWithEntity` is true.
 > known. Tessera (Decision): every `Volume_IsLiquid` box is liquid, as the rule of §7.4
 > states.
 >
-> **Answer (2026-10-08, BIN, W19):** for the movement state the client reads only the mover's
-> `Volume_IsLiquid`, so a coin volume counts as water there, as the Decision says. Whether the
+> **Answer (2026-10-08, BIN, W19; reworded 2026-10-09, W22):** both of the client's routines
+> that set the movement state read the mover's `Volume_IsLiquid` (§7.4), and that flag is set by
+> coin sets as well, so a coin volume counts as water for the movement state, as the Decision
+> says. After a controller update the in-water input also needs the water surface at least the
+> float height minus 0.0002 m above the feet (W22); the routine of the position-update paths
+> reads `Volume_IsLiquid` alone (W19). Whether the
 > "is this position under water" query (§6.3, §10) counts it was not traced; the Decision
 > stands for that query.
 
@@ -489,31 +495,47 @@ the entity when `Monitor_ScaleWithEntity` is true.
 `collision.md` §10.4 lists the mover states Water_ControlledSurface (1), Water_NoSurface (2) and
 Water_UncontrolledSurface (3).
 
-**Client rule (BIN, W19, 2026-10-08).** The monitor volumes above apply their property sets to
-the movers inside them, so a mover inside a liquid zone has `Volume_IsLiquid` true. The client
-sets `Entity_Element` from that flag and the support flags of `collision.md` §11.3.1: in liquid,
-1 on walkable support, 3 on other support and 2 without support; out of liquid 5, 6 and 4
-(`collision.md` §11.3.2). The water level, the depth and the float height are not inputs: a
-mover standing on walkable ground inside a liquid volume is in state 1 however deep the water,
-and a mover without support is in state 2 however shallow. Which point or shape of the mover
-the monitors test, and how the float height keeps a swimmer at its depth (the client's
-buoyancy), were not traced (`collision.md` Q9).
+**Client rule (BIN, W19, W22; revised 2026-10-09).** The monitor volumes above apply their
+property sets to the movers inside them, so a mover inside a liquid zone has `Volume_IsLiquid`
+true. The client sets `Entity_Element` from an in-water input and the support flags of
+`collision.md` §11.3.1: in water, 1 on walkable support, 3 on other support and 2 without
+support; out of water 5, 6 and 4 (`collision.md` §11.3.2). Two routines apply this table
+(BIN3 (j)):
 
-> **OPEN (merge of 2026-10-09; RE, `collision.md` Q9):** two parallel readings of 2026-10-08
-> disagree on one input of the state rule. The rule above (BIN (h), W19; `collision.md`
-> §11.3.2) has no depth or float-height input. Step 1 of "Entering deep water at speed" below
-> (BIN2 (g), W21; `collision.md` §11.6 item 7, C49) counts the mover as in water only when the
-> water surface also lies at least its float height minus 0.0002 m above its feet, so a mover
-> in a liquid volume above that depth keeps state 5, 6 or 4. The two give different answers to
-> the no-support OPEN below (state 2 here; state 4 there in water shallower than the float
-> height, `collision.md` §15 row for this section). Both are kept as read until a fresh BIN
-> reading decides (`collision.md` §11.3.2 OPEN); the Tessera rule below does not depend on it.
+- **After every update of the player controller** (W22): the mover is in water when its
+  `Volume_IsLiquid` is true **and** the water surface found by the controller lies at least its
+  float height minus 0.0002 m above its feet. A mover in a liquid volume whose feet are less than
+  its float height below the surface is out of water (5, 6 or 4); one on walkable ground deeper
+  than that is in state 1, however deep.
+- **When a mover is placed at a position handed to it** (the position-update paths, W19): the
+  mover is in water when its `Volume_IsLiquid` is true; depth and float height are not inputs.
+
+For a walking or swimming player the first routine decides the state from its first update
+on. Which point or shape of the mover the monitors test, how the controller's water-surface
+query is formed, and how the float height keeps a swimmer at its depth (the client's buoyancy)
+were not traced (`collision.md` Q9, §11.7).
+
+> **Answered (2026-10-09, BIN3 (j); was OPEN, merge of 2026-10-09):** the two readings of
+> 2026-10-08 read two different routines and are both right for their routine (W19, W22;
+> `collision.md` C64). The state of a moving player follows the controller's routine, whose
+> in-water input includes the float-height test; step 1 of "Entering deep water at speed" below
+> therefore stands, and the answer to the no-support OPEN below is corrected.
 
 **Tessera rule (Decision):** a mover is in water when its feet are inside any liquid box; it
 swims (state 2) when the water surface is more than its float height above its feet
 (`collision.md` §11.2), otherwise it wades (state 1, or 3 on steep support); without support it
-swims (the OPEN below). This differs from the client in one case: on walkable support in water
-deeper than the float height Tessera gives 2 where the client gives 1. Tessera keeps its test
+swims (the OPEN below). This differs from the client (after controller updates) in four
+cases:
+
+1. in water shallower than the float height, on walkable support: Tessera gives 1, the client
+   5;
+2. in water shallower than the float height, on support that is not walkable: Tessera gives 3,
+   the client 6;
+3. in water shallower than the float height, without support: Tessera gives 2, the client 4;
+4. in water deeper than the float height, on any support: Tessera gives 2, the client 1 on
+   walkable support and 3 on support that is not walkable.
+
+Without support in water deeper than the float height both give 2. Tessera keeps its test
 because the client's way of lifting a swimmer off the bottom (the Swimming layer's upward
 gravity of `collision.md` §11.1 step 9, applied in state 1 too, with a buoyancy that was not
 traced) is not known, and Tessera's float line (`collision.md` §12.4 (p)) needs the deep-water
@@ -529,8 +551,12 @@ case to be a swimming state.
 > lift the mover out of the water); the surface is the water plane's level where the liquid
 > boxes end there, else the top of the liquid boxes above the feet.
 >
-> **Answer (2026-10-08, BIN, W19):** the client gives state 2 to every mover in liquid without
-> support, whatever the depth, so Tessera's choice of state 2 is the client's state. The
+> **Answer (2026-10-08, BIN, W19; corrected 2026-10-09, BIN3 (j), W22):** after a controller
+> update the client gives state 2 to a mover without support only when the water surface is at
+> least its float height minus 0.0002 m above its feet; in shallower water it gives state 4
+> (out of water, falling). Only a mover just placed by the position-update paths gets state 2
+> whatever the depth. Tessera's choice of state 2 is therefore the client's state in deep water
+> and differs in shallow water (the first difference listed under the Tessera rule above). The
 > float-line handling stays a Tessera Decision (the client's buoyancy was not traced).
 
 **Water surface for the float line (answers the implementer OPEN of 2026-10-07).** The client
@@ -568,7 +594,7 @@ search is replaced.)
 > lookup at the feet + 0.05 m finds a cell. Please state the client's rule (BIN), and
 > whether placed volumes inside cells (§7.3) still apply there.
 
-**Entering deep water at speed (BIN2, W21).** This answers the clean-room OPEN of the M4.5
+**Entering deep water at speed (BIN2, W21; step 3 sign made explicit 2026-10-09).** This answers the clean-room OPEN of the M4.5
 exit verification (2026-10-06), which asked how the original slows a mover that enters deep
 water at speed. The original has **no** rule that cancels or limits a downward speed in
 water. Its player controller (`collision.md` §11.6) slows such a mover only through the
@@ -577,14 +603,18 @@ parameters of the Swimming layer:
 1. The mover counts as in water at the end of an update when its `Volume_IsLiquid` is true
    and the water surface lies at least its float height minus 0.0002 m above its feet; its
    state then becomes 1, 3 or 2 by its support (walkable, other, none) (`collision.md` §11.6
-   item 7); W19 reads no depth input, OPEN above). The update in which this happens still ran with the previous layers.
+   item 7, §11.3.2 (a); W22). The update in which this happens still ran with the previous layers.
 2. From the next update on, the layering adds Swimming (StealthedSwimming when stealthed)
    (`collision.md` §11.1 step 9); in this install that gives gravity −20 m/s² and a damper
    of 0.4 on each world axis (`collision.md` §10.3; read at run time).
 3. Every update subtracts Gravity × *t* from the vertical part of the physics velocity, then
    multiplies each world component by the damper, once per update whatever *t* is; the
-   displacement uses the result (`collision.md` §11.6 items 3–4). A downward speed *v* thus
-   becomes 0.4 · (*v* + 20 *t*) per update. The horizontal parts of the physics velocity (for
+   displacement uses the result (`collision.md` §11.6 items 3–4). Let *v*_z be the vertical
+   component of the physics velocity, positive **upwards** (so *v*_z < 0 while the mover falls;
+   falling at 15 m/s is *v*_z = −15 m/s). With Gravity −20 m/s² each update makes
+   *v*_z ← 0.4 · (*v*_z + 20 *t*): the Swimming layer's negative gravity pushes upwards, and
+   the damper shrinks what is left. A falling mover's downward speed |*v*_z| thus becomes
+   0.4 · (|*v*_z| − 20 *t*) per update while that is positive (example below). The horizontal parts of the physics velocity (for
    example speed gained sliding down a bank) shrink by the same factor; the control velocity
    is not damped.
 4. A falling displacement is never changed: nothing stops the mover at the float line or at
@@ -925,7 +955,7 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 
 > **OPEN:** Which point or shape of a mover the liquid monitor volumes test, and the client's
 > buoyancy (how the float height keeps a swimmer at its depth). The state rule itself is
-> answered (§7.4, BIN, W19; `collision.md` §11.3.2, Q9).
+> answered (§7.4, BIN, W19 and W22; `collision.md` §11.3.2, Q9).
 
 > **OPEN:** The full layout of the distant-landscape sector record (§9, `landblock.md` §7).
 
@@ -943,3 +973,5 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07 from the binary (BIN second use, questions (g)–(i)). Status Revised. §7.2: the volume flags count only as Boolean true (W18), confirming the implementer's Decision. §7.4: new client rule (BIN, W19): `Entity_Element` from the mover's `Volume_IsLiquid` and its support flags, with no depth or float-height input; Tessera's float-height test kept as a Decision with the one case where it differs stated; the contiguous-liquid surface of the 2026-10-07 OPEN confirmed as the Tessera Decision for the float line. §7.1: partial answer to the 2026-10-06 OPEN (offset added to both corners, W20). §7.3: coin volumes count as water for the movement state (BIN). §7.4: the 2026-10-06 no-support OPEN answered (state 2 is the client's state). §13 row and §14 OPEN narrowed. New rows W18–W20. |
 | 2026-10-08 | Revision (status Revised). §7.4: the clean-room OPEN of the M4.5 exit verification (how the original slows a mover entering deep water at speed) is answered from BIN2 (g) and closed: no cancelling or clamping of a downward speed or falling displacement in water; the Swimming layer's gravity and once-per-update damper slow the mover, and the first rising update puts the feet on the float line; worked example at 60 and 30 updates per second; Tessera's current rule (`collision.md` §12.4 (p), with the state-6 case) is kept as a Decision until aligned, and its difference from the original is stated. New tag BIN2, row W18 (renumbered W21 in the merge of 2026-10-09). No layout or shading change. |
 | 2026-10-09 | Merge of the two parallel 2026-10-08 revisions: rows W18–W20 and BIN questions (g)–(i) kept; the other revision's tag BIN2 kept and its row W18 renumbered W21 (references in the header and §7.4 updated); header and review record combined; the disagreement between W19 (no float-height input) and BIN2 step 1 of §7.4 (and `collision.md` §11.6 item 7) recorded as an OPEN in §7.4. No fact changed. |
+| 2026-10-09 | Spec writer (dirty room); status Accepted → Revised, awaiting review. New tag BIN3 (Ghidra, question (j), recorded in `collision.md` as question 70) and row W22; W19 reworded. §7.4: the merged OPEN on the in-water input is answered (two routines set `Entity_Element`: after every controller update the input includes the float-height test, W22; the position-update paths use `Volume_IsLiquid` alone, W19); the client rule paragraph is rewritten around both; the Tessera rule lists its three differences from the client; the 2026-10-08 answer to the no-support OPEN is corrected (state 4 in water shallower than the float height after controller updates); step 1 of "Entering deep water at speed" cites W22; step 3 states that *v*_z is positive upwards and gives the update for a falling mover's downward speed. |
+| 2026-10-09 | Spec writer (dirty room), revision answering the review of 2026-10-09 (no new research; facts from W19, W22 and `collision.md` §11.3.2, §12.3 step 7). **B1:** §7.4 Tessera rule lists four differences from the client after controller updates (the fourth: on support that is not walkable in water deeper than the float height Tessera gives 2, the client 3), as a numbered list; the matching `collision.md` §12.5 row "Water states" is corrected the same way. **B2:** §7.3 answer to the coin-volume OPEN reworded: both routines read `Volume_IsLiquid`, so coin volumes count as water for the movement state; the controller's routine adds the float-height test (W22). Non-blocking: §14 OPEN on containment and buoyancy cites W22. Status stays Revised, awaiting re-review. |

@@ -20,7 +20,7 @@
 
 use std::fmt::Write as _;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tessera_physics::geometry::{CollisionSet, CollisionView, GridMesh};
 use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
@@ -30,6 +30,7 @@ use super::{
     BlockReadiness, CellOwnerIndex, CollisionWorld, MoveInput, MovementState, PhysicsWalker,
     PinStreamers, PinnedCollision, STEP_SECONDS, StepRecord, VIEW_RADIUS,
 };
+use crate::wait::{LoadWait, Waiter};
 use crate::walk_path::{Expect, SETTLE_SECONDS, Walk, WalkScript, steps_for};
 
 /// Deepest penetration allowed at any step, m (ROADMAP M4.5 criterion 4).
@@ -62,6 +63,13 @@ pub trait WalkWorld: CollisionWorld {
     /// ([`PhysicsWalker::pins`]: the walk's own landblock, the owner of the current cell)
     /// resident wherever they lie.
     fn update(&mut self, focus: &WorldPos, pins: &[LandblockKey]);
+
+    /// A progress mark of the loading behind [`WalkWorld::update`]: it changes whenever
+    /// some loading work starts, finishes or is given up (waits on progress compare it,
+    /// [`LoadWait::Progress`]). Worlds that load nothing return a constant.
+    fn load_progress(&self) -> u64 {
+        0
+    }
 }
 
 pub use super::MAX_PINS;
@@ -160,6 +168,14 @@ impl WalkWorld for StreamingWorld {
             }
         }
         self.pins.update(&context, &pins);
+    }
+
+    fn load_progress(&self) -> u64 {
+        self.streamer
+            .stats()
+            .progress()
+            .wrapping_add(self.pins.load_progress())
+            .wrapping_add(self.owners.load_progress())
     }
 }
 
@@ -291,7 +307,7 @@ pub enum RunError {
     /// The start is not finite.
     #[error("the walk's start is not finite")]
     BadStart,
-    /// The sets the walk needs were not installed within the timeout.
+    /// The sets the walk needs were not installed before the wait gave up.
     #[error("collision sets not installed after {waited} s: {}", key_list(missing))]
     NotLoaded {
         /// Seconds waited.
@@ -371,8 +387,8 @@ pub struct Verdict {
     pub notes: Vec<String>,
 }
 
-/// Runs `walk` in `world` with `setup`: places, waits for the sets (at most `timeout` of
-/// wall time per wait), settles, steps and evaluates (module docs).
+/// Runs `walk` in `world` with `setup`: places, waits for the sets (each wait limited by
+/// `wait`), settles, steps and evaluates (module docs).
 ///
 /// # Errors
 ///
@@ -381,7 +397,7 @@ pub fn run_walk<W: WalkWorld>(
     walk: &Walk,
     world: &mut W,
     setup: &MoverSetup,
-    timeout: Duration,
+    wait: LoadWait,
 ) -> Result<WalkOutcome, RunError> {
     let block = LandblockKey::new(walk.region, walk.landblock.0, walk.landblock.1)
         .map_err(|_| RunError::BadLandblock)?;
@@ -415,12 +431,12 @@ pub fn run_walk<W: WalkWorld>(
     if let Some(k) = walker.feet().landblock() {
         first.extend((-1..=1).flat_map(|dy| (-1..=1).filter_map(move |dx| k.offset(dx, dy))));
     }
-    wait_blocks(&walker, world, &first, timeout)?;
+    wait_blocks(&walker, world, &first, wait)?;
     for k in 0..total {
         if k.is_multiple_of(STREAM_EVERY) {
             world.update(&walker.feet(), &walker.pins());
         }
-        wait_ready(&mut walker, world, timeout)?;
+        wait_ready(&mut walker, world, wait)?;
         #[allow(clippy::cast_precision_loss)]
         let t = (k as f64 - settle as f64) * f64::from(STEP_SECONDS);
         let input = if k < settle {
@@ -479,19 +495,20 @@ pub fn yaw_of(h: f64) -> f32 {
     if r.is_finite() { r } else { 0.0 }
 }
 
-/// Streams around `walker`'s feet until none of `keys` is pending, or fails after
-/// `timeout`.
+/// Streams around `walker`'s feet until none of `keys` is pending, or fails when `wait`
+/// gives up (with [`LoadWait::Progress`]: polls about 1 ms apart in which neither the
+/// world's [`WalkWorld::load_progress`] nor the missing landblocks changed).
 ///
 /// # Errors
 ///
-/// [`RunError::NotLoaded`] after `timeout`.
+/// [`RunError::NotLoaded`] when the wait gives up.
 pub fn wait_blocks<W: WalkWorld>(
     walker: &PhysicsWalker,
     world: &mut W,
     keys: &[LandblockKey],
-    timeout: Duration,
+    wait: LoadWait,
 ) -> Result<(), RunError> {
-    let started = Instant::now();
+    let mut waiter = Waiter::new(wait);
     loop {
         world.update(&walker.feet(), &walker.pins());
         let missing: Vec<LandblockKey> = keys
@@ -502,9 +519,9 @@ pub fn wait_blocks<W: WalkWorld>(
         if missing.is_empty() {
             return Ok(());
         }
-        if started.elapsed() >= timeout {
+        if waiter.give_up((world.load_progress(), missing.clone())) {
             return Err(RunError::NotLoaded {
-                waited: started.elapsed().as_secs(),
+                waited: waiter.elapsed().as_secs(),
                 missing,
             });
         }
@@ -512,25 +529,26 @@ pub fn wait_blocks<W: WalkWorld>(
     }
 }
 
-/// Streams until the walker's next step can run, or fails after `timeout`.
+/// Streams until the walker's next step can run, or fails when `wait` gives up (as
+/// [`wait_blocks`]).
 fn wait_ready<W: WalkWorld>(
     walker: &mut PhysicsWalker,
     world: &mut W,
-    timeout: Duration,
+    wait: LoadWait,
 ) -> Result<(), RunError> {
     if walker.pending(world).is_empty() {
         return Ok(());
     }
-    let started = Instant::now();
+    let mut waiter = Waiter::new(wait);
     loop {
         world.update(&walker.feet(), &walker.pins());
         let missing = walker.pending(world);
         if missing.is_empty() {
             return Ok(());
         }
-        if started.elapsed() >= timeout {
+        if waiter.give_up((world.load_progress(), missing.clone())) {
             return Err(RunError::NotLoaded {
-                waited: started.elapsed().as_secs(),
+                waited: waiter.elapsed().as_secs(),
                 missing,
             });
         }
@@ -1341,10 +1359,10 @@ pub fn run_cli(args: &crate::cli::Args) -> anyhow::Result<WalkReport> {
         }
         None => None,
     };
-    let timeout = Duration::from_secs(args.settle_timeout);
+    let wait = LoadWait::Timeout(Duration::from_secs(args.settle_timeout));
     let mut report = WalkReport::default();
     for walk in &walks {
-        match run_walk(walk, &mut world, &session.setup, timeout) {
+        match run_walk(walk, &mut world, &session.setup, wait) {
             Ok(out) => {
                 if let Some(f) = &mut log {
                     write_log(f, &out)?;

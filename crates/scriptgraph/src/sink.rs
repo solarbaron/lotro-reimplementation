@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use tessera_formats::Did;
-use tessera_formats::script_table::AnimationNode;
+use tessera_formats::script_table::{AnimationNode, ParticleScriptNode};
 
 /// An entity, identified by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -26,6 +26,31 @@ pub struct EnvironmentHandle(pub u64);
 /// A started animation, numbered by the sink.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AnimationHandle(pub u64);
+
+/// A started particle effect, numbered by the sink (`particle-runtime.md` §4: the request
+/// handle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ParticleHandle(pub u64);
+
+/// A Particle node that passed the start gates of `particle-runtime.md` §5.4 (an effect
+/// DID, and for a finite effect an intensity above 0.0002): the sink takes the attached
+/// path (§5.5 steps 2–6) or, with `node.drop_effect`, the dropped path (§5.6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleStart {
+    /// The entity whose script runs the node.
+    pub entity: EntityId,
+    /// The target after `ParticleScript_RedirectProperty` (§5.5 step 1): `entity` unless
+    /// the property names another entity. Always `entity` on the dropped path (§5.6 step 1).
+    pub target: EntityId,
+    /// The effect DID (`particles.md` §7.1.1).
+    pub effect: Did,
+    /// The node's fields.
+    pub node: ParticleScriptNode,
+    /// The node's classification (§5.3): the stored byte, else the sink's answer.
+    pub never_ending: bool,
+    /// The node's editor ID (for logs).
+    pub node_id: u32,
+}
 
 /// Where a sound's source is (`sound.md` §9.2 step 6). The offset (random offset plus
 /// `SoundScript_Offset`, step 5) is in the entity frame, metres; the client rotates it by
@@ -153,6 +178,33 @@ pub trait EffectSink {
     fn stop_animation(&mut self, handle: AnimationHandle) {
         let _ = handle;
     }
+    /// The never-ending classification of `effect` for a Particle node without a stored
+    /// byte (`particle-runtime.md` §5.3, rule §12.2: only synthetic nodes). Default: `None`,
+    /// treated as finite.
+    fn classify_particle(&mut self, effect: Did) -> Option<bool> {
+        let _ = effect;
+        None
+    }
+    /// A Particle node starts an effect (`particle-runtime.md` §5.5, §5.6). The handle (or
+    /// `None` when nothing started) is kept by a never-ending node's instance and given to
+    /// [`EffectSink::stop_particle`] when the node stops; finite nodes complete at once and
+    /// never stop their effect. Default: nothing starts.
+    fn start_particle(&mut self, request: &ParticleStart) -> Option<ParticleHandle> {
+        let _ = request;
+        None
+    }
+    /// A never-ending Particle node stopped (`particle-runtime.md` §7.1): stop its effect,
+    /// marking it for immediate disposal when `immediate` (`ParticleScript_ImmediateDisposal`).
+    /// Default: ignored.
+    fn stop_particle(&mut self, handle: ParticleHandle, immediate: bool) {
+        let _ = (handle, immediate);
+    }
+    /// Whether `id` names an existing object outside the runtime's entities (the redirect
+    /// of `particle-runtime.md` §5.5 step 1). Default: no.
+    fn object_exists(&mut self, id: u64) -> bool {
+        let _ = id;
+        false
+    }
     /// An entity was despawned after all its runs stopped: end the fire-and-forget voices
     /// it owns (`script-runtime.md` §19 OPEN-12 Decision). Default: ignored.
     fn entity_removed(&mut self, entity: EntityId) {
@@ -193,6 +245,10 @@ pub enum SinkEvent {
     EnvironmentIntensity(EnvironmentHandle, f32),
     /// `entity_removed`.
     EntityRemoved(EntityId),
+    /// `start_particle`, with the handle the sink gave.
+    ParticleStarted(ParticleHandle, ParticleStart),
+    /// `stop_particle`, with the immediate-disposal flag.
+    ParticleStopped(ParticleHandle, bool),
 }
 
 /// A sink that accepts everything and records what it was asked, for tests and tools.
@@ -211,6 +267,8 @@ pub struct RecordingSink {
     pub playing: BTreeMap<SoundHandle, SoundStart>,
     /// Environments registered and not unregistered.
     pub environments: BTreeMap<EnvironmentHandle, EnvironmentRequest>,
+    /// Particle effects started and not stopped (finite ones are never stopped).
+    pub particles: BTreeMap<ParticleHandle, ParticleStart>,
     /// Number of sound requests accepted.
     pub sounds_started: u64,
     /// Number of sound requests refused.
@@ -228,6 +286,7 @@ impl Default for RecordingSink {
             refuse_sounds: false,
             playing: BTreeMap::new(),
             environments: BTreeMap::new(),
+            particles: BTreeMap::new(),
             sounds_started: 0,
             sounds_refused: 0,
             sounds_stopped: 0,
@@ -328,5 +387,17 @@ impl EffectSink for RecordingSink {
 
     fn entity_removed(&mut self, entity: EntityId) {
         self.push(SinkEvent::EntityRemoved(entity));
+    }
+
+    fn start_particle(&mut self, request: &ParticleStart) -> Option<ParticleHandle> {
+        let h = ParticleHandle(self.handle());
+        self.particles.insert(h, *request);
+        self.push(SinkEvent::ParticleStarted(h, *request));
+        Some(h)
+    }
+
+    fn stop_particle(&mut self, handle: ParticleHandle, immediate: bool) {
+        self.particles.remove(&handle);
+        self.push(SinkEvent::ParticleStopped(handle, immediate));
     }
 }

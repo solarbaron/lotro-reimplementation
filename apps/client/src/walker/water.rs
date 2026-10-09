@@ -16,6 +16,7 @@ use tessera_render::glam::Vec3;
 use tessera_render::{Pass, TextureId, WaterDraw, WaterParams, WaterQuad};
 use tessera_world::{LANDBLOCK_SIZE, WorldStreamer};
 
+use super::farview::FarHandOff;
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA};
 use super::objects::{ObjectLayer, TexLookup};
 use super::resolver::Resolver;
@@ -120,6 +121,7 @@ impl WaterLayer {
         anchor: &Anchor,
         camera: Vec3,
         extent: f32,
+        far_view: Option<&FarHandOff>,
         resolver: &mut Resolver,
         objects: &mut ObjectLayer,
     ) {
@@ -140,7 +142,12 @@ impl WaterLayer {
                 camera.y.clamp(off.y, off.y + size),
                 camera.z,
             );
-            if (near - camera).length() > extent || !w.height.is_finite() {
+            // Blocks a far-view batch covers get the sector's water instead (`far-view.md`
+            // §8, the far view's hand-off).
+            if (near - camera).length() > extent
+                || !w.height.is_finite()
+                || far_view.is_some_and(|h| h.is_covered(key))
+            {
                 continue;
             }
             self.groups

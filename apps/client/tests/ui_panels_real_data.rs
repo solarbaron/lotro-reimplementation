@@ -41,6 +41,9 @@ w:SetVisible(true)
 Turbine.Shell.WriteLine("window: ready")
 "#;
 
+/// The most frames the UI may take to settle after the position update.
+const SETTLE_FRAMES: usize = 20_000;
+
 #[test]
 fn game_ui_on_the_install() {
     let Some(dir) = game_dir() else { return };
@@ -125,12 +128,21 @@ fn game_ui_on_the_install() {
         ..tessera_ui::game::radar::RadarInput::default()
     };
     rig.host.update_position(input, None);
-    for _ in 0..60 {
+    // The paint step works in time slices, so the number of frames it needs depends on the
+    // machine's load: wait for the UI to settle (at least one frame, so the position is
+    // taken in step 7), bounded by a generous frame count.
+    rig.frame();
+    let mut frames = 1;
+    while !rig.host.settled() && frames < SETTLE_FRAMES {
         rig.frame();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        frames += 1;
     }
+    let settled = rig.host.settled();
     let s = rig.host.last_sample();
     println!(
-        "after 60 frames: {} composition entries, canvases {} KiB, textures {} KiB",
+        "after {frames} frames (settled: {settled}): {} composition entries, canvases {} KiB, \
+         textures {} KiB",
         s.entries,
         s.canvas_bytes >> 10,
         s.texture_bytes >> 10

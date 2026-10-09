@@ -71,10 +71,12 @@ pub const LOD_INDEX_OFFSETS: [u32; SECTOR_LODS] = [0, 6_144, 7_680, 8_064];
 pub const MIN_FAR_VIEW_DISTANCE_SQ: f32 = 62_500.0;
 /// The f32 the client multiplies a normal byte by before subtracting 1.0: 2 / 255 (§4.3).
 pub const NORMAL_BYTE_SCALE: f32 = 2.0 / 255.0;
-/// Side of the square of landblocks one imposter table covers (`misc-records.md` §5.1).
-pub const IMPOSTER_SQUARE: u8 = 27;
-/// DID prefix of imposter tables (`misc-records.md` §5.1).
-pub const IMPOSTER_TABLE_PREFIX: u8 = 0x27;
+/// Side of the square of landblocks one imposter table covers (`misc-records.md` §5.1;
+/// [`crate::imposter::IMPOSTER_TABLE_SQUARE`]).
+pub const IMPOSTER_SQUARE: u8 = crate::imposter::IMPOSTER_TABLE_SQUARE;
+/// DID prefix of imposter tables (`misc-records.md` §5.1;
+/// [`crate::imposter::IMPOSTER_TABLE_PREFIX`]).
+pub const IMPOSTER_TABLE_PREFIX: u8 = crate::imposter::IMPOSTER_TABLE_PREFIX;
 
 const SIDE: usize = SECTOR_SIDE as usize;
 
@@ -107,12 +109,7 @@ pub fn block_sample_offset(i: usize, j: usize) -> Option<usize> {
 /// `region` (`misc-records.md` §5.1; distant-landscape §3.9).
 #[must_use]
 pub fn imposter_table_did(region: u8, x: u8, y: u8) -> Did {
-    let sx = x - x % IMPOSTER_SQUARE;
-    let sy = y - y % IMPOSTER_SQUARE;
-    Did(u32::from(IMPOSTER_TABLE_PREFIX) << 24
-        | u32::from(region) << 16
-        | u32::from(sx) << 8
-        | u32::from(sy))
+    crate::imposter::ImposterSquare::containing(region, x, y).did()
 }
 
 /// One stored sample (§3.3): a height on the landblock height scale and a biased normal.

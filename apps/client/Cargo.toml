@@ -31,6 +31,8 @@ tessera-install.workspace = true
 tessera-material.workspace = true
 tessera-mesh.workspace = true
 tessera-net.workspace = true
+# Particle effects started by script tables (`particle-runtime.md`).
+tessera-particles.workspace = true
 # Walk mode on collision (ROADMAP M4.5, decision 0013): the character controller.
 tessera-physics.workspace = true
 tessera-props.workspace = true

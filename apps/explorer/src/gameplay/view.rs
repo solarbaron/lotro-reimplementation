@@ -26,6 +26,8 @@ pub struct GameplayViewState {
     pub filter: String,
     /// The interactive parts' inputs (day fraction, indoor state, simulated journal).
     pub live: super::live::LiveState,
+    /// The particle preview of a 0x39 or 0x44 record, created when first shown.
+    pub preview: Option<crate::particle_view::ParticlePreview>,
 }
 
 impl std::fmt::Debug for GameplayViewState {
@@ -34,6 +36,7 @@ impl std::fmt::Debug for GameplayViewState {
             .field("requested", &self.handle.as_ref().map(Handle::key))
             .field("filter", &self.filter)
             .field("live", &self.live)
+            .field("preview", &self.preview)
             .finish()
     }
 }
@@ -121,6 +124,20 @@ pub(crate) fn gameplay_view(
                 super::live::live_panel(ui, live, &mut cur.gameplay.live, actions);
             });
         ui.separator();
+    }
+    if matches!(did >> 24, 0x39 | 0x44) {
+        egui::CollapsingHeader::new(RichText::new("Particle preview").strong())
+            .id_salt("gameplay-particle-preview")
+            .default_open(true)
+            .show(ui, |ui| {
+                if cur.gameplay.preview.as_ref().is_none_or(|v| v.did() != did) {
+                    cur.gameplay.preview =
+                        Some(crate::particle_view::ParticlePreview::new(&l.ctx, did));
+                }
+                if let Some(v) = &mut cur.gameplay.preview {
+                    v.ui(ui);
+                }
+            });
     }
     ui.horizontal(|ui| {
         ui.label("Filter");

@@ -47,6 +47,8 @@ pub(crate) struct CNode {
     pub kind: NodeKind,
     pub data: NodeData,
     pub base: BaseBlock,
+    /// The Particle node's stored never-ending byte (`particle-runtime.md` §5.3).
+    pub particle_flag: Option<bool>,
     pub targets: Vec<Target>,
     pub ports: Vec<CPort>,
     /// Indices of the Default ports in the kind's start order: by `u32` payload for
@@ -112,6 +114,7 @@ impl Unit {
             kind: n.kind,
             data: n.data.clone(),
             base: n.base.clone(),
+            particle_flag: n.particle_flag,
             targets: n.targets.clone(),
             ports: Vec::with_capacity(n.ports.len()),
             ordered: Vec::new(),

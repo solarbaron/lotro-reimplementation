@@ -8,6 +8,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use crate::error::Result;
+use crate::far_view::{FarTerrainDraw, SpriteDraw};
 use crate::instanced::InstanceBatch;
 use crate::lighting::{FrameLighting, LightReach};
 use crate::material::{Lighting, MeshDebug, MeshDraw};
@@ -126,6 +127,11 @@ pub struct Pass {
     /// Draws of the render-world pipelines (terrain layers, water, sky, instanced
     /// scenery), turned into hooks by `Renderer::end_frame` (`docs/specs/render.md` §5).
     pub(crate) world: WorldDraws,
+    /// Particle draws ([`Pass::particles`]), lit and unlit world passes.
+    pub(crate) particles: Vec<crate::particles::ParticleDraw>,
+    /// Set by `Pass::premultiplied_alpha`: fixed blend states write alpha by
+    /// `docs/specs/render.md` §6.10 "Fixed blends" (R12).
+    pub(crate) premultiplied: bool,
 }
 
 /// The render-world draws queued on one pass (`docs/specs/render.md` §5).
@@ -135,6 +141,8 @@ pub(crate) struct WorldDraws {
     pub water: Vec<WaterDraw>,
     pub sky: Vec<SkyDraw>,
     pub instanced: Vec<InstanceBatch>,
+    pub far_terrain: Vec<FarTerrainDraw>,
+    pub sprites: Vec<SpriteDraw>,
 }
 
 impl WorldDraws {
@@ -143,6 +151,8 @@ impl WorldDraws {
             && self.water.is_empty()
             && self.sky.is_empty()
             && self.instanced.is_empty()
+            && self.far_terrain.is_empty()
+            && self.sprites.is_empty()
     }
 }
 
@@ -163,6 +173,8 @@ impl Pass {
             light_reach: Vec::new(),
             hooks: Vec::new(),
             world: WorldDraws::default(),
+            particles: Vec::new(),
+            premultiplied: false,
         }
     }
 

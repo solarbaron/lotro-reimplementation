@@ -15,13 +15,17 @@
 //!   it fails whenever other work loads the machine; the summary with the stall count is
 //!   printed either way.
 //!
+//! The two screenshot runs wait for the area to settle as long as loading progresses,
+//! counted in frames, not for a wall-clock time ([`SettleWait::Progress`], `walker.md` §7):
+//! a loaded machine makes the run slower, not different. The flight keeps its own wait.
+//!
 //! Only counts, timings and sizes are printed; images go to a temporary directory. The
 //! three walkers run one at a time (a lock in `run`), so the flight's frame times are not
 //! measured while the other tests stream and render in parallel.
 
 use clap::Parser as _;
 use tessera_client::Args;
-use tessera_client::headless::{self, HeadlessReport};
+use tessera_client::headless::{self, HeadlessReport, SettleWait};
 use tessera_render::RenderError;
 
 /// `TESSERA_PERF=1`: also assert frame-time budgets (needs an otherwise idle machine).
@@ -29,10 +33,29 @@ fn perf() -> bool {
     std::env::var_os("TESSERA_PERF").is_some_and(|v| v == "1")
 }
 
+/// Frames per second of the paced headless loop.
+const FPS: u64 = 60;
+
+/// How the screenshot runs wait for the area: give up after this many frames without any
+/// loading progress, or after this many frames in all. One loading job can take many
+/// seconds on a loaded machine and much longer in an unoptimised build; neither limit is
+/// reached by a run that keeps loading.
+fn settle_wait() -> SettleWait {
+    let (stall_s, max_s) = if cfg!(debug_assertions) {
+        (900, 4 * 3600)
+    } else {
+        (60, 3600)
+    };
+    SettleWait::Progress {
+        stall_frames: stall_s * FPS,
+        max_frames: max_s * FPS,
+    }
+}
+
 /// Serialises the walkers of this binary (the test harness runs tests in parallel).
 static WALKER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn run(extra: &[&str]) -> Option<HeadlessReport> {
+fn run(extra: &[&str], wait: SettleWait) -> Option<HeadlessReport> {
     // A panic in another test poisons the lock; the walker itself is still usable.
     let _one_at_a_time = WALKER
         .lock()
@@ -57,7 +80,7 @@ fn run(extra: &[&str]) -> Option<HeadlessReport> {
     .collect();
     argv.extend(extra.iter().map(|s| (*s).to_owned()));
     let args = Args::try_parse_from(argv).expect("valid args");
-    match headless::run(&args) {
+    match headless::run_with(&args, wait) {
         Ok(r) => Some(r),
         Err(e) => {
             if e.chain().any(|c| {
@@ -78,7 +101,10 @@ fn run(extra: &[&str]) -> Option<HeadlessReport> {
 fn screenshot_at_spawn() {
     let out = tempfile::tempdir().expect("tempdir");
     let png = out.path().join("spawn.png");
-    let Some(report) = run(&["--screenshot", png.to_str().unwrap(), "--fly"]) else {
+    let Some(report) = run(
+        &["--screenshot", png.to_str().unwrap(), "--fly"],
+        settle_wait(),
+    ) else {
         return;
     };
     eprintln!(
@@ -101,14 +127,15 @@ fn screenshot_at_spawn() {
 fn place_by_map_coordinates() {
     let out = tempfile::tempdir().expect("tempdir");
     let png = out.path().join("place.png");
-    let Some(report) = run(&[
-        "--screenshot",
-        png.to_str().unwrap(),
-        "--place",
-        "12.3S, 45.6W",
-        "--settle-timeout",
-        "60",
-    ]) else {
+    let Some(report) = run(
+        &[
+            "--screenshot",
+            png.to_str().unwrap(),
+            "--place",
+            "12.3S, 45.6W",
+        ],
+        settle_wait(),
+    ) else {
         return;
     };
     let d = report.description.expect("placed");
@@ -131,16 +158,20 @@ fn flight_across_a_region() {
     };
     let log_dir = tempfile::tempdir().expect("tempdir");
     let log = log_dir.path().join("frames.csv");
-    let Some(report) = run(&[
-        "--fly-path",
-        path,
-        "--speed",
-        "1000",
-        "--frame-log",
-        log.to_str().unwrap(),
-        "--residency-mib",
-        "512",
-    ]) else {
+    // `--fly-path` runs keep the command line's wait (`SettleWait` covers screenshots).
+    let Some(report) = run(
+        &[
+            "--fly-path",
+            path,
+            "--speed",
+            "1000",
+            "--frame-log",
+            log.to_str().unwrap(),
+            "--residency-mib",
+            "512",
+        ],
+        SettleWait::Timeout,
+    ) else {
         return;
     };
     let s = report.summary.expect("flight summary");

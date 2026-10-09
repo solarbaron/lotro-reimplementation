@@ -5,7 +5,7 @@
 //!
 //! | Step | What the host does | Entry point |
 //! |---|---|---|
-//! | 1 | the mapper resolves raw events and offers them to the UI through this host's [`UiSink`]: chat keys first, then [`Ui::offer`]; plugin input handlers run inside ([`PluginUi::deliver`]); band changes go back as the offer's requests; the pointer lock follows `mouselook` (0015 §2.5) | [`UiHost::handle_raw`], [`UiHost::offer_pending`] |
+//! | 1 | the mapper resolves raw events and offers them to the UI through this host's [`UiSink`]: chat keys first, then [`Ui::offer`]; plugin input handlers run inside ([`PluginUi::deliver`]); band changes go back as the offer's requests; the pointer lock follows `mouselook` (0015 §2.5); the lines submitted in the chat window's entry go to the client's command dispatcher (decision 0020 item 1) | [`UiHost::handle_raw`], [`UiHost::offer_pending`], [`UiHost::dispatch_entry_lines`] |
 //! | 7 | worker arrivals, the UI tick ([`Ui::tick_hover`]), `MouseHover`, the `Update` broadcast, the UI's frame work, chat lines, game-driven changes (position, character), the plugin host's deferred work and collector step, then the band changes to the mapper | [`UiHost::step7`] |
 //! | 8 | layout and paint within the paint slice, the GPU operations of the frame, the composition list | [`UiHost::step8`] |
 //! | 10 | the UI pass after the walker's overlays, then the software cursor | [`UiHost::draw`] |
@@ -32,7 +32,7 @@ pub mod stats;
 pub mod text;
 
 use std::cell::{Ref, RefCell, RefMut};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -48,7 +48,7 @@ use tessera_settings::{CursorMode, UiPrefs};
 use tessera_ui::BandChange;
 use tessera_ui::bridge::{CommandOffer, Phase, UiChange, UiInput};
 use tessera_ui::events::Command;
-use tessera_ui::game::chat::{CommandOutcome, TextInputOutcome};
+use tessera_ui::game::chat::{CommandOutcome, EntryLine, TextInputOutcome};
 use tessera_ui::game::escape::EscapeOutcome;
 use tessera_ui::game::radar::RadarInput;
 use tessera_ui::game::{MapSource, NoShortcuts};
@@ -69,6 +69,9 @@ use stats::{FrameSample, Recorder, ms};
 pub const MAX_DELIVERY_ROUNDS: usize = 8;
 /// UI asset workers (image, skin-file and font-atlas decodes).
 pub const UI_WORKERS: usize = 2;
+/// Most chat-window lines waiting for the command dispatcher (lines beyond it are dropped
+/// with a log line; the dispatcher runs them within the same frame-loop step).
+pub const MAX_ENTRY_LINES: usize = 64;
 /// Longest event window in frames (U4 (e) of decision 0015 §6: a screen-sized window's
 /// first job within 40 frames, plus the trigger frame).
 pub const MAX_EVENT_WINDOW_FRAMES: u32 = 41;
@@ -151,6 +154,9 @@ pub struct UiHost {
     pending_position: Option<(RadarInput, Option<u32>)>,
     pending_notices: Vec<String>,
     pending_session: Vec<crate::net::ChatLine>,
+    /// Lines submitted in the chat window (and run by quickslot aliases) waiting for the
+    /// command dispatcher ([`Self::dispatch_entry_lines`]).
+    entry_lines: VecDeque<EntryLine>,
     /// The scale the native panels take (`[UI] ui_scale_global`, then the scripted run's
     /// scale changes), and the scale each open root was given.
     native_scale: f32,
@@ -258,6 +264,7 @@ impl UiHost {
             pending_position: None,
             pending_notices: Vec::new(),
             pending_session: Vec::new(),
+            entry_lines: VecDeque::new(),
             native_scale: if options.prefs.scale_global.is_finite()
                 && options.prefs.scale_global > 0.0
             {
@@ -410,6 +417,23 @@ impl UiHost {
         self.last
     }
 
+    /// Whether the UI has settled: no position, notice or session line waits for step 7,
+    /// no UI asset job is in flight and the paint scheduler is idle (every surface drawn,
+    /// nothing left to paint or upload). Waiting for this is independent of how many
+    /// frames the paint slices need on a loaded machine.
+    #[must_use]
+    pub fn settled(&self) -> bool {
+        let in_flight = self
+            .env
+            .as_ref()
+            .is_some_and(|h| h.borrow().stats().in_flight > 0);
+        self.pending_position.is_none()
+            && self.pending_notices.is_empty()
+            && self.pending_session.is_empty()
+            && !in_flight
+            && self.ui.borrow().paint_settled()
+    }
+
     /// The recorder, when recording.
     #[must_use]
     pub fn recorder(&self) -> Option<&Recorder> {
@@ -477,14 +501,6 @@ impl UiHost {
             h.borrow_mut()
                 .set_plugins_dir(Some(plugins.manager().plugins_dir().to_path_buf()));
         }
-        if let Some(chat) = self.panels.as_ref().and_then(|p| p.chat.as_ref()) {
-            plugins.set_builtin_commands(
-                chat.builtin_names()
-                    .iter()
-                    .map(|n| n.to_ascii_lowercase())
-                    .collect(),
-            );
-        }
         let src: Arc<dyn tessera_plugins::LocalPlayerSource> = self.player.clone();
         plugins.manager_mut().set_local_player_source(Some(src));
         for name in load {
@@ -534,10 +550,8 @@ impl UiHost {
         plugins: &mut Plugins,
         f: impl FnOnce(&mut NativePanels, &mut Ui, &mut Services<'_>) -> R,
     ) -> Option<R> {
-        let builtins = plugins.builtin_commands();
         let panels = self.panels.as_mut()?;
-        let mut v1 = PluginView::new(plugins.manager(), &builtins, &self.deferred);
-        let mut v2 = PluginView::new(plugins.manager(), &builtins, &self.deferred);
+        let mut view = PluginView::new(plugins.manager(), &self.deferred);
         let mut no_maps = NoMaps;
         let maps: &mut dyn MapSource = match self.maps.as_mut() {
             Some(m) => m,
@@ -545,8 +559,7 @@ impl UiHost {
         };
         let mut sv = Services {
             maps,
-            plugins: &mut v1,
-            shell: &mut v2,
+            plugins: &mut view,
         };
         let r = {
             let mut ui = self.ui.borrow_mut();
@@ -812,11 +825,6 @@ impl UiHost {
         if d.refresh {
             m.request_refresh(true);
         }
-        for line in d.commands {
-            if !m.execute_command(&line) {
-                tracing::debug!(%line, "plugin command not handled");
-            }
-        }
     }
 
     /// Delivers plugin notifications and routes the client events to the panels, until
@@ -1022,6 +1030,10 @@ impl UiHost {
         consumed
     }
 
+    /// Offers a command to the chat window (`chat-window.md` §6.2). Line up and down browse
+    /// the dispatcher's history; a submitted line is queued for
+    /// [`Self::dispatch_entry_lines`], which runs it once the UI is no longer borrowed
+    /// (plugin command handlers may drive the UI).
     fn chat_command(
         &mut self,
         plugins: &mut Plugins,
@@ -1030,15 +1042,60 @@ impl UiHost {
     ) -> Option<CommandOutcome> {
         let shift = mods.contains(InputModifiers::SHIFT);
         let ctrl = mods.contains(InputModifiers::CTRL);
-        let out = self.services_run(plugins, |p, ui, sv| {
-            let chat = p.chat.as_mut()?;
-            let out = chat.command(ui, name, shift, ctrl, sv.shell, sv.plugins);
-            let mut actions = Vec::new();
-            p.run_chat_requests(ui, sv, &mut actions);
-            Some(out)
-        });
-        self.run_deferred(plugins);
-        out.flatten()
+        let chat = self.panels.as_mut()?.chat.as_mut()?;
+        let out = {
+            let mut ui = self.ui.borrow_mut();
+            chat.command(&mut ui, name, shift, ctrl, plugins.history_mut())
+        };
+        if let CommandOutcome::Submitted(line) = &out {
+            self.queue_entry_line(line.clone());
+        }
+        Some(out)
+    }
+
+    fn queue_entry_line(&mut self, line: EntryLine) {
+        if self.entry_lines.len() >= MAX_ENTRY_LINES {
+            tracing::warn!(
+                "chat: {MAX_ENTRY_LINES} lines wait for the command dispatcher; line dropped"
+            );
+            return;
+        }
+        self.entry_lines.push_back(line);
+    }
+
+    /// Whether lines submitted in the chat window wait for [`Self::dispatch_entry_lines`].
+    #[must_use]
+    pub fn has_entry_lines(&self) -> bool {
+        !self.entry_lines.is_empty()
+    }
+
+    /// Runs the lines submitted in the chat window's entry (and the chat commands of
+    /// quickslot aliases) through the client's command dispatcher, in order (decision
+    /// 0020 item 1): built-ins, plugin commands, the channel commands with `session` (the
+    /// test server with `--server`, the sandbox otherwise; `None`: no session), the
+    /// unknown-command line. Call in frame-loop step 1 right after the raw events and
+    /// pending offers, and after step 7 (aliases), with the world session. The replies
+    /// reach the chat window in step 7 ([`Plugins::take_local_chat`]).
+    pub fn dispatch_entry_lines(
+        &mut self,
+        plugins: &mut Plugins,
+        mut session: Option<&mut dyn crate::walker::WalkerSession>,
+        now: Instant,
+    ) {
+        if self.entry_lines.is_empty() {
+            return;
+        }
+        let t = Instant::now();
+        while let Some(line) = self.entry_lines.pop_front() {
+            let outcome =
+                plugins.submit_entry(&line, crate::commands::shorten(session.as_deref_mut()), now);
+            tracing::debug!(?outcome, "chat window line dispatched");
+        }
+        self.frame.content_event = true;
+        // Plugin command handlers may have changed the UI or raised plugin events.
+        self.plugin_ui.flush_layouts();
+        self.deliver(plugins);
+        self.frame.host += t.elapsed();
     }
 
     fn offer_text(&mut self, ch: char, plugins: &mut Plugins) -> bool {
@@ -1136,19 +1193,18 @@ impl UiHost {
         if plugins.take_manager_request() {
             let _ = self.open_panel(plugins, PanelId::PluginManager);
         }
-        for line in self.plugin_ui.take_chat_commands() {
-            let handled = self
-                .services_run(plugins, |p, ui, sv| {
-                    p.chat
-                        .as_mut()
-                        .map(|c| c.run_line(ui, &line, sv.shell, sv.plugins))
-                })
-                .flatten()
-                .is_some();
-            if !handled {
-                plugins.manager_mut().execute_command(&line);
+        // Quickslot aliases run their chat commands like typed lines (`plugin-api-usage.md`
+        // §14.6): through the command dispatcher, in the `Say` mode, with the session the
+        // caller gives to `dispatch_entry_lines` after this step.
+        for text in self.plugin_ui.take_chat_commands() {
+            if !text.is_empty() {
+                self.queue_entry_line(EntryLine {
+                    text,
+                    mode: tessera_ui::game::chat::entry::SAY,
+                    word: String::new(),
+                    target: String::new(),
+                });
             }
-            self.run_deferred(plugins);
         }
         plugins.pump_step7();
         self.deliver(plugins);
@@ -1163,20 +1219,26 @@ impl UiHost {
     /// Chat plumbing of step 7 (`chat-window.md` §10 items 2 and 9). Every line reaches
     /// the plugins' `Received` exactly once:
     ///
-    /// - lines the window made itself since the last frame (echoes, command output) go to
+    /// - lines the window made itself since the last frame (the reply line) go to
     ///   `Received` with the type of their mask;
-    /// - Tessera's notices (type 8) and the session's lines (their own type and sender) are
-    ///   posted to the window and queued for `Received` here, with the sender;
-    /// - lines that came from the plugins are posted only: the plugin host already queued
+    /// - the client's own lines (the command dispatcher's replies, player music; type 1 or
+    ///   8), Tessera's notices (type 8) and the session's lines (their own type and sender)
+    ///   are shown in the window and queued for `Received` here, with the sender;
+    /// - lines that came from the plugins are shown only: the plugin host already queued
     ///   them for `Received`.
     ///
-    /// Without a chat window the notices and session lines still go to `Received` once.
+    /// Without a chat window the client's lines, notices and session lines still go to
+    /// `Received` once.
     fn chat_io(&mut self, plugins: &mut Plugins) {
         let from_plugins = plugins.take_chat();
+        let local = plugins.take_local_chat();
         let notices = std::mem::take(&mut self.pending_notices);
         let session = std::mem::take(&mut self.pending_session);
         let mut received: Vec<(Option<String>, String, u32)> = Vec::new();
-        let had_lines = !notices.is_empty() || !session.is_empty() || !from_plugins.is_empty();
+        let had_lines = !notices.is_empty()
+            || !session.is_empty()
+            || !from_plugins.is_empty()
+            || !local.is_empty();
         match self.panels.as_mut().and_then(|p| p.chat.as_mut()) {
             Some(chat) => {
                 let mut ui = self.ui.borrow_mut();
@@ -1184,13 +1246,17 @@ impl UiHost {
                     let chat_type = (64 - mask.leading_zeros()).max(1);
                     received.push((None, text, chat_type));
                 }
+                for (t, text) in local {
+                    chat.show(&mut ui, t, &text);
+                    received.push((None, text, t));
+                }
                 for n in notices {
-                    chat.post_system(&mut ui, &n);
+                    chat.show(&mut ui, crate::panels::chat::CHAT_LOG, &n);
                     received.push((None, n, crate::panels::chat::CHAT_LOG));
                 }
                 for l in session {
                     let shown = session_text(&l);
-                    chat.post(&mut ui, l.chat_type, &shown);
+                    chat.show(&mut ui, l.chat_type, &shown);
                     received.push((
                         (!l.sender.is_empty()).then_some(l.sender),
                         l.text,
@@ -1198,12 +1264,13 @@ impl UiHost {
                     ));
                 }
                 for (t, text) in &from_plugins {
-                    chat.post(&mut ui, *t, text);
+                    chat.show(&mut ui, *t, text);
                 }
-                // The window's echoes of the lines above: already queued (or from plugins).
-                let _echoes = chat.take_outgoing();
             }
             None => {
+                for (t, text) in local {
+                    received.push((None, text, t));
+                }
                 for n in notices {
                     received.push((None, n, crate::panels::chat::CHAT_LOG));
                 }

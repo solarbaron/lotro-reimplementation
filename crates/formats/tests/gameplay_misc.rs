@@ -11,6 +11,7 @@ use common::B;
 use tessera_formats::gameplay::common::Pid;
 use tessera_formats::gameplay::common::build::{array, did, entry, set, structure};
 use tessera_formats::gameplay::misc::*;
+use tessera_formats::imposter::{ImposterSquare, ImposterTable, imposter_atlas_grid};
 use tessera_formats::{Did, FormatError, PropertyType, PropertyValue, Record, RgbaImage};
 
 // ---------------------------------------------------------------------------------------------

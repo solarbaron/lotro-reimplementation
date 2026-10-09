@@ -565,6 +565,10 @@ fn node_kinds_and_payloads_round_out() {
         d => panic!("{d:?}"),
     }
     assert_eq!(roots[3].particle_flag, Some(true));
+    let p = roots[3].particle().expect("Particle node data");
+    assert_eq!(p.particle_id, Did(0x3900_0001));
+    assert_eq!(p.effect_did(), Some(Did(0x3900_0001)));
+    assert!(!p.drop_effect && !p.should_fade && p.redirect_property == 0);
     match &roots[4].data {
         NodeData::Run(r) => assert_eq!(r.script, 0x1000_0042),
         d => panic!("{d:?}"),

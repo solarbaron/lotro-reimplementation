@@ -122,6 +122,10 @@ pub fn data_text(d: &NodeData, names: &NodeNames<'_>) -> String {
             m.scale,
             (names.key)(m.behavior)
         ),
+        NodeData::Particle(p) => format!(
+            "particle {} fork {} at location {} offset {:?}",
+            p.particle_id, p.fork_particle_id, p.holding_location, p.bone_offset
+        ),
         NodeData::Opaque { len, .. } => format!("({len} bytes of data)"),
         NodeData::Fields(set) => cut(set
             .entries

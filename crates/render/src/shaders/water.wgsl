@@ -24,6 +24,9 @@ struct Water {
     shoreline_color: vec4<f32>,
     // x = 1 / target width, y = 1 / target height, zw = block offset O.
     screen: vec4<f32>,
+    // x = far-draw fade start s, y = inverse range r (0: no fade); far-view.md §7.2 and
+    // the §8 OPEN (Tessera applies the far terrain's fade to the sector water).
+    fade: vec4<f32>,
 };
 
 @group(1) @binding(0) var<uniform> water: Water;
@@ -161,6 +164,8 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     // 3. Refraction of the scene drawn so far, tinted toward the under-water fog colour,
     // blended toward the shoreline tint near the camera.
     let scene = textureSample(t_scene, s_clamp, s + n.xy * water.misc0.z);
+    // What lies behind the water, undistorted, for the far-draw fade (step 8).
+    let behind = textureSample(t_scene, s_clamp, s);
     var f = water.fog_color.rgb;
     if (water.misc2.y > 0.5) {
         f = scene_stored(scene);
@@ -203,5 +208,16 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     color = color * water.water_color.rgb * water.misc1.z
         + spec * fake_specular * water.specular_color.rgb;
     color = frame_apply_fog(color, clamp(in.fog, 0.0, 1.0));
+    // 8. Far-draw fade (Tessera, far-view.md §8 OPEN): a = 1 - sat((d - s) r), blended
+    // toward the undistorted scene copy; without a copy only a hard cut at a = 0.5.
+    let a = 1.0 - clamp((dist - water.fade.x) * water.fade.y, 0.0, 1.0);
+    if (water.misc2.y > 0.5) {
+        if (a < 0.001) {
+            discard;
+        }
+        color = scene_stored(behind) + a * (color - scene_stored(behind));
+    } else if (a < 0.5) {
+        discard;
+    }
     return vec4<f32>(frame_output(color), 1.0);
 }

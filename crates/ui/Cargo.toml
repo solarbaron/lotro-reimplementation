@@ -47,5 +47,11 @@ tessera-dat.workspace = true
 name = "paint_probe"
 harness = false
 
+# Frame-loop step 8 (`Ui::paint`) on a synthetic UI shaped like decision 0015 §6's scripted
+# run (U1, U4 (b)); a plain binary.
+[[bench]]
+name = "paint_frame"
+harness = false
+
 [lints]
 workspace = true

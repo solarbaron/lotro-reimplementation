@@ -27,10 +27,28 @@ use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_client::audio::backend::{BackendChoice, SettingsChoice};
 use tessera_client::audio::location::{LocPos, LocationSet};
 use tessera_client::audio::{AudioConfig, AudioInput, WorldAudio};
+use tessera_client::wait::{LoadWait, ProgressWait, wait_until};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::PropertyValue;
 use tessera_world::{
     BundleOptions, LandblockKey, RingConfig, StreamConfig, WorldContext, WorldPos, WorldStreamer,
+};
+
+/// Settling the streamer waits as long as loading progresses: it gives up after this many
+/// updates (about 1 ms apart, longer on a loaded machine) in a row without any loading
+/// work starting or finishing, or after this many updates in all
+/// ([`tessera_world::WorldStreamer::settle_on_progress`]; `walker.md` §7, implementer note
+/// on progress waits).
+const SETTLE_STALL: u64 = if cfg!(debug_assertions) {
+    900_000
+} else {
+    120_000
+};
+/// See [`SETTLE_STALL`].
+const SETTLE_MAX: u64 = if cfg!(debug_assertions) {
+    14_400_000
+} else {
+    3_600_000
 };
 
 fn install() -> Option<PathBuf> {
@@ -43,17 +61,25 @@ fn install() -> Option<PathBuf> {
     }
 }
 
-/// Runs frames of 1/30 s until `done` holds or `limit` of wall time passed.
+/// How long [`run_until`] waits: as long as the audio side progresses. It gives up after
+/// this many frames (about 5 ms apart) in a row in which nothing it loads or runs changed
+/// (start-up, landblocks scanned, loads, reads, graph node starts, location sources), or
+/// after this many frames in all.
+const AUDIO_WAIT: LoadWait = if cfg!(debug_assertions) {
+    LoadWait::Progress(ProgressWait::new(180_000, 2_880_000))
+} else {
+    LoadWait::Progress(ProgressWait::new(24_000, 720_000))
+};
+
+/// Runs frames of 1/30 s until `done` holds or the wait gives up ([`AUDIO_WAIT`]).
 fn run_until(
     audio: &mut WorldAudio,
     streamer: &WorldStreamer,
     player: (WorldPos, f32),
     cell: Option<(LandblockKey, u16)>,
-    limit: Duration,
     mut done: impl FnMut(&WorldAudio) -> bool,
 ) -> bool {
-    let t0 = Instant::now();
-    loop {
+    wait_until(AUDIO_WAIT, Duration::from_millis(5), || {
         audio.update(AudioInput {
             dt: 1.0 / 30.0,
             streamer,
@@ -62,13 +88,22 @@ fn run_until(
             player_cell: cell,
         });
         if done(audio) {
-            return true;
+            return None;
         }
-        if t0.elapsed() > limit {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        let s = audio.stats();
+        let src = audio.location_sources();
+        Some((
+            (s.ready, s.problem.is_some(), s.blocks, s.emitters),
+            (
+                s.loads,
+                s.sync_info_reads,
+                s.sync_script_reads,
+                s.node_starts,
+            ),
+            (s.outside, s.outside_changes, s.location),
+            (src.cell.len(), src.landblock.len(), src.monitor.len()),
+        ))
+    })
 }
 
 fn tri(v: Option<PropertyValue>) -> Option<u64> {
@@ -106,7 +141,7 @@ fn entering_the_in1_interior() {
         -212.90,
     );
     assert!(
-        streamer.settle(start, Duration::from_secs(120)),
+        streamer.settle_on_progress(start, SETTLE_STALL, SETTLE_MAX),
         "never settled"
     );
     assert!(streamer.bundle(owner).is_some(), "the owner is resident");
@@ -129,14 +164,9 @@ fn entering_the_in1_interior() {
 
     // 1. Outdoors: the avatar starts with Volume_IsOutside = 1.
     let t0 = Instant::now();
-    let ready = run_until(
-        &mut audio,
-        &streamer,
-        outdoors,
-        None,
-        Duration::from_secs(300),
-        |a| a.stats().outside.is_some(),
-    );
+    let ready = run_until(&mut audio, &streamer, outdoors, None, |a| {
+        a.stats().outside.is_some()
+    });
     assert!(
         ready,
         "the avatar never started: {:?}",
@@ -169,19 +199,12 @@ fn entering_the_in1_interior() {
 
     // 2. Inside cell 9 of the owner landblock (waiting for the owner's scan to deliver
     //    the cell's set to the cell source).
-    let entered = run_until(
-        &mut audio,
-        &streamer,
-        outdoors,
-        inside_cell,
-        Duration::from_secs(60),
-        |a| {
-            a.stats().outside == Some(0)
-                && cell_set
-                    .keys()
-                    .all(|k| a.location_sources().cell.contains_key(k))
-        },
-    );
+    let entered = run_until(&mut audio, &streamer, outdoors, inside_cell, |a| {
+        a.stats().outside == Some(0)
+            && cell_set
+                .keys()
+                .all(|k| a.location_sources().cell.contains_key(k))
+    });
     assert!(
         entered,
         "Volume_IsOutside never turned 0 with the cell's set"
@@ -231,14 +254,9 @@ fn entering_the_in1_interior() {
     );
 
     // 3. Outdoors again.
-    let left = run_until(
-        &mut audio,
-        &streamer,
-        outdoors,
-        None,
-        Duration::from_secs(30),
-        |a| a.stats().outside == Some(1),
-    );
+    let left = run_until(&mut audio, &streamer, outdoors, None, |a| {
+        a.stats().outside == Some(1)
+    });
     assert!(left, "Volume_IsOutside never returned to 1");
     let s = audio.stats();
     assert_eq!(s.outside_changes, 2, "one change on leaving");

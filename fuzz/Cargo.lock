@@ -2077,6 +2077,7 @@ dependencies = [
  "tessera-install",
  "tessera-material",
  "tessera-mesh",
+ "tessera-world",
  "tessera-wvm",
  "thiserror",
  "tracing",

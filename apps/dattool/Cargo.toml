@@ -26,6 +26,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tessera-dat.workspace = true
 tessera-formats.workspace = true
+# `logic`: decal parameters and the offline phasing-box rule (`decals.md`, `world-logic.md`).
+tessera-world.workspace = true
 tessera-material.workspace = true
 # `census` decodes the embedded render meshes of 0x01 records and 0x06 meshes to walk
 # their level trees (`collision.md` §3.5, §5.7).

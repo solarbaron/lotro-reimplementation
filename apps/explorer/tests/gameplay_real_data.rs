@@ -174,3 +174,65 @@ fn gameplay_cards() {
         }
     }
 }
+
+/// The landblock card of landblock-info records (`world-logic.md` §13, `decals.md` §9.3,
+/// `instance-scripts.md` §9.6, `npc-drama.md` §11): a sample builds without failure and
+/// shows decals, phasing boxes, instance scripts and dramas somewhere in it.
+#[test]
+fn landblock_logic_cards() {
+    let Some(dir) = game_dir() else { return };
+    let ctx = Arc::new(DataContext::open(&dir, None).expect("open the install read-only"));
+    let decoder = GameplayDecoder::new(Arc::clone(&ctx));
+    let job = JobContext::detached();
+    let infos: Vec<u32> = dids(&ctx, 0x80)
+        .into_iter()
+        .filter(|d| (d >> 20) & 0xF == 2)
+        .collect();
+    let picked = if full() {
+        infos.clone()
+    } else {
+        sample(&infos, 600)
+    };
+    let t = Instant::now();
+    let mut sections: BTreeMap<String, usize> = BTreeMap::new();
+    let mut tally = Tally::default();
+    for &did in &picked {
+        let r = decoder.card(did, &job);
+        if let Ok(p) = &r {
+            assert_eq!(p.family, Family::Logic);
+            for s in &p.sections {
+                let key: String = s
+                    .title
+                    .split(" of ")
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect();
+                *sections.entry(key).or_default() += 1;
+            }
+        }
+        tally.add(r);
+    }
+    eprintln!(
+        "landblock cards: {} of {} in {} ms: built {}, rows {}, failed {:?}",
+        picked.len(),
+        infos.len(),
+        t.elapsed().as_millis(),
+        tally.built,
+        tally.rows,
+        tally.failed
+    );
+    eprintln!("  sections: {sections:?}");
+    assert_eq!(
+        tally.built,
+        picked.len(),
+        "every landblock-info record gets a card"
+    );
+    for want in ["Decals", "Phasing boxes", "Instance scripts", "Dramas"] {
+        assert!(
+            sections.keys().any(|k| k.starts_with(want)),
+            "the sample shows a {want} section"
+        );
+    }
+}

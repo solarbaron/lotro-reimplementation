@@ -4006,6 +4006,7 @@ dependencies = [
  "tessera-install",
  "tessera-material",
  "tessera-mesh",
+ "tessera-world",
  "tessera-wvm",
  "thiserror 2.0.21",
  "tracing",

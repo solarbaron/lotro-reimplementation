@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09: §2.1 census corrected, §4.4 merge order and §4.5 port rule folded in; needs a fresh review of the changed sections. Review of the revision 2026-10-09: **changes requested** (2 blocking items, Review record); stays Revised, not Accepted. |
+| **Status** | Revised (2026-10-09; was Accepted 2026-10-09). Revised the same day to answer the three implementer OPENs of 2026-10-09: §2.1 census corrected, §4.4 merge order and §4.5 port rule folded in; needs a fresh review of the changed sections. Review of the revision 2026-10-09: **changes requested** (2 blocking items, Review record); stays Revised, not Accepted. Revised again 2026-10-09 (spec writer) to fix both blocking items and notes N1, N2: §4.4.1 consequence bullets (the instance case is §4.4 step 2; null includes, recursion bound), §4.5.1 Decision (port type 1 or more kept, the census table is no decoding rule), §9.3 step 3, IS13 restated as a census check, Q8 decision, new Q9; needs a fresh review of these sections. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -86,7 +86,7 @@ referred to by structure, never quoted.
 | I16 | `Light_LODClass` (PID 0x1DC) and `Light_DrivenByDayCycle` (0x707) fill two fields of the client's light object, its level-of-detail class and its day-cycle switch: the light class registers those fields with these PIDs, as it does for the fields of `lighting.md` §8.3 (§6.6, §8.2) | BIN | BIN; their consumers OPEN |
 | I17 | The entity property read chooses its store by the definition's `field_b`: 4, 3 and 8 are three stores of the entity, 6 the run-parameter set, 7 and 9 a service lookup (§6.2, §12) | BIN (the read's dispatch) | BIN |
 | I18 | Per-script property sets are merged **first value wins**: a PID already in the merged set is never replaced. The instance definition's set is merged first, then each included table's set in include order, each table before its own includes (depth-first, stored order); a table's includes are not visited for properties once the merged set holds `Script_CombinationType` = 1 (§4.4) | BIN2 (question 8) | BIN |
-| I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists were not enumerated. Observed (kind, port type) pairs over all tables and scriptlets in §4.5 | BIN (step 3 rule); BIN2 (declaration record form); OBS2 (observed pairs) | BIN; per-kind lists OPEN (§13 Q8) |
+| I19 | When a node is built from a tree, a port is created only if the node's kind declares its port type, and only while the node holds fewer ports of that type than the declared maximum (a declaration may be unlimited); the per-kind declaration lists were not enumerated. Observed (kind, port type) pairs over all tables and scriptlets in §4.5 | BIN (step 3 rule); BIN2 (declaration record form); OBS2 (observed pairs) | BIN; per-kind lists OPEN (§13 Q8), selector field OPEN (§13 Q9) |
 
 ---
 
@@ -440,10 +440,22 @@ Consequences:
   definition's settings win over every table's, and an earlier table in the closure wins over a
   later one. Tessera's choice in the implementer note of 2026-10-09 matches the client.
 - `Script_CombinationType` itself follows the same rule. The check that stops the descent into
-  a table's includes reads the **merged** set, so a value of 1 merged from the instance
-  definition or from an earlier table also keeps later tables from adding their includes' sets.
-  The next included table of the entity's own list is still visited (step 3 goes through the
-  whole list).
+  a table's includes reads the **merged** set, so a value of 1 merged from an earlier table of
+  the walk (or from the table's own per-script set) also keeps every later table from adding
+  its includes' sets. The tables of the entity's own include list are still visited one after
+  the other (step 3 goes through the whole list); only the descent into includes stops.
+- A value of 1 merged from the **instance definition** is not a case of this walk: it stops the
+  lookup at §4.4 step 2, before any included table is visited, so no table's per-script set is
+  merged at all.
+- Includes that are null are skipped (BIN2). No guard against a table that includes itself,
+  directly or through other tables, was seen in the client's property walk (the root walk of
+  `script-table.md` §8.2 skips a direct self-include). **Decision (Tessera):** the property walk
+  visits each table at most once per lookup (a visited set, which also covers a table including
+  itself), so hostile data cannot make it loop and the work is bounded by the number of
+  distinct tables reachable through the includes. On data without cycles this gives the
+  client's result: a second visit of a table would add nothing, because every PID of its own
+  set is already merged, and either its includes were merged on the first visit or the merged
+  set still holds the value 1 that stopped the descent then.
 - The root gathering of step 3 is a separate walk (`script-runtime.md` §12.2); this rule is
   about the per-script properties only.
 
@@ -528,15 +540,19 @@ No other kind holds a port in the binary records. The ports of all ISTs (instanc
 sets, 0x47 descriptors) use six of these pairs: Collection 6 (13 ports), Sequence 6 (14),
 Switch 5 (2) and 6 (2), Random 6 (2), Timer 6 (10).
 
-> **Decision (Tessera; answers the implementer OPEN of 2026-10-09 as far as the data allow):** a
-> tree port is kept when its (kind, port type) pair is in the table above, with no limit on the
-> count; any other port is dropped, its subtree with it, and logged. On every record of this
-> install this keeps every stored port (each is of an observed pair). The implementer's interim
-> choice (keep every port with a type of 1 or more) also keeps every port of this install; the
-> two rules differ only on data outside the observed pairs, where the client's behaviour is
-> unknown. Until the per-kind lists are known (§13 Q8),
-> either rule passes the invariants; the table rule is preferred because it never keeps a port
-> the client might refuse in a pair it does not use.
+The table is a census of this install, not a decoding rule: a data update may add pairs that
+the client's declarations accept, and an implementation must not refuse ports because their
+pair is missing from it.
+
+> **Decision (Tessera; answers the implementer OPEN of 2026-10-09 as far as the data allow;
+> revised 2026-10-09):** while the per-kind declarations are unknown (§13 Q8), a tree port is
+> kept when its port type is 1 or more, whatever the node's kind, with no limit on the count of
+> ports of one type. A port of type 0 (including a port type that is not an enum or property-ID
+> value, taken as 0 by step 3) is dropped with its subtree and logged; no port of this install
+> has type 0. The rule does not depend on the table above. Tools and real-data tests may
+> compare the kept ports with the observed pairs and count or log the ports outside them as
+> census findings (IS13); such a finding never changes what is kept. On every record of this
+> install the rule keeps every stored port.
 
 <a id="s4-6"></a>
 ### 4.6 What runs where
@@ -868,7 +884,8 @@ client uses a light's LOD class (presumably to cull or fade distant lights) was 
    element becomes the driven map (pairs of `Script_DrivenProperty`, `Script_DriverProperty`).
    For SetProperty, the element whose PID equals `SetPropertyScript_PropertyName` is the value
    to set.
-3. Build ports and targets as in §4.5 steps 3–4; for a Link target take `LinkTarget_Name` from
+3. Build ports and targets as in §4.5 steps 3–4, keeping ports by the rule of the §4.5.1
+   Decision (port type 1 or more, any kind, any count); for a Link target take `LinkTarget_Name` from
    the target's `ScriptTable_NodeProperties` and resolve it as §3.5 decides.
 4. Bound the work against hostile input: nesting depth (the install needs 2 levels of nodes;
    a limit of 32 is ample, together with `property-system.md` §5.3's value-depth limit), and
@@ -956,8 +973,13 @@ For a selected SED or instance property set, a per-instance script view shows:
   `Script_MaxNumInstances` = 3 and an included table whose set for the same key holds 10, the
   merged value is 3; with the instance set empty, 10; with two included tables holding 4 and 7
   in include order, 4 (§4.4.1).
-- **IS13 (OBS2):** every port of every node in the decoded 0x07 and 0x0C records and in every
-  IST has a (kind, port type) pair of the §4.5.1 table.
+- **IS13 (OBS2; census check of this install, not an invariant; revised 2026-10-09):** in this
+  install every port of every node in the decoded 0x07 and 0x0C records and in every IST has a
+  (kind, port type) pair of the §4.5.1 table, so a real-data test reports 0 ports outside the
+  table. The test reports the number of such ports (and their pairs) and fails on a non-zero
+  count only when its strict census mode is selected (an opt-in for checking an install against
+  this census); by default it passes and reports them. Decoding does not depend on the table
+  (§4.5.1 Decision).
 
 ---
 
@@ -1076,7 +1098,8 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 | Q5 | What the client does with a light's `LODClass` and `DrivenByDayCycle` fields | §6.6, §8.2 | ignore both (as `lighting.md` does today for σ) |
 | Q6 | The Light node's own run-time rules (`LightScript_FadeTime`, `LightScript_Lifespan`, `LightScript_Offset`, holding location) | §6.3 | add and remove the light at once; offset 0 |
 | Q7 | Meaning of `ScriptSystem_TimeofDay_Activation` (378 SED-IID sets, read by no node) | §8.1 | ignore |
-| Q8 | The client's port declarations per node kind (port types, maximum counts, the selector field), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2): the port step of the tree builder (rule of §4.5.1) and the search for the node classes' declaration methods; the node classes could not be enumerated from the executable in that session | §4.5.1 | keep ports of the observed pairs only |
+| Q8 | The client's port declarations per node kind (port types and maximum counts), from the implementer OPEN of 2026-10-09. Tried 2026-10-09 (BIN2): the port step of the tree builder (rule of §4.5.1) and the search for the node classes' declaration methods; the node classes could not be enumerated from the executable in that session | §4.5.1 | keep every port of type 1 or more, any kind, no count limit; count ports outside the observed pairs as census findings (IS13) |
+| Q9 | The meaning and the non-default values of the further selector field of a port declaration entry (§4.5.1): which values exist and how a non-default value changes the count check of step 3. Split from Q8 on 2026-10-09 (review note N2); not traced in BIN2 | §4.5.1 | ignore the selector (the Q8 decision keeps the port either way) |
 
 ---
 
@@ -1087,3 +1110,4 @@ Entity: a Physics SED whose object's class table is 0x07000689; its instance set
 |---|---|
 | 2026-10-08 | First version (spec writer, dirty room): census over every landblock-info record, 0x47, 0x78 and 0x79 set; schema and node mapping of `Entity_InstanceScriptTable`; BIN of the client's table set, start-up order, IST merge, lookup and node building; member overrides as ordinary properties; day and night lights; instance switches; examples; Q1–Q7. Status Review. |
 | 2026-10-09 | Revision (spec writer, dirty room) answering the three implementer OPENs of 2026-10-09. §2.1: recount with a new probe (OBS2); no SED set is a strict subset, the 955,794 were sets in another stored order plus the 9 later SEDs of shared IIDs; I2 and IS8 corrected. §4.4.1 new: per-script property merge, first value wins, descent stopped by an `Overriding` merged value (BIN2, I18, IS12). §4.5.1 new: port declaration rule (BIN2), observed (kind, port type) census over all tables and scriptlets (OBS2), Decision to keep only observed pairs (I19, IS13); per-kind declarations remain OPEN as Q8. §12 notes for `script-runtime.md` §12.2 and `script-table.md` §4.3. Status Revised. |
+| 2026-10-09 | Revision (spec writer, dirty room) answering the review of the same day (changes requested). Blocking (1): §4.4.1 second consequence bullet restricted to a `Script_CombinationType` value merged from an earlier table or the table's own set; new bullet: an `Overriding` instance definition stops the lookup at §4.4 step 2 and no table's set is merged. Blocking (2): §4.5.1 Decision now keeps every tree port of type 1 or more for any kind with no count limit, independent of the census; the observed-pair table is stated as a census of this install; ports outside it are census findings only; §9.3 step 3 and the Q8 decision follow; IS13 restated as a census check that fails only in a strict census mode. N1: §4.4.1 states that null includes are skipped and adds Tessera's visited-set and depth bound for the property walk. N2: the declaration entry's selector field is its own open question, Q9. No new observations. Status stays Revised. |

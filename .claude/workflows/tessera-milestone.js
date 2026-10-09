@@ -73,7 +73,22 @@ const DIRTY = `You are a SPEC WRITER (dirty room). You MAY read ${REPO}/research
 // exit verifier).
 const CLEAN_READ = `CLEAN-ROOM RULES (non-negotiable, CLAUDE.md): do NOT open ${REPO}/research/, ${CLONES}, ${SCRATCH_DIRTY}${RE_DIR ? ', ' + RE_DIR : ''}, third-party LOTRO/AC/DDO source code or decompiler output, and do not look formats up online. Work only from ${REPO}/docs/ (specs, decisions, roadmap, architecture) and the existing crates/apps/fuzz/tools. Your scratch dir is ${SCRATCH_CLEAN}. If a spec lacks a fact or looks wrong, add a "> **OPEN:**" note to it or report it; never correct a spec's facts yourself.`
 
-const CLEAN = `You are a CLEAN-ROOM IMPLEMENTER. ${CLEAN_READ} A missing fact means: implement conservatively and add a "> **OPEN:**" note to the spec. Requirements: no panics on hostile input, bounded allocation, thiserror errors, rustdoc on public API, synthetic unit tests, real-data tests gated on TESSERA_GAME_DIR (run them when available; --release for heavy ones), SPDX headers, cargo fmt + cargo clippy -p <crate> --all-targets -- -D warnings clean, a fuzz target for every new decoder (run 60 s each with tools/fuzz-smoke.sh -t 60 <target>). Finish with: public API summary, test summary lines, OPEN items.`
+const CLEAN = `You are a CLEAN-ROOM IMPLEMENTER. ${CLEAN_READ} A missing fact means: implement conservatively and add a "> **OPEN:**" note to the spec. Requirements: no panics on hostile input, bounded allocation, thiserror errors, rustdoc on public API, synthetic unit tests, real-data tests gated on TESSERA_GAME_DIR (run them when available; --release for heavy ones), SPDX headers, cargo fmt + cargo clippy -p <crate> --all-targets -- -D warnings clean, a fuzz target for every new decoder (run 60 s each with tools/fuzz-smoke.sh -t 60 <target>). Test only the crates you changed (cargo test -p <crate>, --release for real-data tests); the exit verifier runs the whole workspace once. Read test output through its summary lines (grep "test result"/FAILED), not whole logs.`
+
+// Compact, structured returns keep the reviewers', fixer's and exit verifier's prompts small.
+const IMPL_SCHEMA = { type: 'object', properties: {
+  summary: { type: 'string', description: 'at most 10 lines: public API added or changed, behaviour' },
+  files: { type: 'array', items: { type: 'string' } },
+  diff_lines: { type: 'number', description: 'added + removed lines (git diff --shortstat)' },
+  tests: { type: 'string', description: 'one line per test command: passed/failed counts' },
+  spec_refs: { type: 'array', items: { type: 'string' } },
+  opens: { type: 'array', items: { type: 'string' }, description: 'OPEN notes filed: spec and section, one line each' } },
+  required: ['summary', 'files', 'diff_lines', 'tests', 'spec_refs', 'opens'] }
+const FIX_SCHEMA = { type: 'object', properties: {
+  fixed: { type: 'array', items: { type: 'string' } }, rejected: { type: 'array', items: { type: 'string' } },
+  tests: { type: 'string' } }, required: ['fixed', 'rejected', 'tests'] }
+// Changes up to this size get one reviewer covering all three lenses; larger ones get one per lens.
+const SMALL_DIFF = 800
 
 const PLAN_SCHEMA = {
   type: 'object',
@@ -147,15 +162,21 @@ async function reviewFix(t, impl) {
     ['robustness', `Hostile input and runtime safety: truncation, huge counts, overflow, unbounded allocation, unwrap/expect/indexing on untrusted data, resource leaks, main-thread stalls, races and thread-safety.`],
     ['quality', `API design, idiomatic Rust, docs, test gaps, CLAUDE.md compliance (SPDX headers, tracing, no game data or text in the repo, clean-room provenance), clippy -D warnings, fit for later milestones.`],
   ]
-  const fs = await parallel(lenses.map(([k, p]) => () => agent(`${CTX}\n\n${CLEAN_READ}\n\nYou are a skeptical REVIEWER of ${t.owns} (do not edit those files; put throwaway tests in ${SCRATCH_CLEAN} or remove them afterwards). Check against the specs in docs/specs/ only. Lens: ${p}\nReport only problems you verified, with file:line, a concrete failing scenario and a suggested fix.`,
-    { label: `review:${t.key}:${k}`, phase: 'Review', schema: REVIEW_SCHEMA })))
+  const scope = `Files changed: ${(impl.files || []).join(', ') || t.owns}. Tests the implementer ran: ${impl.tests || 'not reported'}.`
+  const ask = (k, p) => agent(`${CTX}\n\n${CLEAN_READ}\n\nYou are a skeptical REVIEWER of ${t.owns} (do not edit those files; put throwaway tests in ${SCRATCH_CLEAN} or remove them afterwards). Check against the specs in docs/specs/ only (${t.spec || 'roadmap deliverables'}). ${scope} Lens: ${p}\nReport only problems you verified, with file:line, a concrete failing scenario and a suggested fix.`,
+    { label: `review:${t.key}:${k}`, phase: 'Review', schema: REVIEW_SCHEMA })
+  // One combined reviewer for small changes, one per lens for large ones.
+  const fs = (impl.diff_lines || 0) <= SMALL_DIFF
+    ? [await ask('all', lenses.map(([k, p]) => `(${k}) ${p}`).join(' '))]
+    : await parallel(lenses.map(([k, p]) => () => ask(k, p)))
+  const used = fs.length === 1 ? [['all']] : lenses
   const ok = fs.filter(Boolean)
   if (!ok.length) return 'reviewers failed: no lens returned a result'
   const all = ok.flatMap(f => f.findings || [])
-  const missing = lenses.filter((_, i) => !fs[i]).map(([k]) => k)
+  const missing = used.filter((_, i) => !fs[i]).map(([k]) => k)
   if (!all.length) return missing.length ? `no findings (lenses that failed: ${missing.join(', ')})` : 'no findings'
-  return agent(`${CTX}\n\n${CLEAN}\n\nYou own ${t.owns}. Verify each finding below; fix real ones with a regression test; explain rejections. Re-run fmt, clippy -D warnings and tests. Return a finding -> fixed/rejected table and the final test summary.\n\nFINDINGS:\n${JSON.stringify(all, null, 1)}`,
-    { label: `fix:${t.key}`, phase: 'Fix' })
+  return agent(`${CTX}\n\n${CLEAN}\n\nYou own ${t.owns}. Verify each finding below; fix real ones with a regression test; explain rejections. Re-run fmt, clippy -D warnings and the tests of the crates you changed. Return what you fixed and rejected (one line each) and the test summary.\n\nFINDINGS:\n${JSON.stringify(all, null, 1)}`,
+    { label: `fix:${t.key}`, phase: 'Fix', schema: FIX_SCHEMA })
 }
 
 // Promises are created lazily and memoised, so the order of plan.tasks does not matter.
@@ -166,7 +187,7 @@ function start(k) {
   let p
   if (n.kind === 'spec') {
     const s = n.item
-    p = agent(`${CTX}\n\n${DIRTY}\n\nWrite ${s.files}.\n${s.task}\nReturn a short summary and the facts you confirmed vs corrected.`,
+    p = agent(`${CTX}\n\n${DIRTY}\n\nWrite ${s.files}.\n${s.task}\nReturn at most 5 lines: the files written and their status. Do not repeat the facts (no clean session may see them).`,
       { label: `spec:${s.key}`, phase: 'Specs' }).catch(e => ({ error: String(e) }))
   } else {
     const t = n.item
@@ -175,7 +196,7 @@ function start(k) {
         const bad = deps.filter(([, r]) => failed(r)).map(([d]) => d)
         if (bad.length) return { skipped: `dependency failed or was skipped: ${bad.join(', ')}` }
         const impl = await agent(`${CTX}\n\n${CLEAN}\n\nYou own ${t.owns}. Specs: ${t.spec || '(design task, no spec)'}.\n${t.task}`,
-          { label: `build:${t.key}`, phase: 'Build' })
+          { label: `build:${t.key}`, phase: 'Build', schema: IMPL_SCHEMA })
         return { impl, review: await reviewFix(t, impl) }
       })
       .catch(e => ({ error: String(e) }))

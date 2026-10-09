@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision of 2026-10-09: OPEN sweep, review fixes 2026-10-09; re-review 2026-10-09 passed). Previously Accepted (revision of 2026-10-08: OPEN items closed from the client library and BIN; review fixes 2026-10-08) |
+| **Status** | Revised (2026-10-09, P1 revision: the examination-tooltip properties of §5.1 are now specified by [`item-tooltips.md`](item-tooltips.md); `UI_Examination_Tooltip_Compare_Type` removed from the §14 unread-label OPEN; §10 gains a tooltip row and §15 a scenario-feed note; no other fact changed; awaiting review). Previously Accepted (revision of 2026-10-09: OPEN sweep, review fixes 2026-10-09; re-review 2026-10-09 passed) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
@@ -582,9 +582,9 @@ the interoperability label, not confirmed by any observation) or OPEN.
 | `PhysObj` | DID → 0x47 | 151,230 | 10,295 distinct | Ground / held look (`appearance.md` §5) |
 | `ExternalAppearanceID` | DID → 0x20 | 138,462 | 0x20000004 in 138,428, 0x200020F1 in 34 | Not read by the client library (F44); use OPEN (§14) |
 | `Item_WornAppearanceMapList` | array | 42,086 | | Worn look (`appearance.md` §4) |
-| `UI_Examination_Tooltip_0Click_Layout`, `…_1Click_Layout`, `…_Compare_Layout` | DID → 0x22 | 149,695 / 148,979 / 107,479 | 0x22000000 in all but 11, 11 and 20 | Tooltip layout record (`ui-layout.md`) |
+| `UI_Examination_Tooltip_0Click_Layout`, `…_1Click_Layout`, `…_Compare_Layout` | DID → 0x22 | 149,695 / 148,979 / 107,479 | 0x22000000 in all but 11, 11 and 20 | Tooltip layout record (`ui-layout.md`): hover and pinned, one-click, and equipped-side comparison tooltip (`item-tooltips.md` §3) |
 | `UI_Examination_Tooltip_0Click_Element`, `…_1Click_Element`, `…_Compare_Element` | enum (0x230000D1) | 149,695 / 148,979 / 107,479 | 25 / 22 / 10 | Element of that layout used as the tooltip |
-| `UI_Examination_Tooltip_Compare_Type` | enum | 110,672 | 6 | Not read by the client library (F44); use OPEN (§14) |
+| `UI_Examination_Tooltip_Compare_Type` | enum | 110,672 | 6 | Not read by the client library (F44); read by the native tooltip assembler: which comparison the hover tooltip makes (`item-tooltips.md` §8, BIN there) |
 | `Entity_AdditionalScriptTables` | array of `ScriptTable_DBScriptTable` (DID → 0x07) | 149,924 | 1,163 distinct lists | Script tables attached to the item's entity (`script-table.md`) |
 
 <a id="s5-2"></a>
@@ -1610,6 +1610,7 @@ The item card shows one item record. Rows appear only when their sources exist.
 | Set | Set name (via §9.9), tier counts, member count | |
 | Legendary | §5.12 labels present | |
 | Description | `Description` | |
+| Tooltip | The hover tooltip of `item-tooltips.md` (§3–§7), as a preview | Built with the explorer's empty viewer (no level, class or race) |
 | Visuals | worn/held preview (`appearance.md` §8) | |
 | Links | Every outbound DID of §8.1 (clickable) and the inbound references of §8.2 (a reverse index built once per session) | |
 | Raw | Every property, grouped as in §4 (stamps and copies collapsed by default) | |
@@ -1806,8 +1807,8 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 > **OPEN:** Labels the client library never reads (no 32-bit literal equal to their PID in the
 > bytecode), so their use is server behaviour or native code not traced: `Inventory_UseOnAcquire`,
 > `Inventory_QuestItem`, `Quest_IsQuestToken`, `Effect_IsEnchantable`, `ExternalAppearanceID`,
-> `Item_MaterialType`, `UI_Examination_Tooltip_Compare_Type`, the three `Combat_*Stance`
-> labels (F44). Labels it reads without the effect being traced here:
+> `Item_MaterialType`, the three `Combat_*Stance` labels (F44). (`UI_Examination_Tooltip_Compare_Type`
+> was in this list; the native tooltip assembler reads it, `item-tooltips.md` §8, 2026-10-09.) Labels it reads without the effect being traced here:
 > `Inventory_CanBeContained` (container functions of classes 368/2804, 1534, 1541),
 > `Item_MithrilCost` (a getter of class 3649), `SpellcraftCalculator` (classes 3177, 1494). A
 > further reading of those bodies (method M1) settles the second group. **Tried (2026-10-09,
@@ -1836,6 +1837,11 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 - `mesh.md` §8.5 OPEN (dictionary defaults of absent properties) is the question settled in
   §14 (F43): the client library supplies a default per read site; the native lookup does not
   substitute the dictionary default.
+- `scenario-feed.md` (decision 0024 P1): the feed's item steps name records of this spec through
+  the `item` selector family (its §8.3: `kind`, `slot`, `fits`, `equippable`, `category`,
+  `quality`, `level`, `min-level`, `class`, `stackable`, `has-icon`, `listed-by`); the client
+  half shows them with `item-tooltips.md` and `character-panels.md`. Values the feed scripts
+  (quantity, condition) replace the record's for display only.
 - `interaction.md` §4.3 (compiled effect list of hotspot templates) describes the same class-701
   structure that items carry (§3.2); items use multimap keys 16 and 32.
 - `combat-data.md` §10.2 states the value and DPS table lookups; §9.2 and §9.5 here add the
@@ -1855,3 +1861,4 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §5.10 (`Usage_Operator` type: `interaction.md` §3.7.1), §6.3 (repair-cost and wear-state keys and factors: Roles paragraphs) and §6.4 (cooldown entry labels: `economy.md` §11.5.3), each answered in part; IT13 note kept next to the IT1–IT19 sentence. No fact changed; status unchanged. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set of the install walked at every depth; dictionary types) and rows F45–F53. Implementer OPENs answered: §2.4 tie rule and kind order (Decision F51), §2.1 signatures of classes 1722, 2097, 3924 (F45), §3.3 and IT12 weapons carry the worn mirror (F46; the earlier sentence was wrong), §5.7 requirement types (F47), §6.3 wear-control entry labels and §6.4 decay entry labels (F48), §7.2/§7.3 labels and types of classes 2134, 2139, 2338, 4015, 3138, `Runic_Tier`, `ItemAdvancement_Mod_Weight` (F49), IT13 counts 0x70 records (F50). §6.4 examination list: compiled form and its reader found (F53). §14 unread-label callout: the getters and callers were located (F52), effect still OPEN. Still OPEN: F21 spellcraft, server set activation, legendary rules, the unread labels, the separate merge list (the examination list is settled, F53; all others server behaviour or native code). |
 | 2026-10-09 | Review fixes (spec writer, dirty room; status stays Revised, waiting for re-review). §6.4 and F53: the examination builder is class 412 function 1, which class 269 inherits (the earlier text named class 269 function 1, a different body); §6.4 now gives the builder's steps, including the struct type of the examination data and the skipped walk when the object's property copy is empty. §2.1: the signature column defines all, exclusive and nested; row 803 marks `Key_CanBePlacedOnKeyRing` exclusive but in 9 of 40 keys only; row 3663 marks `Effect_Crafting_RecipeList` nested (inside the usage effect list's data list); row 795 says which of its labels are exclusive. §2.4 rule 4 step 1 names the labels per kind, searches for the recipe-list label at every depth, and states that the key test is partial and redundant with step 3 and that a top-level-only test gives 151,153. New row F54 (OBS3, every record); F52 and F53 rows put in order; change-log rows put in date order. |
+| 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → Revised, awaiting review). §5.1: the three tooltip layout properties named by purpose and `UI_Examination_Tooltip_Compare_Type` given its reader (native tooltip assembler), both pointing to the new `item-tooltips.md`; §14: `UI_Examination_Tooltip_Compare_Type` taken out of the unread-label OPEN; §10: tooltip row; §15: scenario-feed note. No count or rule changed. |

@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec-writer agent), none of them an author session: first and second review (2026-10-07), review of the 2026-10-08 revision |
-| **Review record** | Second review 2026-10-07: **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08, **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.2, §13 (introduction), §13.1, §13.5, §13.7 changed (row U2 and new rows X1–X4); status Revised until a separate session reviews it. |
+| **Review record** | Second review 2026-10-07: **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08, **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.2, §12.2, §13 (introduction), §13.1, §13.5, §13.7 changed (row U2 and new rows X1–X5); status Revised until a separate session reviews it. |
 | **Implements into** | `crates/formats` (decoders for prefixes 0x33, 0x21, 0x27, 0x2D, 0x43, 0x0E200000, 0x0EBADA55, and the stored envelope of 0x0E010000–0x0E010002; one fuzz target each), `crates/material` (the compositor image composition of §3.6), `crates/props` (typed views of §12 and §13), `apps/explorer` (compositor and imposter previews, typed metadata views, the PID → metadata index of §13.1), `apps/dattool` (`info` and `validate` for these prefixes) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize and bucket order, strings), §1.6 (prologues), §2.1 (DID → DB type table, whose BIN rows this spec closes); [`property-system.md`](property-system.md) §4 (value encodings), §5 (property sets), §8 (DID maps), §9 (DB-object-type codes); [`entity-descriptor.md`](entity-descriptor.md) §3 (the static entity descriptor reused by UI scenes); [`wstate.md`](wstate.md) §2, §3 (object records and the WEENIECONTENT map); [`script-table.md`](script-table.md) (script nodes 27 GameCallback, 33 ModifyCompositorColor, 44 ModifyCompositorLayer, 53 TextureCompositor); [`appearance.md`](appearance.md) §3.3–§3.4 (face compositing OPEN, character-creation controls); [`ui-layout.md`](ui-layout.md) §9.6.2 (the 2D compositor's per-pixel arithmetic, reused here); [`texture-list.md`](texture-list.md) §2.2; [`string-table.md`](string-table.md) §10.3 (prefix 0x58). |
 
@@ -118,6 +118,7 @@ How sources are marked:
 | X1 | Property-response members: 419 objects in six root classes found by the label rule of §13.5 (237 effect lists, 120 world-event lists, 32 callback-only, 21 map-property, 9 calculate-property arrays) | OBS3 (every 0x79 set); implementation census 2026-10-07 | Confirmed 2026-10-09 |
 | X2 | Version family: 123 members in 31 root classes plus the `VersionSystem` control (class 1623 here), whose number list names all 123 members (and 35 other singletons) | OBS3 | Confirmed 2026-10-09 |
 | X4 | Percentage display of modifier values: the modifier-description code asks the metadata control for `PropertyMetaData_DisplayAsPercentage`; with the flag, a float value is shown × 100, and for `Multiply` as \|v − 1\| × 100 with an increase or decrease text by v ≥ 1 (§13.1) | BC (class 1341 functions 9, 12 and 48; class 1392 function 95; class 1391 function 89 here) | Confirmed (bytecode) 2026-10-09 |
+| X5 | Of the 4,112 raw four-byte matches of 0x78 DIDs in 795 object records, none is a decoded value of the record (§12.2) | OBS3 (all 383,332 0x70 records raw-scanned; the 795 with matches decoded with `tessera-wstate` and every decoded value compared, 2026-10-09) | Confirmed 2026-10-09 |
 | X3 | Value types of the `UI_Map_GameMap` fields and of the `AppearanceUI_*` control fields (§12.2, §3.7) | OBS3 (dictionary) | Confirmed 2026-10-09 |
 
 ---
@@ -1056,10 +1057,17 @@ volume families is named by at least one `Monitor_VolumePropertiesToApply`. A ra
 scan of every record of the general, gamelogic, English, cell and map archives finds the
 same 0x47 counts exactly.
 
-> **OPEN:** the raw scan also finds 4-byte values equal to these sets' DIDs inside object
-> records (0x70), script tables (0x07), cells (0x01) and landblock records (0x80). Those
-> records were not decoded for this question, so whether the matches are references or
-> chance byte patterns is not known. A viewer lists only the typed referrers.
+**Raw matches in object records (Confirmed, X5).** The raw scan finds 4,112 four-byte values
+equal to the DID of one of the 1,618 0x78 sets inside 795 object records (0x70). Every one of
+these records was decoded with `wstate.md`, and none of the 4,112 is a decoded integer, DID,
+key or reference of the record: they are byte patterns that span field boundaries or lie inside
+other values (most at unaligned offsets, some at a regular stride inside large native maps). So
+no object record refers to a 0x78 set.
+
+> **OPEN:** the raw scan also finds such values inside script tables (0x07), cells (0x01) and
+> landblock records (0x80); those records were not decoded for this question, so whether
+> those matches are references or chance byte patterns is not known. A viewer lists only the
+> typed referrers.
 
 ---
 
@@ -1455,8 +1463,8 @@ These are proposals for the owners of those specs; this session edits only this 
 
 > **OPEN (gated, M8):** compression-dictionary body and field meanings (§11).
 
-> **OPEN:** whether the raw 0x78 DID matches in 0x70, 0x07, 0x01 and 0x80 records are
-> references (§12.2).
+> **OPEN:** whether the raw 0x78 DID matches in 0x07, 0x01 and 0x80 records are
+> references (§12.2; the 0x70 matches are not, X5).
 
 > **OPEN:** operator semantics of property metadata (the percentage scale is settled, §13.1, X4); needs the
 > data-driven code or one owner observation (§13.1).
@@ -1520,4 +1528,4 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-07 | Second revision after the first review (status stays Review). Every count disputed by the review re-measured from scratch over all records in a separate session: 3,737 first DIDs, 121 of them 0 (all colour entries with `mask_did` 0, colour key 0x10000007 under layer key 0x10000003), 3,616 non-zero (2,977 distinct), none among the 3,838,957 directory entries of the 30 client archives; off-canvas options: 8, all in 0x33000017 layer 0x10000012, last row 310 (option 5: `y` 219, height 92) of the 256-row canvas, none past column 511, none negative or starting outside; 5,954 distinct non-zero compositor DIDs (2,977 with headers, 2,977 absent, no overlap). The other counts of §1–§3 (layer histogram, 166 layers, 1,811 options, colour counts 307/1,082/422, `x` 0–476, `y` 0–701, the `index` exception, base and overlay formats, 1,805 A8 masks of matching size, flag values, 199 node-44 and 218 node-33 instances with the stated values, 218 `AppearanceUI_CompositorFile` references) re-confirmed; no further correction needed. The BIN facts of C9 (opacity and colour conversions, the opacity skip, the placement rule, the stored-form colour scale) re-read and confirmed (BIN row, third use). Review issues 1–5 stay resolved as in the previous row. |
 | 2026-10-08 | Revision answering the OPEN callouts (status Accepted → Revised). Fourth BIN use (decision 0011) and new OBS measurements. (1) §3.7, C10: the `AC_Color_*` → colour-key pairing is referenced from `appearance.md` §3.5 (OPEN closed). (2) §4.1, U3: the UI-scene trailer is a fog override of the 3D view; fields renamed `fog_colour`, `fog_override`, `fog_start`, `fog_end` (formerly `colour`, `flag`, `value_a`, `value_b`; the last two are f32, formerly listed as u32 bit patterns). (3) §4.2, U4: camera chosen by UISceneEntity key equal to the viewport's camera value; element types created; `CameraFOV` range. (4) §5.2, I5: `value_a`/`value_b` are the sprite quad's size and lower-edge height (× sprite scale), with the corner table. (5) §5.3, I6: atlas roles (parameters 3000 and 3011) and the normal channel mapping. (6) §5.4, I7, MR13: margin at the right and bottom (BIN + OBS over 12,406 cells); mirrored sprites; I3's OPEN mark removed. (7) New §7.4 (SC3, SC4): channel arbitration, queueing, transition precedence, stop handling; narrowed OPEN. (8) §9 (NF2, NF3, MR14): every rule-set field named and explained (former names in brackets), new §9.1 character check, §9.2 name check with the vowel set, §9.3 narrowed OPEN; correction: class 16 has no range (12 of 13 classes have one). (9) §10 (TB2–TB4, MR15): header fields renamed `category`/`contexts` (formerly `a`/`b`) and explained, the list-table string hash, new §10.1 matching (PCRE2, caseless, unanchored); narrowed OPEN. (10) §12.2, §15, PS2: referrers found inside `Entity_Monitors` structs (`Monitor_VolumePropertiesToApply`) for all local-sky, ambient-music and volume sets; correction: the 19 `Physics_SurfacePropertiesToApply` references are in 0x78 sets, not 0x79, and 52 more are in 0x47; narrowed OPEN on raw matches. (11) §13.1: OPEN made precise (where the rule is not, what would settle it). (12) §16 MR13–MR15, §18 four new proposal rows, §19 rewritten. |
 | 2026-10-08 | Review of the 2026-10-08 revision (separate review session): passed; status Revised → Accepted. No content change. Record in the review log. |
-| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows X1–X3; row U2 corrected. Accepted the implementation's census corrections: §4.2 bit 0x010 is in 3,026 descriptors; §13.5 states the member rule and the 32 callback-only objects (X1); §13.7 and the §13 introduction: the Version family has the `VersionSystem` control, 123 members plus the control (X2). §19 implementer notes (1)–(9) confirmed, with the value types of (5) (X3). Still OPEN: script-channel queue modes, name-entry context and order, taboo walking and tokenizer, compression dictionaries (gated), raw 0x78 DID matches in other records, operator semantics of property metadata. §13.1 percentage display read from the class library (new key BC, row X4); the operator part of that callout stays open. |
+| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows X1–X3; row U2 corrected. Accepted the implementation's census corrections: §4.2 bit 0x010 is in 3,026 descriptors; §13.5 states the member rule and the 32 callback-only objects (X1); §13.7 and the §13 introduction: the Version family has the `VersionSystem` control, 123 members plus the control (X2). §19 implementer notes (1)–(9) confirmed, with the value types of (5) (X3). Still OPEN: script-channel queue modes, name-entry context and order, taboo walking and tokenizer, compression dictionaries (gated), raw 0x78 DID matches in other records, operator semantics of property metadata. §13.1 percentage display read from the class library (new key BC, row X4); the operator part of that callout stays open. §12.2: the raw 0x78 matches in object records are not references (X5); those in 0x07, 0x01 and 0x80 records stay open. |

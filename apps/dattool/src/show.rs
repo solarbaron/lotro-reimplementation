@@ -1903,7 +1903,7 @@ impl View<'_> {
 fn sector_mesh_json(m: &SectorMesh) -> Value {
     json!({
         "samples": m.samples.len(),
-        "indices": m.indices.len(),
+        "stored_index_count": m.stored_index_count,
         "bounds_min": m.bounds_min,
         "bounds_max": m.bounds_max,
         "chunks": m.chunks.iter().map(|c| json!({
@@ -1936,8 +1936,9 @@ fn sector_json(g: &SectorRecord) -> Value {
             "height": p.height,
             "north": p.north,
             "scale": p.scale,
-            "distance": p.distance,
-            "byte": p.byte,
+            "fade_distance": p.distance,
+            "heading_byte": p.byte,
+            "heading_degrees": p.heading_degrees(),
         })).collect::<Vec<_>>(),
         "entities": g.entities.iter().map(|e| json!({
             "type": e.entity_type,
@@ -1979,18 +1980,18 @@ impl View<'_> {
         )?;
         writeln!(
             s,
-            "terrain: {} samples, {} stored indices, bounds {} – {}",
+            "terrain: {} samples, {} stored indices (skipped), bounds {} – {}",
             g.terrain.samples.len(),
-            g.terrain.indices.len(),
+            g.terrain.stored_index_count,
             v3(g.terrain.bounds_min),
             v3(g.terrain.bounds_max)
         )?;
         if let Some(c) = &g.ceiling {
             writeln!(
                 s,
-                "ceiling: {} samples, {} stored indices, bounds {} – {}",
+                "ceiling: {} samples, {} stored indices (skipped), bounds {} – {}",
                 c.samples.len(),
-                c.indices.len(),
+                c.stored_index_count,
                 v3(c.bounds_min),
                 v3(c.bounds_max)
             )?;
@@ -2045,8 +2046,8 @@ impl View<'_> {
                 ("NORTH", Align::Right),
                 ("HEIGHT", Align::Right),
                 ("SCALE", Align::Right),
-                ("DISTANCE", Align::Right),
-                ("BYTE", Align::Right),
+                ("FADE", Align::Right),
+                ("HEADING", Align::Right),
             ]);
             let mut shown = 0;
             for p in g.sprites.iter().take(self.max) {
@@ -2058,7 +2059,7 @@ impl View<'_> {
                     p.height.to_string(),
                     p.scale.to_string(),
                     p.distance.to_string(),
-                    p.byte.to_string(),
+                    format!("{}°", p.heading_degrees()),
                 ]);
             }
             writeln!(s, "sprites:")?;

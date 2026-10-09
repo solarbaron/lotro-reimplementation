@@ -19,7 +19,15 @@
 //! 3. [`ClipResolver::resolve`] builds the property state from the entity's values and the
 //!    [`MotionInputs`] of a [`MotionState`] (§8.4, §11.3 step 2), runs the `Startup` script
 //!    (the `Startup` definitions of every closure table), then the start-up scripts the
-//!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s.
+//!    lookup finds (§11.3 step 3), and returns the [`ClipCandidate`]s, with the bind-space
+//!    deformers and the MeshFX nodes the same runs start ([`MeshFxCandidate`], §5.2; the
+//!    mount mesh of `mounts.md` §4.4).
+//! 4. [`ClipResolver::resolve_script`] runs one script key instead (for example the
+//!    avatar's `Loc_Jumping`, `collision.md` §11.10); every resolution also lists the
+//!    PhysicsImpulse nodes that would start ([`ImpulseCandidate`]).
+//!
+//! [`EntityScripts::running`] marks scripts as running before `Startup` (a mounted rider's
+//! channelling script, read by WhenRunning nodes, §8.4 step 2).
 //!
 //! Every script run (`Startup`, a start-up name, a Run node) runs **all** the definitions
 //! the lookup gathers (§8.2 steps 2–3, T25, T41) in the client's start order: the
@@ -29,6 +37,12 @@
 //! ordinal (§7.5, T42); Sequence and Timer ports start by step and by time (§7.6). The
 //! candidate and deformer lists are in this order, so "the most recently started" node of
 //! `appearance.md` §6.4 (A33) is the last one of its kind.
+//!
+//! The resolution also lists every Appearance node (kind 58) that would run
+//! ([`ClipResolution::appearances`], `appearance.md` §7.4), in the same order. Its Random
+//! nodes and node probabilities can additionally **pick** with a seeded generator
+//! ([`ClipResolver::with_random_seed`], §7.4 rules): the picked candidates are the
+//! figure's random-appearance outfit. The picks do not change the clip candidates.
 //!
 //! Everything is bounded ([`ResolveLimits`]): table count, include depth, scriptlet and run
 //! nesting, evaluation depth, visited nodes, the work done inside the visits (ports, case
@@ -48,8 +62,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::node::{
-    AnimationNode, Node, NodeData, NodeKind, PortPayload, PortType, SWITCH_ALL_BITS_SET,
-    SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
+    AnimationNode, MeshFxNode, Node, NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType,
+    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
 use super::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
@@ -112,6 +126,55 @@ pub struct MeshDeformerFieldPids {
     pub use_bone_weights: Option<u32>,
 }
 
+/// PIDs of the PhysicsImpulse (kind 9) fields that driven properties and scriptlet
+/// parameters can set (§5.3 names with the `PhysicsImpulseScript_` prefix). Each is `None`
+/// when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImpulseFieldPids {
+    /// `PhysicsImpulseScript_IsJump`.
+    pub is_jump: Option<u32>,
+    /// `PhysicsImpulseScript_ImpulseType`.
+    pub impulse_type: Option<u32>,
+    /// `PhysicsImpulseScript_IsGlobalSpaceImpulse`.
+    pub global_space: Option<u32>,
+    /// `PhysicsImpulseScript_Impulse`.
+    pub impulse: Option<u32>,
+    /// `PhysicsImpulseScript_AirTime`.
+    pub air_time: Option<u32>,
+    /// `PhysicsImpulseScript_ExpectedGravity`.
+    pub expected_gravity: Option<u32>,
+}
+
+impl ImpulseFieldPids {
+    /// Looks the §5.3 field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            is_jump: p("PhysicsImpulseScript_IsJump"),
+            impulse_type: p("PhysicsImpulseScript_ImpulseType"),
+            global_space: p("PhysicsImpulseScript_IsGlobalSpaceImpulse"),
+            impulse: p("PhysicsImpulseScript_Impulse"),
+            air_time: p("PhysicsImpulseScript_AirTime"),
+            expected_gravity: p("PhysicsImpulseScript_ExpectedGravity"),
+        }
+    }
+
+    /// The PIDs that are defined.
+    fn all(&self) -> impl Iterator<Item = u32> {
+        [
+            self.is_jump,
+            self.impulse_type,
+            self.global_space,
+            self.impulse,
+            self.air_time,
+            self.expected_gravity,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 impl MeshDeformerFieldPids {
     /// Looks the §6.9 field names up; missing names stay `None`.
     #[must_use]
@@ -121,6 +184,92 @@ impl MeshDeformerFieldPids {
             time: names.pid_of("MeshDeformerScriptNode_AnimationTime"),
             use_bone_weights: names.pid_of("MeshDeformerScriptNode_UseBoneWeights"),
         }
+    }
+}
+
+/// Field PIDs of the Appearance node (kind 58, §5.1): `AppearanceScript_Appearance`,
+/// `AppearanceScript_Key`, `AppearanceScript_Modifier`, for driven values (`appearance.md`
+/// §7.4: a few nodes take their record, key or modifier from driven properties).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AppearanceFieldPids {
+    /// `AppearanceScript_Appearance`.
+    pub appearance: Option<u32>,
+    /// `AppearanceScript_Key`.
+    pub key: Option<u32>,
+    /// `AppearanceScript_Modifier`.
+    pub modifier: Option<u32>,
+}
+
+impl AppearanceFieldPids {
+    /// Looks the names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        Self {
+            appearance: names.pid_of("AppearanceScript_Appearance"),
+            key: names.pid_of("AppearanceScript_Key"),
+            modifier: names.pid_of("AppearanceScript_Modifier"),
+        }
+    }
+}
+
+/// PIDs of the MeshFX (kind 41) fields that driven properties and scriptlet parameters can
+/// set (§5.2; the field labels are `MeshFXScript_*`, `mounts.md` §4.2). Each is `None`
+/// when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MeshFxFieldPids {
+    /// `MeshFXScript_Entity`.
+    pub entity: Option<u32>,
+    /// `MeshFXScript_HoldingLocation`.
+    pub holding_location: Option<u32>,
+    /// `MeshFXScript_BoneOffset`.
+    pub bone_offset: Option<u32>,
+    /// `MeshFXScript_Scale`.
+    pub scale: Option<u32>,
+    /// `MeshFXScript_Behavior`.
+    pub behavior: Option<u32>,
+    /// `MeshFXScript_OffsetRotationYaw`.
+    pub yaw: Option<u32>,
+    /// `MeshFXScript_OffsetRotationPitch`.
+    pub pitch: Option<u32>,
+    /// `MeshFXScript_OffsetRotationRoll`.
+    pub roll: Option<u32>,
+    /// `MeshFXScript_FadeInTime`.
+    pub fade_in_time: Option<u32>,
+}
+
+impl MeshFxFieldPids {
+    /// Looks the field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            entity: p("MeshFXScript_Entity"),
+            holding_location: p("MeshFXScript_HoldingLocation"),
+            bone_offset: p("MeshFXScript_BoneOffset"),
+            scale: p("MeshFXScript_Scale"),
+            behavior: p("MeshFXScript_Behavior"),
+            yaw: p("MeshFXScript_OffsetRotationYaw"),
+            pitch: p("MeshFXScript_OffsetRotationPitch"),
+            roll: p("MeshFXScript_OffsetRotationRoll"),
+            fade_in_time: p("MeshFXScript_FadeInTime"),
+        }
+    }
+
+    /// The PIDs that are defined.
+    fn all(&self) -> impl Iterator<Item = u32> {
+        [
+            self.entity,
+            self.holding_location,
+            self.bone_offset,
+            self.scale,
+            self.behavior,
+            self.yaw,
+            self.pitch,
+            self.roll,
+            self.fade_in_time,
+        ]
+        .into_iter()
+        .flatten()
     }
 }
 
@@ -174,6 +323,10 @@ pub struct ScriptVocabulary {
     pub slider_definitions: Option<u32>,
     /// MeshDeformer field PIDs (§6.9).
     pub mesh_deformer: MeshDeformerFieldPids,
+    /// Appearance-node field PIDs (§5.1 kind 58; `appearance.md` §7.4).
+    pub appearance: AppearanceFieldPids,
+    /// MeshFX field PIDs (§5.2).
+    pub mesh_fx: MeshFxFieldPids,
     /// `Script_CombinationType` (enum 0x2300016D): the per-script property (§2.4) that marks
     /// a definition as overriding (§8.2 step 2). `None` when the dictionary lacks it: then
     /// every definition is additive.
@@ -181,6 +334,14 @@ pub struct ScriptVocabulary {
     /// Key of `Overriding` in the `Script_CombinationType` enum; `None` reads as
     /// [`COMBINATION_OVERRIDING`], the value §8.2 step 1 states.
     pub combination_overriding: Option<u32>,
+    /// The `Loc_Jumping` script key (label of the `ScriptTable_ScriptID` enum): the
+    /// avatar's jump script (`collision.md` §11.10). `None` when the enum lacks it.
+    pub jump_script: Option<u32>,
+    /// `Entity_FinalElement`: the property the jump script switches on (`collision.md`
+    /// §11.10).
+    pub final_element: Option<u32>,
+    /// PhysicsImpulse field PIDs.
+    pub impulse: ImpulseFieldPids,
 }
 
 /// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
@@ -241,6 +402,7 @@ impl ScriptVocabulary {
         let element_no_surface = entity_element.and_then(|p| label(p, "Earth_NoSurface").ok());
         let combination_type = opt("Script_CombinationType");
         let combination_overriding = combination_type.and_then(|p| label(p, "Overriding").ok());
+        let jump_script = label(script_id, "Loc_Jumping").ok();
         Ok(Self {
             class_script_table: need("Entity_ClassScriptTable")?,
             additional_script_tables: opt("Entity_AdditionalScriptTables"),
@@ -265,8 +427,13 @@ impl ScriptVocabulary {
             slider_values: opt("BoneSlider_ValueArray_String"),
             slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
             mesh_deformer: MeshDeformerFieldPids::from_names(dict),
+            appearance: AppearanceFieldPids::from_names(dict),
+            mesh_fx: MeshFxFieldPids::from_names(dict),
             combination_type,
             combination_overriding,
+            jump_script,
+            final_element: opt("Entity_FinalElement"),
+            impulse: ImpulseFieldPids::from_names(dict),
         })
     }
 }
@@ -370,6 +537,11 @@ pub struct EntityScripts {
     pub startup_scripts: Vec<u32>,
     /// Scalar property values of all sets; later sets override earlier ones.
     pub properties: PropertyState,
+    /// Script keys that count as running before the evaluation starts (a state the caller
+    /// sets, such as a mounted rider's channelling script, `script-table.md` §8.4 step 2):
+    /// WhenRunning nodes see them running. They are not started by being listed here; list
+    /// a key in `startup_scripts` too to start it.
+    pub running: Vec<u32>,
 }
 
 impl EntityScripts {
@@ -914,6 +1086,70 @@ pub enum DeformerCandidate {
     },
 }
 
+/// An Appearance node (kind 58, §5.1) that a resolution reached (`appearance.md` §7.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppearanceCandidate {
+    /// `AppearanceScript_Appearance` after driven values: a 0x20 record.
+    pub appearance: Did,
+    /// `AppearanceScript_Key` after driven values: an appearance key.
+    pub key: u32,
+    /// `AppearanceScript_Modifier` after driven values.
+    pub modifier: f32,
+    /// `AppearanceScript_Persistent`.
+    pub persistent: bool,
+    /// Whether the seeded picks of [`ClipResolver::with_random_seed`] reach the node: every
+    /// Random node above it picked the port leading to it and every probability draw above
+    /// it succeeded. The figure's look is the picked candidates, in order.
+    pub picked: bool,
+    /// Product of Random shares and node probabilities above it (1 when certain).
+    pub chance: f32,
+    /// The table whose script started the chain.
+    pub table: Did,
+    /// The scriptlet holding the node, or the null DID for a table node.
+    pub scriptlet: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+}
+
+/// The generator of the seeded picks: SplitMix64 (a public-domain 64-bit generator). Any
+/// uniform generator gives the client's distribution (§7.4); this one is small and fully
+/// determined by its seed.
+#[derive(Debug, Clone)]
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A uniform integer in 0 … `n` − 1 (`n` > 0), by rejection so that every value is
+    /// equally likely.
+    fn below(&mut self, n: u64) -> u64 {
+        let zone = u64::MAX - (u64::MAX % n);
+        loop {
+            let v = self.next_u64();
+            if v < zone {
+                return v % n;
+            }
+        }
+    }
+
+    /// A uniform number in [0, 1).
+    fn unit(&mut self) -> f32 {
+        #[allow(clippy::cast_precision_loss)]
+        let v = (self.next_u64() >> 40) as f32;
+        v / 16_777_216.0
+    }
+}
+
 /// One clip an entity would start, with the fields that control playback (§6.1) after
 /// scriptlet parameters and driven properties were applied.
 #[derive(Debug, Clone, PartialEq)]
@@ -1027,6 +1263,65 @@ impl ClipCandidate {
     }
 }
 
+/// A PhysicsImpulse node (kind 9) that would start, with its fields after scriptlet
+/// parameters and driven properties (the same rules as an animation's, §7.8, §8.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImpulseCandidate {
+    /// The node's fields.
+    pub node: PhysicsImpulseNode,
+    /// Product of Random shares and node probabilities above it (1 when certain; §7.4).
+    pub chance: f32,
+    /// Product of the blend weights above it.
+    pub blend_weight: f32,
+    /// The table whose script started it.
+    pub table: Did,
+    /// The scriptlet it lies in (0 for a table's own node).
+    pub scriptlet: Did,
+    /// `ScriptNode_ID` of the node.
+    pub node_id: u32,
+}
+
+/// A MeshFX node (kind 41) that would start: an entity spawned and attached to this one
+/// (§5.2; `mounts.md` §4.4), with scriptlet parameters and driven properties applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshFxCandidate {
+    /// The node's fields after the substitution.
+    pub node: MeshFxNode,
+    /// Which fields took a value from a driven property (or a scriptlet parameter); the
+    /// others keep the node's stored value (`mounts.md` §4.4: a node that does not drive
+    /// `Scale` uses its stored scale).
+    pub driven: MeshFxDriven,
+    /// The table whose script started the chain.
+    pub table: Did,
+    /// The scriptlet holding the node, or the null DID for a table node.
+    pub scriptlet: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+    /// The script keys run on the way to this node, outermost first (as
+    /// [`ClipCandidate::scripts`]).
+    pub scripts: Vec<u32>,
+}
+
+/// The fields of a [`MeshFxCandidate`] that took a run-time value.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MeshFxDriven {
+    /// `Entity`.
+    pub entity: bool,
+    /// `HoldingLocation`.
+    pub holding_location: bool,
+    /// `BoneOffset`.
+    pub bone_offset: bool,
+    /// `Scale`.
+    pub scale: bool,
+    /// `Behavior`.
+    pub behavior: bool,
+    /// One of the three rotation offsets.
+    pub rotation: bool,
+    /// `FadeInTime`.
+    pub fade_in_time: bool,
+}
+
 /// The result of [`ClipResolver::resolve`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClipResolution {
@@ -1035,9 +1330,18 @@ pub struct ClipResolution {
     /// Every animation that would start, in the client's start order (§8.2 step 3, §7.5,
     /// §7.6; T41, T42).
     pub candidates: Vec<ClipCandidate>,
+    /// Every PhysicsImpulse node that would start, in the same order (`collision.md`
+    /// §11.10).
+    pub impulses: Vec<ImpulseCandidate>,
     /// Every bind-space deformer registered (§6.9), in the same start order: the last
     /// slider deformer is the most recently started one (`appearance.md` §6.4, A33).
     pub deformers: Vec<DeformerCandidate>,
+    /// Every Appearance node (kind 58) that would run, in the same start order
+    /// (`appearance.md` §7.4: the elements a figure's start-up scripts append to its
+    /// appearance after its lists; a later one wins equal-priority ties).
+    pub appearances: Vec<AppearanceCandidate>,
+    /// Every MeshFX node that would start (§5.2), in the same start order.
+    pub mesh_fx: Vec<MeshFxCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
     /// Nodes visited.
@@ -1117,6 +1421,12 @@ pub struct ClipResolver<'s, S: ?Sized, F, B, E> {
     defaults: Option<Box<dyn Fn(u32) -> Option<PropertyValue> + Send + Sync + 's>>,
     /// Whether an unset scalar property without a default reads as 0.
     unset_as_zero: bool,
+    /// Kinds whose Default-port children start as if the node were a container
+    /// ([`ClipResolver::with_pass_through`]).
+    pass_through: Vec<NodeKind>,
+    /// Seed of the Random-node picks of [`AppearanceCandidate::picked`] (see
+    /// [`ClipResolver::with_random_seed`]).
+    random_seed: Option<u64>,
     _marker: PhantomData<fn() -> (B, E)>,
 }
 
@@ -1148,8 +1458,24 @@ where
             failures: HashMap::new(),
             defaults: None,
             unset_as_zero: false,
+            pass_through: Vec::new(),
+            random_seed: None,
             _marker: PhantomData,
         }
+    }
+
+    /// Makes Random nodes (§7.4) and node probabilities pick, for the
+    /// [`AppearanceCandidate::picked`] flag, with a generator seeded by `seed` and restarted
+    /// for every resolution (so one seed always gives the same picks). Clip candidates are
+    /// unaffected: they still list every Random port with its share. Without a seed nothing
+    /// below a Random node or a node with a probability below 1 counts as picked.
+    ///
+    /// Tessera seeds a placed figure's picks from its instance ID so that the figure keeps
+    /// its look (`appearance.md` §7.4 Decision; the client draws from one global generator).
+    #[must_use]
+    pub fn with_random_seed(mut self, seed: Option<u64>) -> Self {
+        self.random_seed = seed;
+        self
     }
 
     /// Sets where the values of properties that the state does not set come from: normally
@@ -1188,6 +1514,17 @@ where
     #[must_use]
     pub fn unset_reads_as_zero(mut self, zero: bool) -> Self {
         self.unset_as_zero = zero;
+        self
+    }
+
+    /// Nodes of the kinds in `kinds` that have no evaluation rule here (for example While,
+    /// whose run-time behaviour `script-runtime.md` §18 leaves unimplemented) start the
+    /// children of their Default ports in stored order, instead of nothing. For scans whose
+    /// outcome a spec states for the path as a whole (the jump script of `collision.md`
+    /// §11.10); off (empty) by default. Kinds with a rule here are not affected.
+    #[must_use]
+    pub fn with_pass_through(mut self, kinds: &[NodeKind]) -> Self {
+        self.pass_through = kinds.to_vec();
         self
     }
 
@@ -1407,11 +1744,39 @@ where
         self.evaluate(entity, state, true)
     }
 
+    /// One run of script `key` on `entity` with property state `state`, instead of the
+    /// start-up scripts: every definition the lookup gathers through the closure, in the
+    /// client's start order (§8.2), evaluated as [`ClipResolver::resolve_with_state`] does.
+    /// Nothing else runs first, so a WhenRunning node sees only the scripts this run starts.
+    /// A key no table defines gives an empty result.
+    ///
+    /// # Errors
+    ///
+    /// Only [`ResolveError::Fetch`].
+    pub fn resolve_script(
+        &mut self,
+        entity: &EntityScripts,
+        key: u32,
+        state: PropertyState,
+    ) -> Result<ClipResolution, ResolveError<E>> {
+        self.evaluate_entry(entity, state, false, Entry::Script(key))
+    }
+
     fn evaluate(
         &mut self,
         entity: &EntityScripts,
         state: PropertyState,
         all_branches: bool,
+    ) -> Result<ClipResolution, ResolveError<E>> {
+        self.evaluate_entry(entity, state, all_branches, Entry::Startup)
+    }
+
+    fn evaluate_entry(
+        &mut self,
+        entity: &EntityScripts,
+        state: PropertyState,
+        all_branches: bool,
+        entry: Entry,
     ) -> Result<ClipResolution, ResolveError<E>> {
         let entity_tables = entity.tables();
         let closure = self.closure(&entity_tables)?;
@@ -1438,6 +1803,7 @@ where
         }
         let defined: HashSet<u32> = index.keys().map(|&(k, _)| k).collect();
         let startup = self.vocab.startup_key;
+        let rng = self.random_seed.map(SplitMix64::new);
         let mut ev = Eval {
             r: self,
             state,
@@ -1448,7 +1814,10 @@ where
             defined,
             gathered: HashMap::new(),
             out: Vec::new(),
+            impulses: Vec::new(),
             deformers: Vec::new(),
+            appearances: Vec::new(),
+            rng,
             issues: Vec::new(),
             reported: HashSet::new(),
             visits: 0,
@@ -1457,20 +1826,40 @@ where
             depth: 0,
             calls: Vec::new(),
             runs: Vec::new(),
-            running: HashSet::new(),
+            running: entity.running.iter().copied().collect(),
             table: Did(0),
             all_branches,
+            mesh_fx: Vec::new(),
         };
+        if let Entry::Script(key) = entry {
+            let defs = ev.gather(key);
+            if !defs.is_empty() {
+                ev.running.insert(key);
+                ev.calls.push(Call::Script(key));
+                let res = ev.start(key, &defs, Ctx::ONE);
+                ev.calls.pop();
+                res?;
+            }
+        }
         // The `Startup` script: one run of every definition the lookup gathers, so the
         // `Startup` of every closure table (§8.2 start-up), in the client's start order
         // (§8.2 step 3, T41).
-        let defs = ev.gather(startup);
+        let defs = if entry == Entry::Startup {
+            ev.gather(startup)
+        } else {
+            Arc::from(Vec::new())
+        };
         if !defs.is_empty() {
             ev.running.insert(startup);
             ev.start(startup, &defs, Ctx::ONE)?;
         }
         // Then the start-up scripts named by the table structs (§8.1, §11.3 step 3).
-        for &key in &entity.startup_scripts {
+        let startup_scripts: &[u32] = if entry == Entry::Startup {
+            &entity.startup_scripts
+        } else {
+            &[]
+        };
+        for &key in startup_scripts {
             if ev.stopped {
                 break;
             }
@@ -1493,7 +1882,10 @@ where
         }
         let Eval {
             out,
+            impulses,
             deformers,
+            appearances,
+            mesh_fx,
             issues,
             visits,
             ..
@@ -1501,11 +1893,23 @@ where
         Ok(ClipResolution {
             closure,
             candidates: out,
+            impulses,
             deformers,
+            appearances,
+            mesh_fx,
             issues,
             nodes_visited: visits,
         })
     }
+}
+
+/// What an evaluation runs first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    /// `Startup` and the start-up scripts (§11.3).
+    Startup,
+    /// One script key ([`ClipResolver::resolve_script`]).
+    Script(u32),
 }
 
 /// Weights carried down the evaluation.
@@ -1513,12 +1917,16 @@ where
 struct Ctx {
     weight: f32,
     chance: f32,
+    /// Whether this branch is the one the seeded picks take (see
+    /// [`AppearanceCandidate::picked`]).
+    picked: bool,
 }
 
 impl Ctx {
     const ONE: Self = Self {
         weight: 1.0,
         chance: 1.0,
+        picked: true,
     };
 }
 
@@ -1641,7 +2049,11 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// Gathered definitions per key, in start order (§8.2 step 4: cached per key).
     gathered: HashMap<u32, Arc<[Definition]>>,
     out: Vec<ClipCandidate>,
+    impulses: Vec<ImpulseCandidate>,
     deformers: Vec<DeformerCandidate>,
+    appearances: Vec<AppearanceCandidate>,
+    /// The generator of the seeded picks ([`ClipResolver::with_random_seed`]).
+    rng: Option<SplitMix64>,
     issues: Vec<ResolveIssue>,
     /// Issues already in `issues`.
     reported: HashSet<IssueKey>,
@@ -1658,6 +2070,7 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     table: Did,
     /// Run every branch of Switch, When, ScalarBlend and WhenRunning nodes.
     all_branches: bool,
+    mesh_fx: Vec<MeshFxCandidate>,
 }
 
 impl<S, F, B, E> Eval<'_, '_, S, F, B, E>
@@ -1874,8 +2287,16 @@ where
         if p.is_nan() || p <= 0.0 {
             return Ok(());
         }
+        // A probability below 1 is a draw (§11.3 step 3); only a picked branch draws.
+        let picked = ctx.picked
+            && (p >= 1.0
+                || match self.rng.as_mut() {
+                    Some(rng) => rng.unit() < p,
+                    None => false,
+                });
         let ctx = Ctx {
             chance: ctx.chance * p.min(1.0),
+            picked,
             ..ctx
         };
         self.depth += 1;
@@ -1916,6 +2337,10 @@ where
                 self.set_property(n, *property, value.as_deref());
                 Ok(())
             }
+            NodeData::MeshFx(m) => {
+                self.mesh_fx(n, m, scope);
+                Ok(())
+            }
             NodeData::MeshDeformer {
                 clip,
                 time,
@@ -1931,11 +2356,28 @@ where
                 self.slider_deformer(n, values, *definitions);
                 Ok(())
             }
+            NodeData::PhysicsImpulse(p) => {
+                self.impulse(n, p, scope, ctx);
+                Ok(())
+            }
+            NodeData::Appearance {
+                appearance,
+                key,
+                modifier,
+                persistent,
+            } => {
+                self.appearance(n, (*appearance, *key, *modifier, *persistent), scope, ctx);
+                Ok(())
+            }
             // Containers whose children all start: Collection (by ascending ordinal, §7.5),
             // Sequence and Timer (by step and by time, §7.6), Label (stored order).
             NodeData::None if n.kind == NodeKind::COLLECTION => self.collection(n, scope, ctx),
             NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
             NodeData::Label { .. } => self.children(n, None, scope, ctx),
+            // Kinds the caller asked to pass through (`with_pass_through`).
+            _ if self.r.pass_through.contains(&n.kind) => {
+                self.children(n, Some(PortType::DEFAULT), scope, ctx)
+            }
             // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
@@ -2151,10 +2593,37 @@ where
             })
             .collect();
         let total: f64 = ports.iter().map(|(w, _)| f64::from(*w)).sum();
-        for (w, children) in ports {
+        // The seeded pick (§7.4 rules 1–3; ports walked in stored order, which keeps the
+        // distribution): only a picked branch draws. No-repeat memory only matters when a
+        // node runs again, which one resolution never does.
+        let pick = if !ctx.picked {
+            None
+        } else if ports.len() == 1 {
+            Some(0)
+        } else {
+            match self.rng.as_mut() {
+                Some(rng) => {
+                    let t: u64 = ports.iter().map(|(w, _)| u64::from(*w)).sum();
+                    (t > 0).then(|| {
+                        let k = rng.below(t);
+                        let mut sum = 0u64;
+                        ports
+                            .iter()
+                            .position(|(w, _)| {
+                                sum += u64::from(*w);
+                                sum > k
+                            })
+                            .unwrap_or(0)
+                    })
+                }
+                None => None,
+            }
+        };
+        for (i, (w, children)) in ports.into_iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
             let ctx = Ctx {
                 chance: ctx.chance * (f64::from(w) / total) as f32,
+                picked: pick == Some(i),
                 ..ctx
             };
             self.nodes(children, scope, ctx)?;
@@ -2387,6 +2856,61 @@ where
         }
     }
 
+    /// Registers a MeshFX node (§5.2) with scriptlet parameters, then driven properties,
+    /// applied to its fields (as for animation nodes: the innermost parameter, then the
+    /// run-time value, which wins).
+    fn mesh_fx(&mut self, n: &Node, m: &MeshFxNode, scope: &Scope<'_>) {
+        if self.mesh_fx.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        let pids = self.r.vocab.mesh_fx;
+        let cost = n
+            .base
+            .driven
+            .len()
+            .saturating_add(self.calls.len())
+            .saturating_add(m.appearances.len());
+        if !self.charge(cost) {
+            return;
+        }
+        let mut c = MeshFxCandidate {
+            node: m.clone(),
+            driven: MeshFxDriven::default(),
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
+            scripts: self
+                .calls
+                .iter()
+                .filter_map(|c| match c {
+                    Call::Script(k) => Some(*k),
+                    Call::Scriptlet(_) => None,
+                })
+                .collect(),
+        };
+        for pid in pids.all() {
+            let mut s = Some(scope);
+            while let Some(sc) = s {
+                let entries = sc.params.map_or(0, |p| p.entries.len());
+                if !self.charge(entries.saturating_add(1)) {
+                    return;
+                }
+                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                    apply_mesh_fx_field(&mut c, &pids, pid, v);
+                    break;
+                }
+                s = sc.parent;
+            }
+        }
+        for &(field, source) in &n.base.driven {
+            if let Some(v) = self.state.get(source) {
+                apply_mesh_fx_field(&mut c, &pids, field, v);
+            }
+        }
+        self.mesh_fx.push(c);
+    }
+
     /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
     fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did) {
         if self.deformers.len() >= self.r.limits.max_candidates {
@@ -2432,6 +2956,104 @@ where
             values,
             values_source,
             table: self.table,
+        });
+    }
+
+    /// A PhysicsImpulse node (`collision.md` §11.10): its fields after scriptlet parameters
+    /// (the closest invocation wins) and driven values (they win over parameters), as for an
+    /// animation.
+    fn impulse(&mut self, n: &Node, p: &PhysicsImpulseNode, scope: &Scope<'_>, ctx: Ctx) {
+        if self.impulses.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            self.stopped = true;
+            return;
+        }
+        let pids = self.r.vocab.impulse;
+        if !self.charge(n.base.driven.len()) {
+            return;
+        }
+        let mut node = *p;
+        let mut params: Vec<(u32, &PropertyValue)> = Vec::new();
+        for pid in pids.all() {
+            let mut s = Some(scope);
+            while let Some(sc) = s {
+                let entries = sc.params.map_or(0, |p| p.entries.len());
+                if !self.charge(entries.saturating_add(1)) {
+                    return;
+                }
+                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                    params.push((pid, v));
+                    break;
+                }
+                s = sc.parent;
+            }
+        }
+        for (pid, v) in params {
+            apply_impulse_field(&mut node, &pids, pid, v);
+        }
+        for &(field, source) in &n.base.driven {
+            if let Some(v) = self.state.get(source) {
+                apply_impulse_field(&mut node, &pids, field, v);
+            }
+        }
+        self.impulses.push(ImpulseCandidate {
+            node,
+            chance: ctx.chance,
+            blend_weight: ctx.weight,
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
+        });
+    }
+
+    /// Registers an Appearance node (kind 58) with its driven record, key and modifier
+    /// (`appearance.md` §7.4; driven values win, as for animation fields). The modifier is
+    /// the stored one (the node's intensity factor is 1 in the whole install, §7.4).
+    fn appearance(
+        &mut self,
+        n: &Node,
+        (appearance, key, modifier, persistent): (Did, u32, f32, bool),
+        scope: &Scope<'_>,
+        ctx: Ctx,
+    ) {
+        if self.appearances.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        if !self.charge(n.base.driven.len().saturating_add(1)) {
+            return;
+        }
+        let pids = self.r.vocab.appearance;
+        let (mut appearance, mut key, mut modifier) = (appearance, key, modifier);
+        for &(field, source) in &n.base.driven {
+            let Some(v) = self.state.get(source) else {
+                continue;
+            };
+            if Some(field) == pids.appearance {
+                if let Some(d) = v.as_did() {
+                    appearance = d;
+                }
+            } else if Some(field) == pids.key {
+                if let Some(k) = v.as_bits().and_then(|b| u32::try_from(b).ok()) {
+                    key = k;
+                }
+            } else if Some(field) == pids.modifier {
+                #[allow(clippy::cast_possible_truncation)]
+                if let Some(m) = v.as_f64() {
+                    modifier = m as f32;
+                }
+            }
+        }
+        self.appearances.push(AppearanceCandidate {
+            appearance,
+            key,
+            modifier,
+            persistent,
+            picked: ctx.picked,
+            chance: ctx.chance,
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
         });
     }
 
@@ -2559,6 +3181,36 @@ impl AnimationFieldPids {
 }
 
 /// Sets the candidate field bound to `pid` from `v`, when the types fit.
+/// Applies a scriptlet parameter or driven value `v` of field `pid` to an impulse node.
+fn apply_impulse_field(
+    c: &mut PhysicsImpulseNode,
+    pids: &ImpulseFieldPids,
+    pid: u32,
+    v: &PropertyValue,
+) {
+    let is = |f: Option<u32>| f == Some(pid);
+    #[allow(clippy::cast_possible_truncation)]
+    let float = || v.as_f64().map(|x| x as f32);
+    let flag = || v.as_f64().map(|x| x != 0.0);
+    if is(pids.is_jump) {
+        c.is_jump = flag().unwrap_or(c.is_jump);
+    } else if is(pids.impulse_type) {
+        if let Some(x) = v.as_bits().and_then(|b| u32::try_from(b).ok()) {
+            c.impulse_type = x;
+        }
+    } else if is(pids.global_space) {
+        c.global_space = flag().unwrap_or(c.global_space);
+    } else if is(pids.impulse) {
+        if let PropertyValue::Vector3(d) = v {
+            c.impulse = *d;
+        }
+    } else if is(pids.air_time) {
+        c.air_time = float().unwrap_or(c.air_time);
+    } else if is(pids.expected_gravity) {
+        c.expected_gravity = float().unwrap_or(c.expected_gravity);
+    }
+}
+
 fn apply_field(c: &mut ClipCandidate, pids: &AnimationFieldPids, pid: u32, v: &PropertyValue) {
     let is = |f: Option<u32>| f == Some(pid);
     #[allow(clippy::cast_possible_truncation)]
@@ -2604,6 +3256,67 @@ fn apply_field(c: &mut ClipCandidate, pids: &AnimationFieldPids, pid: u32, v: &P
         }
     } else if is(pids.synchronize_timing) {
         c.synchronize_timing = flag().unwrap_or(c.synchronize_timing);
+    }
+}
+
+/// Sets the MeshFX field `field` of `c` from `v` when the value has the field's form;
+/// otherwise the field keeps its value.
+fn apply_mesh_fx_field(
+    c: &mut MeshFxCandidate,
+    pids: &MeshFxFieldPids,
+    field: u32,
+    v: &PropertyValue,
+) {
+    let is = |p: Option<u32>| p == Some(field);
+    let code = || v.as_bits().and_then(|b| u32::try_from(b).ok());
+    #[allow(clippy::cast_possible_truncation)]
+    let float = || v.as_f64().map(|f| f as f32).filter(|f| f.is_finite());
+    let node = &mut c.node;
+    if is(pids.entity) {
+        if let Some(d) = v.as_did() {
+            node.entity = d;
+            c.driven.entity = true;
+        }
+    } else if is(pids.holding_location) {
+        if let Some(k) = code() {
+            node.holding_location = k;
+            c.driven.holding_location = true;
+        }
+    } else if is(pids.bone_offset) {
+        if let PropertyValue::Vector3(o) = v {
+            node.bone_offset = *o;
+            c.driven.bone_offset = true;
+        }
+    } else if is(pids.scale) {
+        let scale = match v {
+            PropertyValue::Vector3(s) => Some(*s),
+            _ => float().map(|f| [f; 3]),
+        };
+        if let Some(s) = scale {
+            node.scale = s;
+            c.driven.scale = true;
+        }
+    } else if is(pids.behavior) {
+        if let Some(k) = code() {
+            node.behavior = k;
+            c.driven.behavior = true;
+        }
+    } else if is(pids.yaw) || is(pids.pitch) || is(pids.roll) {
+        if let Some(f) = float() {
+            if is(pids.yaw) {
+                node.offset_rotation_yaw = f;
+            } else if is(pids.pitch) {
+                node.offset_rotation_pitch = f;
+            } else {
+                node.offset_rotation_roll = f;
+            }
+            c.driven.rotation = true;
+        }
+    } else if is(pids.fade_in_time)
+        && let Some(f) = float()
+    {
+        node.fade_in_time = f;
+        c.driven.fade_in_time = true;
     }
 }
 

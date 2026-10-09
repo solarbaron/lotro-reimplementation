@@ -46,8 +46,8 @@ pub const FLOAT_AFTER: f64 = 3.0;
 pub const START_LIFT: f64 = 0.01;
 /// A `follow` walk counts as blocked at a step where forward is held, at least
 /// [`BLOCK_GRACE`] after the inputs began and more than [`BLOCK_END_RANGE`] from its end
-/// point, and the horizontal speed is below this fraction of the layer's forward speed
-/// (Tessera reading of §2.2 "never blocked").
+/// point, and the horizontal speed is below this fraction of the speed its input asks for
+/// ([`WalkRow::forward_speed`]; Tessera reading of §2.2 "never blocked").
 pub const BLOCKED_SPEED_FRACTION: f32 = 0.5;
 /// See [`BLOCKED_SPEED_FRACTION`], s.
 pub const BLOCK_GRACE: f64 = 0.5;
@@ -337,7 +337,10 @@ pub struct WalkRow {
     /// the feet (the steepest terrain there, [`steepest_terrain_normal_z`]), when resident;
     /// for the slope allowance of [`terrain_allowance`].
     pub terrain_normal_z: Option<f32>,
-    /// Forward speed of the layer in force (m/s).
+    /// The speed the step's input asks for (m/s): the length of its target velocity
+    /// (`collision.md` §11.6 item 1, [`super::StepRecord::target_speed`]; in walk mode half
+    /// the Walking layer's forward speed, §11.8), or the layer's forward speed when the input
+    /// asks for none.
     pub forward_speed: f32,
     /// The step.
     pub record: StepRecord,
@@ -451,9 +454,14 @@ pub fn run_walk<W: WalkWorld>(
                 jump: c.jump,
             }
         };
-        let forward_speed = walker.controller().params().forward_speed;
+        let layer_speed = walker.controller().params().forward_speed;
         let Some(record) = walker.step(&input, walking, world).cloned() else {
             continue;
+        };
+        let forward_speed = if record.target_speed > 0.0 {
+            record.target_speed
+        } else {
+            layer_speed
         };
         let feet = record.feet();
         rows.push(WalkRow {
@@ -1048,7 +1056,7 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey, radius: f32)
 }
 
 /// Where the feet first came to rest after moving (horizontal speed below a tenth of the
-/// layer's forward speed while forward is held), for the report.
+/// speed the input asks for while forward is held), for the report.
 fn first_stop(rows: &[&WalkRow]) -> Option<[f64; 3]> {
     let mut moving = false;
     for r in rows {

@@ -8,8 +8,13 @@
 //! - [`Node`]: the frame shared by all 66 node kinds (§4). Every kind is walked to its last
 //!   byte; the kinds clip selection needs (animation, switch, when, scalar blend, random,
 //!   scriptlet, scriptlet parameter, run, set property, …) and the kinds the sound runtime
-//!   needs (sound (48) as [`SoundNode`], sound environment (62); `sound.md` §9) are decoded
-//!   into typed [`NodeData`] variants, every other kind is kept as [`NodeData::Opaque`].
+//!   needs (sound (48) as [`SoundNode`], sound environment (62); `sound.md` §9), the light
+//!   (13, [`LightNode`], §5.3), the MeshFX node (41, [`MeshFxNode`], §5.2) and the physics
+//!   impulse (9, [`PhysicsImpulseNode`]; `collision.md` §11.10) are decoded into typed
+//!   [`NodeData`] variants, every other kind is kept as [`NodeData::Opaque`].
+//! - [`instance`]: the per-instance script table `Entity_InstanceScriptTable` (a script table
+//!   written as a property tree), an entity's table set with its instance definitions and
+//!   the lookup of a key through it (`instance-scripts.md`).
 //! - [`resolve`]: a bounded, cycle-safe evaluator that finds the clips an entity plays in a
 //!   given motion state (idle, walk, run, …), following §8 and §11.3.
 //!
@@ -25,17 +30,20 @@
 //!
 //! Spec: `docs/specs/script-table.md`.
 
+pub mod instance;
 mod node;
 mod record;
 pub mod resolve;
 
 pub use node::{
     AnimationNode, BaseBlock, MAX_NODE_DEPTH, MAX_TARGET_DEPTH, MIN_NODE_SIZE, MIN_PORT_SIZE,
-    MIN_TARGET_SIZE, Node, NodeData, NodeKind, Port, PortPayload, PortType, RunNode, RunParameter,
-    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, SwitchNode,
-    SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, when_op,
+    MIN_TARGET_SIZE, Node, NodeData, NodeKind, PhysicsImpulseNode, Port, PortPayload, PortType,
+    RunNode, RunParameter, SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase,
+    SwitchNode, SwitchTransition, Target, TargetData, TargetValue, TimerNode, WhenTest, when_op,
 };
-pub use node::{ParticleScriptNode, SoundNode, sound_pid};
+pub use node::{
+    LightNode, MeshFxAppearanceEntry, MeshFxNode, ParticleScriptNode, SoundNode, sound_pid,
+};
 pub use record::{NodeCensus, Script, ScriptTable, Scriptlet, TABLE_KINDS};
 
 /// Type prefix of script tables.

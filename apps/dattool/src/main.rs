@@ -12,6 +12,7 @@ mod diff;
 mod info;
 mod input;
 mod instance;
+mod logic;
 mod ls;
 mod output;
 mod read;
@@ -117,6 +118,10 @@ enum Cmd {
     /// Show the instanced-content view of one object record or property set (templates,
     /// controls, skirmish, world join, battles, fellowship maker; `instances.md`).
     Instance(InstanceArgs),
+    /// Show the landblock-borne logic of a landblock-info record, or count it over every
+    /// record with --all: decals, phasing boxes, logic wiring, instance scripts, dramas,
+    /// riders (counts, DIDs and keys only; never text).
+    Logic(LogicArgs),
 }
 
 #[derive(Debug, Args)]
@@ -128,6 +133,22 @@ struct InstanceArgs {
     #[arg(value_parser = parse_did, value_name = "DID")]
     did: u32,
     /// List at most N elements per list in text output (0 = all).
+    #[arg(long, default_value_t = 20, value_name = "N")]
+    max_list: usize,
+}
+
+#[derive(Debug, Args)]
+struct LogicArgs {
+    /// Install directory or archive.
+    #[arg(value_name = "DIR|ARCHIVE")]
+    target: String,
+    /// Landblock-info DID (hex, 0x8RR2XXYY).
+    #[arg(value_parser = parse_did, value_name = "DID", required_unless_present = "all")]
+    did: Option<u32>,
+    /// Count over every landblock-info record of the input instead.
+    #[arg(long, conflicts_with = "did")]
+    all: bool,
+    /// List at most N rows in text output (0 = all).
     #[arg(long, default_value_t = 20, value_name = "N")]
     max_list: usize,
 }
@@ -463,6 +484,16 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             &instance::Opts {
                 target: a.target,
                 did: a.did,
+                max_list: a.max_list,
+            },
+        )?,
+        Cmd::Logic(a) => logic::run(
+            &mut out,
+            &ctx,
+            &logic::Opts {
+                target: a.target,
+                did: a.did,
+                all: a.all,
                 max_list: a.max_list,
             },
         )?,

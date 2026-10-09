@@ -63,6 +63,9 @@ pub struct FigureInfo {
     pub kind: FigureKind,
     /// The weenie role (`None` for an NPC-like Physics figure).
     pub role: Option<WeenieRole>,
+    /// The placement's instance ID (`entity-descriptor.md`), when the entity has one: the
+    /// seed of the figure's script Random picks (`appearance.md` §7.4 Decision).
+    pub iid: Option<u64>,
 }
 
 /// State shared between the walker and its sandbox source.
@@ -113,6 +116,11 @@ impl SourceShared {
             instance: f.instance.clone(),
             kind: f.kind,
             role: figure_role(f.kind, f.weenie_type, self.catalog.as_deref()),
+            iid: b
+                .entities
+                .get(f.entity as usize)
+                .and_then(|e| e.iid)
+                .map(|i| i.0),
         })
     }
 }

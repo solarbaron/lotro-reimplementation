@@ -9,16 +9,22 @@
 //!
 //! Assembly (`appearance.md` §3–§4, §8):
 //!
-//! - [`AppearanceEntry::block_for_modifier`] and [`AppearanceEntry::dye_block`] choose a
-//!   block (§3.2.1, `material.md` §12.4);
+//! - [`AppearanceEntry::choose_block`] chooses a block for a modifier or dye code by the
+//!   client's rule (§3.2.1, A19): the greatest `variant` not above the modifier, none for
+//!   −1.0 or a modifier below every block;
+//! - [`AppearanceRecord::linked`] is the list of further 0x20 records applied before a
+//!   record's own entry (§4.2, §4.7 rule 4, A28);
 //! - [`AppearanceKeyInfo`] is one element of an appearance list (`Appearance_ClassList`,
 //!   `Appearance_InstanceList`, §3.2), read from a property set with [`AppearanceListPids`];
-//! - [`SlotTable`] applies the replacement rule of §4.4: per slot the highest priority
-//!   wins, the later source on ties (§4.7 Decision), and a winning stub hides the slot.
+//! - [`key_application_order`] orders the keys of one record as the client's key table does
+//!   (§4.7 rule 3);
+//! - [`SlotTable`] applies the replacement rule of §4.4 and §4.7 rule 1: an offered part
+//!   replaces the slot's part when its priority is greater **or equal** (the part applied
+//!   later wins ties), and a winning stub hides the slot.
 //!
 //! Spec: `docs/specs/setup.md` §3.2 (the worn path) and §8 (the grammar); `appearance.md`
-//! §3–§4 (part and group priorities, key table, block choice, slots); `material.md` §9.3
-//! (how groups bind materials), §12.4 (dye blocks).
+//! §3–§4 (part and group priorities, key table, block choice, slots, linked records);
+//! `material.md` §9.3 (how groups bind materials), §12.4 (dye blocks).
 
 use std::collections::HashMap;
 
@@ -35,11 +41,18 @@ pub const EXTRA_KIND_DID: u32 = 9;
 /// The `variant` of a block that is the base look (§8.3, §8.5).
 pub const BASE_VARIANT: f32 = 1.0;
 
-/// Block selectors within this distance of a modifier select that block (§3.2.1 rule 1).
-pub const MODIFIER_TOLERANCE: f32 = 0.0005;
+/// The modifier the client uses as its "removed" marker: it selects no block
+/// (`appearance.md` §3.2.1 rule 1).
+pub const MODIFIER_NONE: f32 = -1.0;
 
-/// Dye blocks within this distance of a dye code select that block (`material.md` §12.4).
-pub const DYE_TOLERANCE: f32 = 0.005;
+/// The largest `section` byte a record may carry: the byte is the size class (an index
+/// 0–22) of the client's in-memory entry lookup, and the client rejects a record whose byte
+/// is above it (`appearance.md` §4.2, A28, AI13).
+pub const MAX_SECTION: u8 = 22;
+
+/// Buckets of the client's per-record key table (`appearance.md` §4.7 rule 3; the value of
+/// `records.md` §1.3 *B*\[1\]): keys are applied in ascending (key mod 23).
+pub const KEY_TABLE_BUCKETS: u32 = 23;
 
 /// Blocks whose `variant` is below this count as ordinary choices in the key table
 /// (`appearance.md` §4.8).
@@ -206,42 +219,53 @@ impl AppearanceEntry {
             })
     }
 
-    /// The block an appearance-list modifier selects (`appearance.md` §3.2.1): the block
-    /// whose `variant` is within [`MODIFIER_TOLERANCE`] of `modifier`; otherwise (Decision,
-    /// rule 3) the base block (`variant` 1.0) if there is one, else the first block. `None`
-    /// only for an entry without blocks. For dye entries use [`AppearanceEntry::dye_block`].
-    #[must_use]
-    pub fn block_for_modifier(&self, modifier: f32) -> Option<&AppearanceBlock> {
-        self.blocks
-            .iter()
-            .find(|b| (b.variant - modifier).abs() <= MODIFIER_TOLERANCE)
-            .or_else(|| self.blocks.iter().find(|b| b.is_base()))
-            .or_else(|| self.blocks.first())
-    }
-
-    /// The block a dye code selects (`material.md` §12.4 Decision): within
-    /// [`DYE_TOLERANCE`] of `code`; otherwise the block with the largest `variant` ≤ `code`;
-    /// otherwise the first block. `None` only for an entry without blocks or a code that is
-    /// not a number.
+    /// The block a modifier or dye code selects, with its index (`appearance.md` §3.2.1,
+    /// BIN2, A19), compared as single-precision floats with no tolerance:
     ///
-    /// This is the block rule only: it does **not** apply the "code 0.0 means no dye" rule
-    /// of `material.md` §12.4, so code 0.0 selects the 0.00 block. To dye an item, call
-    /// [`crate::item::dye_block`], which returns `None` for code 0.0.
+    /// 1. a modifier of exactly −1.0 ([`MODIFIER_NONE`]) selects no block;
+    /// 2. otherwise walk the blocks in stored order and stop before the first block whose
+    ///    `variant` is greater than the modifier; the last block passed is the one (the
+    ///    greatest `variant` not above the modifier, the blocks being stored in ascending
+    ///    order, AI9);
+    /// 3. a modifier below the first block's `variant` selects no block.
+    ///
+    /// There is no dye rule of its own and no fallback to the base or first block: dye codes
+    /// (§4.9), style modifiers and worn pieces (modifier 1.0) all use this rule. Hostile
+    /// values: a NaN modifier is above no block, so it selects none (Tessera reading of
+    /// "the greatest `variant` not above the modifier"); a NaN `variant` never compares as
+    /// greater, so the walk passes it.
     #[must_use]
-    pub fn dye_block(&self, code: f32) -> Option<&AppearanceBlock> {
-        if code.is_nan() {
+    pub fn choose_block(&self, modifier: f32) -> Option<(usize, &AppearanceBlock)> {
+        if modifier == MODIFIER_NONE || modifier.is_nan() {
             return None;
         }
-        self.blocks
-            .iter()
-            .find(|b| (b.variant - code).abs() <= DYE_TOLERANCE)
-            .or_else(|| {
-                self.blocks
-                    .iter()
-                    .filter(|b| b.variant <= code)
-                    .max_by(|a, b| a.variant.total_cmp(&b.variant))
-            })
-            .or_else(|| self.blocks.first())
+        let mut chosen = None;
+        for (i, b) in self.blocks.iter().enumerate() {
+            if b.variant > modifier {
+                break;
+            }
+            chosen = Some((i, b));
+        }
+        chosen
+    }
+
+    /// [`AppearanceEntry::choose_block`] without the index.
+    #[must_use]
+    pub fn block_for_modifier(&self, modifier: f32) -> Option<&AppearanceBlock> {
+        self.choose_block(modifier).map(|(_, b)| b)
+    }
+
+    /// The block a dye code selects: the same rule as every other modifier
+    /// ([`AppearanceEntry::choose_block`]; `appearance.md` §4.9: the block with the largest
+    /// `variant` not above the code, no tolerance, nothing below the first block).
+    ///
+    /// This is the block rule only: it does **not** apply the "code 0.0 means no dye" rule
+    /// of an item's own dye code (`material.md` §12.4, `appearance.md` §4.9 Decision), so
+    /// code 0.0 selects the 0.00 block. To dye an item, call [`crate::item::dye_block`],
+    /// which returns `None` for code 0.0.
+    #[must_use]
+    pub fn dye_block(&self, code: f32) -> Option<&AppearanceBlock> {
+        self.block_for_modifier(code)
     }
 
     /// The number of blocks whose `variant` is below [`KEY_TABLE_VARIANT_LIMIT`]: the
@@ -262,7 +286,13 @@ impl AppearanceEntry {
 pub struct AppearanceRecord {
     /// The record's own DID.
     pub did: Did,
-    /// Meaning OPEN; 0 (most records) to 6.
+    /// Further 0x20 records applied, recursively and with the same key and modifier, before
+    /// this record's own entry (`appearance.md` §4.2, §4.7 rule 4, A28). Stored as a count
+    /// (the u32 after the DID that `setup.md` §8.1 calls `reserved`) and that many DIDs.
+    /// Empty in every record of the reference install.
+    pub linked: Vec<Did>,
+    /// The size class (0 to [`MAX_SECTION`]) of the client's entry lookup table; no
+    /// appearance meaning (`appearance.md` §4.2). Records above [`MAX_SECTION`] are rejected.
     pub section: u8,
     /// Entries in stored order. Keys are unique (records with duplicates are rejected).
     pub entries: Vec<AppearanceEntry>,
@@ -296,6 +326,9 @@ impl AppearanceRecord {
         b.sort_unstable();
         if a != b {
             return Some("key table keys differ from entry keys");
+        }
+        if self.linked.iter().any(|d| d.kind() != DidKind::Appearance) {
+            return Some("linked record is not a 0x20 DID");
         }
         let blocks = || self.entries.iter().flat_map(|e| &e.blocks);
         if blocks()
@@ -355,7 +388,10 @@ impl AppearanceRecord {
         }
         let len = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let mut out = Vec::new();
-        u32s(&mut out, &[self.did.0, 0]);
+        u32s(&mut out, &[self.did.0, len(self.linked.len())]);
+        for d in &self.linked {
+            u32s(&mut out, &[d.0]);
+        }
         out.push(self.section);
         write_vle(&mut out, len(self.entries.len()));
         for e in &self.entries {
@@ -467,9 +503,22 @@ impl Record<'_> for AppearanceRecord {
     fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::new(data);
         let did = read_prologue(&mut r, Self::NAME, |k| k == DidKind::Appearance)?;
-        let reserved = r.u32()?;
-        expect_const(&mut r, "appearance reserved word", 0, reserved)?;
+        // §4.2 (A28): a count of linked records and their DIDs.
+        let m = r.u32()?;
+        let mut linked = r.alloc_vec(m, 4, usize::MAX)?;
+        for _ in 0..m {
+            let d = r.did()?;
+            r.push(&mut linked, d, m)?;
+        }
+        let section_at = r.position();
         let section = r.u8()?;
+        if section > MAX_SECTION {
+            return Err(FormatError::Unsupported {
+                what: "appearance section byte",
+                offset: section_at,
+                value: u32::from(section),
+            });
+        }
         let n = r.vle()?;
         let mut entries: Vec<AppearanceEntry> = r.alloc_vec(n, 8, usize::MAX)?;
         for _ in 0..n {
@@ -522,6 +571,7 @@ impl Record<'_> for AppearanceRecord {
         r.expect_end(Self::NAME)?;
         Ok(Self {
             did,
+            linked,
             section,
             entries,
             key_table,
@@ -545,8 +595,27 @@ pub struct AppearanceKeyInfo {
 }
 
 impl AppearanceKeyInfo {
-    /// The record to use (§3.3 Decision): `toggle_file` when the toggle property is true
-    /// according to `is_true`, else `file`.
+    /// Whether the client ignores the element (`appearance.md` §3.3 toggle rule, BIN2): its
+    /// `Appearance_AprFile` is null or its `Appearance_Key` is 0.
+    #[must_use]
+    pub fn is_ignored(&self) -> bool {
+        self.file.is_null() || self.key == 0
+    }
+
+    /// The property that switches this element to its toggle file, when the element names
+    /// both a toggle property and a non-null toggle file (`appearance.md` §3.3): the figure
+    /// watches it and rebuilds its appearance when it changes.
+    #[must_use]
+    pub fn watched_toggle(&self) -> Option<u32> {
+        match (self.toggle_file, self.toggle_property) {
+            (Some(t), Some(p)) if !t.is_null() => Some(p),
+            _ => None,
+        }
+    }
+
+    /// The record to use (`appearance.md` §3.3 rule, BIN2, A20): `toggle_file` when the
+    /// element names a toggle property and a non-null toggle file and the property reads
+    /// true through the figure's own lookup (`is_true`), else `file`.
     #[must_use]
     pub fn file_for(&self, is_true: impl Fn(u32) -> bool) -> Did {
         match (self.toggle_file, self.toggle_property) {
@@ -555,8 +624,10 @@ impl AppearanceKeyInfo {
         }
     }
 
-    /// [`AppearanceKeyInfo::file_for`] with the toggle property looked up in `set` (a
-    /// boolean or a non-zero number counts as true).
+    /// [`AppearanceKeyInfo::file_for`] with the toggle property looked up in `set` only (a
+    /// boolean or a non-zero number counts as true; absent reads false, the dictionary
+    /// default of `GOP_AvatarUpdateVisible`). A figure's own lookup also consults the
+    /// option store first (`appearance.md` §3.3 Tessera rule); assembly does that.
     #[must_use]
     pub fn file_in(&self, set: &PropertySet) -> Did {
         self.file_for(|pid| {
@@ -660,6 +731,21 @@ impl AppearanceListPids {
     }
 }
 
+/// The order in which the client applies the keys of one record (`appearance.md` §4.7
+/// rule 3, BIN2): ascending (key mod [`KEY_TABLE_BUCKETS`]), and among keys with the same
+/// remainder the one **added last first**. `keys` are in the order they were added to the
+/// record's key set; the result holds indices into `keys`.
+#[must_use]
+pub fn key_application_order(keys: &[u32]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    // Stable sort by bucket, then reverse the insertion order inside a bucket.
+    order.sort_by_key(|&i| {
+        let bucket = keys.get(i).map_or(0, |k| k % KEY_TABLE_BUCKETS);
+        (bucket, std::cmp::Reverse(i))
+    });
+    order
+}
+
 /// Where a slot's winning part came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PartSource {
@@ -686,9 +772,10 @@ pub struct SlotPart {
 /// A figure's slot table (`appearance.md` §4.4): at most one mesh per `MeshTypeID` slot.
 ///
 /// Default parts enter with the lowest priority; every offered part replaces the slot's
-/// current winner when its priority is greater **or equal** (§4.7 Decision: on ties the
-/// later source wins; offer sources in the §8 order). A part whose priority is not a
-/// number is ignored. Whether a winning mesh is a stub (three vertices: the slot is hidden)
+/// current part when the current priority is lower than **or equal** to the new one
+/// (§4.7 rule 1, BIN2: on equal priority the part applied later wins; offer the parts in
+/// the application order of §4.7 rules 2–4). A part whose priority is not a number is
+/// ignored. Whether a winning mesh is a stub (three vertices: the slot is hidden)
 /// is for the caller to decide from the mesh.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SlotTable {

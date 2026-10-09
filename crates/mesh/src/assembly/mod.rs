@@ -20,28 +20,41 @@
 //!   locations, …) as a categorised [`Diagnostic`], never as an error. Only a body that
 //!   cannot be resolved at all, or a failing record source, is an [`AssemblyError`].
 //!
-//! The algorithm is `appearance.md` §8 in order: setup default parts, appearance lists
-//! (template section, class list, instance list; §7.4), worn items in ascending
-//! `ContainerSlot` bit order (§4.7 Decision), slot resolution by highest priority with the
-//! later source winning ties (§4.4, §4.7), material groups and dyes (§4.9, §4.10), held
-//! items (§5.3–§5.5). Static objects keep every default part of their setup, in order;
-//! the slot table applies to them as to any rig, so a part a list element offers replaces
-//! **all** default parts of its slot (drawn once, at the first one's position; `appearance.md`
-//! §15, implementation choice). A figure with a random-appearance type skips its
-//! appearance lists (§7.4 Decision). Material-only list elements (dye tables and
-//! selection tables, §4.11) layer onto the parts list elements of the same record
-//! contributed, else onto the default parts; never onto a worn item's parts.
+//! The algorithm is `appearance.md` §8 in order:
 //!
+//! 1. setup default parts (§3.1);
+//! 2. the **appearance elements**, building the ordered record list of §4.7 rule 2: the
+//!    template chain's sections (root template first), the class list then the instance
+//!    list (§7.4; each element's record chosen by the toggle rule of §3.3), for a player the
+//!    worn items in ascending `ContainerSlot` bit order with their dye elements (§4.7
+//!    Decision, §4.9), then the Appearance nodes the figure's start-up scripts ran, as the
+//!    caller supplies them ([`ScriptAppearance`], §7.4). A record named again keeps its
+//!    first position and takes the new key and modifier;
+//! 3. the records applied in list order, each record's keys in the client's key-table order
+//!    (§4.7 rule 3), linked records first (rule 4); the block chosen by §3.2.1; every part
+//!    offered to its slot, replacing the current part on equal or greater priority (rule
+//!    1); every material group inserted into **one figure-wide list** by ascending group
+//!    priority (§4.10), which applies to every drawn part whose slot matches;
+//! 4. held items at their stowed or wielded placement (§5.4, §5.6) and NPC props while
+//!    `NPC_Cosmetic_Inventory_Visible` is true (§5.5).
+//!
+//! Static objects keep every default part of their setup, in order; the slot table applies
+//! to them as to any rig, so a part a list element offers replaces **all** default parts of
+//! its slot (drawn once, at the first one's position; `appearance.md` §15 Tessera
+//! Decision). A figure with a random-appearance type keeps its lists (§7.4 Rule): its
+//! outfit comes from the script elements.
+
 //! Records are read through an [`AssemblySource`]: [`GameDataSource`] reads an install
 //! through `tessera-props`, [`MapSource`] holds hand-built records for tests and fuzzing.
 //! Property IDs and enum keys come from an [`AssemblyVocabulary`] looked up in the data at
 //! run time; nothing here hard-codes a PID, a key or a DID.
 //!
-//! Every input is bounded ([`AssemblyLimits`]) and nothing recurses: entity and template
-//! chains are followed by the bounded, cycle-checked resolvers of `tessera-formats`, and
-//! appearance records name no other records. Material groups are stored once per distinct
-//! (record, entry, block, layer kind) and referenced by index, so many list elements naming
-//! one large record cost no more than one ([`AssemblyLimits::max_total_layers`]).
+//! Every input is bounded ([`AssemblyLimits`]): entity and template chains are followed by
+//! the bounded, cycle-checked resolvers of `tessera-formats`; linked appearance records
+//! (§4.7 rule 4) recurse at most [`MAX_LINK_DEPTH`] deep, a record already on the current
+//! path is skipped and reported (§4.7 OPEN, Tessera Decision), and block applications are
+//! counted ([`AssemblyLimits::max_applications`]); the figure-wide group list holds at most
+//! [`AssemblyLimits::max_total_layers`] groups.
 
 mod resolve;
 pub mod shape;
@@ -51,12 +64,52 @@ mod vocab;
 use std::sync::Arc;
 
 use tessera_formats::appearance::MaterialGroup;
-use tessera_formats::setup::{Anchor, Frame};
+use tessera_formats::avatar::{checked_render_scale, scale_product};
+use tessera_formats::setup::{Anchor, Frame, Quaternion};
 use tessera_formats::{Did, PropertySet, Setup};
 
 pub use resolve::CharacterAssembler;
 pub use source::{AssemblySource, GAME_DATA_CACHE_ENTRIES, GameDataSource, Lookup, MapSource};
-pub use vocab::{AssemblyVocabulary, StowRule};
+pub use vocab::{
+    AssemblyVocabulary, Placement, PlacementRow, PlacementRule, PlacementScale, SkillModeMatch,
+    SpeciesMatch, WeaponSlot,
+};
+
+/// Deepest chain of linked appearance records followed (`appearance.md` §4.7 rule 4; every
+/// list of the reference install is empty).
+pub const MAX_LINK_DEPTH: usize = 16;
+
+/// Tessera's own answers for the client-wide options a figure's property lookup consults
+/// before the figure's values (`appearance.md` §3.3 Tessera rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssemblyOptions {
+    /// `GOP_AvatarUpdateVisible`, the updated-avatar graphics option (default on): with it on,
+    /// list elements use their toggle files (§3.3).
+    pub avatar_update_visible: bool,
+}
+
+impl Default for AssemblyOptions {
+    fn default() -> Self {
+        Self {
+            avatar_update_visible: true,
+        }
+    }
+}
+
+/// An Appearance node a figure's start-up scripts ran (`appearance.md` §7.4): one element
+/// (record, key, modifier) appended to the figure's appearance after its lists and worn
+/// items, through the same path as a list element. The caller supplies them in the client's
+/// start order, after the seeded Random picks (see
+/// `tessera_formats::script_table::resolve::AppearanceCandidate::picked`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScriptAppearance {
+    /// The 0x20 record.
+    pub record: Did,
+    /// The appearance key.
+    pub key: u32,
+    /// The modifier (the node's stored modifier; intensity factor 1, §7.4).
+    pub modifier: f32,
+}
 
 /// Bounds on one assembly (hostile-input limits; real figures stay far below them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,14 +126,14 @@ pub struct AssemblyLimits {
     pub max_held: usize,
     /// Material layers kept per part.
     pub max_layers: usize,
-    /// Material layers held per figure before they are attached to parts: the groups of
-    /// every distinct (record, entry, block, layer kind) the figure uses, counted once
-    /// however many list elements or parts share them. Bounds the memory of an assembly
-    /// and the per-part layer scan.
+    /// Material groups in the figure-wide group list (`appearance.md` §4.10). Bounds the
+    /// memory of an assembly and the per-part layer scan.
     pub max_total_layers: usize,
     /// Diagnostics kept per figure (further ones are counted in
     /// [`AssembledCharacter::dropped_diagnostics`]).
     pub max_diagnostics: usize,
+    /// Block applications per figure, linked records included (§4.7 rule 4).
+    pub max_applications: usize,
 }
 
 impl Default for AssemblyLimits {
@@ -93,18 +146,19 @@ impl Default for AssemblyLimits {
             max_layers: 256,
             max_total_layers: 8192,
             max_diagnostics: 1024,
+            max_applications: 4096,
         }
     }
 }
 
-/// Whether a held item is in the hand or stowed (`appearance.md` §5.3, §5.4).
+/// Which placement family a held item takes (`appearance.md` §5.4 Rule, §5.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum WieldState {
-    /// In the hand (in combat): the location of `appearance.md` §5.3.
+    /// In combat: the item's **wielded** placement (§5.6 "Wielded placements").
     #[default]
     Wielded,
-    /// Stowed (out of combat): the stowing location by category (§5.4 Decision); items
-    /// that stay in hand use the wielded location.
+    /// Out of combat: the item's **stowed** placement (§5.6 "Stowed placements"); an item
+    /// without one (an orb) is not drawn. The walker, which has no combat, stows.
     Sheathed,
 }
 
@@ -114,19 +168,18 @@ pub struct EquippedItem {
     /// The item: a game object (0x70–0x76) or its property set (0x79…).
     pub item: Did,
     /// The dye code of the first channel; `None` keeps the item's default
-    /// (`Item_ClothingColor`, `appearance.md` §4.9), `Some(0.0)` means no dye
-    /// (`material.md` §12.4: code 0.0 layers no dye material). An appearance-list dye
-    /// element with modifier 0.0 instead layers its 0.00 block (`appearance.md` §3.2.1
-    /// rule 1); which reading lists follow is OPEN (`appearance.md` §15).
+    /// (`Item_ClothingColor`, `appearance.md` §4.9), `Some(0.0)` means no dye: the item
+    /// emits no dye element (§4.9 Decision). An appearance-list dye element with modifier
+    /// 0.0 instead layers its 0.00 block (§3.2.1, §15).
     pub dye: Option<f32>,
     /// The dye code of the second channel, as `dye`.
     pub secondary_dye: Option<f32>,
     /// Wield state, for items that turn out to be held.
     pub state: WieldState,
     /// The `ContainerSlot` bits of the slot the item is equipped in; `None` (or 0) means
-    /// its `Inventory_DefaultSlot`. It decides the holding location (`appearance.md` §5.3:
-    /// `Weapon_Secondary` → `Wpn_LOffHand`), the stowing location (§5.4: a one-handed
-    /// weapon in the secondary slot → `Sheath_RHip`) and the worn-item order (§4.7), so a
+    /// its `Inventory_DefaultSlot`. It decides which placement script places a held item
+    /// (`appearance.md` §5.6: a one-handed weapon in the secondary slot stows at
+    /// `Sheath_RHip` and is wielded at `Wpn_LOffHand`) and the worn-item order (§4.7), so a
     /// one-handed weapon whose default slot is `Weapon_Primary` can be dual-wielded.
     pub slot: Option<u64>,
 }
@@ -205,6 +258,9 @@ pub struct CharacterSpec {
     pub avatar_height: Option<f32>,
     /// Worn and held items; each item decides worn versus held itself (`setup.md` §13.3).
     pub items: Vec<EquippedItem>,
+    /// The figure's `Combat_SkillMode` is `Ranged`: stowed shields go on the back
+    /// (`appearance.md` §5.6).
+    pub ranged_skill_mode: bool,
 }
 
 impl CharacterSpec {
@@ -238,8 +294,10 @@ pub enum SourceRef {
     /// Element *n* of the instance list in use (§7.4 step 4; see
     /// [`AssembledCharacter::instance_list_origin`]).
     InstanceList(u32),
-    /// Item *n* of [`CharacterSpec::items`].
+    /// Item *n* of [`CharacterSpec::items`] (its own element and its dye elements).
     Item(u32),
+    /// Script element *n* (a [`ScriptAppearance`], §7.4).
+    Script(u32),
     /// NPC prop *n* (1–4, `NPC_Cosmetic_Inventory_Item<n>`, §5.5).
     NpcProp(u8),
     /// The figure as a whole (body, sliders, scale).
@@ -304,10 +362,11 @@ pub enum PartOrigin {
     },
 }
 
-/// Which layer a [`MaterialLayer`] is (`material.md` §9.3, §12.3).
+/// Which kind of block a [`MaterialLayer`] came from (`material.md` §9.3, §12.3). The kind
+/// is informational: every group applies figure-wide (`appearance.md` §4.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayerKind {
-    /// A material group of the part's own block (`appearance.md` §4.10).
+    /// A group of a block under any key but the two dye keys.
     Group,
     /// A group of the first-channel dye block (`ClothingColor`, §4.9).
     Dye,
@@ -316,13 +375,15 @@ pub enum LayerKind {
 }
 
 /// A material group layered onto a part, as DIDs (`material.md` §9.3): it applies to the
-/// part's submeshes whose surface record has `binding_key`. Layers are listed in the order
-/// `material.md` §9.2 applies them: the block's groups, then the dye blocks.
+/// part's submeshes whose surface record has `binding_key`. A part's layers are the groups
+/// of the figure-wide list (`appearance.md` §4.10) whose slot is `All` or the part's slot,
+/// in list order: ascending group priority, ties in application order, so a
+/// higher-priority group is applied later (`material.md` §9.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialLayer {
     /// What the layer is.
     pub kind: LayerKind,
-    /// The group's priority (`appearance.md` §4.3; how priorities combine is OPEN, §4.10).
+    /// The group's priority (`appearance.md` §4.3), the order key of the figure-wide list.
     pub priority: f32,
     /// Shader override (0x2B), if any.
     pub shader: Option<Did>,
@@ -371,8 +432,8 @@ pub struct AssembledPart {
     pub priority: f32,
     /// Where it came from.
     pub origin: PartOrigin,
-    /// The mesh is a stub: the slot is hidden (`appearance.md` §4.4). Whether stubs are
-    /// drawn is OPEN (O4); they never matter for what is hidden.
+    /// The mesh is a stub: the slot is hidden and the part is never drawn
+    /// (`appearance.md` §4.4, `setup.md` §8.5).
     pub hidden: bool,
     /// The mesh has bone influences.
     pub skinned: bool,
@@ -419,26 +480,151 @@ pub struct HeldPart {
     pub anchor: Anchor,
     /// The location's frame in the anchor's space: the item's offset.
     pub frame: Frame,
-    /// The wield state used to choose the location.
+    /// The wield state used to choose the placement.
     pub state: WieldState,
+    /// The placement's offset, rotation and scale in the location's frame (§5.6; identity
+    /// for NPC props).
+    pub placement: HeldPlacement,
+    /// The held entity's own model scale (template chain × entity `Render_AdjustableScale`,
+    /// §6.1), before the holder's scale; see [`AssembledCharacter::held_scale`].
+    pub scale: [f32; 3],
 }
 
-/// The whole-body scale (`appearance.md` §6.1 Decision): template × entity × instance.
+/// Offset, rotation and scale of a held item in its location's frame (`appearance.md`
+/// §5.6: `BoneOffset`, `OffsetRotationYaw`/`Pitch`/`Roll`, `Scale` of the MeshFX node).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeldPlacement {
+    /// Offset in metres.
+    pub offset: [f32; 3],
+    /// Yaw, pitch, roll in degrees.
+    pub rotation: [f32; 3],
+    /// Per-axis scale.
+    pub scale: [f32; 3],
+}
+
+impl Default for HeldPlacement {
+    fn default() -> Self {
+        Self {
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: [1.0; 3],
+        }
+    }
+}
+
+impl HeldPlacement {
+    /// The rotation as a unit quaternion: yaw about +Z, pitch about +X, roll about +Y,
+    /// composed *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch), the axes and order of
+    /// `coordinates.md` §11.3. The spec leaves the composition order open (`appearance.md`
+    /// §5.6 OPEN, O13); every row of §5.6 turns about one axis only, so the order changes
+    /// nothing in the data.
+    #[must_use]
+    pub fn rotation_quaternion(&self) -> Quaternion {
+        let half = |deg: f32| deg.to_radians() * 0.5;
+        let axis = |deg: f32, a: usize| {
+            let (s, c) = half(deg).sin_cos();
+            let mut q = Quaternion {
+                w: c,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            };
+            match a {
+                0 => q.x = s,
+                1 => q.y = s,
+                _ => q.z = s,
+            }
+            q
+        };
+        let [yaw, pitch, roll] = self.rotation;
+        quat_mul(quat_mul(axis(yaw, 2), axis(roll, 1)), axis(pitch, 0))
+    }
+
+    /// `frame` (a holding location's frame) followed by this placement: the offset is taken
+    /// in the location's frame, the rotation after the location's, the scales multiplied
+    /// per axis (exact when the location's scale is uniform, as every holding location of
+    /// the reference install's player setups is).
+    #[must_use]
+    pub fn applied_to(&self, frame: &Frame) -> Frame {
+        let o = [
+            self.offset[0] * frame.scale[0],
+            self.offset[1] * frame.scale[1],
+            self.offset[2] * frame.scale[2],
+        ];
+        let r = rotate(frame.rotation, o);
+        Frame {
+            position: [
+                frame.position[0] + r[0],
+                frame.position[1] + r[1],
+                frame.position[2] + r[2],
+            ],
+            scale: [
+                frame.scale[0] * self.scale[0],
+                frame.scale[1] * self.scale[1],
+                frame.scale[2] * self.scale[2],
+            ],
+            rotation: quat_mul(frame.rotation, self.rotation_quaternion()),
+        }
+    }
+}
+
+/// Hamilton product `a · b`.
+fn quat_mul(a: Quaternion, b: Quaternion) -> Quaternion {
+    Quaternion {
+        w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+        x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    }
+}
+
+/// `v` rotated by the unit quaternion `q`.
+fn rotate(q: Quaternion, v: [f32; 3]) -> [f32; 3] {
+    let p = Quaternion {
+        w: 0.0,
+        x: v[0],
+        y: v[1],
+        z: v[2],
+    };
+    let conj = Quaternion {
+        w: q.w,
+        x: -q.x,
+        y: -q.y,
+        z: -q.z,
+    };
+    let r = quat_mul(quat_mul(q, p), conj);
+    [r.x, r.y, r.z]
+}
+
+/// The whole-body scale per axis (`appearance.md` §6.1 Decision): template chain × entity
+/// × instance.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ModelScale {
-    /// The first template's uniform `vec3`.
-    pub template: Option<f32>,
+    /// The template chain's `vec3`, multiplied over the chain.
+    pub template: Option<[f32; 3]>,
     /// The entity's `Render_AdjustableScale`.
-    pub entity: Option<f32>,
+    pub entity: Option<[f32; 3]>,
     /// The instance set's `Render_AdjustableScale`.
-    pub instance: Option<f32>,
+    pub instance: Option<[f32; 3]>,
 }
 
 impl ModelScale {
-    /// The product of the present factors (1 when none is). Composition OPEN (O8).
+    /// The product of the present factors (1 when none is), per axis, before the limit.
     #[must_use]
-    pub fn value(&self) -> f32 {
-        self.template.unwrap_or(1.0) * self.entity.unwrap_or(1.0) * self.instance.unwrap_or(1.0)
+    pub fn product(&self) -> [f32; 3] {
+        let one = [1.0; 3];
+        scale_product(
+            scale_product(self.template.unwrap_or(one), self.entity.unwrap_or(one)),
+            self.instance.unwrap_or(one),
+        )
+    }
+
+    /// The final scale: [`ModelScale::product`] with the client's check (a component that is
+    /// not finite or strictly below 0.0002 makes it (1, 1, 1); `appearance.md` §6.1). Whether
+    /// the template factor enters is OPEN (O8).
+    #[must_use]
+    pub fn value(&self) -> [f32; 3] {
+        checked_render_scale(self.product())
     }
 }
 
@@ -487,12 +673,12 @@ pub enum DiagnosticCategory {
     AppearanceUndecodable,
     /// The record lacks the element's or item's key (§10: item not drawn for that body).
     KeyMissing,
-    /// No block matches the modifier: §3.2.1 rule 3 chose the base or first block.
-    BlockFallback,
-    /// The entry has no parts where parts were expected (a worn item's material-only
-    /// block, an entry without blocks, a list block with neither parts nor groups).
+    /// No block is at or below the modifier, or the modifier is −1.0: the element
+    /// contributes nothing (§3.2.1 rules 1 and 3).
+    NoBlock,
+    /// A worn item's block has no parts (a material-only entry, §10).
     MaterialOnly,
-    /// An item's wardrobe entry has no `variant` 1.0 block (contradicts AI1).
+    /// A worn item's element chose a block whose `variant` is not 1.0 (contradicts AI1).
     NoBaseBlock,
     /// The item's property set does not exist.
     ItemMissing,
@@ -504,29 +690,34 @@ pub enum DiagnosticCategory {
     NoWardrobeStruct,
     /// The dye entry (`ClothingColor` / `ClothingColorSecondary`) is missing in the record.
     DyeEntryMissing,
-    /// No dye block has exactly the code; the `material.md` §12.4 rule chose another.
+    /// No dye block has exactly the code; §3.2.1 chose the last block below it
+    /// (informational, §4.9).
     DyeInexact,
-    /// A dye or material-only list element whose record contributed no parts through the
-    /// appearance lists; applied to the default parts (Decision, `appearance.md` §15).
-    UnpairedDye,
+    /// A linked record (§4.7 rule 4) is already being applied on the current path: skipped
+    /// (Tessera Decision, §4.7 OPEN).
+    LinkedRecordCycle,
     /// A part's mesh does not exist: the slot keeps its previous winner (§10).
     MeshMissing,
     /// A part's mesh does not decode: the slot keeps its previous winner.
     MeshUndecodable,
     /// A block carries extras (setup DIDs, `setup.md` §8.3): not used by assembly.
     BlockExtraIgnored,
-    /// A held item has no holding location (class items, instruments; §5.3 Decision: not
-    /// drawn).
+    /// A held item has no placement (class items, instruments, baubles, items outside the
+    /// weapon slots, an orb while stowed; §5.3 Decision, §5.6): not drawn.
+    NoPlacement,
+    /// An NPC prop has no holding location: not drawn.
     NoHoldingLocation,
+    /// `NPC_Cosmetic_Inventory_Visible` is false: the figure's props are not drawn (§5.5).
+    PropsHidden,
     /// The wearer's setup lacks the holding location: not drawn (§10).
     HoldingLocationMissing,
     /// A held item's or prop's entity chain does not resolve to a setup.
     HeldChainBroken,
-    /// The figure has a random-appearance type: drawn with its default parts and held
-    /// props, its appearance lists skipped (§7.4 Decision, O12).
+    /// The figure has a random-appearance type but no script elements were supplied: its
+    /// outfit, which the start-up scripts choose (§7.4), is missing.
     RandomAppearance,
-    /// The slider byte string is not clean hex: pairs that are not hexadecimal read 0
-    /// (`appearance.md` §6.3).
+    /// The slider value string is not clean hexadecimal pairs; it is still read piece by
+    /// piece by the client's rule (`appearance.md` §6.3).
     SliderValuesInvalid,
     /// A bound of [`AssemblyLimits`] cut the input.
     LimitExceeded,
@@ -534,12 +725,12 @@ pub enum DiagnosticCategory {
 
 impl DiagnosticCategory {
     /// Every category, in a stable order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 25] = [
         Self::NullAppearance,
         Self::AppearanceMissing,
         Self::AppearanceUndecodable,
         Self::KeyMissing,
-        Self::BlockFallback,
+        Self::NoBlock,
         Self::MaterialOnly,
         Self::NoBaseBlock,
         Self::ItemMissing,
@@ -548,11 +739,13 @@ impl DiagnosticCategory {
         Self::NoWardrobeStruct,
         Self::DyeEntryMissing,
         Self::DyeInexact,
-        Self::UnpairedDye,
+        Self::LinkedRecordCycle,
         Self::MeshMissing,
         Self::MeshUndecodable,
         Self::BlockExtraIgnored,
+        Self::NoPlacement,
         Self::NoHoldingLocation,
+        Self::PropsHidden,
         Self::HoldingLocationMissing,
         Self::HeldChainBroken,
         Self::RandomAppearance,
@@ -568,7 +761,7 @@ impl DiagnosticCategory {
             Self::AppearanceMissing => "appearance-missing",
             Self::AppearanceUndecodable => "appearance-undecodable",
             Self::KeyMissing => "key-missing",
-            Self::BlockFallback => "block-fallback",
+            Self::NoBlock => "no-block",
             Self::MaterialOnly => "material-only",
             Self::NoBaseBlock => "no-base-block",
             Self::ItemMissing => "item-missing",
@@ -577,11 +770,13 @@ impl DiagnosticCategory {
             Self::NoWardrobeStruct => "no-wardrobe-struct",
             Self::DyeEntryMissing => "dye-entry-missing",
             Self::DyeInexact => "dye-inexact",
-            Self::UnpairedDye => "unpaired-dye",
+            Self::LinkedRecordCycle => "linked-record-cycle",
             Self::MeshMissing => "mesh-missing",
             Self::MeshUndecodable => "mesh-undecodable",
             Self::BlockExtraIgnored => "block-extra-ignored",
+            Self::NoPlacement => "no-placement",
             Self::NoHoldingLocation => "no-holding-location",
+            Self::PropsHidden => "props-hidden",
             Self::HoldingLocationMissing => "holding-location-missing",
             Self::HeldChainBroken => "held-chain-broken",
             Self::RandomAppearance => "random-appearance",
@@ -644,6 +839,12 @@ pub struct AssembledCharacter {
     pub instance_list_origin: ListOrigin,
     /// The random-appearance type, if the figure has one other than `Undef` (§7.4).
     pub random_appearance: Option<u32>,
+    /// The toggle properties the figure's list elements name (§3.3): the figure is rebuilt
+    /// when one of them changes.
+    pub watched_properties: Vec<u32>,
+    /// The figure-wide material-group list (§4.10), in application order: ascending group
+    /// priority, ties in the order the blocks were applied.
+    pub groups: Vec<MaterialLayer>,
     /// Unresolved links, in the order they were found.
     pub diagnostics: Vec<Diagnostic>,
     /// Diagnostics beyond [`AssemblyLimits::max_diagnostics`], counted only.
@@ -678,10 +879,23 @@ impl AssembledCharacter {
             .count()
     }
 
-    /// The model scale ([`ModelScale::value`]).
+    /// The model scale per axis ([`ModelScale::value`]).
     #[must_use]
-    pub fn model_scale(&self) -> f32 {
+    pub fn model_scale(&self) -> [f32; 3] {
         self.scale.value()
+    }
+
+    /// The scale of held part `h` relative to the figure (§6.1 Decision: an attached object's
+    /// final scale is its own scale × the holder's final scale, checked by the client's
+    /// rule): final held scale ÷ the figure's final scale, per axis, for drawing the part in
+    /// the figure's scaled model space. The placement's own scale is separate
+    /// ([`HeldPart::placement`]).
+    #[must_use]
+    pub fn held_scale(&self, h: &HeldPart) -> [f32; 3] {
+        let holder = self.model_scale();
+        let fin = checked_render_scale(scale_product(h.scale, holder));
+        // The holder's final scale is checked, so no component is below 0.0002.
+        [fin[0] / holder[0], fin[1] / holder[1], fin[2] / holder[2]]
     }
 }
 

@@ -70,6 +70,7 @@ pub use toml;
 
 mod audio;
 mod error;
+mod graphics;
 mod input;
 mod migrate;
 mod model;
@@ -82,6 +83,7 @@ pub use audio::{
     SECTION_AUDIO, SoundImport, audio_keys,
 };
 pub use error::{LoadWarning, Result, SettingsError};
+pub use graphics::{AVATAR_UPDATE_VISIBLE_KEY, GRAPHICS_SECTION, GraphicsPrefs};
 pub use input::{
     DEFAULT_DOUBLE_CLICK_MS, DEFAULT_DOUBLE_CLICK_PX, DOUBLE_CLICK_MS_RANGE, DOUBLE_CLICK_PX_RANGE,
     INPUT_SECTION, InputPrefs,

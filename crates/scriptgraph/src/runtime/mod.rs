@@ -188,6 +188,11 @@ pub struct EntityInit {
     /// Whether to run `Startup` and the start-up scripts (`script-runtime.md` §22 step 3).
     /// `true` from [`EntityInit::default`] and [`EntityInit::from_scripts`].
     pub run_startup: bool,
+    /// A seed of the entity's own Random-node generator (`script-runtime.md` §8 OPEN-18
+    /// Decision: a placed figure's Random nodes are seeded from its instance ID, so the
+    /// figure keeps its picks). `None` (the default): its Random nodes draw from the
+    /// runtime's single generator, as the original's do from its global one (R40).
+    pub random_seed: Option<u64>,
 }
 
 impl Default for EntityInit {
@@ -198,6 +203,7 @@ impl Default for EntityInit {
             properties: PropertyState::default(),
             parent: None,
             run_startup: true,
+            random_seed: None,
         }
     }
 }
@@ -213,6 +219,7 @@ impl EntityInit {
             properties: scripts.properties.clone(),
             parent: None,
             run_startup: true,
+            random_seed: None,
         }
     }
 }
@@ -287,6 +294,8 @@ pub(crate) struct Entity {
     pub destroying: bool,
     pub runs: HashMap<u32, Vec<InstanceId>>,
     pub instances: usize,
+    /// The entity's own Random-node generator ([`EntityInit::random_seed`]).
+    pub rng: Option<SmallRng>,
 }
 
 /// Per-call bookkeeping.
@@ -511,6 +520,7 @@ impl<'a> Runtime<'a> {
                 destroying: false,
                 runs: HashMap::new(),
                 instances: 0,
+                rng: init.random_seed.map(SmallRng::seed_from_u64),
             },
         );
         // Instances of other entities that listen to this ID (a respawn) read its values

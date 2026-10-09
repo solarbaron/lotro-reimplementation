@@ -5,7 +5,8 @@
 //!
 //! Nothing may panic and nesting stays within the limits of §4.5. An accepted record must
 //! agree with its own census: node counts from walking equal the census, every port of an
-//! animation node with an F32 payload is an event time, and invariant checks run.
+//! animation node with an F32 payload is an event time, the typed Light and MeshFX nodes
+//! sit on nodes of their kinds, and invariant checks run.
 //!
 //! Run with a memory cap so that allocation blow-ups count as failures, e.g.
 //! `cargo fuzz run formats_script_table -- -malloc_limit_mb=512 -rss_limit_mb=1024`.
@@ -13,7 +14,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tessera_formats::script_table::{MAX_NODE_DEPTH, Node, NodeCensus};
+use tessera_formats::script_table::{MAX_NODE_DEPTH, Node, NodeCensus, NodeData, NodeKind};
 use tessera_formats::{
     AnyRecord, NoSchema, PropertyType, ScriptTable, Scriptlet, decode_script_table,
     decode_scriptlet,
@@ -35,6 +36,18 @@ fn check_roots(roots: &[Node], census: &NodeCensus) {
             let _ = n.event_times().count();
             if let Some(a) = n.animation() {
                 let _ = a.displacement_length();
+            }
+            // The typed Light and MeshFX nodes (§5.2, §5.3) keep what was stored.
+            match &n.data {
+                NodeData::Light(l) => {
+                    assert!(l.diffuse_intensity.values.len() <= 10);
+                    assert_eq!(n.kind, NodeKind::LIGHT);
+                }
+                NodeData::MeshFx(m) => {
+                    assert_eq!(n.kind, NodeKind::MESH_FX);
+                    let _ = m.appearances.len();
+                }
+                _ => {}
             }
         });
     }

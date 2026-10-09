@@ -19,6 +19,8 @@
 //! | `economy` | loot lists, recipes, barter, vendors, currency | `economy.md` |
 //! | `map` | map kinds, map-note properties, the places, map-note and quest-note tables (0x0E) | `map-data.md` |
 //! | `particle` | particle systems (0x39) and fork systems (0x44) | `particles.md` |
+//! | `logic` | mount effects, template mount stats and riders; drama lists; quest-state script paths; the landblock card of a landblock-info record (decals, phasing boxes, logic wiring, per-instance scripts with the table set, instance switches, light-glow objects, dramas, riders) | `mounts.md` §10, `npc-drama.md` §11, `instance-scripts.md` §9.6, `world-logic.md` §13, `decals.md` §9.3 |
+//! | [`live`] | the interactive parts: decal previews, day and night lights for a chosen day fraction, the simulated journal, the drama player and mount viewer buttons | `decals.md` §9.3, `instance-scripts.md` §9.6, `world-logic.md` §13, `npc-drama.md` §11, `mounts.md` §10 |
 //! | [`view`] | the UI | — |
 //!
 //! Records are recognised as the specs say: combat objects by class ancestry over the
@@ -32,6 +34,8 @@ mod combat;
 mod creature;
 mod economy;
 mod item;
+pub mod live;
+mod logic;
 mod map;
 mod particle;
 mod quest;
@@ -46,18 +50,24 @@ use tessera_formats::gameplay::common::{
     ObjectRoot, Pid, UNIQUEDB_LABEL, WEENIECONTENT_LABEL, is_object_did,
 };
 use tessera_formats::gameplay::creatures::{CreaturePids, LabelIndex, WeenieKinds};
+use tessera_formats::gameplay::drama::DramaLabels;
 use tessera_formats::gameplay::economy::EconomyReader;
 use tessera_formats::gameplay::items::{ItemSchema, ItemWeenieKinds};
 use tessera_formats::gameplay::map::{MapPids, MapWeenieKeys};
+use tessera_formats::gameplay::mounts::MountLabels;
 use tessera_formats::gameplay::quests::{QuestLabels, QuestSingletons};
+use tessera_formats::gameplay::world_logic::WorldLogicLabels;
+use tessera_formats::script_table::instance::InstanceScriptLabels;
 use tessera_formats::{
     DataIdMap, Did, EnumMapper, PropertySet, PropertySetRecord, object_property_set_did,
 };
 use tessera_props::{EnumSource, PropertyRegistry};
+use tessera_world::decals::DecalPids;
 use tessera_wstate::{ClassLibrary, LIBRARY_DID};
 
 use card::{Card, Labels, property_section, remaining_section};
 pub use card::{Row, Section};
+pub use logic::is_landblock_info;
 
 use crate::data::DataContext;
 use crate::error::ExplorerError;
@@ -79,6 +89,11 @@ pub enum Family {
     Map,
     /// Particle and fork systems (`particles.md`).
     Particle,
+    /// Mount effects (`mounts.md`).
+    Mount,
+    /// The logic of a landblock-info record (`world-logic.md`, `instance-scripts.md`,
+    /// `npc-drama.md`, `decals.md`).
+    Logic,
     /// A game object no family recognises: its properties only.
     Object,
 }
@@ -95,6 +110,8 @@ impl Family {
             Self::Economy => "economy",
             Self::Map => "map",
             Self::Particle => "particle",
+            Self::Mount => "mount",
+            Self::Logic => "landblock logic",
             Self::Object => "object",
         }
     }
@@ -121,14 +138,17 @@ pub struct GameplayProduct {
     pub sections: Vec<Section>,
     /// Classification notes and the errors of typed readers.
     pub notes: Vec<String>,
+    /// The interactive parts (decal previews, day and night lights, simulated journal,
+    /// drama player, mount viewer), evaluated on the UI thread.
+    pub live: Option<Arc<live::LiveData>>,
 }
 
 /// Whether the gameplay view applies to `did`: game objects and their property sets
 /// (0x70–0x7F), the encounter table (0x14), particle (0x39) and fork systems (0x44), and
-/// the 0x0E tables (only the map tables decode).
+/// the 0x0E tables (only the map tables decode), and landblock-info records (their logic).
 #[must_use]
 pub fn applies_to(did: u32) -> bool {
-    matches!(did >> 24, 0x70..=0x7F | 0x14 | 0x39 | 0x44 | 0x0E)
+    matches!(did >> 24, 0x70..=0x7F | 0x14 | 0x39 | 0x44 | 0x0E) || logic::is_landblock_info(did)
 }
 
 /// The labels, kind tables and class library of one install, built once on a worker.
@@ -147,6 +167,11 @@ pub(crate) struct Schemas {
     pub map: MapPids,
     pub map_weenie: MapWeenieKeys,
     pub uniquedb: Option<Arc<DataIdMap>>,
+    pub mounts: MountLabels,
+    pub drama: DramaLabels,
+    pub ist: InstanceScriptLabels,
+    pub logic: WorldLogicLabels,
+    pub decals: DecalPids,
     /// Problems met while building (shown on every card).
     pub problems: Vec<String>,
 }
@@ -241,6 +266,11 @@ impl Schemas {
             map: MapPids::resolve(dict),
             map_weenie,
             uniquedb,
+            mounts: MountLabels::resolve(dict),
+            drama: DramaLabels::resolve(dict),
+            ist: InstanceScriptLabels::resolve(dict),
+            logic: WorldLogicLabels::resolve(dict),
+            decals: DecalPids::resolve(dict),
             problems,
             registry,
         })
@@ -256,6 +286,8 @@ pub(crate) struct Built {
     /// Property groups the family reads, shown after its own sections.
     pub groups: Vec<(&'static str, Vec<Pid>)>,
     pub notes: Vec<String>,
+    /// Interactive parts.
+    pub live: live::LiveData,
 }
 
 /// The context of one card build.
@@ -318,6 +350,7 @@ pub(crate) fn build(
         0x39 | 0x44 => particle::system_product(&cx, did)?,
         0x14 => creature::encounter_product(&cx, did)?,
         0x0E => map::table_product(&cx, did)?,
+        0x80 if logic::is_landblock_info(did) => logic::landblock_product(&cx, did)?,
         _ => {
             return Err(ExplorerError::NotApplicable(format!(
                 "{did:#010x} is not a gameplay record"
@@ -340,6 +373,7 @@ pub(crate) fn product(did: u32, family: Family, kind: impl Into<String>) -> Game
         root_class: None,
         sections: Vec::new(),
         notes: Vec::new(),
+        live: None,
     }
 }
 
@@ -413,6 +447,9 @@ fn object_product(
     if let Some(b) = map::card(cx, &obj) {
         recognised.push((Family::Map, b));
     }
+    if let Some(b) = logic::mount_card(cx, &obj) {
+        recognised.push((Family::Mount, b));
+    }
     let mut iter = recognised.into_iter();
     let (family, mut built) = iter.next().unwrap_or_else(|| {
         (
@@ -431,6 +468,18 @@ fn object_product(
     // Sections every object may carry, whatever its family.
     economy::vendor_sections(cx, &obj, &mut built.card);
     map::object_sections(cx, &obj, &mut built.card);
+    logic::mount_sections(cx, &obj, &mut built.card);
+    logic::drama_sections(cx, obj.set, &mut built.card, "");
+    if let Some(sd) = set_did {
+        built.live.dramas.extend(logic::drama_plays(
+            cx,
+            obj.set,
+            object.map(|d| d.0),
+            crate::drama_play::DramaSource::Set(sd.0),
+            "",
+        ));
+    }
+    logic::quest_state_sections(cx, obj.set, &mut built.card, "");
     let mut shown: HashSet<u32> = HashSet::new();
     let mut sections = built.card.sections;
     for (title, pids) in &built.groups {
@@ -463,6 +512,7 @@ fn object_product(
         root_class: root,
         sections,
         notes,
+        live: (!built.live.is_empty()).then(|| Arc::new(built.live)),
     })
 }
 

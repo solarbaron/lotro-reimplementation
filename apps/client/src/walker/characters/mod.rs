@@ -95,6 +95,10 @@ pub struct CharacterConfig {
     pub anim_distance: f32,
     /// Most entities in the store.
     pub max_entities: u32,
+    /// The updated-avatar graphics option (`appearance.md` §3.3, default on): figure
+    /// appearance elements with a toggle file use it. Kept in Tessera's settings
+    /// (`[Graphics]`); read when the walker starts.
+    pub updated_avatars: bool,
 }
 
 impl Default for CharacterConfig {
@@ -104,6 +108,7 @@ impl Default for CharacterConfig {
             draw_distance: 400.0,
             anim_distance: 200.0,
             max_entities: 1 << 16,
+            updated_avatars: true,
         }
     }
 }
@@ -308,8 +313,9 @@ pub struct FigureEffectView {
     pub position: [f64; 3],
     /// Rotation.
     pub rotation: Quat,
-    /// Render scale (model scale × placement scale, as drawn).
-    pub scale: f32,
+    /// Render scale per axis (model scale × placement scale, as drawn; `appearance.md`
+    /// §6.1).
+    pub scale: Vec3,
     /// Drawn by this layer at the last update (`shown_figures`, `walker.md` §10.2).
     pub drawn: bool,
     /// Model-space bone matrices of the current pose (the sampled pose, else the reference
@@ -530,7 +536,7 @@ impl CharacterLayer {
             return None;
         };
         let tf = self.store.transform(e)?;
-        let scale = g.asset.model_scale * tf.scale[0];
+        let scale = Vec3::from_array(g.asset.model_scale) * tf.scale[0];
         let rot = Quat::from_array(tf.rotation);
         let model = match self.store.anim(e) {
             Some(anim) => self
@@ -553,10 +559,10 @@ impl CharacterLayer {
             } else {
                 Quat::IDENTITY
             },
-            scale: if scale.is_finite() && scale > 0.0 {
+            scale: if scale.is_finite() && scale.min_element() > 0.0 {
                 scale
             } else {
-                1.0
+                Vec3::ONE
             },
             drawn: !a.hidden && self.shown.contains(&tag),
             model,
@@ -1078,6 +1084,9 @@ impl CharacterLayer {
             static_only: matches!(role, Some(WeenieRole::Door | WeenieRole::Marker)),
             avatar_height: None,
             bone_scale: None,
+            // `appearance.md` §7.4 Decision: a placed figure's script picks are seeded
+            // from its instance ID.
+            seed: info.as_ref().and_then(|i| i.iid),
         };
         let slot = (!hidden && matches!(req.body, Body::Character { .. } | Body::Object(_)))
             .then(|| self.acquire(req));
@@ -1561,11 +1570,11 @@ impl CharacterLayer {
             )) else {
                 continue;
             };
-            let scale = g.asset.model_scale * tf.scale[0];
-            let scale = if scale.is_finite() && scale > 0.0 {
+            let scale = Vec3::from_array(g.asset.model_scale) * tf.scale[0];
+            let scale = if scale.is_finite() && scale.min_element() > 0.0 {
                 scale
             } else {
-                1.0
+                Vec3::ONE
             };
             let rot = Quat::from_array(tf.rotation);
             let rot = if rot.is_finite() && rot.length_squared() > 0.0 {
@@ -1573,9 +1582,9 @@ impl CharacterLayer {
             } else {
                 Quat::IDENTITY
             };
-            let world = Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, pos);
+            let world = Mat4::from_scale_rotation_translation(scale, rot, pos);
             let center = world.transform_point3(g.center);
-            let radius = g.radius * scale;
+            let radius = g.radius * scale.max_element();
             let distance = ((center - camera).length() - radius).max(0.0);
             let lod = character_lod(self.lod_classes.as_deref(), g.asset.lod_class, is_player);
             let max_d = character_draw_distance(&df, cap, &lod);

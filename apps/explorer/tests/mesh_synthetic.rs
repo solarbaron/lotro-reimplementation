@@ -94,6 +94,7 @@ fn appearance(did: u32, entries: Vec<AppearanceEntry>) -> Vec<u8> {
     let key_table = entries.iter().map(|e| (e.key, 0)).collect();
     AppearanceRecord {
         did: Did(did),
+        linked: Vec::new(),
         section: 0,
         entries,
         key_table,

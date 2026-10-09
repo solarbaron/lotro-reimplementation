@@ -851,6 +851,9 @@ impl Walker {
                 materials: objects.materials(),
                 mesh_config: mesh_cfg,
                 clips: ClipStore::default(),
+                assembly: tessera_mesh::assembly::AssemblyOptions {
+                    avatar_update_visible: config.characters.updated_avatars,
+                },
             }),
             &pool,
         );

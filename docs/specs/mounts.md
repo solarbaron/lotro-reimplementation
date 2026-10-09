@@ -532,6 +532,12 @@ Consequences an implementation must keep:
 > uniform scale of the node's scale (times the rider's model scale when `UseParentScale` is
 > 1).
 
+> **OPEN (implementer, 2026-10-09):** `MeshFXScript_Scale` is a vec3, and the Decision above
+> applies "a uniform scale of the node's scale". **Tessera's choice:** the three components
+> scale the three axes (the same thing whenever they are equal; every mount node the
+> explorer's real-data test chose had equal components). Should a node with unequal
+> components ever occur, which component (or which combination) is the uniform scale?
+
 <a id="s4-5"></a>
 ### 4.5 Rider and mount talk through targets (Confirmed (script data), MT14)
 
@@ -722,6 +728,11 @@ With the template values of §6.1 (`Mount_Movement_Max_Speed` 6.5, `…_Accelera
 `…_Turn_Rate` 100, `…_Gear_Change_Rate` 2.0, mirrored in their `_Cached` forms) a rider without
 war-steed bonuses has *F* = 6.5, *a*y = 0 and *R* = 100. The war-steed effects add to the base
 properties (§2.6); the `_Cached` forms are the forwarded results (§6.2).
+
+> **OPEN (implementer, 2026-10-09):** the strafe slots are not paired with property names
+> (Inferred above). **Tessera's choice:** *S*1 is the layered left strafe speed and *S*2 the
+> right one (`tessera-physics` `controller::warsteed`); every observed layer has equal strafe
+> speeds.
 
 <a id="s5-4"></a>
 ### 5.4 Target velocity and integration (BIN, MT20)

@@ -2,114 +2,471 @@
 //! The property IDs and enum keys assembly reads, looked up in the data at run time.
 
 use tessera_formats::appearance::AppearanceListPids;
-use tessera_formats::item::{HoldingRule, ItemVisual, WardrobeFallbacks};
+use tessera_formats::item::{HoldingRule, WardrobeFallbacks};
 use tessera_formats::{Did, EnumMapper, PropertyNames};
 use tessera_props::{EnumSource, GameData, PropsError, RecordSource};
 
-/// Stowing locations by equipment category (`appearance.md` §5.4 Decision): one-handed
-/// weapons in the primary slot → `Sheath_LHip`, in the secondary slot → `Sheath_RHip`;
-/// `2HSword` → `Sheath_Back_2H_Sword`; other two-handed weapons, staves, spears and
-/// halberds → `Sheath_Back_2H`; `Bow` → `Sheath_Back_Bow`; `Crossbow` →
-/// `Sheath_Back_Crossbow`; shields → `Sheath_Back_Shield`; everything else (orbs, javelins,
-/// categories the Decision does not name) stays in hand.
-///
-/// `Item_EquipmentCategory` is a 64-bit bitfield: an item stores a **bit mask**, in which
-/// bit *k* − 1 stands for enum key *k* (`property-system.md` §7.3). The rule therefore holds
-/// category masks, not enum keys, and matches an item when the masks intersect.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct StowRule {
-    /// `ContainerSlot` bits of `Weapon_Primary`.
-    pub primary_slot: u64,
-    /// `ContainerSlot` bits of `Weapon_Secondary`.
-    pub secondary_slot: u64,
-    /// `Item_EquipmentCategory` bits of the one-handed weapons, together.
-    pub one_handed: u64,
-    /// Location of a one-handed weapon in the primary slot.
-    pub primary_one_handed: Option<u32>,
-    /// Location of a one-handed weapon in the secondary slot.
-    pub secondary_one_handed: Option<u32>,
-    /// (`Item_EquipmentCategory` bits, location) for the other stowed categories; the first
-    /// pair whose bits intersect the item's wins.
-    pub by_category: Vec<(u64, u32)>,
+/// The three weapon slots whose placement scripts attach an equipped item's entity
+/// (`appearance.md` §5.6: `Script_Item_PhysObj_Primary`, `…_Secondary`, `…_Ranged`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WeaponSlot {
+    /// `Weapon_Primary`.
+    Primary,
+    /// `Weapon_Secondary`.
+    Secondary,
+    /// `Weapon_Ranged`.
+    Ranged,
 }
 
-impl StowRule {
-    /// One-handed `Item_EquipmentCategory` labels (`appearance.md` §5.2).
-    pub const ONE_HANDED: [&'static str; 6] =
-        ["1HSword", "1HAxe", "Dagger", "1HMace", "1HHammer", "1HClub"];
+/// Which wearers a placement row applies to (`appearance.md` §5.6 "Species").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpeciesMatch {
+    /// Every species ("all", and "others" in a row that follows the specific ones).
+    Any,
+    /// The listed `SpeciesType` keys.
+    OneOf(Vec<u32>),
+}
 
-    /// (category label, `HoldingLocation` label) pairs of the §5.4 Decision besides the
-    /// one-handed weapons.
-    pub const BY_CATEGORY: [(&'static str, &'static str); 12] = [
-        ("2HSword", "Sheath_Back_2H_Sword"),
-        ("2HAxe", "Sheath_Back_2H"),
-        ("2HHammer", "Sheath_Back_2H"),
-        ("2HClub", "Sheath_Back_2H"),
-        ("2HStaff", "Sheath_Back_2H"),
-        ("Spear", "Sheath_Back_2H"),
-        ("Halberd", "Sheath_Back_2H"),
-        ("Bow", "Sheath_Back_Bow"),
-        ("Crossbow", "Sheath_Back_Crossbow"),
-        ("Shield", "Sheath_Back_Shield"),
-        ("MediumShield", "Sheath_Back_Shield"),
-        ("HeavyShield", "Sheath_Back_Shield"),
-    ];
+impl SpeciesMatch {
+    fn matches(&self, species: u32) -> bool {
+        match self {
+            Self::Any => true,
+            Self::OneOf(keys) => keys.contains(&species),
+        }
+    }
+}
 
-    /// Builds the rule from labels: `slot_bits` gives a `ContainerSlot` label's bits,
-    /// `category_bits` an `Item_EquipmentCategory` label's **bit** (key *k* → bit *k* − 1),
-    /// `location` a `HoldingLocation` label's key. Missing labels leave their entries out.
+/// The skill-mode condition of a row (`appearance.md` §5.6: shields stow on the back only
+/// while the figure's `Combat_SkillMode` is `Ranged`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillModeMatch {
+    /// Any skill mode.
+    Any,
+    /// Only while the skill mode is `Ranged`.
+    Ranged,
+    /// Only while it is not.
+    NotRanged,
+}
+
+impl SkillModeMatch {
+    fn matches(self, ranged: bool) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Ranged => ranged,
+            Self::NotRanged => !ranged,
+        }
+    }
+}
+
+/// The scale of a placement (the MeshFX node's `Scale`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlacementScale {
+    /// A fixed uniform scale.
+    Fixed(f32),
+    /// Driven by the wearer's `Script_AdjustableScale_Secondary_Vector` (stowed shields).
+    SecondaryVector,
+}
+
+/// One MeshFX attachment of a placement script (`appearance.md` §5.6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    /// The `HoldingLocation` key.
+    pub location: u32,
+    /// Offset in metres in the location's frame (`BoneOffset`).
+    pub offset: [f32; 3],
+    /// `OffsetRotationYaw`, `…Pitch`, `…Roll` in degrees.
+    pub rotation: [f32; 3],
+    /// The node's scale.
+    pub scale: PlacementScale,
+}
+
+/// One row of the stowed or wielded placement tables of `appearance.md` §5.6.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacementRow {
+    /// The weapon slot the item is equipped in.
+    pub slot: WeaponSlot,
+    /// The stowed (out of combat) table, else the wielded one.
+    pub stowed: bool,
+    /// `Item_EquipmentCategory` bits of the row's categories (key *k* is bit *k* − 1); an
+    /// item matches when its bits intersect them.
+    pub categories: u64,
+    /// Wearers the row applies to.
+    pub species: SpeciesMatch,
+    /// Skill-mode condition.
+    pub skill_mode: SkillModeMatch,
+    /// The attachments; empty for a row that draws nothing (an orb while stowed).
+    pub placements: Vec<Placement>,
+}
+
+/// The stowed and wielded placements of weapons, shields and ranged items
+/// (`appearance.md` §5.6, A24): the MeshFX nodes of the six placement scripts of the shared
+/// avatar table, as data. Out of combat an equipped item takes its **stowed** placement, in
+/// combat its **wielded** one (§5.4 Rule). The first row (in table order) whose slot,
+/// family, categories, species and skill mode match decides; an item no row matches
+/// (class items, instruments, baubles, effect items, items outside the three weapon slots)
+/// is not drawn (§5.3 Decision).
+///
+/// `Item_EquipmentCategory` is a 64-bit bitfield: an item stores a **bit mask** in which
+/// bit *k* − 1 stands for enum key *k* (`property-system.md` §7.3; `appearance.md` §15).
+///
+/// Not modelled: the cosmetic in-hand row (it lists entity DIDs in the script, not in the
+/// spec), the battle-gauntlet effect entity (named by the script), and the exceptions for
+/// mounts, stealth and cosmetic locomotion styles that a full script evaluator reproduces.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlacementRule {
+    /// `ContainerSlot` bits of `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`.
+    pub slot_bits: [u64; 3],
+    /// The rows, in matching order.
+    pub rows: Vec<PlacementRow>,
+}
+
+/// The one-handed category list of §5.6.
+const ONE_HANDED: [&str; 8] = [
+    "1HSword",
+    "1HAxe",
+    "1HMace",
+    "1HClub",
+    "1HHammer",
+    "Dagger",
+    "Implement1H",
+    "Cosmetic",
+];
+/// The two-handed list of §5.6 (`2HSword` and `2HStaff` have rows of their own).
+const TWO_HANDED: [&str; 7] = [
+    "2HMace",
+    "2HAxe",
+    "2HClub",
+    "2HHammer",
+    "Spear",
+    "Halberd",
+    "Implement2H",
+];
+const SHIELDS: [&str; 3] = ["Shield", "HeavyShield", "MediumShield"];
+const DWARVES: [&str; 2] = ["Dwarf", "DwarfStoutAxe"];
+
+impl PlacementRule {
+    /// Builds the tables of `appearance.md` §5.6 from labels: `slot_bits` gives a
+    /// `ContainerSlot` label's bits, `category_bits` an `Item_EquipmentCategory` label's
+    /// **bit** (key *k* → bit *k* − 1), `species` a `SpeciesType` label's key and `location`
+    /// a `HoldingLocation` label's key. Missing labels leave their categories, species or
+    /// attachments out (a row whose location is missing then draws nothing).
     #[must_use]
     pub fn from_labels(
         slot_bits: impl Fn(&str) -> Option<u64>,
         category_bits: impl Fn(&str) -> Option<u64>,
+        species: impl Fn(&str) -> Option<u32>,
         location: impl Fn(&str) -> Option<u32>,
     ) -> Self {
-        Self {
-            primary_slot: slot_bits("Weapon_Primary").unwrap_or(0),
-            secondary_slot: slot_bits("Weapon_Secondary").unwrap_or(0),
-            one_handed: Self::ONE_HANDED
+        use PlacementScale::{Fixed, SecondaryVector};
+        use SkillModeMatch as Sk;
+        use WeaponSlot::{Primary, Ranged, Secondary};
+        let cats = |labels: &[&str]| {
+            labels
                 .iter()
                 .filter_map(|l| category_bits(l))
-                .fold(0, |a, b| a | b),
-            primary_one_handed: location("Sheath_LHip"),
-            secondary_one_handed: location("Sheath_RHip"),
-            by_category: Self::BY_CATEGORY
-                .iter()
-                .filter_map(|(c, l)| Some((category_bits(c)?, location(l)?)))
-                .filter(|(bits, _)| *bits != 0)
-                .collect(),
+                .fold(0u64, |a, b| a | b)
+        };
+        let one = |labels: &[&str]| {
+            SpeciesMatch::OneOf(labels.iter().filter_map(|l| species(l)).collect())
+        };
+        let at = |label: &str, offset: [f32; 3], rotation: [f32; 3], scale: PlacementScale| {
+            location(label).map(|location| Placement {
+                location,
+                offset,
+                rotation,
+                scale,
+            })
+        };
+        let plain = |label: &str| at(label, [0.0; 3], [0.0; 3], Fixed(1.0));
+        let row =
+            |slot, stowed, categories, species, skill_mode, placements: Vec<Option<Placement>>| {
+                PlacementRow {
+                    slot,
+                    stowed,
+                    categories,
+                    species,
+                    skill_mode,
+                    placements: placements.into_iter().flatten().collect(),
+                }
+            };
+        let one_handed = cats(&ONE_HANDED);
+        let two_handed = cats(&TWO_HANDED);
+        let sword2 = cats(&["2HSword"]);
+        let staff = cats(&["2HStaff"]);
+        let orb = cats(&["Orb"]);
+        let shields = cats(&SHIELDS);
+        let bow = cats(&["Bow"]);
+        let crossbow = cats(&["Crossbow"]);
+        let javelin = cats(&["Javelin"]);
+        let any = SpeciesMatch::Any;
+        let half_turn = [0.0, 180.0, 0.0];
+        let quarter_roll = [0.0, 0.0, 90.0];
+        let rows = vec![
+            // Stowed (`appearance.md` §5.6 "Stowed placements").
+            row(
+                Primary,
+                true,
+                one_handed,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_LHip")],
+            ),
+            row(
+                Primary,
+                true,
+                sword2,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_Back_2H_Sword")],
+            ),
+            row(
+                Primary,
+                true,
+                two_handed,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_Back_2H")],
+            ),
+            row(
+                Primary,
+                true,
+                staff,
+                one(&DWARVES),
+                Sk::Any,
+                vec![at(
+                    "Sheath_Back_2H",
+                    [0.0, 0.35, 0.0],
+                    half_turn,
+                    Fixed(1.0),
+                )],
+            ),
+            row(
+                Primary,
+                true,
+                staff,
+                one(&["Hobbit"]),
+                Sk::Any,
+                vec![at("Sheath_Back_2H", [0.0, 0.2, 0.0], half_turn, Fixed(1.0))],
+            ),
+            row(
+                Primary,
+                true,
+                staff,
+                any.clone(),
+                Sk::Any,
+                vec![at("Sheath_Back_2H", [0.0, 0.4, 0.0], half_turn, Fixed(1.0))],
+            ),
+            row(Primary, true, orb, any.clone(), Sk::Any, vec![]),
+            row(
+                Secondary,
+                true,
+                one_handed,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_RHip")],
+            ),
+            row(
+                Secondary,
+                true,
+                shields,
+                any.clone(),
+                Sk::NotRanged,
+                vec![at("Wpn_Forearm", [0.0; 3], [0.0; 3], SecondaryVector)],
+            ),
+            row(
+                Secondary,
+                true,
+                shields,
+                any.clone(),
+                Sk::Ranged,
+                vec![at(
+                    "Sheath_Back_Shield",
+                    [0.0; 3],
+                    [0.0; 3],
+                    SecondaryVector,
+                )],
+            ),
+            row(
+                Ranged,
+                true,
+                bow,
+                one(&DWARVES),
+                Sk::Any,
+                vec![at("Sheath_Back_Bow", [0.0; 3], [0.0; 3], Fixed(0.9))],
+            ),
+            row(
+                Ranged,
+                true,
+                bow,
+                one(&["Hobbit", "RiverHobbit"]),
+                Sk::Any,
+                vec![at("Sheath_Back_Bow", [0.0; 3], [0.0; 3], Fixed(0.8))],
+            ),
+            row(
+                Ranged,
+                true,
+                bow,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_Back_Bow")],
+            ),
+            row(
+                Ranged,
+                true,
+                crossbow,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_Back_Crossbow")],
+            ),
+            row(
+                Ranged,
+                true,
+                javelin,
+                one(&DWARVES),
+                Sk::Any,
+                vec![at("Sheath_Back_Bow", [0.0; 3], quarter_roll, Fixed(1.0))],
+            ),
+            row(
+                Ranged,
+                true,
+                javelin,
+                one(&["Hobbit"]),
+                Sk::Any,
+                vec![at(
+                    "Sheath_Back_Bow",
+                    [0.03, 0.0, 0.0],
+                    quarter_roll,
+                    Fixed(1.0),
+                )],
+            ),
+            row(
+                Ranged,
+                true,
+                javelin,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Sheath_Back_Bow")],
+            ),
+            // Wielded (`appearance.md` §5.6 "Wielded placements").
+            row(
+                Primary,
+                false,
+                one_handed | sword2 | two_handed | staff,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_RHand")],
+            ),
+            row(
+                Primary,
+                false,
+                orb,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_RHand"), plain("Wpn_LHand")],
+            ),
+            row(
+                Secondary,
+                false,
+                one_handed,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_LOffHand")],
+            ),
+            row(
+                Secondary,
+                false,
+                shields,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_Forearm")],
+            ),
+            row(
+                Ranged,
+                false,
+                bow,
+                one(&DWARVES),
+                Sk::Any,
+                vec![at("Wpn_LHand", [0.0; 3], [0.0; 3], Fixed(0.9))],
+            ),
+            row(
+                Ranged,
+                false,
+                bow,
+                one(&["Hobbit", "RiverHobbit"]),
+                Sk::Any,
+                vec![at("Wpn_LHand", [0.0; 3], [0.0; 3], Fixed(0.8))],
+            ),
+            row(
+                Ranged,
+                false,
+                bow,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_LHand")],
+            ),
+            row(
+                Ranged,
+                false,
+                crossbow,
+                any.clone(),
+                Sk::Any,
+                vec![plain("Wpn_RHand")],
+            ),
+            row(
+                Ranged,
+                false,
+                javelin,
+                any,
+                Sk::Any,
+                vec![plain("Wpn_ROffhand")],
+            ),
+        ];
+        Self {
+            slot_bits: [
+                slot_bits("Weapon_Primary").unwrap_or(0),
+                slot_bits("Weapon_Secondary").unwrap_or(0),
+                slot_bits("Weapon_Ranged").unwrap_or(0),
+            ],
+            rows: rows.into_iter().filter(|r| r.categories != 0).collect(),
         }
     }
 
-    /// The stowing location of `item` in its default slot ([`StowRule::location_in`]).
+    /// The weapon slot of the `ContainerSlot` bits `slot` (secondary, then ranged, then
+    /// primary when several intersect), or `None` outside the three weapon slots.
     #[must_use]
-    pub fn location(&self, item: &ItemVisual) -> Option<u32> {
-        self.location_in(item, item.default_slot)
+    pub fn weapon_slot(&self, slot: u64) -> Option<WeaponSlot> {
+        let [p, s, r] = self.slot_bits;
+        if slot & s != 0 {
+            Some(WeaponSlot::Secondary)
+        } else if slot & r != 0 {
+            Some(WeaponSlot::Ranged)
+        } else if slot & p != 0 {
+            Some(WeaponSlot::Primary)
+        } else {
+            None
+        }
     }
 
-    /// The stowing location of `item` equipped in `slot` (`ContainerSlot` bits; `None`
-    /// means its default slot), or `None` when it stays in hand (or the rule does not know
-    /// its category). A one-handed weapon goes by the slot: secondary, then primary.
+    /// The placement row for an item with `Item_EquipmentCategory` bits `category` equipped
+    /// in `slot` (`ContainerSlot` bits) on a wearer of `species`, stowed or wielded, with
+    /// the ranged skill mode or not. `None` when no row matches: the item is not drawn.
     #[must_use]
-    pub fn location_in(&self, item: &ItemVisual, slot: Option<u64>) -> Option<u32> {
-        let category = item.equipment_category?;
-        if category == 0 {
-            return None;
-        }
-        if category & self.one_handed != 0 {
-            let slot = slot.or(item.default_slot).unwrap_or(0);
-            if slot & self.secondary_slot != 0 {
-                return self.secondary_one_handed;
-            }
-            if slot & self.primary_slot != 0 {
-                return self.primary_one_handed;
-            }
-            return None;
-        }
-        self.by_category
-            .iter()
-            .find(|(bits, _)| bits & category != 0)
-            .map(|&(_, l)| l)
+    pub fn row(
+        &self,
+        slot: u64,
+        category: u64,
+        species: u32,
+        ranged: bool,
+        stowed: bool,
+    ) -> Option<&PlacementRow> {
+        let ws = self.weapon_slot(slot)?;
+        self.rows.iter().find(|r| {
+            r.slot == ws
+                && r.stowed == stowed
+                && r.categories & category != 0
+                && r.species.matches(species)
+                && r.skill_mode.matches(ranged)
+        })
     }
 }
 
@@ -129,10 +486,18 @@ pub struct AssemblyVocabulary {
     pub upper_body: Option<u32>,
     /// Wardrobe-body fallbacks (§2.3 Decision).
     pub fallbacks: WardrobeFallbacks,
-    /// Holding locations per equipment slot (§5.3; `skeleton-anim.md` §8.5 world rule).
+    /// Paperdoll locations per equipment slot (§5.3; `skeleton-anim.md` §8.5), for
+    /// paperdoll views only; assembly places held items by `placement`.
     pub holding: HoldingRule,
-    /// Stowing locations (§5.4 Decision).
-    pub stow: StowRule,
+    /// Stowed and wielded placements in the world (§5.4 Rule, §5.6).
+    pub placement: PlacementRule,
+    /// `GOP_AvatarUpdateVisible`: the toggle property the option store answers
+    /// (§3.3 Tessera rule).
+    pub avatar_update_visible: Option<u32>,
+    /// `NPC_Cosmetic_Inventory_Visible`: false hides the figure's props (§5.5 Rule).
+    pub npc_props_visible: Option<u32>,
+    /// `Script_AdjustableScale_Secondary_Vector`: the scale of a stowed shield (§5.6).
+    pub secondary_scale: Option<u32>,
     /// (`NPC_Cosmetic_Inventory_Item<n>`, `NPC_Cosmetic_Inventory_HoldingLocation<n>`) for
     /// n = 1–4 (§5.5); index 0 is prop 1.
     pub npc_items: Vec<(u32, Option<u32>)>,
@@ -155,9 +520,9 @@ pub struct AssemblyVocabulary {
 
 impl AssemblyVocabulary {
     /// The paperdoll pairs of `appearance.md` §5.3 / `skeleton-anim.md` §8.5: (`ContainerSlot`
-    /// label, `HoldingLocation` label). The inventory-control object holds them, but its
-    /// struct's field names are not specified (`appearance.md` §14 OPEN), so the pairs are
-    /// built from the labels the specs give.
+    /// label, `HoldingLocation` label), as the spec lists them. (The inventory-control
+    /// object holds them in `InventoryControl_SlotToPaperdollLocation_MappingList`, §14;
+    /// how a reader finds that object is not specified, so the labels are used.)
     pub const SLOT_LOCATIONS: [(&'static str, &'static str); 3] = [
         ("Weapon_Primary", "Wpn_RHand"),
         ("Weapon_Secondary", "Wpn_LOffHand"),
@@ -184,6 +549,7 @@ impl AssemblyVocabulary {
         let slot_bits = |label: &str| bit("Inventory_DefaultSlot", label);
         let location = |label: &str| enum_key("Inventory_ParentingLocation", label);
         let category = |label: &str| bit("Item_EquipmentCategory", label);
+        let species = |label: &str| enum_key("RaceTable_Race", label);
         let holding = HoldingRule {
             slot_locations: Self::SLOT_LOCATIONS
                 .iter()
@@ -199,8 +565,11 @@ impl AssemblyVocabulary {
             clothing_color_secondary: enum_key("Appearance_Key", "ClothingColorSecondary"),
             upper_body: mesh_type("UpperBody"),
             fallbacks: WardrobeFallbacks::from_species_labels(|l| enum_key("RaceTable_Race", l)),
-            stow: StowRule::from_labels(slot_bits, category, location),
+            placement: PlacementRule::from_labels(slot_bits, category, species, location),
             holding,
+            avatar_update_visible: names.pid_of("GOP_AvatarUpdateVisible"),
+            npc_props_visible: names.pid_of("NPC_Cosmetic_Inventory_Visible"),
+            secondary_scale: names.pid_of("Script_AdjustableScale_Secondary_Vector"),
             npc_items: (1..=4)
                 .filter_map(|i| {
                     let item = names.pid_of(&format!("NPC_Cosmetic_Inventory_Item{i}"))?;

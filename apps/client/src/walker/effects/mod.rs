@@ -365,7 +365,7 @@ impl FxState {
                 if v.region != self.region {
                     return None;
                 }
-                let s = Vec3::splat(v.scale);
+                let s = v.scale;
                 Some(OwnerFrame {
                     world: Mat4::from_scale_rotation_translation(
                         s,
@@ -1142,6 +1142,9 @@ impl EffectLayer {
             properties: o.scripts.properties.clone(),
             parent: None,
             run_startup: true,
+            // Effect owners are not figures: their Random nodes keep the runtime's
+            // generator (`script-runtime.md` §8 OPEN-18 and its implementer note).
+            random_seed: None,
         };
         match Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
             g.spawn_entity(sink, o.id, init)

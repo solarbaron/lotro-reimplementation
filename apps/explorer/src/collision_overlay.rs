@@ -62,6 +62,14 @@ pub enum OverlayKind {
     Water,
     /// Liquid boxes.
     Liquids,
+    /// A decal's projection box (`decals.md` §4.2, decal preview).
+    DecalBox,
+    /// A decal's local X′ axis.
+    DecalAxisX,
+    /// A decal's local Y′ axis (the projection direction).
+    DecalAxisY,
+    /// A decal's local Z′ axis.
+    DecalAxisZ,
 }
 
 impl OverlayKind {
@@ -83,6 +91,10 @@ impl OverlayKind {
             Self::Detail => "detail (non-blocking)",
             Self::Water => "water plane",
             Self::Liquids => "liquid boxes",
+            Self::DecalBox => "decal box",
+            Self::DecalAxisX => "decal axis X′",
+            Self::DecalAxisY => "decal axis Y′",
+            Self::DecalAxisZ => "decal axis Z′",
         }
     }
 
@@ -104,6 +116,10 @@ impl OverlayKind {
             Self::Detail => [0.6, 0.6, 0.6, 0.15],
             Self::Water => [0.15, 0.4, 1.0, 0.35],
             Self::Liquids => [0.3, 0.6, 1.0, 1.0],
+            Self::DecalBox => [1.0, 1.0, 1.0, 1.0],
+            Self::DecalAxisX => [1.0, 0.2, 0.2, 1.0],
+            Self::DecalAxisY => [0.2, 1.0, 0.2, 1.0],
+            Self::DecalAxisZ => [0.3, 0.5, 1.0, 1.0],
         }
     }
 

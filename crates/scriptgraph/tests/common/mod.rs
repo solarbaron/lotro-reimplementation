@@ -530,6 +530,7 @@ pub fn init(props: Vec<(u32, PropertyValue)>) -> EntityInit {
         properties: p,
         parent: None,
         run_startup: true,
+        random_seed: None,
     }
 }
 

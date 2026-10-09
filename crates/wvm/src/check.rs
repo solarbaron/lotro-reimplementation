@@ -3,7 +3,7 @@
 //! `wlib-bytecode.md` §13 and the body-sharing rule of §2 (B18).
 //!
 //! These are reported, not enforced at load: the run-time checks of §12 cover what an
-//! interpreter needs (Tessera's choice, recorded as an implementer note in §12).
+//! interpreter needs (Tessera rule, `wlib-bytecode.md` §12 and §13).
 
 use std::collections::HashSet;
 

@@ -6,10 +6,16 @@
 //! of §11.1 with the float height of §11.2 (`Physics_AvatarFloatHeight` of the avatar's 0x47
 //! entity chain).
 //!
+//! The jump comes from the avatar's own jump script (`collision.md` §11.10): the
+//! `Loc_Jumping` script of its tables, run once per movement state with
+//! `Entity_FinalElement` set to that state, gives the `IsJump` PhysicsImpulse node the
+//! script picks there ([`load_jump_table`], a [`JumpTable`] for the controller).
+//!
 //! Every piece falls back on its own: a body that does not assemble keeps
 //! [`CharacterShape::PLAYABLE`] (the capsule every playable species ends up with, §10.6), a
 //! missing record the documented built-in record ([`PlayerMovementRecord::builtin`]), a
-//! missing entity set the default conditions. The fallbacks are listed in
+//! missing entity set the default conditions, a missing jump script Tessera's earlier
+//! jump rule (`collision.md` §12.4 (c), (i)). The fallbacks are listed in
 //! [`MoverSetup::notes`].
 
 use std::sync::Arc;
@@ -17,11 +23,17 @@ use std::time::Instant;
 
 use tessera_dat::ArchiveKind;
 use tessera_formats::Did;
+use tessera_formats::property::PropertyValue;
+use tessera_formats::script_table::NodeKind;
+use tessera_formats::script_table::resolve::{
+    ClipResolver, EntityScripts, MotionState, ScriptVocabulary, collect_entity_scripts,
+};
 use tessera_formats::setup::EntityDescriptor;
 use tessera_mesh::assembly::{CharacterAssembler, CharacterSpec, GameDataSource};
 use tessera_net::Body;
 use tessera_physics::controller::{
-    CharacterShape, LayerConditions, MovementPids, PlayerMovementRecord,
+    CharacterShape, JumpNode, JumpTable, LayerConditions, MovementPids, MovementState,
+    PlayerMovementRecord,
 };
 
 use crate::avatar::AvatarSpec;
@@ -60,6 +72,9 @@ pub struct MoverSetup {
     pub shape: CharacterShape,
     /// Where the capsule came from.
     pub shape_source: ShapeSource,
+    /// The jump nodes of the avatar's jump script by state (`collision.md` §11.10); `None`:
+    /// the earlier rule.
+    pub jump: Option<JumpTable>,
     /// Fallbacks taken, for the log.
     pub notes: Vec<String>,
 }
@@ -76,6 +91,7 @@ impl MoverSetup {
             conditions: LayerConditions::default(),
             shape: CharacterShape::PLAYABLE,
             shape_source: ShapeSource::Default,
+            jump: None,
             notes: vec!["no archives: built-in movement record and capsule".into()],
         }
     }
@@ -109,6 +125,7 @@ impl MoverSetup {
             conditions: LayerConditions::default(),
             shape: CharacterShape::PLAYABLE,
             shape_source: ShapeSource::Default,
+            jump: None,
             notes,
         };
         out.load_body(catalog, spec);
@@ -118,6 +135,10 @@ impl MoverSetup {
             radius = out.shape.radius(),
             height = out.shape.height(),
             float_height = out.record.float_height(&out.conditions),
+            jump = ?out.jump.map(|t| {
+                [MovementState::EarthControlledSurface, MovementState::WaterNoSurface]
+                    .map(|s| t.get(s).map(|n| n.vertical_speed()))
+            }),
             notes = ?out.notes,
             elapsed_ms = started.elapsed().as_millis(),
             "walk mover ready"
@@ -165,6 +186,13 @@ impl MoverSetup {
                 return;
             }
         };
+        self.jump = catalog.scripts.as_ref().and_then(|vocab| {
+            load_jump_table(&catalog.data, vocab, c.clip_inputs.start, &mut self.notes)
+        });
+        if self.jump.is_none() {
+            self.notes
+                .push("no jump script nodes; earlier jump rule (§12.4 (c))".into());
+        }
         let merged = entity_chain_set(&catalog.data, &c.chain, &mut self.notes);
         self.conditions = merged
             .as_ref()
@@ -196,6 +224,80 @@ impl MoverSetup {
             )),
         }
     }
+}
+
+/// The jump table of the entity whose scripts start at `start` (`collision.md` §11.10): the
+/// entity's `Loc_Jumping` script ([`ScriptVocabulary::jump_script`]) is run once for each
+/// movement state 1–6 with `Entity_FinalElement` and `Entity_Element` set to the state and
+/// the idle motion inputs, and the `IsJump` PhysicsImpulse node that starts with the
+/// highest chance (the first on a tie) becomes the state's node. `None` when the vocabulary
+/// lacks the script or the property, the scripts cannot be read, or no state has a node.
+///
+/// Tessera Decisions (recorded as OPEN in `collision.md` §12.5): the jump command starts
+/// `Loc_Jumping`; the character is on foot (nothing else running, so its WhenRunning on the
+/// mounted channelling script reports NotRunning); `Movement_CannotJump` keeps its stored
+/// or dictionary value (false when unset, `script-runtime.md` R27); While nodes pass their
+/// children through (their behaviour is unspecified, `script-runtime.md` §18).
+pub fn load_jump_table(
+    data: &Data,
+    vocab: &ScriptVocabulary,
+    start: Did,
+    notes: &mut Vec<String>,
+) -> Option<JumpTable> {
+    let (Some(key), Some(final_element)) = (vocab.jump_script, vocab.final_element) else {
+        notes.push("jump: no Loc_Jumping key or Entity_FinalElement in the data".into());
+        return None;
+    };
+    let registry = data.registry().ok()?;
+    let dict = registry.dictionary();
+    let scripts: EntityScripts = match collect_entity_scripts(start, dict, vocab, |d| data.read(d))
+    {
+        Ok(ch) => ch.scripts,
+        Err(e) => {
+            notes.push(format!("jump: scripts of {start}: {e}"));
+            return None;
+        }
+    };
+    // `script-runtime.md` R27: an unset property reads as its dictionary default, else as
+    // its type's zero value (so `Movement_CannotJump` reads false). The While node on the
+    // on-foot path has no rule in the specs (`script-runtime.md` §18); §11.10 states that
+    // on foot with `Movement_CannotJump` false the Switch on `Entity_FinalElement` picks the
+    // node, so the scan passes through it.
+    let mut resolver = ClipResolver::new(dict, vocab.clone(), |d: Did| data.read(d))
+        .with_dictionary_defaults(dict)
+        .unset_reads_as_zero(true)
+        .with_pass_through(&[NodeKind::WHILE]);
+    let mut table = JumpTable::new();
+    for k in 1..=6u32 {
+        let Some(state) = MovementState::from_key(k) else {
+            continue;
+        };
+        let mut props = scripts.properties.clone();
+        MotionState::Idle.inputs().apply(vocab, &mut props);
+        props.set(final_element, PropertyValue::Enum(k));
+        if let Some(pid) = vocab.entity_element {
+            props.set(pid, PropertyValue::Enum(k));
+        }
+        let r = match resolver.resolve_script(&scripts, key, props) {
+            Ok(r) => r,
+            Err(e) => {
+                notes.push(format!("jump: state {k}: {e}"));
+                continue;
+            }
+        };
+        let mut best: Option<(f32, JumpNode)> = None;
+        for c in r.impulses.iter().filter(|c| c.node.is_jump) {
+            let w = c.chance * c.blend_weight;
+            let Some(node) = JumpNode::new(c.node.air_time, c.node.expected_gravity) else {
+                continue;
+            };
+            if best.is_none_or(|(b, _)| w > b) {
+                best = Some((w, node));
+            }
+        }
+        table.set(state, best.map(|(_, n)| n));
+    }
+    (!table.is_empty()).then_some(table)
 }
 
 /// The physics scale of `collision.md` §8.1 (BIN, C42) from the merged entity set `set`:

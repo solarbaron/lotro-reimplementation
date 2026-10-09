@@ -16,20 +16,23 @@
 //! |---|---|---|
 //! | [`EntryKind`], [`ClassIndices`], [`classify`], [`WeenieIndex`] | the ten structural kinds of the WEENIECONTENT entries | §2.1 |
 //! | [`SCOPE_LABELS`], [`Group`], [`WEAPON_STYLE_LABELS`] | the 119 labels of this spec | §2.2, §5.5 |
-//! | [`is_empty_marker`], [`DidSet`], [`TemplateDiff`] | empty markers, DID sets, manager entities | §3.2–§3.4 |
+//! | [`is_empty_marker`], [`DidSet`], [`TemplateDiff`], [`entity_name`] | empty markers, DID sets, manager entities | §3.2–§3.4 |
 //! | [`SlotSchedule`], [`AdvancementTable`], [`ModifierTable`] | compiled-only tables | §4.2, §4.10 |
 //! | [`MountDirectory`], [`MountTrait`], [`MountedCombatControl`], [`DuelTimings`] | mounts, mounted gait multipliers, duel timings | §5 |
 //! | [`PerkControl`], [`Perk`], [`CollectionControl`], [`Collection`], [`PaperItemServices`], [`PaperItemService`], [`RandomItemRewardControl`], [`LoginReward`] | account and store | §6 |
-//! | [`VitalDisplayOverrideControl`], [`VitalDisplayOverride`], [`AlertsControl`], [`ResetScheduleControl`], [`ConsiderationControl`], [`ConsiderationTable`], [`TrackingStateControl`], [`DiscoveryDistanceControl`], [`CombatMusicControl`], [`AggroPingControl`], [`OpenTappingControl`] | UI and system rules | §7 |
+//! | [`VitalDisplayOverrideControl`], [`VitalDisplayOverride`], [`item_vdo_unlocks`], [`AlertsControl`], [`ResetScheduleControl`], [`ConsiderationControl`], [`ConsiderationTable`], [`TrackingStateControl`], [`DiscoveryDistanceControl`], [`CombatMusicControl`], [`AggroPingControl`], [`OpenTappingControl`] | UI and system rules | §7 |
 //! | [`GuildControl`] | social controls | §8.1 |
 //!
 //! # Hostile input
 //!
 //! The views copy scalars and DIDs out of sets and states that the lower layers have
-//! already decoded within their own bounds. Every list a view keeps is checked against
-//! [`MAX_VIEW_ENTRIES`] before it is collected; a present property of the wrong type is
-//! [`WStateError::BadProperty`] (except where the spec gives the client's fallback for a
-//! wrong type, §5.3.2, §5.7, §8.1); a compiled-only record of another layout is
+//! already decoded within their own bounds. The choices follow §3.1: every list a view
+//! keeps is checked against [`MAX_VIEW_ENTRIES`] before it is collected (Tessera
+//! Decision); a present property of the wrong type is [`WStateError::BadProperty`]
+//! (Tessera Decision), except for the client's native reads of §5.3.2, §5.7 and §8.1,
+//! which treat it as absent and use their fallback (client behaviour); DID lists drop
+//! null elements except the consideration lists of §7.5, which keep their 120 positions
+//! (Tessera Decision). A compiled-only record of another layout is
 //! [`WStateError::BadAttribute`] or [`WStateError::WrongKind`]; nothing indexes by a
 //! data-derived value.
 
@@ -48,8 +51,8 @@ pub use account::{
 };
 pub use generic::{
     ADVANCEMENT_ATTRIBUTE, AdvancementTable, DID_SET_ATTRIBUTE, DidSet, EMPTY_MARKER_STATE_LEN,
-    EMPTY_PROPERTY_SET_LEN, MODIFIER_ATTRIBUTE, ModifierTable, SlotSchedule, TemplateDiff,
-    is_empty_marker,
+    EMPTY_PROPERTY_SET_LEN, ENTITY_NAME_LABEL, MODIFIER_ATTRIBUTE, ModifierTable, SlotSchedule,
+    TemplateDiff, entity_name, is_empty_marker,
 };
 pub use kinds::{ClassIndices, EntryKind, IndexProblem, WeenieEntry, WeenieIndex, classify};
 pub use mounts::{
@@ -60,8 +63,8 @@ pub use mounts::{
 pub use ui::{
     AggroPingControl, AlertsControl, CombatMusicControl, ConsiderationControl, ConsiderationTable,
     DiscoveryDistanceControl, GuildControl, OpenTappingControl, PLAYER_NOTE_DEFAULT, ResetSchedule,
-    ResetScheduleControl, TrackingStateControl, VitalDisplayOverride, VitalDisplayOverrideControl,
-    bit_keys, unlocked_key,
+    ResetScheduleControl, TrackingStateControl, USAGE_PROPERTY_ARRAY, VDO_UNLOCK_LABEL,
+    VitalDisplayOverride, VitalDisplayOverrideControl, bit_keys, item_vdo_unlocks, unlocked_key,
 };
 
 pub use crate::character::MAX_VIEW_ENTRIES;

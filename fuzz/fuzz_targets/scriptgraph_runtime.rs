@@ -478,7 +478,16 @@ fuzz_target!(|data: &[u8]| {
     };
     let _ = rt.spawn_entity(&mut sink, player, init());
     rt.set_player(Some(player));
-    let _ = rt.spawn_entity(&mut sink, e, init());
+    // The entity sometimes has its own Random generator (`script-runtime.md` §8 OPEN-18).
+    let seed = ops.first().copied().filter(|b| b & 1 == 1).map(u64::from);
+    let _ = rt.spawn_entity(
+        &mut sink,
+        e,
+        EntityInit {
+            random_seed: seed,
+            ..init()
+        },
+    );
     let mut it = ops.iter().copied();
     while let Some(op) = it.next() {
         let x = it.next().unwrap_or(0);
@@ -509,7 +518,16 @@ fuzz_target!(|data: &[u8]| {
             }
             _ => {
                 let _ = rt.despawn(&mut sink, e);
-                let _ = rt.spawn_entity(&mut sink, e, init());
+                // The entity sometimes has its own Random generator (`script-runtime.md` §8 OPEN-18).
+                let seed = ops.first().copied().filter(|b| b & 1 == 1).map(u64::from);
+                let _ = rt.spawn_entity(
+                    &mut sink,
+                    e,
+                    EntityInit {
+                        random_seed: seed,
+                        ..init()
+                    },
+                );
             }
         }
         if let Some(n) = rt.entity_instances(e) {

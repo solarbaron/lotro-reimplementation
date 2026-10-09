@@ -225,13 +225,21 @@ fn reach_up_a_walkable_ramp_and_release_at_the_waypoint() {
         [80.0, 76.0, z],
         0.0,
         "walk",
-        // Uphill the controller keeps about 2.2 of its 4.9 m/s (reported).
-        12.0,
+        // Walk mode asks for 2.5 m/s (`collision.md` §11.8); uphill the controller keeps
+        // less of it.
+        16.0,
     );
     let walk = parse_walk_file(&text).unwrap();
     let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
-    assert!(out.rows.iter().all(|r| r.record.walking));
+    // Walk mode selects the Walking layer from the first step with input on (the style
+    // keeps its value while no move key is held, §11.8 item 6).
+    assert!(
+        out.rows
+            .iter()
+            .filter(|r| r.t >= 0.0)
+            .all(|r| r.record.walking)
+    );
     // Forward is released near the last waypoint.
     assert!(
         out.rows
@@ -265,7 +273,12 @@ fn reach_climbs_box_steps() {
     let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     assert!(out.rows.iter().any(|r| r.record.report.stepped_up));
-    assert!(out.rows.iter().all(|r| r.record.walking));
+    assert!(
+        out.rows
+            .iter()
+            .filter(|r| r.t >= 0.0)
+            .all(|r| r.record.walking)
+    );
 }
 
 #[test]
@@ -765,7 +778,8 @@ fn cells_walk_through_a_doorway() {
             [75.0, 80.0, z0],
             90.0,
             "walk",
-            4.0,
+            // 10 m at the walk-mode 2.5 m/s (`collision.md` §11.8).
+            6.0,
         )
         .replace("cell = 0", &format!("cell = {row_cell}"));
         let walk = parse_walk_file(&text).unwrap();
@@ -1256,7 +1270,8 @@ fn follow_across_a_walkable_slope_allows_the_rest_offset() {
         [70.0, 80.0, g + 0.11],
         90.0,
         "walk",
-        8.0,
+        // 20 m at the walk-mode 2.5 m/s (`collision.md` §11.8).
+        12.0,
     );
     let out = run_walk(
         &parse_walk_file(&text).unwrap(),

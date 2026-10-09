@@ -398,6 +398,20 @@ fn manager_template_diff() {
     assert_eq!(d.only_second, vec![pid(&reg, "Test_GcFloat")]);
     assert!(d.only_first.is_empty());
     assert!(TemplateDiff::between(&a, &a).is_empty());
+
+    // §3.4: the name is `Name`, looked up by label.
+    let named = set(vec![p(
+        &reg,
+        ENTITY_NAME_LABEL,
+        Value::StringInfo(Box::new(tessera_formats::StringInfo {
+            source: tessera_formats::StringSource::Literal(tessera_formats::Utf16String::from("x")),
+            args: None,
+        })),
+    )]);
+    assert!(entity_name(&named, &reg).expect("name").is_some());
+    assert_eq!(entity_name(&a, &reg).expect("no name"), None);
+    let bad = set(vec![p(&reg, "Name", Value::Int(1))]);
+    assert!(entity_name(&bad, &reg).is_err());
 }
 
 #[test]
@@ -589,7 +603,7 @@ fn mounted_combat_control_tables() {
                 &reg,
                 vec![vec![
                     p(&reg, "Mount_Control_FlankPosition", Value::Bitfield32(1)),
-                    p(&reg, "Mount_Control_Flank_Heading", Value::Int(90)),
+                    p(&reg, "Mount_Control_Flank_Heading", Value::Float(90.0)),
                     p(&reg, "Mount_Control_Flank_LeftArc", Value::Float(-45.0)),
                     p(&reg, "Mount_Control_Flank_RightArc", Value::Float(45.0)),
                 ]],
@@ -636,6 +650,35 @@ fn mounted_combat_control_tables() {
         c.tree_skills.first().map(|t| t.skills.clone()),
         Some(vec![(Some(23), Some(Did(0x7000_0001)))])
     );
+    // The tree keys: the tree array is absent here, so the two key sets differ.
+    assert!(!c.tree_keys_consistent());
+    let mut both = c.clone();
+    both.trees = vec![MountTree {
+        tree: Some(1),
+        ..MountTree::default()
+    }];
+    assert!(both.tree_keys_consistent());
+    both.trees.push(MountTree {
+        tree: Some(1),
+        ..MountTree::default()
+    });
+    assert!(!both.tree_keys_consistent(), "a key twice in one array");
+    // GCI18: the flank angles are floats; an int heading is an error of the view (§3.1).
+    let int_heading = set(vec![p(
+        &reg,
+        "Mount_Control_FlankConstraints_Array",
+        structs(
+            &reg,
+            vec![vec![p(&reg, "Mount_Control_Flank_Heading", Value::Int(90))]],
+        ),
+    )]);
+    assert!(matches!(
+        MountedCombatControl::from_properties(&int_heading, &reg),
+        Err(WStateError::BadProperty {
+            property: "Mount_Control_Flank_Heading",
+            ..
+        })
+    ));
     // A struct list that is not an array is a typed error.
     let bad = set(vec![p(&reg, "Mount_Control_Tree_Array", Value::Int(1))]);
     assert!(matches!(
@@ -665,6 +708,9 @@ fn mount_directory_and_traits() {
         other: 0,
     };
     assert!(!overlap.is_disjoint());
+    // §5.1: the race table's tall flag picks the group (reading, Q6).
+    assert_eq!(d.skills_for_size(true), &[Did(1), Did(3)]);
+    assert_eq!(d.skills_for_size(false), &[Did(2)]);
 
     let appearance = |k: u32| {
         p(
@@ -909,6 +955,54 @@ fn vital_display_unlock_worked_example() {
     )
     .expect("override");
     assert_eq!(o.key, unlocked_key(&bits(vec![0x00, 0x02])));
+
+    // §7.1, GCI17: the unlock is the element of the item's top-level usage array; a
+    // top-level value or one inside a struct is not an unlock, other elements are
+    // skipped by label.
+    let item = set(vec![
+        p(
+            &reg,
+            "Usage_SetPropertyUsageData_Array",
+            Value::Array(vec![
+                p(&reg, "Test_GcInt", Value::Int(3)),
+                p(
+                    &reg,
+                    "VitalDisplayOverride_UnlockedVDOs",
+                    bits(vec![0x00, 0x02]),
+                ),
+            ]),
+        ),
+        p(&reg, "VitalDisplayOverride_UnlockedVDOs", bits(vec![0x01])),
+    ]);
+    assert_eq!(item_vdo_unlocks(&item, &reg).expect("item"), vec![Some(10)]);
+    let nested = set(vec![p(
+        &reg,
+        "Usage_SetPropertyUsageData_Array",
+        Value::Array(vec![p(
+            &reg,
+            "Test_GcStruct",
+            st(vec![p(
+                &reg,
+                "VitalDisplayOverride_UnlockedVDOs",
+                bits(vec![0x01]),
+            )]),
+        )]),
+    )]);
+    assert!(item_vdo_unlocks(&nested, &reg).expect("item").is_empty());
+    assert!(
+        item_vdo_unlocks(&set(vec![]), &reg)
+            .expect("no array")
+            .is_empty()
+    );
+    let wrong = set(vec![p(
+        &reg,
+        "Usage_SetPropertyUsageData_Array",
+        Value::Int(1),
+    )]);
+    assert!(matches!(
+        item_vdo_unlocks(&wrong, &reg),
+        Err(WStateError::BadProperty { .. })
+    ));
     assert_eq!(
         (o.ui_state, o.for_monsters, o.for_free_peoples),
         (Some(0x55), Some(true), Some(false))

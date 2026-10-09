@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `tessera-settings` preference sections: the `[UI]` and `[Input]` readers must accept any
-//! settings document without panicking, and what they store must read back to the same
-//! preferences.
+//! `tessera-settings` preference sections: the `[UI]`, `[Input]` and `[Graphics]` readers
+//! must accept any settings document without panicking, and what they store must read back
+//! to the same preferences.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tessera_settings::{InputPrefs, Settings, UiPrefs};
+use tessera_settings::{GraphicsPrefs, InputPrefs, Settings, UiPrefs};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
@@ -28,4 +28,15 @@ fuzz_target!(|data: &[u8]| {
     );
     ui.store(&mut settings);
     let _ = UiPrefs::from_settings(&settings);
+    let (graphics, _) = GraphicsPrefs::from_settings(&settings);
+    graphics.store(&mut settings);
+    let (again, warnings) = GraphicsPrefs::from_settings(&settings);
+    assert!(
+        warnings.is_empty(),
+        "stored [Graphics] re-read with warnings"
+    );
+    assert_eq!(
+        again, graphics,
+        "the [Graphics] round trip changed the preferences"
+    );
 });

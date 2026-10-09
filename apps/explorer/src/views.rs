@@ -21,13 +21,20 @@ use crate::image_ops::ChannelMask;
 use crate::richtext::{Palette, layout_job};
 
 /// Something a view asks the app to do after drawing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Action {
     Open(u32),
     Go(Nav),
     View(ViewKind),
     ToggleBookmark(u32),
     Reveal,
+    /// Show choice `n` of the selected record in the mesh view (a decal preview of a
+    /// landblock-info record, `decals.md` §9.3).
+    MeshChoice(u8),
+    /// Play a drama in the character view (`npc-drama.md` §11 item 4).
+    PlayDrama(Box<crate::drama_play::DramaPlayArg>),
+    /// Ride a mount effect in the character view (`mounts.md` §10).
+    Ride(u32),
 }
 
 /// Requests `key` from `store` into `slot` unless the slot already holds that key.
@@ -171,6 +178,36 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
             Action::Reveal => {
                 if !app.reveal_current() {
                     app.status = Some("not in an archive index (yet)".into());
+                }
+            }
+            Action::MeshChoice(n) => {
+                if let Some(c) = &mut app.current {
+                    c.mesh.set_choice(n);
+                    let nav = Nav {
+                        view: ViewKind::Mesh,
+                        ..c.nav
+                    };
+                    app.navigate(nav);
+                }
+            }
+            Action::PlayDrama(arg) => {
+                app.character.play_drama(*arg);
+                if let Some(c) = &app.current {
+                    let nav = Nav {
+                        view: ViewKind::Character,
+                        ..c.nav
+                    };
+                    app.navigate(nav);
+                }
+            }
+            Action::Ride(effect) => {
+                app.character.ride(Some(effect));
+                if let Some(c) = &app.current {
+                    let nav = Nav {
+                        view: ViewKind::Character,
+                        ..c.nav
+                    };
+                    app.navigate(nav);
                 }
             }
             Action::ToggleBookmark(did) => {

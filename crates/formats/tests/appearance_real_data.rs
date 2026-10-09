@@ -221,16 +221,21 @@ fn appearance_lists_choose_blocks() {
             let cat = if el.file.is_null() {
                 "null DID"
             } else if let Some(r) = recs.get(&el.file) {
+                // §3.2.1 (A19) and the AI12 census categories.
                 match r.entry(el.key) {
                     None => "key missing",
-                    Some(e) => {
-                        let exact = e
-                            .blocks
-                            .iter()
-                            .any(|b| (b.variant - el.modifier).abs() <= 0.0005);
-                        assert!(e.block_for_modifier(el.modifier).is_some() || e.blocks.is_empty());
-                        if exact { "rule 1" } else { "rule 2 or 3" }
-                    }
+                    Some(e) => match e.block_for_modifier(el.modifier) {
+                        Some(b) if b.variant == el.modifier => "exact",
+                        Some(b) => {
+                            assert!(b.variant < el.modifier, "a lower block");
+                            "lower block (rule 2)"
+                        }
+                        None if el.modifier == -1.0 => "none (rule 1)",
+                        None => {
+                            assert!(e.blocks.first().is_none_or(|f| f.variant > el.modifier));
+                            "none (rule 3)"
+                        }
+                    },
                 }
             } else {
                 "record missing (AI8)"
@@ -351,7 +356,7 @@ fn worn_and_held_items_resolve() {
             let slot = it.default_slot.map_or("none".into(), |s| format!("{s:#x}"));
             let e = held.entry(slot).or_default();
             e.0 += 1;
-            if let (Ok(s), Some(l)) = (&human_setup, rule.location(it, true)) {
+            if let (Ok(s), Some(l)) = (&human_setup, rule.paperdoll_location(it)) {
                 e.1 += usize::from(s.holding_location(l).is_some());
             }
         }
@@ -474,7 +479,7 @@ fn playable_bodies_resolve() {
             e.sex,
             b.entity,
             b.setup,
-            b.model_scale(),
+            b.model_scale()[2],
             b.template_scale,
             b.entity_scale,
             files.join(" ")

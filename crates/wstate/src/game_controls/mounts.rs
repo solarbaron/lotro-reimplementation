@@ -21,12 +21,6 @@ pub const GAIT_GALLOP: u32 = 7;
 
 /// A float or an integer property value, widened (for fields whose stored type the spec
 /// leaves open).
-fn number(v: &Value) -> Option<f64> {
-    v.as_f32()
-        .map(f64::from)
-        .or_else(|| v.as_i32().map(f64::from))
-}
-
 /// The mount directory (§5.1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MountDirectory {
@@ -70,6 +64,15 @@ impl MountDirectory {
     /// Every skill, tall first.
     pub fn skills(&self) -> impl Iterator<Item = Did> + '_ {
         self.tall.iter().chain(&self.short).copied()
+    }
+
+    /// The skill group for a body size: `tall` is the species' `RaceTable_IsTallRace`
+    /// flag from the race table (§5.1; [`tessera_formats::avatar`] reads it as
+    /// `tall_race`). That true selects the `Mount_SkillToGrantTall` group and false the
+    /// `…Short` group is a reading from the labels, not a read link (§5.1 OPEN, Q6).
+    #[must_use]
+    pub fn skills_for_size(&self, tall: bool) -> &[Did] {
+        if tall { &self.tall } else { &self.short }
     }
 }
 
@@ -207,16 +210,18 @@ pub struct TreeSkills {
 
 /// One flank constraint (§5.3.1). Reading: the position covers heading + left arc to
 /// heading + right arc, in degrees relative to the steed's facing; its use is OPEN (Q7).
+/// The three angles are floats (GC14, GCI18); a value of another type is an error of the
+/// view (§3.1, Tessera Decision).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FlankConstraint {
-    /// `Mount_Control_FlankPosition` (bitfield).
+    /// `Mount_Control_FlankPosition` (bitfield32).
     pub position: Option<u64>,
-    /// `Mount_Control_Flank_Heading`.
-    pub heading: Option<f64>,
-    /// `Mount_Control_Flank_LeftArc`.
-    pub left_arc: Option<f64>,
-    /// `Mount_Control_Flank_RightArc`.
-    pub right_arc: Option<f64>,
+    /// `Mount_Control_Flank_Heading` (float, degrees).
+    pub heading: Option<f32>,
+    /// `Mount_Control_Flank_LeftArc` (float, degrees).
+    pub left_arc: Option<f32>,
+    /// `Mount_Control_Flank_RightArc` (float, degrees).
+    pub right_arc: Option<f32>,
 }
 
 /// One `Mount_Control_Slots_Allowing_Dye` entry (§5.3.1).
@@ -343,9 +348,9 @@ impl MountedCombatControl {
             flanks: f.struct_list("Mount_Control_FlankConstraints_Array", |s| {
                 Ok(FlankConstraint {
                     position: s.bits("Mount_Control_FlankPosition")?,
-                    heading: s.typed("Mount_Control_Flank_Heading", number)?,
-                    left_arc: s.typed("Mount_Control_Flank_LeftArc", number)?,
-                    right_arc: s.typed("Mount_Control_Flank_RightArc", number)?,
+                    heading: s.float("Mount_Control_Flank_Heading")?,
+                    left_arc: s.float("Mount_Control_Flank_LeftArc")?,
+                    right_arc: s.float("Mount_Control_Flank_RightArc")?,
                 })
             })?,
             dye_slots: f.struct_list("Mount_Control_Slots_Allowing_Dye", |s| {
@@ -364,6 +369,27 @@ impl MountedCombatControl {
                 },
             )?,
         })
+    }
+
+    /// GCI18, second half: the `Mount_Control_Trait_Tree` keys of the tree array and of
+    /// the tree-to-skill array are the same set, each key present and once per array
+    /// (§5.3.1: both struct kinds name their tree by that field).
+    #[must_use]
+    pub fn tree_keys_consistent(&self) -> bool {
+        fn keys(it: impl Iterator<Item = Option<u32>>) -> Option<Vec<u32>> {
+            let mut v = it.collect::<Option<Vec<u32>>>()?;
+            v.sort_unstable();
+            let n = v.len();
+            v.dedup();
+            (v.len() == n).then_some(v)
+        }
+        match (
+            keys(self.trees.iter().map(|t| t.tree)),
+            keys(self.tree_skills.iter().map(|t| t.tree)),
+        ) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
     }
 
     /// §5.3.2 step 1: the speed multiplier of `gait`. Walk, Trot, Canter and Gallop

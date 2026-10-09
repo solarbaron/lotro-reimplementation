@@ -10,18 +10,25 @@
 //!    data, a crevice the mover wedged into) are resolved first: up to 4 rounds, each the
 //!    shortest push that clears every contact plane closer than two skins (an active set
 //!    of at most three planes solved exactly), at most [`MAX_DEPENETRATION`] in all.
-//! 3. **Velocity** (§12.3 steps 1–3). Per local axis (forward, side) the velocity moves
-//!    toward the target at the control acceleration, but never faster than the rate that
-//!    reaches the axis' top speed from rest in the ramp time, and never past the target.
-//!    On walkable support (states 1, 5) the vertical speed is 0 unless a jump starts; a
-//!    jump's push is the jump acceleration applied for one ramp time, given in the jump's
-//!    step (its integral: 40 × 0.13 = 5.2 m/s for players). The ramp time is the BasePlayer
-//!    layer's ([`PlayerMovementRecord::jump_ramp_time`]), so walking and mounted jumps
-//!    match. Otherwise the layer's gravity is added. Each local component is multiplied by
-//!    its damper to the power of the step length, then the speed is limited to the terminal
-//!    velocity (and [`MAX_SPEED`]). The vertical displacement uses the mean of the vertical
-//!    speeds before and after gravity, so a jump's apex is v²/2g at any step.
-//! 4. **Buoyancy** (in water without walkable support, states 2 and 3; Decision): the
+//! 3. **Velocity** (§12.3 steps 1–3). The target is the original's (§11.6 item 1,
+//!    [`target_velocity`]): along the input pair, with the forward/backward and strafe
+//!    speeds blended by the pair's components. Per local axis (forward, side) the velocity
+//!    moves toward the target's component at the control acceleration, but never faster
+//!    than the rate that reaches the axis' top speed from rest in the ramp time, and never
+//!    past the target. On walkable support (states 1, 5) the vertical speed is 0, otherwise
+//!    the layer's gravity is added. Each local component is multiplied by its damper to the
+//!    power of the step length. Then the stored impulse is added (§11.6 item 3, §11.10):
+//!    the jump command adds the vertical impulse of the jump script's node for the state,
+//!    (`AirTime` + 0.2) × `ExpectedGravity` (6.0 m/s on land, 3.0 m/s in water in this
+//!    install, [`ControllerConfig::jump`]), and every impulse lasts one step. Without a
+//!    jump table the earlier rule applies: on walkable support, a push of the jump
+//!    acceleration × the BasePlayer ramp time ([`PlayerMovementRecord::jump_ramp_time`];
+//!    5.2 m/s). The speed is then limited to the terminal velocity (and [`MAX_SPEED`]).
+//!    The vertical displacement uses the mean of the vertical speeds before and after
+//!    gravity (an impulse counting from the step's start), so a jump's apex above its
+//!    first step is v²/2g at any step.
+//! 4. **Buoyancy** (in water without walkable support, states 2 and 3, except in the step
+//!    a jump starts; Decision): the
 //!    float line is the water surface minus the float height. Below it (or on it) the
 //!    layer's gravity applies (−20 for swimmers lifts the mover), the water takes up any
 //!    downward speed (§12.4 (p)) and the feet stop at the line, the upward speed then
@@ -96,6 +103,7 @@ use crate::geometry::{
 use super::contact::{
     ContactClass, always_uncontrolled, best_support, classify, normals_merge, walkable_cos,
 };
+use super::impulse::{Impulse, JumpTable, StoredImpulse};
 use super::params::{
     LayerConditions, MAX_SPEED, MovementParams, MovementPids, PlayerMovementRecord,
 };
@@ -147,18 +155,23 @@ const MAX_PLANES: usize = 8;
 /// Most contact planes one push-out considers (the deepest).
 const MAX_PUSH_PLANES: usize = 32;
 
-/// One step's input (`keymap.md` §9.1 conventions). Axes are sanitised: non-finite → 0,
-/// then clamped to −1..=1; a combined (forward, strafe) longer than 1 is normalised.
+/// One step's input: the controller's input pair of `collision.md` §11.6 item 1 (for the
+/// player, the decoded pair of §11.8 item 5, [`super::PlayerInput`]). Axes are sanitised:
+/// non-finite → 0, then clamped to −1..=1 each (the pair is not normalised: §11.6 item 1
+/// gives its length).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MoveInput {
-    /// Forward (+) / backward (−).
+    /// *y*: forward (+) / backward (−).
     pub forward: f32,
-    /// Strafe right (+) / left (−).
+    /// *x*: strafe right (+) / left (−) (§11.8 item 5: strafing right gives *x* > 0).
     pub strafe: f32,
     /// The new heading (yaw, radians, counter-clockwise from +X), or `None` to keep it.
     /// A non-finite value keeps it too.
     pub heading: Option<f32>,
-    /// Start a jump (taken only on walkable support; the caller latches the press).
+    /// The jump command (the caller latches the press). With a [`ControllerConfig::jump`]
+    /// table the step adds the jump impulse of the table's node for the mover's state
+    /// (§11.10); without one, Tessera's earlier rule applies (a push of jump acceleration ×
+    /// the BasePlayer ramp time, on walkable support only, `collision.md` §12.4 (c), (i)).
     pub jump: bool,
 }
 
@@ -173,20 +186,73 @@ impl MoveInput {
                 0.0
             }
         };
-        let (mut f, mut s) = (axis(self.forward), axis(self.strafe));
-        let l2 = f * f + s * s;
-        if l2 > 1.0 {
-            let l = l2.sqrt();
-            f /= l;
-            s /= l;
-        }
         Self {
-            forward: f,
-            strafe: s,
+            forward: axis(self.forward),
+            strafe: axis(self.strafe),
             heading: self.heading.filter(|h| h.is_finite()),
             jump: self.jump,
         }
     }
+}
+
+/// The target velocity of input pair (`strafe` *x*, `forward` *y*), each in −1 … 1, with
+/// speed multiplier `multiplier` (`collision.md` §11.6 item 1, `skeleton-anim.md` §7.4;
+/// BIN): zero when both |*x*| and |*y*| are at most [`super::INPUT_EPSILON`]; otherwise
+/// along (*x*, *y*) normalised with length *m* · max(|*x*|, |*y*|) · *S*, *S* = (*S*side ·
+/// *w*x + *S*fwd · *w*y) / (*w*x + *w*y), *w*x = |*x*|, *w*y = |*y*| doubled when both are at
+/// most 0.5. *S*fwd is the forward speed for *y* > 0, else the backward speed; *S*side the
+/// strafe-left speed for *x* > 0, else the strafe-right speed (the client's pairing,
+/// §11.6 OPEN; equal in every observed layer). Returns (forward, side) in m/s, side + to the
+/// right. Inputs that are not finite count as 0; a non-finite or negative multiplier as 1.
+#[must_use]
+pub fn target_velocity(
+    strafe: f32,
+    forward: f32,
+    params: &MovementParams,
+    multiplier: f32,
+) -> (f32, f32) {
+    let axis = |v: f32| {
+        if v.is_finite() {
+            v.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    let (x, y) = (axis(strafe), axis(forward));
+    let eps = super::input::INPUT_EPSILON;
+    if x.abs() <= eps && y.abs() <= eps {
+        return (0.0, 0.0);
+    }
+    let m = if multiplier.is_finite() && multiplier >= 0.0 {
+        multiplier
+    } else {
+        1.0
+    };
+    let wx = x.abs();
+    let wy = if x.abs() <= 0.5 && y.abs() <= 0.5 {
+        2.0 * y.abs()
+    } else {
+        y.abs()
+    };
+    let s_fwd = if y > 0.0 {
+        params.forward_speed
+    } else {
+        params.backward_speed
+    };
+    let s_side = if x > 0.0 {
+        params.strafe_left_speed
+    } else {
+        params.strafe_right_speed
+    };
+    let speed = (s_side * wx + s_fwd * wy) / (wx + wy);
+    let len = m * wx.max(y.abs()) * speed;
+    let norm = (x * x + y * y).sqrt();
+    if !(len.is_finite() && norm > 0.0) {
+        return (0.0, 0.0);
+    }
+    let (tf, ts) = (len * y / norm, len * x / norm);
+    let lim = MAX_SPEED;
+    (tf.clamp(-lim, lim), ts.clamp(-lim, lim))
 }
 
 /// Wraps a heading into (−π, π].
@@ -383,6 +449,9 @@ pub struct ControllerConfig {
     /// Whether the mover is a player character (§11.3: walkable limit 45° instead of 70°).
     /// The local avatar is one (Tessera Decision, §11.3).
     pub is_player: bool,
+    /// The jump nodes of the mover's jump script by state (§11.10), read from the data by
+    /// the caller; `None`: Tessera's earlier jump rule (§12.4 (c), (i); [`MoveInput::jump`]).
+    pub jump: Option<JumpTable>,
 }
 
 impl Default for ControllerConfig {
@@ -391,6 +460,7 @@ impl Default for ControllerConfig {
             shape: CharacterShape::PLAYABLE,
             filter: QueryFilter::player(),
             is_player: true,
+            jump: None,
         }
     }
 }
@@ -403,6 +473,7 @@ pub struct Controller {
     pids: Arc<MovementPids>,
     conditions: LayerConditions,
     state: MoverState,
+    impulse: StoredImpulse,
     scratch: Vec<Contact>,
     push_planes: Vec<([f64; 3], f64)>,
 }
@@ -450,9 +521,24 @@ impl Controller {
             pids,
             conditions,
             state: Self::sanitize_state(start),
+            impulse: StoredImpulse::default(),
             scratch: Vec::new(),
             push_planes: Vec::new(),
         }
+    }
+
+    /// Adds a PhysicsImpulse node's effect to the stored impulse (`collision.md` §11.10
+    /// items 1–2); the next step adds it to the velocity once and clears it (item 3).
+    /// Returns whether something was added (a jump adds nothing while a vertical impulse
+    /// is stored).
+    pub fn add_impulse(&mut self, impulse: Impulse) -> bool {
+        self.impulse.add(impulse)
+    }
+
+    /// The impulse the next step adds.
+    #[must_use]
+    pub fn stored_impulse(&self) -> &StoredImpulse {
+        &self.impulse
     }
 
     /// The state after the last step.
@@ -559,6 +645,8 @@ impl Controller {
             report = StepReport::new(StepOutcome::Reverted);
         }
         self.state.steps = before.steps.wrapping_add(1);
+        // §11.10 item 3: the stored impulse acts in one step only.
+        self.impulse.clear();
         if self.scratch.capacity() > SCRATCH_KEEP {
             self.scratch.clear();
             self.scratch.shrink_to(SCRATCH_KEEP);
@@ -606,16 +694,7 @@ impl Controller {
         let mut vf = v[0] * fwd[0] + v[1] * fwd[1];
         let mut vs = v[0] * right[0] + v[1] * right[1];
         let mut vz = v[2];
-        let tf = if input.forward >= 0.0 {
-            input.forward * params.forward_speed
-        } else {
-            input.forward * params.backward_speed
-        };
-        let ts = if input.strafe >= 0.0 {
-            input.strafe * params.strafe_right_speed
-        } else {
-            input.strafe * params.strafe_left_speed
-        };
+        let (tf, ts) = target_velocity(input.strafe, input.forward, &params, 1.0);
         let rate = |axis: usize, top: f32| {
             let a = params.control_acceleration[axis];
             if params.ramp_time > 0.0 {
@@ -646,10 +725,17 @@ impl Controller {
             None
         };
         let above_line = float_line.is_some_and(|t| feet[2] > t + FLOAT_TOLERANCE);
+        // The jump command: the jump script's node for the state (§11.10), else the
+        // earlier rule below.
+        if input.jump
+            && let Some(node) = self.config.jump.and_then(|t| t.get(element))
+        {
+            self.impulse.add(Impulse::Jump(node));
+        }
         let vz_start;
         if walk_support {
             vz = 0.0;
-            if input.jump {
+            if input.jump && self.config.jump.is_none() {
                 let j = (params.jump_acceleration * self.record.jump_ramp_time()).min(MAX_SPEED);
                 if j > 0.0 {
                     vz = j;
@@ -670,6 +756,23 @@ impl Controller {
         vf *= d[0];
         vs *= d[1];
         vz *= d[2];
+        // The stored impulse (§11.6 item 3, §11.10): added once, after gravity and the
+        // damper, the world part turned into the mover's frame. Its vertical part counts
+        // from the start of the step, so the step's mean vertical speed includes it; an
+        // upward impulse starts a jump (§12.4 (f)).
+        let mut vz_start = vz_start;
+        if !self.impulse.is_zero() {
+            let w = self.impulse.world;
+            let l = self.impulse.local;
+            vf += l[0] + w[0] * fwd[0] + w[1] * fwd[1];
+            vs += l[1] + w[0] * right[0] + w[1] * right[1];
+            let up = self.impulse.vertical();
+            vz += up;
+            vz_start += up;
+            if up > 0.0 {
+                report.jumped = true;
+            }
+        }
         let speed_limit = params.terminal_velocity.min(MAX_SPEED);
         let mut local = [vf, vs, vz];
         limit_speed(&mut local, speed_limit);
@@ -677,8 +780,9 @@ impl Controller {
         let vz_start = vz_start.max(-speed_limit).min(speed_limit);
         let mut dz = 0.5 * (vz_start + vz) * dt;
 
-        // Buoyancy: the feet stop at the float line from either side.
-        if let Some(t) = float_line {
+        // Buoyancy: the feet stop at the float line from either side (not in a jump's step:
+        // §11.6 item 4 holds the feet at the line only while not jumping).
+        if let Some(t) = float_line.filter(|_| !report.jumped) {
             if above_line {
                 if feet[2] + dz < t {
                     dz = t - feet[2];
@@ -1543,13 +1647,56 @@ mod tests {
         }
         .sanitized();
         assert_eq!((i.forward, i.strafe, i.heading), (0.0, 1.0, None));
+        // The pair is not normalised: §11.6 item 1 gives its target's length.
         let d = MoveInput {
             forward: 1.0,
             strafe: 1.0,
             ..MoveInput::default()
         }
         .sanitized();
-        assert!((d.forward * d.forward + d.strafe * d.strafe - 1.0).abs() < 1e-6);
+        assert_eq!((d.forward, d.strafe), (1.0, 1.0));
+    }
+
+    /// `collision.md` §11.6 item 1 and the §11.8 speed table (CO61), BasePlayer and
+    /// Walking values of §10.3.
+    #[test]
+    fn target_follows_the_original_rule() {
+        let base = MovementParams::BUILTIN;
+        let walking = MovementParams {
+            forward_speed: 5.0,
+            backward_speed: 4.5,
+            strafe_left_speed: 4.5,
+            strafe_right_speed: 4.5,
+            ..base
+        };
+        let speed = |x: f32, y: f32, p: &MovementParams| {
+            let (f, s) = target_velocity(x, y, p, 1.0);
+            f.hypot(s)
+        };
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(close(speed(0.0, 1.0, &base), 6.5));
+        assert!(close(speed(0.0, -1.0, &base), 3.25));
+        assert!(close(speed(1.0, 0.0, &base), 5.0));
+        assert!(close(speed(-1.0, 1.0, &base), 5.75));
+        assert!(close(speed(0.0, 0.5, &walking), 2.5));
+        assert!(close(speed(0.0, -0.5, &walking), 2.25));
+        assert!(close(speed(0.57, 0.0, &walking), 2.565));
+        let diag = 0.57 * (0.57 * 4.5 + 0.5 * 5.0) / 1.07;
+        assert!(close(speed(0.57, 0.5, &walking), diag), "{diag}");
+        // Direction: along the pair, + side to the right.
+        let (f, s) = target_velocity(0.57, 0.5, &walking, 1.0);
+        assert!(f > 0.0 && s > 0.0 && close(s / f, 0.57 / 0.5));
+        assert_eq!(target_velocity(0.0001, -0.0002, &base, 1.0), (0.0, 0.0));
+        assert_eq!(target_velocity(f32::NAN, f32::NAN, &base, 1.0), (0.0, 0.0));
+        assert!(close(target_velocity(0.0, 1.0, &base, 2.0).0, 13.0));
+        // The client's strafe pairing: x > 0 takes the strafe-left speed.
+        let uneven = MovementParams {
+            strafe_left_speed: 2.0,
+            strafe_right_speed: 4.0,
+            ..base
+        };
+        assert!(close(target_velocity(1.0, 0.0, &uneven, 1.0).1, 2.0));
+        assert!(close(target_velocity(-1.0, 0.0, &uneven, 1.0).1, -4.0));
     }
 
     #[test]

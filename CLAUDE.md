@@ -194,7 +194,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver, instanced-content views
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets (typed Light and MeshFX nodes) with the idle/walk/run clip resolver, instance script tables (`script_table::instance`), instanced-content views, gameplay views (`gameplay::*`, including `mounts`, `drama` and `world_logic` with the quest entry rule)
 - `crates/props` — property registry, values, property sets, enum mappers, DID maps
 - `crates/text` — string tables, StringInfo resolution, substitution, markup
 - `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
@@ -205,9 +205,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/entity` — the client's entity store (decision 0008): entities, transforms, network IDs, render/animation handles, landblock membership, per-frame change lists
 - `crates/wstate` — WLib class library and WState object graph; player-character and game-control views
 - `crates/wvm` — script machine of the class library (WLib bytecode): code-block decoder, load-time rules, disassembly, census and cross-references
-- `crates/world` — coordinates, landblock streaming, residency budget, area lookups
+- `crates/world` — coordinates, landblock streaming, residency budget, area lookups, placed decals (`decals`), the quest-state phasing manager (`phasing`), day and night lamp lights (`lighting::glow`)
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
-- `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
+- `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here), the war-steed controller (`controller::warsteed`); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
 - `crates/particles` — particle runtime: the shared random generator, deterministic simulation of particle systems (0x39) with emitters, caps and controllers, billboard vertices, fork-effect lifetimes (not simulated), effect start/attach/stop/linger rules (`particles.md`, `particle-runtime.md`)
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
@@ -218,8 +218,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/script` — plugin-free sandboxed Lua 5.1 core: apartment profiles, limits and budget, protected calls, pattern matcher, neutral Lua-table data reader (no plugin API namespace, `import` or chat state; decision 0023)
 - `crates/plugins` — plugin host on the script core: `.plugin` discovery, apartments, `import`, the compatible plugin API (its UI classes bind `crates/ui` elements), plugin data, the clean-room class helper
 - `crates/ui` — game UI: retained element tree, layout, sparse CPU canvases and painter, damage and paint jobs, composition list; no wgpu, no Lua
-- `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
-- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`, particle preview of 0x39 records and `--particles DID --sheet`)
+- `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, `logic`, ...)
+- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes with decal previews, character viewer and animation browser with the mount viewer and the drama player, gameplay cards with the mount card and the landblock logic card (day and night lights, simulated journal, per-instance scripts), script-node record view, headless `--sheet`, particle preview of 0x39 records and `--particles DID --sheet`)
 - `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs, particle effects from the scripts of placed objects and NPCs, and a `--crowd` load test; `--server` joins a test server)
 - `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
 - `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests

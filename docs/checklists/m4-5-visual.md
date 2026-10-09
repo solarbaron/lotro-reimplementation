@@ -224,9 +224,9 @@ at least three walks.
 | IN2 | interior | 3 | 0x98D6 | 49 | -1.56,-1.01,-221.09 | `r3 lx1216 ly1712 cInside ox-1.56 oy-1.01 oz-221.09 h90.0` | 90.0 | walk | `wp=4.44,-1.01` | 3 | `cells 49>48 E=4.44,-1.01,-221.09 d=0.15` |
 | IN3 | interior | 4 | 0xFC85 | 31 | 69.01,-5.38,-93.83 | `r4 lx2016 ly1064 cInside ox69.01 oy-5.38 oz-93.83 h270.0` | 270.0 | walk | `wp=63.01,-5.38` | 3 | `cells 31>35 E=63.01,-5.38,-93.83 d=0.15` |
 | IN4 | interior | 2 | 0xF3EE | 32 | 0.00,-7.00,-91.26 | `r2 lx1944 ly1904 cInside ox0.00 oy-7.00 oz-91.26 h180.0` | 180.0 | walk | `wp=0.00,-13.00` | 3 | `cells 32>39 E=0.00,-13.00,-91.26 d=0.15` |
-| CV1 | cave | 1 | 0xE13A | 0 | 107.61,127.21,209.02 | `r1 lx1805 ly470 ox107.61 oy127.21 oz209.02 h30.0` | 30.0 | walk | `wp=115.11,140.20` | 4 | `follow E=115.11,140.20,208.03 d=0.15 dz=0.05 headroom=3.37` |
-| CV2 | cave | 3 | 0x5B60 | 0 | 68.99,35.50,371.59 | `r3 lx731 ly769 ox68.99 oy35.50 oz371.59 h300.0` | 300.0 | walk | `wp=56.00,43.00` | 4 | `follow E=56.00,43.00,364.14 d=0.15 dz=0.05 headroom=4.11` |
-| CV3 | cave | 4 | 0xC9AE | 0 | 19.11,63.44,697.15 | `r4 lx1608 ly1395 ox19.11 oy63.44 oz697.15 h195.0` | 195.0 | walk | `wp=15.23,48.95` | 4 | `follow E=15.23,48.95,697.90 d=0.15 dz=0.05 headroom=4.04` |
+| CV1 | cave | 1 | 0xE13A | 0 | 107.61,127.21,209.02 | `r1 lx1805 ly470 ox107.61 oy127.21 oz209.02 h30.0` | 30.0 | walk | `wp=115.11,140.20` | 8 | `follow E=115.11,140.20,208.03 d=0.15 dz=0.05 headroom=3.37` |
+| CV2 | cave | 3 | 0x5B60 | 0 | 68.99,35.50,371.59 | `r3 lx731 ly769 ox68.99 oy35.50 oz371.59 h300.0` | 300.0 | walk | `wp=56.00,43.00` | 8 | `follow E=56.00,43.00,364.14 d=0.15 dz=0.05 headroom=4.11` |
+| CV3 | cave | 4 | 0xC9AE | 0 | 19.11,63.44,697.15 | `r4 lx1608 ly1395 ox19.11 oy63.44 oz697.15 h195.0` | 195.0 | walk | `wp=15.23,48.95` | 8 | `follow E=15.23,48.95,697.90 d=0.15 dz=0.05 headroom=4.04` |
 | WA1 | water | 1 | 0x9E7F | 0 | 73.22,128.04,337.68 | `r1 lx1267 ly1022 ox73.22 oy128.04 oz337.68 h224.9` | 224.9 | run | `wp=44.99,99.71` | 16 | `wade_swim in=72.58,127.40 swim=70.50,125.31 h=337.255 fh=1.42 d=0.50` |
 | WA2 | water | 2 | 0x5BC7 | 0 | 100.87,125.06,942.79 | `r2 lx733 ly1598 ox100.87 oy125.06 oz942.79 h85.1` | 85.1 | run | `wp=140.72,128.48` | 16 | `wade_swim in=105.00,125.41 swim=114.72,126.25 h=941.177 fh=1.42 d=0.50` |
 | WA3 | water | 3 | 0x7E2C | 0 | 128.11,108.17,149.90 | `r3 lx1014 ly357 ox128.11 oy108.17 oz149.90 h172.1` | 172.1 | run | `wp=133.61,68.55` | 16 | `wade_swim in=128.69,103.96 swim=129.31,99.55 h=149.020 fh=1.42 d=0.50` |
@@ -234,6 +234,12 @@ at least three walks.
 | FR1 | frill | 1 | 0x4C66 | 0 | 85.96,27.56,343.87 | `r1 lx612 ly817 ox85.96 oy27.56 oz343.87 h90.0` | 90.0 | run | `wp=115.96,27.56` | 6 | `pass E=115.96,27.56,335.92 d=0.10` |
 | FR2 | frill | 3 | 0x7A69 | 0 | 66.00,106.57,189.51 | `r3 lx979 ly845 ox66.00 oy106.57 oz189.51 h90.0` | 90.0 | run | `wp=96.00,106.57` | 6 | `pass E=96.00,106.57,190.39 d=0.10` |
 | FR3 | frill | 5 | 0x6FD9 | 0 | 100.17,88.49,173.75 | `r5 lx893 ly1740 ox100.17 oy88.49 oz173.75` | 0.0 | run | `wp=100.17,118.49` | 6 | `pass E=100.17,118.49,174.40 d=0.10` |
+
+> **Implementer note (2026-10-09):** the durations of CV1–CV3 were raised from 4 s to 8 s.
+> Walk mode now moves at the original's walking speed, 2.5 m/s forward (`collision.md`
+> §11.8: the command values are halved and the Walking layer applies), instead of Tessera's
+> earlier full-input Walking speed of about 4.9 m/s; their 15 m paths take about 6.3 s. No
+> other field changed. For the spec writer to confirm.
 
 <a id="s2-4"></a>
 ### 2.4 What each walk meets

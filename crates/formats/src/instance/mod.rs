@@ -25,7 +25,8 @@
 //!   (B2), instance groups (B3) and the fellowship-maker matching index (§10.2).
 //!
 //! The views never fail: a property that is absent or stored with an unexpected type reads
-//! as absent, and an array element of the wrong kind is skipped. Every collection a view
+//! as absent, and an array element of the wrong kind is skipped. Fields are read by their
+//! full labels (§3.5) with the value types of §3.6, never by suffix or value type. Every collection a view
 //! builds is a copy of part of an already decoded (and budget-checked) property set, so a
 //! view never allocates more than its input holds. The object-state forms of §13 are not
 //! read here (they belong to `tessera-wstate`).
@@ -37,7 +38,7 @@ pub mod skirmish;
 pub mod template;
 pub mod testkit;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use crate::did::Did;
 use crate::error::Result;
@@ -66,7 +67,8 @@ macro_rules! define_labels {
             pub const $id: &str = $label;
         )*
         /// Every label the views read, with the value type `instances.md` gives for it
-        /// (`None` where the spec states no type; such fields are read leniently).
+        /// (§3.5 full labels, §3.6 run-time value types; `None` would mark a field without
+        /// a stated type, and there is none left).
         pub const ALL: &[(&str, Option<PropertyType>)] = &[$(($label, $ty)),*];
     };
 }
@@ -89,7 +91,6 @@ pub mod labels {
     const B32: Option<PropertyType> = Some(PropertyType::Bitfield32);
     const D: Option<PropertyType> = Some(PropertyType::DidRef);
     const BO: Option<PropertyType> = Some(PropertyType::Bool);
-    const ANY: Option<PropertyType> = None;
 
     define_labels! {
         // §4.2 identity, capacity and timers
@@ -192,22 +193,35 @@ pub mod labels {
         ST_ALLOWED_TRAITS = "Skirmish_SkillTrainer_AllowedTraits": A;
         // §6.3 skirmish control
         SC_DIFFICULTY_MULT = "SkirmishControl_DifficultyMultiplier_Array": A;
+        SC_DIFF_TIER = "SkirmishControl_DifficultyTier": E;
+        SC_POINT_MULT = "SkirmishControl_SkirmishPoint_Multiplier": F;
         SC_GROUP_SIZE_MULT = "SkirmishControl_GroupSizeMultiplier_Array": A;
+        SC_GROUP_SIZE = "SkirmishControl_GroupSize": E;
+        SC_GROUP_TIERS = "SkirmishControl_GroupTier_Array": A;
+        SC_GT_SIZE = "SkirmishControl_GroupSize_StructVal": E;
+        SC_GT_TIER = "SkirmishControl_GroupTier_StructVal": E;
         SC_ZONE_EVENTS = "SkirmishControl_ZoneEvents": ST;
         SC_POINT_TOKEN = "SkirmishControl_SkirmishPointToken": D;
         SC_PANEL_TRAIT = "SkirmishControl_SkirmishPanel_RequiredTrait": D;
         SC_TRAIT_GATES = "SkirmishControl_SkirmishTraitGates": A;
+        SC_GATE_MAX_RANK = "SkirmishControl_SkirmishTraitGate_MaxRank": I;
+        SC_GATE_WEBSTORE = "SkirmishControl_SkirmishTraitGate_MaxRank_WebstoreItem": D;
         SC_GATE_DEFAULT_RANK = "SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank": I;
         SC_TRAIT_POOLS = "SkirmishControl_SkirmishTraitPools": A;
         SC_MAX_PER_WEEK = "SkirmishControl_SkirmishGating_DEFAULT_MaxSkirmishesPerWeek": I;
         SC_BLOCKED_STATS = "SkirmishControl_BlockedStats_List": A;
         SC_GRS_LIST = "SkirmishControl_SkirmishGRSEnum_PropertyList": A;
+        SC_GRS_PROPERTY = "SkirmishControl_GRSEnum_PropertyName": P;
         SC_STAT_TO_GRS = "SkirmishControl_SkirmishStat_To_GRSEnum_PropertyName_Hash": A;
         SC_STAT = "SkirmishControl_SkirmishStat": E;
         SC_CONVERSION = "SkirmishStats_StatProperty_Conversion_Hash": A;
+        CV_PROPERTY = "SkirmishStats_StatProperty_FullPropertyName": P;
+        CV_STAT = "SkirmishStats_StatProperty_SkirmishStat": E;
+        CV_SIZE = "SkirmishStats_StatProperty_SkirmishGroupSize": E;
+        CV_ON_LEVEL = "SkirmishStats_StatProperty_OnLevel": BO;
         SC_FASTEST = "SkirmishStats_CONSTANT_FASTEST_POSSIBLE_SKIRMISH_TIME": F;
         SC_STATS = "Skirmish_Stats": A;
-        STAT_DERIVED = "Skirmish_DerivedStat": ANY;
+        STAT_DERIVED = "Skirmish_DerivedStat": E;
         STAT_PRIMARY = "Skirmish_Primary_Stat": E;
         STAT_OPERATIONS = "Skirmish_Stat_Operations": A;
         STAT_SECONDARY = "Skirmish_Secondary_Stat": E;
@@ -240,9 +254,12 @@ pub mod labels {
         BB_MEDAL_ALERT = "BigBattleControl_Medal_Alert": E;
         BB_QUEST_POINTS = "BigBattleControl_Quest_RewardValue_Hash": A;
         BB_QUEST = "BigBattleControl_Quest": D;
+        BB_QUEST_POINT_VALUE = "BigBattleControl_QuestPointValue": I;
         BB_QUEST_ENCOUNTERS = "BigBattleControl_Quest_To_Encounter_Hash": A;
+        BB_ENCOUNTER = "BigBattleControl_Encounter": D;
         BB_LOCATION_EVENTS = "BigBattleControl_LocationToZoneEvent_Array": A;
         BB_WAVE_LOCATION = "BigBattleControl_BigBattleWaveLocation": E;
+        BB_LOCATION_EVENT = "BigBattleControl_LocationZoneEvent": D;
         // §8.3 distant-battle scripts
         DB_ZONE_REQUIRED = "DistantBattle_ZoneEvent_Required": D;
         DB_ZONE_PROGRESS = "DistantBattle_ZoneEvent_Progress": D;
@@ -261,6 +278,7 @@ pub mod labels {
         DBU_WEIGHTED = "DistantBattleUnit_WeightedList": A;
         DBU_SIEGE_WEIGHTED = "DistantBattleUnit_Siege_WeightedList": A;
         DBU_ENTRY = "DistantBattleUnit_Entry": D;
+        DBU_WEIGHT = "DistantBattleUnit_Weight": I;
         // §8.4 distant-battle units, §15.1 B5
         DBU_ENTITY_COMPOSITION = "DistantBattleUnit_EntityComposition": A;
         DBU_UNIT = "DistantBattleUnit_Formation_Unit": D;
@@ -283,13 +301,14 @@ pub mod labels {
         DBU_GROUND_CLAMP = "DistantBattleUnit_GroundClampEntities": BO;
         DBU_CAPTURE = "DistantBattleUnit_CaptureQualityOverride": E;
         DBU_LANE = "DistantBattleUnit_LaneType": E;
-        DBU_REMOVED = "DistantBattleUnit_Composition_Removed_List": ANY;
-        DBU_REMOVAL_COUNT = "DistantBattleUnit_Removal_Count": ANY;
-        DBU_REMOVAL_SCRIPT = "DistantBattleUnit_Removal_ScriptKey": ANY;
+        DBU_REMOVED = "DistantBattleUnit_Composition_Removed_List": A;
+        DBU_REMOVAL_COUNT = "DistantBattleUnit_Removal_Count": I;
+        DBU_REMOVAL_SCRIPT = "DistantBattleUnit_Removal_ScriptKey": E;
+        DBU_REMOVAL_PARAMS = "DistantBattleUnit_Removal_ScriptParameters": ST;
         // §8.5 formation control
-        FC_SPACING = "DistantBattleUnit_FormationControl_SpacingBetweenGroups": ANY;
+        FC_SPACING = "DistantBattleUnit_FormationControl_SpacingBetweenGroups": F;
         FC_WIDTHS = "DistantBattleUnit_FormationControl_Width_Lookup": A;
-        FC_ACTUAL_WIDTH = "DistantBattleUnit_FormationControl_ActualWidth": ANY;
+        FC_ACTUAL_WIDTH = "DistantBattleUnit_FormationControl_ActualWidth": F;
         // §8.7 battle statistics
         BS_NAME = "BattleStat_Name": SI;
         BS_DESCRIPTION = "BattleStat_Description": SI;
@@ -305,33 +324,36 @@ pub mod labels {
         FM_MIN_LEVEL = "FellowshipMakerControl_MinLevel": I;
         FM_SIZES = "FellowshipMakerControl_ValidEncounterSizeArray": A;
         FM_MATCH_TIME = "FellowshipMakerControl_MatchTimeWorldPropertyBySizeArray": A;
+        FM_ENCOUNTER_SIZE = "FellowshipMakerControl_EncounterSize": E;
+        FM_MATCH_TIME_PROPERTY = "FellowshipMakerControl_MatchTimeWorldPropertyName": P;
         FM_BONUS = "FellowshipMakerControl_BonusEffectThreshold_Array": A;
+        FM_BONUS_EFFECT = "FellowshipMakerControl_BonusEffect": D;
+        FM_BONUS_THRESHOLD = "FellowshipMakerControl_BonusEffect_Threshold": F;
         FM_RANDOM_BONUS = "FellowshipMakerControl_RandomBonusEffect": D;
         FM_DESERTER = "FellowshipMakerControl_DeserterEffect": D;
         FM_EXCLUDED = "FellowshipMakerControl_ExcludedEncounterArray": A;
+        // §3.3, §3.6, §15.1 B8: the fellowship-maker configuration bitfields
+        FM_PLAYER_CONFIGURATION = "FellowshipMaker_PlayerConfiguration": B32;
+        FM_UI_CONFIGURATION = "FellowshipMakerUI_Configuration": B32;
         // §11 phasing
-        PB_UPDATE_ONLY = "PhasingBox_UpdateOnlyOnCreation": ANY;
-        PB_DELAY = "PhasingBox_DelayRefreshOfLinkedEntities": ANY;
-        PH_FORCE_REFRESH = "Phasing_ForcePhasingRefresh_OnEnterWorld": ANY;
+        PB_UPDATE_ONLY = "PhasingBox_UpdateOnlyOnCreation": BO;
+        PB_DELAY = "PhasingBox_DelayRefreshOfLinkedEntities": BO;
+        PH_FORCE_REFRESH = "Phasing_ForcePhasingRefresh_OnEnterWorld": BO;
     }
 }
 
 /// The PIDs of [`labels::ALL`], looked up in a dictionary at run time.
 ///
-/// A label the dictionary does not define reads as "absent" everywhere. Two sets of enum
-/// PIDs are kept for fields the spec names only by suffix and that share a value type with
-/// a sibling field: the PIDs whose definition uses the `SkirmishStat` mapper and those that
-/// use the `SkirmishGroupSize` mapper (§3.3: "every other group-size field").
+/// A label the dictionary does not define reads as "absent" everywhere. Every field is
+/// read by its full label (§3.5), never by suffix, value type or enum mapper: two fields of
+/// one struct can share a value type and a mapper.
 #[derive(Debug, Clone, Default)]
 pub struct InstanceVocab {
     pids: HashMap<&'static str, u32>,
-    stat_enums: BTreeSet<u32>,
-    size_enums: BTreeSet<u32>,
 }
 
 impl InstanceVocab {
-    /// Looks every label up in `names`. The statistic and group-size enum sets hold only
-    /// the PIDs of `SkirmishControl_SkirmishStat` and `Skirmish_GroupSize`.
+    /// Looks every label up in `names`.
     pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
         let mut pids = HashMap::with_capacity(labels::ALL.len());
         for (label, _) in labels::ALL {
@@ -339,44 +361,13 @@ impl InstanceVocab {
                 pids.insert(*label, pid);
             }
         }
-        let mut v = Self {
-            pids,
-            ..Self::default()
-        };
-        v.stat_enums.extend(v.pid(labels::SC_STAT));
-        v.size_enums.extend(v.pid(labels::SK_GROUP_SIZE));
-        v
+        Self { pids }
     }
 
-    /// Looks every label up in the dictionary and fills the statistic and group-size enum
-    /// sets with every enum PID whose definition names the same mapper as
-    /// `SkirmishControl_SkirmishStat` and `Skirmish_GroupSize` respectively.
+    /// Looks every label up in the dictionary.
     #[must_use]
     pub fn from_dictionary(dict: &PropertyDictionary) -> Self {
-        let mut v = Self::from_names(dict);
-        let source = |label: &str| {
-            v.pid(label)
-                .and_then(|p| dict.definition(p))
-                .filter(|d| d.ty == PropertyType::Enum && d.data.0 != 0)
-                .map(|d| d.data)
-        };
-        let stat = source(labels::SC_STAT);
-        let size = source(labels::SK_GROUP_SIZE);
-        let (mut stats, mut sizes) = (BTreeSet::new(), BTreeSet::new());
-        for d in dict.definitions() {
-            if d.ty != PropertyType::Enum {
-                continue;
-            }
-            if Some(d.data) == stat {
-                stats.insert(d.pid);
-            }
-            if Some(d.data) == size {
-                sizes.insert(d.pid);
-            }
-        }
-        v.stat_enums.extend(stats);
-        v.size_enums.extend(sizes);
-        v
+        Self::from_names(dict)
     }
 
     /// The PID of `label`, when the dictionary defines it.
@@ -414,18 +405,6 @@ impl InstanceVocab {
         out
     }
 
-    /// Whether `pid` is an enum field of the `SkirmishStat` mapper.
-    #[must_use]
-    pub fn is_stat_enum(&self, pid: u32) -> bool {
-        self.stat_enums.contains(&pid)
-    }
-
-    /// Whether `pid` is an enum field of the `SkirmishGroupSize` mapper.
-    #[must_use]
-    pub fn is_size_enum(&self, pid: u32) -> bool {
-        self.size_enums.contains(&pid)
-    }
-
     // ---------------------------------------------------------------- typed access
 
     pub(crate) fn value<'a, F: Fields + ?Sized>(
@@ -451,11 +430,6 @@ impl InstanceVocab {
         self.value(f, label).and_then(PropertyValue::as_f32)
     }
 
-    /// Any numeric value as f64 (fields whose type the spec does not state).
-    pub(crate) fn number<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<f64> {
-        self.value(f, label).and_then(PropertyValue::as_f64)
-    }
-
     pub(crate) fn enum_key<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<u32> {
         match self.value(f, label)? {
             PropertyValue::Enum(v) => Some(*v),
@@ -463,11 +437,13 @@ impl InstanceVocab {
         }
     }
 
-    /// An unsigned integer of any integral type (fields whose type the spec does not state).
-    pub(crate) fn bits32<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<u32> {
-        self.value(f, label)
-            .and_then(PropertyValue::as_bits)
-            .and_then(|b| u32::try_from(b).ok())
+    /// A key stored as an enum (type 8) or PID (type 10) value, read as a 32-bit key: the
+    /// client's test for statistic keys, `Mod_Op` and group labels (§3.6, §15.1 B3, B4).
+    pub(crate) fn key<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<u32> {
+        match self.value(f, label)? {
+            PropertyValue::Enum(v) | PropertyValue::PropertyId(v) => Some(*v),
+            _ => None,
+        }
     }
 
     pub(crate) fn did<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<Did> {
@@ -481,14 +457,16 @@ impl InstanceVocab {
         }
     }
 
+    /// A boolean (type 21); any other type reads as absent (§3.6: the client's flag reads
+    /// accept only booleans).
     pub(crate) fn boolean<F: Fields + ?Sized>(&self, f: &F, label: &str) -> Option<bool> {
         match self.value(f, label)? {
             PropertyValue::Bool(b) => Some(*b),
-            other => other.as_bits().map(|b| b != 0),
+            _ => None,
         }
     }
 
-    /// A stored boolean; absent reads as `false` (§3.1).
+    /// A stored boolean; absent or of another type reads as `false` (§3.1, §3.6).
     pub(crate) fn flag<F: Fields + ?Sized>(&self, f: &F, label: &str) -> bool {
         self.boolean(f, label).unwrap_or(false)
     }
@@ -560,18 +538,6 @@ pub(crate) fn enum_keys(elements: &[PropertyEntry]) -> Vec<u32> {
 /// The struct values among `elements`, in stored order.
 pub(crate) fn structs(elements: &[PropertyEntry]) -> impl Iterator<Item = &PropertyStruct> {
     elements.iter().filter_map(|e| e.value.as_struct())
-}
-
-/// The first field of `s` whose value has type `ty` and whose PID is not `except`.
-pub(crate) fn first_of_type(
-    s: &PropertyStruct,
-    ty: PropertyType,
-    except: Option<u32>,
-) -> Option<&PropertyValue> {
-    s.fields
-        .iter()
-        .find(|e| e.value.property_type() == ty && Some(e.pid) != except)
-        .map(|e| &e.value)
 }
 
 /// A DID with value 0 means "none" (`property-system.md` §4).

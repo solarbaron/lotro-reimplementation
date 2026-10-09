@@ -630,6 +630,16 @@ different picks; Tessera cannot reproduce the original's sequence and keeps its 
 > reseed named in the O12 OPEN of `appearance.md` §7.4. **Decision (Tessera):** as there, a
 > placed figure's Random nodes are seeded from its instance ID.
 
+> **OPEN (implementer, 2026-10-09):** `tessera-scriptgraph` draws a Random pick as the
+> whole part of *u* × sum with *u* from the runtime's one generator (R40), and offers a
+> per-entity seed for the OPEN-18 Decision (an entity spawned with its own seed draws its
+> Random picks from its own generator; its other draws, `Probability` and variances, stay on
+> the runtime's generator, since the Decision names only Random nodes). The client spawns no
+> placed figure into the script runtime yet (random-appearance outfits from start-up scripts
+> are not built, `appearance.md` §7.4), and its placed sound emitters keep the runtime's
+> generator, as they are not figures. Whether emitters should also be seeded per object, and
+> whether the figure seed should cover every draw of the figure, is not stated.
+
 > **OPEN-8:** The order of the internal port table (§6 OPEN-6) decides which port a given
 > draw selects; the distribution is unaffected. **Decision (Tessera):** stored order and the
 > port's stored position as its index.

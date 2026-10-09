@@ -131,6 +131,7 @@ fn view_json(v: &InstanceRecord) -> Value {
         InstanceRecord::SkirmishControl(s) => json!({
             "difficulty_multipliers": s.difficulty_multipliers,
             "group_size_multipliers": s.group_size_multipliers,
+            "group_tiers": s.group_tiers,
             "point_token": jd(s.point_token),
             "trait_gates": s.trait_gates.iter().map(|(r, d)| json!([r, jd(*d)])).collect::<Vec<_>>(),
             "default_max_rank": s.default_max_rank,
@@ -146,7 +147,7 @@ fn view_json(v: &InstanceRecord) -> Value {
         }),
         InstanceRecord::WorldJoinControl(w) => json!({
             "available": jdids(&w.available),
-            "groups": w.groups.iter().map(|g| json!({"label": g.label, "templates": jdids(&g.templates)})).collect::<Vec<_>>(),
+            "groups": w.groups.iter().map(|g| json!({"label": g.label, "templates": jdids(&g.templates), "used_by_client": g.is_usable()})).collect::<Vec<_>>(),
             "featured": w.featured.iter().map(|d| jd(*d)).collect::<Vec<_>>(),
             "featured_world_event": jd(w.featured_world_event),
             "default_ticket": jd(w.default_ticket),

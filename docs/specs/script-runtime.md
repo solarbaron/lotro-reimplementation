@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09: re-review of the owner-observation revision, BIN-O, R40, §8 OPEN-18, passed) |
+| **Status** | Revised (2026-10-09, spec writer: new §30 (the While node, the start outcome of PhysicsImpulse and the avatar's jump path; sources BIN-W and OBS-W, rows R41–R46, OPEN-19 to OPEN-21), the implementer OPEN of §8 answered, pointers in §18 and §29 item 12, §27 items 18–20; awaiting review). Before: **Accepted** (2026-10-09: re-review of the owner-observation revision, BIN-O, R40, §8 OPEN-18, passed) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -67,6 +67,8 @@ the original is unknown, always paired with an OPEN.
 | BIN-R | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), spec review, 2026-10-08.** Same client build as BIN3, read with a decompiler on address ranges only, in the dirty scratch area. **Questions:** the order of the node-start gates (R1), and what value a Switch sees for a property the entity does not have (OPEN-5). **Why M1–M3 were not enough:** the data hold no trace of either; `sound.md` §10.2, `script-table.md` T28 and the first version of this spec disagreed, and only the property read decides between them. |
 | OBS-R | Observed 2026-10-08 in the same install (data unchanged) by the reviewer's own probes: the dictionary definitions of `Music_Monitor` and `HousingPropertyHook_IntMusic` (both enums, flags without 0x800); every Switch on them in script 0x10000039 of 0x0700042E (65 and 1, all persistent; no case value 0; 52 and 1 with a Default port); `Script_MaxNumInstances` in every per-script set of 0x0700042E and 0x0700042F; all Goto and Label nodes of the 7,524 decodable tables. |
 | BIN-O | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), owner-observation pass, 2026-10-08.** Same client build as BIN3, read with the Ghidra 12 decompiler on a private copy of the analysis project, in the dirty scratch area. **Question:** which random source the Random node draws from and how it is seeded (owner observation O12: does a random-appearance figure keep its look between visits). **Why M1–M3 were not enough:** the generator and its seeding are code; the data holds only the weights; the original cannot be observed here. Read: the Random node's port pick, the integer and unit draw helpers, the generator, its two seeding routines and their callers. Nothing about network, login, keys, launcher or anti-tamper. |
+| BIN-W | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), spec writer, 2026-10-09.** Same client build as BIN3, read with the Ghidra 12 decompiler on a private copy of the analysis project (deleted afterwards), in the dirty scratch area. **Questions:** (1) how the While node (kind 50) behaves at run time: when it starts its children, what it watches, when it completes, what `Inverse` and the `Names` list do; (2) whether a PhysicsImpulse node (kind 9) completes at once; (3) which client code writes `Movement_IsJumping`. **Why M1–M3 were not enough:** the data hold the 41 While nodes and the jump scripts but no run-time rule; no published source describes the node; the original cannot be observed here. Read: the While class's field registration, its class object (kind code and instance factory), the instance's start, its property-change handler and stop hook, the listener interface shared by the node instances, the generic value equality and dictionary-default helpers, the PhysicsImpulse instance factory and its start, the Run instance's reply handler, and a search of the code for the property IDs of `Movement_IsJumping` and `Entity_FinalElement` used as constants. Nothing about network, login, keys, launcher or anti-tamper. |
+| OBS-W | Observed 2026-10-09 in the same install (data unchanged) by throwaway probes in the dirty scratch area, with the repository's script-table decoder as a tool: every While node of the 7,524 decodable tables (41 nodes in 17 tables) with its field bytes and ports; every node that sets, tests or is driven by `Movement_IsJumping` in all tables and scriptlets; every Run node that starts `Loc_Jumping`, `Loc_JumpKeyPressed`, `Loc_JumpKeyReleased` or `Jump`; the tables that define script keys 1, 9, 0x1000024F and 0x10000426; the per-script property sets of these keys; labels of enum mappers 0x23000097 and 0x230000F8. |
 | ST, SND, INS, PS | `script-table.md`, `sound.md`, `instruments.md`, `property-system.md` as companion specs. |
 
 | # | Fact | Sources | Mark |
@@ -99,6 +101,12 @@ the original is unknown, always paired with an OPEN.
 | R26 | No guard against synchronous Goto recursion; looping Timers are paced to ≥ 0.1 s per cycle and Sequences to ≥ 0.1 s per pass; nested changes of one property are cut off at the second re-entry (§21) | BIN3; OBS (one table script with self-reaching labels, 0x07000031/0x10000AAC, gated by two When nodes) | BIN |
 | R27 | A Switch (and a When) reads an unset property as its dictionary default when the definition carries one (flag 0x800), else as the zero value of its type; a Switch has **no value** only when the property ID has no dictionary definition. The value then goes through the normal case match, with the first Default port when no case matches (§6.2) | BIN-R (the Switch's property read, the value it starts from, the port choice); OBS-R (the 65 `Music_Monitor` and 1 `HousingPropertyHook_IntMusic` Switches of script 0x10000039) | BIN; agrees with `script-table.md` T28. Settles OPEN-5. |
 | R40 | The Random node's draw comes from the client's single global generator (a combined multiplicative congruential generator with a 32-entry shuffle table), which is seeded once at client start from the wall-clock time in whole seconds and has one other seeding caller (apparently a game-logic bytecode operation, Inferred); nothing in the node's path seeds it per entity or per object (§8) | BIN-O | BIN (numbered from R40 to stay clear of parallel revisions) |
+| R41 | While: the test (the watched property's value, prepared as for a Switch, equal to a `Values` entry or to the current value of a `Names` property; reversed by `Inverse`), and the start: the children of the first Default port start only when the test holds, else the node completes at once (§30.2, §30.3) | BIN-W | BIN |
+| R42 | While: re-evaluates on every change of its property on the target and of its `Names` properties on the running entity; while the test holds nothing happens (a finished branch is not restarted, the node does not arm); the first time it fails the branch is stopped with reason 0 and the node completes (§30.4) | BIN-W | BIN |
+| R43 | Census of the 41 While nodes: properties, values, `Names` empty and `Inverse` 0 in all, one Default port each (§30.5) | OBS-W | Confirmed |
+| R44 | PhysicsImpulse at start: the impulse is sent as a request to each target (the running entity unless a Target or Impulser port names others) and the target is added to the instance's pending work; the node does not arm in its start (§30.6) | BIN-W | BIN (start); completion OPEN-20 |
+| R45 | The avatar's jump scripts: `Movement_ActionKey` (key 9) gates and runs `Loc_JumpKeyPressed`, which gates and runs `Loc_Jumping` (Persistent 1); `Loc_Jumping` sets `Movement_IsJumping` true, then a While on it runs a one-pass Sequence (impulse and a persistent Run of `Jump`; a 0.2 s Timer; `Movement_IsJumping` false) (§30.7) | OBS-W | Confirmed (data); the client code that starts key 9 not traced |
+| R46 | In the client's code the property ID of `Movement_IsJumping` occurs once, as a read in the controller; no code that writes it was found, and no script other than `Loc_Jumping` sets it for the player (§30.7, OPEN-19) | BIN-W; OBS-W | BIN (search for the constant); Confirmed (scripts) |
 | C1 | Census of the scope (§0): kinds and field values of Switch, When, Random, Sequence, Timer, Run, WhenRunning, SetProperty, Goto/Label, OnStop, driven pairs (tables in §6–§16) | OBS | Confirmed |
 
 ---
@@ -630,7 +638,16 @@ different picks; Tessera cannot reproduce the original's sequence and keeps its 
 > reseed named in the O12 OPEN of `appearance.md` §7.4. **Decision (Tessera):** as there, a
 > placed figure's Random nodes are seeded from its instance ID.
 
-> **OPEN (implementer, 2026-10-09):** `tessera-scriptgraph` draws a Random pick as the
+> **Answered (spec writer, 2026-10-09; was OPEN, implementer, 2026-10-09):** the original
+> seeds nothing per entity, per object or per node (R40): the Random port pick comes from the
+> client's one global generator. Both questions are therefore about
+> Tessera's own seeding, and the implementation's choices are confirmed as Decisions:
+> placed sound emitters keep the runtime's generator (they are not figures, and the original
+> gives them no seed of their own), and a figure's own seed covers only its Random port picks;
+> its `Probability` draws (§3.1 step 2) and intensity variances (§4.2) stay on the runtime's
+> generator. No client fact is missing.
+>
+> Was: **OPEN (implementer, 2026-10-09):** `tessera-scriptgraph` draws a Random pick as the
 > whole part of *u* × sum with *u* from the runtime's one generator (R40), and offers a
 > per-entity seed for the OPEN-18 Decision (an entity spawned with its own seed draws its
 > Random picks from its own generator; its other draws, `Probability` and variances, stay on
@@ -994,6 +1011,9 @@ Collections and Timers wait for running children:
 > package code (WLib) was not traced and may depend on server state. **Decision (Tessera):** as
 > in the table; an owner observation can tell whether quest-dependent music variants appear.
 
+The While node (50) and the start outcome of PhysicsImpulse (9), which the avatar's jump
+scripts use, are specified in §30 (2026-10-09).
+
 ---
 
 <a id="s19"></a>
@@ -1257,6 +1277,9 @@ otherwise unchanged.
 15. Animation instances on undrawn entities (§18 OPEN-16).
 16. Run-time duration of effect kinds (§18 OPEN-17).
 17. When and with which seed the second seeding caller reseeds the generator (§8 OPEN-18).
+18. What resets `Movement_IsJumping` after a jump (§30.7 OPEN-19).
+19. When a PhysicsImpulse instance completes (§30.6 OPEN-20).
+20. How the `Names` entries of a While are stored (§30.1 OPEN-21).
 
 ---
 
@@ -1272,6 +1295,7 @@ otherwise unchanged.
 | 2026-10-08 | header, §1 (R27), §6.2 | Narrow re-review of the R1 order note and the OPEN-5 lines: passed. Wording only: the "no value" clause of R27 and §6.2 now names the Switch; a When prepares its value the same way. No fact changed. | Spec reviewer (dirty room, another session) |
 | 2026-10-08 | header, §1 (new source BIN-O, new R40), §8 | Owner-observation pass (O12): the Random node's random source is the client's global generator, seeded once from the wall-clock time at start-up (and reseedable by one bytecode operation); no per-object seed. Status Revised, awaiting review. | Spec writer (dirty room) |
 | 2026-10-09 | header, §8, §27 item 17, §28 | Answer to the blocking items of the 2026-10-09 review: the 2026-10-08 row moved into this table; the untraced timing of the second seeding caller made a callout (new OPEN-18, pointing to `appearance.md` §7.4 O12, with Tessera's per-figure seed as its Decision). No fact changed. Status Revised, awaiting review. | Spec writer (dirty room) |
+| 2026-10-09 | header, §1 (sources BIN-W, OBS-W; rows R41–R46), §8, §18, new §30, §27 items 18–20, §29 item 12 | Implementer questions answered. **New §30:** the While node from the client (test, start, re-evaluation, completion, census of the 41 nodes); the start of PhysicsImpulse (a request to each target; completion OPEN-20 with a Decision: at once); the avatar's jump scripts walked through with the rules of this spec, including the finding that `Loc_Jumping` does not clear `Movement_IsJumping` by itself (OPEN-19, with a Decision that `collision.md` §11.10 states). §8: the implementer OPEN on per-entity seeding answered (Tessera Decisions confirmed; the original seeds nothing per entity). No earlier fact changed. Status Revised, awaiting review. | Spec writer (dirty room) |
 
 ---
 
@@ -1339,7 +1363,7 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     reschedule it at the same time forever.
 12. Unsupported here and completing at once (reported once): target types other than
     `ThePlayer` (4) and `This` (13) (the music graph has Run nodes with a `Child` (14)
-    target), and the effect kinds of §18 (While, EditMaterial, TextureCompositor,
+    target), and the effect kinds of §18 (While — specified in §30 since 2026-10-09 —, EditMaterial, TextureCompositor,
     ModifyCompositorLayer/Color, MeshDeformer, MonitorObjects occur in the walked graphs).
     ScalarBlend starts the children of the one or two ports whose anchors bracket the
     property's value, once, without weighting their intensity (OPEN-17).
@@ -1404,3 +1428,184 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     > property whose only value is its dictionary default is skipped. Please confirm.
     > Related to item 5: setting such a property to its default value is no change of the
     > value the entity reads, so the Switch is not told and does not re-evaluate.
+
+---
+
+<a id="s30"></a>
+## 30. While (50), PhysicsImpulse (9) and the avatar's jump path (BIN-W, OBS-W)
+
+This section answers the implementer question of 2026-10-09 (`collision.md` §12.5, choice 3):
+the avatar's on-foot jump script passes a While node, which §18 did not cover, and its jump
+node is a PhysicsImpulse.
+
+<a id="s30-1"></a>
+### 30.1 While: fields and ports
+
+Fields (`script-table.md` §5.2): `WhileScript_PropertyName` (a property ID), `Values` (a list
+of PVs), `Names` (a list) and `WhileScript_Inverse` (bool). At run time the client reads each
+`Names` entry as a property ID (BIN-W). Ports: the Default ports (type 6), of which **only the
+first in port order** is used, and optionally a Target port (type 25) that names another entity
+to watch. Every While of this install has exactly one Default port and no other port (R43).
+
+> **OPEN-21:** `script-table.md` §5.2 lists the `Names` entries as PVs, while the run-time code
+> reads each entry as a 4-byte property ID. No While of this install has a `Names` entry, so
+> the stored form cannot be checked against data. **Decision (Tessera):** decoders keep the
+> layout of `script-table.md` §5.2; the runtime uses each entry's property ID (for a PV, its
+> PID) as the name of a watched property.
+
+<a id="s30-2"></a>
+### 30.2 The test (R41)
+
+1. **Value.** The While reads `WhileScript_PropertyName` from its target (the running entity
+   unless a Target port names another) and prepares the value as a Switch does (§6.2, R27):
+   the entity's value when it has one, else the dictionary default, else the zero value of the
+   property's type. A property ID without a dictionary definition gives no value, which matches
+   nothing.
+2. **Match.** The value matches when
+   - it equals one of the `Values` entries: same property ID and equal value. Integers, enums,
+     booleans, bit fields, property IDs, DIDs and floats compare as whole values, so a bit-field
+     entry must equal all 32 bits (it is not a mask); or
+   - it has the same type as, and equals, the current value of one of the `Names` properties,
+     read from the running entity, or from the run-parameter set for a script-parameter
+     property (as the int list of a Switch case, §6.3).
+3. **Result.** The test **holds** when the value matches and `Inverse` is 0, or when it does
+   not match and `Inverse` is 1.
+
+<a id="s30-3"></a>
+### 30.3 Start (R41)
+
+After the steps of §3.1 (gates, copy, intensity), the While's start:
+
+1. fixes its target (the running entity, or the entity the Target port names);
+2. starts listening to `WhileScript_PropertyName` on the target and to each `Names` property
+   on the running entity;
+3. evaluates the test once;
+4. if the test **fails**, arms; as nothing runs it **completes at once** and no child starts;
+5. if the test **holds**, starts the children of its first Default port into its port group
+   (§3.2) and does **not** arm.
+
+<a id="s30-4"></a>
+### 30.4 Afterwards (R42)
+
+- Every change of a watched property, reported by the target or the running entity, makes the
+  While evaluate the test again (it reads its own property afresh; which watched property
+  changed does not matter).
+- **Test holds:** nothing happens. The running branch continues; a branch that has already
+  finished is **not** started again, and the While does not arm, so it keeps running with no
+  child.
+- **Test fails:** the port group is stopped with reason 0 (§3.5), the While arms, and it
+  completes as soon as no child and no pending work is left, normally in the same call.
+  Later changes do nothing more: a While never starts its branch a second time.
+- So a While runs while its test holds, outlives its branch, and ends the first time the test
+  fails, or when it is stopped from above (§3.5); its stop removes its listeners.
+- Changes are seen synchronously: a SetProperty inside the While's own branch that makes the
+  test fail stops the branch inside that SetProperty's start (§14), so later siblings of that
+  SetProperty do not start (§3.2).
+- Intensity changes reach the branch as for every container (§4.3). A property that keeps
+  re-triggering itself is cut off by the guard of §21.
+
+<a id="s30-5"></a>
+### 30.5 Census (OBS-W, R43)
+
+41 While nodes in 17 of the 7,524 decodable tables; `Names` empty and `Inverse` 0 in all;
+one Default port each, with 1 or 2 children.
+
+| Property (dictionary type; default) | `Values` | Nodes | First children |
+|---|---|---|---|
+| `Movement_IsJumping` (Bool; none) | true | 8 | Sequence (the jump scripts, §30.7) |
+| `Combat_Violent` (Bool; none) | true | 4 | Appearance |
+| `Script_PlayingCraftAnimation` (Bool; false) | true | 1 | Switch |
+| `CombatState_CurrentState` (Bitfield32; 0x00040000) | 0x00000200 | 24 | Collection, Timer, MeshFX, Switch with Particle |
+| `CombatState_CurrentState` | 0x04000000 | 3 | Collection (one with a Timer) |
+| `CombatState_CurrentState` | 0x00000200, 0x00020000 | 1 | Collection |
+
+These are observations of this install; a runtime reads the nodes from the data.
+
+<a id="s30-6"></a>
+### 30.6 PhysicsImpulse (9) at run time (R44)
+
+Fields: `script-table.md` §5.3; what the impulse does to the mover: `collision.md` §11.6
+item 3 and §11.10. After the steps of §3.1, the start:
+
+1. does nothing and completes at once when bit 6 of the context's flags is set (a flag that
+   §2.1 does not name; where it is set was not traced, and the default flags leave it clear);
+2. resolves its targets: the running entity, or the entities that a Target port (type 25) and
+   an Impulser port (type 19) name. None found: nothing is sent and the node completes at once
+   (the client logs it). No jump node of this install has a port;
+3. sends the impulse to each target as a request, like the request of a Run (§12.4 step 2),
+   carrying the vector (`Impulse` × the node's intensity, or for `IsJump` the vertical value
+   of `collision.md` §11.10 item 2, which the intensity does not scale), `ImpulseType`,
+   `IsGlobalSpaceImpulse` and the current scheduler time plus the run's synchronisation
+   offset. Each target is added to the instance's pending work (§3.4);
+4. does not arm.
+
+> **OPEN-20:** When the PhysicsImpulse instance completes: the answer path of its request was
+> not read, so whether the instance ends in the same call (as a Run's request to the running
+> entity is handled, §12.4 step 2) or later is not known. **Decision (Tessera):** the node
+> applies its impulse during its start and completes at once. On the jump path this changes
+> nothing (§30.7 b).
+
+<a id="s30-7"></a>
+### 30.7 The avatar's jump path (data, OBS-W; R45, R46)
+
+Script keys (labels of enum 0x23000097 and its base 0x230000F8; interoperability
+identifiers): `Movement_ActionKey` (9), `Loc_JumpKeyPressed` (0x10000426),
+`Loc_JumpKeyReleased` (0x100002C5), `Loc_Jumping` (0x1000024F), `Jump` (1),
+`Mounted_Channeling_Loop` (0x10000147). Table DIDs are this install's; read them at run time.
+
+1. **`Movement_ActionKey`** (defined in 0x07000433 and 0x070017E2): a Switch on
+   `Movement_FrozenWhileWaitingForServer` (case false) → a Switch on `Movement_IsJumping`
+   (case false) → a Switch on `Entity_FinalElement` (cases 5, 1, 2, 3) → a Label whose ports
+   start, in ordinal order, (1) an OnStop whose child runs `Loc_JumpKeyReleased` and (2) a Run
+   of `Loc_JumpKeyPressed` (both Runs Persistent 0). Every other case selects nothing and the
+   run ends at once. The OnStop keeps the run alive until it is stopped; its stop then runs
+   `Loc_JumpKeyReleased`, whose definitions in the player locomotion tables are empty
+   Collections. Which client code starts this key is not traced (`collision.md` §11.10).
+2. **`Loc_JumpKeyPressed`** (player locomotion tables 0x0700001C, 0x070017E4, 0x07002B86;
+   per-script `Script_MaxNumInstances` 2): a Switch on `ScriptSystem_ActiveMovementBlocked`
+   (case true: nothing) → a Switch on `Movement_ActiveMovementFrozen` (case true: an empty
+   Collection) → a Switch on `Movement_IsJumping` (case false) → a Switch on
+   `Entity_FinalElement` (cases 5, 3, 1, 2, 6; in 0x070017E4 without 6) → a Label → a Run of
+   `Loc_Jumping` with Persistent 1.
+3. **`Loc_Jumping`** (the same tables; `Script_MaxNumInstances` 2), on foot: a WhenRunning on
+   `Mounted_Channeling_Loop` (Persistent 0), NotRunning port → a Collection with two ports:
+   ordinal 1, a SetProperty of `Movement_IsJumping` to true; ordinal 4, a While on
+   `Movement_IsJumping` with `Values` {true} → a one-pass Sequence: step 1, a Switch on
+   `Movement_CannotJump` (case false) → a Switch on `Entity_FinalElement` → a PhysicsImpulse
+   (`IsJump`) and a Run of `Jump` with Persistent 1; step 2, a Timer of 0.2 s without ports;
+   step 3, a SetProperty of `Movement_IsJumping` to false. The mounted branches have the same
+   shape with gait cases (`collision.md` §11.10).
+
+Consequences under the rules of this spec (Inferred: each step is a stated rule, the chain was
+not observed in the original):
+
+- **a.** The Collection starts its ports in ordinal order (§9), so `Movement_IsJumping` is
+  true when the While starts; its test holds and the impulse branch starts in the same call
+  as the script. The impulse is requested in the frame in which `Loc_Jumping` starts.
+- **b.** Step 1 holds the persistent Run of `Jump` (the take-off clips of the race's
+  animation table). A persistent Run does not complete when the script it started ends
+  (§12.4 step 3), so steps 2 and 3 are not reached by the scripts alone and
+  `Movement_IsJumping` stays true.
+- **c.** While it is true, the `Movement_IsJumping` Switches of items 1 and 2 select nothing,
+  so no further jump starts.
+- **d.** When `Movement_IsJumping` becomes false by any means, the While stops its branch
+  with reason 0, the persistent Run then stops `Jump` (§12.4 item 5), and the While, the
+  Collection, the WhenRunning and the run of `Loc_Jumping` end in the same call. The
+  persistent Run in `Loc_JumpKeyPressed` stays running (§12.4 step 3), so with the instance
+  limit of 2 a third start of `Loc_JumpKeyPressed` would be refused (§12.3).
+- **e.** In the client's code the property ID of `Movement_IsJumping` occurs once, as a read
+  (the "not jumping" condition of `collision.md` §11.6 item 4); no code that writes it was
+  found, and no script other than `Loc_Jumping` sets it for the player (R46).
+
+> **OPEN-19:** What ends a jump in the original: what sets `Movement_IsJumping` back to false
+> and what ends the runs of `Loc_Jumping` and `Loc_JumpKeyPressed`. By b–e the scripts do
+> neither, yet the original allows one jump after another. Candidates: a client path that
+> writes properties or stops runs generically (not found by the constant search), the server
+> (the jump scripts carry `Script_ClientAuthorative` true and `Script_ReplicateToClient`
+> false), or a completion rule of persistent Runs that §12.4 does not state. Suggested
+> methods: M3 (owner: jump repeatedly on flat ground; jump again while still in the air) and
+> M4 (the script start and stop paths of the player's own entity). **Decision (Tessera):**
+> as `collision.md` §11.10 states: the controller sets `Movement_IsJumping` to false at the
+> end of the first physics update at least 0.2 s after the take-off update whose
+> `Entity_Element` is not 4, and the runs of `Loc_Jumping` and `Loc_JumpKeyPressed` that the
+> jump started are then stopped with reason 0.

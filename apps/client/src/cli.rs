@@ -223,6 +223,12 @@ pub struct Args {
     #[arg(long, value_name = "M", default_value_t = crate::walker::DEFAULT_FAR_BAND, value_parser = parse_far_band)]
     pub far_band: f32,
 
+    /// The far view of the distant-landscape sectors (`far-view.md`): `on` or `off`. Its far
+    /// radius follows `--landscape-distance`; the walker's full-detail rings stay (`--view-blocks
+    /// 3` gives the original's 3 × 3 near field).
+    #[arg(long, value_name = "on|off", default_value = "off", value_parser = parse_on_off)]
+    pub far_view: bool,
+
     /// Hide the HUD and the minimap (clean screenshots).
     #[arg(long)]
     pub no_hud: bool,
@@ -632,6 +638,14 @@ fn parse_landscape_level(s: &str) -> Result<tessera_world::draw_distance::Landsc
 fn parse_detail_level(s: &str) -> Result<tessera_world::DetailLevel, String> {
     tessera_world::DetailLevel::from_name(s)
         .ok_or_else(|| "expected Low, Medium, High, VeryHigh or UltraHigh".to_owned())
+}
+
+fn parse_on_off(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err("must be `on` or `off`".into()),
+    }
 }
 
 fn parse_far_band(s: &str) -> Result<f32, String> {

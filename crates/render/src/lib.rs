@@ -123,7 +123,9 @@
 //! (`water.md` §8), [`Pass::sky`] draws [`SkyObject`]s around the camera
 //! (`environment.md` §12) and [`Pass::instanced`] draws thousands of instances of a
 //! [`WorldModel`] per call, with the frill rules of `scenery.md` §8.3 for [`FrillParams`]
-//! batches.
+//! batches. [`Pass::far_terrain`] draws distant-landscape batches uploaded with
+//! [`Renderer::upload_far_terrain`] and [`Pass::distant_sprites`] the sector sprites
+//! uploaded with [`Renderer::upload_sprite_batch`] (`far-view.md` §6, §9).
 //!
 //! ```no_run
 //! # fn main() -> Result<(), tessera_render::RenderError> {
@@ -157,6 +159,7 @@ mod arena;
 mod camera;
 mod context;
 mod error;
+mod far_view;
 mod frame;
 mod instanced;
 pub mod lighting;
@@ -181,6 +184,11 @@ pub use context::{
     rank_adapter,
 };
 pub use error::{RenderError, Result};
+pub use far_view::{
+    DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FarFadeParams, FarTerrainData, FarTerrainDraw,
+    FarTerrainMesh, MAX_FAR_TERRAIN_INDICES, MAX_FAR_TERRAIN_VERTICES, MAX_SPRITES_PER_BATCH,
+    SpriteBatch, SpriteDraw,
+};
 pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
 pub use instanced::{
     FRILL_FADE_IN_SECONDS, FRILL_SECTOR, FRILL_SWAY_MIN, FrillParams, FrillReduction, Instance,

@@ -241,6 +241,14 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         // The collision mover takes the avatar's float height (`walker.md` §13.2).
         avatar: args.avatar.clone().unwrap_or_default(),
         far_band: args.far_band,
+        far_view: crate::walker::farview::FarViewConfig {
+            enabled: args.far_view,
+            settings: tessera_world::far_view::FarViewSettings {
+                far_radius: distances.landscape.groups(),
+                ..tessera_world::far_view::FarViewSettings::default()
+            },
+            ..crate::walker::farview::FarViewConfig::default()
+        },
         hud: !args.no_hud,
         camera: match (&args.camera_loop, args.turn_rate) {
             (Some(path), _) => Some(CameraPlan::Loop {

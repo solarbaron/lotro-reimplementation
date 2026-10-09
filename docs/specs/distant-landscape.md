@@ -511,6 +511,8 @@ creates entities from it and how it draws them was not traced (OPEN).
 <a id="s5"></a>
 ## 5. Client behaviour (BIN unless marked)
 
+Run-time use (radii, near field, far-terrain shading, sprite fades, far entities, horizon fill): [`far-view.md`](far-view.md).
+
 <a id="s5-1"></a>
 ### 5.1 Which sectors are loaded
 

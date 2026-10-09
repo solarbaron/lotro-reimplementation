@@ -8,6 +8,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use crate::error::Result;
+use crate::far_view::{FarTerrainDraw, SpriteDraw};
 use crate::instanced::InstanceBatch;
 use crate::lighting::{FrameLighting, LightReach};
 use crate::material::{Lighting, MeshDebug, MeshDraw};
@@ -135,6 +136,8 @@ pub(crate) struct WorldDraws {
     pub water: Vec<WaterDraw>,
     pub sky: Vec<SkyDraw>,
     pub instanced: Vec<InstanceBatch>,
+    pub far_terrain: Vec<FarTerrainDraw>,
+    pub sprites: Vec<SpriteDraw>,
 }
 
 impl WorldDraws {
@@ -143,6 +146,8 @@ impl WorldDraws {
             && self.water.is_empty()
             && self.sky.is_empty()
             && self.instanced.is_empty()
+            && self.far_terrain.is_empty()
+            && self.sprites.is_empty()
     }
 }
 

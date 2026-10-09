@@ -71,6 +71,7 @@
 //! | [`scenery`] | terrain-scene (0x12) and scene-choice (0x11) tables, scene records (0x02): [`TerrainSceneTable`], [`SceneChoiceTable`], [`Scene`] | `scenery.md` §4–§5 |
 //! | [`water`] | water (0x16) and fog-zone (0x17) tables: [`WaterTable`], [`FogZoneTable`] | `water.md` §4–§5 |
 //! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
+//! | [`imposter`] | imposter tables (0x27): [`ImposterTable`] | `misc-records.md` §5 |
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 //! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, distant-landscape sectors (kind 5, [`SectorRecord`]), region descriptors (0x0F) and their eight table slots | `landblock.md`, `distant-landscape.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
@@ -85,6 +86,7 @@ pub mod did_map;
 pub mod enum_mapper;
 pub mod environment;
 mod error;
+pub mod imposter;
 pub mod instance;
 pub mod item;
 pub mod landblock;
@@ -132,6 +134,7 @@ pub use did_map::{DataIdEntry, DataIdGroup, DataIdMap};
 pub use enum_mapper::EnumMapper;
 pub use environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 pub use error::{FormatError, Result};
+pub use imposter::{ImposterEntry, ImposterTable, decode_imposter_table};
 pub use landblock::{
     BlockMap, BlockMapDescriptor, CollisionTree, LandblockData, LandblockGroupRecord,
     LandblockInfo, LandblockProperties, LightMaps, RegionDescriptor, RegionTable, SectorRecord,

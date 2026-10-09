@@ -40,6 +40,7 @@ pub mod chat;
 pub(crate) mod controls;
 pub mod env;
 pub mod farband;
+pub mod farview;
 pub mod figures;
 pub(crate) mod framelog;
 pub mod frills;
@@ -399,6 +400,8 @@ pub struct WalkerConfig {
     /// Terrain blocks farther than this (metres) draw their baked layer stack
     /// (`walker.md` §14.4); 0 draws full layers at every distance.
     pub far_band: f32,
+    /// The far view of `far-view.md` (`--far-view on`).
+    pub far_view: farview::FarViewConfig,
     /// Draw the HUD and the minimap.
     pub hud: bool,
 }
@@ -460,6 +463,7 @@ impl Default for WalkerConfig {
             distances: DistanceSettings::default(),
             camera: None,
             far_band: DEFAULT_FAR_BAND,
+            far_view: farview::FarViewConfig::default(),
             hud: true,
         }
     }
@@ -643,6 +647,8 @@ pub struct Walker {
     chat: chat::ChatOverlay,
     /// The HUD's network line (M7).
     net_line: Option<String>,
+    /// The far view (`--far-view on`).
+    far_view: Option<farview::FarViewLayer>,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -822,6 +828,8 @@ impl Walker {
         let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
         let resolver = Resolver::new(Arc::clone(&ctx), objects.materials())?;
         let systems = config.systems;
+        let far_view = (config.far_view.enabled)
+            .then(|| farview::FarViewLayer::new(Arc::clone(&ctx), &config.far_view));
         Ok(Self {
             far,
             help,
@@ -894,6 +902,7 @@ impl Walker {
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
             net_line: None,
+            far_view,
         })
     }
 
@@ -1351,6 +1360,12 @@ impl Walker {
                 lod: oframe.lod,
             });
             self.last_eye = Some(eye);
+            if let Some(fv) = self.far_view.as_mut() {
+                let far = self.config.stream.rings.far;
+                let near = farview::near_field_of(self.terrain.keys(), &eye, far);
+                let view = farview::sprite_view(self.viewport.1, FOV_Y, &self.config.distances);
+                fv.update(renderer, &mut self.objects, Some(&eye), near, view);
+            }
             let t2 = Instant::now();
             if let Some(k) = eye.landblock() {
                 let radius = (self.config.minimap_radius / LANDBLOCK_SIZE).ceil() as u32 + 1;
@@ -1824,6 +1839,9 @@ impl Walker {
         self.frills.clear(&mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);
+        if let Some(fv) = self.far_view.as_mut() {
+            fv.clear(&mut self.objects);
+        }
         let keys: Vec<LandblockKey> = self.objects.keys().collect();
         for k in keys {
             self.objects.remove(k);
@@ -1955,6 +1973,9 @@ impl Walker {
         out.push((format!("Map {map}"), WHITE));
         let heading = self.controls.heading();
         out.push((loc_text(&pos, heading), GREY));
+        if let Some(fv) = &self.far_view {
+            out.push((fv.hud_line(), GREY));
+        }
         if let Some((k, c)) = self.camera_cell {
             out.push((
                 format!(
@@ -2248,6 +2269,19 @@ impl Walker {
             if scene.outdoor_visible {
                 self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
+            let water_on = self.water_drawn();
+            if let (Some(fv), true) = (self.far_view.as_mut(), scene.outdoor_visible) {
+                let c = self.config.distances.object_multiplier();
+                fv.draw(
+                    pass,
+                    &anchor,
+                    eye,
+                    c,
+                    &mut self.resolver,
+                    &mut self.objects,
+                    water_on,
+                );
+            }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
             let all_interiors = self.config.interiors;
@@ -2492,6 +2526,9 @@ impl Walker {
         self.env.release(&mut self.objects);
         self.resolver.shutdown();
         self.terrain.shutdown();
+        if let Some(fv) = self.far_view.as_mut() {
+            fv.shutdown();
+        }
         self.clear_all(renderer);
         self.hud.release(renderer);
         self.chat.release(renderer);

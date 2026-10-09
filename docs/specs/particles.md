@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-09: the two implementer OPENs of §8.6.1 answered from a third BIN pass, §8.5.2 wording made exact, new row P53). Review of this revision 2026-10-09: **changes requested** (2 blocking items, see Review record); not Accepted. Before: Accepted (2026-10-08; revision of the text Accepted 2026-10-07) |
+| **Status** | Revised (2026-10-09: the two implementer OPENs of §8.6.1 answered from a third BIN pass, §8.5.2 wording made exact, new row P53. 2026-10-09, second change: both blocking items of that revision's review fixed — new rule §10.11 with P36 widened, first sentence of §8.6.1 reworded — and the non-blocking items handled: §8.5.2 line wrapped, the emitter-condition question recorded as OPEN Q15). Awaiting re-review; not Accepted. Before: Accepted (2026-10-08; revision of the text Accepted 2026-10-07) |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author): first review, a re-review by a third session, and a final review by a fourth session that neither wrote the spec nor made either earlier review, all 2026-10-07. The 2026-10-08 revision was reviewed by a further separate session (neither the author nor an earlier reviewer), 2026-10-08. |
-| **Review record** | Final review 2026-10-07: **passed**, Accepted. Review of the 2026-10-08 revision, 2026-10-08: **passed**, Accepted. Review of the 2026-10-09 revision (diff against main: header, §1 BIN third pass and P53, §8.5.2, §8.6.1, change log), 2026-10-09, by a separate dirty-room session (AI-assisted; neither the author nor an earlier reviewer), checked against CLEAN_ROOM.md §5.3: **changes requested**. The new facts are functional, in plain words, with no code, copied prose or game data, and the BIN third pass names its questions (18–21) and why M1–M3 were not enough; a read-only spot-check of the second-pass listings in the dirty scratch area agrees with P53 (the age raised to 0, a key current when the age is at least its `time`, controller then channels then physics flags, no motion without a controller key). **Blocking:** (1) The new Tessera rule of §8.6.1 (a channel without a current key uses scale (1, 1), opaque white, mass 1) has no provenance entry and is not in §10, although the legend defines Decision as a §10 rule and P36 lists the §10 rules: add it to §10 as a new numbered rule (section numbers of §10.1–§10.10 kept) and widen P36 to name it, with §8.6.1 pointing to it. (2) The first sentence of §8.6.1 still says keys are visited "as the particle's age passes their `time`", which contradicts the answered rule (an equal age counts; the age is raised to 0 first): reword it to match step 2. **Non-blocking:** (a) the §8.5.2 bullet has one over-long line (wrap it); (b) the writer may check whether the key walk and the physics-flag copy run for every emitter that has keyframes or depend on emitter-level conditions computed at creation; that question predates this revision and is not a condition of acceptance. Full record in the review log (decision 0018). |
+| **Review record** | Final review 2026-10-07: **passed**, Accepted. Review of the 2026-10-08 revision, 2026-10-08: **passed**, Accepted. Review of the 2026-10-09 revision (diff against main: header, §1 BIN third pass and P53, §8.5.2, §8.6.1, change log), 2026-10-09, by a separate dirty-room session (AI-assisted; neither the author nor an earlier reviewer), checked against CLEAN_ROOM.md §5.3: **changes requested**. The new facts are functional, in plain words, with no code, copied prose or game data, and the BIN third pass names its questions (18–21) and why M1–M3 were not enough; a read-only spot-check of the second-pass listings in the dirty scratch area agrees with P53 (the age raised to 0, a key current when the age is at least its `time`, controller then channels then physics flags, no motion without a controller key). **Blocking:** (1) The new Tessera rule of §8.6.1 (a channel without a current key uses scale (1, 1), opaque white, mass 1) has no provenance entry and is not in §10, although the legend defines Decision as a §10 rule and P36 lists the §10 rules: add it to §10 as a new numbered rule (section numbers of §10.1–§10.10 kept) and widen P36 to name it, with §8.6.1 pointing to it. (2) The first sentence of §8.6.1 still says keys are visited "as the particle's age passes their `time`", which contradicts the answered rule (an equal age counts; the age is raised to 0 first): reword it to match step 2. **Non-blocking:** (a) the §8.5.2 bullet has one over-long line (wrap it); (b) the writer may check whether the key walk and the physics-flag copy run for every emitter that has keyframes or depend on emitter-level conditions computed at creation; that question predates this revision and is not a condition of acceptance. Full record in the review log (decision 0018). Writer's response, 2026-10-09: blocking (1) fixed by new rule §10.11, P36 widened to §10.1–§10.11, §8.6.1 pointing to it; blocking (2) fixed by rewording the first sentence of §8.6.1 (and the table heading) to step 2's rule; non-blocking (a) wrapped; (b) not examined in this revision, recorded as OPEN Q15. |
 | **Implements into** | `crates/formats` (decoders for prefix 0x39, §4, and the outer layer of prefix 0x44, §6), `apps/explorer` (particle preview, §8; fork records shown as metadata, §10), `crates/render` (particle pipeline, §8.10–§8.12), `apps/client` (effects started by script-table Particle and Beam nodes, weather systems of §7.1.3), `fuzz/` (both decoders) |
 | **Companion specs** | [`records.md`](records.md) §1.2 (VLE), §1.3 (TSize), §1.4 (Pascal string), §2.1 (prefix table; rows 0x39 and 0x44), §7 (enum mappers), §8 (DID maps). [`property-system.md`](property-system.md) §2 (master property dictionary), §4.2 (waveform = float curve), §6.3 (embedded property sets), §9 (DB-object-type codes), §17.1 (VLE forms). [`material.md`](material.md) §4 (surface records 0x31), §5.3 (float curve layout and evaluation), §7 (shader records 0x2B). [`script-table.md`](script-table.md) §5.3 (Particle node, kind 59, and Beam node, kind 54). [`skeleton-anim.md`](skeleton-anim.md) (holding locations and bone types). [`environment.md`](environment.md) §9 (kinds of prefixes 0x39 and 0x44). [`coordinates.md`](coordinates.md) (axes: Z is up). |
 
@@ -117,7 +117,7 @@ Legend:
 | P33 | Drawn size (scale channel × the owner-scale factor of §8.6.3 × `particle_scale` when that curve is not the constant 1) and drawn colour (colour channel, alpha × fade envelope, each channel clamped to [0, 1]) (§8.6.2) | BIN | Confirmed (BIN) |
 | P34 | `pivot` and `origin_offset`: evaluated at the draw clock, axis use in the camera-aligned frame (§8.12) | BIN (first pass; time and axes second pass) | Confirmed (BIN) |
 | P35 | No field of either family carries a gameplay value; gameplay reaches the records only by selection through script nodes, the whitelist and UNIQUEDB (§9) | OBS and BIN (the complete field lists of §4 and §6.1); ST (node fields); §7 | Inferred from the confirmed layouts and references |
-| P36 | Tessera rules: complete decoding, opaque fork images, curve and random evaluation, Particle-node record choice, invalid `time_step`, `burst_count` = 0, controller 4 without force fields, bounded timed and distance emission with hostile values, the two fields without effect (§10) | This spec | Decision |
+| P36 | Tessera rules: complete decoding, opaque fork images, curve and random evaluation, Particle-node record choice, invalid `time_step`, `burst_count` = 0, controller 4 without force fields, bounded timed and distance emission with hostile values, the two fields without effect, the values of a keyframe channel without a current key (§10.1–§10.11) | This spec | Decision |
 | P37 | `snap` values and the other emitter censuses (§4.7, §5.2), last-key time against `lifespan` (§5.3) | OBS (all 32,789 emitters and 121,087 keyframes) | Confirmed |
 | P38 | System start state: start = first placement time − `fast_forward`; each emitter's last particle-update, last-burst and last distance-emission times start at system start + `start_time` (§8.3, §8.17) | BIN (second pass) | Confirmed (BIN) |
 | P39 | Catch-up `lifespan` evaluated at the last-burst time on the client clock (§8.3) | BIN (second pass: the register holding the time at the call) | Confirmed (BIN) |
@@ -908,7 +908,8 @@ distribution.
 - `exploding` = 0: *d* = `direction`, rotated by the system's orientation.
 - `exploding` = 1: if any component of the shape point *s* exceeds 0.0002 in magnitude, where
   *s* is the point after the attachment of step 3 (§8.5.5: moved into the bone or holding frame
-  when the emitter has one) and before `origin` is added in step 6 (BIN third pass, P53), *d* = *s* rotated by the system's orientation (radial from the emitter);
+  when the emitter has one) and before `origin` is added in step 6 (BIN third pass, P53),
+  *d* = *s* rotated by the system's orientation (radial from the emitter);
   otherwise *d* = three randoms in [−1, 1] (not rotated).
 
 <a id="s8-5-3"></a>
@@ -951,10 +952,11 @@ evaluated at the emitter time of its spawn.
 <a id="s8-6-1"></a>
 #### 8.6.1 Flag bits and channels
 
-Keyframes are visited in stored order as the particle's age passes their `time`. A key takes
-part in a channel according to its `flags`:
+Keyframes are visited in stored order at each particle update: a key becomes current once the
+particle's age, raised to 0 when negative, is at least the key's `time` (an equal age counts;
+steps 1–5 below give the full rule). A key takes part in a channel according to its `flags`:
 
-| Bit | Effect when the age reaches the key |
+| Bit | Effect when the key becomes current |
 |---|---|
 | 0x10 or 0x02 | The key becomes the particle's current **scale** key |
 | 0x20 or 0x04 | The key becomes the current **colour** key |
@@ -1009,8 +1011,13 @@ Without keyframes no channel exists and mass is 1 (not observed: every emitter h
 **A channel without a current key** (not reached by the data). The client keeps no value for
 it: its vertex writer reads the scale and colour through the empty reference, and the
 controller-2 switch reads the mass the same way, so the original has no defined result.
-**Tessera rule (Decision):** use scale (1, 1), opaque white (1, 1, 1, 1) and mass 1, the values
-of an emitter without keys, and no motion without a controller key.
+**Tessera rule (Decision, [§10.11](#s10)):** use scale (1, 1), opaque white (1, 1, 1, 1) and
+mass 1, the values of an emitter without keys, and no motion without a controller key.
+
+> **OPEN (Q15):** Whether the key walk of steps 2–3 and the physics-flag copy (0x200) run for
+> every emitter that has keyframes, or depend on emitter-level conditions computed when the
+> emitter is created. The data does not decide it (every emitter has keys, and every first key
+> has `time` 0). Suggested method: a further M4 look at the particle update's entry conditions.
 
 > **Answered (2026-10-09, BIN third pass; was OPEN, implementer, 2026-10-07):** (1) a key
 > becomes current when the age equals its `time` (step 2: "at least"; the age is raised to 0
@@ -1414,6 +1421,10 @@ Timing values that a player can perceive (effect length) follow from `time_limit
    is negative or not a finite number counts as 0 (off). The client's loop already ends when room
    reaches 0 or after *n* + 1 steps.
 10. `force_draw` and `draw_reflection` are decoded and shown, and have no effect (§8.15).
+11. A keyframe channel without a current key (§8.6.1; not reached by the data): the client
+    reads it through an empty reference and has no defined result. Use scale (1, 1), opaque white (1, 1, 1, 1) and
+    mass 1, the values of an emitter without keys. A particle without a current controller key
+    does not move, as in the client.
 
 ---
 
@@ -1631,6 +1642,9 @@ Q12 — closed 2026-10-08: §7.1.1; rule §10.4 now follows the client.
 
 Q14 — closed 2026-10-08: §8.7 (the force-field list is never filled; controller-1 start index).
 
+Q15 — OPEN, in §8.6.1 (whether the key walk and the physics-flag copy depend on emitter-level
+conditions computed at creation; raised by the 2026-10-09 review, not blocking).
+
 <a id="s14"></a>
 ## 14. Notes for other specs
 
@@ -1669,3 +1683,4 @@ These are suggestions for the owners of those specs; this spec does not edit the
 | 2026-10-07 | §1 (P19, P23, P24, P30, P36), §5.2, §7.1.3, §8.3, §8.7, §8.8, new §8.8.1, §10.8, §11 (PS9), §13 (Q13), §14 | Re-review answered (status stays Review). **Blocking:** §8.8 said gravity and wind are computed at system start and kept for the system's life. That is not true for every system. Each emitter stores both vectors, computed at start. The weather code's rain precipitation update recomputes them for every emitter of the UNIQUEDB 0x83 system, and the snow update does the same for the 0xFE system when the snow value exceeds 1.001, once per run of each update. No other caller exists. Particle updates read the stored vectors, so live particles follow a recomputation (BIN, the start and recompute routines and both callers re-read). New §8.8.1 lists the systems and conditions. The weather code creates all ten UNIQUEDB systems at initialisation (§7.1.3, P30). P24 is widened. Q13 now asks how often the precipitation updates run, what the rain and snow values mean, and where the enabling flags come from. **Non-blocking:** (a) §8.3 now gives the 32-bit wrapping running total and the bound of at most cap passes per update. It also gives the client's behaviour with a negative, too small or not-a-number `emit_interval` (BIN). New Tessera rule §10.8 bounds the work. The `emit_interval` census was re-measured over all 32,789 emitters: 615 are 0, the rest are finite from 0.000263 to 100,000, and none is negative. `max_particles` is at most 100,000 (§5.2, PS9). (b) §8.7: a force-field lifetime below 0.0002, negative values included, never runs out (BIN). A rain fall-direction note for `environment.md` was added to §14. |
 | 2026-10-08 | Header, §0, §1 (BIN second pass; P12, P20, P23, P33, P34, P36 widened; new P38–P52), §2.2, §4.1, §4.2, §6.1, new §6.5, §7.1.1, §7.1.2, §8 intro, §8.1, §8.3, §8.4, §8.5 step 9, §8.5.5, §8.6.1, §8.6.2, new §8.6.3, §8.7, §8.8, §8.8.1, §8.11, §8.12 (rewritten), new §8.13–§8.17, §9, §10.4, §10.7, new §10.9–§10.10, §13, §14 | **Status Revised** (Accepted text changed). OPEN questions answered from a second M4 pass and new censuses: Q3 (catch-up `lifespan` at the last-burst clock time; `pivot`/`origin_offset` at the draw clock), Q5 (`uses_video_post` pass, `use_lighting`, `inherit_opacity`, `sorting_priority` order, `shareable` sharing, the distance fade; `force_draw` and `draw_reflection` have no reader), Q6 (`fast_forward` start and restart, `physics_duration`), Q7 (no effect), Q9 (start values, scheduling, anchors), Q10 (whitelist via UNIQUEDB 0x1E2 and the two start-gating options), Q11 (saved loaded-surface slot), Q12 (node DID resolution by DB type), Q14 (the force-field list is never filled; controller-1 index range). Partly answered: Q2 (`flag`, `tail_value`, `transform`), Q4 (`scale_mode` selection), Q8 (billboard construction and modes). Remaining OPEN: Q1, Q2 (bounds, version source), Q4 (source of the two scale vectors), Q8 (local-space frames, light attenuation and ambient, streak in `world_rotation` mode), Q13. **Corrections to Accepted text:** §8.5 step 9 said a new particle is updated to now; the client updates it to the emitter's last particle-update time (BIN). §8.4 said the spawn time is interpolated between the two updates; the client dates successive steps before the previous update (BIN), and the loop also ends when room reaches 0. §8.7 controller 3 with physics flag 0x8: the particle takes the key's counter, which is then re-drawn at random. Rule §10.4 now follows the client instead of starting nothing. |
 | 2026-10-09 | Header, §1 (BIN third pass, questions 18–21; new P53), §8.5.2, §8.6.1 | Spec writer (dirty room); status Accepted → Revised, awaiting review. The two implementer OPENs of §8.6.1 (2026-10-07: equal age and a channel without a key; 2026-10-08: the run-time simulation's choices) answered and marked Answered: a key becomes current at a particle update when the age, raised to 0, is at least its `time`; no key is current at creation; a key applies its controller, then its channels, then its physics flags; controller point indices are drawn later; no motion without a controller key; a channel without a key has no defined value in the client (Tessera Decision: scale (1, 1), opaque white, mass 1). §8.5.2: the exploding direction uses the shape point after the attachment and before `origin` (the simulation's "before the attachment" differs). No other fact changed; section numbers kept. |
+| 2026-10-09 | Header, §1 (P36), §8.5.2, §8.6.1, new §10.11, §13 (Q15) | Spec writer (dirty room); status stays Revised, awaiting re-review. Review of the morning revision answered. **Blocking:** (1) the §8.6.1 Decision for a channel without a current key (scale (1, 1), opaque white, mass 1; no motion without a controller key, which is the client's behaviour) is now rule §10.11; §10.1–§10.10 keep their numbers; P36 names it; §8.6.1 points to §10.11. (2) The first sentence of §8.6.1 said keys are visited "as the age passes their `time`"; it now states step 2's rule (age raised to 0, an equal age counts), and the table heading reads "when the key becomes current". **Non-blocking:** (a) §8.5.2 line wrapped; (b) whether the key walk and the physics-flag copy depend on emitter-level conditions computed at creation is recorded as OPEN Q15 (not examined; predates the revision). No fact about the original changed. |

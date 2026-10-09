@@ -178,10 +178,10 @@ fn bytecode_census() {
         "definite assignment ({:.2?}): {} analysed, {} skipped, reads {:x?}",
         t2.elapsed(),
         da.analysed,
-        da.skipped,
+        da.skipped.len(),
         da.reads
     );
-    assert_eq!(da.skipped, 0);
+    assert!(da.skipped.is_empty(), "skipped bodies {:x?}", da.skipped);
     assert_eq!(
         da.reads,
         vec![

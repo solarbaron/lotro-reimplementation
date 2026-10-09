@@ -139,6 +139,8 @@ pub struct CellOwnerIndex {
     asked: HashSet<LandblockKey>,
     /// Failed outside the data: ask again from then on.
     retry: HashMap<LandblockKey, Instant>,
+    /// Records asked for and answers taken in so far (cumulative).
+    progress: u64,
 }
 
 impl std::fmt::Debug for CellOwnerIndex {
@@ -161,6 +163,7 @@ impl CellOwnerIndex {
             by_origin: HashMap::new(),
             asked: HashSet::new(),
             retry: HashMap::new(),
+            progress: 0,
         }
     }
 
@@ -174,6 +177,13 @@ impl CellOwnerIndex {
     #[must_use]
     pub fn known(&self) -> usize {
         self.known.len()
+    }
+
+    /// A progress mark: records asked for plus answers taken in, cumulative (waits on
+    /// progress compare it, [`crate::wait::LoadWait::Progress`]).
+    #[must_use]
+    pub fn load_progress(&self) -> u64 {
+        self.progress
     }
 
     fn channel(&mut self) -> Option<&Channel> {
@@ -234,6 +244,7 @@ impl CellOwnerIndex {
                     break;
                 }
                 self.asked.insert(k);
+                self.progress = self.progress.wrapping_add(1);
             }
         }
         let answers: Vec<(LandblockKey, OwnerRead)> = self
@@ -243,6 +254,7 @@ impl CellOwnerIndex {
             .unwrap_or_default();
         for (k, read) in answers {
             self.asked.remove(&k);
+            self.progress = self.progress.wrapping_add(1);
             match read {
                 OwnerRead::Origins(origins) => {
                     self.retry.remove(&k);

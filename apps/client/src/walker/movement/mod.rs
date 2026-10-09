@@ -306,6 +306,16 @@ impl PinStreamers {
         }
     }
 
+    /// A progress mark of the pinned streamers' loading: the sum of their
+    /// [`tessera_world::StreamStats::progress`] marks and the number of pins (a new pin is
+    /// progress; a dropped one changes the mark too).
+    #[must_use]
+    pub fn load_progress(&self) -> u64 {
+        self.pins.iter().fold(self.pins.len() as u64, |a, (_, s)| {
+            a.wrapping_add(s.stats().progress())
+        })
+    }
+
     /// The landblocks pinned now.
     #[must_use]
     pub fn pinned(&self) -> Vec<LandblockKey> {

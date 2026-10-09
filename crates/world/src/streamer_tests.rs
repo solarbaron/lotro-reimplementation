@@ -576,6 +576,29 @@ fn slow_jobs_lengthen_the_urgent_part_not_the_path() {
 }
 
 #[test]
+fn settling_on_progress_matches_the_timed_settle() {
+    let ctx = strip();
+    let pool = pool();
+    let focus = centre(10, 3);
+    let mut timed = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
+    assert!(timed.settle(focus, Duration::from_secs(20)));
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
+    let before = w.stats().progress();
+    assert!(w.settle_on_progress(focus, 60_000, 1_000_000));
+    assert!(w.stats().progress() > before, "loading counted as progress");
+    let mut a: Vec<_> = timed.resident().map(|(k, _, _)| k).collect();
+    let mut b: Vec<_> = w.resident().map(|(k, _, _)| k).collect();
+    a.sort();
+    b.sort();
+    assert_eq!(a, b, "the same landblocks resident");
+    // Settled already: the first update changes nothing.
+    assert!(w.settle_on_progress(focus, 0, 1));
+    // An update cap of 1 with work outstanding gives up.
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
+    assert!(!w.settle_on_progress(focus, 60_000, 1));
+}
+
+#[test]
 fn ahead_blocks_yield_to_the_rings_under_the_budget() {
     let ctx = strip();
     let pool = pool();

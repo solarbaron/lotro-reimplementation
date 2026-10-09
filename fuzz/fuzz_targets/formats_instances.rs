@@ -52,15 +52,20 @@ fn exercise(set: &PropertySet) {
     for d in &s.derived_stats {
         let _ = d.evaluate(|k| {
             if k % 2 == 0 {
-                StatValue::Int(i64::from(k) - 7)
+                StatValue::Int(k.cast_signed().wrapping_sub(7))
             } else {
-                StatValue::Float(f64::from(k) * 0.5)
+                StatValue::Float(f32::from(u16::try_from(k % 1000).unwrap_or(0)) * 0.5)
             }
         });
-        let _ = d.evaluate(|k| StatValue::Int(i64::from(k).wrapping_mul(i64::MAX)));
+        let _ = d.evaluate(|k| StatValue::Int(k.cast_signed().wrapping_mul(i32::MAX)));
     }
     let w = WorldJoinControl::read(set, &v);
-    let _ = (w.deviations(), w.finder_order(), w.sort_index(Did(1)));
+    let _ = (
+        w.deviations(),
+        w.finder_order(),
+        w.sort_index(Did(1)),
+        w.group_table().len(),
+    );
     for n in [i32::MIN, -1, 0, 1, 2, i32::MAX] {
         let _ = w.featured_instance(Some(&PropertyValue::Int(n)));
     }
@@ -81,14 +86,21 @@ fn exercise(set: &PropertySet) {
         u.bounding_box([0.0; 3]),
         u.figure_count(),
     );
-    let mut counts = FigureCounts::new(&u);
+    let (mut counts, _) = FigureCounts::first_display(&u, &u.removals);
     let _ = counts.apply(&u.removals);
-    let _ = counts.apply(&u.removals);
+    let mut fresh = FigureCounts::new(&u);
+    let _ = fresh.apply(&u.removals);
+    let _ = fresh.apply(&u.removals[..u.removals.len() / 2]);
+    let _ = fresh.apply(&u.removals);
+    let mut shortened = u.clone();
+    fresh.write_back(&mut shortened);
+    assert!(shortened.figure_count() <= u.figure_count());
     let _ = SessionPlayControl::read(set, &v);
     let f = FellowshipMakerControl::read(set, &v);
     let _ = PhasingFlags::read(set, &v);
     let _ = BattleStat::read(set, &v);
     let rules = MatchingRules {
+        bits: testkit::flag_bits(),
         valid_sizes: f.valid_sizes.clone(),
         capped: w.capped,
         seasonal: w.seasonal.iter().copied().collect(),
@@ -96,6 +108,8 @@ fn exercise(set: &PropertySet) {
     let templates = [MatchingTemplate::from_template(Did(1), &t)];
     let idx = MatchingIndex::build(&templates, &rules);
     assert!(idx.entries.len() <= t.group_sizes.len().saturating_mul(t.tiers.len()));
+    assert!(idx.entries.iter().all(|e| rules.bits.is_listed(e.flags)));
+    let _ = idx.group_flags(&[Did(1)]);
 }
 
 fuzz_target!(|data: &[u8]| {

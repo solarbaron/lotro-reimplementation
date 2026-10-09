@@ -504,7 +504,7 @@ impl Ui {
             }
         }
         changed.sort_unstable();
-        e.dirty = true;
+        self.note_paint_dirty(k);
         for p in changed {
             self.property_changed(k, p);
         }
@@ -1031,6 +1031,9 @@ impl Ui {
                     if let Some(e) = self.el_mut(k) {
                         e.scale = Some(s.map(|v| if v.is_finite() { v } else { 1.0 }));
                     }
+                    // A new displayed box of a surface: composition input, not damage. The
+                    // next paint with a change runs the full surface pass.
+                    self.painter.note_structure();
                     self.input.hover_dirty = true;
                     return;
                 }
@@ -1125,10 +1128,17 @@ impl Ui {
 
     /// Marks an element's paint dirty (decision 0015 Decision 1.4).
     pub(crate) fn mark_dirty(&mut self, k: ElementKey) {
-        if let Some(e) = self.el_mut(k) {
-            e.dirty = true;
-        }
+        self.note_paint_dirty(k);
         self.painter.touched = true;
+    }
+
+    /// Sets an element's paint-dirty flag and records it for the next damage pass, without
+    /// asking for one (decision 0015 Decision 1.4).
+    pub(crate) fn note_paint_dirty(&mut self, k: ElementKey) {
+        if let Some(e) = self.arena.get_mut(k) {
+            e.paint_dirty = true;
+            self.painter.note_dirty(k);
+        }
     }
 
     /// Registers the element for per-frame work.

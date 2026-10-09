@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); the implementer OPEN of 2026-10-08 in §13.6 (merged from main 2026-10-09) awaits the next revision |
-| **Last updated** | 2026-10-09 (merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
+| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); §13.6 revised 2026-10-09 (spec writer: the implementer OPEN of 2026-10-08 answered by restating the `blocked` and slope-allowance readings); review of 2026-10-09 passed: **Accepted**. §7 and §10.8: Tessera rules added 2026-10-09 by the spec writer (settle wait, audio columns, overlay on the dispatcher); review of 2026-10-09 passed |
+| **Last updated** | 2026-10-09 (spec writer, dirty room: implementer OPENs of §7, §10.8 and §13.6 answered; before that, the same day, merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
-| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**; 2026-10-08 re-review of the fifth revision (Claude review session, spec-writer agent): **passed, Accepted**. §11 unchanged: Accepted. Details in the dirty-room review log (decision 0018). |
+| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**; 2026-10-08 re-review of the fifth revision (Claude review session, spec-writer agent): **passed, Accepted**. §11 unchanged: Accepted. 2026-10-09 review of the spec writer's change of §7, §10.8 and §13.6 (Claude review session, spec-reviewer agent, independent of the writer; CLEAN_ROOM.md §5.3): **passed**, §13.6 Accepted again. Spot-checked read-only: the §13.6 first-touch and slope-allowance wording agrees with `m4-5-visual.md` §2.2 (sampling at the axis and on rings of *r* and *r*/2, 16 directions; 0.05 m tolerances); decision 0020 and `chat-window.md` §10 items 2, 11–13 exist as cited; the settle-wait rule and the four audio columns match what the implementation does. No client fact added, no code, no game text. Non-blocking: the §7 frame cap could say that it counts start-up frames too. Details in the dirty-room review log (decision 0018). |
 | **Implements into** | `apps/client/src/walker/` (M4.5: `interiors.rs`, `env.rs`, `terrain.rs`, `objects.rs`, `movement/`; M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs` |
 | **Format facts from** | `coordinates.md` (§3, §8–§12), `landblock.md` (§5, §6.3, §8), `entity-descriptor.md` (§5–§9), `setup.md` (§7), `mesh.md` (§8, §11), `material.md` (§9–§12), `terrain.md`, `keymap.md`, `wstate.md` (§11); M4: `appearance.md` (§2–§7), `skeleton-anim.md` (§2, §4, §7, §8), `script-table.md` (§6, §8, §11); M4.5: `landblock.md` (§4.4, §4.11–§4.14), `lighting.md` (§8.1, §8.3, §8.5, §9, §10), `terrain-texturing.md` (§4.8–§4.10, §10), `collision.md` (§5.8.1, §10–§12), `environment.md`, `water.md`, `scenery.md` (§8); the client facts §13–§14 rely on are restated with their provenance in §14.13 |
 
@@ -184,6 +184,16 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
   loading, deferred or missing in the near ring, every terrain block is meshed and every part
   and texture in range is on the GPU or failed, for 20 consecutive frames (or after
   `--settle-timeout`).
+- **Settle wait** (Tessera rule, 2026-10-09). The settled rule above is the same for every run;
+  what differs is when a run gives up waiting for it. The command line uses a **wall-clock**
+  limit (`--settle-timeout`). Library callers (tests through `tessera_client::headless`) may
+  choose a **progress** limit instead: the run gives up only after a given number of
+  consecutive frames in which no loading work finished or arrived, or after a frame cap, with no
+  wall-clock limit. "Loading work" is read from the completion and outstanding-work counters of
+  the streamer, terrain, objects, characters (sampled poses included), water, frills, sky and
+  the resolver. Real-data tests that assert the settled state use the progress limit, so a
+  heavily loaded machine that is still making progress does not fail them; both numbers are
+  the caller's parameters. The command line gains no option for it.
 - `--fly-path`: the camera waits at the start (`--fly-height` above the terrain, facing the
   end, pitched 8.6° down) until settled, then moves at `--speed`, following the terrain
   upwards at once and downwards slowly. Headless runs are paced at 60 frames per second and
@@ -201,28 +211,31 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
   main-thread animation time (mean and max), the worker time, the share of the animation
   work done on workers (worker / (worker + main thread)) and the character layer's longest
   frame.
+- Audio columns (M6, appended last, after the M4.5 columns of §14 that end in
+  `frills_draw_ms`, so that readers of the earlier columns keep working): `audio_ms`
+  (main-thread world-audio update), `audio_voices` (audible voices), `audio_underruns` (device
+  underruns so far, cumulative) and `mixer_load` (render time over audio time of the last
+  mixer call). With audio on, the summary also reports the mean and longest audio update, the
+  most audible voices, the underruns during the log and the highest mixer load.
 
-> **OPEN:** (M6 implementation, 2026-10-07; position updated when M6 merged with M4.5 and
-> M7, 2026-10-08) the walker's frame log gained four columns, appended last (after the
-> M4.5 columns of §14 that end in `frills_draw_ms`) so that existing readers of the earlier
-> columns keep working:
-> `audio_ms` (main-thread world-audio update), `audio_voices` (audible voices),
-> `audio_underruns` (device underruns so far, cumulative) and `mixer_load` (render time over
-> audio time of the last mixer call). With audio on, the summary also reports the mean and
-> longest audio update, the most audible voices, the underruns during the log and the
-> highest mixer load. The owner of this spec should fold them into the list above.
+> **Answered (2026-10-09, spec writer; was OPEN, M6 implementation, 2026-10-07):** the four
+> audio columns and the summary lines are folded into the list above.
+
+> **Answered (2026-10-09, spec writer; was OPEN, clean-room implementer, 2026-10-09):** the
+> progress-based settle wait is accepted as a Tessera rule ("Settle wait" above) for library
+> callers and real-data tests; the command line keeps `--settle-timeout` only.
 
 > **OPEN:** (clean-room implementer, 2026-10-09; engineering choice, no client fact) the
-> `--screenshot` settle wait above is wall-clock (`--settle-timeout`), so real-data tests
-> that assert the settled state failed on a heavily loaded machine although loading was
-> still progressing. Library callers (tests) may now choose a progress wait instead
-> (`tessera_client::headless::run_with` with `SettleWait::Progress`): the settled rule is
-> unchanged (20 consecutive settled frames), but the run gives up only after a given number
-> of consecutive frames in which no loading work finished or arrived (completion and
-> outstanding-work counters of the streamer, terrain, objects, characters including
-> sampled poses, water, frills, sky and resolver), or after a frame cap; no wall-clock
-> limit applies. The command line keeps `--settle-timeout`. The owner of this spec should
-> decide whether to fold this into the list above or expose it on the command line.
+> other waits of library callers follow the same rule. `WorldStreamer::settle_on_progress`
+> settles like `settle` but gives up only after a number of consecutive updates in which the
+> streamer's cumulative work counters (requests, completed jobs, integrations, evictions,
+> releases, cancellations, failures, retries) and its loading, pending and retry counts did
+> not change, or after an update cap. The scripted-walk and soak runners (§13.6, §13.7) take
+> a `LoadWait`: the command line's `--settle-timeout` as before, or a progress wait that
+> gives up after consecutive polls in which neither the walk world's loading counters
+> (main and pin streamers, cell-owner index) nor the missing landblocks changed, or after a
+> poll cap. Player-music waits count polls in which start-up, a job or a queued command
+> finished. The real-data tests use these progress waits; no client behaviour changes.
 
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
@@ -525,15 +538,15 @@ describe the implementation and list what it leaves open.
   move (§10.5). They stand on the walker's terrain and are animated by ground speed as in
   §10.5; a sample whose motion byte says Standing animates as standing.
 - A minimal chat overlay (last 8 lines, plain text) and a one-line input: Enter opens it,
-  Enter sends on Say, Escape cancels; the HUD shows backend, session state, round-trip
+  Enter submits the line to the client's command dispatcher (decision 0020, `chat-window.md`
+  §10 items 2, 11–13), which says plain text on Say through the session, runs `/play` and the
+  other client commands locally and posts an unknown command as a local error line without
+  sending anything; Escape cancels; the HUD shows backend, session state, round-trip
   time, clock offset and the interpolation delay. M5 replaces this with the real chat
   window.
 
-> **OPEN (implementation, 2026-10-08):** the overlay now feeds the client's command
-> dispatcher (decision 0020) in every session, with or without `--server`: plain text is said
-> on Say, `/play` and the other client commands run locally, and an unknown command posts a
-> local error line and sends nothing. The bullet above still says "Enter sends on Say";
-> spec writer: update it as decision 0020 Consequences asks.
+> **Answered (2026-10-09, spec writer; was OPEN, implementation, 2026-10-08):** the bullet
+> above now says that the overlay feeds the dispatcher.
 
 > **OPEN:** the motion byte's Backward flag and the Airborne gait, and the `STANCE` and
 > `EMOTE` properties (`tessera-protocol.md` §7.5), do not change a networked character's
@@ -1480,24 +1493,30 @@ was inside the lake's volume boxes and the walker swam up out of its cell.
   held, at least 0.5 s into the inputs and more than 1 m from the end point, whose
   horizontal speed is below half the layer's forward speed; `pass`'s "object contact" is
   a static or generated body within 0.01 m. A failure within twice its tolerance is
-  reported as a near miss (`m4-5-visual.md` §2.2: for the spec writer). `blocked` walks also report the
-  first stop (where the walker first came to rest with forward held).
+  reported as a near miss (`m4-5-visual.md` §2.2: for the spec writer).
+- `blocked` (revised 2026-10-09 to follow `m4-5-visual.md` §2.2 as revised 2026-10-08 and
+  confirmed 2026-10-09): the walk is judged at the **first touch**, the first step with forward
+  held after which the capsule lies within 0.01 m of a static, generated or other body that is
+  not terrain, ceiling or cell, searched among all contacts of that step (not only the 8 that
+  the movement log keeps). "Never past P + `d`" (the feet's distance along the start heading) is
+  checked at every step up to the first touch; at the first touch the feet must be within `d` of
+  P horizontally and within 0.05 m below to 0.05 m plus the slope allowance above P. After it the
+  walker may slide along or round the blocker; the end point and the first stop (where the
+  walker first came to rest with forward held) are reported for information only.
+- **Slope allowance** (`m4-5-visual.md` §2.2, `collision.md` §11.7): the upper vertical
+  tolerance of `follow` and `pass` (feet above the terrain under them) and of `blocked` (feet
+  above P at the first touch) is raised by *r* · (sec *θ* − 1), where *r* is the capsule radius
+  and *θ* the steepest terrain triangle sampled within *r* of the capsule's axis (at the axis and
+  on rings of radius *r* and *r*/2, 16 directions each); the lower tolerance is unchanged.
 - Movement log (CSV, one row per step): `walk, step, t, x, y, z` (feet, frame of the
   walk's landblock), `vx, vy, vz, heading_deg, state` (`collision.md` §10.4), `support`,
   `cell` (`0xXXYY:N` or 0), `water_depth, forward, strafe, jump, walking, stepped_up,
   jumped, snapped, planes, pushed_out, penetration, boundary, terrain` (terrain height
   under the feet), `contacts` (up to 8, `kind@separation`).
 
-> **OPEN (implementer, 2026-10-08):** `m4-5-visual.md` §2.2 was revised from `collision.md`
-> §11.7, and the runner now reads it so: `blocked` is checked at the **first touch** (the
-> first step with forward held after which the capsule lies within 0.01 m of a static,
-> generated or other non-terrain, non-ceiling, non-cell body, searched among all contacts,
-> not only the 8 logged), "never past P + `d`" up to that step, the end point only
-> reported; the feet's height above the terrain in `follow` and `pass`, and above P at the
-> first touch in `blocked`, may exceed the tolerance by *r* · (sec *θ* − 1), *θ* the steepest
-> terrain triangle sampled within the capsule radius *r* of the axis; below it the tolerance
-> is unchanged. The readings above ("`blocked` walks also report the first stop") predate
-> this; please restate them in the next revision of §13.6.
+> **Answered (2026-10-09, spec writer; was OPEN, implementer, 2026-10-08):** the first-touch
+> reading of `blocked` and the slope allowance are restated above; the earlier "`blocked` walks
+> also report the first stop" is kept as information only.
 
 <a id="s13-7"></a>
 ### 13.7 The soak (`m4-5-visual.md` §2.5)
@@ -2587,3 +2606,4 @@ the fog, sky placement.
 | 2026-10-07 | Spec writer (dirty room), fourth, wording-only revision of §13–§14 after the acceptance, applying the non-blocking note of that review on row W-E12; no fact about the walker's behaviour changed: §14.3 "Black or dim sun" says a sun brightness below 0.0002 (exactly 0 in all but one keyframe, which holds 0.0001), and that in that one keyframe the walker's sun diffuse term is near black but not exactly; row W-E12 gives 557 keyframes at exactly 0 and one at 0.0001 (own probe re-run over all 963 day descriptions) and notes that the `environment.md` §5.3 count of 558 includes it. No section number or anchor changed. Status of §13–§14: Accepted → Revised. |
 | 2026-10-08 | Spec writer (dirty room), fifth revision of §13–§14 answering the re-review of the fourth revision (changes requested: B1 stale body, B2 fog contradiction with `render.md`, B3 choices only in OPENs; N1 sun-colour alpha), checked against the code of the remediation worktree: §13.3 the pinned landblocks in every view as a Decision (implementer status OPEN folded); §14.3 rewritten to the current code: key A by the position lookup with fallback 2, key B and the overrides by the same lookup (also with outdoor-visible clear and no camera cell), stored types as the client, the black/dim-sun test now made (remaining departures: no `effect` test, sun-colour alpha, no 5 s fade; new row W-E13, own probe), fog limits in the client's order with the renderer's lower limits only (consistent with `render.md` §4.2; the fog departure is withdrawn), object shadows as the client (opacity above 0.8, strictly below the shadow distance; opacity factors taken as 1, Decision), reach entries for every light and the automatic selection for every draw with per-instance lists (remaining departure: parent switches, no effect here), the clock keys, the no-sky case and the 430 m terrain casters labelled Decisions; §14.4: ceiling-shadow, rule-3, fallback (empty or missing table, unresolved layers: not in this install), far-band hysteresis, far-band bake and mask parking as Decisions, the far-band light-map term labelled a departure (implementer OPENs folded); §14.5: the fade restart labelled a departure from the client (new BIN question (o), row W-O3: the client advances fade and smoothed distance for every object of the scene each frame, the fade is time-based), the smoothed distance confirmed as the client's rule, object shadows as the client, character shadows still departing (OPEN narrowed), new departures for unlit blend pairs and unlit fog (OPEN); §14.7 the colour retry as a Decision; §14.8 the sky-fog rule and the client's sky rotation (departures withdrawn, OPENs removed); §14.10a rows L2/L7 annotated; §14.11 annotations updated; §14.12 (a) camera raise, (b) portal by `portal` field, PVS skip rules, (c) full scene-flag pass with the landblock-order Decision, (d) crossing count, (e) avatar placeholder, (g) cells without x, y, z drawn at the origin (collision side still departs), test notes (implementer OPENs folded); §14.13 BIN source (o), rows W-E13 and W-O3, "Used in" columns updated, departures table rewritten (eleven rows withdrawn, four added). No section number or anchor changed. Status of §13–§14: Revised (Accepted text changed). |
 | 2026-10-09 | Merge of main into remediation-2: main's 2026-10-06 M5 rules (§5, §6) and its implementer OPENs (§7 frame-log columns, §10 chat overlay, §13.6 first touch) kept beside the fifth revision; header status combined. No fact changed. |
+| 2026-10-09 | Spec writer (dirty room; Tessera rules only, no new client fact): §7 gains the settle-wait rule (wall-clock limit on the command line, progress limit for library callers and real-data tests) and the four audio frame-log columns; both §7 implementer OPENs marked Answered. §10.8: the overlay bullet says that lines go to the command dispatcher (decision 0020); its OPEN marked Answered. §13.6: `blocked` judged at the first touch and the slope allowance restated from `m4-5-visual.md` §2.2; the implementer OPEN of 2026-10-08 marked Answered. Status of §13.6 Accepted → Revised. |

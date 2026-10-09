@@ -459,6 +459,7 @@ mod tests {
     fn record(did: u32, key: u32, blocks: Vec<AppearanceBlock>) -> AppearanceRecord {
         AppearanceRecord {
             did: Did(did),
+            linked: Vec::new(),
             entries: vec![AppearanceEntry { key, blocks }],
             ..AppearanceRecord::default()
         }

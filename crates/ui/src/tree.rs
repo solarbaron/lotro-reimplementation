@@ -199,8 +199,9 @@ pub(crate) struct Element {
     pub scaler: Option<((i32, i32), f32)>,
     pub fade: Option<AutoFade>,
     pub text: TextState,
-    /// Paint must be rebuilt.
-    pub dirty: bool,
+    /// Paint must be rebuilt. Set only through `Ui::note_paint_dirty` (or
+    /// `Ui::mark_dirty`), which also records the element for the paint step's damage pass.
+    pub paint_dirty: bool,
     /// Registered for per-frame work.
     pub frame_update: bool,
     /// Accepts double clicks (`ui-behaviour.md` §4.6; Tessera: plugin controls do).
@@ -267,7 +268,7 @@ impl Element {
             scaler: None,
             fade: None,
             text: TextState::default(),
-            dirty: true,
+            paint_dirty: true,
             frame_update: false,
             accepts_double_click: false,
             wants_moves: false,

@@ -27,7 +27,7 @@ use tessera_wstate::game_controls::{
     MountedCombatControl, OpenTappingControl, PaperItemService, PaperItemServices, Perk,
     PerkControl, RandomItemRewardControl, ResetScheduleControl, SlotSchedule, TemplateDiff,
     TrackingStateControl, VitalDisplayOverride, VitalDisplayOverrideControl, bit_keys, classify,
-    is_default_attack, is_empty_marker, unlocked_key,
+    entity_name, is_default_attack, is_empty_marker, item_vdo_unlocks, unlocked_key,
 };
 use tessera_wstate::testkit::{LibraryBuilder, game_controls_dictionary};
 use tessera_wstate::{ClassLibrary, DecodeContext, ObjectState};
@@ -85,6 +85,7 @@ fn views(set: &PropertySet, reg: &PropertyRegistry) {
     if let Ok(d) = MountDirectory::from_properties(set, reg) {
         let _ = d.is_disjoint();
         let _ = d.skills().count();
+        let _ = d.skills_for_size(true).len() + d.skills_for_size(false).len();
     }
     if let Ok(t) = MountTrait::from_properties(set, reg) {
         let _ = t.slot();
@@ -97,6 +98,7 @@ fn views(set: &PropertySet, reg: &PropertyRegistry) {
             let _ = c.forward_speed_limit(Some(gait), 10.0, Some(5.0));
         }
         let _ = c.forward_speed_limit(None, f32::MAX, None);
+        let _ = c.tree_keys_consistent();
         let _ = MountedCombatControl::turn_gait(set.iter().next().map(|p| &p.value));
     }
     let _ = is_default_attack(set, reg);
@@ -120,6 +122,8 @@ fn views(set: &PropertySet, reg: &PropertyRegistry) {
     }
     let _ = VitalDisplayOverrideControl::from_properties(set, reg);
     let _ = VitalDisplayOverride::from_properties(set, reg);
+    let _ = item_vdo_unlocks(set, reg);
+    let _ = entity_name(set, reg);
     if let Ok(a) = AlertsControl::from_properties(set, reg) {
         let _ = a.types_are_distinct_and_non_zero();
     }

@@ -776,6 +776,113 @@ fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// render.md §6.10 "Fixed blends" (R12): in a pass with the premultiplied option, a fixed
+/// blend keeps the destination alpha, except SRCALPHA / INVSRCALPHA, ADD (alpha
+/// source-over) and destination ZERO with a source factor that does not read the
+/// destination (alpha 1); over a pixel an opaque draw covered, the colour equals the same
+/// draw into an opaque target and alpha stays 1. Without the option nothing changes: every
+/// fixed blend keeps the destination alpha. The colour check also runs with an over-bright
+/// pane (lit colour above 1, not clamped on a `Rgba8Unorm` target): the blend unit clamps
+/// the source before it applies the factor, so the opaque path must too.
+#[test]
+fn fixed_blends_write_alpha_by_r12_in_premultiplied_passes() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    // White with base alpha 0.5: the pane's opacity source.
+    let white = texel(&mut r, [255, 255, 255, 128])?;
+    let grey = texel(&mut r, [128, 128, 128, 255])?;
+    // An opaque grey ground (lit colour 128 / 255) over the left half of the view.
+    let left = MeshDraw::new(
+        plane,
+        Mat4::from_translation(Vec3::new(-20.0, 0.0, 0.0)),
+        Material::textured(grey),
+    )
+    .with_lit(LitSurface::default());
+    // A pane in front of everything: lit colour 1 (ambient 0.5) or above 1 (ambient 1). Its
+    // factors read the opacity source, the base alpha 0.5; M.alpha does not enter
+    // (material.md §11.3, rule for unlit records).
+    let pane = |src, dst, op| {
+        MeshDraw::new(
+            plane,
+            Mat4::from_translation(Vec3::Z),
+            Material {
+                alpha: AlphaMode::Fixed(FixedBlend {
+                    src,
+                    dst,
+                    op,
+                    depth_write: false,
+                    alpha_test: None,
+                }),
+                ..Material::textured(white)
+            },
+        )
+        .with_lit(LitSurface {
+            opacity: Opacity::BaseAlpha,
+            ..LitSurface::default()
+        })
+    };
+    // (premultiplied, clear) → (left pixel, right pixel).
+    let mut run = |l: &FrameLighting, draw: MeshDraw, premultiplied: bool, clear: [f32; 4]| {
+        let target = r.create_offscreen_target(SIZE, SIZE, OffscreenFormat::Rgba8Unorm)?;
+        let mut frame = r.begin_offscreen_frame(&target)?;
+        let pass = frame.world_pass("pass", &camera());
+        if premultiplied {
+            pass.premultiplied_alpha();
+        } else {
+            pass.clear(clear);
+        }
+        pass.frame_lighting(l.clone()).mesh(left).mesh(draw);
+        r.end_frame(frame)?;
+        let img = r.read_pixels(&target)?;
+        let at = |x| img.pixel(x, SIZE / 2).unwrap_or([0; 4]);
+        Ok::<_, RenderError>((at(SIZE / 4), at(3 * SIZE / 4)))
+    };
+    use BlendFactor as F;
+    // (src, dst, op, colour over the empty pixel, alpha written there).
+    let cases = [
+        (F::SrcAlpha, F::One, BlendOp::Add, 0.5, 0.0),
+        (F::One, F::One, BlendOp::Add, 1.0, 0.0),
+        (F::SrcAlpha, F::OneMinusSrcAlpha, BlendOp::Add, 0.5, 0.5),
+        (F::One, F::Zero, BlendOp::Add, 1.0, 1.0),
+        (F::SrcAlpha, F::Zero, BlendOp::Add, 0.5, 1.0),
+        (F::Zero, F::Zero, BlendOp::Add, 0.0, 1.0),
+        (F::Zero, F::SrcColor, BlendOp::Add, 0.0, 0.0),
+        (F::DstColor, F::One, BlendOp::Add, 0.0, 0.0),
+        (F::One, F::One, BlendOp::Max, 1.0, 0.0),
+        (F::One, F::One, BlendOp::Min, 0.0, 0.0),
+    ];
+    for ((src, dst, op, colour, alpha), level) in
+        cases.into_iter().flat_map(|c| [(c, 0.5f32), (c, 1.0)])
+    {
+        let l = ambient_only(level);
+        let what = format!("{src:?} / {dst:?} {op:?}, ambient {level}");
+        let draw = pane(src, dst, op);
+        let (p_left, p_right) = run(&l, draw, true, [0.0; 4])?;
+        assert_pixel(p_right, [colour; 3], &format!("{what}: colour over empty"));
+        let a = (alpha * 255.0f32).round() as u8;
+        assert!(
+            p_right[3].abs_diff(a) <= 1,
+            "{what}: alpha over empty {p_right:?}, R12 wants {a}"
+        );
+        assert_eq!(p_left[3], 255, "{what}: alpha over the opaque ground");
+        let (o_left, _) = run(&l, draw, false, [0.0, 0.0, 0.0, 1.0])?;
+        assert_eq!(p_left, o_left, "{what}: same colour as in an opaque target");
+        // Without the option every fixed blend keeps the destination alpha.
+        let (n_left, n_right) = run(&l, draw, false, [0.0; 4])?;
+        assert_eq!(
+            n_right[3], 0,
+            "{what}: alpha kept outside premultiplied passes"
+        );
+        assert_eq!(
+            n_left, o_left,
+            "{what}: unchanged outside premultiplied passes"
+        );
+    }
+    Ok(())
+}
+
 /// `render.md` §4.8 R-D11, `material.md` §11.2: a fixed blend with its record's alpha test
 /// discards fragments whose opacity is at most the threshold, so they write neither colour
 /// nor depth; without the test the same pane writes depth.

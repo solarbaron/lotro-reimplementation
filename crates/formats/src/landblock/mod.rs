@@ -64,6 +64,7 @@ mod info;
 mod properties;
 mod region;
 mod sector;
+pub mod sector_normals;
 
 pub use block_map::{
     BLOCK_MAP_DESCRIPTOR_PREFIX, BlockMap, BlockMapDescriptor, BlockMapEntry, BlockMapProperty,
@@ -91,13 +92,14 @@ pub use region::{
     RegionDescriptor, RegionDidMap, RegionDidMapEntry, RegionTable,
 };
 pub use sector::{
-    ALL_LANDBLOCKS_MASK, CHUNK_INDEX_SHARE, IMPOSTER_SQUARE, IMPOSTER_TABLE_PREFIX,
+    ALL_LANDBLOCKS_MASK, CHUNK_INDEX_SHARE, FarPlacements, IMPOSTER_SQUARE, IMPOSTER_TABLE_PREFIX,
     LOD_INDEX_OFFSETS, LOD_TRIANGLES, LodRange, MIN_FAR_VIEW_DISTANCE_SQ, NORMAL_BYTE_SCALE,
     SECTOR_BLOCK_SAMPLES, SECTOR_CHUNK_SIZE, SECTOR_CHUNKS, SECTOR_EXTENT, SECTOR_LODS,
-    SECTOR_MIN_ENTITY_SIZE, SECTOR_SAMPLE_SIZE, SECTOR_SPRITE_SIZE, SECTOR_TERRAIN_SAMPLES,
-    SECTOR_WATER_PAIR_SIZE, SectorChunk, SectorEntity, SectorMesh, SectorRecord, SectorSample,
-    SectorSprite, block_sample_offset, chunk_index, chunk_landblock, decode_distant_sector,
-    imposter_table_did, vertex_block,
+    SECTOR_MIN_ENTITY_SIZE, SECTOR_NEAR_RADIUS, SECTOR_SAMPLE_SIZE, SECTOR_SPRITE_SIZE,
+    SECTOR_TERRAIN_SAMPLES, SECTOR_WATER_PAIR_SIZE, SectorChunk, SectorEntity, SectorMesh,
+    SectorRecord, SectorSample, SectorSprite, block_sample_offset, chunk_index, chunk_landblock,
+    decode_distant_sector, imposter_table_did, sector_radius, sprite_fade_parameter,
+    sprite_is_mirrored, sprite_is_near, vertex_block,
 };
 
 use crate::did::{Did, LandblockId, LandblockKind};

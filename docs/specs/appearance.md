@@ -2145,6 +2145,65 @@ Review follow-up (clean room, 2026-10-05):
 > started (static analysis), and stops of a SliderMeshDeformer are not applied. No figure
 > of the install has two slider nodes (SI12), so nothing visible changes.
 
+Implementation feedback (clean room, 2026-10-09, conformance with the Accepted text):
+
+> **OPEN** (implementation, §5.6 rotations, axes): the implementation applies a placement
+> as the location's frame followed by the offset (in the location's frame), then the
+> rotation, then the node's scale, and builds the rotation as yaw about the location's
+> +Z, pitch about +X and roll about +Y, composed *R*_Z(yaw) · *R*_Y(roll) · *R*_X(pitch),
+> the axes and order of `coordinates.md` §11.3 for object frames. §5.6 gives the angles but
+> not the axes of the location frame they turn about (the O13 OPEN covers the order, which
+> no row of §5.6 exercises: every row turns about one axis). Please state which local axis
+> each of `OffsetRotationYaw`, `…Pitch` and `…Roll` turns about.
+
+> **OPEN** (implementation, §5.6 shield scale): §5.6 calls the placement scale "the node's
+> uniform `Scale`", while `script-table.md` §5.2 lists the MeshFX `Scale` as a vec3, and the
+> stowed-shield rows drive it from the vector property
+> `Script_AdjustableScale_Secondary_Vector`. The implementation uses the property per axis
+> when the figure's property lookup finds a vector (or a float for all axes), and
+> (1, 1, 1) when it finds none (Tessera choice: the property's dictionary default is not
+> stated here). Please confirm the vec3 reading and state what an absent property gives.
+
+> **OPEN** (implementation, §5.6 rows not modelled): the implementation reproduces §5.6 as a
+> table, not by running the six placement scripts. Two rows need data the spec does not
+> carry: the cosmetic in-hand row of the primary slot (it applies when
+> `Script_Item_PhysObj_Primary_Cosmetic` is one of the entity DIDs listed in the script's
+> case) and the battle-gauntlet effect entity at `Wpn_RHand` / `Wpn_LHand` (yaw −90, +90),
+> whose DID the script names. Both are left out (cosmetic overrides are not an input yet;
+> gauntlets show only as worn parts). Should the spec name how a reader finds those DIDs
+> (script key and node), or should a later implementation evaluate the MeshFX nodes of the
+> placement scripts directly?
+
+> **OPEN** (implementation, §5.5 creature cosmetic slots): the implementation attaches the
+> four `NPC_Cosmetic_Inventory_Item<n>` props while `NPC_Cosmetic_Inventory_Visible` is true,
+> but not the creature cosmetic slots `Inventory_Cosmetic_Slot1` … `4`. Their property names
+> are given as a stem and suffixes (`_Entity`, `_HoldingLocation`, `_Scale`,
+> `_OffsetRotationYaw`, `_OffsetRotationPitch`, `_Behavior`, `_Hide`); please state the full
+> names (for example whether the slot's entity is `Inventory_Cosmetic_Slot1_Entity`), which
+> figures carry them (placed static figures or only server objects), and how `_Scale` and
+> the two rotations apply to the attachment (as the MeshFX fields of §5.6?).
+
+> **OPEN** (implementation, confirmation only, §3.2.1, §3.3, §4.7, §6.1, §7.4, §15):
+> engineering readings taken where the text is silent: (1) §3.2.1: a NaN modifier selects
+> no block (it is above no block); a NaN `variant` is passed by the walk. (2) §3.3: the
+> option store answers only `GOP_AvatarUpdateVisible` (Tessera default true); any other
+> toggle property is read through the figure's own sets (instance, game object, entity) and
+> reads false when absent. (3) §4.7 Decision: an item's dye element names the item's
+> wardrobe record, so two items sharing one record (the chest/shoulder cross-overs of §4.2)
+> share one dye key there and the later item's code replaces the earlier one (rule 2 taken
+> literally). (4) §4.7 rule 4: linked records recurse at most 16 deep and a figure applies
+> at most 4,096 blocks (Tessera bounds; every list of the install is empty). (5) §6.1: the
+> template `vec3` product runs over the template parent chain up to the root, also above the
+> template that names the setup, where the entity chain of `setup.md` §3.1 stops; template
+> sections are applied root first. (6) §7.4 Decision: the walker seeds a placed figure's
+> picks with its instance ID; figures without one (player bodies, the explorer) use seed 0;
+> one generator per resolution, drawing only on branches the picks take, in the client's
+> start order; a Random node whose only port has weight 0 picks nothing (the resolver skips
+> weight-0 ports; §7.4 rule 1 would pick it). (7) §4.4 and the §15 stub answer: the mesh
+> summary counts the triangles of the index buffers, not of the detail levels' draws (it does
+> not read the levels); the two agree when each index buffer is drawn once. Please say if
+> any reading differs from the client.
+
 ---
 
 <a id="s16"></a>

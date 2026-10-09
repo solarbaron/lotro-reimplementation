@@ -3,13 +3,14 @@
 //! operations. The first byte picks how the graph is made: either the input's next parts
 //! decode as a script table (0x07) and a scriptlet (0x0C) with a total synthetic schema, or
 //! the bytes are read as a recipe of nodes (every control-flow kind, sounds, environments,
-//! with random ports, payloads, probabilities, variances and driven pairs). Every table DID
+//! particle nodes, with random ports, payloads, probabilities, variances and driven pairs). Every table DID
 //! names that table and every scriptlet DID that scriptlet, so includes, Run nodes and
 //! Scriptlet nodes reach them recursively. The remaining bytes are operations (property
 //! changes, advances, voice completions, script starts and stops, respawns).
 //!
 //! Nothing may panic or overflow the stack, the per-entity instance bound holds, and once
-//! the entities are removed no instance, run or tracked voice is left.
+//! the entities are removed no instance, run, tracked voice or never-ending attached
+//! particle effect is left.
 
 #![no_main]
 
@@ -18,8 +19,8 @@ use std::sync::Arc;
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::property::PropertyEntry;
 use tessera_formats::script_table::{
-    BaseBlock, Node, NodeData, NodeKind, Port, PortPayload, PortType, RunNode, SoundNode,
-    SwitchCase, SwitchNode, SwitchTransition, TimerNode, WhenTest,
+    BaseBlock, Node, NodeData, NodeKind, ParticleScriptNode, Port, PortPayload, PortType, RunNode,
+    SoundNode, SwitchCase, SwitchNode, SwitchTransition, TimerNode, WhenTest,
 };
 use tessera_formats::{
     Did, PropertySet, PropertyType, PropertyValue, Script, ScriptTable, Scriptlet,
@@ -93,6 +94,7 @@ impl Recipe<'_> {
         let k = self.byte();
         let pid = u32::from(self.byte() % 8);
         let mut ports = Vec::new();
+        let mut particle_flag = None;
         let (kind, data) = match k % 15 {
             0 => {
                 for i in 0..(self.byte() % 3) {
@@ -320,7 +322,21 @@ impl Recipe<'_> {
                     },
                 )
             }
-            _ => match self.byte() % 3 {
+            _ => match self.byte() % 4 {
+                3 => {
+                    let f = self.byte();
+                    particle_flag = (f & 1 == 0).then_some(f & 2 != 0);
+                    (
+                        NodeKind::PARTICLE,
+                        NodeData::Particle(Box::new(ParticleScriptNode {
+                            particle_id: Did(if f & 4 == 0 { 0x3900_0001 } else { 0 }),
+                            drop_effect: f & 8 != 0,
+                            immediate_disposal: f & 16 != 0,
+                            redirect_property: if f & 32 == 0 { 0 } else { pid },
+                            ..ParticleScriptNode::default()
+                        })),
+                    )
+                }
                 0 => (
                     NodeKind::SCRIPTLET_PARAMETER,
                     NodeData::ScriptletParameter { name: "a".into() },
@@ -354,7 +370,7 @@ impl Recipe<'_> {
             kind,
             data,
             base,
-            particle_flag: None,
+            particle_flag,
             ports,
             targets: Vec::new(),
         })
@@ -526,4 +542,11 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(s.tracked_sounds, 0);
     assert!(sink.playing.is_empty());
     assert!(sink.environments.is_empty());
+    // Only finite and dropped effects outlive their scripts (`particle-runtime.md` §5.5,
+    // §5.6, §7.1).
+    assert!(
+        sink.particles
+            .values()
+            .all(|p| !p.never_ending || p.node.drop_effect)
+    );
 });

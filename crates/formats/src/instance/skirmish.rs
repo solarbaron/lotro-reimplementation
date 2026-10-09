@@ -5,9 +5,9 @@
 use std::collections::BTreeSet;
 
 use super::labels as l;
-use super::{Deviation, InstanceVocab, enum_keys, first_of_type, structs};
+use super::{Deviation, InstanceVocab, enum_keys, structs};
 use crate::did::Did;
-use crate::property::{PropertyStruct, PropertyType, PropertyValue};
+use crate::property::{PropertyStruct, PropertyValue};
 use crate::property_set::PropertySet;
 
 /// `Mod_Op` key: divide (§15.1 B4).
@@ -27,53 +27,53 @@ pub const CONVERSION_STATS: usize = 19;
 /// Group sizes of the conversion hash (N-I12).
 pub const CONVERSION_SIZES: usize = 6;
 
-/// One `SkirmishStats_StatProperty_Conversion_Hash` entry (§6.3).
-///
-/// The spec names its fields by suffix only; they are told apart by type and enum mapper:
-/// the PID field is the statistic property, the boolean the on-level flag, and the two
-/// enums by whether their definition uses the `SkirmishStat` or `SkirmishGroupSize` mapper
-/// ([`InstanceVocab::is_stat_enum`], [`InstanceVocab::is_size_enum`]).
+/// One `SkirmishStats_StatProperty_HashEntry` of the conversion hash (§6.3), its fields
+/// read by their full labels (§3.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ConversionEntry {
-    /// The statistic property (`SkirmishStats_<statistic>_<size>_<level class>`).
+    /// `SkirmishStats_StatProperty_FullPropertyName`: the statistic property
+    /// (`SkirmishStats_<statistic>_<size>_<level class>`).
     pub property: Option<u32>,
-    /// The `SkirmishStat` key.
+    /// `SkirmishStats_StatProperty_SkirmishStat`.
     pub stat: Option<u32>,
-    /// The `SkirmishGroupSize` key.
+    /// `SkirmishStats_StatProperty_SkirmishGroupSize`.
     pub group_size: Option<u32>,
-    /// On-level (absent = false).
+    /// `SkirmishStats_StatProperty_OnLevel` (absent = false).
     pub on_level: bool,
 }
 
-/// One derived statistic (`Skirmish_Stat`, §6.3).
+/// One derived statistic (`Skirmish_Stat`, §6.3), read as the client reads it (§15.1 B4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedStat {
-    /// `Skirmish_DerivedStat` (key 17–21).
+    /// `Skirmish_DerivedStat` (key 17–21; an enum or PID value).
     pub derived: Option<u32>,
-    /// `Skirmish_Primary_Stat`.
+    /// `Skirmish_Primary_Stat` (an enum or PID value).
     pub primary: Option<u32>,
-    /// (`Skirmish_Secondary_Stat`, `Mod_Op`) of each operation, stored order.
-    pub operations: Vec<(Option<u32>, Option<u32>)>,
-    /// `Skirmish_Stat_Scale` (default 1).
+    /// (`Skirmish_Secondary_Stat`, `Mod_Op`) of each operation, stored order. Reading
+    /// stops at the first operation that is not a struct or whose secondary statistic or
+    /// `Mod_Op` is missing or not an enum or PID value; the operations before it are kept.
+    pub operations: Vec<(u32, u32)>,
+    /// `Skirmish_Stat_Scale` (a 32-bit integer; absent → 1).
     pub scale: i32,
 }
 
-/// A statistic value: integer statistics and float statistics (best time, played time).
+/// A statistic value: integer statistics (signed 32-bit) and float statistics (single
+/// precision: best time, played time).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StatValue {
     /// An integer statistic.
-    Int(i64),
+    Int(i32),
     /// A float statistic.
-    Float(f64),
+    Float(f32),
 }
 
 impl StatValue {
-    /// The value as f64.
+    /// The value in single precision (an integer is converted, §15.1 B4).
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
-    pub fn as_f64(self) -> f64 {
+    pub fn as_f32(self) -> f32 {
         match self {
-            Self::Int(v) => v as f64,
+            Self::Int(v) => v as f32,
             Self::Float(v) => v,
         }
     }
@@ -84,46 +84,70 @@ impl StatValue {
 }
 
 impl DerivedStat {
-    fn read(s: &PropertyStruct, v: &InstanceVocab) -> Self {
-        Self {
-            derived: v.bits32(s, l::STAT_DERIVED),
-            primary: v.enum_key(s, l::STAT_PRIMARY),
-            operations: structs(v.elements(s, l::STAT_OPERATIONS))
-                .map(|o| (v.enum_key(o, l::STAT_SECONDARY), v.enum_key(o, l::MOD_OP)))
-                .collect(),
-            scale: v.int(s, l::STAT_SCALE).unwrap_or(1),
+    /// Reads one `Skirmish_Stat` struct (§15.1 B4). `None` when `Skirmish_Stat_Scale` is
+    /// stored with a value type other than a 32-bit integer: the client stops reading such
+    /// an entry before its operations, and Tessera ignores it as malformed, with a warning
+    /// (Tessera Decision of B4).
+    #[must_use]
+    pub fn read(s: &PropertyStruct, v: &InstanceVocab) -> Option<Self> {
+        let scale = match v.value(s, l::STAT_SCALE) {
+            None => 1,
+            Some(PropertyValue::Int(n)) => *n,
+            Some(_) => {
+                tracing::warn!("skirmish derived statistic with a non-integer scale ignored");
+                return None;
+            }
+        };
+        let mut operations = Vec::new();
+        for e in v.elements(s, l::STAT_OPERATIONS) {
+            let Some(o) = e.value.as_struct() else {
+                break;
+            };
+            let (Some(secondary), Some(op)) = (v.key(o, l::STAT_SECONDARY), v.key(o, l::MOD_OP))
+            else {
+                break;
+            };
+            operations.push((secondary, op));
         }
+        Some(Self {
+            derived: v.key(s, l::STAT_DERIVED),
+            primary: v.key(s, l::STAT_PRIMARY),
+            operations,
+            scale,
+        })
     }
 
     /// Evaluates the statistic as the panel does (§15.1 B4). `value_of` gives the current
     /// value of a stored statistic (its float-ness decides the arithmetic); an absent
-    /// primary or secondary key reads as integer 0.
+    /// primary key reads as integer 0.
     ///
-    /// Floating point is used when the primary or any secondary statistic is a float or any
-    /// operation divides; integer arithmetic otherwise. Integer arithmetic saturates at the
-    /// i64 range (an implementer choice; the spec does not give the width).
+    /// Floating point (IEEE single precision, integer statistics converted before each
+    /// operation) is used when the primary or any secondary statistic is a float or any
+    /// operation divides; a divisor of 0 sets the running value to 0. Otherwise the
+    /// arithmetic is signed 32-bit two's complement: add, subtract and multiply wrap on
+    /// overflow. The scale, when not 1, multiplies the result (converted to single
+    /// precision in floating-point mode).
     pub fn evaluate(&self, value_of: impl Fn(u32) -> StatValue) -> StatValue {
-        let get = |k: Option<u32>| k.map_or(StatValue::Int(0), &value_of);
-        let primary = get(self.primary);
-        let seconds: Vec<StatValue> = self.operations.iter().map(|(s, _)| get(*s)).collect();
+        let primary = self.primary.map_or(StatValue::Int(0), &value_of);
+        let seconds: Vec<StatValue> = self.operations.iter().map(|(s, _)| value_of(*s)).collect();
         let float = primary.is_float()
             || seconds.iter().any(|s| s.is_float())
-            || self.operations.iter().any(|(_, op)| *op == Some(OP_DIVIDE));
+            || self.operations.iter().any(|(_, op)| *op == OP_DIVIDE);
         if float {
-            let mut acc = primary.as_f64();
+            let mut acc = primary.as_f32();
             for ((_, op), sec) in self.operations.iter().zip(&seconds) {
-                let x = sec.as_f64();
+                let x = sec.as_f32();
                 acc = match *op {
-                    Some(OP_DIVIDE) if x == 0.0 => 0.0,
-                    Some(OP_DIVIDE) => acc / x,
-                    Some(OP_SUBTRACT) => acc - x,
-                    Some(OP_ADD) => acc + x,
-                    Some(OP_MULTIPLY) => acc * x,
+                    OP_DIVIDE if x == 0.0 => 0.0,
+                    OP_DIVIDE => acc / x,
+                    OP_SUBTRACT => acc - x,
+                    OP_ADD => acc + x,
+                    OP_MULTIPLY => acc * x,
                     _ => acc,
                 };
             }
             if self.scale != 1 {
-                acc *= f64::from(self.scale);
+                acc *= StatValue::Int(self.scale).as_f32();
             }
             StatValue::Float(acc)
         } else {
@@ -135,14 +159,14 @@ impl DerivedStat {
             for ((_, op), sec) in self.operations.iter().zip(&seconds) {
                 let x = as_int(*sec);
                 acc = match *op {
-                    Some(OP_SUBTRACT) => acc.saturating_sub(x),
-                    Some(OP_ADD) => acc.saturating_add(x),
-                    Some(OP_MULTIPLY) => acc.saturating_mul(x),
+                    OP_SUBTRACT => acc.wrapping_sub(x),
+                    OP_ADD => acc.wrapping_add(x),
+                    OP_MULTIPLY => acc.wrapping_mul(x),
                     _ => acc,
                 };
             }
             if self.scale != 1 {
-                acc = acc.saturating_mul(i64::from(self.scale));
+                acc = acc.wrapping_mul(self.scale);
             }
             StatValue::Int(acc)
         }
@@ -169,18 +193,23 @@ pub fn combine_best_time(
 /// The skirmish control record (§6.3, label `SkirmishControl`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SkirmishControl {
-    /// (tier, point multiplier) of `SkirmishControl_DifficultyMultiplier_Array`; fields told
-    /// apart by type (one enum, one float).
+    /// (`SkirmishControl_DifficultyTier`, `SkirmishControl_SkirmishPoint_Multiplier`) of
+    /// `SkirmishControl_DifficultyMultiplier_Array`.
     pub difficulty_multipliers: Vec<(u32, f32)>,
-    /// (group size, point multiplier) of `SkirmishControl_GroupSizeMultiplier_Array`.
+    /// (`SkirmishControl_GroupSize`, `SkirmishControl_SkirmishPoint_Multiplier`) of
+    /// `SkirmishControl_GroupSizeMultiplier_Array`.
     pub group_size_multipliers: Vec<(u32, f32)>,
+    /// (`SkirmishControl_GroupSize_StructVal`, `SkirmishControl_GroupTier_StructVal`) of
+    /// `SkirmishControl_GroupTier_Array`: group size → size band used for scaling.
+    pub group_tiers: Vec<(Option<u32>, Option<u32>)>,
     /// Whether `SkirmishControl_ZoneEvents` is stored.
     pub has_zone_events: bool,
     /// `SkirmishControl_SkirmishPointToken`.
     pub point_token: Option<Did>,
     /// `SkirmishControl_SkirmishPanel_RequiredTrait`.
     pub panel_required_trait: Option<Did>,
-    /// (`…_MaxRank`, `…_MaxRank_WebstoreItem`) of each trait gate, told apart by type.
+    /// (`SkirmishControl_SkirmishTraitGate_MaxRank`,
+    /// `SkirmishControl_SkirmishTraitGate_MaxRank_WebstoreItem`) of each trait gate.
     pub trait_gates: Vec<(Option<i32>, Option<Did>)>,
     /// `SkirmishControl_SkirmishTraitGate_DEFAULT_MaxRank`.
     pub default_max_rank: Option<i32>,
@@ -192,54 +221,37 @@ pub struct SkirmishControl {
     pub blocked_stats: Vec<u32>,
     /// `SkirmishControl_SkirmishGRSEnum_PropertyList` (PIDs).
     pub grs_properties: Vec<u32>,
-    /// (statistic key, `GRS_…` PID) of the statistic-to-GRS hash, told apart by type.
+    /// (`SkirmishControl_SkirmishStat`, `SkirmishControl_GRSEnum_PropertyName`) of the
+    /// statistic-to-GRS hash.
     pub stat_to_grs: Vec<(Option<u32>, Option<u32>)>,
     /// The conversion hash.
     pub conversion: Vec<ConversionEntry>,
     /// `SkirmishStats_CONSTANT_FASTEST_POSSIBLE_SKIRMISH_TIME`.
     pub fastest_possible_time: Option<f32>,
-    /// `Skirmish_Stats`.
+    /// `Skirmish_Stats` (entries with a malformed scale left out, [`DerivedStat::read`]).
     pub derived_stats: Vec<DerivedStat>,
-}
-
-fn enum_float_pairs(s: &PropertyStruct) -> Option<(u32, f32)> {
-    let key = match first_of_type(s, PropertyType::Enum, None)? {
-        PropertyValue::Enum(k) => *k,
-        _ => return None,
-    };
-    let x = first_of_type(s, PropertyType::Float, None)?.as_f32()?;
-    Some((key, x))
 }
 
 impl SkirmishControl {
     /// Reads the control fields of `set`.
     #[must_use]
     pub fn read(set: &PropertySet, v: &InstanceVocab) -> Self {
-        let pid_of = |s: &PropertyStruct| match first_of_type(s, PropertyType::PropertyId, None) {
-            Some(PropertyValue::PropertyId(p)) => Some(*p),
-            _ => None,
+        let pairs = |array: &str, key: &str| -> Vec<(u32, f32)> {
+            structs(v.elements(set, array))
+                .filter_map(|s| Some((v.enum_key(s, key)?, v.float(s, l::SC_POINT_MULT)?)))
+                .collect()
         };
         Self {
-            difficulty_multipliers: structs(v.elements(set, l::SC_DIFFICULTY_MULT))
-                .filter_map(enum_float_pairs)
-                .collect(),
-            group_size_multipliers: structs(v.elements(set, l::SC_GROUP_SIZE_MULT))
-                .filter_map(enum_float_pairs)
+            difficulty_multipliers: pairs(l::SC_DIFFICULTY_MULT, l::SC_DIFF_TIER),
+            group_size_multipliers: pairs(l::SC_GROUP_SIZE_MULT, l::SC_GROUP_SIZE),
+            group_tiers: structs(v.elements(set, l::SC_GROUP_TIERS))
+                .map(|s| (v.enum_key(s, l::SC_GT_SIZE), v.enum_key(s, l::SC_GT_TIER)))
                 .collect(),
             has_zone_events: v.has(set, l::SC_ZONE_EVENTS),
             point_token: v.did(set, l::SC_POINT_TOKEN),
             panel_required_trait: v.did(set, l::SC_PANEL_TRAIT),
             trait_gates: structs(v.elements(set, l::SC_TRAIT_GATES))
-                .map(|s| {
-                    (
-                        match first_of_type(s, PropertyType::Int, None) {
-                            Some(PropertyValue::Int(n)) => Some(*n),
-                            _ => None,
-                        },
-                        first_of_type(s, PropertyType::DidRef, None)
-                            .and_then(PropertyValue::as_did),
-                    )
-                })
+                .map(|s| (v.int(s, l::SC_GATE_MAX_RANK), v.did(s, l::SC_GATE_WEBSTORE)))
                 .collect(),
             default_max_rank: v.int(set, l::SC_GATE_DEFAULT_RANK),
             trait_pools: enum_keys(v.elements(set, l::SC_TRAIT_POOLS)),
@@ -255,37 +267,34 @@ impl SkirmishControl {
                 .collect(),
             stat_to_grs: structs(v.elements(set, l::SC_STAT_TO_GRS))
                 .map(|s| {
-                    let stat = match first_of_type(s, PropertyType::Enum, None) {
-                        Some(PropertyValue::Enum(k)) => Some(*k),
-                        _ => None,
-                    };
-                    (stat, pid_of(s))
+                    (
+                        v.enum_key(s, l::SC_STAT),
+                        v.pid_value(s, l::SC_GRS_PROPERTY),
+                    )
                 })
                 .collect(),
             conversion: structs(v.elements(set, l::SC_CONVERSION))
-                .map(|s| {
-                    let mut e = ConversionEntry {
-                        property: pid_of(s),
-                        ..ConversionEntry::default()
-                    };
-                    for f in &s.fields {
-                        match f.value {
-                            PropertyValue::Enum(k) if v.is_stat_enum(f.pid) => e.stat = Some(k),
-                            PropertyValue::Enum(k) if v.is_size_enum(f.pid) => {
-                                e.group_size = Some(k);
-                            }
-                            PropertyValue::Bool(b) => e.on_level = b,
-                            _ => {}
-                        }
-                    }
-                    e
+                .map(|s| ConversionEntry {
+                    property: v.pid_value(s, l::CV_PROPERTY),
+                    stat: v.enum_key(s, l::CV_STAT),
+                    group_size: v.enum_key(s, l::CV_SIZE),
+                    on_level: v.flag(s, l::CV_ON_LEVEL),
                 })
                 .collect(),
             fastest_possible_time: v.float(set, l::SC_FASTEST),
             derived_stats: structs(v.elements(set, l::SC_STATS))
-                .map(|s| DerivedStat::read(s, v))
+                .filter_map(|s| DerivedStat::read(s, v))
                 .collect(),
         }
+    }
+
+    /// The size band of group size `size` (`SkirmishControl_GroupTier_Array`), if listed.
+    #[must_use]
+    pub fn group_tier(&self, size: u32) -> Option<u32> {
+        self.group_tiers
+            .iter()
+            .find(|(s, _)| *s == Some(size))
+            .and_then(|(_, t)| *t)
     }
 
     /// The point multiplier of difficulty tier `tier`, if listed.

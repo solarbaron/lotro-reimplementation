@@ -26,6 +26,7 @@ use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
 use crate::mesh_pipelines::{
     Cull, DrawContext, DrawUniform, Kind, MeshKey, MeshLayouts, MeshPipelineCache, is_mirrored,
 };
+use crate::particles::{ParticleFrame, ParticleState};
 use crate::pass_hook::{HookPrepare, HookRecord, HookStage, PassHook};
 use crate::pipelines::{
     DEPTH_CLEAR, DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
@@ -201,6 +202,11 @@ pub struct FrameStats {
     pub instances_culled: u32,
     /// Colour-buffer copies made for water refraction.
     pub scene_copies: u32,
+    /// Particle draws (one per [`crate::ParticleDraw`] with vertices; each is one or two
+    /// draw calls, counted in `draw_calls`).
+    pub particle_draws: u32,
+    /// Particle vertices drawn.
+    pub particle_vertices: u32,
     /// UI pass and UI texture statistics (render.md §6), kept apart from
     /// asset uploads.
     pub ui: crate::ui::UiStats,
@@ -393,7 +399,9 @@ pub struct Renderer<'w> {
     /// Render-world pipelines (`docs/specs/render.md` §5).
     terrain_state: TerrainState,
     water_state: WaterState,
+    far_view_state: crate::far_view::FarViewState,
     sky_state: SkyState,
+    particle_state: ParticleState,
     instanced_state: InstancedState,
     /// Copy of the colour target for water refraction: texture, view, size, format.
     scene_copy: Option<SceneCopy>,
@@ -639,6 +647,9 @@ pub(crate) struct WorldFrame<'a> {
     pub textures: TextureResolver<'a>,
     /// Id of the renderer (handles of other renderers are skipped).
     pub owner: u64,
+    /// The pass has the premultiplied option (`Pass::premultiplied_alpha`): fixed blends
+    /// write alpha by [`crate::material::FixedBlend::alpha_rule`].
+    pub premultiplied: bool,
 }
 
 /// What a render-world module needs to create retained GPU objects.
@@ -929,7 +940,9 @@ impl<'w> Renderer<'w> {
             lit_material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
             terrain_state: TerrainState::default(),
             water_state: WaterState::default(),
+            far_view_state: crate::far_view::FarViewState::default(),
             sky_state: SkyState::default(),
+            particle_state: ParticleState::default(),
             instanced_state: InstancedState::default(),
             scene_copy: None,
             clear_color: wgpu::Color { r, g, b, a },
@@ -1355,7 +1368,8 @@ impl<'w> Renderer<'w> {
     }
 
     /// Build the render-world hooks of one lit pass (`docs/specs/render.md` §5.1), in
-    /// draw order: terrain layers, instanced scenery, sky, water.
+    /// draw order: terrain layers, instanced scenery, sky, far terrain and distant sprites,
+    /// water.
     #[allow(clippy::too_many_arguments)]
     fn world_hooks(
         &mut self,
@@ -1368,6 +1382,7 @@ impl<'w> Renderer<'w> {
         size: (u32, u32),
         target: &wgpu::TextureView,
         scene_copy: bool,
+        premultiplied: bool,
     ) -> Result<Vec<Arc<dyn PassHook>>> {
         let selector = LightSelector::new(frame, reach);
         let copy_view = if scene_copy {
@@ -1393,12 +1408,15 @@ impl<'w> Renderer<'w> {
                 exclude: Some(target),
             },
             owner: self.owner,
+            premultiplied,
         };
         let WorldDraws {
             terrain,
             water,
             sky,
             instanced,
+            far_terrain,
+            sprites,
         } = draws;
         let mut hooks: Vec<Arc<dyn PassHook>> = Vec::new();
         if let Some(h) = crate::terrain_layers::build_hook(&mut self.terrain_state, terrain, &ctx)?
@@ -1410,6 +1428,14 @@ impl<'w> Renderer<'w> {
         }
         if let Some(h) =
             crate::sky::build_hook(&mut self.sky_state, &mut self.instanced_state, sky, &ctx)?
+        {
+            hooks.push(h);
+        }
+        // The far view draws after the sky: the far-draw fade (`far-view.md` §6.3 step 3)
+        // and the sprites' fog blend over the sky instead of the clear colour. The sky
+        // writes no depth, so the far terrain still passes its depth test there.
+        if let Some(h) =
+            crate::far_view::build_hook(&mut self.far_view_state, far_terrain, sprites, &ctx)?
         {
             hooks.push(h);
         }
@@ -1974,12 +2000,15 @@ impl<'w> Renderer<'w> {
                         AlphaMode::Mask { .. } => LitKind::Mask,
                         AlphaMode::TestBlend { .. } => LitKind::TestBlend,
                         AlphaMode::Blend => LitKind::Blend,
-                        AlphaMode::Additive => LitKind::Fixed(FixedBlend::ADDITIVE),
-                        AlphaMode::Fixed(b) => LitKind::Fixed(b),
+                        AlphaMode::Additive => LitKind::Fixed(
+                            FixedBlend::ADDITIVE,
+                            FixedBlend::ADDITIVE.alpha_rule(pass.premultiplied),
+                        ),
+                        AlphaMode::Fixed(b) => LitKind::Fixed(b, b.alpha_rule(pass.premultiplied)),
                     };
                     let blended = matches!(
                         kind,
-                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(_)
+                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(..)
                     );
                     let key = LitKey {
                         format,
@@ -2527,6 +2556,7 @@ impl<'w> Renderer<'w> {
                                 (width, height),
                                 &view,
                                 copy,
+                                pass.premultiplied,
                             )?;
                             pass.hooks.splice(0..0, hooks);
                         }
@@ -2540,6 +2570,27 @@ impl<'w> Renderer<'w> {
                                 warnings.world_unlit = true;
                             }
                         }
+                    }
+                }
+                let particle_draws = std::mem::take(&mut pass.particles);
+                if !particle_draws.is_empty() {
+                    let pctx = ParticleFrame {
+                        device: &self.ctx.device,
+                        format,
+                        view_proj,
+                        textures: TextureResolver {
+                            store: &self.textures,
+                            white: (&self.white_view.0, &self.white_view.1),
+                            exclude: Some(&view),
+                        },
+                        premultiplied: pass.premultiplied,
+                    };
+                    if let Some(h) = crate::particles::build_hook(
+                        &mut self.particle_state,
+                        particle_draws,
+                        &pctx,
+                    )? {
+                        pass.hooks.push(h);
                     }
                 }
                 let prepare = HookPrepare {
@@ -2557,7 +2608,9 @@ impl<'w> Renderer<'w> {
                     hook.prepare(&prepare)?;
                 }
             } else {
-                if (!pass.meshes.is_empty() || !pass.world.is_empty()) && !warnings.screen_mesh {
+                if (!pass.meshes.is_empty() || !pass.world.is_empty() || !pass.particles.is_empty())
+                    && !warnings.screen_mesh
+                {
                     tracing::warn!(pass = %pass.label, "meshes in a screen pass are ignored");
                     warnings.screen_mesh = true;
                 }

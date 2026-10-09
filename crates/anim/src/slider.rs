@@ -158,10 +158,10 @@ impl BoneSliders {
     ///   bones keep theirs (`appearance.md` §6.3, BIN4, A30): one
     ///   [`AnimError::BoneIndexOutOfRange`] per such bone;
     /// - a slider whose limits are not finite contributes no entry (the §6.3 Tessera
-    ///   Decision), and neither does one whose position *t* or channel value *c* = min +
-    ///   *t*(max − min) is not finite (a Tessera guard beyond that Decision, recorded as an
-    ///   OPEN in `appearance.md` §14; *c* can overflow with a minus-sign piece and very
-    ///   large limits): one [`AnimError::BadSlider`] is returned;
+    ///   Decision), and neither does one whose position *t* or channel value *c* = (max −
+    ///   min) × *t* + min is not finite (the §6.3 Decision "Channel values that are not
+    ///   finite", A32; *c* can overflow with a minus-sign piece and very large limits): one
+    ///   [`AnimError::BadSlider`] is returned;
     /// - beyond [`BoneSliders::MAX_OPS`] bones the slider is skipped.
     pub fn build<'a>(
         skeleton: &Skeleton,

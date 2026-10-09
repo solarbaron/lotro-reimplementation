@@ -25,7 +25,7 @@ use tessera_wstate::character::{
     ClassPriority, ExperienceTable, LevelTableDirectory, NameGenerator, NameRuleControl,
     NationalityDirectory, NationalityRecord, Pip, PipControl, RaceDirectory, RaceRecord,
     RestedExperienceControl, ShiftEntry, ShiftTable, XpGlobals, allegiance_problems,
-    default_character_properties, generate_name, mirror_base,
+    default_character_properties, generate_name, generate_name_once, mirror_base,
 };
 use tessera_wstate::testkit::character_dictionary;
 
@@ -109,6 +109,10 @@ fn views(set: &PropertySet, reg: &PropertyRegistry) {
                 },
                 |s| s.len() > 3,
             );
+            let _ = generate_name_once(&g, &text, e.species, e.sex, |n| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                state % n.max(1)
+            });
         }
     }
 }

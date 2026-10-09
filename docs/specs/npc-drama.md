@@ -894,6 +894,12 @@ spawn; `EnableCombat` lets the entity fight while still an NPC. `AI_KungFu_IsNPC
 > repetition), what the health clamp is, the 2 ratios above 1, and the effect of `EnableCombat`.
 > Server-side; no client code reads these properties except `AI_KungFu_IsNPC` (§9.5).
 
+> **OPEN (implementer, 2026-10-09):** the transition fields are written with elisions
+> (`…_HealthRatio`, `…_Transition_AlwaysActive`); the health-ratio label could be read as
+> `AI_KungFu_HealthRatio` or `AI_KungFu_Transition_HealthRatio`. Tessera resolves both and uses
+> the one the install's dictionary defines (only the second resolves here). Please spell the
+> full labels of the transition fields.
+
 ---
 
 <a id="s8"></a>
@@ -1133,6 +1139,14 @@ For a selected entity (instance set, static entity or template) the explorer sho
    actor entities, effect and scriptlet DIDs;
 3. the entity's scripted-fight properties and transitions (§7) and starting-idle properties (§8);
 4. a "play" button that runs T1 under T2/T5 rules in the character viewer.
+
+> **OPEN (implementer, 2026-10-09):** two choices of the explorer's "play" button (item 4)
+> that the Decisions leave to the viewer. (a) A spawned object's instance set names no
+> template (§2.2), so its dramas play on the figure the character view shows, and their emotes
+> are resolved through that figure's script tables. (b) An emote plays the most likely clip
+> (largest blend weight × chance, not a held clip) among the clips whose run starts at the
+> emote's script key; a key that starts no clip on the figure is logged and plays nothing.
+> Both affect only the preview, not T1–T6.
 
 ---
 

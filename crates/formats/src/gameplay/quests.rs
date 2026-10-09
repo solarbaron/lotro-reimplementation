@@ -16,6 +16,7 @@
 //! | [`Role`], [`RoleAction`], [`CompletionComment`], [`active_quest_roles`], [`QuestRoleRef::matches`] | Roles, dialogue lines, NPC-side role lists and their matching rule | §7.1–§7.4 |
 //! | [`NpcComment`], [`NpcCommentList`], [`ColourTextList`], [`ColourTextControl`], [`Scene`] | Free-standing dialogue, barks, scenes | §7.7–§7.9 |
 //! | [`Permissions`], [`QuestRequirement`], [`QuestStatus`], [`Operator`], [`WorldEventCondition`] | Usage permissions and quest requirements | §8, §14.2 |
+//! | [`QuestJournal`], [`MapJournal`], [`EntryGates`], [`entry_passes`] | The entry rule of one quest requirement for a player | §8.2 |
 //! | [`RewardList`], [`RewardLevelTable`], [`choose_reward_table`], [`QuestControl`], [`QuestTreasure`] | Reward tiers, tables, treasure, medals | §9 |
 //! | [`DeedInfo`], [`AccomplishmentDirectory`], [`AccomplishmentVersionList`] | Deeds and deed directories | §10 |
 //! | [`QuestArc`], [`QuestArcDirectory`] | Quest arcs | §11 |
@@ -2692,7 +2693,7 @@ pub fn active_quest_roles<'a, A: PropertyAccess + ?Sized>(
 
 /// A 32-bit quest status code (§8.3): the raw status in bits 28–31, an objective number in
 /// bits 0–27.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct QuestStatus(pub u32);
 
 /// The raw status of a [`QuestStatus`] (§8.3).
@@ -2830,6 +2831,130 @@ impl QuestRequirement {
     pub fn operator(&self) -> Option<Operator> {
         Operator::from_code(self.operator)
     }
+
+    /// The entry rule of §8.2 for this entry ([`entry_passes`]); a missing quest is the
+    /// null DID and a missing status 0.
+    #[must_use]
+    pub fn passes<J: QuestJournal + ?Sized>(
+        &self,
+        journal: &J,
+        gates: &EntryGates,
+        prerequisites_pass: impl Fn(Did) -> bool,
+    ) -> bool {
+        entry_passes(
+            journal,
+            gates,
+            prerequisites_pass,
+            self.operator,
+            self.quest.unwrap_or(Did(0)),
+            self.status.unwrap_or(QuestStatus(0)),
+        )
+    }
+}
+
+/// A player's quest state as the entry rule of §8.2 reads it (the journal). A server
+/// supplies it; Tessera's sandbox keeps its own (`world-logic.md` §4.9 D1).
+pub trait QuestJournal {
+    /// Whether the player has completed `quest`.
+    fn has_completed(&self, quest: Did) -> bool;
+    /// Whether the player has a failure record of `quest`.
+    fn has_failed(&self, quest: Did) -> bool;
+    /// The objective the player's underway `quest` is at, `None` when it is not underway.
+    fn underway_objective(&self, quest: Did) -> Option<u32>;
+}
+
+/// A journal kept as maps: completed and failed quests and the objective of each underway
+/// quest. [`MapJournal::default`] is the empty journal of `world-logic.md` §4.9 D1.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MapJournal {
+    /// Completed quests.
+    pub completed: BTreeSet<Did>,
+    /// Quests with a failure record.
+    pub failed: BTreeSet<Did>,
+    /// Underway quests and the objective each is at.
+    pub underway: BTreeMap<Did, u32>,
+}
+
+impl QuestJournal for MapJournal {
+    fn has_completed(&self, quest: Did) -> bool {
+        self.completed.contains(&quest)
+    }
+    fn has_failed(&self, quest: Did) -> bool {
+        self.failed.contains(&quest)
+    }
+    fn underway_objective(&self, quest: Did) -> Option<u32> {
+        self.underway.get(&quest).copied()
+    }
+}
+
+/// The world-level inputs of steps 1 and 2 of the entry rule (§8.2): the world properties
+/// `World_BypassableQuestArray` and `World_DisabledQuestArray`, and the player's
+/// `WeenieType` value (0 when absent).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EntryGates {
+    /// Quests of `World_BypassableQuestArray`.
+    pub bypassable: BTreeSet<Did>,
+    /// Quests of `World_DisabledQuestArray`.
+    pub disabled: BTreeSet<Did>,
+    /// The player's `WeenieType` value.
+    pub weenie_type: u32,
+}
+
+/// The entry rule of `quests.md` §8.2 for (operator `op`, quest `quest`, status code
+/// `status`), evaluated for the player whose state `journal` holds. `prerequisites_pass`
+/// answers step 1's "the quest's own prerequisites pass for the player"; it is called only
+/// for a bypassable quest and a player whose `WeenieType` has its four low bits set.
+///
+/// The comparison is not numeric on the code: the raw status (bits 28–31) chooses the rule
+/// and the objective number (bits 0–27) is compared with the journal's objective, unsigned.
+#[must_use]
+pub fn entry_passes<J: QuestJournal + ?Sized>(
+    journal: &J,
+    gates: &EntryGates,
+    prerequisites_pass: impl Fn(Did) -> bool,
+    op: u32,
+    quest: Did,
+    status: QuestStatus,
+) -> bool {
+    const NOT_EQUAL: u32 = 2;
+    if gates.bypassable.contains(&quest)
+        && gates.weenie_type & 0xF == 0xF
+        && prerequisites_pass(quest)
+    {
+        return true;
+    }
+    if gates.disabled.contains(&quest) {
+        return false;
+    }
+    match status.kind() {
+        StatusKind::Completed => (op == NOT_EQUAL) != journal.has_completed(quest),
+        StatusKind::Failed => (op == NOT_EQUAL) != journal.has_failed(quest),
+        StatusKind::Underway => {
+            let n = status.objective();
+            match journal.underway_objective(quest) {
+                None if op == NOT_EQUAL => true,
+                None => {
+                    let completed = journal.has_completed(quest);
+                    match op {
+                        1 | 6 => completed,
+                        4 | 5 => !completed,
+                        _ => false,
+                    }
+                }
+                Some(_) if n == 0 => op != NOT_EQUAL,
+                Some(c) => match op {
+                    NOT_EQUAL => c != n,
+                    1 => c >= n,
+                    3 => c == n,
+                    4 => c < n,
+                    5 => c <= n,
+                    6 => c > n,
+                    _ => false,
+                },
+            }
+        }
+        _ => false,
+    }
 }
 
 /// One `WorldEvent_Condition` (§14.2), or the three type-34 fields of an event entry.
@@ -2854,6 +2979,12 @@ impl WorldEventCondition {
             value: a.int(w.condition_value),
             compare_with: a.did_nonnull(w.compare_with),
         }
+    }
+
+    /// Reads a `WorldEvent_Condition` struct (or any struct holding its fields).
+    #[must_use]
+    pub fn from_struct(w: &WorldEventPids, s: &PropertyStruct) -> Self {
+        Self::read(w, s)
     }
 
     /// Whether the entry is an empty slot (operator 0 or world event 0, §7.7).

@@ -130,8 +130,9 @@ impl ClassIndices {
     /// The structural cross-checks of §2.1 that the class library alone can answer:
     /// the first common ancestor is a root of the parent map, the second its child and
     /// the third the second's child; every base class descends from the third; the
-    /// plain-object and entity bases are not related. Classes need not have a class-table
-    /// definition (a base class may appear only in the parent map). An empty result means
+    /// plain-object and entity bases are not related. Only the parent map is used: a role class
+    /// need not be defined in the class table (§2.1; the entity base is undefined on the
+    /// spec's install and occurs only in the parent map). An empty result means
     /// all hold.
     #[must_use]
     pub fn check(&self, lib: &ClassLibrary) -> Vec<IndexProblem> {

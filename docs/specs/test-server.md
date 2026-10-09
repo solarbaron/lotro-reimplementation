@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
-| **Last updated** | 2026-10-08 |
-| **Author role** | Spec writer (design; one terrain height observed for the default spawn, §1) |
-| **Reviewer** | none yet |
-| **Review record** | Review 2026-10-08 of the 2026-10-08 revision only (§4.7, §10.1, §13.1, §13.3, §15.1, §15.2; Claude review session, spec-reviewer role, fresh session): **passed**, no blocking finding; Tessera design facts only, no dirty-room material, cross-references to `tessera-protocol.md` §12.2 (Accepting 10 s, closing linger) and ARCHITECTURE §19.4 checked. The spec as a whole has not been reviewed, so the status stays Draft. Non-blocking: the §15.1 implementer note on the per-address login budget still says only the connection limit exempts loopback; the §10.1 handshake cap now does too. |
+| **Status** | **Accepted** (2026-10-09: independent whole-spec re-review of the revision of 2026-10-09 passed CLEAN_ROOM.md §5.3, every item; first whole-spec acceptance; see the review record). Before: Revised (2026-10-09: the blocking item of the whole-spec review of 2026-10-09 is fixed, §4.6 `log_chat` row moved into the `[chat]` table; non-blocking (a), (b), (d), (e) also addressed, (c) noted; awaiting re-review, see the change log). Before: Review, **changes requested** (independent whole-spec review 2026-10-09, one blocking item, see the review record). Before that: Review (2026-10-09: prepared for its first whole-spec review; every implementer note of §15.1 and §15.2 folded into the text or kept as a stated OPEN or implementation gap; provenance and cross-references checked against `tessera-protocol.md` v1.0 as revised 2026-10-09) |
+| **Last updated** | 2026-10-09 |
+| **Author role** | Spec writer (dirty room; the content is design, plus one terrain height observed for the default spawn, §1) |
+| **Reviewer** | none yet (whole spec); partial review 2026-10-08, see the record |
+| **Review record** | Whole-spec re-review 2026-10-09 of the revision of 2026-10-09 (commit 0f2e39f; Claude review session, spec-reviewer role, did not write this spec, its revision or its code), the whole text read against CLEAN_ROOM.md §5.3: **passed**, every item. Functional facts only (commands, files, formats, defaults, limits, policies, measurements); no code or pseudo-code (the §8.3 update rules are stated as conditions and assignments in prose, matching `tessera-protocol.md` §8.3 "Server relaxations"); no copied prose; no game text, keys, hostnames or traffic (Tessera's own texts only; one DID and one terrain height in §1 as the Confirmed observation; property and layer names only as interoperability names via `collision.md`); every fact under a provenance row with a mark; invariants of §14 testable; unknowns marked OPEN (§3.3, §8.3, §15); no closed gate (private and LAN test server, decision 0004 respected). Earlier blocking item (1) fixed: `log_chat` is now a row of the §4.6 table, before the paragraph. Non-blocking (a), (b), (d), (e) fixed as the change log says; checked: `facing` → heading = (90° − `facing`) in radians reduced to (−π, π] agrees with the Pose convention of `tessera-protocol.md` §5.3 and the four listed values; the tick start ⌊*k* · 10⁶ / `tick_rate`⌋ µs agrees with `tessera-protocol.md` §11.1; 83 MiB = 19,456 KiB × 1 + 64 MiB, and the largest constrained value (8 × 1 GiB + 64 MiB) lies inside 65,536. Re-checked: `tessera-protocol.md` §8.3 "Server relaxations" (window ≤ 10 s skipping only the up and down tests, *S* ≤ 100 m, the same *C* update) agrees with §8.3 here; `collision.md` BasePlayer row (6.5, 3.25, 5, damper 0.2, terminal 50, step-up 0.5) and §12.3 step 3 (length limited to the terminal velocity and 120 m/s) agree with §4.5 and §8.3; its pending revision of 2026-10-09 (§12.5 water-states row) touches none of the cited limits. Arithmetic re-checked: 57-character alphabet, 66.5 m, 18.5 m/s, 42.7 m/s, 166.7 ms. Non-blocking, for a later revision: (i) carry-over (c): `tessera-protocol.md` is itself Revised (its §8.3 relaxations await review); if that review changes the relaxations, re-check §4.5, §8.3 and §14 invariant 8 here; the protocol's settling-window examples still do not name a `Named` teleport to a `ground` spawn. (ii) §3.1 says the install guard refuses a data directory with status 4 and "refuses a content file" without a status; §2.8 and §5.6 step 5 imply status 3 for the content case; say so in §3.1. (iii) The **Reviewer** row above still reads "none yet (whole spec)"; this record names the reviewer (this session) and should be copied there in the next revision. (iv) "Revised" was used before the first acceptance, where CLEAN_ROOM.md §5.2 reserves it for Accepted specs; moot now. Earlier: whole-spec review 2026-10-09 (Claude review session, spec-reviewer role, did not write this spec or its code), against CLEAN_ROOM.md §5.3: **changes requested**. Checklist: functional facts only, no code or pseudo-code, no copied prose, no game text, keys, hostnames or traffic, provenance per fact with the legend of `tessera-protocol.md` §1, invariants testable, unknowns marked OPEN, no closed gate: all pass except the item below. Spot-checks (read-only): the Confirmed row of §1 re-read in place, sample (16, 4) of height record 0x80017E8C gives 438.7 m and the block spans 432.8–452.2 m (agrees); `tessera-protocol.md` §8.3 "Server relaxations" (10 s, 100 m, update rules identical to §8.3 here), the extent 42,080 m, §10.2 chat limits (5, 2 s, 20 in 60 s), §9.4 backlog values, §4.2 71-character fingerprint, §12.2 Accepting 10 s, §8.6 delay bound, §6.3.9 rate range, §5.2 `NAME`/`ACCOUNT` limits; `collision.md` §10.3 BasePlayer and layer values; arithmetic of the 57-character alphabet, *S* = 58 m, the 66.5 m bound, the credit-fill bound and 166.7 ms (all agree). **Blocking:** (1) §4.6: the `log_chat` row (bool, default false, §11.2) stands after the prose paragraph, outside the `[chat]` table, so it renders as paragraph text and the key is missing from the normative table; since §4.1 makes unknown keys an error, a reader who builds the key set from the table rejects valid configurations. Move the row into the table, before the paragraph. Non-blocking: (a) §5.3 `facing` defines the conversion only by naming a function in `tessera_net`; state it in words (protocol heading = 90° − facing, in radians, reduced to (−π, π], from the Pose convention of `tessera-protocol.md` §5.3). (b) §8.1 cites `tick_start(k)` of `tessera-protocol.md` §11.1, which gives the start as ⌊*k* · 10⁶ / `tick_rate`⌋ µs but has no such name; give the formula inline. (c) §8.3 and §4.5 rest on `tessera-protocol.md` §8.3 and `collision.md` revisions of 2026-10-09 that are themselves awaiting review; re-check if either changes. The protocol's settling-window parenthesis names world entry and `Ground` destinations; the grace here also follows a `Named` teleport to a `ground` spawn, covered by the protocol's general clause and its closing sentence, but the protocol could say so explicitly. (d) Author role reads "Spec writer (design; …)" rather than CLEAN_ROOM.md §5.1's "Spec writer (dirty room)" (same convention as `tessera-protocol.md`). (e) §4.7 `memory_budget_mib` lower bound 64 can never meet its own constraint (at least 83 MiB at the Argon2id floor); harmless, the constraint governs. Earlier: Review 2026-10-08 of the 2026-10-08 revision only (§4.7, §10.1, §13.1, §13.3, §15.1, §15.2; Claude review session, spec-reviewer role, fresh session): **passed**, no blocking finding; Tessera design facts only, no dirty-room material, cross-references to `tessera-protocol.md` §12.2 (Accepting 10 s, closing linger) and ARCHITECTURE §19.4 checked. The spec as a whole has not been reviewed, so the status stays Draft. Non-blocking: the §15.1 implementer note on the per-address login budget still said only the connection limit exempts loopback; the §10.1 handshake cap does too (answered 2026-10-09: §6.2 step 1 now lists both exemptions and says the login budget has none). |
 | **Implements into** | `apps/server` (`tessera-server` library and binary), `apps/loadtest` (`tessera-loadtest`), `fuzz/` (content-file and accounts-file parsers) |
 | **Companion documents** | `tessera-protocol.md` (the wire format; this spec never restates it), `server-content.md` (what content a server may hold), [decision 0030](../decisions/0030-tessera-protocol-transport.md) (QUIC, threads), `walker.md` §10.5 and §10.7, `collision.md` §10.3, §11.3, §12.3–§12.4, `coordinates.md` §4 and §7, `docs/ARCHITECTURE.md` §19–§20, [LEGAL.md](../LEGAL.md) §11.1 |
 
@@ -42,10 +42,10 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 | Facts | Source | Mark |
 |---|---|---|
 | Everything not listed below: commands, files, formats, defaults, limits, policies, the desync and leak definitions | Original design, 2026-10-06 (spec writer, design role). No other server's behaviour was consulted | Design |
-| Wire behaviour referred to (states, codes, budgets, validation, interest, chat, time) | `tessera-protocol.md` v1.0 draft of 2026-10-06 | Project |
+| Wire behaviour referred to (states, codes, budgets, validation, interest, chat, time) | `tessera-protocol.md` v1.0 (Accepted 2026-10-07; §8.3 server relaxations and invariant 8 revised 2026-10-09), checked section by section on 2026-10-09 | Project |
 | `WALK_SPEED` 2 m/s and `RUN_SPEED` 6 m/s (animation and gait only) | `walker.md` §10.5, §10.7; `tessera-protocol.md` §1 | Project |
-| Movement limits of §4.5 and §8.3: fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s² and damper 0.2, Slope gravity 10 m/s², Falling gravity 15 m/s² and control acceleration 10 m/s² toward at most 5 m/s with damper 1, Slide and Ice braking ≤ 6.4 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m, landings keep the horizontal length of the clipped velocity | `collision.md` §10.3, §11.1, §11.3, §12.3, §12.4 (a)–(c), (i), (p), (v) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
-| Run-out lengths behind *S* = 56 m (§8.3) | Tessera's own stepping of the `collision.md` §12.3 controller with the default records at 1/60 s, 2026-10-08 (spec writer, design) | Design |
+| Movement limits of §4.5 and §8.3 (`collision.md` re-checked 2026-10-09: its §11.3.2 revision of that date changes only the water states, not these limits): fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s² and damper 0.2, Slope gravity 10 m/s², Falling gravity 15 m/s² and control acceleration 10 m/s² toward at most 5 m/s with damper 1, Slide and Ice braking ≤ 6.4 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m, landings keep the horizontal length of the clipped velocity | `collision.md` §10.3, §11.1, §11.3, §12.3, §12.4 (a)–(c), (i), (p), (v) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
+| Run-out lengths behind *S* = 58 m (§8.3) | Tessera's own stepping of the `collision.md` §12.3 controller with the default records at 1/60 s, 2026-10-08 (spec writer, design), and the implementer's independent stepped model of 2026-10-08 (ground braking without the damper; §15.1 note answered 2026-10-09) | Design |
 | 30 Hz tick; network thread with a single-threaded async runtime; bounded channels | ARCH §19.4, §20.3; decision 0030 item 4 | Project |
 | Landblock 160 m, indices 0–254, ±1,280 m anchor ownership, region 0 = no data | `coordinates.md` §4, §7; `tessera_net::model` | Project |
 | Terrain heights lie in 0–2,000 m (stored u16 × 2,000 / 65,535) | `landblock.md` §3.4 | Project |
@@ -57,6 +57,7 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 | Ed25519 private key file: PKCS#8 (RFC 5958 OneAsymmetricKey) with the RFC 8410 algorithm identifier, PEM label `PRIVATE KEY` (RFC 7468) | RFC 5958, RFC 8410, RFC 7468 | Standard |
 | Private address ranges | RFC 1918, RFC 6598, RFC 4193, RFC 3927, RFC 4291 | Standard |
 | Configuration and data syntax: TOML 1.0; times as RFC 3339 offset date-times in UTC | toml.io v1.0.0; RFC 3339 | Standard |
+| Readings adopted from the implementer notes of 2026-10-07 and 2026-10-08 (§2.2, §2.3, §3.4, §3.5, §5.3, §6.2, §6.4, §8.1, §8.3, §8.4, §10.1, §10.2, §11.1, §12, §13) | The clean-room implementations of `apps/server` and `apps/loadtest`, their notes reviewed and adopted by the spec writer (design), 2026-10-09 | Design |
 
 ---
 
@@ -87,7 +88,9 @@ Starts the server in the foreground. Steps, in order; any failure exits with the
 1. Resolve the data directory, apply the install guard (§3.1), create the directory if
    missing (mode 0700 on Unix), and take the server lock (§3.7).
 2. Read and validate the configuration (§4). `--listen` (repeatable) replaces
-   `[server] listen`; `--content` replaces `[server] content`.
+   `[server] listen`; `--content` replaces `[server] content`. A relative `--content` path is
+   resolved against the working directory, as `--config` and `check-content` arguments are
+   (a relative `content` key in the configuration against the data directory, §4.2).
 3. Load and check the content file (§5.6, the checks `run` applies).
 4. Apply the address guard (§4.2).
 5. Load or generate the server key (§3.3). Log the fingerprint (`tessera-protocol.md` §4.2) at
@@ -105,7 +108,8 @@ It runs until a shutdown signal (§12.1).
 - `tessera-server keygen [--force]` creates the server key (§3.3) if none exists and prints its
   fingerprint. If a key exists it refuses (status 2) unless `--force` is given. With
   `--force` it renames the old file to `server.key.old-<UTC time as YYYYMMDDTHHMMSSZ>`
-  (same mode), writes a new key, prints the old and new fingerprints, and warns that every
+  (same mode; when that name exists it appends `.1`, `.2`, … so that no earlier backup is ever
+  replaced), writes a new key, prints the old and new fingerprints, and warns that every
   client that pinned the old fingerprint will fail with `KEY_MISMATCH`
   (`tessera-protocol.md` §4.9). It needs the server lock (§3.7): it refuses while a server
   runs on the directory.
@@ -269,6 +273,11 @@ name order:
   hashes. After a successful login whose stored parameters are below the configured ones in
   any of memory, iterations or lanes, the server re-hashes the password it still holds and
   replaces the entry (under the accounts lock).
+- **Size.** The file is at most 4 MiB; every reader of the server and the CLI refuses a larger
+  one. A change that would make it larger is refused: `Register` with
+  `LoginFailed(REGISTRATION_CLOSED)`, `account add` with status 1. Every write checks the
+  size, so the server can always read the file it wrote. There is no separate account-count
+  limit.
 - Unknown keys, a duplicate name, a non-canonical name or a hash that is not a valid
   Argon2id PHC string make the file invalid. `run` then refuses to start (status 2), and a
   running server keeps its last good copy and logs an error.
@@ -289,6 +298,9 @@ name order:
 
 - Character names are unique across the server by their key (§6.4); the server keeps an index
   in memory, built at start from all character files.
+- A character whose stored name is not a protocol `NAME` (`tessera-protocol.md` §5.2) makes
+  the file invalid. A stored anchor whose indices do not fit the protocol's anchor (block
+  index above 255, cell above 65,535) fails the limits like any other position.
 - A character whose stored position or appearance fails the protocol's limits is loaded with
   the default spawn (§5.2) or, for the appearance, refused at `EnterWorld` with
   `SERVER_ERROR` and an error log line naming the file.
@@ -378,7 +390,7 @@ the operator rules.
 | `lockout_after` | integer | 5 | 1–100 | Consecutive failures before an account lockout (§6.2) |
 | `lockout_base_s` | integer | 30 | 1–3,600 | First lockout |
 | `lockout_max_s` | integer | 900 | `lockout_base_s`–86,400 | Longest lockout |
-| `attempts_per_address_per_min` | integer | 20 | 1–10,000 | Per-address login budget (§6.2) |
+| `attempts_per_address_per_min` | integer | 20 | 1–10,000 | Per-address login budget (§6.2); loopback addresses are not exempt |
 | `allow_object_bodies` | bool | false | — | Accept `Object` bodies in player appearances (§6.4) |
 
 <a id="s4-4"></a>
@@ -414,11 +426,13 @@ configurable.
 | `max_horizontal_speed` | float | 8.5 | 6.5–120 | *V*ₕ |
 | `max_up_speed` | float | 10.0 | 6.5–120 | *V*ᵤ |
 | `max_down_speed` | float | 120.0 | 50–200 | *V*_d |
-| `slide_reserve` | float | 56.0 | 0–100 | *S*, the most descent credit kept for a slide's run-out, in metres (§8.3); 0 turns the credit off |
+| `slide_reserve` | float | 58.0 | 0–100 | *S*, the most descent credit kept for a slide's run-out, in metres (§8.3); 0 turns the credit off |
 | `window_s` | float | 1.0 | 0.25–5.0 | *W*, the allowance window |
 | `settle_grace_s` | float | 3.0 | 0–10 | §8.3 settling grace |
 
-The defaults are the protocol's §8.3 defaults. They follow the character controller of
+The defaults of *V*ₕ, *V*ᵤ, *V*_d and *W* are the protocol's §8.3 defaults; `slide_reserve` and
+`settle_grace_s` use the two relaxations that §8.3 there permits (descent credit *S* ≤ 100 m,
+settling window ≤ 10 s). The limits follow the character controller of
 `collision.md` §12 (Tessera's client, `crates/physics`), whose speeds come from the player
 movement record (`collision.md` §10.3), not from `WALK_SPEED`/`RUN_SPEED`; the walk and run
 speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
@@ -440,7 +454,7 @@ speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
   m/s (Slide layer), and every speed is capped at 120 m/s (`collision.md` §12.3 step 3), so
   no legitimate descent exceeds it.
 - **Cheats still rejected.** On level ground a speed or teleport hack gains at most
-  *V*ₕ · *W* + *S* = 64.5 m beyond *V*ₕ · *t* and is then corrected; the credit grows only by
+  *V*ₕ · *W* + *S* = 66.5 m beyond *V*ₕ · *t* and is then corrected; the credit grows only by
   descending and is cleared by every correction (§8.3). Over any stretch of one epoch the
   accepted horizontal distance is at most *V*ₕ · (*t* + *W*) + *S* + the descent counted in it
   (§14 invariant 8), so a client whose height comes back to where it was averages at most
@@ -458,11 +472,17 @@ speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
 | `say_range_m` | float | 40 | 1–1,000 | Say range (`tessera-protocol.md` §10.1) |
 | `emote_range_m` | float | 40 | 1–1,000 | Emote range |
 | `yell_scope` | string | `instance` | `instance`, `region` | Yell reaches the whole instance (protocol default) or only the speaker's region in it |
-| `bucket_capacity` | integer | 5 | 1–50 | Chat token bucket (`tessera-protocol.md` §10.2) |
-| `refill_s` | float | 2.0 | 0.1–60 | Seconds per token |
-| `flood_rejections` | integer | 20 | 5–1,000 | Rejections within `flood_window_s` that end the session with `FLOODING` |
-| `flood_window_s` | integer | 60 | 10–3,600 | |
+| `bucket_capacity` | integer | 5 | 1–5 | Chat token bucket (`tessera-protocol.md` §10.2) |
+| `refill_s` | float | 2.0 | 2.0–60 | Seconds per token |
+| `flood_rejections` | integer | 20 | 5–20 | Rejections within `flood_window_s` that end the session with `FLOODING` |
+| `flood_window_s` | integer | 60 | 60–3,600 | |
 | `log_chat` | bool | false | — | §11.2 |
+
+The protocol fixes the chat rate limit and flood rule (`tessera-protocol.md` §10.2: capacity 5,
+one token per 2 s, 20 rejections within 60 s), so these keys can only make them **stricter**;
+their ranges stop at the protocol's values and the defaults equal them. The protocol session
+applies its own limits as well; with the ranges above the configured ones are never looser, so
+the configured values are the ones that act.
 
 <a id="s4-7"></a>
 ### 4.7 `[limits]`
@@ -473,7 +493,7 @@ speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
 | `max_connections_per_address` | integer | 8 | 1–4,096 | Per source IP address; loopback addresses are exempt |
 | `max_handshakes` | integer | 32 | 1–1,024 | QUIC handshakes in progress. The per-address cap (4, loopback exempt) is fixed, not a key (§10.1) |
 | `control_queue` | integer | 64 | 16–1,024 | Inbound control messages queued per connection between the network and simulation threads |
-| `memory_budget_mib` | integer | 1,024 | 64–65,536 | Accounted memory budget (§10.2). Must be at least `argon2_memory_kib` × `hash_workers` + 64 MiB |
+| `memory_budget_mib` | integer | 1,024 | 83–65,536 | Accounted memory budget (§10.2). Must be at least `argon2_memory_kib` × `hash_workers` + 64 MiB |
 
 <a id="s4-8"></a>
 ### 4.8 `[log]`
@@ -520,12 +540,15 @@ TOML, UTF-8. Committed content files start with a comment line
 | `block` | [X, Y] | Landblock indices 0–254. Exactly one of `block` + `offset` or `location` is given |
 | `offset` | [x, y, z] | Block-local metres. x and y within ±1,280; z absolute height, finite, within ±10⁷ |
 | `location` | [x, y, z] | Region-global metres (`tessera-protocol.md` §5.3 limits) |
-| `facing` | float | Compass degrees: 0 = north, 90 = east, clockwise; [0, 360). Converted to the protocol's heading convention as `tessera_net::model::heading_from_compass_degrees` does. Default 0 |
+| `facing` | float | Compass degrees: 0 = north, 90 = east, clockwise; [0, 360). Converted to the protocol's heading (`tessera-protocol.md` §5.3 Pose: radians, 0 = +X east, counter-clockwise; +Y is north, `coordinates.md` §3) as heading = (90° − `facing`) in radians, reduced to (−π, π]; so 0 → π/2, 90 → 0, 180 → −π/2, 270 → π. Default 0 |
 | `ground` | bool | Default false. True: the height is approximate and the player settles onto their own terrain (§8.3 settling grace). Not allowed with an out-of-square offset |
 
 A `block` + `offset` spawn whose x or y lies outside [0, 160] is an **interior** position: it is
 anchored to that block (cell 0, unknown; `coordinates.md` §7) and is never treated as ground.
-Every other spawn's anchor is the landblock that contains it. Each spawn counts as one
+Every other spawn is outdoors and carries **no anchor**: its interest block follows the position
+(`tessera-protocol.md` §8.7, §9.1). (An anchor on an outdoor spawn would keep deciding the
+interest block while it owns the position, ±1,280 m, so a player walking away would keep the
+spawn's block for up to eight blocks.) Each spawn counts as one
 position (`server-content.md` §5.2 P4).
 
 <a id="s5-4"></a>
@@ -548,7 +571,7 @@ Simulated, project-made actors (`server-content.md` §7 "In scope").
   lie on a ring of radius 2 × `radius` around the spawn point, at angle 2π *i* / *n* from east,
   counter-clockwise. Each wanderer starts at angle 2π *i* / *n* on its own circle, moves
   counter-clockwise at `speed`, faces along its velocity, and keeps the spawn's height and
-  region. Its anchor is the spawn's.
+  region. It has the spawn's anchor, that is none for an outdoor spawn (§5.3).
 - Its entity kind is NonPlayer, it has no class, no properties and no name collisions with
   characters (character names cannot contain digits, §6.4). Its motion byte has gait Walking
   when `speed` is at most the midpoint of the configured walk and run speeds, otherwise
@@ -625,41 +648,41 @@ For each `Login` (`tessera-protocol.md` §4.7):
 1. **Address budget.** A token bucket per source IP address, capacity
    `attempts_per_address_per_min`, refilled at that many tokens per minute. Empty: answer
    `LoginFailed(RATE_LIMITED)` with `retry_after` = seconds until the next token, rounded
-   up, at least 1. No hash is computed.
-2. **Account lockout.** If the canonical account is locked out, answer `RATE_LIMITED` with the
-   remaining seconds. No hash is computed.
+   up, at least 1. No hash is computed. Loopback addresses are **not** exempt from this budget
+   (only the connection and handshake caps of §4.7 and §10.1 exempt them), so a load test that
+   runs many bots on loopback raises `attempts_per_address_per_min` or uses several loopback
+   addresses (§13.1).
+2. **Name lockout.** If the canonical account **name** is locked out, answer `RATE_LIMITED`
+   with the remaining seconds. No hash is computed. Lockouts are kept per canonical name
+   whether or not an account of that name exists (step 5).
 3. **Queue.** The verification goes to the hash workers (§8.1): at most `hash_workers` run at
    once and at most 64 wait. With the queue full: `RATE_LIMITED`, `retry_after` 5.
 4. **Verify.** Known account: verify the password against its hash. Unknown account: verify
    it against a dummy hash made at start with the configured parameters, so both cases take
    similar time. The result for an unknown account is always a failure.
 5. **Answer.**
-   - Wrong password or unknown account: `BAD_CREDENTIALS`. A known account's consecutive
-     failure count increases; reaching `lockout_after` locks it for `lockout_base_s`, and each
-     further failure while the count stays above the limit doubles the lockout, up to
-     `lockout_max_s`.
+   - Wrong password or unknown account: `BAD_CREDENTIALS`. The consecutive failure count of
+     the canonical name increases, **whether or not the account exists**, so that a known and
+     an unknown name answer alike on the wire (`tessera-protocol.md` §4.7); reaching
+     `lockout_after` locks the name for `lockout_base_s`, and each further failure while the
+     count stays above the limit doubles the lockout, up to `lockout_max_s`. The table of
+     counted names holds at most 65,536 entries; when it is full, no new name is counted,
+     known or not.
    - Right password, account disabled: `ACCOUNT_DISABLED`. (A wrong password never reveals
      that an account is disabled.)
    - Right password: reset the failure count; apply the duplicate-login rule (§6.3); re-hash
      if needed (§3.4); `LoginOk`.
 6. The password buffer is overwritten once the verification (and any re-hash) is done.
 
-Lockout and address-budget entries live in memory only and are removed when they have been
-idle for `lockout_max_s`. A per-account lockout lets a stranger lock a known account out for
+Lockout and address-budget entries live in memory only. A lockout entry is removed when it
+has been idle for `lockout_max_s`; an address-budget entry is removed only once its bucket has
+refilled completely (it then equals a new entry), so removing it never hands out tokens early. A per-account lockout lets a stranger lock a known account out for
 a while; on a private server (`server-content.md` §8 O1) that is accepted.
 
-> **OPEN:** (implementer, review of 2026-10-07) step 5 counts failures and locks out only
-> **known** accounts, but `tessera-protocol.md` §4.7 says failures for an unknown account
-> and a wrong password MUST be indistinguishable on the wire: after `lockout_after` failures
-> a known name answers `RATE_LIMITED` while an unknown one keeps answering
-> `BAD_CREDENTIALS`, which enumerates accounts. The code follows the protocol: it counts
-> failures and applies lockouts per canonical name whether the account exists or not
-> (the table is capped at 65,536 entries; when full, no new name is counted, known or not),
-> and keeps the "unknown account" log wording of §11.2. It also removes an address-budget
-> entry only once its bucket has refilled (then it equals a new one): removing it after
-> `lockout_max_s` of idling while it is still refilling would hand out a full bucket early
-> (with `lockout_max_s` = 1 and one attempt per minute, about one attempt per second got
-> through). Spec writer: confirm both, or reword step 5 and the removal rule.
+> **Answered (2026-10-09, spec writer; was OPEN, implementer, review of 2026-10-07):** both
+> readings of the code are adopted: failures and lockouts per canonical name whether the account
+> exists or not (step 5, table cap 65,536), and an address-budget entry removed only once its
+> bucket has refilled (above). The log keeps "unknown account" for unknown names (§11.2).
 
 <a id="s6-3"></a>
 ### 6.3 Duplicate login
@@ -675,6 +698,8 @@ destroyed for observers with reason `REMOVED`), then the new session gets `Login
   It is 2–24 Unicode scalar values, starts with a letter, and contains only letters (general
   category L), single spaces, apostrophes (U+0027, U+2019) and hyphens, with no two
   non-letters next to each other and no non-letter at the end. Digits are not allowed. The
+  NFC form must also be a protocol `NAME` (`tessera-protocol.md` §5.2, at most 64 bytes of
+  UTF-8; a few letters grow under NFC, for example U+FA6C becomes the four-byte U+242EE). The
   names `System` and `Server` are reserved.
 - **Name key.** The full Unicode lowercase mapping of the NFC name. Names are unique across
   the server by key (`NAME_TAKEN`); `Tell` recipients and `@name` teleports (§8.4) are matched
@@ -730,18 +755,25 @@ destroyed for observers with reason `REMOVED`), then the new session gets `Login
 |---|---|---|
 | Network | 1 | tokio `current_thread` runtime with the QUIC endpoint and one task per connection: framing, decoding, encoding, flow control (decision 0030) |
 | Simulation | 1 | Owns all world state. Runs the 30 Hz tick |
-| Hash workers | `hash_workers` | Argon2id computations only (§6.2) |
-| Writer | 1 | Atomic file writes (§3.7, §12.2) |
+| Hash workers | `hash_workers` | Argon2id computations (§6.2), and the read-modify-write of `accounts.toml` that goes with a registration or a re-hash, under the accounts lock (§3.7) |
+| Writer | 1 | Every other file write, atomically (§3.7, §12.2) |
 
 The threads talk over bounded channels only. Neither the network nor the simulation thread
 ever computes a hash or touches a file.
 
-**Tick** (every 1/30 s of server time, `tessera-protocol.md` §11.1). In order:
+**Tick** (every 1/30 s of server time, `tessera-protocol.md` §11.1). Tick *k* is due at
+server time ⌊*k* · 10⁶ / `tick_rate`⌋ µs (§11.1 there), computed from *k*; a deadline is never found by adding a rounded
+period to the previous one (which drifts and can repeat tick numbers). In order:
 
 1. Drain inbound queues: at most 256 control messages over all connections per tick, the
    rest wait (oldest connection first, round robin); all queued movement.
 2. Apply logins, world entries, teleports, chat, emotes, stances, appearances, movement
-   (§8.3).
+   (§8.3). For a connection that closed after its events were queued, its queued `ChatSend`,
+   `EmoteSet`, `StanceSet` and `AppearanceSet` and its newest `MoveInput` are still applied,
+   then its character leaves the world and is saved (so a last chat line reaches its
+   recipients and the saved position is the last accepted one); its queued `Login`,
+   `Register`, `CharacterCreate`, `EnterWorld`, `TeleportRequest` and `QueryLocation` are
+   dropped, since no answer can arrive.
 3. Advance wanderers (§5.4).
 4. Interest: re-evaluate the pairs whose interest block changed; also check 1/30 of the
    observers in full, rotating, so that every observer is fully checked once per second
@@ -775,7 +807,9 @@ instance and region.
 ### 8.3 Movement validation
 
 The protocol's procedure (`tessera-protocol.md` §8.3) with the `[movement]` parameters, plus
-two server rules: a settling grace and a descent credit. Besides the protocol's state the
+two server rules: a settling grace and a descent credit. Both are relaxations that §8.3 there
+permits within stated bounds ("Server relaxations", revised 2026-10-09): a settling window of
+at most 10 s that skips only the up and down tests, and a descent credit of at most 100 m. Besides the protocol's state the
 server keeps, per player, the **descent credit** *C* in metres, 0 ≤ *C* ≤ *S*. *C* is 0 at
 world entry and at the start of every epoch (the client sets its velocity to 0 on every
 teleport and correction, `tessera-protocol.md` §8.4) and never grows with time. *A*ₕ, *A*ᵤ
@@ -798,20 +832,24 @@ and descent the move does not need is kept in *C*. With *S* = 0 the credit is of
 - **Settling grace.** The server has no terrain (`server-content.md` §3.2), so a spawn or
   teleport height may differ from the ground a client sees. For `settle_grace_s` of server
   time after an epoch starts at a `ground` spawn (world entry or a `Named` teleport to one)
-  or at a `Ground` destination, the up and down tests of step 5 are skipped: only the
+  or at a `Ground` destination, the up and down tests of step 5 are skipped (at world entry
+  whenever the character is placed at a `ground` spawn, whatever instance it was stored in): only the
   horizontal test (with its counted descent and credit) and the extent check apply. Step 6
   still lowers *A*ᵤ and *A*_d, so a move counts at most *A*_d ≤ *V*_d · *W* = 120 m of descent
   toward the credit however far it claims to drop, and *C* stays capped at *S*. A slide that
   starts right after a ground spawn or a `Ground` teleport therefore gets its credit as it
   would anywhere else, and the grace adds nothing to what a cheat can bank. The vertical
-  velocity clamp still applies to what is relayed.
+  velocity clamp still applies to what is relayed. The grace is measured from the start of the
+  ground epoch: a correction inside it (horizontal or extent) starts a new epoch at the last
+  accepted *P* and clears *C* as every new epoch does, but neither ends nor restarts the grace,
+  which runs until `settle_grace_s` after the ground epoch began.
 - **Descent credit (slides).** Horizontal speed above *V*ₕ arises only from gravity on
   steep faces (normals 45°–85° from up, `collision.md` §11.3, §12.4 (q), (t); there the Slope
   layer applies, gravity 10 m/s², no control acceleration) and is then carried into the air
   and onto walkable ground. Along a face of 45° or steeper the horizontal speed is at most
   the vertical one, so every move of a slide counts at least as much descent as it covers
   horizontally, and in the air after leaving a face gravity only adds descent. What follows
-  the descent, the **run-out**, is paid from *C*. *S* = 56 m covers the longest run-out that
+  the descent, the **run-out**, is paid from *C*. *S* = 58 m covers the longest run-out that
   the default records allow (`collision.md` §10.3), found by stepping the controller of
   `collision.md` §12.3 at 1/60 s (Tessera's own calculation, 2026-10-08):
   - **Fastest horizontal speed.** Every speed is limited to the terminal velocity, 50 m/s
@@ -825,15 +863,20 @@ and descent the move does not need is kept in *C*. With *S* = 0 the credit is of
     (the Falling layer brakes at only 10 m/s² per axis, toward at most 5 m/s, with no damper);
     about 18 m into water; about 45.5 m when the walker jumps at every landing (5.2 m/s,
     `collision.md` §12.4 (c); each hop is about 0.7 s in the air and one step on the ground,
-    and the air brakes only at 10 m/s²). From 35.4 m/s: about 4, 16 and 28 m.
+    and the air brakes only at 10 m/s²). From 35.4 m/s: about 4, 16 and 28 m. The
+    implementer's independent model (ground braking at 38.5 m/s² **without** the damper, air
+    10 m/s² toward 5 m/s, jump 5.2 m/s, Falling gravity 15 m/s²) gives about 49 m for the
+    jumping run-out and about 15 m for level braking; leaving the damper out lengthens both, so
+    49 m is the conservative figure and is the one used below.
   - **Late moves.** During a run-out *A*ₕ is near 0, so a move that arrives late pays from *C*
     what *A*ₕ would have refilled meanwhile; *S* adds one window, *V*ₕ · *W* = 8.5 m, for that:
-    45.5 + 8.5, rounded up to 56 m.
+    49 + 8.5 = 57.5, rounded up to 58 m (revised 2026-10-09 from 56 m, which took the 45.5 m
+    figure).
   - **The credit fills in time.** On a face *d*_c ≥ *d*ₕ, so *A*ₕ + *C* grows by at least *V*ₕ
     per second of sliding (the allowance pays first, so none of its refill is lost), and by
     all the descent while the mover is slower than *V*ₕ. Reaching a horizontal speed *v* on a
     45° face takes at least *v* / 5 s (10 × sin 45° m/s² along the face), which leaves
-    *A*ₕ + *C* ≥ min(8.5 + 1.7 *v*, 64.5) m at its foot, more than the run-out from *v* needs at
+    *A*ₕ + *C* ≥ min(8.5 + 1.7 *v*, 66.5) m at its foot, more than the run-out from *v* needs at
     every speed: 42.7 m/s needs 50 m/s along the face, at least 7 s of sliding. Steeper faces
     fill it faster. No face just steeper than 45° leaves too little credit.
   - **Not covered.** The Slide and Ice layers (terminal velocity up to 100 m/s, braking at
@@ -842,14 +885,12 @@ and descent the move does not need is kept in *C*. With *S* = 0 the credit is of
     records other than the observed ones of `collision.md` §10.3 (it accepts speeds up to
     120 m/s), which a client reads from its own install.
 
-> **OPEN (tessera-protocol.md):** §8.3 there describes the checks without such a grace or
-> credit, and lets a server add checks but not relax them. Either that spec allows a
-> server-defined settling grace after `Ground`-type epochs (preferred: it changes no bytes),
-> or the protocol needs a "settle" hint so clients snap to their terrain before the first
-> `MoveInput`. Until it is settled, servers with `settle_grace_s` = 0 and `slide_reserve` = 0
-> follow §8.3 there exactly, and content spawns should give heights close to the terrain (as
-> §5.7 does). The descent credit needs the same allowance there (or a place in that
-> procedure); without it, long slides down steep faces are corrected.
+> **Answered (2026-10-09, spec writer, design; was OPEN, addressed to `tessera-protocol.md`):**
+> `tessera-protocol.md` §8.3 now permits both relaxations within bounds ("Server relaxations":
+> a settling window of at most 10 s after an epoch that starts at a position whose height the
+> server does not know, skipping only the up and down tests; a descent credit pool of at most
+> 100 m used as here), and its invariant 8 counts them. The defaults here (3 s, 58 m) lie within
+> those bounds, so `tessera-server` conforms with its default configuration. No bytes change.
 
 > **OPEN:** (spec writer, 2026-10-08) a run-out onto a rising walkable slope is lifted onto it
 > (`collision.md` §12.4 (v)) and climbs at up to its horizontal speed (45°). Braking on the
@@ -879,6 +920,9 @@ The server adds no terrain or collision checks of its own in v1.
   sends a numeric destination.
 - **`Ground` destinations** keep the given height (the server has no terrain,
   `tessera-protocol.md` §8.4) and start the settling grace.
+- **Extent.** A `Location`, `Ground` or `Anchored` destination whose x or y lies outside the
+  movement extent of `tessera-protocol.md` §8.3 (each in [−1,280, 42,080]) is refused with
+  `TeleportRefused(INVALID_DESTINATION)`: every later `MoveInput` there would be corrected.
 - **Rate.** At most one executed teleport per player per `teleport_interval_ms`. A request
   that arrives earlier waits until the interval has passed; a newer request supersedes it
   (`CANCELLED`, `tessera-protocol.md` §6.2.12). Every request is answered within 10 s.
@@ -927,12 +971,12 @@ parameters:
 | Connections past the handshake | `max_connections` | The server answers `Hello` with `Disconnect(SERVER_FULL)` |
 | Connections per source address | `max_connections_per_address` (loopback exempt) | As above, `SERVER_FULL` |
 | Characters in an instance | `instance_capacity` | Assignment tries the next instance; none: `EnterWorldFailed(NO_INSTANCE)` |
-| Inbound control messages per connection | `control_queue` | The network thread stops reading that connection's control stream (QUIC flow control pushes back). Full for 5 s: `Disconnect(SLOW_CONSUMER)` (`tessera-protocol.md` §13.3) |
+| Inbound control messages per connection | `control_queue` | Counted **per message**, not per read: the network thread feeds received control bytes to the protocol session one frame at a time and stops decoding once `control_queue` events wait for the simulation; the rest stays buffered unread, and QUIC flow control pushes back. Full for 5 s: `Disconnect(SLOW_CONSUMER)` (`tessera-protocol.md` §13.3) |
 | Inbound movement per connection | The newest `MoveInput` only (a queue of 1, newest wins), plus the rate limit of `tessera-protocol.md` §13.1 | Older unprocessed movement is dropped and counted |
 | Outbound world stream per connection | The protocol's §9.4 backlog rules | Creates and updates pause; persistent: `Disconnect(SLOW_CONSUMER)` |
 | Outbound chat stream per connection | 256 KiB unsent | Above it for 30 s, or above 1 MiB: `Disconnect(SLOW_CONSUMER)` |
 | Login verifications | `hash_workers` running, 64 waiting | `LoginFailed(RATE_LIMITED)` (§6.2) |
-| Writer queue | One pending job per file (a newer snapshot replaces an older one); at most 4,096 files | Above it: the simulation skips the periodic save round and logs a warning; shutdown saves are never skipped |
+| Writer queue | One pending job per file (a newer snapshot replaces an older one); at most 4,096 files | Above it, the simulation skips the periodic save round, the save after teleports and the save at world entry, and logs a warning. The save when a character leaves the world and the shutdown saves are never skipped: they wait for room. A shutdown save that cannot be queued counts as a failed save (§12.1 step 6) |
 | Accounted memory | `memory_budget_mib` | §10.2 |
 
 **Admission of a new QUIC connection attempt.** The network thread checks, in this order,
@@ -963,13 +1007,16 @@ one address at once, such as `tessera-loadtest` provisioning accounts (§13.1), 
 ### 10.2 Memory budget
 
 The server **accounts** for the memory it controls: every connection's unsent world and chat
-bytes, its queued inbound frames, a fixed 64 KiB per connection for its state, and
-`argon2_memory_kib` × `hash_workers` for hashing. (The QUIC library's own buffers are bounded
+bytes, its queued inbound control events at 1 KiB each (the network thread queues decoded
+events, not frames; a frame is at most 64 KiB and typical control messages are far smaller), a
+fixed 64 KiB per connection for its state, and `argon2_memory_kib` × `hash_workers` for
+hashing. (The QUIC library's own buffers are bounded
 by the flow-control windows of `tessera-protocol.md` §2.1 and are not counted separately.)
 
 - At 80 % of the budget, new connections get `Disconnect(SERVER_FULL)` after `Hello`.
 - At 100 %, the server disconnects the connection with the largest unsent backlog with
-  `SLOW_CONSUMER`, and repeats each tick until the accounted total is below 90 %.
+  `SLOW_CONSUMER`, and repeats each tick until the accounted total is below 90 %. A connection
+  that is already ending (its `Disconnect` is queued) is not chosen again.
 - The accounted total is reported in the statistics line (§11.1). The soak tools compare it
   with the process's resident memory (§13.3).
 
@@ -990,8 +1037,9 @@ by the flow-control windows of `tessera-protocol.md` §2.1 and are not counted s
   character, instance), leaving the world;
 - kicks, `SLOW_CONSUMER`, `FLOODING`, `SERVER_FULL`, refused teleports at debug;
 - every `stats_interval_s`: connections by state, characters per instance, entities, interest
-  pairs, tick duration (p50, p99, max over the interval), overruns, bytes per second in and out,
-  accounted memory and, where the platform reports it, resident memory.
+  pairs, tick duration (the last and the longest over the interval; p50 and p99 MAY be added),
+  overruns, bytes per second in and out, accounted memory and, where the platform reports it,
+  resident memory.
 
 At warn or error: configuration problems, failed saves, overruns, reload failures.
 
@@ -1017,8 +1065,8 @@ At warn or error: configuration problems, failed saves, overruns, reload failure
 <a id="s12-1"></a>
 ### 12.1 Graceful shutdown
 
-Triggered by SIGINT or SIGTERM on Unix, and by Ctrl+C, Ctrl+Break or console close on
-Windows.
+Triggered by SIGINT or SIGTERM on Unix, and by Ctrl+C on Windows (Ctrl+Break and console close
+SHOULD trigger it too).
 
 1. Stop accepting connections.
 2. Send `ServerNotice` with level Shutdown and `seconds` = remaining grace to every logged-in
@@ -1036,14 +1084,16 @@ A third signal exits at once with status 1 after logging what was not saved.
 <a id="s12-2"></a>
 ### 12.2 Persistence of characters
 
-A character's file is written (through the writer, §8.1):
+A character's file is written (through the writer, §8.1; which writes may be skipped when the
+writer queue is full is §10.1):
 
-- when the character leaves the world (disconnect, kick, idle, replaced login);
+- when the character leaves the world (disconnect, kick, idle, replaced login), never skipped;
 - 5 s after a teleport (one write for a burst of teleports);
 - every `save_interval_s`, for each character in the world that has moved at least 1 m or
   changed appearance since its last save, together with `world-state.toml`;
 - on creation, appearance changes and removals;
-- at shutdown (§12.1 step 4).
+- at world entry (the instance it was placed in);
+- at shutdown (§12.1 step 4), never skipped.
 
 The position saved is the last accepted one, with its anchor and heading, and the instance.
 After a crash, at most `save_interval_s` of movement is lost. Nothing else about a session
@@ -1069,8 +1119,8 @@ of numbers chosen by the tool, never resolved.
 | `connect-storm` | Connect, log in and enter the world as fast as the limits allow; measures admission |
 | `walk` | Walk or run on random paths inside a square of K × K landblocks around the spawn, at 2 or 6 m/s, following the client send rules (`tessera-protocol.md` §8.2), with stops and turns |
 | `chat` | Say, Yell and Tell at a configured rate within the chat limits |
-| `churn` | Disconnect and reconnect at random intervals, with and without `Disconnect` (abrupt loss) |
-| `cheat` | Send moves above the limits and stale epochs; every one must be corrected or dropped |
+| `churn` | Disconnect and reconnect at random intervals with `Disconnect`; abrupt loss (no `Disconnect`) is exercised by the hostile mode's attackers, because the client backend always sends one |
+| `cheat` | Send moves above the limits; every one must be handled (below). Stale-epoch moves are exercised by the hostile mode's pre-login `MoveInput` floods, because the client backend stamps the current epoch |
 | `soak` | A mix for a long duration: default 1 hour, 16 bots, 70 % walking, one chat line per bot per 30 s, 10 % of the bots reconnecting every 5 minutes, a teleport per bot per 10 minutes |
 
 Bots in every scenario except `cheat` stay within the limits, so any correction of such a
@@ -1080,6 +1130,29 @@ The tool provisions accounts (registration, character creation) at most 4 at a t
 it never has more handshakes in progress from one address than the server's per-address cap
 allows (§10.1).
 
+- **Hostile mode on loopback.** The login budget applies to loopback (§6.2 step 1), so the
+  hostile clients bind a second loopback address (for example `127.0.0.2`) against a loopback
+  server to keep their failed logins out of the honest bots' budget; where no second address
+  can be bound they share `127.0.0.1` and the in-process server's
+  `attempts_per_address_per_min` is raised to 10,000.
+- **`cheat` verdict.** An over-limit move is **handled** when a `CORRECTED` report puts the bot
+  back within 1.5 m of where it was, within 2 s after the move (the bot holds the move for
+  200 ms so that the newest-move slot sends it), or, in-process, when the server's
+  dropped-move counter covers the unanswered moves. A correction elsewhere fails the run, and
+  any observer sample within 5 m of the refused target during the following 3.7 s is a desync
+  of kind **Cheat** (§13.2). Remote, a dropped move can be told from an accepted one only
+  through the observers.
+- **Walking area.** Interest leave needs pairs more than *R* + 1 blocks apart, so the `walk`
+  square is at least *R* + 3 blocks wide, and 2*R* + 4 (8 for *R* = 2) for every far teleport
+  to leave range from anywhere. The report adds a coverage note when the area is too small,
+  when far teleports fell short, or when no observer–entity pair left range. Region and
+  instance changes are not exercised (one region).
+- **Scale.** The tool checks every observer–entity pair; it measures its own loop and its
+  achieved sampling rate, marks timing indicative when the loop overruns its tick in more than
+  5 % of iterations, and declares a run **invalid** (a failure) when sampling falls below 9 Hz.
+  The tool MAY state the largest bot count it supports on a machine instead of scaling
+  further.
+
 <a id="s13-2"></a>
 ### 13.2 Desync
 
@@ -1088,7 +1161,13 @@ what *O* shows with the truth. The truth for a bot is its own simulated trajecto
 exactly what it simulates); for a wanderer it is the formula of §5.4. Times are mapped
 through each bot's clock-offset estimate (`tessera-protocol.md` §11.2); in-process runs share
 one monotonic clock. Samples are taken at 10 Hz per observer, at the observer's render time
-*t* (estimated server time − *D*, `tessera-protocol.md` §8.6, *D* = 150 ms).
+*t* = estimated server time − *D*, where *D* is the observer's actual interpolation delay
+(`tessera-protocol.md` §8.6; at least 2 / `snapshot_rate` + 1 / `tick_rate`, 166.7 ms at
+15 Hz and 30 Hz), reported in the summary.
+
+A client cannot learn a wanderer group's start time, so the phase of its circle is unknown:
+wanderers are **not** judged for the Position, Rest and Motion kinds; they are judged for
+Missing, Ghost and State like other entities.
 
 A **desync** is any of these, each episode counted once:
 
@@ -1096,11 +1175,20 @@ A **desync** is any of these, each episode counted once:
 |---|---|
 | Position | The horizontal distance between *O*'s interpolated position of *E* at *t* and *E*'s true position at *t* exceeds 1.0 m + 0.1 s × *E*'s true speed for 1 s or longer |
 | Rest | *E* has been at rest for 1 s, and *O*'s position of *E* is more than 0.05 m off for a further 1 s |
-| Missing | *E* is within *R* blocks of *O* (same instance and region) for 2 s, and *O* has not created it, while *O*'s created count is below its entity limit |
+| Missing | *E* is within *R* blocks of *O* (same instance and region) for 2 s, and *O* has not created it, while *O*'s created count is below its entity limit. The 2 s hold of the *k*-th nearest candidate is extended by ⌈*k* / `creates_per_tick`⌉ ticks (the protocol creates at most that many per tick, nearest first, `tessera-protocol.md` §9.4); in-process, Missing is not judged for 2 s after the server counted an overrun or a skipped tick |
 | Ghost | *O* still has *E* created 2 s after *E* left *R* + 1 blocks, left the instance or region, or left the world |
-| State | *O*'s view of *E*'s appearance or properties differs from the server's for 2 s after a change |
-| Chat | A line that the rules say *O* must receive arrives later than 2 s, never, twice, or out of order with another line of the same speaker |
+| State | *O*'s view of *E*'s appearance or `STANCE` differs from the server's for 2 s after a change (`EMOTE` is not compared: it is an opaque animation key whose start time the client estimates) |
+| Motion | While *E*'s true speed is at least 0.5 m/s, *O*'s heading of *E* is more than 0.35 rad off, or *O*'s gait of *E* differs from the gait that `tessera-protocol.md` §8.1 derives from the true speed and the configured `WALK_SPEED` and `RUN_SPEED`, for 1 s (this is what ROADMAP M7 criterion 1 calls "animate") |
+| Chat | A line that the rules say *O* must receive arrives later than 2 s, never, twice, or out of order with another line of the same speaker. *O* counts as a certain recipient only when it was in the world from 1 s before to 2 s after the line was sent and, for Say, did not teleport in that time; Say recipients within ±6 m of the Say range (one second at run speed) are not judged, and those beyond it must not receive the line |
+| Cheat | An observer sample within 5 m of a refused `cheat` target during the 3.7 s after the move (§13.1) |
 | Correction | A bot that stayed within the limits receives a `CORRECTED` location report |
+
+Missing, Ghost and Yell need the observers' instance. A remote run that cannot learn it
+(the client backend does not report the instance of `WorldEnter`) judges them as if all bots
+were in one instance and adds a coverage note; the in-process server sizes
+`instance_capacity` to the bot count. Remote runs take the walk and run speeds from the
+player's `WALK_SPEED` and `RUN_SPEED` properties and need `--say-range` for Say to be judged
+beyond the speaker's echo (the protocol does not announce the range).
 
 A run passes the desync criterion with **zero** desync events. The report lists every
 episode with the bots, entity, kind, time and size of the error.
@@ -1123,10 +1211,17 @@ A run is **leak-free** when all of these hold:
 2. **Return to baseline.** Within 10 s after the last bot has disconnected, every count
    except the throttle tables equals its value before the first bot connected. The throttle
    tables are empty `lockout_max_s` + 60 s later.
-3. **Bounded memory.** After a warm-up of 10 % of the run (at least 5 minutes), a
+3. **Bounded memory.** After a warm-up of the larger of 10 % of the run and `--warmup-min`
+   (default 5 minutes), capped at half the run (so that runs shorter than 10 minutes still get
+   a verdict, marked indicative), a
    least-squares line through the resident-memory samples grows by less than the larger of
    16 MiB and 5 % of the warm-up maximum over the rest of the run, and no sample exceeds the
    warm-up maximum by more than that amount.
+
+Criteria 1 and 2 judge the server's counts only where the tool can read them, that is
+in-process; a remote run judges its own sessions' counts and says that the server's were not
+judged. The throttle-table check of criterion 2 runs by default for runs of 5 minutes or more,
+with the in-process server's `lockout_max_s` set to 30 s so that the wait is at most 90 s.
 
 Resident memory alone is not trusted to fall after disconnections (allocators keep freed
 memory), which is why criterion 2 uses counts and criterion 3 uses the trend.
@@ -1152,9 +1247,10 @@ settings: tuning it through the environment (for example glibc's `MALLOC_ARENA_M
 <a id="s13-4"></a>
 ### 13.4 Other measurements and the report
 
-- Login and world-entry latency; round-trip time (`Ping`); `MotionBatch` inter-arrival times
-  and loss; bytes per second per bot in each direction; corrections, drops and their causes;
-  the server's tick duration (p50, p99, max) and overruns; CPU time of the server process.
+- Login and world-entry latency; round-trip time (`Ping`); bytes per second per bot in each
+  direction (QUIC UDP bytes); corrections, drops and their causes; the server's tick duration
+  (as §11.1 reports it) and overruns; CPU time of the server process. Where the client backend
+  reports them, also `MotionBatch` inter-arrival times and loss.
 - The report is one JSON file plus a short text summary. It records the tool and server
   versions, configuration, scenario, duration, the machine (CPU model, cores, memory) and the
   system load average at every sample.
@@ -1189,9 +1285,7 @@ settings: tuning it through the environment (for example glibc's `MALLOC_ARENA_M
 <a id="s15"></a>
 ## 15. Open items
 
-> **OPEN:** settling grace versus `tessera-protocol.md` §8.3 (§8.3 here).
-
-> **OPEN:** Windows permission checks for the key and accounts files (§3.3).
+> **OPEN:** Windows permission checks for the key and accounts files (§3.3). v1 makes none.
 
 > **OPEN:** an operator console or admin commands while running (kick, broadcast, instance
 > moves). v1 has only signals, the accounts-file reload and the CLI.
@@ -1199,289 +1293,78 @@ settings: tuning it through the environment (for example glibc's `MALLOC_ARENA_M
 > **OPEN:** changing instance during a session (§7).
 
 > **OPEN:** the defaults of §4 (instance capacity 64, tick budgets, chat ranges, settling
-> grace 3 s) are starting points; the M7 soak runs should confirm or tune them, as
+> grace 3 s, slide reserve 58 m) are starting points. The third M7 soak series passed with
+> them (`docs/perf/m7-soak.md`); a soak between two machines on a LAN is still to run, as
 > `tessera-protocol.md` §17 says for the protocol's defaults.
 
-### 15.1 Implementer notes (`tessera-server`, 2026-10-07)
+> **OPEN:** run-outs that jump up a rising walkable slope (§8.3, spec writer, 2026-10-08) were
+> not stepped; check them before relying on *V*ᵤ = 10 m/s there.
 
-Readings the clean-room implementation of `apps/server` had to choose where this spec is
-silent, ambiguous or in tension with `tessera-protocol.md`. The code follows each note; a
-reviewer should confirm or correct it.
+The former OPEN "settling grace versus `tessera-protocol.md` §8.3" is answered (§8.3).
 
-> **OPEN:** (implementer note) §5.3 "every other spawn's anchor is the landblock that
-> contains it" conflicts with `tessera-protocol.md` §8.7 and §9.1: an anchor decides the
-> interest block for as long as it owns the position (±1,280 m), so a player who walks out
-> of an outdoor spawn block would keep that block as its interest block for up to eight
-> blocks. The server therefore sends **no** anchor for in-square (outdoor) spawns, whose
-> interest block then follows the position; only interior (out-of-square) spawns carry
-> their block with cell 0. Wanderers inherit this. Spec writer: confirm, or say that the
-> outdoor anchor is dropped when the player leaves the block.
+<a id="s15-1"></a>
+### 15.1 Implementer notes (`tessera-server`, 2026-10-07 and 2026-10-08), answered 2026-10-09
 
-> **OPEN:** (implementer note) §8.4: a `Location`, `Ground` or `Anchored` destination whose
-> x or y lies outside the movement extent of `tessera-protocol.md` §8.3
-> ([−1,280, 42,080]) is refused with `INVALID_DESTINATION`, because every later `MoveInput`
-> there would be corrected. Spec writer: confirm the code, or allow such teleports.
+Each note's reading was reviewed by the spec writer (design) and written into the text; the
+notes themselves are not repeated here.
 
-> **OPEN:** (implementer note) §4.6: the protocol session in `tessera-protocol`
-> (`ServerSession`) applies the protocol's own chat bucket (5 tokens, 2 s) and flood rule
-> (20 in 60 s) and offers no way to change them. The server applies the configured
-> `[chat]` bucket and flood rule in addition, so a configuration stricter than the
-> protocol defaults takes effect, and a looser one does not. Needs a `tessera-protocol`
-> API change (configurable `ChatLimiter` in `ServerParams`).
+| Note | Answer |
+|---|---|
+| §5.3 anchor of outdoor spawns | Adopted: outdoor spawns carry no anchor, interior spawns keep theirs; wanderers inherit (§5.3, §5.4) |
+| §8.4 destinations outside the movement extent | Adopted: refused with `INVALID_DESTINATION` (§8.4) |
+| §4.6 chat bucket and flood rule in the protocol session | Resolved without an API change: the `[chat]` keys may only tighten the protocol's fixed limits, so the configured values always act (§4.6) |
+| §8.1 who writes `accounts.toml` for a registration or re-hash | Adopted: the hash worker, under the accounts lock; the writer does every other write (§8.1) |
+| §10.2 "queued inbound frames" | Adopted: 1 KiB per queued control event; an ending connection is not chosen again (§10.2) |
+| §11.1 statistics line, §12.1 Windows signals | §11.1 now requires the last and the longest tick (p50 and p99 optional); §12.1 requires Ctrl+C (Ctrl+Break and console close SHOULD). The rest is §15.3 |
+| §6.2 step 1 loopback and the login budget | Adopted: the login budget has no loopback exemption (§6.2 step 1, §4.3) |
+| §10.1 `control_queue` per message | Adopted (§10.1) |
+| §4.3/§6.5 no cap on the number of accounts | A 4 MiB size limit on `accounts.toml`, checked by every write (§3.4); no separate count limit |
+| §10.1/§12.2 which saves may be skipped | Adopted: only the periodic round, the save after teleports and the save at world entry (§10.1, §12.2) |
+| §8.1 events queued by a connection that closes | Adopted (§8.1 tick step 2) |
+| Smaller readings (§6.4 NFC `NAME`, §3.5 stored names and anchors, §8.3 grace at any ground spawn, §2.2 relative `--content`, §2.3 keygen backups) | Adopted (§6.4, §3.5, §8.3, §2.2, §2.3) |
+| M7 exit check: tick deadlines | §8.1: tick *k* is due at ⌊*k* · 10⁶ / `tick_rate`⌋ µs; the wording question about `server_time` stays at `tessera-protocol.md` §11.1 |
+| §8.3 settling grace across a correction | Adopted: the grace runs from the start of the ground epoch; a correction clears *C* but neither ends nor restarts it (§8.3) |
+| §8.3 API shape and the 56 m margin | The API is the implementation's. The margin is revised: *S* = 58 m, from the conservative 49 m run-out of the implementer's model (§8.3, §4.5) |
 
-> **OPEN:** (implementer note) §8.1: registration and re-hashing need a read-modify-write
-> of `accounts.toml` under the accounts lock together with a hash. The hash workers do that
-> write themselves (the writer thread does every other write); neither the network nor the
-> simulation thread touches the file. Spec writer: confirm, or route it through the writer.
+<a id="s15-2"></a>
+### 15.2 Implementer notes (`tessera-loadtest`, 2026-10-07), answered 2026-10-09
 
-> **OPEN:** (implementer note) §10.2 "its queued inbound frames": the network thread
-> forwards decoded control events, not frames, so each queued event is accounted as
-> 1 KiB (a frame is at most 64 KiB; typical control messages are far smaller). Connections
-> already ending (a `Disconnect` was queued) do not count towards further memory-budget
-> disconnects.
+| Note | Answer |
+|---|---|
+| Wanderer phase unknown to clients | Wanderers are not judged for Position, Rest and Motion (§13.2) |
+| *D* = 150 ms against `tessera-protocol.md` §8.6 | *D* is the observer's actual interpolation delay (§13.2) |
+| Chat certainty, range edge, Yell instance | Adopted as the Chat rule and the instance paragraph of §13.2 |
+| `churn` without `Disconnect` | Abrupt loss is exercised by the hostile mode (§13.1) |
+| Remote runs and server memory and counts | §13.3 (which process criterion 3 judges; criteria 1–2 on server counts in-process only) |
+| Warm-up and the throttle check | Adopted (§13.3) |
+| Measurements not taken | §13.4 makes `MotionBatch` timing conditional on the backend; tick figures as §11.1; the rest is §15.3 |
+| Hostile clients and the loopback login budget | Adopted (§13.1) |
+| `cheat` verdict and stale epochs | Adopted with the stated numbers; new desync kind Cheat (§13.1, §13.2) |
+| State and "animate" | State compares appearance and `STANCE`; new kind Motion (§13.2) |
+| Missing and the create budget | Adopted (§13.2) |
+| Instance limitation of Missing, Ghost and Yell | Adopted as a coverage note (§13.2); a backend change is §15.3 |
+| Typed refusal events, ping counter | §15.3 |
+| Size of the walking area | Adopted (§13.1) |
+| Single-threaded checking and its limit | The tool may state its limit; below 9 Hz a run is invalid (§13.1) |
 
-> **OPEN:** (implementer note) §11.1: the statistics line reports the last and the longest
-> tick duration, not p50/p99 over the interval, and no resident memory; per-connection byte
-> counts are not in the "connection closed" line yet. §12.1 on Windows: only Ctrl+C is
-> handled (Ctrl+Break and console close are not).
+The resident-memory notes were resolved on 2026-10-08 (§13.3, change log).
 
-> **OPEN:** (implementer note) §6.2 step 1: the per-address login budget applies to loopback
-> addresses too (only the connection limit of §4.7 exempts them); an in-process load test
-> with many bots on loopback needs a larger `attempts_per_address_per_min`.
+<a id="s15-3"></a>
+### 15.3 Known implementation gaps (2026-10-09; not questions)
 
-> **OPEN:** (implementer, review of 2026-10-07) §10.1 `control_queue` is applied **per
-> message**: received control bytes are fed to the protocol session one frame at a time and
-> decoding stops once `control_queue` events wait for the simulation, the rest of the read
-> staying buffered (one read of 240 small frames used to be forwarded at once). Spec writer:
-> say "per message, not per read".
+For the owners of `apps/server`, `apps/loadtest` and `crates/net`; none of them changes this
+spec's rules.
 
-> **Resolved** (2026-10-08, spec writer, design): §10.1 handshake admission (implementer
-> note: per-address handshake cap, Retry under pressure, cap on live connections). All three
-> are confirmed and written into §10.1: the per-address cap of 4 handshakes in progress
-> (loopback exempt) is a fixed rule, not a `[limits]` key, so that clients such as the load
-> tool can rely on it; a QUIC Retry for unvalidated sources once half of `max_handshakes` are
-> in progress; refusal once `max_connections` + `max_handshakes` connections are alive past
-> the handshake, each counting its 64 KiB towards §10.2. The order of the checks is §10.1's.
-
-> **OPEN:** (implementer, review of 2026-10-07) §4.3/§6.5 define no cap on the number of
-> accounts. Self-registration could grow `accounts.toml` past the 4 MiB every reader of the
-> server accepts, after which the server refused to start. The server now refuses a
-> registration with `LoginFailed(REGISTRATION_CLOSED)` when the file would exceed that
-> size, and every accounts-file write checks it. Spec writer: consider an
-> `[accounts] max_accounts` key.
-
-> **OPEN:** (implementer, review of 2026-10-07) §10.1 says "shutdown saves are never
-> skipped"; the server also never skips the save when a character leaves the world (§12.2
-> first item): it waits for room in the writer queue. Only the periodic round, the save
-> after teleports and the save at world entry are skipped when the queue is full. A save
-> that cannot be queued at shutdown counts as a failure (§12.1 step 6, exit status 1).
-
-> **OPEN:** (implementer, review of 2026-10-07) §8.1 step 1 queues control events until the
-> next tick. When a connection closes first, its queued `ChatSend`, `EmoteSet`, `StanceSet`
-> and `AppearanceSet` events and its newest `MoveInput` are still processed before the
-> character leaves the world and is saved, so a last chat line reaches its recipients and
-> the saved position is the last accepted one. Queued `Login`, `Register`,
-> `CharacterCreate`, `EnterWorld`, `TeleportRequest` and `QueryLocation` are dropped (no
-> answer can arrive). Spec writer: confirm.
-
-> **OPEN:** (implementer, review of 2026-10-07) smaller readings: §6.4 the name rule also
-> requires the NFC form to be a protocol `NAME` (at most 64 bytes; a few letters grow under
-> NFC, e.g. U+FA6C to the 4-byte U+242EE), and a character file whose stored name is not a
-> `NAME` is invalid; §3.5 a stored anchor whose indices do not fit (block > 255, cell >
-> 65,535) fails the limits like any other position (reset to the default spawn); §8.3 the
-> settling grace applies whenever world entry starts at any `ground` spawn, whatever the
-> stored instance; §2.2 `run --content FILE` takes a relative path relative to the working
-> directory (as `--config` and `check-content` do); §2.3 a forced `keygen` never replaces
-> an earlier backup: when `server.key.old-<time>` exists it uses `.1`, `.2`, … after it.
-
-> **OPEN:** (M7 exit check, 2026-10-07) `tessera-protocol.md` review R.7 finding 3 is fixed in
-> code: the simulation thread now takes each deadline as `tick_start(k)` of
-> `tessera-protocol.md` §11.1 instead of adding a rounded 33,333 µs period, which drifted
-> 10 µs a second from the schedule and could repeat tick numbers. The finding's wording
-> question (what `server_time` a tick reports) is still open there.
-
-> **Resolved** (2026-10-08, spec writer, design): §8.3 settling grace and descent credit
-> (implementer note: no credit during the grace, so a slide right after a ground spawn or a
-> `Ground` teleport was corrected). §8.3 now skips only the up and down *tests* during the
-> grace; step 6 keeps lowering *A*ᵤ and *A*_d, and a move counts only *d*_c = min(*d*_d, *A*_d)
-> of its descent toward the credit. A claimed drop of any size thus earns at most
-> *V*_d · *W* = 120 m, capped at *S*, and the credit applies during the grace as everywhere
-> else. The code's "no credit while the grace runs" is replaced.
-
-> **Resolved** (2026-10-08, spec writer, design): §8.3 credit after faces just steeper than
-> 45° (implementer note: *A*ₕ grew only by *d*_d − *d*ₕ ≈ 0, so a run-out after a 45°+ slide
-> at 50 m/s was corrected near its end). The credit rule changes: *C* is a pool of its own,
-> *A*ₕ pays first, then the move's counted descent, then *C*, and unused descent is kept in
-> *C*. *A*ₕ's refill is then never lost while sliding, and *A*ₕ + *C* grows by at least *V*ₕ
-> per second on any face. *S* rises from 16 to 56 m because a run-out with a jump at every
-> landing needs about 45.5 m (§8.3 reasoning), and *C* is cleared at every new epoch. The edge
-> no longer exists; the tests may use 45°+ faces.
-
-> **Resolved** (2026-10-08, spec writer, design): API shape for the §4.5 defaults: done and
-> accepted as the implementer note recorded it: `tessera_protocol::movement::MovementLimits`
-> carries *V*ₕ as `horizontal_speed` (default `limits::MAX_HORIZONTAL_SPEED` = 8.5; the
-> `run_speed` field and `HORIZONTAL_TOLERANCE_FACTOR` are gone), `descent_credit:
-> Option<f64>` holds *S* (`None` = `tessera-protocol.md` §8.3 exactly; `tessera-server` sets
-> `Some(slide_reserve)`; a negative or NaN *S* counts as 0), `tessera-net`'s §8.6 snap speed
-> default is 8.5 m/s and `InterpConfig::with_run_speed` is removed. Under the revised §8.3
-> the validator keeps *C* apart from *A*ₕ (so the old cap of *A*ₕ at *V*ₕ · *W* + *S* becomes
-> *A*ₕ ≤ *V*ₕ · *W* and *C* ≤ *S*), treats *S* = 0 like `None` in the horizontal test, clears
-> *C* at every new epoch, and runs the grace by skipping the up and down tests instead of
-> using very large vertical limits.
-
-> **OPEN:** (implementer note, 2026-10-08) §8.3 settling grace across a correction. A
-> correction inside the grace (horizontal or extent) starts a new epoch at the last accepted
-> *P*, not at a `ground` spawn. `tessera-server` keeps the grace running until
-> `settle_grace_s` after the ground epoch started (the up and down tests stay skipped after
-> such a correction); the credit is cleared by the correction as §8.3 requires. Spec writer:
-> confirm, or say that a correction ends the grace.
-
-> **OPEN:** (implementer note, 2026-10-08) API shape for the revised §8.3:
-> `MovementValidator::set_settling(bool)` turns the grace on and off (the server sets it
-> before each check from its grace deadline; `start_epoch` leaves it as it is), and
-> `MovementValidator::descent_credit()` returns *C*. A change of limits caps *A*ₕ at
-> *V*ₕ · *W* and *C* at the new *S* at the next check. The tests step their own model of the
-> controller at 1/60 s (ground braking 38.5 m/s² without the damper, air 10 m/s² toward
-> 5 m/s, jump 5.2 m/s, Falling gravity 15 m/s²): the run-out from 42.7 m/s with a jump at
-> every landing comes to about 49 m beyond *V*ₕ · *t* less its counted descent (§8.3 says
-> about 45.5 m), and on level ground braking about 15 m (§8.3: about 7 m). Both still fit
-> *A*ₕ + *C* at the foot of a 46° face, also with the first second of the run-out arriving
-> at once; a reserve of 44 m does not. Spec writer: the difference may come from the damper
-> or from how the run-out is counted; worth a second look at the 56 m margin.
-
-### 15.2 Implementer notes (`tessera-loadtest`, 2026-10-07)
-
-Readings the clean-room implementation of `apps/loadtest` had to choose where §13 is silent,
-ambiguous or not implementable with the current APIs. The code follows each note; a reviewer
-should confirm or correct it.
-
-> **OPEN:** (implementer note) §13.2 says the truth for a wanderer is the formula of §5.4,
-> but a client cannot learn a group's start time (instance start, or the first player's
-> entry for `first-player` groups), so the phase of every circle is unknown. The tool's
-> in-process content has no wanderers, and wanderers seen on a remote server are counted
-> but not judged. Spec writer: give the phase origin (for example server time 0, or a
-> property carrying the start time), or drop wanderers from the desync definition.
-
-> **OPEN:** (implementer note) §13.2 fixes *D* = 150 ms, but `tessera-net` raises the delay
-> to `tessera-protocol.md` §8.6's own bound 2 / `snapshot_rate` + 1 / `tick_rate`
-> (166.7 ms at 15 Hz and 30 Hz). The tool samples at each observer's actual render time
-> (the backend's delay, reported in the summary). Spec writer: make §13.2 say "the
-> client's interpolation delay" or reconcile 150 ms with §8.6.
-
-> **OPEN:** (implementer note) §13.2 "Chat": a recipient counts as certain only when it was
-> in the world from 1 s before to 2 s after the line was sent and, for Say, did not teleport
-> in that time; Say recipients within ±6 m of the 40 m range (one second at run speed) are
-> not judged, those beyond it must not receive the line ("unexpected"). The spec gives no
-> tolerance at the range edge. Yell is judged as instance-wide on the assumption that every
-> bot is in one instance: `tessera_net::Event::WorldEntered` does not carry the instance
-> number that `WorldEnter` has, so on a remote server with several instances Yell results
-> are wrong (the in-process server sizes `instance_capacity` to the bot count).
-
-> **OPEN:** (implementer note) §13.1 `churn` "with and without `Disconnect` (abrupt loss)":
-> `tessera_net::Session` has no way to drop a connection without `Disconnect` (dropping the
-> backend sends one), so every reconnection is a clean one. The hostile mode's attackers
-> do drop connections abruptly.
-
-> **OPEN:** (implementer note) §13.3 remote runs: the statistics line has no resident
-> memory (§15.1) and the tool does not read the server's logs, so a remote run checks only
-> its own process's memory and no server counts. In-process runs measure the whole process
-> (server and bots together).
-
-> **OPEN:** (implementer note) §13.3 criterion 3 asks for a warm-up of at least 5 minutes;
-> the tool uses the larger of 10 % of the run and `--warmup-min` (default 5 minutes), capped
-> at half the run, so runs shorter than 10 minutes still get a verdict (indicative). The
-> throttle-table check of criterion 2 runs by default for runs of 5 minutes or more, with
-> the in-process server's `lockout_max_s` set to 30 s so the wait is at most 90 s.
-
-> **OPEN:** (implementer note) §13.4 measurements not taken: `MotionBatch` inter-arrival
-> times and loss (`RemoteStats` has counts only, and the bots poll at 30 Hz, which also
-> quantises chat latency to about 33 ms), and tick p50/p99 (the server keeps the last and
-> longest tick only, §15.1). Bytes per second are QUIC UDP bytes from `RemoteStats`.
-
-> **Resolved** (2026-10-08, spec writer, design): the four notes on resident-memory growth
-> in in-process runs (measured 2026-10-07, its two follow-ups, and the M7 exit check's cause
-> and fix). The growth was the bot side's, not the server's: every `tessera-net` session had
-> its own network thread, runtime and QUIC client endpoint, and each reconnection left a
-> freed receive buffer of about 2.9 MiB resident in glibc's heap. `tessera-net` now runs every
-> session as a task on one network thread per process and shares one client endpoint per
-> address family (ARCH §19.4; `crates/net/src/remote`), and the third series of
-> `docs/perf/m7-soak.md` passes criterion 3 in-process (S60d), against a separate server
-> (L60d) and under the hostile mode (H5d), with default allocator settings. §13.3 now says
-> which process criterion 3 judges (the server's when the tool can sample it, otherwise the
-> tool's own; in-process the whole process, bots included), that a level-off has no rule of
-> its own, and that allocator tuning does not turn a failure into a pass. The tool's reading
-> of 2026-10-07 is confirmed. The provisioning limit of the exit-check note is now §13.1 and
-> §10.1.
-
-> **OPEN:** (implementer note) the per-address login budget applies to loopback (§15.1), so
-> the hostile clients bind `127.0.0.2` against a loopback server (any other address of
-> 127/8 works on Linux) to keep their failed logins out of the honest bots' budget; where
-> that address cannot be bound they share `127.0.0.1` and the in-process server's budget is
-> raised to 10,000 per minute.
-
-> **OPEN:** (implementer note, review follow-up 2026-10-07) §13.1 `cheat` "and stale
-> epochs": `tessera_net::Command::Move` carries no epoch (the backend stamps the current
-> one), so the tool sends only moves above the limits; stale-epoch moves are covered only by
-> the hostile mode's pre-login `MoveInput` floods, not by an in-world check. A raw in-world
-> client would be needed. The tool judges each over-limit move as **handled** when a
-> `CORRECTED` report puts the bot back within 1.5 m of where it was within 2 s after the
-> move (held 200 ms so the newest-move slot sends it), or, in-process, when the server's
-> dropped-move counter covers the unanswered ones; a correction elsewhere fails the run, and
-> any observer sample within 5 m of the refused target during the following 3.7 s is a
-> desync of a new kind, **Cheat**, recorded at once. Remote, a dropped move cannot be told
-> from an accepted one except through the observers. Spec writer: confirm these numbers or
-> give others.
-
-> **OPEN:** (implementer note, review follow-up) §13.2 "State" names "appearance or
-> properties"; the tool compares appearance and `STANCE` (bots toggle Relaxed/Ready with
-> every appearance change) and not `EMOTE` (an opaque animation key whose start time the
-> backend estimates, `tessera-protocol.md` §17.2). ROADMAP M7 criterion 1 says clients "see
-> each other move, **animate** and chat", which §13.2 does not define. The tool adds a
-> **Motion** kind: while *E*'s true speed is at least 0.5 m/s, *O*'s heading of *E* is more
-> than 0.35 rad off, or *O*'s gait differs from the one `tessera-protocol.md` §8.1 derives
-> from the true speed and the server's `WALK_SPEED`/`RUN_SPEED`, for 1 s. Spec writer: put
-> an animation rule into §13.2 or say that criterion 1's "animate" means something else.
-
-> **OPEN:** (implementer note, review follow-up) §13.2 "Missing" holds for 2 s, but
-> `tessera-protocol.md` §9.4 creates at most `creates_per_tick` (16) entities per observer
-> per tick, nearest first: an observer entering (or reset next to) more than about 960
-> candidates cannot have them all within 2 s on a correct server, and server overruns slow
-> it further. The tool extends the hold of the *k*-th nearest candidate by ⌈*k* / 16⌉ ticks
-> and, in-process, does not judge Missing for 2 s after the server counted an overrun or a
-> skipped tick (the report counts those rounds). Spec writer: write the create budget into
-> the Missing rule.
-
-> **OPEN:** (implementer note, review follow-up) the instance limitation of the chat note
-> above applies to **Missing** and **Ghost** too ("same instance and region"): without the
-> instance number of `WorldEnter`, a remote run with more bots than `instance_capacity`
-> reports every cross-instance pair within *R* as missing. The in-process server sizes
-> `instance_capacity` to the bot count; remote reports carry a coverage note. Remote runs
-> also need `--say-range` for Say to be judged beyond the speaker's echo (the protocol does
-> not announce the range), and take walk and run speeds from the player's `WALK_SPEED` and
-> `RUN_SPEED` properties. The tessera-net owner could add the instance to
-> `Event::WorldEntered` or `RemoteBackend`.
-
-> **OPEN:** (implementer note, review follow-up) `tessera-net` maps `TeleportRefused`,
-> `ChatRejected` and `ServerNotice` all to `System` chat lines; the tool tells them apart by
-> the backend's text prefixes (`teleport refused:`, `chat not sent:`), which an operator
-> notice could imitate. `RemoteStats` has the latest ping RTT but no ping counter, so the
-> tool records a new RTT value once (two equal measurements count as one). The tessera-net
-> owner could add typed events and a ping sequence.
-
-> **OPEN:** (implementer note, review follow-up) interest leave needs pairs more than
-> *R* + 1 blocks apart: the walking area must be at least *R* + 3 blocks wide, and 2*R* + 4
-> (8 for *R* = 2, now the default) for every far teleport to leave range from anywhere. The
-> report adds coverage notes when the area is too small, when far teleports fell short, or
-> when no observer–entity pair left range. Region changes and instance changes are not
-> exercised (the tool uses one region).
-
-> **OPEN:** (implementer note, review follow-up) the tool checks every observer–entity pair
-> on one thread 10 times a second; it measures its own loop and its achieved sampling rate,
-> marks timing indicative when the loop overruns its tick in more than 5 % of iterations,
-> and declares the run **invalid** (a failure) when sampling falls below 9 Hz. On the
-> reference laptop under other load this happened at 512 bots; 256 bots kept 10 Hz with
-> loop overruns (`docs/perf/m7-soak.md`). §13 gives no bot count; spec writer: say whether
-> the tool must scale further (several threads) or may state its limit.
+- The statistics line has no resident memory, and the "connection closed" line no byte counts
+  (§11.1).
+- On Windows only Ctrl+C triggers a graceful shutdown (§12.1 SHOULD items).
+- `tessera-net`: no way to drop a connection without `Disconnect`; moves carry the backend's
+  current epoch only; `Event::WorldEntered` does not carry the instance of `WorldEnter`;
+  `TeleportRefused`, `ChatRejected` and `ServerNotice` all arrive as system chat lines, which the
+  tool tells apart by text prefixes that an operator notice could imitate; the latest ping RTT
+  has no sequence counter (two equal measurements count as one); `RemoteStats` has counts only
+  (no `MotionBatch` inter-arrival times or loss), and the bots poll at 30 Hz, which quantises
+  chat latency to about 33 ms.
 
 ---
 
@@ -1494,3 +1377,5 @@ should confirm or correct it.
 | 2026-10-08 | §1, §4.5, §8.3: movement limits follow the `collision.md` §12 controller instead of the walk 2 / run 6 m/s controller: *V*ₕ 8.5 m/s (`max_horizontal_speed` replaces `tolerance`; no longer derived from `run_speed`), *V*ᵤ 10 m/s (reasoned anew), *V*_d 120 m/s (was 60); new descent credit with `slide_reserve` *S* = 16 m. Spec writer (design) |
 | 2026-10-08 | §1, §4.5, §8.3, §14, §15.1: answers the three implementer notes of 2026-10-08. Descent credit is a pool *C* of its own (0 to *S*, cleared at every epoch); *A*ₕ pays first, then the move's counted descent *d*_c, then *C*; unused descent is kept in *C*. *S* (`slide_reserve`) 16 → 56 m, derived from stepped run-outs with a jump at every landing; *S* = 0 turns the credit off. Settling grace skips only the up and down tests; *A*ᵤ and *A*_d stay tracked and bound the counted descent. Cheat bounds restated (§4.5), new invariant 8, new OPEN on run-outs up slopes. Spec writer (design) |
 | 2026-10-08 | §4.7, §10.1, §13.1, §13.3, §15.1, §15.2: §10.1 gains the per-address handshake cap (4 in progress per source IP address, loopback exempt; a fixed rule, not a `[limits]` key), the cap of `max_connections` + `max_handshakes` live connections, the QUIC Retry under handshake pressure and the order of the admission checks; §13.1: the load tool provisions at most 4 accounts at a time. §13.3 says which process criterion 3 judges (in-process: the whole process, bots included; `--server-pid`: the server process; otherwise the tool's own, with the server not judged), no separate level-off rule, verdicts with default allocator settings. The four §15.2 notes on bot-side memory growth (fixed in `tessera-net`: one network thread and a shared client endpoint per process) and the §15.1 handshake note are marked Resolved. Spec writer (design) |
+| 2026-10-09 | Prepared for review (spec writer, design); status Draft → Review. Provenance: `tessera-protocol.md` v1.0 cited as Accepted and revised 2026-10-09; a row for the adopted implementer readings; the *S* derivation row names both stepped models. Every implementer note of §15.1 and §15.2 answered and folded into the text: §2.2 relative `--content`, §2.3 keygen backup names, §3.4 4 MiB accounts-file limit, §3.5 stored names and anchors, §4.3 and §6.2 login budget without a loopback exemption, §4.6 chat keys may only tighten the protocol's limits, §5.3 outdoor spawns carry no anchor, §6.2 lockouts per canonical name and the address-budget removal rule, §6.4 NFC `NAME`, §8.1 hash workers write `accounts.toml`, tick deadlines from `tick_start(k)`, events of a closed connection, §8.3 grace across corrections and at any ground spawn, *S* 56 → 58 m (cheat bound 66.5 m), the protocol OPEN answered by `tessera-protocol.md` §8.3 "Server relaxations", §8.4 destinations outside the extent, §10.1 `control_queue` per message and the writer-queue skips, §10.2 accounting per event, §11.1 tick figures, §12.1 Windows signals, §12.2 saves; §13.1 churn, cheat verdict, hostile mode on loopback, walking area, scale; §13.2 *D*, wanderers, Chat certainty, Missing create budget, State, new kinds Motion and Cheat, instance coverage; §13.3 warm-up, remote counts; §13.4 measurements. §15 restructured: open items, answered-note tables §15.1–§15.2, new §15.3 implementation gaps. |
+| 2026-10-09 | Revision after the whole-spec review of 2026-10-09 (spec writer); status Review (changes requested) → Revised. Blocking (1): §4.6 `log_chat` (bool, default false, §11.2) moved into the `[chat]` table before the paragraph, so the table lists every `[chat]` key (§4.1). Non-blocking: (a) §5.3 `facing` conversion stated in words (heading = 90° − `facing` in radians, reduced to (−π, π]) instead of naming a crate function; (b) §8.1 and §15.1 give the tick start ⌊*k* · 10⁶ / `tick_rate`⌋ µs inline instead of the name `tick_start(k)`; (d) author role reads "Spec writer (dirty room; …)"; (e) §4.7 `memory_budget_mib` lower bound 64 → 83 (the smallest value the constraint can meet: 19 MiB Argon2id floor × 1 worker + 64 MiB), no change in accepted configurations. (c) left as a re-check item: §4.5 and §8.3 must be re-read if the 2026-10-09 revisions of `tessera-protocol.md` §8.3 or `collision.md` change in their reviews. No new facts; provenance unchanged. |

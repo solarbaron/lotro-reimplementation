@@ -110,6 +110,18 @@ pub trait AssemblySource {
     ///
     /// Only when the source fails.
     fn object_properties(&mut self, object: Did) -> Result<Lookup<PropertySet>, Self::Error>;
+
+    /// The own model scale of a held entity (0x47): its template chain's `vec3` × its
+    /// `Render_AdjustableScale`, per axis, before any check (`appearance.md` §6.1). `None`
+    /// when unknown; the default implementation knows none (scale 1).
+    ///
+    /// # Errors
+    ///
+    /// Only when the source fails.
+    fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Self::Error> {
+        let _ = entity;
+        Ok(None)
+    }
 }
 
 impl<T: AssemblySource + ?Sized> AssemblySource for &mut T {
@@ -138,6 +150,9 @@ impl<T: AssemblySource + ?Sized> AssemblySource for &mut T {
     fn object_properties(&mut self, object: Did) -> Result<Lookup<PropertySet>, Self::Error> {
         (**self).object_properties(object)
     }
+    fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Self::Error> {
+        (**self).held_scale(entity)
+    }
 }
 
 /// Hand-built records in maps: for synthetic tests, fuzzing and tools that assemble
@@ -162,6 +177,8 @@ pub struct MapSource {
     pub items: HashMap<Did, ItemVisual>,
     /// Game-object property sets by object DID.
     pub objects: HashMap<Did, PropertySet>,
+    /// Own model scales of held entities ([`AssemblySource::held_scale`]).
+    pub held_scales: HashMap<Did, [f32; 3]>,
     /// DIDs every lookup reports as [`Lookup::Invalid`] (for bodies, setups, chains,
     /// appearance records, meshes, items and object property sets alike), whatever the
     /// maps hold.
@@ -213,6 +230,9 @@ impl AssemblySource for MapSource {
     }
     fn object_properties(&mut self, object: Did) -> Result<Lookup<PropertySet>, Infallible> {
         Ok(self.lookup(&self.objects, object))
+    }
+    fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Infallible> {
+        Ok(self.held_scales.get(&entity).copied())
     }
 }
 
@@ -436,5 +456,12 @@ impl<S: RecordSource> AssemblySource for GameDataSource<'_, S> {
             Some(set) => property_set(self.data, set),
             None => Ok(Lookup::Invalid(format!("{object} is not a game object"))),
         }
+    }
+
+    fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, PropsError> {
+        Ok(match self.body(entity)? {
+            Lookup::Found(b) => Some(b.model_scale()),
+            _ => None,
+        })
     }
 }

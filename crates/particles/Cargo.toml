@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-particles"
+description = "Particle runtime: the shared random source, deterministic CPU simulation of particle-system descriptors (0x39), fork-effect lifetimes, effect start, attachment, stop, lingering and removal, and billboard vertex generation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam = "0.33"
+tessera-formats.workspace = true
+# Float-curve evaluation (`material.md` §5.3.1) for every mode except the random one.
+tessera-material.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Real-data test only (tests/real_data.rs): every 0x39 record of the install.
+tessera-dat.workspace = true
+
+[lints]
+workspace = true

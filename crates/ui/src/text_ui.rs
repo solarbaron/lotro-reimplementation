@@ -41,7 +41,7 @@ impl Ui {
         }
         e.text.runtime = text;
         e.text.dirty = true;
-        e.dirty = true;
+        self.note_paint_dirty(k);
         self.painter.touched = true;
     }
 
@@ -125,7 +125,7 @@ impl Ui {
                 && (e.class.is_text() || e.plugin.is_some())
             {
                 e.text.dirty = true;
-                e.dirty = true;
+                self.note_paint_dirty(k);
             }
         }
         self.painter.touched = true;

@@ -67,6 +67,7 @@ fn figure(env: &Env, spec: &str, height: Option<f32>) -> FigureAsset {
         static_only: false,
         avatar_height: height,
         bone_scale: None,
+        seed: None,
     };
     build_figure(&env.ctx, &req, &|| false).expect("figure builds")
 }
@@ -91,7 +92,8 @@ impl Probe {
             model: vec![Mat4::IDENTITY; n],
             triples: skeleton.reference_triples().to_vec(),
             skeleton,
-            scale: asset.model_scale,
+            // Heights are along z: the z component of the per-axis model scale.
+            scale: asset.model_scale[2],
             snaps: Vec::new(),
             scratch: EvalScratch::new(),
         }
@@ -338,7 +340,7 @@ fn mesh_heights(env: &Env, spec: &str, height: Option<f32>) -> (f32, f32, f32) {
             d.deform(&mut pos, None, None, joints, weights);
         }
         for ((p, j), w) in pos.iter().zip(joints).zip(weights) {
-            let z = skin_position(&skin, j, w, Vec3::from_array(*p)).z * asset.model_scale;
+            let z = skin_position(&skin, j, w, Vec3::from_array(*p)).z * asset.model_scale[2];
             top = top.max(z);
             low = low.min(z);
         }
@@ -531,7 +533,7 @@ fn moving_mesh_stays_near_the_ground() {
                 skinning_matrices(&sk, &probe.triples, &mut skin).expect("palette");
                 for ((p, j), w) in pos.iter().zip(&joints).zip(&weights) {
                     let z = skin_position(&skin, j, w, Vec3::from_array(*p)).z;
-                    lowest = lowest.min(z * asset.model_scale);
+                    lowest = lowest.min(z * asset.model_scale[2]);
                 }
                 drive(&mut a, &mut loco, speed, 0.05);
             }

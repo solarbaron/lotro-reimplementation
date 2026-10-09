@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The plugin host as the native panels see it ([`PluginControl`], [`ShellCommands`]), and
-//! the local-player view the plugins read (`plugin-api-usage.md` §8).
+//! The plugin host as the native panels see it ([`PluginControl`]), the plugins' shell
+//! command names for the command dispatcher's registry ([`plugin_command_names`]), and the
+//! local-player view the plugins read (`plugin-api-usage.md` §8).
 //!
 //! Panel code runs while the host holds a mutable borrow of the [`tessera_ui::Ui`], and
 //! plugin code drives the same UI through `tessera-plugins`, so no plugin code may run
-//! inside a panel call. The adapters therefore answer from a snapshot (the plugin rows
-//! and command names taken before the call) and **queue** loads, unloads, refreshes and
-//! plugin commands; the host runs the queue right after the panel call returns, still in
-//! the same frame-loop step ([`Deferred`]).
+//! inside a panel call. The adapter therefore answers from a snapshot (the plugin rows
+//! taken before the call) and **queues** loads, unloads and refreshes; the host runs the
+//! queue right after the panel call returns, still in the same frame-loop step
+//! ([`Deferred`]). Typed command lines never pass through here: the chat window hands them
+//! to the command dispatcher after the panel call (decision 0020 item 1).
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::BTreeMap;
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_plugins::{LocalPlayerInfo, LocalPlayerSource, PluginManager};
 
-use crate::panels::{PluginControl, PluginRow, ShellCommands};
+use crate::panels::{PluginControl, PluginRow};
 
 /// Most queued plugin requests between two runs.
 pub const MAX_DEFERRED: usize = 256;
@@ -29,22 +31,17 @@ pub struct Deferred {
     pub unloads: Vec<Option<String>>,
     /// Rediscover the available plugins (§4.3).
     pub refresh: bool,
-    /// Plugin command lines (`/word args`) to run.
-    pub commands: Vec<String>,
 }
 
 impl Deferred {
     /// Whether nothing is queued.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.loads.is_empty()
-            && self.unloads.is_empty()
-            && !self.refresh
-            && self.commands.is_empty()
+        self.loads.is_empty() && self.unloads.is_empty() && !self.refresh
     }
 
     fn full(&self) -> bool {
-        self.loads.len() + self.unloads.len() + self.commands.len() >= MAX_DEFERRED
+        self.loads.len() + self.unloads.len() >= MAX_DEFERRED
     }
 }
 
@@ -112,17 +109,14 @@ pub fn plugin_command_names(manager: &PluginManager, builtins: &[String]) -> Vec
         .unwrap_or_default()
 }
 
-/// The adapters' shared view (module docs). Rows and command names are read from the
-/// manager on first use only, so a panel call that needs neither costs nothing.
+/// The adapter's view (module docs). Rows are read from the manager on first use only, so
+/// a panel call that does not need them costs nothing.
 pub struct PluginView<'a> {
     /// The plugin manager (read only).
     pub manager: &'a PluginManager,
-    /// The client's built-in command names.
-    pub builtins: &'a [String],
     /// The queue.
     pub deferred: &'a RefCell<Deferred>,
     rows: OnceCell<Vec<PluginRow>>,
-    commands: OnceCell<Vec<String>>,
 }
 
 impl std::fmt::Debug for PluginView<'_> {
@@ -134,27 +128,16 @@ impl std::fmt::Debug for PluginView<'_> {
 impl<'a> PluginView<'a> {
     /// A view over `manager`.
     #[must_use]
-    pub fn new(
-        manager: &'a PluginManager,
-        builtins: &'a [String],
-        deferred: &'a RefCell<Deferred>,
-    ) -> Self {
+    pub fn new(manager: &'a PluginManager, deferred: &'a RefCell<Deferred>) -> Self {
         Self {
             manager,
-            builtins,
             deferred,
             rows: OnceCell::new(),
-            commands: OnceCell::new(),
         }
     }
 
     fn rows_ref(&self) -> &[PluginRow] {
         self.rows.get_or_init(|| plugin_rows(self.manager))
-    }
-
-    fn commands_ref(&self) -> &[String] {
-        self.commands
-            .get_or_init(|| plugin_command_names(self.manager, self.builtins))
     }
 }
 
@@ -186,34 +169,6 @@ impl PluginControl for PluginView<'_> {
 
     fn refresh(&mut self) {
         self.deferred.borrow_mut().refresh = true;
-    }
-}
-
-impl ShellCommands for PluginView<'_> {
-    fn lookup(&self, word: &str) -> Option<u32> {
-        let w = word.to_ascii_lowercase();
-        self.commands_ref()
-            .iter()
-            .position(|c| *c == w)
-            .and_then(|i| u32::try_from(i).ok())
-    }
-
-    fn run(&mut self, _id: u32, word: &str, args: &str) -> i32 {
-        let mut d = self.deferred.borrow_mut();
-        if d.full() {
-            return 0;
-        }
-        let line = if args.is_empty() {
-            format!("/{word}")
-        } else {
-            format!("/{word} {args}")
-        };
-        d.commands.push(line);
-        1
-    }
-
-    fn names(&self) -> Vec<String> {
-        self.commands_ref().to_vec()
     }
 }
 
@@ -266,16 +221,16 @@ mod tests {
             std::sync::Arc::new(crate::plugins::LogHost::new(dir.path().join("data")));
         let manager = PluginManager::new(tessera_plugins::ManagerConfig::new(dir.path()), host);
         let d = RefCell::new(Deferred::default());
-        let builtins: Vec<String> = Vec::new();
-        let mut v = PluginView::new(&manager, &builtins, &d);
+        let mut v = PluginView::new(&manager, &d);
         assert!(PluginControl::load(&mut v, "B").is_err(), "no such plugin");
         assert!(v.unload(None).is_ok());
-        assert_eq!(v.lookup("hello"), None, "no apartment, no commands");
-        assert_eq!(v.run(0, "Hello", "x y"), 1);
+        assert!(
+            plugin_command_names(&manager, &[]).is_empty(),
+            "no apartment, no commands"
+        );
         v.refresh();
         let d = d.into_inner();
         assert_eq!(d.unloads, vec![None]);
-        assert_eq!(d.commands, vec!["/Hello x y".to_owned()]);
         assert!(d.refresh);
     }
 

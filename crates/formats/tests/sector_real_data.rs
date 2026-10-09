@@ -12,7 +12,9 @@
 //!   (`wet` and the named pair equal `water.md` §6.2 from the block maps and the region's
 //!   water table) and DL-I13 (every named DID exists).
 //!
-//! DL-I14 (normals, Probable) and the imposter-key census (DL14) are not checked here.
+//! DL-I14 (every terrain and ceiling normal within one step of the rule of §4.3, with the
+//! 5 × 5 landblocks around each sector) and DL-I15 (no mask bit above 8) are checked too;
+//! the imposter-key census (DL14) is not.
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. A release build visits every
 //! record; a debug build takes a 1-in-23 sample unless `TESSERA_FULL=1`. Run with
@@ -25,9 +27,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tessera_dat::{ArchiveKind, ArchiveSet, Entry, SetOptions};
+use tessera_formats::landblock::sector_normals::SectorNormalCheck;
 use tessera_formats::landblock::{
     FailureCategory, HeightGrid, REGION_DESCRIPTOR_PREFIX, SectorRecord, SectorSample,
-    SectorWaterPair, block_sample_offset, height_from_raw,
+    SectorWaterPair, block_sample_offset, height_from_raw, sprite_is_mirrored,
 };
 use tessera_formats::{
     BlockMap, LandblockData, PropertyDictionary, Record, RegionDescriptor, WaterTable,
@@ -144,6 +147,13 @@ struct Tally {
     entity_properties: BTreeMap<u32, usize>,
     flow_maps: usize,
     landblocks_checked: usize,
+    /// DL-I14: stored normals against the rule of §4.3.
+    normals: SectorNormalCheck,
+    /// DL-I15: `mode` 2 masks with a bit above bit 8 (rejected by the decoder, so 0).
+    high_mask_bits: usize,
+    /// §5.6 step 4 census: sprites drawn mirrored for a viewer at the sector's centre
+    /// landblock.
+    sprites_mirrored: usize,
 }
 
 impl Tally {
@@ -182,6 +192,9 @@ impl Tally {
         add(&mut self.entity_properties, o.entity_properties);
         self.flow_maps += o.flow_maps;
         self.landblocks_checked += o.landblocks_checked;
+        self.normals.merge(o.normals);
+        self.high_mask_bits += o.high_mask_bits;
+        self.sprites_mirrored += o.sprites_mirrored;
     }
 
     fn cross(&mut self, did: u32, why: &'static str) {
@@ -206,9 +219,14 @@ impl Tally {
         self.sprites += s.sprites.len();
         self.sprite_records += usize::from(!s.sprites.is_empty());
         self.sprite_max = self.sprite_max.max(s.sprites.len());
+        let centre = s.origin().map(|(x, y)| (x + 1, y + 1));
         for sp in &s.sprites {
             *self.distances.entry(sp.distance.to_bits()).or_default() += 1;
+            if let (Some(o), Some(c)) = (s.origin(), centre) {
+                self.sprites_mirrored += usize::from(sprite_is_mirrored(sp, sp.viewer_frame(o, c)));
+            }
         }
+        self.high_mask_bits += usize::from(s.mode == 2 && s.ceiling_mask & !0x1FF != 0);
         self.entities += s.entities.len();
         self.entity_records += usize::from(!s.entities.is_empty());
         self.entity_max = self.entity_max.max(s.entities.len());
@@ -266,21 +284,33 @@ fn cross_check(
         }
     }
     let table = water.get(&region);
+    // The 5 × 5 landblocks around the sector (its own 3 × 3 and the ring the normal rule
+    // of §4.3 reads), parsed once.
+    let mut near: HashMap<(i32, i32), LandblockData> = HashMap::new();
+    for gx in -1..=3i32 {
+        for gy in -1..=3i32 {
+            let (lx, ly) = (i32::from(id.x) + gx, i32::from(id.y) + gy);
+            let (Ok(ux), Ok(uy)) = (u8::try_from(lx), u8::try_from(ly)) else {
+                continue;
+            };
+            let block = (region << 16) | (u32::from(ux) << 8) | u32::from(uy);
+            let Ok((loc, payload)) = set.read_with_entry(0x8000_0000 | block) else {
+                continue;
+            };
+            if let Ok(d) = LandblockData::parse(&payload, Some(loc.entry.stamp)) {
+                near.insert((lx, ly), d);
+            }
+        }
+    }
+    t.normals.merge(s.check_normals(|x, y| near.get(&(x, y))));
     let mut rank = 0usize;
     for x in 0..3usize {
         for y in 0..3usize {
             let (lx, ly) = (u32::from(id.x) + x as u32, u32::from(id.y) + y as u32);
             let block = (region << 16) | (lx << 8) | ly;
-            let Ok((loc, payload)) = set.read_with_entry(0x8000_0000 | block) else {
-                t.cross(did, "landblock data missing");
+            let Some(data) = near.get(&(lx as i32, ly as i32)) else {
+                t.cross(did, "landblock data missing or does not decode");
                 continue;
-            };
-            let data = match LandblockData::parse(&payload, Some(loc.entry.stamp)) {
-                Ok(d) => d,
-                Err(_) => {
-                    t.cross(did, "landblock data does not decode");
-                    continue;
-                }
             };
             t.landblocks_checked += 1;
             if !block_equals(s.terrain.block(x, y), &data.heights) {
@@ -432,4 +462,30 @@ fn every_sector_decodes_and_follows_the_invariants() {
     assert!(all.deviations.is_empty(), "record-local invariants broken");
     assert!(all.cross.is_empty(), "cross-record invariants broken");
     assert_eq!(all.landblocks_checked, 9 * all.records);
+    let n = all.normals;
+    eprintln!(
+        "DL-I14 normals: terrain {} samples, {} exact, {} within one step, {} beyond, {} \
+         uncomputable; ceiling {} samples, {} exact, {} within one step, {} beyond, {} \
+         uncomputable, {} pointing up",
+        n.terrain.samples,
+        n.terrain.exact,
+        n.terrain.within_one,
+        n.terrain.beyond,
+        n.terrain.uncomputable,
+        n.ceiling.samples,
+        n.ceiling.exact,
+        n.ceiling.within_one,
+        n.ceiling.beyond,
+        n.ceiling.uncomputable,
+        n.ceiling.ceiling_up
+    );
+    eprintln!(
+        "§5.6: {} of {} sprites mirrored for a viewer on the sector's centre landblock",
+        all.sprites_mirrored, all.sprites
+    );
+    assert!(n.holds(), "DL-I14: stored normals follow the rule of §4.3");
+    assert_eq!(all.high_mask_bits, 0, "DL-I15");
+    if full {
+        assert_eq!(n.terrain.samples, 9 * 1089 * all.records as u64);
+    }
 }

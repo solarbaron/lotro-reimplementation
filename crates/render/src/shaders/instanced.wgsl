@@ -248,7 +248,7 @@ fn fs_blend(in: InstOut) -> @location(0) vec4<f32> {
     if (surface_alpha_test(s.opacity)) {
         discard;
     }
-    return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
+    return frame_blend_output(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
 @fragment

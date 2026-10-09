@@ -137,6 +137,19 @@ pub(crate) enum KindState {
         handle: Option<AnimationHandle>,
         event: Option<EventKey>,
     },
+    /// A never-ending Particle node (`particle-runtime.md` §5.5 step 5): the effect's handle
+    /// (none when nothing started), its target, the `ImmediateDisposal` byte and the
+    /// redirect PID it listens to (0 for none, §5.8).
+    Particle(Box<ParticleState>),
+}
+
+/// The state of a never-ending Particle node's instance.
+#[derive(Debug, Clone)]
+pub(crate) struct ParticleState {
+    pub handle: Option<crate::sink::ParticleHandle>,
+    pub target: EntityId,
+    pub immediate: bool,
+    pub redirect: u32,
 }
 
 /// A node instance.

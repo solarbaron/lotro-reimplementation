@@ -23,7 +23,9 @@
 //! the ceiling sample count 1,089 × the mask's bit count; every chunk's sample window must
 //! be empty or one 1,089-sample block inside the sample array; a `wet` byte above 1, a
 //! water index at or past the water list's end, a `mode` above 2 and a ceiling mask with bits
-//! above bit 8 fail the record. Only the newest grammar is decoded (§3.10).
+//! above bit 8 fail the record (the client ignores those bits; rejecting them is a Tessera
+//! Decision, §3.11). Stored index bytes are skipped, never kept (§3.2). Only the newest
+//! grammar is decoded (§3.10).
 //!
 //! Spec: `docs/specs/distant-landscape.md` §3, §4, §7.
 
@@ -69,10 +71,12 @@ pub const LOD_INDEX_OFFSETS: [u32; SECTOR_LODS] = [0, 6_144, 7_680, 8_064];
 pub const MIN_FAR_VIEW_DISTANCE_SQ: f32 = 62_500.0;
 /// The f32 the client multiplies a normal byte by before subtracting 1.0: 2 / 255 (§4.3).
 pub const NORMAL_BYTE_SCALE: f32 = 2.0 / 255.0;
-/// Side of the square of landblocks one imposter table covers (`misc-records.md` §5.1).
-pub const IMPOSTER_SQUARE: u8 = 27;
-/// DID prefix of imposter tables (`misc-records.md` §5.1).
-pub const IMPOSTER_TABLE_PREFIX: u8 = 0x27;
+/// Side of the square of landblocks one imposter table covers (`misc-records.md` §5.1;
+/// [`crate::imposter::IMPOSTER_TABLE_SQUARE`]).
+pub const IMPOSTER_SQUARE: u8 = crate::imposter::IMPOSTER_TABLE_SQUARE;
+/// DID prefix of imposter tables (`misc-records.md` §5.1;
+/// [`crate::imposter::IMPOSTER_TABLE_PREFIX`]).
+pub const IMPOSTER_TABLE_PREFIX: u8 = crate::imposter::IMPOSTER_TABLE_PREFIX;
 
 const SIDE: usize = SECTOR_SIDE as usize;
 
@@ -105,12 +109,7 @@ pub fn block_sample_offset(i: usize, j: usize) -> Option<usize> {
 /// `region` (`misc-records.md` §5.1; distant-landscape §3.9).
 #[must_use]
 pub fn imposter_table_did(region: u8, x: u8, y: u8) -> Did {
-    let sx = x - x % IMPOSTER_SQUARE;
-    let sy = y - y % IMPOSTER_SQUARE;
-    Did(u32::from(IMPOSTER_TABLE_PREFIX) << 24
-        | u32::from(region) << 16
-        | u32::from(sx) << 8
-        | u32::from(sy))
+    crate::imposter::ImposterSquare::containing(region, x, y).did()
 }
 
 /// One stored sample (§3.3): a height on the landblock height scale and a biased normal.
@@ -245,15 +244,16 @@ impl SectorChunk {
     }
 }
 
-/// A mesh block (§3.2): samples, stored indices, nine chunk entries and the bounds.
+/// A mesh block (§3.2): samples, the stored index count, nine chunk entries and the bounds.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SectorMesh {
     /// The sample array (terrain: nine blocks in vertex-block order; ceiling: the ceiling
     /// landblocks' blocks packed by rank).
     pub samples: Vec<SectorSample>,
-    /// The stored index list (empty in every observed record; the client then generates
-    /// its own, §5.3).
-    pub indices: Vec<u16>,
+    /// The stored index count *m* (0 in every observed record). The *m* × 2 index bytes
+    /// are skipped and never kept: a reader always uses the generated index list of §5.3
+    /// (Tessera rule of §3.2, the client's ordinary loading path).
+    pub stored_index_count: u32,
     /// Chunk entries in chunk order c = x + 3·y.
     pub chunks: [SectorChunk; SECTOR_CHUNKS],
     /// Minimum (x, y, z) over the present chunks.
@@ -324,11 +324,8 @@ impl SectorMesh {
             r.push(&mut samples, SectorSample { height, normal }, n)?;
         }
         let m = r.u32()?;
-        let mut indices = r.alloc_vec(m, 2, usize::MAX)?;
-        for _ in 0..m {
-            let v = r.u16()?;
-            r.push(&mut indices, v, m)?;
-        }
+        r.ensure_elements(m, 2)?;
+        r.skip(usize::try_from(m).unwrap_or(usize::MAX).saturating_mul(2))?;
         let mut chunks = [SectorChunk::default(); SECTOR_CHUNKS];
         for chunk in &mut chunks {
             let at = r.position();
@@ -339,7 +336,7 @@ impl SectorMesh {
         let bounds_max = [r.f32()?, r.f32()?, r.f32()?];
         Ok(Self {
             samples,
-            indices,
+            stored_index_count: m,
             chunks,
             bounds_min,
             bounds_max,
@@ -352,9 +349,10 @@ impl SectorMesh {
             put::u16(out, s.height);
             out.extend_from_slice(&s.normal);
         }
-        put::u32(out, put::len_u32(self.indices.len()));
-        for &i in &self.indices {
-            put::u16(out, i);
+        // The stored index bytes are not kept (§3.2); the encoder writes zeros for them.
+        put::u32(out, self.stored_index_count);
+        for _ in 0..self.stored_index_count {
+            put::u16(out, 0);
         }
         for c in &self.chunks {
             c.write(out);
@@ -398,9 +396,11 @@ pub struct SectorSprite {
     pub north: f32,
     /// Size factor.
     pub scale: f32,
-    /// Distance parameter, units (role OPEN).
+    /// Fade distance, units (§4.8): the sprite's fade parameter when it lies near the
+    /// viewer, replaced by a computed value otherwise ([`sprite_fade_parameter`], §5.6).
     pub distance: f32,
-    /// Last byte (meaning OPEN).
+    /// Heading, `byte` × 360/256 degrees ([`SectorSprite::heading_degrees`], §4.8); used
+    /// only for the mirror decision of §5.6 ([`sprite_is_mirrored`]).
     pub byte: u8,
 }
 
@@ -409,6 +409,34 @@ impl SectorSprite {
     #[must_use]
     pub fn position(&self) -> [f32; 3] {
         [self.east, self.north, self.height]
+    }
+
+    /// The heading θ in degrees, 0 ≤ θ < 360 (§4.8): (`byte` × 1/256 × 360) modulo 360,
+    /// in 32-bit floats as the client computes it.
+    #[must_use]
+    pub fn heading_degrees(&self) -> f32 {
+        (f32::from(self.byte) * (1.0 / 256.0) * 360.0) % 360.0
+    }
+
+    /// The billboard's size *S* = `value_a` × `scale` (width and height of the quad) and
+    /// lower-edge height *B* = `value_b` × `scale` above the sprite position, from the
+    /// imposter entry's two stored floats (§4.8, `misc-records.md` §5.2).
+    #[must_use]
+    pub fn billboard_size(&self, value_a: f32, value_b: f32) -> (f32, f32) {
+        (value_a * self.scale, value_b * self.scale)
+    }
+
+    /// The sprite's horizontal position (*x*, *y*) relative to the south-west corner of the
+    /// viewer's landblock (§5.6 step 2): sector-local `east`, `north` plus 160 × (sector
+    /// corner landblock − viewer landblock) on each axis. `sector_origin` and `viewer` are
+    /// landblock (X, Y) of the same region.
+    #[must_use]
+    pub fn viewer_frame(&self, sector_origin: (u8, u8), viewer: (u8, u8)) -> (f32, f32) {
+        let off = |s: u8, v: u8| LANDBLOCK_SIZE * (f32::from(s) - f32::from(v));
+        (
+            self.east + off(sector_origin.0, viewer.0),
+            self.north + off(sector_origin.1, viewer.1),
+        )
     }
 
     fn read(r: &mut Reader<'_>) -> Result<Self> {
@@ -436,6 +464,104 @@ impl SectorSprite {
             ],
         );
         out.push(self.byte);
+    }
+}
+
+/// Whether a sprite at viewer-frame position (*x*, *y*) (§5.6 step 2) lies on the viewer's
+/// landblock or one of its eight neighbours: −160 ≤ *x* ≤ 320 and −160 ≤ *y* ≤ 320.
+#[must_use]
+pub fn sprite_is_near(x: f32, y: f32) -> bool {
+    let r = -LANDBLOCK_SIZE..=2.0 * LANDBLOCK_SIZE;
+    r.contains(&x) && r.contains(&y)
+}
+
+/// The sprite's fade parameter *P* (§5.6 step 3, DL25): the stored `distance` for a sprite
+/// near the viewer ([`sprite_is_near`]), otherwise *S* × *K* / *M_d* with *S* the billboard
+/// size ([`SectorSprite::billboard_size`]), *K* = (*H* / *φ*) / 248 for a render target
+/// *H* pixels high and a field of view of *φ* radians, and *M_d* the object draw-distance
+/// multiplier. Identifying *H* and *φ* with those quantities is Inferred in the spec.
+#[must_use]
+pub fn sprite_fade_parameter(
+    sprite: &SectorSprite,
+    (x, y): (f32, f32),
+    size: f32,
+    target_height_px: f32,
+    fov_radians: f32,
+    draw_distance_multiplier: f32,
+) -> f32 {
+    if sprite_is_near(x, y) {
+        return sprite.distance;
+    }
+    let k = (target_height_px / fov_radians) / 248.0;
+    size * k / draw_distance_multiplier
+}
+
+/// Whether the billboard is drawn mirrored (§5.6 step 4, DL26): exactly when
+/// (*x* − 160) × sin θ + (*y* − 160) × cos θ > 0, with (*x*, *y*) the viewer-frame position
+/// and θ the sprite's heading ([`SectorSprite::heading_degrees`]) in radians.
+#[must_use]
+pub fn sprite_is_mirrored(sprite: &SectorSprite, (x, y): (f32, f32)) -> bool {
+    let theta = sprite.heading_degrees().to_radians();
+    (x - LANDBLOCK_SIZE) * theta.sin() + (y - LANDBLOCK_SIZE) * theta.cos() > 0.0
+}
+
+/// The near radius *N* of §5.2 in landblocks: the viewer's landblock and its eight
+/// neighbours (DL29).
+pub const SECTOR_NEAR_RADIUS: u32 = 1;
+
+/// The sector radius *F* of §5.1 for a landscape far radius of `landscape_radius`
+/// landblocks (the landscape draw-distance option; 2, 4, 6, 9 or 12 for levels 0–4):
+/// ⌊*R* / 3⌋ + 1 (DL29). *R* is a user setting and comes from Tessera's own settings.
+#[must_use]
+pub fn sector_radius(landscape_radius: u32) -> u32 {
+    landscape_radius / 3 + 1
+}
+
+/// The far placements registered from sector entity lists (§4.9, DL28): one per instance
+/// ID; an entry whose instance ID is already known is skipped, so a sector loaded again,
+/// or an entry repeated in two records, adds nothing. When the placements are turned into
+/// entities, drawn and removed is OPEN (§10).
+#[derive(Debug, Clone, Default)]
+pub struct FarPlacements {
+    by_iid: std::collections::HashMap<u64, SectorEntity>,
+}
+
+impl FarPlacements {
+    /// An empty table.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers every entity of `record` whose instance ID is not yet known; returns how
+    /// many were added.
+    pub fn register(&mut self, record: &SectorRecord) -> usize {
+        let mut added = 0;
+        for e in &record.entities {
+            if let std::collections::hash_map::Entry::Vacant(v) = self.by_iid.entry(e.iid.0) {
+                v.insert(e.clone());
+                added += 1;
+            }
+        }
+        added
+    }
+
+    /// The placement registered under `iid`.
+    #[must_use]
+    pub fn get(&self, iid: u64) -> Option<&SectorEntity> {
+        self.by_iid.get(&iid)
+    }
+
+    /// Number of registered placements.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_iid.len()
+    }
+
+    /// Whether nothing is registered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_iid.is_empty()
     }
 }
 
@@ -618,6 +744,8 @@ impl SectorRecord {
             2 => {
                 let at = r.position();
                 let mask = r.u32()?;
+                // Bits 9–31: the client ignores them (§3.5, DL24); Tessera rejects them
+                // (Tessera Decision of §3.11, DL-I15).
                 if mask & !ALL_LANDBLOCKS_MASK != 0 {
                     return Err(FormatError::malformed(
                         "sector ceiling mask",
@@ -689,10 +817,13 @@ impl SectorRecord {
         })
     }
 
-    /// Re-encodes the record (§3.1). Byte-exact for a decoded record whose entities all have
-    /// a null property; an entity with a property fails with [`FormatError::Unsupported`]
-    /// (this crate has no property-value encoder). The water count is written as a shortest
-    /// VLE and the mask only for `mode` 2.
+    /// Re-encodes the record (§3.1), for synthetic fixtures and fuzzing (the format needs
+    /// no encoder; Tessera Decision of §3.11). Byte-exact for a decoded record whose
+    /// entities all have a null property and whose stored index lists are empty (skipped
+    /// index bytes come back as zeros); an entity with a property fails with
+    /// [`FormatError::Unsupported`] (this crate has no property-value encoder; records with
+    /// null properties are valid). The water count is written as a shortest VLE and the
+    /// mask only for `mode` 2.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         put::u32(&mut out, self.did.0);
@@ -791,11 +922,13 @@ impl SectorRecord {
             "DL-I2: X or Y not a multiple of 3 below 255",
         );
         flag(
-            !self.terrain.indices.is_empty(),
+            self.terrain.stored_index_count != 0,
             "DL-I3: terrain index count not 0",
         );
         flag(
-            self.ceiling.as_ref().is_some_and(|c| !c.indices.is_empty()),
+            self.ceiling
+                .as_ref()
+                .is_some_and(|c| c.stored_index_count != 0),
             "DL-I3: ceiling index count not 0",
         );
         let (chunks_ok, heights_ok, bounds_ok) = mesh_rules(&self.terrain, ALL_LANDBLOCKS_MASK);
@@ -892,6 +1025,64 @@ impl SectorRecord {
     #[must_use]
     pub fn first_unusual_field(&self) -> Option<&'static str> {
         self.deviations().first().copied()
+    }
+
+    /// DL-I14: compares every stored terrain and ceiling normal with the rule of §4.3
+    /// ([`super::sector_normals`]). `landblock(x, y)` returns the region's landblock-data
+    /// record at absolute landblock (x, y) (any landblock of the region, also outside the
+    /// sector; `None` beyond the region border or 0–254).
+    pub fn check_normals<'a>(
+        &self,
+        landblock: impl Fn(i32, i32) -> Option<&'a super::LandblockData>,
+    ) -> super::sector_normals::SectorNormalCheck {
+        use super::sector_normals::{
+            NeighbourWindow, NormalSurface, SectorNormalCheck, rule_normal_bytes,
+        };
+        let mut out = SectorNormalCheck::default();
+        let Some((x0, y0)) = self.origin() else {
+            return out;
+        };
+        for x in 0..SIDE {
+            for y in 0..SIDE {
+                let (lx, ly) = (i32::from(x0) + x as i32, i32::from(y0) + y as i32);
+                let mut w = NeighbourWindow::default();
+                for (dy, row) in (-1..=1).zip(w.0.iter_mut()) {
+                    for (dx, cell) in (-1..=1).zip(row.iter_mut()) {
+                        *cell = landblock(lx + dx, ly + dy);
+                    }
+                }
+                let meshes = [
+                    (Some(&self.terrain), NormalSurface::Terrain),
+                    (
+                        self.ceiling.as_ref().filter(|_| self.has_ceiling(x, y)),
+                        NormalSurface::Ceiling,
+                    ),
+                ];
+                for (mesh, surface) in meshes {
+                    let Some(block) = mesh.and_then(|m| m.block(x, y)) else {
+                        continue;
+                    };
+                    for i in 0..GRID_SIDE {
+                        for j in 0..GRID_SIDE {
+                            let Some(stored) = block_sample_offset(i, j).and_then(|k| block.get(k))
+                            else {
+                                continue;
+                            };
+                            let rule = rule_normal_bytes(&w, surface, i, j);
+                            match surface {
+                                NormalSurface::Terrain => {
+                                    out.terrain.add(stored.normal, rule, surface);
+                                }
+                                NormalSurface::Ceiling => {
+                                    out.ceiling.add(stored.normal, rule, surface);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// DL-I10 (local part): pairs distinct, each used by a wet terrain chunk, and listed in

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Miscellaneous record decoders (`tessera_formats::gameplay::misc`,
 //! `docs/specs/misc-records.md`) on arbitrary bytes: image compositors and their
-//! composition (§3), UI scenes (§4), imposter tables (§5), compute shaders and their DXBC
-//! container (§6), script channels (§7), the name-filter and taboo tables (§9, §10) and the
-//! compression-dictionary envelope (§11), and the percentage display of modifier values
-//! (§13.1).
+//! composition (§3), UI scenes (§4), compute shaders and their DXBC container (§6), script
+//! channels (§7), the name-filter and taboo tables (§9, §10) and the compression-dictionary
+//! envelope (§11), and the percentage display of modifier values (§13.1). Imposter tables
+//! (§5) have their own target, `formats_imposter_table`.
 //!
 //! Input: byte 0 picks the decoder, the rest is the payload. UI-scene descriptors use a
 //! total synthetic schema. A decoded compositor is composed with synthetic images whose
@@ -77,7 +77,7 @@ fuzz_target!(|input: &[u8]| {
     let [selector, data @ ..] = input else {
         return;
     };
-    match selector % 9 {
+    match selector % 8 {
         0 => {
             if let Ok(c) = ImageCompositor::parse(data) {
                 assert_eq!(c.to_bytes(), data);
@@ -94,41 +94,28 @@ fuzz_target!(|input: &[u8]| {
             }
         }
         2 => {
-            if let Ok(t) = ImposterTable::parse(data) {
-                let bytes = t.to_bytes();
-                let again = ImposterTable::parse(&bytes).expect("re-parse");
-                assert_eq!(again.to_bytes(), bytes);
-                let _ = t.first_unusual_field();
-                let _ = t.is_bucket_ordered();
-                for e in &t.entries {
-                    let _ = t.cell_uv(e.column, e.row);
-                }
-                let _ = (t.atlas_texels(), t.expected_cell_size(), t.square());
-            }
-        }
-        3 => {
             if let Ok(cs) = ComputeShader::parse(data) {
                 assert_eq!(cs.blob.len() + 8, data.len());
                 let _ = cs.is_consistent();
             }
             let _ = DxbcContainer::parse(data);
         }
-        4 => {
+        3 => {
             if let Ok(sc) = ScriptChannels::parse(data) {
                 let bytes = sc.to_bytes();
                 assert_eq!(ScriptChannels::parse(&bytes).expect("re-parse"), sc);
                 let _ = sc.script_keys();
             }
         }
-        5 => {
+        4 => {
             let _ = NameFilterTable::parse(data);
         }
-        6 => {
+        5 => {
             if let Ok(t) = TabooTable::parse(data) {
                 let _ = (t.keys_match_headers(), t.pattern_count());
             }
         }
-        7 => {
+        6 => {
             if let Ok(e) = CompressionDictionaryEnvelope::parse(data) {
                 assert_eq!(
                     data.len(),
@@ -163,7 +150,6 @@ fuzz_target!(|input: &[u8]| {
                 (px[1] & 1 == 0).then_some(px[2]),
             );
             let _ = opacity_byte(f32::from_bits(w(44)));
-            let _ = imposter_atlas_grid(w(48));
             // §13.1 (X4): the percentage display of a modifier value.
             let (multiply, flag) = (px[3] & 1 == 0, px[3] & 2 == 0);
             let v = f32::from_bits(w(52));

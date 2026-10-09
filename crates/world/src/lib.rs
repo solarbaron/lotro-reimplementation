@@ -18,7 +18,10 @@
 //! | [`collision`] ([`CollisionSystem`], [`BlockCollision`], [`CellPortals`]) | Collision residency: per-landblock collision sets of terrain, statics, generated objects and cells, cells and portals of landblock info | `collision.md` §5.8, §9.3, §9.4, §12.1 |
 //! | [`environment`] ([`SkyLibrary`], [`Environment`], [`GameClock`]) | Game clock, day descriptions, keyframe blending, sky objects | `environment.md` §11 |
 //! | [`lighting`] ([`LightEntity`], [`select_lights`]) | Light entities and per-object light selection | `lighting.md` §8.3–§8.5 |
+//! | [`far_view`] ([`far_view::FarViewState`], [`far_view::LandblockGrid`], [`far_view::build_batch`]) | Distant-landscape sectors around the viewer: sector list and residency, per-landblock LOD grid, far-terrain batches with stitching, distant sprites, far entities, horizon fill placement | `far-view.md`, `distant-landscape.md` §5 |
 //! | [`draw_distance`] ([`LodClasses`], [`LodValues`], [`DistanceSettings`]) | Object draw distances by LOD class, fades, detail levels | `walker.md` §11.2–§11.4 |
+//! | [`decals`] ([`decals::DecalParams`], [`decals::build_mesh`], [`decals::shading`]) | Placed decal volumes: parameters, projection volume and mesh, receivers, colour, light, depth bias, draw distance | `decals.md` §2–§7 |
+//! | [`phasing`] ([`phasing::PhasingManager`], [`phasing::landblock_boxes`]) | Quest-state phasing by phasing boxes: the manager's events and the offline box rule | `world-logic.md` §4.5, §4.9 |
 //! | [`AreaNameSource`], [`WStateAreaNames`] | Area → territory → region names via `tessera-wstate` and `tessera-text` | `wstate.md` §11 |
 //! | [`WorldSource`], [`BundleSource`], [`BundleFrame`] | Records with directory stamps; the internal frame that carries a landblock's records from read to decode | `landblock.md` §2.4 |
 //! | [`testkit`] | Synthetic records and worlds | |
@@ -64,13 +67,16 @@ pub mod bundle;
 pub mod collision;
 pub mod context;
 pub mod coords;
+pub mod decals;
 pub mod draw_distance;
 pub mod environment;
 pub mod error;
+pub mod far_view;
 pub mod frills;
 pub mod lighting;
 pub mod mapcoords;
 pub mod objects;
+pub mod phasing;
 pub mod ring;
 pub mod scenery;
 pub mod source;

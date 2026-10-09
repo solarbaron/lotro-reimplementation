@@ -18,6 +18,7 @@
 //! | [`turn_rate_on_foot`], [`TURN_KEY_SPEED_DEGREES`], [`mounted_turn_rate_degrees`] | §11.9 |
 //! | [`Impulse`], [`JumpNode`], [`JumpTable`], [`StoredImpulse`], [`Controller::add_impulse`] | §11.10 (impulses, the jump) |
 //! | [`WaterQuery`], [`LiquidWater`], [`NoWater`] (and `WaterQuery` for `CollisionSet` / `CollisionView`) | §12.3 step 7, `water.md` §7.4 |
+//! | [`warsteed`] | the war-steed (ramp-up) controller of `mounts.md` §5.3–§5.7 |
 //!
 //! **Using it.** Read the player movement record once ([`PlayerMovementRecord::locate`] or
 //! [`PlayerMovementRecord::from_set`]), build a [`Controller`] with the avatar's capsule and
@@ -34,6 +35,7 @@ mod params;
 mod shape;
 mod state;
 mod step;
+pub mod warsteed;
 mod water;
 
 pub use contact::{

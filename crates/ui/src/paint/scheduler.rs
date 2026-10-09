@@ -528,6 +528,26 @@ impl<G> Scheduler<G> {
             .is_some_and(|s| s.stage != Stage::Idle)
     }
 
+    /// Whether the scheduler has nothing left to do: no GPU operation queued, no
+    /// generation running or pending, and every surface idle (no job in flight), drawn or
+    /// released from its first paint, without damage and without images still loading.
+    /// A frame run in this state paints no band and uploads nothing.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        self.pending_ops.is_empty()
+            && self
+                .groups
+                .values()
+                .all(|g| g.running.is_none() && g.pending.is_none())
+            && self.surfaces.values().all(|s| {
+                s.stage == Stage::Idle
+                    && s.first.is_none()
+                    && s.generation.is_none()
+                    && s.damage.is_empty()
+                    && !s.images_pending
+            })
+    }
+
     /// Bytes of all CPU canvases.
     #[must_use]
     pub fn canvas_bytes(&self) -> u64 {

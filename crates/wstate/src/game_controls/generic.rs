@@ -4,8 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use tessera_formats::Did;
-use tessera_props::PropertySet;
+use tessera_formats::{Did, StringInfo};
+use tessera_props::{PropertyRegistry, PropertySet};
 
 use crate::character::check_len;
 use crate::error::{Result, WStateError};
@@ -302,6 +302,21 @@ impl ModifierTable {
             .and_then(|i| self.entries.get(i))
             .map(|&(_, v)| v)
     }
+}
+
+/// The label of the name property of the manager entities and the three server entities
+/// (§3.4, GC8, GCI19): their one textual property, and among the 13 managers other than
+/// RepositoryManager the only property whose value differs. Looked up through the
+/// dictionary, never by PID.
+pub const ENTITY_NAME_LABEL: &str = "Name";
+
+/// The name of a manager or server entity (§3.4): `Name` of its property half.
+///
+/// # Errors
+///
+/// [`crate::WStateError::BadProperty`] when `Name` is not a StringInfo.
+pub fn entity_name(set: &PropertySet, reg: &PropertyRegistry) -> Result<Option<StringInfo>> {
+    crate::character::Fields::new(set, reg, "manager entity").string_info("Name")
 }
 
 /// The differences between two property sets compared property by property (the

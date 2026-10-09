@@ -123,7 +123,9 @@
 //! (`water.md` §8), [`Pass::sky`] draws [`SkyObject`]s around the camera
 //! (`environment.md` §12) and [`Pass::instanced`] draws thousands of instances of a
 //! [`WorldModel`] per call, with the frill rules of `scenery.md` §8.3 for [`FrillParams`]
-//! batches.
+//! batches. [`Pass::far_terrain`] draws distant-landscape batches uploaded with
+//! [`Renderer::upload_far_terrain`] and [`Pass::distant_sprites`] the sector sprites
+//! uploaded with [`Renderer::upload_sprite_batch`] (`far-view.md` §6, §9).
 //!
 //! ```no_run
 //! # fn main() -> Result<(), tessera_render::RenderError> {
@@ -149,6 +151,11 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Particles (`docs/specs/particle-runtime.md` §9): [`Pass::particles`] draws one
+//! [`ParticleDraw`] per draw instance of a particle system, world-space
+//! [`ParticleVertex`]es with quads first and triangles after, in the caller's order (no
+//! sorting), with the blend, alpha test and depth write of an [`AlphaMode`], in lit and
+//! unlit world passes.
 //! Game UI (M5): [`Renderer::create_ui_texture`] and
 //! [`Renderer::update_texture_rect`] hold panel canvases, and
 //! [`Frame::ui_pass`] composes them with transform and clip chains; see the
@@ -162,6 +169,7 @@ mod arena;
 mod camera;
 mod context;
 mod error;
+mod far_view;
 mod frame;
 mod instanced;
 pub mod lighting;
@@ -169,6 +177,7 @@ mod lit_pipelines;
 mod material;
 mod mesh;
 mod mesh_pipelines;
+mod particles;
 mod pass_hook;
 mod pipelines;
 mod renderer;
@@ -187,6 +196,11 @@ pub use context::{
     rank_adapter,
 };
 pub use error::{RenderError, Result};
+pub use far_view::{
+    DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FarFadeParams, FarTerrainData, FarTerrainDraw,
+    FarTerrainMesh, MAX_FAR_TERRAIN_INDICES, MAX_FAR_TERRAIN_VERTICES, MAX_SPRITES_PER_BATCH,
+    SpriteBatch, SpriteDraw,
+};
 pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
 pub use instanced::{
     FRILL_FADE_IN_SECONDS, FRILL_SECTOR, FRILL_SWAY_MIN, FrillParams, FrillReduction, Instance,
@@ -206,6 +220,10 @@ pub use material::{
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,
     SubmeshInfo,
+};
+pub use particles::{
+    MAX_PARTICLE_DRAW_VERTICES, MAX_PARTICLE_DRAWS_PER_PASS, MAX_PARTICLE_VERTICES_PER_PASS,
+    ParticleDraw, ParticleVertex,
 };
 pub use pipelines::{DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT, LineVertex};
 pub use renderer::{
@@ -229,7 +247,7 @@ pub use ui::{
 };
 pub use water::{
     MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, WATER_BLOCK, WaterDraw,
-    WaterParams, WaterQuad, fresnel as water_fresnel, wave_height as water_wave_height,
+    WaterParams, WaterQuad, fresnel as water_fresnel, water_fade, wave_height as water_wave_height,
 };
 
 /// Re-export of the math library used in the public API.

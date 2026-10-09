@@ -35,6 +35,12 @@ use tessera_client::walker::movement::{
     MoveInput, MovementState, PhysicsWalker, STEP_SECONDS,
 };
 
+use tessera_client::wait::{LoadWait, ProgressWait};
+
+/// The wait for missing sets: a static world loads nothing, so a set that is missing stays
+/// missing and the wait gives up after the stall limit.
+const SYNTH_WAIT: LoadWait = LoadWait::Progress(ProgressWait::new(1_000, 10_000));
+
 const REGION: u8 = 1;
 const BX: u8 = 100;
 const BY: u8 = 100;
@@ -154,13 +160,7 @@ fn blocked_by_a_wall_without_penetration() {
         3.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     assert!(out.verdict.max_penetration <= 0.01);
     let end = out.rows.last().unwrap();
@@ -230,13 +230,7 @@ fn reach_up_a_walkable_ramp_and_release_at_the_waypoint() {
         16.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     // Walk mode selects the Walking layer from the first step with input on (the style
     // keeps its value while no move key is held, §11.8 item 6).
@@ -276,13 +270,7 @@ fn reach_climbs_box_steps() {
         6.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     assert!(out.rows.iter().any(|r| r.record.report.stepped_up));
     assert!(
@@ -332,13 +320,7 @@ fn slides_on_a_steep_slope() {
         4.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     let end = out.rows.last().unwrap();
     assert!(end.local[1] < 85.5, "slid to the foot: {:?}", end.local);
@@ -381,13 +363,7 @@ fn climbs_triangle_risers() {
         6.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
 }
 
@@ -447,13 +423,7 @@ fn wades_then_swims_at_the_float_line() {
         25.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     assert!(
         out.rows
@@ -695,7 +665,7 @@ fn soak_walks_on_hills_never_fall_through() {
             .plan(|k, xy| find_start(&world, &s.shape, k, xy))
             .unwrap();
         assert!(walk.start_z.is_some());
-        let out = run_soak_walk(&walk, &mut world, &s, std::time::Duration::from_secs(1));
+        let out = run_soak_walk(&walk, &mut world, &s, SYNTH_WAIT);
         assert!(out.failures.is_empty(), "{:?}", out.failures);
         assert!(out.skipped.is_none(), "{:?}", out.skipped);
         assert_eq!(out.steps, 3_600);
@@ -814,13 +784,7 @@ fn cells_walk_through_a_doorway() {
         .replace("cell = 0", &format!("cell = {row_cell}"));
         let walk = parse_walk_file(&text).unwrap();
         assert_eq!(walk.cell, row_cell);
-        let out = run_walk(
-            &walk,
-            &mut world,
-            &setup(),
-            std::time::Duration::from_secs(1),
-        )
-        .unwrap();
+        let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
         assert!(out.verdict.passed, "{row_cell}: {:?}", out.verdict);
         // The start cell is the one after the settle.
         let settled = out.rows.iter().rfind(|r| r.t < 0.0).unwrap();
@@ -844,13 +808,7 @@ fn cells_walk_through_a_doorway() {
         4.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(!out.verdict.passed);
     assert!(
         out.verdict
@@ -1125,7 +1083,7 @@ fn log_headings_stay_below_360() {
         &parse_walk_file(&text).unwrap(),
         &mut world,
         &setup(),
-        std::time::Duration::from_secs(1),
+        SYNTH_WAIT,
     )
     .unwrap();
     let mut csv = Vec::new();
@@ -1149,13 +1107,7 @@ fn pass_and_follow_conditions() {
     );
     let walk = parse_walk_file(&text).unwrap();
     let mut open = flat_world(100.0, |_| {});
-    let out = run_walk(
-        &walk,
-        &mut open,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut open, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     // With a placed object on the path: the contact fails it.
     let zf = g as f32;
@@ -1171,13 +1123,7 @@ fn pass_and_follow_conditions() {
             }),
         );
     });
-    let out = run_walk(
-        &walk,
-        &mut blocked,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut blocked, &setup(), SYNTH_WAIT).unwrap();
     assert!(!out.verdict.passed);
     assert!(
         out.verdict
@@ -1205,7 +1151,7 @@ fn pass_and_follow_conditions() {
             &parse_walk_file(&text).unwrap(),
             &mut ground_world,
             &setup(),
-            std::time::Duration::from_secs(1),
+            SYNTH_WAIT,
         )
         .unwrap();
         assert!(out.verdict.passed, "{lift}: {:?}", out.verdict);
@@ -1226,7 +1172,7 @@ fn pass_and_follow_conditions() {
         &parse_walk_file(&text).unwrap(),
         &mut walled,
         &setup(),
-        std::time::Duration::from_secs(1),
+        SYNTH_WAIT,
     )
     .unwrap();
     assert!(!out.verdict.passed);
@@ -1262,13 +1208,7 @@ fn blocked_measures_the_first_touch_and_allows_the_slide_after_it() {
         3.0,
     );
     let walk = parse_walk_file(&text).unwrap();
-    let out = run_walk(
-        &walk,
-        &mut world,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);
     let end = out.rows.last().unwrap();
     // It slid on along the wall, farther than d from the stop point.
@@ -1281,13 +1221,7 @@ fn blocked_measures_the_first_touch_and_allows_the_slide_after_it() {
     assert!(end.local[1] < 90.0 - 0.34, "{:?}", end.local);
     // A walker that never touches a blocker fails.
     let mut open = flat_world(100.0, |_| {});
-    let out = run_walk(
-        &walk,
-        &mut open,
-        &setup(),
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
+    let out = run_walk(&walk, &mut open, &setup(), SYNTH_WAIT).unwrap();
     assert!(!out.verdict.passed);
     assert!(
         out.verdict
@@ -1343,7 +1277,7 @@ fn follow_across_a_walkable_slope_allows_the_rest_offset() {
         &parse_walk_file(&text).unwrap(),
         &mut world,
         &setup(),
-        std::time::Duration::from_secs(1),
+        SYNTH_WAIT,
     )
     .unwrap();
     assert!(out.verdict.passed, "{:?}", out.verdict);

@@ -233,20 +233,17 @@ impl Canvas {
         }
     }
 
-    /// Reads row `y`, pixels `[x0, x1)` inside one tile, into `out` (zeros for a missing
-    /// tile).
-    pub(crate) fn read_span(&self, y: i32, x0: i32, x1: i32, out: &mut [u32]) {
+    /// Row `y`, pixels `[x0, x1)` inside one tile, or `None` for a missing tile.
+    fn span(&self, y: i32, x0: i32, x1: i32) -> Option<&[u32]> {
         let (x0, x1, y) = (x0 as u32, x1 as u32, y as u32);
         let (tx, ty) = (x0 / TILE, y / TILE);
-        let n = (x1 - x0) as usize;
-        match &self.tiles[(ty * self.tiles_x + tx) as usize] {
-            None => out[..n].fill(0),
-            Some(t) => {
-                let (tw, _) = self.tile_dims(tx, ty);
-                let off = ((y - ty * TILE) * tw + (x0 - tx * TILE)) as usize;
-                out[..n].copy_from_slice(&t[off..off + n]);
-            }
-        }
+        let t = self
+            .tiles
+            .get((ty * self.tiles_x + tx) as usize)?
+            .as_ref()?;
+        let (tw, _) = self.tile_dims(tx, ty);
+        let off = ((y - ty * TILE) * tw + (x0 - tx * TILE)) as usize;
+        t.get(off..off + (x1 - x0) as usize)
     }
 
     /// Erases `r` to transparent black (Decision 1.3 step 1). Tiles that `r` covers whole
@@ -299,19 +296,23 @@ impl Canvas {
             return (Rect::EMPTY, Vec::new());
         }
         let w = r.width() as usize;
-        let mut out = Vec::with_capacity(w * r.height() as usize * 4);
-        let mut row = vec![0u32; w];
-        for y in r.y0..r.y1 {
+        // Missing tiles stay zero (transparent black); allocated spans are copied row by
+        // row as little-endian bytes.
+        let mut out = vec![0u8; w * r.height() as usize * 4];
+        for (y, dst_row) in (r.y0..r.y1).zip(out.chunks_exact_mut(w * 4)) {
             let mut x = r.x0;
             while x < r.x1 {
                 let end = (((x as u32 / TILE) + 1) * TILE).min(r.x1 as u32) as i32;
-                let a = (x - r.x0) as usize;
-                let b = (end - r.x0) as usize;
-                self.read_span(y, x, end, &mut row[a..b]);
+                if let Some(src) = self.span(y, x, end) {
+                    let a = (x - r.x0) as usize * 4;
+                    let b = (end - r.x0) as usize * 4;
+                    if let Some(dst) = dst_row.get_mut(a..b) {
+                        for (d, p) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                            *d = p.to_le_bytes();
+                        }
+                    }
+                }
                 x = end;
-            }
-            for p in &row {
-                out.extend_from_slice(&p.to_le_bytes());
             }
         }
         (r, out)

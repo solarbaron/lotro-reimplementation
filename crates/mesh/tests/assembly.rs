@@ -16,9 +16,9 @@ use tessera_formats::{
     Did, PropertyArray, PropertyEntry, PropertySet, PropertyStruct, PropertyValue, Setup, TSize,
 };
 use tessera_mesh::assembly::{
-    AssemblyError, AssemblyLimits, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
-    DiagnosticCategory as Cat, EquippedItem, LayerKind, ListOrigin, MapSource, RigKind, SourceRef,
-    StowRule, StyleChoice, WieldState,
+    AssemblyError, AssemblyLimits, AssemblyOptions, AssemblyVocabulary, CharacterAssembler,
+    CharacterSpec, DiagnosticCategory as Cat, EquippedItem, LayerKind, ListOrigin, MapSource,
+    PlacementRule, RigKind, ScriptAppearance, SourceRef, StyleChoice, WeaponSlot, WieldState,
 };
 use tessera_mesh::{MeshSummary, SubmeshSummary, VertexFormat};
 
@@ -64,6 +64,7 @@ const L_BACK_BOW: u32 = 0x1000_003E;
 const L_LHIP: u32 = 0x1000_003F;
 const L_BACK_2H: u32 = 0x1000_0040;
 const L_RHIP: u32 = 0x1000_0041;
+const L_BACK_SHIELD: u32 = 0x1000_0042;
 
 // `Item_EquipmentCategory` is a bitfield: items store bit k − 1 for key k
 // (property-system.md §7.3). Keys 10–13 and 21.
@@ -71,7 +72,9 @@ const C_1HSWORD: u64 = 1 << 9;
 const C_2HAXE: u64 = 1 << 10;
 const C_SHIELD: u64 = 1 << 11;
 const C_ORB: u64 = 1 << 12;
+const C_STAFF: u64 = 1 << 13;
 const C_CLASS: u64 = 1 << 20;
+const SHORT_SPECIES: u32 = 0x51;
 
 const P_CLASS: u32 = 100;
 const P_INSTANCE: u32 = 101;
@@ -85,7 +88,46 @@ const P_NPC_LOC2: u32 = 113;
 const P_IDLE: u32 = 120;
 const P_RANDOM: u32 = 121;
 const P_SCALE: u32 = 122;
+const P_VISIBLE: u32 = 123;
+const P_UPDATE: u32 = 124;
+const P_SECONDARY_SCALE: u32 = 125;
 const RANDOM_UNDEF: u32 = 0x1000_0001;
+
+/// The §5.6 tables with the invented keys above (labels from the spec).
+fn placement() -> PlacementRule {
+    PlacementRule::from_labels(
+        |l| match l {
+            "Weapon_Primary" => Some(S_PRIMARY),
+            "Weapon_Secondary" => Some(S_SECONDARY),
+            "Weapon_Ranged" => Some(S_RANGED),
+            _ => None,
+        },
+        |l| match l {
+            "1HSword" => Some(C_1HSWORD),
+            "2HAxe" => Some(C_2HAXE),
+            "Shield" => Some(C_SHIELD),
+            "Orb" => Some(C_ORB),
+            "2HStaff" => Some(C_STAFF),
+            _ => None,
+        },
+        |l| match l {
+            "Hobbit" => Some(SHORT_SPECIES),
+            _ => None,
+        },
+        |l| match l {
+            "Sheath_LHip" => Some(L_LHIP),
+            "Sheath_RHip" => Some(L_RHIP),
+            "Sheath_Back_2H" => Some(L_BACK_2H),
+            "Sheath_Back_Bow" => Some(L_BACK_BOW),
+            "Sheath_Back_Shield" => Some(L_BACK_SHIELD),
+            "Wpn_RHand" => Some(L_WPN_RHAND),
+            "Wpn_LHand" => Some(L_LHAND),
+            "Wpn_LOffHand" => Some(L_WPN_LOFFHAND),
+            "Wpn_Forearm" => Some(L_FOREARM),
+            _ => None,
+        },
+    )
+}
 
 fn vocab() -> AssemblyVocabulary {
     AssemblyVocabulary {
@@ -111,14 +153,10 @@ fn vocab() -> AssemblyVocabulary {
                 (S_RANGED, L_BACK_BOW),
             ],
         },
-        stow: StowRule {
-            primary_slot: S_PRIMARY,
-            secondary_slot: S_SECONDARY,
-            one_handed: C_1HSWORD,
-            primary_one_handed: Some(L_LHIP),
-            secondary_one_handed: Some(L_RHIP),
-            by_category: vec![(C_2HAXE, L_BACK_2H)],
-        },
+        placement: placement(),
+        avatar_update_visible: Some(P_UPDATE),
+        npc_props_visible: Some(P_VISIBLE),
+        secondary_scale: Some(P_SECONDARY_SCALE),
         npc_items: vec![
             (P_NPC_ITEM1, Some(P_NPC_LOC1)),
             (P_NPC_ITEM2, Some(P_NPC_LOC2)),
@@ -179,6 +217,7 @@ fn block(variant: f32, parts: &[(f32, u32, u32)], groups: &[(u32, u32)]) -> Appe
 fn record(did: u32, entries: Vec<(u32, Vec<AppearanceBlock>)>) -> Arc<AppearanceRecord> {
     Arc::new(AppearanceRecord {
         did: Did(did),
+        linked: Vec::new(),
         section: 0,
         key_table: entries.iter().map(|(k, _)| (*k, 0)).collect(),
         entries: entries
@@ -345,8 +384,8 @@ fn world() -> MapSource {
         entity: Did(ENTITY),
         chain: vec![Did(ENTITY), Did(0x1F00_0001), Did(SETUP)],
         setup: Did(SETUP),
-        template_scale: Some(1.03),
-        entity_scale: Some(0.7),
+        template_scale: Some([1.03; 3]),
+        entity_scale: Some([0.7; 3]),
         template_appearance: vec![],
         class_list: vec![key_info(KEY_HAIR, HAIR_REC, 0.0)],
         instance_list: vec![],
@@ -617,11 +656,23 @@ fn ties_go_to_the_later_slot_and_styles_replace_modifiers() {
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
     assert!(!c.part_in(CREST).unwrap().is_default());
-    // A modifier no block has: rule 3 (no 1.0 block, so the first) and a diagnostic.
+    // §3.2.1: a modifier between blocks takes the greatest variant not above it (0.01).
     spec.styles[0].modifier = 0.5;
     let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
+    assert!(!c.part_in(CREST).unwrap().is_default());
+    assert_eq!(c.count(Cat::NoBlock), 0);
+    // Just below 0.01 takes 0.00: no tolerance.
+    spec.styles[0].modifier = 0.009_999;
+    let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.part_in(CREST).unwrap().mesh, Did(F));
-    assert_eq!(c.count(Cat::BlockFallback), 1);
+    // −1.0 and a modifier below every block select nothing: the default part stays.
+    for m in [-1.0, -0.5] {
+        spec.styles[0].modifier = m;
+        let c = asm.assemble_character(&spec).unwrap();
+        assert!(c.part_in(CREST).unwrap().is_default(), "{m}");
+        assert_eq!(c.count(Cat::NoBlock), 1, "{m}");
+    }
 
     // Species fallback (§2.3): a Beorning wears the Human struct.
     s.items.get_mut(&Did(I_LEGS)).unwrap().worn[0].species = HUMAN;
@@ -637,38 +688,45 @@ fn ties_go_to_the_later_slot_and_styles_replace_modifiers() {
 }
 
 #[test]
-fn dyes_layer_onto_the_items_parts() {
+fn dyes_join_the_figure_wide_group_list() {
     let mut s = world();
     s.items.get_mut(&Did(I_CHEST)).unwrap().clothing_color = Some(0.32);
     let mut asm = assembler(s);
     let c = asm.assemble_character(&human(&[I_CHEST])).unwrap();
     let chest = c.part_in(UPPER).unwrap();
-    let kinds: Vec<(LayerKind, u32)> = chest
+    let kinds: Vec<(LayerKind, u32, f32)> = chest
         .materials
         .iter()
-        .map(|l| (l.kind, l.material.0))
+        .map(|l| (l.kind, l.material.0, l.priority))
         .collect();
-    // The block's own group, then both dye groups (All and UpperBody) of block 0.32.
+    // §4.7 rule 3: the record's keys apply in ascending (key mod 23), so the dye key (1)
+    // before the worn key (7). §4.10: one list by ascending group priority, ties in
+    // application order: the dye block's UpperBody group (priority 0, the float stored
+    // after the first group), then its All group (3), then the chest block's group (3).
+    assert_eq!(KEY_DYE % 23, 1);
+    assert_eq!(KEY_WORN % 23, 7);
     assert_eq!(
         kinds,
         vec![
-            (LayerKind::Group, CHEST_REC + 0x1000_0000),
-            (LayerKind::Dye, 0x3000_0D32),
-            (LayerKind::Dye, 0x3000_0E32),
+            (LayerKind::Dye, 0x3000_0E32, 0.0),
+            (LayerKind::Dye, 0x3000_0D32, 3.0),
+            (LayerKind::Group, CHEST_REC + 0x1000_0000, 3.0),
         ]
     );
-    assert_eq!(
-        chest.materials[0].priority, 3.0,
-        "group_param is the first priority"
-    );
-    // The UpperBody-only dye group does not reach the LowerBody stub.
+    assert_eq!(c.groups.len(), 3);
+    // The UpperBody-only dye group does not reach the LowerBody stub, the others do.
     let stub = c.part_in(LOWER).unwrap();
     assert_eq!(stub.materials.len(), 2);
-    // A chosen dye replaces the default; 0.0 means none; an unknown code is inexact.
+    // Groups apply to every matching part, default parts included (§4.10).
+    let feet = c.part_in(FEET).unwrap();
+    assert!(feet.is_default());
+    assert_eq!(feet.materials.len(), 2);
+    // A chosen dye replaces the default; 0.0 emits no dye element; a code between blocks
+    // takes the last block below it (§3.2.1) and is noted.
     let mut spec = CharacterSpec::new(HUMAN, MALE).wearing(EquippedItem::new(I_CHEST).dyed(0.06));
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(
-        c.part_in(UPPER).unwrap().materials[1].material,
+        c.part_in(UPPER).unwrap().materials[0].material,
         Did(0x3000_0D06)
     );
     spec.items[0].dye = Some(0.0);
@@ -676,7 +734,7 @@ fn dyes_layer_onto_the_items_parts() {
     assert_eq!(c.part_in(UPPER).unwrap().materials.len(), 1);
     spec.items[0].dye = Some(0.2);
     let c = asm.assemble_character(&spec).unwrap();
-    assert_eq!(c.part_in(UPPER).unwrap().materials[1].variant, 0.06);
+    assert_eq!(c.part_in(UPPER).unwrap().materials[0].variant, 0.06);
     assert_eq!(c.count(Cat::DyeInexact), 1);
     // A second channel the record has no table for.
     spec.items[0].secondary_dye = Some(0.1);
@@ -729,7 +787,7 @@ fn unresolved_links_are_diagnostics() {
         (Cat::ItemInvisible, 1),
         (Cat::NoWardrobeStruct, 1),
         (Cat::ItemMissing, 1),
-        (Cat::NoHoldingLocation, 1),
+        (Cat::NoPlacement, 1), // the class item: no placement script (§5.3, §5.6)
         (Cat::HeldChainBroken, 1),
         (Cat::SliderValuesInvalid, 1),
     ];
@@ -763,7 +821,7 @@ fn unresolved_links_are_diagnostics() {
 }
 
 #[test]
-fn held_items_get_their_slot_and_offset() {
+fn held_items_take_their_section_5_6_placement() {
     let mut asm = assembler(world());
     let spec = human(&[I_SWORD, I_SHIELD]);
     let c = asm.assemble_character(&spec).unwrap();
@@ -774,25 +832,89 @@ fn held_items_get_their_slot_and_offset() {
     assert_eq!(sword.setup, Did(SWORD_SETUP));
     assert_eq!(sword.parts, vec![Did(SWORD_SETUP + 0x0200_0000)]);
     assert_eq!(sword.chain.first(), Some(&Did(SWORD_ENTITY)));
+    assert_eq!(sword.placement.scale, [1.0; 3]);
     let shield = &c.held[1];
-    assert_eq!(shield.location, L_FOREARM, "the item's parenting location");
+    assert_eq!(
+        shield.location, L_FOREARM,
+        "wielded shields at Wpn_Forearm; the item's parenting location takes no part"
+    );
     assert_eq!(shield.anchor, Anchor::Bone(BONE_LELBOW));
     assert_eq!(shield.frame.position, [0.05, 0.0, 0.0]);
-    // Stowed: one-handed primary → left hip; two-handed axe → back; orb stays in hand.
+    // Stowed: one-handed primary → left hip; two-handed axe → Sheath_Back_2H (missing on
+    // this setup); an orb has no stowed placement.
     let mut spec = CharacterSpec::new(HUMAN, MALE);
     for i in [I_SWORD, I_AXE, I_ORB] {
         spec = spec.wearing(EquippedItem::new(i).with_state(WieldState::Sheathed));
     }
     let c = asm.assemble_character(&spec).unwrap();
     let locs: Vec<(u32, WieldState)> = c.held.iter().map(|h| (h.location, h.state)).collect();
-    assert_eq!(locs.len(), 2, "{:?}", c.diagnostics);
-    assert_eq!(locs[0], (L_LHIP, WieldState::Sheathed));
-    assert_eq!(locs[1], (L_WPN_RHAND, WieldState::Sheathed));
+    assert_eq!(
+        locs,
+        vec![(L_LHIP, WieldState::Sheathed)],
+        "{:?}",
+        c.diagnostics
+    );
     assert_eq!(
         c.count(Cat::HoldingLocationMissing),
         1,
         "no Sheath_Back_2H on this setup"
     );
+    assert_eq!(
+        c.count(Cat::NoPlacement),
+        1,
+        "the orb is not drawn while stowed"
+    );
+    // Wielded, an orb is attached twice: right and left hand.
+    let c = asm.assemble_character(&human(&[I_ORB])).unwrap();
+    let locs: Vec<u32> = c.held.iter().map(|h| h.location).collect();
+    assert_eq!(locs, vec![L_WPN_RHAND, L_LHAND]);
+    // A stowed shield sits on the forearm, or on the back in the ranged skill mode, scaled
+    // by the wearer's `Script_AdjustableScale_Secondary_Vector`.
+    let mut s = world();
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().properties = set(vec![(
+        P_SECONDARY_SCALE,
+        PropertyValue::Vector3([1.1, 1.2, 1.3]),
+    )]);
+    let mut back = (*s.setups[&Did(SETUP)]).clone();
+    back.bone_frames
+        .push(location(L_BACK_SHIELD, BONE_HIP as i32, 0.0));
+    s.setups.insert(Did(SETUP), Arc::new(back));
+    let mut asm = assembler(s);
+    let mut spec = CharacterSpec::new(HUMAN, MALE)
+        .wearing(EquippedItem::new(I_SHIELD).with_state(WieldState::Sheathed));
+    let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.held[0].location, L_FOREARM);
+    assert_eq!(c.held[0].placement.scale, [1.1, 1.2, 1.3]);
+    spec.ranged_skill_mode = true;
+    let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.held[0].location, L_BACK_SHIELD);
+    // A stowed staff: species rows with an offset and a half turn (§5.6).
+    let mut s = world();
+    s.items.insert(
+        Did(0x7900_0020),
+        held_item(S_PRIMARY, SWORD_ENTITY, C_STAFF),
+    );
+    let mut back = (*s.setups[&Did(SETUP)]).clone();
+    back.bone_frames.push(location(L_BACK_2H, 16, 0.0));
+    s.setups.insert(Did(SETUP), Arc::new(back));
+    s.race.insert((SHORT_SPECIES, MALE), Did(AVATAR));
+    let mut asm = assembler(s);
+    for (species, y) in [(HUMAN, 0.4), (SHORT_SPECIES, 0.2)] {
+        let spec = CharacterSpec::new(species, MALE)
+            .wearing(EquippedItem::new(0x7900_0020).with_state(WieldState::Sheathed));
+        let c = asm.assemble_character(&spec).unwrap();
+        let h = &c.held[0];
+        assert_eq!(h.location, L_BACK_2H);
+        assert_eq!(h.placement.offset, [0.0, y, 0.0]);
+        assert_eq!(h.placement.rotation, [0.0, 180.0, 0.0]);
+        // Pitch 180° turns about the location's +X: y and z flip.
+        let f = h.placement.applied_to(&h.frame);
+        assert!((f.position[1] - y).abs() < 1e-6);
+        assert!(
+            f.rotation.x.abs() > 0.999 && f.rotation.w.abs() < 1e-6,
+            "{f:?}"
+        );
+    }
     // Bounded: a figure holds at most `max_held` items.
     let mut asm = assembler(world()).with_limits(AssemblyLimits {
         max_held: 1,
@@ -847,7 +969,7 @@ fn static_objects_are_unchanged() {
     );
     assert!(c.parts.iter().all(|p| p.is_default() && !p.hidden));
     assert!(c.diagnostics.is_empty());
-    assert_eq!(c.model_scale(), 1.0);
+    assert_eq!(c.model_scale(), [1.0; 3]);
     assert_eq!(c.clip_inputs.start, Did(0x4700_1000));
 }
 
@@ -914,7 +1036,7 @@ fn placed_npcs_follow_section_7_4() {
         c.part_in(HEAD).unwrap().hidden,
         "a slot the setup lacks is appended"
     );
-    // The ClothingColor element dyes the parts of its own record.
+    // The ClothingColor element's group joins the figure-wide list (§4.10).
     let dyed = &c.part_in(UPPER).unwrap().materials;
     assert_eq!(dyed.len(), 1);
     assert_eq!(dyed[0].material, Did(0x3000_0A06));
@@ -926,10 +1048,10 @@ fn placed_npcs_follow_section_7_4() {
     assert_eq!(c.clip_inputs.starting_idle_animation, Some(0x7));
     assert!(c.clip_inputs.instance_properties.is_some());
     assert_eq!(c.random_appearance, None, "Undef is no random appearance");
-    assert!((c.model_scale() - 1.03 * 0.7 * 0.9).abs() < 1e-6);
+    assert!((c.model_scale()[0] - 1.03 * 0.7 * 0.9).abs() < 1e-6);
 
-    // A random-appearance figure: default parts and held props only (§7.4 Decision); its
-    // lists (class list and instance list) are skipped.
+    // A random-appearance figure keeps its lists (§7.4 Rule); without the script elements
+    // that choose its outfit it is reported.
     let instance = set(vec![
         (P_RANDOM, PropertyValue::Enum(0xDB)),
         (
@@ -942,23 +1064,81 @@ fn placed_npcs_follow_section_7_4() {
     let c = asm.assemble_object(Did(ENTITY), Some(&instance)).unwrap();
     assert_eq!(c.random_appearance, Some(0xDB));
     assert_eq!(c.count(Cat::RandomAppearance), 1);
-    assert_eq!(c.count(Cat::UnpairedDye), 0);
-    assert!(c.parts.iter().all(|p| p.is_default()), "{:?}", c.parts);
-    assert!(c.parts.iter().all(|p| p.materials.is_empty()));
-    assert!(
-        !c.parts.iter().any(|p| p.mesh == Did(F)),
-        "the class list's hair style is skipped too"
+    assert_eq!(
+        c.part_in(UPPER).unwrap().mesh,
+        Did(PIECE),
+        "the list applies"
     );
     assert_eq!(c.held.len(), 1, "held props are kept");
+    // With the Appearance nodes its start-up scripts ran: applied after the lists, so an
+    // equal-priority script piece wins (§4.7 rules 1–2).
+    const SCRIPT_REC: u32 = 0x2000_0210;
+    const SCRIPT_PIECE: u32 = 0x0600_0211;
+    asm.source_mut().meshes.insert(
+        Did(SCRIPT_PIECE),
+        mesh_summary(SCRIPT_PIECE, UPPER, 4000, true),
+    );
+    asm.source_mut().appearances.insert(
+        Did(SCRIPT_REC),
+        record(
+            SCRIPT_REC,
+            vec![(
+                KEY_WORN,
+                vec![block(1.0, &[(1.0, UPPER, SCRIPT_PIECE)], &[])],
+            )],
+        ),
+    );
+    let scripts = [ScriptAppearance {
+        record: Did(SCRIPT_REC),
+        key: KEY_WORN,
+        modifier: 1.0,
+    }];
+    let c = asm
+        .assemble_object_with(Did(ENTITY), Some(&instance), &scripts)
+        .unwrap();
+    assert_eq!(c.count(Cat::RandomAppearance), 0);
+    let upper = c.part_in(UPPER).unwrap();
+    assert_eq!(upper.mesh, Did(SCRIPT_PIECE));
+    assert_eq!(upper.source(), Some(SourceRef::Script(0)));
+    // A script element naming a record the lists named keeps the record's first position:
+    // here the NPC record (list element 0) comes first again, so the script's own record,
+    // applied after it, still wins the tie.
+    let scripts = [
+        ScriptAppearance {
+            record: Did(SCRIPT_REC),
+            key: KEY_WORN,
+            modifier: 1.0,
+        },
+        ScriptAppearance {
+            record: Did(NPC_REC),
+            key: KEY_WORN,
+            modifier: 1.0,
+        },
+    ];
+    let c = asm
+        .assemble_object_with(Did(ENTITY), Some(&instance), &scripts)
+        .unwrap();
+    assert_eq!(c.part_in(UPPER).unwrap().mesh, Did(SCRIPT_PIECE));
 
-    // An unpaired dye element (no random type) dyes the default parts.
+    // A lone dye element recolours every matching part, default parts included (§4.10:
+    // no pairing, no report).
     let instance = set(vec![(P_INSTANCE, list_value(&[(KEY_DYE, NPC_REC, 0.0)]))]);
     let c = asm.assemble_object(Did(ENTITY), Some(&instance)).unwrap();
     assert_eq!(c.random_appearance, None);
-    assert_eq!(c.count(Cat::UnpairedDye), 1);
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
     let upper = c.part_in(UPPER).unwrap();
     assert!(upper.is_default());
     assert_eq!(upper.materials[0].material, Did(0x3000_0A00));
+
+    // `NPC_Cosmetic_Inventory_Visible` false hides the props (§5.5 Rule).
+    let instance = set(vec![
+        (P_NPC_ITEM1, PropertyValue::DidRef(Did(PROP))),
+        (P_NPC_LOC1, PropertyValue::Enum(L_LHAND)),
+        (P_VISIBLE, PropertyValue::Bool(false)),
+    ]);
+    let c = asm.assemble_object(Did(ENTITY), Some(&instance)).unwrap();
+    assert!(c.held.is_empty());
+    assert_eq!(c.count(Cat::PropsHidden), 1);
 
     // A weenie object: its own property set supplies the list when there is no instance.
     s.objects.insert(
@@ -999,7 +1179,7 @@ fn sliders_and_skeleton_are_passed_through() {
     assert_eq!(c.sliders.bone_scale, Some(0.5));
     assert_eq!(c.clip_inputs.start, Did(AVATAR));
     assert_eq!(c.clip_inputs.entity, Did(ENTITY));
-    assert!((c.model_scale() - 1.03 * 0.7).abs() < 1e-6);
+    assert!((c.model_scale()[2] - 1.03 * 0.7).abs() < 1e-6);
 }
 
 #[test]
@@ -1018,6 +1198,7 @@ fn equipment_categories_are_bit_masks() {
         let table: &[(&str, &str, u32)] = &[
             ("Inventory_DefaultSlot", "Weapon_Primary", 5),
             ("Inventory_DefaultSlot", "Weapon_Secondary", 6),
+            ("Inventory_DefaultSlot", "Weapon_Ranged", 7),
             ("Item_EquipmentCategory", "1HSword", 2),
             ("Item_EquipmentCategory", "2HSword", 9),
             ("Item_EquipmentCategory", "2HClub", 11),
@@ -1046,60 +1227,50 @@ fn equipment_categories_are_bit_masks() {
     };
     let names = |_: &str| -> Option<u32> { None };
     let v = AssemblyVocabulary::from_lookup(&names, keys, |_| None);
-    let stow = &v.stow;
+    let rule = &v.placement;
     let primary = 1 << 4;
     let secondary = 1 << 5;
-    let (sword_1h, sword_2h, club_2h, bow, shield, medium_shield) =
-        (1 << 1, 1 << 8, 1 << 10, 1 << 13, 1 << 20, 1u64 << 45);
-    assert_eq!(stow.primary_slot, primary);
-    assert_eq!(stow.secondary_slot, secondary);
-    assert_eq!(stow.one_handed, sword_1h);
-    assert!(stow.by_category.contains(&(sword_2h, BACK_2H_SWORD)));
-    assert!(stow.by_category.contains(&(club_2h, BACK_2H)));
-    assert!(stow.by_category.contains(&(bow, BACK_BOW)));
-    assert!(stow.by_category.contains(&(shield, BACK_SHIELD)));
-    assert!(
-        stow.by_category.contains(&(medium_shield, BACK_SHIELD)),
-        "bits above 31 are kept"
-    );
-    let item = |category: u64, slot: u64| ItemVisual {
-        default_slot: Some(slot),
-        equipment_category: Some(category),
-        ..ItemVisual::default()
+    let (sword_1h, sword_2h, club_2h, shield, medium_shield) =
+        (1 << 1, 1 << 8, 1 << 10, 1 << 20, 1u64 << 45);
+    assert_eq!(rule.slot_bits[0], primary);
+    assert_eq!(rule.slot_bits[1], secondary);
+    assert_eq!(rule.weapon_slot(primary), Some(WeaponSlot::Primary));
+    assert_eq!(rule.weapon_slot(secondary), Some(WeaponSlot::Secondary));
+    assert_eq!(rule.weapon_slot(1 << 9), None);
+    let stowed = |category: u64, slot: u64| {
+        rule.row(slot, category, 0, false, true)
+            .and_then(|r| r.placements.first())
+            .map(|p| p.location)
     };
+    assert_eq!(stowed(sword_2h, primary), Some(BACK_2H_SWORD), "2HSword");
+    assert_eq!(stowed(club_2h, primary), Some(BACK_2H), "2HClub");
+    assert_eq!(stowed(sword_1h, primary), Some(LHIP), "1HSword: left hip");
     assert_eq!(
-        stow.location(&item(sword_2h, primary)),
-        Some(BACK_2H_SWORD),
-        "2HSword"
-    );
-    assert_eq!(
-        stow.location(&item(club_2h, primary)),
-        Some(BACK_2H),
-        "2HClub"
-    );
-    assert_eq!(stow.location(&item(bow, primary)), Some(BACK_BOW), "Bow");
-    assert_eq!(
-        stow.location(&item(shield, secondary)),
-        Some(BACK_SHIELD),
-        "Shield"
-    );
-    assert_eq!(
-        stow.location(&item(medium_shield, secondary)),
-        Some(BACK_SHIELD),
-        "MediumShield (bit 45)"
-    );
-    let sword = item(sword_1h, primary);
-    assert_eq!(stow.location(&sword), Some(LHIP), "1HSword: left hip");
-    assert_eq!(
-        stow.location_in(&sword, Some(secondary)),
+        stowed(sword_1h, secondary),
         Some(RHIP),
         "1HSword in the secondary slot: right hip"
     );
-    assert_eq!(stow.location(&item(0, primary)), None);
-    assert_eq!(
-        stow.location(&item(1 << 30, primary)),
-        None,
-        "unknown: in hand"
+    // Shields stay on the forearm out of the ranged skill mode (no forearm label here, so
+    // the row draws nothing), on the back in it; bits above 31 are kept.
+    for c in [shield, medium_shield] {
+        let row = rule.row(secondary, c, 0, false, true).expect("shield row");
+        assert!(row.placements.is_empty());
+        assert_eq!(
+            rule.row(secondary, c, 0, true, true)
+                .and_then(|r| r.placements.first())
+                .map(|p| p.location),
+            Some(BACK_SHIELD)
+        );
+    }
+    // A bow is a ranged item: stowed on the back in the ranged slot, and in the primary
+    // slot no row matches.
+    let bow = 1 << 13;
+    assert_eq!(stowed(bow, 1 << 6), Some(BACK_BOW));
+    assert!(rule.row(primary, bow, 0, false, true).is_none());
+    assert!(rule.row(primary, 0, 0, false, true).is_none());
+    assert!(
+        rule.row(primary, 1 << 30, 0, false, true).is_none(),
+        "unknown"
     );
 }
 
@@ -1143,9 +1314,10 @@ fn the_equipped_slot_decides_hand_and_stow() {
 }
 
 #[test]
-fn material_only_list_blocks_pair_with_their_records_parts() {
+fn material_only_list_blocks_join_the_figure_wide_list() {
     // A selection table of NPC pieces (appearance.md §4.11): material-only blocks under a
-    // key other than ClothingColor apply with the record's parts.
+    // key other than ClothingColor are not paired with anything; their groups join the
+    // figure-wide list and apply to every matching part (§4.10, §15).
     const SEL_REC: u32 = 0x2000_0300;
     const KEY_SEL: u32 = 0x1000_1AC8;
     const KEY_EMPTY: u32 = 0x1000_1AC9;
@@ -1182,29 +1354,34 @@ fn material_only_list_blocks_pair_with_their_records_parts() {
         .map(|l| (l.kind, l.material.0))
         .collect();
     assert_eq!(layers, vec![(LayerKind::Group, 0x3000_5E01)]);
-    assert_eq!(c.count(Cat::MaterialOnly), 0, "{:?}", c.diagnostics);
-    // Only the record's parts take it: the default lower body does not.
-    assert!(c.part_in(LOWER).unwrap().materials.is_empty());
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    // The default lower body takes it too.
+    assert_eq!(
+        c.part_in(LOWER).unwrap().materials[0].material,
+        Did(0x3000_5E01)
+    );
 
-    // Unpaired: onto the default parts, as an unpaired dye (Decision).
+    // Alone: onto the default parts, without a report.
     let instance = set(vec![(P_INSTANCE, list_value(&[(KEY_SEL, SEL_REC, 0.0)]))]);
     let c = asm.assemble_object(Did(ENTITY), Some(&instance)).unwrap();
-    assert_eq!(c.count(Cat::UnpairedDye), 1);
-    assert_eq!(c.count(Cat::MaterialOnly), 0);
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
     let upper = c.part_in(UPPER).unwrap();
     assert!(upper.is_default());
     assert_eq!(upper.materials[0].material, Did(0x3000_5E00));
     assert_eq!(upper.materials[0].kind, LayerKind::Group);
 
-    // A block with neither parts nor groups has nothing to apply.
+    // A block with neither parts nor groups changes nothing.
     let instance = set(vec![(P_INSTANCE, list_value(&[(KEY_EMPTY, SEL_REC, 0.0)]))]);
     let c = asm.assemble_object(Did(ENTITY), Some(&instance)).unwrap();
-    assert_eq!(c.count(Cat::MaterialOnly), 1);
-    assert_eq!(c.count(Cat::UnpairedDye), 0);
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    assert!(c.groups.is_empty());
 }
 
 #[test]
-fn list_dyes_do_not_override_a_worn_items_dye() {
+fn a_record_named_again_keeps_its_first_position() {
+    // §4.7 rule 2: the class list names the chest record (piece and dye 0.32); a worn item
+    // on the same record merges into that record's place: its key replaces the piece's
+    // modifier and source, its dye element replaces the dye's modifier (§4.9, §4.10).
     let mut s = world();
     s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list = vec![
         key_info(KEY_WORN, CHEST_REC, 1.0),
@@ -1219,7 +1396,6 @@ fn list_dyes_do_not_override_a_worn_items_dye() {
             .map(|l| (l.kind, l.material.0))
             .collect()
     };
-    // The list's own piece takes the list's dye.
     let c = asm.assemble_character(&human(&[])).unwrap();
     assert_eq!(
         c.part_in(UPPER).unwrap().source(),
@@ -1228,55 +1404,148 @@ fn list_dyes_do_not_override_a_worn_items_dye() {
     assert_eq!(
         layers(&c),
         vec![
-            (LayerKind::Group, CHEST_REC + 0x1000_0000),
-            (LayerKind::Dye, 0x3000_0D32),
             (LayerKind::Dye, 0x3000_0E32),
+            (LayerKind::Dye, 0x3000_0D32),
+            (LayerKind::Group, CHEST_REC + 0x1000_0000),
         ]
     );
-    // A worn item on the same record keeps its chosen dye (§4.9).
     let spec = CharacterSpec::new(HUMAN, MALE).wearing(EquippedItem::new(I_CHEST).dyed(0.06));
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.part_in(UPPER).unwrap().source(), Some(SourceRef::Item(0)));
     assert_eq!(
         layers(&c),
         vec![
-            (LayerKind::Group, CHEST_REC + 0x1000_0000),
             (LayerKind::Dye, 0x3000_0D06),
+            (LayerKind::Group, CHEST_REC + 0x1000_0000),
         ]
     );
 }
 
 #[test]
-fn dye_code_zero_on_lists_and_on_items() {
-    // Lists: modifier 0.0 picks the 0.00 block (appearance.md §3.2.1 rule 1). Items: code
-    // 0.0 means no dye (material.md §12.4). Which reading lists follow is OPEN
-    // (appearance.md §15); both paths are pinned here.
+fn keys_of_one_record_apply_in_key_table_order() {
+    // §4.7 rule 3: ascending (key mod 23); among keys of one remainder the one added last
+    // first. Two keys with remainder 4 offer equal-priority parts for one slot: the key
+    // added first is applied last and wins.
+    const REC: u32 = 0x2000_0500;
+    let (k1, k2) = (23 * 1000 + 4, 23 * 2000 + 4);
     let mut s = world();
-    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list = vec![
-        key_info(KEY_WORN, CHEST_REC, 1.0),
-        key_info(KEY_DYE, CHEST_REC, 0.0),
-    ];
+    s.appearances.insert(
+        Did(REC),
+        record(
+            REC,
+            vec![
+                (k1, vec![block(1.0, &[(5.0, UPPER, H)], &[])]),
+                (k2, vec![block(1.0, &[(5.0, UPPER, J)], &[])]),
+            ],
+        ),
+    );
+    s.meshes.insert(Did(J), mesh_summary(J, UPPER, 700, true));
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list =
+        vec![key_info(k1, REC, 1.0), key_info(k2, REC, 1.0)];
+    let mut asm = assembler(s.clone());
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    assert_eq!(c.part_in(UPPER).unwrap().mesh, Did(H));
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list =
+        vec![key_info(k2, REC, 1.0), key_info(k1, REC, 1.0)];
     let mut asm = assembler(s);
     let c = asm.assemble_character(&human(&[])).unwrap();
-    let m: Vec<u32> = c
-        .part_in(UPPER)
-        .unwrap()
-        .materials
-        .iter()
-        .map(|l| l.material.0)
-        .collect();
-    assert_eq!(m, vec![CHEST_REC + 0x1000_0000, 0x3000_0D00]);
-    let mut asm = assembler(world());
-    let spec = CharacterSpec::new(HUMAN, MALE).wearing(EquippedItem::new(I_CHEST).dyed(0.0));
-    let c = asm.assemble_character(&spec).unwrap();
-    let m: Vec<u32> = c
-        .part_in(UPPER)
-        .unwrap()
-        .materials
-        .iter()
-        .map(|l| l.material.0)
-        .collect();
-    assert_eq!(m, vec![CHEST_REC + 0x1000_0000]);
+    assert_eq!(c.part_in(UPPER).unwrap().mesh, Did(J));
+}
+
+#[test]
+fn linked_records_apply_first_and_cycles_stop() {
+    // §4.2, §4.7 rule 4: a record's linked records take the same key and modifier first;
+    // a record already on the path is skipped and reported (Tessera Decision).
+    const OWN: u32 = 0x2000_0600;
+    const LINKED: u32 = 0x2000_0601;
+    let mut s = world();
+    let mut own = (*record(
+        OWN,
+        vec![(KEY_WORN, vec![block(1.0, &[(5.0, UPPER, H)], &[])])],
+    ))
+    .clone();
+    own.linked = vec![Did(LINKED), Did(0x2000_0BAD)];
+    let mut linked = (*record(
+        LINKED,
+        vec![(
+            KEY_WORN,
+            vec![block(1.0, &[(5.0, UPPER, A)], &[(ALL, 0x3000_0001)])],
+        )],
+    ))
+    .clone();
+    linked.linked = vec![Did(OWN)];
+    s.appearances.insert(Did(OWN), Arc::new(own));
+    s.appearances.insert(Did(LINKED), Arc::new(linked));
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list = vec![key_info(KEY_WORN, OWN, 1.0)];
+    let mut asm = assembler(s);
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    // The linked record's part came first; the record's own part, at equal priority, wins.
+    assert_eq!(c.part_in(UPPER).unwrap().mesh, Did(H));
+    assert!(!c.part_in(UPPER).unwrap().is_default());
+    assert_eq!(
+        c.groups.len(),
+        1,
+        "the linked block's group joined the list"
+    );
+    assert_eq!(c.count(Cat::LinkedRecordCycle), 1, "{:?}", c.diagnostics);
+    assert_eq!(
+        c.count(Cat::AppearanceMissing),
+        1,
+        "the missing link is skipped"
+    );
+}
+
+#[test]
+fn toggle_files_follow_the_option_store() {
+    // §3.3: the toggle file replaces the file when the toggle property reads true through
+    // the figure's lookup; the option store answers the updated-avatar option first.
+    const PLAIN: u32 = 0x2000_0700;
+    const TOGGLE: u32 = 0x2000_0701;
+    let mut s = world();
+    for (did, mesh) in [(PLAIN, F), (TOGGLE, E)] {
+        s.appearances.insert(
+            Did(did),
+            record(
+                did,
+                vec![(KEY_HAIR, vec![block(0.0, &[(1.0, CREST, mesh)], &[])])],
+            ),
+        );
+    }
+    let element = |property: u32| AppearanceKeyInfo {
+        toggle_file: Some(Did(TOGGLE)),
+        toggle_property: Some(property),
+        ..key_info(KEY_HAIR, PLAIN, 0.0)
+    };
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list = vec![element(P_UPDATE)];
+    let mut asm = assembler(s.clone());
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    assert_eq!(
+        c.part_in(CREST).unwrap().mesh,
+        Did(E),
+        "option on by default"
+    );
+    assert!(!c.part_in(CREST).unwrap().is_default());
+    assert_eq!(c.watched_properties, vec![P_UPDATE]);
+    let mut asm = assembler(s.clone()).with_options(AssemblyOptions {
+        avatar_update_visible: false,
+    });
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    assert_eq!(
+        c.part_in(CREST).unwrap().mesh,
+        Did(F),
+        "option off: the plain file"
+    );
+    // Another toggle property reads through the figure's own sets; absent reads false.
+    const OTHER: u32 = 130;
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().class_list = vec![element(OTHER)];
+    let mut asm = assembler(s.clone());
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    assert_eq!(c.part_in(CREST).unwrap().mesh, Did(F));
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().properties =
+        set(vec![(OTHER, PropertyValue::Bool(true))]);
+    let mut asm = assembler(s);
+    let c = asm.assemble_character(&human(&[])).unwrap();
+    assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
 }
 
 #[test]
@@ -1295,7 +1564,9 @@ fn undecodable_records_keep_their_category() {
     let c = asm
         .assemble_character(&human(&[I_LEGS, I_BOOTS, I_GLOVES]))
         .unwrap();
-    assert_eq!(c.count(Cat::MeshUndecodable), 2, "{:?}", c.diagnostics);
+    // The class list and the leggings name the legs record with one key: one record use
+    // (§4.7 rule 2), applied once, so the mesh is reported once.
+    assert_eq!(c.count(Cat::MeshUndecodable), 1, "{:?}", c.diagnostics);
     assert_eq!(c.count(Cat::MeshMissing), 0);
     assert_eq!(c.count(Cat::ItemUndecodable), 1);
     assert_eq!(c.count(Cat::AppearanceUndecodable), 1);
@@ -1309,8 +1580,8 @@ fn undecodable_records_keep_their_category() {
 #[test]
 fn many_list_elements_on_one_record_share_their_layers() {
     // 256 part elements and 256 dye elements naming one record whose blocks carry 1000
-    // groups each, none applying to a part (the worst case of the layer scan). Each
-    // distinct block is stored once, so this is cheap.
+    // groups each, none applying to a part (the worst case of the layer scan). They merge
+    // into one record use with two keys (§4.7 rule 2), so each block is applied once.
     const BIG: u32 = 0x2000_0400;
     const NOWHERE: u32 = 0x1000_0777;
     let groups: Vec<(u32, u32)> = (0..1000).map(|i| (NOWHERE, 0x3000_0000 + i)).collect();

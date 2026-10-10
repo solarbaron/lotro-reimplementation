@@ -3191,6 +3191,32 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > at once, so there is one image per surface. **Decision (Tessera)** for the order (narrow OPEN
 > in §3.5): attach order, the last one attached wins.
 
+> **OPEN** (implementation, 2026-10-10, §7.4 "Random dye colours", engineering choices,
+> confirmation only): the figure path's resolver (`tessera-formats`, `script_table::resolve`)
+> now applies `script-runtime.md` §5.2 to Scriptlet nodes and to the look nodes of §3.5, and
+> runs Goto nodes (§15 there). On the install the seven EditMaterial nodes fed by
+> `Appearance_RandomDyeColorValue` are six reached through scriptlet-driven pairs (in
+> 0x0C008223, 0x0C0082DE, 0x0C0082E1, 0x0C0082ED; parameters 2003 × 4, 2013 × 2) and one
+> through a driven pair in table 0x07001C17 (parameter 2000); all 49 Scriptlet nodes holding
+> the parameter have the driven pair (PID, PID); the nine fallen soldiers' start-ups colour
+> every fed edit they reach, none keeps the placeholder or the stored white, and the binding
+> keys 0x10000073, 0x10000018, 0x10000024 and 2 all reach the edits. Choices:
+> (1) A Scriptlet node's driven pair (field, source) and its scriptlet-driven pair (field,
+> parameter) both write the parameter of PID *field* in that invocation (the Decision above,
+> extended to the scriptlet-driven pairs that "pass them down"); driven pairs first, then
+> scriptlet-driven ones, the later write winning, as §5.2 lists them. A scriptlet-driven pair
+> reads only the invocation of the node's own record, not the outer ones.
+> (2) With seeded picks, a SetProperty node on a branch the picks do not take sets nothing,
+> so a Random over SetProperty nodes sets one value.
+> (3) Goto: the first Label of the name in a depth-first walk of the record context's roots
+> in stored order (ports and children in stored order), names compared exactly; a Goto
+> whose Label is already running through a Goto on the current path starts nothing (the
+> client would recurse until its runaway guards, §21 there).
+> (4) Not yet changed: animation, MeshFX and impulse nodes still take scriptlet parameters
+> by their field PID through every enclosing invocation, without scriptlet-driven pairs; and
+> the effect runtime (`tessera-scriptgraph`) reads a Scriptlet node's stored parameter set
+> without applying the node's own driven pairs to it.
+
 ---
 
 <a id="s16"></a>

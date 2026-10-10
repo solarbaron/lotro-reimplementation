@@ -985,3 +985,162 @@ fn look_nodes_decode_and_follow_the_census() {
         }
     }
 }
+
+/// `appearance.md` §7.4 "Random dye colours" (OBS10, A58): the seven EditMaterial nodes
+/// fed by `Appearance_RandomDyeColorValue` (six through scriptlet-driven pairs in four
+/// scriptlets, one through a driven pair in a table), the Scriptlet nodes that
+/// hold that parameter (each fills it from the figure's value by a driven pair of the same
+/// PID), and the generated fallen soldiers of 3, 0xD7E7 (objects 0x47007170–0x47007178):
+/// every fed edit their start-up reaches takes a chosen colour in place of its stored
+/// placeholder, with its own material parameter.
+#[test]
+fn random_dye_chains_replace_the_placeholder() {
+    use tessera_formats::script_table::NodeData;
+    use tessera_formats::script_table::resolve::LookEffect;
+    let Some(set) = open_set() else { return };
+    if !exhaustive() {
+        eprintln!("debug build: skipping the scriptlet scan (set TESSERA_FULL=1)");
+        return;
+    }
+    let dict = dictionary(set);
+    let vocab = vocabulary(set);
+    let dye = dict
+        .pid("Appearance_RandomDyeColorValue")
+        .expect("Appearance_RandomDyeColorValue");
+    // Per record: fed edits (node ID, parameter, stored colour; fed through a
+    // scriptlet-driven pair, or in one table through a driven pair) and Scriptlet nodes
+    // holding the parameter (invoked file, whether a driven pair (dye, dye) fills it).
+    type Found = (Did, Vec<(u32, u32, [u8; 4])>, Vec<(Did, bool)>);
+    let scan = |did: Did, roots: &[tessera_formats::script_table::Node]| -> Found {
+        let (mut edits, mut invokers) = (Vec::new(), Vec::new());
+        for r in roots {
+            r.walk(&mut |n, _| match &n.data {
+                NodeData::EditMaterial(e)
+                    if n.base
+                        .driven
+                        .iter()
+                        .chain(&n.base.scriptlet_driven)
+                        .any(|&(_, p)| p == dye) =>
+                {
+                    edits.push((n.base.node_id, e.material_property, e.color_value));
+                }
+                NodeData::Scriptlet { file, parameters } if parameters.get(dye).is_some() => {
+                    invokers.push((*file, n.base.driven.contains(&(dye, dye))));
+                }
+                _ => {}
+            });
+        }
+        (did, edits, invokers)
+    };
+    let mut found = par_each(&entries_with_prefix(set, 0x0C), |(i, e)| {
+        set.member(*i)
+            .archive
+            .read_entry(e)
+            .ok()
+            .and_then(|p| Scriptlet::parse_expecting(&p, e.did, dict).ok())
+            .map(|s| scan(Did(e.did), &s.roots))
+    });
+    found.extend(par_each(&entries_with_prefix(set, 0x07), |(i, e)| {
+        let t = set
+            .member(*i)
+            .archive
+            .read_entry(e)
+            .ok()
+            .and_then(|p| ScriptTable::parse_expecting(&p, e.did, dict).ok())?;
+        let roots: Vec<_> = t.scripts.iter().flat_map(|s| s.roots.clone()).collect();
+        Some(scan(Did(e.did), &roots))
+    }));
+    let found: Vec<Found> = found.into_iter().flatten().collect();
+    let fed: BTreeMap<(Did, u32), (u32, [u8; 4])> = found
+        .iter()
+        .flat_map(|(d, edits, _)| edits.iter().map(move |&(id, p, c)| ((*d, id), (p, c))))
+        .collect();
+    let invokers: Vec<(Did, bool)> = found.iter().flat_map(|f| f.2.clone()).collect();
+    let records: BTreeSet<Did> = fed.keys().map(|k| k.0).collect();
+    let mut parameters: BTreeMap<u32, usize> = BTreeMap::new();
+    for (p, _) in fed.values() {
+        *parameters.entry(*p).or_default() += 1;
+    }
+    eprintln!(
+        "{} edits fed by the dye value in {} records {records:x?}, parameters {parameters:?}; \
+         {} Scriptlet nodes hold the parameter, {} with the driven pair (dye, dye), {} of \
+         them invoke a record with a fed edit",
+        fed.len(),
+        records.len(),
+        invokers.len(),
+        invokers.iter().filter(|i| i.1).count(),
+        invokers.iter().filter(|i| records.contains(&i.0)).count(),
+    );
+    assert_eq!(fed.len(), 7, "edit nodes fed by the dye value");
+    assert!(
+        parameters.keys().all(|p| [2000, 2003, 2013].contains(p)),
+        "{parameters:?}"
+    );
+    assert!(parameters.contains_key(&2013), "not every edit is of 2003");
+    assert!(
+        invokers.iter().all(|i| i.1),
+        "every holder fills the parameter from the figure's value"
+    );
+
+    // The fallen soldiers: every fed edit their start-up picks is coloured.
+    let mut reached: BTreeSet<(Did, u32)> = BTreeSet::new();
+    let mut placeholders = Vec::new();
+    let mut coloured = 0usize;
+    let mut bindings: BTreeSet<u32> = BTreeSet::new();
+    // Edits left with the parameter's stored white (no SetProperty of the chain ran).
+    let mut white = 0usize;
+    for object in 0x4700_7170u32..=0x4700_7178 {
+        let chain =
+            collect_entity_scripts(Did(object), dict, &vocab, |d| fetch(set)(d)).expect("scripts");
+        for seed in 0..8u64 {
+            let mut r = ClipResolver::new(dict, vocab.clone(), fetch(set))
+                .with_dictionary_defaults(dict)
+                .with_random_seed(Some(object as u64 ^ seed));
+            let res = r
+                .resolve(&chain.scripts, MotionState::Idle)
+                .expect("resolution");
+            for l in res.look.iter().filter(|l| l.active()) {
+                let LookEffect::EditMaterial(e) = &l.effect else {
+                    continue;
+                };
+                let record = if l.scriptlet.is_null() {
+                    l.table
+                } else {
+                    l.scriptlet
+                };
+                let Some(&(parameter, stored)) = fed.get(&(record, l.node_id)) else {
+                    continue;
+                };
+                reached.insert((record, l.node_id));
+                assert_eq!(e.material_property, parameter, "the node's own parameter");
+                if e.color_value == stored {
+                    placeholders.push((object, seed, record, l.node_id));
+                } else {
+                    coloured += 1;
+                    white += usize::from(e.color_value[..3] == [0xFF; 3]);
+                    bindings.insert(e.material_type);
+                }
+            }
+        }
+    }
+    eprintln!(
+        "fallen soldiers: {} of the fed edits reached ({reached:x?}), {coloured} coloured \
+         edits, {} left with the placeholder",
+        reached.len(),
+        placeholders.len()
+    );
+    assert!(
+        placeholders.is_empty(),
+        "placeholder left: {placeholders:x?}"
+    );
+    assert!(coloured > 0, "the soldiers' chains run");
+    assert_eq!(white, 0, "every chain's SetProperty chose a colour");
+    // The outer scriptlets' binding keys reach the edits (`UpperBody` 0x10000073,
+    // `Accessory1` 0x10000018, `Crest` and the hair chain 0x10000024, every surface 2), so
+    // the Goto chains of types 0xD8 and 0xD6 run too.
+    assert_eq!(
+        bindings,
+        BTreeSet::from([2, 0x1000_0018, 0x1000_0024, 0x1000_0073]),
+        "binding keys of the coloured edits"
+    );
+}

@@ -16,9 +16,11 @@ use std::time::Instant;
 use common::*;
 use tessera_client::screens::backend::BackendKind;
 use tessera_client::screens::ui::{ChargenIds, ChargenLayouts, ChargenRefs, ScreenUi};
-use tessera_client::screens::{Action, ScreenModel, Stage};
+use tessera_client::screens::{Action, ControlValue, ScreenModel, Stage};
 use tessera_formats::StringInfo;
+use tessera_formats::property::PropertyValue;
 use tessera_formats::ui_layout::ElementDesc;
+use tessera_gamedata::GENDER_FEMALE;
 use tessera_ui::events::{Message, MsgArg};
 use tessera_ui::{ElementKey, Ui, UiEvent};
 use ui_common::*;
@@ -149,8 +151,13 @@ fn layouts() -> Vec<tessera_formats::ui_layout::UiLayout> {
                 261,
                 600,
             ),
-            el("CharGen_Male_Button", t.button, 20, 40, 60, 30),
-            el("CharGen_Female_Button", t.button, 90, 40, 60, 30),
+            with(
+                el("CharGen_Gender_GroupBox", t.group_box, 20, 40, 140, 30),
+                vec![
+                    el("CharGen_Male_Button", t.button, 0, 0, 60, 30),
+                    el("CharGen_Female_Button", t.button, 70, 0, 60, 30),
+                ],
+            ),
             with(
                 el("Chargen_Race_Info_Panel", t.field, 300, 80, 300, 300),
                 vec![typed(0x1000_8F00, t.text, 0, 0, 300, 200)],
@@ -187,13 +194,23 @@ fn layouts() -> Vec<tessera_formats::ui_layout::UiLayout> {
             el("CharGen_Name_Create_Button", t.button, 790, 810, 261, 45),
         ],
     );
-    let apr = el(
-        "CharGen_APRAppearanceChoice_BaseField",
-        t.field,
-        0,
-        0,
-        253,
-        40,
+    // The style template with the parts of §5.2.2.
+    let apr = with(
+        el(
+            "CharGen_APRAppearanceChoice_BaseField",
+            t.field,
+            0,
+            0,
+            253,
+            40,
+        ),
+        vec![
+            el("AppearanceUIElement_LeftButton", t.button, 0, 10, 20, 20),
+            el("AppearanceUIElement_Label", t.text, 25, 0, 161, 23),
+            el("AppearanceUIElement_CurrentChoice", t.text, 186, 0, 48, 23),
+            el("AppearanceUIElement_RightButton", t.button, 233, 10, 20, 20),
+            el("AppearanceUIElement_LockButton", t.button, 0, 0, 10, 10),
+        ],
     );
     let scale = el(
         "CharGen_BoneScalingAppearanceChoice_BaseField",
@@ -322,7 +339,18 @@ fn layouts_follow_the_model_and_clicks_become_actions() {
     let classes = find(&ui, "CharGen_Class_Select_Listbox");
     assert_eq!(ui.list_entries(races).len(), 2);
     assert_eq!(ui.list_entries(classes).len(), 3);
-    assert!(!ghosted(&ui, "CharGen_Female_Button"));
+    // The gender group (§4.1): shown for a race with two entries, its selection the
+    // chosen sex.
+    let group = find(&ui, "CharGen_Gender_GroupBox");
+    let selected = |ui: &Ui| match ui.property(group, ui.vocab().pids.gb_selected) {
+        Some(PropertyValue::Enum(k)) => Some(*k),
+        _ => None,
+    };
+    assert!(ui.is_visible(group));
+    assert_eq!(selected(&ui), Some(id("CharGen_Male_Button")));
+    m.apply(Action::Gender(GENDER_FEMALE), now);
+    screen.sync(&mut ui, &m, &no_text);
+    assert_eq!(selected(&ui), Some(id("CharGen_Female_Button")));
 
     // Selecting the second race in the list becomes Race(B).
     let entries = ui.list_entries(races);
@@ -336,9 +364,10 @@ fn layouts_follow_the_model_and_clicks_become_actions() {
     screen.sync(&mut ui, &m, &no_text);
     assert_eq!(ui.list_entries(classes).len(), 1, "race B has one class");
     assert!(
-        ghosted(&ui, "CharGen_Female_Button"),
-        "race B has no female entry"
+        !ui.is_visible(group),
+        "race B has no female entry: no group"
     );
+    assert_eq!(selected(&ui), Some(id("CharGen_Male_Button")));
 
     // Continue → the appearance screen with the control widgets.
     let cont = find(&ui, "CharGen_Continue_Button");
@@ -355,8 +384,9 @@ fn layouts_follow_the_model_and_clicks_become_actions() {
         "create takes its box"
     );
     let controls = find(&ui, "CharGen_Appearance_Controls_Listbox");
-    // Style and scale get widgets; the colour control has no palette here.
-    assert_eq!(ui.list_entries(controls).len(), 3);
+    // The header of group 1, then the style, colour and scale rows (§5.2); the colour
+    // control has no palette here.
+    assert_eq!(ui.list_entries(controls).len(), 4);
 
     // Typing a name becomes Name; Create becomes Create.
     let name = find(&ui, "CharGen_Name_Entry_Field");
@@ -449,6 +479,10 @@ fn shown_values_follow_the_model() {
         let c = data.chargen.classes.get_mut(&CLASS_2).unwrap();
         c.name = token(3);
         c.description = token(4);
+        data.group_names.insert(1, token(7).unwrap());
+        for d in data.avatars.values_mut() {
+            d.controls[0].meta.label = token(6);
+        }
         // A palette on the colour control and a dye override for nationality B.
         for d in data.avatars.values_mut() {
             if let tessera_gamedata::chargen::ControlKind::Colour { palette, .. } =
@@ -475,6 +509,8 @@ fn shown_values_follow_the_model() {
             (3, "Warden"),
             (4, "Wardens guard."),
             (5, "A race."),
+            (6, "Head"),
+            (7, "Skin"),
         ]
         .into_iter()
         .collect(),
@@ -561,7 +597,42 @@ fn shown_values_follow_the_model() {
     screen.sync(&mut ui, &m, &texts);
     let controls = find(&ui, "CharGen_Appearance_Controls_Listbox");
     let before = ui.list_entries(controls);
-    assert_eq!(before.len(), 3, "style, colour (with a palette), scale");
+    assert_eq!(
+        before.len(),
+        4,
+        "group header, style, colour (with a palette), scale"
+    );
+    // The style row shows the control's own name and its current choice (§5.2.2 rules 1
+    // and 2; the test texts have no format: Tessera's "i / n").
+    let style_row = before[1];
+    assert_eq!(
+        text_below(&mut ui, style_row, "AppearanceUIElement_Label"),
+        "Head"
+    );
+    assert_eq!(
+        text_below(&mut ui, style_row, "AppearanceUIElement_CurrentChoice"),
+        "1 / 5"
+    );
+    // The header shows the group's display text.
+    assert_eq!(
+        text_below(&mut ui, before[0], "AppearanceUIElement_Label"),
+        "Skin"
+    );
+    // The next arrow moves the style; the shown choice follows the model.
+    let next = tessera_ui::game::find_below(&ui, style_row, id("AppearanceUIElement_RightButton"))
+        .expect("arrow");
+    let a = {
+        let ev = msg(&ui, next, ui.vocab().msgs.button_click);
+        screen.handle_event(&mut ui, &ev, &m, 1)
+    };
+    assert_eq!(a, vec![Action::Control(0, ControlValue::Style(1))]);
+    m.apply(a[0].clone(), now);
+    screen.sync(&mut ui, &m, &texts);
+    let style_row = ui.list_entries(controls)[1];
+    assert_eq!(
+        text_below(&mut ui, style_row, "AppearanceUIElement_CurrentChoice"),
+        "2 / 5"
+    );
     screen.sync(&mut ui, &m, &texts);
     assert_eq!(
         ui.list_entries(controls),
@@ -571,7 +642,7 @@ fn shown_values_follow_the_model() {
     m.apply(Action::Nationality(NAT_B), now);
     screen.sync(&mut ui, &m, &texts);
     let after = ui.list_entries(controls);
-    assert_eq!(after.len(), 3);
+    assert_eq!(after.len(), 4);
     assert_ne!(after, before, "rebuilt for the nationality's palette");
 
     // A refusal reason naming a record resolves through the texts.

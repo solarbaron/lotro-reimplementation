@@ -117,6 +117,8 @@ fn plain_sandbox_creates_selects_and_enters() {
     // The selected character stands in the viewport with its look.
     let v = viewport_state(d.screens.model());
     assert_eq!(v.camera, Some(4), "selection camera");
+    assert_eq!(v.zoom_camera, Some(6), "selection zoom camera");
+    assert_eq!((v.stage, v.action, v.class), (4, 2, None), "§2.1.4");
     assert_eq!(v.scene, Some(tessera_formats::Did(0x2100_0000 | SPECIES_A)));
     match &v.figure {
         FigureChoice::Character { choices, .. } => {
@@ -250,22 +252,52 @@ fn flow_rules_continue_back_and_defaults() {
     for (i, v) in &m.creation().appearance.values {
         assert!(detail.control(*i).unwrap().accepts(v));
     }
-    // Turntable: a short press steps 15°, a stage change resets.
-    d.act(Action::TurnPress(Turn::Left));
-    d.act(Action::TurnRelease(Turn::Left));
-    assert!((d.screens.model().turntable().angle() - 15.0).abs() < 1e-3);
+    // Turntable (§2.3): a hot click eases θ by −20° (half-life 0.15 s), a stage change
+    // resets θ and the zoom.
+    d.act(Action::TurnClick(Turn::Left));
+    for _ in 0..200 {
+        d.frame();
+    }
+    let a = d.screens.model().turntable().angle();
+    assert_eq!(a, -20.0, "reached within 0.0002 after about 2.5 s");
+    let v = viewport_state(d.screens.model());
+    assert_eq!(
+        (v.camera, v.zoom_camera),
+        (Some(3), Some(5)),
+        "creation cameras"
+    );
+    assert!(v.view.is_none(), "no scene frames in the synthetic install");
+    assert_eq!((v.stage, v.action), (6, 2), "§2.1.4 appearance stage");
     d.act(Action::ZoomIn);
     assert_eq!(
-        viewport_state(d.screens.model()).camera,
-        Some(5),
-        "zoom camera"
+        d.screens.model().turntable().zoom(),
+        1.0,
+        "no frames: at once"
     );
+    assert_eq!(
+        d.screens.model().zoom_in_button(),
+        ButtonRule::Ghosted(None)
+    );
+    assert!(d.screens.model().zoom_out_button().is_enabled());
     d.act(Action::Back);
     assert_eq!(d.screens.model().turntable().angle(), 0.0);
-    // The race screen shows the gender entry's race-select entity.
+    assert_eq!(d.screens.model().turntable().zoom(), 0.0);
+    // The race screen shows a figure of the chosen race and gender with `CharGen_Stage` 1
+    // and the class (§2.1.4), not the race-select entity.
+    let v = viewport_state(d.screens.model());
+    assert!(matches!(
+        v.figure,
+        FigureChoice::Character {
+            species: SPECIES_A,
+            sex: GENDER_FEMALE,
+            ..
+        }
+    ));
+    assert_eq!((v.stage, v.action, v.class), (1, 2, Some(CLASS_1)));
+    let req = figure_request(&v, d.screens.model().data()).expect("a figure");
     assert_eq!(
-        viewport_state(d.screens.model()).figure,
-        FigureChoice::Entity(tessera_formats::Did(0x4700_0000 | GENDER_FEMALE))
+        (req.chargen_stage, req.chargen_action, req.class),
+        (Some(1), Some(2), Some(CLASS_1))
     );
     // A ghosted Continue still answers with an error line (§2.3).
     let data = synthetic_data();

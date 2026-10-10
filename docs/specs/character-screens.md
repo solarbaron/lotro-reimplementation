@@ -167,6 +167,17 @@ named by UISceneEntity labels.
 > step 4; the others are not applied until `lighting.md` or `render.md` defines bloom,
 > deshading, rim lighting and fake shadows; `UseParticles` true lets effect entities run.
 
+> **OPEN:** (implementer, `apps/client/src/walker/stage.rs`, 2026-10-10; not a spec gap, an
+> implementation gap recorded so that the rule above is not claimed complete) As implemented:
+> Physics elements are drawn through the object layer's instanced models at their placements
+> and `Render_AdjustableScale` (the element's own draw values winning over its object chain's),
+> lit by the scene's Light elements (range in force by day, intensity curve at the material
+> clock, *σ* = 1) and the viewport's ambient, with no sun, no hemispheric input and no fog;
+> the figure is lit the same way. Not drawn yet: Decal elements (the walker has no drawing of
+> placed decals), the particle systems of effect entities' start-up scripts, and parts whose
+> surfaces cannot be drawn as instanced models (records with programs of their own,
+> `material.md` §11.6; left out and logged).
+
 <a id="s2-1-2"></a>
 #### 2.1.2 Where the figure stands (BIN, CS20; data CS19)
 
@@ -244,6 +255,20 @@ layout stages only (§2.2). The species tables' scripts choose the stage clips b
 
 > **OPEN:** what `RaceTable_RaceSelect_Entity` (§4.1) is used for; it is not the figure of any
 > stage traced here. **Tessera rule:** not used by the screens.
+
+> **OPEN:** (implementer, 2026-10-10, real data, `tessera-client` with the keys of the table
+> above) With `CharGen_Stage` 1, `CharGen_Action` 2 and `Agent_Class` set, the species tables
+> of 13 of the 15 race-and-class figures (all but the two River-hobbit bodies) start only
+> clips on layer 18 that drive part of the skeleton (`UseBoneOpacity`), so Tessera shows these
+> figures in their bind pose (arms stretched out); with key 6 the same bodies also start a
+> looping layer-10 clip and stand. The Stout-axe body (species 0x78, both gender entries)
+> shows its bind pose on the appearance stage too (arms out, taller than the dwarf body, so
+> the stage camera does not hold the whole figure), and the River-hobbit female's only
+> appearance-stage clip (layer 30, not looping) leaves her standing waist-deep below the
+> marker. Not stated: which clip (or which further property of the figure) gives the
+> race-and-class figure its stance, and how a stage clip that does not loop is played (once,
+> held at its last frame, or looped). As implemented: the walker's idle selection
+> (`script-table.md` §11.3; looping clips one per layer, else the most likely candidate).
 
 <a id="s2-2"></a>
 ### 2.2 Screens and stages (Confirmed, CS2)
@@ -344,6 +369,15 @@ Which stage shows which control is game code, not data. **Tessera rule (P1):**
 
 > **OPEN:** the original's stage-by-stage visibility of these controls and when it offers
 > Exit (owner check O85). (The turn step, speed and zoom are answered above, BIN.)
+
+> **OPEN:** (implementer, 2026-10-10; review note (n1)) which wheel direction zooms in.
+> **Tessera rule as implemented:** a notch away from the player (`ScrollUp`) moves the target
+> of *t* by +0.15 (towards the zoom frame), `ScrollDown` by −0.15. Also as implemented
+> (Tessera rules, not stated above): while a zoom button's camera move runs, drags and wheel
+> notches are ignored as well as the ghosted turn buttons; the field of view is applied as the
+> vertical one (`walker.md` W17 OPEN); the hover of the selection figure (`CharGen_Action` 3,
+> §2.1.4) is not detected, since the viewport has no picking of its figure yet, so the
+> selection figure carries 2.
 
 ---
 
@@ -668,6 +702,15 @@ Rules (BIN):
    starts with its lock button in the `highlight` state, otherwise `normal` (2 controls of this
    install carry the field). What a lock changes is OPEN (Tessera rule: a locked control is
    skipped by randomise).
+
+> **OPEN:** (implementer, 2026-10-10) The group header's element is named by its layout's DID
+> only (0x2200090A, rule 3 and the table above); the client finds layouts by their `UILAYOUT`
+> labels, and `chargen_appearance` holds no header template of its own. **Tessera rule as
+> implemented:** a header row is an instance of the style template (`CharGen_APRAppearanceChoice_BaseField`)
+> with only its label part shown, holding the group's display text, placed in the control
+> list before the group's controls; groups stay expanded (no expand or collapse buttons).
+> Also as implemented: a click on a lock button toggles the lock (its `highlight` state).
+> Please name the header layout's label (or another run-time way to find it).
 
 <a id="s5-3"></a>
 ### 5.3 Name

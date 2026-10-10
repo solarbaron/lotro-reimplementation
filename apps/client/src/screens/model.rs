@@ -115,6 +115,9 @@ pub struct Creation {
     pub appearance: AppearanceChoices,
     /// The (species, sex) the appearance choices belong to.
     pub appearance_for: Option<(u32, u32)>,
+    /// Locked controls (stored indices; §5.2.2 rule 4: they start locked when their struct
+    /// says so; Tessera rule: randomise skips them).
+    pub locked: std::collections::BTreeSet<usize>,
     /// The name field.
     pub name: String,
 }
@@ -189,14 +192,25 @@ pub enum Action {
     RandomName(u64),
     /// Create the character (§7.1).
     Create,
-    /// A turn button went down.
-    TurnPress(Turn),
-    /// A turn button went up.
-    TurnRelease(Turn),
-    /// Zoom in.
+    /// One hot click of a turn button (`Button_hot_click`, §2.3).
+    TurnClick(Turn),
+    /// A drag across the viewport starts at this pixel column.
+    DragStart(f32),
+    /// The drag is at this pixel column.
+    DragTo(f32),
+    /// The drag ends.
+    DragEnd,
+    /// Wheel notches over the viewport (positive: away from the player, zoom in).
+    Wheel(f32),
+    /// Zoom in (the zoom-in button).
     ZoomIn,
-    /// Zoom out.
+    /// Zoom out (the zoom-out button).
     ZoomOut,
+    /// The pointer moved onto (true) or off the selection screen's figure (§2.1.4
+    /// `CharGen_Action` `Hover`).
+    FigureHover(bool),
+    /// A control's lock button (§5.2.2 rule 4).
+    ToggleLock(usize),
     /// The `GOP_AvatarUpdateVisible` check box (§2.3).
     AvatarUpdateVisible(bool),
 }
@@ -207,6 +221,10 @@ struct Pending {
     since: Instant,
     created: CreatedCharacter,
 }
+
+/// What identifies the stage camera in view (§2.1.3): the stage, the selected row on the
+/// selection screen, the body.
+type CameraKey = (Stage, Option<usize>, Option<(u32, u32)>);
 
 /// The screens' state machine (module docs).
 #[derive(Debug, Clone)]
@@ -231,6 +249,9 @@ pub struct ScreenModel {
     status: Status,
     created: Vec<CreatedCharacter>,
     figure_loading: bool,
+    hover: bool,
+    /// The stage camera the turntable was last reset for (§2.1.3: setting it resets).
+    camera_for: Option<CameraKey>,
 }
 
 impl ScreenModel {
@@ -257,6 +278,8 @@ impl ScreenModel {
             status: Status::Open,
             created: Vec::new(),
             figure_loading: false,
+            hover: false,
+            camera_for: None,
         }
     }
 
@@ -443,9 +466,111 @@ impl ScreenModel {
         self.avatar_update_visible = on;
     }
 
-    /// Sets the turn buttons' first repeat interval read from the data.
-    pub fn set_turn_interval(&mut self, first: Duration) {
-        self.turntable = Turntable::with_first_interval(first);
+    /// Whether the pointer is on the selection screen's figure (§2.1.4).
+    #[must_use]
+    pub fn hovering_figure(&self) -> bool {
+        self.hover
+    }
+
+    /// The (species, sex) of the figure in view: the selected character's body on the
+    /// selection screen, the chosen race and gender on the creation stages.
+    #[must_use]
+    pub fn body_in_view(&self) -> Option<(u32, u32)> {
+        match self.stage {
+            Stage::Select => self.selected_row().and_then(CharacterRow::character_body),
+            _ => self.creation.species.zip(self.creation.sex),
+        }
+    }
+
+    /// The stage camera keys in view (§2.1.3): the race table's
+    /// `RaceTable_Character_Select_Camera` on the selection screen, `RaceTable_Chargen_Camera`
+    /// on the creation stages, and the gender entry's zoom variant of the same.
+    #[must_use]
+    pub fn stage_cameras(&self) -> (Option<u32>, Option<u32>) {
+        let Some((species, sex)) = self.body_in_view() else {
+            return (None, None);
+        };
+        let race = self.data.chargen.race_with_gender(species, sex);
+        let gender = race.and_then(|r| r.gender(sex));
+        match self.stage {
+            Stage::Select => (
+                race.and_then(|r| r.record.select_camera),
+                gender.and_then(|g| g.select_zoom_camera),
+            ),
+            _ => (
+                race.and_then(|r| r.record.chargen_camera),
+                gender.and_then(|g| g.chargen_zoom_camera),
+            ),
+        }
+    }
+
+    /// The camera rig in view (§2.1.3): the base and zoom frames from the race scene's
+    /// elements named by the stage cameras, turned about the figure's place; `None` when
+    /// the scene or a frame is missing (a missing zoom frame falls back to the base).
+    #[must_use]
+    pub fn camera_rig(&self) -> Option<super::scene::CameraRig> {
+        let (species, _) = self.body_in_view()?;
+        let scene = self.data.scene(species)?;
+        let (base, zoom) = self.stage_cameras();
+        let base = scene.frame_of(base?)?;
+        let zoom = zoom.and_then(|z| scene.frame_of(z)).unwrap_or(base);
+        Some(super::scene::CameraRig {
+            base: base.into(),
+            zoom: zoom.into(),
+            pivot: scene.figure_frame().position,
+        })
+    }
+
+    /// The turn buttons (§2.3): ghosted while a zoom move runs.
+    #[must_use]
+    pub fn turn_buttons(&self) -> ButtonRule {
+        if self.turntable.turn_ghosted() {
+            ButtonRule::Ghosted(None)
+        } else {
+            ButtonRule::Enabled
+        }
+    }
+
+    /// The zoom-in button (§2.3): ghosted while the zoom target is at its end.
+    #[must_use]
+    pub fn zoom_in_button(&self) -> ButtonRule {
+        if self.turntable.zoom_in_ghosted() {
+            ButtonRule::Ghosted(None)
+        } else {
+            ButtonRule::Enabled
+        }
+    }
+
+    /// The zoom-out button (§2.3).
+    #[must_use]
+    pub fn zoom_out_button(&self) -> ButtonRule {
+        if self.turntable.zoom_out_ghosted() {
+            ButtonRule::Ghosted(None)
+        } else {
+            ButtonRule::Enabled
+        }
+    }
+
+    /// A zoom button (§2.3): the timed move to `to` from the camera as it is now.
+    fn zoom_to(&mut self, to: f32, now: Instant) {
+        self.follow_camera();
+        self.turntable.update(now);
+        let rig = self.camera_rig();
+        self.turntable.zoom_to(to, rig.as_ref(), now);
+    }
+
+    /// Resets the turntable when the stage camera in view changed (a new stage, race,
+    /// gender or selected character; §2.1.3).
+    fn follow_camera(&mut self) {
+        let body = self.body_in_view();
+        let row = (self.stage == Stage::Select)
+            .then_some(self.selected)
+            .flatten();
+        let key = (self.stage, row, body);
+        if self.camera_for != Some(key) {
+            self.camera_for = Some(key);
+            self.turntable.reset();
+        }
     }
 
     /// Reports whether the figure for the current choice is still loading.
@@ -496,8 +621,9 @@ impl ScreenModel {
     fn set_stage(&mut self, stage: Stage) {
         if self.stage != stage {
             self.stage = stage;
-            self.turntable.reset_angle();
+            self.hover = false;
             self.errors.clear();
+            self.follow_camera();
         }
     }
 
@@ -700,6 +826,7 @@ impl ScreenModel {
             self.timed_out = self.pending.take();
             self.own_error(OwnText::CreateTimedOut);
         }
+        self.follow_camera();
         self.turntable.update(now);
     }
 
@@ -713,11 +840,10 @@ impl ScreenModel {
                 if i < self.rows.len() && self.stage == Stage::Select {
                     if self.selected != Some(i) {
                         self.confirm = None;
-                    }
-                    if self.selected != Some(i) {
-                        self.turntable.reset_angle();
+                        self.hover = false;
                     }
                     self.selected = Some(i);
+                    self.follow_camera();
                 }
             }
             Action::Enter => self.enter(),
@@ -778,7 +904,7 @@ impl ScreenModel {
                     && self.creation.sex != Some(sex)
                 {
                     self.creation.sex = Some(sex);
-                    self.turntable.reset_angle();
+                    self.follow_camera();
                 }
             }
             Action::Class(class) => {
@@ -820,10 +946,33 @@ impl ScreenModel {
             }
             Action::RandomName(seed) => self.random_name(seed),
             Action::Create => self.create(now),
-            Action::TurnPress(t) => self.turntable.press(t, now),
-            Action::TurnRelease(t) => self.turntable.release(t, now),
-            Action::ZoomIn => self.turntable.zoom_in(),
-            Action::ZoomOut => self.turntable.zoom_out(),
+            Action::TurnClick(t) => {
+                self.follow_camera();
+                self.turntable.turn_click(t, now);
+            }
+            Action::DragStart(x) => {
+                self.follow_camera();
+                self.turntable.drag_start(x);
+            }
+            Action::DragTo(x) => self.turntable.drag_to(x),
+            Action::DragEnd => self.turntable.drag_end(),
+            Action::Wheel(n) => {
+                self.follow_camera();
+                self.turntable.wheel(n, now);
+            }
+            Action::ZoomIn => self.zoom_to(1.0, now),
+            Action::ZoomOut => self.zoom_to(0.0, now),
+            Action::FigureHover(on) => self.hover = on && self.stage == Stage::Select,
+            Action::ToggleLock(index) => {
+                if self.stage == Stage::Appearance
+                    && self
+                        .current_avatar()
+                        .is_some_and(|d| d.control(index).is_some())
+                    && !self.creation.locked.remove(&index)
+                {
+                    self.creation.locked.insert(index);
+                }
+            }
             Action::AvatarUpdateVisible(on) => self.avatar_update_visible = on,
         }
     }
@@ -839,12 +988,24 @@ impl ScreenModel {
         };
         let nationality = self.creation.nationality.unwrap_or(0);
         let data = Arc::clone(&self.data);
+        let before = self.creation.appearance.clone();
         self.creation.appearance.randomise(
             &d,
             seed,
             &|c| data.chargen.palette_for(&c.control, nationality),
             sampler,
         );
+        // Locked controls keep their value (Tessera rule of §5.2.2 rule 4).
+        for i in &self.creation.locked {
+            match before.values.get(i) {
+                Some(v) => {
+                    self.creation.appearance.values.insert(*i, v.clone());
+                }
+                None => {
+                    self.creation.appearance.values.remove(i);
+                }
+            }
+        }
     }
 
     fn enter(&mut self) {
@@ -893,7 +1054,7 @@ impl ScreenModel {
         self.creation.species = Some(species);
         self.creation.sex = sex;
         self.creation.class = class;
-        self.turntable.reset_angle();
+        self.follow_camera();
     }
 
     fn race_class_valid(&self) -> bool {
@@ -916,6 +1077,17 @@ impl ScreenModel {
         if !keep {
             self.creation.appearance = AppearanceChoices::default();
             self.creation.appearance_for = Some((species, sex));
+            self.creation.locked = self
+                .data
+                .avatar(species, sex)
+                .map(|d| {
+                    d.controls
+                        .iter()
+                        .filter(|c| c.meta.default_locked)
+                        .map(|c| c.control.index)
+                        .collect()
+                })
+                .unwrap_or_default();
             self.creation.nationality = self.data.chargen.default_nationality(species);
             self.creation.name.clear();
         }

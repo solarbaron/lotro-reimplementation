@@ -25,6 +25,7 @@ use tessera_material::{LiquidSurface, MaterialLibrary, WaterMaterial};
 use super::liquid::SurfaceAnim;
 use tessera_world::WorldContext;
 use tessera_world::frills::{FrillObjectValues, FrillSettings};
+use tessera_world::objects::DrawFlags;
 
 /// Most objects and water surfaces kept; requests beyond it are not made.
 pub const MAX_RESOLVED: usize = 1 << 16;
@@ -42,6 +43,8 @@ pub struct ObjectAnswer {
     /// Its frill values along the 0x47 chain (`scenery.md` §8.3 rules 6–7), with the
     /// engine's default settings.
     pub frill: FrillObjectValues,
+    /// Its draw-suppression values along the chain (`entity-descriptor.md` §9).
+    pub draw: DrawFlags,
 }
 
 impl ObjectAnswer {
@@ -51,6 +54,7 @@ impl ObjectAnswer {
         Self {
             parts: Arc::from(Vec::new()),
             frill: FrillObjectValues::default(),
+            draw: DrawFlags::default(),
         }
     }
 }
@@ -89,6 +93,7 @@ impl Lookups for InstallLookups {
         ObjectAnswer {
             parts: Arc::clone(&r.parts),
             frill,
+            draw: r.draw,
         }
     }
 
@@ -357,6 +362,7 @@ mod tests {
                     opaque: false,
                     ..FrillObjectValues::default()
                 },
+                draw: DrawFlags::default(),
             }
         }
 

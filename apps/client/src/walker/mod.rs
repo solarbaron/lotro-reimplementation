@@ -62,6 +62,7 @@ pub mod parse;
 pub(crate) mod places;
 pub(crate) mod resolver;
 pub(crate) mod source;
+pub mod stage;
 pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
@@ -722,6 +723,8 @@ pub struct Walker {
     env: WorldEnv,
     /// Background lookups of sky and frill objects and water surfaces.
     resolver: Resolver,
+    /// The creation viewport's scene (`character-screens.md` §2.1.1).
+    stage: stage::StageLayer,
     water: WaterLayer,
     frills: FrillLayer,
     /// The environment of this frame.
@@ -1043,6 +1046,7 @@ impl Walker {
             systems,
             env,
             resolver,
+            stage: stage::StageLayer::default(),
             water: WaterLayer::default(),
             frills: FrillLayer::default(),
             frame_env: None,
@@ -1689,6 +1693,16 @@ impl Walker {
             self.phase_ms[0] = ms(t0, t1);
             self.phase_ms[1] = ms(t1, t2);
             self.phase_ms[2] = ms(t2, Instant::now());
+        } else if self.stage.scene().is_some() {
+            // No viewer yet, with the creation viewport's scene (`character-screens.md`
+            // §2.1.1): its parts and their textures load through the object layer, which
+            // holds no landblock before world entry.
+            let time = self.material_time();
+            self.stage
+                .update(&mut self.resolver, &mut self.objects, time);
+            let oframe = self.unviewed_frame(dt);
+            self.objects
+                .update(renderer, [0.0; 3], &oframe, &mut budget);
         } else {
             // No viewer yet (the character screens before world entry): the textures of
             // the screens' figure still load.
@@ -1958,6 +1972,27 @@ impl Walker {
     }
 
     /// How objects are chosen and drawn this frame (`walker.md` §11.4, §14.5).
+    /// The object layer's frame before world entry (no viewer): the walker's settings with
+    /// a still camera and no interior.
+    fn unviewed_frame(&self, dt: f32) -> ObjectFrame {
+        let (fps, _, _) = self.rolling.stats();
+        ObjectFrame {
+            g: self.extent(),
+            settings: self.config.distances,
+            lod: self.systems.on(System::Lod),
+            instancing: self.systems.on(System::Instancing),
+            scenery: self.systems.on(System::Scenery),
+            lit: self.systems.on(System::Lit),
+            shadows: self.systems.on(System::Shadows),
+            dt,
+            fps: if fps > 0.0 { fps as f32 } else { 60.0 },
+            camera_moved: 0.0,
+            interior: None,
+            all_interiors: self.config.interiors,
+            time: self.material_time(),
+        }
+    }
+
     fn object_frame(&self, eye: &WorldPos, dt: f32) -> ObjectFrame {
         let (fps, _, _) = self.rolling.stats();
         let moved = self.last_eye.map_or(f32::INFINITY, |l| {
@@ -2592,8 +2627,9 @@ impl Walker {
     }
 
     /// Shows the character screens' figure (`character-screens.md` §2.1, §6) or removes it
-    /// (`None`); see [`CharacterLayer::set_preview`]. Call every frame the screens are open
-    /// with their current figure ([`crate::screens::viewport::figure_job`]).
+    /// (`None`, which also removes the scene); see [`CharacterLayer::set_preview`]. Call
+    /// every frame the screens are open with their current figure
+    /// ([`crate::screens::viewport::figure_job`]).
     pub fn set_preview(
         &mut self,
         job: Option<(
@@ -2601,7 +2637,25 @@ impl Walker {
             characters::figure::LookChoices,
         )>,
     ) {
+        if job.is_none() {
+            self.stage.set_scene(None, &mut self.objects);
+        }
         self.characters.set_preview(job, Instant::now());
+    }
+
+    /// Shows the race scene around the character screens' figure (`character-screens.md`
+    /// §2.1.1), or none. Call every frame the screens are open (an unchanged scene costs a
+    /// comparison).
+    pub fn set_preview_scene(&mut self, scene: Option<Arc<crate::screens::scene::StageScene>>) {
+        self.stage.set_scene(scene, &mut self.objects);
+    }
+
+    /// The scene around the screens' figure: (objects with geometry, objects skipped,
+    /// parts referenced, lights) and whether everything has loaded.
+    #[must_use]
+    pub fn preview_scene(&self) -> Option<((usize, usize, usize, usize), bool)> {
+        self.stage.scene()?;
+        Some((self.stage.counts(), self.stage.settled(&self.objects)))
     }
 
     /// The character screens' figure: what was requested and how far it has come.
@@ -2610,13 +2664,58 @@ impl Walker {
         self.characters.preview()
     }
 
-    /// Draws the character screens' figure alone into `frame` for the creation viewport
-    /// (`character-screens.md` §2.1), as [`Walker::draw_portrait`] draws the paperdoll's:
-    /// turned by the turntable's `yaw_degrees`; `zoomed` frames the upper part of the
-    /// figure (§2.3 zoom; Tessera framing while the scene's cameras are not read, §2.1
-    /// OPEN). Returns whether a figure was drawn.
-    pub fn draw_preview(&mut self, frame: &mut Frame, yaw_degrees: f32, zoomed: bool) -> bool {
-        self.draw_alone(frame, Some(characters::PREVIEW_ID), yaw_degrees, zoomed)
+    /// Whether the screens' figure for the current request is still loading (§4.3 loading
+    /// notice and race blocker).
+    #[must_use]
+    pub fn preview_loading(&self) -> bool {
+        self.characters.preview_loading()
+    }
+
+    /// Whether the screens' figure and scene have loaded: every figure on the GPU and
+    /// posed, every part and texture the object layer holds on the GPU (or failed for
+    /// good), every scene object resolved (tests and screenshots).
+    #[must_use]
+    pub fn preview_settled(&self) -> bool {
+        self.characters.settled()
+            && self.objects.settled()
+            && self.stage.settled(&self.objects)
+            && self.resolver.pending() == 0
+    }
+
+    /// Draws the creation viewport (`character-screens.md` §2.1.1–§2.1.3) into `frame`:
+    /// with a `view`, the scene set by [`Walker::set_preview_scene`] lit by its own lights
+    /// and the viewport's ambient, the screens' figure standing at the view's figure frame
+    /// and lit like the scene, through the view's camera, on opaque black; without one
+    /// (no camera frame for the stage, §2.1.3 OPEN) the figure alone as the paperdoll's
+    /// portrait. Returns whether the figure was drawn.
+    pub fn draw_preview(&mut self, frame: &mut Frame, view: Option<&stage::StageView>) -> bool {
+        let Some((view, camera)) = view.and_then(|v| v.camera().map(|c| (*v, c))) else {
+            return self.draw_alone(frame, Some(characters::PREVIEW_ID), 0.0, false);
+        };
+        let mut draws = Vec::new();
+        let place = |scale: Vec3| view.figure_transform(scale);
+        let bounds = self.characters.placed_draws(
+            frame,
+            characters::PREVIEW_ID,
+            &place,
+            true,
+            &self.objects,
+            &mut draws,
+        );
+        let time = self.material_time() as f32;
+        let (lighting, reach) = self.stage.lighting(view.ambient, time);
+        let pass = frame.world_pass("chargen-viewport", &camera);
+        pass.premultiplied_alpha();
+        pass.clear([0.0, 0.0, 0.0, 1.0]);
+        pass.frame_lighting(lighting);
+        pass.light_reach(reach);
+        if view.scene.is_some() {
+            self.stage.draw(pass, &mut self.objects);
+        }
+        for d in draws {
+            pass.mesh(d);
+        }
+        bounds.is_some()
     }
 
     /// One figure alone into `frame` ([`Walker::draw_portrait`]).
@@ -3059,6 +3158,7 @@ impl Walker {
         }
         self.effects.shutdown();
         self.characters.shutdown(renderer, &mut self.objects);
+        self.stage.release(&mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);
         self.resolver.shutdown();

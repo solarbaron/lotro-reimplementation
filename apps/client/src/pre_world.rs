@@ -107,12 +107,26 @@ impl PreWorld {
         crate::screens::viewport::figure_job(&view, self.screens.model().data())
     }
 
+    /// The race scene around the viewport's figure (`character-screens.md` §2.1.1), when
+    /// it loaded.
+    #[must_use]
+    pub fn scene(&self) -> Option<Arc<crate::screens::scene::StageScene>> {
+        let data = self.screens.model().data();
+        let did = self.screens.viewport().scene?;
+        data.scenes.get(&did).cloned()
+    }
+
     /// What to render into the viewport this frame (`None` without the screens' layouts or
     /// while the viewport is not displayed).
     #[must_use]
     pub fn portrait(&self, ui: &Ui) -> Option<crate::character::panel::Portrait> {
         let view = self.screens.viewport();
         self.ui.as_ref()?.portrait(ui, &view)
+    }
+
+    /// Reports whether the viewport's figure is still loading (§4.3 loading notice).
+    pub fn set_figure_loading(&mut self, loading: bool) {
+        self.screens.model_mut().set_figure_loading(loading);
     }
 
     /// One action of the player (Escape: [`Action::Quit`]).
@@ -140,6 +154,9 @@ impl PreWorld {
                 for a in sui.handle_event(ui, ev, self.screens.model(), self.seed) {
                     self.screens.act(a, now);
                 }
+            }
+            for a in sui.drag_actions(ui) {
+                self.screens.act(a, now);
             }
         }
         self.scratch.clear();

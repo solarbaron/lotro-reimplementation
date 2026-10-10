@@ -70,7 +70,7 @@ use self::figure::{
 use self::motion::{Locomotion, drive, make_animator};
 use super::UploadBudget;
 use super::geometry::{MaterialPlan, TexRequest};
-use super::objects::{ObjectLayer, surface_draw};
+use super::objects::{ObjectLayer, TexLookup, surface_draw};
 use super::source::SourceShared;
 use super::view::{Anchor, Frustum};
 
@@ -1246,6 +1246,8 @@ impl CharacterLayer {
             // from its instance ID.
             seed: info.as_ref().and_then(|i| i.iid),
             chargen_stage: None,
+            chargen_action: None,
+            class: None,
         };
         let slot = (!hidden && matches!(req.body, Body::Character { .. } | Body::Object(_)))
             .then(|| self.acquire(req, look));
@@ -1519,7 +1521,7 @@ impl CharacterLayer {
             }
         }
 
-        self.attach_ready();
+        self.attach_ready(&|t| matches!(objects.texture(t), TexLookup::Pending));
 
         // Animation (ARCHITECTURE §20.3 step 6): collect the previous frame's poses, then
         // advance and submit.
@@ -1566,8 +1568,12 @@ impl CharacterLayer {
     }
 
     /// Gives entities whose requested figure became ready their render (and animation)
-    /// components; a failed figure removes them.
-    fn attach_ready(&mut self) {
+    /// components; a failed figure removes them. The screens' figure is attached only once
+    /// every texture of its surfaces is on the GPU (or failed for good): drawn earlier, its
+    /// surfaces whose textures still load are left out (a head without its composed face,
+    /// limbs without their skin), so the previous figure stays until then and the screens
+    /// show their loading notice (`character-screens.md` §4.3).
+    fn attach_ready(&mut self, texture_pending: &dyn Fn(TexRequest) -> bool) {
         // Attach figures that became ready.
         let pending: Vec<(Entity, u32)> = self
             .actors
@@ -1591,6 +1597,10 @@ impl CharacterLayer {
             let Some(SlotState::Ready(g)) = state else {
                 continue;
             };
+            let preview = self.actors.get(e).is_some_and(|a| a.preview);
+            if preview && g.textures.iter().any(|t| texture_pending(*t)) {
+                continue;
+            }
             let asset = Arc::clone(&g.asset);
             if self.store.set_render(e, CharRender { slot }).is_err() {
                 continue;
@@ -1907,6 +1917,19 @@ impl CharacterLayer {
         }
     }
 
+    /// Whether the character screens' figure for the current request is still loading
+    /// (not yet attached: building, uploading or waiting for its textures; §4.3 loading
+    /// notice).
+    #[must_use]
+    pub fn preview_loading(&self) -> bool {
+        let Some(e) = self.store.entity_for(NetId(PREVIEW_ID.0)) else {
+            return false;
+        };
+        self.actors
+            .get(e)
+            .is_some_and(|a| a.slot.is_some() && a.slot != a.attached)
+    }
+
     /// The figure the character screens show ([`CharacterLayer::set_preview`]): what was
     /// requested and how far it has come.
     #[must_use]
@@ -1927,6 +1950,26 @@ impl CharacterLayer {
         objects: &ObjectLayer,
         out: &mut Vec<MeshDraw>,
     ) -> Option<(Vec3, f32)> {
+        let yaw = if yaw.is_finite() { yaw } else { 0.0 };
+        let place = |scale: Vec3| {
+            Mat4::from_scale_rotation_translation(scale, Quat::from_rotation_z(yaw), Vec3::ZERO)
+        };
+        self.placed_draws(frame, id, &place, false, objects, out)
+    }
+
+    /// The draws of entity `id`'s figure alone with its current pose, at the transform
+    /// `place` gives for the figure's whole-body scale; `lit` draws it with the pass's
+    /// lighting (the creation viewport's scene, `character-screens.md` §2.1.1 step 5),
+    /// else unlit as a portrait. Returns the figure's bounding sphere in that frame.
+    pub fn placed_draws(
+        &self,
+        frame: &mut Frame,
+        id: EntityId,
+        place: &dyn Fn(Vec3) -> Mat4,
+        lit: bool,
+        objects: &ObjectLayer,
+        out: &mut Vec<MeshDraw>,
+    ) -> Option<(Vec3, f32)> {
         let e = self.store.entity_for(NetId(id.0))?;
         let render = self.store.render(e)?;
         let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
@@ -1939,9 +1982,7 @@ impl CharacterLayer {
         } else {
             Vec3::ONE
         };
-        let yaw = if yaw.is_finite() { yaw } else { 0.0 };
-        let world =
-            Mat4::from_scale_rotation_translation(scale, Quat::from_rotation_z(yaw), Vec3::ZERO);
+        let world = place(scale);
         let pose: Option<PoseView<'_>> = match self.store.anim(e) {
             Some(anim) => self
                 .scheduler
@@ -1968,14 +2009,14 @@ impl CharacterLayer {
                 }
             };
             for (i, plan) in part.plans.iter().enumerate() {
-                let Some((material, lit)) =
-                    surface_draw(plan, &|t| objects.texture(t), false, 1.0, false)
+                let Some((material, surface)) =
+                    surface_draw(plan, &|t| objects.texture(t), lit, 1.0, false)
                 else {
                     continue;
                 };
                 let mut d = MeshDraw::new(part.mesh, transform, material)
                     .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
-                    .with_lit(lit);
+                    .with_lit(surface);
                 if part.skinned
                     && let Some(p) = palette
                 {
@@ -2087,6 +2128,7 @@ mod tests {
             entity: Some(Did(0x4700_1000)),
             controls: vec![
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(
                         0,
                         ControlKind::Style {
@@ -2103,6 +2145,7 @@ mod tests {
                     default: Some(ControlValue::Style(0)),
                 },
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(
                         1,
                         ControlKind::BodyScale {
@@ -2126,6 +2169,7 @@ mod tests {
                 ..ScreenPids::default()
             },
             stage_keys: crate::screens::data::StageKeys::default(),
+            ..Default::default()
         })
     }
 
@@ -2148,6 +2192,8 @@ mod tests {
             bone_scale: None,
             seed: None,
             chargen_stage: Some(stage),
+            chargen_action: None,
+            class: None,
         };
         let look = LookChoices {
             appearance_values: vec![(
@@ -2229,10 +2275,10 @@ mod tests {
         let f = l.figure_of(EntityId(5)).expect("figure");
         assert_eq!(
             f.look.styles,
-            vec![tessera_mesh::assembly::StyleChoice {
-                key: 0x1000_0009,
-                modifier: 0.02
-            }]
+            vec![tessera_mesh::assembly::StyleChoice::modifier(
+                0x1000_0009,
+                0.02
+            )]
         );
         assert_eq!(f.request.bone_scale, Some(0.75));
         assert_eq!(f.request.avatar_height, None);
@@ -2566,7 +2612,7 @@ mod tests {
         assert!(!l.settled(), "figure queued");
         l.start_jobs(); // no context: the figure fails
         l.poll_jobs();
-        l.attach_ready();
+        l.attach_ready(&|_| false);
         l.collect_shown(None);
         assert!(!l.shows_figure(10));
         assert!(l.shown_figures().is_empty());

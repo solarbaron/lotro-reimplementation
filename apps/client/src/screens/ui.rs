@@ -8,11 +8,16 @@
 //!
 //! What the data does not name is not bound (OPEN in `character-screens.md` §3, §5): the
 //! selection screen's quit, options and plugin-manager buttons and its slots label, the
-//! randomise button, the group headers of the control list, the racial-trait rows. The
-//! client's start-up maps Escape to [`Action::Quit`]. The viewport element hosts external
-//! content ([`VIEWPORT_CONTENT_ID`], `render.md` §6.10): the walker renders the screens'
-//! figure into a target of its size ([`ScreenUi::portrait`]), what it shows is
-//! [`super::viewport`].
+//! randomise button, the racial-trait rows. The client's start-up maps Escape to
+//! [`Action::Quit`]. The viewport element hosts external content ([`VIEWPORT_CONTENT_ID`],
+//! `render.md` §6.10): the walker renders the race scene and the figure into a target of
+//! its size ([`ScreenUi::portrait`]) with the viewport's ambient input read from the layout;
+//! drags across it turn the camera and the wheel zooms (§2.3). The turn buttons act on
+//! every hot click; the turn and zoom buttons are ghosted by the model's rules (§2.3). The
+//! gender group's selection follows the chosen sex and the group hides for a race with one
+//! gender entry (§4.1). The appearance controls (§5.2.2) are built in the list order with a
+//! header per group, each showing its own name in the template's label part and its current
+//! choice in the template's current-choice part, its arrows and lock button bound.
 //!
 //! **Tessera rules** (OPEN in `character-screens.md` §4.2): a character row's description
 //! is Tessera's own line "Level *n* *race* *class*" with the parts the session told (the
@@ -157,6 +162,8 @@ label_table! {
         male = "CharGen_Male_Button",
         /// Race: female.
         female = "CharGen_Female_Button",
+        /// Race: the gender group (`CharGen_Gender_GroupBox`, §4.1).
+        gender_group = "CharGen_Gender_GroupBox",
         /// Race list.
         race_list = "CharGen_Race_Select_Listbox",
         /// Race entry template.
@@ -201,6 +208,22 @@ label_table! {
         bone_slider_template = "CharGen_BoneSliderSystemChoice_BaseField",
         /// Presets control template.
         presets_template = "CharGen_PresetsAppearanceChoice_BaseField",
+        /// A control template's label part (§5.2.2).
+        control_label = "AppearanceUIElement_Label",
+        /// A control template's current-choice text (§5.2.2 rule 2).
+        control_choice = "AppearanceUIElement_CurrentChoice",
+        /// A control template's previous arrow.
+        control_left = "AppearanceUIElement_LeftButton",
+        /// A control template's next arrow.
+        control_right = "AppearanceUIElement_RightButton",
+        /// A control template's lock button (§5.2.2 rule 4).
+        control_lock = "AppearanceUIElement_LockButton",
+        /// The body-scale template's label part.
+        bone_label = "BoneScalingAppearanceUIElement_Label",
+        /// The body-scale template's slider part.
+        bone_slider = "BoneScalingAppearanceUIElement_Slider",
+        /// The colour template's picker part.
+        colour_choice = "ColorChoice",
         /// The nationality text above the controls.
         nationality_text = "CharGen_Appearance_Nationality_Text",
         /// The name field.
@@ -255,6 +278,14 @@ pub trait ScreenTexts {
         let _ = text;
         None
     }
+
+    /// The plain text of a format string reference with numeric arguments (variable ID,
+    /// value); `None` shows Tessera's own form. The default resolves nothing;
+    /// [`super::data::InstallTexts`] resolves through the install's string tables.
+    fn format(&self, info: &StringInfo, args: &[(u32, i64)]) -> Option<String> {
+        let _ = (info, args);
+        None
+    }
 }
 
 impl<F: Fn(&StringInfo) -> Option<String>> ScreenTexts for F {
@@ -270,6 +301,93 @@ enum ControlWidget {
     Slider(Slider),
     Swatch(SwatchGrid),
     Sliders { which: Stepper, value: Slider },
+}
+
+impl ControlWidget {
+    fn release(self, ui: &mut Ui) {
+        match self {
+            Self::Stepper(s) => s.release(ui),
+            Self::Slider(s) => s.release(ui),
+            Self::Swatch(s) => s.release(ui),
+            Self::Sliders { which, value } => {
+                which.release(ui);
+                value.release(ui);
+            }
+        }
+    }
+}
+
+/// One appearance control in the list: its template instance, widgets and lock button.
+#[derive(Debug)]
+struct ControlRow {
+    index: usize,
+    widget: ControlWidget,
+    lock: Option<ElementKey>,
+}
+
+/// The format token of the current-choice text and its two argument IDs
+/// (`character-screens.md` §5.2.2 rule 2, CS24: token 0x0E5568D5 of table 0x250001BB with
+/// 0x047D3D75 = the number of the current choice and 0x005662B5 = the number of choices;
+/// observed IDs, Tessera's "i / n" when the install does not resolve them).
+pub const CHOICE_FORMAT: (u32, u32) = (0x0E55_68D5, 0x2500_01BB);
+/// The current choice's argument ID.
+pub const CHOICE_ARG_CURRENT: u32 = 0x047D_3D75;
+/// The number of choices' argument ID.
+pub const CHOICE_ARG_COUNT: u32 = 0x0056_62B5;
+
+/// The recorded ambient input of `chargen_viewport` (0xFF281E19, §2.1), used when the
+/// layout's value cannot be read: R 0x28, G 0x1E, B 0x19.
+pub const RECORDED_AMBIENT: [f32; 3] = [40.0 / 255.0, 30.0 / 255.0, 25.0 / 255.0];
+
+/// The current-choice text of a control showing choice `current` (from 1) of `count`
+/// (§5.2.2 rule 2): the install's format, else "*current* / *count*".
+#[must_use]
+pub fn choice_text(texts: &dyn ScreenTexts, current: usize, count: usize) -> String {
+    let info = StringInfo {
+        source: tessera_formats::string_info::StringSource::Table {
+            token: CHOICE_FORMAT.0,
+            table: Did(CHOICE_FORMAT.1),
+        },
+        args: None,
+    };
+    let args = [
+        (
+            CHOICE_ARG_CURRENT,
+            i64::try_from(current).unwrap_or(i64::MAX),
+        ),
+        (CHOICE_ARG_COUNT, i64::try_from(count).unwrap_or(i64::MAX)),
+    ];
+    texts
+        .format(&info, &args)
+        .unwrap_or_else(|| format!("{current} / {count}"))
+}
+
+/// The current choice of a control as (number from 1, count) for its current-choice text
+/// (§5.2.2 rule 2): a style's block *i* of *n*; a face layer's value *v* of *m* options
+/// numbered from the minimum (from 0: *v* + 1 of *m* + 1); a preset *i* of the presets.
+#[must_use]
+pub fn current_choice(
+    choices: &ControlChoices,
+    value: Option<&ControlValue>,
+) -> Option<(usize, usize)> {
+    match (choices, value) {
+        (ControlChoices::Styles { variants, .. }, Some(ControlValue::Style(i))) => {
+            Some((*i as usize + 1, variants.len()))
+        }
+        (ControlChoices::Options(o), Some(ControlValue::Option(v))) => {
+            let max = o.iter().copied().max().unwrap_or(0) as usize;
+            let from_zero = o.first() == Some(&0);
+            Some(if from_zero {
+                (*v as usize + 1, max + 1)
+            } else {
+                (*v as usize, max)
+            })
+        }
+        (ControlChoices::Presets(p), Some(ControlValue::Preset(i))) => {
+            Some((*i as usize + 1, p.len()))
+        }
+        _ => None,
+    }
 }
 
 /// A filled choice list: the keys of its entries (for clicks), the entries, and a stamp of
@@ -318,8 +436,12 @@ pub struct ScreenUi {
     nationalities: ListCache<u32>,
     errors: Vec<String>,
     controls_for: Option<ControlsFor>,
-    controls: Vec<(usize, ElementKey, ControlWidget)>,
+    controls: Vec<ControlRow>,
     name_shown: String,
+    /// The viewport's ambient input (`UICore_Viewport_AmbientLight`, §2.1.1 step 4).
+    ambient: [f32; 3],
+    /// A drag across the viewport runs (§2.3).
+    dragging: bool,
     race_info: (Vec<ElementKey>, Option<u64>),
     class_info: (Vec<ElementKey>, Option<u64>),
     /// Layouts or elements that could not be opened or found.
@@ -447,6 +569,7 @@ impl ScreenUi {
             ids.notice_players,
             ids.male,
             ids.female,
+            ids.gender_group,
             ids.race_list,
             ids.race_info,
             ids.class_list,
@@ -492,6 +615,7 @@ impl ScreenUi {
             ids.continue_button,
             ids.zoom_in,
             ids.zoom_out,
+            ids.control_lock,
             ids.avatar_toggle_button,
             ids.new,
             ids.delete,
@@ -506,10 +630,19 @@ impl ScreenUi {
         {
             ui.register_handler(id, click);
         }
+        // Turn buttons act on every hot click (§2.3); the viewport takes drags and the
+        // wheel.
+        let hot = ui.vocab().msgs.button_hot_click;
         for id in [ids.turn_left, ids.turn_right].into_iter().flatten() {
+            ui.register_handler(id, hot);
+        }
+        if let Some(id) = ids.viewport {
+            let scroll = ui.vocab().msgs.mouse_scroll;
             ui.register_handler(id, press);
             ui.register_handler(id, release);
+            ui.register_handler(id, scroll);
         }
+        s.ambient = RECORDED_AMBIENT;
         for id in [
             ids.character_list,
             ids.race_list,
@@ -573,8 +706,8 @@ impl ScreenUi {
     }
 
     /// What the walker renders into the viewport this frame: its content id, its layout
-    /// box's size, the turntable's turn and zoom (`view`); `None` while the viewport is
-    /// not displayed or has no size.
+    /// box's size and the stage view of `view` with the viewport's ambient input; `None`
+    /// while the viewport is not displayed or has no size.
     #[must_use]
     pub fn portrait(
         &self,
@@ -591,10 +724,11 @@ impl ScreenUi {
         Some(crate::character::panel::Portrait {
             id: VIEWPORT_CONTENT_ID,
             size: (w, h),
-            yaw: view.yaw_degrees,
-            figure: crate::character::panel::PortraitFigure::Screens {
-                zoomed: view.zoomed,
-            },
+            yaw: view.turn,
+            figure: crate::character::panel::PortraitFigure::Screens(super::viewport::stage_view(
+                view,
+                self.ambient,
+            )),
         })
     }
 
@@ -672,6 +806,16 @@ impl ScreenUi {
         self.apply_button(ui, ids.delete, &model.delete_button());
         self.apply_button(ui, ids.enter, &model.enter_button());
         self.show(ui, ids.turntable, true);
+        self.apply_button(ui, ids.turn_left, &model.turn_buttons());
+        self.apply_button(ui, ids.turn_right, &model.turn_buttons());
+        self.apply_button(ui, ids.zoom_in, &model.zoom_in_button());
+        self.apply_button(ui, ids.zoom_out, &model.zoom_out_button());
+        // The viewport's ambient input, from the layout (§2.1.1 step 4).
+        if let (Some(k), Some(pid)) = (self.el(ids.viewport), model.data().pids.viewport_ambient)
+            && let Some(PropertyValue::Colour([b, g, r, _])) = ui.property(k, pid)
+        {
+            self.ambient = [r, g, b].map(|c| f32::from(*c) / 255.0);
+        }
         self.show(ui, ids.avatar_toggle, model.shows_avatar_update_toggle());
         if let Some(k) = self.el(ids.avatar_toggle_button) {
             let st = ui.vocab().states;
@@ -836,28 +980,7 @@ impl ScreenUi {
                     ],
                 );
             }
-            let race = data.chargen.race(species);
-            let has = |x: u32| race.is_some_and(|r| r.gender(x).is_some());
-            let male = tessera_gamedata::GENDER_MALE;
-            let female = tessera_gamedata::GENDER_FEMALE;
-            self.apply_button(
-                ui,
-                ids.male,
-                &if has(male) {
-                    ButtonRule::Enabled
-                } else {
-                    ButtonRule::Ghosted(None)
-                },
-            );
-            self.apply_button(
-                ui,
-                ids.female,
-                &if has(female) {
-                    ButtonRule::Enabled
-                } else {
-                    ButtonRule::Ghosted(None)
-                },
-            );
+            self.sync_gender(ui, model);
 
             // Nationality and appearance (§5).
             let nats = data.chargen.nationalities_for(species);
@@ -888,7 +1011,7 @@ impl ScreenUi {
                     .and_then(|(_, n)| n.name.as_ref());
                 ui.set_text(k, Some(text(name)));
             }
-            self.sync_controls(ui, model);
+            self.sync_controls(ui, model, texts);
         }
 
         // Name field (§5.3): shown text follows the model unless the player is typing.
@@ -928,7 +1051,44 @@ impl ScreenUi {
         }
     }
 
-    fn sync_controls(&mut self, ui: &mut Ui, model: &ScreenModel) {
+    /// The gender group (§4.1, CS27): the group shows exactly when the race has more than
+    /// one gender entry; its selection (`UICore_GroupBox_selected_button`, which lights the
+    /// selected button and puts the other in `normal`) follows the chosen sex, the male
+    /// button for a race with one entry.
+    fn sync_gender(&self, ui: &mut Ui, model: &ScreenModel) {
+        let ids = self.refs.ids;
+        let Some(species) = model.creation().species else {
+            return;
+        };
+        let several = model
+            .data()
+            .chargen
+            .race(species)
+            .is_some_and(|r| r.genders.len() > 1);
+        self.show(ui, ids.gender_group, several);
+        let button = match model.creation().sex {
+            Some(tessera_gamedata::GENDER_FEMALE) if several => ids.female,
+            _ => ids.male,
+        };
+        let (Some(group), Some(button)) = (self.el(ids.gender_group), button) else {
+            return;
+        };
+        let pid = ui.vocab().pids.gb_selected;
+        let current = match ui.property(group, pid) {
+            Some(PropertyValue::Enum(k)) => Some(*k),
+            _ => None,
+        };
+        if current != Some(button) {
+            ui.set_property(group, pid, PropertyValue::Enum(button));
+        }
+    }
+
+    /// The appearance controls (§5.2, §5.2.2): built when the body or nationality changes,
+    /// in the list order (ungrouped controls, then one header per group key in ascending
+    /// order with its controls), each from its kind's template with its own name in the
+    /// label part, the template's arrows and current-choice text bound to its value, and its
+    /// lock button lit when the control starts locked; values follow the model every frame.
+    fn sync_controls(&mut self, ui: &mut Ui, model: &ScreenModel, texts: &dyn ScreenTexts) {
         let ids = self.refs.ids;
         let body = model
             .creation()
@@ -939,16 +1099,8 @@ impl ScreenUi {
             return;
         };
         if body != self.controls_for {
-            for (_, _, w) in self.controls.drain(..) {
-                match w {
-                    ControlWidget::Stepper(s) => s.release(ui),
-                    ControlWidget::Slider(s) => s.release(ui),
-                    ControlWidget::Swatch(s) => s.release(ui),
-                    ControlWidget::Sliders { which, value } => {
-                        which.release(ui);
-                        value.release(ui);
-                    }
-                }
+            for row in self.controls.drain(..) {
+                row.widget.release(ui);
             }
             ui.list_clear(list);
             self.controls_for = body;
@@ -957,57 +1109,27 @@ impl ScreenUi {
             };
             let layout = self.refs.layouts.appearance;
             let nationality = model.creation().nationality.unwrap_or(0);
-            for c in &detail.controls {
-                let tpl_id = match c.choices {
-                    ControlChoices::Styles { .. } => ids.apr_template,
-                    ControlChoices::Options(_) => ids.compositor_template,
-                    ControlChoices::Palette(_) => ids.dyemap_template,
-                    ControlChoices::Range { .. } => ids.bone_scaling_template,
-                    ControlChoices::Sliders { .. } => ids.bone_slider_template,
-                    ControlChoices::Presets(_) => ids.presets_template,
-                    ControlChoices::Nothing => None,
-                };
-                let Some(tpl) = template(layout, tpl_id) else {
+            let mut shown_group: Option<u32> = None;
+            for i in detail.list_order() {
+                let Some(c) = detail.controls.get(i) else {
                     continue;
                 };
-                let Ok(host) = ui.create_element(None, Did(tpl.layout), tpl.element) else {
-                    continue;
-                };
-                if ui.list_add(list, host, None).is_err() {
-                    ui.destroy(host);
-                    continue;
-                }
-                let label = format!("{}", c.control.index + 1);
-                let w = match &c.choices {
-                    ControlChoices::Styles { variants, .. } => {
-                        Stepper::build(ui, host, &label, variants.len(), 0)
-                            .map(ControlWidget::Stepper)
-                    }
-                    ControlChoices::Options(o) => {
-                        Stepper::build(ui, host, &label, o.len(), 0).map(ControlWidget::Stepper)
-                    }
-                    ControlChoices::Presets(p) => {
-                        Stepper::build(ui, host, &label, p.len(), 0).map(ControlWidget::Stepper)
-                    }
-                    ControlChoices::Range { min, max } => {
-                        Slider::build(ui, host, *min, *max, *min).map(ControlWidget::Slider)
-                    }
-                    ControlChoices::Palette(_) => model
+                // A group header before the first control of each group (§5.2.2 rule 3).
+                if let Some(g) = c.control.group.filter(|g| *g != 0)
+                    && shown_group != Some(g)
+                {
+                    shown_group = Some(g);
+                    let name = model
                         .data()
-                        .chargen
-                        .palette_for(&c.control, nationality)
-                        .and_then(|p| SwatchGrid::build(ui, host, ImageRef::Did(p.0), (64, 64)))
-                        .map(ControlWidget::Swatch),
-                    ControlChoices::Sliders { count } => {
-                        Stepper::build(ui, host, &label, *count, 0).and_then(|which| {
-                            Slider::build(ui, host, 0.0, 255.0, 128.0)
-                                .map(|value| ControlWidget::Sliders { which, value })
-                        })
-                    }
-                    ControlChoices::Nothing => None,
-                };
-                if let Some(w) = w {
-                    self.controls.push((c.control.index, host, w));
+                        .group_names
+                        .get(&g)
+                        .and_then(|i| texts.text(i))
+                        .unwrap_or_default();
+                    self.add_group_header(ui, list, &name);
+                }
+                if let Some(row) = self.add_control(ui, list, layout, model, c, nationality, texts)
+                {
+                    self.controls.push(row);
                 }
             }
         }
@@ -1015,10 +1137,11 @@ impl ScreenUi {
         let Some(detail) = model.current_avatar() else {
             return;
         };
-        for (index, _, w) in &mut self.controls {
-            let v = model.creation().appearance.value(detail, *index);
-            let c = detail.control(*index);
-            match (w, v, c.map(|c| &c.choices)) {
+        let st = ui.vocab().states;
+        for row in &mut self.controls {
+            let v = model.creation().appearance.value(detail, row.index);
+            let c = detail.control(row.index);
+            match (&mut row.widget, v, c.map(|c| &c.choices)) {
                 (ControlWidget::Stepper(s), Some(ControlValue::Style(i)), _) => {
                     let n = s.count();
                     s.set(ui, *i as usize, n);
@@ -1051,7 +1174,147 @@ impl ScreenUi {
                 }
                 _ => {}
             }
+            // The current-choice text (§5.2.2 rule 2).
+            if let (ControlWidget::Stepper(s), Some(c)) = (&mut row.widget, c)
+                && let Some((cur, n)) = current_choice(&c.choices, v)
+            {
+                let t = choice_text(texts, cur, n);
+                // `Stepper::set` writes its own "i / n"; the install's text replaces it.
+                s.set_value_text(ui, Some(t));
+            }
+            if let Some(k) = row.lock {
+                let locked = model.creation().locked.contains(&row.index);
+                ui.switch_state(k, if locked { st.highlight } else { st.normal });
+            }
         }
+    }
+
+    /// A group header row (§5.2.2 rule 3) at the end of `list` showing `name`: the style
+    /// template with only its label part shown (Tessera rule, `character-screens.md`
+    /// §5.2.2 OPEN: the header's own layout is named by its DID only).
+    fn add_group_header(&mut self, ui: &mut Ui, list: ElementKey, name: &str) {
+        let ids = self.refs.ids;
+        let Some(tpl) = template(self.refs.layouts.appearance, ids.apr_template) else {
+            return;
+        };
+        let Ok(host) = ui.create_element(None, Did(tpl.layout), tpl.element) else {
+            return;
+        };
+        if ui.list_add(list, host, None).is_err() {
+            ui.destroy(host);
+            return;
+        }
+        for id in [
+            ids.control_choice,
+            ids.control_left,
+            ids.control_right,
+            ids.control_lock,
+        ] {
+            if let Some(k) = id.and_then(|id| find_below(ui, host, id)) {
+                ui.set_shown(k, false);
+            }
+        }
+        match ids.control_label.and_then(|id| find_below(ui, host, id)) {
+            Some(k) => ui.set_text(k, Some(name.to_owned())),
+            None => {
+                let _ = Stepper::build(ui, host, name, 0, 0).map(|s| {
+                    ui.set_shown(s.prev, false);
+                    ui.set_shown(s.next, false);
+                    s.release(ui);
+                });
+            }
+        }
+    }
+
+    /// One control row (§5.2, §5.2.2) at the end of `list`.
+    #[allow(clippy::too_many_arguments)]
+    fn add_control(
+        &self,
+        ui: &mut Ui,
+        list: ElementKey,
+        layout: Option<u32>,
+        model: &ScreenModel,
+        c: &super::controls::ControlDetail,
+        nationality: u32,
+        texts: &dyn ScreenTexts,
+    ) -> Option<ControlRow> {
+        let ids = self.refs.ids;
+        let tpl_id = match c.choices {
+            ControlChoices::Styles { .. } => ids.apr_template,
+            ControlChoices::Options(_) => ids.compositor_template,
+            ControlChoices::Palette(_) => ids.dyemap_template,
+            ControlChoices::Range { .. } => ids.bone_scaling_template,
+            ControlChoices::Sliders { .. } => ids.bone_slider_template,
+            ControlChoices::Presets(_) => ids.presets_template,
+            ControlChoices::Nothing => None,
+        };
+        let tpl = template(layout, tpl_id)?;
+        let host = ui.create_element(None, Did(tpl.layout), tpl.element).ok()?;
+        if ui.list_add(list, host, None).is_err() {
+            ui.destroy(host);
+            return None;
+        }
+        let part = |ui: &Ui, id: Option<u32>| id.and_then(|id| find_below(ui, host, id));
+        // The control's own name (§5.2.2 rule 1); the colour template's layout text is a
+        // placeholder that is always replaced.
+        let name = c
+            .meta
+            .label
+            .as_ref()
+            .and_then(|i| texts.text(i))
+            .unwrap_or_else(|| format!("{}", c.control.index + 1));
+        let label = match c.choices {
+            ControlChoices::Range { .. } => part(ui, ids.bone_label),
+            _ => part(ui, ids.control_label),
+        };
+        if let Some(k) = label {
+            ui.set_text(k, Some(name.clone()));
+        }
+        let lock = part(ui, ids.control_lock);
+        let arrows = (
+            part(ui, ids.control_left),
+            part(ui, ids.control_right),
+            part(ui, ids.control_choice),
+        );
+        let stepper = |ui: &mut Ui, count: usize| match arrows {
+            (Some(prev), Some(next), value) => {
+                let mut s = Stepper::bind(ui, host, prev, next, value, count);
+                s.label = label;
+                Some(s)
+            }
+            _ => Stepper::build(ui, host, &name, count, 0),
+        };
+        let widget = match &c.choices {
+            ControlChoices::Styles { variants, .. } => {
+                stepper(ui, variants.len()).map(ControlWidget::Stepper)
+            }
+            ControlChoices::Options(o) => stepper(ui, o.len()).map(ControlWidget::Stepper),
+            ControlChoices::Presets(p) => stepper(ui, p.len()).map(ControlWidget::Stepper),
+            ControlChoices::Range { min, max } => {
+                let at = part(ui, ids.bone_slider).unwrap_or(host);
+                Slider::build(ui, at, *min, *max, *min).map(ControlWidget::Slider)
+            }
+            ControlChoices::Palette(_) => {
+                let at = part(ui, ids.colour_choice).unwrap_or(host);
+                model
+                    .data()
+                    .chargen
+                    .palette_for(&c.control, nationality)
+                    .and_then(|p| SwatchGrid::build(ui, at, ImageRef::Did(p.0), (64, 64)))
+                    .map(ControlWidget::Swatch)
+            }
+            ControlChoices::Sliders { count } => Stepper::build(ui, host, &name, *count, 0)
+                .and_then(|which| {
+                    Slider::build(ui, host, 0.0, 255.0, 128.0)
+                        .map(|value| ControlWidget::Sliders { which, value })
+                }),
+            ControlChoices::Nothing => None,
+        }?;
+        Some(ControlRow {
+            index: c.control.index,
+            widget,
+            lock,
+        })
     }
 
     /// Turns one UI event into the player's actions (`seed` seeds random names and the
@@ -1065,13 +1328,23 @@ impl ScreenUi {
     ) -> Vec<Action> {
         let mut out = Vec::new();
         let ids = self.refs.ids;
-        // Control widgets first (they listen on their own code elements).
+        // Control widgets first (they listen on their own code elements and on the
+        // templates' arrows).
         if let Some(detail) = model.current_avatar() {
-            for (index, _, w) in &mut self.controls {
-                let Some(c) = detail.control(*index) else {
+            for row in &mut self.controls {
+                let index = row.index;
+                let Some(c) = detail.control(index) else {
                     continue;
                 };
-                let v = match (w, &c.choices) {
+                // A click on the row's lock button (§5.2.2 rule 4, Tessera rule).
+                if let (UiEvent::Game { message }, Some(lock)) = (ev, row.lock)
+                    && message.msg == ui.vocab().msgs.button_click
+                    && message.source == lock
+                {
+                    out.push(Action::ToggleLock(index));
+                    continue;
+                }
+                let v = match (&mut row.widget, &c.choices) {
                     (ControlWidget::Stepper(s), ControlChoices::Styles { .. }) => s
                         .handle_event(ui, ev)
                         .map(|i| ControlValue::Style(u32::try_from(i).unwrap_or(0))),
@@ -1104,7 +1377,7 @@ impl ScreenUi {
                                 .handle_event(ui, ev)
                                 .or_else(|| value.update(ui))
                                 .and_then(|f| {
-                                    match model.creation().appearance.value(detail, *index) {
+                                    match model.creation().appearance.value(detail, index) {
                                         Some(ControlValue::Sliders(b)) => {
                                             let mut b = b.clone();
                                             let byte = f.round().clamp(0.0, 255.0) as u8;
@@ -1119,7 +1392,7 @@ impl ScreenUi {
                     _ => None,
                 };
                 if let Some(v) = v {
-                    out.push(Action::Control(*index, v));
+                    out.push(Action::Control(index, v));
                 }
             }
         }
@@ -1157,20 +1430,36 @@ impl ScreenUi {
                 None
             };
             out.extend(a);
-        } else if message.msg == msgs.mouse_press || message.msg == msgs.mouse_release {
-            let turn = if src == ids.turn_left {
-                Some(Turn::Left)
+        } else if message.msg == msgs.button_hot_click {
+            if src == ids.turn_left {
+                out.push(Action::TurnClick(Turn::Left));
             } else if src == ids.turn_right {
-                Some(Turn::Right)
-            } else {
-                None
-            };
-            if let Some(t) = turn {
-                out.push(if message.msg == msgs.mouse_press {
-                    Action::TurnPress(t)
-                } else {
-                    Action::TurnRelease(t)
-                });
+                out.push(Action::TurnClick(Turn::Right));
+            }
+        } else if src == ids.viewport && src.is_some() {
+            // Drags and the wheel over the viewport (§2.3).
+            let left = message
+                .arg
+                .command
+                .as_ref()
+                .is_some_and(|c| c.mouse_button() == 1);
+            if message.msg == msgs.mouse_press && left {
+                self.dragging = true;
+                out.push(Action::DragStart(message.arg.pos.0 as f32));
+            } else if message.msg == msgs.mouse_release && self.dragging {
+                self.dragging = false;
+                out.push(Action::DragEnd);
+            } else if message.msg == msgs.mouse_scroll
+                && let Some(c) = &message.arg.command
+            {
+                let n = match &*c.name {
+                    tessera_ui::vocab::commands::SCROLL_UP => 1.0,
+                    tessera_ui::vocab::commands::SCROLL_DOWN => -1.0,
+                    _ => 0.0,
+                };
+                if n != 0.0 {
+                    out.push(Action::Wheel(n));
+                }
             }
         } else if message.msg == msgs.listbox_new_selection {
             let pick = |ui: &Ui, cache: &ListCache<u32>| {
@@ -1208,21 +1497,35 @@ impl ScreenUi {
         out
     }
 
+    /// The drag across the viewport (§2.3): while it runs, the pointer's column in the
+    /// viewport's frame (call once per frame after the UI's events); a drag whose capture
+    /// was lost ends.
+    pub fn drag_actions(&mut self, ui: &Ui) -> Vec<Action> {
+        if !self.dragging {
+            return Vec::new();
+        }
+        let Some(k) = self.el(self.refs.ids.viewport) else {
+            self.dragging = false;
+            return vec![Action::DragEnd];
+        };
+        if ui.captured() != Some(k) {
+            self.dragging = false;
+            return vec![Action::DragEnd];
+        }
+        let Some((x, _)) = ui.pointer() else {
+            return Vec::new();
+        };
+        let left = ui.absolute_layout_box(k).l;
+        vec![Action::DragTo((x - left) as f32)]
+    }
+
     /// Closes the four layouts.
     pub fn close(self, ui: &mut Ui) {
         if let Some(k) = self.el(self.refs.ids.viewport) {
             ui.set_external_content(k, None);
         }
-        for (_, w) in self.controls.into_iter().map(|(_, k, w)| (k, w)) {
-            match w {
-                ControlWidget::Stepper(s) => s.release(ui),
-                ControlWidget::Slider(s) => s.release(ui),
-                ControlWidget::Swatch(s) => s.release(ui),
-                ControlWidget::Sliders { which, value } => {
-                    which.release(ui);
-                    value.release(ui);
-                }
-            }
+        for row in self.controls {
+            row.widget.release(ui);
         }
         for k in self.roots.into_values() {
             ui.destroy(k);

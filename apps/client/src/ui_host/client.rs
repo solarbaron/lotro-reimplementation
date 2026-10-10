@@ -275,7 +275,11 @@ impl ClientUi {
             pre.frame(world, Some(&mut ui), &events, now)
         };
         match state {
-            crate::pre_world::PreWorldState::Open => walker.set_preview(pre.figure_job()),
+            crate::pre_world::PreWorldState::Open => {
+                walker.set_preview(pre.figure_job());
+                walker.set_preview_scene(pre.scene());
+                pre.set_figure_loading(walker.preview_loading());
+            }
             crate::pre_world::PreWorldState::Entered(name) => {
                 tracing::info!(character = %name, "entered the world from the character screens");
                 host.collect_screen_events(false);
@@ -683,8 +687,8 @@ impl ClientUi {
                 crate::character::panel::PortraitFigure::Player => {
                     walker.draw_portrait(frame, p.yaw)
                 }
-                crate::character::panel::PortraitFigure::Screens { zoomed } => {
-                    walker.draw_preview(frame, p.yaw, zoomed)
+                crate::character::panel::PortraitFigure::Screens(view) => {
+                    walker.draw_preview(frame, view.as_ref())
                 }
             });
         }

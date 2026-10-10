@@ -268,20 +268,38 @@ pub fn creation_controls(
         .collect()
 }
 
-/// Groups controls under their `AppearanceUI_Group` headers: groups in the order their
-/// first control appears, controls in stored order within a group (Tessera reading of
-/// "in stored order, grouped", `character-screens.md` §5.2).
+/// Groups controls for the list of `character-screens.md` §5.2 (BIN, CS25): first the
+/// controls without `AppearanceUI_Group` (or with group 0) in stored order, as one group
+/// without a header (`group` `None`, listed only when it has controls), then one group per
+/// group key that has controls, in ascending key order, each holding its controls in stored
+/// order.
 #[must_use]
 pub fn group_controls(controls: &[AppearanceControl]) -> Vec<ControlGroup> {
+    let ungrouped = |c: &&AppearanceControl| c.group.is_none_or(|g| g == 0);
     let mut out: Vec<ControlGroup> = Vec::new();
-    for c in controls {
-        match out.iter_mut().find(|g| g.group == c.group) {
-            Some(g) => g.controls.push(*c),
-            None => out.push(ControlGroup {
-                group: c.group,
-                controls: vec![*c],
-            }),
-        }
+    let first: Vec<AppearanceControl> = controls.iter().filter(ungrouped).copied().collect();
+    if !first.is_empty() {
+        out.push(ControlGroup {
+            group: None,
+            controls: first,
+        });
+    }
+    let mut keys: Vec<u32> = controls
+        .iter()
+        .filter(|c| !ungrouped(c))
+        .filter_map(|c| c.group)
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    for k in keys {
+        out.push(ControlGroup {
+            group: Some(k),
+            controls: controls
+                .iter()
+                .filter(|c| c.group == Some(k))
+                .copied()
+                .collect(),
+        });
     }
     out
 }

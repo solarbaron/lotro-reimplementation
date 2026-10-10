@@ -40,8 +40,10 @@
 //! tint hair and skin with them (`appearance.md` §3.5).
 //!
 //! A figure on a character screen ([`FigureRequest::chargen_stage`]) carries its
-//! `CharGen_Stage` from the start and is not placed in a world (`appearance.md` §3.5
-//! Decision); every other figure gets `Physics_InWorld` after its start-up.
+//! `CharGen_Stage`, and its `CharGen_Action` and `Agent_Class` when the request names them
+//! (`character-screens.md` §2.1.4), from the start and is not placed in a world
+//! (`appearance.md` §3.5 Decision); every other figure gets `Physics_InWorld` after its
+//! start-up.
 //!
 //! A figure without a usable skeleton, or with no skinned part, is **static**: its parts
 //! are drawn rigid in the setup frame, unanimated. Every failure short of "no body" is a
@@ -142,6 +144,12 @@ pub struct FigureRequest {
     /// (`character-screens.md` §2.2; `appearance.md` §3.5 Decision: such a figure carries
     /// its stage and is not placed in a world); `None` for a figure in the world.
     pub chargen_stage: Option<u32>,
+    /// The `CharGen_Action` key of a character-screen figure (`character-screens.md`
+    /// §2.1.4: 2 `Idle`, 3 `Hover`), carried from the start like the stage.
+    pub chargen_action: Option<u32>,
+    /// The `Agent_Class` a character-screen figure is created with (the chosen class on
+    /// the creation stages, §2.1.4).
+    pub class: Option<u32>,
 }
 
 /// The look choices of a playable figure beyond its heights (decision 0025 D2: a
@@ -206,7 +214,16 @@ impl FigureRequest {
             look: look
                 .styles
                 .iter()
-                .map(|s| (s.key, s.modifier.to_bits()))
+                .map(|s| {
+                    let e = s.element.unwrap_or_default();
+                    (
+                        s.key,
+                        s.modifier.to_bits(),
+                        if s.element.is_some() { e.file.0 } else { 0 },
+                        e.toggle_file.map_or(0, |d| d.0),
+                        e.toggle_property.unwrap_or(0),
+                    )
+                })
                 .collect(),
             sliders: look.slider_values.clone(),
             values: look
@@ -236,6 +253,7 @@ impl FigureRequest {
             ],
             seed: self.seed,
             stage: self.chargen_stage,
+            screen: (self.chargen_action, self.class),
         }
     }
 }
@@ -243,7 +261,7 @@ impl FigureRequest {
 /// Identifies a figure: equal keys share one asset and one set of GPU resources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FigureKey {
-    look: Vec<(u32, u32)>,
+    look: Vec<(u32, u32, u32, u32, u32)>,
     sliders: Option<String>,
     values: Vec<(u32, ValueKey)>,
     body: Body,
@@ -253,6 +271,7 @@ pub struct FigureKey {
     shape: [u32; 2],
     seed: Option<u64>,
     stage: Option<u32>,
+    screen: (Option<u32>, Option<u32>),
 }
 
 /// One part ready for upload.
@@ -996,6 +1015,25 @@ fn look_inputs<S: tessera_material::RecordSource>(
     (composed, edits)
 }
 
+/// A key-valued property of a character-screen figure (`CharGen_Action`, `Agent_Class`;
+/// `character-screens.md` §2.1.4) as a value of the property's dictionary type: an enum
+/// key, or an integer for an integer property; `None` when the dictionary lacks the name
+/// or types it otherwise.
+fn screen_property(
+    registry: &tessera_props::PropertyRegistry,
+    name: &str,
+    key: u32,
+) -> Option<(u32, PropertyValue)> {
+    let pid = registry.pid(name)?;
+    let v = match registry.property_type(pid)? {
+        tessera_formats::PropertyType::Enum => PropertyValue::Enum(key),
+        tessera_formats::PropertyType::Int => PropertyValue::Int(i32::try_from(key).ok()?),
+        tessera_formats::PropertyType::Int64 => PropertyValue::Int64(i64::from(key)),
+        _ => return None,
+    };
+    Some((pid, v))
+}
+
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
 /// the most likely per data layer (the original layers them, §6.2; a figure whose base
 /// idle is a reference stance shows its stance from a higher layer); without a looping one
@@ -1048,6 +1086,14 @@ fn select_clips(
         (Some(stage), Some(asm)) => {
             for (pid, v) in figure_on_screen(asm, stage) {
                 scripts.properties.set(pid, v);
+            }
+            for (name, key) in [
+                ("CharGen_Action", req.chargen_action),
+                ("Agent_Class", req.class),
+            ] {
+                if let Some((pid, v)) = key.and_then(|k| screen_property(registry, name, k)) {
+                    scripts.properties.set(pid, v);
+                }
             }
             Vec::new()
         }

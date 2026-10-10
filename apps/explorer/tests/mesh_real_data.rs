@@ -180,10 +180,13 @@ fn scenes_over_the_real_install() {
             {
                 pick(&format!("{name} blended"), did);
             }
-            if p.materials
-                .iter()
-                .any(|m| matches!(m.gpu.alpha, tessera_explorer::scene::AlphaKind::Mask(_)))
-            {
+            if p.materials.iter().any(|m| {
+                matches!(
+                    m.gpu.alpha,
+                    tessera_explorer::scene::AlphaKind::Mask(_)
+                        | tessera_explorer::scene::AlphaKind::TestBlend(_)
+                )
+            }) {
                 pick(&format!("{name} alpha-tested"), did);
             }
         }

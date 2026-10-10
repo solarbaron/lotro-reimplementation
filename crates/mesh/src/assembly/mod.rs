@@ -58,6 +58,7 @@
 //! counted ([`AssemblyLimits::max_applications`]); the figure-wide group list holds at most
 //! [`AssemblyLimits::max_total_layers`] groups.
 
+pub mod look;
 mod resolve;
 pub mod shape;
 mod source;
@@ -68,7 +69,7 @@ use std::sync::Arc;
 use tessera_formats::appearance::MaterialGroup;
 use tessera_formats::avatar::{checked_render_scale, scale_product};
 use tessera_formats::setup::{Anchor, Frame, Quaternion};
-use tessera_formats::{Did, PropertySet, Setup};
+use tessera_formats::{Did, PropertySet, PropertyValue, Setup};
 
 pub use resolve::CharacterAssembler;
 pub use source::{AssemblySource, GAME_DATA_CACHE_ENTRIES, GameDataSource, Lookup, MapSource};
@@ -87,14 +88,20 @@ pub const MAX_LINK_DEPTH: usize = 16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AssemblyOptions {
     /// `GOP_AvatarUpdateVisible`, the updated-avatar graphics option (default on): with it on,
-    /// list elements use their toggle files (§3.3).
+    /// list elements use their toggle files (§3.3) and the species tables run the newer
+    /// face compositor (§3.5).
     pub avatar_update_visible: bool,
+    /// `GOP_AvatarFaceCompositing`, the face-compositing graphics option (default on): the
+    /// species tables test it before attaching a face compositor; whether "off" removes the
+    /// face, and for which bodies, is the data's choice (§3.5 table).
+    pub avatar_face_compositing: bool,
 }
 
 impl Default for AssemblyOptions {
     fn default() -> Self {
         Self {
             avatar_update_visible: true,
+            avatar_face_compositing: true,
         }
     }
 }
@@ -267,6 +274,11 @@ pub struct CharacterSpec {
     /// The figure is mounted: a stowed shield in the ranged skill mode is not drawn
     /// (`appearance.md` §5.6, revised 2026-10-09).
     pub mounted: bool,
+    /// The character's own appearance values (`AC_Color_*`, `AC_Texture_*`, `AC_Mesh_Head`,
+    /// …) as (PID, value), later entries winning; properties not listed keep the avatar
+    /// entity's values. The species tables read them through driven node fields (face
+    /// layers and colours, hair and skin tints, `appearance.md` §3.5).
+    pub appearance_values: Vec<(u32, PropertyValue)>,
 }
 
 impl CharacterSpec {
@@ -685,6 +697,9 @@ pub struct ClipInputs {
     pub instance_properties: Option<PropertySet>,
     /// `NPC_StartingIdleAnimation` (an idle animation enum value, `appearance.md` §7.2).
     pub starting_idle_animation: Option<u32>,
+    /// The character's own appearance values ([`CharacterSpec::appearance_values`]), set
+    /// after every property set (see [`look::figure_script_properties`]).
+    pub appearance_values: Vec<(u32, PropertyValue)>,
 }
 
 /// Categories of unresolved links and data gaps (`appearance.md` §9, §10).

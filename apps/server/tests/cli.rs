@@ -311,6 +311,63 @@ fn install_guard_refuses_game_directories() {
     assert!(datadir::data_dir_guard_hit(&plain));
 }
 
+/// §3.1: `run` refuses a content file inside an installation with status 3 (`INSTALL-PATH`),
+/// given on the command line or as `[server] content`; the file is not read.
+#[test]
+fn run_refuses_content_in_an_installation_with_status_3() {
+    let tmp = tempfile::tempdir().unwrap();
+    let game = tmp.path().join("game");
+    std::fs::create_dir_all(&game).unwrap();
+    // An empty file with an archive-like name (synthetic; never a real archive).
+    std::fs::write(game.join("client_test.dat"), b"").unwrap();
+    let content = game.join("world.toml");
+    std::fs::write(&content, tessera_server::content::DEFAULT_WORLD).unwrap();
+    let dir = tmp.path().join("data");
+    fast_config(&dir);
+    let (code, out, err) = run(&["run", "--content", content.to_str().unwrap()], &dir, None);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        out.contains("INSTALL-PATH") || err.contains("INSTALL-PATH"),
+        "{out}{err}"
+    );
+    // The same file named in server.toml.
+    let dir = tmp.path().join("data2");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("server.toml"),
+        format!(
+            "[server]\nlisten = [\"127.0.0.1:47124\"]\ncontent = {:?}\n",
+            content.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let (code, out, err) = run(&["run"], &dir, None);
+    assert_eq!(code, 3, "{out}{err}");
+}
+
+/// §4.1: a `[movement]` relaxation beyond the protocol's bounds stops `run` with status 2;
+/// it is never clamped.
+#[test]
+fn run_refuses_out_of_range_movement_with_status_2() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (n, line) in ["settle_grace_s = 11.0", "slide_reserve = 150.0"]
+        .iter()
+        .enumerate()
+    {
+        let dir = tmp.path().join(format!("data{n}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("server.toml"),
+            format!("[server]\nlisten = [\"127.0.0.1:47125\"]\n[movement]\n{line}\n"),
+        )
+        .unwrap();
+        let (code, out, err) = run(&["run"], &dir, None);
+        assert_eq!(code, 2, "{line}: {out}{err}");
+        let key = line.split(' ').next().unwrap();
+        assert!(out.contains(key) || err.contains(key), "{line}: {out}{err}");
+    }
+}
+
 /// Real installation (read-only): the guard refuses a data directory or content file in it.
 /// Only directory names are listed; nothing is opened or written.
 #[test]

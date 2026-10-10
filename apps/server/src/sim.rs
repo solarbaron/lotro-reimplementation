@@ -51,7 +51,7 @@ use crate::datadir::{self, DataDir};
 use crate::names;
 use crate::shared::{
     ConnId, ConnShared, HashJob, HashOutcome, HashResult, Outbound, SessionCmd, SimControl,
-    SimInput, Stats, StatsInterval, StopReport, WriteJob, WriterMsg,
+    SimInput, Stats, StatsInterval, StatsLine, StopReport, WriteJob, WriterMsg,
 };
 use crate::workers::HASH_QUEUE;
 
@@ -353,6 +353,7 @@ pub struct Sim {
     next_save: u64,
     next_stats: u64,
     stats_interval: StatsInterval,
+    last_stats_line: Option<StatsLine>,
     last_overrun_log: u64,
     limits: MovementLimits,
     stopped: bool,
@@ -423,6 +424,7 @@ impl Sim {
             next_save: now + u64::from(config.world.save_interval_s) * SECOND,
             next_stats: now + u64::from(config.log.stats_interval_s.max(1)) * SECOND,
             stats_interval,
+            last_stats_line: None,
             last_overrun_log: 0,
             limits,
             stopped: false,
@@ -469,6 +471,12 @@ impl Sim {
     #[must_use]
     pub fn tick_number(&self) -> u64 {
         self.tick
+    }
+
+    /// The most recent statistics line (`test-server.md` §11.1), if one was written.
+    #[must_use]
+    pub fn last_stats_line(&self) -> Option<&StatsLine> {
+        self.last_stats_line.as_ref()
     }
 
     // ------------------------------------------------------------------ helpers
@@ -2199,27 +2207,34 @@ impl Sim {
         // An address bucket is dropped once it has refilled: a new one is then the same.
         // (Dropping one that is still refilling would hand out a fresh, full bucket.)
         self.addr_buckets.retain(|_, b| !b.full_at(now));
-        // Statistics line (§11.1).
+        // Statistics line (§11.1): written at the first tick starting at least
+        // `stats_interval_s` after the interval's start; the next interval starts at this
+        // tick's start. This tick completes after the line, so it counts toward the next
+        // interval (§14 invariant 9).
         if self.config.log.stats_interval_s > 0 && now >= self.next_stats {
             self.next_stats = now + u64::from(self.config.log.stats_interval_s) * SECOND;
+            // The counts are those at the time of the line.
+            self.publish_stats(now);
             let s = self.stats.snapshot();
+            let interval_start_us = self.stats_interval.start();
             let interval = self.stats_interval.close(&self.stats, now);
-            let per_instance: Vec<u32> = self.instances.iter().map(|i| i.players).collect();
-            tracing::info!(
-                connections = s.sim_connections,
-                logged_in = s.logged_in,
-                in_world = s.in_world,
-                per_instance = ?per_instance,
-                entities = s.entities,
-                interest_pairs = s.interest_pairs,
-                tick_last_us = s.tick_last_us,
-                tick_max_us = interval.tick_max_us,
-                overruns = s.overruns,
-                bytes_in_per_s = interval.bytes_in_per_s,
-                bytes_out_per_s = interval.bytes_out_per_s,
-                accounted_bytes = s.accounted_bytes,
-                "stats"
-            );
+            let line = StatsLine {
+                interval_start_us,
+                at_us: now,
+                connections: s.sim_connections,
+                logged_in: s.logged_in,
+                in_world: s.in_world,
+                per_instance: self.instances.iter().map(|i| i.players).collect(),
+                entities: s.entities,
+                interest_pairs: s.interest_pairs,
+                tick_last_us: s.tick_last_us,
+                interval,
+                overruns: s.overruns,
+                accounted_bytes: s.accounted_bytes,
+                resident_bytes: crate::shared::resident_bytes(),
+            };
+            line.log();
+            self.last_stats_line = Some(line);
         }
     }
 
@@ -2683,7 +2698,10 @@ impl Sim {
         s.logged_in.store(self.online.len(), Ordering::Relaxed);
         s.in_world
             .store(self.players_by_key.len(), Ordering::Relaxed);
-        s.entities.store(self.entities.len(), Ordering::Relaxed);
+        // Entities removed in this tick leave their instance at once; they are purged at
+        // the tick's end.
+        let entities = self.entities.values().filter(|e| !e.removed).count();
+        s.entities.store(entities, Ordering::Relaxed);
         s.throttle_entries.store(
             self.lockouts.len() + self.addr_buckets.len(),
             Ordering::Relaxed,

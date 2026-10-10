@@ -20,9 +20,21 @@
 //! passes with fog) where the program is fogged; output alpha = *T*.alpha × *V*.alpha ×
 //! *M*.alpha without the factors the program leaves out. The alpha test reads the
 //! texture's opacity alone (two layers: the product of both alphas), with the per-draw
-//! reference of `material.md` §11.2 and *A* = *M*.alpha ([`draw_reference`]). The
-//! soft-particle factor of parameter 1174 is not applied: particle draws get no depth
-//! input.
+//! reference of `material.md` §11.2 and *A* = *M*.alpha ([`draw_reference`]). In two-layer
+//! programs the first layer is read at texture matrix 0 and the second at texture matrix 1
+//! ([`ParticleDraw::uv`], `material.md` §8.4); one-layer programs read the vertex UV as it
+//! is. Particle draws use the permutations without feature bit 1 (`particle-runtime.md`
+//! §9.1.2, rule 11): no soft-particle factor (parameter 1174), and the heat-distortion
+//! program is not drawn (the caller leaves it out).
+//!
+//! Opacity (`particle-runtime.md` §9.1.3): the blend's source alpha is the program's
+//! output alpha above, not the mesh opacity source of `render.md` §4.3, so instance
+//! opacity, distance fade and the particle colour's alpha fade particles through the
+//! blend, also for [`AlphaMode::Fixed`] states; the alpha test comes from the draw's
+//! [`AlphaMode`], which the caller builds from the particle surface. Colour and alpha are
+//! clamped to [0, 1] before blending. In a premultiplied pass the alpha rows
+//! (SRCALPHA / INVSRCALPHA, ADD) blend alpha source-over, the additive rows keep the
+//! destination alpha and other fixed blends follow `render.md` §6.10 (R12).
 //!
 //! Draws are recorded in a world pass's translucent stage, after the opaque surfaces and
 //! the render-world hooks, before the sorted blended meshes. They work in lit and unlit
@@ -38,7 +50,7 @@ use wgpu::util::DeviceExt;
 use crate::error::{RenderError, Result};
 use crate::frame::{Pass, Rgba};
 use crate::instanced::{uniform_entry, uniform_stride};
-use crate::material::{AlphaMode, FixedAlpha, FixedBlend};
+use crate::material::{AlphaMode, FixedAlpha, FixedBlend, UvTransform};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
 use crate::renderer::{FrameStats, ResolvedTexture, TextureResolver};
@@ -149,6 +161,11 @@ pub struct ParticleDraw {
     /// The second layer's texture (white when `None` or unknown), read only when
     /// [`ParticleShading::layers`] is set.
     pub second_texture: Option<TextureId>,
+    /// Texture matrices 0 and 1 (`material.md` §8.4, evaluated at the draw's clock): the
+    /// first layer is read at `uv[0]` and the second at `uv[1]` when
+    /// [`ParticleShading::layers`] is set (`particle-runtime.md` §9.1.1, RT27); one-layer
+    /// programs ignore both and read the vertex UV.
+    pub uv: [UvTransform; 2],
 }
 
 impl ParticleDraw {
@@ -165,6 +182,7 @@ impl ParticleDraw {
             material: [1.0; 4],
             shading: ParticleShading::STANDARD,
             second_texture: None,
+            uv: [UvTransform::IDENTITY; 2],
         }
     }
 }
@@ -307,6 +325,8 @@ struct ParticleUniform {
     fog_color: [f32; 4],
     flags: [u32; 4],
     layers: [u32; 4],
+    /// Texture matrices 0 and 1 packed by [`UvTransform::pack`].
+    uv: [[f32; 4]; 3],
 }
 
 type PipeKey = (wgpu::TextureFormat, BlendKey, bool, FixedAlpha);
@@ -651,6 +671,10 @@ pub(crate) fn build_hook(
                 0,
                 0,
             ],
+            uv: UvTransform::pack(match sh.layers {
+                Some(_) => d.uv,
+                None => [UvTransform::IDENTITY; 2],
+            }),
         };
         let offset = u32::try_from(uniform_data.len()).map_err(|_| RenderError::LimitExceeded {
             what: "particle uniform bytes per pass",
@@ -789,7 +813,7 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        assert_eq!(size_of::<ParticleUniform>(), 160);
+        assert_eq!(size_of::<ParticleUniform>(), 208);
         assert_eq!(size_of::<ParticleVertex>(), 36);
     }
 

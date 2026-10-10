@@ -317,8 +317,14 @@ pub enum AlphaKind {
     Opaque,
     /// Alpha test with this threshold (kept when opacity ≥ threshold, `material.md` §11.2).
     Mask(f32),
-    /// Alpha blending (the renderer's only blend; additive and other blend states are
-    /// approximated by it).
+    /// Alpha test **and** source-alpha blend with depth write: the base pass of a lit
+    /// alpha-tested surface (`material.md` §11.2, §11.3: the test removes texels at or below
+    /// the threshold, the kept texels blend by their opacity and write depth). Drawn as
+    /// [`tessera_render::AlphaMode::TestBlend`], which the viewer's mesh passes draw as an
+    /// alpha test with depth write, so the surface hides what lies behind its kept texels.
+    TestBlend(f32),
+    /// Alpha blending without depth write (the renderer's only blend; additive and other
+    /// blend states are approximated by it).
     Blend,
 }
 
@@ -1192,6 +1198,16 @@ fn plan_material(m: &ResolvedMaterial) -> GpuPlan {
         BlendMode::Cutout => f.alpha_test.map_or(AlphaKind::Opaque, |a| {
             AlphaKind::Mask(finite01(a.threshold, 0.5))
         }),
+        // A source-alpha blend that writes depth and tests an opacity source keeps its test
+        // (`material.md` §11.2, §11.3: lit `ColorAndOpacity` surfaces with alpha test on,
+        // hair and foliage among them). Dropping it drew every texel blended without depth
+        // write, so a surface under such a one (a hair net under the hair of a bun) showed
+        // through it whenever it sorted later.
+        BlendMode::AlphaBlend if f.blend.depth_write => {
+            f.alpha_test.map_or(AlphaKind::Blend, |a| {
+                AlphaKind::TestBlend(finite01(a.threshold, 0.5))
+            })
+        }
         BlendMode::AlphaBlend | BlendMode::Additive | BlendMode::Custom => AlphaKind::Blend,
     };
     let diffuse_color = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
@@ -1785,6 +1801,79 @@ impl<'a> Collector<'a> {
         };
         self.layered_index.insert(cache_key, i);
         i
+    }
+
+    /// [`Collector::surface_material_layered`], then the figure look's composed face
+    /// texture and material edits for a part in `slot` (`appearance.md` §3.5, §8 step 6; the
+    /// client's figure path makes the same edits). Without a look, or with no edit for the
+    /// surface, the layered material.
+    pub(crate) fn surface_material_look(
+        &mut self,
+        surface: Did,
+        layers: &[(Option<Did>, Did, u32)],
+        look: Option<(u32, &tessera_mesh::assembly::look::FigureLook)>,
+    ) -> usize {
+        let lib = &self.ctx.materials;
+        let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
+        let (Some((slot, look)), Some(key)) = (look, key) else {
+            return self.surface_material_layered(surface, layers);
+        };
+        let composed = look
+            .compositor_for(slot, key)
+            .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
+        let edits: Vec<tessera_material::ParameterEdit> = look
+            .edits_for(slot, key)
+            .into_iter()
+            .filter_map(tessera_material::ParameterEdit::from_material_edit)
+            .collect();
+        let edits = tessera_material::figure_edits(lib.runtime_textures(), &edits, composed);
+        if edits.is_empty() {
+            return self.surface_material_layered(surface, layers);
+        }
+        let matching: Vec<(Option<Did>, Did)> = layers
+            .iter()
+            .filter(|(_, m, k)| *k == key && !m.is_null())
+            .map(|&(sh, m, _)| (sh, m))
+            .take(16)
+            .collect();
+        let layering = (!matching.is_empty()).then(|| Layering {
+            shader_override: matching.iter().find_map(|(sh, _)| *sh),
+            materials: matching.iter().map(|(_, m)| *m).collect(),
+        });
+        let title = format!("{surface} + figure look");
+        let what = format!(
+            "figure look (appearance.md §3.5): {}",
+            edits
+                .iter()
+                .map(|e| match e {
+                    tessera_material::ParameterEdit::Colour { id, value } =>
+                        format!("{id} = ({:.3}, {:.3}, {:.3})", value[0], value[1], value[2]),
+                    tessera_material::ParameterEdit::Texture { id, list }
+                        if list.prefix() == tessera_material::RUNTIME_TEXTURE_PREFIX =>
+                    {
+                        format!("{id} = composed image {list}")
+                    }
+                    tessera_material::ParameterEdit::Texture { id, list } => {
+                        format!("{id} = texture {list}")
+                    }
+                    tessera_material::ParameterEdit::Float { id, curve } => {
+                        format!(
+                            "{id} = curve mode {} ({:.3} at 0)",
+                            curve.mode,
+                            curve.evaluate()
+                        )
+                    }
+                    tessera_material::ParameterEdit::Flag { id, value } => {
+                        format!("{id} = {value}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        match lib.resolve_edited(surface, layering.as_ref(), &edits) {
+            Ok(m) => self.add_resolved(&m, title, Some(&what)),
+            Err(e) => self.add_failed(title, e.to_string()),
+        }
     }
 
     pub(crate) fn finish(mut self, job: &JobContext<'_>) -> Result<Finished, ExplorerError> {
@@ -3266,6 +3355,7 @@ mod tests {
                     default: v.clone(),
                     binding_count: 1,
                     flag: 0,
+                    transform_bound: false,
                 })
                 .collect(),
             slots: Vec::new(),
@@ -3335,6 +3425,67 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// A lit alpha-tested `ColorAndOpacity` surface (source-alpha blend with depth write,
+    /// `material.md` §11.2, §11.3) keeps its alpha test: the test removes the texels at or
+    /// below the threshold and the kept ones write depth. Hair is such a surface; drawn as a
+    /// plain blend without depth write, a hair net under the hair of a bun showed through.
+    #[test]
+    fn plan_lit_alpha_tested_blend_keeps_the_test_and_depth_write() {
+        let mut f = opaque_features();
+        f.lit = true;
+        f.blend.mode = BlendMode::AlphaBlend;
+        f.blend.src = BlendFactor::SrcAlpha;
+        f.blend.dst = BlendFactor::InvSrcAlpha;
+        f.blend.depth_write = true;
+        f.blend.opacity_slot = Some(ids::DIFFUSE);
+        f.opacity_slot = Some(ids::DIFFUSE);
+        f.alpha_test = Some(AlphaTest {
+            threshold: 0.9,
+            source_slot: ids::DIFFUSE,
+        });
+        let m = resolved(
+            &[],
+            vec![slot(ids::DIFFUSE, DIFFUSE_TEX, "ColorAndOpacity")],
+            f,
+            None,
+        );
+        let plan = plan_material(&m);
+        assert_eq!(plan.material.alpha, AlphaKind::TestBlend(0.9));
+        assert!(matches!(
+            plan.base,
+            Some(TexKey::Base {
+                alpha: AlphaPlan::Own,
+                ..
+            })
+        ));
+        // The viewer's material: alpha test and blend with depth write.
+        assert_eq!(
+            crate::viewport::render_alpha(plan.material.alpha),
+            tessera_render::AlphaMode::TestBlend { cutoff: 0.9 }
+        );
+        // Without an alpha test the same surface is translucent by its texture alpha.
+        let mut f2 = f;
+        f2.alpha_test = None;
+        let m = resolved(
+            &[],
+            vec![slot(ids::DIFFUSE, DIFFUSE_TEX, "ColorAndOpacity")],
+            f2,
+            None,
+        );
+        assert_eq!(plan_material(&m).material.alpha, AlphaKind::Blend);
+        // A blend without depth write (unlit blend records) stays a plain blend.
+        let mut f3 = f;
+        f3.lit = false;
+        f3.blend.depth_write = false;
+        let m = resolved(
+            &[],
+            vec![slot(ids::DIFFUSE, DIFFUSE_TEX, "ColorAndOpacity")],
+            f3,
+            None,
+        );
+        assert_eq!(plan_material(&m).material.alpha, AlphaKind::Blend);
     }
 
     #[test]

@@ -922,6 +922,8 @@ mod tests {
             lights: Vec::new(),
             entity_lod_classes: vec![Some(3), None, None],
             generated_lod_classes: Vec::new(),
+            entity_depth_bias_types: Vec::new(),
+            generated_depth_bias_types: Vec::new(),
             problems: Vec::new(),
             heap_bytes: 0,
         }

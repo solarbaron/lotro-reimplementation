@@ -12,13 +12,21 @@
 //! §3.3), so a system run twice with the same seed and the same inputs gives the same
 //! particles.
 //!
-//! Keyframes (§8.6.1, BIN third pass): no key is current at creation; every particle
-//! update, the one right after the spawn included, walks the later keys with the age
-//! raised to 0 and makes a key current once that age is at least its `time`; a key applies
-//! its controller, then its channels, then its physics flags; controller 3 draws its point
-//! index at the first update that runs it. A channel without a current key uses scale
-//! (1, 1), opaque white and mass 1, and a particle without a controller key does not move
-//! (rule §10.11).
+//! Keyframes (§8.6.1, BIN third and fourth passes): no key is current at creation; every
+//! particle update, the one right after the spawn included, walks the later keys with the
+//! age raised to 0 and makes a key current once that age is at least its `time`; a key
+//! applies its controller, then its channels, then its physics flags. A controller key that
+//! becomes current while another one is current first runs the **base fix** of the leaving
+//! controller (the §8.6.1 table) and raises the starting value of the one angle triple the
+//! particle keeps (the one §8.12 item 3 draws, P58) by the new key's `time` ×
+//! `rotation_velocity` (§8.7). Each particle has one point-index slot, shared by
+//! controllers 1 and 3, filled once by the first evaluation that needs it (a particle
+//! update under controller 1 or 3, or the base fix of a leaving controller-1 or
+//! controller-3 key) and never emptied; controller 3 reduces it modulo the current key's
+//! point count (rule §10.12). Controller 1 walks its travel budget on every update under
+//! its key, the first included (after the placement on the start point; the spawn-time
+//! update has a span of 0, P57). A channel without a current key uses scale (1, 1), opaque
+//! white and mass 1, and a particle without a controller key does not move (rule §10.11).
 //!
 //! Frames (`particles.md` Q8, Tessera Decision of `particle-runtime.md` §9.2): a
 //! world-space system simulates in world coordinates with the first draw instance of the
@@ -230,22 +238,24 @@ pub struct Particle {
     pub(crate) controller_key: Option<u32>,
     /// The particle's physics flags (§8.8).
     pub physics_flags: u32,
+    /// The point-index slot shared by controllers 1 and 3 (`particles.md` §8.6.1 step 4):
+    /// `None` until the first evaluation that needs it fills it, then never emptied.
     /// Controller 3: the chosen point; controller 1: the target point.
-    pub(crate) point: u32,
-    /// Controller 1: whether the particle has been placed on its start point.
-    pub(crate) path_started: bool,
-    /// Controller 3: the point index is still to be drawn, at the first particle update
-    /// that runs the controller (`particles.md` §8.6.1 step 4).
-    pub(crate) point_pending: bool,
+    pub(crate) point_slot: Option<u32>,
     /// Controller 1: speed (length of the spawn velocity).
     pub(crate) path_speed: f32,
     /// `particle_scale` drawn at spawn.
     pub scale: f32,
     /// `streak` drawn at spawn, seconds.
     pub streak: f32,
-    /// `rotation` drawn at spawn, radians.
+    /// `rotation` drawn at spawn, radians: the value the growth with age starts from. When
+    /// it is the angle triple the particle keeps (`world_rotation` is the constant 0,
+    /// `particles.md` §8.7, P58), every base fix raises it by the new controller key's
+    /// `time` × `rotation_velocity`.
     pub rotation: [f32; 3],
-    /// `world_rotation` drawn at spawn, radians.
+    /// `world_rotation` drawn at spawn, radians. When some component of the emitter's
+    /// `world_rotation` is not the constant 0 this is the triple the particle keeps and
+    /// draws (§8.12 item 3), and every base fix raises it instead of `rotation` (P58).
     pub world_rotation: [f32; 3],
     /// `rotation_velocity` drawn at spawn.
     pub rotation_velocity: [f32; 3],
@@ -310,8 +320,6 @@ pub(crate) struct Control {
     pub gravity: Vec3,
     pub wind: Vec3,
     pub snap: EvalCurve,
-    /// Emitter's previous particle-update time before the current one (controller 1).
-    pub previous_update: f64,
     /// The system's update interval under rule §10.5 (the controller-4 step).
     pub time_step: f64,
 }
@@ -606,7 +614,6 @@ impl SystemSim {
             s.last_update = t0;
             s.last_burst = t0;
             s.last_distance = t0;
-            s.control.previous_update = t0;
             s.total = 0;
             s.particles.clear();
             s.control.counters.iter_mut().for_each(|c| *c = 0);
@@ -1066,9 +1073,7 @@ fn spawn(
         mass_key: None,
         controller_key: None,
         physics_flags: 0,
-        point: 0,
-        path_started: false,
-        point_pending: false,
+        point_slot: None,
         path_speed: velocity.length(),
         scale,
         streak,
@@ -1082,6 +1087,8 @@ fn spawn(
     // No key is current at creation (§8.6.1 step 1); the update right after the spawn
     // walks the keys (step 2), so a first key with `time` 0 is current from it on, also at
     // a negative age (`particle-runtime.md` §14.3).
+    // It runs at the emitter's stored update time, which is also the previous update time
+    // it measures spans from, so a controller-1 walk there has a span of 0 (§8.7, P57).
     let at = s.last_update;
     if advance(
         &mut p,
@@ -1089,7 +1096,7 @@ fn spawn(
         &mut s.control,
         ctx.frame,
         at,
-        0.0,
+        at,
         ctx.config,
         rng,
     ) {
@@ -1111,13 +1118,24 @@ fn particle_update(ctx: &mut SpawnCtx<'_>, s: &mut EmitterSim, rng: &mut Ran2) {
     if !(step >= s.control.time_step) {
         return;
     }
-    s.control.previous_update = s.last_update;
+    // The emitter's previous particle-update time; the new one is stored only after all
+    // its particles are updated (§8.1, P57).
+    let previous = s.last_update;
     let e = ctx.e;
     let reset = step > INTERPOLATION_RESET;
     let mut i = 0;
     while let Some(p) = s.particles.get_mut(i) {
         let before = (p.position, p.anchor);
-        if advance(p, e, &mut s.control, ctx.frame, now, step, ctx.config, rng) {
+        if advance(
+            p,
+            e,
+            &mut s.control,
+            ctx.frame,
+            now,
+            previous,
+            ctx.config,
+            rng,
+        ) {
             if reset {
                 p.previous = p.position;
                 p.previous_anchor = p.anchor;
@@ -1136,8 +1154,8 @@ fn particle_update(ctx: &mut SpawnCtx<'_>, s: &mut EmitterSim, rng: &mut Ran2) {
 
 /// Makes key `k` current for what its flags name (§8.6.1 step 3): the controller switch
 /// (0x100) first, then the scale, colour and mass bits, then the physics flags (0x200).
-/// The point index of controller 3 is not drawn here but at the first particle update that
-/// runs the controller (step 4; controller 1 likewise places its start point there).
+/// The point index of controllers 1 and 3 is not taken here (step 4: the shared slot is
+/// filled by the first evaluation that needs it); the base fix runs before this call.
 fn visit_key(p: &mut Particle, e: &Emitter, k: usize) {
     let Some(key) = e.keyframes.get(k) else {
         return;
@@ -1145,8 +1163,6 @@ fn visit_key(p: &mut Particle, e: &Emitter, k: usize) {
     let k32 = u32::try_from(k).unwrap_or(u32::MAX);
     if key.flags & KEY_CONTROLLER != 0 {
         p.controller_key = Some(k32);
-        p.path_started = false;
-        p.point_pending = key.motion() == MotionController::PointPlacement;
     }
     if key.flags & (KEY_SCALE | KEY_SCALE_LERP) != 0 {
         p.scale_key = Some(k32);
@@ -1162,18 +1178,24 @@ fn visit_key(p: &mut Particle, e: &Emitter, k: usize) {
     }
 }
 
-/// Controller 3's point index (§8.7), drawn at the first particle update under the key
-/// (§8.6.1 step 4), so it sees the physics flags of the key that set the controller: the
-/// particle takes the key's counter, which then advances by one (wrapping) or, with
-/// physics flag 0x8, is replaced by a uniform index.
-fn draw_point_index(p: &mut Particle, key: &Keyframe, c: &mut Control, k: usize, rng: &mut Ran2) {
-    p.point_pending = false;
+/// Fills the empty point-index slot at a particle update under controller 3 (§8.7): the
+/// particle takes key `k`'s counter, which then advances by one (wrapping) or, with
+/// physics flag 0x8, is replaced by a uniform index. Because it runs at the update, it sees
+/// the physics flags of the key that set the controller (§8.6.1 step 4). A key without
+/// points leaves the slot empty.
+fn fill_slot_by_update(
+    p: &mut Particle,
+    key: &Keyframe,
+    c: &mut Control,
+    k: usize,
+    rng: &mut Ran2,
+) {
     let count = key.points.len();
-    if count == 0 {
+    if count == 0 || p.point_slot.is_some() {
         return;
     }
     if let Some(counter) = c.counters.get_mut(k) {
-        p.point = *counter;
+        p.point_slot = Some(*counter);
         *counter = if p.physics_flags & PHYSICS_RANDOM_POINT != 0 {
             u32::try_from(rng.index(count)).unwrap_or(0)
         } else {
@@ -1181,6 +1203,184 @@ fn draw_point_index(p: &mut Particle, key: &Keyframe, c: &mut Control, k: usize,
             u32::try_from(next).unwrap_or(0)
         };
     }
+}
+
+/// Fills the empty point-index slot with the start point of controller 1 (§8.7, and the
+/// controller-1 base fix of §8.6.1, P57): index 0, or a uniform index in [0, `count` − 1]
+/// when the particle's physics flag 0x8 is set; no key counter changes. Returns whether
+/// the slot was empty (the caller then places the particle on that point).
+fn fill_slot_for_path(p: &mut Particle, count: usize, rng: &mut Ran2) -> bool {
+    if count == 0 || p.point_slot.is_some() {
+        return false;
+    }
+    let idx = if p.physics_flags & PHYSICS_RANDOM_POINT != 0 {
+        rng.index(count)
+    } else {
+        0
+    };
+    p.point_slot = Some(u32::try_from(idx).unwrap_or(0));
+    true
+}
+
+/// The travel budget *s* × `span` of a controller-1 walk (§8.7); 0 when not finite. The
+/// span is not clamped: a budget at or below the walk's tolerance moves nothing.
+fn path_budget(p: &Particle, span: f64) -> f32 {
+    let b = p.path_speed * span as f32;
+    if b.is_finite() { b } else { 0.0 }
+}
+
+/// The point of `points` at the particle's slot, rotated by `rot`; the slot is reduced
+/// modulo the point count (rule §10.12; the slot itself keeps its value). `None` with an
+/// empty slot or no points.
+fn slot_point(slot: Option<u32>, points: &[[f32; 3]], rot: Quat) -> Option<Vec3> {
+    let n = points.len();
+    if n == 0 {
+        return None;
+    }
+    let i = slot? as usize % n;
+    points.get(i).map(|&q| rot * Vec3::from_array(q))
+}
+
+/// The point-path walk of controller 1 (§8.7) with travel budget `b`: towards the point at
+/// the slot (reduced modulo the count), landing on points and moving the slot on. The
+/// budget is compared with, and reduced by, squared distances, as in the original.
+fn walk_path(p: &mut Particle, points: &[[f32; 3]], rot: Quat, mut b: f32, max_legs: u32) {
+    let n = points.len();
+    if n == 0 {
+        return;
+    }
+    let mut legs = 0;
+    while b > TOLERANCE && legs < max_legs {
+        legs += 1;
+        let idx = p.point_slot.unwrap_or(0) as usize % n;
+        let target = p.base
+            + points
+                .get(idx)
+                .map_or(Vec3::ZERO, |&q| rot * Vec3::from_array(q));
+        let q2 = (target - p.position).length_squared();
+        if b <= q2 {
+            let dir = (target - p.position).normalize_or_zero();
+            p.position += dir * b.sqrt();
+            b = 0.0;
+        } else {
+            p.position = target;
+            b -= q2;
+            p.point_slot = Some(u32::try_from((idx + 1) % n).unwrap_or(0));
+        }
+    }
+}
+
+/// The base fix (§8.6.1, BIN fourth pass): key `new` sets a controller while another
+/// controller key is current, so the base *p*₀ first moves by the motion of the
+/// **leaving** key over *τ* = `new.time` − its `time`:
+///
+/// - 2: *p*₀ + *v* *τ* + ½ *a* *τ*², *a* scaled by the stored `mass` of the current mass
+///   key (not interpolated; 1 without one, rule §10.11);
+/// - 5: *p*₀ + `position`(*τ*);
+/// - 3: an empty slot takes the leaving key's counter, which advances by one (wrapping),
+///   whatever physics flag 0x8 says; then *p*₀ + that point (rule §10.12); no points: *p*₀;
+/// - 1 (P57): an empty slot is filled as at a controller-1 update (index 0, or a random
+///   index with physics flag 0x8; no key counter changes) and the particle is placed on
+///   *p*₀ + that point; then the point-path walk runs once from the particle's current
+///   position with the budget *s* × ((spawn time + `new.time`) − `previous`, the emitter's
+///   previous particle-update time); position and new base are the result; no points: *p*₀;
+/// - 6, 4 and any other value: *p*₀.
+///
+/// Then the starting value of the one angle triple the particle keeps rises by `new.time`
+/// × the particle's `rotation_velocity` (§8.7, P58): `world_rotation` when some component
+/// of the emitter's `world_rotation` is not the constant 0, otherwise `rotation`.
+#[allow(clippy::too_many_arguments)]
+fn base_fix(
+    p: &mut Particle,
+    e: &Emitter,
+    c: &mut Control,
+    rot: Quat,
+    new: &Keyframe,
+    previous: f64,
+    config: SimConfig,
+    rng: &mut Ran2,
+) {
+    let Some(k) = p.controller_key else {
+        return;
+    };
+    let Some(old) = e.keyframes.get(k as usize) else {
+        return;
+    };
+    let tau = new.time - old.time;
+    match old.motion() {
+        MotionController::Ballistic => {
+            let mass = p
+                .mass_key
+                .and_then(|i| e.keyframes.get(i as usize))
+                .map_or(1.0, |kf| finite(kf.mass));
+            let a = force(p, c, mass);
+            p.base += p.velocity * tau + 0.5 * a * tau * tau;
+        }
+        MotionController::PathCurves => {
+            let off = c
+                .paths
+                .get_mut(k as usize)
+                .map_or([0.0; 3], |v| v.eval(f64::from(tau), rng));
+            p.base += Vec3::from_array(off);
+        }
+        MotionController::PointPlacement => {
+            let n = old.points.len();
+            if n > 0 {
+                if p.point_slot.is_none()
+                    && let Some(counter) = c.counters.get_mut(k as usize)
+                {
+                    p.point_slot = Some(*counter);
+                    *counter = u32::try_from((*counter as usize + 1) % n).unwrap_or(0);
+                }
+                if let Some(pt) = slot_point(p.point_slot, &old.points, rot) {
+                    p.base += pt;
+                }
+            }
+        }
+        MotionController::PointPath => {
+            if !old.points.is_empty() {
+                if fill_slot_for_path(p, old.points.len(), rng) {
+                    p.position =
+                        p.base + slot_point(p.point_slot, &old.points, rot).unwrap_or_default();
+                }
+                let span = (p.spawn_time + f64::from(new.time)) - previous;
+                walk_path(
+                    p,
+                    &old.points,
+                    rot,
+                    path_budget(p, span),
+                    config.max_path_legs,
+                );
+                p.base = p.position;
+            }
+        }
+        MotionController::Static | MotionController::Stepped => {}
+    }
+    if !p.base.is_finite() {
+        p.base = p.position;
+    }
+    let rv = p.rotation_velocity;
+    let kept = if keeps_world_rotation(e) {
+        &mut p.world_rotation
+    } else {
+        &mut p.rotation
+    };
+    for (a, v) in kept.iter_mut().zip(rv) {
+        let x = *a + new.time * v;
+        if x.is_finite() {
+            *a = x;
+        }
+    }
+}
+
+/// Whether the particles of `e` keep the `world_rotation` triple (some component of it is
+/// not the constant 0) rather than `rotation` (`particles.md` §8.7, P58; the choice of
+/// §8.12 item 3).
+fn keeps_world_rotation(e: &Emitter) -> bool {
+    let w = &e.world_rotation;
+    [&w.x, &w.y, &w.z]
+        .into_iter()
+        .any(|c| !c.is_constant_value(0.0))
 }
 
 /// The value of a keyframe channel for a particle whose current key is `key`, at `age`
@@ -1275,11 +1475,7 @@ fn path_position(
             Some(p.base + Vec3::from_array(off))
         }
         MotionController::PointPlacement => {
-            let pt = key
-                .points
-                .get(p.point as usize)
-                .map_or(Vec3::ZERO, |&q| rot * Vec3::from_array(q));
-            Some(p.base + pt)
+            Some(p.base + slot_point(p.point_slot, &key.points, rot).unwrap_or(Vec3::ZERO))
         }
         MotionController::Static => Some(p.base),
         MotionController::PointPath | MotionController::Stepped => None,
@@ -1287,8 +1483,9 @@ fn path_position(
 }
 
 /// Advances `p` to clock time `at` (a particle update or the spawn update, §8.5 step 9).
-/// `step` is the time since the emitter's previous particle update (0 at spawn). Returns
-/// `false` when the particle is dead.
+/// `previous` is the emitter's previous particle-update time, the one stored before this
+/// update (`at` itself at the spawn update, so its spans are 0). Returns `false` when the
+/// particle is dead.
 #[allow(clippy::too_many_arguments)]
 fn advance(
     p: &mut Particle,
@@ -1296,10 +1493,11 @@ fn advance(
     c: &mut Control,
     frame: SimFrame,
     at: f64,
-    step: f64,
+    previous: f64,
     config: SimConfig,
     rng: &mut Ran2,
 ) -> bool {
+    let step = at - previous;
     let age64 = at - p.spawn_time;
     if !(age64 <= f64::from(p.lifespan)) {
         return false;
@@ -1313,23 +1511,17 @@ fn advance(
             break;
         }
         let k = p.visited as usize;
-        if key.flags & KEY_CONTROLLER != 0 {
-            // Fix the position at the key time as the new base (§8.6.1).
-            let old = p.controller_key.and_then(|i| e.keyframes.get(i as usize));
-            let old_time = old.map_or(0.0, |k| k.time);
-            let mass = mass_of(p, e, c, key.time);
-            let a = force(p, c, mass);
-            p.base = path_position(p, old, c, frame.rotation, a, key.time - old_time, rng)
-                .unwrap_or(p.position);
+        if key.flags & KEY_CONTROLLER != 0 && p.controller_key.is_some() {
+            base_fix(p, e, c, frame.rotation, key, previous, config, rng);
         }
         visit_key(p, e, k);
         p.visited = p.visited.saturating_add(1);
     }
     let key = p.controller_key.and_then(|i| e.keyframes.get(i as usize));
-    if p.point_pending
-        && let (Some(k), Some(kf)) = (p.controller_key, key)
+    if let (Some(k), Some(kf)) = (p.controller_key, key)
+        && kf.motion() == MotionController::PointPlacement
     {
-        draw_point_index(p, kf, c, k as usize, rng);
+        fill_slot_by_update(p, kf, c, k as usize, rng);
     }
     let tau = age - key.map_or(0.0, |k| k.time);
     let mass = mass_of(p, e, c, age);
@@ -1340,39 +1532,15 @@ fn advance(
             let points = key.map_or(&[][..], |k| &k.points[..]);
             if points.is_empty() {
                 p.position = p.base;
-            } else if !p.path_started {
-                let idx = if p.physics_flags & PHYSICS_RANDOM_POINT != 0 {
-                    rng.index(points.len())
-                } else {
-                    0
-                };
-                p.point = u32::try_from(idx).unwrap_or(0);
-                p.position = p.base
-                    + points
-                        .get(idx)
-                        .map_or(Vec3::ZERO, |&q| rot * Vec3::from_array(q));
-                p.path_started = true;
             } else {
-                let mut b = p.path_speed * (at - c.previous_update) as f32;
-                let mut legs = 0;
-                while b > TOLERANCE && legs < config.max_path_legs {
-                    legs += 1;
-                    let idx = (p.point as usize) % points.len();
-                    let target = p.base
-                        + points
-                            .get(idx)
-                            .map_or(Vec3::ZERO, |&q| rot * Vec3::from_array(q));
-                    let q2 = (target - p.position).length_squared();
-                    if b <= q2 {
-                        let dir = (target - p.position).normalize_or_zero();
-                        p.position += dir * b.sqrt();
-                        b = 0.0;
-                    } else {
-                        p.position = target;
-                        b -= q2;
-                        p.point = u32::try_from((idx + 1) % points.len()).unwrap_or(0);
-                    }
+                // The first evaluation fills the shared slot with the start point and places
+                // the particle there (§8.7); a filled slot (this key's or an earlier
+                // controller-1 or controller-3 key's) continues from where it is. Every
+                // update, the first included, then walks its budget (P57).
+                if fill_slot_for_path(p, points.len(), rng) {
+                    p.position = p.base + slot_point(p.point_slot, points, rot).unwrap_or_default();
                 }
+                walk_path(p, points, rot, path_budget(p, step), config.max_path_legs);
             }
         }
         Some(MotionController::Stepped) => {

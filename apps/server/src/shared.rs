@@ -144,6 +144,12 @@ pub struct ConnShared {
     /// then waits for it instead of acting on the flag, so events forwarded before it are
     /// handled first.
     pub close_queued: AtomicBool,
+    /// Bytes received on this connection since its acceptance, counted as
+    /// [`Stats::bytes_in`] counts them (`test-server.md` §11.1, "connection closed").
+    pub bytes_in: AtomicU64,
+    /// Bytes sent on this connection since its acceptance, counted as
+    /// [`Stats::bytes_out`] counts them (the stream-kind byte is not counted).
+    pub bytes_out: AtomicU64,
     kill_code: AtomicU16,
     kill_notify: tokio::sync::Notify,
     /// The minor version the session negotiated (`tessera-protocol.md` §3.1), set by the
@@ -169,6 +175,8 @@ impl ConnShared {
                 moves_dropped: AtomicU64::new(0),
                 closed: AtomicBool::new(false),
                 close_queued: AtomicBool::new(false),
+                bytes_in: AtomicU64::new(0),
+                bytes_out: AtomicU64::new(0),
                 kill_code: AtomicU16::new(NO_KILL),
                 kill_notify: tokio::sync::Notify::new(),
                 minor: AtomicU16::new(0),
@@ -242,6 +250,31 @@ impl ConnShared {
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => false,
         }
+    }
+
+    /// Counts `n` bytes received on this connection, in its own total and the server's
+    /// (§11.1).
+    pub fn count_in(&self, stats: &Stats, n: usize) {
+        let n = n as u64;
+        self.bytes_in.fetch_add(n, Ordering::Relaxed);
+        stats.bytes_in.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Counts `n` bytes handed to QUIC for this connection, in its own total and the
+    /// server's (§11.1).
+    pub fn count_out(&self, stats: &Stats, n: usize) {
+        let n = n as u64;
+        self.bytes_out.fetch_add(n, Ordering::Relaxed);
+        stats.bytes_out.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// This connection's bytes in and out so far (§11.1, the "connection closed" line).
+    #[must_use]
+    pub fn bytes(&self) -> (u64, u64) {
+        (
+            self.bytes_in.load(Ordering::Relaxed),
+            self.bytes_out.load(Ordering::Relaxed),
+        )
     }
 
     /// Bytes this connection has queued but not sent.
@@ -565,6 +598,12 @@ impl StatsInterval {
         }
     }
 
+    /// Server time (µs) at which the interval started.
+    #[must_use]
+    pub fn start(&self) -> u64 {
+        self.start
+    }
+
     /// Ends the interval at server time `now` (µs), returns its figures and starts the next
     /// one: resets the interval's longest tick and remembers the byte counters.
     pub fn close(&mut self, stats: &Stats, now: u64) -> IntervalFigures {
@@ -588,9 +627,111 @@ impl StatsInterval {
     }
 }
 
+/// One statistics line (`test-server.md` §11.1): the counts at the time of the line and the
+/// figures of the interval it closes (§14 invariant 9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatsLine {
+    /// Server time (µs) at which the interval started.
+    pub interval_start_us: u64,
+    /// Server time (µs) of the line: the start of the tick that wrote it, and the start of
+    /// the next interval.
+    pub at_us: u64,
+    /// Connections the simulation knows.
+    pub connections: usize,
+    /// Of them, those past login (`LoginOk` sent).
+    pub logged_in: usize,
+    /// Of those, the ones in the world.
+    pub in_world: usize,
+    /// Characters in the world per instance, in instance order.
+    pub per_instance: Vec<u32>,
+    /// Entities in all instances (characters and wanderers).
+    pub entities: usize,
+    /// (observer, entity) pairs in interest.
+    pub interest_pairs: usize,
+    /// Duration of the most recently completed tick, µs.
+    pub tick_last_us: u64,
+    /// The interval's figures: its longest tick and byte rates.
+    pub interval: IntervalFigures,
+    /// Ticks that overran, since the server started.
+    pub overruns: u64,
+    /// The §10.2 accounted total, bytes.
+    pub accounted_bytes: usize,
+    /// Resident memory, bytes, where the platform reports it.
+    pub resident_bytes: Option<u64>,
+}
+
+impl StatsLine {
+    /// Writes the line at info level.
+    pub fn log(&self) {
+        tracing::info!(
+            connections = self.connections,
+            logged_in = self.logged_in,
+            in_world = self.in_world,
+            per_instance = ?self.per_instance,
+            entities = self.entities,
+            interest_pairs = self.interest_pairs,
+            tick_last_us = self.tick_last_us,
+            tick_max_us = self.interval.tick_max_us,
+            overruns = self.overruns,
+            bytes_in_per_s = self.interval.bytes_in_per_s,
+            bytes_out_per_s = self.interval.bytes_out_per_s,
+            accounted_bytes = self.accounted_bytes,
+            resident_bytes = self.resident_bytes,
+            "stats"
+        );
+    }
+}
+
+/// This process's resident memory in bytes, where the platform reports it (`VmRSS` of
+/// Linux's `/proc/self/status`); `None` elsewhere or when it cannot be read.
+#[must_use]
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/self/status").ok()?;
+        status_kib(&text, "VmRSS")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// A `/proc/*/status` field given in kB, as bytes.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn status_kib(text: &str, field: &str) -> Option<u64> {
+    let rest = text
+        .lines()
+        .find_map(|l| l.strip_prefix(field)?.strip_prefix(':'))?;
+    let mut parts = rest.split_whitespace();
+    let n: u64 = parts.next()?.parse().ok()?;
+    if parts.next() != Some("kB") {
+        return None;
+    }
+    n.checked_mul(1024)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §11.1: a connection's bytes in and out are its own totals; the server's counters
+    /// add every connection's.
+    #[test]
+    fn connection_bytes_are_its_own_totals() {
+        let stats = Stats::default();
+        let (a, _ra) = ConnShared::new(1, "192.0.2.1:1".parse().unwrap(), 1);
+        let (b, _rb) = ConnShared::new(2, "192.0.2.2:1".parse().unwrap(), 1);
+        a.count_in(&stats, 10);
+        a.count_out(&stats, 7);
+        b.count_in(&stats, 100);
+        a.count_out(&stats, 3);
+        b.count_out(&stats, 1_000);
+        assert_eq!(a.bytes(), (10, 10));
+        assert_eq!(b.bytes(), (100, 1_000));
+        let s = stats.snapshot();
+        assert_eq!((s.bytes_in, s.bytes_out), (110, 1_010));
+    }
 
     /// §11.1: the statistics line reports the longest tick over the interval (not since
     /// start) and bytes per second (not cumulative bytes).
@@ -632,5 +773,28 @@ mod tests {
         assert_eq!(stats.snapshot().ticks, 3);
         // No tick and no time in between: zeros, no division by zero.
         assert_eq!(iv.close(&stats, 13_000_000), IntervalFigures::default());
+    }
+
+    /// §11.1: byte rates are rounded down.
+    #[test]
+    fn byte_rates_round_down() {
+        let stats = Stats::default();
+        let mut iv = StatsInterval::new(&stats, 0);
+        stats.bytes_in.store(10, Ordering::Relaxed);
+        stats.bytes_out.store(1, Ordering::Relaxed);
+        // 10 bytes over 3 s: 3.33 → 3; 1 byte over 3 s: 0.33 → 0.
+        let f = iv.close(&stats, 3_000_000);
+        assert_eq!((f.bytes_in_per_s, f.bytes_out_per_s), (3, 0));
+    }
+
+    #[test]
+    fn status_field_in_kib() {
+        let t = "Name:\tx\nVmHWM:\t  2048 kB\nVmRSS:\t  1024 kB\n";
+        assert_eq!(status_kib(t, "VmRSS"), Some(1024 * 1024));
+        assert_eq!(status_kib(t, "VmSwap"), None);
+        assert_eq!(status_kib("VmRSS:\t12 MB\n", "VmRSS"), None);
+        assert_eq!(status_kib("VmRSS:\tx kB\n", "VmRSS"), None);
+        #[cfg(target_os = "linux")]
+        assert!(resident_bytes().is_some_and(|b| b > 0));
     }
 }

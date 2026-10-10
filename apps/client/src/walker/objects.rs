@@ -48,10 +48,10 @@ use tessera_material::{FallbackReason, LibraryConfig, MaterialLibrary};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, Dye, DyeMask, Gloss, Instance as GpuInstance, InstanceBatch, LiquidMeshDraw,
-    LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, MipChainUpload, MipLevel,
-    Opacity, Pass, PreparedMesh, Renderer, SecondLayer, Specular, TextureId, TextureUpload,
-    UvTransform, WorldModel, WorldSurface, Wrap,
+    AlphaMode, DrawDepthBias, Dye, DyeMask, Gloss, Instance as GpuInstance, InstanceBatch,
+    LiquidMeshDraw, LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, MipChainUpload,
+    MipLevel, Opacity, Pass, PreparedMesh, Renderer, SecondLayer, Specular, TextureId,
+    TextureUpload, UvTransform, WorldModel, WorldSurface, Wrap,
 };
 use tessera_world::draw_distance::{DistanceSmoother, DrawFade, aabb_distance, detail_level};
 use tessera_world::{DistanceSettings, LANDBLOCK_SIZE, LandblockKey, LodValues};
@@ -713,6 +713,15 @@ pub fn texture_failure_reason(err: &AssetError) -> FallbackReason {
     }
 }
 
+/// The key of an instanced batch of [`ObjectLayer`]: landblock, part, detail level, casts
+/// shadows, depth bias ([`DrawDepthBias::key_bits`]).
+type BatchKey = (LandblockKey, u32, u8, bool, [u32; 2]);
+
+/// The bias whose [`DrawDepthBias::key_bits`] are `bits`.
+fn bias_of_bits(bits: [u32; 2]) -> DrawDepthBias {
+    DrawDepthBias::new(f32::from_bits(bits[0]), f32::from_bits(bits[1]))
+}
+
 struct TexEntry {
     refs: u32,
     state: TexState,
@@ -756,6 +765,11 @@ pub struct ObjectInfo {
     /// [`UNATTACHED`](super::interiors::UNATTACHED) for an interior entity no cell
     /// contains (`walker.md` §14.12 (h)).
     pub cell: u16,
+    /// Its `Render_DepthBias_Type` entry (`decals.md` §6.5; entry 0 when no source holds
+    /// the property), applied to every colour draw of the object: generic-path meshes,
+    /// instanced batches and placed liquid surfaces (the Tessera default of `decals.md` §6.5
+    /// OPEN (c), `water.md` §14).
+    pub depth_bias: DrawDepthBias,
 }
 
 /// Per-object state of the layer.
@@ -809,6 +823,9 @@ struct BlockObjects {
     /// The cell each placed figure of the block is drawn through: the [`ObjectInfo::cell`]
     /// of the object of its first instance, by figure index ([`Instance::figure`]).
     figure_cells: HashMap<u32, u16>,
+    /// The depth bias of each placed figure of the block (the [`ObjectInfo::depth_bias`] of
+    /// the same object as [`Self::figure_cells`]), for the character layer's draws.
+    figure_bias: HashMap<u32, DrawDepthBias>,
 }
 
 impl BlockObjects {
@@ -882,11 +899,13 @@ impl BlockObjects {
         parts.sort_unstable();
         parts.dedup();
         let mut figure_cells: HashMap<u32, u16> = HashMap::new();
+        let mut figure_bias: HashMap<u32, DrawDepthBias> = HashMap::new();
         for inst in instances.iter() {
             if let Some(f) = inst.figure
                 && let Some(o) = objects.get(inst.object as usize)
             {
                 figure_cells.entry(f).or_insert(o.cell);
+                figure_bias.entry(f).or_insert(o.depth_bias);
             }
         }
         BlockObjects {
@@ -902,6 +921,7 @@ impl BlockObjects {
             parts,
             active_instances: 0,
             figure_cells,
+            figure_bias,
         }
     }
 }
@@ -1043,8 +1063,12 @@ pub fn surface_draw(
     // when it failed.
     let layer2 = match plan.layer2 {
         None => None,
-        Some((t, add)) => match texture(t) {
-            TexLookup::Ready(id) => Some(SecondLayer { texture: id, add }),
+        Some((t, add, alpha)) => match texture(t) {
+            TexLookup::Ready(id) => Some(SecondLayer {
+                texture: id,
+                add,
+                alpha,
+            }),
             TexLookup::Failed => None,
             TexLookup::Pending if lit => return None,
             TexLookup::Pending => None,
@@ -1196,7 +1220,11 @@ fn world_surface(plan: &MaterialPlan, texture: &impl Fn(TexRequest) -> TexLookup
         unlit: plan.unlit,
         second_layer: layer2
             .zip(plan.layer2)
-            .map(|(texture, (_, add))| SecondLayer { texture, add }),
+            .map(|(texture, (_, add, alpha))| SecondLayer {
+                texture,
+                add,
+                alpha,
+            }),
         uv: plan.uv,
     })
 }
@@ -1306,8 +1334,8 @@ pub struct ObjectLayer {
     /// When a part last had to wait for arena space.
     arena_full_at: Option<Instant>,
     /// Instanced batches being collected this frame: (landblock, part, level, casts
-    /// shadows) → instances.
-    batches: HashMap<(LandblockKey, u32, u8, bool), Vec<GpuInstance>>,
+    /// shadows, depth bias as [`DrawDepthBias::key_bits`]) → instances.
+    batches: HashMap<BatchKey, Vec<GpuInstance>>,
     /// The frame settings of the last update.
     frame: ObjectFrame,
     /// Draw frames recorded so far ([`fade_resets`]).
@@ -1576,6 +1604,16 @@ impl ObjectLayer {
         let (key, index) = super::figures::tag_parts(tag)?;
         let cell = *self.blocks.get(&key)?.figure_cells.get(&index)?;
         Some((key, cell))
+    }
+
+    /// The depth bias of the placed figure `tag` ([`ObjectInfo::depth_bias`] of its object;
+    /// none for a tag the layer does not hold), which the character layer applies to every
+    /// draw of the figure (`decals.md` §6.5 OPEN (c), Tessera default).
+    #[must_use]
+    pub fn figure_depth_bias(&self, tag: u64) -> DrawDepthBias {
+        super::figures::tag_parts(tag)
+            .and_then(|(key, index)| self.blocks.get(&key)?.figure_bias.get(&index).copied())
+            .unwrap_or(DrawDepthBias::NONE)
     }
 
     /// Whether `part` is on the GPU (or failed for good, so waiting for it is pointless).
@@ -2588,7 +2626,13 @@ impl ObjectLayer {
                         && level.model.is_some()
                     {
                         self.batches
-                            .entry((key, inst.part, u8::try_from(k).unwrap_or(u8::MAX), casts))
+                            .entry((
+                                key,
+                                inst.part,
+                                u8::try_from(k).unwrap_or(u8::MAX),
+                                casts,
+                                obj.depth_bias.key_bits(),
+                            ))
                             .or_default()
                             .push(GpuInstance::new(tf));
                         instanced += 1;
@@ -2633,6 +2677,7 @@ impl ObjectLayer {
                                 normal_map,
                                 textures,
                                 light_object: None,
+                                depth_bias: obj.depth_bias,
                             });
                             self.fallback.count(&plan.diag, None, 1);
                             draws += 1;
@@ -2665,7 +2710,8 @@ impl ObjectLayer {
                         pass.mesh(
                             MeshDraw::new(level.mesh, tf, material)
                                 .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
-                                .with_lit(lit),
+                                .with_lit(lit)
+                                .with_depth_bias(obj.depth_bias),
                         );
                         draws += 1;
                     }
@@ -2684,7 +2730,7 @@ impl ObjectLayer {
         }
         self.order = order;
         let mut batches = 0usize;
-        for ((_, part, k, casts), list) in &self.batches {
+        for ((_, part, k, casts, bias), list) in &self.batches {
             if list.is_empty() {
                 continue;
             }
@@ -2704,6 +2750,7 @@ impl ObjectLayer {
             let mut batch = InstanceBatch::new(model, list.as_slice());
             batch.cast_shadow = *casts;
             batch.uv = uv;
+            batch.depth_bias = bias_of_bits(*bias);
             pass.instanced(batch);
             batches += 1;
         }
@@ -2920,18 +2967,36 @@ mod tests {
         assert!(!drawn_as_character(key, &plain, &shown));
     }
 
+    /// Instanced batches are keyed by the bias bits and rebuilt from them unchanged
+    /// (`decals.md` §6.5: instances of different entries never share a batch).
+    #[test]
+    fn batch_bias_round_trips_through_its_key() {
+        for b in [
+            DrawDepthBias::NONE,
+            DrawDepthBias::slope(-0.8),
+            DrawDepthBias::new(10.0, 0.01),
+        ] {
+            assert_eq!(bias_of_bits(b.key_bits()), b.sanitized());
+        }
+        assert_ne!(
+            DrawDepthBias::slope(-0.8).key_bits(),
+            DrawDepthBias::slope(-1.6).key_bits()
+        );
+    }
+
     #[test]
     fn figures_take_the_cell_of_their_first_instance() {
         // `landblock.md` §4.11 "Moving entities": a placed figure the character layer draws
         // is culled by the cell its static instance is drawn through.
         let key = LandblockKey::new(1, 10, 20).unwrap();
-        let o = |cell| ObjectInfo {
+        let o = |cell: u16| ObjectInfo {
             position: Vec3::ZERO,
             lod: LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]),
             generated: false,
             first: 0,
             count: 1,
             cell,
+            depth_bias: DrawDepthBias::slope(-f32::from(cell)),
         };
         let with = |figure, object| Instance {
             figure: Some(figure),
@@ -2955,6 +3020,9 @@ mod tests {
         );
         assert_eq!(b.figure_cells.get(&6), Some(&OUTDOORS));
         assert_eq!(b.figure_cells.get(&8), None, "an object index out of range");
+        // The figure's draws take the depth bias of the same object (`decals.md` §6.5).
+        assert_eq!(b.figure_bias.get(&4), Some(&DrawDepthBias::slope(-12.0)));
+        assert_eq!(b.figure_bias.get(&8), None);
         let mut layer_blocks = HashMap::new();
         layer_blocks.insert(key, b);
         let lookup = |tag: u64| -> Option<(LandblockKey, u16)> {
@@ -3174,6 +3242,7 @@ mod tests {
             first,
             count,
             cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
         };
         assert_eq!(
             object_parts(&instances, &o(0, 2)).collect::<Vec<_>>(),
@@ -3200,6 +3269,7 @@ mod tests {
             first,
             count: 1,
             cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
         };
         let objects: Arc<[ObjectInfo]> = vec![o(0, false), o(1, true)].into();
         let key = LandblockKey::new(1, 10, 10).unwrap();
@@ -3448,6 +3518,7 @@ mod tests {
             first,
             count: 1,
             cell,
+            depth_bias: DrawDepthBias::NONE,
         };
         // An outdoor static and a cell mesh 300 m west of the block, 200 m down.
         let objects: Arc<[ObjectInfo]> = vec![

@@ -8,6 +8,7 @@
 //! | [`interface`] | A shader record's interface: declarations, slot roles, render-state summary | `material.md` §7, §10, §11 |
 //! | [`resolve`] | Effective parameter set, texture slots, feature flags, dye setup | `material.md` §9–§12 |
 //! | [`dye`] | Dye blend, dye colours of a dye material, dye block selection | `material.md` §12 |
+//! | [`edits`] | Run-time parameter edits applied after a surface's materials, run-time textures (composed face images) | `appearance.md` §3.5, §8 step 6 |
 //! | [`MaterialLibrary`] | Surface → material → texture list → texture chain over a [`RecordSource`], with caches | `material.md` §9, `texture-list.md` §5.2 |
 //! | [`icon`] | Layered icon composition: layer properties, order, integer blend rule, canvas from the bottom layer, layers at the top-left | `docs/specs/icon-layers.md` |
 //! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
@@ -76,6 +77,7 @@ mod cache;
 pub mod diagnose;
 mod dims;
 pub mod dye;
+pub mod edits;
 mod error;
 pub mod icon;
 pub mod inputs;
@@ -94,13 +96,16 @@ pub mod water;
 
 pub use diagnose::{FallbackReason, MaterialKind, SurfaceDiagnosis};
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
+pub use edits::{
+    COMPOSED_TEXTURE_SLOT, ParameterEdit, RUNTIME_TEXTURE_PREFIX, RuntimeTextures, figure_edits,
+};
 pub use error::{MaterialError, Result, SourceFailure};
 pub use inputs::{
     DistanceFog, NamedInput, NamedValue, ObjectInputs, SpecularInputs, SurfaceInputs,
     UNLIT_FOG_WHEN_UNKNOWN,
 };
 pub use interface::ShaderInterface;
-pub use layers::{LayerCombine, second_layer};
+pub use layers::{LayerAlpha, LayerCombine, SecondLayerPlan, second_layer, second_layer_plan};
 pub use library::{
     AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,
 };

@@ -9,6 +9,8 @@
 //! buttons and the minimap's `MapZoom` routing, P15's store button, apartments and the
 //! queue cap.
 
+mod ui_common;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -33,6 +35,7 @@ use tessera_ui::game::chat::{CommandOutcome, EntryLine, NoHistory};
 use tessera_ui::game::escape::EscapeOutcome;
 use tessera_ui::game::{GameAction, GameLayouts, GameVocab};
 use tessera_ui::{ElementKey, MemoryEnv, Ui, UiEvent, Vocab};
+use ui_common::pump_plugins_until;
 
 const CHAT: u32 = 0x22FF_4000;
 const PANELS: u32 = 0x22FF_5000;
@@ -328,11 +331,8 @@ fn plugin_host(dir: &std::path::Path) -> Plugins {
     // No install: plugins may load (`chat-window.md` §10 item 3).
     p.data_unavailable();
     p.set_music(PlayerMusic::new(MusicConfig::default()));
-    let deadline = Instant::now() + std::time::Duration::from_secs(30);
-    while p.manager().loaded_plugins().is_empty() && Instant::now() < deadline {
-        p.pump();
-        std::thread::yield_now();
-    }
+    // A progress wait (no wall-clock deadline): until loaded, or the host idle.
+    pump_plugins_until(&mut p, 5000, |p| !p.manager().loaded_plugins().is_empty());
     assert_eq!(p.manager().loaded_plugins().len(), 1, "Greet loads");
     // As `UiHost::attach_plugins` does: the client's own lines go to the chat window.
     p.set_ui_driven(true);

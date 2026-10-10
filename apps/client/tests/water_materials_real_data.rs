@@ -284,8 +284,10 @@ fn water_materials_as_drawn() {
         );
         if p.family == WaterFamily::Flow {
             fastest_flow = rates.iter().flatten().fold(fastest_flow, |a, &r| a.max(r));
-            // §8.6.4 (implementer OPEN there): each flow-map record keeps its own Fresnel
-            // form, 0x2B0007FD step 4 (with layers 1 and 2), 0x2B0005EC §8.4 step 5.
+            // §8.6.4 Tessera rule (revised 2026-10-10): each flow-map record keeps its own
+            // colour list, 0x2B0007FD the first (Fresnel of step 4, with layers 1 and 2),
+            // 0x2B0005EC its own (Fresnel of §8.4 step 5, tint toward `WaterFogColor`, no
+            // L_c; W42, W43).
             let want = match w.shader.0 {
                 0x2B00_07FD => Some(WaterFresnelForm::Scaled),
                 0x2B00_05EC => Some(WaterFresnelForm::Biased),
@@ -296,8 +298,26 @@ fn water_materials_as_drawn() {
                 flow_forms += 1;
             }
             if s.0 == 0x3100_66D5 {
-                // Checklist row W17: the river's Fresnel rises toward grazing angles (8° below
-                // the horizon: |v . n| = sin 8°) instead of staying at its bias.
+                // Checklist row W17 (revised 2026-10-10): the river surface has Fresnel bias
+                // 0.01, exponent 2, fog amount 1 and `WaterFogColor` (0.129, 0.149, 0.133),
+                // the colour its own list tints toward (`water.md` §8.6.4 answer).
+                assert_eq!(p.fresnel_form, WaterFresnelForm::Biased, "{s}: own list");
+                assert!(
+                    (p.fresnel_bias - 0.01).abs() < 1e-4,
+                    "{s}: bias {}",
+                    p.fresnel_bias
+                );
+                assert!((p.fresnel_exponent - 2.0).abs() < 1e-4, "{s}: exponent");
+                assert!((p.fog_amount - 1.0).abs() < 1e-4, "{s}: fog amount");
+                for (got, want) in p.fog_color.iter().zip([0.129, 0.149, 0.133]) {
+                    assert!(
+                        (got - want).abs() < 0.002,
+                        "{s}: fog colour {:?}",
+                        p.fog_color
+                    );
+                }
+                // The river's Fresnel rises toward grazing angles (8° below the horizon:
+                // |v . n| = sin 8°) instead of staying at its bias.
                 let grazing = tessera_render::water_fresnel(&p, 8f32.to_radians().sin());
                 eprintln!("  {s}: Fresnel at 8° below the horizon {grazing:.3}");
                 assert!(
@@ -314,6 +334,14 @@ fn water_materials_as_drawn() {
             }
         }
     }
+    // Checklist row W13 (`water.md` §8.5.4 answer of 2026-10-10, W44): the puddle surface of
+    // the mirror record is depth-tested and writes depth (4001 = 4002 = 1).
+    let puddle = lib
+        .resolve_surface(Did(0x3100_0A2A))
+        .expect("puddle surface");
+    assert_eq!(puddle.shader.did, Did(0x2B00_00AA), "puddle: mirror record");
+    assert!(puddle.depth_test(), "puddle: depth test on");
+    assert!(puddle.features.blend.depth_write, "puddle: depth write on");
     eprintln!("fastest drawn flow-map layer: {fastest_flow:.2} m/s");
     eprintln!("flow-map surfaces with their record's Fresnel form: {flow_forms}");
     assert!(flow_forms > 0, "no flow-map surface in the water tables");

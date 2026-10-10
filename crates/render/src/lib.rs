@@ -169,6 +169,7 @@
 mod arena;
 mod camera;
 mod context;
+mod depth_bias;
 mod error;
 mod far_view;
 mod frame;
@@ -196,6 +197,7 @@ pub use context::{
     ContextOptions, ENV_ADAPTER_NAME, ENV_BACKEND, ENV_POWER_PREF, GPU_WAIT_TIMEOUT, GpuContext,
     rank_adapter,
 };
+pub use depth_bias::{DrawDepthBias, MAX_DEPTH_BIAS, MAX_DEPTH_BIAS_CLAMP};
 pub use error::{RenderError, Result};
 pub use far_view::{
     DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FAR_GRID_CULL, FAR_STITCH_CULL, FarFadeParams,
@@ -215,7 +217,7 @@ pub use lighting::{
     SunShadow,
 };
 pub use material::{
-    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss,
+    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LayerAlpha,
     LightSelection, Lighting, LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
     Opacity, SecondLayer, Specular, UvTransform,
 };

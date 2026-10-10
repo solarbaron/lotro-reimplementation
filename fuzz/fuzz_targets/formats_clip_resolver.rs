@@ -16,7 +16,10 @@
 //! transitions, When tests, ScalarBlend anchors, Random weights, Scriptlet invocations of
 //! the world's scriptlets and of themselves with parameter sets and named bindings,
 //! ScriptletParameter, Run, WhenRunning, SetProperty, both deformers, Sequence, Timer,
-//! Label, OnStop) with driven pairs on the vocabulary's animation fields, hostile floats and
+//! Label, OnStop, and the look nodes TextureCompositor, ModifyCompositorLayer,
+//! ModifyCompositorColor and EditMaterial with occasional large waveforms, `appearance.md`
+//! §3.5) with driven pairs on the vocabulary's animation and EditMaterial fields (and
+//! scriptlet parameters on both), hostile floats and
 //! zero or NaN probabilities; and two property sets naming the tables, start-up scripts and
 //! entity of the chain. Now and then one byte of one record is corrupted, so undecodable
 //! records are met too. Most such worlds decode, so the evaluator itself runs. Once the
@@ -42,8 +45,8 @@ use std::convert::Infallible;
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::reader::write_vle;
 use tessera_formats::script_table::resolve::{
-    AnimationFieldPids, ClipResolution, ClipResolver, EntityScripts, MeshDeformerFieldPids,
-    MotionState, ResolveLimits, ScriptVocabulary, collect_entity_scripts,
+    AnimationFieldPids, ClipResolution, ClipResolver, EditMaterialFieldPids, EntityScripts,
+    MeshDeformerFieldPids, MotionState, ResolveLimits, ScriptVocabulary, collect_entity_scripts,
 };
 use tessera_formats::setup::ENTITY_FLAGS_REQUIRED;
 use tessera_formats::{
@@ -77,6 +80,7 @@ const STRUCT: u32 = 11;
 const ARRAY: u32 = 12;
 const BITFIELD64: u32 = 14;
 const INT: u32 = 15;
+const COLOUR: u32 = 16;
 const INT64: u32 = 19;
 const DID_REF: u32 = 20;
 const BOOL: u32 = 21;
@@ -139,6 +143,26 @@ const ELEMENT_KEY: u32 = typed(42, ENUM);
 // `Script_CombinationType` in the per-script sets (§2.4): `Overriding` (1, the value §8.2
 // step 1 states) cuts the gathering descent (§8.2 step 2).
 const COMBINATION_TYPE: u32 = typed(43, ENUM);
+// The EditMaterial fields (`script-table.md` §5.3, `EditMaterialScript_*`), typed as the
+// resolver applies them, and a colour property to drive colours from.
+const EM_MATERIAL_PROPERTY: u32 = typed(44, ENUM);
+const EM_MESH_TYPE: u32 = typed(45, ENUM);
+const EM_MATERIAL_TYPE: u32 = typed(46, ENUM);
+const EM_PRIORITY: u32 = typed(47, INT);
+const EM_COLOR: u32 = typed(48, COLOUR);
+const EM_TEXTURE: u32 = typed(49, DID_REF);
+const EM_BOOL: u32 = typed(50, BOOL);
+const STATE_COLOUR: u32 = typed(51, COLOUR);
+
+const EDIT_MATERIAL_FIELDS: [u32; 7] = [
+    EM_MATERIAL_PROPERTY,
+    EM_MESH_TYPE,
+    EM_MATERIAL_TYPE,
+    EM_PRIORITY,
+    EM_COLOR,
+    EM_TEXTURE,
+    EM_BOOL,
+];
 
 const ANIMATION_FIELDS: [u32; 16] = [
     ANIM_ASSET,
@@ -160,7 +184,8 @@ const ANIMATION_FIELDS: [u32; 16] = [
 ];
 
 /// Properties nodes test, blend on, set and drive from.
-const STATE: [u32; 18] = [
+const STATE: [u32; 19] = [
+    STATE_COLOUR,
     MOVEMENT_STYLE,
     SLIDER_PROPEL,
     SLIDER_STRAFE,
@@ -526,7 +551,7 @@ fn f32_payload(src: &mut Src<'_>, anchors: &[f32]) -> Vec<u8> {
 /// empty target list.
 #[allow(clippy::too_many_lines)] // one arm per node kind
 fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
-    let sel = src.below(20);
+    let sel = src.below(22);
     let kind = match sel {
         0..=4 => 36u8,
         5 => 2,
@@ -542,6 +567,7 @@ fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
         16 => 18,
         17 => 81,
         18 => src.pick(&[6u8, 65, 25, 10]),
+        20 | 21 => src.pick(&[33u8, 44, 53, 60]),
         _ => 28,
     };
     out.push(kind);
@@ -722,7 +748,11 @@ fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
                 _ => src.pick(&DIDS[2..]),
             };
             put_u32(out, file);
-            put_set(out, src, &ANIMATION_FIELDS, 3);
+            if src.below(4) == 0 {
+                put_set(out, src, &EDIT_MATERIAL_FIELDS, 3);
+            } else {
+                put_set(out, src, &ANIMATION_FIELDS, 3);
+            }
             put_base(out, src, &ANIMATION_FIELDS);
             put_ports(out, src, depth, ports, |s| {
                 let mut p = Vec::new();
@@ -791,6 +821,46 @@ fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
             );
             put_u32(out, 0);
         }
+        33 => {
+            // ModifyCompositorColor: name, colour key, colour.
+            put_u32(out, src.pick(&[1u32, 2, 0x1000_0001]));
+            put_u32(out, src.pick(&[0x1000_000B, 0x1000_0007, 3]));
+            put_u32(out, src.u32());
+            put_base(out, src, &[STATE_COLOUR, STATE_INT, ANIM_ASSET]);
+            put_u32(out, 0);
+        }
+        44 => {
+            // ModifyCompositorLayer: name, layer key, image number, opacity.
+            put_u32(out, src.pick(&[1u32, 2, 0x1000_0001]));
+            put_u32(out, src.pick(&[0x1000_0001, 0x1000_0004, 5]));
+            put_u32(out, src.pick(&[0u32, 1, 2, u32::MAX, 0x8000_0000]));
+            put_f32(out, src.float());
+            put_base(out, src, &[STATE_INT, STATE_INT64, SLIDER_PROPEL]);
+            put_u32(out, 0);
+        }
+        53 => {
+            // TextureCompositor: name, record, mesh type, material type.
+            put_u32(out, src.pick(&[1u32, 2, 0x1000_0001]));
+            put_u32(out, src.did());
+            put_u32(out, src.pick(&[2u32, 0x1000_0002, 7]));
+            put_u32(out, src.pick(&[0x1000_006C, 9]));
+            put_base(out, src, &[ANIM_ASSET, STATE_INT]);
+            put_u32(out, 0);
+        }
+        60 => {
+            // EditMaterial: property, mesh type, material type, priority, waveform, colour,
+            // texture, bool.
+            put_u32(out, src.pick(&[2003u32, 3000, 2000, 1, u32::MAX]));
+            put_u32(out, src.pick(&[2u32, 0x1000_000E, 0]));
+            put_u32(out, src.key());
+            put_u32(out, src.pick(&[5u32, 20, 0, u32::MAX]));
+            put_waveform(out, src);
+            put_u32(out, src.u32());
+            put_u32(out, src.did());
+            put_bool(out, src);
+            put_base(out, src, &EDIT_MATERIAL_FIELDS);
+            put_u32(out, 0);
+        }
         81 => {
             put_pascal(out, src.pick(&["0A1B", "", "zz", "00FF7F"]));
             put_u32(out, src.did());
@@ -805,6 +875,38 @@ fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
         }
     }
     put_u32(out, 0); // targets
+}
+
+/// A waveform (`property-system.md` §4.2): mostly empty or short, now and then subtype 10
+/// with many pairs.
+fn put_waveform(out: &mut Vec<u8>, src: &mut Src<'_>) {
+    match src.below(8) {
+        0..=3 => put_u32(out, 0),
+        4 => {
+            put_u32(out, 1);
+            put_f32(out, src.float());
+        }
+        5 => {
+            put_u32(out, 3);
+            for _ in 0..10 {
+                put_f32(out, src.float());
+            }
+        }
+        _ => {
+            put_u32(out, 10);
+            for _ in 0..10 {
+                put_f32(out, src.float());
+            }
+            put_f32(out, src.float());
+            put_bool(out, src);
+            let k: u32 = src.pick(&[0, 1, 3, 500, 4000]);
+            put_u32(out, k);
+            for _ in 0..k {
+                put_f32(out, 0.5);
+                put_f32(out, 1.0);
+            }
+        }
+    }
 }
 
 /// `n` root nodes.
@@ -947,6 +1049,7 @@ fn entity_state(src: &mut Src<'_>, entity: &mut EntityScripts) {
             INT64 => PropertyValue::Int64(i64::from(src.u32() as i32)),
             TRI_STATE => PropertyValue::TriState(src.pick(&[0, 1, 255])),
             BOOL => PropertyValue::Bool(src.bool()),
+            COLOUR => PropertyValue::Colour(src.u32().to_le_bytes()),
             FLOAT => PropertyValue::Float(src.float()),
             DID_REF => PropertyValue::DidRef(Did(src.did())),
             STRING => PropertyValue::String(src.pick(&["0A1B", "zz", ""]).to_owned()),
@@ -1069,6 +1172,16 @@ fuzz_target!(|data: &[u8]| {
         // Without it every definition is additive and `gather` never takes its
         // overriding branch.
         combination_type: Some(COMBINATION_TYPE),
+        edit_material: EditMaterialFieldPids {
+            material_property: Some(EM_MATERIAL_PROPERTY),
+            mesh_type: Some(EM_MESH_TYPE),
+            material_type: Some(EM_MATERIAL_TYPE),
+            priority: Some(EM_PRIORITY),
+            color_value: Some(EM_COLOR),
+            texture_value: Some(EM_TEXTURE),
+            bool_value: Some(EM_BOOL),
+            ..EditMaterialFieldPids::default()
+        },
         ..ScriptVocabulary::default()
     };
     // Bits 2–3 of byte 0 all set: tight limits, so that every limit is reached.
@@ -1132,10 +1245,36 @@ fuzz_target!(|data: &[u8]| {
             );
         }
         assert!(res.deformers.len() <= limits.max_candidates);
+        assert!(res.look.len() <= limits.max_candidates);
         assert!(res.held().len() <= res.candidates.len());
         assert_issues_unique(&res);
         let _ = res.primary(10);
         let _ = res.clips();
+    }
+    // Properties set after the start-up (`appearance.md` §3.5, `Physics_InWorld`): watched
+    // persistent Switches re-evaluate; the lists stay within the caps.
+    let mut late = ClipResolver::new(&total, r.vocabulary().clone(), |d: Did| {
+        Ok::<_, Infallible>(world.get(&d).cloned())
+    })
+    .with_limits(limits)
+    .with_defaults(|pid| (pid % 3 == 0).then_some(PropertyValue::Int(0)))
+    .with_random_seed(Some(1))
+    .with_after_startup(vec![
+        (CHARGEN_STAGE, PropertyValue::Int(i32::from(mode & 7))),
+        (COMBAT_VIOLENT, PropertyValue::Bool(true)),
+        (ENTITY_ELEMENT, PropertyValue::Int(1)),
+    ]);
+    let res = late
+        .resolve(&entity, MotionState::Idle)
+        .expect("fetch never fails");
+    assert!(res.look.len() <= limits.max_candidates);
+    assert!(res.candidates.len() <= limits.max_candidates);
+    assert!(res.appearances.len() <= limits.max_candidates);
+    assert!(res.mesh_fx.len() <= limits.max_candidates);
+    for (i, l) in res.look.iter().enumerate() {
+        if let Some(at) = l.stopped_at {
+            assert!(l.stopped && at > i, "a stop follows its start");
+        }
     }
     let all = r.reachable(&entity).expect("fetch never fails");
     assert!(all.candidates.len() <= limits.max_candidates);

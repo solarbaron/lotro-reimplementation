@@ -14,7 +14,9 @@
 use tessera_formats::Did;
 use tessera_formats::RgbaImage;
 use tessera_material::diagnose::{base_reason, opacity_slot};
-use tessera_material::layers::{LayerCombine, SECOND_LAYER_ROLES, second_layer};
+use tessera_material::layers::{
+    LayerAlpha as MaterialLayerAlpha, LayerCombine, SECOND_LAYER_ROLES, second_layer_plan,
+};
 use tessera_material::vocab::ids;
 use tessera_material::{
     BlendMode, CurveStates, FallbackReason, LiquidSurface, MaterialKind, ResolvedMaterial,
@@ -22,7 +24,7 @@ use tessera_material::{
 };
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
 use tessera_render::{
-    AlphaMode, Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh, UvTransform,
+    AlphaMode, Indices, LayerAlpha, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh, UvTransform,
 };
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
@@ -265,9 +267,10 @@ pub struct MaterialPlan {
     pub lit: LitInputs,
     /// Where the plan came from and why it lacks a base texture (diagnostics only).
     pub diag: PlanDiag,
-    /// The second colour layer (`material.md` §10.3): slot 3001 with its own alpha, and
-    /// whether its RGB is added (else multiplied); sampled at texture matrix 1.
-    pub layer2: Option<(TexRequest, bool)>,
+    /// The second colour layer (`material.md` §10.3): slot 3001 with its own alpha,
+    /// whether its RGB is added (else multiplied) and what its alpha does (§10.3 MA54,
+    /// §20.1); sampled at texture matrix 1.
+    pub layer2: Option<(TexRequest, bool, LayerAlpha)>,
     /// Texture matrices 0 and 1 at clock 0 (`material.md` §8.4); the walker evaluates them
     /// again every frame when [`MaterialPlan::animated_uv`] is set.
     pub uv: [UvTransform; 2],
@@ -436,21 +439,30 @@ pub fn plan_material_with(
                 .as_deref()
                 .is_some_and(|r| SECOND_LAYER_ROLES.contains(&r))
     });
+    // The `ColorTexture` record takes slot 3001 for its alpha only (§20.1, §19 answer (b)).
     let layer2 = if own.is_none() && layout.is_some() {
-        second_layer(m)
-            .filter(|(d, _)| d.0 > VARIANT_DYE_MASK)
-            .map(|(d, c)| {
+        second_layer_plan(m)
+            .filter(|l| l.texture.0 > VARIANT_DYE_MASK)
+            .map(|l| {
                 (
                     TexRequest {
-                        did: d.0,
+                        did: l.texture.0,
                         variant: VARIANT_OWN_ALPHA,
                     },
-                    c == LayerCombine::Add,
+                    l.combine == LayerCombine::Add,
+                    match l.alpha {
+                        MaterialLayerAlpha::Ignored => LayerAlpha::Ignored,
+                        MaterialLayerAlpha::Multiplied => LayerAlpha::Multiplied,
+                        MaterialLayerAlpha::OpacityOnly => LayerAlpha::OpacityOnly,
+                    },
                 )
             })
     } else {
         None
     };
+    // Whether the second layer's alpha joins the opacity (§10.3 MA54: `ColorAndOpacity2`,
+    // and the `ColorTexture` record of §20.1).
+    let layer2_alpha = layer2.is_some_and(|l| l.2 != LayerAlpha::Ignored);
     let emissive_uv1 = m
         .slot(ids::EMISSIVE)
         .and_then(|s| s.role.as_deref())
@@ -471,11 +483,11 @@ pub fn plan_material_with(
         BlendMode::AlphaBlend | BlendMode::Additive | BlendMode::Custom => AlphaKind::Blend,
     };
     // An alpha mode without an alpha source would hide or fade the whole surface.
-    // A second colour layer's alpha is an opacity source too (§10.3: the product of the
-    // two alphas is the opacity).
+    // A second colour layer's alpha is an opacity source too when its role carries
+    // opacity (§10.3 MA54: the product of the two alphas is the opacity).
     let alpha = match (alpha, texture) {
         (AlphaKind::Mask(_) | AlphaKind::Blend, Some(t))
-            if t.variant == VARIANT_OPAQUE && layer2.is_none() =>
+            if t.variant == VARIANT_OPAQUE && !layer2_alpha =>
         {
             AlphaKind::Opaque
         }
@@ -483,7 +495,7 @@ pub fn plan_material_with(
         (a, _) => a,
     };
     let tint = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
-    let lit = lit_inputs(m, texture, layer2.is_some(), alpha, tint);
+    let lit = lit_inputs(m, texture, layer2_alpha, alpha, tint);
     let scrolls = own.is_none()
         && match layout {
             Some(_) => false,

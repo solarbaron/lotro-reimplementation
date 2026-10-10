@@ -27,6 +27,7 @@ use glam::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::arena::MeshConfig;
+use crate::depth_bias::{BiasKey, DrawDepthBias};
 use crate::error::{RenderError, Result};
 use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
@@ -424,6 +425,12 @@ pub struct InstanceBatch {
     /// surfaces' own [`WorldSurface::uv`]. Surfaces past the list keep their own. `None`:
     /// every surface keeps its own.
     pub uv: Option<Arc<[[UvTransform; 2]]>>,
+    /// The depth bias of the placed entities the batch draws (`decals.md` §6.5: their
+    /// `Render_DepthBias_Type` entry, the Tessera default of OPEN (c) applying it to every
+    /// draw of an entity), on every colour draw of the batch; the shadow-map draws keep the
+    /// shadow pass's own bias. Batch only instances that share it. [`DrawDepthBias::NONE`]
+    /// by default.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl InstanceBatch {
@@ -438,6 +445,7 @@ impl InstanceBatch {
             max_distance: None,
             frill: None,
             uv: None,
+            depth_bias: DrawDepthBias::NONE,
         }
     }
 
@@ -683,6 +691,10 @@ pub(crate) mod sf {
     pub const SECOND_LAYER: u32 = 512;
     /// Its RGB is added (else multiplied).
     pub const LAYER_ADD: u32 = 1024;
+    /// Its alpha multiplies the base alpha ([`crate::LayerAlpha::Multiplied`]).
+    pub const LAYER_ALPHA: u32 = 2048;
+    /// RGB of the base alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
+    pub const LAYER_OPACITY_ONLY: u32 = 4096;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
     pub const SRGB_LAYER2: u32 = 4;
@@ -754,6 +766,11 @@ impl SurfaceUniform {
             if l.add {
                 flags |= sf::LAYER_ADD;
             }
+            flags |= match l.alpha {
+                crate::LayerAlpha::Ignored => 0,
+                crate::LayerAlpha::Multiplied => sf::LAYER_ALPHA,
+                crate::LayerAlpha::OpacityOnly => sf::LAYER_OPACITY_ONLY,
+            };
         }
         let mut srgb_bits = 0;
         if srgb[0] {
@@ -1156,6 +1173,8 @@ struct PipeKey {
     /// face is culled (`docs/specs/render.md` §2.3 Mirrored transforms; unused when
     /// two-sided).
     mirrored: bool,
+    /// The batch's depth bias for the reversed depth ([`DrawDepthBias`]).
+    bias: BiasKey,
 }
 
 /// Pipelines and layouts of the instanced path, built lazily, kept for the renderer's
@@ -1302,7 +1321,10 @@ impl InstancedState {
                 },
                 ..Default::default()
             },
-            depth_stencil: Some(world_depth(write)),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                bias: key.bias.state(),
+                ..world_depth(write)
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: shader,
@@ -1712,6 +1734,7 @@ pub(crate) fn build_hook(
         ];
         let shadow_range = as_u32(start)..as_u32(gpu.len());
         let mut counted_part = None;
+        let bias = batch.depth_bias.reversed(ctx.bias_clamp);
         for (pi, part) in model.parts.iter().enumerate() {
             let Some(surface) = model.surfaces.get(part.surface) else {
                 continue;
@@ -1760,6 +1783,7 @@ pub(crate) fn build_hook(
                         },
                         two_sided: surface.two_sided,
                         mirrored: *mirrored && !surface.two_sided,
+                        bias,
                     },
                 ) else {
                     continue;
@@ -1975,6 +1999,7 @@ mod tests {
             second_layer: Some(SecondLayer {
                 texture: tex,
                 add: true,
+                alpha: crate::LayerAlpha::Multiplied,
             }),
             uv: [
                 UvTransform {
@@ -1994,6 +2019,27 @@ mod tests {
         );
         assert_ne!(u.flags[0] & sf::SECOND_LAYER, 0);
         assert_ne!(u.flags[0] & sf::LAYER_ADD, 0);
+        assert_ne!(u.flags[0] & sf::LAYER_ALPHA, 0);
+        assert_eq!(u.flags[0] & sf::LAYER_OPACITY_ONLY, 0);
+        // material.md §10.3 MA54: a Color2 layer's alpha does not join the opacity.
+        let ignored = WorldSurface {
+            second_layer: s.second_layer.map(|l| SecondLayer {
+                alpha: crate::LayerAlpha::Ignored,
+                ..l
+            }),
+            ..s
+        };
+        let f = SurfaceUniform::new(
+            &ignored,
+            WorldSurfaceOptions::default(),
+            true,
+            [false; 3],
+            false,
+            true,
+        )
+        .flags[0];
+        assert_ne!(f & sf::SECOND_LAYER, 0);
+        assert_eq!(f & (sf::LAYER_ALPHA | sf::LAYER_OPACITY_ONLY), 0);
         assert_eq!(u.uv[0], [2.0, 0.0, 0.5, 0.0]);
         assert_eq!(u.uv[1], [3.0, -0.25, 1.0, 0.0]);
         let missing = SurfaceUniform::new(

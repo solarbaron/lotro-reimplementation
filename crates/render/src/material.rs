@@ -15,6 +15,7 @@
 use glam::{Mat4, Vec3};
 
 use crate::arena::MeshId;
+use crate::depth_bias::DrawDepthBias;
 use crate::frame::Rgba;
 use crate::skin::SkinPalette;
 use crate::texture::TextureId;
@@ -690,14 +691,31 @@ impl Default for UvTransform {
 }
 
 /// The second colour layer of a surface (`material.md` §10.3): slot 3001, sampled at texture
-/// matrix 1, combined with the base colour by multiplying or adding the RGB; the two alphas
-/// are multiplied into the opacity.
+/// matrix 1, combined with the base colour by multiplying or adding the RGB; its alpha joins
+/// the base alpha as [`SecondLayer::alpha`] says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecondLayer {
     /// The layer's texture.
     pub texture: TextureId,
-    /// Add the RGB (else multiply).
+    /// Add the RGB (else multiply). Ignored with [`LayerAlpha::OpacityOnly`].
     pub add: bool,
+    /// What the layer's alpha does (`material.md` §10.3 MA54, §20.1).
+    pub alpha: LayerAlpha,
+}
+
+/// How a second colour layer's alpha reaches the base alpha (`material.md` §10.3, MA54).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LayerAlpha {
+    /// The alpha never reaches the output (second layers of role `Color2`,
+    /// `ColorAndGloss2`, `ColorAndDye2`): the base alpha is the first layer's.
+    #[default]
+    Ignored,
+    /// The two alphas are multiplied (role `ColorAndOpacity2`, after a `ColorAndOpacity`
+    /// first layer).
+    Multiplied,
+    /// The `ColorTexture` record (`material.md` §20.1, MA46): the RGB is the first layer's
+    /// alone and the alpha is 2 × both layers' alphas, clamped to 1.
+    OpacityOnly,
 }
 
 /// The inputs of a mesh draw that only lit passes use (`lighting.md` §4.1, §5). Plain
@@ -790,6 +808,11 @@ pub struct MeshDraw {
     /// [`crate::LightReach::parent`] by the automatic light selection (`lighting.md` §8.5
     /// step 3). `None`: the draw is no light's parent.
     pub light_object: Option<u64>,
+    /// The depth bias of the placed entity the draw belongs to (`decals.md` §6.5: its
+    /// `Render_DepthBias_Type` entry, the Tessera default of OPEN (c) applying it to every
+    /// draw of the entity). Applied to the colour draws of world passes; the shadow-map
+    /// draws keep the shadow pass's own bias. [`DrawDepthBias::NONE`] by default.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl MeshDraw {
@@ -804,7 +827,15 @@ impl MeshDraw {
             skin: None,
             lit: LitSurface::default(),
             light_object: None,
+            depth_bias: DrawDepthBias::NONE,
         }
+    }
+
+    /// Set the entity's depth bias (see [`Self::depth_bias`]).
+    #[must_use]
+    pub fn with_depth_bias(mut self, bias: DrawDepthBias) -> Self {
+        self.depth_bias = bias;
+        self
     }
 
     /// Mark the draw as part of the object with handle `object` (see

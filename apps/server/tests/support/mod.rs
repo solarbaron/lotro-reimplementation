@@ -6,6 +6,8 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tessera_protocol::codes::AppErrorCode;
@@ -149,6 +151,10 @@ pub struct RawClient {
     pub closed: Option<(Option<u64>, String)>,
     seq: u32,
     pub epoch: u32,
+    /// Frame and datagram bytes this client handed to QUIC.
+    pub sent_bytes: Arc<AtomicU64>,
+    /// Frame and datagram bytes this client read from QUIC (stream-kind bytes excluded).
+    pub received_bytes: Arc<AtomicU64>,
 }
 
 impl RawClient {
@@ -166,8 +172,11 @@ impl RawClient {
             .expect("QUIC handshake");
         let (send, recv) = conn.open_bi().await.unwrap();
         let (tx, rx) = mpsc::unbounded_channel();
+        let sent_bytes = Arc::new(AtomicU64::new(0));
+        let received_bytes = Arc::new(AtomicU64::new(0));
         // Control stream reader.
         let t = tx.clone();
+        let count = Arc::clone(&received_bytes);
         tokio::spawn(async move {
             let mut recv = recv;
             let mut dec = FrameDecoder::new(Channel::Control, Side::Server);
@@ -175,6 +184,7 @@ impl RawClient {
             loop {
                 match recv.read(&mut buf).await {
                     Ok(Some(n)) => {
+                        count.fetch_add(n as u64, Ordering::Relaxed);
                         let mut input: &[u8] = &buf[..n];
                         loop {
                             match dec.push(&mut input) {
@@ -196,9 +206,11 @@ impl RawClient {
         // Unidirectional streams.
         let c = conn.clone();
         let t = tx.clone();
+        let count = Arc::clone(&received_bytes);
         tokio::spawn(async move {
             while let Ok(mut s) = c.accept_uni().await {
                 let t = t.clone();
+                let count = Arc::clone(&count);
                 tokio::spawn(async move {
                     let mut kind = [0u8; 1];
                     if s.read_exact(&mut kind).await.is_err() {
@@ -213,6 +225,7 @@ impl RawClient {
                     loop {
                         match s.read(&mut buf).await {
                             Ok(Some(n)) => {
+                                count.fetch_add(n as u64, Ordering::Relaxed);
                                 let mut input: &[u8] = &buf[..n];
                                 loop {
                                     match dec.push(&mut input) {
@@ -240,8 +253,10 @@ impl RawClient {
         // Datagrams.
         let c = conn.clone();
         let t = tx.clone();
+        let count = Arc::clone(&received_bytes);
         tokio::spawn(async move {
             while let Ok(d) = c.read_datagram().await {
+                count.fetch_add(d.len() as u64, Ordering::Relaxed);
                 match decode_datagram(Side::Server, &d) {
                     Ok(m) => {
                         let _ = t.send(Received::Datagram(m));
@@ -274,25 +289,43 @@ impl RawClient {
             closed: None,
             seq: 0,
             epoch: 1,
+            sent_bytes,
+            received_bytes,
         }
     }
 
     pub async fn send(&mut self, m: &Message) {
         let b = frame_to_vec(m).unwrap();
         self.send.write_all(&b).await.unwrap();
+        self.sent_bytes.fetch_add(b.len() as u64, Ordering::Relaxed);
     }
 
     pub async fn send_raw(&mut self, b: &[u8]) {
-        let _ = self.send.write_all(b).await;
+        if self.send.write_all(b).await.is_ok() {
+            self.sent_bytes.fetch_add(b.len() as u64, Ordering::Relaxed);
+        }
     }
 
     pub fn datagram(&self, m: &Message) {
         let b = encode_datagram(m).unwrap();
-        let _ = self.conn.send_datagram(b.into());
+        let n = b.len() as u64;
+        if self.conn.send_datagram(b.into()).is_ok() {
+            self.sent_bytes.fetch_add(n, Ordering::Relaxed);
+        }
     }
 
     pub fn datagram_raw(&self, b: &[u8]) {
-        let _ = self.conn.send_datagram(b.to_vec().into());
+        if self.conn.send_datagram(b.to_vec().into()).is_ok() {
+            self.sent_bytes.fetch_add(b.len() as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Bytes this client sent and received so far (frames and datagrams).
+    pub fn byte_counts(&self) -> (u64, u64) {
+        (
+            self.sent_bytes.load(Ordering::Relaxed),
+            self.received_bytes.load(Ordering::Relaxed),
+        )
     }
 
     /// Waits for a received item matching `pred`, keeping the others buffered.

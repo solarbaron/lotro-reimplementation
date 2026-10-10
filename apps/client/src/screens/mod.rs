@@ -25,7 +25,7 @@
 //! directly. **Not done yet:** the figure in the screens' viewport is not drawn, and
 //! [`viewport::figure_request`] passes only the two height values of a creation figure
 //! (received looks in the world also carry styles and sliders, through the walker's
-//! `FigureLook`); both are recorded as OPEN in `character-screens.md` §6. Each frame the caller passes the
+//! `LookChoices`); both are recorded as OPEN in `character-screens.md` §6. Each frame the caller passes the
 //! session to [`CharacterScreens::pump`], which polls it, updates the screens, sends their
 //! commands and hands every event back to the caller; the player's input arrives as
 //! [`Action`]s ([`CharacterScreens::act`], or through [`ui::ScreenUi`]). When

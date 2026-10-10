@@ -936,6 +936,187 @@ fn flow_fresnel_form_per_record() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// `water.md` §8.6.4 Tessera rule (revised 2026-10-10), WA17: each flow-map record keeps its
+/// own colour list. Seen straight down from 100 m with Fresnel bias 0 (*f* = 0 in both
+/// forms) and fog amount 1 (*w* = 1), the colour is the tint target: 0x2B0005EC
+/// ([`WaterFresnelForm::Biased`]) tints toward `WaterFogColor` itself and never reads the
+/// fake light's colour; 0x2B0007FD ([`WaterFresnelForm::Scaled`]) toward *L*꜀² ×
+/// `WaterFogColor`, *L*꜀ = 0.6 for the grey fake light without a sun.
+///
+/// [`WaterFresnelForm::Biased`]: tessera_render::WaterFresnelForm::Biased
+/// [`WaterFresnelForm::Scaled`]: tessera_render::WaterFresnelForm::Scaled
+#[test]
+fn flow_colour_list_per_record() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.8, 0.4, 0.2];
+    let fog = [0.5, 0.25, 0.75];
+    let params = |form| WaterParams {
+        family: tessera_render::WaterFamily::Flow,
+        normal_speed: [[1.0, 1.0], [0.0; 2], [0.0; 2]],
+        normal_scale: [10.0, 1.0, 1.0],
+        normal_layers: 1,
+        fresnel_bias: 0.0,
+        fresnel_exponent: 2.0,
+        fresnel_form: form,
+        fog_amount: 1.0,
+        fog_color: fog,
+        specular_color: [0.0; 3],
+        ..WaterParams::default()
+    };
+    let lit = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::new(0.3, 0.2, 1.0).normalize(),
+            color: [0.2; 3],
+            specular: [0.0; 3],
+        }),
+        time: 2.0,
+        ..FrameLighting::default()
+    };
+    let mut px_of = |form, lighting: FrameLighting| {
+        scene_px(&mut r, floor_rgb, lighting, |pass| {
+            pass.water(WaterDraw::new(quad(), None, params(form)));
+        })
+        .map(|(px, _)| px)
+    };
+    let own = px_of(tessera_render::WaterFresnelForm::Biased, no_sun(2.0))?;
+    assert!(close(own, fog), "0x2B0005EC list: {own:?} vs {fog:?}");
+    let own_lit = px_of(tessera_render::WaterFresnelForm::Biased, lit.clone())?;
+    assert!(close(own_lit, fog), "no Lc with a sun: {own_lit:?}");
+    let first = px_of(tessera_render::WaterFresnelForm::Scaled, no_sun(2.0))?;
+    let want = fog.map(|c| c * 0.36);
+    assert!(close(first, want), "0x2B0007FD list: {first:?} vs {want:?}");
+    let first_lit = px_of(tessera_render::WaterFresnelForm::Scaled, lit)?;
+    assert!(
+        first_lit[2] + 10 < first[2],
+        "Lc follows the sun's colour: {first_lit:?} vs {first:?}"
+    );
+    Ok(())
+}
+
+/// `water.md` §8.5.5 step 5 (W45, WA18): the unlit liquids test their output alpha: texel
+/// alpha × vertex alpha (0x2B00063E) × material alpha, discarding at or below the
+/// threshold even when the texel alpha alone is above it.
+#[test]
+fn liquid_alpha_test_reads_the_output_alpha() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.2, 0.4, 0.6];
+    let texel = solid(&mut r, [255, 255, 255, 255])?;
+    for (vertex_alpha, material_alpha, vertex_color, want) in [
+        // 1 x 0.4 x 1 <= 0.5: discarded, the floor shows.
+        (0.4f32, 1.0f32, true, floor_rgb),
+        // 1 x 1 x 0.4 <= 0.5 (no vertex colour read): discarded.
+        (0.4, 0.4, false, floor_rgb),
+        // 1 x 0.6 x 1 > 0.5: kept, white blended by 0.6.
+        (0.6, 1.0, true, [0.68, 0.76, 0.84]),
+    ] {
+        let mut mesh = floor_mesh_with_uv(0.0);
+        mesh.colors = Some(vec![[1.0, 1.0, 1.0, vertex_alpha]; 4]);
+        let plane = r.upload_mesh(&mesh)?;
+        let liquid = tessera_render::DistortionParams {
+            vertex_color,
+            alpha_test: Some(0.5),
+            color: [1.0, 1.0, 1.0, material_alpha],
+            ..tessera_render::DistortionParams::default()
+        };
+        let (px, _) = scene_px(&mut r, floor_rgb, no_sun(1.0), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Distortion(liquid),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(texel), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
+            });
+        })?;
+        r.destroy_mesh(plane);
+        assert!(
+            close(px, want),
+            "vertex alpha {vertex_alpha}, material alpha {material_alpha}: {px:?} vs {want:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `water.md` §8.5.5 step 5 (W52, WA19): the lit liquid (0x2B0007D0) tests the alpha of the
+/// distorted `ColorAndOpacity` texel alone, before any multiply: a texel alpha above the
+/// reference is kept even when texel alpha × material alpha is at or below it, with that
+/// product as its output alpha; a texel alpha at or below the reference is discarded at any
+/// material alpha; the record has no vertex-colour input, so a vertex alpha changes nothing.
+#[test]
+fn lit_liquid_alpha_test_reads_the_texel_alpha() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.2, 0.4, 0.6];
+    let mut mesh = floor_mesh_with_uv(0.0);
+    mesh.colors = Some(vec![[1.0, 1.0, 1.0, 0.1]; 4]);
+    let plane = r.upload_mesh(&mesh)?;
+    // Texel alpha 0.8 and 0.4 (exact in 8 bits).
+    let high = solid(&mut r, [255, 255, 255, 204])?;
+    let low = solid(&mut r, [255, 255, 255, 102])?;
+    let draw = |r: &mut Renderer<'static>,
+                texel: TextureId,
+                material_alpha: f32,
+                test: Option<f32>,
+                vertex_color: bool| {
+        let liquid = tessera_render::DistortionParams {
+            lit: true,
+            vertex_color,
+            alpha_test: test,
+            color: [1.0, 1.0, 1.0, material_alpha],
+            ..tessera_render::DistortionParams::default()
+        };
+        scene_px(r, floor_rgb, no_sun(1.0), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Distortion(liquid),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(texel), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
+            });
+        })
+        .map(|(px, _)| px)
+    };
+    let floor_px = scene_px(&mut r, floor_rgb, no_sun(1.0), |_| {})?.0;
+    // Texel 0.8 > 0.5 although 0.8 × 0.4 = 0.32 <= 0.5: kept, blended by 0.32.
+    let kept = draw(&mut r, high, 0.4, Some(0.5), false)?;
+    assert!(kept != floor_px, "kept: {kept:?} vs floor {floor_px:?}");
+    // The same output alpha 0.32 without a test (texel 0.4 × material 0.8) draws the same.
+    let untested = draw(&mut r, low, 0.8, None, false)?;
+    assert!(
+        kept.iter().zip(untested).all(|(a, b)| a.abs_diff(b) <= 2),
+        "output alpha = texel × material: {kept:?} vs {untested:?}"
+    );
+    // Texel 0.4 <= 0.5: discarded at material alpha 1.
+    let discarded = draw(&mut r, low, 1.0, Some(0.5), false)?;
+    assert_eq!(discarded, floor_px, "texel alpha at or below the reference");
+    // The vertex alpha 0.1 takes no part, even with the vertex-colour flag set.
+    let with_vertex = draw(&mut r, high, 0.4, Some(0.5), true)?;
+    assert!(
+        kept.iter()
+            .zip(with_vertex)
+            .all(|(a, b)| a.abs_diff(b) <= 2),
+        "no vertex multiply: {kept:?} vs {with_vertex:?}"
+    );
+    r.destroy_mesh(plane);
+    Ok(())
+}
+
 /// `water.md` §8.5.5 step 5: the unlit liquid of 0x2B00063E multiplies colour and alpha by
 /// the vertex colour; the other liquids ignore it.
 #[test]
@@ -970,6 +1151,7 @@ fn liquid_vertex_colour() -> Result<(), RenderError> {
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
             });
         })?;
         assert!(
@@ -1137,6 +1319,9 @@ fn mirror_surfaces_follow_section_8_5_4() -> Result<(), RenderError> {
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
+                // Type 3 of the puddle objects (`water.md` W44): a slope-scale bias only,
+                // which leaves a surface seen straight on where it is.
+                depth_bias: tessera_render::DrawDepthBias::slope(-0.8),
             });
         })?;
         assert!(close(px, want), "bias {bias}: {px:?} vs {want:?}");
@@ -1175,6 +1360,7 @@ fn placed_water_and_liquid_meshes_use_their_own_programs() -> Result<(), RenderE
             normal_map: None,
             textures: tessera_render::WaterTextures::default(),
             light_object: None,
+            depth_bias: tessera_render::DrawDepthBias::NONE,
         });
     })?;
     assert!(close(px, [0.6, 0.6, 0.3]), "placed water: {px:?}");
@@ -1196,6 +1382,7 @@ fn placed_water_and_liquid_meshes_use_their_own_programs() -> Result<(), RenderE
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
             });
         })?;
         assert!(close(px, want), "liquid alpha {alpha}: {px:?} vs {want:?}");

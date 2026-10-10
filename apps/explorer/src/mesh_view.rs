@@ -956,6 +956,7 @@ fn material_inspector(
     let alpha = match g.alpha {
         AlphaKind::Opaque => "opaque".to_owned(),
         AlphaKind::Mask(t) => format!("alpha test {t}"),
+        AlphaKind::TestBlend(t) => format!("alpha test {t}, blended"),
         AlphaKind::Blend => "blended".to_owned(),
     };
     ui.label(

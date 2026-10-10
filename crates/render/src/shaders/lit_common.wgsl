@@ -58,12 +58,16 @@ const LIT_SRGB_OPACITY: u32 = 32768u;
 // opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const LIT_FACTOR_OPACITY: u32 = 65536u;
 // A second colour layer (material.md §10.3): sampled at texture matrix 1, its RGB added
-// (LIT_LAYER_ADD) or multiplied, its alpha multiplied into the opacity.
+// (LIT_LAYER_ADD) or multiplied; its alpha multiplies the base alpha only with
+// LIT_LAYER_ALPHA (role ColorAndOpacity2, MA54); LIT_LAYER_OPACITY_ONLY: the ColorTexture
+// record (§20.1), base RGB alone and alpha 2 x both alphas.
 const LIT_SECOND_LAYER: u32 = 131072u;
 const LIT_LAYER_ADD: u32 = 262144u;
 // The emissive texture reads texture matrix 1 (material.md §8.4).
 const LIT_EMISSIVE_UV1: u32 = 524288u;
 const LIT_SRGB_LAYER2: u32 = 1048576u;
+const LIT_LAYER_ALPHA: u32 = 2097152u;
+const LIT_LAYER_OPACITY_ONLY: u32 = 4194304u;
 
 const SOURCE_ONE: u32 = 0u;
 const SOURCE_BASE: u32 = 1u;
@@ -106,16 +110,25 @@ fn lit_uv1(uv: vec2<f32>) -> vec2<f32> {
 }
 
 // The base colour with the second colour layer applied (material.md §10.3): RGB added or
-// multiplied, alphas multiplied.
+// multiplied, the alphas multiplied when the layer's role carries opacity (MA54).
 fn lit_layered(base: vec4<f32>, layer2: vec4<f32>) -> vec4<f32> {
     if (!lit_flag(LIT_SECOND_LAYER)) {
         return base;
+    }
+    if (lit_flag(LIT_LAYER_OPACITY_ONLY)) {
+        // 2 x both layer alphas, unclamped: the material alpha multiplies it next and only
+        // the output (the 8-bit target) clamps (material.md §20.1, MA46).
+        return vec4<f32>(base.rgb, 2.0 * base.a * layer2.a);
     }
     var rgb = base.rgb * layer2.rgb;
     if (lit_flag(LIT_LAYER_ADD)) {
         rgb = base.rgb + layer2.rgb;
     }
-    return vec4<f32>(rgb, base.a * layer2.a);
+    var a = base.a;
+    if (lit_flag(LIT_LAYER_ALPHA)) {
+        a = a * layer2.a;
+    }
+    return vec4<f32>(rgb, a);
 }
 
 struct VsIn {

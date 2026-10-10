@@ -875,3 +875,113 @@ fn weenie_creatures_resolve() {
         "at least the monster type resolves idle and movement (§10.4)"
     );
 }
+
+/// The face-compositing and colour-edit nodes (`appearance.md` §3.5, `script-table.md`
+/// §5.1): every TextureCompositor (53), ModifyCompositorLayer (44), ModifyCompositorColor
+/// (33) and EditMaterial (60) node decodes to its typed fields; the EditMaterial colour
+/// edits driven by `AC_Color_Hair` and `AC_Color_Skin` are found through the
+/// `EditMaterialScript_ColorValue` field PID (A21: 255 and 42).
+#[test]
+fn look_nodes_decode_and_follow_the_census() {
+    use tessera_formats::script_table::NodeData;
+    let Some(set) = open_set() else { return };
+    let dict = dictionary(set);
+    let vocab = vocabulary(set);
+    let colour_field = vocab.edit_material.color_value;
+    let hair = dict.pid("AC_Color_Hair");
+    let skin = dict.pid("AC_Color_Skin");
+    let ac_colour = |pid: u32| dict.name(pid).is_some_and(|n| n.starts_with("AC_Color_"));
+    let ac_texture = |pid: u32| dict.name(pid).is_some_and(|n| n.starts_with("AC_Texture_"));
+    // [53, 44, 33, 60, untyped, 60 colour driven by hair, by skin, 33 driven by AC_Color_*,
+    //  44 driven by AC_Texture_*]
+    let count = |roots: &[tessera_formats::script_table::Node], c: &mut [usize; 9]| {
+        for r in roots {
+            r.walk(&mut |n, _| {
+                let driven = |pred: &dyn Fn(u32) -> bool| {
+                    n.base.driven.iter().any(|&(_, source)| pred(source))
+                };
+                match (n.kind.0, &n.data) {
+                    (53, NodeData::TextureCompositor(_)) => c[0] += 1,
+                    (44, NodeData::CompositorLayer(_)) => {
+                        c[1] += 1;
+                        c[8] += usize::from(driven(&ac_texture));
+                    }
+                    (33, NodeData::CompositorColour(_)) => {
+                        c[2] += 1;
+                        c[7] += usize::from(driven(&ac_colour));
+                    }
+                    (60, NodeData::EditMaterial(_)) => {
+                        c[3] += 1;
+                        for &(field, source) in &n.base.driven {
+                            if Some(field) == colour_field {
+                                c[5] += usize::from(Some(source) == hair);
+                                c[6] += usize::from(Some(source) == skin);
+                            }
+                        }
+                    }
+                    (33 | 44 | 53 | 60, _) => c[4] += 1,
+                    _ => {}
+                }
+            });
+        }
+    };
+    let tables = par_each(&entries_with_prefix(set, 0x07), |(i, e)| {
+        let mut c = [0usize; 9];
+        if let Ok(payload) = set.member(*i).archive.read_entry(e)
+            && let Ok(t) = ScriptTable::parse_expecting(&payload, e.did, dict)
+        {
+            for sc in &t.scripts {
+                count(&sc.roots, &mut c);
+            }
+        }
+        c
+    });
+    let scriptlets = par_each(&entries_with_prefix(set, 0x0C), |(i, e)| {
+        let mut c = [0usize; 9];
+        if let Ok(payload) = set.member(*i).archive.read_entry(e)
+            && let Ok(s) = Scriptlet::parse_expecting(&payload, e.did, dict)
+        {
+            count(&s.roots, &mut c);
+        }
+        c
+    });
+    let sum = |v: Vec<[usize; 9]>| {
+        v.into_iter().fold([0usize; 9], |mut a, c| {
+            for (x, y) in a.iter_mut().zip(c) {
+                *x += y;
+            }
+            a
+        })
+    };
+    let (t, s) = (sum(tables), sum(scriptlets));
+    eprintln!(
+        "look nodes in tables: 53 {}, 44 {}, 33 {}, 60 {}, untyped {}; colour edits driven by \
+         hair {}, skin {}; 33 driven by AC_Color_* {}; 44 driven by AC_Texture_* {}",
+        t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8]
+    );
+    eprintln!(
+        "look nodes in scriptlets: 53 {}, 44 {}, 33 {}, 60 {}, untyped {}; colour edits driven \
+         by hair {}, skin {}",
+        s[0], s[1], s[2], s[3], s[4], s[5], s[6]
+    );
+    assert_eq!(
+        t[4] + s[4],
+        0,
+        "every look node decodes to its typed fields"
+    );
+    if exhaustive() {
+        assert!(colour_field.is_some(), "EditMaterialScript_ColorValue");
+        assert!(t[5] + s[5] > 0, "colour edits driven by AC_Color_Hair");
+        assert!(t[6] + s[6] > 0, "colour edits driven by AC_Color_Skin");
+        // script-table.md §5.1 and appearance.md A21.
+        let found = [t[0], t[1], t[2], t[3], s[3], t[5] + s[5], t[6] + s[6]];
+        let census = [39, 199, 218, 2873, 13, 255, 42];
+        if found != census {
+            eprintln!("census differs from the spec: {found:?} against {census:?}");
+            assert!(
+                !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
+                "census (strict)"
+            );
+        }
+    }
+}

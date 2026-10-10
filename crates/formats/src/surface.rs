@@ -61,30 +61,38 @@ pub fn jpeg_decode_bytes(width: u32, height: u32, components: u8, progressive: b
     output.saturating_add(padded.saturating_mul(u64::from(components) * 2))
 }
 
-/// Frame-type facts read from a JPEG's start-of-frame marker.
-#[cfg(feature = "jpeg")]
+/// Frame facts read from a JPEG's start-of-frame marker without decoding anything
+/// ([`jpeg_frame`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct JpegFrame {
+pub struct JpegFrame {
     /// SOF2, SOF6, SOF10 or SOF14: the scans refine the whole image progressively.
-    progressive: bool,
+    pub progressive: bool,
     /// Number of colour components in the frame.
-    components: u8,
+    pub components: u8,
     /// Frame width in pixels, as stored in the frame header.
-    width: u16,
+    pub width: u16,
     /// Frame height in pixels, as stored in the frame header.
-    height: u16,
+    pub height: u16,
 }
 
-/// Walks the marker segments of a JPEG stream up to its start-of-frame marker. `None` if
-/// the stream ends, a segment is malformed, or a scan starts before any frame header.
+/// Reads the first frame header of a JPEG stream without decoding anything, walking its
+/// marker segments from the start-of-image marker. `None` if the stream does not start
+/// with `FF D8`, ends early, a segment is malformed, or a scan starts before any frame
+/// header.
 ///
 /// Fails closed on the marker codes that have no place before a frame header: 0x00 (a
 /// stuffed byte), 0x01 (TEM), 0xD0–0xD7 (restart markers) and a second 0xD8 (start of
 /// image). Decoders disagree on how to step over them (stand-alone marker, length-carrying
 /// segment, or fill), so accepting them would let this walk reach a different frame header
-/// from the one the decoder uses, and the memory check below would rely on the wrong frame.
-#[cfg(feature = "jpeg")]
-fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
+/// from the one the decoder uses (`records.md` §5.3.2: no stored stream has them). The
+/// surface decoder rejects a stream whose decoded frame differs from this one, so the size
+/// read here is the size [`Surface::to_rgba8`] would produce, and callers may check and
+/// charge it before decoding.
+#[must_use]
+pub fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
     let mut pos = 2usize; // after FF D8
     while pos < data.len() {
         if *data.get(pos)? != 0xFF {
@@ -342,6 +350,19 @@ impl Surface<'_> {
     #[must_use]
     pub fn is_jpeg(&self) -> bool {
         self.format == SurfaceFormat::Jpeg
+    }
+
+    /// The pixel size `(width, height)` this surface decodes to, read without decoding:
+    /// the header fields, or for a JPEG surface (whose header size is not used,
+    /// `records.md` §5.3.2) the stream's frame header ([`jpeg_frame`]). `None` when a JPEG
+    /// frame header cannot be read; [`Surface::to_rgba8`] then fails too.
+    #[must_use]
+    pub fn decoded_size(&self) -> Option<(u32, u32)> {
+        if self.is_jpeg() {
+            jpeg_frame(self.data).map(|f| (u32::from(f.width), u32::from(f.height)))
+        } else {
+            Some((self.width, self.height))
+        }
     }
 
     /// Converts the surface to RGBA8.

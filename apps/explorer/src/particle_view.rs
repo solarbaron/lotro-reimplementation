@@ -24,9 +24,9 @@ use std::time::Instant;
 use eframe::egui::{self, Color32, ColorImage, RichText, TextureHandle, TextureOptions, Ui};
 use tessera_formats::gameplay::particles::ParticleSystem;
 use tessera_formats::{Did, RgbaImage};
-use tessera_material::BlendMode;
 use tessera_material::ResolvedMaterial;
 use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
+use tessera_material::{BlendMode, CurveStates, TextureMatrix, TextureMatrixLayout};
 use tessera_particles::glam::Vec3;
 use tessera_particles::surface::{LayerCombine, ParticleSurface};
 use tessera_particles::{
@@ -35,7 +35,8 @@ use tessera_particles::{
 use tessera_render::{
     AlphaMode, BlendFactor, BlendOp, Camera, ColorSpace, Filter, FixedBlend, Material, MeshData,
     MeshDraw, MeshId, OffscreenFormat, OffscreenTarget, ParticleDraw, ParticleLayers,
-    ParticleShading, ParticleVertex, Renderer, RendererConfig, TextureId, TextureUpload, Wrap,
+    ParticleShading, ParticleVertex, Renderer, RendererConfig, TextureId, TextureUpload,
+    UvTransform, Wrap,
 };
 
 use crate::data::DataContext;
@@ -66,6 +67,9 @@ pub struct PreviewLook {
     pub drawn: bool,
     /// The shader record when it is one of the programs of runtime §9.1.1.
     pub program: Option<u32>,
+    /// Texture matrices 0 and 1 of a two-layer program (identity otherwise; runtime
+    /// §9.1.1, RT27).
+    pub uv: [UvTransform; 2],
 }
 
 impl Default for PreviewLook {
@@ -76,8 +80,23 @@ impl Default for PreviewLook {
             material: [1.0; 4],
             drawn: true,
             program: None,
+            uv: [UvTransform::IDENTITY; 2],
         }
     }
+}
+
+/// What re-evaluates a surface whose alpha-test reference or texture matrices follow the
+/// clock ([`ParticleSurface::is_animated`]; runtime §9.1.1 answers (d), (e)).
+#[derive(Debug)]
+pub struct PreviewClock {
+    look: ParticleSurface,
+    material: Arc<ResolvedMaterial>,
+    layout: Arc<TextureMatrixLayout>,
+}
+
+/// Texture matrices as the renderer takes them.
+fn uv_transforms(m: [TextureMatrix; 2]) -> [UvTransform; 2] {
+    m.map(|m| UvTransform { rows: m.rows }.sanitized())
 }
 
 /// What the preview needs from the install.
@@ -91,8 +110,10 @@ pub struct PreviewSource {
     pub texture: Option<Arc<RgbaImage>>,
     /// The second colour layer (slot 3001) of a two-layer program.
     pub second_texture: Option<Arc<RgbaImage>>,
-    /// The surface's blend state and program.
+    /// The surface's blend state and program at time 0.
     pub look: PreviewLook,
+    /// For an animated surface: what [`PreviewSim::look`] re-evaluates at every step.
+    pub clock: Option<Arc<PreviewClock>>,
     /// What could not be resolved.
     pub notes: Vec<String>,
 }
@@ -130,12 +151,12 @@ fn factor(f: MatFactor) -> Option<BlendFactor> {
     })
 }
 
-/// The renderer's alpha mode for a resolved surface material (`material.md` §11.2–§11.3:
-/// the blend mode, factors, depth write and alpha test).
-#[must_use]
-pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
+/// The renderer's alpha mode for a particle surface's resolved material (`material.md`
+/// §11.3: the blend mode, factors and depth write) with the particle alpha test `test`
+/// ([`ParticleSurface::alpha_test`], runtime §9.1.3: the effective 4004 and 1043, not the
+/// mesh opacity-source rule).
+pub fn surface_alpha(m: &ResolvedMaterial, test: Option<f32>) -> AlphaMode {
     let b = m.features.blend;
-    let test = m.features.alpha_test.map(|a| a.threshold);
     match b.mode {
         BlendMode::Opaque => test.map_or(AlphaMode::Opaque, |c| AlphaMode::Mask { cutoff: c }),
         BlendMode::Cutout => AlphaMode::Mask {
@@ -187,6 +208,25 @@ pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
     }
 }
 
+impl PreviewClock {
+    /// `base` with the alpha-test reference and the texture matrices evaluated at `t` with
+    /// the run's curve states `states` and the run's stream `rng` (mode 3).
+    fn look_at(
+        &self,
+        base: PreviewLook,
+        t: f64,
+        states: &mut CurveStates,
+        rng: &mut Ran2,
+    ) -> PreviewLook {
+        let s = self.look.at(&self.material, &self.layout, t, states, rng);
+        PreviewLook {
+            alpha: surface_alpha(&self.material, s.alpha_test),
+            uv: uv_transforms(s.matrices),
+            ..base
+        }
+    }
+}
+
 /// Reads and decodes `did` and resolves its surface (`particles.md` §4.1: `surface`, else
 /// `extra_surface`).
 ///
@@ -218,19 +258,33 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
     let mut texture = None;
     let mut second_texture = None;
     let mut look = PreviewLook::default();
+    let mut clock = None;
     if surface.is_null() {
         notes.push("no surface: the client draws nothing for this system (§8.11)".into());
     } else {
         match ctx.materials.resolve_surface(surface) {
             Ok(m) => {
-                let s = ParticleSurface::of(&m);
+                let layout = ctx
+                    .materials
+                    .texture_matrices(m.shader.did)
+                    .map_err(|e| notes.push(format!("texture matrices of {}: {e}", m.shader.did)))
+                    .unwrap_or_default();
+                let s = ParticleSurface::of(&m, &layout);
                 look = PreviewLook {
-                    alpha: surface_alpha(&m),
+                    alpha: surface_alpha(&m, s.alpha_test),
                     shading: particle_shading(&s),
                     material: s.material_colour,
                     drawn: s.is_drawn(),
                     program: s.program.shader,
+                    uv: uv_transforms(s.matrices),
                 };
+                if s.is_animated() {
+                    clock = Some(Arc::new(PreviewClock {
+                        look: s,
+                        material: Arc::clone(&m),
+                        layout,
+                    }));
+                }
                 if s.program.shader.is_none() {
                     notes.push(format!(
                         "shader {} is not one of the particle programs of runtime §9.1.1: \
@@ -240,8 +294,8 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
                 }
                 if !s.is_drawn() {
                     notes.push(
-                        "frame-buffer distortion program: drawn as its variant without a \
-                         frame-buffer input, which leaves the image unchanged (runtime §9.1.1)"
+                        "heat-distortion program: drawn as its variant without feature bit 1, \
+                         which leaves the image unchanged (runtime §9.1.2, rule 11)"
                             .into(),
                     );
                 }
@@ -272,11 +326,18 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
         texture,
         second_texture,
         look,
+        clock,
         notes,
     })
 }
 
 /// A running simulation of the preview.
+///
+/// With a surface ([`PreviewSim::with_surface`]) the run keeps one set of curve states for
+/// that surface for its whole length (`particle-runtime.md` §12 rule 12) and evaluates the
+/// look at every drawn frame, as the walker does: at the clock of the frame drawn, after
+/// the system's draw, with mode-3 curves drawing from the shared stream next (§9.1.1 (d),
+/// (e); RT33); a restart starts the states afresh.
 #[derive(Debug, Clone)]
 pub struct PreviewSim {
     desc: Arc<ParticleSystem>,
@@ -286,10 +347,14 @@ pub struct PreviewSim {
     frame: u64,
     time: f64,
     pending: f64,
+    base: PreviewLook,
+    clock: Option<Arc<PreviewClock>>,
+    states: CurveStates,
+    look: PreviewLook,
 }
 
 impl PreviewSim {
-    /// A fresh simulation with `seed`, at time 0.
+    /// A fresh simulation with `seed`, at time 0, drawn with the default look.
     #[must_use]
     pub fn new(desc: Arc<ParticleSystem>, seed: u32) -> Self {
         Self {
@@ -300,12 +365,37 @@ impl PreviewSim {
             frame: 0,
             time: 0.0,
             pending: 0.0,
+            base: PreviewLook::default(),
+            clock: None,
+            states: CurveStates::new(),
+            look: PreviewLook::default(),
         }
     }
 
-    /// Starts again from time 0 with `seed`.
+    /// This simulation drawn with the surface of `src`: its look at time 0, re-evaluated at
+    /// every drawn frame when the surface is animated.
+    #[must_use]
+    pub fn with_surface(mut self, src: &PreviewSource) -> Self {
+        self.base = src.look;
+        self.look = src.look;
+        self.clock = src.clock.clone();
+        self.states = CurveStates::new();
+        self
+    }
+
+    /// Starts again from time 0 with `seed` (the surface's curve states afresh).
     pub fn restart(&mut self, seed: u32) {
-        *self = Self::new(Arc::clone(&self.desc), seed);
+        let mut fresh = Self::new(Arc::clone(&self.desc), seed);
+        fresh.base = self.base;
+        fresh.look = self.base;
+        fresh.clock = self.clock.take();
+        *self = fresh;
+    }
+
+    /// The surface's look at the last drawn frame (the look at time 0 before any draw).
+    #[must_use]
+    pub fn look(&self) -> PreviewLook {
+        self.look
     }
 
     /// The seed.
@@ -368,12 +458,22 @@ impl PreviewSim {
         }
     }
 
-    /// The current frame drawn from `camera`.
+    /// The current frame drawn from `camera`, and the surface's look ([`PreviewSim::look`])
+    /// evaluated at that frame's clock after it, in the walker's order.
     pub fn draw(&mut self, camera: &Camera) -> Option<SystemDraw> {
-        let now = (self.time - 1.0 / STEPS_PER_SECOND).max(0.0);
+        let now = self.drawn_clock();
         let view = CameraView::look_at(camera.eye, camera.target);
         self.sim.instance_frame()?;
-        self.sim.draw(now, &view, &mut self.rng)
+        let drawn = self.sim.draw(now, &view, &mut self.rng)?;
+        if let Some(c) = &self.clock {
+            self.look = c.look_at(self.base, now, &mut self.states, &mut self.rng);
+        }
+        Some(drawn)
+    }
+
+    /// The clock of the last placed frame: the one [`PreviewSim::draw`] draws.
+    fn drawn_clock(&self) -> f64 {
+        (self.time - 1.0 / STEPS_PER_SECOND).max(0.0)
     }
 }
 
@@ -407,6 +507,7 @@ pub fn render_draws(
             material: look.material,
             shading: look.shading,
             second_texture: textures[1],
+            uv: look.uv,
         })
         .collect()
 }
@@ -768,7 +869,8 @@ impl ParticlePreview {
                 let _ = thread.tx.send(Cmd::Texture(0, src.texture.clone()));
                 let _ = thread.tx.send(Cmd::Texture(1, src.second_texture.clone()));
                 self.thread = Some(thread);
-                self.sim = Some(PreviewSim::new(Arc::clone(&src.desc), self.seed));
+                self.sim =
+                    Some(PreviewSim::new(Arc::clone(&src.desc), self.seed).with_surface(&src));
                 self.source = Some(src);
                 self.loader = None;
             }
@@ -799,7 +901,6 @@ impl ParticlePreview {
             });
             return;
         };
-        let look = src.look;
         for n in &src.notes {
             ui.label(RichText::new(n).weak());
         }
@@ -862,6 +963,7 @@ impl ParticlePreview {
         }
         let camera = self.orbit.camera();
         let drawn = sim.draw(&camera);
+        let look = sim.look();
         if !self.framed && drawn.is_some() {
             let (c, r) = draw_sphere(drawn.as_ref());
             self.orbit.frame(c, r * 1.2, width / height);
@@ -1017,7 +1119,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
     let mut frame_orbit = OrbitView::new();
     let mut spheres = Vec::new();
     for &t in &times {
-        let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
+        let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed).with_surface(&src);
         probe.run_to(t);
         let drawn = probe.draw(&frame_orbit.camera());
         if drawn.as_ref().is_some_and(|d| d.vertex_count() > 0) {
@@ -1032,7 +1134,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
     );
     let mut images = vec![blank; cols * rows];
     for (c, &t) in times.iter().enumerate() {
-        let mut sim = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
+        let mut sim = PreviewSim::new(Arc::clone(&src.desc), plan.seed).with_surface(&src);
         sim.run_to(t);
         let mut counts = Vec::new();
         for (r, angle) in angles.iter().enumerate() {
@@ -1045,7 +1147,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
             counts.push(drawn.as_ref().map_or(0, SystemDraw::vertex_count));
             let draws = drawn
                 .as_ref()
-                .map_or_else(Vec::new, |s| render_draws(s, gpu.textures(), src.look));
+                .map_or_else(Vec::new, |s| render_draws(s, gpu.textures(), sim.look()));
             let img = gpu
                 .render(draws, &camera, tw, th)
                 .map_err(ExplorerError::Worker)?;
@@ -1116,16 +1218,10 @@ mod tests {
         })
     }
 
-    /// A resolved unlit particle material with the given blend and alpha test.
-    fn particle_material(
-        mode: BlendMode,
-        dst: MatFactor,
-        depth_write: bool,
-        test: Option<f32>,
-    ) -> ResolvedMaterial {
-        use tessera_material::{
-            AlphaTest, BlendState, FeatureFlags, ParameterSet, ShaderInterface,
-        };
+    /// A resolved unlit particle material with the given blend and no mesh alpha test
+    /// (the particle test comes from the surface, runtime §9.1.3).
+    fn particle_material(mode: BlendMode, dst: MatFactor, depth_write: bool) -> ResolvedMaterial {
+        use tessera_material::{BlendState, FeatureFlags, ParameterSet, ShaderInterface};
         let shader = Arc::new(ShaderInterface {
             did: Did(0x2B00_0001),
             declarations: Vec::new(),
@@ -1149,10 +1245,7 @@ mod tests {
             slots: Vec::new(),
             features: FeatureFlags {
                 lit: false,
-                alpha_test: test.map(|threshold| AlphaTest {
-                    threshold,
-                    source_slot: 3000,
-                }),
+                alpha_test: None,
                 opacity_slot: Some(3000),
                 blend: BlendState {
                     mode,
@@ -1204,7 +1297,7 @@ mod tests {
             ),
             (BlendMode::Additive, MatFactor::One, BlendFactor::One),
         ] {
-            let alpha = surface_alpha(&particle_material(mode, dst, false, Some(0.5)));
+            let alpha = surface_alpha(&particle_material(mode, dst, false), Some(0.5));
             let AlphaMode::Fixed(f) = alpha else {
                 panic!("{mode:?}: {alpha:?}");
             };
@@ -1216,17 +1309,15 @@ mod tests {
             assert_eq!(reference(alpha, 0.9), Some(r), "{mode:?}");
             assert_eq!(reference(alpha, 0.85), Some(0.0), "{mode:?}");
 
-            let untested = surface_alpha(&particle_material(mode, dst, false, None));
+            let untested = surface_alpha(&particle_material(mode, dst, false), None);
             assert!(matches!(untested, AlphaMode::Blend | AlphaMode::Additive));
             assert_eq!(reference(untested, 1.0), Some(0.0), "{mode:?}");
         }
         // Depth write on: the reference is scaled by *A*.
-        let written = surface_alpha(&particle_material(
-            BlendMode::Additive,
-            MatFactor::One,
-            true,
+        let written = surface_alpha(
+            &particle_material(BlendMode::Additive, MatFactor::One, true),
             Some(0.5),
-        ));
+        );
         assert_eq!(
             reference(written, 0.5),
             Some((0.25_f32 * 255.0).floor() / 255.0)
@@ -1246,7 +1337,7 @@ mod tests {
             ..PreviewLook::default()
         };
         assert_eq!(render_draws(&draw, [None; 2], additive).len(), 1);
-        // The frame-buffer distortion program is not drawn (runtime §9.1.1).
+        // The heat-distortion program is not drawn (runtime §9.1.2, rule 11).
         let hidden = PreviewLook {
             drawn: false,
             ..additive
@@ -1264,6 +1355,116 @@ mod tests {
         assert_eq!(a.time(), 0.0);
         let (c, r) = draw_sphere(None);
         assert!(r >= 0.5 && c[2].is_finite());
+    }
+
+    /// An animated particle surface: program 0x2B00_070F (it tests the texture) with alpha
+    /// test 4004 on and reference 1043 = `reference`, on a blend without depth write.
+    fn animated_clock(reference: tessera_material::FloatCurve) -> Arc<PreviewClock> {
+        use tessera_material::records::{
+            PERMUTATION_KEY_WORDS, ParamEntry, ParamValue, Permutation, RENDER_STATE_SIZE,
+            RenderState,
+        };
+        use tessera_material::{ShaderInterface, ShaderRecord};
+        let mut raw = [0u8; RENDER_STATE_SIZE];
+        // SRCALPHA / INVSRCALPHA, no depth write.
+        raw[..7].copy_from_slice(&[5, 6, 1, 7, 0, 2, 0]);
+        let record = ShaderRecord {
+            did: Did(0x2B00_070F),
+            reserved: 0,
+            params: vec![
+                ParamEntry {
+                    id: 1043,
+                    group: 1000,
+                    value: ParamValue::Float(reference),
+                    flag: 0,
+                    bindings: Vec::new(),
+                },
+                ParamEntry {
+                    id: 4004,
+                    group: 4000,
+                    value: ParamValue::Flag(1),
+                    flag: 0,
+                    bindings: Vec::new(),
+                },
+            ],
+            permutations: vec![Permutation {
+                key: [0; PERMUTATION_KEY_WORDS],
+                programs: None,
+                samplers: Vec::new(),
+                extra_items: Vec::new(),
+                render_state: RenderState { raw },
+            }],
+        };
+        let layout = Arc::new(TextureMatrixLayout::from_record(&record));
+        let shader = Arc::new(ShaderInterface::from_record(&record));
+        let material = Arc::new(ResolvedMaterial::resolve(shader, &[]));
+        let look = ParticleSurface::of(&material, &layout);
+        assert!(look.is_animated());
+        Arc::new(PreviewClock {
+            look,
+            material,
+            layout,
+        })
+    }
+
+    /// The look is evaluated at every drawn frame, at that frame's clock and after the
+    /// system's draw, as the walker does (`particle-runtime.md` §9.1.1 (e), rule 12, RT33).
+    #[test]
+    fn surface_look_follows_the_drawn_frame() {
+        let cam = Camera {
+            eye: Vec3::new(0.0, -4.0, 1.0),
+            target: Vec3::new(0.0, 0.0, 0.5),
+            ..Camera::default()
+        };
+        let source = |clock: Arc<PreviewClock>| PreviewSource {
+            did: 0x3900_0001,
+            desc: system(),
+            texture: None,
+            second_texture: None,
+            look: PreviewLook::default(),
+            clock: Some(clock),
+            notes: Vec::new(),
+        };
+        let threshold = |look: PreviewLook| match look.alpha {
+            AlphaMode::Fixed(f) => f.alpha_test.map(|t| t.value()),
+            _ => None,
+        };
+        // A ramp 0.5 + 0.1 t: the drawn frame's clock, not the next step's.
+        let mut ramp = tessera_material::FloatCurve::constant(0.5);
+        ramp.mode = 2;
+        ramp.params[1] = 0.1;
+        ramp.param_count = 10;
+        let mut sim = PreviewSim::new(system(), 1).with_surface(&source(animated_clock(ramp)));
+        sim.run_to(1.0);
+        let now = sim.drawn_clock();
+        assert!(sim.draw(&cam).is_some());
+        let got = threshold(sim.look()).expect("tested");
+        assert!(
+            (f64::from(got) - (0.5 + 0.1 * now)).abs() < 1e-5,
+            "{got} at {now}"
+        );
+        // A mode-3 flicker 0.5 + 0.25 r takes its r from the shared stream after the
+        // system's draw.
+        let mut flicker = tessera_material::FloatCurve::constant(0.5);
+        flicker.mode = 3;
+        flicker.params[2] = 0.25;
+        flicker.param_count = 10;
+        let clock = animated_clock(flicker);
+        let mut sim = PreviewSim::new(system(), 5).with_surface(&source(Arc::clone(&clock)));
+        sim.run_to(0.5);
+        let mut probe = sim.clone();
+        let view = CameraView::look_at(cam.eye, cam.target);
+        let now = probe.drawn_clock();
+        assert!(probe.sim.draw(now, &view, &mut probe.rng).is_some());
+        let want = clock.look_at(
+            PreviewLook::default(),
+            now,
+            &mut CurveStates::new(),
+            &mut probe.rng,
+        );
+        assert!(sim.draw(&cam).is_some());
+        assert_eq!(sim.look(), want);
+        assert_eq!(sim.rng, probe.rng, "the same draws from the shared stream");
     }
 
     #[test]

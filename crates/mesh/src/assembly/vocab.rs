@@ -660,6 +660,13 @@ pub struct AssemblyVocabulary {
     /// `GOP_AvatarUpdateVisible`: the toggle property the option store answers
     /// (§3.3 Tessera rule).
     pub avatar_update_visible: Option<u32>,
+    /// `GOP_AvatarFaceCompositing`: the face-compositing graphics option the species tables
+    /// test before attaching a face compositor (§3.5).
+    pub avatar_face_compositing: Option<u32>,
+    /// `Script_UsePvMPReducedOptions`: false on every figure (§3.5 Rule).
+    pub reduced_options: Option<u32>,
+    /// `Physics_InWorld`: set true after a placed figure's start-up (§3.5 Decision).
+    pub physics_in_world: Option<u32>,
     /// `NPC_Cosmetic_Inventory_Visible`: false hides the figure's props (§5.5 Rule).
     pub npc_props_visible: Option<u32>,
     /// `Script_AdjustableScale_Secondary_Vector`: the scale of a stowed shield (§5.6).
@@ -747,6 +754,9 @@ impl AssemblyVocabulary {
             placement: PlacementRule::from_labels(slot_bits, category, species, location),
             holding,
             avatar_update_visible: names.pid_of("GOP_AvatarUpdateVisible"),
+            avatar_face_compositing: names.pid_of("GOP_AvatarFaceCompositing"),
+            reduced_options: names.pid_of("Script_UsePvMPReducedOptions"),
+            physics_in_world: names.pid_of("Physics_InWorld"),
             npc_props_visible: names.pid_of("NPC_Cosmetic_Inventory_Visible"),
             secondary_scale: names.pid_of("Script_AdjustableScale_Secondary_Vector"),
             npc_items: (1..=4)

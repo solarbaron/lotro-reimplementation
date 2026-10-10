@@ -16,6 +16,10 @@
 //! classification of §5.3 computed from the record the node's effect DID names, and every
 //! node with `ParticleScript_DropEffect` = 1 stores 0.
 //!
+//! RT-I14 (rule 12) is checked over the surface records the 0x39 records name: the curves of
+//! the effective 1043 and texture-matrix values that are not constant use modes 2, 3, 4, 6,
+//! 7 and 10 only, exactly two surfaces have a mode-10 curve, and no 1043 is non-constant.
+//!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-particles --test real_data -- --nocapture`. The output
 //! stays on the local terminal; do not paste record contents into committed files.
@@ -26,6 +30,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tessera_dat::{ArchiveSet, SetOptions};
+use tessera_formats::Did;
 use tessera_formats::gameplay::particles::{
     FORK_SYSTEM_PREFIX, ForkSystem, MAX_EMISSION_CAP, PARTICLE_SYSTEM_PREFIX, ParticleSystem,
 };
@@ -33,6 +38,7 @@ use tessera_formats::script_table::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
 use tessera_formats::{
     NoSchema, Node, NodeData, PropertyDictionary, Record as _, ScriptTable, Scriptlet,
 };
+use tessera_material::MaterialLibrary;
 use tessera_particles::glam::Vec3;
 use tessera_particles::{
     CameraView, Classification, Environment, ForkEffect, ForkFade, MAX_VERTICES, OriginAttachments,
@@ -342,4 +348,64 @@ fn stored_never_ending_bytes_match_the_classification() {
     );
     // RT-I2.
     assert_eq!(t.dropped_never_ending, 0, "a dropped node stores 1");
+}
+
+/// The effective values RT-I14 looks at: 1043 and the texture-matrix values.
+const RT_I14_IDS: [u32; 15] = [
+    1043, 1001, 1002, 1003, 1004, 1017, 1018, 1019, 1020, 1033, 1034, 1070, 1071, 1072, 1073,
+];
+
+/// RT-I14 (module docs).
+#[test]
+fn rt_i14_animated_particle_surface_curves() {
+    let Some(set) = open_set() else {
+        return;
+    };
+    let mut surfaces = std::collections::BTreeSet::new();
+    for (did, bytes) in records(&set, PARTICLE_SYSTEM_PREFIX) {
+        let desc = ParticleSystem::decode(&bytes)
+            .unwrap_or_else(|e| panic!("{did:#010x} does not decode: {e}"));
+        let surface = if desc.surface.is_null() {
+            desc.extra_surface
+        } else {
+            desc.surface
+        };
+        if !surface.is_null() {
+            surfaces.insert(surface.0);
+        }
+    }
+    let library = MaterialLibrary::new(&set);
+    let mut per_mode: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    let (mut resolved, mut mode10, mut animated_1043) = (0usize, 0usize, 0usize);
+    for &did in &surfaces {
+        let Ok(m) = library.resolve_surface(Did(did)) else {
+            continue;
+        };
+        resolved += 1;
+        let mut modes = std::collections::BTreeSet::new();
+        for id in RT_I14_IDS {
+            if let Some(c) = m.params.curve(id).filter(|c| c.is_animated()) {
+                modes.insert(c.mode);
+                if id == 1043 {
+                    animated_1043 += 1;
+                }
+            }
+        }
+        for &mode in &modes {
+            *per_mode.entry(mode).or_default() += 1;
+        }
+        if modes.contains(&10) {
+            mode10 += 1;
+        }
+    }
+    eprintln!(
+        "RT-I14: {} surfaces named, {resolved} resolved; surfaces per mode {per_mode:?}",
+        surfaces.len()
+    );
+    assert!(
+        per_mode.keys().all(|m| [2, 3, 4, 6, 7, 10].contains(m)),
+        "{per_mode:?}"
+    );
+    assert_eq!(mode10, 2, "surfaces with a mode-10 curve");
+    assert_eq!(animated_1043, 0, "non-constant 1043 curves");
 }

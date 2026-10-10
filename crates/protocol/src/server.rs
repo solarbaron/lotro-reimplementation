@@ -213,6 +213,8 @@ pub struct ServerSession {
     /// Bytes or messages arrived on the control stream (so a `Disconnect` can be sent on it).
     control_seen: bool,
     dropped: u64,
+    /// The first `Disconnect` the client sent that the session acted on (§12.3).
+    peer_disconnect: Option<Disconnect>,
 }
 
 impl ServerSession {
@@ -247,6 +249,7 @@ impl ServerSession {
             reported: false,
             control_seen: false,
             dropped: 0,
+            peer_disconnect: None,
         }
     }
 
@@ -275,6 +278,13 @@ impl ServerSession {
         self.hello.as_ref().map_or(0, |h| {
             usize::from(h.max_entities).min(DEFAULT_SERVER_ENTITY_CAP)
         })
+    }
+
+    /// The client's `Disconnect` that ended the session, or that arrived while the session
+    /// was closing (§12.3 step 2), if one did: the first one acted on.
+    #[must_use]
+    pub fn peer_disconnect(&self) -> Option<&Disconnect> {
+        self.peer_disconnect.as_ref()
     }
 
     /// Messages dropped under §13.2 so far.
@@ -567,9 +577,11 @@ impl ServerSession {
             ServerState::Closed => return Ok(None),
             ServerState::Closing => {
                 if let Message::Disconnect(d) = msg {
+                    let code = d.code;
+                    self.peer_disconnect.get_or_insert(d);
                     self.outbox.clear();
                     self.close_now(AppErrorCode::NoError);
-                    return Ok(self.closed_event(d.code, true));
+                    return Ok(self.closed_event(code, true));
                 }
                 self.dropped += 1;
                 return Ok(None);
@@ -813,9 +825,11 @@ impl ServerSession {
                     // "Client: after Hello" (§6.1).
                     return Err(self.unexpected(ty));
                 }
+                let code = d.code;
+                self.peer_disconnect.get_or_insert(d);
                 self.outbox.clear();
                 self.close_now(AppErrorCode::NoError);
-                Ok(self.closed_event(d.code, true))
+                Ok(self.closed_event(code, true))
             }
             _ => Err(self.unexpected(ty)),
         }

@@ -41,6 +41,7 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::arena::MeshId;
+use crate::depth_bias::{BiasKey, DrawDepthBias};
 use crate::error::{RenderError, Result};
 use crate::far_view::FarFadeParams;
 use crate::frame::Pass;
@@ -111,17 +112,23 @@ pub struct WaterFlowParams {
     pub rotation: f32,
 }
 
-/// The Fresnel form of a flow-map draw (`water.md` §8.6.4).
+/// The Fresnel form of a flow-map draw, and with it the record's own colour list
+/// (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: each flow-map record follows its own
+/// OpenGL reflection-permutation list with the reflection replaced by the untinted
+/// refraction sample; W42, W43).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FresnelForm {
     /// `water.md` §8.4 step 5: *f* = bias + (1 − bias) × (1 − |*v* · *n*|)^exponent. The
-    /// plain families, and the flow-map record without layers 1 and 2 (0x2B0005EC, whose
-    /// own programs use this form, §8.6.4).
+    /// plain families, and the flow-map record without layers 1 and 2 (0x2B0005EC), whose
+    /// list (§8.6.4 steps 1–5 of its own list) tints toward `WaterFogColor` itself and has no
+    /// fake-light diffuse term *L*꜀ anywhere (W42).
     #[default]
     Biased,
     /// `water.md` §8.6.4 step 4 (0x2B0007FD): *f* = bias × (1 − |*v* · *n*|)^(1 / exponent),
-    /// the bias multiplies and the exponent is inverted. Read only by
-    /// [`WaterFamily::Flow`]; the other families always use [`FresnelForm::Biased`].
+    /// the bias multiplies and the exponent is inverted; its list tints toward *L*꜀² ×
+    /// `WaterFogColor` and multiplies the specular by *L*꜀ (steps 1–6 of the first list).
+    /// Read only by [`WaterFamily::Flow`]; the other families always use
+    /// [`FresnelForm::Biased`].
     Scaled,
 }
 
@@ -377,14 +384,18 @@ pub struct DistortionParams {
     pub matrix: UvTransform,
     /// The material colour 2000 (stored-value RGBA).
     pub color: [f32; 4],
-    /// The alpha-test threshold (texel alpha at or below it is discarded), when on.
+    /// The alpha-test threshold, when on. The unlit records test their output alpha (texel
+    /// alpha × the vertex alpha where [`DistortionParams::vertex_color`] × material alpha,
+    /// `water.md` §8.5.5 step 5, W45); the lit record tests the texel alpha before any
+    /// vertex multiply (`lighting.md` §5.12). A pixel at or below the threshold is
+    /// discarded.
     pub alpha_test: Option<f32>,
     /// Both faces drawn.
     pub two_sided: bool,
     /// Depth write.
     pub depth_write: bool,
-    /// The output (colour and alpha) is multiplied by the vertex colour (`water.md` §8.5.5
-    /// step 5: 0x2B00063E).
+    /// The texel (colour and alpha) is multiplied by the vertex colour before the alpha
+    /// test (`water.md` §8.5.5 step 5: 0x2B00063E; unlit records only).
     pub vertex_color: bool,
 }
 
@@ -449,6 +460,11 @@ pub struct LiquidMeshDraw {
     pub textures: WaterTextures,
     /// The caller's object handle for the light selection of lit liquids.
     pub light_object: Option<u64>,
+    /// The depth bias of the placed entity's `Render_DepthBias_Type` entry, as the
+    /// depth-bias table stores it (`decals.md` §6.5); applied as the Tessera default of
+    /// §6.5 OPEN (c), which covers every draw of the entity (`water.md` §8.5.4 rule for
+    /// puddles, §14). See [`DrawDepthBias`] for the sign, the clamp and the bounds.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl Pass {
@@ -531,10 +547,11 @@ const TEXTURE_BITS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 mod fl {
     pub const WORLD_UV: u32 = 1;
     pub const ALPHA_TEST: u32 = 2;
-    /// Flow-map water with the 0x2B0007FD Fresnel ([`super::FresnelForm::Scaled`]).
-    pub const FRESNEL_SCALED: u32 = 4;
-    /// The liquid's output is multiplied by the vertex colour (0x2B00063E, `water.md`
-    /// §8.5.5 step 5).
+    /// Flow-map water with the colour list of 0x2B0007FD ([`super::FresnelForm::Scaled`]):
+    /// its Fresnel form, the tint toward *L*꜀² × `WaterFogColor` and the specular × *L*꜀.
+    pub const FLOW_FAKE_LIGHT: u32 = 4;
+    /// The liquid's texel is multiplied by the vertex colour before the alpha test
+    /// (0x2B00063E, `water.md` §8.5.5 step 5).
     pub const VERTEX_COLOR: u32 = 8;
 }
 
@@ -603,7 +620,7 @@ impl WaterUniform {
             WaterFamily::Lava => fam::LAVA,
         };
         let flags = if p.family == WaterFamily::Flow && p.fresnel_form == FresnelForm::Scaled {
-            self::fl::FRESNEL_SCALED
+            self::fl::FLOW_FAKE_LIGHT
         } else {
             0
         };
@@ -744,6 +761,8 @@ struct WaterPipeKey {
     /// `None`: both faces; `Some(false)`: back faces culled; `Some(true)`: front faces
     /// (mirrored transforms).
     cull: Option<bool>,
+    /// Depth bias for the reversed depth ([`DrawDepthBias`]).
+    bias: BiasKey,
 }
 
 /// Pipelines of the water, built lazily.
@@ -867,7 +886,10 @@ impl WaterState {
                 },
                 ..Default::default()
             },
-            depth_stencil: Some(world_depth(key.depth_write)),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                bias: key.bias.state(),
+                ..world_depth(key.depth_write)
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: shader,
@@ -1064,6 +1086,7 @@ pub(crate) fn build_hook(
             blend: false,
             depth_write: true,
             cull: None,
+            bias: BiasKey::NONE,
         },
     );
     for ((draw, range), n) in draws.iter().zip(ranges).zip(cells) {
@@ -1196,6 +1219,7 @@ pub(crate) fn build_hook(
                 blend: blended,
                 depth_write,
                 cull: cull.map(|_| mirrored),
+                bias: d.depth_bias.reversed(ctx.bias_clamp),
             },
         ) else {
             continue;

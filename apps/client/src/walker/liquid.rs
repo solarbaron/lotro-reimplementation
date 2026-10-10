@@ -155,9 +155,12 @@ fn rgb(c: [f32; 4]) -> [f32; 3] {
 /// - older bump water: 1055 and 1056 for the layer coordinates of §8.5.6, drawn by §8.4 with
 ///   `WaterColor` white and the refraction tinted by `c_WaterDeepColor` (Tessera rule there);
 /// - flow-map water: 1057 and 1058 as the phase rates and 1063 as the scale (layer 0), and
-///   layers 1 and 2 only for the records that have them (§8.6.2, §8.6.4 Tessera rule); the
-///   record with layers (0x2B0007FD) takes the Fresnel of §8.6.4 step 4, the one without
-///   (0x2B0005EC) its own programs' form, §8.4 step 5 (implementer OPEN in §8.6.4).
+///   layers 1 and 2 only for the records that have them (§8.6.2, §8.6.4 Tessera rule); each
+///   record keeps its own colour list (§8.6.4 Tessera rule, revised 2026-10-10): the record
+///   with layers (0x2B0007FD) the first list (Fresnel of step 4, tint toward *L*꜀² ×
+///   `WaterFogColor`, specular × *L*꜀), the one without (0x2B0005EC) its own list (Fresnel
+///   of §8.4 step 5, tint toward `WaterFogColor`, no *L*꜀; W42). Telling them apart by
+///   layers 1 and 2 is an observation of this install (§8.6.4 answer).
 #[must_use]
 pub fn water_params(m: &WaterMaterial) -> WaterParams {
     let p = &m.params;
@@ -726,9 +729,11 @@ mod tests {
         use crate::walker::geometry::{plan_material, plan_material_with};
         let adds = tests_support::two_layer(0x2B00_0817, 0.5);
         let plan = plan_material_with(&adds.material, Some(&adds.layout));
-        let (layer, add) = plan.layer2.expect("second layer");
+        let (layer, add, alpha) = plan.layer2.expect("second layer");
         assert_eq!(layer.did, 0x4100_0061);
         assert!(add, "0x2B000817 adds its layers");
+        // `ColorAndOpacity2`: its alpha joins the opacity (`material.md` §10.3 MA54).
+        assert_eq!(alpha, tessera_render::LayerAlpha::Multiplied);
         assert!(plan.animated_uv);
         assert!((plan.uv[0].rows[0][0] - 2.0).abs() < 1e-6);
         assert!(plan.own.is_none() && !plan.diag.scrolls && !plan.diag.second_layer);

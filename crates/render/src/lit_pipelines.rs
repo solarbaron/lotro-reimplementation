@@ -11,6 +11,7 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::depth_bias::BiasKey;
 use crate::lighting::{
     FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, LightReach, MAX_DRAW_LIGHTS, reference,
 };
@@ -58,6 +59,10 @@ pub(crate) mod lit_flag {
     pub const EMISSIVE_UV1: u32 = 1 << 19;
     /// sRGB re-encode bit of the second colour layer (the shift above covers textures 0–6).
     pub const SRGB_LAYER2: u32 = 1 << 20;
+    /// The second layer's alpha multiplies the base alpha ([`crate::LayerAlpha::Multiplied`]).
+    pub const LAYER_ALPHA: u32 = 1 << 21;
+    /// Base RGB alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
+    pub const LAYER_OPACITY_ONLY: u32 = 1 << 22;
 }
 
 /// The lit shader source.
@@ -179,6 +184,11 @@ pub(crate) fn lit_fields(
         if l.add {
             flags |= lit_flag::LAYER_ADD;
         }
+        flags |= match l.alpha {
+            crate::LayerAlpha::Ignored => 0,
+            crate::LayerAlpha::Multiplied => lit_flag::LAYER_ALPHA,
+            crate::LayerAlpha::OpacityOnly => lit_flag::LAYER_OPACITY_ONLY,
+        };
     }
     if lit.emissive_uv1 {
         flags |= lit_flag::EMISSIVE_UV1;
@@ -588,6 +598,9 @@ pub(crate) struct LitKey {
     pub kind: LitKind,
     pub cull: Cull,
     pub skinned: bool,
+    /// The entity's depth bias for the colour kinds (`decals.md` §6.5); none for the
+    /// shadow kinds, which keep the shadow pass's own bias.
+    pub bias: BiasKey,
 }
 
 /// Layouts and shaders of the lit and shadow pipelines.
@@ -813,7 +826,7 @@ impl LitLayouts {
                 depth_write_enabled: Some(depth_write),
                 depth_compare: Some(DEPTH_COMPARE),
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                bias: key.bias.state(),
             }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
@@ -855,12 +868,13 @@ impl LitPipelineCache {
     }
 }
 
-/// Shadow pipelines do not depend on the colour format or culling.
+/// Shadow pipelines do not depend on the colour format, culling or the entity's bias.
 fn normalize(key: LitKey) -> LitKey {
     if key.kind.is_shadow() {
         LitKey {
             format: wgpu::TextureFormat::R8Unorm,
             cull: Cull::None,
+            bias: BiasKey::NONE,
             ..key
         }
     } else {

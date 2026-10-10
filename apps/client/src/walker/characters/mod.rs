@@ -59,13 +59,13 @@ use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_entity::{Changes, Column, Entity, EntityStore, NetId, StoreConfig, Transform};
 use tessera_net::{Appearance, Body, EntityId, Event};
 use tessera_render::glam::{Mat4, Quat, Vec3};
-use tessera_render::{Frame, MeshDraw, MeshId, Renderer, SkinPalette};
+use tessera_render::{DrawDepthBias, Frame, MeshDraw, MeshId, Renderer, SkinPalette};
 use tessera_world::WorldPos;
 use tessera_world::draw_distance::{LodClasses, LodValues};
 
 use self::catalog::WeenieRole;
 use self::figure::{
-    FigureAsset, FigureContext, FigureKey, FigureLook, FigureRequest, build_figure_with_look,
+    FigureAsset, FigureContext, FigureKey, FigureRequest, LookChoices, build_figure_with_look,
 };
 use self::motion::{Locomotion, drive, make_animator};
 use super::UploadBudget;
@@ -101,6 +101,10 @@ pub struct CharacterConfig {
     /// appearance elements with a toggle file use it. Kept in Tessera's settings
     /// (`[Graphics]`); read when the walker starts.
     pub updated_avatars: bool,
+    /// The face-compositing graphics option (`appearance.md` §3.5, default on): with it
+    /// off the species tables attach no face compositor. Kept in Tessera's settings
+    /// (`[Graphics]`); read when the walker starts.
+    pub face_compositing: bool,
 }
 
 impl Default for CharacterConfig {
@@ -111,6 +115,7 @@ impl Default for CharacterConfig {
             anim_distance: 200.0,
             max_entities: 1 << 16,
             updated_avatars: true,
+            face_compositing: true,
         }
     }
 }
@@ -378,7 +383,7 @@ struct Slot {
     key: Option<FigureKey>,
     request: Option<FigureRequest>,
     /// The look choices built with the request.
-    look: FigureLook,
+    look: LookChoices,
     generation: u64,
     refs: u32,
     unused_since: Option<Instant>,
@@ -494,7 +499,7 @@ pub struct FigureStatus {
     /// The request (body, worn and held items with their slots).
     pub request: FigureRequest,
     /// The look choices of a received look (styles, slider string).
-    pub look: FigureLook,
+    pub look: LookChoices,
     /// Its state.
     pub state: FigureState,
 }
@@ -588,14 +593,14 @@ impl CharacterLayer {
     /// by the receiver rule (a property a creation control of the body's player avatar
     /// writes in this install, with a matching value kind), then turned into heights,
     /// styles and the slider string as the creation screen's controls turn them.
-    fn look_choices(&mut self, appearance: &Appearance) -> (Option<f32>, Option<f32>, FigureLook) {
+    fn look_choices(&mut self, appearance: &Appearance) -> (Option<f32>, Option<f32>, LookChoices) {
         let (Some(look), Some(data), Body::Character { species, sex }) =
             (&appearance.look, &self.looks, appearance.body)
         else {
-            return (None, None, FigureLook::default());
+            return (None, None, LookChoices::default());
         };
         let Some(detail) = data.avatar(species, sex) else {
-            return (None, None, FigureLook::default());
+            return (None, None, LookChoices::default());
         };
         let (accepted, ignored) = crate::screens::controls::accept_look(look, detail);
         if ignored > 0 {
@@ -616,7 +621,7 @@ impl CharacterLayer {
         (
             spec.avatar_height,
             spec.bone_scale,
-            FigureLook {
+            LookChoices {
                 styles: spec.styles,
                 slider_values: spec.slider_values,
             },
@@ -788,7 +793,7 @@ impl CharacterLayer {
     // ----- figures ---------------------------------------------------------------------
 
     /// Takes a reference to the figure of `req`, queueing its job when it is new.
-    fn acquire(&mut self, req: FigureRequest, look: FigureLook) -> u32 {
+    fn acquire(&mut self, req: FigureRequest, look: LookChoices) -> u32 {
         let key = req.key_with(&look);
         if let Some(&slot) = self.by_key.get(&key) {
             let s = &mut self.slots[slot as usize];
@@ -802,7 +807,7 @@ impl CharacterLayer {
                 self.slots.push(Slot {
                     key: None,
                     request: None,
-                    look: FigureLook::default(),
+                    look: LookChoices::default(),
                     generation: 0,
                     refs: 0,
                     unused_since: None,
@@ -1776,6 +1781,11 @@ impl CharacterLayer {
             let palette: Option<SkinPalette> = pose
                 .filter(|(skin, _)| !skin.is_empty())
                 .and_then(|(skin, _)| frame.skin_palette(skin).ok());
+            // A placed figure's `Render_DepthBias_Type` entry on every draw of it
+            // (`decals.md` §6.5 OPEN (c), Tessera default); other characters have none.
+            let depth_bias = a
+                .tag
+                .map_or(DrawDepthBias::NONE, |tag| objects.figure_depth_bias(tag));
             drawn += 1;
             for part in &g.parts {
                 let transform = match part.held {
@@ -1797,7 +1807,8 @@ impl CharacterLayer {
                     };
                     let mut d = MeshDraw::new(part.mesh, transform, material)
                         .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
-                        .with_lit(lit);
+                        .with_lit(lit)
+                        .with_depth_bias(depth_bias);
                     if part.skinned
                         && let Some(p) = palette
                     {

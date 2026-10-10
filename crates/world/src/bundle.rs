@@ -436,6 +436,14 @@ pub struct LandblockBundle {
     /// `Render_LODClass` of each generated object, same order as
     /// [`LandblockBundle::generated`].
     pub generated_lod_classes: Vec<Option<u32>>,
+    /// `Render_DepthBias_Type` of each entity of [`LandblockBundle::entities`], same order,
+    /// in the lookup order of the LOD class (instance set, own set, 0x47 chain;
+    /// `decals.md` §6.5 "Objects"); empty when the property is unknown or the environment
+    /// is off.
+    pub entity_depth_bias_types: Vec<Option<u32>>,
+    /// `Render_DepthBias_Type` of each generated object (its 0x47 chain), same order as
+    /// [`LandblockBundle::generated`].
+    pub generated_depth_bias_types: Vec<Option<u32>>,
     /// Non-fatal problems.
     pub problems: Vec<BundleProblem>,
     /// The residency charge (`landblock.md` §8.1, "Residency charge" and "World parts"):
@@ -628,6 +636,24 @@ impl LandblockBundle {
         self.lod_class(self.entity_ref(e)?)
     }
 
+    /// The `Render_DepthBias_Type` of an entity or generated object (`decals.md` §6.5):
+    /// `None` when none of its sets holds it.
+    #[must_use]
+    pub fn depth_bias_type(&self, r: EntityRef) -> Option<u32> {
+        match r {
+            EntityRef::Entity(i) => self.entity_depth_bias_types.get(i as usize),
+            EntityRef::Generated(i) => self.generated_depth_bias_types.get(i as usize),
+        }
+        .copied()
+        .flatten()
+    }
+
+    /// [`LandblockBundle::depth_bias_type`] of `e`, an element of this bundle's lists.
+    #[must_use]
+    pub fn depth_bias_type_of(&self, e: &PlacedEntity) -> Option<u32> {
+        self.depth_bias_type(self.entity_ref(e)?)
+    }
+
     /// A bundle of `data` alone (no info, block map or properties; no world systems), as
     /// [`build_bundle`] delivers for a landblock with only a data record. For tests and
     /// tools that build bundles by hand.
@@ -656,6 +682,8 @@ impl LandblockBundle {
             collision: None,
             lights: Vec::new(),
             entity_lod_classes: Vec::new(),
+            entity_depth_bias_types: Vec::new(),
+            generated_depth_bias_types: Vec::new(),
             generated_lod_classes: Vec::new(),
             problems: Vec::new(),
             heap_bytes,
@@ -1060,25 +1088,45 @@ pub fn build_bundle(
         &mut stages,
     )?;
     let mut chains = ChainReads::default();
-    let entity_lod_classes =
-        entity_lod_classes(ctx, info.as_ref(), &entities, &weenie_list, &mut chains);
+    let entity_lod_classes = entity_placement_enums(
+        ctx,
+        ctx.systems().pids.lod_class,
+        info.as_ref(),
+        &entities,
+        &weenie_list,
+        &mut chains,
+    );
+    // The same chains again (cached by the property cache); a failed read is reported once,
+    // by the LOD-class pass.
+    let mut bias_chains = ChainReads::default();
+    let entity_depth_bias_types = entity_placement_enums(
+        ctx,
+        ctx.systems().pids.depth_bias_type,
+        info.as_ref(),
+        &entities,
+        &weenie_list,
+        &mut bias_chains,
+    );
     drop(weenie_list);
-    if let Some(pid) = ctx
-        .systems()
-        .pids
-        .lod_class
-        .filter(|_| ctx.options().load_environment)
-    {
-        world.generated_lod_classes = world
+    let generated_enums = |pid: Option<u32>, chains: &mut ChainReads| -> Vec<Option<u32>> {
+        let Some(pid) = pid.filter(|_| ctx.options().load_environment) else {
+            return Vec::new();
+        };
+        world
             .generated
             .iter()
             .map(|g| {
-                let chain = chain_properties(ctx, g.object, &mut chains);
+                let chain = chain_properties(ctx, g.object, chains);
                 placement_lod_class(pid, None, None, chain.as_deref())
             })
-            .collect();
-        world.bytes += world.generated_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
-    }
+            .collect()
+    };
+    let generated_lod_classes = generated_enums(ctx.systems().pids.lod_class, &mut chains);
+    let generated_depth_bias_types =
+        generated_enums(ctx.systems().pids.depth_bias_type, &mut bias_chains);
+    world.generated_lod_classes = generated_lod_classes;
+    world.bytes += (world.generated_lod_classes.capacity() + generated_depth_bias_types.capacity())
+        * std::mem::size_of::<Option<u32>>();
     if chains.transient > 0 {
         system_problem(
             &mut problems,
@@ -1101,7 +1149,8 @@ pub fn build_bundle(
     let heap_bytes = data_charge(&data)
         + DECODED_PER_STORED * stored.saturating_sub(data_rec.bytes.len())
         + world.bytes
-        + entity_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
+        + (entity_lod_classes.capacity() + entity_depth_bias_types.capacity())
+            * std::mem::size_of::<Option<u32>>();
     stages.log(key, heap_bytes);
     Ok(LandblockBundle {
         key,
@@ -1126,6 +1175,8 @@ pub fn build_bundle(
         lights: world.lights,
         entity_lod_classes,
         generated_lod_classes: world.generated_lod_classes,
+        entity_depth_bias_types,
+        generated_depth_bias_types,
         problems,
         heap_bytes,
     })
@@ -1138,18 +1189,18 @@ struct ChainReads {
     transient: u32,
 }
 
-/// The `Render_LODClass` of every placed entity (`walker.md` §11.4.3, W22): its instance
-/// set in the weenie list, its own set, then its 0x47 chain. Empty without the property
-/// or the environment.
-fn entity_lod_classes(
+/// The enum property `pid` of every placed entity: `Render_LODClass` (`walker.md` §11.4.3,
+/// W22) or `Render_DepthBias_Type` (`decals.md` §6.5): its instance set in the weenie list,
+/// its own set, then its 0x47 chain. Empty without the property or the environment.
+fn entity_placement_enums(
     ctx: &WorldContext,
+    pid: Option<u32>,
     info: Option<&LandblockInfo>,
     entities: &[PlacedEntity],
     weenies: &[tessera_formats::landblock::Weenie],
     chains: &mut ChainReads,
 ) -> Vec<Option<u32>> {
-    let systems = ctx.systems();
-    let (Some(pid), Some(info)) = (systems.pids.lod_class, info) else {
+    let (Some(pid), Some(info)) = (pid, info) else {
         return Vec::new();
     };
     if !ctx.options().load_environment {

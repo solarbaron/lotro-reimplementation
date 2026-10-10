@@ -37,14 +37,22 @@ pub mod mirror_ids {
     pub const FRESNEL_BUMP_AMOUNT: u32 = 1106;
 }
 
-/// The liquid-distortion records whose layers read the world position instead of the mesh
-/// UV (`water.md` §8.5.5 step 1: 0x2B000442). The spec gives no interface rule for it;
-/// Tessera recognises it by DID (implementer OPEN in `water.md` §14).
-pub const LIQUID_WORLD_RECORDS: [u32; 1] = [0x2B00_0442];
+/// Whether a liquid-distortion record's layers read the world position *B* instead of the
+/// mesh UV through texture matrix 0 (`water.md` §8.5.5 step 1): by the record-wide interface
+/// rule (i) of W52, the record none of whose declarations has a binding with a semantic of
+/// 38–44 ([`crate::ShaderInterface::binds_transform_items`]). In the reference install this
+/// selects exactly 0x2B000442 among the four liquid-distortion records (re-checked when the
+/// data changes, `world_fidelity_real_data`).
+#[must_use]
+pub fn liquid_reads_world_position(shader: &crate::ShaderInterface) -> bool {
+    shader.family == ProgramFamily::LiquidDistortion && !shader.binds_transform_items()
+}
 
-/// The liquid-distortion records whose output is multiplied by the vertex colour, RGBA
-/// (`water.md` §8.5.5 step 5: 0x2B00063E). The spec gives no interface rule for it; Tessera
-/// recognises it by DID like [`LIQUID_WORLD_RECORDS`].
+/// The liquid-distortion records whose texel is multiplied by the vertex colour, RGBA,
+/// before the alpha test (`water.md` §8.5.5 step 5, W45: 0x2B00063E). The interface
+/// property (a vertex program with a colour input, W46) needs the program's input signature,
+/// which Tessera does not read; Tessera recognises it by DID (Tessera Decision of the
+/// §8.5.5 answer of 2026-10-10).
 pub const LIQUID_VERTEX_COLOR_RECORDS: [u32; 1] = [0x2B00_063E];
 
 const WHITE: [f32; 4] = [1.0; 4];
@@ -151,7 +159,7 @@ pub struct DistortionMaterial {
     /// The record lights its colour like a lit `ColorAndOpacity` surface (0x2B0007D0).
     pub lit: bool,
     /// The layers read the world position *B* instead of the mesh UV through texture
-    /// matrix 0 ([`LIQUID_WORLD_RECORDS`]).
+    /// matrix 0 ([`liquid_reads_world_position`]).
     pub world_coordinates: bool,
     /// 1044–1046: vertex waves (speed, frequency, amplitude); the unlit records only.
     pub waves: [f32; 3],
@@ -177,8 +185,8 @@ pub struct DistortionMaterial {
     pub two_sided: bool,
     /// Depth write (`material.md` §11.3).
     pub depth_write: bool,
-    /// The output (colour and alpha) is multiplied by the vertex colour
-    /// ([`LIQUID_VERTEX_COLOR_RECORDS`]).
+    /// The texel (colour and alpha) is multiplied by the vertex colour before the alpha
+    /// test reads the output alpha ([`LIQUID_VERTEX_COLOR_RECORDS`], `water.md` W45).
     pub vertex_color: bool,
 }
 
@@ -206,7 +214,7 @@ impl DistortionMaterial {
         Some(Self {
             shader: material.shader.did,
             lit: material.features.lit,
-            world_coordinates: LIQUID_WORLD_RECORDS.contains(&material.shader.did.0),
+            world_coordinates: liquid_reads_world_position(&material.shader),
             waves: [
                 f(water_ids::WAVE_SPEED, 0.0, states),
                 f(water_ids::WAVE_FREQUENCY, 0.0, states),

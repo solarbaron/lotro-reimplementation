@@ -12,18 +12,19 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tessera_protocol::codes::AppErrorCode;
 use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec_minor};
 use tessera_protocol::limits::{CONTROL_QUEUE_GRACE, HANDSHAKE_TIMEOUT};
-use tessera_protocol::message::Channel;
+use tessera_protocol::message::{Channel, Message};
 use tessera_protocol::server::{ServerEvent, ServerParams};
 use tessera_protocol::session::{ConnectionEnd, StreamEnd, StreamRef, Transmit};
 use tessera_protocol::transport::{ServerIdentity, peer_datagrams, server_endpoint};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
+use crate::closing::{CauseTracker, QuicEnd};
 use crate::config::Config;
 use crate::conn::{ConnectionCore, Inbound};
 use crate::error::ServerError;
@@ -38,6 +39,9 @@ const CONTROL_BACKLOG_LIMIT: usize = 256 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 /// How often a paused control stream is re-checked.
 const PAUSE_POLL: Duration = Duration::from_millis(20);
+/// Longest wait for a closed connection's stream writers before its "connection closed"
+/// line (engineering bound; they normally end at once).
+const WRITER_DRAIN: Duration = Duration::from_secs(1);
 /// QUIC handshakes in progress from one source address (loopback exempt).
 const MAX_HANDSHAKES_PER_ADDRESS: usize = 4;
 
@@ -54,6 +58,10 @@ pub(crate) struct NetCtx {
     per_addr: Mutex<HashMap<IpAddr, usize>>,
     handshakes_per_addr: Mutex<HashMap<IpAddr, usize>>,
     accepting: AtomicBool,
+    /// The application code and reason the server closed its QUIC endpoints with (§12.1
+    /// step 6), set before the close: a connection that then ends closed locally counts as
+    /// closed by the server with them (§11.1 "Graceful shutdown").
+    endpoint_close: OnceLock<(AppErrorCode, String)>,
 }
 
 impl NetCtx {
@@ -75,6 +83,7 @@ impl NetCtx {
             per_addr: Mutex::new(HashMap::new()),
             handshakes_per_addr: Mutex::new(HashMap::new()),
             accepting: AtomicBool::new(true),
+            endpoint_close: OnceLock::new(),
         }
     }
 
@@ -247,18 +256,33 @@ pub(crate) fn start(
                             {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
                             }
+                            // Recorded before the close, so that every connection it
+                            // ends logs it as the server's own close (§11.1).
+                            let code = AppErrorCode::ServerShutdown;
+                            let (code, reason) = ctx
+                                .endpoint_close
+                                .get_or_init(|| (code, code.name().to_owned()));
                             for ep in &endpoints {
                                 ep.close(
-                                    quinn::VarInt::from_u32(u32::from(
-                                        AppErrorCode::ServerShutdown.to_u16(),
-                                    )),
-                                    b"SERVER_SHUTDOWN",
+                                    quinn::VarInt::from_u32(u32::from(code.to_u16())),
+                                    reason.as_bytes(),
                                 );
                             }
                             for ep in &endpoints {
                                 let _ =
                                     tokio::time::timeout(Duration::from_secs(2), ep.wait_idle())
                                         .await;
+                            }
+                            // Let the connection tasks the close ended write their closed
+                            // lines (each waits at most WRITER_DRAIN for its writers) before
+                            // the runtime stops (§14 invariant 10).
+                            let deadline = tokio::time::Instant::now()
+                                + WRITER_DRAIN
+                                + Duration::from_millis(100);
+                            while ctx.stats.net_tasks.load(Ordering::Acquire) > 0
+                                && tokio::time::Instant::now() < deadline
+                            {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
                             }
                             let _ = done.send(());
                             return;
@@ -357,11 +381,29 @@ struct Task {
     paused_since: Option<u64>,
     /// The control-backlog slow-consumer rule has fired (it fires once).
     slow_reported: bool,
+    /// The control and unidirectional stream writers; awaited before the "connection
+    /// closed" line so that it carries every byte they handed to QUIC (§11.1).
+    writers: Vec<tokio::task::JoinHandle<()>>,
+    /// What the "connection closed" line's cause is chosen from (§11.1).
+    cause: CauseTracker,
 }
 
 impl Task {
     fn now(&self) -> u64 {
         self.ctx.clock.now()
+    }
+
+    /// Closes the QUIC connection with `code` and `reason`, recording the close for the
+    /// closed line only when it takes effect: once the connection is closed (by the peer,
+    /// an earlier close or the endpoint close) quinn ignores further closes (§11.1).
+    fn close_conn(&mut self, code: AppErrorCode, reason: &str) {
+        if self.conn.close_reason().is_none() {
+            self.cause.closed_by_server(code, reason);
+        }
+        self.conn.close(
+            quinn::VarInt::from_u32(u32::from(code.to_u16())),
+            reason.as_bytes(),
+        );
     }
 
     fn report_closed(&mut self) {
@@ -455,9 +497,21 @@ impl Task {
                 break;
             }
             let inbound = self.core.decode_control(now, budget);
+            self.note_peer_disconnect();
             self.forward(inbound);
         }
         self.update_pause(now);
+    }
+
+    /// Records the peer's `Disconnect` once the session acted on it, before anything the
+    /// session queued meanwhile is sent (§11.1: the first `Disconnect` sent or received
+    /// is the cause of the end).
+    fn note_peer_disconnect(&mut self) {
+        if !self.cause.has_disconnect()
+            && let Some(d) = self.core.peer_disconnect()
+        {
+            self.cause.disconnect_received(d.code, &d.text);
+        }
     }
 
     fn update_pause(&mut self, now: u64) {
@@ -481,10 +535,7 @@ impl Task {
                     match m.channel() {
                         Channel::Datagram => {
                             if let Ok(b) = encode_datagram(&m) {
-                                self.ctx
-                                    .stats
-                                    .bytes_out
-                                    .fetch_add(b.len() as u64, Ordering::Relaxed);
+                                self.shared.count_out(&self.ctx.stats, b.len());
                                 let _ = self.conn.send_datagram(b.into());
                             }
                         }
@@ -501,6 +552,9 @@ impl Task {
                                         .is_some_and(|t| t.send(CtlWrite::Data(b)).is_ok());
                                     if ok {
                                         self.shared.control_unsent.fetch_add(n, Ordering::Relaxed);
+                                        if let Message::Disconnect(d) = &m {
+                                            self.cause.disconnect_sent(d.code, &d.text);
+                                        }
                                     }
                                     continue;
                                 }
@@ -521,14 +575,14 @@ impl Task {
                 Transmit::OpenStream(kind) => {
                     let (tx, rx) = unbounded_channel::<Vec<u8>>();
                     let counter = Arc::clone(&self.shared);
-                    tokio::spawn(uni_writer(
+                    self.writers.push(tokio::spawn(uni_writer(
                         self.conn.clone(),
                         kind,
                         rx,
                         counter,
                         self.internal_tx.clone(),
                         Arc::clone(&self.ctx.stats),
-                    ));
+                    )));
                     match kind {
                         StreamKind::World => self.world_tx = Some(tx),
                         StreamKind::Chat => self.chat_tx = Some(tx),
@@ -539,12 +593,7 @@ impl Task {
                         let _ = t.send(CtlWrite::Finish);
                     }
                 }
-                Transmit::Close { code, reason } => {
-                    self.conn.close(
-                        quinn::VarInt::from_u32(u32::from(code.to_u16())),
-                        reason.as_bytes(),
-                    );
-                }
+                Transmit::Close { code, reason } => self.close_conn(code, &reason),
             }
         }
     }
@@ -587,10 +636,7 @@ impl Task {
             Outbound::Datagram(b) => {
                 if self.core.may_send_world() {
                     self.ctx.stats.messages_out.fetch_add(1, Ordering::Relaxed);
-                    self.ctx
-                        .stats
-                        .bytes_out
-                        .fetch_add(b.len() as u64, Ordering::Relaxed);
+                    self.shared.count_out(&self.ctx.stats, b.len());
                     let _ = self.conn.send_datagram(b.into());
                 }
             }
@@ -616,13 +662,14 @@ async fn uni_writer(
             .open_uni()
             .await
             .map_err(quinn::WriteError::ConnectionLost)?;
+        // The kind byte is not a frame and is not counted (test-server.md §11.1).
         s.write_all(&[kind.to_byte()]).await?;
         while let Some(b) = rx.recv().await {
             let n = b.len();
             let r = s.write_all(&b).await;
             counter.fetch_sub(n, Ordering::Relaxed);
             r?;
-            stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+            shared.count_out(&stats, n);
         }
         Ok(())
     }
@@ -654,9 +701,7 @@ async fn control_writer(
                 let n = b.len();
                 if !failed {
                     match send.write_all(&b).await {
-                        Ok(()) => {
-                            stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
-                        }
+                        Ok(()) => shared.count_out(&stats, n),
                         Err(e) => {
                             failed = true;
                             if matches!(e, quinn::WriteError::Stopped(_)) {
@@ -755,6 +800,8 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         internal_tx,
         paused_since: None,
         slow_reported: false,
+        writers: Vec::new(),
+        cause: CauseTracker::new(),
     };
     if admitted
         && ctx
@@ -792,7 +839,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             e = conn.closed() => break e,
             () = shared.killed() => {
                 let code = shared.kill_requested().unwrap_or(AppErrorCode::InternalError);
-                conn.close(quinn::VarInt::from_u32(u32::from(code.to_u16())), code.name().as_bytes());
+                task.close_conn(code, code.name());
                 task.report_closed();
                 break conn.closed().await;
             }
@@ -806,13 +853,13 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
                 Ok((send, r)) => {
                     if recv.is_none() && task.ctl_tx.is_none() {
                         let (tx, rx) = unbounded_channel();
-                        tokio::spawn(control_writer(
+                        task.writers.push(tokio::spawn(control_writer(
                             send,
                             rx,
                             Arc::clone(&shared),
                             task.internal_tx.clone(),
                             Arc::clone(&ctx.stats),
-                        ));
+                        )));
                         task.ctl_tx = Some(tx);
                         recv = Some(r);
                         buf = vec![0u8; READ_CHUNK];
@@ -827,7 +874,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
                 let now = task.now();
                 match r {
                     Ok(Some(n)) => {
-                        ctx.stats.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
+                        shared.count_in(&ctx.stats, n);
                         task.core.push_control(&buf[..n]);
                         task.pump_control(now);
                     }
@@ -846,7 +893,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             }
             d = conn.read_datagram(), if datagrams_open => match d {
                 Ok(bytes) => {
-                    ctx.stats.bytes_in.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    shared.count_in(&ctx.stats, bytes.len());
                     ctx.stats.messages_in.fetch_add(1, Ordering::Relaxed);
                     let now = task.now();
                     let inbound = task.core.on_datagram(&bytes, now);
@@ -882,6 +929,15 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         }
         task.flush();
     };
+    // A local end after the endpoint close of §12.1 step 6 is the server's close with
+    // that code and reason, unless the connection's own close took effect first (§11.1
+    // "Graceful shutdown").
+    if matches!(end, quinn::ConnectionError::LocallyClosed)
+        && let Some((code, reason)) = ctx.endpoint_close.get()
+    {
+        task.cause.closed_with_endpoint(*code, reason);
+    }
+    let cause = task.cause.finish(&QuicEnd::of(&end));
     let inbound = task.core.connection_closed(connection_end(&end));
     task.forward(inbound);
     task.report_closed();
@@ -900,12 +956,38 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             _ => {}
         }
     }
+    // With their senders dropped and the connection closed the writers end at once; the
+    // bound only guards against a writer that does not.
+    let writers = std::mem::take(&mut task.writers);
+    let _ = tokio::time::timeout(WRITER_DRAIN, async {
+        for w in writers {
+            let _ = w.await;
+        }
+    })
+    .await;
     if admitted {
         ctx.release(addr);
     }
     ctx.stats.connections.fetch_sub(1, Ordering::AcqRel);
     let duration_ms = ctx.clock.now().saturating_sub(accepted_at) / 1_000;
-    tracing::info!(conn = id, %addr, duration_ms, reason = %end, "connection closed");
+    // This connection's own totals from acceptance to end, in bytes (§11.1).
+    let (bytes_in, bytes_out) = shared.bytes();
+    tracing::info!(
+        conn = id,
+        %addr,
+        duration_ms,
+        bytes_in,
+        bytes_out,
+        // `code` and `end` come from fixed sets and are written plain; `reason` and `close`
+        // can carry text the peer chose, so they are string values: the `text` format
+        // quotes them with `"`, `\` and every control character escaped, the `json`
+        // format writes JSON strings (§11.1 "Fields of the cause").
+        code = %cause.code_text(),
+        reason = cause.reason.as_str(),
+        end = %cause.end_text(),
+        close = cause.close.as_deref(),
+        "connection closed"
+    );
 }
 
 #[cfg(test)]

@@ -1264,6 +1264,9 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 entity: body.entity,
                 instance_properties: input.instance.cloned(),
                 starting_idle_animation,
+                appearance_values: spec
+                    .map(|s| s.appearance_values.clone())
+                    .unwrap_or_default(),
             },
             instance_list_origin,
             random_appearance,

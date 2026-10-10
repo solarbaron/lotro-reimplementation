@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O88, the far sea of row W2, and O89, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -76,8 +76,8 @@ marks the item **done** here.
 | [O84](#o84) | Equipping, unequipping, using, splitting and destroying items | `character-panels.md` §6 | Look | open (P1) |
 | [O85](#o85) | Character selection and race/class screens: order of screens, lists, defaults | `character-screens.md` §2–§4, §6 | Look | open (P1) |
 | [O86](#o86) | Appearance and name screen: controls, randomise, nationality colours | `character-screens.md` §5 | Look | open (P1) |
-| [O88](#o88) | Far sea at row W2: as dark as Tessera's, or reflecting the sky? | `water.md` §8.4, §8.6.4; `m4-5-visual.md` W2 | Look | open (M4.5) |
-| [O89](#o89) | Fallen soldiers generated in landblock 3, 0xD7E7: pose and cloth colours | `appearance.md` §7.4; `m4-5-visual.md` §4.6 (L5 note) | Look | open (M4.5) |
+| [O91](#o88) | Far sea at row W2: as dark as Tessera's, or reflecting the sky? | `water.md` §8.4, §8.6.4; `m4-5-visual.md` W2 | Look | open (M4.5) |
+| [O92](#o89) | Fallen soldiers generated in landblock 3, 0xD7E7: pose and cloth colours | `appearance.md` §7.4; `m4-5-visual.md` §4.6 (L5 note) | Look | open (M4.5) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -87,7 +87,7 @@ on the reference machine and needs no observation.
 M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md#m4-5-status)):
 criterion 4 (walking on collision): O18 (only the jump measurement left since 2026-10-08), O19; criterion 6 (visual checklist): O20 (terrain,
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
-fog rows, with the W9 sky line), O27, O88 (W2 far sea), O89 (figures seen from L5); the default-settings profile behind criteria 5 and 6: O21, O22.
+fog rows, with the W9 sky line), O27, O91 (W2 far sea), O92 (figures seen from L5); the default-settings profile behind criteria 5 and 6: O21, O22.
 
 M5 exit criteria that wait on these items ([ROADMAP M5 status](../ROADMAP.md#m5-status)):
 criterion 2 (native panels): O39; criterion 3 (user skin, optional cross-check): O41;
@@ -1424,7 +1424,7 @@ of drifts up to 22.6 m/s; the spec gives 0.15–0.9 m/s.
 "slower / about the same / faster". No screenshots of the original in the repository.
 
 <a id="o88"></a>
-## O88. Far sea at row W2 (M4.5, added 2026-10-10)
+## O91. Far sea at row W2 (M4.5, added 2026-10-10)
 
 **Spec:** `water.md` §8.4 (the reflection pass is OPEN) and §8.6.4 (Tessera rule without a
 reflection pass); row W2 of `docs/checklists/m4-5-visual.md` §4.4 and its camera in §4.7.1.
@@ -1442,7 +1442,7 @@ sky? Where does it change from seeing the bed to reflecting (near, middle, far)?
 no screenshots in the repository.
 
 <a id="o89"></a>
-## O89. Fallen soldiers generated in landblock 3, 0xD7E7 (M4.5, added 2026-10-10)
+## O92. Fallen soldiers generated in landblock 3, 0xD7E7 (M4.5, added 2026-10-10)
 
 **Spec:** `appearance.md` §7.4 ("Random dye colours", A58); the L5 note of
 `docs/checklists/m4-5-visual.md` §4.6; `walker.md` §10.2 (generated rigs as figures).

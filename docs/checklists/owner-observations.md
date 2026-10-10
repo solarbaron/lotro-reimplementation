@@ -581,6 +581,17 @@ default, turns face compositing off. Colours are stored B, G, R, A (`property-sy
 - **Record:** which texture slot of the face-skin draw holds the composed face image. The
   other questions above are now only a confirmation.
 
+**2026-10-10 (Tessera's composed faces, one comparison added):** on a Dwarf M figure with
+the default colours, Tessera shows saturated orange eyebrows (the compositor's eyebrow colour
+multiplied by `AC_Color_Hair`) next to dark brown hair and beard (the same colour as their
+dye colour 2003).
+
+- **What to do:** look at a Dwarf M character's face close up in the original client, next
+  to the same character in Tessera (`tessera-explorer --character dwarf,m`).
+- **Record:** whether the eyebrows have the same hue and brightness as the hair and beard,
+  or are visibly more orange or brighter, as in Tessera. No code change unless the original
+  differs.
+
 <a id="o16"></a>
 ## O16. Which idle, walk and run clips play (M4)
 

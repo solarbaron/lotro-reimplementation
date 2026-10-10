@@ -1702,6 +1702,7 @@ fn toggle_files_follow_the_option_store() {
     assert_eq!(c.watched_properties, vec![P_UPDATE]);
     let mut asm = assembler(s.clone()).with_options(AssemblyOptions {
         avatar_update_visible: false,
+        ..AssemblyOptions::default()
     });
     let c = asm.assemble_character(&human(&[])).unwrap();
     assert_eq!(

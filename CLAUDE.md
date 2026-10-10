@@ -141,6 +141,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   flow-map water no longer uses the plain-water scroll (it drifted up to 22.6 m/s). Diagnostic:
   `tessera-dattool fallback`, walker HUD/headless fallback counts. Open: puddle quads cut by the
   terrain (row W13, `water.md` §8.5.4 OPEN), owner comparison O87.
+- **Faces and colour tints (merged 2026-10-10):** `appearance.md` §3.5 in the shared figure
+  path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (10 of 14
+  playable bodies; Elf and High-elf wait for the §15 `Physics_InWorld` OPEN) and hair, skin and
+  eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
+  choices), owner item O15 (Dwarf brow colour).
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and by
   an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so

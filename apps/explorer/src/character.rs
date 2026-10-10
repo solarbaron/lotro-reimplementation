@@ -34,10 +34,14 @@ use tessera_formats::script_table::resolve::{
 use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, EnumMapper};
 use tessera_havok::{AnimationData, Clip, Envelope, Tagfile, Transform};
+use tessera_mesh::assembly::look::{
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
+};
 use tessera_mesh::assembly::shape::{FigureShape, FigureSliders, ShapeDriver, figure_shape};
 use tessera_mesh::assembly::{
-    AssembledCharacter, AssemblySource, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
-    EquippedItem, GameDataSource, Lookup, PartOrigin, RigKind, ScriptAppearance, WieldState,
+    AssembledCharacter, AssemblyOptions, AssemblySource, AssemblyVocabulary, CharacterAssembler,
+    CharacterSpec, EquippedItem, GameDataSource, Lookup, PartOrigin, RigKind, ScriptAppearance,
+    WieldState,
 };
 use tessera_props::{EnumSource, GameData};
 
@@ -48,6 +52,9 @@ use crate::scene::{
     Collector, GeometryBudget, ProductParts, SceneLimits, SceneProduct, SceneRequest, SceneSource,
     build_part, finish_product,
 };
+
+/// One appearance layer of a part: (shader override, material, binding key).
+type PartLayer = (Option<Did>, Did, u32);
 
 /// Most items a character request carries (more are dropped with a note).
 pub const MAX_ITEMS: usize = crate::charspec::MAX_ITEMS;
@@ -729,6 +736,9 @@ pub struct ClipSelection {
     /// The Appearance nodes the Idle resolution's start-up scripts run, picked with seed 0
     /// (`appearance.md` §7.4).
     pub appearances: Vec<ScriptAppearance>,
+    /// The figure's look from the Idle resolution: composited face and colour edits
+    /// (`appearance.md` §3.5; shared with the client).
+    pub look: FigureLook,
 }
 
 impl ClipSelection {
@@ -907,7 +917,8 @@ pub fn build_character(
     let bone_types = Labels::of_mapper(data, data.lookup_path(&["EMAPPER", "BoneType"])?);
     let vocab = AssemblyVocabulary::from_game_data(data)?;
     let asm_vocab = vocab.clone();
-    let mut asm = CharacterAssembler::new(GameDataSource::new(data)?, vocab);
+    let mut asm = CharacterAssembler::new(GameDataSource::new(data)?, vocab)
+        .with_options(ctx.assembly_options());
     cancelled(job)?;
 
     // 1. Assemble (appearance.md §8 steps 1–6, 9).
@@ -998,7 +1009,14 @@ pub fn build_character(
         (None, _) => None,
     };
     let (clips, shape, mount_mesh) = match &assembled {
-        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab, rider_mount.as_ref()),
+        Some(c) => select_clips(
+            data,
+            dict,
+            catalog,
+            c,
+            (&asm_vocab, asm.options(), &ctx.looks),
+            rider_mount.as_ref(),
+        ),
         None => (
             ClipSelection {
                 error: Some("a bare setup has no script tables".into()),
@@ -1031,6 +1049,36 @@ pub fn build_character(
             format!("{} elements (§7.4)", clips.appearances.len()),
         ));
     }
+    // The species table's face compositor and colour edits (appearance.md §3.5).
+    for f in &clips.look.compositors {
+        facts.push((
+            "face".into(),
+            match &f.image {
+                Some(i) => format!(
+                    "compositor {} under {:#x}: {} × {} (§3.5)",
+                    f.record, f.name, i.width, i.height
+                ),
+                None => format!("compositor {} under {:#x}: not composed", f.record, f.name),
+            },
+        ));
+    }
+    if !clips.look.edits.is_empty() {
+        facts.push((
+            "colour edits".into(),
+            format!(
+                "{} (hair, beard and skin tints, §3.5)",
+                clips.look.edits.len()
+            ),
+        ));
+    }
+    notes.extend(
+        clips
+            .look
+            .notes
+            .iter()
+            .take(4)
+            .map(|n| format!("look: {n}")),
+    );
     cancelled(job)?;
 
     // 2. Skeleton.
@@ -1088,7 +1136,7 @@ pub fn build_character(
     let mut build = |mats: &mut Collector<'_>,
                      mesh: Did,
                      skin: bool,
-                     layers: &[(Option<Did>, Did, u32)],
+                     (layers, look): (&[PartLayer], Option<(u32, &FigureLook)>),
                      budget: &mut GeometryBudget|
      -> crate::scene::ScenePart {
         let mut part = built
@@ -1107,7 +1155,7 @@ pub fn build_character(
         for s in &mut part.submeshes {
             s.material = s
                 .surface
-                .map(|d| mats.surface_material_layered(Did(d), layers));
+                .map(|d| mats.surface_material_look(Did(d), layers, look));
         }
         part
     };
@@ -1157,7 +1205,13 @@ pub fn build_character(
                 .iter()
                 .map(|l| (l.shader, l.material, l.binding_key))
                 .collect();
-            let mut part = build(&mut mats, p.mesh, p.skinned, &layers, &mut budget);
+            let mut part = build(
+                &mut mats,
+                p.mesh,
+                p.skinned,
+                (&layers, Some((p.slot, &clips.look))),
+                &mut budget,
+            );
             let slot = mesh_types.get(p.slot);
             let origin = match p.origin {
                 PartOrigin::Setup { index } => format!("setup part {index}"),
@@ -1205,7 +1259,7 @@ pub fn build_character(
         facts.push(("setup".into(), scene_did.to_string()));
         for (i, &mesh) in setup_parts.iter().enumerate().take(MAX_FIGURE_PARTS) {
             cancelled(job)?;
-            let mut part = build(&mut mats, mesh, bones > 0, &[], &mut budget);
+            let mut part = build(&mut mats, mesh, bones > 0, (&[], None), &mut budget);
             part.caption = format!("part {i} · {mesh}");
             part_info.push(FigurePart::Body {
                 slot: mesh_types.get(part.flags),
@@ -1235,7 +1289,7 @@ pub fn build_character(
                     break;
                 }
                 cancelled(job)?;
-                let mut part = build(&mut mats, mesh, false, &[], &mut budget);
+                let mut part = build(&mut mats, mesh, false, (&[], None), &mut budget);
                 part.attach = Some(key);
                 part.caption = format!("held {} · {mesh}", locations.get(h.location));
                 part_info.push(FigurePart::Held { held: index });
@@ -1475,7 +1529,7 @@ fn select_clips<S: tessera_props::RecordSource>(
     dict: &tessera_formats::PropertyDictionary,
     catalog: &Catalog,
     c: &AssembledCharacter,
-    asm_vocab: &AssemblyVocabulary,
+    (asm_vocab, options, looks): (&AssemblyVocabulary, AssemblyOptions, &LookCache),
     mount: Option<&crate::mount_view::RiderMount>,
 ) -> (ClipSelection, FigureShape, Option<MountMesh>) {
     let mut out = ClipSelection::default();
@@ -1504,6 +1558,9 @@ fn select_clips<S: tessera_props::RecordSource>(
     if let Some(m) = mount {
         m.apply(&mut scripts);
     }
+    // The options the figure's lookup answers first and the character's own appearance
+    // values (`appearance.md` §3.3, §3.5).
+    apply_figure_properties(&mut scripts, c, asm_vocab, options);
     let moving_mount = mount.is_some_and(|m| crate::mount_view::is_moving_gait(m.gait));
     out.tables = scripts.tables();
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
@@ -1555,6 +1612,8 @@ fn select_clips<S: tessera_props::RecordSource>(
         if state == StateArg::Idle {
             idle_clips = r.clips();
             shape = figure_shape(data, asm_vocab, c, &r);
+            out.look =
+                figure_look_from_data(data, &r, options, &LookLimits::default(), Some(looks));
             out.appearances = r
                 .appearances
                 .iter()

@@ -242,6 +242,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
                 .character_distance
                 .unwrap_or(CharacterConfig::default().draw_distance),
             updated_avatars: graphics_prefs().avatar_update_visible,
+            face_compositing: graphics_prefs().avatar_face_compositing,
             ..CharacterConfig::default()
         },
         autorun: args.autorun.as_deref().map(|g| g == "walk"),

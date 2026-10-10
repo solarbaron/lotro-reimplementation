@@ -14,6 +14,7 @@ use tessera_formats::{
 use crate::cache::BoundedCache;
 use crate::dims::surface_dims;
 use crate::dye::{DyeColors, DyeLayer, apply_dye};
+use crate::edits::{ParameterEdit, RuntimeTextures};
 use crate::error::{MaterialError, Result};
 use crate::inputs::{ObjectInputs, SurfaceInputs};
 use crate::interface::ShaderInterface;
@@ -195,6 +196,7 @@ pub struct MaterialLibrary<S> {
     headers: BoundedCache<Did, LevelHeader>,
     resolved: BoundedCache<Did, Arc<ResolvedMaterial>>,
     images: BoundedCache<Did, (Arc<RgbaImage>, SurfaceFormat)>,
+    runtime: RuntimeTextures,
 }
 
 /// A cached shader record: its interface and its texture-matrix bindings.
@@ -250,6 +252,13 @@ impl<S> MaterialLibrary<S> {
     pub fn source(&self) -> &S {
         &self.source
     }
+
+    /// The run-time textures [`MaterialLibrary::texture`] answers (composed face images,
+    /// [`crate::edits`]).
+    #[must_use]
+    pub fn runtime_textures(&self) -> &RuntimeTextures {
+        &self.runtime
+    }
 }
 
 impl<S: RecordSource> MaterialLibrary<S> {
@@ -271,6 +280,7 @@ impl<S: RecordSource> MaterialLibrary<S> {
             headers: BoundedCache::new(n, b),
             resolved: BoundedCache::new(n, b),
             images: BoundedCache::new(config.image_cache_entries, config.image_cache_bytes),
+            runtime: RuntimeTextures::default(),
         }
     }
 
@@ -421,6 +431,17 @@ impl<S: RecordSource> MaterialLibrary<S> {
     /// [`MAX_RESOLVE_MATERIALS`] distinct materials fail with
     /// [`MaterialError::TooManyMaterials`].
     pub fn resolve(&self, shader: Did, materials: &[Did]) -> Result<ResolvedMaterial> {
+        self.resolve_with_edits(shader, materials, &[])
+    }
+
+    /// [`MaterialLibrary::resolve`] with `edits` applied after the materials
+    /// ([`crate::edits`], `appearance.md` §8 step 6).
+    pub fn resolve_with_edits(
+        &self,
+        shader: Did,
+        materials: &[Did],
+        edits: &[ParameterEdit],
+    ) -> Result<ResolvedMaterial> {
         let materials = last_occurrences(materials, |d| *d);
         if materials.len() > MAX_RESOLVE_MATERIALS {
             return Err(MaterialError::TooManyMaterials {
@@ -446,6 +467,9 @@ impl<S: RecordSource> MaterialLibrary<S> {
         let refs: Vec<&MaterialRecord> = loaded.iter().map(AsRef::as_ref).collect();
         let mut resolved = ResolvedMaterial::resolve(iface, &refs);
         resolved.skipped = skipped;
+        if !edits.is_empty() {
+            resolved = crate::edits::apply_edits(&resolved, &refs, edits);
+        }
         Ok(resolved)
     }
 
@@ -476,6 +500,28 @@ impl<S: RecordSource> MaterialLibrary<S> {
         materials.extend_from_slice(&layer.materials);
         Ok(self
             .resolve(shader, &materials)?
+            .with_surface(did, surface.binding_key))
+    }
+
+    /// Resolves surface record `did` under an optional appearance layer, then applies
+    /// `edits` after every material (`appearance.md` §3.5, §8 step 6: the colour edits of a
+    /// figure's species table and its composed face texture). Not cached.
+    pub fn resolve_edited(
+        &self,
+        did: Did,
+        layer: Option<&Layering>,
+        edits: &[ParameterEdit],
+    ) -> Result<ResolvedMaterial> {
+        let surface = self.surface_record(did)?;
+        let shader = layer
+            .and_then(|l| l.shader_override)
+            .unwrap_or(surface.shader);
+        let mut materials = surface.materials.clone();
+        if let Some(l) = layer {
+            materials.extend_from_slice(&l.materials);
+        }
+        Ok(self
+            .resolve_with_edits(shader, &materials, edits)?
             .with_surface(did, surface.binding_key))
     }
 
@@ -662,6 +708,18 @@ impl<S: RecordSource> MaterialLibrary<S> {
     /// cached by surface DID, so caps that pick the same level, and lists that share a
     /// surface, share one decoded image.
     pub fn texture(&self, list: Did, max_dimension: Option<u32>) -> Result<Arc<TextureImage>> {
+        // A run-time texture (a composed image, `crate::edits`) is answered as it is: one
+        // level; callers that cap sizes scale it themselves.
+        if let Some(image) = self.runtime.get(list) {
+            return Ok(Arc::new(TextureImage {
+                list,
+                kind: TextureListKind::MipChain,
+                level: 0,
+                surface: list,
+                format: SurfaceFormat::A8R8G8B8,
+                image,
+            }));
+        }
         let tl = self.texture_list(list)?;
         let dids: &[Did] = match tl.kind {
             TextureListKind::CubeMap => tl.surfaces.get(..1).unwrap_or(&[]),

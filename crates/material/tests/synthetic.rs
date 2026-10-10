@@ -2182,3 +2182,130 @@ fn fallback_diagnosis_names_the_failing_step() {
     let e = lib.texture(Did(0x4000_0FFF), None).unwrap_err();
     assert_eq!(reason_of_texture_error(&e), R::TextureListMissing);
 }
+
+// ---------------------------------------------------------------------------------------
+// Run-time edits and textures (appearance.md §3.5, §8 step 6)
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn edits_apply_after_every_material() {
+    use tessera_material::{ParameterEdit, RUNTIME_TEXTURE_PREFIX};
+    let lib = library(base_store());
+    // The dyeable surface with the blue dye material layered, then a colour edit of 2003
+    // and a texture edit of 3000: both win over the materials.
+    let layer = Layering {
+        shader_override: None,
+        materials: vec![Did(0x3000_0003)],
+    };
+    let image = std::sync::Arc::new(tessera_formats::RgbaImage {
+        width: 2,
+        height: 1,
+        pixels: vec![10, 20, 30, 255, 40, 50, 60, 255],
+    });
+    let tex = lib
+        .runtime_textures()
+        .register(0x1234_5678_9ABC, std::sync::Arc::clone(&image))
+        .unwrap();
+    assert_eq!(tex.prefix(), RUNTIME_TEXTURE_PREFIX);
+    // The same identity gives the same DID.
+    assert_eq!(
+        lib.runtime_textures().register(0x1234_5678_9ABC, image),
+        Some(tex)
+    );
+    let edits = [
+        ParameterEdit::Colour {
+            id: 2003,
+            value: [0.5, 0.25, 0.0, 1.0],
+        },
+        ParameterEdit::Texture {
+            id: 3000,
+            list: tex,
+        },
+        // Outside its value's group: ignored.
+        ParameterEdit::Colour {
+            id: 3000,
+            value: [0.0; 4],
+        },
+    ];
+    let r = lib
+        .resolve_edited(Did(0x3100_0004), Some(&layer), &edits)
+        .unwrap();
+    assert_eq!(r.surface, Some(Did(0x3100_0004)));
+    assert_eq!(r.materials, vec![Did(0x3000_0003)], "stored materials only");
+    assert_eq!(r.dye.unwrap().primary.color, [0.5, 0.25, 0.0, 1.0]);
+    assert_eq!(r.diffuse(), Some(tex));
+    // The library answers the run-time texture.
+    let t = lib.texture(tex, Some(1)).unwrap();
+    assert_eq!((t.image.width, t.image.height), (2, 1));
+    // Without edits the layered result is unchanged.
+    let plain = lib
+        .resolve_edited(Did(0x3100_0004), Some(&layer), &[])
+        .unwrap();
+    assert_eq!(
+        plain,
+        lib.resolve_layered(Did(0x3100_0004), &layer).unwrap()
+    );
+    assert_eq!(plain.dye.unwrap().primary.color, [0.0, 0.0, 1.0, 1.0]);
+    // An id the shader does not declare changes nothing.
+    let undeclared = lib
+        .resolve_edited(
+            Did(0x3100_0004),
+            None,
+            &[ParameterEdit::Colour {
+                id: 2999,
+                value: [0.0; 4],
+            }],
+        )
+        .unwrap();
+    assert_eq!(undeclared.dye.unwrap().primary.color, [1.0; 4]);
+}
+
+#[test]
+fn runtime_textures_are_bounded() {
+    use tessera_material::RuntimeTextures;
+    let reg = RuntimeTextures::default();
+    let img = |n: u8| {
+        std::sync::Arc::new(tessera_formats::RgbaImage {
+            width: 1,
+            height: 1,
+            pixels: vec![n, n, n, 255],
+        })
+    };
+    // Identities whose low 24 bits collide get distinct DIDs.
+    let a = reg.register(0x0100_0005, img(1)).unwrap();
+    let b = reg.register(0x0200_0005, img(2)).unwrap();
+    assert_ne!(a, b);
+    assert_eq!(reg.get(a).unwrap().pixels[0], 1);
+    assert_eq!(reg.get(b).unwrap().pixels[0], 2);
+    // An inconsistent image is refused.
+    let bad = std::sync::Arc::new(tessera_formats::RgbaImage {
+        width: 4,
+        height: 4,
+        pixels: vec![0; 3],
+    });
+    assert_eq!(reg.register(7, bad), None);
+    // The least recently used entries go first once the entry cap is reached: `b` is
+    // registered again (a hit) after `a`, so `a` goes first.
+    assert_eq!(reg.register(0x0200_0005, img(2)), Some(b));
+    let mut issued = vec![a, b];
+    for i in 0..RuntimeTextures::MAX_ENTRIES as u64 - 1 {
+        issued.push(reg.register(0x10_0000_0000 + i, img(3)).unwrap());
+    }
+    assert_eq!(reg.len(), RuntimeTextures::MAX_ENTRIES);
+    assert!(reg.get(a).is_none());
+    assert_eq!(reg.get(b).unwrap().pixels[0], 2);
+    // A request counts as a use too: `b` was just requested, so the next registration
+    // evicts the oldest other entry, not `b`.
+    issued.push(reg.register(0x20_0000_0000, img(4)).unwrap());
+    assert!(reg.get(b).is_some());
+    // DIDs are never handed out twice, not even after their entry was forgotten.
+    let mut sorted = issued.clone();
+    sorted.sort_by_key(|d| d.0);
+    sorted.dedup();
+    assert_eq!(sorted.len(), issued.len());
+    // `a`'s identity registered again gets a new DID.
+    let again = reg.register(0x0100_0005, img(1)).unwrap();
+    assert!(!issued.contains(&again));
+    // Not a run-time DID.
+    assert!(reg.get(Did(0x4000_0001)).is_none());
+}

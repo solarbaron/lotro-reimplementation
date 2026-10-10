@@ -259,6 +259,7 @@ fn vocab() -> AssemblyVocabulary {
             },
         ),
         avatar_update_visible: Some(30),
+        avatar_face_compositing: Some(97),
         npc_props_visible: Some(23),
         secondary_scale: Some(24),
         npc_items: vec![(10, Some(11)), (12, Some(13)), (14, None)],
@@ -543,6 +544,7 @@ fuzz_target!(|data: &[u8]| {
         .collect();
     let options = AssemblyOptions {
         avatar_update_visible: b.chance(4),
+        avatar_face_compositing: b.chance(4),
     };
     let stubs: HashMap<Did, bool> = source
         .meshes

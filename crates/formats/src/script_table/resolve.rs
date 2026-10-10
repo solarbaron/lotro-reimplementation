@@ -64,8 +64,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::node::{
-    AnimationNode, MeshFxNode, Node, NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType,
-    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, WhenTest, WhileNode,
+    AnimationNode, CompositorColourNode, CompositorLayerNode, EditMaterialNode, MeshFxNode, Node,
+    NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType, SWITCH_ALL_BITS_SET,
+    SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, TextureCompositorNode, WhenTest, WhileNode,
     when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
@@ -283,6 +284,60 @@ impl MeshFxFieldPids {
     }
 }
 
+/// PIDs of the EditMaterial (kind 60) fields that driven properties and scriptlet
+/// parameters can set (§5.3: the `EditMaterialScript_` prefix and the field names). Each is
+/// `None` when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditMaterialFieldPids {
+    /// `EditMaterialScript_MaterialProperty`.
+    pub material_property: Option<u32>,
+    /// `EditMaterialScript_MeshType`.
+    pub mesh_type: Option<u32>,
+    /// `EditMaterialScript_MaterialType`.
+    pub material_type: Option<u32>,
+    /// `EditMaterialScript_Priority`.
+    pub priority: Option<u32>,
+    /// `EditMaterialScript_ColorValue` (`appearance.md` §3.5: driven by `AC_Color_Hair` and
+    /// `AC_Color_Skin`).
+    pub color_value: Option<u32>,
+    /// `EditMaterialScript_TextureValue`.
+    pub texture_value: Option<u32>,
+    /// `EditMaterialScript_BoolValue`.
+    pub bool_value: Option<u32>,
+}
+
+impl EditMaterialFieldPids {
+    /// Looks the field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            material_property: p("EditMaterialScript_MaterialProperty"),
+            mesh_type: p("EditMaterialScript_MeshType"),
+            material_type: p("EditMaterialScript_MaterialType"),
+            priority: p("EditMaterialScript_Priority"),
+            color_value: p("EditMaterialScript_ColorValue"),
+            texture_value: p("EditMaterialScript_TextureValue"),
+            bool_value: p("EditMaterialScript_BoolValue"),
+        }
+    }
+
+    /// The PIDs that are defined.
+    fn all(&self) -> impl Iterator<Item = u32> {
+        [
+            self.material_property,
+            self.mesh_type,
+            self.material_type,
+            self.priority,
+            self.color_value,
+            self.texture_value,
+            self.bool_value,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 /// The property IDs and enum keys clip selection needs, looked up by name in the data
 /// (§8.1, §8.4, §11.3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -356,6 +411,8 @@ pub struct ScriptVocabulary {
     pub final_element: Option<u32>,
     /// PhysicsImpulse field PIDs.
     pub impulse: ImpulseFieldPids,
+    /// EditMaterial field PIDs (§5.3; `appearance.md` §3.5).
+    pub edit_material: EditMaterialFieldPids,
 }
 
 /// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
@@ -450,6 +507,7 @@ impl ScriptVocabulary {
             action_key,
             final_element: opt("Entity_FinalElement"),
             impulse: ImpulseFieldPids::from_names(dict),
+            edit_material: EditMaterialFieldPids::from_names(dict),
         })
     }
 }
@@ -1338,6 +1396,92 @@ pub struct MeshFxDriven {
     pub fade_in_time: bool,
 }
 
+/// The scalar fields of an EditMaterial node (kind 60, §5.3) that a figure's look uses
+/// (`appearance.md` §3.5). The node's `WaveformValue` is left out: no look reads it, and
+/// leaving it out keeps every listed candidate small and of fixed size, however large the
+/// stored waveform is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialEdit {
+    /// `MaterialProperty`: the material parameter id (2003 = dye colour).
+    pub material_property: u32,
+    /// `MeshType`: the `MeshTypeID` slot, 2 = every part.
+    pub mesh_type: u32,
+    /// `MaterialType`: the surface binding key.
+    pub material_type: u32,
+    /// `Priority`.
+    pub priority: i32,
+    /// `ColorValue`: the four stored bytes (B, G, R, A).
+    pub color_value: [u8; 4],
+    /// `TextureValue`: a DID, or 0.
+    pub texture_value: Did,
+    /// `BoolValue`.
+    pub bool_value: bool,
+}
+
+impl From<&EditMaterialNode> for MaterialEdit {
+    fn from(e: &EditMaterialNode) -> Self {
+        Self {
+            material_property: e.material_property,
+            mesh_type: e.mesh_type,
+            material_type: e.material_type,
+            priority: e.priority,
+            color_value: e.color_value,
+            texture_value: e.texture_value,
+            bool_value: e.bool_value,
+        }
+    }
+}
+
+/// What a face-compositing or colour-edit node does to the figure's look
+/// (`appearance.md` §3.5), with its fields after driven values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum LookEffect {
+    /// TextureCompositor (53): attach a compositor record under a name.
+    AttachCompositor(TextureCompositorNode),
+    /// ModifyCompositorLayer (44): select a layer option of a named compositor.
+    CompositorLayer(CompositorLayerNode),
+    /// ModifyCompositorColor (33): set a colour of a named compositor.
+    CompositorColour(CompositorColourNode),
+    /// EditMaterial (60): edit a material parameter of the figure's surfaces (its scalar
+    /// fields only).
+    EditMaterial(MaterialEdit),
+}
+
+/// A face-compositing or colour-edit node (kinds 53, 44, 33, 60) that a resolution reached
+/// (`appearance.md` §3.5), in the client's start order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookCandidate {
+    /// The node's effect after the driven-value substitution (`script-runtime.md` §5.2).
+    pub effect: LookEffect,
+    /// Whether a field took a value from a driven property or a scriptlet parameter.
+    pub driven: bool,
+    /// Whether the seeded picks reach the node (as [`AppearanceCandidate::picked`]).
+    pub picked: bool,
+    /// Product of Random shares and node probabilities above it (1 when certain).
+    pub chance: f32,
+    /// Whether a Run node with `RunScript_Stop` stopped one of [`LookCandidate::scripts`]
+    /// after the node started (`appearance.md` §3.5: the older face compositor is stopped
+    /// when the newer one runs). A stopped node no longer contributes to the look.
+    pub stopped: bool,
+    /// The table whose script started the chain.
+    pub table: Did,
+    /// The scriptlet holding the node, or the null DID for a table node.
+    pub scriptlet: Did,
+    /// The node's editor ID.
+    pub node_id: u32,
+    /// The script keys run on the way to this node, outermost first.
+    pub scripts: Vec<u32>,
+}
+
+impl LookCandidate {
+    /// Whether the node is part of the figure's look: picked and not stopped.
+    #[must_use]
+    pub fn active(&self) -> bool {
+        self.picked && !self.stopped
+    }
+}
+
 /// The result of [`ClipResolver::resolve`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClipResolution {
@@ -1358,6 +1502,9 @@ pub struct ClipResolution {
     pub appearances: Vec<AppearanceCandidate>,
     /// Every MeshFX node that would start (§5.2), in the same start order.
     pub mesh_fx: Vec<MeshFxCandidate>,
+    /// Every face-compositing and colour-edit node that would start (`appearance.md` §3.5),
+    /// in the same start order.
+    pub look: Vec<LookCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
     /// Nodes visited.
@@ -1832,6 +1979,7 @@ where
             table: Did(0),
             all_branches,
             mesh_fx: Vec::new(),
+            look: Vec::new(),
         };
         if let Entry::Script(key) = entry {
             let defs = ev.gather(key);
@@ -1888,6 +2036,7 @@ where
             deformers,
             appearances,
             mesh_fx,
+            look,
             issues,
             visits,
             ..
@@ -1899,6 +2048,7 @@ where
             deformers,
             appearances,
             mesh_fx,
+            look,
             issues,
             nodes_visited: visits,
         })
@@ -2084,6 +2234,7 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// Run every branch of Switch, When, ScalarBlend and WhenRunning nodes.
     all_branches: bool,
     mesh_fx: Vec<MeshFxCandidate>,
+    look: Vec<LookCandidate>,
 }
 
 impl<S, F, B, E> Eval<'_, '_, S, F, B, E>
@@ -2377,6 +2528,33 @@ where
             }
             NodeData::PhysicsImpulse(p) => {
                 self.impulse(n, p, scope, ctx);
+                Ok(())
+            }
+            NodeData::TextureCompositor(t) => {
+                self.look(n, LookEffect::AttachCompositor(*t), scope, ctx);
+                Ok(())
+            }
+            NodeData::CompositorLayer(l) => {
+                self.look(n, LookEffect::CompositorLayer(*l), scope, ctx);
+                Ok(())
+            }
+            NodeData::CompositorColour(c) => {
+                self.look(n, LookEffect::CompositorColour(*c), scope, ctx);
+                Ok(())
+            }
+            NodeData::EditMaterial(e) => {
+                // Only the scalar fields are copied (fixed size, no heap), and only after
+                // the candidate cap ([`Eval::look`] checks it again before listing).
+                if self.look.len() < self.r.limits.max_candidates {
+                    self.look(
+                        n,
+                        LookEffect::EditMaterial(MaterialEdit::from(&**e)),
+                        scope,
+                        ctx,
+                    );
+                } else {
+                    self.limit("max_candidates");
+                }
                 Ok(())
             }
             NodeData::Appearance {
@@ -2720,6 +2898,15 @@ where
     fn run(&mut self, script: u32, stop: bool, ctx: Ctx) -> Result<(), ResolveError<E>> {
         if stop {
             self.running.remove(&script);
+            // A stopped run takes its look effects with it (`appearance.md` §3.5).
+            if !self.charge(self.look.len()) {
+                return Ok(());
+            }
+            for l in &mut self.look {
+                if l.scripts.contains(&script) {
+                    l.stopped = true;
+                }
+            }
             if !self.all_branches {
                 if !self.charge(self.runs.len()) {
                     return Ok(());
@@ -3025,6 +3212,71 @@ where
             }
         }
         self.mesh_fx.push(c);
+    }
+
+    /// Lists a face-compositing or colour-edit node (`appearance.md` §3.5) with its driven
+    /// values: an EditMaterial field by its `EditMaterialScript_*` PID (scriptlet
+    /// parameters first, then driven properties, as [`Eval::mesh_fx`]); the compositor
+    /// kinds by the form of the driving value ([`apply_look_value`]).
+    fn look(&mut self, n: &Node, mut effect: LookEffect, scope: &Scope<'_>, ctx: Ctx) {
+        if self.look.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        let cost = n
+            .base
+            .driven
+            .len()
+            .saturating_add(self.calls.len())
+            .saturating_add(1);
+        if !self.charge(cost) {
+            return;
+        }
+        let pids = self.r.vocab.edit_material;
+        let mut driven = false;
+        if let LookEffect::EditMaterial(e) = &mut effect {
+            for pid in pids.all() {
+                let mut s = Some(scope);
+                while let Some(sc) = s {
+                    let entries = sc.params.map_or(0, |p| p.entries.len());
+                    if !self.charge(entries.saturating_add(1)) {
+                        return;
+                    }
+                    if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                        driven |= apply_edit_material_field(e, &pids, pid, v);
+                        break;
+                    }
+                    s = sc.parent;
+                }
+            }
+        }
+        for &(field, source) in &n.base.driven {
+            let Some(v) = self.r.read(&self.state, source) else {
+                continue;
+            };
+            driven |= match &mut effect {
+                LookEffect::EditMaterial(e) => apply_edit_material_field(e, &pids, field, &v),
+                other => apply_look_value(other, &v),
+            };
+        }
+        self.look.push(LookCandidate {
+            effect,
+            driven,
+            picked: ctx.picked,
+            chance: ctx.chance,
+            stopped: false,
+            table: self.table,
+            scriptlet: scope.scriptlet,
+            node_id: n.base.node_id,
+            scripts: self
+                .calls
+                .iter()
+                .filter_map(|c| match c {
+                    Call::Script(k) => Some(*k),
+                    Call::Scriptlet(_) => None,
+                })
+                .collect(),
+        });
     }
 
     /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
@@ -3433,6 +3685,93 @@ fn apply_mesh_fx_field(
     {
         node.fade_in_time = f;
         c.driven.fade_in_time = true;
+    }
+}
+
+/// Sets the EditMaterial field `field` of `e` from `v` when the value has the field's form;
+/// returns whether a field changed.
+fn apply_edit_material_field(
+    e: &mut MaterialEdit,
+    pids: &EditMaterialFieldPids,
+    field: u32,
+    v: &PropertyValue,
+) -> bool {
+    let is = |p: Option<u32>| p == Some(field);
+    let code = || v.as_bits().and_then(|b| u32::try_from(b).ok());
+    if is(pids.color_value) {
+        if let PropertyValue::Colour(c) = v {
+            e.color_value = *c;
+            return true;
+        }
+    } else if is(pids.material_property) {
+        if let Some(k) = code() {
+            e.material_property = k;
+            return true;
+        }
+    } else if is(pids.mesh_type) {
+        if let Some(k) = code() {
+            e.mesh_type = k;
+            return true;
+        }
+    } else if is(pids.material_type) {
+        if let Some(k) = code() {
+            e.material_type = k;
+            return true;
+        }
+    } else if is(pids.priority) {
+        if let Some(p) = v.as_f64().filter(|f| f.is_finite()) {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                e.priority = p.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+            }
+            return true;
+        }
+    } else if is(pids.texture_value) {
+        if let Some(d) = v.as_did() {
+            e.texture_value = d;
+            return true;
+        }
+    } else if is(pids.bool_value)
+        && let PropertyValue::Bool(b) = v
+    {
+        e.bool_value = *b;
+        return true;
+    }
+    false
+}
+
+/// Applies a driven value to a compositor node by the value's form (Tessera Decision,
+/// `appearance.md` §3.5 implementation note: the dictionary names of the fields of kinds 33,
+/// 44 and 53 are not specified, and every driven pair of the data drives `Color` of kind 33
+/// and `ImageNumber` of kind 44): a colour sets `Color`; an integer sets `ImageNumber`, a
+/// float `Opacity`; a DID sets `ImageCompositorFile`. Any other form changes nothing.
+/// Returns whether a field changed.
+fn apply_look_value(effect: &mut LookEffect, v: &PropertyValue) -> bool {
+    match (effect, v) {
+        (LookEffect::CompositorColour(c), PropertyValue::Colour(b)) => {
+            c.color = *b;
+            true
+        }
+        (LookEffect::CompositorLayer(l), PropertyValue::Int(i)) => {
+            l.image_number = *i;
+            true
+        }
+        (LookEffect::CompositorLayer(l), PropertyValue::Int64(i)) => match i32::try_from(*i) {
+            Ok(i) => {
+                l.image_number = i;
+                true
+            }
+            Err(_) => false,
+        },
+        (LookEffect::CompositorLayer(l), PropertyValue::Float(f)) => {
+            l.opacity = *f;
+            true
+        }
+        (LookEffect::AttachCompositor(t), PropertyValue::DidRef(d)) => {
+            t.file = *d;
+            true
+        }
+        _ => false,
     }
 }
 

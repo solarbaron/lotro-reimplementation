@@ -2628,6 +2628,100 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > mapper 0x2300000F (default 0 `Undef`), and the Switch case is operator 3 with the value key 1
 > (`MonsterPlayer`). Tessera's choice is right; §5.5 states it.
 
+> **OPEN:** (implementation, 2026-10-10, §3.5, engineering choices recorded for review)
+> Tessera implements §3.5 in `tessera-formats` (typed nodes 33, 44, 53, 60; the resolver lists
+> them with their driven values in start order), `tessera-mesh` (`assembly::look`: compositor
+> instances by name, composition by `misc-records.md` §3.6, colour edits) and
+> `tessera-material` (edits applied after every material, run-time textures), shared by the
+> client and the explorer. Choices the spec leaves open: (1) the composed image replaces the
+> base colour, slot 3000, of the surfaces whose binding key equals `MaterialType` on parts
+> whose slot equals `MeshType` (the §3.5 OPEN; O15); (2) colour edits are applied after the
+> surface's materials and the figure's groups (§8 step 6) as one more material; of several
+> edits of one parameter on one surface the highest `Priority` wins, the later one on ties;
+> `MeshType` 2 matches every part, `MaterialType` is compared with the binding key only; an
+> edit whose `MaterialProperty` is not in the colour group 2000–2999 is not applied (none of
+> the avatar tints); (3) a driven field whose source the figure lacks reads the source's
+> dictionary default, as §5.7 step 3 states for MeshFX; (4) a Run node with
+> `RunScript_Stop` that stops a script removes the look effects started under that script
+> (the older face "is stopped"); (5) a layer or colour change of a name not attached yet is
+> ignored and a second attach under one name is refused (`misc-records.md` §3.7); (6) bounds
+> (2026-10-10, after review): at most 8 compositors and 256 images per compositor, 1024 × 1024
+> texels per image (the composed canvas takes its base image's size), 64 MiB of decoded RGBA8
+> per compositor and 128 MiB per figure, checked before each image is decoded (the largest
+> playable face on the reference install decodes 22 MiB); a compositor that reaches a bound
+> keeps what fitted and gets a note; (7) composed images, decoded sources and parsed 0x33
+> records are cached per client and per explorer, least recently used first, keyed by the
+> record and a digest of the selection and colours; a cached composition is charged what
+> composing it charged, so the cache never changes a figure's image; run-time texture DIDs
+> are handed out in sequence and not reissued; (8) with `GOP_AvatarFaceCompositing` false
+> the compositor nodes (53, 44, 33) are dropped after the resolution, so the head keeps its
+> own surface texture as this section states, until the OPEN on `ScriptSystem_ServerScriptlet`
+> below is answered. Please confirm or correct.
+
+> **OPEN:** (implementation, 2026-10-10, §3.5 and `script-table.md` §5.1) The dictionary
+> names of the fields of kinds 33 (`CompositorName`, `ColorName`, `Color`), 44
+> (`CompositorName`, `LayerName`, `ImageNumber`, `Opacity`) and 53 (`CompositorName`,
+> `ImageCompositorFile`, `MeshType`, `MaterialType`) are not given, so a reader cannot match
+> a driven pair's field PID to a field. Tessera applies a driven value by its form (a colour
+> sets `Color`, an integer `ImageNumber`, a float `Opacity`, a DID `ImageCompositorFile`).
+> Which property names do these fields carry? (Our census on the reference install agrees
+> with A21: 39, 199, 218 and 2,873 + 13 nodes; 218 of the 218 node-33 instances and 194 of
+> the 199 node-44 instances have a driven pair from an `AC_Color_*` or `AC_Texture_*`
+> property; `EditMaterialScript_ColorValue` finds the 255 + 42 colour edits.)
+
+> **OPEN:** (implementation, 2026-10-10, §3.5) With the avatar entity's own values and both
+> graphics options on, Tessera's evaluation of `Startup` reaches **no** TextureCompositor
+> node for the Elf and High-elf bodies (P5, P6, P10, P11; class tables 0x0700041B and
+> 0x0700204E), although four are reachable when every Switch, When and blend branch runs.
+> Hair and skin edits do run for them. Which property values (set by the client, the
+> character or the options) select the face-compositor branch for these species?
+> *Resolver trace (2026-10-10, after review):* the deciding property is `Physics_InWorld`.
+> In the species tables of these bodies (0x07003012, 0x07003013, 0x0700301A, 0x0700301B, the
+> tables §3.5 lists as defining only the newer face) `Startup` is a Switch on
+> `CharGen_Stage`; its cases (stages 6, 1, 3, 7, and 4) run `Compositor` (0x10002ACD)
+> directly, and its Default port holds a Switch on `Physics_InWorld` whose only case
+> (`Bool` true) invokes scriptlet 0x0C0084DA, whose `Active` binding runs `Compositor`. The
+> figure's state has no `Physics_InWorld`, and the dictionary gives it no default, so that
+> Switch matches nothing and nothing is attached. The question is therefore: does the client
+> set `Physics_InWorld` (to true) on an avatar figure in the world, and from when (before
+> its `Startup` runs, or later, which would re-evaluate the Switch if it is persistent)? Is
+> it also set on figures shown outside the world (character selection, a preview)?
+
+> **OPEN:** (implementation, 2026-10-10, §3.5) With `GOP_AvatarFaceCompositing` false,
+> Tessera still attaches the newer face compositor for Human M and F and River-hobbit M and
+> F (P3, P4, P13, P14; for the male bodies the newer face comes from 0x07002DAD and
+> 0x07002F08, two of the tables §3.5 lists as defining both scripts directly), while for the bodies reached through scriptlet 0x0C0091D3 (P1,
+> P2, P7, P8, P9) and for DwarfStoutAxe nothing is attached, as §3.5 says. Does the check of
+> scriptlet 0x0C0084DA guard the compositor of the tables that define both scripts
+> directly, and if so through which node?
+> *Resolver trace (2026-10-10, after review):* it does; the deciding property is
+> `ScriptSystem_ServerScriptlet`. In 0x07002DAD `Startup` is a Switch on `CharGen_Stage`
+> whose Default port invokes scriptlet 0x0C0084DA (as the tables reached through 0x0C0091D3
+> do inside that scriptlet). The scriptlet's root is a Switch on
+> `ScriptSystem_ServerScriptlet`: its case `Bool` false leads to a Switch on
+> `Script_UsePvMPReducedOptions` (case true: an empty Collection; Default: the Switch on
+> `GOP_AvatarFaceCompositing`, case false → binding `Inactive`, which stops both
+> compositor scripts; Default → `Active`), and its Default port runs `Active` directly. The
+> figure's state has no `ScriptSystem_ServerScriptlet` and the dictionary default is
+> `Bool` true when the check runs, so the option is never tested and `Active` runs. The data
+> does set it: the `Startup` of table 0x07000042 (kind 1, in every avatar closure) is a
+> SetProperty of `ScriptSystem_ServerScriptlet` = `Bool` false. In the run order of
+> `script-table.md` §8.2 step 3 that SetProperty comes **before** the check for the bodies
+> whose species table is of kind 2 (traced for Hobbit M, table 0x0700041F; the option works
+> for P1, P2, P7, P8, P9), but **after** it for the kind-1
+> species table 0x07002DAD, which comes earlier in the kind-1 gathering order than 0x07000042
+> (traced for Human M; P4, P13 and P14 behave the same and presumably have the same cause,
+> not traced one by one); the Switch is not persistent, so the later change does not re-run
+> it. Setting the property to false before `Startup` makes
+> Tessera's evaluation drop the compositor for Human M as §3.5 states. The question is
+> therefore: does the client give a figure's script state `ScriptSystem_ServerScriptlet` =
+> false before any `Startup` definition runs (a client-side value of the script system), or
+> does the kind-1 order of §8.2 differ for these tables? And which value of
+> `Script_UsePvMPReducedOptions` (dictionary default false) does a figure on the client see?
+> *Tessera rule until answered:* with the option false, `tessera-mesh` drops the
+> compositor nodes after the resolution (choice (8) of the first OPEN above), so every
+> playable body keeps its head's own texture, as §3.5 states.
+
 ---
 
 <a id="s16"></a>

@@ -233,15 +233,32 @@ pub struct CharacterUi {
 /// First external-content id of the character panel's viewports (the client's id space).
 pub const PORTRAIT_CONTENT_ID: u64 = 0x0050_0000;
 
-/// What the client renders for the paperdoll this frame (`render.md` §6.10).
+/// What the client renders into a viewport this frame (`render.md` §6.10): the
+/// paperdoll's figure, or the character screens' figure in the creation viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Portrait {
     /// The external-content id the UI composes.
     pub id: u64,
     /// The target size: the viewport's layout box.
     pub size: (u32, u32),
-    /// The figure's turn, degrees (`character-panels.md` §3.2).
+    /// The figure's turn, degrees (`character-panels.md` §3.2; the turntable of
+    /// `character-screens.md` §2.3).
     pub yaw: f32,
+    /// Which figure.
+    pub figure: PortraitFigure,
+}
+
+/// The figure a [`Portrait`] shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortraitFigure {
+    /// The player's own figure (the paperdoll, `character-panels.md` §3.2).
+    Player,
+    /// The character screens' figure (`character-screens.md` §2.1), with the turntable's
+    /// zoom (§2.3).
+    Screens {
+        /// Zoomed in.
+        zoomed: bool,
+    },
 }
 
 fn slot_place(p: SlotPlace) -> Option<ItemPlace> {
@@ -455,6 +472,7 @@ impl CharacterUi {
             id: t.host.id,
             size: (w, h),
             yaw: a.yaw,
+            figure: PortraitFigure::Player,
         })
     }
 

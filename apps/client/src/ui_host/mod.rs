@@ -1327,23 +1327,44 @@ impl UiHost {
         commands
     }
 
-    /// Renders the paperdoll's portrait (`render.md` §6.10) into its target before the
-    /// frame: `draw` draws the figure into an offscreen frame with the turn in degrees and
-    /// returns whether it drew one. The UI composes the target as the viewport's external
-    /// content. A closed or hidden panel renders nothing. Call before the frame's
+    /// Renders the portraits (`render.md` §6.10) into their targets before the frame: the
+    /// paperdoll's, when the character panel shows it, and `screens`, the character
+    /// screens' viewport (`character-screens.md` §2.1). `draw` draws a portrait's figure
+    /// into an offscreen frame and returns whether it drew one. The UI composes each target
+    /// as its viewport's external content. A closed or hidden panel renders nothing; the
+    /// screens' target is freed when they no longer ask for one. Call before the frame's
     /// `begin_frame`.
     pub fn render_portraits(
         &mut self,
         renderer: &mut Renderer<'_>,
-        draw: &mut dyn FnMut(&mut Frame, f32) -> bool,
+        screens: Option<crate::character::panel::Portrait>,
+        draw: &mut dyn FnMut(&mut Frame, &crate::character::panel::Portrait) -> bool,
     ) {
-        let portrait = self
+        let paperdoll = self
             .character
             .as_ref()
             .and_then(|c| c.portrait(&self.ui.borrow()));
-        let Some(p) = portrait else {
-            return;
-        };
+        if screens.is_none()
+            && let Some((_, tex, _)) = self
+                .portraits
+                .remove(&crate::screens::ui::VIEWPORT_CONTENT_ID)
+        {
+            renderer.destroy_texture(tex);
+            self.textures
+                .set_external(crate::screens::ui::VIEWPORT_CONTENT_ID, None);
+        }
+        for p in [screens, paperdoll].into_iter().flatten() {
+            self.render_portrait(renderer, &p, draw);
+        }
+    }
+
+    /// One portrait of [`Self::render_portraits`].
+    fn render_portrait(
+        &mut self,
+        renderer: &mut Renderer<'_>,
+        p: &crate::character::panel::Portrait,
+        draw: &mut dyn FnMut(&mut Frame, &crate::character::panel::Portrait) -> bool,
+    ) {
         if self.portrait_failed == Some((p.id, p.size)) {
             return;
         }
@@ -1379,7 +1400,7 @@ impl UiHost {
                 Err(e) => {
                     tracing::warn!(
                         size = ?p.size,
-                        "paperdoll portrait target: {e}; not tried again at this size"
+                        "portrait target: {e}; not tried again at this size"
                     );
                     self.portrait_failed = Some((p.id, p.size));
                     return;
@@ -1391,12 +1412,12 @@ impl UiHost {
         };
         match renderer.begin_offscreen_frame(target) {
             Ok(mut frame) => {
-                draw(&mut frame, p.yaw);
+                draw(&mut frame, p);
                 if let Err(e) = renderer.end_frame(frame) {
-                    tracing::debug!("paperdoll portrait: {e}");
+                    tracing::debug!("portrait: {e}");
                 }
             }
-            Err(e) => tracing::debug!("paperdoll portrait: {e}"),
+            Err(e) => tracing::debug!("portrait: {e}"),
         }
     }
 

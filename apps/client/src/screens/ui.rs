@@ -9,8 +9,10 @@
 //! What the data does not name is not bound (OPEN in `character-screens.md` §3, §5): the
 //! selection screen's quit, options and plugin-manager buttons and its slots label, the
 //! randomise button, the group headers of the control list, the racial-trait rows. The
-//! client's start-up maps Escape to [`Action::Quit`]. The viewport element is left to the
-//! renderer: its box is [`ScreenUi::viewport_box`], its content [`super::viewport`].
+//! client's start-up maps Escape to [`Action::Quit`]. The viewport element hosts external
+//! content ([`VIEWPORT_CONTENT_ID`], `render.md` §6.10): the walker renders the screens'
+//! figure into a target of its size ([`ScreenUi::portrait`]), what it shows is
+//! [`super::viewport`].
 //!
 //! **Tessera rules** (OPEN in `character-screens.md` §4.2): a character row's description
 //! is Tessera's own line "Level *n* *race* *class*" with the parts the session told (the
@@ -299,6 +301,11 @@ fn stamp_of<T: Hash + ?Sized>(t: &T) -> u64 {
 /// nationality (its dye-map overrides replace palettes, §5.1).
 type ControlsFor = (u32, u32, Option<u32>);
 
+/// The external-content id of the creation viewport `chargen_viewport` (the client's id
+/// space, beside the paperdoll's `crate::character::panel::PORTRAIT_CONTENT_ID`): the
+/// walker renders the screens' figure into it (`render.md` §6.10).
+pub const VIEWPORT_CONTENT_ID: u64 = 0x0051_0000;
+
 /// The chargen layouts opened in a [`Ui`].
 #[derive(Debug, Default)]
 pub struct ScreenUi {
@@ -544,6 +551,10 @@ impl ScreenUi {
                 ui.set_shown(k, false);
             }
         }
+        // The viewport hosts the figure the walker renders (`render.md` §6.10, §2.1).
+        if let Some(k) = s.el(ids.viewport) {
+            ui.set_external_content(k, Some(VIEWPORT_CONTENT_ID));
+        }
         // Where the information panels' texts go (module docs), found before any is set.
         s.race_info.0 = free_texts(ui, s.el(ids.race_info), 1);
         s.class_info.0 = free_texts(ui, s.el(ids.class_info), 2);
@@ -559,6 +570,32 @@ impl ScreenUi {
     pub fn viewport_box(&self, ui: &Ui) -> Option<IBox> {
         self.el(self.refs.ids.viewport)
             .map(|k| ui.absolute_layout_box(k))
+    }
+
+    /// What the walker renders into the viewport this frame: its content id, its layout
+    /// box's size, the turntable's turn and zoom (`view`); `None` while the viewport is
+    /// not displayed or has no size.
+    #[must_use]
+    pub fn portrait(
+        &self,
+        ui: &Ui,
+        view: &super::viewport::ViewportState,
+    ) -> Option<crate::character::panel::Portrait> {
+        let k = self.el(self.refs.ids.viewport)?;
+        if !ui.is_displayed(k) {
+            return None;
+        }
+        let b = ui.layout_box(k)?;
+        let w = u32::try_from(b.w()).ok().filter(|w| *w > 0)?;
+        let h = u32::try_from(b.h()).ok().filter(|h| *h > 0)?;
+        Some(crate::character::panel::Portrait {
+            id: VIEWPORT_CONTENT_ID,
+            size: (w, h),
+            yaw: view.yaw_degrees,
+            figure: crate::character::panel::PortraitFigure::Screens {
+                zoomed: view.zoomed,
+            },
+        })
     }
 
     fn apply_button(&self, ui: &mut Ui, id: Option<u32>, rule: &ButtonRule) {
@@ -1173,6 +1210,9 @@ impl ScreenUi {
 
     /// Closes the four layouts.
     pub fn close(self, ui: &mut Ui) {
+        if let Some(k) = self.el(self.refs.ids.viewport) {
+            ui.set_external_content(k, None);
+        }
         for (_, w) in self.controls.into_iter().map(|(_, k, w)| (k, w)) {
             match w {
                 ControlWidget::Stepper(s) => s.release(ui),

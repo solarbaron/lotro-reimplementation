@@ -20,7 +20,7 @@ use tessera_formats::script_table::{
 use tessera_mesh::assembly::AssemblyVocabulary;
 use tessera_mesh::assembly::look::{
     COMPOSITOR_COLOUR_SCALE, FigureLook, LookCache, LookLimits, compositor_colour,
-    figure_after_startup, figure_look, look_matches, material_colour,
+    figure_after_startup, figure_look, figure_on_screen, look_matches, material_colour,
 };
 
 const FACE: u32 = 0x1000_0001;
@@ -528,4 +528,18 @@ fn placed_figures_are_in_the_world_after_start_up() {
         vec![(77, PropertyValue::Bool(true))]
     );
     assert!(figure_after_startup(&AssemblyVocabulary::default()).is_empty());
+}
+
+#[test]
+fn character_screen_figures_carry_their_stage() {
+    // appearance.md §3.5 Decision: a character-screen figure carries `CharGen_Stage`.
+    let vocab = AssemblyVocabulary {
+        chargen_stage: Some(78),
+        ..AssemblyVocabulary::default()
+    };
+    assert_eq!(
+        figure_on_screen(&vocab, 6),
+        vec![(78, PropertyValue::Enum(6))]
+    );
+    assert!(figure_on_screen(&AssemblyVocabulary::default(), 6).is_empty());
 }

@@ -84,6 +84,22 @@ variants in the gender entry (`player-character.md` §5.2–§5.3).
 192 × 128 at 571, 12, CS15), by its label the in-world examination tooltip's anchor. **Tessera
 rule (P1):** never created on these screens (they have no examinable objects).
 
+> **OPEN:** (implementer, `apps/client/src/screens/viewport.rs`, `apps/client/src/walker`,
+> 2026-10-10) Where the figure stands in the race's `RaceTable_UIScene` and how the scene's
+> camera element (U4 of `misc-records.md` §4.2) frames it are not stated: the scene's
+> elements carry placements, but which element (or which point) the screens' figure is
+> placed at, and with which heading, is not given; nor whether the six `chargen_viewport`
+> values above (shadows, bloom, ambient light, fake shadow colour, deshade, rim lighting)
+> apply to the figure. The figures of the creation stages also play other idle clips than in
+> the world (the species tables' scripts choose them by `CharGen_Stage`), and these clips
+> turn some bodies away from a camera on the figure's front. As implemented: the viewport
+> hosts external content (`render.md` §6.10) into which the client draws the figure alone,
+> as the paperdoll's portrait: at the origin, turned by the turntable, seen from its front
+> at the height of its bounding sphere's centre with a fixed light, on a transparent
+> background; the zoom (§2.3) halves the distance and aims a quarter of the sphere's radius
+> higher. The scene's objects, lights and cameras are not drawn. Please give the figure's
+> place and heading in the scene and the rule for the viewport's lighting values.
+
 <a id="s2-2"></a>
 ### 2.2 Screens and stages (Confirmed, CS2)
 
@@ -456,6 +472,22 @@ change of a control).
 > start-up must pass; without it (the display name is the same for every server by
 > default) the choices are neither kept nor applied.
 
+> **OPEN:** (implementer, `apps/client/src/screens`, `apps/client/src/walker`, 2026-10-10;
+> follow-up of the two notes above and below) Item (1) is closed in the client: the
+> viewport's figure is the walker's, built through the shared figure path
+> (`tessera-mesh` assembly and `assembly::look`) with every creation control applied: styles,
+> slider string, the two heights and, as the character's own appearance values, every value
+> a set control writes (colours, face layers, the head value), so the species tables compose
+> the face and tint hair and skin from them (`appearance.md` §3.5); it is rebuilt on every
+> change (the old figure stays drawn until the new one is ready). Figures on these screens
+> carry the stage's `CharGen_Stage` key (§2.2: 4 on the selection screen, 7 for the
+> race-select entity, 6 on the appearance screen, read from the mapper by label) from the
+> start of their scripts and are not placed in a world (`appearance.md` §3.5 Decision). Not
+> specified, as implemented: before world entry nothing streams around a viewer, so the
+> client loads only the textures of the screens' figure. Question: the stage key of a figure
+> shown on the appearance stage while the name is typed (stage 3 `Name` has no layout of its
+> own in this build, §2.2): 6 is used; please confirm.
+
 > **OPEN:** (implementer, `apps/client/src/pre_world.rs`, 2026-10-10; follow-up of the note
 > above) Item (2): `tessera-client --character-select` (windowed, with the game UI) now opens
 > these screens at start-up: the world session does not enter by itself and is polled by the
@@ -622,6 +654,19 @@ there).
 > serves item (1) of the §6 OPEN. Colour controls and face layers are not drawn:
 > `tessera-mesh`'s `CharacterSpec` has no field for them. Until the assembler takes them,
 > the "look" part of P1 exit criterion 1 holds for heights, styles and sliders only.
+
+> **OPEN:** (implementer, `apps/client/src/walker/characters`, 2026-10-10; follow-up of the
+> note above) The assembler now takes the character's own appearance values
+> (`CharacterSpec::appearance_values`), so a received look draws colours and face layers too:
+> every entry the receiver rule accepts sets its creation control as on the screens, and
+> every set control's written property and value become the figure's own property values,
+> set in its script state after its property sets (look colours, R, G, B, A, converted to the
+> data's B, G, R, A order). The figure then composes its face and tints hair and skin from
+> them like any figure (`appearance.md` §3.5). Not specified, as implemented: an accepted
+> entry whose value no control of the receiving install accepts (a face-layer option the
+> compositor lacks, a value outside a float range) is dropped with its control, so the
+> property keeps the avatar's own value; please confirm, or say whether the value should
+> be set as received.
 
 <a id="s7-2"></a>
 ### 7.2 Deleting

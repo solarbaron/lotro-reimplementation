@@ -12,6 +12,10 @@
 //! name → (Create) back to Select with the new row selected → (Enter) world entry. Back
 //! goes one stage back; the appearance choices survive going back while race and gender
 //! stay the same.
+//!
+//! **Names** are compared in Unicode Normalization Form C (§7.1, CS16): two names are the
+//! same when their NFC forms are equal code point for code point ([`same_name`]), since
+//! Tessera's test server stores and lists the NFC form of a created name.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -29,6 +33,14 @@ use super::controls::{AppearanceChoices, ControlValue, PaletteSampler};
 use super::data::ScreenData;
 use super::texts::{ErrorLine, OwnText};
 use super::turntable::{Turn, Turntable};
+
+/// Whether two character names are the same (`character-screens.md` §7.1): their Unicode
+/// NFC forms are equal, code point for code point.
+#[must_use]
+pub fn same_name(a: &str, b: &str) -> bool {
+    use unicode_normalization::UnicodeNormalization as _;
+    a == b || a.nfc().eq(b.nfc())
+}
 
 /// How long the screen waits for the answer to `CreateCharacter` (§7.1).
 pub const CREATE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -456,7 +468,7 @@ impl ScreenModel {
         class: Option<u32>,
         look: Option<Look>,
     ) {
-        let Some(r) = self.rows.iter_mut().find(|r| r.name == name) else {
+        let Some(r) = self.rows.iter_mut().find(|r| same_name(&r.name, name)) else {
             return;
         };
         if r.body.is_none() {
@@ -490,7 +502,7 @@ impl ScreenModel {
     }
 
     fn row_index(&self, name: &str) -> Option<usize> {
-        self.rows.iter().position(|r| r.name == name)
+        self.rows.iter().position(|r| same_name(&r.name, name))
     }
 
     /// Takes one session event (`_now`: the frame's time, for answers that start clocks).
@@ -560,17 +572,30 @@ impl ScreenModel {
                 if self.selected.is_none() {
                     self.selected = Some(i);
                 }
-                let answers_pending = self.pending.as_ref().is_some_and(|p| &p.name == name);
-                if answers_pending && self.timed_out.as_ref().is_some_and(|p| &p.name == name) {
+                let answers_pending = self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| same_name(&p.name, name));
+                if answers_pending
+                    && self
+                        .timed_out
+                        .as_ref()
+                        .is_some_and(|p| same_name(&p.name, name))
+                {
                     // A retry of a timed-out creation: the retry's answer counts.
                     self.timed_out = None;
                 }
-                let late =
-                    !answers_pending && self.timed_out.as_ref().is_some_and(|p| &p.name == name);
+                let late = !answers_pending
+                    && self
+                        .timed_out
+                        .as_ref()
+                        .is_some_and(|p| same_name(&p.name, name));
                 if late {
                     // The answer came after the time-out (§7.1): the screen stays where it
                     // is, but the row gets the choices and they are kept.
-                    let p = self.timed_out.take().expect("checked");
+                    let mut p = self.timed_out.take().expect("checked");
+                    // Kept under the name as the session lists it (NFC on a test server).
+                    p.created.name.clone_from(name);
                     if self.rows[i].look.is_none() {
                         self.rows[i].look.clone_from(&p.created.look);
                     }
@@ -584,7 +609,8 @@ impl ScreenModel {
                         self.created.push(p.created);
                     }
                 } else if answers_pending {
-                    let p = self.pending.take().expect("checked");
+                    let mut p = self.pending.take().expect("checked");
+                    p.created.name.clone_from(name);
                     if self.rows[i].look.is_none() {
                         self.rows[i].look.clone_from(&p.created.look);
                     }
@@ -603,10 +629,18 @@ impl ScreenModel {
                 }
             }
             CharacterEvent::CharacterRefused { name, reason } => {
-                if self.pending.as_ref().is_some_and(|p| &p.name == name) {
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| same_name(&p.name, name))
+                {
                     self.pending = None;
                 }
-                if self.timed_out.as_ref().is_some_and(|p| &p.name == name) {
+                if self
+                    .timed_out
+                    .as_ref()
+                    .is_some_and(|p| same_name(&p.name, name))
+                {
                     self.timed_out = None;
                 }
                 self.error(ErrorLine::Reason(reason.clone()));
@@ -630,7 +664,11 @@ impl ScreenModel {
         let why = err.to_string();
         match command {
             Command::Character(CharacterCommand::CreateCharacter { name, .. }) => {
-                if self.pending.as_ref().is_some_and(|p| &p.name == name) {
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| same_name(&p.name, name))
+                {
                     self.pending = None;
                 }
                 self.own_error(OwnText::CreateRefused(why));
@@ -640,8 +678,15 @@ impl ScreenModel {
                 self.own_error(OwnText::DeleteRefused);
             }
             Command::EnterWorld { .. } => {
+                // §7.3: the selection screen stays with Enter enabled. A refusal while a
+                // creation that timed out on this screen is still unanswered is the
+                // backend's outstanding-creation rule (§7.1.1 step 6).
                 self.status = Status::Open;
-                self.own_error(OwnText::EnterRefused(why));
+                if matches!(err, NetError::InvalidCommand(_)) && self.timed_out.is_some() {
+                    self.own_error(OwnText::CreationStillOutstanding);
+                } else {
+                    self.own_error(OwnText::EnterRefused(why));
+                }
             }
             _ => tracing::debug!("screen command refused: {why}"),
         }

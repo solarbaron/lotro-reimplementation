@@ -22,11 +22,11 @@
 //! [`CharacterScreens::open`] takes the [`Session`] (in any state; `Connect` is sent when
 //! it is idle) and the install's [`GameDataStore`]. The client's start-up opens them with
 //! `--character-select` (`crate::pre_world`); tests and the headless driver use them
-//! directly. **Not done yet:** the figure in the screens' viewport is not drawn, and
-//! [`viewport::figure_request`] passes only the two height values of a creation figure
-//! (received looks in the world also carry styles and sliders, through the walker's
-//! `LookChoices`); both are recorded as OPEN in `character-screens.md` §6. Each frame the caller passes the
-//! session to [`CharacterScreens::pump`], which polls it, updates the screens, sends their
+//! directly. The viewport's figure is the walker's (`walker::Walker::set_preview`, drawn
+//! alone into the viewport's external content by `walker::Walker::draw_preview`):
+//! [`viewport::figure_job`] gives it with every creation control applied and the stage's
+//! `CharGen_Stage` key, from which it takes its face (`appearance.md` §3.5). Each frame
+//! the caller passes the session to [`CharacterScreens::pump`], which polls it, updates the screens, sends their
 //! commands and hands every event back to the caller; the player's input arrives as
 //! [`Action`]s ([`CharacterScreens::act`], or through [`ui::ScreenUi`]). When
 //! [`CharacterScreens::status`] is [`Status::Entered`] the world has been entered and the

@@ -28,6 +28,9 @@ pub enum OwnText {
     DeleteRefused,
     /// The session refused `EnterWorld` (§7.3).
     EnterRefused(String),
+    /// The session refused `EnterWorld` while a character creation is still waiting for
+    /// the server's answer (§7.3, §7.1.1 step 6).
+    CreationStillOutstanding,
     /// The session ended before world entry.
     Disconnected(String),
     /// The ghosted New button's tooltip (§7.1).
@@ -58,6 +61,10 @@ impl std::fmt::Display for OwnText {
             }
             Self::DeleteRefused => f.write_str("This server cannot delete characters."),
             Self::EnterRefused(why) => write!(f, "Could not enter the world ({why})."),
+            Self::CreationStillOutstanding => f.write_str(
+                "A character creation is still waiting for the server's answer; try again \
+                 once it has arrived.",
+            ),
             Self::Disconnected(why) => write!(f, "The connection ended ({why})."),
             Self::CreationNotAllowed => {
                 f.write_str("This server does not allow creating characters.")

@@ -8,10 +8,77 @@ use std::collections::BTreeMap;
 use tessera_formats::{Did, StringInfo};
 use tessera_gamedata::GameDataStore;
 use tessera_gamedata::chargen::{ChargenData, NameData, load_chargen, load_names};
-use tessera_props::RecordSource;
+use tessera_props::{EnumSource, GameData, PropertyRegistry, RecordSource};
 use tessera_text::{RenderOptions, Strings, Values};
 
 use super::controls::{AvatarDetail, ScreenPids, read_avatar_detail};
+use super::model::Stage;
+
+/// The `CharGen_Stage` keys the screens' figures carry (`character-screens.md` §2.2;
+/// `appearance.md` §3.5: "the code of the character screens sets `CharGen_Stage` on the
+/// figures it shows"). Read at run time from the property's enum mapper by the labels
+/// `CharacterSelect`, `RaceClass` and `Appearance`; a label the install does not resolve
+/// keeps the key §2.2 records (4, 7, 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageKeys {
+    /// `CharacterSelect`.
+    pub select: u32,
+    /// `RaceClass`.
+    pub race_class: u32,
+    /// `Appearance`.
+    pub appearance: u32,
+}
+
+impl Default for StageKeys {
+    fn default() -> Self {
+        Self {
+            select: 4,
+            race_class: 7,
+            appearance: 6,
+        }
+    }
+}
+
+impl StageKeys {
+    /// The keys of the mapper that labels `CharGen_Stage` in `gd`'s dictionary (module
+    /// docs); the recorded keys where it does not resolve (logged).
+    #[must_use]
+    pub fn resolve<S: RecordSource>(gd: &GameData<S>, reg: &PropertyRegistry) -> Self {
+        let mut keys = Self::default();
+        let mapper = reg
+            .pid("CharGen_Stage")
+            .and_then(|p| reg.enum_source(p))
+            .and_then(|s| match s {
+                EnumSource::Mapper(m) => gd.enum_mapper(m).ok().flatten(),
+                EnumSource::DidMap(_) => None,
+            });
+        let Some(mapper) = mapper else {
+            tracing::debug!("CharGen_Stage has no enum mapper; the recorded stage keys are used");
+            return keys;
+        };
+        for (label, slot) in [
+            ("CharacterSelect", &mut keys.select),
+            ("RaceClass", &mut keys.race_class),
+            ("Appearance", &mut keys.appearance),
+        ] {
+            match mapper.key_in_chain(|d| gd.enum_mapper(d).ok().flatten(), label) {
+                Some(k) => *slot = k,
+                None => tracing::debug!(label, "CharGen_Stage label not found; recorded key used"),
+            }
+        }
+        keys
+    }
+
+    /// The key of `stage`.
+    #[must_use]
+    pub fn of(&self, stage: Stage) -> u32 {
+        match stage {
+            Stage::Select => self.select,
+            Stage::RaceClass => self.race_class,
+            Stage::Appearance => self.appearance,
+        }
+    }
+}
 
 /// Why the screens' data could not be loaded.
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +100,8 @@ pub struct ScreenData {
     pub avatars: BTreeMap<Did, AvatarDetail>,
     /// Property IDs by name.
     pub pids: ScreenPids,
+    /// The `CharGen_Stage` keys of the screens' figures.
+    pub stage_keys: StageKeys,
 }
 
 /// The plain text of `info` in the install's strings (`None` when it does not resolve
@@ -99,6 +168,10 @@ impl ScreenData {
             .registry()
             .map(|r| ScreenPids::resolve(r))
             .unwrap_or_default();
+        let stage_keys = gd
+            .registry()
+            .map(|r| StageKeys::resolve(gd, r))
+            .unwrap_or_default();
         let mut avatars = BTreeMap::new();
         for (avatar, controls) in &chargen.controls {
             if let Ok(c) = controls {
@@ -114,6 +187,7 @@ impl ScreenData {
             names,
             avatars,
             pids,
+            stage_keys,
         })
     }
 

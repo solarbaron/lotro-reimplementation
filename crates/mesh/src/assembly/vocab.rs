@@ -667,6 +667,10 @@ pub struct AssemblyVocabulary {
     pub reduced_options: Option<u32>,
     /// `Physics_InWorld`: set true after a placed figure's start-up (§3.5 Decision).
     pub physics_in_world: Option<u32>,
+    /// `CharGen_Stage`: the stage a figure on a character screen carries instead of the
+    /// placement (§3.5 Decision; stage keys of the mapper 0x23000132 in
+    /// `character-screens.md` §2.2).
+    pub chargen_stage: Option<u32>,
     /// `NPC_Cosmetic_Inventory_Visible`: false hides the figure's props (§5.5 Rule).
     pub npc_props_visible: Option<u32>,
     /// `Script_AdjustableScale_Secondary_Vector`: the scale of a stowed shield (§5.6).
@@ -757,6 +761,7 @@ impl AssemblyVocabulary {
             avatar_face_compositing: names.pid_of("GOP_AvatarFaceCompositing"),
             reduced_options: names.pid_of("Script_UsePvMPReducedOptions"),
             physics_in_world: names.pid_of("Physics_InWorld"),
+            chargen_stage: names.pid_of("CharGen_Stage"),
             npc_props_visible: names.pid_of("NPC_Cosmetic_Inventory_Visible"),
             secondary_scale: names.pid_of("Script_AdjustableScale_Secondary_Vector"),
             npc_items: (1..=4)

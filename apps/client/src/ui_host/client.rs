@@ -253,8 +253,9 @@ impl ClientUi {
         self.pre_world = Some(pre);
     }
 
-    /// The character screens' frame (after step 7).
-    fn screens_frame(&mut self, rt: &mut Runtime, menu: bool) {
+    /// The character screens' frame (after step 7): the screens pump the session, and the
+    /// walker gets the viewport's figure (`character-screens.md` §2.1, §6).
+    fn screens_frame(&mut self, walker: &mut Walker, rt: &mut Runtime, menu: bool) {
         let Some(pre) = self.pre_world.as_mut() else {
             return;
         };
@@ -274,17 +275,19 @@ impl ClientUi {
             pre.frame(world, Some(&mut ui), &events, now)
         };
         match state {
-            crate::pre_world::PreWorldState::Open => {}
+            crate::pre_world::PreWorldState::Open => walker.set_preview(pre.figure_job()),
             crate::pre_world::PreWorldState::Entered(name) => {
                 tracing::info!(character = %name, "entered the world from the character screens");
                 host.collect_screen_events(false);
                 self.pre_world = None;
+                walker.set_preview(None);
             }
             crate::pre_world::PreWorldState::Ended(reason) => {
                 tracing::info!("character screens ended: {reason}");
                 host.collect_screen_events(false);
                 self.pre_world = None;
                 self.quit = true;
+                walker.set_preview(None);
             }
         }
     }
@@ -652,7 +655,7 @@ impl ClientUi {
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
         // The character screens before world entry (`--character-select`).
-        self.screens_frame(rt, events.menu && screens);
+        self.screens_frame(walker, rt, events.menu && screens);
     }
 
     /// Step 8.
@@ -667,14 +670,42 @@ impl ClientUi {
         }
     }
 
-    /// The portraits the UI shows (the paperdoll's figure, `render.md` §6.10), rendered
-    /// with the walker into their targets. Call before the frame's `begin_frame`.
+    /// The portraits the UI shows (the paperdoll's figure and the character screens'
+    /// figure, `render.md` §6.10), rendered with the walker into their targets. Call before
+    /// the frame's `begin_frame`.
     pub fn render_portraits(&mut self, walker: &mut Walker, renderer: &mut Renderer<'_>) {
         if !self.attached_walker {
             return;
         }
         if let State::Ready(host) = &mut self.state {
-            host.render_portraits(renderer, &mut |frame, yaw| walker.draw_portrait(frame, yaw));
+            let screens = self.pre_world.as_ref().and_then(|p| p.portrait(&host.ui()));
+            host.render_portraits(renderer, screens, &mut |frame, p| match p.figure {
+                crate::character::panel::PortraitFigure::Player => {
+                    walker.draw_portrait(frame, p.yaw)
+                }
+                crate::character::panel::PortraitFigure::Screens { zoomed } => {
+                    walker.draw_preview(frame, p.yaw, zoomed)
+                }
+            });
+        }
+    }
+
+    /// The character screens while they are open (tests and headless drivers).
+    #[must_use]
+    pub fn pre_world(&self) -> Option<&crate::pre_world::PreWorld> {
+        self.pre_world.as_ref()
+    }
+
+    /// Takes one action of the player on the open character screens (tests and headless
+    /// drivers; the windowed client feeds them through the UI's events). Returns whether
+    /// the screens were open.
+    pub fn screens_act(&mut self, action: crate::screens::Action) -> bool {
+        match self.pre_world.as_mut() {
+            Some(p) => {
+                p.act(action, Instant::now());
+                true
+            }
+            None => false,
         }
     }
 

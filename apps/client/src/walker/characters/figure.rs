@@ -32,9 +32,16 @@
 //! (the §7.4 Decision: a figure keeps its look), and when there are any the figure is
 //! assembled again with them before its parts are built.
 //!
-//! The figure's height and slider values are the avatar entity's (`AC_Avatar_Height` 0 is
-//! the shortest River-hobbit, `appearance.md` §6.2): the session model carries no
-//! per-character values yet.
+//! The figure's heights, styles, slider values and appearance values are the avatar
+//! entity's (`AC_Avatar_Height` 0 is the shortest River-hobbit, `appearance.md` §6.2)
+//! unless the request's [`LookChoices`] carry the character's own (a received look under
+//! the receiver rule, decision 0025 D2, or the creation screen's choices): the appearance
+//! values go into the figure's script state, so the species tables compose the face and
+//! tint hair and skin with them (`appearance.md` §3.5).
+//!
+//! A figure on a character screen ([`FigureRequest::chargen_stage`]) carries its
+//! `CharGen_Stage` from the start and is not placed in a world (`appearance.md` §3.5
+//! Decision); every other figure gets `Physics_InWorld` after its start-up.
 //!
 //! A figure without a usable skeleton, or with no skinned part, is **static**: its parts
 //! are drawn rigid in the setup frame, unanimated. Every failure short of "no body" is a
@@ -54,13 +61,13 @@ use tessera_formats::script_table::resolve::{
     ClipCandidate, ClipResolver, MotionState, collect_entity_scripts,
 };
 use tessera_formats::setup::Anchor;
-use tessera_formats::{Did, PropertySet};
+use tessera_formats::{Did, PropertySet, PropertyValue};
 use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
 use tessera_material::{ParameterEdit, figure_edits};
 use tessera_mesh::assembly::look::{
     FigureLook, LookCache, LookLimits, apply_figure_properties, figure_after_startup,
-    figure_look_from_data,
+    figure_look_from_data, figure_on_screen,
 };
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
@@ -131,25 +138,57 @@ pub struct FigureRequest {
     /// Seed of the figure's script Random picks (`appearance.md` §7.4 Decision: the placed
     /// figure's instance ID, so it keeps its look); `None` uses 0.
     pub seed: Option<u64>,
+    /// The `CharGen_Stage` key of a figure shown on a character screen
+    /// (`character-screens.md` §2.2; `appearance.md` §3.5 Decision: such a figure carries
+    /// its stage and is not placed in a world); `None` for a figure in the world.
+    pub chargen_stage: Option<u32>,
 }
 
 /// The look choices of a playable figure beyond its heights (decision 0025 D2: a
-/// received look under the receiver rule): chosen styles and the slider string, as
-/// `tessera-mesh`'s [`CharacterSpec`] takes them (not the figure look of `tessera_mesh::assembly::look`). Colours and face layers are not in the
-/// assembler's input (`character-screens.md` §6 OPEN), so they are not drawn yet.
+/// received look under the receiver rule; the creation screen's choices): chosen styles,
+/// the slider string and the character's own appearance values, as `tessera-mesh`'s
+/// [`CharacterSpec`] takes them. The appearance values (colours, face layers, the head
+/// value, …) reach the figure's script state, where the species tables' driven nodes read
+/// them for the composited face and the hair and skin tints (`appearance.md` §3.5,
+/// `tessera_mesh::assembly::look`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LookChoices {
     /// Chosen styles (`CharacterSpec::styles`).
     pub styles: Vec<StyleChoice>,
     /// The slider byte string (`AC_BoneSlider_Value_Array`).
     pub slider_values: Option<String>,
+    /// The character's own property values (`CharacterSpec::appearance_values`), data
+    /// order (colours as stored: B, G, R, A).
+    pub appearance_values: Vec<(u32, PropertyValue)>,
 }
 
 impl LookChoices {
     /// Whether it changes nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.styles.is_empty() && self.slider_values.is_none()
+        self.styles.is_empty() && self.slider_values.is_none() && self.appearance_values.is_empty()
+    }
+}
+
+/// [`value_key`]'s form: type code, bits, text.
+type ValueKey = (u32, u64, Option<String>);
+
+/// A hashable form of an appearance value: its type code and its value's bits (the
+/// debug form for values without fixed bits; a look holds only scalars, short strings and
+/// colours).
+fn value_key(v: &PropertyValue) -> ValueKey {
+    let t = v.property_type().code();
+    match v {
+        PropertyValue::Bool(b) => (t, u64::from(*b), None),
+        PropertyValue::Int(i) => (t, u64::from(i.cast_unsigned()), None),
+        PropertyValue::Int64(i) => (t, i.cast_unsigned(), None),
+        PropertyValue::Float(f) => (t, u64::from(f.to_bits()), None),
+        PropertyValue::Enum(k) | PropertyValue::Bitfield32(k) => (t, u64::from(*k), None),
+        PropertyValue::Bitfield64(k) => (t, *k, None),
+        PropertyValue::DidRef(d) => (t, u64::from(d.0), None),
+        PropertyValue::Colour(c) => (t, u64::from(u32::from_le_bytes(*c)), None),
+        PropertyValue::String(s) => (t, 0, Some(s.clone())),
+        other => (t, 0, Some(format!("{other:?}"))),
     }
 }
 
@@ -170,6 +209,11 @@ impl FigureRequest {
                 .map(|s| (s.key, s.modifier.to_bits()))
                 .collect(),
             sliders: look.slider_values.clone(),
+            values: look
+                .appearance_values
+                .iter()
+                .map(|(p, v)| (*p, value_key(v)))
+                .collect(),
             body: self.body,
             items: self
                 .equipment
@@ -191,6 +235,7 @@ impl FigureRequest {
                 self.bone_scale.map_or(u32::MAX, f32::to_bits),
             ],
             seed: self.seed,
+            stage: self.chargen_stage,
         }
     }
 }
@@ -200,12 +245,14 @@ impl FigureRequest {
 pub struct FigureKey {
     look: Vec<(u32, u32)>,
     sliders: Option<String>,
+    values: Vec<(u32, ValueKey)>,
     body: Body,
     items: Vec<(u32, u32, u32, bool, Option<u8>)>,
     instance: Option<u64>,
     static_only: bool,
     shape: [u32; 2],
     seed: Option<u64>,
+    stage: Option<u32>,
 }
 
 /// One part ready for upload.
@@ -289,11 +336,60 @@ pub struct FigureAsset {
     /// placement's instance set, then along the 0x47 entity chain from the figure's entity;
     /// `None` when no level holds it (the component's initial values apply, `mesh.md` §8.5).
     pub lod_class: Option<u32>,
+    /// What the species tables' look gave the figure (`appearance.md` §3.5): composed
+    /// faces and material edits, for tests and diagnostics.
+    pub face: FaceSummary,
     /// Problems, for the log.
     pub notes: Vec<String>,
     /// Worker time.
     pub build_ms: f64,
 }
+
+/// The figure's look in numbers (`appearance.md` §3.5): which compositors were attached,
+/// which of them composed an image (with the image's identity, a digest of record,
+/// layer selection and colours), and the material edits registered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FaceSummary {
+    /// (compositor name, identity of its composed image; `None` when it composed none),
+    /// attach order.
+    pub compositors: Vec<(u32, Option<u64>)>,
+    /// Material edits registered at the end (every parameter group).
+    pub edits: usize,
+    /// The colour values of the edits of the dye-colour parameter 2003 (stored order
+    /// B, G, R, A), start order: the hair and skin tints (`appearance.md` §3.5).
+    pub dye_colours: Vec<[u8; 4]>,
+}
+
+impl FaceSummary {
+    /// The summary of `look`.
+    #[must_use]
+    pub fn of(look: &FigureLook) -> Self {
+        Self {
+            compositors: look
+                .compositors
+                .iter()
+                .map(|c| (c.name, c.image.as_ref().map(|_| c.identity)))
+                .collect(),
+            edits: look.edits.len(),
+            dye_colours: look
+                .edits
+                .iter()
+                .filter(|e| e.material_property == DYE_COLOUR_PARAMETER)
+                .map(|e| e.color_value)
+                .collect(),
+        }
+    }
+
+    /// Whether a face was composed.
+    #[must_use]
+    pub fn composed(&self) -> bool {
+        self.compositors.iter().any(|(_, i)| i.is_some())
+    }
+}
+
+/// The dye-colour material parameter the hair and skin edits set (`appearance.md` §3.5,
+/// `material.md` §12).
+pub const DYE_COLOUR_PARAMETER: u32 = 2003;
 
 impl FigureAsset {
     /// Whether the figure is animated.
@@ -477,6 +573,8 @@ pub fn build_figure_with_look(
             spec.bone_scale = req.bone_scale;
             spec.styles.clone_from(&choices.styles);
             spec.slider_values.clone_from(&choices.slider_values);
+            spec.appearance_values
+                .clone_from(&choices.appearance_values);
             for e in req.equipment.iter().take(super::MAX_EQUIPMENT) {
                 let mut item = EquippedItem::new(Did(e.item.0)).with_state(if e.stowed {
                     WieldState::Sheathed
@@ -538,7 +636,7 @@ pub fn build_figure_with_look(
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
     let (clips, shape, scripts, look) = match &skeleton {
-        Some(s) => select_clips(ctx, &c, s, req.seed, &mut notes),
+        Some(s) => select_clips(ctx, &c, s, req, &mut notes),
         None => (
             FigureClips::default(),
             FigureShape::default(),
@@ -547,6 +645,7 @@ pub fn build_figure_with_look(
         ),
     };
     notes.extend(look.notes.iter().take(4).map(|n| format!("look: {n}")));
+    let face = FaceSummary::of(&look);
     // The Appearance nodes the start-up scripts ran (`appearance.md` §7.4): assembled
     // after the lists, on the same body and setup.
     if !scripts.is_empty() {
@@ -697,6 +796,7 @@ pub fn build_figure_with_look(
         model_scale,
         points,
         lod_class,
+        face,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,
     })
@@ -894,9 +994,10 @@ fn select_clips(
     ctx: &FigureContext,
     c: &AssembledCharacter,
     skeleton: &Arc<AnimSkeleton>,
-    seed: Option<u64>,
+    req: &FigureRequest,
     notes: &mut Vec<String>,
 ) -> (FigureClips, FigureShape, Vec<ScriptAppearance>, FigureLook) {
+    let seed = req.seed;
     let cat = &ctx.catalog;
     let data = &cat.data;
     let mut out = FigureClips::default();
@@ -928,12 +1029,18 @@ fn select_clips(
         apply_figure_properties(&mut scripts, c, asm, ctx.assembly);
     }
     // A figure in the walker is placed in the world: `Physics_InWorld` turns true after its
-    // start-up (`appearance.md` §3.5 Decision).
-    let after_startup = cat
-        .assembly
-        .as_ref()
-        .map(figure_after_startup)
-        .unwrap_or_default();
+    // start-up; a figure on a character screen carries its `CharGen_Stage` from the start
+    // and is not placed (`appearance.md` §3.5 Decision).
+    let after_startup = match (req.chargen_stage, cat.assembly.as_ref()) {
+        (Some(stage), Some(asm)) => {
+            for (pid, v) in figure_on_screen(asm, stage) {
+                scripts.properties.set(pid, v);
+            }
+            Vec::new()
+        }
+        (Some(_), None) => Vec::new(),
+        (None, asm) => asm.map(figure_after_startup).unwrap_or_default(),
+    };
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
         .with_random_seed(Some(seed.unwrap_or(0)))

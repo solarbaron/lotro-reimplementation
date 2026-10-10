@@ -856,8 +856,12 @@ impl AppearanceChoices {
 
     /// The figure of these choices for `tessera-mesh`'s assembler (`appearance.md` §8):
     /// styles as [`StyleChoice`]s (modifier = the chosen block's `variant`), the slider
-    /// string, and the
-    /// `AC_BoneScale_Test` and `AC_Avatar_Height` values.
+    /// string, the `AC_BoneScale_Test` and `AC_Avatar_Height` values, and every set
+    /// control's written property with its value as the character's own appearance value
+    /// ([`CharacterSpec::appearance_values`]: colours, face layers, the head value, heights
+    /// and sliders; colours in the data's B, G, R, A order), so the species tables compose
+    /// the face and tint hair and skin with them (`appearance.md` §3.5). Controls without a
+    /// value keep the avatar's own (§3.4: the defaults).
     #[must_use]
     pub fn character_spec(
         &self,
@@ -888,9 +892,36 @@ impl AppearanceChoices {
                 }
                 _ => {}
             }
+            if let Some((pid, _)) = c.writes
+                && let Some(v) = c.look_value(v).as_ref().and_then(data_value)
+            {
+                spec.appearance_values.retain(|(p, _)| *p != pid);
+                spec.appearance_values.push((pid, v));
+            }
         }
         spec
     }
+}
+
+/// A look entry value as the data's property value (the inverse of the reading in
+/// [`read_avatar_detail`]): colours from the look's R, G, B, A to the data's stored
+/// B, G, R, A (`appearance.md` §3.5); `None` for kinds a look cannot carry.
+#[must_use]
+pub fn data_value(v: &PropertyValue) -> Option<tessera_formats::PropertyValue> {
+    use tessera_formats::PropertyValue as D;
+    Some(match v {
+        PropertyValue::Bool(b) => D::Bool(*b),
+        PropertyValue::Int(i) => D::Int(*i),
+        PropertyValue::Int64(i) => D::Int64(*i),
+        PropertyValue::Float(f) if f.is_finite() => D::Float(*f),
+        PropertyValue::Enum(k) => D::Enum(*k),
+        PropertyValue::Bitfield32(b) => D::Bitfield32(*b),
+        PropertyValue::Bitfield64(b) => D::Bitfield64(*b),
+        PropertyValue::Did(d) => D::DidRef(Did(d.0)),
+        PropertyValue::String(s) => D::String(s.clone()),
+        PropertyValue::Colour([r, g, b, a]) => D::Colour([*b, *g, *r, *a]),
+        _ => return None,
+    })
 }
 
 /// The receiver rule of `tessera-protocol.md` §7.4 for a received look of a `Character`
@@ -1162,5 +1193,54 @@ mod tests {
         // A modifier between variants maps to the block the figure would show.
         let mid = d.controls[0].value_from_look(&PropertyValue::Float(0.2));
         assert_eq!(mid, Some(ControlValue::Style(1)));
+    }
+
+    /// Closing `character-screens.md` §6 OPEN (1) and the §7.1 look note: colours, face
+    /// layers and every other written value reach the assembler as the character's own
+    /// appearance values, colours in the data's B, G, R, A order; unset controls are left
+    /// out (the avatar's own values stay).
+    #[test]
+    fn written_values_become_appearance_values() {
+        use tessera_formats::PropertyValue as D;
+        let d = avatar();
+        let pids = ScreenPids::default();
+        let mut c = AppearanceChoices::default();
+        assert!(
+            c.character_spec(&d, &pids, 0x51, 0x1000)
+                .appearance_values
+                .is_empty()
+        );
+        assert!(c.set(&d, 0, ControlValue::Style(2)));
+        assert!(c.set(&d, 1, ControlValue::Style(1)));
+        assert!(c.set(&d, 2, ControlValue::Colour([0x10, 0x20, 0x30, 0xFF])));
+        assert!(c.set(&d, 5, ControlValue::Option(5)));
+        assert!(c.set(&d, 4, ControlValue::Sliders(vec![1, 2, 3])));
+        let spec = c.character_spec(&d, &pids, 0x51, 0x1000);
+        assert_eq!(
+            spec.appearance_values,
+            vec![
+                (0x100, D::Int(2)),
+                (0x101, D::Colour([0x30, 0x20, 0x10, 0xFF])),
+                (0x103, D::String("010203".into())),
+                (0x104, D::Int(5)),
+            ],
+            "hair names no property; colours as stored"
+        );
+        // The same values come from a received look under the receiver rule.
+        let look = c.look(&d).expect("a look");
+        let (ok, _) = accept_look(&look, &d);
+        let mut back = AppearanceChoices::default();
+        back.apply_entries(&d, &ok);
+        assert_eq!(
+            back.character_spec(&d, &pids, 0x51, 0x1000)
+                .appearance_values,
+            spec.appearance_values
+        );
+        assert_eq!(data_value(&PropertyValue::Instance(1)), None);
+        assert_eq!(data_value(&PropertyValue::Float(f32::NAN)), None);
+        assert_eq!(
+            data_value(&PropertyValue::Did(tessera_net::DataId(7))),
+            Some(D::DidRef(Did(7)))
+        );
     }
 }

@@ -68,6 +68,7 @@ fn figure(env: &Env, spec: &str, height: Option<f32>) -> FigureAsset {
         avatar_height: height,
         bone_scale: None,
         seed: None,
+        chargen_stage: None,
     };
     build_figure(&env.ctx, &req, &|| false).expect("figure builds")
 }

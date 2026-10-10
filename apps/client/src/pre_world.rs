@@ -12,8 +12,10 @@
 //! the player's actions. Escape is the selection screen's quit (`crate::screens::ui`
 //! module docs). On `WorldEntered` the screens close and the world session polls again.
 //!
-//! **Not done here** (`character-screens.md` §6 implementer OPEN (1)): the viewport's figure
-//! is not drawn; the screens' layouts, lists and controls are.
+//! The viewport's figure: each frame [`PreWorld::figure_job`] gives the walker the figure
+//! of the current stage and choices (`Walker::set_preview`; every creation control
+//! applied, the stage's `CharGen_Stage` carried), and [`PreWorld::portrait`] says what to
+//! render into the viewport's external content (`Walker::draw_preview`).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -90,6 +92,27 @@ impl PreWorld {
     #[must_use]
     pub fn state(&self) -> &PreWorldState {
         &self.state
+    }
+
+    /// The figure the viewport shows now, as a job of the walker's figure path
+    /// ([`crate::screens::viewport::figure_job`]); `None` without a figure.
+    #[must_use]
+    pub fn figure_job(
+        &self,
+    ) -> Option<(
+        crate::walker::characters::figure::FigureRequest,
+        crate::walker::characters::figure::LookChoices,
+    )> {
+        let view = self.screens.viewport();
+        crate::screens::viewport::figure_job(&view, self.screens.model().data())
+    }
+
+    /// What to render into the viewport this frame (`None` without the screens' layouts or
+    /// while the viewport is not displayed).
+    #[must_use]
+    pub fn portrait(&self, ui: &Ui) -> Option<crate::character::panel::Portrait> {
+        let view = self.screens.viewport();
+        self.ui.as_ref()?.portrait(ui, &view)
     }
 
     /// One action of the player (Escape: [`Action::Quit`]).

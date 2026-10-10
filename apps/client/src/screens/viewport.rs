@@ -5,10 +5,19 @@
 //! screen, the gender entry's `RaceTable_RaceSelect_Entity` on the race-and-class screen,
 //! the figure of the creation choices on the appearance screen, turned by the turntable.
 //!
-//! [`viewport_state`] derives it from the model; [`figure_request`] turns the figure into a
+//! [`viewport_state`] derives it from the model; [`figure_job`] turns the figure into a
 //! request of the walker's figure path (`walker::characters::figure`, assembled and
-//! animated on the asset workers like every other figure); [`SceneView`] reads a UI scene
-//! and picks its camera by the rule U4 of `misc-records.md` §4.2.
+//! animated on the asset workers like every other figure) with every creation control
+//! applied (styles, slider string, heights and the appearance values from which the
+//! species tables compose the face and tint hair and skin) and the stage's
+//! `CharGen_Stage` key, from which a figure on these screens takes its face
+//! (`appearance.md` §3.5 Decision); [`SceneView`] reads a UI scene and picks its camera by
+//! the rule U4 of `misc-records.md` §4.2.
+//!
+//! The walker draws the figure alone into the viewport (`walker::Walker::draw_preview`):
+//! where a figure stands in the race's UI scene and how the scene's camera frames it are
+//! not specified (`character-screens.md` §2.1 OPEN), so the scene's objects and camera are
+//! not drawn yet.
 
 use tessera_formats::Did;
 use tessera_formats::gameplay::misc::{UI_SCENE_CAMERA_TYPE, UiScene};
@@ -20,7 +29,7 @@ use tessera_props::{EnumSource, GameData, PropertySet, RecordSource};
 use super::controls::{AppearanceChoices, accept_look};
 use super::data::ScreenData;
 use super::model::{ScreenModel, Stage};
-use crate::walker::characters::figure::FigureRequest;
+use crate::walker::characters::figure::{FigureRequest, LookChoices};
 
 /// Most elements a scene view keeps (the data has at most 732 descriptors per scene).
 pub const MAX_SCENE_ELEMENTS: usize = 4096;
@@ -52,6 +61,11 @@ pub struct ViewportState {
     pub camera: Option<u32>,
     /// The figure's turn about its vertical axis, degrees (turntable, §2.3).
     pub yaw_degrees: f32,
+    /// The turntable's zoom (§2.3).
+    pub zoomed: bool,
+    /// The `CharGen_Stage` key the figure carries (`character-screens.md` §2.2,
+    /// `appearance.md` §3.5).
+    pub stage: u32,
     /// The figure.
     pub figure: FigureChoice,
 }
@@ -65,11 +79,14 @@ pub fn viewport_state(model: &ScreenModel) -> ViewportState {
         Stage::Select => (model.selected_row().and_then(|r| r.character_body()), true),
         _ => (model.creation().species.zip(model.creation().sex), false),
     };
+    let stage = data.stage_keys.of(model.stage());
     let Some((species, sex)) = body else {
         return ViewportState {
             scene: None,
             camera: None,
             yaw_degrees: model.turntable().angle(),
+            zoomed,
+            stage,
             figure: FigureChoice::None,
         };
     };
@@ -121,19 +138,29 @@ pub fn viewport_state(model: &ScreenModel) -> ViewportState {
         scene: race.and_then(|r| r.record.ui_scene),
         camera,
         yaw_degrees: model.turntable().angle(),
+        zoomed,
+        stage,
         figure,
     }
 }
 
 /// The figure as a request of the walker's figure path: a visual entity as an object body,
-/// a playable body with the `AC_BoneScale_Test` and `AC_Avatar_Height` choices.
-///
-/// The figure path takes no styles, colours, face layers or slider strings yet
-/// ([`FigureRequest`] carries only the two heights; OPEN in `character-screens.md` §6), so
-/// the drawn viewport figure does not yet follow those controls; [`character_spec`] gives
-/// the full choices for `tessera-mesh`'s assembler.
+/// a playable body with its `AC_BoneScale_Test` and `AC_Avatar_Height` choices; both carry
+/// the stage's `CharGen_Stage` key. [`figure_job`] adds the rest of the look.
 #[must_use]
 pub fn figure_request(state: &ViewportState, data: &ScreenData) -> Option<FigureRequest> {
+    figure_job(state, data).map(|(r, _)| r)
+}
+
+/// The figure as a job of the walker's figure path (module docs): the request (body,
+/// heights, stage) and the look choices of every set creation control (styles, slider
+/// string, appearance values), so the drawn figure follows each control at once
+/// (`character-screens.md` §6; `appearance.md` §3.5).
+#[must_use]
+pub fn figure_job(
+    state: &ViewportState,
+    data: &ScreenData,
+) -> Option<(FigureRequest, LookChoices)> {
     let base = |body| FigureRequest {
         body,
         equipment: Vec::new(),
@@ -143,10 +170,13 @@ pub fn figure_request(state: &ViewportState, data: &ScreenData) -> Option<Figure
         avatar_height: None,
         bone_scale: None,
         seed: None,
+        chargen_stage: Some(state.stage),
     };
     match &state.figure {
         FigureChoice::None => None,
-        FigureChoice::Entity(did) => Some(base(Body::Object(DataId(did.0)))),
+        FigureChoice::Entity(did) => {
+            Some((base(Body::Object(DataId(did.0))), LookChoices::default()))
+        }
         FigureChoice::Character {
             species,
             sex,
@@ -156,18 +186,24 @@ pub fn figure_request(state: &ViewportState, data: &ScreenData) -> Option<Figure
                 species: *species,
                 sex: *sex,
             });
+            let mut look = LookChoices::default();
             if let Some(d) = data.avatar(*species, *sex) {
                 let spec = choices.character_spec(d, &data.pids, *species, *sex);
                 r.avatar_height = spec.avatar_height;
                 r.bone_scale = spec.bone_scale;
+                look = LookChoices {
+                    styles: spec.styles,
+                    slider_values: spec.slider_values,
+                    appearance_values: spec.appearance_values,
+                };
             }
-            Some(r)
+            Some((r, look))
         }
     }
 }
 
 /// The full figure of a character choice for `tessera-mesh`'s assembler (styles, sliders,
-/// heights); `None` for an entity or no figure.
+/// heights, appearance values); `None` for an entity or no figure.
 #[must_use]
 pub fn character_spec(state: &ViewportState, data: &ScreenData) -> Option<CharacterSpec> {
     let FigureChoice::Character {

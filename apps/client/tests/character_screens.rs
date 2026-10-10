@@ -15,7 +15,7 @@ use common::*;
 use tessera_client::screens::backend::{BackendKind, ButtonRule};
 use tessera_client::screens::model::CREATE_TIMEOUT;
 use tessera_client::screens::texts::OwnText;
-use tessera_client::screens::viewport::{FigureChoice, figure_request};
+use tessera_client::screens::viewport::{FigureChoice, figure_job, figure_request};
 use tessera_client::screens::{
     Action, CharacterScreens, ControlValue, ScreenModel, ScreenOptions, Stage, Status, Turn,
     viewport_state,
@@ -126,6 +126,12 @@ fn plain_sandbox_creates_selects_and_enters() {
     }
     let req = figure_request(&v, d.screens.model().data()).expect("a figure");
     assert_eq!(req.bone_scale, Some(0.25));
+    // The figure carries the selection stage's `CharGen_Stage` key (§2.2; appearance.md
+    // §3.5) and every written value as the character's own (`figure_job`).
+    assert_eq!(req.chargen_stage, Some(4), "CharacterSelect");
+    let (_, look) = figure_job(&v, d.screens.model().data()).expect("a figure");
+    let props: Vec<u32> = look.appearance_values.iter().map(|(p, _)| *p).collect();
+    assert_eq!(props, vec![PROP_HEAD, PROP_SCALE]);
 
     // A second creation with the same name is refused by the sandbox (§9.6 step 1).
     fill_creation(&mut d, SPECIES_B, GENDER_MALE, CLASS_2, "Cora");
@@ -649,4 +655,82 @@ fn kept_choices_survive_a_restart_and_concurrent_clients() {
         .find(|r| r.name == "Cora")
         .unwrap();
     assert!(cora.look.is_none(), "{cora:?}");
+}
+
+/// `character-screens.md` §7.1 (CS16): names are compared in NFC form, so a creation typed
+/// in a decomposed form is answered by the server's precomposed (NFC) name, and the row
+/// shows the name as the event carries it.
+#[test]
+fn creation_answers_match_by_nfc_form() {
+    let (mut m, now) = select_model();
+    m.apply(Action::New, now);
+    m.apply(Action::Continue, now);
+    m.apply(Action::Name("E\u{301}owyn".into()), now);
+    m.apply(Action::Create, now);
+    assert_eq!(m.take_commands().len(), 1, "the creation is sent");
+    assert_eq!(m.pending_creation(), Some("E\u{301}owyn"));
+    m.handle_event(
+        &Event::Character(CharacterEvent::CharacterInfo {
+            name: "\u{c9}owyn".into(),
+            body: None,
+            class: None,
+            level: None,
+            look: None,
+        }),
+        now,
+    );
+    assert!(m.pending_creation().is_none(), "answered");
+    assert_eq!(m.stage(), Stage::Select);
+    assert_eq!(m.selected_row().unwrap().name, "\u{c9}owyn");
+    assert_eq!(m.take_created()[0].name, "\u{c9}owyn");
+    // A refusal names the requested creation in another normal form: still a failure of it.
+    m.apply(Action::New, now);
+    m.apply(Action::Continue, now);
+    m.apply(Action::Name("Ade\u{300}le".into()), now);
+    m.apply(Action::Create, now);
+    m.take_commands();
+    m.handle_event(
+        &Event::Character(CharacterEvent::CharacterRefused {
+            name: "Ad\u{e8}le".into(),
+            reason: Text::Literal("taken".into()),
+        }),
+        now,
+    );
+    assert!(m.pending_creation().is_none());
+    assert_eq!(m.stage(), Stage::Appearance, "the screen stays");
+}
+
+/// `character-screens.md` §7.3 and §7.1.1 step 6 (CS17): after the screen's time-out the
+/// creation is still outstanding on M7's server, whose backend refuses `EnterWorld`; the
+/// selection screen shows Tessera's text, stays and keeps Enter enabled.
+#[test]
+fn enter_refused_while_a_creation_is_outstanding() {
+    let (mut m, now) = select_model();
+    m.apply(Action::New, now);
+    m.apply(Action::Continue, now);
+    m.apply(Action::Name("Cora".into()), now);
+    m.apply(Action::Create, now);
+    m.take_commands();
+    m.tick(now + CREATE_TIMEOUT + Duration::from_millis(1));
+    m.apply(Action::Back, now);
+    m.apply(Action::Back, now);
+    assert_eq!(m.stage(), Stage::Select);
+    m.apply(Action::Enter, now);
+    let cmds = m.take_commands();
+    let enter = cmds
+        .iter()
+        .find(|c| matches!(c, Command::EnterWorld { .. }))
+        .expect("Enter sends");
+    m.send_failed(
+        enter,
+        &tessera_net::NetError::InvalidCommand("a character creation is still outstanding"),
+    );
+    assert_eq!(m.status(), &Status::Open);
+    assert_eq!(m.stage(), Stage::Select);
+    assert!(m.enter_button().is_enabled(), "Enter stays enabled");
+    let last = m.errors().last().expect("an error line");
+    assert_eq!(
+        last,
+        &tessera_client::screens::texts::ErrorLine::Own(OwnText::CreationStillOutstanding)
+    );
 }

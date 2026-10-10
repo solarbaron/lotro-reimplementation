@@ -111,28 +111,25 @@ pub(crate) struct Mapper {
     scratch: Vec<Event>,
 }
 
-/// Tessera's own text for a `CharacterCreateFailed` code (`character-screens.md` §7.1.1
-/// step 4); unknown codes read as `SERVER_ERROR`.
-#[must_use]
 /// The index of the list entry for the outstanding creation `name`
-/// (`character-screens.md` §7.1.1 step 3): the entry with exactly that name, else the one
-/// whose NFC form equals the NFC form of `name`. tessera-server stores and lists the NFC form
-/// (`test-server.md` §6.4), so a name sent in another normal form comes back changed (OPEN
-/// in §7.1.1 step 3).
+/// (`character-screens.md` §7.1.1 step 3): the first entry whose name is the same as `name`
+/// in Unicode Normalization Form C (both normalised, compared code point for code point).
+/// tessera-server stores and lists the NFC form (`test-server.md` §6.4, §3.5), so a name
+/// sent in another normal form comes back changed.
 fn find_created(
     characters: &[tessera_protocol::types::CharacterSummary],
     name: &str,
 ) -> Option<usize> {
     use unicode_normalization::UnicodeNormalization;
-    if let Some(i) = characters.iter().position(|c| c.name == name) {
-        return Some(i);
-    }
     let want: String = name.nfc().collect();
     characters
         .iter()
         .position(|c| c.name.nfc().eq(want.chars()))
 }
 
+/// Tessera's own text for a `CharacterCreateFailed` code (`character-screens.md` §7.1.1
+/// step 4); unknown codes read as `SERVER_ERROR`.
+#[must_use]
 pub(crate) fn create_failed_text(code: CharacterCreateFailedCode) -> &'static str {
     match code {
         CharacterCreateFailedCode::NameTaken => "A character with this name already exists.",
@@ -318,9 +315,12 @@ impl Mapper {
                                 "CharacterList: entries other than the new one emit nothing"
                             );
                         }
+                        // §7.1.1 step 3: the entry's name (the NFC form the server
+                        // stored), not the requested one; the screens compare NFC forms.
+                        let entry = characters.get(i);
                         out.push(Event::Character(CharacterEvent::CharacterInfo {
-                            name,
-                            body: characters.get(i).map(|c| convert::body(&c.body)),
+                            name: entry.map_or(name, |c| c.name.clone()),
+                            body: entry.map(|c| convert::body(&c.body)),
                             class: None,
                             level: None,
                             look: looks.get(i).and_then(convert::look).map(Box::new),
@@ -631,7 +631,8 @@ mod tests {
     }
 
     /// tessera-server lists the NFC form of a created name (`test-server.md` §6.4): a
-    /// creation sent in another normal form is found, and reported under the requested name.
+    /// creation sent in another normal form is found, and reported under the entry's name
+    /// (`character-screens.md` §7.1.1 step 3).
     #[test]
     fn created_name_matches_after_nfc() {
         use tessera_protocol::types::CharacterSummary as Wire;
@@ -656,7 +657,7 @@ mod tests {
         assert!(matches!(
             &out[..],
             [Event::Character(CharacterEvent::CharacterInfo { name, body: Some(_), .. })]
-                if name == "E\u{301}owyn"
+                if name == "\u{c9}owyn"
         ));
         // A list without the name (in any normal form) is still SERVER_ERROR.
         out.clear();

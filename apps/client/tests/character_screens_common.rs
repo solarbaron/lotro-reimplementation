@@ -268,5 +268,6 @@ pub fn synthetic_data() -> Arc<ScreenData> {
             bone_scale: Some(PROP_SCALE),
             ..ScreenPids::default()
         },
+        stage_keys: Default::default(),
     })
 }

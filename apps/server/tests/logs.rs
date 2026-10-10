@@ -407,9 +407,10 @@ const HOSTILE_REASON: &[u8] = b"a\"b\\c\nend=server close=\"x\"";
 /// closing path the server takes: a peer's `Disconnect` after `Hello` (logout), a peer's
 /// close without `Disconnect` (a defined code, and an undefined one with a reason phrase
 /// that tries to end the field), a peer's `Disconnect` before `Hello`, a server
-/// `Disconnect` acknowledged by the peer and one whose linger passed (both
-/// `SERVER_FULL`), and an immediate close on a protocol violation. `reason` and `close`
-/// are quoted and escaped, `code` and `end` plain. The idle timeout, the fallback close
+/// `Disconnect` acknowledged by the peer, one answered by a close with an undefined code
+/// and one whose linger passed (all `SERVER_FULL`), and an immediate close on a protocol
+/// violation. `reason` and `close` are quoted and escaped, `code` and `end` plain; an
+/// undefined code is its decimal number alone (seventh revision). The idle timeout, the fallback close
 /// without a queued `Disconnect` and the transport's description are covered by the unit
 /// tests of `closing.rs`; the endpoint close at shutdown by
 /// `closed_line_records_the_endpoint_close_at_shutdown`.
@@ -491,6 +492,19 @@ fn closed_line_records_the_cause_of_the_end() {
             "full, acknowledged",
             closed_line(&rx, &mut lines, &local(&b)).await,
         ));
+        // 3b. SERVER_FULL, answered by a close with a code §14.1 does not define.
+        let mut h = RawClient::connect(addr, fp).await;
+        h.send(&hello_message()).await;
+        assert_eq!(
+            h.disconnect_code(WAIT).await,
+            Some(AppErrorCode::ServerFull)
+        );
+        h.conn.close(0x1_0000u32.into(), b"");
+        h.endpoint.wait_idle().await;
+        out.push((
+            "full, odd close",
+            closed_line(&rx, &mut lines, &local(&h)).await,
+        ));
         // 4. SERVER_FULL, and the peer does not answer: the server closes after the linger.
         let mut c = RawClient::connect(addr, fp).await;
         c.send(&hello_message()).await;
@@ -531,7 +545,8 @@ fn closed_line_records_the_cause_of_the_end() {
         ),
         (
             "peer close, odd code",
-            "code=code 65536",
+            // §11.1 seventh revision: the decimal number alone, one token.
+            "code=65536 ",
             r#"reason="a\"b\\c\nend=server close=\"x\"" end=peer"#,
             "end=peer",
             None,
@@ -549,6 +564,13 @@ fn closed_line_records_the_cause_of_the_end() {
             "reason=\"\"",
             "end=server",
             Some("close=\"NO_ERROR from peer\""),
+        ),
+        (
+            "full, odd close",
+            "code=SERVER_FULL",
+            "reason=\"\"",
+            "end=server",
+            Some("close=\"65536 from peer\""),
         ),
         (
             "full, linger",
@@ -739,7 +761,7 @@ fn closed_line_cause_fields_in_json() {
         assert!(logout.contains(part), "logout: {part} missing: {logout}");
     }
     for part in [
-        r#""code":"code 65536""#,
+        r#""code":"65536""#,
         r#""reason":"a\"b\\c\nend=server close=\"x\"""#,
         r#""end":"peer""#,
     ] {

@@ -1643,6 +1643,16 @@ spec's rules.
 > as its decimal number alone (`65536`, and `65536 from peer` in `close`), not quoted, so
 > `code` stays one token; this is the one new gap above.
 
+> **OPEN:** (implementer, `tessera-server`, 2026-10-10, branch `conform-b19`; a report, not
+> a question.) The undefined-code gap above is fixed: `code` and `close` write a code
+> §14.1 does not define as its decimal number alone, for a peer's close, a `Disconnect`
+> code and the server's own close (`65536`, `65536 from peer`); unit tests cover every
+> 16-bit value (one token, a letter first exactly for the §14.1 names) and check Rust's
+> string debug form against the §11.1 "Quoted form" table for every Unicode scalar value
+> (§14 invariant 12). §12.1 step 6: the idle wait now has one 2 s deadline for all
+> endpoints together (it was 2 s per endpoint), then at most 1.1 s for the closed lines.
+> The spec writer may mark the gap closed.
+
 ---
 
 <a id="s16"></a>

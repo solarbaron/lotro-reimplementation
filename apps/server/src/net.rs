@@ -42,6 +42,12 @@ const PAUSE_POLL: Duration = Duration::from_millis(20);
 /// Longest wait for a closed connection's stream writers before its "connection closed"
 /// line (engineering bound; they normally end at once).
 const WRITER_DRAIN: Duration = Duration::from_secs(1);
+/// `test-server.md` §12.1 step 6: the longest wait, after the endpoint close, for the
+/// endpoints to become idle (the close sent on every connection, closing periods over).
+const SHUTDOWN_IDLE_WAIT: Duration = Duration::from_secs(2);
+/// §12.1 step 6: the longest wait, after that, for every connection's "connection closed"
+/// line: the drain bound of §11.1 plus 0.1 s for scheduling.
+const SHUTDOWN_LINES_WAIT: Duration = WRITER_DRAIN.saturating_add(Duration::from_millis(100));
 /// QUIC handshakes in progress from one source address (loopback exempt).
 const MAX_HANDSHAKES_PER_ADDRESS: usize = 4;
 
@@ -268,17 +274,18 @@ pub(crate) fn start(
                                     reason.as_bytes(),
                                 );
                             }
+                            // §12.1 step 6: at most SHUTDOWN_IDLE_WAIT in all for every
+                            // endpoint to become idle (one deadline, however many
+                            // endpoints), then at most SHUTDOWN_LINES_WAIT for the closed
+                            // lines; each wait ends as soon as its condition holds.
+                            let deadline = tokio::time::Instant::now() + SHUTDOWN_IDLE_WAIT;
                             for ep in &endpoints {
-                                let _ =
-                                    tokio::time::timeout(Duration::from_secs(2), ep.wait_idle())
-                                        .await;
+                                let _ = tokio::time::timeout_at(deadline, ep.wait_idle()).await;
                             }
                             // Let the connection tasks the close ended write their closed
                             // lines (each waits at most WRITER_DRAIN for its writers) before
                             // the runtime stops (§14 invariant 10).
-                            let deadline = tokio::time::Instant::now()
-                                + WRITER_DRAIN
-                                + Duration::from_millis(100);
+                            let deadline = tokio::time::Instant::now() + SHUTDOWN_LINES_WAIT;
                             while ctx.stats.net_tasks.load(Ordering::Acquire) > 0
                                 && tokio::time::Instant::now() < deadline
                             {

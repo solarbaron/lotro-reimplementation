@@ -200,11 +200,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   creation, entry and look transfer pass on real data; the creation viewport draws its
   figure (shared figure path, `CharGen_Stage`, composed face, colour controls live, 15 / 15
   bodies) and received looks carry colours and face layers
-  (`CharacterSpec::appearance_values`). Open visual defects of that figure: the Beorning
-  female's default appearance figure has no head, the River-hobbit female stands low (legs
-  cut at the viewport edge) and faces away, pictures under load may miss parts still
-  loading, no selected state on the gender buttons; the UI scene's objects and lights are
-  not drawn (`character-screens.md` §2.1, §6 OPENs). Built: decision 0025 (Accepted) with
+  (`CharacterSpec::appearance_values`). Creation-screen fixes merged 2026-10-11
+  (conform-b22, specs-22/23): every figure runs the `Chargen` start-up script (stance and
+  class costume on all 15 bodies, both stages), appears only once its textures are loaded,
+  stands on the scene marker with the scene's objects, lights and tints around it, camera
+  base/zoom frames and turntable, controls named from the data, gender selection shown.
+  Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
+  ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn, side
+  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 not offered
+  until the owner decides the per-figure image budget. Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
   `server-content.md` (Draft, owner); `tessera-gamedata` `tooltip`, `chargen`, `inventory`;
   protocol minor 1 (looks, `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay

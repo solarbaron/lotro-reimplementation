@@ -675,6 +675,84 @@ impl LightNode {
     }
 }
 
+/// Data of a TextureCompositor node (kind 53, §5.1): attaches an image compositor to the
+/// entity under a name (`misc-records.md` §3.7, `appearance.md` §3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextureCompositorNode {
+    /// `CompositorName`: a key of the TextureCompositorNames enum mapper.
+    pub compositor: u32,
+    /// `ImageCompositorFile`: the 0x33 record.
+    pub file: Did,
+    /// `MeshType`: the `MeshTypeID` slot whose parts receive the composed texture.
+    pub mesh_type: u32,
+    /// `MaterialType`: the surface binding key that receives it.
+    pub material_type: u32,
+}
+
+/// Data of a ModifyCompositorLayer node (kind 44, §5.1): selects an option of one layer of
+/// a named compositor instance (`misc-records.md` §3.6.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CompositorLayerNode {
+    /// `CompositorName`.
+    pub compositor: u32,
+    /// `LayerName`: a key of the ImageCompositorLayerNames enum mapper.
+    pub layer: u32,
+    /// `ImageNumber`: the option number (stored as i32).
+    pub image_number: i32,
+    /// `Opacity`, as stored (any f32).
+    pub opacity: f32,
+}
+
+/// Data of a ModifyCompositorColor node (kind 33, §5.1): sets one colour of a named
+/// compositor instance (`misc-records.md` §3.6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompositorColourNode {
+    /// `CompositorName`.
+    pub compositor: u32,
+    /// `ColorName`: a key of the ImageCompositorColorNames enum mapper.
+    pub colour: u32,
+    /// `Color`: the four stored bytes (B, G, R, A, `property-system.md` §4.7).
+    pub color: [u8; 4],
+}
+
+/// Data of an EditMaterial node (kind 60, §5.3): changes one material parameter of the
+/// surfaces of the entity's parts (`appearance.md` §3.5). Field names are the
+/// `EditMaterialScript_*` names with the prefix stripped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditMaterialNode {
+    /// `MaterialProperty`: the material parameter id (2003 = dye colour, `material.md` §8).
+    pub material_property: u32,
+    /// `MeshType`: the `MeshTypeID` slot, 2 = every part.
+    pub mesh_type: u32,
+    /// `MaterialType`: the surface binding key.
+    pub material_type: u32,
+    /// `Priority`.
+    pub priority: i32,
+    /// `WaveformValue`.
+    pub waveform_value: Waveform,
+    /// `ColorValue`: the four stored bytes (B, G, R, A).
+    pub color_value: [u8; 4],
+    /// `TextureValue`: a DID, or 0.
+    pub texture_value: Did,
+    /// `BoolValue`.
+    pub bool_value: bool,
+}
+
+impl EditMaterialNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self {
+            material_property: r.u32()?,
+            mesh_type: r.u32()?,
+            material_type: r.u32()?,
+            priority: r.i32()?,
+            waveform_value: read_waveform(r)?,
+            color_value: r.array()?,
+            texture_value: r.did()?,
+            bool_value: r.bool8()?,
+        })
+    }
+}
+
 /// One element of a MeshFX node's `Appearances` list (§5.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeshFxAppearanceEntry {
@@ -1022,6 +1100,14 @@ pub enum NodeData {
     While(Box<WhileNode>),
     /// GameCallback (27): calls a game package (§5.2).
     GameCallback(Box<GameCallbackNode>),
+    /// TextureCompositor (53): attaches an image compositor (`appearance.md` §3.5).
+    TextureCompositor(TextureCompositorNode),
+    /// ModifyCompositorLayer (44): selects a compositor layer option.
+    CompositorLayer(CompositorLayerNode),
+    /// ModifyCompositorColor (33): sets a compositor colour.
+    CompositorColour(CompositorColourNode),
+    /// EditMaterial (60): edits a material parameter of the entity's surfaces.
+    EditMaterial(Box<EditMaterialNode>),
     /// SliderMeshDeformer (81): the bone sliders of a figure (§6.9).
     SliderMeshDeformer {
         /// `BoneSlider_ValueArray_String`: the slider value string as stored.
@@ -1410,7 +1496,6 @@ const BEAM: &[F] = &[
     B, Rgba, Pos, B, U, U, U, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, W4, U, U, V3,
     B, U, U, V3, B, B, W4, W4, W4, W4, U, U, W4, W4, U, U,
 ];
-const EDIT_MATERIAL: &[F] = &[U, U, U, W4, Wave, Rgba, U, B];
 
 /// Fixed layouts of the kinds that are skipped field by field (§5.1–§5.3). `None` for
 /// kinds handled specially or not skippable.
@@ -1430,18 +1515,14 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         29 => &[B],
         31 => &[U, U],
         32 => CAMERA_SHAKE,
-        33 => &[U, U, Rgba],
         34 => &[Pv, Si, Si, U, U],
         37 => &[B, U],
         39 => &[B, Rgba, W4],
-        44 => &[U, U, W4, W4],
         46 => DETECT,
         49 => &[U],
         51 => MOVE_TO,
-        53 => &[U, U, U, U],
         54 => BEAM,
         56 => &[U, U, U, B],
-        60 => EDIT_MATERIAL,
         81 => &[Str, U],
         _ => return None,
     })
@@ -1686,6 +1767,28 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 name: r.u32()?,
                 priority: r.i32()?,
             },
+            33 => NodeData::CompositorColour(CompositorColourNode {
+                compositor: r.u32()?,
+                colour: r.u32()?,
+                color: r.array()?,
+            }),
+            44 => NodeData::CompositorLayer(CompositorLayerNode {
+                compositor: r.u32()?,
+                layer: r.u32()?,
+                image_number: r.i32()?,
+                opacity: r.f32()?,
+            }),
+            53 => NodeData::TextureCompositor(TextureCompositorNode {
+                compositor: r.u32()?,
+                file: r.did()?,
+                mesh_type: r.u32()?,
+                material_type: r.u32()?,
+            }),
+            60 => {
+                let e = EditMaterialNode::read(r)?;
+                r.charge(std::mem::size_of::<EditMaterialNode>())?;
+                NodeData::EditMaterial(Box::new(e))
+            }
             61 => NodeData::Goto {
                 name: r.pascal_string()?,
             },

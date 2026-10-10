@@ -1787,6 +1787,63 @@ impl<'a> Collector<'a> {
         i
     }
 
+    /// [`Collector::surface_material_layered`], then the figure look's colour edits and
+    /// composed face texture for a part in `slot` (`appearance.md` §3.5, §8 step 6; the
+    /// client's figure path makes the same edits). Without a look, or with no edit for the
+    /// surface, the layered material.
+    pub(crate) fn surface_material_look(
+        &mut self,
+        surface: Did,
+        layers: &[(Option<Did>, Did, u32)],
+        look: Option<(u32, &tessera_mesh::assembly::look::FigureLook)>,
+    ) -> usize {
+        let lib = &self.ctx.materials;
+        let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
+        let (Some((slot, look)), Some(key)) = (look, key) else {
+            return self.surface_material_layered(surface, layers);
+        };
+        let composed = look
+            .compositor_for(slot, key)
+            .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
+        let edits = tessera_material::figure_edits(
+            lib.runtime_textures(),
+            &look.colour_edits_for(slot, key),
+            composed,
+        );
+        if edits.is_empty() {
+            return self.surface_material_layered(surface, layers);
+        }
+        let matching: Vec<(Option<Did>, Did)> = layers
+            .iter()
+            .filter(|(_, m, k)| *k == key && !m.is_null())
+            .map(|&(sh, m, _)| (sh, m))
+            .take(16)
+            .collect();
+        let layering = (!matching.is_empty()).then(|| Layering {
+            shader_override: matching.iter().find_map(|(sh, _)| *sh),
+            materials: matching.iter().map(|(_, m)| *m).collect(),
+        });
+        let title = format!("{surface} + figure look");
+        let what = format!(
+            "figure look (appearance.md §3.5): {}",
+            edits
+                .iter()
+                .map(|e| match e {
+                    tessera_material::ParameterEdit::Colour { id, value } =>
+                        format!("{id} = ({:.3}, {:.3}, {:.3})", value[0], value[1], value[2]),
+                    tessera_material::ParameterEdit::Texture { id, list } => {
+                        format!("{id} = composed image {list}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        match lib.resolve_edited(surface, layering.as_ref(), &edits) {
+            Ok(m) => self.add_resolved(&m, title, Some(&what)),
+            Err(e) => self.add_failed(title, e.to_string()),
+        }
+    }
+
     pub(crate) fn finish(mut self, job: &JobContext<'_>) -> Result<Finished, ExplorerError> {
         let lib = &self.ctx.materials;
         let cap = texture_cap(self.keys.len());

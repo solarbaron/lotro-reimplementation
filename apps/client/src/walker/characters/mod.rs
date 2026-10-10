@@ -99,6 +99,10 @@ pub struct CharacterConfig {
     /// appearance elements with a toggle file use it. Kept in Tessera's settings
     /// (`[Graphics]`); read when the walker starts.
     pub updated_avatars: bool,
+    /// The face-compositing graphics option (`appearance.md` §3.5, default on): with it
+    /// off the species tables attach no face compositor. Kept in Tessera's settings
+    /// (`[Graphics]`); read when the walker starts.
+    pub face_compositing: bool,
 }
 
 impl Default for CharacterConfig {
@@ -109,6 +113,7 @@ impl Default for CharacterConfig {
             anim_distance: 200.0,
             max_entities: 1 << 16,
             updated_avatars: true,
+            face_compositing: true,
         }
     }
 }

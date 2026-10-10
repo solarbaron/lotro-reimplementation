@@ -1250,3 +1250,10 @@ path = "fuzz_targets/net_scenario_run.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mesh_figure_look"
+path = "fuzz_targets/mesh_figure_look.rs"
+test = false
+doc = false
+bench = false

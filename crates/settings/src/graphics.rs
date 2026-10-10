@@ -10,6 +10,7 @@
 //! ```toml
 //! [Graphics]
 //! avatar_update_visible = true  # appearance.md §3.3: the updated-avatar option (default on)
+//! avatar_face_compositing = true  # appearance.md §3.5: the face-compositing option (default on)
 //! ```
 
 use crate::Settings;
@@ -18,6 +19,8 @@ use crate::Settings;
 pub const GRAPHICS_SECTION: &str = "Graphics";
 /// Key of the updated-avatar option (`appearance.md` §3.3: `GOP_AvatarUpdateVisible`).
 pub const AVATAR_UPDATE_VISIBLE_KEY: &str = "avatar_update_visible";
+/// Key of the face-compositing option (`appearance.md` §3.5: `GOP_AvatarFaceCompositing`).
+pub const AVATAR_FACE_COMPOSITING_KEY: &str = "avatar_face_compositing";
 
 /// The `[Graphics]` preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,12 +28,16 @@ pub struct GraphicsPrefs {
     /// The updated-avatar option (`appearance.md` §3.3): with it on (the default), figure
     /// appearance elements that name a toggle file use it.
     pub avatar_update_visible: bool,
+    /// The face-compositing option (`appearance.md` §3.5): with it on (the default), the
+    /// species tables compose the face texture from the character's choices.
+    pub avatar_face_compositing: bool,
 }
 
 impl Default for GraphicsPrefs {
     fn default() -> Self {
         Self {
             avatar_update_visible: true,
+            avatar_face_compositing: true,
         }
     }
 }
@@ -63,12 +70,15 @@ impl GraphicsPrefs {
             ));
             return (p, warn);
         };
-        if let Some(v) = t.get(AVATAR_UPDATE_VISIBLE_KEY) {
-            match boolean(v) {
-                Some(b) => p.avatar_update_visible = b,
-                None => warn.push(format!(
-                    "[{GRAPHICS_SECTION}] {AVATAR_UPDATE_VISIBLE_KEY}: invalid value ignored"
-                )),
+        for (key, slot) in [
+            (AVATAR_UPDATE_VISIBLE_KEY, &mut p.avatar_update_visible),
+            (AVATAR_FACE_COMPOSITING_KEY, &mut p.avatar_face_compositing),
+        ] {
+            if let Some(v) = t.get(key) {
+                match boolean(v) {
+                    Some(b) => *slot = b,
+                    None => warn.push(format!("[{GRAPHICS_SECTION}] {key}: invalid value ignored")),
+                }
             }
         }
         (p, warn)
@@ -89,6 +99,10 @@ impl GraphicsPrefs {
                 AVATAR_UPDATE_VISIBLE_KEY.into(),
                 toml::Value::Boolean(self.avatar_update_visible),
             );
+            t.insert(
+                AVATAR_FACE_COMPOSITING_KEY.into(),
+                toml::Value::Boolean(self.avatar_face_compositing),
+            );
         }
     }
 }
@@ -105,10 +119,11 @@ mod tests {
         let mut s = Settings::default();
         GraphicsPrefs {
             avatar_update_visible: false,
+            avatar_face_compositing: false,
         }
         .store(&mut s);
         let (p, w) = GraphicsPrefs::from_settings(&s);
-        assert!(!p.avatar_update_visible && w.is_empty());
+        assert!(!p.avatar_update_visible && !p.avatar_face_compositing && w.is_empty());
         let mut s = Settings::default();
         let mut t = toml::Table::new();
         t.insert(AVATAR_UPDATE_VISIBLE_KEY.into(), toml::Value::Integer(3));

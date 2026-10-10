@@ -870,6 +870,7 @@ impl Walker {
                 clips: ClipStore::default(),
                 assembly: tessera_mesh::assembly::AssemblyOptions {
                     avatar_update_visible: config.characters.updated_avatars,
+                    avatar_face_compositing: config.characters.face_compositing,
                 },
             }),
             &pool,

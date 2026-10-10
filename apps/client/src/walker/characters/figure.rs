@@ -20,8 +20,9 @@
 //! 4. **Parts**: every visible body part decoded, flattened at its display level and
 //!    prepared for the GPU, skinned to the skeleton where the mesh is skinned, its skinned
 //!    vertices deformed once in bind space by the figure's deformation; materials
-//!    resolved with the part's appearance layers (`material.md` §9.3) into the walker's
-//!    material plans; held items' parts prepared rigid, keyed by holding location, with an
+//!    resolved with the part's appearance layers (`material.md` §9.3), then the species
+//!    table's colour edits and composited face texture (`appearance.md` §3.5, §8 step 6;
+//!    [`figure_look`], shared with the explorer), into the walker's material plans; held items' parts prepared rigid, keyed by holding location, with an
 //!    attach table of the wearer's locations (`skeleton-anim.md` §8.4), each with its
 //!    stowed or wielded placement (`appearance.md` §5.6).
 //!
@@ -56,6 +57,10 @@ use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, PropertySet};
 use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
+use tessera_material::{ParameterEdit, figure_edits};
+use tessera_mesh::assembly::look::{
+    FigureLook, LookLimits, apply_figure_properties, figure_look_from_data,
+};
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblyOptions, CharacterAssembler, CharacterSpec, EquippedItem,
@@ -462,10 +467,16 @@ pub fn build_figure(
         }
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
-    let (clips, shape, scripts) = match &skeleton {
+    let (clips, shape, scripts, look) = match &skeleton {
         Some(s) => select_clips(ctx, &c, s, req.seed, &mut notes),
-        None => (FigureClips::default(), FigureShape::default(), Vec::new()),
+        None => (
+            FigureClips::default(),
+            FigureShape::default(),
+            Vec::new(),
+            FigureLook::default(),
+        ),
     };
+    notes.extend(look.notes.iter().take(4).map(|n| format!("look: {n}")));
     // The Appearance nodes the start-up scripts ran (`appearance.md` §7.4): assembled
     // after the lists, on the same body and setup.
     if !scripts.is_empty() {
@@ -512,7 +523,7 @@ pub fn build_figure(
             ctx,
             p.mesh,
             bones.filter(|_| p.skinned),
-            &p.materials,
+            (&p.materials, Some((p.slot, &look))),
             deformation.as_ref(),
         ) {
             Ok(mut part) => {
@@ -537,7 +548,7 @@ pub fn build_figure(
                 if cancelled() {
                     return Err(FigureError::Cancelled);
                 }
-                match build_part(ctx, mesh, None, &[], None) {
+                match build_part(ctx, mesh, None, (&[], None), None) {
                     Ok(mut part) => {
                         part.held = Some(key);
                         parts.push(part);
@@ -663,12 +674,14 @@ fn figure_lod_class(
 }
 
 /// Decodes, flattens and prepares one part mesh; skinned when `bones` is given, its
-/// skinned vertices deformed in bind space by `deform` (`appearance.md` §6.4 step 4).
+/// skinned vertices deformed in bind space by `deform` (`appearance.md` §6.4 step 4). The
+/// materials take the part's appearance layers and, for a body part, its slot and the
+/// figure's look (`appearance.md` §3.5).
 fn build_part(
     ctx: &FigureContext,
     mesh_did: Did,
     bones: Option<usize>,
-    layers: &[MaterialLayer],
+    (layers, look): (&[MaterialLayer], Option<(u32, &FigureLook)>),
     deform: Option<&BindDeformation>,
 ) -> Result<PartAsset, String> {
     let (located, bytes) = ctx
@@ -706,7 +719,7 @@ fn build_part(
         .map(|p| {
             p.surface.map_or(
                 MaterialPlan::unresolved(None, tessera_material::FallbackReason::NoSurface),
-                |s| plan_for(ctx, s, layers),
+                |s| plan_for(ctx, s, layers, look),
             )
         })
         .collect();
@@ -738,8 +751,14 @@ fn build_part(
 }
 
 /// The plan of `surface` with the part's appearance layers whose binding key matches the
-/// surface's (`material.md` §9.3, `appearance.md` §4.10).
-fn plan_for(ctx: &FigureContext, surface: Did, layers: &[MaterialLayer]) -> MaterialPlan {
+/// surface's (`material.md` §9.3, `appearance.md` §4.10), then the figure look's colour
+/// edits and composed texture for the part's slot (`appearance.md` §3.5, §8 step 6).
+fn plan_for(
+    ctx: &FigureContext,
+    surface: Did,
+    layers: &[MaterialLayer],
+    look: Option<(u32, &FigureLook)>,
+) -> MaterialPlan {
     let lib = &ctx.materials;
     let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
     let matching: Vec<&MaterialLayer> = layers
@@ -747,15 +766,22 @@ fn plan_for(ctx: &FigureContext, surface: Did, layers: &[MaterialLayer]) -> Mate
         .filter(|l| Some(l.binding_key) == key && !l.material.is_null())
         .take(16)
         .collect();
-    let resolved = if matching.is_empty() {
-        lib.resolve_surface(surface).map(|m| plan_material_dyed(&m))
-    } else {
-        let layering = Layering {
-            shader_override: matching.iter().find_map(|l| l.shader),
-            materials: matching.iter().map(|l| l.material).collect(),
-        };
-        lib.resolve_layered(surface, &layering)
-            .map(|m| plan_material_dyed(&m))
+    let edits = match (look, key) {
+        (Some((slot, look)), Some(key)) => look_edits(lib, look, slot, key),
+        _ => Vec::new(),
+    };
+    let layering = (!matching.is_empty()).then(|| Layering {
+        shader_override: matching.iter().find_map(|l| l.shader),
+        materials: matching.iter().map(|l| l.material).collect(),
+    });
+    let resolved = match (&layering, edits.is_empty()) {
+        (None, true) => lib.resolve_surface(surface).map(|m| plan_material_dyed(&m)),
+        (Some(l), true) => lib
+            .resolve_layered(surface, l)
+            .map(|m| plan_material_dyed(&m)),
+        (l, false) => lib
+            .resolve_edited(surface, l.as_ref(), &edits)
+            .map(|m| plan_material_dyed(&m)),
     };
     resolved.unwrap_or_else(|e| {
         tracing::debug!(%surface, "figure material unresolved: {e}");
@@ -764,6 +790,26 @@ fn plan_for(ctx: &FigureContext, surface: Did, layers: &[MaterialLayer]) -> Mate
             tessera_material::diagnose::reason_of_resolve_error(&e),
         )
     })
+}
+
+/// The parameter edits the figure's look makes on a surface with `key` of a part in `slot`
+/// (`appearance.md` §3.5): its colour edits, then the composed face texture as the base
+/// colour (a run-time texture of the shared library, so the object layer's texture loader
+/// finds it).
+fn look_edits<S: tessera_material::RecordSource>(
+    lib: &MaterialLibrary<S>,
+    look: &FigureLook,
+    slot: u32,
+    key: u32,
+) -> Vec<ParameterEdit> {
+    let composed = look
+        .compositor_for(slot, key)
+        .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
+    figure_edits(
+        lib.runtime_textures(),
+        &look.colour_edits_for(slot, key),
+        composed,
+    )
 }
 
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
@@ -779,30 +825,36 @@ fn select_clips(
     skeleton: &Arc<AnimSkeleton>,
     seed: Option<u64>,
     notes: &mut Vec<String>,
-) -> (FigureClips, FigureShape, Vec<ScriptAppearance>) {
+) -> (FigureClips, FigureShape, Vec<ScriptAppearance>, FigureLook) {
     let cat = &ctx.catalog;
     let data = &cat.data;
     let mut out = FigureClips::default();
     let mut shape = FigureShape::default();
     let mut appearances = Vec::new();
+    let mut look = FigureLook::default();
     let Some(vocab) = cat.scripts.clone() else {
         notes.push("no script vocabulary; not animated".into());
-        return (out, shape, appearances);
+        return (out, shape, appearances, look);
     };
     let Ok(registry) = data.registry() else {
-        return (out, shape, appearances);
+        return (out, shape, appearances, look);
     };
     let dict = registry.dictionary();
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             notes.push(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return (out, shape, appearances);
+            return (out, shape, appearances, look);
         }
     };
     let mut scripts = chain.scripts;
     if let Some(inst) = &c.clip_inputs.instance_properties {
         scripts.add_property_set(inst, &vocab);
+    }
+    // The options the figure's lookup answers first and the character's own appearance
+    // values (`appearance.md` §3.3, §3.5).
+    if let Some(asm) = &cat.assembly {
+        apply_figure_properties(&mut scripts, c, asm, ctx.assembly);
     }
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
@@ -832,6 +884,7 @@ fn select_clips(
             if let Some(asm) = &cat.assembly {
                 shape = figure_shape(data, asm, c, &r);
             }
+            look = figure_look_from_data(data, &r, &LookLimits::default());
             appearances = r
                 .appearances
                 .iter()
@@ -938,5 +991,5 @@ fn select_clips(
     {
         out.run = None;
     }
-    (out, shape, appearances)
+    (out, shape, appearances, look)
 }

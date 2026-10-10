@@ -2,9 +2,11 @@
 
 # 0025 — P1 on M7's server: scenario overlay, character looks, held-item slots, creation and the new feed steps
 
-**Status:** Proposed (spec writer, design, 2026-10-10). The revised specs (`scenario-feed.md`
-revision 4, `tessera-protocol.md` v1.1, `test-server.md`, `server-content.md`) await an
-independent review; this record becomes Accepted when that review passes.
+**Status:** Accepted (independent review 2026-10-10, passed; see [Review](#review)). The three
+items under [Open for the owner](#open-for-the-owner) stay open: this acceptance decides none
+of them. `scenario-feed.md` revision 4, `tessera-protocol.md` v1.1 and `test-server.md` are
+Accepted; `server-content.md` passed the same review and stays Draft for the owner (LEGAL.md
+§11.1). Before: Proposed (spec writer, design, 2026-10-10).
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
 needed or used; the inputs are `docs/` only (decision 0024, LEGAL.md §11.1, the specs named
@@ -239,3 +241,32 @@ looks, character removal, stats, item properties), §14.9 (overlay cases) and §
    §11.1 is unchanged; the owner's confirmation before any public test build still applies.
 3. **Deletion on M7's server** (`character-screens.md` §7.2, Q9) is not part of this
    decision; the delete button stays ghosted on that backend.
+
+## Review
+
+**2026-10-10**, spec reviewer (Clean-Room-Role: review): a Claude review session that wrote no
+part of this decision, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`,
+`test-server.md` and `server-content.md`, or of the code. Checked against `docs/CLEAN_ROOM.md`
+§5.3 and LEGAL.md §11.1 rule 5: consistency of D1–D5 with the specs, bounds and hostile-input
+limits of every new field, the conformance vectors, version negotiation, and the
+implementation on branch `p1` (read to compare only). Result: **passed**.
+
+- **Rule 5.** The server gains no message, state or rule. Looks and slots are stored and
+  relayed unjudged, class and nationality never travel, and the overlay sends only
+  `AppearanceSet`s, at most one in flight and 4 per second. Bags, items, wallet, levels, stats
+  and item properties stay in the client. `tools/check-server-deps.sh` passed on `p1`.
+- **Bounds.** Every row of the hostile-input table above is in the specs with the same value
+  and outcome (`tessera-protocol.md` §5.3, §13.1; `test-server.md` §3.5, §10.1;
+  `scenario-feed.md` §9.5, §11.1, §12.5.4).
+- **Vectors and negotiation.** `tessera-protocol.md` §16.8 re-encoded independently and equal
+  byte for byte; Vector G and the 15 new hostile rows re-derived; `Hello` and `HelloAck`
+  frozen, minors 0–1, byte identity at minor 0 (invariant 10). Tests of `tessera-protocol`,
+  `tessera-net` and `tessera-server` on `p1` passed.
+- **Erratum (D1).** D1 lists `look` among the declarations an overlay run allows;
+  `scenario-feed.md` §12.5.1, which is normative, excludes it, and the implementation follows
+  §12.5.1. Read D1 without `look`: every place that binds a look (`player`, `character`,
+  `accept-character`, the `create-character` input form) is outside the overlay subset anyway.
+- Non-blocking notes on the specs are in their review records: `tessera-protocol.md`
+  (a)–(c), `test-server.md` (a)–(c), `scenario-feed.md` §18.3 (a)–(f), and the
+  `server-content.md` Reviewer row (looks hold player-chosen values as well as record
+  numbers; the owner's confirmation and the counsel question should name them, owner item 2).

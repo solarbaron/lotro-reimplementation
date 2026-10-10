@@ -1,0 +1,369 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The alpha test and output alpha of a surface (`material.md` §11.2, §11.3).
+//!
+//! - [`TestedOpacity`]: which texel alphas the programs compare, from the opacity-bearing
+//!   roles of the shader record's slots (§11.2 table "Tested opacity"): one alpha, the
+//!   **product** of two, or the **sum** of two for the seven records of
+//!   [`SUM_OPACITY_RECORDS`] (recognised by DID, as no interface field separates them).
+//! - [`AlphaReference`]: the per-draw reference *R* the programs compare with (§11.2
+//!   "What the client does per draw", steps 1–3): the material-alpha adjustment by the
+//!   permutation's own depth-write switch, the single-precision floor quantisation, and
+//!   the *R* = 0 / −1 rule when the test is off.
+//! - [`keeps`]: a fragment is kept only when its tested opacity is **greater than** *R*.
+//! - [`output_alpha`]: the lit base pass's output alpha, the tested opacity × the material
+//!   alpha, clamped to [0, 1] (§11.3 Tessera rule).
+//!
+//! ```
+//! use tessera_material::alpha::{AlphaReference, keeps};
+//!
+//! // 0.65 at material alpha 1: R = ⌊0.65 × 255⌋ / 255 = 165 / 255.
+//! let r = AlphaReference::tested(0.65, 1.0, true).reference();
+//! assert!(keeps(166.0 / 255.0, r));
+//! assert!(!keeps(165.0 / 255.0, r));
+//! ```
+
+use crate::interface::ShaderInterface;
+use crate::vocab::ids;
+
+/// The shader records whose tested opacity is the **sum** of their two opacity-bearing
+/// alphas (`material.md` §11.2 table): with `ColorAndOpacity2` 0x2B0007B4, 0x2B0007CC,
+/// 0x2B0008A5, 0x2B0008A6, 0x2B0009E9; with `EmissiveAndOpacity` 0x2B000812, 0x2B000813.
+/// Every other record with two opacity-bearing roles tests their product.
+pub const SUM_OPACITY_RECORDS: [u32; 7] = [
+    0x2B00_07B4,
+    0x2B00_07CC,
+    0x2B00_0812,
+    0x2B00_0813,
+    0x2B00_08A5,
+    0x2B00_08A6,
+    0x2B00_09E9,
+];
+
+/// The opacity-bearing role of each slot (`material.md` §11.2 "Opacity source"), in the
+/// order the first opacity slot is chosen: slot 3000 `ColorAndOpacity`, slot 3020
+/// `OpacityAlpha`, slot 3018 `EmissiveAndOpacity`, slot 3001 `ColorAndOpacity2`.
+pub const OPACITY_ROLES: [(u32, &str); 4] = [
+    (ids::DIFFUSE, "ColorAndOpacity"),
+    (ids::OPACITY, "OpacityAlpha"),
+    (ids::EMISSIVE, "EmissiveAndOpacity"),
+    (ids::SECOND_LAYER, "ColorAndOpacity2"),
+];
+
+/// Threshold of the material alpha below which a permutation that does not write depth
+/// switches its alpha test off (`material.md` §11.2 step 2).
+pub const FADE_TEST_OFF_BELOW: f32 = 0.9;
+
+/// The tested opacity of a shader record (`material.md` §11.2 table): which texel alphas
+/// the alpha test compares, and how two combine. Material alpha and vertex alpha are never
+/// part of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TestedOpacity {
+    /// No opacity-bearing role: the constant 1 (the record has no opacity source; its only
+    /// comparison is in the view-space-normal pass).
+    #[default]
+    One,
+    /// One texel alpha: the slot's.
+    Slot(u32),
+    /// The product of two slots' alphas.
+    Product(u32, u32),
+    /// The sum of two slots' alphas (the records of [`SUM_OPACITY_RECORDS`]); it may
+    /// exceed 1.
+    Sum(u32, u32),
+}
+
+impl TestedOpacity {
+    /// The tested opacity of `shader` from its slots' role names (§11.2 table):
+    ///
+    /// | Roles | Tested opacity |
+    /// |---|---|
+    /// | one of the four of [`OPACITY_ROLES`] | that slot's alpha |
+    /// | `ColorAndOpacity` with `ColorAndOpacity2` or `EmissiveAndOpacity` | product, or sum for [`SUM_OPACITY_RECORDS`] |
+    /// | `ColorAndOpacity` with `OpacityAlpha` | product |
+    /// | none | [`TestedOpacity::One`] |
+    ///
+    /// Combinations outside the table (none is reached in the install the spec counts):
+    /// the first two roles in [`OPACITY_ROLES`] order, combined as the table's rule says
+    /// (product, sum only for the listed records); `material.md` §18 implementer note.
+    #[must_use]
+    pub fn of(shader: &ShaderInterface) -> Self {
+        let mut present = OPACITY_ROLES
+            .iter()
+            .filter(|(id, role)| shader.role(*id) == Some(*role))
+            .map(|(id, _)| *id);
+        let Some(first) = present.next() else {
+            return Self::One;
+        };
+        let Some(second) = present.next() else {
+            return Self::Slot(first);
+        };
+        if SUM_OPACITY_RECORDS.contains(&shader.did.0) {
+            Self::Sum(first, second)
+        } else {
+            Self::Product(first, second)
+        }
+    }
+
+    /// The slot whose alpha is tested first ([`OPACITY_ROLES`] order), `None` for
+    /// [`TestedOpacity::One`].
+    #[must_use]
+    pub fn first(self) -> Option<u32> {
+        match self {
+            Self::One => None,
+            Self::Slot(a) | Self::Product(a, _) | Self::Sum(a, _) => Some(a),
+        }
+    }
+
+    /// The second slot of a product or sum.
+    #[must_use]
+    pub fn second(self) -> Option<u32> {
+        match self {
+            Self::Product(_, b) | Self::Sum(_, b) => Some(b),
+            Self::One | Self::Slot(_) => None,
+        }
+    }
+
+    /// Whether the record has an opacity source (§11.2: alpha test needs one).
+    #[must_use]
+    pub fn has_source(self) -> bool {
+        self != Self::One
+    }
+
+    /// Whether `slot`'s alpha takes part.
+    #[must_use]
+    pub fn uses(self, slot: u32) -> bool {
+        self.first() == Some(slot) || self.second() == Some(slot)
+    }
+
+    /// The tested opacity given each slot's texel alpha (`alpha(slot)`), in single
+    /// precision. A sum is not clamped.
+    #[must_use]
+    pub fn evaluate(self, alpha: impl Fn(u32) -> f32) -> f32 {
+        match self {
+            Self::One => 1.0,
+            Self::Slot(a) => alpha(a),
+            Self::Product(a, b) => alpha(a) * alpha(b),
+            Self::Sum(a, b) => alpha(a) + alpha(b),
+        }
+    }
+}
+
+/// The inputs of the per-draw reference *R* (`material.md` §11.2 "What the client does
+/// per draw") for one permutation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AlphaReference {
+    /// *T₀*: the permutation's alpha-test switch (on when 4004 is 1 and the record has an
+    /// opacity source).
+    pub test: bool,
+    /// *W*: the permutation's own depth-write switch.
+    pub depth_write: bool,
+    /// *r*: the alpha reference (1043) at the clock.
+    pub reference: f32,
+    /// *A*: the material colour's alpha × the per-object tint's alpha, in [0, 1].
+    pub material_alpha: f32,
+    /// The permutation's `src_blend` is SRCALPHA (code 5).
+    pub src_alpha: bool,
+    /// The client's alpha-to-coverage option (Tessera has none: `false`).
+    pub alpha_to_coverage: bool,
+}
+
+impl AlphaReference {
+    /// An alpha-tested permutation with reference `reference`, material alpha
+    /// `material_alpha` and depth-write switch `depth_write` (source factor SRCALPHA, no
+    /// alpha-to-coverage).
+    #[must_use]
+    pub fn tested(reference: f32, material_alpha: f32, depth_write: bool) -> Self {
+        Self {
+            test: true,
+            depth_write,
+            reference,
+            material_alpha,
+            src_alpha: true,
+            alpha_to_coverage: false,
+        }
+    }
+
+    /// Whether the alpha test is on for the draw after step 2 (*T*).
+    #[must_use]
+    pub fn test_on(&self) -> bool {
+        if !self.test {
+            return false;
+        }
+        if self.alpha_to_coverage || self.depth_write {
+            return true;
+        }
+        material_alpha(self.material_alpha) >= FADE_TEST_OFF_BELOW
+    }
+
+    /// *R* (§11.2 steps 1–3; the Tessera rule applies step 2):
+    ///
+    /// 1. alpha test on and alpha-to-coverage on: *r* as is, step 2 skipped;
+    /// 2. alpha test on: with depth write, *r* × *A* (single precision); without, *r* as is
+    ///    and the test off when *A* < 0.9;
+    /// 3. test on: ⌊*r* × 255⌋ / 255 ([`quantise_reference`]); test off and (it was on
+    ///    before step 2 or the source factor is SRCALPHA): 0; otherwise −1.
+    ///
+    /// A non-finite *r* is taken as 0.5 (the fallback threshold of
+    /// [`crate::resolve::FALLBACK_ALPHA_THRESHOLD`]); a non-finite *A* as 1, and *A* is
+    /// clamped to [0, 1].
+    #[must_use]
+    pub fn reference(&self) -> f32 {
+        let r = if self.reference.is_finite() {
+            self.reference
+        } else {
+            crate::resolve::FALLBACK_ALPHA_THRESHOLD
+        };
+        let a = material_alpha(self.material_alpha);
+        if self.test {
+            if self.alpha_to_coverage {
+                return quantise_reference(r);
+            }
+            if self.depth_write {
+                return quantise_reference(r * a);
+            }
+            if a >= FADE_TEST_OFF_BELOW {
+                return quantise_reference(r);
+            }
+            // Step 2 switched the test off: only opacity 0 is discarded.
+            return 0.0;
+        }
+        if self.src_alpha { 0.0 } else { -1.0 }
+    }
+}
+
+/// *A* in [0, 1]; a non-finite value is 1.
+fn material_alpha(a: f32) -> f32 {
+    if a.is_finite() {
+        a.clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// Step 3 of §11.2: ⌊*r* × 255⌋ / 255, the multiplication, floor and division in single
+/// precision. 0.65 gives 165 / 255, 0.8 gives 204 / 255, 0.9 gives 229 / 255.
+#[must_use]
+pub fn quantise_reference(r: f32) -> f32 {
+    (r * 255.0).floor() / 255.0
+}
+
+/// Whether a fragment of tested opacity `opacity` survives reference `r`: only when the
+/// opacity is **greater than** *R* (§11.2; equal is discarded).
+#[must_use]
+pub fn keeps(opacity: f32, r: f32) -> bool {
+    opacity > r
+}
+
+/// The output alpha of a lit base pass (`material.md` §11.3): the tested opacity × the
+/// material alpha *A*, clamped to [0, 1] before it is used as a blend factor (Tessera
+/// rule; a sum can exceed 1). Non-finite results give 1 for a non-finite opacity and 0
+/// otherwise.
+#[must_use]
+pub fn output_alpha(opacity: f32, material_alpha: f32) -> f32 {
+    let o = if opacity.is_finite() { opacity } else { 1.0 };
+    let v = o * self::material_alpha(material_alpha);
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantisation_examples() {
+        // material.md §11.2 step 3 examples at A = 1.
+        assert_eq!(quantise_reference(0.65), 165.0 / 255.0);
+        assert_eq!(quantise_reference(0.8), 204.0 / 255.0);
+        assert_eq!(quantise_reference(0.9), 229.0 / 255.0);
+        assert_eq!(quantise_reference(0.5), 127.0 / 255.0);
+        // W = 1, A = 0.5: 0.65 → 0.325 → ⌊82.875⌋ = 82.
+        let r = AlphaReference::tested(0.65, 0.5, true).reference();
+        assert_eq!(r, 82.0 / 255.0);
+    }
+
+    #[test]
+    fn boundary_165_of_255() {
+        let r = AlphaReference::tested(0.65, 1.0, true).reference();
+        // The single-precision quotient the step produces is discarded; one step above
+        // is kept.
+        assert!(!keeps(165.0_f32 / 255.0, r));
+        assert!(keeps(166.0_f32 / 255.0, r));
+        // Strict: equal is discarded, at every reference.
+        for t in [0.3_f32, 0.5, 0.65, 0.8, 0.9] {
+            let r = quantise_reference(t);
+            assert!(!keeps(r, r));
+        }
+    }
+
+    #[test]
+    fn depth_write_switch_decides_the_fade() {
+        // W = 1: r × A.
+        let on = AlphaReference::tested(0.8, 0.5, true);
+        assert!(on.test_on());
+        assert_eq!(on.reference(), quantise_reference(0.4));
+        // W = 0, A ≥ 0.9: r unchanged.
+        let off = AlphaReference::tested(0.8, 0.95, false);
+        assert!(off.test_on());
+        assert_eq!(off.reference(), 204.0 / 255.0);
+        // W = 0, A < 0.9: the test is switched off, R = 0.
+        let faded = AlphaReference::tested(0.8, 0.5, false);
+        assert!(!faded.test_on());
+        assert_eq!(faded.reference(), 0.0);
+        // Alpha-to-coverage keeps r even with depth write.
+        let atc = AlphaReference {
+            alpha_to_coverage: true,
+            ..AlphaReference::tested(0.8, 0.5, true)
+        };
+        assert_eq!(atc.reference(), 204.0 / 255.0);
+    }
+
+    #[test]
+    fn reference_when_the_test_is_off() {
+        let base = AlphaReference {
+            test: false,
+            ..AlphaReference::tested(0.8, 1.0, true)
+        };
+        // SRCALPHA source factor: R = 0, only opacity 0 is discarded.
+        assert_eq!(base.reference(), 0.0);
+        assert!(!keeps(0.0, base.reference()));
+        assert!(keeps(1.0 / 255.0, base.reference()));
+        // Any other source factor: R = −1, nothing is discarded.
+        let none = AlphaReference {
+            src_alpha: false,
+            ..base
+        };
+        assert_eq!(none.reference(), -1.0);
+        assert!(keeps(0.0, none.reference()));
+    }
+
+    #[test]
+    fn hostile_inputs() {
+        let r = AlphaReference::tested(f32::NAN, f32::INFINITY, true).reference();
+        assert_eq!(r, quantise_reference(0.5));
+        let r = AlphaReference::tested(0.8, -3.0, true).reference();
+        assert_eq!(r, 0.0);
+        assert_eq!(output_alpha(1.7, 1.0), 1.0);
+        assert_eq!(output_alpha(0.5, 0.5), 0.25);
+        assert_eq!(output_alpha(f32::NAN, 0.5), 0.5);
+        assert_eq!(output_alpha(-1.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn evaluate_forms() {
+        let alpha = |s: u32| if s == 3000 { 0.5 } else { 0.75 };
+        assert_eq!(TestedOpacity::One.evaluate(alpha), 1.0);
+        assert_eq!(TestedOpacity::Slot(3020).evaluate(alpha), 0.75);
+        assert_eq!(TestedOpacity::Product(3000, 3001).evaluate(alpha), 0.375);
+        assert_eq!(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.25);
+        // A sum above 1 is always kept (R ≤ 1).
+        assert!(keeps(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.0));
+    }
+
+    #[test]
+    fn sum_records_are_sorted_and_distinct() {
+        assert!(SUM_OPACITY_RECORDS.windows(2).all(|w| w[0] < w[1]));
+    }
+}

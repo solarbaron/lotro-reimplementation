@@ -14,7 +14,7 @@
 //!   binding key, and whose mesh slot the group's slot matches (`All` matches every part),
 //!   is drawn with the surface record's materials followed by the matching groups'
 //!   materials in list order, and with the shader override of the last matching group that
-//!   has one (`material.md` §9.3; a later group is applied later, so it wins).
+//!   has one, a group without a material included (`material.md` §9.3 rules 1–2).
 //! - **Parts** a chosen block offers are not drawn on a cell (a cell has no slot table);
 //!   they are counted and logged. No block of this install's cell lists has parts (own
 //!   probe, 2026-10-08: 81,171 elements in 80,825 cell lists, every chosen block
@@ -80,26 +80,23 @@ pub struct CellLook {
 impl CellLook {
     /// The layering of a submesh whose surface record has `binding_key`, of a mesh in slot
     /// `mesh_slot` (`None` when unknown: only `All` groups apply): `None` when no group
-    /// matches (the surface's own look).
+    /// changes it (the surface's own look). The groups that match (`material.md` §9.3: the
+    /// group's key equals the surface's or is 2, its slot is `All` or the mesh's, never 0)
+    /// apply in list order through [`Layering::from_groups`], the one rule of every figure
+    /// path: a shader-only group replaces the shader, the last override wins.
     #[must_use]
     pub fn layering(&self, binding_key: u32, mesh_slot: Option<u32>) -> Option<Layering> {
-        let matching: Vec<&LookGroup> = self
-            .groups
-            .iter()
-            .filter(|g| {
-                g.binding_key == binding_key
-                    && !g.material.is_null()
-                    && (g.slot == SLOT_ALL || Some(g.slot) == mesh_slot)
-            })
-            .take(MAX_LAYERS)
-            .collect();
-        if matching.is_empty() {
-            return None;
-        }
-        Some(Layering {
-            shader_override: matching.iter().rev().find_map(|g| g.shader),
-            materials: matching.iter().map(|g| g.material).collect(),
-        })
+        Layering::from_groups(
+            self.groups
+                .iter()
+                .filter(|g| {
+                    tessera_material::group_binding_matches(g.binding_key, binding_key)
+                        && g.slot != 0
+                        && (g.slot == SLOT_ALL || Some(g.slot) == mesh_slot)
+                })
+                .map(|g| (g.shader, g.material)),
+            MAX_LAYERS,
+        )
     }
 
     /// Whether the look changes nothing.
@@ -453,6 +450,47 @@ mod tests {
         assert_eq!(l.materials.len(), 3);
         assert_eq!(l.shader_override, Some(Did(0x2B00_0003)));
         assert!(look.layering(9, None).is_none(), "no group for this key");
+    }
+
+    /// `material.md` §9.3 rules 1–2: a group without a material still replaces the shader
+    /// (it is not skipped), the last override applied wins, binding key 2 matches every
+    /// surface and slot 0 matches no mesh.
+    #[test]
+    fn shader_only_groups_and_the_last_override() {
+        let group =
+            |priority: f32, shader: Option<u32>, material: u32, slot: u32, key: u32| LookGroup {
+                priority,
+                shader: shader.map(Did),
+                material: Did(material),
+                slot,
+                binding_key: key,
+            };
+        let look = CellLook {
+            groups: vec![
+                group(1.0, Some(0x2B00_0001), 0x3000_0001, SLOT_ALL, 7),
+                group(2.0, Some(0x2B00_0002), 0, SLOT_ALL, 7),
+                group(3.0, None, 0x3000_0003, SLOT_ALL, 2),
+                group(4.0, Some(0x2B00_0004), 0x3000_0004, 0, 7),
+            ],
+            parts_ignored: 0,
+        };
+        let l = look.layering(7, Some(5)).expect("matches");
+        assert_eq!(l.shader_override, Some(Did(0x2B00_0002)));
+        assert_eq!(l.materials, [Did(0x3000_0001), Did(0x3000_0003)]);
+        // Only the key-2 group reaches another surface.
+        let l = look.layering(8, None).expect("matches");
+        assert_eq!(l.shader_override, None);
+        assert_eq!(l.materials, [Did(0x3000_0003)]);
+        // A shader-only group alone.
+        let only = CellLook {
+            groups: vec![group(1.0, Some(0x2B00_0009), 0, SLOT_ALL, 7)],
+            parts_ignored: 0,
+        };
+        let l = only
+            .layering(7, None)
+            .expect("a shader-only group is applied");
+        assert_eq!(l.shader_override, Some(Did(0x2B00_0009)));
+        assert!(l.materials.is_empty());
     }
 
     /// A record with entry `key` whose blocks are `blocks`.

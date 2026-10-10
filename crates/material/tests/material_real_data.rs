@@ -242,12 +242,24 @@ fn all_material_records() {
     let mut blend_opacity: BTreeMap<String, usize> = BTreeMap::new();
     let mut extended_lists: Vec<Did> = Vec::new();
     let mut sourceless_lists: Vec<Did> = Vec::new();
+    // §11.2 table "Tested opacity": surface records by the form their shader record tests.
+    let mut tested_forms: BTreeMap<String, usize> = BTreeMap::new();
+    let mut sum_shaders_wrong: Vec<Did> = Vec::new();
     for s in &surfaces {
         match lib.resolve_surface(s.did) {
             Ok(r) => {
                 resolved += 1;
                 let ft = &r.features;
                 skipped += r.skipped.len();
+                *tested_forms
+                    .entry(format!("{:?}", ft.tested_opacity))
+                    .or_default() += 1;
+                // The seven sum records test a sum whenever they have two opacity roles.
+                if tessera_material::alpha::SUM_OPACITY_RECORDS.contains(&r.shader.did.0)
+                    && !matches!(ft.tested_opacity, tessera_material::TestedOpacity::Sum(..))
+                {
+                    sum_shaders_wrong.push(r.shader.did);
+                }
                 for i in r.params.ignored() {
                     match i.reason {
                         IgnoreReason::Undeclared => ignored_undeclared += 1,
@@ -372,6 +384,11 @@ fn all_material_records() {
     println!("blend modes: {blend:?}");
     println!("alpha test: declared by {alpha_test_declared}; sources {opacity_src:?}");
     println!("alpha-test thresholds: {thresholds:?}");
+    println!("tested opacity (material.md §11.2 table): {tested_forms:?}");
+    assert!(
+        sum_shaders_wrong.is_empty(),
+        "sum records without two opacity roles: {sum_shaders_wrong:?}"
+    );
     println!("diffuse roles: {diffuse_roles:?}; no diffuse texture: {no_diffuse}");
     println!("cache: {:?}", lib.cache_usage());
     // How many of those diffuse textures are mostly transparent (at least a quarter of

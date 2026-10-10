@@ -44,6 +44,8 @@ const SF_SECOND_LAYER: u32 = 512u;
 const SF_LAYER_ADD: u32 = 1024u;
 const SF_LAYER_ALPHA: u32 = 2048u;
 const SF_LAYER_OPACITY_ONLY: u32 = 4096u;
+// The second layer's alpha is added to the base alpha (the sum records of material.md §11.2).
+const SF_LAYER_SUM: u32 = 8192u;
 const SF_SRGB_BASE: u32 = 1u;
 const SF_SRGB_NORMAL: u32 = 2u;
 const SF_SRGB_LAYER2: u32 = 4u;
@@ -107,6 +109,10 @@ fn surface_base_at(uv0: vec2<f32>, uv1: vec2<f32>) -> vec4<f32> {
     var a = base.a;
     if (surface_flag(SF_LAYER_ALPHA)) {
         a = a * layer2.a;
+    }
+    if (surface_flag(SF_LAYER_SUM)) {
+        // Unclamped: the output alpha is clamped (material.md §11.3).
+        a = a + layer2.a;
     }
     return vec4<f32>(rgb, a);
 }

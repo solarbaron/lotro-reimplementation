@@ -91,6 +91,10 @@ pub enum LayerAlpha {
     Ignored,
     /// It multiplies the first layer's alpha (`ColorAndOpacity2`).
     Multiplied,
+    /// It is added to the first layer's alpha (`ColorAndOpacity2` of the sum records of
+    /// [`crate::alpha::SUM_OPACITY_RECORDS`], `material.md` §11.2 table): the sum may exceed
+    /// 1; the output alpha is clamped (§11.3).
+    Summed,
     /// The `ColorTexture` record (§20.1): the RGB is the first layer's alone and the alpha
     /// 2 × both layers' alphas (× the 2000 alpha, as for one layer).
     OpacityOnly,
@@ -147,10 +151,20 @@ pub fn second_layer_plan(material: &ResolvedMaterial) -> Option<SecondLayerPlan>
         .slot(ids::SECOND_LAYER)
         .and_then(|s| s.role.as_deref())
         .unwrap_or_default();
+    let alpha = match layer_alpha_of(role) {
+        // §11.2 table: the sum records add the two alphas.
+        LayerAlpha::Multiplied
+            if material.features.tested_opacity
+                == crate::alpha::TestedOpacity::Sum(ids::DIFFUSE, ids::SECOND_LAYER) =>
+        {
+            LayerAlpha::Summed
+        }
+        other => other,
+    };
     Some(SecondLayerPlan {
         texture,
         combine,
-        alpha: layer_alpha_of(role),
+        alpha,
     })
 }
 

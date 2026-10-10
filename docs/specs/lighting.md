@@ -489,6 +489,17 @@ Final RGB = lerp(colour, fog colour, *f*) with the per-vertex fog factor *f* of 
   alpha 0 makes the surface invisible.
 - Additive passes output *M*.alpha as alpha.
 
+> **OPEN (implementer, clean room, 2026-10-10, conformance to `material.md` §11.2–§11.3 as
+> revised 2026-10-10, MA60):** this section and `material.md` §11.3 now disagree. Here the
+> output alpha is *α* × *M*.alpha only "when the base role carries opacity", else *M*.alpha,
+> and the tested *α* with two layers is "the product of both alphas". `material.md` §11.3
+> says the lit base pass outputs the tested opacity of the §11.2 table (one alpha of slot
+> 3000, 3020 or 3018, or the product or, for seven records, the sum of two) × the 2000
+> alpha, for every opacity-bearing role, clamped to [0, 1] by a Tessera rule. The
+> implementation (`crates/render` lit pipeline, `Opacity::BaseWith`, `LayerAlpha::Summed`)
+> follows `material.md` §11.3. Please align this section (and row L8) or state which one
+> holds for `OpacityAlpha` and `EmissiveAndOpacity` surfaces.
+
 <a id="s5-13"></a>
 ### 5.13 Vertex colours (Confirmed census, use BIN)
 

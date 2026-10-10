@@ -219,7 +219,7 @@ pub use lighting::{
 pub use material::{
     AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LayerAlpha,
     LightSelection, Lighting, LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
-    Opacity, SecondLayer, Specular, UvTransform,
+    Opacity, SecondLayer, SecondOpacity, Specular, UvTransform,
 };
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,

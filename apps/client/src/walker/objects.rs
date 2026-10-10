@@ -48,10 +48,11 @@ use tessera_material::{FallbackReason, LibraryConfig, MaterialLibrary};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, DrawDepthBias, Dye, DyeMask, Gloss, Instance as GpuInstance, InstanceBatch,
-    LiquidMeshDraw, LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, MipChainUpload,
-    MipLevel, Opacity, Pass, PreparedMesh, Renderer, SecondLayer, Specular, TextureId,
-    TextureUpload, UvTransform, WorldModel, WorldSurface, Wrap,
+    AlphaMode, AlphaThreshold, DrawDepthBias, Dye, DyeMask, FixedBlend, Gloss,
+    Instance as GpuInstance, InstanceBatch, LiquidMeshDraw, LitSurface, Material, MeshConfig,
+    MeshData, MeshDraw, MeshId, MipChainUpload, MipLevel, Opacity, Pass, PreparedMesh, Renderer,
+    SecondLayer, SecondOpacity, Specular, TextureId, TextureUpload, UvTransform, WorldModel,
+    WorldSurface, Wrap,
 };
 use tessera_world::draw_distance::{DistanceSmoother, DrawFade, aabb_distance, detail_level};
 use tessera_world::{DistanceSettings, LANDBLOCK_SIZE, LandblockKey, LodValues};
@@ -60,9 +61,9 @@ use super::UploadBudget;
 use super::fallback::{FallbackStats, FallbackTally};
 use super::figures::figure_tag;
 use super::geometry::{
-    AlphaFrom, AlphaKind, GlossFrom, MaterialPlan, OWN_TEXTURES, TexRequest, VARIANT_ALPHA_ONLY,
-    VARIANT_DYE_MASK, VARIANT_OPAQUE, VARIANT_OWN_ALPHA, compose_texture, downscale_to, dye_mask,
-    image_ok, level_mesh_data, plan_material_with,
+    AlphaFrom, AlphaKind, GlossFrom, LitInputs, MaterialPlan, OWN_TEXTURES, SecondOpacityPlan,
+    TexRequest, VARIANT_ALPHA_ONLY, VARIANT_DYE_MASK, VARIANT_OPAQUE, VARIANT_OWN_ALPHA,
+    compose_texture, downscale_to, dye_mask, image_ok, level_mesh_data, plan_material_with,
 };
 use super::interiors::OUTDOORS;
 use super::liquid::{AnimClock, SurfaceAnim};
@@ -1010,6 +1011,28 @@ pub fn faded_alpha(mode: AlphaMode) -> AlphaMode {
     }
 }
 
+/// [`faded_alpha`] with the reference *R* recomputed for the fade (`material.md` §11.2
+/// "What the client does per draw"): the material alpha *A* becomes the plan's × `fade`,
+/// so a depth-writing permutation tests against ⌊*r* × *A* × 255⌋ / 255 and one that does
+/// not switches its test off (*R* = 0) below *A* 0.9. Surfaces whose opacity is not drawn
+/// keep their mode.
+#[must_use]
+pub fn faded_alpha_at(lit: &LitInputs, fade: f32) -> AlphaMode {
+    let mode = faded_alpha(lit.alpha);
+    if !lit.opacity_from_base {
+        return mode;
+    }
+    let r = lit.reference_at(fade);
+    match mode {
+        AlphaMode::TestBlend { cutoff } if cutoff >= 0.0 => AlphaMode::TestBlend { cutoff: r },
+        AlphaMode::Fixed(b) if b.alpha_test.is_some() => AlphaMode::Fixed(FixedBlend {
+            alpha_test: (r >= 0.0).then_some(AlphaThreshold(r)),
+            ..b
+        }),
+        other => other,
+    }
+}
+
 /// Linear-light unit value to its 8-bit sRGB encoding in 0–1 (clamped; non-finite → 0):
 /// the stored value of a colour the M2 plans keep linear.
 #[must_use]
@@ -1091,6 +1114,10 @@ pub fn surface_draw(
         let alpha = match plan.alpha {
             AlphaKind::Opaque if fade < 1.0 => AlphaMode::Blend,
             AlphaKind::Opaque => AlphaMode::Opaque,
+            // §11.2: R with the fade's material alpha (r × A in a depth-writing pass).
+            AlphaKind::Mask(_) if fade < 1.0 => AlphaMode::Mask {
+                cutoff: plan.lit.reference_at(fade),
+            },
             AlphaKind::Mask(c) => AlphaMode::Mask { cutoff: c },
             AlphaKind::Blend => AlphaMode::Blend,
         };
@@ -1116,7 +1143,7 @@ pub fn surface_draw(
     color[3] *= fade;
     let normal = ready(l.normal);
     let alpha = if fade < 1.0 {
-        faded_alpha(l.alpha)
+        faded_alpha_at(l, fade)
     } else {
         l.alpha
     };
@@ -1146,10 +1173,26 @@ pub fn surface_draw(
         emissive: ready(l.emissive),
         glow_mask: ready(l.glow_mask),
         gloss,
-        opacity: if l.opacity_from_base && base.is_some() {
-            Opacity::BaseAlpha
-        } else {
-            Opacity::One
+        // The tested opacity of `material.md` §11.2: the base alpha, with a second alpha
+        // multiplied or added when the record has two opacity roles.
+        opacity: match (l.opacity_from_base && base.is_some(), l.opacity2) {
+            (false, _) => Opacity::One,
+            (true, Some(SecondOpacityPlan::Emissive { sum })) if ready(l.emissive).is_some() => {
+                Opacity::BaseWith {
+                    second: SecondOpacity::EmissiveAlpha,
+                    sum,
+                }
+            }
+            (true, Some(SecondOpacityPlan::Texture { texture, sum })) => {
+                match ready(Some(texture)) {
+                    Some(id) => Opacity::BaseWith {
+                        second: SecondOpacity::Texture(id),
+                        sum,
+                    },
+                    None => Opacity::BaseAlpha,
+                }
+            }
+            (true, _) => Opacity::BaseAlpha,
         },
         vertex_colors: false,
         fog: true,
@@ -3131,6 +3174,54 @@ mod tests {
         assert_eq!(faded_alpha(AlphaMode::Blend), AlphaMode::Blend);
     }
 
+    /// `material.md` §11.2 per draw: a fade lowers the reference of a depth-writing
+    /// permutation (r × A), switches the test of one without depth write off below A 0.9
+    /// (R = 0), and leaves a surface whose opacity is not drawn alone.
+    #[test]
+    fn faded_references_follow_the_depth_write_switch() {
+        let mut lit = MaterialPlan::FALLBACK.lit;
+        lit.opacity_from_base = true;
+        lit.alpha = AlphaMode::TestBlend {
+            cutoff: 165.0 / 255.0,
+        };
+        lit.reference = tessera_material::AlphaReference::tested(0.65, 1.0, true);
+        assert_eq!(
+            faded_alpha_at(&lit, 0.5),
+            AlphaMode::TestBlend {
+                cutoff: 82.0 / 255.0
+            }
+        );
+        lit.reference.depth_write = false;
+        assert_eq!(
+            faded_alpha_at(&lit, 0.95),
+            AlphaMode::TestBlend {
+                cutoff: 165.0 / 255.0
+            }
+        );
+        assert_eq!(
+            faded_alpha_at(&lit, 0.5),
+            AlphaMode::TestBlend { cutoff: 0.0 }
+        );
+        // An unlit fixed blend with its test.
+        let fixed = FixedBlend {
+            alpha_test: Some(AlphaThreshold(165.0 / 255.0)),
+            ..FixedBlend::ADDITIVE
+        };
+        lit.alpha = AlphaMode::Fixed(fixed);
+        lit.reference.depth_write = true;
+        assert_eq!(
+            faded_alpha_at(&lit, 0.5),
+            AlphaMode::Fixed(FixedBlend {
+                alpha_test: Some(AlphaThreshold(82.0 / 255.0)),
+                ..fixed
+            })
+        );
+        // No opacity drawn: the mode of `faded_alpha`.
+        lit.opacity_from_base = false;
+        lit.alpha = AlphaMode::Opaque;
+        assert_eq!(faded_alpha_at(&lit, 0.5), AlphaMode::BLEND_DEPTH_WRITE);
+    }
+
     #[test]
     fn stored_colours_invert_the_linear_conversion() {
         for v in [0.0_f32, 0.001, 0.02, 0.2, 0.5, 0.9, 1.0] {
@@ -3160,6 +3251,7 @@ mod tests {
         plan.alpha = AlphaKind::Mask(0.5);
         plan.lit.alpha = AlphaMode::Mask { cutoff: 0.5 };
         plan.lit.opacity_from_base = true;
+        plan.lit.reference = tessera_material::AlphaReference::tested(0.5, 1.0, true);
         let pending = |_| TexLookup::Pending;
         assert!(surface_draw(&plan, &pending, true, 1.0, true).is_none());
         let failed = |_| TexLookup::Failed;
@@ -3185,13 +3277,24 @@ mod tests {
         // Fading: translucent, no shadow at or below opacity 0.8 (`mesh.md` §8.8), alpha
         // scaled.
         let (m, l) = surface_draw(&plan, &ready, true, 0.25, true).unwrap();
-        assert_eq!(m.alpha, AlphaMode::TestBlend { cutoff: 0.5 });
+        // material.md §11.2: a depth-writing permutation tests ⌊r × A × 255⌋ / 255.
+        assert_eq!(
+            m.alpha,
+            AlphaMode::TestBlend {
+                cutoff: 31.0 / 255.0
+            }
+        );
         assert!((m.base_color[3] - 0.25 * plan.lit.color[3]).abs() < 1e-6);
         assert!(!l.cast_shadow);
         let (_, l) = surface_draw(&plan, &ready, true, SHADOW_MIN_OPACITY, true).unwrap();
         assert!(!l.cast_shadow, "0.8 itself does not cast");
         let (m, l) = surface_draw(&plan, &ready, true, 0.85, true).unwrap();
-        assert_eq!(m.alpha, AlphaMode::TestBlend { cutoff: 0.5 });
+        assert_eq!(
+            m.alpha,
+            AlphaMode::TestBlend {
+                cutoff: 108.0 / 255.0
+            }
+        );
         assert!(l.cast_shadow, "above 0.8 a fading object casts");
         // The M2 path keeps the linear plan colour.
         let (m, _) = surface_draw(&plan, &ready, false, 1.0, true).unwrap();

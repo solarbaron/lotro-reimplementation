@@ -234,6 +234,12 @@ pub enum AlphaSource<'a> {
     /// The alpha channel of another texture (a separate opacity map), resampled to the
     /// base texture's size.
     From(&'a RgbaImage),
+    /// The base texture's alpha times another texture's alpha (resampled), the product of
+    /// `material.md` §11.2.
+    OwnTimes(&'a RgbaImage),
+    /// The base texture's alpha plus another texture's alpha (resampled), saturated at 255:
+    /// the sum of `material.md` §11.2, clamped as the output alpha is (§11.3).
+    OwnPlus(&'a RgbaImage),
 }
 
 /// The base-colour texture the renderer samples: RGB of `base`, alpha from `alpha`
@@ -244,12 +250,22 @@ pub enum AlphaSource<'a> {
 #[must_use]
 pub fn base_texture(base: Option<&RgbaImage>, alpha: AlphaSource<'_>) -> Option<RgbaImage> {
     let alpha_img = match alpha {
-        AlphaSource::From(a) if image_ok(a) => Some(a),
-        AlphaSource::From(_) => return None,
+        AlphaSource::From(a) | AlphaSource::OwnTimes(a) | AlphaSource::OwnPlus(a)
+            if image_ok(a) =>
+        {
+            Some(a)
+        }
+        AlphaSource::From(_) | AlphaSource::OwnTimes(_) | AlphaSource::OwnPlus(_) => {
+            return None;
+        }
         _ => None,
     };
     let Some(base) = base else {
-        let a = alpha_img?;
+        // Without a base texture its alpha is 1: the product is the other alpha, the sum 1.
+        let a = match alpha {
+            AlphaSource::OwnPlus(_) => return None,
+            _ => alpha_img?,
+        };
         let mut out = a.clone();
         for px in out.pixels.as_chunks_mut::<4>().0 {
             px[0] = 255;
@@ -271,7 +287,14 @@ pub fn base_texture(base: Option<&RgbaImage>, alpha: AlphaSource<'_>) -> Option<
                     let i = (y as usize * w as usize + x as usize) * 4 + 3;
                     let v = alpha_at(a, x, y, w, h);
                     if let Some(p) = out.pixels.get_mut(i) {
-                        *p = v;
+                        *p = match alpha {
+                            AlphaSource::OwnTimes(_) => {
+                                u8::try_from((u16::from(*p) * u16::from(v) + 127) / 255)
+                                    .unwrap_or(u8::MAX)
+                            }
+                            AlphaSource::OwnPlus(_) => p.saturating_add(v),
+                            _ => v,
+                        };
                     }
                 }
             }
@@ -575,6 +598,18 @@ mod tests {
         };
         assert!(base_texture(Some(&bad), AlphaSource::Own).is_none());
         assert!(base_texture(Some(&base), AlphaSource::From(&bad)).is_none());
+        assert!(base_texture(Some(&base), AlphaSource::OwnTimes(&bad)).is_none());
+        // material.md §11.2: the product and the (saturated) sum of two alphas.
+        let times = base_texture(Some(&base), AlphaSource::OwnTimes(&alpha)).unwrap();
+        assert_eq!(times.pixels[3], 0);
+        assert_eq!(times.pixels[3 * 4 + 3], 8); // 10 × 200 / 255
+        let plus = base_texture(Some(&base), AlphaSource::OwnPlus(&alpha)).unwrap();
+        assert_eq!(plus.pixels[3], 10);
+        assert_eq!(plus.pixels[3 * 4 + 3], 210);
+        let full = img(4, 4, |_, _| [0, 0, 0, 250]);
+        let sat = base_texture(Some(&full), AlphaSource::OwnPlus(&alpha)).unwrap();
+        assert_eq!(sat.pixels[3 * 4 + 3], 255);
+        assert!(base_texture(None, AlphaSource::OwnPlus(&alpha)).is_none());
         assert!(alpha_mask(&bad, true).is_none());
         assert!(thumbnail(&bad, 8).is_none());
     }

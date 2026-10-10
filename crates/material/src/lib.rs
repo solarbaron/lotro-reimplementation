@@ -7,6 +7,7 @@
 //! | [`vocab`] | Parameter ids, texture slot kinds, role names and channel packing | `material.md` §8, §10 |
 //! | [`interface`] | A shader record's interface: declarations, slot roles, render-state summary | `material.md` §7, §10, §11 |
 //! | [`resolve`] | Effective parameter set, texture slots, feature flags, dye setup | `material.md` §9–§12 |
+//! | [`alpha`] | Tested opacity per role combination, the per-draw alpha reference *R*, the output alpha | `material.md` §11.2, §11.3 |
 //! | [`dye`] | Dye blend, dye colours of a dye material, dye block selection | `material.md` §12 |
 //! | [`edits`] | Run-time parameter edits applied after a surface's materials, run-time textures (composed face images) | `appearance.md` §3.5, §8 step 6 |
 //! | [`MaterialLibrary`] | Surface → material → texture list → texture chain over a [`RecordSource`], with caches | `material.md` §9, `texture-list.md` §5.2 |
@@ -73,6 +74,7 @@
 
 #![warn(missing_docs)]
 
+pub mod alpha;
 mod cache;
 pub mod diagnose;
 mod dims;
@@ -94,10 +96,12 @@ pub mod ui_image;
 pub mod vocab;
 pub mod water;
 
+pub use alpha::{AlphaReference, TestedOpacity};
 pub use diagnose::{FallbackReason, MaterialKind, SurfaceDiagnosis};
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
 pub use edits::{
-    COMPOSED_TEXTURE_SLOT, ParameterEdit, RUNTIME_TEXTURE_PREFIX, RuntimeTextures, figure_edits,
+    COMPOSED_TEXTURE_SLOT, ParameterEdit, RUNTIME_TEXTURE_PREFIX, RuntimeTextures, composed_edit,
+    figure_edits,
 };
 pub use error::{MaterialError, Result, SourceFailure};
 pub use inputs::{
@@ -107,7 +111,8 @@ pub use inputs::{
 pub use interface::ShaderInterface;
 pub use layers::{LayerAlpha, LayerCombine, SecondLayerPlan, second_layer, second_layer_plan};
 pub use library::{
-    AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,
+    AppearanceGroup, BINDING_KEY_ALL, Layering, LibraryConfig, MaterialLibrary, SurfaceLook,
+    TextureChain, TextureImage, group_binding_matches,
 };
 pub use liquid::{DistortionMaterial, LavaMaterial, LiquidSurface, MirrorMaterial};
 pub use records::{

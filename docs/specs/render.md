@@ -345,6 +345,24 @@ cut-outs). `LitSurface`: glow colour *G*, emissive texture, glow mask, gloss sou
 `EmissiveAlpha`, `Texture`), `vertex_colors`, `fog` (unlit surfaces only, §4.1),
 `cast_shadow`, `lights` (`Auto`, `None`, `List`).
 
+> **OPEN (implementer, clean room, 2026-10-10, conformance to `material.md` §11.2–§11.3 as
+> revised 2026-10-10, MA60):** the renderer now departs from the paragraph above and from
+> two rows of the table, following `material.md`: (1) the lit output alpha is the tested
+> opacity × *M*.alpha (× vertex alpha) for **every** opacity source, `Opacity::Texture` and
+> `Opacity::EmissiveAlpha` included, clamped to [0, 1]; (2) new `Opacity::BaseWith { second,
+> sum }` tests and outputs the base alpha times (or, for the sum records, plus) the emissive
+> alpha or a separate texture's alpha, and new `LayerAlpha::Summed` adds the second colour
+> layer's alpha (the `ColorAndOpacity2` sum records); the shadow pass's cut-outs use the same
+> tested opacity; (3) `TestBlend` outside lit passes (the M2 pipelines) is drawn in
+> `MeshShading::Lit` as in lit passes (test, then source-alpha blend by the clamped output
+> alpha, depth write, sorted with the blended draws), and as `Mask` only in the debug
+> shadings; the M2 `Mask` compares the base texel's alpha before the material and vertex
+> alphas and discards at or below the cutoff (it compared the product with "below"); (4) the
+> `cutoff` of `Mask`, `TestBlend` and `FixedBlend::alpha_test` is the caller's reference *R*
+> of `material.md` §11.2 steps 1–3 (`tessera_material::alpha::AlphaReference`), so a lit
+> `ColorAndOpacity` surface without a test passes *R* = 0, not −1. Please fold (1)–(4) into
+> the `AlphaMode` table and the `Opacity` list.
+
 **Light selection (`lighting.md` §8.5, rows L30–L32, L34):** `LightSelection::Auto` takes the
 point lights whose squared distance to the draw's world box is below ρ² (strict), where ρ is
 the light's selection radius; it leaves out lights flagged as baked into the landscape on

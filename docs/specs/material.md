@@ -2108,6 +2108,27 @@ Added by the clean-room implementation of M4.5 (`crates/material` modules `trans
 > is 0 for a negative or non-finite clock.
 > Answer: the client uses the block's `specular_color` (bytes 19–22, §7.6; white in every block of this install) × the per-object tint, then black below power 0.5 (§8.3). The implementation's white × tint equals it on this install; reading the block value is exact.
 
+> **OPEN (implementer, clean room, 2026-10-10, conformance to the §9.3, §11.2 and §11.3
+> revision; engineering choices where the spec is silent, please confirm or correct):**
+> (1) Tested opacity of role combinations the §11.2 table does not list (two roles other than
+> the tabled pairs, three or more roles, `ColorAndOpacity2` without `ColorAndOpacity`):
+> Tessera orders the roles by slot 3000, 3020, 3018, 3001, takes a lone role's alpha, and
+> combines the first two as the table's rule says (the product; the sum only for the seven
+> listed DIDs). The table says no record in scope has such a combination. (2) In "What the
+> client does per draw", a non-finite *r* is taken as 0.5 and a non-finite *A* as 1, and *A*
+> is clamped to [0, 1]; Tessera has no alpha-to-coverage option, so steps 1 and 4 never
+> apply. (3) *A* in the walker is the 2000 alpha × Tessera's own draw-distance fade of the
+> object (no per-object tint is applied yet); *R* is recomputed for every fading draw. The
+> explorer uses the 2000 alpha alone. (4) The explorer bakes the product or sum of two
+> opacity alphas into the 8-bit alpha of the base texture: a sum saturates at 1, so where
+> *R* = 1 a texel whose sum exceeds 1 is discarded (the programs keep it; the lit pipeline
+> of the walker adds the two alphas unclamped and matches the programs). (5) The walker binds
+> the emissive texture of a `ColorAndOpacity` + `EmissiveAndOpacity` record for its alpha
+> even when the record's glow colour is black (the emissive RGB then adds nothing). (6) A
+> group whose slot `a` is 0 is dropped before matching, and binding key 2 matches every
+> surface record, in all figure and cell paths (§9.3 binding rule), with at most 16 matched
+> groups per surface.
+
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)
 

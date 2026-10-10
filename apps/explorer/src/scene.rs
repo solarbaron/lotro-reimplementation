@@ -45,7 +45,7 @@ use tessera_material::records::{
 };
 use tessera_material::resolve::{DyeMask, ParamOrigin};
 use tessera_material::vocab::{AlphaUse, ColorUse, SlotKind, ids};
-use tessera_material::{BlendMode, Layering, ResolvedMaterial};
+use tessera_material::{BlendMode, Layering, ResolvedMaterial, SurfaceLook, TestedOpacity};
 use tessera_mesh::{DecodeOptions, GeometryLimits, LevelKind, Mesh, MeshError};
 use tessera_props::Value;
 use tessera_render::{MeshConfig, MeshData, PreparedMesh};
@@ -315,13 +315,14 @@ pub struct ScenePart {
 pub enum AlphaKind {
     /// Opaque.
     Opaque,
-    /// Alpha test with this threshold (kept when opacity ≥ threshold, `material.md` §11.2).
+    /// Alpha test with this reference *R* (kept only when the tested opacity is greater
+    /// than *R*, `material.md` §11.2).
     Mask(f32),
     /// Alpha test **and** source-alpha blend with depth write: the base pass of a lit
-    /// alpha-tested surface (`material.md` §11.2, §11.3: the test removes texels at or below
-    /// the threshold, the kept texels blend by their opacity and write depth). Drawn as
-    /// [`tessera_render::AlphaMode::TestBlend`], which the viewer's mesh passes draw as an
-    /// alpha test with depth write, so the surface hides what lies behind its kept texels.
+    /// surface (`material.md` §11.2, §11.3: the test removes texels at or below *R*, the kept
+    /// texels blend by their output alpha and write depth; *R* = 0 when the test is off).
+    /// Drawn as [`tessera_render::AlphaMode::TestBlend`], which the viewer's lit shading
+    /// draws the same way (the debug shadings as a cut-out).
     TestBlend(f32),
     /// Alpha blending without depth write (the renderer's only blend; additive and other
     /// blend states are approximated by it).
@@ -1011,14 +1012,34 @@ fn appearance_parts(
             entry.blocks.len()
         ));
     }
-    let groups = Arc::new(block.groups.clone());
+    // The block's groups in group-list order (`appearance.md` §4.10: ascending priority,
+    // stored order among equal priorities); a part takes those of slot `All` or its own
+    // slot, never slot 0 (`material.md` §9.3).
+    let mut ordered: Vec<(f32, MaterialGroup)> =
+        block.groups_with_priority().map(|(p, g)| (p, *g)).collect();
+    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let for_slot = |slot: Option<u32>| -> Arc<Vec<MaterialGroup>> {
+        Arc::new(
+            ordered
+                .iter()
+                .map(|(_, g)| *g)
+                .filter(|g| {
+                    g.slot() != 0
+                        && slot.is_none_or(|s| {
+                            g.slot() == tessera_formats::appearance::SLOT_ALL || g.slot() == s
+                        })
+                })
+                .collect(),
+        )
+    };
+    let groups = for_slot(None);
     let mut parts: Vec<PartSpec> = block
         .parts
         .iter()
         .map(|p| PartSpec {
             mesh: p.mesh,
             caption: format!("slot {:#x}", p.slot),
-            groups: Some(Arc::clone(&groups)),
+            groups: Some(for_slot(Some(p.slot))),
         })
         .collect();
     let mut seen = HashSet::new();
@@ -1085,6 +1106,10 @@ enum AlphaPlan {
     Opaque,
     Own,
     From(Did),
+    /// The base alpha times another texture's alpha (`material.md` §11.2 product).
+    OwnTimes(Did),
+    /// The base alpha plus another texture's alpha, saturated (§11.2 sum records).
+    OwnPlus(Did),
 }
 
 /// A texture the scene needs, keyed so identical requests are decoded once.
@@ -1135,20 +1160,44 @@ fn finite01(v: f32, fallback: f32) -> f32 {
 fn plan_material(m: &ResolvedMaterial) -> GpuPlan {
     let f = &m.features;
     let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture);
-    // Opacity: the alpha-test source, else the blend's source alpha (§11.2, §11.3).
-    let opacity = f
-        .alpha_test
-        .map(|a| a.source_slot)
-        .or(if f.blend.is_transparent() {
-            f.blend.opacity_slot
-        } else {
-            None
-        });
-    let alpha = match opacity {
-        None => AlphaPlan::Opaque,
-        Some(ids::DIFFUSE) => AlphaPlan::Own,
+    // Opacity: the tested opacity of §11.2 (its table: one alpha, or the product or sum of
+    // two), else, for a transparent blend without one, the blend's source alpha (§11.3).
+    let tested = if f.alpha_test.is_none() && !f.blend.is_transparent() {
+        TestedOpacity::One
+    } else {
+        [
+            f.tested_opacity,
+            f.alpha_test.map_or(TestedOpacity::One, |a| a.opacity),
+        ]
+        .into_iter()
+        .find(|t| t.has_source())
+        .or_else(|| f.alpha_test.map(|a| TestedOpacity::Slot(a.source_slot)))
+        .or_else(|| f.opacity_slot.map(TestedOpacity::Slot))
+        .unwrap_or(TestedOpacity::One)
+    };
+    let tested = match tested {
+        TestedOpacity::One if f.blend.is_transparent() => f
+            .blend
+            .opacity_slot
+            .map_or(TestedOpacity::One, TestedOpacity::Slot),
+        t => t,
+    };
+    let alpha = match tested {
+        TestedOpacity::One => AlphaPlan::Opaque,
+        TestedOpacity::Slot(ids::DIFFUSE) => AlphaPlan::Own,
         // An opacity slot without a texture: opacity 1 (§18 OPEN).
-        Some(other) => slot_tex(other).map_or(AlphaPlan::Opaque, AlphaPlan::From),
+        TestedOpacity::Slot(other) => slot_tex(other).map_or(AlphaPlan::Opaque, AlphaPlan::From),
+        // Two alphas, baked into the base texture's alpha (a sum saturates at 1, which the
+        // output alpha's clamp gives too, §11.3). A second slot without a texture: alpha 1.
+        TestedOpacity::Product(ids::DIFFUSE, b) => {
+            slot_tex(b).map_or(AlphaPlan::Own, AlphaPlan::OwnTimes)
+        }
+        TestedOpacity::Sum(ids::DIFFUSE, b) => {
+            slot_tex(b).map_or(AlphaPlan::Opaque, AlphaPlan::OwnPlus)
+        }
+        TestedOpacity::Product(a, _) | TestedOpacity::Sum(a, _) => {
+            slot_tex(a).map_or(AlphaPlan::Opaque, AlphaPlan::From)
+        }
     };
     let diffuse = slot_tex(ids::DIFFUSE);
     let (clamp, nearest) = sampler_flags(m.slot(ids::DIFFUSE).and_then(|s| s.sampler.as_ref()));
@@ -1193,29 +1242,35 @@ fn plan_material(m: &ResolvedMaterial) -> GpuPlan {
         dye[0] = channel(setup.primary.mask, setup.primary.color);
         dye[1] = setup.secondary.and_then(|s| channel(s.mask, s.color));
     }
+    // The reference R of §11.2 at the material's own alpha A (2000 alpha, no object tint):
+    // single-precision floor quantisation, r × A in depth-writing permutations, and with the
+    // test off 0 under a SRCALPHA source factor, else −1.
+    let reference = m.alpha_reference(1.0).reference();
     let alpha_kind = match f.blend.mode {
         BlendMode::Opaque => AlphaKind::Opaque,
-        BlendMode::Cutout => f.alpha_test.map_or(AlphaKind::Opaque, |a| {
-            AlphaKind::Mask(finite01(a.threshold, 0.5))
-        }),
-        // A source-alpha blend that writes depth and tests an opacity source keeps its test
-        // (`material.md` §11.2, §11.3: lit `ColorAndOpacity` surfaces with alpha test on,
-        // hair and foliage among them). Dropping it drew every texel blended without depth
-        // write, so a surface under such a one (a hair net under the hair of a bun) showed
-        // through it whenever it sorted later.
-        BlendMode::AlphaBlend if f.blend.depth_write => {
-            f.alpha_test.map_or(AlphaKind::Blend, |a| {
-                AlphaKind::TestBlend(finite01(a.threshold, 0.5))
-            })
-        }
+        BlendMode::Cutout => f
+            .alpha_test
+            .map_or(AlphaKind::Opaque, |_| AlphaKind::Mask(reference)),
+        // A source-alpha blend that writes depth (the lit base pass, `material.md` §11.3)
+        // tests by R and blends the kept texels by their output alpha, with depth write: R
+        // from the test when it is on, R = 0 when it is off (only opacity 0 is dropped).
+        // Drawn as a plain blend without depth write, a surface under such a one (a hair
+        // net under the hair of a bun) showed through whenever it sorted later.
+        BlendMode::AlphaBlend if f.blend.depth_write => AlphaKind::TestBlend(reference),
         BlendMode::AlphaBlend | BlendMode::Additive | BlendMode::Custom => AlphaKind::Blend,
     };
     let diffuse_color = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
+    // The lit output alpha is the tested opacity × the 2000 alpha (§11.3); unlit blends read
+    // the opacity alone (§11.3 rule for unlit records).
+    let material_alpha = match alpha_kind {
+        AlphaKind::TestBlend(_) | AlphaKind::Blend if f.lit => finite01(diffuse_color[3], 1.0),
+        _ => 1.0,
+    };
     let base_color = [
         srgb_unit_to_linear(diffuse_color[0]),
         srgb_unit_to_linear(diffuse_color[1]),
         srgb_unit_to_linear(diffuse_color[2]),
-        1.0,
+        material_alpha,
     ];
     // Specular power 0 (the default of several common shader records, overridden by
     // materials that want a highlight) is taken as "no highlight": (N·H)^0 would light
@@ -1411,11 +1466,22 @@ fn view_of(m: &ResolvedMaterial, layered: Option<&str>) -> MaterialView {
         ),
     ));
     if let Some(a) = f.alpha_test {
+        let tested = match a.opacity {
+            tessera_material::TestedOpacity::One => "1".to_owned(),
+            tessera_material::TestedOpacity::Slot(s) => format!("alpha of slot {s}"),
+            tessera_material::TestedOpacity::Product(x, y) => {
+                format!("alpha of slot {x} × alpha of slot {y}")
+            }
+            tessera_material::TestedOpacity::Sum(x, y) => {
+                format!("alpha of slot {x} + alpha of slot {y}")
+            }
+        };
         v.facts.push((
             "alpha test".into(),
             format!(
-                "opacity ≥ {} (alpha of slot {})",
-                a.threshold, a.source_slot
+                "kept when {tested} > R = {:.4} (threshold {}, material.md §11.2)",
+                m.alpha_reference(1.0).reference(),
+                a.threshold
             ),
         ));
     }
@@ -1491,9 +1557,11 @@ fn view_of(m: &ResolvedMaterial, layered: Option<&str>) -> MaterialView {
             f.blend.mode
         ));
     }
-    if f.blend.is_transparent() && f.alpha_test.is_some() {
-        v.notes
-            .push("blended and alpha-tested: the viewer blends without the test".into());
+    if f.blend.is_transparent() && !f.blend.depth_write && f.alpha_test.is_some() {
+        v.notes.push(
+            "blended without depth write and alpha-tested: the viewer blends without the test"
+                .into(),
+        );
     }
     if let Some(c) = m.params.color(ids::DIFFUSE_COLOR)
         && c[..3].iter().any(|v| *v < 0.999)
@@ -1573,6 +1641,9 @@ fn used_as(m: &ResolvedMaterial, plan: &GpuPlan, id: u32) -> String {
 /// (surface, matching (shader override, material) layers) of an assembled part's draw.
 type LayeredKey = (Did, Vec<(Option<Did>, Did)>);
 
+/// Most material groups layered onto one surface (a hostile group list stays bounded).
+const MAX_SURFACE_GROUPS: usize = 16;
+
 /// Collects distinct textures and thumbnails while materials are added.
 pub(crate) struct Collector<'a> {
     ctx: &'a DataContext,
@@ -1580,7 +1651,8 @@ pub(crate) struct Collector<'a> {
     key_index: HashMap<TexKey, usize>,
     plans: Vec<GpuPlan>,
     materials: Vec<SceneMaterial>,
-    material_index: HashMap<(Did, Option<(Did, Did)>), usize>,
+    /// Materials of plain surfaces (no group, no look).
+    material_index: HashMap<Did, usize>,
     /// Materials of assembled parts by (surface, matching layers).
     layered_index: HashMap<LayeredKey, usize>,
     thumb_lists: Vec<(Did, bool)>,
@@ -1694,119 +1766,46 @@ impl<'a> Collector<'a> {
         self.add(title, plan, view, m.features.dyeable)
     }
 
-    /// The material of one draw: the surface record, layered with the appearance group
-    /// whose binding key matches (`material.md` §9.3).
+    /// The material of one draw: the surface record, layered with the appearance groups of
+    /// `groups` (in list order) whose binding key matches (`material.md` §9.3), through
+    /// [`Collector::surface_material_look`].
     pub(crate) fn surface_material(
         &mut self,
         surface: Did,
         groups: Option<&[MaterialGroup]>,
     ) -> usize {
-        let lib = &self.ctx.materials;
-        let group = groups.and_then(|g| {
-            let key = lib.surface_record(surface).ok()?.binding_key;
-            g.iter().find(|g| g.binding_key == key).copied()
-        });
-        let layer_key = group.map(|g| (g.shader, g.material));
-        if let Some(&i) = self.material_index.get(&(surface, layer_key)) {
-            return i;
-        }
-        let title = match group {
-            Some(g) if !g.material.is_null() => format!("{surface} + {}", g.material),
-            _ => surface.to_string(),
-        };
-        let i = match group {
-            Some(g) => {
-                let layering = Layering {
-                    shader_override: (!g.shader.is_null()).then_some(g.shader),
-                    materials: if g.material.is_null() {
-                        Vec::new()
-                    } else {
-                        vec![g.material]
-                    },
-                };
-                let what = format!(
-                    "group material {}{}",
+        let layers: Vec<(Option<Did>, Did, u32)> = groups
+            .unwrap_or_default()
+            .iter()
+            .map(|g| {
+                (
+                    Some(g.shader).filter(|d| !d.is_null()),
                     g.material,
-                    if g.shader.is_null() {
-                        String::new()
-                    } else {
-                        format!(", shader override {}", g.shader)
-                    }
-                );
-                match lib.resolve_layered(surface, &layering) {
-                    Ok(m) => self.add_resolved(&m, title, Some(&what)),
-                    Err(e) => self.add_failed(title, e.to_string()),
-                }
-            }
-            None => match lib.resolve_surface(surface) {
-                Ok(m) => self.add_resolved(&m, title, None),
-                Err(e) => self.add_failed(title, e.to_string()),
-            },
-        };
-        self.material_index.insert((surface, layer_key), i);
-        i
+                    g.binding_key,
+                )
+            })
+            .collect();
+        self.surface_material_look(surface, &layers, None)
     }
 
-    /// Decodes the textures and thumbnails; returns them with the final GPU materials.
-    /// The material of one draw of an assembled part: the surface record layered with
-    /// every layer of `layers` (material groups, then dye blocks, in application order,
-    /// `material.md` §9.2) whose binding key matches the surface's (`material.md` §9.3,
-    /// `appearance.md` §8 step 6). The first layer with a shader override sets the shader.
+    /// The material of one draw of an assembled part: [`Collector::surface_material_look`]
+    /// without a figure look.
     pub(crate) fn surface_material_layered(
         &mut self,
         surface: Did,
         layers: &[(Option<Did>, Did, u32)],
     ) -> usize {
-        let lib = &self.ctx.materials;
-        let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
-        let matching: Vec<(Option<Did>, Did)> = layers
-            .iter()
-            .filter(|(_, m, k)| Some(*k) == key && !m.is_null())
-            .map(|&(sh, m, _)| (sh, m))
-            .take(16)
-            .collect();
-        if matching.is_empty() {
-            return self.surface_material(surface, None);
-        }
-        let cache_key = (surface, matching.clone());
-        if let Some(&i) = self.layered_index.get(&cache_key) {
-            return i;
-        }
-        let shader = matching.iter().find_map(|(sh, _)| *sh);
-        let materials: Vec<Did> = matching.iter().map(|(_, m)| *m).collect();
-        let title = format!(
-            "{surface} + {}",
-            materials
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(" + ")
-        );
-        let what = format!(
-            "assembled layers {}{}",
-            materials
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
-            shader.map_or_else(String::new, |s| format!(", shader override {s}"))
-        );
-        let layering = Layering {
-            shader_override: shader,
-            materials,
-        };
-        let i = match lib.resolve_layered(surface, &layering) {
-            Ok(m) => self.add_resolved(&m, title, Some(&what)),
-            Err(e) => self.add_failed(title, e.to_string()),
-        };
-        self.layered_index.insert(cache_key, i);
-        i
+        self.surface_material_look(surface, layers, None)
     }
 
-    /// [`Collector::surface_material_layered`], then the figure look's composed face
-    /// texture and material edits for a part in `slot` (`appearance.md` §3.5, §8 step 6; the
-    /// client's figure path makes the same edits). Without a look, or with no edit for the
-    /// surface, the layered material.
+    /// The material of one draw: the surface record with the layers of `layers` (shader
+    /// override, material, binding key; material groups and dye blocks in group-list
+    /// order) whose binding key matches the surface's, then the figure look's composed
+    /// image and material edits for a part in `slot`. One rule for every path (the client's
+    /// figure and cell paths use the same, `material.md` §9.3 rules 1–4, `appearance.md`
+    /// §3.5): a group without a material still replaces the shader, the last override
+    /// applied wins, and the surface's materials are followed by the composed image, then
+    /// the group materials, then the edits.
     pub(crate) fn surface_material_look(
         &mut self,
         surface: Did,
@@ -1815,39 +1814,83 @@ impl<'a> Collector<'a> {
     ) -> usize {
         let lib = &self.ctx.materials;
         let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
-        let (Some((slot, look)), Some(key)) = (look, key) else {
-            return self.surface_material_layered(surface, layers);
-        };
-        let composed = look
-            .compositor_for(slot, key)
-            .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
-        let edits: Vec<tessera_material::ParameterEdit> = look
-            .edits_for(slot, key)
-            .into_iter()
-            .filter_map(tessera_material::ParameterEdit::from_material_edit)
-            .collect();
-        let edits = tessera_material::figure_edits(lib.runtime_textures(), &edits, composed);
-        if edits.is_empty() {
-            return self.surface_material_layered(surface, layers);
-        }
-        let matching: Vec<(Option<Did>, Did)> = layers
-            .iter()
-            .filter(|(_, m, k)| *k == key && !m.is_null())
-            .map(|&(sh, m, _)| (sh, m))
-            .take(16)
-            .collect();
-        let layering = (!matching.is_empty()).then(|| Layering {
-            shader_override: matching.iter().find_map(|(sh, _)| *sh),
-            materials: matching.iter().map(|(_, m)| *m).collect(),
-        });
-        let title = format!("{surface} + figure look");
-        let what = format!(
-            "figure look (appearance.md §3.5): {}",
-            edits
+        let matching: Vec<(Option<Did>, Did)> = key.map_or_else(Vec::new, |k| {
+            layers
                 .iter()
+                .filter(|(_, _, g)| tessera_material::group_binding_matches(*g, k))
+                .map(|&(sh, m, _)| (sh, m))
+                .take(MAX_SURFACE_GROUPS)
+                .collect()
+        });
+        let layering = Layering::from_groups(matching.iter().copied(), MAX_SURFACE_GROUPS);
+        let (composed, edits) = match (look, key) {
+            (Some((slot, look)), Some(key)) => {
+                let composed = look.compositor_for(slot, key).and_then(|f| {
+                    f.image.as_ref().and_then(|i| {
+                        tessera_material::composed_edit(lib.runtime_textures(), f.identity, i)
+                    })
+                });
+                let edits: Vec<tessera_material::ParameterEdit> = look
+                    .edits_for(slot, key)
+                    .into_iter()
+                    .filter_map(tessera_material::ParameterEdit::from_material_edit)
+                    .collect();
+                (composed, edits)
+            }
+            _ => (None, Vec::new()),
+        };
+        if layering.is_none() && composed.is_none() && edits.is_empty() {
+            if let Some(&i) = self.material_index.get(&surface) {
+                return i;
+            }
+            let i = match lib.resolve_surface(surface) {
+                Ok(m) => self.add_resolved(&m, surface.to_string(), None),
+                Err(e) => self.add_failed(surface.to_string(), e.to_string()),
+            };
+            self.material_index.insert(surface, i);
+            return i;
+        }
+        // Only group layers are cached: a look's run-time texture identities change
+        // between figures.
+        let cache_key = (composed.is_none() && edits.is_empty()).then_some((surface, matching));
+        if let Some(i) = cache_key.as_ref().and_then(|k| self.layered_index.get(k)) {
+            return *i;
+        }
+        let materials: &[Did] = layering.as_ref().map_or(&[], |l| l.materials.as_slice());
+        let shader = layering.as_ref().and_then(|l| l.shader_override);
+        let title = if composed.is_some() || !edits.is_empty() {
+            format!("{surface} + figure look")
+        } else if materials.is_empty() {
+            format!("{surface} + shader override")
+        } else {
+            format!(
+                "{surface} + {}",
+                materials
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            )
+        };
+        let mut what = format!(
+            "groups (material.md §9.3): materials [{}]{}",
+            materials
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            shader.map_or_else(String::new, |s| format!(
+                ", shader override {s} (last applied)"
+            ))
+        );
+        if composed.is_some() || !edits.is_empty() {
+            let look_text = composed
+                .iter()
+                .chain(&edits)
                 .map(|e| match e {
-                    tessera_material::ParameterEdit::Colour { id, value } =>
-                        format!("{id} = ({:.3}, {:.3}, {:.3})", value[0], value[1], value[2]),
+                    tessera_material::ParameterEdit::Colour { id, value } => {
+                        format!("{id} = ({:.3}, {:.3}, {:.3})", value[0], value[1], value[2])
+                    }
                     tessera_material::ParameterEdit::Texture { id, list }
                         if list.prefix() == tessera_material::RUNTIME_TEXTURE_PREFIX =>
                     {
@@ -1868,12 +1911,27 @@ impl<'a> Collector<'a> {
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", ");
+            what.push_str(&format!(
+                "; figure look (appearance.md §3.5, composed image before the groups, edits after): {look_text}"
+            ));
+        }
+        let resolved = lib.resolve_look(
+            surface,
+            &SurfaceLook {
+                composed: composed.as_slice(),
+                layer: layering.as_ref(),
+                edits: &edits,
+            },
         );
-        match lib.resolve_edited(surface, layering.as_ref(), &edits) {
+        let i = match resolved {
             Ok(m) => self.add_resolved(&m, title, Some(&what)),
             Err(e) => self.add_failed(title, e.to_string()),
+        };
+        if let Some(k) = cache_key {
+            self.layered_index.insert(k, i);
         }
+        i
     }
 
     pub(crate) fn finish(mut self, job: &JobContext<'_>) -> Result<Finished, ExplorerError> {
@@ -2012,21 +2070,25 @@ fn make_textures(
             } => (|| {
                 let base = diffuse.map(load).transpose()?;
                 let other = match alpha {
-                    AlphaPlan::From(d) => match load(d) {
-                        Ok(o) => Some(o),
-                        Err(e) => {
-                            note(
-                                &mut notes,
-                                format!("opacity map {e}; its base colour is drawn opaque"),
-                            );
-                            None
+                    AlphaPlan::From(d) | AlphaPlan::OwnTimes(d) | AlphaPlan::OwnPlus(d) => {
+                        match load(d) {
+                            Ok(o) => Some(o),
+                            Err(e) => {
+                                note(
+                                    &mut notes,
+                                    format!("opacity map {e}; its base colour is drawn opaque"),
+                                );
+                                None
+                            }
                         }
-                    },
+                    }
                     _ => None,
                 };
                 let src = match (alpha, &other) {
-                    (AlphaPlan::Own, _) => AlphaSource::Own,
+                    (AlphaPlan::Own | AlphaPlan::OwnTimes(_), None) => AlphaSource::Own,
                     (AlphaPlan::From(_), Some(o)) => AlphaSource::From(o),
+                    (AlphaPlan::OwnTimes(_), Some(o)) => AlphaSource::OwnTimes(o),
+                    (AlphaPlan::OwnPlus(_), Some(o)) => AlphaSource::OwnPlus(o),
                     _ => AlphaSource::Opaque,
                 };
                 Ok(base_texture(base.as_deref(), src).map(|img| SceneTexture {
@@ -3304,6 +3366,7 @@ mod tests {
             lit: true,
             alpha_test: None,
             opacity_slot: None,
+            tested_opacity: TestedOpacity::One,
             blend: BlendState {
                 mode: BlendMode::Opaque,
                 src: BlendFactor::One,
@@ -3393,6 +3456,7 @@ mod tests {
         f.alpha_test = Some(AlphaTest {
             threshold: 0.8,
             source_slot: ids::DIFFUSE,
+            opacity: TestedOpacity::Slot(ids::DIFFUSE),
         });
         let m = resolved(
             &[],
@@ -3401,7 +3465,8 @@ mod tests {
             None,
         );
         let plan = plan_material(&m);
-        assert_eq!(plan.material.alpha, AlphaKind::Mask(0.8));
+        // R = ⌊0.8 × 255⌋ / 255 (material.md §11.2 step 3).
+        assert_eq!(plan.material.alpha, AlphaKind::Mask(204.0 / 255.0));
         assert_eq!(
             plan.base,
             Some(TexKey::Base {
@@ -3444,6 +3509,7 @@ mod tests {
         f.alpha_test = Some(AlphaTest {
             threshold: 0.9,
             source_slot: ids::DIFFUSE,
+            opacity: TestedOpacity::Slot(ids::DIFFUSE),
         });
         let m = resolved(
             &[],
@@ -3452,7 +3518,9 @@ mod tests {
             None,
         );
         let plan = plan_material(&m);
-        assert_eq!(plan.material.alpha, AlphaKind::TestBlend(0.9));
+        // R = ⌊0.9 × 255⌋ / 255 = 229 / 255 (material.md §11.2 step 3).
+        let r = 229.0 / 255.0;
+        assert_eq!(plan.material.alpha, AlphaKind::TestBlend(r));
         assert!(matches!(
             plan.base,
             Some(TexKey::Base {
@@ -3463,9 +3531,13 @@ mod tests {
         // The viewer's material: alpha test and blend with depth write.
         assert_eq!(
             crate::viewport::render_alpha(plan.material.alpha),
-            tessera_render::AlphaMode::TestBlend { cutoff: 0.9 }
+            tessera_render::AlphaMode::TestBlend { cutoff: r }
         );
-        // Without an alpha test the same surface is translucent by its texture alpha.
+        // The lit output alpha carries the 2000 alpha (1 here, §11.3).
+        assert_eq!(plan.material.base_color[3], 1.0);
+        // Without an alpha test the same surface is translucent by its texture alpha and
+        // still writes depth; R = 0 (SRCALPHA source factor, §11.2 step 3) drops only
+        // opacity 0.
         let mut f2 = f;
         f2.alpha_test = None;
         let m = resolved(
@@ -3474,7 +3546,7 @@ mod tests {
             f2,
             None,
         );
-        assert_eq!(plan_material(&m).material.alpha, AlphaKind::Blend);
+        assert_eq!(plan_material(&m).material.alpha, AlphaKind::TestBlend(0.0));
         // A blend without depth write (unlit blend records) stays a plain blend.
         let mut f3 = f;
         f3.lit = false;
@@ -3492,6 +3564,7 @@ mod tests {
     fn plan_opacity_from_a_separate_slot_when_blended() {
         let mut f = opaque_features();
         f.blend.mode = BlendMode::AlphaBlend;
+        f.blend.src = BlendFactor::SrcAlpha;
         f.blend.opacity_slot = Some(ids::OPACITY);
         f.opacity_slot = Some(ids::OPACITY);
         let m = resolved(
@@ -3504,7 +3577,8 @@ mod tests {
             None,
         );
         let plan = plan_material(&m);
-        assert_eq!(plan.material.alpha, AlphaKind::Blend);
+        // A lit blend writes depth: tested by R = 0 (test off, SRCALPHA; §11.2 step 3).
+        assert_eq!(plan.material.alpha, AlphaKind::TestBlend(0.0));
         assert!(matches!(
             plan.base,
             Some(TexKey::Base { alpha: AlphaPlan::From(d), .. }) if d == Did(OPACITY_TEX)
@@ -3526,6 +3600,50 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// `material.md` §11.2 table: two opacity-bearing roles test the product of their
+    /// alphas, the sum records their sum; both are baked into the base alpha.
+    #[test]
+    fn plan_tested_opacity_of_two_roles() {
+        for (tested, expected) in [
+            (
+                TestedOpacity::Product(ids::DIFFUSE, ids::OPACITY),
+                AlphaPlan::OwnTimes(Did(OPACITY_TEX)),
+            ),
+            (
+                TestedOpacity::Sum(ids::DIFFUSE, ids::OPACITY),
+                AlphaPlan::OwnPlus(Did(OPACITY_TEX)),
+            ),
+        ] {
+            let mut f = opaque_features();
+            f.blend.mode = BlendMode::AlphaBlend;
+            f.blend.src = BlendFactor::SrcAlpha;
+            f.blend.opacity_slot = Some(ids::DIFFUSE);
+            f.opacity_slot = Some(ids::DIFFUSE);
+            f.tested_opacity = tested;
+            f.alpha_test = Some(AlphaTest {
+                threshold: 0.65,
+                source_slot: ids::DIFFUSE,
+                opacity: tested,
+            });
+            let m = resolved(
+                &[],
+                vec![
+                    slot(ids::DIFFUSE, DIFFUSE_TEX, "ColorAndOpacity"),
+                    slot(ids::OPACITY, OPACITY_TEX, "OpacityAlpha"),
+                ],
+                f,
+                None,
+            );
+            let plan = plan_material(&m);
+            assert!(
+                matches!(plan.base, Some(TexKey::Base { alpha, .. }) if alpha == expected),
+                "{tested:?}"
+            );
+            // The 165 / 255 boundary: R = ⌊0.65 × 255⌋ / 255.
+            assert_eq!(plan.material.alpha, AlphaKind::TestBlend(165.0 / 255.0));
+        }
     }
 
     #[test]

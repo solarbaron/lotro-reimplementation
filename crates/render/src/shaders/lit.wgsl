@@ -64,11 +64,11 @@ fn light_index(i: u32) -> u32 {
 struct Shaded {
     // Colour in stored-value space, fog applied as for a base pass.
     color: vec3<f32>,
-    // Output alpha (lighting.md §5.12): opacity x M.alpha when the base texture carries the
-    // opacity, else M.alpha (x vertex alpha where read); for a fixed blend the opacity
-    // source alone (material.md §11.3).
+    // Output alpha (material.md §11.3): the tested opacity x M.alpha (x vertex alpha where
+    // read), 1 x M.alpha without an opacity source; for a fixed blend the opacity source
+    // alone. Clamped by the fragment stages.
     alpha: f32,
-    // Opacity texel alpha for the alpha test (before vertex colours, §5.12).
+    // The tested opacity for the alpha test (material.md §11.2; before vertex colours).
     opacity: f32,
     // Unfogged colour and fog factor (additive passes scale by 1 - f instead).
     unfogged: vec3<f32>,
@@ -106,9 +106,9 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     if (lit_flag(LIT_VERTEX_COLORS)) {
         m = m * in.color;
     }
-    // Only a base-texture opacity reaches the output alpha; the opacity of slot 3020 or 3018
-    // drives the alpha test alone (lighting.md §5.12, material.md §11.3).
-    out.alpha = select(1.0, out.opacity, lit_source(LIT_OPACITY_SHIFT) == SOURCE_BASE) * m.a;
+    // The tested opacity reaches the output alpha whatever its source (material.md §11.3,
+    // revised 2026-10-10, MA60).
+    out.alpha = out.opacity * m.a;
     // A fixed blend's factors read the §11.2 opacity source, or 1 without one
     // (material.md §11.3, rule for unlit records).
     if (lit_flag(LIT_FACTOR_OPACITY)) {
@@ -197,7 +197,8 @@ fn lit_shade(in: LitVsOut) -> Shaded {
 }
 
 fn alpha_test(s: Shaded) {
-    // Discarded when opacity <= threshold (lighting.md §5.12).
+    // Kept only when the tested opacity is greater than the reference R (material.md §11.2):
+    // discarded when opacity <= R. R = -1 keeps everything, R = 0 drops opacity 0 only.
     if (s.opacity <= draw.params.x) {
         discard;
     }

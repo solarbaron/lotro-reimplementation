@@ -68,6 +68,13 @@ const LIT_EMISSIVE_UV1: u32 = 524288u;
 const LIT_SRGB_LAYER2: u32 = 1048576u;
 const LIT_LAYER_ALPHA: u32 = 2097152u;
 const LIT_LAYER_OPACITY_ONLY: u32 = 4194304u;
+// A second opacity source (Opacity::BaseWith, material.md §11.2 table): two bits, 2 the
+// emissive alpha, 3 the opacity texture's alpha; LIT_OPACITY_SUM adds the two alphas
+// (else they are multiplied). LIT_LAYER_SUM: the second colour layer's alpha is added to
+// the base alpha (the sum records with ColorAndOpacity2).
+const LIT_OPACITY2_SHIFT: u32 = 23u;
+const LIT_OPACITY_SUM: u32 = 33554432u;
+const LIT_LAYER_SUM: u32 = 67108864u;
 
 const SOURCE_ONE: u32 = 0u;
 const SOURCE_BASE: u32 = 1u;
@@ -127,6 +134,10 @@ fn lit_layered(base: vec4<f32>, layer2: vec4<f32>) -> vec4<f32> {
     var a = base.a;
     if (lit_flag(LIT_LAYER_ALPHA)) {
         a = a * layer2.a;
+    }
+    if (lit_flag(LIT_LAYER_SUM)) {
+        // Unclamped: the output alpha is clamped (material.md §11.3).
+        a = a + layer2.a;
     }
     return vec4<f32>(rgb, a);
 }
@@ -196,14 +207,27 @@ fn skin_dir(s: SkinIn, d: vec3<f32>) -> vec3<f32> {
     return acc;
 }
 
-// The opacity texel alpha (material.md §11.2 source): 1, base alpha, emissive alpha or
-// the opacity texture's alpha. Used by the alpha test (also in the shadow pass); only the
-// base-alpha source also reaches the output alpha (lighting.md §5.12).
-fn lit_opacity(base: vec4<f32>, emissive: vec4<f32>, opacity: vec4<f32>) -> f32 {
-    switch (lit_source(LIT_OPACITY_SHIFT)) {
+fn lit_opacity_part(code: u32, base: vec4<f32>, emissive: vec4<f32>, opacity: vec4<f32>) -> f32 {
+    switch (code) {
         case 1u: { return base.a; }
         case 2u: { return emissive.a; }
         case 3u: { return opacity.a; }
         default: { return 1.0; }
     }
+}
+
+// The tested opacity (material.md §11.2 table): 1, the base alpha, the emissive alpha or the
+// opacity texture's alpha, or the base alpha times (or plus) a second one. Used by the alpha
+// test (also in the shadow pass) and, times M.alpha, as the output alpha (§11.3).
+fn lit_opacity(base: vec4<f32>, emissive: vec4<f32>, opacity: vec4<f32>) -> f32 {
+    let a = lit_opacity_part(lit_source(LIT_OPACITY_SHIFT), base, emissive, opacity);
+    let second = lit_source(LIT_OPACITY2_SHIFT);
+    if (second == 0u) {
+        return a;
+    }
+    let b = lit_opacity_part(second, base, emissive, opacity);
+    if (lit_flag(LIT_OPACITY_SUM)) {
+        return a + b;
+    }
+    return a * b;
 }

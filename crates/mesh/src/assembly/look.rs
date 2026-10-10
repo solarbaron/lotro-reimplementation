@@ -42,10 +42,11 @@
 //!
 //! The look's surfaces (§3.5 "How material edits combine"): a part whose slot equals a
 //! node's `MeshType` (2: every part; 0: none) and a surface whose binding key equals its
-//! `MaterialType` (2: every surface) get the composed image of each matching compositor as
-//! the base colour (3000), then the matching edits sorted by descending `Priority` (start
-//! order among equals), each a material of its own, so the lowest `Priority` takes effect
-//! (`tessera_material::figure_edits`).
+//! `MaterialType` (2: every surface) get the composed image of the last attached matching
+//! compositor as the base colour (3000), then the figure's material groups, then the
+//! matching edits sorted by descending `Priority` (start order among equals), each a
+//! material of its own, so the lowest `Priority` takes effect (`material.md` §9.3 rule 4,
+//! `tessera_material::MaterialLibrary::resolve_look`).
 //!
 //! Composition is cached ([`LookCache`], shared by every figure of a client or explorer):
 //! parsed compositor records and decoded source images by DID, composed images by

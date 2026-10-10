@@ -17,6 +17,7 @@ use crate::lighting::{
 };
 use crate::material::{
     FixedAlpha, FixedBlend, FogRule, Gloss, LightSelection, LitSurface, Material, Opacity,
+    SecondOpacity,
 };
 use crate::mesh::GpuVertex;
 use crate::mesh_pipelines::{Cull, DrawUniform, MeshLayouts};
@@ -63,6 +64,13 @@ pub(crate) mod lit_flag {
     pub const LAYER_ALPHA: u32 = 1 << 21;
     /// Base RGB alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
     pub const LAYER_OPACITY_ONLY: u32 = 1 << 22;
+    /// Second opacity source of [`crate::Opacity::BaseWith`] (two bits: 0 none, 2 the
+    /// emissive alpha, 3 the opacity texture's alpha).
+    pub const OPACITY2_SHIFT: u32 = 23;
+    /// The two opacity sources are added (else multiplied).
+    pub const OPACITY_SUM: u32 = 1 << 25;
+    /// The second layer's alpha is added to the base alpha ([`crate::LayerAlpha::Summed`]).
+    pub const LAYER_SUM: u32 = 1 << 26;
 }
 
 /// The lit shader source.
@@ -143,17 +151,27 @@ pub(crate) fn lit_fields(
     // A base alpha that masks the dye is not an opacity (material.md §11.2: testing the dye
     // mask would punch holes in dyeable cloth), so it neither tests nor reaches the output.
     let dye_in_base_alpha = u.flags[2] == DYE_SOURCE_BASE_ALPHA;
-    let opacity = match lit.opacity {
-        Opacity::One => 0,
-        Opacity::BaseAlpha if dye_in_base_alpha => 0,
-        Opacity::BaseAlpha => 1,
-        Opacity::EmissiveAlpha if ctx.present[4] => 2,
-        Opacity::EmissiveAlpha => 0,
-        Opacity::Texture(_) if ctx.present[6] => 3,
-        Opacity::Texture(_) => 0,
+    let base_code = if dye_in_base_alpha { 0 } else { 1 };
+    // A source whose texture did not resolve contributes 1 (the white texture's alpha).
+    let second_code = |second: SecondOpacity| match second {
+        SecondOpacity::EmissiveAlpha if ctx.present[4] => 2,
+        SecondOpacity::Texture(_) if ctx.present[6] => 3,
+        _ => 0,
+    };
+    let (opacity, opacity2, sum) = match lit.opacity {
+        Opacity::One => (0, 0, false),
+        Opacity::BaseAlpha => (base_code, 0, false),
+        Opacity::EmissiveAlpha => (second_code(SecondOpacity::EmissiveAlpha), 0, false),
+        Opacity::Texture(id) => (second_code(SecondOpacity::Texture(id)), 0, false),
+        // material.md §11.2 table: the base alpha with a second alpha, multiplied or added.
+        Opacity::BaseWith { second, sum } => (base_code, second_code(second), sum),
     };
     flags |= gloss << lit_flag::GLOSS_SHIFT;
     flags |= opacity << lit_flag::OPACITY_SHIFT;
+    flags |= opacity2 << lit_flag::OPACITY2_SHIFT;
+    if sum && opacity2 != 0 {
+        flags |= lit_flag::OPACITY_SUM;
+    }
     // material.md §11.3, rule for unlit records: "opacity" in a blend factor is the §11.2
     // opacity source, or 1 without one (not × M.alpha).
     if matches!(material.alpha, crate::AlphaMode::Fixed(_)) {
@@ -188,6 +206,7 @@ pub(crate) fn lit_fields(
             crate::LayerAlpha::Ignored => 0,
             crate::LayerAlpha::Multiplied => lit_flag::LAYER_ALPHA,
             crate::LayerAlpha::OpacityOnly => lit_flag::LAYER_OPACITY_ONLY,
+            crate::LayerAlpha::Summed => lit_flag::LAYER_SUM,
         };
     }
     if lit.emissive_uv1 {

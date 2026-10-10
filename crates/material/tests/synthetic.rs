@@ -812,8 +812,14 @@ fn appearance_group_with_shader_override_and_dye() {
         material: Did(0x3000_0002),
         binding_key: 2,
     };
-    assert!(!none.applies_to(&surface));
+    // Binding key 2 matches every surface record (§9.3 binding rule).
+    assert!(none.applies_to(&surface));
     assert_eq!(none.layering(None).shader_override, None);
+    let other = AppearanceGroup {
+        binding_key: 0x1000_0099,
+        ..none
+    };
+    assert!(!other.applies_to(&surface));
 }
 
 #[test]
@@ -2431,4 +2437,255 @@ fn runtime_textures_are_bounded() {
     assert!(!issued.contains(&again));
     // Not a run-time DID.
     assert!(reg.get(Did(0x4000_0001)).is_none());
+}
+
+// ---------------------------------------------------------------------------------------
+// Appearance groups on a figure (material.md §9.3 rules 1–4, revision of 2026-10-10)
+// ---------------------------------------------------------------------------------------
+
+/// Rule 1: a group with material 0 and an override still replaces the shader and appends
+/// nothing; a group with both 0 does nothing.
+#[test]
+fn shader_only_group_replaces_the_shader() {
+    let lib = library(base_store());
+    let layer = Layering::from_groups([(Some(Did(0x2B00_0020)), Did(0))], 16).unwrap();
+    assert_eq!(layer.shader_override, Some(Did(0x2B00_0020)));
+    assert!(layer.materials.is_empty());
+    let r = lib.resolve_layered(Did(0x3100_0003), &layer).unwrap();
+    assert_eq!(r.shader.did, Did(0x2B00_0020));
+    assert_eq!(r.materials, vec![Did(0x3000_0001), Did(0x3000_0002)]);
+    assert_eq!(Layering::from_groups([(None, Did(0))], 16), None);
+    assert_eq!(Layering::from_groups([(Some(Did(0)), Did(0))], 16), None);
+    assert_eq!(
+        Layering::from_groups(std::iter::empty::<(Option<Did>, Did)>(), 16),
+        None
+    );
+}
+
+/// Rule 2: overrides apply in group-list order, the last one applied wins; materials are
+/// appended in the same order. Rule 3: a material appended before a later override applies
+/// to that override's declarations.
+#[test]
+fn last_override_in_list_order_wins() {
+    let lib = library(base_store());
+    let groups = [
+        (Some(Did(0x2B00_0010)), Did(0x3000_0003)),
+        (Some(Did(0x2B00_0020)), Did(0)),
+    ];
+    let layer = Layering::from_groups(groups, 16).unwrap();
+    assert_eq!(layer.shader_override, Some(Did(0x2B00_0020)));
+    assert_eq!(layer.materials, vec![Did(0x3000_0003)]);
+    let r = lib.resolve_layered(Did(0x3100_0003), &layer).unwrap();
+    assert_eq!(r.shader.did, Did(0x2B00_0020));
+    // The dye material came before the override, and sets the override's 2003.
+    assert_eq!(r.dye.unwrap().primary.color, [0.0, 0.0, 1.0, 1.0]);
+    // Reversed list: the other override wins.
+    let reversed = Layering::from_groups(groups.into_iter().rev(), 16).unwrap();
+    assert_eq!(reversed.shader_override, Some(Did(0x2B00_0010)));
+    // The cap bounds the groups taken.
+    let capped = Layering::from_groups(groups, 1).unwrap();
+    assert_eq!(capped.shader_override, Some(Did(0x2B00_0010)));
+}
+
+/// Rule 4: the composed images go after the surface's own materials and before the group
+/// materials, the look edits after both.
+#[test]
+fn composed_images_then_groups_then_edits() {
+    use tessera_material::{ParameterEdit, SurfaceLook, composed_edit};
+    let lib = library(base_store());
+    let image = std::sync::Arc::new(tessera_formats::RgbaImage {
+        width: 1,
+        height: 1,
+        pixels: vec![1, 2, 3, 255],
+    });
+    let composed = composed_edit(lib.runtime_textures(), 0xFACE, &image).unwrap();
+    let ParameterEdit::Texture { list: face, .. } = composed else {
+        panic!("composed image is a texture edit");
+    };
+    // The group's material 0x3000_0002 sets 3000: it wins over the composed image.
+    let layer = Layering::from_groups([(None, Did(0x3000_0002))], 16).unwrap();
+    let look = SurfaceLook {
+        composed: std::slice::from_ref(&composed),
+        layer: Some(&layer),
+        edits: &[],
+    };
+    let r = lib.resolve_look(Did(0x3100_0004), &look).unwrap();
+    assert_eq!(r.diffuse(), Some(Did(0x4000_0042)));
+    assert_eq!(r.materials, vec![Did(0x3000_0002)], "stored materials only");
+    // Without the group the composed image is the base colour.
+    let r = lib
+        .resolve_look(
+            Did(0x3100_0004),
+            &SurfaceLook {
+                composed: std::slice::from_ref(&composed),
+                ..SurfaceLook::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(r.diffuse(), Some(face));
+    // A look edit of 3000 wins over both.
+    let edit = ParameterEdit::Texture {
+        id: 3000,
+        list: Did(0x4000_0777),
+    };
+    let r = lib
+        .resolve_look(
+            Did(0x3100_0004),
+            &SurfaceLook {
+                edits: std::slice::from_ref(&edit),
+                ..look
+            },
+        )
+        .unwrap();
+    assert_eq!(r.diffuse(), Some(Did(0x4000_0777)));
+}
+
+#[test]
+fn binding_key_two_matches_every_surface() {
+    use tessera_material::{BINDING_KEY_ALL, group_binding_matches};
+    assert_eq!(BINDING_KEY_ALL, 2);
+    assert!(group_binding_matches(2, 0x1000_0024));
+    assert!(group_binding_matches(0x1000_0024, 0x1000_0024));
+    assert!(!group_binding_matches(0x1000_0041, 0x1000_0024));
+}
+
+// ---------------------------------------------------------------------------------------
+// Tested opacity and the per-draw reference (material.md §11.2, §11.3)
+// ---------------------------------------------------------------------------------------
+
+/// A lit two-pass shader `did` whose slots `slots` are bound to samplers `names`, with alpha
+/// test on at `threshold`.
+fn roles_shader(did: u32, slots: &[u32], names: &[&str], threshold: f32) -> Vec<u8> {
+    let mut decls: Vec<Vec<u8>> = slots
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| entry(id, V::Word(0x4000_0700 + i as u32), &[(10, 0, i as u32)], 0))
+        .collect();
+    decls.push(entry(4004, V::Word(1), &[], 0));
+    decls.push(entry(1043, V::Const(threshold), &[], 0));
+    shader(
+        did,
+        &decls,
+        &[
+            Perm {
+                programs: None,
+                samplers: names,
+                extra_type5: false,
+                state: LIT_BASE,
+            },
+            Perm {
+                programs: None,
+                samplers: names,
+                extra_type5: false,
+                state: LIT_LIGHT,
+            },
+        ],
+    )
+}
+
+#[test]
+fn tested_opacity_per_role_combination() {
+    use tessera_material::TestedOpacity as T;
+    let co = (3000, "ColorAndOpacity");
+    let co2 = (3001, "ColorAndOpacity2");
+    let eo = (3018, "EmissiveAndOpacity");
+    let oa = (3020, "OpacityAlpha");
+    let color = (3000, "Color");
+    // (roles, shader DID, expected) — material.md §11.2 table "Tested opacity".
+    type Roles<'a> = Vec<(u32, &'a str)>;
+    let cases: Vec<(Roles<'_>, u32, T)> = vec![
+        (vec![co], 0x2B00_0700, T::Slot(3000)),
+        (vec![color, oa], 0x2B00_0701, T::Slot(3020)),
+        (vec![eo], 0x2B00_0772, T::Slot(3018)),
+        (vec![co, co2], 0x2B00_07A1, T::Product(3000, 3001)),
+        (vec![co, co2], 0x2B00_07B4, T::Sum(3000, 3001)),
+        (vec![co, co2], 0x2B00_07CC, T::Sum(3000, 3001)),
+        (vec![co, co2], 0x2B00_08A5, T::Sum(3000, 3001)),
+        (vec![co, co2], 0x2B00_08A6, T::Sum(3000, 3001)),
+        (vec![co, co2], 0x2B00_09E9, T::Sum(3000, 3001)),
+        (vec![co, eo], 0x2B00_0739, T::Product(3000, 3018)),
+        (vec![co, eo], 0x2B00_0812, T::Sum(3000, 3018)),
+        (vec![co, eo], 0x2B00_0813, T::Sum(3000, 3018)),
+        (vec![co, oa], 0x2B00_06F8, T::Product(3000, 3020)),
+        (vec![color], 0x2B00_09DA, T::One),
+    ];
+    for (roles, did, expected) in cases {
+        let slots: Vec<u32> = roles.iter().map(|r| r.0).collect();
+        let names: Vec<&str> = roles.iter().map(|r| r.1).collect();
+        let r = resolve_one(roles_shader(did, &slots, &names, 0.65), did, &[]);
+        let f = &r.features;
+        assert_eq!(f.tested_opacity, expected, "{did:#x}");
+        assert_eq!(f.opacity_slot, expected.first(), "{did:#x}");
+        match expected {
+            // No opacity source: alpha test off even with 4004 = 1.
+            T::One => assert_eq!(f.alpha_test, None),
+            _ => {
+                let at = f.alpha_test.unwrap();
+                assert_eq!(at.opacity, expected, "{did:#x}");
+                assert_eq!(at.threshold, 0.65);
+            }
+        }
+    }
+}
+
+/// A sum record's `ColorAndOpacity2` layer adds its alpha (§11.2), a product record's
+/// multiplies it (§10.3 MA54).
+#[test]
+fn sum_records_add_the_second_layer_alpha() {
+    use tessera_material::{LayerAlpha, second_layer_plan};
+    for (did, expected) in [
+        (0x2B00_07B4, LayerAlpha::Summed),
+        (0x2B00_07A1, LayerAlpha::Multiplied),
+    ] {
+        let r = resolve_one(
+            roles_shader(
+                did,
+                &[3000, 3001],
+                &["ColorAndOpacity", "ColorAndOpacity2"],
+                0.5,
+            ),
+            did,
+            &[],
+        );
+        assert_eq!(second_layer_plan(&r).unwrap().alpha, expected, "{did:#x}");
+    }
+}
+
+/// §11.2 per draw: R from the resolved material, the 165 / 255 boundary, the fade by the
+/// depth-write switch and the R = 0 / −1 rule.
+#[test]
+fn alpha_reference_of_a_resolved_material() {
+    use tessera_material::alpha::keeps;
+    let did = 0x2B00_0700;
+    let r = resolve_one(
+        roles_shader(did, &[3000], &["ColorAndOpacity"], 0.65),
+        did,
+        &[],
+    );
+    let at_one = r.alpha_reference(1.0);
+    assert!(at_one.test && at_one.depth_write && at_one.src_alpha);
+    let reference = at_one.reference();
+    assert_eq!(reference, 165.0 / 255.0);
+    assert!(keeps(166.0 / 255.0, reference));
+    assert!(!keeps(165.0_f32 / 255.0, reference));
+    // A fading object (tint alpha 0.5) in a depth-writing permutation: r × A.
+    assert_eq!(r.alpha_reference(0.5).reference(), 82.0 / 255.0);
+    // Alpha test off (4004 = 0): a lit surface (SRCALPHA) keeps R = 0.
+    let off = resolve_one(
+        roles_shader(did, &[3000], &["ColorAndOpacity"], 0.65),
+        did,
+        &[(
+            0x3000_0700,
+            material(0x3000_0700, &[entry(4004, V::Word(0), &[], 0)]),
+        )],
+    );
+    assert_eq!(off.features.alpha_test, None);
+    assert_eq!(off.alpha_reference(1.0).reference(), 0.0);
+    // An unlit ONE / ZERO record without a test: R = −1.
+    let unlit = resolve_one(
+        unlit_shader(0x2B00_0702, (2, 1, 1, 1, 2, 0.8)),
+        0x2B00_0702,
+        &[],
+    );
+    assert_eq!(unlit.alpha_reference(1.0).reference(), -1.0);
 }

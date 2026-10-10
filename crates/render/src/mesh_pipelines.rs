@@ -193,6 +193,9 @@ pub(crate) enum Kind {
     Opaque,
     Mask,
     Blend,
+    /// Alpha test, then source-alpha blend with depth write ([`AlphaMode::TestBlend`] in
+    /// the lit shading: `material.md` §11.2, §11.3).
+    TestBlend,
     Wire,
     NormalLines,
 }
@@ -313,11 +316,12 @@ impl MeshLayouts {
 
     fn build(&self, device: &wgpu::Device, key: MeshKey) -> wgpu::RenderPipeline {
         let (vs, fs, topology, step) = match key.kind {
-            Kind::Opaque | Kind::Mask | Kind::Blend if key.skinned => (
+            Kind::Opaque | Kind::Mask | Kind::Blend | Kind::TestBlend if key.skinned => (
                 "vs_skinned",
                 match key.kind {
                     Kind::Opaque => "fs_opaque",
                     Kind::Mask => "fs_mask",
+                    Kind::TestBlend => "fs_test_blend",
                     _ => "fs_blend",
                 },
                 wgpu::PrimitiveTopology::TriangleList,
@@ -353,6 +357,12 @@ impl MeshLayouts {
                 wgpu::PrimitiveTopology::TriangleList,
                 wgpu::VertexStepMode::Vertex,
             ),
+            Kind::TestBlend => (
+                "vs_main",
+                "fs_test_blend",
+                wgpu::PrimitiveTopology::TriangleList,
+                wgpu::VertexStepMode::Vertex,
+            ),
             Kind::Wire => (
                 "vs_wire",
                 "fs_overlay",
@@ -368,7 +378,9 @@ impl MeshLayouts {
         };
         let blend = match key.kind {
             Kind::Opaque | Kind::Mask => None,
-            Kind::Blend | Kind::Wire | Kind::NormalLines => Some(wgpu::BlendState::ALPHA_BLENDING),
+            Kind::Blend | Kind::TestBlend | Kind::Wire | Kind::NormalLines => {
+                Some(wgpu::BlendState::ALPHA_BLENDING)
+            }
         };
         let layout = match key.kind {
             Kind::Wire | Kind::NormalLines => &self.overlay_layout,

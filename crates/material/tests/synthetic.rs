@@ -2260,6 +2260,54 @@ fn edits_apply_after_every_material() {
     assert_eq!(undeclared.dye.unwrap().primary.color, [1.0; 4]);
 }
 
+/// A face registered while its figure's materials are planned survives any number of
+/// other registrations (a crowd, `--crowd` up to 1,024 figures) until its texture is first
+/// requested; only the pending bound forgets it.
+#[test]
+fn runtime_textures_keep_registrations_until_requested() {
+    use tessera_material::RuntimeTextures;
+    let reg = RuntimeTextures::default();
+    let img = |n: u8| {
+        std::sync::Arc::new(tessera_formats::RgbaImage {
+            width: 1,
+            height: 1,
+            pixels: vec![n, n, n, 255],
+        })
+    };
+    // Some faces already requested fill the requested pool.
+    for i in 0..RuntimeTextures::MAX_ENTRIES as u64 {
+        let did = reg.register(0x30_0000_0000 + i, img(9)).unwrap();
+        assert!(reg.get(did).is_some());
+    }
+    // A burst of more distinct faces than the requested pool holds, none requested yet.
+    let burst = 4 * RuntimeTextures::MAX_ENTRIES;
+    let dids: Vec<Did> = (0..burst as u64)
+        .map(|i| {
+            reg.register(0x40_0000_0000 + i, img((i % 200) as u8))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(reg.pending(), burst);
+    // Every one of them is still answered at its first request, oldest first.
+    for (i, did) in dids.iter().enumerate() {
+        assert_eq!(
+            reg.get(*did).unwrap().pixels[0],
+            (i % 200) as u8,
+            "face {i}"
+        );
+    }
+    assert_eq!(reg.pending(), 0);
+    // Once requested they are ordinary entries: the requested pool is bounded again.
+    assert_eq!(reg.len(), RuntimeTextures::MAX_ENTRIES);
+    // The pending pool is bounded too: past it the oldest pending entry is forgotten.
+    let first = reg.register(0x50_0000_0000, img(1)).unwrap();
+    for i in 1..=RuntimeTextures::MAX_PENDING as u64 {
+        reg.register(0x50_0000_0000 + i, img(2)).unwrap();
+    }
+    assert_eq!(reg.pending(), RuntimeTextures::MAX_PENDING);
+    assert!(reg.get(first).is_none());
+}
+
 #[test]
 fn runtime_textures_are_bounded() {
     use tessera_material::RuntimeTextures;
@@ -2289,14 +2337,19 @@ fn runtime_textures_are_bounded() {
     assert_eq!(reg.register(0x0200_0005, img(2)), Some(b));
     let mut issued = vec![a, b];
     for i in 0..RuntimeTextures::MAX_ENTRIES as u64 - 1 {
-        issued.push(reg.register(0x10_0000_0000 + i, img(3)).unwrap());
+        let did = reg.register(0x10_0000_0000 + i, img(3)).unwrap();
+        assert!(reg.get(did).is_some());
+        issued.push(did);
     }
     assert_eq!(reg.len(), RuntimeTextures::MAX_ENTRIES);
+    assert_eq!(reg.pending(), 0);
     assert!(reg.get(a).is_none());
     assert_eq!(reg.get(b).unwrap().pixels[0], 2);
-    // A request counts as a use too: `b` was just requested, so the next registration
-    // evicts the oldest other entry, not `b`.
-    issued.push(reg.register(0x20_0000_0000, img(4)).unwrap());
+    // A request counts as a use too: `b` was just requested, so the next requested
+    // entry evicts the oldest other entry, not `b`.
+    let did = reg.register(0x20_0000_0000, img(4)).unwrap();
+    assert!(reg.get(did).is_some());
+    issued.push(did);
     assert!(reg.get(b).is_some());
     // DIDs are never handed out twice, not even after their entry was forgotten.
     let mut sorted = issued.clone();

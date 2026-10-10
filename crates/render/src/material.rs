@@ -628,6 +628,13 @@ pub enum SecondOpacity {
     EmissiveAlpha,
     /// The alpha of a separate texture.
     Texture(TextureId),
+    /// The constant 1: the second opacity slot's effective texture is 0, which reads as an
+    /// all-ones texel (`material.md` §18, Tessera Decision answered 2026-10-10). A product is
+    /// then the base alpha alone and a sum the base alpha + 1, so the output alpha is
+    /// min(1, (alpha + 1) × *M*.alpha). A [`SecondOpacity::Texture`] or
+    /// [`SecondOpacity::EmissiveAlpha`] whose texture does not resolve reads the white
+    /// texture and so acts the same.
+    One,
 }
 
 /// Which lights of the pass's light table ([`crate::FrameLighting::lights`]) a draw

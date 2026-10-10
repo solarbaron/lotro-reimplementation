@@ -392,6 +392,18 @@ reference *R* the caller computes by `material.md` §11.2 steps 1–3 (in the ma
 > alpha whatever the glow colour (`material.md` §18, answer to the note of commit b949a54,
 > item 5).
 
+> **OPEN (implementer, clean room, 2026-10-10; conformance to the `material.md` §18
+> Decision on a texture 0, wording of 2026-10-10):** API choice to record. The `Opacity`
+> list above names two `SecondOpacity` values; the implementation adds a third,
+> `SecondOpacity::One` (the constant 1), which a caller passes for a sum or product record
+> whose second opacity slot has an effective texture 0. With `sum` the tested opacity is the
+> base alpha + 1 and the output alpha min(1, (alpha + 1) × *M*.alpha); without, the base
+> alpha alone. A `SecondOpacity::Texture` or `SecondOpacity::EmissiveAlpha` whose texture
+> does not resolve now acts the same (it reads the white texture's alpha 1): bit 25 of the
+> lit flags is set for every `sum`, also when bits 23–24 are 0, where before an unresolved
+> second source left the base alpha alone in a sum. Please fold the variant into the
+> `Opacity` list (and the flag sentence of the draw uniform) or name another shape.
+
 **Light selection (`lighting.md` §8.5, rows L30–L32, L34):** `LightSelection::Auto` takes the
 point lights whose squared distance to the draw's world box is below ρ² (strict), where ρ is
 the light's selection radius; it leaves out lights flagged as baked into the landscape on

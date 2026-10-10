@@ -158,6 +158,12 @@ pub enum SecondOpacityPlan {
         /// Add the alphas.
         sum: bool,
     },
+    /// A sum record whose second opacity slot (3001, 3018 or 3020) has no texture: the
+    /// missing texture reads alpha 1 (`material.md` §18, Tessera Decision answered
+    /// 2026-10-10), so the tested opacity is the base alpha + 1 and the output alpha
+    /// min(1, (alpha + 1) × *A*). A product with a missing texture is the base alpha alone
+    /// and needs no plan.
+    MissingInSum,
 }
 
 impl LitInputs {
@@ -176,22 +182,21 @@ impl LitInputs {
     /// The lit inputs with the reference inputs `reference` (`material.md` §11.2): *r*
     /// evaluated at this frame's clock for an animated 1043. The cutoffs that carry *R*
     /// (an alpha mask, a tested blend, a fixed blend's test) take the new *R*; surfaces
-    /// whose opacity is not drawn keep their mode.
+    /// whose opacity is not drawn keep their mode, except a fixed blend, whose test is set
+    /// whenever *R* ≥ 0 (`render.md` §4.3 `Fixed`, row R-A3).
     #[must_use]
     pub fn with_reference(self, reference: AlphaReference) -> Self {
         let r = reference.reference();
-        let alpha = if self.opacity_from_base {
-            match self.alpha {
-                AlphaMode::Mask { .. } => AlphaMode::Mask { cutoff: r },
-                AlphaMode::TestBlend { .. } => AlphaMode::TestBlend { cutoff: r },
-                AlphaMode::Fixed(b) => AlphaMode::Fixed(tessera_render::FixedBlend {
-                    alpha_test: (r >= 0.0).then_some(tessera_render::AlphaThreshold(r)),
-                    ..b
-                }),
-                other => other,
+        let alpha = match self.alpha {
+            AlphaMode::Fixed(b) => AlphaMode::Fixed(tessera_render::FixedBlend {
+                alpha_test: (r >= 0.0).then_some(tessera_render::AlphaThreshold(r)),
+                ..b
+            }),
+            AlphaMode::Mask { .. } if self.opacity_from_base => AlphaMode::Mask { cutoff: r },
+            AlphaMode::TestBlend { .. } if self.opacity_from_base => {
+                AlphaMode::TestBlend { cutoff: r }
             }
-        } else {
-            self.alpha
+            other => other,
         };
         Self {
             alpha,
@@ -738,18 +743,24 @@ fn lit_inputs(
     };
     let lit_glow = glow != [0.0; 3];
     // `material.md` §11.2 table: the base alpha with a second opacity alpha (the
-    // `ColorAndOpacity2` layer goes through the second colour layer instead).
+    // `ColorAndOpacity2` layer goes through the second colour layer instead, when it has a
+    // texture).
     let opacity2 = match f.tested_opacity {
         TestedOpacity::Product(ids::DIFFUSE, b) | TestedOpacity::Sum(ids::DIFFUSE, b)
-            if opacity_from_base && b != ids::SECOND_LAYER =>
+            if opacity_from_base =>
         {
             let sum = matches!(f.tested_opacity, TestedOpacity::Sum(..));
             let tex = slot_tex(b).filter(|&d| d > VARIANT_DYE_MASK).map(own(b));
             match (b, tex) {
+                (ids::SECOND_LAYER, Some(_)) => None,
                 (ids::EMISSIVE, Some(_)) => Some(SecondOpacityPlan::Emissive { sum }),
                 (_, Some(texture)) => Some(SecondOpacityPlan::Texture { texture, sum }),
-                // No texture: that alpha is 1 (`material.md` §18 OPEN); a product is the
-                // base alpha alone, a sum at least 1.
+                // No texture (effective texture 0): that alpha reads 1 (`material.md` §18
+                // Tessera Decision, `tessera_material::alpha::MISSING_TEXTURE_ALPHA`): a
+                // product is the base alpha alone, a sum the base alpha + 1.
+                (_, None) if f.tested_opacity.missing_adds_one(b) => {
+                    Some(SecondOpacityPlan::MissingInSum)
+                }
                 (_, None) => None,
             }
         }
@@ -792,13 +803,14 @@ fn lit_inputs(
             _ => AlphaMode::Opaque,
         },
         // Unlit records: the record's own blend triple and depth write as a fixed-function
-        // blend, with the reference R when the opacity source is drawn (`material.md` §11.3
-        // rule for unlit records, §11.2; `walker.md` §14.5 "Unlit blend pairs"); a triple
+        // blend, with the alpha test whenever R ≥ 0 (`render.md` §4.3 `Fixed`, row R-A3:
+        // without a drawn opacity source the tested opacity is 1, so R = 0 discards nothing)
+        // (`material.md` §11.3 rule for unlit records, §11.2; `walker.md` §14.5 "Unlit blend
+        // pairs"); a triple
         // with a code the renderer cannot express keeps the source-alpha blend below.
         BlendMode::Additive | BlendMode::Custom
             if !f.lit
-                && let Some(b) =
-                    fixed_blend(f, Some(r).filter(|r| *r >= 0.0 && opacity_from_base)) =>
+                && let Some(b) = fixed_blend(f, Some(r).filter(|r| *r >= 0.0)) =>
         {
             AlphaMode::Fixed(b)
         }
@@ -1445,6 +1457,84 @@ mod tests {
             Some(SecondOpacityPlan::Emissive { sum: true })
         );
         assert_eq!(plan.lit.emissive.map(|t| t.did), Some(0x4100_0003));
+    }
+
+    /// `material.md` §18 (Tessera Decision, wording of 2026-10-10): a sum record whose second
+    /// opacity texture is 0 tests the base alpha + 1 (the missing texture reads alpha 1, in
+    /// slot 3018, 3020 or 3001 alike); a product with a texture 0 is the base alpha alone.
+    #[test]
+    fn missing_second_opacity_texture_reads_one() {
+        let co = (ids::DIFFUSE, 0x4100_0001, "ColorAndOpacity");
+        for (slot, role) in [
+            (ids::EMISSIVE, "EmissiveAndOpacity"),
+            (ids::OPACITY, "OpacityAlpha"),
+            (ids::SECOND_LAYER, "ColorAndOpacity2"),
+        ] {
+            let zero = (slot, 0, role);
+            let sum = TestedOpacity::Sum(ids::DIFFUSE, slot);
+            let plan = plan_material(&lit_material(&[co, zero], Some(0.5), sum));
+            assert_eq!(
+                plan.lit.opacity2,
+                Some(SecondOpacityPlan::MissingInSum),
+                "sum, slot {slot}"
+            );
+            assert!(plan.lit.emissive.is_none(), "slot {slot}");
+            assert!(plan.layer2.is_none(), "slot {slot}");
+            assert!(!plan.textures().any(|t| t.did == 0), "slot {slot}");
+            assert!(!plan.instanceable(), "slot {slot}");
+            let product = TestedOpacity::Product(ids::DIFFUSE, slot);
+            let plan = plan_material(&lit_material(&[co, zero], Some(0.5), product));
+            assert_eq!(plan.lit.opacity2, None, "product, slot {slot}");
+        }
+        // With its texture, the sum record's `ColorAndOpacity2` layer carries the alpha.
+        let layer = (ids::SECOND_LAYER, 0x4100_0004, "ColorAndOpacity2");
+        let sum = TestedOpacity::Sum(ids::DIFFUSE, ids::SECOND_LAYER);
+        let plan = plan_material(&lit_material(&[co, layer], Some(0.5), sum));
+        assert_eq!(plan.lit.opacity2, None);
+    }
+
+    /// `render.md` §4.3 `Fixed` (row R-A3): `FixedBlend::alpha_test` carries *R* whenever
+    /// *R* ≥ 0: an unlit SRCALPHA record without a test keeps *R* = 0 (opacity 0 discarded;
+    /// without an opacity source the tested opacity is 1, so nothing is), and only *R* = −1
+    /// (test off, another source factor) leaves it unset.
+    #[test]
+    fn fixed_blends_carry_the_reference_whenever_it_is_not_negative() {
+        use tessera_material::records::BlendFactor as M;
+        let unlit = |slots: &[(u32, u32, &str)], test, tested, src| {
+            let mut m = lit_material(slots, test, tested);
+            m.features.lit = false;
+            m.features.blend.mode = BlendMode::Custom;
+            m.features.blend.src = src;
+            m
+        };
+        let fixed_test = |m: &ResolvedMaterial| match plan_material(m).lit.alpha {
+            AlphaMode::Fixed(b) => b.alpha_test,
+            other => panic!("not a fixed blend: {other:?}"),
+        };
+        let co = (ids::DIFFUSE, 0x4100_0001, "ColorAndOpacity");
+        let base = TestedOpacity::Slot(ids::DIFFUSE);
+        // Test on: the quantised threshold.
+        let m = unlit(&[co], Some(0.65), base, M::SrcAlpha);
+        assert_eq!(
+            fixed_test(&m),
+            Some(tessera_render::AlphaThreshold(165.0 / 255.0))
+        );
+        // Test off under SRCALPHA: R = 0, with or without a drawn opacity source.
+        let m = unlit(&[co], None, base, M::SrcAlpha);
+        assert_eq!(fixed_test(&m), Some(tessera_render::AlphaThreshold(0.0)));
+        let m = unlit(&[], None, TestedOpacity::One, M::SrcAlpha);
+        assert_eq!(fixed_test(&m), Some(tessera_render::AlphaThreshold(0.0)));
+        let plan = plan_material(&m);
+        assert!(!plan.lit.opacity_from_base);
+        // A frame's reference keeps it.
+        let lit = plan.lit.with_reference(m.alpha_reference(1.0));
+        assert!(matches!(
+            lit.alpha,
+            AlphaMode::Fixed(b) if b.alpha_test == Some(tessera_render::AlphaThreshold(0.0))
+        ));
+        // Test off under another source factor: R = −1, unset.
+        let m = unlit(&[co], None, base, M::One);
+        assert_eq!(fixed_test(&m), None);
     }
 
     /// `material.md` §11.2: *r* is evaluated at the clock, so a frame's *R* replaces the

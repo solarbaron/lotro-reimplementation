@@ -50,6 +50,10 @@ pub struct SlotInterface {
     pub wrap_v_bound: bool,
 }
 
+/// Most distinct unbound default textures kept per shader record
+/// ([`ShaderInterface::unbound_defaults`]).
+pub const MAX_UNBOUND_DEFAULTS: usize = 8;
+
 /// The blend triple Tessera uses for an unlit shader record (§11.3 Decision).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlendTriple {
@@ -64,6 +68,26 @@ pub struct BlendTriple {
     pub depth_write: bool,
     /// How many render-state blocks carry the triple.
     pub count: usize,
+}
+
+/// The program family of a shader record whose own programs the generic lit and unlit path
+/// must not stand in for (`material.md` §11.6, MA51), recognised from its interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ProgramFamily {
+    /// Every other record: the generic path of `material.md` §9–§11.
+    #[default]
+    Generic,
+    /// A water record: declares 1057 or 1056 and has a `FrameBufferTexture` sampler
+    /// (`water.md` §8.3–§8.6).
+    Water,
+    /// The mirror record: declares any of 1100–1106 (`water.md` §8.5.4).
+    Mirror,
+    /// A liquid-distortion record: declares 1057, has no `FrameBufferTexture` sampler and has
+    /// a `LiquidNormalTexture` or `Distortion` sampler (`water.md` §8.5.5).
+    LiquidDistortion,
+    /// The lava record: declares 1057, has a `FlowTexture` sampler and no
+    /// `FrameBufferTexture` sampler (`material.md` §11.6 lava row, `water.md` §8.6.5).
+    Lava,
 }
 
 /// The analysed interface of one shader record.
@@ -88,6 +112,13 @@ pub struct ShaderInterface {
     pub cull_none: bool,
     /// The most common render-state `alpha_ref` (the shader's built-in default threshold).
     pub default_alpha_ref: Option<f32>,
+    /// The program family (`material.md` §11.6).
+    pub family: ProgramFamily,
+    /// Texture lists that samplers hold by default (`material.md` §7.5 `default_texture`)
+    /// where no texture binding of the record names the sampler, distinct, in permutation
+    /// and sampler order. The flow-map and lava programs read their noise texture from
+    /// such a sampler (`water.md` §8.6.1).
+    pub unbound_defaults: Vec<Did>,
 }
 
 /// Most common element of `items`; ties go to the first met.
@@ -194,6 +225,56 @@ impl ShaderInterface {
         let default_alpha_ref =
             most_common(states().map(|s| s.alpha_ref().to_bits())).map(|(b, _)| f32::from_bits(b));
 
+        // §11.6: the family from the declared ids and the sampler names of any permutation.
+        let declares = |id: u32| index_of.contains_key(&id);
+        let sampler_named = |names: &[&str]| {
+            record
+                .permutations
+                .iter()
+                .flat_map(|p| p.samplers.iter())
+                .any(|s| names.contains(&s.name.as_str()))
+        };
+        let frame_buffer = sampler_named(&["FrameBufferTexture"]);
+        let family = if (declares(1057) || declares(1056)) && frame_buffer {
+            ProgramFamily::Water
+        } else if (1100..=1106).any(declares) {
+            ProgramFamily::Mirror
+        } else if declares(1057)
+            && !frame_buffer
+            && sampler_named(&["LiquidNormalTexture", "Distortion"])
+        {
+            ProgramFamily::LiquidDistortion
+        } else if declares(1057) && !frame_buffer && sampler_named(&["FlowTexture"]) {
+            ProgramFamily::Lava
+        } else {
+            ProgramFamily::Generic
+        };
+
+        // §7.5: the default texture of samplers that no texture binding names.
+        let bound: HashSet<(u32, u32)> = decl_entries
+            .iter()
+            .filter(|e| group_of(e.id) == GROUP_TEXTURE)
+            .flat_map(|e| e.bindings.iter().map(|b| (b.permutation, b.slot)))
+            .collect();
+        let mut unbound_defaults: Vec<Did> = Vec::new();
+        for (pi, perm) in record.permutations.iter().enumerate() {
+            for (si, sampler) in perm.samplers.iter().enumerate() {
+                let key = (
+                    u32::try_from(pi).unwrap_or(u32::MAX),
+                    u32::try_from(si).unwrap_or(u32::MAX),
+                );
+                let d = sampler.state.default_texture();
+                if d.0 != 0
+                    && sampler.state.source() == 0
+                    && !bound.contains(&key)
+                    && !unbound_defaults.contains(&d)
+                    && unbound_defaults.len() < MAX_UNBOUND_DEFAULTS
+                {
+                    unbound_defaults.push(d);
+                }
+            }
+        }
+
         Self {
             did: record.did,
             declarations,
@@ -203,6 +284,8 @@ impl ShaderInterface {
             common_blend,
             cull_none,
             default_alpha_ref,
+            family,
+            unbound_defaults,
         }
     }
 
@@ -248,5 +331,6 @@ impl ShaderInterface {
                 .iter()
                 .map(|s| s.role.as_ref().map_or(0, String::capacity))
                 .sum::<usize>()
+            + self.unbound_defaults.capacity() * size_of::<Did>()
     }
 }

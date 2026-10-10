@@ -42,6 +42,7 @@ pub mod chat;
 pub(crate) mod controls;
 pub mod effects;
 pub mod env;
+pub mod fallback;
 pub mod farband;
 pub mod farview;
 pub mod figures;
@@ -52,6 +53,7 @@ pub(crate) mod geometry;
 pub(crate) mod hud;
 pub mod interiors;
 pub(crate) mod jobs;
+pub mod liquid;
 pub mod looks;
 pub(crate) mod minimap;
 pub mod movement;
@@ -64,6 +66,13 @@ pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
 
+/// The walker's material plan of a resolved surface, with its fallback diagnostic, for the
+/// real-data fallback probe.
+pub use self::geometry::{
+    MaterialPlan, OwnPlan, PlanDiag, TexRequest, plan_material, plan_material_with,
+};
+/// The fallback reason of a failed texture request of the object layer.
+pub use self::objects::texture_failure_reason;
 /// The walker's `terrain-texturing.md` §4.9 path, for the real-data row checks.
 pub use self::terrain::{block_open, layerless_key, resolve_block_surface};
 
@@ -1851,6 +1860,14 @@ impl Walker {
         self.config.stream.rings.far as f32
     }
 
+    /// The fallback diagnostic of the last frame: object submesh draws without their
+    /// base-colour texture, by reason and surface, and the draws of records with programs of
+    /// their own drawn through the generic path ([`fallback`]).
+    #[must_use]
+    pub fn fallback_stats(&self) -> fallback::FallbackStats {
+        self.objects.fallback_stats().clone()
+    }
+
     /// The far view's counters of the last frame (`None` with the far view off).
     #[must_use]
     pub fn far_view_stats(&self) -> Option<farview::FarViewStats> {
@@ -1911,6 +1928,7 @@ impl Walker {
             camera_moved: moved,
             interior: self.camera_cell.map(|(k, _)| k),
             all_interiors: self.config.interiors,
+            time: self.material_time(),
         }
     }
 
@@ -2466,6 +2484,8 @@ impl Walker {
                 ),
                 GREY,
             ));
+            let fb = self.objects.fallback_stats();
+            out.push((fb.hud_line(), if fb.draws > 0 { GOLD } else { GREY }));
             let cs = self.characters.stats();
             out.push((
                 format!(
@@ -2613,6 +2633,7 @@ impl Walker {
                 self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
             let water_on = self.water_drawn();
+            let material_time = self.material_time();
             let hand_off = self.far_view.as_ref().map(farview::FarViewLayer::hand_off);
             if let (Some(fv), true) = (self.far_view.as_mut(), scene.outdoor_visible) {
                 let c = self.config.distances.object_multiplier();
@@ -2624,6 +2645,7 @@ impl Walker {
                     &mut self.resolver,
                     &mut self.objects,
                     water_on,
+                    material_time,
                 );
             }
             let t1 = Instant::now();
@@ -2676,6 +2698,7 @@ impl Walker {
                     eye,
                     self.ring_extent(),
                     hand_off.as_deref(),
+                    material_time,
                     &mut self.resolver,
                     &mut self.objects,
                 );

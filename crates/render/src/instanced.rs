@@ -32,7 +32,9 @@ use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
 use crate::lit_pipelines::LightTarget;
 use crate::lit_pipelines::SHADOW_FORMAT;
-use crate::material::{AlphaMode, FixedAlpha, FixedBlend, FogRule, LightSelection, Specular};
+use crate::material::{
+    AlphaMode, FixedAlpha, FixedBlend, FogRule, LightSelection, SecondLayer, Specular, UvTransform,
+};
 use crate::mesh::{GpuVertex, MeshData, MeshInfo};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
@@ -106,6 +108,13 @@ pub struct WorldSurface {
     /// Unlit: texture × *M* (× vertex colour) (`lighting.md` §7, code 0x00); fogged unless
     /// the surface's [`WorldSurfaceOptions::fog`] is off.
     pub unlit: bool,
+    /// The second colour layer (`material.md` §10.3): sampled at texture matrix 1, its RGB
+    /// added or multiplied to the base colour, its alpha multiplied into the opacity. An
+    /// unknown or destroyed texture draws as if there were no second layer.
+    pub second_layer: Option<SecondLayer>,
+    /// Texture matrices 0 (base colour and normal map) and 1 (second layer) when the batch
+    /// gives none for this frame ([`InstanceBatch::uv`]; `material.md` §8.4).
+    pub uv: [UvTransform; 2],
 }
 
 /// Per-surface switches of a [`WorldModel`] that [`WorldSurface`] does not carry, given to
@@ -140,6 +149,8 @@ impl Default for WorldSurface {
             gloss_from_normal_alpha: false,
             vertex_colors: false,
             unlit: false,
+            second_layer: None,
+            uv: [UvTransform::IDENTITY; 2],
         }
     }
 }
@@ -408,6 +419,11 @@ pub struct InstanceBatch {
     pub max_distance: Option<f32>,
     /// Frill-engine behaviour (`None`: ordinary scenery).
     pub frill: Option<FrillParams>,
+    /// Texture matrices 0 and 1 of this frame per surface of the model (index = surface
+    /// index; `material.md` §8.4, curves evaluated by the caller at the clock), replacing the
+    /// surfaces' own [`WorldSurface::uv`]. Surfaces past the list keep their own. `None`:
+    /// every surface keeps its own.
+    pub uv: Option<Arc<[[UvTransform; 2]]>>,
 }
 
 impl InstanceBatch {
@@ -421,6 +437,7 @@ impl InstanceBatch {
             cast_shadow: true,
             max_distance: None,
             frill: None,
+            uv: None,
         }
     }
 
@@ -515,32 +532,32 @@ impl Renderer<'_> {
         }
         let layouts = up.instanced.layouts(device);
         let surface_layout = layouts.surface.clone();
-        let (model, gpu_error) =
-            crate::renderer::with_error_scope(device, || {
-                let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("tessera-model-vertices"),
-                    contents: vbytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("tessera-model-indices"),
-                    contents: ibytes,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                let has_tangents = prepared.info.has_tangents;
-                let defaults = [WorldSurface::default()];
-                let list = if surfaces.is_empty() {
-                    &defaults[..]
-                } else {
-                    surfaces
-                };
-                let mut warned = false;
-                let white = up.textures.white();
-                let gpu_surfaces: Vec<SurfaceGpu> = list
+        let (model, gpu_error) = crate::renderer::with_error_scope(device, || {
+            let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("tessera-model-vertices"),
+                contents: vbytes,
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("tessera-model-indices"),
+                contents: ibytes,
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            let has_tangents = prepared.info.has_tangents;
+            let defaults = [WorldSurface::default()];
+            let list = if surfaces.is_empty() {
+                &defaults[..]
+            } else {
+                surfaces
+            };
+            let mut warned = false;
+            let white = up.textures.white();
+            let gpu_surfaces: Vec<SurfaceGpu> = list
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    for id in [s.base_texture, s.normal_texture] {
+                    let layer2 = s.second_layer.map(|l| l.texture);
+                    for id in [s.base_texture, s.normal_texture, layer2] {
                         if up.textures.is_missing(id) && !warned {
                             tracing::warn!(
                                 ?id,
@@ -549,7 +566,11 @@ impl Renderer<'_> {
                             warned = true;
                         }
                     }
-                    let set = [up.textures.get(s.base_texture), up.textures.get(s.normal_texture)];
+                    let set = [
+                        up.textures.get(s.base_texture),
+                        up.textures.get(s.normal_texture),
+                        up.textures.get(layer2),
+                    ];
                     let opts = options.get(i).copied().unwrap_or_default();
                     let desc = SurfaceDesc {
                         surface: *s,
@@ -559,25 +580,25 @@ impl Renderer<'_> {
                     SurfaceGpu::new(device, &surface_layout, desc, set, &white)
                 })
                 .collect();
-                let parts = prepared
-                    .submeshes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| ModelPart {
-                        indices: s.first_index..s.first_index.saturating_add(s.index_count),
-                        surface: i.min(gpu_surfaces.len() - 1),
-                    })
-                    .collect();
-                ModelGpu {
-                    owner: up.owner,
-                    label: data.label.clone(),
-                    vertices,
-                    indices,
-                    info: prepared.info.clone(),
-                    parts,
-                    surfaces: gpu_surfaces,
-                }
-            });
+            let parts = prepared
+                .submeshes
+                .iter()
+                .enumerate()
+                .map(|(i, s)| ModelPart {
+                    indices: s.first_index..s.first_index.saturating_add(s.index_count),
+                    surface: i.min(gpu_surfaces.len() - 1),
+                })
+                .collect();
+            ModelGpu {
+                owner: up.owner,
+                label: data.label.clone(),
+                vertices,
+                indices,
+                info: prepared.info.clone(),
+                parts,
+                surfaces: gpu_surfaces,
+            }
+        });
         if let Some(e) = gpu_error {
             return Err(RenderError::Gpu(e));
         }
@@ -640,6 +661,8 @@ pub(crate) struct SurfaceUniform {
     pub params: [f32; 4],
     /// x = flags (`SF_*`), y = sRGB re-encode bits, zw unused.
     pub flags: [u32; 4],
+    /// Texture matrices 0 and 1 ([`UvTransform::pack`]).
+    pub uv: [[f32; 4]; 3],
 }
 
 pub(crate) mod sf {
@@ -656,8 +679,13 @@ pub(crate) mod sf {
     pub const NO_FOG: u32 = 128;
     /// The output alpha is the opacity texel alone ([`super::AlphaMode::Fixed`]).
     pub const FACTOR_OPACITY: u32 = 256;
+    /// A second colour layer (`material.md` §10.3).
+    pub const SECOND_LAYER: u32 = 512;
+    /// Its RGB is added (else multiplied).
+    pub const LAYER_ADD: u32 = 1024;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
+    pub const SRGB_LAYER2: u32 = 4;
 }
 
 fn finite_or(v: f32, d: f32) -> f32 {
@@ -665,13 +693,15 @@ fn finite_or(v: f32, d: f32) -> f32 {
 }
 
 impl SurfaceUniform {
-    /// `normal_resolved`: the normal texture resolved (else the normal-map switch is off).
+    /// `normal_resolved`: the normal texture resolved (else the normal-map switch is off);
+    /// `layer2_resolved` the same for the second colour layer.
     fn new(
         s: &WorldSurface,
         options: WorldSurfaceOptions,
         has_tangents: bool,
-        srgb: [bool; 2],
+        srgb: [bool; 3],
         normal_resolved: bool,
+        layer2_resolved: bool,
     ) -> Self {
         let color = s.base_color.map(|c| finite_or(c, 1.0));
         let (spec, power) = match s.specular {
@@ -717,6 +747,14 @@ impl SurfaceUniform {
         if s.alpha == AlphaMode::Opaque {
             flags |= sf::OPAQUE;
         }
+        if let Some(l) = s.second_layer
+            && layer2_resolved
+        {
+            flags |= sf::SECOND_LAYER;
+            if l.add {
+                flags |= sf::LAYER_ADD;
+            }
+        }
         let mut srgb_bits = 0;
         if srgb[0] {
             srgb_bits |= sf::SRGB_BASE;
@@ -724,11 +762,15 @@ impl SurfaceUniform {
         if srgb[1] {
             srgb_bits |= sf::SRGB_NORMAL;
         }
+        if srgb[2] {
+            srgb_bits |= sf::SRGB_LAYER2;
+        }
         Self {
             color,
             specular: [spec[0], spec[1], spec[2], power],
             params: [cutoff, 0.0, 0.0, 0.0],
             flags: [flags, srgb_bits, 0, 0],
+            uv: UvTransform::pack(s.uv),
         }
     }
 }
@@ -738,7 +780,7 @@ impl SurfaceUniform {
 #[derive(Debug)]
 struct SurfaceBind {
     bind_group: wgpu::BindGroup,
-    textures: [Option<TextureId>; 2],
+    textures: [Option<TextureId>; 3],
 }
 
 /// What a surface's uniform is built from.
@@ -759,16 +801,21 @@ pub(crate) struct SurfaceGpu {
 }
 
 impl SurfaceGpu {
-    /// `set`: the resolved base and normal textures (`None`: absent or unusable).
+    /// `set`: the resolved base, normal and second-layer textures (`None`: absent or
+    /// unusable).
     fn new(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         desc: SurfaceDesc,
-        set: [Option<ResolvedTexture>; 2],
+        set: [Option<ResolvedTexture>; 3],
         white: &ResolvedTexture,
     ) -> Self {
         let s = desc.surface;
-        let ids = [s.base_texture, s.normal_texture];
+        let ids = [
+            s.base_texture,
+            s.normal_texture,
+            s.second_layer.map(|l| l.texture),
+        ];
         let bind = make_surface_bind(device, layout, &desc, ids, &set, white);
         Self {
             bind: Mutex::new(bind),
@@ -806,18 +853,20 @@ fn make_surface_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     desc: &SurfaceDesc,
-    ids: [Option<TextureId>; 2],
-    set: &[Option<ResolvedTexture>; 2],
+    ids: [Option<TextureId>; 3],
+    set: &[Option<ResolvedTexture>; 3],
     white: &ResolvedTexture,
 ) -> SurfaceBind {
     let base = set[0].as_ref().unwrap_or(white);
     let normal = set[1].as_ref().unwrap_or(white);
+    let layer2 = set[2].as_ref().unwrap_or(white);
     let uniform = SurfaceUniform::new(
         &desc.surface,
         desc.options,
         desc.has_tangents,
-        [base.srgb, normal.srgb],
+        [base.srgb, normal.srgb, layer2.srgb],
         set[1].is_some(),
+        set[2].is_some(),
     );
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("tessera-model-surface"),
@@ -848,6 +897,14 @@ fn make_surface_bind(
                 binding: 4,
                 resource: wgpu::BindingResource::Sampler(&normal.sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(&layer2.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(&layer2.sampler),
+            },
         ],
     });
     SurfaceBind {
@@ -855,6 +912,7 @@ fn make_surface_bind(
         textures: [
             ids[0].filter(|_| set[0].is_some()),
             ids[1].filter(|_| set[1].is_some()),
+            ids[2].filter(|_| set[2].is_some()),
         ],
     }
 }
@@ -1064,6 +1122,8 @@ struct BatchUniform {
     frill: [f32; 4],
     /// z_min, sway height h, fade-in, unused.
     sway: [f32; 4],
+    /// Texture matrices 0 and 1 of this frame when [`bf::UV`] is set ([`UvTransform::pack`]).
+    uv: [[f32; 4]; 3],
 }
 
 mod bf {
@@ -1071,6 +1131,8 @@ mod bf {
     pub const SWAY: u32 = 2;
     /// The surfaces are drawn blended (a non-opaque frill group).
     pub const BLENDED: u32 = 4;
+    /// The batch slot carries the surface's texture matrices for this frame.
+    pub const UV: u32 = 8;
 }
 
 /// Bind group layouts shared by the instanced and sky pipelines.
@@ -1136,6 +1198,8 @@ impl InstancedState {
                 texture_entry(2),
                 sampler_entry(3),
                 sampler_entry(4),
+                texture_entry(5),
+                sampler_entry(6),
             ],
         });
         let l = Arc::new(ModelLayouts { batch, surface });
@@ -1414,10 +1478,20 @@ pub(crate) fn build_hook(
     let layouts = state.layouts(ctx.device);
     let frustum = Frustum::new(ctx.view_proj);
     let stride = uniform_stride(ctx.device, size_of::<BatchUniform>());
-    // One uniform slot per queued batch at most: checked up front, so the outcome does not
-    // depend on the view.
+    // One uniform slot per queued batch, plus one per surface of a batch with texture
+    // matrices of its own, at most: checked up front, so the outcome does not depend on the
+    // view.
     let max_uniform = max_uniform_bytes(ctx.device);
-    let uniform_bytes = (batches.len() as u64).saturating_mul(stride);
+    let slots: u64 = batches
+        .iter()
+        .map(|b| {
+            1 + b
+                .uv
+                .as_ref()
+                .map_or(0, |_| b.model.gpu().parts.len() as u64)
+        })
+        .sum();
+    let uniform_bytes = slots.saturating_mul(stride);
     if uniform_bytes > max_uniform {
         return Err(RenderError::LimitExceeded {
             what: "instanced batch uniform bytes per pass",
@@ -1602,6 +1676,7 @@ pub(crate) fn build_hook(
             lights: [0; 4],
             frill: [0.0; 4],
             sway: [z_min, 0.0, 1.0, 0.0],
+            uv: UvTransform::pack([UvTransform::IDENTITY; 2]),
         };
         if let Some(fp) = frill {
             flags |= bf::FRILL;
@@ -1641,6 +1716,22 @@ pub(crate) fn build_hook(
             let Some(surface) = model.surfaces.get(part.surface) else {
                 continue;
             };
+            // This frame's texture matrices of the surface (material.md §8.4): a slot of
+            // their own.
+            let mut part_offset = offset32;
+            if let Some(m) = batch.uv.as_ref().and_then(|l| l.get(part.surface)) {
+                let mut pu = u;
+                pu.lights[3] |= bf::UV;
+                pu.uv = UvTransform::pack(*m);
+                let o = uniforms.len() as u64;
+                part_offset = u32::try_from(o).map_err(|_| RenderError::LimitExceeded {
+                    what: "instanced batch uniform bytes per pass",
+                    requested: o,
+                    max: u64::from(u32::MAX),
+                })?;
+                uniforms.extend_from_slice(bytemuck::bytes_of(&pu));
+                uniforms.resize((o + stride) as usize, 0);
+            }
             let mut kind = surface.kind;
             if frill.is_some_and(|f| !f.opaque) && !kind.translucent() {
                 kind = SurfaceKind::TestBlend;
@@ -1684,7 +1775,7 @@ pub(crate) fn build_hook(
                     model: batch.model.clone(),
                     part: pi,
                     surface_bg: surface.bind_group(ctx.device, &layouts.surface, &ctx.textures),
-                    batch_offset: offset32,
+                    batch_offset: part_offset,
                     instances: range.clone(),
                     shadow_instances: shadow_range.clone(),
                     counts_instances: counts,
@@ -1834,8 +1925,8 @@ mod tests {
     #[test]
     fn layouts_match_the_wgsl() {
         assert_eq!(size_of::<GpuInstance>(), 96);
-        assert_eq!(size_of::<BatchUniform>(), 48);
-        assert_eq!(size_of::<SurfaceUniform>(), 64);
+        assert_eq!(size_of::<BatchUniform>(), 96);
+        assert_eq!(size_of::<SurfaceUniform>(), 112);
     }
 
     /// A normal-and-gloss texture's alpha is the gloss (F2 frills drew near-white with an
@@ -1851,8 +1942,9 @@ mod tests {
                 s,
                 WorldSurfaceOptions::default(),
                 true,
-                [false; 2],
+                [false; 3],
                 resolved,
+                false,
             )
             .flags[0]
         };
@@ -1874,12 +1966,61 @@ mod tests {
         );
     }
 
+    /// The second colour layer sets its flags only when its texture resolved; the static
+    /// texture matrices are packed into the surface uniform (material.md §8.4, §10.3).
+    #[test]
+    fn second_layer_flags_and_static_matrices() {
+        let tex = TextureId::placeholder();
+        let s = WorldSurface {
+            second_layer: Some(SecondLayer {
+                texture: tex,
+                add: true,
+            }),
+            uv: [
+                UvTransform {
+                    rows: [[2.0, 0.0, 0.5], [0.0, 3.0, -0.25]],
+                },
+                UvTransform::IDENTITY,
+            ],
+            ..WorldSurface::default()
+        };
+        let u = SurfaceUniform::new(
+            &s,
+            WorldSurfaceOptions::default(),
+            true,
+            [false; 3],
+            false,
+            true,
+        );
+        assert_ne!(u.flags[0] & sf::SECOND_LAYER, 0);
+        assert_ne!(u.flags[0] & sf::LAYER_ADD, 0);
+        assert_eq!(u.uv[0], [2.0, 0.0, 0.5, 0.0]);
+        assert_eq!(u.uv[1], [3.0, -0.25, 1.0, 0.0]);
+        let missing = SurfaceUniform::new(
+            &s,
+            WorldSurfaceOptions::default(),
+            true,
+            [false; 3],
+            false,
+            false,
+        );
+        assert_eq!(missing.flags[0] & (sf::SECOND_LAYER | sf::LAYER_ADD), 0);
+    }
+
     /// The fog switch acts on unlit surfaces only; the factor-opacity flag marks fixed
     /// blends only (material.md §11.3).
     #[test]
     fn surface_flags_for_fog_and_fixed_blends() {
         let flags = |s: &WorldSurface, fog| {
-            SurfaceUniform::new(s, WorldSurfaceOptions { fog }, true, [false; 2], false).flags[0]
+            SurfaceUniform::new(
+                s,
+                WorldSurfaceOptions { fog },
+                true,
+                [false; 3],
+                false,
+                false,
+            )
+            .flags[0]
         };
         let unlit = WorldSurface {
             unlit: true,

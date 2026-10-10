@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
-| **Last updated** | 2026-10-08 |
+| **Status** | **Accepted** (2026-10-09, review of the revision answering `water.md` item B1 passed, see the review record). Before: Revised (2026-10-09, spec writer: §11.6 lava row and recognition rule, answering `water.md` review item B1; row MA53; change-log row for the §19 implementer callout). Before: **Accepted** (2026-10-09, review of the water-feature revision passed, see the review record). Before: Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; review 2026-10-09: **passed**, Accepted). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Third review 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). Fourth review (fifth revision) 2026-10-08, separate review session: **passed**, Accepted; details in the review log. |
+| **Review record** | Third review 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). Fourth review (fifth revision) 2026-10-08, separate review session: **passed**, Accepted; details in the review log. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the water-feature revision on branch `water-fix` (`git diff main...water-fix`, commits 88edc8f and 4be89e7) against CLEAN_ROOM.md §5.3, **passed**, Accepted (every item). New facts MA50–MA52 have provenance (tag SH-W pointing to `water.md` SH2) and marks; §10.3 and §11.6 are rules and tables in words; labels and sampler names used for recognition are data-file names needed for interoperability; no code, copied prose, game text, keys or hostnames; nothing under a closed gate. Spot checks (read-only, own probes): the OpenGL colour programs of 0x2B000817 add the two layers' RGB and multiply their alphas, those of 0x2B0007A1 multiply the RGB (MA50); the §11.6 recognition reproduced with `tessera-dattool fallback --all` on the install selects exactly the ten water records, 0x2B0000AA and the four liquid-distortion records of the table (98, 9 and 16 surface records), and 23 surface records lack a usable base texture, as the §18 note and the §19 implementer callout state. Non-blocking: (1) the change log has no row for the implementer callout added to §19 on this branch (fallback diagnostic, commit b1da85a); (2) `water.md` review item B1 (lava 0x2B000810) may be resolved by a change to §11.6, which would make this spec Revised again. Spec writer, 2026-10-09: both notes taken up (see the change log); Revised, awaiting review. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the revision of commit 8c578bc (§1 row MA53, §11.6 lava row and fourth recognition rule, §19 change-log row; the whole branch read, `git diff main...water-fix`) against CLEAN_ROOM.md §5.3: **passed**, Accepted (every item). MA53 has sources and marks (interface Confirmed, program BIN); §11.6 states its rules in words, and the sampler and parameter names it uses for recognition are data names needed for interoperability; no code, copied prose, game text, keys or hostnames; nothing under a closed gate. Spot checks (read-only, own probes): over all 510 shader records the lava rule selects 0x2B000810 alone and no record meets both it and the liquid-distortion rule; the water and liquid-distortion rules still select exactly the ten and four records of the table; the lava record's Direct3D 10/11 water permutations sample no frame-buffer copy. Non-blocking: (1) row MA53 stands before MA52 in the §1 table; (2) the §11.6 lava row says the emissive layer is read "at world-position coordinates"; by `water.md` §8.6.5 step 3 it is read at the mesh UV plus 1063 × *B*. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of the whole `water-fix` branch up to commit 113462a (`git diff main...water-fix`) against CLEAN_ROOM.md §5.3. This spec did not change after its acceptance of the same day (commit 03f2320): **passed**, stays Accepted. Spot-checked read-only with own probes: the §11.6 lava row's slots on 0x31006FAE (3000 = 3001 = 0x4001D168, 3018, 3075 0x400163D3, 3079, 3013 without a sampler binding) and the §9.2 effective sets of the water, mirror and lava surfaces used by `water.md`. The two non-blocking notes of the previous round stand. |
 | **Implements into** | `crates/formats` or `crates/material` (decoders for prefixes 0x31, 0x30 and 0x2B), `crates/material` (effective parameter set, texture roles, feature flags, dye), `crates/render` (pipeline selection from feature flags), explorer material inspector and dye preview |
 | **Companion specs** | `texture-list.md` (a texture slot names a 0x40 texture list; level selection and highres fallback). `records.md` §1 (primitives), §5 (0x41 surfaces). `dat-container.md` (routing). `mesh.md` (mesh record layout; only the surface list is used here). [`setup.md`](setup.md) §8 (normative for the 0x20 worn-appearance layout) and [`appearance.md`](appearance.md) §4.9–§4.10 (dyes and material groups of worn items); only the parts needed for material binding are repeated here, §9.3. [`lighting.md`](lighting.md) (passes, lighting equation and engine inputs that use these parameters; §4.4 colour encodings). [`terrain-texturing.md`](terrain-texturing.md) (terrain layers use the same transform and parameters, §6.3, §8.2). [`water.md`](water.md) §8 (water parameters). |
 
@@ -84,6 +84,7 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | BIN-R | **M4 (decision 0011), fourth pass 2026-10-07.** Same build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), decompiled with a headless disassembler on a copy of the analysis project. **Questions:** (h) what the two bytes after a surface record's material list mean (§4); (i) how appearance groups are matched to parts and surfaces (§9.3); (j) how the client reads and applies parameter bindings, render-state blocks, sampler states and extra state items (§7.3, §7.5–§7.7); (k) what 4007 AlphaBlendPass does (§8.5); (l) how the alpha-test reference is handled per draw, and whether alpha-to-coverage is used (§11.2); (m) how materials are layered and what happens on broken references (§9.2); (n) whether mode 10 gets the clock reduction (§5.3.1). **Why M1–M3 were not enough:** the data holds bytes whose use is code; their values barely vary (most fields are constant in all records), so statistics cannot name them; no frame capture (M3) is available; nothing is published (M2). |
 | BIN-S4 | **M4 (decision 0011), fourth shader pass 2026-10-07.** Same build; the compiled programs stored in the shader records, disassembled with the same public shader disassembler. **Questions:** output alpha of the `ColorTexture` record and of the lit base passes whose opacity comes from 3020 or 3018 (§18); which texture matrix the emissive and glow samplers use (§8.4); how the tie-dye ramp is indexed (§12.5); what the `DecalDynamicLightTexture` record outputs (§18). Same reasons as BIN-S. |
 | WAT | [`water.md`](water.md) §8.2–§8.4 (water surface parameters). |
+| SH-W | [`water.md`](water.md) tag SH2 (2026-10-09): the OpenGL text and the Direct3D 10/11 programs (the latter under decision 0011, as BIN-S) of the water, mirror, liquid and two-layer records, read to settle how two colour layers combine and which records need their own drawing. Every record of §10.3 was checked in both back ends (all colour permutations of passes 0x00, 0x04, 0x05, 0x3E–0x40). |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §6.3, §8.2 (the terrain layer's use of the same transform and parameters). |
 
 | # | Fact | Sources | Mark |
@@ -137,6 +138,10 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | MA47 | Emissive, `EmissiveAndOpacity` and glow samplers use texture matrix 0 or 1 depending on the record (§8.4) | BIN-S4 (Direct3D 10/11 programs of all 152 records with such samplers) | BIN |
 | MA48 | Tie-dye: the ramp is indexed by a power of N·V plus an offset, then lerped toward white (§12.5) | BIN-S4 (0x2B00072F, 0x2B00076E) | BIN |
 | MA49 | Mode 10 receives the same modulo-3,600 clock reduction as the other modes (§5.3.1) | BIN-R (n) | BIN |
+| MA50 | Two colour layers combine per record: RGB multiplied or added as tabled in §10.3, the two alphas multiplied in every record checked (§10.3) | SH-W (both back ends, every colour permutation of the two-layer records used by surface records; alphas checked in the records named in §10.3) | Confirmed (programs) |
+| MA51 | Water-family, mirror and liquid-distortion records are not drawn by the generic path: their slot-3000 defaults are placeholders (near-white 0x40000DDF for the water records) sampled only by low-detail permutations, and their programs follow `water.md` §8.3–§8.6 (§11.6) | SH-W; OBS (texture levels decoded, 2026-10-09) | Confirmed |
+| MA53 | The lava record 0x2B000810 is not drawn by the generic path either: its slot 3000 is one of two flow-phase colour layers that its emissive layer hides in this install, and its program follows `water.md` §8.6.5; it is the only shader record that declares 1057, has a `FlowTexture` sampler and has no `FrameBufferTexture` sampler (§11.6) | SH-W (`water.md` W40); OBS (all 510 shader records, 2026-10-09; `water.md` W41) | Confirmed (interface); BIN (program, Direct3D 10/11) |
+| MA52 | Labels and use of the mirror parameters 1100–1106, the flow, foam and depth parameters 1170–1173 and 1182–1190 and the bump parameters 1049, 1052, 1053, 1055, 1056 (§8.7) | EM (labels); SH-W (use) | Confirmed (labels); use as in `water.md` §8.5–§8.6 |
 
 ---
 
@@ -991,15 +996,23 @@ anisotropic hair specular. They occur on few surfaces (water: 98 surfaces). M2 r
 these surfaces with the generic pipeline chosen by §11 and ignores the extra parameters.
 
 Water: the parameters the water programs read and how they combine are in `water.md`
-§8.2–§8.4. The terrain layers use parameter 1203 (`c_AlphaBlendMax`) as the weight of the
+§8.2–§8.4 (plain water), §8.6 (flow-map water: 1057 and 1058 are cycle rates there; 1170
+`c_WaterShorelineMaxDepth`, 1171 `c_WaterFogMinDepth`, 1173 `c_WaterFogDepthFactor`,
+1182–1187 foam and depth-lookup offsets and tiling, 1188 `c_NormalWaveRotation`, 1189
+`c_DepthBasedOpacityOffset`, 1190 `c_FoamAlphaFadeFactor`) and §8.5.6 (older bump water: 1049,
+1052, 1053, 1055, 1056). Mirrors (1100–1106, the puddles' record 0x2B0000AA): `water.md`
+§8.5.4. Liquid-distortion records (0x2B000442, 0x2B0004B5, 0x2B00063E, 0x2B0007D0, which read
+1044–1048 and 1057–1066 on mesh UVs): `water.md` §8.5.5. Labels as in §8.0 (interoperability).
+The terrain layers use parameter 1203 (`c_AlphaBlendMax`) as the weight of the
 squared mask (`terrain-texturing.md` §7, §8.2).
 
 Tie-dye (1175–1177): answered in §12.5.
 
-> **OPEN:** Per-parameter meanings of the other effect families: mirrors (1100–1106), windows
+> **OPEN:** Per-parameter meanings of the other effect families: windows
 > (1120–1127), distortion (1140–1149), heat distortion (1160), wind sway (1178–1180), vertex
 > displacement (1191–1199), snow and triplanar blending (1200–1202) and anisotropic specular
-> (1204–1207), and the water flow, foam and depth parameters left open by `water.md`. Each is
+> (1204–1207). (Mirrors and the water flow, foam and depth parameters: answered 2026-10-09,
+> above.) Each is
 > answerable from the programs of the few records that declare it (BIN-S); none is needed by
 > the generic pipeline of §11.
 
@@ -1170,6 +1183,36 @@ the normal toward the top of the image (decreasing V). The alpha channel is glos
 by role, as tabled above.
 
 ---
+
+<a id="s10-3"></a>
+### 10.3 Combining two colour layers (per record; MA50, added 2026-10-09)
+
+A record with a second colour layer (slot 3001 bound to a `Color2`, `ColorAndOpacity2`,
+`ColorAndGloss2`, `ColorAndDye2` or `DiffuseTexture2` sampler) combines the two texels in its
+programs; no data field or role name says how. Layer 1 is slot 3000 at texture matrix 0, layer
+2 slot 3001 at texture matrix 1 (§8.4), both from UV set 0 except the three records of
+`lighting.md` §4.3.
+
+**Rule (Confirmed in the programs, both back ends):** the RGB of the two texels is **added** in
+the records below and **multiplied** in every other two-layer record used by surface records;
+the two alphas are **multiplied** in every record checked (all `ColorAndOpacity` records of the
+table and the multiplying records 0x2B0006E8, 0x2B0007A1, 0x2B0007E5 and 0x2B0007F7), and that
+product is the opacity of §11.2 and §11.3.
+
+| Records that add the two layers' RGB (surface records) | Roles |
+|---|---|
+| 0x2B0006E4 (1) | `ColorAndDye` / `ColorAndDye2` (as `lighting.md` §5.2 states) |
+| 0x2B0006F1 (1) | `Color` / `Color2` |
+| 0x2B0006F2 (16), 0x2B000717 (20), 0x2B00072A (15), 0x2B00072D (7), 0x2B000736 (2), 0x2B000750 (15), 0x2B00078C (18), 0x2B0007AD (49), 0x2B0007FB (2), 0x2B00080D (3), 0x2B000814 (3), 0x2B000817 (16), 0x2B000A07 (2) | `ColorAndOpacity` / `ColorAndOpacity2` |
+
+Not covered by the rule: 0x2B000077 (window), 0x2B0000B7 (`ColorTexture`, §20.1: 2 × both
+alphas), 0x2B000810 (lava), 0x2B000A0A (a `ColorAndGloss` record whose permutations differ),
+0x2B0009D1 (some permutations not resolved).
+
+Waterfall sheets, foam on falls and fountain spouts use both kinds (`water.md` §8.5.3): for
+example 0x2B0007A1 multiplies, 0x2B000817 and 0x2B00078C add. A record that adds a near-white
+second layer to a pale first one saturates toward white; one that multiplies by a white
+second layer whose alpha is a soft mask keeps the first layer's colour and fades its edges.
 
 <a id="s11"></a>
 ## 11. Feature flags
@@ -1358,6 +1401,39 @@ power 0 shows no highlight in the original. Environment map (slot 3015, role
 base colour before lighting** (`lighting.md` §5.10).
 
 ---
+
+<a id="s11-6"></a>
+### 11.6 Records that the generic path must not draw (MA51, added 2026-10-09)
+
+The feature flags of §11.1–§11.5 describe the generic lit and unlit programs. Some records
+have programs of their own, and their slot-3000 texture is not the surface's colour:
+
+| Records | Why the generic path is wrong | Drawing |
+|---|---|---|
+| Water records: 0x2B0000A8, 0x2B0000A9, 0x2B0000CE, 0x2B0000DC, 0x2B000559, 0x2B0005EC, 0x2B0007FD, 0x2B00084B, 0x2B00089A, 0x2B000A8D | slots 3000 and 3001 default to the near-white lists 0x40000DDF and 0x40000DE0, which only the low-detail permutations sample; the water permutations shade from the normal map, the frame-buffer copy and the reflection | `water.md` §8.3–§8.6 |
+| Mirror record 0x2B0000AA (puddles, and six static mirror surfaces) | slot 3000 is a diffuse image that multiplies the reflection (on the puddles a white image whose alpha is the shape); the colour is the reflection | `water.md` §8.5.4 |
+| Liquid-distortion records 0x2B000442, 0x2B0004B5, 0x2B00063E, 0x2B0007D0 | the colour texture is read at distorted, scrolled coordinates | `water.md` §8.5.5 |
+| Lava record 0x2B000810 (added 2026-10-09, MA53) | slots 3000 and 3001 are colour layers read at flow-phase coordinates and blended with an emissive layer (3018) at world-position coordinates and a brightness of its own; no frame-buffer copy, no lighting | `water.md` §8.6.5 |
+
+A renderer recognises them from the record's interface, not from fixed DIDs (Confirmed,
+census of all 510 shader records, 2026-10-09, lava rule included; it selects exactly the
+records of the table):
+
+- **water record:** declares 1057 (`c_WaterNormal0SpeedU`) or 1056 (`c_WaterBumpSpeed`) and has
+  a sampler named `FrameBufferTexture` in some permutation;
+- **mirror record:** declares any of 1100–1106 (only 0x2B0000AA does);
+- **liquid-distortion record:** declares 1057, has no `FrameBufferTexture` sampler, and has a
+  `LiquidNormalTexture` or `Distortion` sampler;
+- **lava record** (added 2026-10-09): declares 1057, has a `FlowTexture` sampler and has no
+  `FrameBufferTexture` sampler (only 0x2B000810 does; no record meets both this rule and the
+  liquid-distortion rule).
+
+The window family 0x2B0009E1–0x2B0009E8 (a frame-buffer sampler and some `c_Water…` colours,
+but no 1056 or 1057) falls outside; the lava record 0x2B000810 (1057 but neither the
+frame-buffer nor a liquid-distortion sampler) is not a water record and has its own row above
+(revised 2026-10-09: the former text said only that it falls outside, which left it to the
+generic path);
+other frame-buffer records (heat distortion and similar effects) declare none of these ids.
 
 <a id="s12"></a>
 ## 12. Dyes
@@ -1636,6 +1712,14 @@ changes a result on current data unless stated.
 > without a texture (an empty binding would read 0 and discard every fragment; a default white
 > image would keep them). Answerable by disassembly of the back ends' texture binding (M4) or
 > by owner observation of the 4 affected surfaces.
+>
+> Base-colour case (added 2026-10-09 from Tessera's whole-world probe, `water.md` tag TP):
+> two drawn surface records set slot 3000 itself to 0, 0x31000482 (record 0x2B0007D5, lit
+> `Color`; on rock meshes such as objects 0x470003EA, 0x470014EB, 0x470014B8; 15,976 draws in
+> 2,501 landblocks) and 0x31000908 (record 0x2B000755, unlit `ColorAndOpacity`, material alpha
+> 0, alpha test on; objects 0x47003953, 0x47003954, 0x47003956; 2,379 draws). Neither is water.
+> What the original samples there is the same unknown (an empty binding reads 0: black, and
+> for 0x31000908 every fragment fails the alpha test; a default white image would show white).
 
 > **Answered 2026-10-05 (§20.1, row 1; was OPEN):** §11.3 maps unlit records to a fixed blend but does not say whether alpha test
 > (§11.2) also applies to blended surfaces. The implementation reports both independently:
@@ -1895,6 +1979,42 @@ open:
 > entry? the wearer's body?). The rule that pairs them is needed for a faithful dye
 > preview of worn items.
 
+> **OPEN (implementer, 2026-10-09, fallback diagnostic; engineering choice, no format
+> fact):** `tessera_material::diagnose` names why a submesh draws without its base-colour
+> texture by the first step of the chain that fails: no surface entry; surface record
+> missing or not decoding (§4); shader record missing or not decoding (§7; the surface then
+> has no effect, §9.2 MA45); other chain failure; no slot 3000 declared, or slot 3000 with
+> value 0 (§8.2, §9.2); no 3000 texture but an opacity texture (the §11.2 source, else the
+> §11.3 blend slot), drawn as white with that alpha; texture list missing or not decoding,
+> no level resolving (`texture-list.md` §5.2), unknown pixel format (`texture-list.md`
+> §7), other level decode failure, above the size limit, a read failure, or a renderer's
+> compose or upload failure. The material kind groups the result: the water, mirror and
+> liquid-distortion records of §11.6 (recognised from the interface as §11.6 states; their
+> slot 3000 resolves but is a placeholder), else lit or unlit (§11.3). The walker tallies
+> per frame the reasons by surface record, the draws of §11.6 records it sends through the
+> generic path, and the draws whose animated texture matrices or second colour layer it
+> leaves out (at most 4,096 distinct surfaces per frame, the eight with the most draws
+> listed). Census on the reference install (2026-10-09, base textures decoded at the
+> walker's 512 cap): of 13,781 surface records 23 have no usable base texture (20 unlit and
+> 1 lit without slot 3000, 1 lit and 1 unlit with slot 3000 at 0); no texture list, level
+> or format fails; the §11.6 recognition picks 98 water, 9 mirror and 16 liquid-distortion
+> surface records, on exactly the records of the §11.6 table. A reviewer may want a
+> different grouping; nothing here is the original's behaviour.
+
+> **OPEN (implementer, 2026-10-09, walker and `tessera-render`; engineering choices, no
+> format fact):** (a) The walker evaluates texture matrices 0 and 1 from the record-wide
+> binding table (§7.7 merged table, `TextureMatrixLayout::evaluate`), not per permutation: it
+> draws one colour permutation per surface. (b) The records that §10.3 does not cover
+> (0x2B000077, 0x2B0000B7, 0x2B000810, 0x2B000A0A, 0x2B0009D1) are drawn with their first
+> colour layer only; the fallback diagnostic counts their draws as "second layer left out".
+> (c) The emissive texture reads matrix 1 for the `EmissiveAndOpacity` role and for the three
+> records §8.4 lists (0x2B0009CE, 0x2B0009CF, 0x2B00070D), matrix 0 otherwise (glow masks:
+> matrix 0 always; the glow-pass exceptions of §8.4 do not apply to the colour pass drawn).
+> (d) When a second colour layer is drawn on a blended or alpha-tested surface whose base
+> texture is no opacity source, the second layer's alpha alone is the opacity (the product of
+> §10.3 with a base alpha of 1). (e) A second layer whose texture is still loading holds the
+> draw back like the base texture; one that failed to load is left out.
+
 
 ---
 
@@ -1949,3 +2069,6 @@ Answers of 2026-10-07 (BIN-R, BIN-S4):
 | 2026-10-06 | §1, §7.3, §8.4, §8.6, §20.1 | Fourth revision after the re-review of 2026-10-05 (spec writer; M1 only). §7.3, §8.6, MA19: 2013 is the one flag-1 parameter with binding entries (one semantic-4 binding in 7 of its 11 records, all naming a permutation without programs); the statements that no flag-1 parameter has bindings are corrected, and flag-1 parameters still reach every program by name. §8.4: the centre-rotation census is 264 early-translation/translation pairs in 136 materials (205 on U, 59 on V); "205 material entries" counted U only. §20.1 "unlit" row rewritten from a census of all back ends: 11 records (99 surface records) read light inputs (ten water-family records, E18 in water permutations and E1, E2, E9–E11 in their `Color`/`Color2` permutation, some OpenGL only; 0x2B000A8C reads E3 and E5 in all four permutations), 94 (2,043) read none, 84 of them (2,020) no water parameter either. New row MA36. |
 | 2026-10-07 | header, §1, §4.1, §4.2, §5.3.1, §7.3, §7.3.1 (new), §7.4, §7.5, §7.6, §7.7, §8.3, §8.4, §8.5, §8.6, §8.7, §9.2, §9.3, §11.2, §11.4, §12.4, §12.5, §14, §17, §18, §19, §20.1 | Fifth revision (spec writer; M4 under decision 0011: BIN-R client-executable pass and BIN-S4 shader pass; M1 censuses). Status Revised. New provenance rows MA37–MA49; MA28 corrected (semantics 33–37 set the curves of type-1, -2 and -3 items, not early translations). §4.1: the u16 `tail` is two flag bytes, `shadow_receiver` and `not_pickable`; §4.2: `binding_key` has no special surface value, 2 is the group-side wildcard. §7.3.1: how each binding sets its own permutation's state, sampler or item. §7.4: `has_programs` is a count, third blob with key bit 10. §7.5: full sampler state; bytes 10 and 11 are minification then magnification (swapped). §7.6: full block; byte 3 is the depth comparison for a reversed depth range, byte 6 the alpha-test switch, bytes 7–38 default reference, colours and specular power as curves and packed colours. §7.7: the extra state list is the texture-transform list; `stage` = texture matrix; composition per permutation. §8.4: matrix of emissive and glow samplers per record. §8.5: 4001–4006 rules per bound permutation; 4007 = second edge-softening draw. §8.6: by-name passing for groups 1000/2000 only. §9.2: client layering, last wins, broken references. §9.3: group matching (`a`, `b`, 2 = all, `a` 0 = none) over all parts of the entity; census. §11.2: per-draw alpha-test handling (quantised reference, material-alpha scaling, reference 0 in SRCALPHA passes, alpha-to-coverage option). §11.4: per-permutation cull. §12.5: tie-dye ramp. §14: MT10–MT13. §18–§19: callouts answered, adopted as Decisions or narrowed. Of the 34 earlier OPEN callouts 30 are closed (25 answered from the client and the data, 5 implementation choices adopted as Decisions) and 4 remain; 2 new, narrower ones were added. Remaining: the setting that enables the 4007 draw (§8.5), effect families (§8.7), two unidentified per-draw alpha-test conditions (§11.2), the dye-block fallback (§12.4), a sampler without a texture (§18), cube-map face order (`texture-list.md`). |
 | 2026-10-08 | header | Fifth revision reviewed (separate review session): passed, status Accepted. No content change. |
+| 2026-10-09 | header, §1, §8.7, §10.3 (new), §11.6 (new) | Spec writer (dirty room), water-feature revision with `water.md` (tag SH-W, rows MA50–MA52). §10.3: how two colour layers combine, per record (add or multiply RGB, alphas multiplied), replacing the role-based Tessera Decision of `lighting.md` §5.2 item 2. §11.6: water, mirror and liquid-distortion records are not drawn by the generic path. §8.7: mirror, flow, foam, depth and bump parameters point to `water.md` §8.5–§8.6; the OPEN narrowed. Status Accepted → Revised, awaiting review. |
+| 2026-10-09 | §11.6, §18 | Spec writer (dirty room), second water-feature revision after Tessera's whole-world fallback probe: §11.6 mirror row covers the six static mirror surfaces (`water.md` §8.5.4, W36); the §18 OPEN on a sampler without a texture records the two drawn surface records with slot 3000 at 0 (not water). No fact of the generic path changed; status stays Revised. |
+| 2026-10-09 | header, §1, §11.6, §19 | Spec writer (dirty room), answering `water.md` review item B1 (lava 0x2B000810) and the two non-blocking notes of this spec's review of 2026-10-09. §11.6: a lava row and a fourth recognition rule (declares 1057, has a `FlowTexture` sampler, no `FrameBufferTexture` sampler; only 0x2B000810 of the 510 records; disjoint from the other three rules, census re-run 2026-10-09); the sentence that left lava "outside" (and so to the generic path) replaced; drawing by `water.md` §8.6.5. §1: row MA53. §19: records the implementer callout on the fallback diagnostic added on this branch (commit b1da85a, clean-room implementer; no fact of the original in it); a lava group in that grouping follows from the new §11.6 rule. Status Accepted → Revised, awaiting review. |

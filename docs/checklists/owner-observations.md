@@ -1228,3 +1228,29 @@ record any chat text.**
 
 **2026-10-08 (check):** not answerable from the data or the offline client: the server
 decides who receives a chat line. Unchanged (optional).
+
+## O87. Water, waterfalls and puddles after the water fix (2026-10-10)
+
+**Spec:** `water.md` §8.5–§8.7, `material.md` §10.3 and §11.6; rows W7–W17 of
+`docs/checklists/m4-5-visual.md` §4.4 and §4.8.
+
+**Background:** the owner reported on 2026-10-09 that waterfalls, textured (non-shader) water
+and puddles drew as a white texture, and that the shader water might move too fast. Since the
+merge of branch `water-fix`, those surfaces have their own water, mirror, liquid-distortion
+and lava drawings. Two-layer and animated surfaces (waterfalls, foam, spouts) scroll with both
+layers, and flow-map water no longer uses the plain-water scroll. That scroll was the cause
+of drifts up to 22.6 m/s; the spec gives 0.15–0.9 m/s.
+
+**What to do:** walk to the places of rows W10–W17 in the original client and in
+`tessera-client`, and compare:
+1. Waterfalls (W10, W11): do the sheets and foam move in the same direction and at about the
+   same speed?
+2. River and lake water (W15–W17): does the water drift about as slowly as in the original,
+   and does a river show its bed near the bank?
+3. Puddles (W13, W14): soft rounded shape or hard-edged polygon? Tessera still shows a
+   hard edge where the terrain cuts the flat puddle quad (`water.md` §8.5.4 OPEN). Does the
+   original's puddle lie on the ground everywhere, even on slopes?
+4. Ripples and lava (W7, W17): do they move at all in the original? (`water.md` §8.6.3 OPEN)
+
+**Record:** for each row, same / different, with a few words on what differs. Speeds as
+"slower / about the same / faster". No screenshots of the original in the repository.

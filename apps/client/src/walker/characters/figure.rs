@@ -704,8 +704,10 @@ fn build_part(
         .parts
         .iter()
         .map(|p| {
-            p.surface
-                .map_or(MaterialPlan::FALLBACK, |s| plan_for(ctx, s, layers))
+            p.surface.map_or(
+                MaterialPlan::unresolved(None, tessera_material::FallbackReason::NoSurface),
+                |s| plan_for(ctx, s, layers),
+            )
         })
         .collect();
     let mut data = level_mesh_data(&geo, format!("figure part {mesh_did}"));
@@ -757,7 +759,10 @@ fn plan_for(ctx: &FigureContext, surface: Did, layers: &[MaterialLayer]) -> Mate
     };
     resolved.unwrap_or_else(|e| {
         tracing::debug!(%surface, "figure material unresolved: {e}");
-        MaterialPlan::FALLBACK
+        MaterialPlan::unresolved(
+            Some(surface),
+            tessera_material::diagnose::reason_of_resolve_error(&e),
+        )
     })
 }
 

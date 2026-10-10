@@ -14,10 +14,15 @@ struct Batch {
     // x = z_min of the model's bounding box, y = sway height h (0: none),
     // z = fade-in factor.
     sway: vec4<f32>,
+    // This frame's texture matrices 0 and 1 when BF_UV is set (packed as Surface.uv*).
+    uv0: vec4<f32>,
+    uv1: vec4<f32>,
+    uv2: vec4<f32>,
 };
 
 const BF_FRILL: u32 = 1u;
 const BF_SWAY: u32 = 2u;
+const BF_UV: u32 = 8u;
 
 @group(1) @binding(0) var<uniform> batch: Batch;
 
@@ -53,6 +58,15 @@ struct InstOut {
 
 fn batch_flag(bit: u32) -> bool {
     return (batch.lights.w & bit) != 0u;
+}
+
+// Texture coordinates through matrix k: the batch's of this frame, else the surface's own
+// (material.md §8.4).
+fn inst_uv(k: u32, uv: vec2<f32>) -> vec2<f32> {
+    if (batch_flag(BF_UV)) {
+        return uv_through(batch.uv0, batch.uv1, batch.uv2, k, uv);
+    }
+    return uv_through(surface.uv0, surface.uv1, surface.uv2, k, uv);
 }
 
 fn safe_unit(v: vec3<f32>) -> vec3<f32> {
@@ -150,8 +164,9 @@ struct Shaded {
 };
 
 fn shade(in: InstOut) -> Shaded {
-    let base = surface_base(in.uv);
-    let ntex = surface_normal_texel(in.uv);
+    let uv0 = inst_uv(0u, in.uv);
+    let base = surface_base_at(uv0, inst_uv(1u, in.uv));
+    let ntex = surface_normal_texel(uv0);
     var out: Shaded;
     out.opacity = surface_opacity_texel(base);
     var m = surface.color * in.tint;
@@ -287,7 +302,7 @@ fn vs_shadow(v: ModelIn, inst: InstIn) -> ShadowOut {
 // Cut-outs cast cut-out shadows (lighting.md §7, code 0x0A).
 @fragment
 fn fs_shadow_mask(in: ShadowOut) {
-    let a = surface_opacity_texel(surface_base(in.uv));
+    let a = surface_opacity_texel(surface_base_at(inst_uv(0u, in.uv), inst_uv(1u, in.uv)));
     if (surface_alpha_test(a)) {
         discard;
     }

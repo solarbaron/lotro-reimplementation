@@ -984,6 +984,8 @@ mod tests {
             common_blend: None,
             cull_none: false,
             default_alpha_ref: None,
+            family: Default::default(),
+            unbound_defaults: Vec::new(),
         });
         let params = ParameterSet::build(&shader, &[]);
         ResolvedMaterial {

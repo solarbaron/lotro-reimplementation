@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A background thread that answers the record lookups of the walker's M4.5 layers, so
 //! the main thread never reads an archive (`walker.md` §2): 0x47 objects to their part
-//! meshes (sky objects and frills, `setup.md` §3.1) and water surfaces to their water
-//! material (`water.md` §8.2). Requests are made once per key and answered
+//! meshes (sky objects and frills, `setup.md` §3.1) and water surfaces to their resolved
+//! material and texture-matrix bindings (`water.md` §8.2), which the water layers evaluate
+//! at the clock every frame (`water.md` §8.7.1). Requests are made once per key and answered
 //! asynchronously; the answers are kept for the walker's life, bounded by
 //! [`MAX_RESOLVED`] entries.
 //!
@@ -19,7 +20,9 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
 use tessera_dat::ArchiveSet;
 use tessera_formats::Did;
-use tessera_material::{MaterialLibrary, WaterMaterial};
+use tessera_material::{LiquidSurface, MaterialLibrary, WaterMaterial};
+
+use super::liquid::SurfaceAnim;
 use tessera_world::WorldContext;
 use tessera_world::frills::{FrillObjectValues, FrillSettings};
 
@@ -56,9 +59,9 @@ impl ObjectAnswer {
 pub trait Lookups: Send + 'static {
     /// Object `did`'s parts and frill values.
     fn object(&self, did: Did) -> ObjectAnswer;
-    /// The water material of surface `did` (`None`: it reads no water parameter or does
-    /// not resolve).
-    fn water(&self, did: Did) -> Option<WaterMaterial>;
+    /// The material of water surface `did` (`None`: it reads no water parameter, is no
+    /// own-program record (`material.md` §11.6) or does not resolve).
+    fn water(&self, did: Did) -> Option<SurfaceAnim>;
 }
 
 /// The install's lookups: objects through a [`WorldContext`], water surfaces through the
@@ -89,18 +92,26 @@ impl Lookups for InstallLookups {
         }
     }
 
-    fn water(&self, did: Did) -> Option<WaterMaterial> {
-        self.materials
+    fn water(&self, did: Did) -> Option<SurfaceAnim> {
+        let material = self
+            .materials
             .resolve_surface(did)
             .map_err(|e| tracing::debug!(%did, "water surface unresolved: {e}"))
-            .ok()
-            .and_then(|m| WaterMaterial::at_rest(&m))
+            .ok()?;
+        let layout = self
+            .materials
+            .texture_matrices(material.shader.did)
+            .unwrap_or_default();
+        let mut states = tessera_material::CurveStates::new();
+        let drawn = LiquidSurface::evaluate(&material, &layout, 0.0, &mut states).is_some()
+            || WaterMaterial::at_rest(&material).is_some();
+        drawn.then_some(SurfaceAnim { material, layout })
     }
 }
 
 enum Answer {
     Object(Did, ObjectAnswer),
-    Water(Did, Option<Box<WaterMaterial>>),
+    Water(Did, Option<SurfaceAnim>),
 }
 
 /// Where a lookup stands.
@@ -115,7 +126,7 @@ pub struct Resolver {
     tx: Option<Sender<Request>>,
     rx: Receiver<Answer>,
     objects: HashMap<Did, Entry<ObjectAnswer>>,
-    water: HashMap<Did, Entry<Option<WaterMaterial>>>,
+    water: HashMap<Did, Entry<Option<SurfaceAnim>>>,
     /// Entries of both maps still [`Entry::Pending`].
     pending: usize,
     /// Asks the thread to stop before its next request.
@@ -181,8 +192,7 @@ impl Resolver {
                         ),
                         Request::Water(did) => Answer::Water(
                             did,
-                            guarded("water surface", did, || lookups.water(did), || None)
-                                .map(Box::new),
+                            guarded("water surface", did, || lookups.water(did), || None),
                         ),
                     };
                     if ans_tx.send(answer).is_err() {
@@ -221,7 +231,7 @@ impl Resolver {
                     Self::settle(&mut self.objects, &mut self.pending, did, a);
                 }
                 Ok(Answer::Water(did, m)) => {
-                    Self::settle(&mut self.water, &mut self.pending, did, m.map(|b| *b));
+                    Self::settle(&mut self.water, &mut self.pending, did, m);
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
@@ -277,9 +287,9 @@ impl Resolver {
         }
     }
 
-    /// The water material of surface `did`, once resolved (`Some(None)`: the surface
+    /// The material of water surface `did`, once resolved (`Some(None)`: the surface
     /// reads no water parameter or does not resolve); asks for it on first use.
-    pub fn water(&mut self, did: Did) -> Option<Option<WaterMaterial>> {
+    pub fn water(&mut self, did: Did) -> Option<Option<SurfaceAnim>> {
         match self.water.get(&did) {
             Some(Entry::Done(m)) => Some(m.clone()),
             Some(Entry::Pending) => None,
@@ -350,7 +360,7 @@ mod tests {
             }
         }
 
-        fn water(&self, did: Did) -> Option<WaterMaterial> {
+        fn water(&self, did: Did) -> Option<SurfaceAnim> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             assert!(did.0 != 0x666, "hostile surface");
             None
@@ -390,7 +400,7 @@ mod tests {
         assert_eq!(&*a.parts, &[Did(6)]);
         assert!(!a.frill.opaque);
         assert_eq!(r.object_parts(Did(5)).as_deref(), Some(&[Did(6)][..]));
-        assert_eq!(r.water(Did(7)), Some(None));
+        assert!(matches!(r.water(Did(7)), Some(None)));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
@@ -404,7 +414,7 @@ mod tests {
         let a = r.object(Did(0x666)).unwrap();
         assert!(a.parts.is_empty());
         assert_eq!(a.frill, FrillObjectValues::default());
-        assert_eq!(r.water(Did(0x666)), Some(None));
+        assert!(matches!(r.water(Did(0x666)), Some(None)));
         // Later lookups are still answered.
         assert!(r.object(Did(9)).is_none());
         settle(&mut r);
@@ -437,7 +447,7 @@ mod tests {
         r.poll();
         assert_eq!(r.pending(), 0, "nothing waits for a dead thread");
         assert!(r.object(Did(4)).is_some_and(|a| a.parts.is_empty()));
-        assert_eq!(r.water(Did(50)), Some(None));
+        assert!(matches!(r.water(Did(50)), Some(None)));
         // No new request is made (and none stays pending).
         assert!(r.object(Did(77)).is_none());
         assert_eq!(r.pending(), 0);

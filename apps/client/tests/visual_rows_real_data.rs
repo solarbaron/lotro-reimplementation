@@ -16,6 +16,8 @@
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
 //! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7, [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle |
 //!
+//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 implementer OPEN; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
+//!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
 //! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed. The images of
 //! `row_cameras_render` are for viewing only and must not be committed.
@@ -752,6 +754,240 @@ fn row_cameras_render() {
         }
     }
     assert!(unsettled.is_empty(), "not settled: {unsettled:?}");
+}
+
+/// What a water row's image must show in the walker's fallback diagnostic of its last
+/// frame (`walker/fallback.rs`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WaterExpect {
+    /// Placed surfaces of `material.md` §11.6 records in view, drawn by their own
+    /// programs (`water.md` §8.5 rule).
+    Routed,
+    /// Only the generic expectations (below).
+    Any,
+    /// The generic expectations, and landscape water that stays see-through beyond the near
+    /// field: the mean luminance of a band at the screen centre (water about 27 m away at
+    /// W17) is at least [`SEE_THROUGH_RATIO`] × that of a band near the bottom edge (water
+    /// within 15 m, where the `water.md` §8.6.4 step 3 tint is 0). Checklist row W17: the
+    /// bed seen through the river, not a near-black band past 15 m.
+    SeeThrough,
+}
+
+/// Smallest centre-to-bottom luminance ratio of [`WaterExpect::SeeThrough`].
+const SEE_THROUGH_RATIO: f64 = 0.45;
+
+/// Mean luminance (0–1, Rec. 709 weights on the stored values) of the rectangle of `png`
+/// between the fractions `y` (top, bottom) and `x` (left, right) of its size.
+fn band_luma(png_path: &std::path::Path, y: (f64, f64), x: (f64, f64)) -> f64 {
+    let file = std::fs::File::open(png_path).expect("open the screenshot");
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .expect("png header");
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("png size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    let (w, h) = (info.width as usize, info.height as usize);
+    let channels = info.color_type.samples();
+    assert_eq!(info.bit_depth, png::BitDepth::Eight, "8-bit screenshot");
+    let span = |a: f64, n: usize| ((a * n as f64) as usize).min(n);
+    let (mut sum, mut count) = (0.0f64, 0usize);
+    for row in span(y.0, h)..span(y.1, h) {
+        for col in span(x.0, w)..span(x.1, w) {
+            let i = (row * w + col) * channels;
+            if let Some(px) = buf.get(i..i + 3) {
+                sum += (0.2126 * f64::from(px[0])
+                    + 0.7152 * f64::from(px[1])
+                    + 0.0722 * f64::from(px[2]))
+                    / 255.0;
+                count += 1;
+            }
+        }
+    }
+    sum / count.max(1) as f64
+}
+
+/// The cameras of the water rows of `m4-5-visual.md` §4.4 (W7 lava, W8 placed water) and
+/// §4.8 (W10–W17, added 2026-10-09 for non-shader water and water animation).
+#[rustfmt::skip]
+const WATER_CAMERAS: [(RowCamera, WaterExpect); 10] = [
+    (RowCamera { id: "W7", region: 4, block: 0x38A8, eye: [95.00, 113.30, 152.02], heading: 0.0, pitch: -30.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
+    (RowCamera { id: "W8", region: 3, block: 0x4DE9, eye: [40.20, 95.63, 167.60], heading: 0.0, pitch: -20.0, t: 0.5, extra: &[], target: Some([40.20, 101.63, 165.74]) }, WaterExpect::Routed),
+    (RowCamera { id: "W10", region: 1, block: 0x4D7F, eye: [105.30, 60.00, 473.00], heading: 0.0, pitch: 28.0, t: 0.5, extra: &[], target: Some([105.3, 151.6, 500.0]) }, WaterExpect::Any),
+    (RowCamera { id: "W11", region: 1, block: 0x9832, eye: [28.00, 55.00, 410.00], heading: 0.0, pitch: 14.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
+    (RowCamera { id: "W12", region: 1, block: 0x61A5, eye: [58.00, 52.00, 385.00], heading: 43.0, pitch: -35.0, t: 0.5, extra: &[], target: Some([65.98, 61.06, 377.37]) }, WaterExpect::Routed),
+    (RowCamera { id: "W13", region: 1, block: 0x7574, eye: [105.80, 15.00, 390.00], heading: 0.0, pitch: -25.0, t: 0.5, extra: &[], target: Some([105.77, 30.01, 381.46]) }, WaterExpect::Routed),
+    (RowCamera { id: "W14", region: 1, block: 0xE243, eye: [100.50, 78.00, 318.50], heading: 180.0, pitch: -20.0, t: 0.5, extra: &[], target: Some([100.52, 63.84, 314.06]) }, WaterExpect::Routed),
+    (RowCamera { id: "W15", region: 1, block: 0x4D7F, eye: [105.30, 60.00, 473.00], heading: 0.0, pitch: -12.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
+    (RowCamera { id: "W16", region: 1, block: 0x9832, eye: [50.00, 80.00, 407.50], heading: 271.0, pitch: -10.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
+    (RowCamera { id: "W17", region: 5, block: 0x6758, eye: [70.00, 65.00, 396.00], heading: 64.5, pitch: -8.0, t: 0.5, extra: &[], target: None }, WaterExpect::SeeThrough),
+];
+
+/// The water rows' cameras frame their targets (no install needed).
+#[test]
+fn water_row_cameras_frame_their_targets() {
+    let half_v = (FOV_Y / 2.0).to_radians();
+    let half_h = (half_v.tan() * ASPECT).atan();
+    for (c, _) in &WATER_CAMERAS {
+        let Some(target) = c.target else { continue };
+        let (h, p) = (c.heading.to_radians(), c.pitch.to_radians());
+        let fwd = [h.sin() * p.cos(), h.cos() * p.cos(), p.sin()];
+        let right = [h.cos(), -h.sin(), 0.0];
+        let up = [
+            right[1] * fwd[2] - right[2] * fwd[1],
+            right[2] * fwd[0] - right[0] * fwd[2],
+            right[0] * fwd[1] - right[1] * fwd[0],
+        ];
+        let d: Vec<f64> = (0..3).map(|i| target[i] - c.eye[i]).collect();
+        let dot = |a: &[f64; 3]| a.iter().zip(&d).map(|(x, y)| x * y).sum::<f64>();
+        let (f, r, u) = (dot(&fwd), dot(&right), dot(&up));
+        assert!(f > 0.0, "{}: target behind the camera", c.id);
+        assert!(
+            r.atan2(f).abs() < half_h && u.atan2(f).abs() < half_v,
+            "{}: target out of view",
+            c.id
+        );
+    }
+}
+
+/// Renders the water rows (`m4-5-visual.md` §4.4 W7, W8 and §4.8 W10–W17) into
+/// `TESSERA_VISUAL_SHOTS` (private; never committed) with the walker's headless screenshot
+/// path (1600 × 900, free-fly, no HUD, game clock stopped, the material clock running) and
+/// checks, per row, that the area settled and that the walker's fallback diagnostic of the
+/// last frame shows no own-program record (`material.md` §11.6) on the generic path, no
+/// animated texture matrix drawn still and no second colour layer left out of a record that
+/// `material.md` §10.3 covers; at W8 and W12–W14 the placed water, fountain and puddle
+/// surfaces must be drawn by their own programs, and at W17 the river must stay see-through
+/// beyond the near field ([`WaterExpect::SeeThrough`]). Skipped unless both `TESSERA_VISUAL_SHOTS`
+/// and `TESSERA_GAME_DIR` are set, or when no GPU adapter exists.
+#[test]
+fn water_rows_render() {
+    use clap::Parser as _;
+    let Some(out) = std::env::var_os("TESSERA_VISUAL_SHOTS").filter(|d| !d.is_empty()) else {
+        eprintln!("TESSERA_VISUAL_SHOTS not set; skipping");
+        return;
+    };
+    let Some(dir) = install() else { return };
+    let out = PathBuf::from(out);
+    std::fs::create_dir_all(&out).expect("create the image directory");
+    let (out_abs, dir_abs) = (
+        out.canonicalize().expect("image directory"),
+        dir.canonicalize().expect("install directory"),
+    );
+    assert!(
+        !out_abs.starts_with(&dir_abs),
+        "TESSERA_VISUAL_SHOTS must lie outside the install"
+    );
+    let only: Option<Vec<String>> = std::env::var("TESSERA_WATER_ROWS")
+        .ok()
+        .map(|v| v.split(',').map(|s| s.trim().to_owned()).collect());
+    let mut failed = Vec::new();
+    for (c, expect) in &WATER_CAMERAS {
+        if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == c.id)) {
+            continue;
+        }
+        let data = tempfile::tempdir().expect("tempdir");
+        let png = out.join(format!("{}.png", c.id));
+        let spawn = format!(
+            "{},{},{},{:.3},{:.3},{:.3}",
+            c.region,
+            c.block >> 8,
+            c.block & 0xFF,
+            c.eye[0],
+            c.eye[1],
+            c.eye[2] - 1.0
+        );
+        let argv: Vec<String> = [
+            "tessera-client",
+            "--game-dir",
+            dir.to_str().expect("utf-8 game dir"),
+            "--data-dir",
+            data.path().to_str().expect("utf-8 temp path"),
+            "--size",
+            "1600x900",
+            "--spawn",
+            &spawn,
+            "--fly",
+            "--eye-height",
+            "1.0",
+            "--heading",
+            &c.heading.to_string(),
+            "--pitch",
+            &c.pitch.to_string(),
+            "--time-of-day",
+            &c.t.to_string(),
+            "--time-rate",
+            "0",
+            "--no-hud",
+            "--screenshot",
+            png.to_str().expect("utf-8 image path"),
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .chain(c.extra.iter().map(|s| (*s).to_owned()))
+        .collect();
+        let args = tessera_client::Args::try_parse_from(argv).expect("valid args");
+        let r = match tessera_client::headless::run_with(&args, settle_wait()) {
+            Ok(r) => r,
+            Err(e) => {
+                if e.chain().any(|x| {
+                    matches!(
+                        x.downcast_ref::<tessera_render::RenderError>(),
+                        Some(tessera_render::RenderError::NoAdapter { .. })
+                    )
+                }) {
+                    eprintln!("skipping: no GPU adapter: {e:#}");
+                    return;
+                }
+                panic!("{}: walker run failed: {e:#}", c.id);
+            }
+        };
+        let f = &r.fallback;
+        eprintln!(
+            "{}: {} frames, settled {}; {}",
+            c.id,
+            r.frames,
+            r.settled,
+            f.hud_line()
+        );
+        let mut fails = Vec::new();
+        if !r.settled {
+            fails.push("not settled".to_owned());
+        }
+        if f.own_program_draws > 0 {
+            fails.push(format!(
+                "{} own-program draws on the generic path ({:?})",
+                f.own_program_draws, f.own_program_top
+            ));
+        }
+        if f.still_scroll_draws > 0 {
+            fails.push(format!("{} draws scroll still", f.still_scroll_draws));
+        }
+        if f.second_layer_draws > 0 {
+            fails.push(format!(
+                "{} draws without their second layer",
+                f.second_layer_draws
+            ));
+        }
+        if *expect == WaterExpect::Routed && f.own_program_routed == 0 {
+            fails.push("no surface drawn by its own program".to_owned());
+        }
+        if *expect == WaterExpect::SeeThrough {
+            let centre = band_luma(&png, (0.48, 0.56), (0.3, 0.7));
+            let near = band_luma(&png, (0.88, 0.96), (0.3, 0.7));
+            eprintln!(
+                "{}: luminance centre {centre:.3}, bottom {near:.3}, ratio {:.2}",
+                c.id,
+                centre / near.max(1e-6)
+            );
+            if centre < SEE_THROUGH_RATIO * near {
+                fails.push(format!(
+                    "water dark past the near field (centre {centre:.3} < {SEE_THROUGH_RATIO} \
+                     x bottom {near:.3})"
+                ));
+            }
+        }
+        report(c.id, &fails, &mut failed, "settled, no water fallback");
+    }
+    assert!(failed.is_empty(), "rows failing: {failed:?}");
 }
 
 fn report(id: &str, fails: &[String], failed: &mut Vec<String>, ok: &str) {

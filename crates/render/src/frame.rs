@@ -18,7 +18,7 @@ use crate::skin::{PaletteData, SkinPalette};
 use crate::sky::SkyDraw;
 use crate::terrain_layers::TerrainDraw;
 use crate::texture::TextureId;
-use crate::water::WaterDraw;
+use crate::water::{LiquidMeshDraw, WaterDraw};
 
 /// Linear RGBA colour.
 pub type Rgba = [f32; 4];
@@ -139,6 +139,7 @@ pub struct Pass {
 pub(crate) struct WorldDraws {
     pub terrain: Vec<TerrainDraw>,
     pub water: Vec<WaterDraw>,
+    pub liquid: Vec<LiquidMeshDraw>,
     pub sky: Vec<SkyDraw>,
     pub instanced: Vec<InstanceBatch>,
     pub far_terrain: Vec<FarTerrainDraw>,
@@ -149,6 +150,7 @@ impl WorldDraws {
     pub(crate) fn is_empty(&self) -> bool {
         self.terrain.is_empty()
             && self.water.is_empty()
+            && self.liquid.is_empty()
             && self.sky.is_empty()
             && self.instanced.is_empty()
             && self.far_terrain.is_empty()

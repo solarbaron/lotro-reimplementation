@@ -1981,3 +1981,162 @@ fn second_colour_layer_multiplies_the_opacity() {
     assert_eq!(r.features.blend.opacity_slot, None);
     assert_eq!(r.second_opacity_slot(), None);
 }
+
+// ---------------------------------------------------------------------------------------
+// Program families (§11.6) and the fallback diagnosis
+// ---------------------------------------------------------------------------------------
+
+/// A one-permutation unlit shader declaring `decls` with samplers `samplers`.
+fn family_shader(did: u32, decls: &[Vec<u8>], samplers: &[&str]) -> Vec<u8> {
+    shader(
+        did,
+        decls,
+        &[Perm {
+            programs: None,
+            samplers,
+            extra_type5: false,
+            state: (5, 6, 1, 1, 2, 0.5),
+        }],
+    )
+}
+
+#[test]
+fn program_families_from_the_interface() {
+    use tessera_material::interface::ProgramFamily;
+    let family = |decls: &[Vec<u8>], samplers: &[&str]| {
+        let bytes = family_shader(0x2B00_0042, decls, samplers);
+        let rec = ShaderRecord::parse_expecting(&bytes, Did(0x2B00_0042)).unwrap();
+        ShaderInterface::from_record(&rec).family
+    };
+    let speed = entry(1057, V::Const(0.005), &[], 1);
+    let bump = entry(1056, V::Const(0.003), &[], 1);
+    let mirror = entry(1101, V::Const(1.33), &[], 1);
+    let colour = entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0);
+    let water_colour = entry(2009, V::Color([1.0; 4]), &[], 1);
+    // Water: 1057 or 1056 with a frame-buffer sampler.
+    assert_eq!(
+        family(
+            &[speed.clone(), colour.clone()],
+            &["Color", "FrameBufferTexture"]
+        ),
+        ProgramFamily::Water
+    );
+    assert_eq!(
+        family(&[bump], &["FrameBufferTexture"]),
+        ProgramFamily::Water
+    );
+    // Mirror: any of 1100-1106.
+    assert_eq!(
+        family(&[mirror, colour.clone()], &["DiffuseTexture"]),
+        ProgramFamily::Mirror
+    );
+    // Liquid distortion: 1057, no frame buffer, a liquid-normal or distortion sampler.
+    assert_eq!(
+        family(
+            &[speed.clone(), colour.clone()],
+            &["LiquidDiffuseTexture", "LiquidNormalTexture"]
+        ),
+        ProgramFamily::LiquidDistortion
+    );
+    assert_eq!(
+        family(
+            std::slice::from_ref(&speed),
+            &["ColorAndOpacity", "Distortion"]
+        ),
+        ProgramFamily::LiquidDistortion
+    );
+    // 1057 with neither sampler (the lava case) and a frame buffer without 1056/1057 (the
+    // window case) stay generic.
+    assert_eq!(family(&[speed], &["Color"]), ProgramFamily::Generic);
+    assert_eq!(
+        family(&[water_colour, colour], &["Color", "FrameBufferTexture"]),
+        ProgramFamily::Generic
+    );
+}
+
+#[test]
+fn fallback_diagnosis_names_the_failing_step() {
+    use tessera_material::diagnose::{base_reason, reason_of_texture_error};
+    use tessera_material::{FallbackReason as R, MaterialKind};
+    let mut s = texture_store();
+    // An unlit shader without slot 3000, and one whose 3000 a material sets to 0.
+    s.insert(
+        0x2B00_0050,
+        family_shader(0x2B00_0050, &[entry(2000, V::Color([1.0; 4]), &[], 0)], &[]),
+    );
+    s.insert(
+        0x2B00_0051,
+        family_shader(
+            0x2B00_0051,
+            &[entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0)],
+            &["Color"],
+        ),
+    );
+    // A water record whose 3000 names a missing texture list.
+    s.insert(
+        0x2B00_0052,
+        family_shader(
+            0x2B00_0052,
+            &[
+                entry(1057, V::Const(0.005), &[], 1),
+                entry(3000, V::Word(0x4000_0FFF), &[(10, 0, 0)], 0),
+            ],
+            &["Color", "FrameBufferTexture"],
+        ),
+    );
+    s.insert(
+        0x3000_0050,
+        material(0x3000_0050, &[entry(3000, V::Word(0), &[], 0)]),
+    );
+    s.insert(
+        0x3100_0050,
+        surface_record(0x3100_0050, 0x2B00_0050, 1, &[]),
+    );
+    s.insert(
+        0x3100_0051,
+        surface_record(0x3100_0051, 0x2B00_0051, 1, &[0x3000_0050]),
+    );
+    s.insert(
+        0x3100_0052,
+        surface_record(0x3100_0052, 0x2B00_00FF, 1, &[]),
+    );
+    s.insert(
+        0x3100_0053,
+        surface_record(0x3100_0053, 0x2B00_0052, 1, &[]),
+    );
+    // A list none of whose levels resolves (0x4000_0300 of the texture store).
+    s.insert(
+        0x3000_0051,
+        material(0x3000_0051, &[entry(3000, V::Word(0x4000_0300), &[], 0)]),
+    );
+    s.insert(
+        0x3100_0054,
+        surface_record(0x3100_0054, 0x2B00_0051, 1, &[0x3000_0051]),
+    );
+    let lib = library(s);
+    let d = |did: u32, decode: bool| lib.diagnose_surface(Did(did), Some(64), decode);
+    assert_eq!(d(0, true).fallback, Some(R::NoSurface));
+    assert_eq!(d(0x3100_00F0, true).fallback, Some(R::SurfaceMissing));
+    assert_eq!(d(0x3100_00F0, true).kind, MaterialKind::Unresolved);
+    let shaderless = d(0x3100_0052, true);
+    assert_eq!(shaderless.fallback, Some(R::ShaderMissing));
+    assert_eq!(shaderless.shader, Some(Did(0x2B00_00FF)));
+    assert_eq!(d(0x3100_0050, true).fallback, Some(R::NoBaseSlot));
+    assert_eq!(d(0x3100_0050, true).kind, MaterialKind::Unlit);
+    assert_eq!(d(0x3100_0051, true).fallback, Some(R::BaseSlotEmpty));
+    let water = d(0x3100_0053, false);
+    assert_eq!(water.kind, MaterialKind::Water);
+    assert!(water.kind.needs_own_program());
+    assert_eq!(
+        water.fallback, None,
+        "not decoded: the slot has a texture list"
+    );
+    assert_eq!(water.base_texture, Some(Did(0x4000_0FFF)));
+    assert_eq!(d(0x3100_0053, true).fallback, Some(R::TextureListMissing));
+    assert_eq!(d(0x3100_0054, true).fallback, Some(R::TextureLevelsMissing));
+    assert!(d(0x3100_0054, true).error.is_some());
+    let m = lib.resolve_surface(Did(0x3100_0051)).unwrap();
+    assert_eq!(base_reason(&m), Some(R::BaseSlotEmpty));
+    let e = lib.texture(Did(0x4000_0FFF), None).unwrap_err();
+    assert_eq!(reason_of_texture_error(&e), R::TextureListMissing);
+}

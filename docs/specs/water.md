@@ -4,12 +4,12 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-09, re-review of the revision answering B1–B2: passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: Revised (2026-10-09, spec writer: revision answering the review of 2026-10-09, B1 (§7.4 Tessera rule lists four differences) and B2 (§7.3 answer reworded to agree with W22), and the non-blocking §14 note). Before: Revised (2026-10-09, spec writer: §7.4 merged OPEN answered by BIN3 (j), new W22, W19 reworded, the no-support answer corrected, step 3 sign of *v* made explicit; review 2026-10-09: **changes requested**, items B1–B2 in the review record). Before: Accepted (2026-10-08; two parallel revisions of that date, each re-reviewed and accepted: the volume-flag, element and monitor answers, rows W18–W20, and the §7.4 revision on entering deep water from BIN2, row W21 (W18 in that revision); merged 2026-10-09 with one disagreement between them recorded as an OPEN in §7.4). First accepted 2026-10-06. |
+| **Status** | **Accepted** (2026-10-09, re-review of the fourth water-feature revision passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-09, spec writer: non-shader water and animation rates, see §15; second revision the same day, checked against Tessera's own whole-world fallback probe: tags TP and BIN4, rows W35–W39, §8.3 how the client fills *O*, §8.5.1 drawn-world counts and liquid objects, §8.5.3 four more fall surfaces, §8.5.4 the six static mirrors, new §8.7.1–§8.7.2, WA12–WA15; review 2026-10-09: **changes requested**, items B1–B2 in the review record; third revision the same day answering B1–B2 and the three non-blocking notes: the lava record 0x2B000810 is its own family with its formula traced, new §8.6.5, rows W40–W41, WA16; re-review 2026-10-09: **changes requested**, item B1 of the third revision in the review record; fourth revision the same day answering that B1 and non-blocking note (1): W37, the §8.7.1 rule and census and the §8.7 rate table cover the lava family (1186, 1187 on 0x31006FAE) and the older bump water, §8.6.5 step 6 and a new texture-matrix paragraph; awaiting re-review). Before: **Accepted** (2026-10-09, re-review of the revision answering B1–B2: passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: Revised (2026-10-09, spec writer: revision answering the review of 2026-10-09, B1 (§7.4 Tessera rule lists four differences) and B2 (§7.3 answer reworded to agree with W22), and the non-blocking §14 note). Before: Revised (2026-10-09, spec writer: §7.4 merged OPEN answered by BIN3 (j), new W22, W19 reworded, the no-support answer corrected, step 3 sign of *v* made explicit; review 2026-10-09: **changes requested**, items B1–B2 in the review record). Before: Accepted (2026-10-08; two parallel revisions of that date, each re-reviewed and accepted: the volume-flag, element and monitor answers, rows W18–W20, and the §7.4 revision on entering deep water from BIN2, row W21 (W18 in that revision); merged 2026-10-09 with one disagreement between them recorded as an OPEN in §7.4). First accepted 2026-10-06. |
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec reviewer, fresh sessions; separate from the writer's session) |
-| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Re-review of the 2026-10-08 revision (rows W18–W20), 2026-10-08 (fresh reviewer session): **Accepted** (CLEAN_ROOM.md §5.3, every item; W19 spot-checked in the binary). Re-review 2026-10-08 of the parallel §7.4 revision (BIN2, row W21, then W18) (Claude review session, spec-reviewer role, fresh session): **passed**, Accepted; all CLEAN_ROOM.md §5.3 items hold. Spot check: steps 1–4 agree with `collision.md` §10.3 (Swimming row), §11.1 step 9, §11.6 items 3, 4, 7 and §12.4 (p), §12.5; the worked example recomputed (0.098, 0.037, 0.013, 0.003 m, line in the fifth update at 60 per second; 0.19, 0.07, 0.02 m, fourth at 30). Non-blocking: in §7.4 step 3, *v* in 0.4 · (*v* + 20 *t*) is the signed vertical velocity (negative downward), not the "downward speed" the sentence names; the example fixes the sign. Merge of both revisions, 2026-10-09: no fact changed; the merged text has not been reviewed as a whole. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the BIN3 revision (commit a654745, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **changes requested**. Items that hold: no code or pseudo-code (the update of *v*_z in §7.4 step 3 is a formula), no addresses, middleware class names, copied prose, game text, keys or hostnames; nothing under a closed gate; BIN3 has a provenance row with question, method and why M1–M3 were not enough; W19 and W22 are marked. Spot checks passed (read-only, against the cited sources): W19, W22 and BIN3 agree with `collision.md` §11.3.2 (a) and (b), C28, C49, C64 and BIN question 70 on this branch; §7.4 step 1 cites W22 consistently; the step 3 formula recomputed from Gravity −20 m/s² and damper 0.4 at *t* = 1/60 s and 15 m/s gives the example's 0.098, 0.037, 0.013, 0.003 m and the rise in the fifth update, and the earlier non-blocking note on the sign of *v* is resolved. The binary was not re-read in this review. Blocking: **B1** §7.4 Tessera rule says it differs from the client (after controller updates) "in three cases", but a fourth follows from the stated rules: in water deeper than the float height on support that is not walkable, Tessera's Decision ("swims (state 2) when the water surface is more than its float height above its feet"; `collision.md` §12.3 step 7) gives 2 where the client (W22, table of `collision.md` §11.3.2) gives 3. List all four cases (the matching `collision.md` §12.5 row "Water states" has the same gap). **B2** §7.3, "Answer (2026-10-08, BIN, W19)": "for the movement state the client reads only the mover's `Volume_IsLiquid`" contradicts W22 (after controller updates the in-water input also needs the float-height depth). Reword so it agrees with §7.4 (both routines read `Volume_IsLiquid`, so a coin volume still counts as water for the movement state; the controller's routine adds the depth test). Non-blocking: the §14 OPEN on containment and buoyancy cites only W19 for the answered state rule; add W22. Full records in the review log (decision 0018). Spec writer, 2026-10-09: revision answering B1, B2 and the non-blocking note (see the change log). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of that revision (commit d145d39, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **Accepted** (every item). **B1** resolved: the §7.4 Tessera rule lists four differences after controller updates; checked case by case against the Tessera Decision (§7.4, `collision.md` §12.3 step 7) and the client table with the W22 in-water input (`collision.md` §11.3.2): shallow water gives 1/5, 3/6, 2/4 (Tessera/client) by support, deep water gives 2/1 and 2/3 on walkable and other support, and both give 2 without support in deep water, as stated; `collision.md` §12.5 row "Water states" lists the same four. **B2** resolved: the §7.3 coin-volume answer says both routines read `Volume_IsLiquid` and that the controller's routine adds the float-height test (W22), consistent with W19, W22 and §7.4. Non-blocking §14 note resolved (cites W19 and W22). No remaining text in §7.3, §7.4, §13 or §14 states the superseded "no depth input for the movement state" or "state 2 whatever the depth" without the position-update qualifier. No new facts, so no new provenance needed; no code or pseudo-code, no copied prose, addresses, middleware class names, game text, keys or hostnames; nothing under a closed gate. The binary was not re-read in this review (no new BIN claim). Non-blocking: in the narrow band where the depth lies between the float height minus 0.0002 m and the float height, the client is in water while Tessera wades; both give 1 or 3 with support and 2 without, so no fifth difference arises. |
-| **Implements into** | `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
+| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Re-review of the 2026-10-08 revision (rows W18–W20), 2026-10-08 (fresh reviewer session): **Accepted** (CLEAN_ROOM.md §5.3, every item; W19 spot-checked in the binary). Re-review 2026-10-08 of the parallel §7.4 revision (BIN2, row W21, then W18) (Claude review session, spec-reviewer role, fresh session): **passed**, Accepted; all CLEAN_ROOM.md §5.3 items hold. Spot check: steps 1–4 agree with `collision.md` §10.3 (Swimming row), §11.1 step 9, §11.6 items 3, 4, 7 and §12.4 (p), §12.5; the worked example recomputed (0.098, 0.037, 0.013, 0.003 m, line in the fifth update at 60 per second; 0.19, 0.07, 0.02 m, fourth at 30). Non-blocking: in §7.4 step 3, *v* in 0.4 · (*v* + 20 *t*) is the signed vertical velocity (negative downward), not the "downward speed" the sentence names; the example fixes the sign. Merge of both revisions, 2026-10-09: no fact changed; the merged text has not been reviewed as a whole. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the BIN3 revision (commit a654745, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **changes requested**. Items that hold: no code or pseudo-code (the update of *v*_z in §7.4 step 3 is a formula), no addresses, middleware class names, copied prose, game text, keys or hostnames; nothing under a closed gate; BIN3 has a provenance row with question, method and why M1–M3 were not enough; W19 and W22 are marked. Spot checks passed (read-only, against the cited sources): W19, W22 and BIN3 agree with `collision.md` §11.3.2 (a) and (b), C28, C49, C64 and BIN question 70 on this branch; §7.4 step 1 cites W22 consistently; the step 3 formula recomputed from Gravity −20 m/s² and damper 0.4 at *t* = 1/60 s and 15 m/s gives the example's 0.098, 0.037, 0.013, 0.003 m and the rise in the fifth update, and the earlier non-blocking note on the sign of *v* is resolved. The binary was not re-read in this review. Blocking: **B1** §7.4 Tessera rule says it differs from the client (after controller updates) "in three cases", but a fourth follows from the stated rules: in water deeper than the float height on support that is not walkable, Tessera's Decision ("swims (state 2) when the water surface is more than its float height above its feet"; `collision.md` §12.3 step 7) gives 2 where the client (W22, table of `collision.md` §11.3.2) gives 3. List all four cases (the matching `collision.md` §12.5 row "Water states" has the same gap). **B2** §7.3, "Answer (2026-10-08, BIN, W19)": "for the movement state the client reads only the mover's `Volume_IsLiquid`" contradicts W22 (after controller updates the in-water input also needs the float-height depth). Reword so it agrees with §7.4 (both routines read `Volume_IsLiquid`, so a coin volume still counts as water for the movement state; the controller's routine adds the depth test). Non-blocking: the §14 OPEN on containment and buoyancy cites only W19 for the answered state rule; add W22. Full records in the review log (decision 0018). Spec writer, 2026-10-09: revision answering B1, B2 and the non-blocking note (see the change log). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of that revision (commit d145d39, `git diff main -- docs/specs/water.md` on specs-9) against CLEAN_ROOM.md §5.3, **Accepted** (every item). **B1** resolved: the §7.4 Tessera rule lists four differences after controller updates; checked case by case against the Tessera Decision (§7.4, `collision.md` §12.3 step 7) and the client table with the W22 in-water input (`collision.md` §11.3.2): shallow water gives 1/5, 3/6, 2/4 (Tessera/client) by support, deep water gives 2/1 and 2/3 on walkable and other support, and both give 2 without support in deep water, as stated; `collision.md` §12.5 row "Water states" lists the same four. **B2** resolved: the §7.3 coin-volume answer says both routines read `Volume_IsLiquid` and that the controller's routine adds the float-height test (W22), consistent with W19, W22 and §7.4. Non-blocking §14 note resolved (cites W19 and W22). No remaining text in §7.3, §7.4, §13 or §14 states the superseded "no depth input for the movement state" or "state 2 whatever the depth" without the position-update qualifier. No new facts, so no new provenance needed; no code or pseudo-code, no copied prose, addresses, middleware class names, game text, keys or hostnames; nothing under a closed gate. The binary was not re-read in this review (no new BIN claim). Non-blocking: in the narrow band where the depth lies between the float height minus 0.0002 m and the float height, the client is in water while Tessera wades; both give 1 or 3 with support and 2 without, so no fifth difference arises. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the water-feature revision on branch `water-fix` (`git diff main...water-fix`, commits 88edc8f and 4be89e7) against CLEAN_ROOM.md §5.3, **changes requested**. Items that hold: every new statement is a functional fact (formulas, rates, counts, DIDs, parameter values); no code or pseudo-code (§8.5.4, §8.5.5 and §8.6.2 are numbered formulas, no program text, registers or listing order reproduced); the `c_…` parameter labels are marked as interoperability names; no game text, keys, hostnames or traffic; nothing under a closed gate; every new fact has a provenance row (W23–W39, tags OBS2, SH2, LIT, TP and BIN4, BIN4 with question, method and why M1–M3 were not enough) and a mark defined in the legend (Probable included); WA7–WA15 are testable; unknowns are OPEN (O reference, lava, bump-water pixel stage, splash source, permutation choice, run-time flow map). Spot checks (read-only, own probes on the install, independent of the writer's scratch): the OpenGL programs of 0x2B0005EC agree with §8.6.2 steps 1–6 (1/160 world scale, phases 1057 *T* and 1058 *T* + ½, noise offset ½ × the noise at ½ *B*, jump 0.7 per cycle, triangle weight 2 |½ − *f*₁|, *k* = 2 |*F*|²) and with its far-draw-fade alpha and the 100 m later fog start; the OpenGL programs of 0x2B0007FD agree with §8.6.4 steps 1–6 (bias multiplies, exponent inverted, undistorted reflection at +0.003, *L*꜀ and tint as stated, alpha 1) and have no layers 1 and 2; its Direct3D 10/11 programs, and not those of 0x2B0005EC, carry the constants 0.0004, 8000, 0.098, 2.5 and 0.005 of §8.6.2 step 7 and §8.6.4; the OpenGL programs of 0x2B0000AA agree with §8.5.4 (coordinates, fog without upper clamp, steps 1–5); W28: the flow map's one level is 32 × 32 DXT1 with texels (125, 127, 0) and (128, 126, 0) only, \|*F*\| ≤ 0.020; TP: `tessera-dattool fallback --all` reproduces 23 surfaces without a usable base texture and 98 / 9 / 16 water, mirror and liquid-distortion surface records on exactly the records of `material.md` §11.6. Recomputed: the rate tables of §8.7 and §8.7.2, the wet-landblock sums of §8.2 (89,913; 85,059), and the five worked examples of §12 (all agree). BIN4 (W38) and the Direct3D colour terms beyond the constants were not re-read. **Blocking:** **B1** record 0x2B000810 (lava, 656 wet landblocks) is treated inconsistently: §8.2 "Program families" puts it in the flow-map family "described in §8.6" and the answered callout there says a renderer gives each record the formula of its family (§8.6), routing rule 1 of §8.5 sends flow-map records to the water drawing, and WA7 counts it in that family; but §8.6 says it is not traced and its Tessera rule covers only 0x2B0007FD and 0x2B0005EC, and `material.md` §11.6 excludes 0x2B000810 from the water records ("falls outside"). State one status for it (family membership by interface only, drawing OPEN) and give a Tessera Decision for drawing landblock lava until it is traced, consistent with `material.md` §11.6. **B2** §8.6.3 OPEN asks the owner about "row W12 of `m4-5-visual.md` §4.8 (a 0x2B0005EC river)"; in that checklist W12 is the fountain basin and the 0x2B0005EC river is W17 (whose text points back to this OPEN). Non-blocking: (1) §8.7.1 census column "drawn placements (TP)" holds TP draw counts (3,409 = 2,067 + 712 + 630), not placements; (2) §12 "Curve-valued scale": the direction reverses every π seconds only approximately (the constant 0.005 term shifts the zero crossings); (3) the checklist rows W10–W17 share their labels with this spec's provenance rows W10–W17; references from other specs qualify them, but a bare "W12" in this spec reads as the provenance row. Spec writer, 2026-10-09: third revision answering B1, B2 and the three non-blocking notes (see the change log); awaiting re-review. Claude review session (spec reviewer, fresh session; neither the writer nor the reviewer of the earlier round), 2026-10-09: re-review of the third revision (commit 8c578bc; the whole branch read, `git diff main...water-fix`) against CLEAN_ROOM.md §5.3, **changes requested**. Items that hold: the earlier **B1** is resolved: 0x2B000810 has one status throughout (§8.2 family table and sampler row, the answered §8.2 callout, §8.5 routing paragraph, §8.6 intro, §8.6.3, §8.6.4 OPEN, §8.6.5, §8.7 table, §13, §14, WA11, WA16) and agrees with the `material.md` §11.6 lava row and MA53; the earlier **B2** is resolved (§8.6.3 cites checklist row W17); the three non-blocking notes are taken up. W40 and W41 have provenance (SH2 extended with question, method and why M1–M3 were not enough) and marks; §8.6.5 gives formulas and steps in words, with no program text, registers or listing; no game text, keys or hostnames; nothing under a closed gate. Spot checks (read-only, own probes): the Direct3D 10/11 programs of 0x2B000810, disassembled with a public library, have two water permutations with one identical pixel program; the vertex stage passes UV set 0 unchanged and gives *B* at 1/160, the phases 1057 *T* and 1058 *T* + ½ and the distance-fog factor; the pixel stage agrees with §8.6.5 steps 1–7 term by term (noise at ½ *B*, jump 0.7 per cycle, *F* × *f*ᵢ, *k* = 2 |*F*|², weight 2 |½ − *f*₁|, rotation by 1188, emissive at UV + 1063 × *B*, *a* = clamp(1 + *E*ₐ − *k*, 0, 1), brightness 2 × 1066 × (1.8 − *a* − ½ *E*ₐ), foam weight a clamped product, fog mix with a final clamp, alpha 1, six textures sampled, no normal map and no light input). The `material.md` §11.6 rules reproduced over all 510 shader records from their sampler and constant names: the lava rule selects 0x2B000810 alone and is disjoint from the water and liquid-distortion rules, which select the ten and four records of the table. 0x31006FAE: 1057 = 1058 = 0.1, 1063 = 6, 1066 = 1.5, 1188 = 0, flow map 0x400163D3, 4002 = 4003 = 1; colour list 0x4001D168 has alpha 255 in every texel of all nine levels; emissive list 0x4001D1AF has alpha 0–255 at its top level and a dark red mean colour. WA16 and the "What this means" paragraph of §8.6.5 recomputed (2.4 to 0.9 for 1066 = 1.5; with *E*ₐ = 0 the brightness does not depend on *T*). The Direct3D 9 programs were not read. **Blocking:** **B1** W37 and the §8.7.1 census say they list every curve-valued parameter outside the texture matrices ("no other"), but the lava surface 0x31006FAE has 1186 and 1187 as mode-4 curves (amplitude 0.001), which §8.6.5 step 6 reads; and with lava now its own family, the §8.7.1 rule ("a parameter of a water-family, mirror or liquid-distortion surface") no longer says that its curves are evaluated at the clock every frame. Add the row, widen W37's scope and extend the rule to the lava family (no visible effect in this install, since the flow map's third channel is 0). Non-blocking: (1) 0x31006FAE also carries scrolling texture-matrix curves (1017–1020) and scales of 6 (1001–1004) that only the low-detail permutation applies; §8.6.5 could say so, because under that permutation the lava would scroll (relevant to the §8.6.5 OPEN); (2) the lava drawing reaches the implementers only through the §8.6.5 Tessera rule and the §13 note: `render.md` §5.7 OPEN (1) and R-D12, and `walker.md` §14.6, still name only the two flow-map records; add lava there in the next revision. Fourth revision (spec writer, 2026-10-09) answering B1 and non-blocking note (1); note (2) left to the next revision of `render.md` and `walker.md` (the §13 row stands); awaiting re-review. Claude review session (spec reviewer, fresh session; neither the writer nor a reviewer of the earlier rounds), 2026-10-09: re-review of the fourth revision (commit 113462a; the whole branch read, `git diff main...water-fix`) against CLEAN_ROOM.md §5.3: **passed**, **Accepted** (every item). The earlier **B1** is resolved: W37 names its scope (124 surface records of the water, lava, older bump-water, mirror and liquid-distortion families, texture-matrix ids excluded) and lists 1186 and 1187 on 0x31006FAE; the §8.7.1 rule covers the lava family and the older bump water; §8.6.5 step 6 and the §8.7 rate table cite the per-frame rule. Non-blocking note (1) is taken up by the §8.6.5 texture-matrix paragraph. No code or pseudo-code (formulas and numbered steps in words; no program text, registers or listing order), no copied prose, addresses, game text, keys or hostnames; the `c_…` labels and sampler names are marked as interoperability names; nothing under a closed gate; every new fact has a provenance row and a mark of the legend; WA7–WA16 are testable; unknowns are OPEN. Spot checks (read-only, own probes written for this review, independent of the writer's scratch): OBS2's record totals (510 / 24,091 / 13,781 / 81,135); W37 re-run over all 124 records reproduces every row exactly (1045 mode 2 on 0x31002A44–A46, mode 7 on 0x31008446, 0x3100890B, 0x3100890C; 1059, 1061 on 0x3100338F; 1063–1065 on 0x3100328B, 0x3100824C; 1105 on the three puddles; 1182, 1183 on 21 and 1186, 1187 on 18 0x2B0007FD surfaces plus 0x31006FAE; nothing else), and the per-family surface counts of the §8.2 table; effective values of 0x31006748 (§8.5.2: normal map, scales 4, 8, 8, fog amount and colour, Fresnel, specular, alpha 0.75, depth write off), 0x31000A2A and the six static mirrors (§8.5.4, W36), 0x310004E6 (§8.5.3 row), 0x31004359 and 0x310066D5 (§8.7, checklist W15, W17) and 0x31006FAE (W41 and the §8.6.5 texture-matrix paragraph: 1057 = 1058 = 0.1, 1063 = 6, 1066 = 1.5, 1001–1004 = 6, 1017–1020 at −0.02 and +0.025, 4002 = 4003 = 1); the OpenGL programs of 0x2B0000AA agree with §8.5.4 (coordinates, fog without upper clamp, steps 1–5); the §8.7 and §8.7.2 rates and the §12 examples recomputed. BIN4 (W38) and the Direct3D programs were not re-read. Non-blocking: (1) W39 says 21 of the 66 plain-water surface records have a layer faster than 1.5 m/s; this review counts 20 (19 with constant parameters, plus 0x3100328B at the base of its scale curves); re-check the count or state how curve-valued and zero-scale layers were counted; (2) 1186 of 0x31006FAE (and of the flow-map surfaces) has `w[5]` = 0.2, which by `material.md` §5.3.1 adds 0.2 rad/s to its angular rate (1.2 rad/s on the lava surface, 0.7 on the flow-map ones), not the 1 rad/s of the §8.7.1 census row and §8.7 lava row; and §8.5.3 states the mode-4 value without the `w[1]`, `w[3]`, `w[5]`, `w[7]` terms (say that they are 0 in the rows tabled, or cite §5.3.1); no implementation consequence, since the rule evaluates the curves by §5.3.1; (3) carried over: `render.md` R-D12 and §5.7 OPEN (1) and `walker.md` §14.6 still name only the two flow-map records (§13 row stands). |
+| **Implements into** | `crates/material` and `crates/render` (routing of placed water surfaces by program family, §8.5; flow-map water, §8.6; animation rates, §8.7), `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
 | **Companion specs** | [`environment.md`](environment.md) §3 (region descriptor: slots 5 and 6 name the two tables). [`landblock.md`](landblock.md) §3.4 (height conversion), §5 (block maps; keys 3, 4 and 7 are read here), §7 (distant-landscape sector records). [`material.md`](material.md) §4 (surface records 0x31), §5–§8 (shader records 0x2B, parameter entries, labels; §8.6: `c_`-labelled parameters feed the program constant of the same name). [`collision.md`](collision.md) §9–§12 (volumes, movement states, controller). [`scenery.md`](scenery.md) §7.4–§7.5 (height modes and water ranges that read the water plane). [`entity-descriptor.md`](entity-descriptor.md) (placed static entities). [`property-system.md`](property-system.md) §5 (0x78 property sets), §7 (enum mappers). [`records.md`](records.md) §1 (VLE), §2.1 (prefix → DB type table). |
 
 ---
@@ -26,6 +26,9 @@ This spec is the single place that describes water. With it an implementer can:
 - place the **water volumes** that turn a mover into a wading or swimming one (§7);
 - draw the water surface with the original's material chain, geometry and shading inputs
   (§8), including distant water (§9);
+- shade placed water (fountains, pools, puddles, waterfalls, rapids) by the program family of
+  each surface (§8.5), draw the flow-map water that covers most wet landblocks (§8.6), and
+  animate every kind of water at the original's rates on the original's time base (§8.7);
 - answer the questions other systems ask about water: scenery height checks, the encounter
   pass, "is this point under water" (§10).
 
@@ -45,6 +48,11 @@ the invariants (§11), not the counts.
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone in the dirty room on 2026-10-05. **Questions:** (a) which DB object type the client registers for each DID range (to settle what prefixes 0x16 and 0x17 are); (b) the deserialisers of the water table, the fog-zone table and the region descriptor; (c) how a landblock decides it has water: which block-map keys, how a stored level becomes a height, the presence rule, the plane; (d) who consumes that state: the water-volume entity, the "under water" test, the scenery and encounter passes; (e) how water geometry is built for drawing; (f) how the fog-zone table is looked up. **Why M1–M3 were not enough:** block-map keys 3, 4, 6 and 7 have no descriptor entry in the data (`landblock.md` §5.6), so nothing in the data says which table reads them or how a stored value becomes a height; the earlier specs disagreed about which slot is water (§13); no published source describes these records; no running client is available to this session for M3. Only offline world code was read: nothing about network, login, keys, launcher or anti-tamper. **Second use, 2026-10-08 (same build; Ghidra headless on a copy of the analysed project, deleted afterwards; answering the implementer OPENs of 2026-10-07):** (g) which value types the client's readers of the volume flags accept; (h) the routine that sets a mover's `Entity_Element` and the inputs it reads; (i) how a monitor's `Monitor_Offset` and box corners are read. **Why M1–M3 were not enough:** the dictionary gives each flag one type, so the data never exercises another; the state rule and the monitor reader are run-time behaviour no record stores; no running client or published source is available. Read: the volume-flag readers, the element routine and its support-flag accessors, the monitor-array reader. |
 | BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read with Ghidra in the dirty room on 2026-10-08. **Question (g):** what the player controller does to a mover's downward speed and displacement when the mover enters water (the clean-room OPEN of the M4.5 exit verification in §7.4). Read: the player controller's update, its velocity and displacement routine, its water-surface routine, the move request and the routine that publishes the movement state; the constants they load were read from the executable. **Why M1–M3 were not enough:** the data hold only the layer parameters (`collision.md` §10.3), not how the controller applies them to a mover entering water; no running client is available to this session (M3). Only offline movement code was read: nothing about network, login, keys, launcher or anti-tamper. |
 | BIN3 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build, read with Ghidra 12 headless on a private copy of the analysis project (deleted afterwards) on 2026-10-09; recorded in `collision.md` §1 as question 70. **Question (j):** whether the routine of W19 and the controller routine of BIN2 that set `Entity_Element` are one routine or two, and which applies after the player controller's updates. **Why M1–M3 were not enough:** both earlier readings were of code; the data holds no state rule; the original cannot be observed here. |
+| OBS2 | Observed in the user's install (Steam, data unchanged since 2026-10-04) on 2026-10-09 by throwaway probes in the dirty-room scratchpad: all 510 shader records (0x2B), 24,091 materials (0x30), 13,781 surface records (0x31) and 81,135 texture lists (0x40) of `client_general.dat` decoded again and every surface record's effective parameter set formed (`material.md` §9.2); the water type, height and surface record of all 89,913 wet landblocks of §6.4; all 3,253,835 entity rows of all landblock-info records (every SED type) joined to their setups, meshes and surface records; the texture levels named by the surfaces of §8.5 and §8.6 decoded and looked at. The framing of the checklist cameras of `m4-5-visual.md` §4.8 was checked with Tessera's own walker (`--screenshot`), images private. |
+| SH2 | The programs of the shader records 0x2B0000A8, 0x2B0000A9, 0x2B0000AA, 0x2B000442, 0x2B0004B5, 0x2B00063E, 0x2B0005EC, 0x2B0007D0, 0x2B0007FD and of the two-layer records of `material.md` §10.3 in the same install, read on 2026-10-09: the OpenGL programs as text (method M1, as SH) and the Direct3D 10/11 programs (kind 4) through a public disassembler library, which is method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md) as for `material.md` BIN-S (the compiled programs stored in the shader records). **Question:** how the water-family, mirror, liquid and two-layer records animate and shade (§8.5–§8.7). **Why M1–M3 were not enough for the Direct3D part:** the OpenGL text of 0x2B0007FD omits terms that its Direct3D 10/11 programs contain (§8.6.2), so the bytecode had to be read; no running client is available here for M3. Reduced to words; no program text or listing is reproduced. Facts marked "programs" were found in both back ends; facts marked "D3D" rest on the Direct3D 10/11 programs only. **Added 2026-10-09 (third revision):** the two Direct3D 10/11 water permutations of the lava record 0x2B000810, same method and day; question: how landscape lava is drawn (§8.6.5); why M1–M3 were not enough: the record's only OpenGL program is its low-detail two-colour permutation, so the water permutations exist only as compiled Direct3D programs (its Direct3D 9 permutations were not read). |
+| LIT | [`lighting.md`](lighting.md) row L25 (BIN-L (i)): the programs' time input E20 is the client's global clock in seconds, reduced modulo 3,600 once it exceeds 3,600; `material.md` §5.3.1 (the same clock drives the float curves). |
+| TP | Tessera's own real-data probe of 2026-10-09 (clean-room code on branch `water-fix`, commit b1da85a: the fallback diagnostic of `material.md` §19 and a test that walks every landblock of the install with the walker's draw rule), run on the user's install; its counts were read by the spec writer and the facts used here were re-checked against the records with the dirty-room probes of OBS2 on the same day. Counts are **submesh draws** over all 390,150 landblocks (one draw per part instance and submesh), not placements, so they differ from the placement counts of §8.5.1. |
+| BIN4 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), Ghidra 12 headless on a private copy of the analysis project (deleted afterwards), 2026-10-09. **Question (k):** how the engine fills the horizontal offset *O* of §8.3 (the program constant the water programs subtract from the world position). **Why M1–M3 were not enough:** *O* is an engine input that no record stores; no published source describes it; no running client is available for M3. Read: the engine-constant name table, the routine that returns each engine constant's storage, the routine that writes *O*, and the landblock-difference helper it calls. Only offline rendering code was read: nothing about network, login, keys, launcher or anti-tamper. |
 | SH | The water shader records (prefix 0x2B) of the same install carry the OpenGL back end's programs as text. Those of shader record 0x2B0000A8 (used by 43 of the 76 water surfaces) were read in the dirty room (method M1, data files) and reduced to the words of §8.3–§8.4; the sampler lists of the other five water shader records were read. No program text is reproduced. |
 | LC | LotroCompanion `lotro-tools` (`RegionLoader`, readable source; facts only): names region slot 5 "water" and slot 6 "fog". Reported only; confirmed here by BIN. |
 | ENV, LB, COL, SCN, MAT | `environment.md`, `landblock.md`, `collision.md`, `scenery.md`, `material.md` (same install). |
@@ -81,6 +89,25 @@ where the original's is not known (never a statement about the original).
 | W20 | A monitor's `Monitor_Offset` (a vector) is added to both box corners; the corners and the offset are used only when they are vectors (§7.1) | BIN (i) | BIN |
 | W21 | The original does not cancel or clamp a downward speed or a falling displacement in water; a mover entering deep water is slowed only by the Swimming layer's gravity and once-per-update damper, and the first update whose displacement rises puts its feet on the float line (§7.4) | BIN2 (g); `collision.md` §11.1 step 9, §11.6 items 3, 4, 7 (BIN) | BIN |
 | W22 | After every update of the player controller the client sets `Entity_Element` by the same table with an in-water input that also needs the water surface at least the float height minus 0.0002 m above the feet; this routine, not W19's, decides the state of a moving player (§7.4; `collision.md` §11.3.2 (a), C64) | BIN2; BIN3 (j) | BIN |
+| W23 | Wet landblocks by the shader record of their surface: 0x2B0007FD 83,929; 0x2B0000A8 4,093; 0x2B0005EC 1,130; 0x2B000810 656; 0x2B0000CE 61; 0x2B000559 44 (of 89,913) (§8.2) | OBS2 | Confirmed |
+| W24 | The time input *T* of every water-family, mirror and liquid program is E20: the global clock in seconds, reduced modulo 3,600 above 3,600; the texture-matrix curves of the two-layer records use the same clock (§8.7) | LIT; SH2 (every such program reads the one time constant of the engine) | BIN |
+| W25 | The Direct3D 10/11 water programs of 0x2B0000A8 compute the normal-layer coordinates exactly as its OpenGL text (§8.3) | SH2 (D3D, all four kind-4 water permutations) | Confirmed (programs) |
+| W26 | The flow-map records 0x2B0007FD and 0x2B0005EC use 1057 and 1058 as the rates, in cycles per second, of two flow phases, not as scroll speeds; layer 0 is the normal map at *B* × `Normal0Scale` displaced along the flow vector of the flow map (read at the mesh's UV set 0) by the phase, with a noise phase offset and a jump of 0.7 per cycle; the two phases are blended by a triangle weight; the flow normal is scaled by 2 \|*F*\|² (§8.6.2) | SH2 (OpenGL text and Direct3D 10/11 programs of both records agree) | Confirmed (programs) |
+| W27 | The Direct3D 10/11 water programs of 0x2B0007FD add normal layers 1 and 2 (*B* × `Scale`ₖ + *g* × `Speed`ₖ × *T*, *g* = clamp(0.0004 × view depth, 1, 10)) weighted by (1 − \|*F*\|) × (1 − foam weight); its OpenGL programs and every program of 0x2B0005EC have no layers 1 and 2 (§8.6.2) | SH2 (D3D; OpenGL text for the absence) | BIN |
+| W28 | All 27 surface records of the flow-map family and the lava record (0x2B0007FD 21, 0x2B0005EC 5; lava 0x2B000810 1, §8.6.5) name flow map 0x400163D3 (one 32 × 32 level whose two flow channels lie within 125–128 of 255: \|*F*\| ≤ 0.02), and their noise samplers hold texture list 0x400163D4 as the sampler default (`material.md` §7.5) with no binding (§8.6.3) | OBS2 | Confirmed |
+| W29 | Of the 3,253,835 entity rows of landblock info, 6,105 placements of 105 objects use a water-family record, 1,841 of 14 objects the mirror record 0x2B0000AA (puddles and a few static mirrors, W36), 593 of 63 objects a liquid-distortion record (§8.5.1) | OBS2 | Confirmed |
+| W30 | The slot-3000 and 3001 defaults of the water records, texture lists 0x40000DDF and 0x40000DE0, are near-white images; the water permutations of those records sample neither; only the low-detail `Color` / `Color2` permutations do (§8.5.2) | OBS2 (levels decoded); SH (sampler lists) | Confirmed |
+| W31 | Mirror record 0x2B0000AA (puddles): colour = reflection × diffuse × material colour, alpha = Fresnel × diffuse alpha × material alpha, the normal map scrolled in UV space (§8.5.4) | SH2 (programs) | Confirmed (programs) |
+| W32 | Liquid-distortion records 0x2B000442, 0x2B0004B5, 0x2B00063E and the lit 0x2B0007D0: three scrolled layers of a distortion normal map offset the colour texture, which itself scrolls with layer 2 (§8.5.5) | SH2 (both back ends for 0x2B0004B5; D3D for the other three) | Confirmed (programs) for 0x2B0004B5; BIN for the others |
+| W33 | Older bump-water records 0x2B0000A9 and 0x2B0000DC: normal layers at the mesh UV × `BumpTextureScale` × (1, 2, 4) plus `BumpSpeed` × *T* × (1, 4, 8); plain water on mesh UV (0x2B00084B, 0x2B00089A, 0x2B000A8D): layer *k* at UV × `Scale`ₖ + `Speed`ₖ × *T* (§8.5.6) | SH (OpenGL vertex text of 0x2B0000A9 and 0x2B00084B; constant lists of the others) | Confirmed for 0x2B0000A9 and 0x2B00084B; the others Probable |
+| W34 | Waterfall sheets, foam, spouts and fountain overlays are two-layer `ColorAndOpacity` records whose texture matrices are animated by float curves and whose layers combine per record (multiply or add, `material.md` §10.3) (§8.5.3) | OBS2; SH2 (programs) | Confirmed |
+| W35 | Drawn with the walker's draw rule over every landblock, 15 water-record surfaces (6,133 draws in 1,471 landblocks), 8 mirror-record surfaces (3,491 draws) and 11 liquid-distortion surfaces (647 draws) reach placed meshes; 109 two-layer surfaces with animated texture matrices (43,373 draws) belong to waterfalls, spouts, foam and similar streaming water; every placed object with liquid-volume monitors (§7.3; 39 objects with parts) draws at least one water-record surface (§8.5.1) | TP; OBS2 (records re-checked) | Confirmed |
+| W36 | Mirror record 0x2B0000AA has 9 surface records: the 3 puddle surfaces (animated normal scroll) and 6 static ones with other Fresnel, distortion and diffuse values, four of them with Fresnel bias 1 (§8.5.4) | OBS2 (all 13,781 surface records) | Confirmed |
+| W37 | Curve-valued parameters (a curve of a mode other than 1; texture-matrix ids 1001–1006, 1017–1022, 1033–1035, 1070–1075 excluded) of all surface records of the water families (plain water, plain water on mesh UV, flow map), the lava family, the older bump water, the mirror record and the liquid-distortion records (124 surface records, §8.2): 1045 (mode 2) on 0x31002A44–0x31002A46; 1059, 1061 (mode 4) on 0x3100338F; 1063–1065 (mode 4) on 0x3100328B and 0x3100824C; 1045 (mode 7) on 0x31008446, 0x3100890B, 0x3100890C; 1105 (mode 2) on the three puddles; 1182, 1183 (mode 4) on all 21 and 1186, 1187 on 18 of the 0x2B0007FD surfaces; 1186, 1187 (mode 4, amplitude 0.001) on the lava surface 0x31006FAE; no other (§8.7.1; scope widened to the lava family and the older bump water 2026-10-09, fourth revision) | OBS2 (all 13,781 surface records; re-run 2026-10-09 over the 124 records of these families) | Confirmed |
+| W38 | The engine recomputes *O* whenever a position is handed to the world view (Inferred: the viewer's position): 160 m times the landblock difference between the viewer's position and a reference position held by a per-region object, minus a horizontal offset stored in that object; a change of region replaces the object; when both positions are in the same landblock the difference is zero (§8.3) | BIN4 (k) | BIN |
+| W39 | Every plain-water rate follows from the surface's own data, including the fast ones (up to 11.7 m/s on 0x31000CA1, 5.3–6.7 m/s on 0x31002A44–0x31002A46, 6.3 m/s on 0x3100068D and 0x31000CF3); of the 66 plain-water surface records, 21 have a layer faster than 1.5 m/s, and only 9 of those are used by wet landblocks (0x31002F37 42, 0x31003E6C 25, 0x3100664C 21, 0x31000C80 5, 0x3100328B 2, 0x31003E6D 2, 0x31000697 2, 0x31002A44 1, 0x31000692 1); a normal-layer scale of 0 occurs (0x31000698 layer 1, one wet landblock) (§8.7.2) | OBS2 (all 66 plain-water surface records, all 89,913 wet landblocks); TP (rates recomputed) | Confirmed |
+| W40 | Lava record 0x2B000810, Direct3D 10/11 water permutations: two colour layers (slots 3000, 3001) read at the two flow phases of §8.6.2 steps 1–4 and blended as step 5; an emissive layer (slot 3018) at UV + 1063 × *B* with no time term, weighted by clamp(1 + emissive alpha − 2 \|*F*\|², 0, 1); brightness 2 × 1066 × (1.8 − that weight − ½ emissive alpha); foam as §8.6.2 step 7, clamped; distance fog of §8.3 and a final clamp; output alpha 1; no light, frame-buffer, reflection or depth input; 1057 and 1058 are flow rates, the other declared water parameters are not read; both permutations have the same pixel program (§8.6.5) | SH2 (D3D, both kind-4 water permutations) | BIN |
+| W41 | 0x2B000810 is the only shader record of the 510 that declares 1057 and has a `FlowTexture` sampler but no `FrameBufferTexture` sampler; it has one surface record, 0x31006FAE, used by landblock water only (656 wet landblocks, W23; no placed mesh); its bindings name 3000, 3001 (`ColorAndOpacity`, `ColorAndOpacity2`), 3018 (`Emissive`), 3011 (`NormalTexture`, not sampled by the Direct3D 10/11 programs), 3075 (flow, clamp), 3079 (foam); the noise sampler has no binding and the default 0x400163D4; 3013 is declared without a binding; the render-state block of its water permutations is source alpha / inverse source alpha, depth test nearer-or-equal, depth write on, cull none; on 0x31006FAE the colour layers are one texture list (0x4001D168) whose alpha is 255 in every texel of all 9 levels, and the emissive list (0x4001D1AF) has alpha from 0 to 255; its only OpenGL program is the low-detail `Color` / `Color2` permutation (§8.6.5) | OBS2 (all 510 shader records; the one surface record; every level of the colour list decoded) | Confirmed |
 
 ---
 
@@ -90,7 +117,7 @@ where the original's is not known (never a statement about the original).
 | Source | Data | Drawn by | Volumes (swimming) | § |
 |---|---|---|---|---|
 | **Landblock water** (seas, large lakes and rivers at a flat level per landblock) | Region water table (0x16) + block-map keys 7 (type) and 4 (level) + the height grid's minimum | One quad per wet landblock (§8.1) with the type's surface record (0x31) | The type's volume entity, placed per wet landblock (§7.1) | §4, §6–§8 |
-| **Placed water** (ponds, pools, water in interiors, fountains, falls) | Static entities in landblock info whose 0x47 chain carries a water mesh and, for many, liquid-volume monitors | Like any static entity (`entity-descriptor.md`, `material.md`); the water shaders of §8.2 | The entity's own monitor boxes (§7.3) | §7.3, §8.5 |
+| **Placed water** (ponds, pools, water in interiors, fountains, falls, puddles) | Static entities in landblock info whose 0x47 chain carries a water mesh and, for many, liquid-volume monitors | Placed like any static entity (`entity-descriptor.md`), but each surface is shaded by the program family of its shader record (§8.5): water records (§8.3–§8.4, §8.6), the mirror record (puddles), liquid-distortion records, or two-layer records with animated texture matrices (waterfall sheets, foam, spouts) | The entity's own monitor boxes (§7.3) | §7.3, §8.5 |
 | **Distant water** | The water pairs inside distant-landscape sector records (kind 5) | The same quads, built per 3 × 3-landblock sector (§9) | none | §9 |
 
 Not water: the **fog-zone table** (0x17, slot 6). It is documented here (§5) because earlier
@@ -683,10 +710,39 @@ effective parameter set (`material.md` §9). The 76 water surfaces use six shade
 | 0x2B0000CE | 5 | normal map; frame-buffer copy; depth (some); ripple map (some) |
 | 0x2B0005EC | 5 | normal map, flow map, noise, frame-buffer copy, reflection, depth |
 | 0x2B000559 | 1 | normal map, frame-buffer copy, reflection, environment cube map, depth |
-| 0x2B000810 | 1 | colour-and-opacity layers, emissive, normal, flow, foam, noise, frame-buffer copy |
+| 0x2B000810 | 1 | two colour-and-opacity layers, emissive, flow, foam, noise (a normal map is bound but not sampled; no frame-buffer copy, reflection or depth; corrected 2026-10-09, W41) |
 
 Every one also has a low-detail permutation that samples two colour textures (3000, 3001)
-with the vertex texture coordinates, lights them per vertex and fogs them.
+with the vertex texture coordinates, lights them per vertex and fogs them. The last record,
+0x2B000810, draws lava, not water (§8.6.5).
+
+<a id="s8-2-1"></a>
+**Program families (added 2026-10-09; SH2, OBS2, W23).** The six records above do not share one
+program. The formula of §8.3–§8.4 holds for the **plain water** family only; the flow-map
+family has its own (§8.6). Every shader record of this install that declares a `c_Water…`
+parameter (1044–1069, 1170–1173, 1182–1190, 2004–2011) or a flow or foam slot (3075, 3079)
+belongs to one of the families below; the surface counts are of all 13,781 surface records.
+
+| Family | Shader records (surface records: landblock-water table / placed) | Wet landblocks | Coordinates of the normal layers | Described in |
+|---|---|---|---|---|
+| Plain water | 0x2B0000A8 (43 / 12), 0x2B0000CE (5 / 5), 0x2B000559 (1 / 0) | 4,093 + 61 + 44 | world position, *B* × `Scale`ₖ + `Speed`ₖ × *T* | §8.3–§8.4 |
+| Plain water on mesh UV | 0x2B00084B (0 / 1), 0x2B00089A (0 / 1), 0x2B000A8D (0 / 1) | 0 | mesh UV set 0, UV × `Scale`ₖ + `Speed`ₖ × *T* | §8.5.6 |
+| Flow map | 0x2B0007FD (21 / 0), 0x2B0005EC (5 / 0) | 83,929 + 1,130 | world position for the normal map, mesh UV set 0 for the flow map | §8.6 |
+| Lava (flow-map interface without a frame-buffer copy; revised 2026-10-09, W40, W41) | 0x2B000810 (1 / 0) | 656 | world position for the two colour layers and the emissive layer, mesh UV set 0 for the flow map and added to the emissive coordinates | §8.6.5 |
+| Older bump water | 0x2B0000A9 (0 / 2), 0x2B0000DC (0 / 1) | 0 | mesh UV set 0 | §8.5.6 |
+| Liquid distortion | 0x2B000442 (0 / 2), 0x2B0004B5 (0 / 8), 0x2B00063E (0 / 2); lit: 0x2B0007D0 (0 / 4) | 0 | mesh UV set 0 through texture matrix 0 (0x2B000442: world position) | §8.5.5 |
+| Window (glass with a depth tint) | 0x2B0009E1–0x2B0009E5, 0x2B0009E8 (0 / 10) | 0 | – | not water; `material.md` §8.7 |
+| Other | 0x2B000A8C (0 / 1): a two-layer additive effect that reads only `c_WaterOverbrightAmount` | 0 | – | `material.md` §10.3 |
+
+So 85,059 of the 89,913 wet landblocks (95 %) are drawn by the flow-map family, not by the
+formula of §8.3–§8.4.
+
+> **Answered 2026-10-09 (SH2; was the OPEN below on undeclared parameters):** the records that
+> lack parameters do not use them. 0x2B0005EC has no normal layers 1 and 2 and no waves in any
+> program; 0x2B0007FD has no waves in any program and reads layers 1 and 2 in its Direct3D
+> 10/11 programs only (§8.6.2, W27); 0x2B000810 (lava) has no waves and no normal layers at
+> all (§8.6.5, W40). A renderer gives each record the formula of its family (§8.3–§8.6.5) and
+> never fills an undeclared id with the 0x2B0000A8 default.
 
 **Which permutation a statement covers (0x2B0000A8, Confirmed, W16).** Statements about
 0x2B0000A8 elsewhere in the spec set describe different permutations of the same record:
@@ -728,7 +784,7 @@ Materials of individual surfaces override these as usual. Other declared water p
 (1170–1173, 1182–1190, 2004, 2005, 2007, 2008) are read by the flow, foam and depth permutations; their
 formulas were not traced (OPEN).
 
-> **OPEN:** Three of the six water shader records do not declare every parameter of the
+> **Answered 2026-10-09 (see "Program families" above):** Three of the six water shader records do not declare every parameter of the
 > table above (clean-room M4.5 real-data run, 2026-10-06): 0x2B0005EC and 0x2B000810 lack
 > 1044–1046 (waves), 1059–1062 and 1064, 1065 (normal layers 1 and 2); 0x2B0007FD lacks
 > 1044–1046. `tessera-material` (`WaterMaterial`) fills an undeclared id with the
@@ -760,6 +816,37 @@ renderer's current block grid), so *B* advances by one per landblock:
 
 **Tessera rule (Decision):** take *O* = (0, 0) in the region frame, so *B* is the region
 position in landblock units and the normal layers continue seamlessly across landblocks.
+
+**How the client fills *O* (added 2026-10-09; BIN4, W38).** *O* is one of the engine's
+per-draw inputs (not a material parameter). The client rewrites it whenever a position is
+handed to its world view (Inferred: the viewer's position; written so below): *O* = 160 m × (landblock *x*, *y* of a reference position − landblock *x*,
+*y* of the viewer's position) − a horizontal offset stored with that reference. The reference
+belongs to an object that the client keeps per region and replaces when the region changes; with
+both positions in the same landblock the landblock term is (0, 0). So *O* changes in whole
+landblocks as the viewer crosses landblock edges. Inferred (the frame of the vertex positions
+was not traced): the world positions the programs receive are relative to the viewer's
+landblock, so the change of *O* cancels the change of frame and *B* is a continuous function of
+the world position measured from the per-region reference; the Tessera rule above has the same
+property with a different reference. With constant `Scale`ₖ the choice of reference only
+shifts the pattern. It becomes visible when a scale is a curve (§8.7.1), because the pattern
+then moves at *B* × d`Scale`ₖ/d*t*.
+
+> **OPEN (2026-10-09):** which position the per-region reference holds (the region's first
+> landblock, the landblock where the viewer entered the region, or another) and what the stored
+> horizontal offset is; whether the vertex positions are relative to the viewer's landblock; and
+> what a second routine that also writes *O* (another rendering path) sets.
+> Only the size of *B* depends on it, which matters for the two surfaces with curve-valued
+> scales (§8.7.1).
+
+**Time base and back ends (added 2026-10-09; W24, W25).** *T* is the engine's time input E20:
+the global clock in seconds, reduced modulo 3,600 once it exceeds 3,600 (`lighting.md` L25),
+not a frame count and not the game's time of day. The Direct3D 10/11 water programs of
+0x2B0000A8 compute the same layer coordinates and waves as the OpenGL text. So for the plain
+water family the layer *k* pattern moves over the ground at (`SpeedU`ₖ, `SpeedV`ₖ) × 160 /
+`Scale`ₖ metres per second (one normal-map repeat covers 160 / `Scale`ₖ m); the rates of the
+landblock-water surfaces are tabled in §8.7. These statements, and §8.3–§8.4 as a whole,
+cover the plain water family only (§8.2 "Program families"); the flow-map records, which
+draw 95 % of the wet landblocks, follow §8.6.
 
 <a id="s8-4"></a>
 ### 8.4 Pixel colour (SH, shader record 0x2B0000A8)
@@ -831,10 +918,607 @@ replaced by the refraction sample (the original's no-reflection path), and use a
 <a id="s8-5"></a>
 ### 8.5 Placed water meshes
 
-Placed water (lakes above landblock level, pools, rivers in dungeons, falls) is ordinary
-static geometry whose surface records use the water shaders of §8.2; it is drawn with
-`entity-descriptor.md` and the material pipeline, and the same shading applies. Its meshes
-carry their own texture coordinates and may be tessellated, so vertex waves show there.
+*Revised 2026-10-09 (W28–W34).* Placed water (pools, fountains, troughs, puddles, waterfalls,
+rapids, water in interiors) is ordinary static geometry placed by `entity-descriptor.md`. How
+each of its surfaces is shaded depends on the **program family of the surface's shader
+record**, not on the generic rules of `material.md` §11: a water record's slot 3000 is a
+near-white placeholder (§8.5.2), a puddle's diffuse texture is a white shape whose colour
+comes from the reflection (§8.5.4), and a waterfall's look comes from two scrolling texture
+layers (§8.5.3). The earlier text of this section ("the same shading applies") held for the
+plain water family only.
+
+**Rule (normative):** a renderer selects the shading of a placed surface by its shader record:
+
+1. a record of the plain water, plain-water-on-UV, older-bump or flow-map family of §8.2:
+   the water drawing of §8.3–§8.4, §8.5.6 or §8.6, with the surface's water parameters; the
+   placed mesh's own vertices are used, its world position feeds *B* where the family uses
+   *B*;
+2. the mirror record 0x2B0000AA: §8.5.4;
+3. a liquid-distortion record: §8.5.5;
+4. every other record (the two-layer waterfall records included): the generic path of
+   `material.md` §9–§11 and `lighting.md` §5, **with** both colour layers (`material.md`
+   §10.3) and the animated texture matrices (`material.md` §7.7, §8.4, §5.3.1).
+
+The lava record (0x2B000810 in this install; added 2026-10-09, W41) is not of kind 4: it is
+drawn by §8.6.5, on landblock water and on any placed mesh alike (no placed mesh uses it in this
+install). Records of kinds 1–3 and the lava record are recognised from their interface
+(declared ids and sampler names), as `material.md` §11.6 states. Drawing a family-1, -2 or -3
+surface with the generic path, or a family-4 surface without its
+second layer and texture matrices, gives the near-white, static surfaces described in §8.5.2
+to §8.5.4; drawing the lava record with the generic path shows its colour layer at the mesh
+UV (one repeat per 3 × 3 sector on landblock quads, §8.1) instead of the emissive pattern of
+§8.6.5.
+
+<a id="s8-5-1"></a>
+#### 8.5.1 Census (OBS2, W29)
+
+Placements are entity rows of landblock info (all regions); the same object can carry
+several surfaces. Object and surface DIDs identify; the descriptions are ours.
+
+| Kind | Example objects (0x47) → surface records (placements) | Shader record, family | § |
+|---|---|---|---|
+| Fountain basins, reflecting pools, troughs: the water plane | 0x47006F16, 0x47006F68 and 44 more → 0x31006748 (1,914); 0x47004F1A → 0x31004121 (413); 0x4700654A → 0x31005ADB (694); 0x470038E1 → 0x3100770C (105) | 0x2B0000A8, plain water | §8.5.2 |
+| Round pools | 0x47001983 and 26 more → 0x3100053C (2,948) | 0x2B0000A9, older bump water | §8.5.6 |
+| Puddles | 0x470015E4, 0x47006B5E, 0x4700C32A → 0x31000A2A (1,573); 0x4700C32B → 0x31008161 (65); 0x4700C32C → 0x31008162 (143) | 0x2B0000AA, mirror | §8.5.4 |
+| Waterfall sheets (inner, outer and fill meshes of a fall) | 0x470003E6–0x470003E8, 0x47002168, 0x47002169, 0x47002305 … → 0x310004E6 (3,525), 0x310004E7 (2,251), 0x310004E8 (2,942) | 0x2B0007A1, lit two-layer, layers multiplied | §8.5.3 |
+| Inner sheet of a small fall | 0x4700102C → 0x31007856 (277) | 0x2B0007F7, lit two-layer, multiplied | §8.5.3 |
+| Cascades, rapids and splashes of a stepped fall | 0x47004B3E, 0x47004B3F, 0x47004B41 … → 0x31003E4C (327); 0x47004B49 → 0x3100770D (69) | 0x2B000817, lit two-layer, layers **added** | §8.5.3 |
+| Foam on those falls | 0x47004B4A, 0x47004B42 → 0x31003E51 (556) | 0x2B00078C, unlit two-layer, added, vertex colour | §8.5.3 |
+| Opaque foam, a coastal fall | 0x47004BE0–0x47004BE5 … → 0x31003E4E (306), 0x31003E52 (84); 0x4700D2C0 … → 0x31008F62 (67) | 0x2B0006F2, unlit two-layer, added | §8.5.3 |
+| Fountain overlays and water spouts | 0x47006F17 → 0x31006749 (480); 0x47004F1B … → 0x31004122 (533); 0x4700CF6A … → 0x3100502D (124) | 0x2B0007E5, lit two-layer, multiplied | §8.5.3 |
+| A gate waterfall | 0x47004037 → 0x31003228 (132) | 0x2B0004B5, liquid distortion | §8.5.5 |
+| Thin falls with distortion | 0x47003F1D … → 0x31003174 (102), 0x31003175 (67) | 0x2B0007D0, lit liquid distortion | §8.5.5 |
+| Flowing-water and mud marks | 0x4700158A, 0x470036F5, 0x47000F8B and 136 more → 0x31000798 (16,500) | 0x2B00078B, unlit `Color`, no transform: a static texture | `decals.md` (the flowing-water marks are Decal SEDs, type 2) |
+
+> **OPEN:** The splash and mist entities placed at the foot of falls (for example 0x47000D28,
+> 0x470003E5, 0x470041C4) name the generic placeholder setups 0x04000000 and 0x0400000D;
+> where their visible splash comes from (effects of `particles.md`, scripts) was not traced.
+
+**What a renderer meets over the whole world (added 2026-10-09; TP, W35).** Counted as submesh
+draws with the walker's draw rule over all 390,150 landblocks (so the numbers differ from the
+placements above):
+
+| Group | Surface records | Draws | Largest (draws) |
+|---|---|---|---|
+| Water records on placed meshes (§8.5.2, §8.5.6) | 15 (0x2B0000A8, 0x2B0000A9, 0x2B0000CE) | 6,133 in 1,471 landblocks | 0x3100053C (2,986), 0x31006748 (1,914), 0x31005ADB (685), 0x31004121 (413) |
+| Mirror record (§8.5.4) | 8 of its 9 | 3,491 | 0x31000A2A (2,067), 0x31008162 (712), 0x31008161 (630) |
+| Liquid-distortion records (§8.5.5) | 11 | 647 | 0x31000AFB (234), 0x31003228 (132), 0x31003174 (102) |
+| Two-layer records with animated texture matrices, waterfall-like (§8.5.3) | 109 | 43,373 | 0x31006637 (8,205) and 0x31006638 (5,470) on object 0x47006CBE; 0x310004E6 (3,519); 0x3100048A (3,328) and 0x31000489 (2,551) on 0x470003E9; 0x310004E8 (2,933); 0x310004E7 (2,244) |
+
+Every drawn surface of 0x2B0000A8, 0x2B0000A9 and 0x2B0000CE keeps the near-white defaults
+0x40000DDF / 0x40000DE0 in slots 3000 / 3001 (0x31008E9F, which sets its own slot 3000, §8.5.2,
+is not among the drawn ones). Of all 13,781 surface records only 23 have no usable slot-3000
+texture, and the two of those that are drawn (0x31000482, 0x31000908) are on rock and building
+meshes, not water (`material.md` §18 OPEN). So placed water, puddles and falls do not look white
+for lack of a texture: they look white or grey because their own drawing (§8.5.2–§8.5.6) is
+replaced by the generic one, which shows the placeholder or the white shape image, and because
+the generic one leaves out the second layer and the animated texture matrices (§8.5.3).
+
+**Liquid objects (W35).** Every placed object that carries liquid-volume monitors (§7.3; 39 such
+objects with visible parts) draws at least one water-record surface (26 surface uses, 3,833
+draws) besides ordinary lit or unlit parts (basin rims and similar; 9 uses, 95 draws).
+
+<a id="s8-5-2"></a>
+#### 8.5.2 Water records on placed meshes (W30)
+
+The water planes of fountains, pools and troughs use the landscape's water records
+(0x2B0000A8 here). The record's water permutations (§8.2 table) read only the vertex
+position and sample the normal map, the frame-buffer copy and, when present, the reflection
+and depth textures; which permutation the client picks under which setting is OPEN (§8.4),
+and that it picks a water permutation whenever the landscape water is drawn with one is
+Inferred (the same record serves both). *B* comes from the plane's world position,
+so a pool's ripples continue the landscape's pattern. On every placed surface of 0x2B0000A8 and
+0x2B0000A9 the slots 3000 and 3001 keep their shader defaults, the texture lists 0x40000DDF and
+0x40000DE0: near-white images (mean level-2 colour about (245, 243, 243) and (228, 235, 237)).
+Three other placed water surfaces set slot 3000: 0x31008E9F (0x2B0000CE) and 0x310081C1,
+0x31008768 (0x2B00084B, 0x2B00089A; a 4 × 4 white image). Only the low-detail `Color` /
+`Color2` permutations sample them, scrolled by the record's animated 1017–1020 curves.
+
+Parameters of the most common plane, 0x31006748 (effective, `material.md` §9.2): normal map
+0x40000DDE, scales 4, 8, 8 with the default speeds of §8.2, fog amount 1.2, fog colour
+(0.463, 0.678, 0.89), Fresnel bias 0.3 and exponent 5, specular power 3 with colour
+(0.373, 0.482, 0.455), material colour alpha 0.75, depth write off (4002 = 0).
+
+**Tessera rule (Decision):** draw these surfaces through the water pipeline (§8.3–§8.4 with
+the Tessera rules there) at the placed mesh's own triangles; never through the generic lit
+path, which shows the near-white placeholder.
+
+<a id="s8-5-3"></a>
+#### 8.5.3 Waterfall sheets, foam and spouts (W34)
+
+These are generic two-layer records (`ColorAndOpacity` on slot 3000, `ColorAndOpacity2` on
+slot 3001). Their look rests on three things that a renderer without texture matrices and
+without a second layer loses:
+
+1. **Two layers.** The colour is the two texels multiplied (0x2B0007A1, 0x2B0007F7,
+   0x2B0007E5) or **added** (0x2B000817, 0x2B00078C, 0x2B0006F2), per record
+   (`material.md` §10.3); the opacity is the **product** of both alphas, times the material
+   colour's alpha (and the vertex alpha in 0x2B00078C). In the waterfall surfaces the second
+   texture is often a soft-edged mask: 0x40000C5D, the second layer of 0x310004E6 and
+   0x310004E7, is white with an alpha that is opaque in the middle and fades to 0 at all four
+   borders, so the sheet's edges dissolve.
+2. **Animated texture matrices.** Each layer has its own matrix (layer 1 matrix 0, layer 2
+   matrix 1, `material.md` §8.4) whose values are float curves evaluated at the global clock
+   every frame (`material.md` §5.3.1): mode 2 is a steady scroll (rate `w[6]` texture repeats
+   per second), mode 4 a sine, mode 7 smooth noise.
+3. **Translucency.** The material colour's alpha is below 1 on most sheets and depth write is
+   off on the inner and outer sheets.
+
+Effective values of the sheets of the common falls (effective parameter set; curve
+parameters as `w[0..9]` of `material.md` §5.3, only the non-zero ones):
+
+| Surface | Layer 1 matrix (0) | Layer 2 matrix (1) | Textures 3000 / 3001 | 2000 (RGBA) | Other |
+|---|---|---|---|---|---|
+| 0x310004E6 (inner, part of outer) | U translation mode 2, `w[2]` 1, `w[6]` 0.15 (0.15 per second); V translation mode 2, `w[6]` −0.4; U scale mode 4, `w[0]` 2, `w[2]` 0.2, `w[6]` 0.5 (2 + 0.2 sin 0.5*t*) | identity | 0x40000C5C / 0x40000C5D | (0.741, 0.769, 0.788, 0.51) | depth write off, alpha test off |
+| 0x310004E7 (fill) | U translation mode 7, `w[2]` 1, `w[6]` 0.1 (noise drift); V translation mode 2, `w[2]` 0.1, `w[6]` −0.4; U scale mode 4 (1 + 0.2 sin 0.5*t*); V scale mode 4 (1 + 0.15 sin 0.5*t*) | identity | 0x40000B18 / 0x40000C5D | (0.722, 0.733, 0.769, 1) | alpha test on, threshold 0.3 |
+| 0x310004E8 (outer) | U translation mode 2, `w[6]` 0.3; V translation mode 2, `w[6]` −0.4 | V translation mode 2, `w[6]` −0.6 | 0x40000C5E / 0x40000C5F | (1, 1, 1, 0.757) | two-sided, depth write off, alpha test off |
+| 0x31003E4C (stepped falls) | V scale 0.5; V translation mode 2, `w[6]` −0.1 | U scale 2, V scale 0.89; U translation mode 2, `w[6]` −0.15; V early translation mode 2, `w[6]` −0.45 | 0x4001DACB / 0x4001793D | (1, 1, 1, 1) | layers added; two-sided, depth write off |
+| 0x31003E51 (foam) | scale (2, 1.2); U translation mode 7 (`w[2]` 0.37, `w[6]` 0.3); V translation mode 2, `w[6]` −0.37 | scale (2, 0.8); U translation mode 7 (`w[2]` −0.33, `w[4]` 0.25, `w[6]` 0.25); V translation mode 2, `w[6]` −0.34 | 0x40019DAC / 0x40019DAC | (1, 1, 1, 0.679) | unlit, layers added, × vertex colour |
+| 0x31006637 (object 0x47006CBE; added 2026-10-09, the most drawn, TP) | U early translation −0.5; U scale mode 4 (1 + 0.2 sin *t*); V scale 1.4; U translation 0.5; V translation mode 2, `w[6]` −0.7 | U early translation −0.5; U scale mode 4 (0.8 + 0.1 sin(*t* + 0.5π)); V scale 1.1; U translation 0.5; V translation mode 2, `w[6]` −0.5 | 0x4001793D / 0x4001793D | (1, 1, 1, 1) | record 0x2B0007F7, lit, layers multiplied; depth write on, alpha test off |
+| 0x31006638 (object 0x47006CBE; added 2026-10-09) | U early translation 0.5; U scale mode 4 (0.7 + 0.1 sin *t*); V scale mode 4 (2 + 0.05 sin *t*); U translation 0.5; V translation mode 2, `w[6]` −0.7 | U early translation −0.5; U scale mode 4 (0.55 + 0.05 sin(*t* + 0.3π)); V scale mode 4 (1.6 + 0.06 sin(*t* + 0.5π)); U translation −0.5; V translation mode 2, `w[6]` −0.5 | 0x4001793D / 0x4001793D | (1, 1, 1, 1) | as 0x31006637 |
+| 0x3100048A (object 0x470003E9; added 2026-10-09) | V scale mode 4 (1 + 0.2 sin 0.5*t*); U translation mode 2, `w[6]` −0.5; V translation mode 2, `w[6]` 0.7 | V scale mode 4 (1 + 0.2 sin(0.5*t* + 0.25π)); V translation mode 2, `w[6]` 0.75 | 0x40000B18 / 0x40000B1A | (1, 1, 1, 1) | record 0x2B0007A1, multiplied; two-sided, depth write off |
+| 0x31000489 (object 0x470003E9; added 2026-10-09) | U scale mode 4 (1.8 + 0.2 sin 0.5*t*); V scale 0.6; U translation mode 4 (0.5 sin 0.2*t*); V translation mode 2, `w[6]` 0.487 | identity | 0x4001793D / 0x40000B19 | (1, 1, 1, 0.637) | record 0x2B0007A1, multiplied; two-sided, depth write off |
+
+The mode-2 translation `w[6]` is a rate in texture repeats per second (`material.md` §5.3.1:
+the result is `w[0]` + `w[1]`·*t* + `w[6]`·*t* + …); the V rates (from −0.7 to +0.75 repeats
+per second in the rows above) make the texture stream along the sheet. Mode-4 values are
+`w[0]` + `w[2]` sin(`w[6]` *t* + π `w[4]`) (`material.md` §5.3.1); every curve of the table is
+evaluated at the global clock each frame (§8.7). That the stream runs downward on screen follows from the
+meshes' UV layout and is Inferred.
+
+<a id="s8-5-4"></a>
+#### 8.5.4 Puddles: the mirror record 0x2B0000AA (W31)
+
+Parameters (labels from enum mapper 0x230001A6, interoperability): 1100
+`c_MirrorReflectionBumpDistortionAmount`, 1101 `c_MirrorFresnelExponent`, 1102
+`c_MirrorFresnelBias`, 1103 `c_MirrorNormalTextureScale`, 1104 `c_MirrorNormalSpeedU`, 1105
+`c_MirrorNormalSpeedV`, 1106 `c_MirrorFresnelBumpAmount`; slots 3000 (diffuse), 3011 (normal
+map), and the engine's reflection texture (sampler source 3, `material.md` §7.5). Values of the
+three puddle surfaces 0x31000A2A, 0x31008161, 0x31008162: 1100 = 0.006, 1101 = 1.33, 1102 = 0,
+1103 = 1, 1104 = 0, 1105 = a mode-2 curve with `w[6]` = 0.00001 (its value is 0.00001 × *t*),
+1106 = 0.05; normal map 0x40000DDB; diffuse 0x400017ED, 0x4001E99B, 0x4001E99A: pale or white
+images (mean colour about (186, 181, 166), (255, 255, 255), (253, 253, 253)) whose alpha is the
+puddle's shape.
+
+Per vertex: the normal-map coordinates are (UV + (*S*ᵤ, *S*ᵥ) × *T*) × `NormalTextureScale`,
+with UV the mesh's UV set 0 and *S* the evaluated 1104 and 1105 (a curve value multiplied by
+*T* again, so for the puddles the offset grows as 0.00001 × *t* × *T*); the diffuse uses UV set 0
+unchanged; the view vector is carried in the tangent frame (tangent, binormal, normal) of the
+vertex; the fog factor is (distance − fog near) / fog range, at least 0 and not limited to 1
+(the program does not clamp it from above).
+
+Per pixel:
+
+1. *n* = the normal-map texel; *S* = the pixel's screen position in [0, 1]² (vertical axis
+   downward).
+2. Reflection *R* = the reflection texture at *S* + 2 (*n*.xy − 0.5) × 1100, times the material
+   colour's RGB.
+3. Diffuse *D* = slot 3000 at UV.
+4. Fresnel normal *m* = (0, 0, 1) + 1106 × (2*n*.x − 1, 2*n*.y − 1, 2*n*.z − 2) (tangent
+   space); *f* = (1 − |*v* · *m*|)^1101 with *v* the unit tangent-space view vector;
+   *a* = 1102 + (1 − 1102) × *f*.
+5. Colour = *D* × *R*, mixed toward the fog colour by the fog factor; output alpha =
+   *a* × *D*.alpha × material alpha. Blending source alpha / inverse source alpha, depth write
+   on, back faces culled.
+
+So a puddle shows the reflected scene inside its shape, nearly invisible when looked at from
+above (*f* near 0) and mirror-like at grazing angles. The record's permutations without a
+reflection sampler (one per back end) write nothing (blend ZERO / ONE).
+
+**Tessera rule (Decision), until a reflection pass exists (§8.4 OPEN):** take *R* as the
+distance-fog colour times the material colour (a sky-like tint), keep steps 3–5, and draw in
+the transparent phase. Never draw the diffuse as an opaque or plain alpha-blended colour: its
+RGB is white by design.
+
+**The record's other surfaces (added 2026-10-09; W36, TP).** 0x2B0000AA has nine surface
+records. Besides the three puddles, six are static mirrors (1104 = 1105 = 0, so the normal map
+does not move; 1103 = 1; normal map 0x40000E21 except 0x31006DFF, which names its own):
+
+| Surface | 1100 | 1101 | 1102 | 1106 | Diffuse (mean luminance, TP) | Material colour | Drawn on (TP: draws) |
+|---|---|---|---|---|---|---|---|
+| 0x31000A4E | 0 | 2 | 0 | 0 | 0x40001828 (0.23) | white | 0x47001644 (22) |
+| 0x31000A4F | 0 | 2 | 0 | 0 | 0x40000008 (1.00) | white | 0x47001644 (22) |
+| 0x31000CBE | 0 | 4 | 1 | 0 | 0x40000008 (1.00) | white | 0x47007615, 0x47002303, 0x4700830A (15) |
+| 0x31007E55 | 0 | 4 | 1 | 0 | 0x400010F0 | white | not drawn |
+| 0x31002770 | 0.08 | 4 | 1 | 0.25 | 0x40001F87 (0.82) | (0.651, 0.651, 0.651, 1) | 0x47002D92 (22) |
+| 0x31006DFF | 0.08 | 4 | 1 | 0.25 | 0x4001CEFD (0.82) | white | 0x47007E50 (1) |
+
+The same steps 1–5 apply. With 1102 = 1 step 4 gives *a* = 1 at every angle, so those four
+surfaces are opaque wherever the diffuse alpha and the material alpha are 1: a mirror whose
+colour is the reflection × the diffuse. With 1100 = 0 the reflection is not distorted and with
+1106 = 0 the Fresnel normal is (0, 0, 1). The Tessera rule above applies to all nine; on the
+opaque mirrors it gives a flat fog-tinted surface until a reflection pass exists.
+
+> **OPEN (implementer, 2026-10-10; checklist row W13 of `m4-5-visual.md` §4.8, for the spec
+> writer or the owner):** the puddle object 0x470015E4 draws mesh 0x0600183D, a single flat
+> 2 × 2 quad (17.4 m across at scale 8.7) whose centre lies 0.23 m above the ground. Where the
+> terrain under it rises above the quad, the depth test hides the quad, so Tessera shows the
+> polygon where quad and terrain intersect (hard edges, one soft corner where the diffuse
+> alpha's rounded edge is visible) instead of the texture's soft outline that row W13
+> expects. The shape is the same at every mesh detail level and through the generic and the
+> mirror drawing, so it is not the §8.5.4 formula. Steps 1–5 give depth write on and back
+> faces culled but say nothing about the depth test or a depth offset. Question: does the
+> original also clip puddle quads against the terrain, or does it keep them visible some
+> other way, for example a depth bias from `Render_DepthBias_Type` on the puddle's SED or
+> object (`decals.md` §6.5 and its OPEN (c), not implemented in Tessera), the depth test off
+> for this record, or placing or projecting the quad onto the ground? Tessera draws them as
+> stated (depth test on, no bias) until answered.
+
+<a id="s8-5-5"></a>
+#### 8.5.5 Liquid-distortion records (W32)
+
+0x2B000442, 0x2B0004B5 and 0x2B00063E (unlit; samplers `LiquidNormalTexture` on slot 3011
+and `LiquidDiffuseTexture` on slot 3000) and 0x2B0007D0 (lit; samplers `Distortion` on slot
+3026 and `ColorAndOpacity` on slot 3000) read the water parameters 1044–1046 (waves), 1048
+(refraction distortion), 1057–1065 (layer speeds and scales) and, unlit, 1066 (overbright).
+
+1. **Coordinates.** UV′ = the mesh's UV set 0 through texture matrix 0 (0x2B0004B5,
+   0x2B00063E, 0x2B0007D0; `material.md` §8.4), or *B* = (world position − *O*) / 160
+   (0x2B000442). Layer *k* (0, 1, 2) = UV′ × `Scale`ₖ + (`SpeedU`ₖ, `SpeedV`ₖ) × *T*.
+2. **Waves** (unlit records): the vertex height changes as in §8.3 (same formula, model
+   coordinates).
+3. **Distortion.** Sum the three layer samples of the normal (or distortion) texture, each
+   mapped to 2 (rgb − 0.5); normalise; take its first two components × 1048.
+4. **Colour texture** at layer 2's coordinates plus that offset. So the colour texture scrolls
+   with layer 2 and wobbles with the sum.
+5. **Output** (unlit): colour × material colour × 1066, fogged; alpha = texel alpha × material
+   alpha (× vertex colour, RGBA, in 0x2B00063E); the alpha test of the program discards at or
+   below the threshold. 0x2B0007D0 lights the distorted colour like any lit `ColorAndOpacity`
+   surface (`lighting.md` §5).
+
+   > **OPEN (implementer, 2026-10-10):** the spec gives no interface rule that tells
+   > 0x2B00063E apart; Tessera recognises the vertex-colour record by its DID, as it does
+   > 0x2B000442 for step 1. Tessera multiplies colour and alpha by the vertex colour after the
+   > alpha test, which reads the texel alpha alone (which alpha the program tests is not
+   > stated).
+
+Example: the gate waterfall 0x31003228 (0x2B0004B5) has texture matrix 0 scale (0.3, 0.2) and
+V translation mode 2 `w[6]` −0.001; speeds (0.005, −0.1), (0.015, −0.2), (−0.01, −0.2); scales
+2, 4, 8; distortion 1; overbright 1.15; diffuse 0x40004801. Its colour texture therefore streams
+at 0.2 repeats per second along V at eight times the matrix's tiling.
+
+<a id="s8-5-6"></a>
+#### 8.5.6 Plain water on mesh UV and older bump water (W33)
+
+**Plain water on mesh UV** (0x2B00084B, 0x2B00089A, 0x2B000A8D): as §8.3–§8.4 (Probable for
+the pixel stage) except that layer *k* reads the normal map at UV × `Scale`ₖ + (`SpeedU`ₖ,
+`SpeedV`ₖ) × *T*, UV the mesh's UV set 0.
+
+**Older bump water** (0x2B0000A9, 0x2B0000DC; parameters 1055 `c_WaterBumpTextureScale` and
+1056 `c_WaterBumpSpeed`, labels for interoperability): with *U* = UV × 1055 and *b* = 1056 × *T*,
+the three normal-layer coordinates are *U* + (*b*, *b*), 2*U* + (4*b*, 4*b*) and 4*U* + (8*b*,
+8*b*). The round pools 0x3100053C use 1055 = 0.5 and 1056 = 0.003. The pixel stage reads
+`c_WaterDeepColor`, `c_WaterShallowColor`, `c_WaterReflectionAmount`,
+`c_WaterRefractionAmount` and `c_WaterFresnelBumpAmount` (2004, 2005, 1052, 1053, 1049; labels
+for interoperability) besides the common ones; its formula was not traced.
+
+> **OPEN:** The pixel formula of the older bump-water records (2 records, 3 placed surfaces).
+> **Tessera rule (Decision):** draw them with §8.4 using the coordinates above, `WaterColor`
+> white and the refraction tint of their `c_WaterDeepColor`.
+
+<a id="s8-6"></a>
+### 8.6 Flow-map water: 0x2B0007FD and 0x2B0005EC (W26–W28)
+
+These two records draw 85,059 of the 89,913 wet landblocks (W23). They are not the plain
+water of §8.3–§8.4: their normal is built from a flow map, and they use 1057 and 1058 as
+rates of a cycle, not as scroll speeds. The lava record 0x2B000810 uses the same flow phases
+for colour layers instead of a normal map and has no water colour; it is described separately
+in §8.6.5 and nothing else in §8.6.1–§8.6.4 applies to it.
+
+<a id="s8-6-1"></a>
+#### 8.6.1 Inputs
+
+- Per vertex: position; UV set 0 (on landscape quads the sector coordinates of §8.1).
+- Slots: 3011 normal map; 3075 flow map (sampler address clamp); 3079 foam map
+  (0x2B0007FD only); a noise texture on a sampler without binding whose default texture
+  (`material.md` §7.5) is 0x400163D4; the frame-buffer copy; the reflection texture and the
+  depth texture in some permutations; the sun-shadow inputs in the Direct3D 10/11 permutations
+  of 0x2B0007FD.
+- Parameters: 1057, 1058 (flow rates); 1063 (`Normal0Scale`); 0x2B0007FD also 1059–1062,
+  1064, 1065 (layers 1 and 2), 1170 `c_WaterShorelineMaxDepth`, 1171 `c_WaterFogMinDepth`, 1173
+  `c_WaterFogDepthFactor`, 1182, 1183 `c_WaterFoamOffsetU`/`V`, 1184, 1185
+  `c_WaterFoamTileU`/`V`, 1186, 1187 `c_WaterDepthOffsetU`/`V`, 1188 `c_NormalWaveRotation`,
+  1189 `c_DepthBasedOpacityOffset`, 1190 `c_FoamAlphaFadeFactor` (labels for
+  interoperability); the colour parameters of §8.2. Neither record has waves.
+
+<a id="s8-6-2"></a>
+#### 8.6.2 Normal
+
+With *B* = ((*P*.x, *P*.y) − *O*) / 160 as in §8.3 and *T* as in §8.7:
+
+1. **Flow vector** *F* = 2 × (the flow map's first two channels at UV) − 1.
+2. **Phase offset** *q* = ½ × the noise texture's first channel at ½ *B* (one noise repeat per
+   two landblocks).
+3. **Two phases.** *p*₁ = *q* + 1057 × *T*; *p*₂ = *q* + 1058 × *T* + ½. For each, *f*ᵢ = the
+   fractional part of *p*ᵢ and *i*ᵢ = *p*ᵢ − *f*ᵢ (the cycle number).
+4. **Layer-0 coordinates** of phase *i*: *c*ᵢ = 1063 × *B* + 0.7 × (*i*ᵢ, *i*ᵢ) + *F* × *f*ᵢ.
+   Within a cycle the normal map slides along *F* by *f*ᵢ repeats; at each new cycle it jumps
+   by 0.7 repeats on both axes. 0x2B0007FD (Direct3D 10/11) then rotates both *c*ᵢ by the
+   angle 1188 (radians): (*x*, *y*) → (*x* cos θ + *y* sin θ, −*x* sin θ + *y* cos θ); 1188 is
+   0 on all 21 surfaces.
+5. **Blend.** Sample the normal map at *c*₁ and *c*₂; mix them with weight *w* = 2 × |½ − *f*₁|
+   toward the second (the first alone at mid-cycle of phase 1, the second alone when phase 1
+   wraps).
+6. **Flow normal.** With *t* the mixed texel (r, g, b) and *k* = 2 |*F*|²: horizontal x =
+   *k* (2r − 1), horizontal y = *k* (2g − 1), vertical = 1 + *k* (2b − 2). With no flow
+   (*F* = 0) it is straight up.
+7. **Layers 1 and 2** (0x2B0007FD, Direct3D 10/11 programs only, W27). With *g* =
+   clamp(0.0004 × the pixel's view depth, 1, 10) (1 within 2,500 m): layer *k* coordinates =
+   *B* × `Scale`ₖ + *g* × (`SpeedU`ₖ, `SpeedV`ₖ) × *T*; each texel *t*ₖ gives
+   (2r − 1, 2g − 1, 2b − 1) (horizontal x, horizontal y, vertical). Foam weight *φ* = (the flow
+   map's third channel at UV + (1186, 1187)) × (the foam map's alpha at (UV + (1182, 1183)) ×
+   (1184, 1185)). Add both layer vectors, each × (1 − |*F*|) × (1 − *φ*), to the flow normal.
+8. **Normalise.**
+
+The OpenGL programs of 0x2B0007FD and all programs of 0x2B0005EC stop after step 6 (no
+layers 1 and 2, no foam).
+
+<a id="s8-6-3"></a>
+#### 8.6.3 What this means in this install (W28; Inferred)
+
+All 27 flow-family and lava surfaces use flow map 0x400163D3, whose flow channels give |*F*| ≤ 0.02,
+and its third channel is 0. So *k* ≤ 0.0008: the flow normal is straight up for practical
+purposes, the phases move the normal map by at most 0.02 repeats per cycle, and the foam weight
+is 0. Consequently:
+
+- in the Direct3D 10/11 programs of 0x2B0007FD the visible ripples are those of layers 1 and 2,
+  moving at their (slow) speeds (§8.7);
+- 0x2B0005EC, and 0x2B0007FD through its OpenGL programs, give an almost flat surface: no
+  moving ripples; refraction, reflection and Fresnel only.
+
+> **OPEN:** Whether the client binds another texture to the flow sampler of landscape water at
+> run time (the sector coordinates of §8.1, which span a 3 × 3 sector, suggest a per-sector
+> map; the data binds only 0x400163D3). An owner observation settles it: in the original, does
+> the water at checklist row W17 of `m4-5-visual.md` §4.8 (a 0x2B0005EC river) show moving
+> ripples? (Corrected 2026-10-09: the former text named checklist row W12, the fountain basin.)
+> The same answer decides whether landblock lava moves (§8.6.5).
+
+<a id="s8-6-4"></a>
+#### 8.6.4 Colour
+
+**OpenGL programs of 0x2B0007FD** (SH2, programs):
+
+1. *S* = screen position; refraction *F*ᵣ = the frame-buffer copy at *S* + *N*.xy × 1048 (*N*
+   the normal of §8.6.2, horizontal components); reflection *R* = the reflection texture at
+   *S* + (0, 0.003), not distorted.
+2. *L*꜀ = clamp(*D*ₗ + (1066 − 1) (1 − *D*ₗ), 0, 1) with *D*ₗ the fake light's diffuse colour.
+3. Tint: with *w* = clamp(0.1 × eye distance − 0.5, 0, 1) × 1068, the refraction becomes
+   *F*ᵣ + *w* × (*L*꜀² × `WaterFogColor` − *F*ᵣ).
+4. Fresnel *f* = 1050 × (max(1 − |*v* · *N*|, 0))^(1 / 1051): the bias **multiplies** and the
+   exponent is **inverted**, unlike §8.4 step 5.
+5. Colour = mix(tinted refraction, *R*, *f*) × `WaterColor` × 1066 + *L*꜀ ×
+   sat(*N* · normalize(*v* − *L*))^1054 × fake specular colour × `WaterSpecularColor`.
+6. Fog: mixed toward the fog colour by clamp((distance − fog near − 100) / fog range, 0, 1)
+   (the fog starts 100 m later than for other surfaces). Alpha 1.
+
+**Direct3D 10/11 programs of 0x2B0007FD** (SH2, D3D) differ:
+
+- Refraction depth: *θ*₀ = the depth texture at *S* minus the pixel's view depth (the water's
+  thickness along the view); *o* = 1189 + 0.001; the refraction offset *N*.xy × 1048 is scaled by
+  clamp(*θ* / |*o*|, 0, 1), tested again at the offset point, and the unoffset point is used when
+  the offset one lies in front of the water; pixels with negative thickness are discarded.
+- Depth colouring: shoreline colour (2011) toward fog colour (2010) by smoothsteps of the
+  thickness against 1170 and 1171; the refraction is tinted by clamp((*θ* − 1171) × 1173, 0, 1)
+  × 1068 × those colours' alphas.
+- Fresnel as the OpenGL step 4, multiplied by clamp(mean of the reflection's RGB +
+  smoothstep(clamp(distance / 75, 0, 1)), 0, 1).
+- Specular: exponent fixed at 25 (1054 and 1067 are not read), plus a sun-disc term
+  (*N* · −*L*)^8000 × the reflection's red, plus a glitter term from the noise texture at
+  0.1 *B* + (*u*, *u*), *u* = fractional part of 0.005 *T* (one cycle per 200 s), masked by the
+  normal layers' alpha and faded out by view depth; all three × *L*꜀ × fake specular colour ×
+  `WaterSpecularColor` × (1 − *φ*).
+- Foam: the foam texel × *L*꜀ × 2.5 × the sun-shadow factor (`lighting.md` §9, weighted by the
+  depth-dependent fog amount), mixed in by *φ* × 1190; the specular terms are not shadowed.
+- **Output alpha** = clamp(*θ* / ((1 + 0.098 × view depth) × |*o*|), 0, 1): soft shores.
+  Blend source alpha / inverse source alpha (the OpenGL permutations write with ONE / ZERO).
+
+**0x2B0005EC** (SH2, programs): the normal of §8.6.2 steps 1–6; Fresnel as §8.4 step 5
+(bias + (1 − bias) × (1 − |*v* · *N*|)^exponent); refraction, reflection and depth tint like the
+Direct3D programs above without foam and glitter; output alpha = 1 − clamp((distance − *s*) ×
+*r*, 0, 1) with (*s*, *r*) the engine's far-draw fade.
+
+> **OPEN:** The exact order and weights of the Direct3D 10/11 colour terms of 0x2B0007FD
+> (depth colouring, glitter mask and fade, shadow weighting) and of 0x2B0005EC were read once
+> and not cross-checked; the reflection pass and the depth texture's contents are engine
+> behaviour (§8.4 OPEN). (Lava, 0x2B000810: §8.6.5.)
+
+**Tessera rule (Decision), until those are settled:** use the normal of §8.6.2, with layers 1
+and 2 for 0x2B0007FD (its Direct3D 10/11 form) and steps 1–6 only for 0x2B0005EC (which has no
+layers 1 and 2), and the colour of the OpenGL list above with the reflection replaced by the
+refraction sample (§8.4 Tessera rule), alpha 1. Never apply §8.3's scroll formula to 1057 and 1058 of these
+records.
+
+> **OPEN (implementer, 2026-10-10, `tessera-render` water pipeline; checklist row W17 of
+> `m4-5-visual.md` §4.8):** the Tessera rule above gives both records "the colour of the
+> OpenGL list", whose step 4 is the Fresnel of 0x2B0007FD (bias × (1 − |*v* · *N*|)^(1 / exponent)),
+> while the paragraph on 0x2B0005EC states that its own programs use the §8.4 step 5 form
+> (bias + (1 − bias) × (1 − |*v* · *N*|)^exponent). Applied literally to the river surface
+> 0x310066D5 (Fresnel bias 0.01) the multiplied form keeps *f* ≤ 0.01, so beyond about 15 m
+> the step 3 tint (fog amount 1) pulls the whole river to *L*꜀² × `WaterFogColor`, a
+> near-black band, where row W17 expects the bed seen through the water with reflection
+> rising toward grazing angles. **Tessera (implementer choice until answered):** each record
+> keeps its own Fresnel form (0x2B0007FD step 4; 0x2B0005EC §8.4 step 5, told apart by
+> whether the record declares layers 1 and 2), the rest of the OpenGL list (refraction,
+> *L*꜀, tint, colour, specular, fog) unchanged for both. Spec writer: confirm this reading of
+> the Tessera rule, or state the colour of 0x2B0005EC without a depth texture (its own depth
+> tint needs one) another way.
+
+<a id="s8-6-5"></a>
+#### 8.6.5 Lava: 0x2B000810 (added 2026-10-09, third revision; W40, W41)
+
+**Status.** 0x2B000810 is the record of landblock lava: one surface record (0x31006FAE) of the
+landblock-water tables, 656 wet landblocks (W23), no placed mesh (W41). It shares part of the
+flow-map interface (1057, 1058, 1063, the flow, foam and noise slots and the flow, foam and
+depth parameters) but has no frame-buffer, reflection or depth sampler and no water colour.
+It is its own family ("Lava" in §8.2), not a member of the flow-map family and not a water
+record of `material.md` §11.6; that section's lava row recognises it from its interface: it
+declares 1057, has a `FlowTexture` sampler and has no `FrameBufferTexture` sampler (only
+0x2B000810 of the 510 shader records, W41). The formula below is that of its Direct3D 10/11
+water permutations (W40, read once, D3D). Its only OpenGL program is the low-detail
+`Color` / `Color2` permutation of §8.2; its Direct3D 9 programs were not read.
+
+**Inputs.**
+
+- Per vertex: position; UV set 0 (on landscape quads the sector coordinates of §8.1), used as
+  stored (no texture matrix).
+- Slots: 3000 and 3001 (`ColorAndOpacity`, `ColorAndOpacity2`), 3018 (`Emissive`), 3075 flow
+  map (clamp), 3079 foam map, the noise sampler without binding (default 0x400163D4, as
+  §8.6.1). 3011 is bound but not sampled; 3013 is declared without a binding. Address modes and
+  filters as `material.md` §7.5 and §7.3.1.
+- Parameters read: 1057, 1058 (flow rates), 1063 (scale of the colour layers and of the
+  emissive layer), 1066 (brightness), 1182–1187 (foam and depth offsets, foam tiling), 1188
+  (rotation). The other declared water parameters (1047, 1048, 1050, 1051, 1054, 1067, 1068,
+  1170, 1171, 1173, 1189, 1190, 2006, 2009–2011) are not read.
+- No light input of any kind (no fake light, no ambient, no shadow), no frame-buffer copy.
+
+**Colour.** With *B*, *T*, *F*, *q*, the phases *p*ᵢ, their fractions *f*ᵢ and cycle numbers
+as in §8.6.2 steps 1–3, and *k* = 2 |*F*|²:
+
+1. **Phase coordinates** *c*₁, *c*₂ as §8.6.2 step 4, rotation by 1188 included.
+2. **Flow colour** *C* = the RGB of slot 3000 at *c*₁ mixed with the RGB of slot 3001 at *c*₂,
+   weight *w* = 2 × |½ − *f*₁| toward the second (as §8.6.2 step 5, but each phase reads its
+   own colour layer).
+3. **Emissive texel** *E* = slot 3018 at UV + 1063 × *B* (RGB and alpha *E*ₐ). These
+   coordinates have no time term.
+4. **Emissive weight** *a* = clamp(1 + *E*ₐ − *k*, 0, 1); base colour *X* = *C* + *a* × (*E*.rgb − *C*).
+5. **Brightness** *m* = 2 × 1066 × (1.8 − *a* − 0.5 *E*ₐ); colour *Y* = *m* × *X*.
+6. **Foam** weight *φ* = clamp(the foam map's alpha at (UV + (1182, 1183)) × (1184, 1185),
+   multiplied by the flow map's third channel at UV + (1186, 1187), 0, 1); *Z* = *Y* + *φ* ×
+   (foam RGB − *Y*). On 0x31006FAE, 1186 and 1187 are sine curves; like every curve-valued
+   parameter they are evaluated at the clock for every frame drawn (§8.7.1, W37).
+7. **Fog and output:** each channel of *Z* + *d* × (fog colour − *Z*), clamped to 0–1, with *d*
+   the distance-fog factor of §8.3 (no 100 m shift as in §8.6.4); output alpha 1.
+
+Render state (W41): the stored block of the water permutations blends source alpha / inverse
+source alpha (opaque in effect, alpha 1), tests depth, writes depth and culls nothing; the
+surface's flags 4002 and 4003 are 1 and agree.
+
+**Texture matrices (added 2026-10-09, fourth revision; OBS2).** 0x31006FAE also carries texture
+matrices for sets 0 and 1: scales 1001–1004 of 6 and translations 1017–1020 that are mode-2
+curves (−0.02 per second on both axes of set 0, +0.025 per second on both axes of set 1;
+`material.md` §8.4, §5.3). Only the low-detail permutations of 0x2B000810 (the five that have an
+extra state list, `material.md` §7.7) bind them; its water permutations have no extra state
+list and read UV set 0 as stored (W40). So under the water permutations (steps 1–7) lava has no
+texture-matrix motion, while under a low-detail permutation its two colour layers would scroll.
+This matters for the OPEN below; the Tessera rule above does not use the low-detail
+permutation.
+
+**What this means in this install (Inferred from W28, W41).** The flow map is neutral, so *k*
+≤ 0.0008 and the foam weight is 0 (its third channel is 0); *E*ₐ ≥ 0 makes *a* ≥ 0.9992, so the
+colour layers contribute at most 0.08 % and the surface is the emissive layer alone:
+*m* × *E*.rgb with *m* = 3 × (0.8 − 0.5 *E*ₐ) for 1066 = 1.5 (from 2.4 where *E*ₐ = 0 to 0.9
+where *E*ₐ = 1), fogged. Nothing in that result depends on *T*: **landblock lava does not move
+in this install**; its pattern repeats about 6 times per landblock along each axis (1063 = 6
+from *B*, plus or minus ⅓ from the sector UV, which adds one repeat per 3 × 3 sector). The 1057 and 1058 values (0.1 on 0x31006FAE) only
+move the colour layers, which the emissive weight hides. These are observations of one install;
+a renderer reads every value at run time.
+
+**Tessera rule (Decision), while the OPEN below stands:** draw the lava record with steps 1–7
+(the Direct3D 10/11 form), on the landblock quads of §8.1 and on any placed mesh, opaque with
+depth write and both faces; never with the generic path, the plain-water formula of
+§8.3–§8.4 or the flow-water colour of §8.6.4. Do not substitute the low-detail permutation.
+
+> **OPEN (2026-10-09):** whether the original's landblock lava moves (it does if the client binds
+> a run-time flow map, the §8.6.3 OPEN; an owner observation at checklist row W7 of
+> `m4-5-visual.md` §4.4 settles both); the Direct3D 9 programs of 0x2B000810 and which
+> permutation the client picks for lava under each user setting (§8.4 OPEN).
+
+<a id="s8-7"></a>
+### 8.7 Animation rates and the time base (W24–W27; compared with the former text)
+
+**Time base.** Every program above reads the engine's time input *T* = E20: seconds of the
+client's global clock, reduced modulo 3,600 once above 3,600 (`lighting.md` L25). The float
+curves of texture matrices (§8.5.3) and of every curve-valued water, lava, mirror or liquid
+parameter (§8.7.1) are evaluated at the same clock, with the same reduction (`material.md` §5.3.1), every
+frame. Nothing water
+related runs on the game's time of day. A renderer passes real elapsed seconds, not frames or
+game time.
+
+| Family | What moves | Rate (units) |
+|---|---|---|
+| Plain water (§8.3) | normal layer *k* | (`SpeedU`ₖ, `SpeedV`ₖ) repeats per second; on the ground × 160 / `Scale`ₖ m/s |
+| Plain water (§8.3) | waves | phase `WaveSpeed` × (0.5 + 0.8 *k*) rad/s; amplitude 0 on most surfaces |
+| Flow map (§8.6) | flow phases | 1057 and 1058 cycles per second (cycle 1 / rate s); the normal map slides by \|*F*\| repeats per cycle and jumps 0.7 per cycle |
+| Flow map, 0x2B0007FD D3D (§8.6) | normal layers 1, 2 | *g* × (`SpeedU`ₖ, `SpeedV`ₖ) repeats per second, × 160 / `Scale`ₖ m/s; *g* = 1 within 2,500 m |
+| Flow map, 0x2B0007FD D3D | glitter noise | 0.005 noise repeats per second (0.1 repeat per landblock) |
+| Flow map, 0x2B0007FD D3D | foam and depth lookups | offsets 1182, 1183, 1186, 1187: sine curves (mode 4), amplitude 0.0001–0.01 UV, 0.5–1 rad/s |
+| Lava (§8.6.5) | colour layers; emissive layer | 1057 and 1058 cycles per second as the flow phases; the emissive layer does not move (no time term); in this install the emissive layer hides the colour layers, so nothing visible moves |
+| Lava (§8.6.5) | depth lookup of the foam weight | offsets 1186, 1187: sine curves (mode 4), amplitude 0.001 UV, 1 and 0.6 rad/s (§8.7.1); no visible effect in this install (the flow map's third channel is 0) |
+| Older bump water (§8.5.6) | three layers | 1056 × (1, 4, 8) repeats per second of 1055 × (1, 2, 4) tiles of UV |
+| Mirror (§8.5.4) | normal map | (1104, 1105) × 1103 repeats per second; for the puddles 0.00001 × *t* (the curve) × *T* |
+| Liquid distortion (§8.5.5) | three layers, colour with layer 2 | (`SpeedU`ₖ, `SpeedV`ₖ) repeats per second of UV′ × `Scale`ₖ |
+| Two-layer records (§8.5.3) | each layer's texture matrix | mode-2 curves: `w[6]` repeats per second; modes 4 and 7: `w[6]` rad/s |
+
+**Rates of the main landblock-water surfaces** (OBS2, effective values; metres per second on
+the ground, length of the vector; "former" is what the formula of §8.3, applied to every water
+record, gives):
+
+| Surface (record) | Wet landblocks | Original: visible layers | Former: §8.3 on all records |
+|---|---|---|---|
+| 0x31004359 (0x2B0007FD) | 24,946 | layer 1: scale 2, speed (0.0015, 0.002): 0.20 m/s; layer 2: scale 8, (−0.01, −0.0125): 0.32 m/s; flow phases 1 cycle per second, not visible (§8.6.3) | layer 0: scale 10, speed (1, 1): 22.6 m/s |
+| 0x31008DB5 (0x2B0007FD) | 24,089 | layer 1: scale 1, (0.0025, 0.005): 0.89 m/s; layer 2: scale 12, (−0.01, −0.005): 0.15 m/s; phases 0.2 per second | layer 0: scale 6, (0.2, 0.2): 7.5 m/s |
+| 0x31008B7F (0x2B0007FD) | 17,276 | as 0x31008DB5: 0.89 and 0.15 m/s | 7.5 m/s |
+| 0x31006653 (0x2B0007FD) | 14,380 | layer 1: scale 2, (0.0035, 0.005): 0.49 m/s; layer 2: scale 12, (−0.02, −0.0125): 0.31 m/s | layer 0: scale 7.5, (0.2, 0.2): 6.0 m/s |
+| 0x3100068B (0x2B0000A8) | 1,678 | layer 0: scale 4, (0.005, 0.0075): 0.36 m/s; layer 1: scale 8, (0.015, 0.02): 0.50 m/s; layer 2: scale 16, (−0.01, −0.0125): 0.16 m/s | the same |
+| 0x310066D5 (0x2B0005EC) | 761 | no moving ripples (flow only, §8.6.3) | one layer: scale 10, (1, 1): 22.6 m/s |
+
+So for 95 % of the wet landblocks the former text made the ripples drift 6–23 m/s in one fixed
+direction, where the original shows ripples drifting at 0.15–0.9 m/s (Direct3D 10/11) or none.
+For the plain water records the former formula and the rates are right; the time base must be
+seconds (W24).
+
+<a id="s8-7-1"></a>
+#### 8.7.1 Curve-valued water parameters (added 2026-10-09; W37, W38)
+
+A parameter of a surface of the water families (plain water, plain water on mesh UV, flow
+map), the lava family (§8.6.5), the older bump water (§8.5.6), the mirror record (§8.5.4) or a
+liquid-distortion record (§8.5.5) may be a float curve (`material.md` §5.3) instead of a
+constant (lava and older bump water added 2026-10-09, fourth revision). **Rule (normative):** evaluate every such curve at
+the global clock *t* (`material.md` §5.3.1) for every frame drawn and hand the value to the
+program in place of the constant; never evaluate it once at load or at *t* = 0. The program
+then uses the value exactly where it uses a constant, so a curve-valued speed is multiplied by
+*T* again and a curve-valued scale multiplies *B* (or the UV). *t* and *T* are the same clock
+with the same reduction modulo 3,600 s, so every product restarts together once an hour.
+
+Census (OBS2, all 13,781 surface records, of which 124 belong to the families above; every
+curve of a mode other than 1; texture-matrix ids excluded, they are §8.5.3's; W37). No other
+parameter of these families is a curve of a mode other than 1 in this install; the plain water
+on mesh UV, the older bump water and 0x2B0005EC have none.
+
+| Parameter (§8.2 labels) | Mode | Surfaces | Value | Effect | Wet landblocks / TP draws (W35) |
+|---|---|---|---|---|---|
+| 1045 `WaveFrequency` | 2 | 0x31002A44, 0x31002A45, 0x31002A46 (0x2B0000A8) | 1 + 0.005 *t* | the wave pattern of §8.3 tightens from frequency 1 to 19 over the hour, then returns to 1; amplitude 1046 = 0.005, so the waves stay below 0.008 m | 1 / 0 (0x31002A44 only) |
+| 1045 `WaveFrequency` | 7 | 0x31008446, 0x3100890B, 0x3100890C (0x2B0004B5) | 1 + 0.2 *N₁*(0.1 *t*) | the liquid's vertex waves (§8.5.5 step 2; amplitude 0.5, speed 0.35) wander slowly in frequency | – / not drawn |
+| 1059, 1061 `Normal1SpeedU`, `Normal2SpeedU` | 4 | 0x3100338F (0x2B0000A8) | 0.01 − 0.0001 sin 0.25*t*; −0.01 + 0.0001 sin 0.25*t* | the U offset of layers 1 and 2 is the value × *T*; its rate of change is the value + *T* × its derivative, so the small sine grows with *T* (example in §12) | 0 / 0 |
+| 1063, 1064, 1065 `Normal0Scale` … `Normal2Scale` | 4 | 0x3100328B (0x2B0000A8) | 2 + 0.05 sin(*t* + 0.33π); 1 − 0.025 sin(2*t* + 0.66π); 2.5 + 0.05 sin(2*t* + 0.99π) | the tiling breathes; at a point the pattern moves at *B* × d`Scale`ₖ/d*t* + `Speed`ₖ repeats per second, which depends on the size of *B* (§8.3, W38) | 2 / 0 |
+| 1063, 1064, 1065 | 4 | 0x3100824C (0x2B0000CE, placed) | 8 + 0.1 sin(*t* + 0.33π); 4 − 0.05 sin(2*t* + 0.66π); 10 + 0.1 sin(2*t* + 0.99π) | as above | – / not drawn |
+| 1105 `MirrorNormalSpeedV` | 2 | the three puddles (0x2B0000AA) | 0.00001 *t* | §8.5.4 | – / 3,409 draws (2,067 + 712 + 630) |
+| 1182, 1183; 1186, 1187 (foam and depth offsets) | 4 | all 21; 18 of the 0x2B0007FD surfaces | sines, amplitude 0.0001–0.01, 0.5–1 rad/s | §8.6.2 step 7 (foam weight 0 in this install, §8.6.3) | all flow-map landblocks |
+| 1186, 1187 (depth offsets; added 2026-10-09, fourth revision) | 4 | 0x31006FAE (0x2B000810, lava) | sines, amplitude 0.001, 1 rad/s (1186) and 0.6 rad/s (1187) | §8.6.5 step 6: they offset the flow-map lookup of the foam weight; no visible effect in this install (the flow map's third channel is 0, §8.6.5) | 656 / 0 (landblock water only, W41) |
+
+**Tessera rule (Decision) for curve-valued scales on world-position families** (0x3100328B,
+0x3100824C), while the reference of *O* is OPEN (§8.3): measure *B* for these surfaces from the
+south-west corner of the landblock that contains the camera (so |*B*| stays within the view
+distance in landblocks), not from the region origin; the pattern then shifts once when the
+camera crosses a landblock edge (by the fractional part of `Scale`ₖ). With the region origin,
+|*B*| is about 135 on the two landblocks of 0x3100328B (region 2, landblocks (39, 129) and
+(39, 130)) and the breathing would sweep the pattern at hundreds of metres per second. Every other surface keeps *O* = (0, 0) of §8.3.
+
+<a id="s8-7-2"></a>
+#### 8.7.2 Rates fixed by the data (added 2026-10-09; W39)
+
+The plain-water rates of §8.3 come from each surface's own values. Most layers drift
+0.01–2.8 m/s; some surfaces are much faster by their data, for example 0x31000CA1 (layers at
+6.6, 6.4 and 11.7 m/s: speeds (0.075, 0.035), (0.14, 0.08), (−0.3, −0.5) at scales 2, 4, 8),
+the placed 0x31006DE4 (8.0 m/s), 0x31002A44–0x31002A46 (5.3, 6.7 and 2.7 m/s at scale 6) and
+0x3100068D, 0x31000CF3 (6.3 m/s). Most fast surfaces are table entries that no wet landblock
+uses (W39 lists the nine fast ones in use, 101 landblocks in all). **Rule:** draw them at these
+rates; the original computes the same coordinates (W25), so nothing is to be clamped or scaled.
+
+A normal-layer scale of 0 is legal (0x31000698, layer 1, speed (0, 0); one wet landblock): that
+layer reads the same texel at every point (at coordinates `Speed`ₖ × *T*), so it adds a uniform
+normal that changes only with time. A rate in metres per second is undefined for it; an
+implementation never divides by a scale.
 
 ---
 
@@ -888,6 +1572,16 @@ the same pairs, instead of decoding kind 5.
 | WA4 | Every block map has the water table's `type_key` and `level_key` and the fog table's `zone_key` | Confirmed (390,150) |
 | WA5 | For every wet landblock, the (type, *h*) pair occurs in the distant-sector record of its 3 × 3 group | Confirmed (12,925 sectors) |
 | WA6 | §6.2 is a pure function of the water table, the block map and the height grid (deterministic) | BIN |
+| WA7 | Every surface record whose shader record declares a `c_Water…` parameter, a mirror parameter (1100–1106) or slot 3075 or 3079 belongs to exactly one family of §8.2 "Program families" or §8.5 (mirror, liquid distortion) | Confirmed (OBS2, all 13,781 surface records) |
+| WA8 | Plain water family: a normal layer's coordinates at *T* + 1 minus those at *T* equal (`SpeedU`ₖ, `SpeedV`ₖ) exactly, independent of position (§8.3) | Synthetic |
+| WA9 | Flow-map family: with *F* = 0 the normal of §8.6.2 steps 1–6 is straight up for any normal map and any *T*; with layers 1 and 2 (step 7) the normal varies with *T* only through those layers (§8.6.2) | Synthetic |
+| WA10 | Flow-map family: the layer-0 coordinates are continuous within a cycle and jump by exactly 0.7 on both axes (plus −*F*) when a phase wraps (§8.6.2 step 4) | Synthetic |
+| WA11 | Every flow-family and lava surface names a flow map whose two flow channels give \|*F*\| ≤ 0.02 in this install (observation, read at run time, never assumed) (§8.6.3) | Confirmed (27 of 27) |
+| WA12 | Every placed object with liquid-volume monitors (§7.3) has at least one surface of a water-family record (§8.2) | Confirmed (TP, 39 of 39 objects with parts) |
+| WA13 | Curve-valued parameters (§8.7.1): with a constant curve (mode 1) the drawing at clock *t* equals the drawing with that constant; with a mode-2 speed *S*(*t*) = *a* + *b t*, the layer offset at *T* is (*a* + *b T*) × *T* (not *a* × *T*); a value evaluated at *t* = 0 and held fails this for every *b* ≠ 0 | Synthetic |
+| WA14 | A normal-layer scale of 0 gives the same layer texel at every point of the surface at a given *T*, and no division by zero or non-finite value arises anywhere in the water, mirror or liquid drawings (§8.7.2) | Synthetic |
+| WA15 | Mirror surfaces with 1102 = 1 have output alpha = diffuse alpha × material alpha at every view angle (§8.5.4) | Synthetic |
+| WA16 | Lava (§8.6.5), with constant parameters, the flow map's third channel 0 and fog factor 0: with *F* = 0 the colour equals clamp(2 × 1066 × (0.8 − 0.5 *E*ₐ) × *E*.rgb, 0, 1) for any colour layers and any *T*; with *F* ≠ 0 and *E*ₐ = 0 it varies with *T* through the colour layers only; output alpha is 1 in every case; exactly one shader record of the install satisfies the lava recognition rule of `material.md` §11.6 (observation, read at run time) | Synthetic; Confirmed (OBS2, 1 of 510) |
 
 Hostile input: bound every count by the bytes left; reject flag bytes other than 0 and 1;
 treat a non-finite `value` or fog float as malformed; never index the entry list by key
@@ -921,6 +1615,38 @@ entity (−1 ≤ −0.5196 < −0.5 relative to the entity at *h*). With key 4 �
 **Fog zones.** A zone table with `zone_key` 3 whose entries are all inactive, or block maps
 whose key 3 is 0, leaves the sky's fog unchanged.
 
+**Plain water rate (§8.3, §8.7).** Layer 0 with `Normal0Scale` 4 and speeds (0.005, 0.0075):
+one repeat covers 160 / 4 = 40 m, so the pattern moves (0.2, 0.3) m/s, 0.36 m/s along the
+diagonal. At *T* = 10 s a point with *B* = (2.5, 1.0) samples (10.05, 4.075).
+
+**Flow phases (§8.6.2).** Rate 0.2 (both 1057 and 1058), noise offset *q* = 0.1, *T* = 7 s:
+*p*₁ = 0.1 + 1.4 = 1.5, so *f*₁ = 0.5, *i*₁ = 1; *p*₂ = 0.1 + 1.4 + 0.5 = 2.0, so *f*₂ = 0,
+*i*₂ = 2. The blend weight 2 × |0.5 − 0.5| = 0 takes the first sample alone, at
+1063 × *B* + (0.7, 0.7) + 0.5 *F*. At *T* = 9.5 s, *p*₁ = 2.0: the first phase wraps to *f*₁ = 0,
+*i*₁ = 2, so its coordinates go from 1063 *B* + (0.7, 0.7) + *F* (just before) to
+1063 *B* + (1.4, 1.4), a jump of (0.7, 0.7) − *F*; there the weight is 1, so the jump is hidden
+behind the second sample.
+
+**Puddle normal scroll (§8.5.4).** 1105 is a mode-2 curve with `w[6]` = 0.00001, so at *t* =
+*T* = 100 s its value is 0.001 and the V offset is 0.001 × 100 = 0.1 repeats (× 1103 = 1); at
+1,000 s it is 10 repeats, moving 0.02 repeats per second.
+
+**Curve-valued speed (§8.7.1).** 0x3100338F, layer 1 U: *S*(*t*) = 0.01 − 0.0001 sin 0.25*t*,
+scale 5 (one repeat = 32 m). At *t* = *T* = 100 s, *S* = 0.010013 and the offset is
+*S* × *T* = 1.0013 repeats; the U offset changes at *S* + *T* × d*S*/d*t* = 0.0075 repeats per
+second (0.24 m/s). At *T* = 3,000 s, *S* = 0.009925, the offset is 29.78 repeats and the rate is
+0.060 repeats per second (1.9 m/s): the term *T* × d*S*/d*t* (amplitude 0.000025 *T*, period
+8π ≈ 25 s) outgrows *S*. A renderer that evaluates *S* once at *t* = 0 gets 0.01 repeats per
+second at all times.
+
+**Curve-valued scale (§8.7.1).** 0x3100328B, layer 0: `Scale`₀(*t*) = 2 + 0.05 sin(*t* + 0.33π),
+speed (0.005, 0.0075). At *t* = 0, `Scale`₀ = 2.043 and d`Scale`₀/d*t* = 0.0255 per second. At
+*B* = (0, 0) the U coordinate changes at 0.005 repeats per second (0.39 m/s on the ground); at
+*B* = (2, 0) at 2 × 0.0255 + 0.005 = 0.056 repeats per second (4.4 m/s). There the rate is
+0.1 cos(*t* + 0.33π) + 0.005 repeats per second, so the direction reverses about every π
+seconds; the constant 0.005 shifts the zero crossings, and the intervals alternate between
+about π + 0.1 s and π − 0.1 s.
+
 ---
 
 <a id="s13"></a>
@@ -937,7 +1663,17 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | `collision.md` §10.4 OPEN, Q8; §12.3 step 7 | Where water volumes are placed and how deep water is | §6.2 (landblock water), §7.1 (volume boxes), §7.3 (placed volumes). The state rule is BIN (§7.4, `collision.md` §11.3.2); the containment test and buoyancy stay OPEN. |
 | `terrain.md` §9 OPEN (water) | No water level to shade the shore against | §6 gives the level per landblock. |
 | `walker.md` §9 OPEN | Water not drawn | §8 gives the geometry and shading. |
-| `material.md` §8.7 OPEN | Water effect-family parameters | §8.2–§8.4 for the parameters the 0x2B0000A8 programs read; the flow, foam and depth parameters stay OPEN. |
+| `material.md` §8.7 OPEN | Water effect-family parameters | §8.2–§8.4 for the parameters the 0x2B0000A8 programs read; the flow, foam and depth parameters stay OPEN. **2026-10-09:** flow, foam and depth parameters answered in §8.6; mirror parameters in §8.5.4. |
+| This spec, §8.3–§8.4 and §8.5 (before the revision of 2026-10-09) | The 0x2B0000A8 formula was stated as the water drawing; §8.5 said placed water uses the water shaders "and the same shading applies" | The formula covers the plain water family only (§8.2 "Program families"); the flow-map records, 95 % of the wet landblocks, follow §8.6, and placed surfaces follow the routing rule of §8.5 (water records, mirror, liquid distortion, two-layer records with animated matrices). |
+| `render.md` §5.3 (Inputs, Vertex stage), `walker.md` §14.6 | Every landscape-water record is drawn with §8.3–§8.4, records without layers 1 and 2 with one layer at `Normal0Speed`; undeclared ids take the 0x2B0000A8 defaults | For 0x2B0007FD and 0x2B0005EC use §8.6 (1057 and 1058 are cycle rates, not scroll speeds; the former drawing drifts 6–23 m/s, §8.7). For the render and walker owners; departure row R-D12 in `render.md` §7. |
+| `walker.md` §14.5 ("Texture transforms and second colour layers are not drawn"), §14.6 ("Placed water meshes are ordinary objects") | Placed water drawn by the generic lit path without second layer and texture matrices | Route placed surfaces by §8.5; draw both colour layers and the animated matrices (`material.md` §8.4, §10.3). This is why waterfalls and puddles show static, near-white surfaces and fountain water a near-white texture. For the walker owner. |
+| `lighting.md` §5.2 item 2 (Tessera Decision "multiply for `…Opacity2` roles") | Multiply the two colour layers of `ColorAndOpacity` records | Several waterfall and foam records add them; the per-record table is `material.md` §10.3 (revised there the same day). |
+| `m4-5-visual.md` row W8 | Surface 0x31006748 "unlit with source-alpha / inverse-source-alpha blending" | It is a plain water record surface drawn by the water programs (§8.5.2); the row is corrected there. |
+| `walker.md` §14.6 (the walker's water parameters, as built on 2026-10-09: evaluated once at *t* = 0) | Water parameters taken as constants | Curve-valued parameters are evaluated at the clock every frame (§8.7.1); 0x3100328B is drawn by two wet landblocks with breathing scales and 0x31002A44 by one with a changing wave frequency. For the walker owner (OPEN in `walker.md` §14.6). |
+| This spec, §8.5.4 (before 2026-10-09, second revision) | The mirror record was described by its three puddle surfaces only | Six static mirror surfaces use it too, four of them with Fresnel bias 1 (opaque mirrors) (§8.5.4, W36). |
+| `material.md` §11.6 (as accepted 2026-10-09) | The lava record 0x2B000810 "falls outside" the records the generic path must not draw | It is not a water record but must not be drawn by the generic path either: lava row and recognition rule added there (revised the same day); drawing §8.6.5. |
+| `render.md` §5.7 OPEN (1), `walker.md` §14.6 OPEN (R-D12) | Name the flow-map records 0x2B0007FD and 0x2B0005EC as the landscape-water records to move off §8.3 | Landblock lava (0x2B000810, 656 wet landblocks) also leaves §8.3: draw it by §8.6.5 (note for the implementers; those specs are unchanged). |
+| This spec, §8.2, §8.5, §8.6 (before 2026-10-09, third revision) | 0x2B000810 listed in the flow-map family and as sampling a frame-buffer copy, yet "not traced" | Its own family, no frame-buffer copy, formula in §8.6.5 (W40, W41). |
 
 ---
 
@@ -959,6 +1695,38 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 
 > **OPEN:** The full layout of the distant-landscape sector record (§9, `landblock.md` §7).
 
+> **OPEN (2026-10-09):** Whether the client binds a run-time texture to the flow sampler of
+> landscape water (§8.6.3), which also decides whether landblock lava moves (§8.6.5); the exact
+> Direct3D 10/11 colour terms of the flow-map records (§8.6.4); the Direct3D 9 programs of the
+> lava record 0x2B000810 (§8.6.5); the pixel formula of the older bump-water records
+> (§8.5.6); the source of the splash and mist at the foot of falls (§8.5.1); which permutation
+> (with or without reflection, depth and interactive ripples) the client chooses for water and
+> puddles under each user setting (§8.4).
+
+> **OPEN (2026-10-09, second revision):** the reference position and stored offset behind *O*
+> (§8.3, W38), which decide how fast the curve-valued scales of 0x3100328B and 0x3100824C move
+> (§8.7.1; Tessera Decision there).
+
+> **OPEN (implementer, 2026-10-09, `tessera-material`, `tessera-render` and the walker;
+> engineering choices, no format fact):** (a) §8.2 tells plain water from plain water on mesh
+> UV (0x2B00084B, 0x2B00089A, 0x2B000A8D) and §8.5.5 the liquid-distortion record whose layers
+> read the world position (0x2B000442) only by DID; no interface rule is given, so Tessera
+> recognises these four records by DID (`tessera_material::water::PLAIN_UV_RECORDS`,
+> `tessera_material::liquid::LIQUID_WORLD_RECORDS`) and every other water record by the
+> interface rules of `material.md` §11.6 (older bump water: declares 1056; flow-map water: a
+> 3075 slot, with layers 1 and 2 when it declares 1059). An interface rule would let a
+> renderer do without fixed DIDs. (b) §8.6.1 names "a sampler without binding" as the noise
+> source; Tessera takes the first non-zero default texture of a sampler that no texture
+> binding names, in permutation and sampler order (at most eight kept per record). (c) The
+> mirror and liquid-distortion drawings of placed meshes multiply the walker's draw-distance
+> fade into the material alpha; the water and lava drawings, which write with ONE / ZERO, do
+> not fade. (d) A water-table entry whose surface is a mirror or liquid-distortion record (none
+> in this install) is drawn as plain water with the 0x2B0000A8 defaults of §8.2. (e) The view
+> depth of §8.6.2 step 7 and of the depth fog is the clip-space *w* of the pixel. (f) Texture
+> lists of these drawings are uploaded as sRGB like every walker texture and re-encoded to the
+> stored values after sampling (flow, foam and noise maps included), so the flow vector of
+> §8.6.2 step 1 reads the stored channels.
+
 ---
 
 <a id="s15"></a>
@@ -975,3 +1743,7 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | 2026-10-09 | Merge of the two parallel 2026-10-08 revisions: rows W18–W20 and BIN questions (g)–(i) kept; the other revision's tag BIN2 kept and its row W18 renumbered W21 (references in the header and §7.4 updated); header and review record combined; the disagreement between W19 (no float-height input) and BIN2 step 1 of §7.4 (and `collision.md` §11.6 item 7) recorded as an OPEN in §7.4. No fact changed. |
 | 2026-10-09 | Spec writer (dirty room); status Accepted → Revised, awaiting review. New tag BIN3 (Ghidra, question (j), recorded in `collision.md` as question 70) and row W22; W19 reworded. §7.4: the merged OPEN on the in-water input is answered (two routines set `Entity_Element`: after every controller update the input includes the float-height test, W22; the position-update paths use `Volume_IsLiquid` alone, W19); the client rule paragraph is rewritten around both; the Tessera rule lists its three differences from the client; the 2026-10-08 answer to the no-support OPEN is corrected (state 4 in water shallower than the float height after controller updates); step 1 of "Entering deep water at speed" cites W22; step 3 states that *v*_z is positive upwards and gives the update for a falling mover's downward speed. |
 | 2026-10-09 | Spec writer (dirty room), revision answering the review of 2026-10-09 (no new research; facts from W19, W22 and `collision.md` §11.3.2, §12.3 step 7). **B1:** §7.4 Tessera rule lists four differences from the client after controller updates (the fourth: on support that is not walkable in water deeper than the float height Tessera gives 2, the client 3), as a numbered list; the matching `collision.md` §12.5 row "Water states" is corrected the same way. **B2:** §7.3 answer to the coin-volume OPEN reworded: both routines read `Volume_IsLiquid`, so coin volumes count as water for the movement state; the controller's routine adds the float-height test (W22). Non-blocking: §14 OPEN on containment and buoyancy cites W22. Status stays Revised, awaiting re-review. |
+| 2026-10-09 | Spec writer (dirty room), non-shader water and animation rates (owner report of 2026-10-09: waterfalls, "water texture" surfaces and puddles drawn as a white texture; the shader water perhaps moving too fast). Status Accepted → Revised, awaiting review. New tags OBS2, SH2, LIT; rows W23–W34. §2: placed-water row. §8.2: program families of every water-parameter record and their wet-landblock counts; the OPEN on undeclared parameters answered. §8.3: time base (E20, seconds modulo 3,600) and the Direct3D 10/11 agreement; the formula limited to the plain water family. §8.5 rewritten with a normative routing rule and new §8.5.1–§8.5.6 (census; water records on placed meshes and their near-white slot-3000 placeholder; two-layer waterfall records; the mirror record of puddles; liquid-distortion records; plain water on mesh UV and older bump water). New §8.6 (flow-map water: inputs, normal, what the install's neutral flow map implies, colour) and §8.7 (rates of every family, rates of the main landblock-water surfaces compared with the former drawing). §11: WA7–WA11. §12: three worked examples. §13: six correction rows. §14: one OPEN. Checklist rows W10–W17 in `m4-5-visual.md` §4.8. |
+| 2026-10-09 | Spec writer (dirty room), second revision of the water-feature revision, after Tessera's clean-room diagnosis of the same day (commit b1da85a: per-surface fallback reasons and a whole-world draw census). No section number or anchor changed; status stays Revised, awaiting review. New tags TP (the clean probe's counts, re-checked with the dirty probes) and BIN4 (Ghidra, question (k)); rows W35–W39; W29 wording (the mirror record also serves static mirrors). §8.3: how the client fills *O* (per-viewer-update landblock difference to a per-region reference, W38) and an OPEN on the reference. §8.5.1: what the walker meets over the whole world (15 water-record, 8 mirror, 11 liquid-distortion and 109 two-layer animated surfaces), why it looks white (generic path, not missing textures: only 23 surface records lack a base texture, the two drawn ones are not water), liquid objects. §8.5.3: rows for 0x31006637, 0x31006638, 0x3100048A, 0x31000489 (the most drawn falls) and the mode-4 formula. §8.5.4: the six static mirror surfaces. New §8.7.1 (every curve-valued water parameter evaluated at the clock each frame; census; Tessera Decision for curve-valued scales) and §8.7.2 (fast plain-water rates are the data's; scale 0). §11: WA12–WA15. §12: two examples. §13: two rows. §14: one OPEN. |
+| 2026-10-09 | Spec writer (dirty room), third revision of the water-feature revision, answering the review of 2026-10-09 (changes requested). **B1:** the lava record 0x2B000810 has one status: its own family ("Lava" in the §8.2 program-family table, no longer listed in the flow-map family), recognised from its interface by the new lava row of `material.md` §11.6 (revised the same day), and drawn by the new §8.6.5, whose formula was traced from its Direct3D 10/11 water permutations (SH2 extended; rows W40, W41) with a Tessera Decision (draw steps 1–7, never the generic path) and an OPEN (whether lava moves in the original; Direct3D 9 programs; permutation choice). The §8.2 sampler row for 0x2B000810 corrected (no frame-buffer copy; the normal map is bound but not sampled); the §8.2 answered callout, §8.5 routing (lava paragraph after the rule, numbering kept), §8.6 intro, §8.6.4 OPEN, §8.7 rate table (lava row), W28, WA11 and the §14 OPEN updated; new WA16; three §13 rows. **B2:** the §8.6.3 OPEN now names checklist row W17 of `m4-5-visual.md` §4.8 (the 0x2B0005EC river), not W12 (the fountain basin). Non-blocking: (1) the §8.7.1 census column is "TP draws" and the puddle cell gives 3,409 draws (2,067 + 712 + 630); (2) §12 "Curve-valued scale" says the direction reverses about every π seconds, with intervals of about π ± 0.1 s; (3) checklist rows are cited as "checklist row W… of `m4-5-visual.md`" wherever this spec names them. Checklist row W7 of `m4-5-visual.md` §4.4 gains the expected lava look. No existing section number or anchor changed (§8.6.5 is new); status stays Revised, awaiting re-review. |
+| 2026-10-09 | Spec writer (dirty room), fourth revision of the water-feature revision, answering the re-review of 2026-10-09 (changes requested). **B1:** W37 widened to every surface record of the water families, the lava family, the older bump water, the mirror record and the liquid-distortion records (124 records; census re-run over all of them, texture-matrix ids named) and gains 1186, 1187 (mode 4, amplitude 0.001) on the lava surface 0x31006FAE; §8.7.1 rule extended to the lava family and the older bump water, census intro states the scope and that no other curve occurs, new census row for 0x31006FAE; §8.7 time-base sentence and a lava row for the depth offsets in the rate table; §8.6.5 step 6 says 1186 and 1187 are curves evaluated every frame. Non-blocking (1): new §8.6.5 paragraph on the lava surface's texture matrices (scales 6, mode-2 translations), which only the low-detail permutations bind (OBS2). Non-blocking (2) left to the next revision of `render.md` and `walker.md` (the §13 row stands). No section number or anchor changed; status stays Revised, awaiting re-review. |

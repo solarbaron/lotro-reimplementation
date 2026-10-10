@@ -3,9 +3,11 @@
 //! (`docs/specs/material.md` §9–§12, `texture-list.md` §5.2): the whole chain surface
 //! record → shader record + materials → texture list → surface over an in-memory source
 //! built from the input, then texture decoding (capped levels, the resolved chain with its
-//! upload plan, cube faces), the dye preview, the dye blend on arbitrary images and dye
-//! block selection. Nothing may panic; decoded textures stay
-//! within the configured size limit.
+//! upload plan, cube faces), the dye preview, the fallback diagnosis
+//! (`tessera_material::diagnose`), the dye blend on arbitrary images and dye block
+//! selection, and the own-program materials of `material.md` §11.6 (`water.md` §8.5–§8.7)
+//! and the two-layer rule of §10.3. Nothing may panic; decoded textures stay within the
+//! configured size limit.
 //!
 //! Input layout: a control byte, then up to six chunks, each a u16 little-endian length
 //! and that many bytes: shader record 0x2B000001, materials 0x30000001 and 0x30000002,
@@ -96,6 +98,17 @@ fuzz_target!(|data: &[u8]| {
             check(&f.image);
         }
     }
+    // The fallback diagnosis never fails and agrees with the resolution.
+    let d = lib.diagnose_surface(Did(0x3100_0001), Some(u32::from(ctl)), ctl & 2 == 2);
+    assert_eq!(d.surface, Did(0x3100_0001));
+    if d.fallback.is_none() {
+        assert!(d.base_texture.is_some());
+    }
+    if d.fallback
+        .is_some_and(tessera_material::FallbackReason::unresolved)
+    {
+        assert!(lib.resolve_surface(Did(0x3100_0001)).is_err());
+    }
     if let Ok(r) = lib.resolve_surface(Did(0x3100_0001)) {
         for slot in &r.slots {
             if let Ok(Some(t)) = lib.slot_texture(&r, slot.id, None) {
@@ -105,6 +118,21 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(Some(img)) = lib.dye_preview_with(&r, DyeColors::default(), Some(16)) {
             check(&img);
         }
+        // Own-program materials (`material.md` §11.6, `water.md` §8.5–§8.7) at hostile
+        // clock values: every float finite; the second-layer rule (§10.3) never panics.
+        if let Ok(layout) = lib.texture_matrices(r.shader.did) {
+            let mut states = tessera_material::CurveStates::new();
+            for t in [0.0, f64::from(ctl) * 37.5, 3_600.5, -1.0, f64::NAN, 1.0e300] {
+                if let Some(l) =
+                    tessera_material::LiquidSurface::evaluate(&r, &layout, t, &mut states)
+                {
+                    assert!(l.all_finite());
+                    let _ = l.textures();
+                }
+            }
+        }
+        let _ = tessera_material::second_layer(&r);
+        let _ = tessera_material::water_family(&r.shader);
     }
 
     // The dye blend on images built from the input (consistent or not).

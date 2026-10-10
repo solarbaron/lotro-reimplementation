@@ -73,6 +73,11 @@ pub struct HeadlessReport {
     /// Particle effects at the end (`particle-runtime.md`): owners, systems, drawn
     /// vertices of the last frame and the most of any frame.
     pub particles: crate::walker::effects::EffectStats,
+    /// The fallback diagnostic of the last frame: object submesh draws without their
+    /// base-colour texture by reason and surface, the draws of water, mirror and
+    /// liquid-distortion records through the generic path, and the draws without their
+    /// texture animation or second layer (`crate::walker::fallback`).
+    pub fallback: crate::walker::fallback::FallbackStats,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -335,6 +340,25 @@ fn finish(
         tracing::info!(?f, "far view at the end");
     }
     report.particles = walker.effects().stats();
+    report.fallback = walker.fallback_stats();
+    tracing::info!("{}", report.fallback.hud_line());
+    for (reason, surface, kind, n) in &report.fallback.top {
+        tracing::info!(
+            surface = %format_args!("{surface:#010x}"),
+            %kind,
+            %reason,
+            draws = n,
+            "fallback surface"
+        );
+    }
+    for (surface, kind, n) in &report.fallback.own_program_top {
+        tracing::info!(
+            surface = %format_args!("{surface:#010x}"),
+            %kind,
+            draws = n,
+            "own-program surface drawn through the generic path"
+        );
+    }
     tracing::info!("particles: {}", walker.effects().hud_line());
     if let Some(a) = &report.audio {
         crate::audio::log_report(a);

@@ -12,7 +12,10 @@
 //! | [`icon`] | Layered icon composition: layer properties, order, straight-alpha source-over, canvas and centring | `docs/specs/icon-layers.md` |
 //! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
 //! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants, the distance-fog switch | `lighting.md` §4.1; `material.md` §8.3, §11 |
-//! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface | `water.md` §8.2 |
+//! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface; the water program families | `water.md` §8.2, §8.5.6, §8.6 |
+//! | [`liquid`] | Mirror, liquid-distortion and lava materials, and [`LiquidSurface`] for every record the generic path must not draw | `material.md` §11.6, `water.md` §8.5.4–§8.6.5 |
+//! | [`layers`] | Two colour layers: which records add and which multiply | `material.md` §10.3 |
+//! | [`diagnose`] | Why a submesh falls back to a white base colour: [`FallbackReason`] per step of the chain, [`MaterialKind`], [`MaterialLibrary::diagnose_surface`] | `material.md` §9–§10, `texture-list.md` §5.2, `water.md` §8.2 |
 //! | [`texture`] | Mip-chain helpers on top of `tessera-formats` texture lists: effective chain with a resolution cap, level selection, chain classes, GPU upload plans, level invariants | `docs/specs/texture-list.md` §4, §5 |
 //!
 //! # Resolving a submesh
@@ -70,13 +73,16 @@
 #![warn(missing_docs)]
 
 mod cache;
+pub mod diagnose;
 mod dims;
 pub mod dye;
 mod error;
 pub mod icon;
 pub mod inputs;
 pub mod interface;
+pub mod layers;
 pub mod library;
+pub mod liquid;
 pub mod records;
 pub mod resolve;
 mod source;
@@ -86,6 +92,7 @@ pub mod ui_image;
 pub mod vocab;
 pub mod water;
 
+pub use diagnose::{FallbackReason, MaterialKind, SurfaceDiagnosis};
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
 pub use error::{MaterialError, Result, SourceFailure};
 pub use inputs::{
@@ -93,9 +100,11 @@ pub use inputs::{
     UNLIT_FOG_WHEN_UNKNOWN,
 };
 pub use interface::ShaderInterface;
+pub use layers::{LayerCombine, second_layer};
 pub use library::{
     AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,
 };
+pub use liquid::{DistortionMaterial, LavaMaterial, LiquidSurface, MirrorMaterial};
 pub use records::{
     CurveState, CurveStates, FloatCurve, MaterialRecord, ShaderRecord, SurfaceRecord, program_time,
 };
@@ -107,4 +116,4 @@ pub use source::{FnSource, RecordSource};
 pub use transform::{
     EvaluatedMatrix, TextureMatrix, TextureMatrixLayout, TextureTransform, TransformValue,
 };
-pub use water::{WaterMaterial, WaterParams};
+pub use water::{BumpParams, FlowParams, WaterFamily, WaterMaterial, WaterParams, water_family};

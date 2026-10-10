@@ -135,6 +135,12 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   effects from script-table nodes; not every client part yet, see ROADMAP). Census round 3
   specs (decals, instance scripts, mounts, NPC dramas, world logic) are Accepted; their
   decoders are being built.
+- **Water appearance (owner report 2026-10-09; merged 2026-10-10):** placed water, puddles,
+  waterfalls, liquid distortion and lava draw with their own programs (`water.md` §8.5–§8.7,
+  `material.md` §10.3, §11.6); second colour layers and animated texture matrices are drawn;
+  flow-map water no longer uses the plain-water scroll (it drifted up to 22.6 m/s). Diagnostic:
+  `tessera-dattool fallback`, walker HUD/headless fallback counts. Open: puddle quads cut by the
+  terrain (row W13, `water.md` §8.5.4 OPEN), owner comparison O87.
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and by
   an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so

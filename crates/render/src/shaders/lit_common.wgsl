@@ -26,6 +26,11 @@ struct Draw {
     // x, y = light-table indices (four u8 each, low byte first), z = light count,
     // w = lit flags (LIT_*).
     lit_lights: vec4<u32>,
+    // Texture matrices 0 and 1 (material.md §8.4), rows ((a, b, c), (d, e, f)) packed as
+    // (a0, b0, c0, d0), (e0, f0, a1, b1), (c1, d1, e1, f1).
+    uv0: vec4<f32>,
+    uv1: vec4<f32>,
+    uv2: vec4<f32>,
 };
 
 const F_NORMAL_MAP: u32 = 1u;
@@ -52,6 +57,13 @@ const LIT_SRGB_OPACITY: u32 = 32768u;
 // A fixed-function blend (AlphaMode::Fixed): the output alpha a blend factor reads is the
 // opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const LIT_FACTOR_OPACITY: u32 = 65536u;
+// A second colour layer (material.md §10.3): sampled at texture matrix 1, its RGB added
+// (LIT_LAYER_ADD) or multiplied, its alpha multiplied into the opacity.
+const LIT_SECOND_LAYER: u32 = 131072u;
+const LIT_LAYER_ADD: u32 = 262144u;
+// The emissive texture reads texture matrix 1 (material.md §8.4).
+const LIT_EMISSIVE_UV1: u32 = 524288u;
+const LIT_SRGB_LAYER2: u32 = 1048576u;
 
 const SOURCE_ONE: u32 = 0u;
 const SOURCE_BASE: u32 = 1u;
@@ -72,13 +84,39 @@ struct Palette {
 @group(2) @binding(4) var t_emissive: texture_2d<f32>;
 @group(2) @binding(5) var t_glow: texture_2d<f32>;
 @group(2) @binding(6) var t_opacity: texture_2d<f32>;
-@group(2) @binding(7) var s_base: sampler;
-@group(2) @binding(8) var s_normal: sampler;
-@group(2) @binding(9) var s_dye: sampler;
-@group(2) @binding(10) var s_gloss: sampler;
-@group(2) @binding(11) var s_emissive: sampler;
-@group(2) @binding(12) var s_glow: sampler;
-@group(2) @binding(13) var s_opacity: sampler;
+@group(2) @binding(7) var t_layer2: texture_2d<f32>;
+@group(2) @binding(8) var s_base: sampler;
+@group(2) @binding(9) var s_normal: sampler;
+@group(2) @binding(10) var s_dye: sampler;
+@group(2) @binding(11) var s_gloss: sampler;
+@group(2) @binding(12) var s_emissive: sampler;
+@group(2) @binding(13) var s_glow: sampler;
+@group(2) @binding(14) var s_opacity: sampler;
+@group(2) @binding(15) var s_layer2: sampler;
+
+// Texture coordinates through texture matrix 0 and 1 (material.md §8.4).
+fn lit_uv0(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(draw.uv0.x * uv.x + draw.uv0.y * uv.y + draw.uv0.z,
+        draw.uv0.w * uv.x + draw.uv1.x * uv.y + draw.uv1.y);
+}
+
+fn lit_uv1(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(draw.uv1.z * uv.x + draw.uv1.w * uv.y + draw.uv2.x,
+        draw.uv2.y * uv.x + draw.uv2.z * uv.y + draw.uv2.w);
+}
+
+// The base colour with the second colour layer applied (material.md §10.3): RGB added or
+// multiplied, alphas multiplied.
+fn lit_layered(base: vec4<f32>, layer2: vec4<f32>) -> vec4<f32> {
+    if (!lit_flag(LIT_SECOND_LAYER)) {
+        return base;
+    }
+    var rgb = base.rgb * layer2.rgb;
+    if (lit_flag(LIT_LAYER_ADD)) {
+        rgb = base.rgb + layer2.rgb;
+    }
+    return vec4<f32>(rgb, base.a * layer2.a);
+}
 
 struct VsIn {
     @location(0) position: vec3<f32>,

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §11.1 statistics line and §14 invariant 9 agree with `tessera-server` since commit 9ce64c8; §4.1 and §8.3 agree with `tessera-protocol.md` §8.3 as revised and accepted 2026-10-10; see the review record). Before: Revised (2026-10-10, spec writer: §11.1 statistics line defined exactly (interval, longest tick reset per line, byte rates), §3.1 content refusal status, §4.1 and §8.3 parameters fixed for a run and the protocol's new rules for changes and out-of-bound values, §8.3 run-out OPEN restated with its consequence and test, §14 invariant 9, §15.1 rows brought up to date, reviewer row filled in; ready for review, awaiting re-review; see the change log). Before: **Accepted** (2026-10-09: independent whole-spec re-review of the revision of 2026-10-09 passed CLEAN_ROOM.md §5.3, every item; first whole-spec acceptance; see the review record). Before: Revised (2026-10-09: the blocking item of the whole-spec review of 2026-10-09 is fixed, §4.6 `log_chat` row moved into the `[chat]` table; non-blocking (a), (b), (d), (e) also addressed, (c) noted; awaiting re-review, see the change log). Before: Review, **changes requested** (independent whole-spec review 2026-10-09, one blocking item, see the review record). Before that: Review (2026-10-09: prepared for its first whole-spec review; every implementer note of §15.1 and §15.2 folded into the text or kept as a stated OPEN or implementation gap; provenance and cross-references checked against `tessera-protocol.md` v1.0 as revised 2026-10-09) |
+| **Status** | **Review** (revision of 2026-10-10 for [decision 0025](../decisions/0025-p1-character-look-on-test-server.md), spec writer, design: protocol minors 0–1, looks and slots in character files and wanderer appearances, the 1 MiB character-file limit, §3.5, §4.4, §5.4, §6.4, §10.1, §11.2, §13.1, §14 invariant 10; awaiting an independent review). Before: **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §11.1 statistics line and §14 invariant 9 agree with `tessera-server` since commit 9ce64c8; §4.1 and §8.3 agree with `tessera-protocol.md` §8.3 as revised and accepted 2026-10-10; see the review record). Before: Revised (2026-10-10, spec writer: §11.1 statistics line defined exactly (interval, longest tick reset per line, byte rates), §3.1 content refusal status, §4.1 and §8.3 parameters fixed for a run and the protocol's new rules for changes and out-of-bound values, §8.3 run-out OPEN restated with its consequence and test, §14 invariant 9, §15.1 rows brought up to date, reviewer row filled in; ready for review, awaiting re-review; see the change log). Before: **Accepted** (2026-10-09: independent whole-spec re-review of the revision of 2026-10-09 passed CLEAN_ROOM.md §5.3, every item; first whole-spec acceptance; see the review record). Before: Revised (2026-10-09: the blocking item of the whole-spec review of 2026-10-09 is fixed, §4.6 `log_chat` row moved into the `[chat]` table; non-blocking (a), (b), (d), (e) also addressed, (c) noted; awaiting re-review, see the change log). Before: Review, **changes requested** (independent whole-spec review 2026-10-09, one blocking item, see the review record). Before that: Review (2026-10-09: prepared for its first whole-spec review; every implementer note of §15.1 and §15.2 folded into the text or kept as a stated OPEN or implementation gap; provenance and cross-references checked against `tessera-protocol.md` v1.0 as revised 2026-10-09) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room; the content is design, plus one terrain height observed for the default spawn, §1) |
 | **Reviewer** | Claude review session in the spec-reviewer role (did not write this spec, its revisions or its code), whole-spec reviews 2026-10-09 (changes requested, then passed on re-review); partial review 2026-10-08; see the record. The revision of 2026-10-10 was reviewed 2026-10-10 by another Claude review session in the same role (passed) |
@@ -42,6 +42,7 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 | Facts | Source | Mark |
 |---|---|---|
 | Everything not listed below: commands, files, formats, defaults, limits, policies, the desync and leak definitions | Original design, 2026-10-06 (spec writer, design role). No other server's behaviour was consulted | Design |
+| Looks, held-item slots and minor version 1 (§3.5, §4.4, §5.4, §6.4, §10.1, §11.2, §13.1, §14) | `tessera-protocol.md` v1.1 §3.1, §5.3, §6.2, §7.4 (revised 2026-10-10, awaiting review); `server-content.md` §4.1 R3, R7 (revised 2026-10-10); decision 0025 (spec writer, design; no dirty-room input) | Project |
 | Wire behaviour referred to (states, codes, budgets, validation, interest, chat, time) | `tessera-protocol.md` v1.0 (Accepted 2026-10-07; §8.3 server relaxations and invariant 8 revised 2026-10-09), checked section by section on 2026-10-09 | Project |
 | `WALK_SPEED` 2 m/s and `RUN_SPEED` 6 m/s (animation and gait only) | `walker.md` §10.5, §10.7; `tessera-protocol.md` §1 | Project |
 | Movement limits of §4.5 and §8.3 (`collision.md` re-checked 2026-10-09: its §11.3.2 revision of that date changes only the water states, not these limits): fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s² and damper 0.2, Slope gravity 10 m/s², Falling gravity 15 m/s² and control acceleration 10 m/s² toward at most 5 m/s with damper 1, Slide and Ice braking ≤ 6.4 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m, landings keep the horizontal length of the clipped velocity | `collision.md` §10.3, §11.1, §11.3, §12.3, §12.4 (a)–(c), (i), (p), (v) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
@@ -297,7 +298,7 @@ name order:
 | `created` | offset date-time | UTC |
 | `instance` | integer | The last world instance, 0 = never entered |
 | `position` | table | `region` (0–65,535), `x`, `y`, `z` (floats, metres, `tessera-protocol.md` §5.3 limits), `heading` (radians, protocol convention), optional `anchor` = [block X, block Y, cell] that owns the position |
-| `appearance` | table | `body` = `{ species = N, sex = N }` or `{ object = N }`; `scale`; optional `idle`; optional `[[character.appearance.items]]` with `did`, optional `dye`, optional `secondary_dye`, `stowed` (bool). Same limits as the protocol's Appearance (`tessera-protocol.md` §5.3) |
+| `appearance` | table | `body` = `{ species = N, sex = N }` or `{ object = N }`; `scale`; optional `idle`; optional `[[character.appearance.items]]` with `did`, optional `dye`, optional `secondary_dye`, `stowed` (bool), optional `slot` (1–64); optional `[[character.appearance.look]]` (below). Same limits as the protocol's Appearance and Look (`tessera-protocol.md` §5.3) |
 
 - Character names are unique across the server by their key (§6.4); the server keeps an index
   in memory, built at start from all character files.
@@ -308,6 +309,23 @@ name order:
   the default spawn (§5.2) or, for the appearance, refused at `EnterWorld` with
   `SERVER_ERROR` and an error log line naming the file.
 - A file holds only its own account's characters (`server-content.md` §11 invariant 6).
+- **Look entries** (`[[character.appearance.look]]`, in ascending `property` order, at most
+  48, encoded size at most 768 bytes as on the wire): `property` (integer 1–4,294,967,295),
+  `kind` (string: `bool`, `int32`, `int64`, `float32`, `enum`, `data-id`, `string`,
+  `bitfield32`, `bitfield64`, `colour`) and `value`: a boolean for `bool`; an integer for
+  `int32`, `int64`, `enum`, `data-id`, `bitfield32` (each within its wire range); a float for
+  `float32`, written so that it reads back to the same binary32 value; a string of 0–128
+  bytes of U+0021–U+007E for `string`; for `bitfield64` a string `0x` followed by 16
+  hexadecimal digits (TOML integers cannot hold every `u64`); for `colour` an array of four
+  integers 0–255 (R, G, B, A). A look entry that breaks these rules is handled like an
+  appearance that fails the protocol's limits (refused at `EnterWorld` with `SERVER_ERROR`).
+- **Size.** A character file is at most 1 MiB (1,048,576 bytes); readers refuse a larger
+  one (the account's characters then fail like an invalid file), and a write that would make
+  it larger is refused: `CharacterCreate` with `CharacterCreateFailed(SERVER_ERROR)`, an
+  appearance change with the old appearance and a system line. With 64 characters of
+  maximal looks a file stays far below this limit.
+- A character's class and nationality are never stored (`server-content.md` §4.1 R7); the
+  protocol does not carry them.
 
 <a id="s3-6"></a>
 ### 3.6 World-state file
@@ -418,8 +436,10 @@ the operator rules.
 | `teleport_interval_ms` | integer | 500 | 0–10,000 | Least time between two executed teleports of one player |
 | `save_interval_s` | integer | 60 | 10–3,600 | §12.2 |
 
-The tick rate is fixed at 30 Hz in v1 (`tessera-protocol.md` §6.2.2), and the minimum
-supported minor version is 0 (`tessera-protocol.md` §3); neither is configurable. The world-stream
+The tick rate is fixed at 30 Hz in v1 (`tessera-protocol.md` §6.2.2), the minimum supported
+minor version is 0 and the maximum 1 (`tessera-protocol.md` §3, §3.1); none of these is
+configurable. On a minor-0 connection the server sends no look and no slot; it keeps those it
+stores. The world-stream
 backlog limits (1 MiB, 256 KiB, 4 MiB, 30 s) are the protocol's §9.4 defaults and are not
 configurable.
 
@@ -584,13 +604,15 @@ Simulated, project-made actors (`server-content.md` §7 "In scope").
   when `speed` is at most the midpoint of the configured walk and run speeds, otherwise
   Running (`tessera-protocol.md` §8.1).
 - **`first-player`:** the group does not exist until the first character enters the
-  instance. At that moment it is created with that character's appearance at entry. Later
+  instance. At that moment it is created with that character's appearance at entry (look and
+  slots included; they are sent to each observer as that observer's minor allows). Later
   appearance changes of that character do not propagate. The group then stays until the
   server stops, whether or not players remain. This lets the default world show animated
   characters without holding any opaque reference.
 - With an explicit appearance, the group exists from the moment the instance starts. Its
   references count towards the limit of `server-content.md` §9.2 (one per body, one for
-  `idle`, one per item).
+  `idle`, one per item, one per item `slot`). An explicit content appearance has no `look`
+  key (`server-content.md` §9.2); a `look` there is a `FORMAT` finding.
 
 <a id="s5-5"></a>
 ### 5.5 `[clock]` (optional)
@@ -714,12 +736,18 @@ destroyed for observers with reason `REMOVED`), then the new session gets `Login
 - **Creation** (`CharacterCreate`): checks in order: creation enabled (`DISABLED`), name rule,
   name taken, `max_characters` (`TOO_MANY`), appearance policy. The new character starts at
   the default spawn with instance 0 (never entered) and is written to its account's file
-  before `CharacterList` is sent.
+  before `CharacterList` is sent. At minor 1 the look of the message is stored with the
+  character as it came (`server-content.md` §4.1 R1–R3) and sent in `CharacterList.looks`,
+  `LoginOk.looks`, `WorldEnter.look`, `EntityCreate.look` and `EntityAppearance.look` to
+  connections at minor 1; a character created at minor 0 has no look.
 - **Appearance policy** (`APPEARANCE_REFUSED` on creation; on `AppearanceSet`, the old
   appearance comes back with a system line): an `Object` body is refused unless
-  `allow_object_bodies` is true. Nothing else about an appearance is judged, because the
-  server cannot know what a reference means (`server-content.md` §4.1 R2). The protocol's own
-  limits are enforced by the decoder.
+  `allow_object_bodies` is true. Nothing else about an appearance, its slots or its look is
+  judged, because the server cannot know what a reference means (`server-content.md` §4.1
+  R2). The protocol's own limits are enforced by the decoder. An accepted `AppearanceSet`
+  replaces body, scale, idle and items (with their slots) and keeps the stored look, which
+  the `EntityAppearance` answer and the relay to observers carry (`tessera-protocol.md`
+  §6.2.17).
 - **Starting properties** on world entry: `STANCE` absent (Relaxed), `WALK_SPEED` and
   `RUN_SPEED` from `[movement]` (`tessera-protocol.md` §7.3).
 
@@ -1001,6 +1029,7 @@ parameters:
 | Outbound world stream per connection | The protocol's §9.4 backlog rules | Creates and updates pause; persistent: `Disconnect(SLOW_CONSUMER)` |
 | Outbound chat stream per connection | 256 KiB unsent | Above it for 30 s, or above 1 MiB: `Disconnect(SLOW_CONSUMER)` |
 | Login verifications | `hash_workers` running, 64 waiting | `LoginFailed(RATE_LIMITED)` (§6.2) |
+| Character file | 1 MiB (§3.5) | Read: the file is refused. Write: the change is refused (§3.5) |
 | Writer queue | One pending job per file (a newer snapshot replaces an older one); at most 4,096 files | Above it, the simulation skips the periodic save round, the save after teleports and the save at world entry, and logs a warning. The save when a character leaves the world and the shutdown saves are never skipped: they wait for room. A shutdown save that cannot be queued counts as a failed save (§12.1 step 6) |
 | Accounted memory | `memory_budget_mib` | §10.2 |
 
@@ -1098,8 +1127,8 @@ No field of the line is a total since start except overruns.
   address and "unknown account" or the canonical name;
 - chat text, unless `log_chat` is true; then each line is logged at info under its own
   target with channel, sender and (for Tell) recipient;
-- appearances in bulk (`server-content.md` §4.1 R4). A debug trace of one message may show
-  it.
+- appearances in bulk, looks included (`server-content.md` §4.1 R4). A debug trace of one
+  message may show it.
 
 ---
 
@@ -1156,7 +1185,9 @@ backend the client uses, against a remote server (`--server tessera://…?pin=�
 **in-process** server on loopback (`--in-process`, with a temporary data directory,
 generated accounts `bot-0001`… and Argon2id at the configuration floor, §4.3). Bots have no
 game data: they use the content's `void` or `start` spawn and invented appearances made only
-of numbers chosen by the tool, never resolved.
+of numbers chosen by the tool, never resolved. Bots negotiate minor 1; their invented
+appearances may carry invented looks (made-up property IDs and values) and slots, and a share
+of bots (default 10 %) negotiate minor 0, so that observers at both minors meet.
 
 | Scenario | Bots do |
 |---|---|
@@ -1179,6 +1210,22 @@ allows (§10.1).
   server to keep their failed logins out of the honest bots' budget; where no second address
   can be bound they share `127.0.0.1` and the in-process server's
   `attempts_per_address_per_min` is raised to 10,000.
+- **Hostile 1.1 cases.** The hostile mode also sends each client-to-server negative vector
+  of `tessera-protocol.md` §16.8 (slot bit at minor 0, slots outside 1–64, flag bit 4,
+  unordered or zero property IDs, a forbidden tag, a space in a look string, 49 entries, an
+  811-byte look, a look appended at minor 0) and expects `Disconnect(PROTOCOL_VIOLATION)`
+  each time, with the server's counts back at baseline afterwards (§13.3). The `looks` count
+  case travels server to client and is a test of the client's decoder.
+
+  > **OPEN:** (implementer note, `apps/loadtest`, 2026-10-10) The state in which each vector
+  > is sent is not given. Sent right after `Hello`, a `CharacterCreate` or `AppearanceSet` is
+  > already a message outside its state, so `PROTOCOL_VIOLATION` follows whatever the
+  > server's v1.1 decoding does. As implemented: the hostile mode's attackers (no account)
+  > still send each vector right after `Hello`; the end-to-end test logs in and sends
+  > `CharacterCreate` vectors in CharacterSelect and `AppearanceSet` vectors in the world
+  > (both capabilities on), with the two minor-0 vectors sent at minor 1 the same way as a
+  > positive control (answered, connection open). Spec owner to say whether the hostile mode
+  > itself must log in (it would need an account and character of its own).
 - **`cheat` verdict.** An over-limit move is **handled** when a `CORRECTED` report puts the bot
   back within 1.5 m of where it was, within 2 s after the move (the bot holds the move for
   200 ms so that the newest-move slot sends it), or, in-process, when the server's
@@ -1328,6 +1375,8 @@ settings: tuning it through the environment (for example glibc's `MALLOC_ARENA_M
    duration among the ticks completed since the previous line (or the start), and its byte
    rates equal the bytes of that interval × 10⁶ / the interval's length in µs, rounded down.
    A tick in which a line is written completes after it and counts toward the next interval.
+10. (2026-10-10) A character's stored look is sent exactly as created, only to connections
+    at minor 1 or higher; class and nationality are never stored (§3.5, §6.4).
 
 ---
 
@@ -1430,3 +1479,4 @@ spec's rules.
 | 2026-10-09 | Prepared for review (spec writer, design); status Draft → Review. Provenance: `tessera-protocol.md` v1.0 cited as Accepted and revised 2026-10-09; a row for the adopted implementer readings; the *S* derivation row names both stepped models. Every implementer note of §15.1 and §15.2 answered and folded into the text: §2.2 relative `--content`, §2.3 keygen backup names, §3.4 4 MiB accounts-file limit, §3.5 stored names and anchors, §4.3 and §6.2 login budget without a loopback exemption, §4.6 chat keys may only tighten the protocol's limits, §5.3 outdoor spawns carry no anchor, §6.2 lockouts per canonical name and the address-budget removal rule, §6.4 NFC `NAME`, §8.1 hash workers write `accounts.toml`, tick deadlines from `tick_start(k)`, events of a closed connection, §8.3 grace across corrections and at any ground spawn, *S* 56 → 58 m (cheat bound 66.5 m), the protocol OPEN answered by `tessera-protocol.md` §8.3 "Server relaxations", §8.4 destinations outside the extent, §10.1 `control_queue` per message and the writer-queue skips, §10.2 accounting per event, §11.1 tick figures, §12.1 Windows signals, §12.2 saves; §13.1 churn, cheat verdict, hostile mode on loopback, walking area, scale; §13.2 *D*, wanderers, Chat certainty, Missing create budget, State, new kinds Motion and Cheat, instance coverage; §13.3 warm-up, remote counts; §13.4 measurements. §15 restructured: open items, answered-note tables §15.1–§15.2, new §15.3 implementation gaps. |
 | 2026-10-09 | Revision after the whole-spec review of 2026-10-09 (spec writer); status Review (changes requested) → Revised. Blocking (1): §4.6 `log_chat` (bool, default false, §11.2) moved into the `[chat]` table before the paragraph, so the table lists every `[chat]` key (§4.1). Non-blocking: (a) §5.3 `facing` conversion stated in words (heading = 90° − `facing` in radians, reduced to (−π, π]) instead of naming a crate function; (b) §8.1 and §15.1 give the tick start ⌊*k* · 10⁶ / `tick_rate`⌋ µs inline instead of the name `tick_start(k)`; (d) author role reads "Spec writer (dirty room; …)"; (e) §4.7 `memory_budget_mib` lower bound 64 → 83 (the smallest value the constraint can meet: 19 MiB Argon2id floor × 1 worker + 64 MiB), no change in accepted configurations. (c) left as a re-check item: §4.5 and §8.3 must be re-read if the 2026-10-09 revisions of `tessera-protocol.md` §8.3 or `collision.md` change in their reviews. No new facts; provenance unchanged. |
 | 2026-10-10 | Revision (spec writer); status Accepted → Revised, ready for review. §11.1: the statistics line is defined field by field: interval boundaries (from the start of the simulation, then from each line), the longest tick of the interval reset at every line, bytes per second from the bytes of the interval (protocol frames and datagram messages, rounded down), overruns counted since start, three connection counts; new §14 invariant 9; §13.4 names the since-start longest tick as a report figure (adopted from commit 9ce64c8). §4.1: values outside their range are refused, never clamped; `[movement]` fixed for the run. §8.3: new paragraph on the parameters and `tessera-protocol.md` §8.3's new rules (bounds of the values in force, changing the parameters during an epoch, revised 2026-10-10); the run-out OPEN restated with its consequence (a correction of a legitimate player, never an accepted cheat) and the stepped calculation that would close it; §15 entry points to it. §3.1: a content file in an installation is refused with status 3 (`INSTALL-PATH`), a data directory with status 4 (re-review note (ii)). Header: **Reviewer** row names the 2026-10-09 reviewer (note (iii)). §15.1: the loopback row says both exemptions (connection limit and handshake cap); the statistics row points to the new §11.1. The 2026-10-09 OPENs on the settling grace and credit (grace credit bounded by *A*_d, faces just steeper than 45°) were already answered in §8.3; checked, no change. Two provenance rows (Design for §11.1, Project for §4.1/§8.3). Re-review note (i) checked: `tessera-protocol.md` §8.3 item 1 now names a `Named` teleport; its 2026-10-10 revision adds rules only and changes none of the values §4.5, §8.3 and invariant 8 rely on |
+| 2026-10-10 | Revision for decision 0025 (spec writer, design); status Accepted → Review. §1 provenance row; §3.5 item `slot`, look entries and their TOML form, the 1 MiB character-file limit, no class or nationality; §4.4 minors 0–1; §5.4 `first-player` copies look and slots, content appearances have no look, a slot counts as a reference; §6.4 looks stored at creation and kept by `AppearanceSet`; §10.1 character-file row; §11.2 looks never logged in bulk; §13.1 bots at minors 0 and 1, hostile 1.1 cases; §14 invariant 10 |

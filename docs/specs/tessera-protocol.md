@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §8.3 "Bounds of the values in force" and "Changing the parameters during an epoch" and §15 invariant 8 agree with `test-server.md` §4.1, §4.5 and §8.3 as revised 2026-10-10; no byte changes, minor version 0; see the review record). Before: Revised (2026-10-10, spec writer, design: §8.3 "Server relaxations" gains two normative paragraphs, "Bounds of the values in force" and "Changing the parameters during an epoch", answering the two implementer notes of 2026-10-09 and 2026-10-10 in §17.1; §15 invariant 8 covers a change of the parameters within a stretch; no byte changes, minor version 0; awaiting review, see the change log). Before: **Accepted** (independent re-review 2026-10-09 of the review-fix revision of 2026-10-09: CLEAN_ROOM.md §5.3 passed, every item; both blocking items of the earlier 2026-10-09 review fixed; §8.3 "Server relaxations" and §15 invariant 8 agree with `test-server.md` §4.5, §8.3, §8.4 and §14; no byte changes, minor version 0; implementers re-check `MovementValidator` and `tessera-server` against §8.3; see the review record). Before: Revised (2026-10-09, spec writer, design: the two blocking items of the 2026-10-09 review are fixed in §8.3 "Server relaxations" and §15 invariant 8, with non-blocking notes (a)–(c); no byte changes, minor version 0; awaiting review). Before: Revised, **changes requested** (independent review 2026-10-09 of the 2026-10-09 revision: two blocking items, see the review record). Before that: Revised (2026-10-09, spec writer, design: §8.3 "Server relaxations" answers the round-2 OPEN on the settling grace, and invariant 8 is reworded for them and for unreported rejections; no byte two peers exchange changes, the minor version stays 0; awaiting review). Before that: Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
-| **Protocol version** | 1.0 (major 1 in ALPN `tessera/1`, minor 0 in `Hello`) |
+| **Status** | **Review** (v1.1 minor revision of 2026-10-10, spec writer, design, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md): §3.1 minor 1, §5.3 `Equipped.slot`, `LookEntry` and `Look`, the look appended to `CharacterCreate`, `LoginOk`, `CharacterList`, `WorldEnter`, `EntityCreate`, `EntityAppearance`, §7.4 receiver rules, §13.1 limits, §15 invariants 10–11, §16.8 vectors, Appendix A creation mapping; v1.0 bytes unchanged; an independent review by a session that wrote no part of v1.1 must follow). Before: **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §8.3 "Bounds of the values in force" and "Changing the parameters during an epoch" and §15 invariant 8 agree with `test-server.md` §4.1, §4.5 and §8.3 as revised 2026-10-10; no byte changes, minor version 0; see the review record). Before: Revised (2026-10-10, spec writer, design: §8.3 "Server relaxations" gains two normative paragraphs, "Bounds of the values in force" and "Changing the parameters during an epoch", answering the two implementer notes of 2026-10-09 and 2026-10-10 in §17.1; §15 invariant 8 covers a change of the parameters within a stretch; no byte changes, minor version 0; awaiting review, see the change log). Before: **Accepted** (independent re-review 2026-10-09 of the review-fix revision of 2026-10-09: CLEAN_ROOM.md §5.3 passed, every item; both blocking items of the earlier 2026-10-09 review fixed; §8.3 "Server relaxations" and §15 invariant 8 agree with `test-server.md` §4.5, §8.3, §8.4 and §14; no byte changes, minor version 0; implementers re-check `MovementValidator` and `tessera-server` against §8.3; see the review record). Before: Revised (2026-10-09, spec writer, design: the two blocking items of the 2026-10-09 review are fixed in §8.3 "Server relaxations" and §15 invariant 8, with non-blocking notes (a)–(c); no byte changes, minor version 0; awaiting review). Before: Revised, **changes requested** (independent review 2026-10-09 of the 2026-10-09 revision: two blocking items, see the review record). Before that: Revised (2026-10-09, spec writer, design: §8.3 "Server relaxations" answers the round-2 OPEN on the settling grace, and invariant 8 is reworded for them and for unreported rejections; no byte two peers exchange changes, the minor version stays 0; awaiting review). Before that: Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
+| **Protocol version** | 1.1 (major 1 in ALPN `tessera/1`; minor 1 in `Hello`, peers may negotiate minor 0 = v1.0, §3.1) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | reviewer (did not write the code), 2026-10-07; second round 2026-10-07 ([R.7](#review-r7)). Method and results: [Review](#review) |
@@ -90,6 +90,8 @@ background only and not normative.
 | Property value kinds mirrored in §7.2 | `tessera_props::Value` (21 kinds), read 2026-10-06 | Project |
 | quinn 0.11 defaults (CUBIC congestion control, 30 s idle timeout, worst-case 1-RTT datagram overhead) | quinn-proto 0.11.19 source in the local cargo registry, 2026-10-06 | Reported (background only; §2 states the normative values) |
 | §8.3 bounds of the values in force and changing the parameters during an epoch; invariant 8 across a change (2026-10-10) | Design decision of the spec writer, 2026-10-10, adopting the readings of the clean-room `MovementValidator` (implementer notes of 2026-10-09 and 2026-10-10, §17.1); no dirty-room input | Design |
+| v1.1 (minor 1): character looks, held-item slots, the minor-version table, the creation mapping of Appendix A (2026-10-10) | Design decision of the spec writer, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md); `character-screens.md` §5.2 and §7.1.1, `character-panels.md` §7, `property-system.md` §3 and §7.3 (Accepted, read 2026-10-10); no dirty-room input | Design |
+| Test vectors of §16.8 (v1.1) | Computed 2026-10-10 by a throwaway encoder written from §5–§7 (dirty scratch directory, not committed); each frame was checked to have length = 2 + body, and the v1.0 `CharacterCreate` and `AppearanceSet` vectors of §16.2 were reproduced byte for byte by the same encoder first | Computed |
 | Test vectors (§16) | Computed 2026-10-06 by a throwaway encoder written from §5–§7 (dirty scratch directory, not committed); each frame was checked to have length = 2 + body | Computed |
 
 ---
@@ -192,8 +194,13 @@ Rules:
   minor (from `test-server.md`; 0 for every v1 server today), the server sends
   `Disconnect(UNSUPPORTED_VERSION)`.
 - **Compatible changes** (minor bump): a new message type; a new field appended at the end of
-  a message body; a new value of an enumerated field; a new capability bit; a new property
-  value tag. A peer sends any of these only when the negotiated minor includes them.
+  a message body; a new value of an enumerated field; a new bit of a flags field whose
+  undefined bits MUST be 0, together with the payload the bit announces inside the same
+  structure (as `Equipped` bits 0 and 1 announce their dye fields); a new capability bit; a
+  new property value tag. A peer sends any of these only when the negotiated minor includes
+  them. The `Hello` and `HelloAck` bodies are frozen for major 1 (no minor appends to them),
+  because they are decoded before a minor is negotiated; client extensions use `client_caps`
+  bits or messages sent after `HelloAck`.
 - **Changes that need no negotiation:** new property IDs (§7.1). Values are self-describing,
   so receivers skip IDs they do not know.
 - **Incompatible changes** (major bump): changing the meaning, width or order of an existing
@@ -230,7 +237,11 @@ Rules:
 > the informational exceptions explicitly.
 
 
-> **OPEN:** (review, non-blocking, round 2) "A new field appended at the end of a message
+> **Answered (2026-10-10, spec writer, design, v1.1; was OPEN, review round 2):** the
+> `Hello` and `HelloAck` bodies are frozen for major 1 (bullet "Compatible changes" above);
+> v1.1 appends nothing to them, and the §16.7 vector stays.
+>
+> **OPEN (as raised):** (review, non-blocking, round 2) "A new field appended at the end of a message
 > body" cannot apply to `Hello`, nor to any message sent before `HelloAck`: no minor is
 > negotiated yet, and strict decoding makes the extra bytes fatal. §16.7 even lists "`Hello`
 > frame with one extra trailing `00`" as a negative vector, and `tessera-protocol` closes
@@ -240,6 +251,24 @@ Rules:
 > `client_caps` bits or messages after `HelloAck`; or define that a server whose maximum
 > minor is below `Hello.minor_max` ignores bytes after the fields it knows (and then change
 > the §16.7 vector).
+
+
+<a id="s3-1"></a>
+### 3.1 Minor versions
+
+| Minor | Adds (all sent only when the negotiated minor is at least this value) | Spec |
+|---|---|---|
+| 0 | v1.0: everything not listed below | — |
+| 1 | `Equipped` flag bit 3 and its `slot` byte (§5.3); the `Look` structure (§5.3); the appended fields `CharacterCreate.look` (§6.2.7), `LoginOk.looks` (§6.2.5), `CharacterList.looks` (§6.2.8), `WorldEnter.look` (§6.3.1), `EntityCreate.look` (§6.3.4), `EntityAppearance.look` (§6.3.6) | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) |
+
+- A client that supports v1.1 sends `minor_max` = 1. `tessera-server` supports minors 0 and 1
+  (its minimum stays 0, `test-server.md` §4.4), so v1.0 and v1.1 clients both connect.
+- At negotiated minor 0 a v1.1 peer encodes and decodes exactly the v1.0 layouts: no flag
+  bit 3, no appended field. A v1.1 server keeps the looks and slots it stores and simply does
+  not send them on a minor-0 connection; a v1.1 client on a minor-0 connection sends no look
+  and no slot (`scenario-feed.md` §9.7).
+- No capability bit is added: a minor-1 server stores and relays looks and slots as §7.4
+  says. `server_caps` bit 2 `APPEARANCE_CHANGE` keeps its meaning.
 
 ---
 
@@ -514,14 +543,15 @@ counter-clockwise seen from above; any finite value, receivers reduce it to (−
 
 Any other tag is a protocol violation.
 
-**Equipped** (5, 9 or 13 bytes):
+**Equipped** (5, 9 or 13 bytes; at minor ≥ 1 also 6, 10 or 14):
 
 | Order | Type | Field | Rule |
 |---|---|---|---|
 | 1 | u32 | `item` | DID of the item record, non-zero (opaque) |
-| 2 | u8 | `flags` | Bit 0: `dye` follows. Bit 1: `secondary_dye` follows. Bit 2: stowed. Bits 3–7 MUST be 0 |
+| 2 | u8 | `flags` | Bit 0: `dye` follows. Bit 1: `secondary_dye` follows. Bit 2: stowed. Bit 3 (minor ≥ 1): `slot` follows. Bits 4–7 MUST be 0, and bit 3 MUST be 0 at minor 0 |
 | 3 | f32 | `dye` | Only if bit 0. In [0, 1] |
 | 4 | f32 | `secondary_dye` | Only if bit 1. In [0, 1] |
+| 5 | u8 | `slot` | Only if bit 3. 1–64: the data's equipment slot key that holds the item (opaque; `property-system.md` §7.3 bit ↔ key). Lets an item that fits either hand say which hand holds it (§7.4) |
 
 **Appearance** (`tessera_net::model::Appearance`):
 
@@ -531,6 +561,18 @@ Any other tag is a protocol violation.
 | 2 | f32 | `scale` | In (0, 100] |
 | 3 | opt<u32> | `idle` | The data's starting-idle enum key (opaque) |
 | 4 | list8<Equipped> | `equipment` | At most 32 entries |
+
+**LookEntry** (minor ≥ 1): `property` u32, then a tagged value (§7.2).
+
+| Order | Type | Field | Rule |
+|---|---|---|---|
+| 1 | u32 | `property` | A property ID of the client's data (opaque; unrelated to §7.1's IDs). Non-zero |
+| 2 | tagged value | `value` | Tag 0x01 Bool, 0x02 Int32, 0x03 Int64, 0x04 Float32 (finite), 0x05 Enum, 0x06 DataId, 0x07 String, 0x09 Bitfield32, 0x0A Bitfield64 or 0x0D Colour. A String here is 0–128 bytes, each byte 0x21–0x7E (printable ASCII without space). Any other tag (None, Vector3, EntityRef, Time, Array, Struct) is a protocol violation |
+
+**Look** (minor ≥ 1): `list8<LookEntry>`, 0–48 entries (0 = no look), `property` strictly
+ascending, the whole encoding (count byte included) at most 768 bytes. A character's
+creation choices: the values its creation controls wrote (`character-screens.md` §5.2), each
+an opaque (property, value) pair (§7.4).
 
 **CharacterSummary**: `name` str (`NAME`), then `body` Body.
 
@@ -691,8 +733,10 @@ Same body as `Login`. Creates the account and logs in. It is a protocol violatio
 |---|---|---|---|
 | 1 | str | `account` | `ACCOUNT`: the account's canonical name as the server stores it |
 | 2 | list8<CharacterSummary> | `characters` | 0–64 entries, names unique within the list |
+| 3 | list8<Look> | `looks` | Minor ≥ 1 only. Exactly as many entries as `characters`; entry *i* is the look of character *i* (empty: none) |
 
-Post: the server opens the chat stream. The client is in CharacterSelect.
+Post: the server opens the chat stream. The client is in CharacterSelect. (With 64 characters
+of 768-byte looks and a 32-byte account the frame stays below 54,000 bytes.)
 
 <a id="s6-2-6"></a>
 #### 6.2.6 LoginFailed (0x0006, S→C)
@@ -712,6 +756,7 @@ After `SERVER_FULL` or `SERVER_ERROR` the server follows with `Disconnect`.
 |---|---|---|---|
 | 1 | str | `name` | `NAME` |
 | 2 | Appearance | `appearance` | §5.3 |
+| 3 | Look | `look` | Minor ≥ 1 only. The character's creation choices (empty: none). Stored with the character and never changed afterwards in v1.1 |
 
 Pre: CharacterSelect, `CHARACTER_CREATION`, no `CharacterCreate` or `EnterWorld`
 outstanding. Answered by exactly one `CharacterList` or `CharacterCreateFailed`. The server
@@ -724,6 +769,7 @@ position, instance and starting properties are server-local (`test-server.md`).
 | Order | Type | Field | Rule |
 |---|---|---|---|
 | 1 | list8<CharacterSummary> | `characters` | The account's full list after the change, 0–64 entries |
+| 2 | list8<Look> | `looks` | Minor ≥ 1 only. As `LoginOk.looks` |
 
 <a id="s6-2-9"></a>
 #### 6.2.9 CharacterCreateFailed (0x0009, S→C)
@@ -819,7 +865,9 @@ Effect: the server sets the player's `STANCE` property.
 |---|---|---|---|
 | 1 | Appearance | `appearance` | §5.3 |
 
-A protocol violation unless `APPEARANCE_CHANGE` was advertised. The server answers
+A protocol violation unless `APPEARANCE_CHANGE` was advertised. No look is appended in v1.1:
+a character's look is set by `CharacterCreate` and kept by the server, which sends it with
+every `EntityAppearance` answer (§6.3.6). Slots (`Equipped` bit 3) are allowed at minor ≥ 1. The server answers
 **every** `AppearanceSet` with an `EntityAppearance` for the player carrying the resulting
 appearance, which is the old one if it refused. When it refuses, it also sends a system
 `ChatMessage` saying why.
@@ -871,6 +919,7 @@ a user-requested disconnect.
 | 5 | u64 | `server_time` | Server time of this state, µs (§11.1) |
 | 6 | Pose | `pose` | Where the player is |
 | 7 | Appearance | `appearance` | How the player looks |
+| 8 | Look | `look` | Minor ≥ 1 only. The character's look (empty: none) |
 
 Pre: the first frame on the world stream. It is followed at once by `WorldClock`, and then by
 the entities around the player (§9).
@@ -916,6 +965,7 @@ and the client does not snap to it.
 | 8 | u8 | `motion` | §8.1 |
 | 9 | Appearance | `appearance` | |
 | 10 | PropList | `properties` | Full property state (§7.2). No removals |
+| 11 | Look | `look` | Minor ≥ 1 only. The entity's look (empty: none; always empty for entities that are not characters) |
 
 Entity IDs are assigned by the server, unique for the server's lifetime, and never reused for
 another entity while the server runs. An entity that leaves and re-enters interest keeps its
@@ -936,6 +986,7 @@ ID and is created again.
 |---|---|---|---|
 | 1 | u64 | `id` | A created entity, or the player |
 | 2 | Appearance | `appearance` | Full replacement |
+| 3 | Look | `look` | Minor ≥ 1 only. The entity's look, also a full replacement (empty: none) |
 
 <a id="s6-3-7"></a>
 #### 6.3.7 EntityDestroy (0x0107)
@@ -1207,9 +1258,29 @@ Appearance travels as the dedicated `Appearance` structure (§5.3), not as prope
   `walker.md` §10.4). It draws what it can resolve and skips the rest with a log entry. A
   DID that does not resolve is never an error.
 - **Idle**: an optional starting-idle enum key from the data.
+- **Slot** (minor ≥ 1): an equipped item may name the equipment slot key that holds it. A
+  client places a held item in the hand its slot names; without a slot it applies the Tessera
+  rule of `character-panels.md` §7 (default slot, then the secondary hand).
+- **Look** (minor ≥ 1): up to 48 opaque (property ID, value) pairs, the character's creation
+  choices, carried beside the appearance in the messages of §3.1. The creating client fills
+  it from its creation controls (`character-screens.md` §5.2); the server stores it with the
+  character at `CharacterCreate` and sends it, unchanged, wherever it sends that character's
+  appearance. v1.1 has no message that changes a look after creation.
 
 The server treats all of these as opaque. It checks only the wire limits and its content
 policy (`server-content.md`). It never holds or sends game assets.
+
+**Receiving a look** (every client; a peer may be hostile). A client applies a look entry to a
+character's figure only when (1) the body is a `Character` body, (2) the entry's property is
+one that a creation control of that body's player avatar writes in the receiving client's
+**own** install (`character-screens.md` §5.2, column "Writes"; `appearance.md` §3.4), and
+(3) the value's tag matches that property's type in the receiver's property dictionary
+(`property-system.md` §3: Bool 21, Int32 15, Int64 19, Float32 9, Enum 8, DataId 20,
+String 1, Bitfield32 18, Bitfield64 14, Colour 16). An applied entry replaces the avatar's own
+value of that property, which is otherwise the default (`appearance.md` §3.4). Every other
+entry is ignored and counted, with at most one debug line per message. A look string is a
+property value, never shown as text. Two clients with different installs may therefore show
+different looks for the same bytes, as for every other reference.
 
 <a id="s7-5"></a>
 ### 7.5 Motion and animation state
@@ -1727,7 +1798,9 @@ beyond the limits below.
 | Location coordinates | finite, \|c\| ≤ 10⁷ | Fatal |
 | Landblock index | ≤ 254 | Fatal |
 | Anchor ownership | ±1,280 m | Fatal |
-| Appearance: scale (0, 100], ≤ 32 items, dye in [0, 1], item ≠ 0, flag bits 3–7 = 0 | — | Fatal |
+| Appearance: scale (0, 100], ≤ 32 items, dye in [0, 1], item ≠ 0, flag bits 4–7 = 0; bit 3 = 0 at minor 0; at minor ≥ 1 a `slot` (bit 3) in 1–64 | — | Fatal |
+| Look (minor ≥ 1): ≤ 48 entries, encoding ≤ 768 bytes (checked while decoding, before further allocation), `property` ≠ 0 and strictly ascending, the ten allowed tags only, String 0–128 bytes of 0x21–0x7E, Float32 finite | — | Fatal |
+| `LoginOk.looks`, `CharacterList.looks` (minor ≥ 1) | count = `characters` count | Fatal |
 | Characters in a list | 64 | Fatal |
 | PropList entries | 256, `pid` strictly ascending and ≠ 0 | Fatal |
 | Value depth, array length, struct fields, one value's size | 4, 256, 64, 8,192 bytes | Fatal |
@@ -1922,6 +1995,11 @@ protocol violation, because codes are informational.
 > "every rejection that is reported advances the epoch", as the review had confirmed.
 9. The server never sends static world objects or game data. Every DID and data key on the
    wire is an opaque number the client resolves against its own install.
+10. (v1.1) At negotiated minor 0 every message is byte for byte a v1.0 message: no `Equipped`
+    flag bit 3 and no appended look field is ever sent.
+11. (v1.1) A server sends a character's look exactly as the client created it, and never
+    derives, completes, changes or merges looks; a receiver never applies a look entry that
+    fails the rule of §7.4 "Receiving a look".
 
 > **OPEN:** (review, non-blocking) Invariant 2 cannot hold for server text that contains
 > control characters: such a message is valid (§5.2 sanitises it rather than failing), the
@@ -2152,6 +2230,61 @@ None (removal)         00
 | `ChatSend` with channel 5 | System is server-only |
 | Uni stream starting with kind byte `58` | Unknown stream kind |
 
+<a id="s16-8"></a>
+### 16.8 Minor 1 (v1.1)
+
+Negotiated minor 1 unless a row says otherwise. Look K = [(0x10000A01, Float32 0.5),
+(0x10000A02, Colour (200, 150, 100, 255)), (0x10000A03, String "8080ff")], 32 bytes:
+`03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8 96 64 ff 03 0a 00 10 07 06 00 38 30 38 30
+66 66`. (All IDs, DIDs and keys are made-up numbers.)
+
+```
+Hello  minor_max 1, caps 0, max_entities 1024, client_name "tessera-client 0.8.0"   (36 bytes)
+  20 00 00 00 01 00 01 00 00 00 00 00 00 04 14 00 74 65 73 73 65 72 61 2d 63 6c 69 65
+  6e 74 20 30 2e 38 2e 30
+HelloAck  minor 1, caps REGISTRATION|CHARACTER_CREATION|APPEARANCE_CHANGE, tick 30,
+          snapshot 15, R 2, server_name "Test Shard", motd ""                         (29 bytes)
+  19 00 00 00 02 00 01 00 07 00 00 00 1e 0f 02 0a 00 54 65 73 74 20 53 68 61 72 64 00
+  00
+CharacterCreate  "Aldith", Character 23/1, scale 1.0, no idle, no items, look K       (61 bytes)
+  39 00 00 00 07 00 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 00 00 80 3f 00
+  00 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8 96 64 ff 03 0a 00 10 07 06 00 38
+  30 38 30 66 66
+LoginOk  account "alice", characters [("Aldith", Character 23/1)], looks [K]          (64 bytes)
+  3c 00 00 00 05 00 05 00 61 6c 69 63 65 01 06 00 41 6c 64 69 74 68 01 17 00 00 00 01
+  00 00 00 01 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8 96 64 ff 03 0a 00 10 07
+  06 00 38 30 38 30 66 66
+CharacterList  [("Aldith", Character 23/1), ("Bram", Character 81/2)], looks [K, none] (73 bytes)
+  45 00 00 00 08 00 02 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 04 00 42 72
+  61 6d 01 51 00 00 00 02 00 00 00 02 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8
+  96 64 ff 03 0a 00 10 07 06 00 38 30 38 30 66 66 00
+AppearanceSet  Character 23/1, scale 1.0, no idle; items 0x70001234 dye 0.25 slot 17,
+               0x70005678 stowed slot 18                                              (37 bytes)
+  21 00 00 00 11 00 01 17 00 00 00 01 00 00 00 00 00 80 3f 00 02 34 12 00 70 09 00 00
+  80 3e 11 78 56 00 70 0c 12
+EntityAppearance  id 43, Character 81/2, scale 1.0, no idle, item 0x70001234 slot 17,
+                  no look                                                             (36 bytes)
+  20 00 00 00 06 01 2b 00 00 00 00 00 00 00 01 51 00 00 00 02 00 00 00 00 00 80 3f 00
+  01 34 12 00 70 08 11 00
+```
+
+Negative vectors (each MUST be rejected as a protocol violation):
+
+| Input | Why |
+|---|---|
+| The `AppearanceSet` above at negotiated minor 0 | `Equipped` flag bit 3 at minor 0 |
+| The `CharacterCreate` above at negotiated minor 0 | 32 bytes left after the body |
+| `AppearanceSet` whose first item has flags `08` and slot `00` | `slot` outside 1–64 |
+| `AppearanceSet` whose first item has flags `08` and slot `41` | `slot` outside 1–64 |
+| `AppearanceSet` whose first item has flags `10` | Flag bit 4 |
+| `CharacterCreate` with look `02 02 0a 00 10 01 01 01 0a 00 10 01 00` | Property IDs not ascending |
+| `CharacterCreate` with look `01 00 00 00 00 01 01` | Property ID 0 |
+| `CharacterCreate` with look `01 01 0a 00 10 0e 00 00` | Array tag in a look |
+| `CharacterCreate` with look `01 01 0a 00 10 07 03 00 61 20 62` | Space (0x20) in a look string |
+| `CharacterCreate` with a look of count 49 (49 entries `pid` ascending, each Bool) | More than 48 entries |
+| `CharacterCreate` with a look of six String entries of 128 bytes each (811 bytes) | Look above 768 bytes |
+| `LoginOk` with 1 character and `looks` count 0 | Count differs from `characters` |
+
 ---
 
 <a id="appA"></a>
@@ -2168,20 +2301,24 @@ neutral `Event`/`Command` vocabulary (`crates/net/src/session.rs`).
 | `Teleport { destination }` | `TeleportRequest`. The backend assigns `request_id`. `Destination::{Location, Ground, Anchored, Named}` → tags 1–4 |
 | `QueryLocation` | `QueryLocation` |
 | `Chat { channel, text }` | `ChatSend` (Say 1, Yell 2, Emote 3, `Tell { peer }` 4). `System` is refused by `Session` before it reaches the backend |
+| `CreateCharacter { name, appearance, class, nationality }` | `CharacterCreate { name, appearance, look }` under the normative rule of `character-screens.md` §7.1.1 (capability, `Connected` state, appearance required, one outstanding); `class` and `nationality` are dropped (`server-content.md` §7); `look` is the appearance's look at minor ≥ 1 and is not sent at minor 0 (`scenario-feed.md` §9.7). Any other `CreateCharacter` is refused with `NetError::InvalidCommand` and sends nothing |
+| Equipment changes of an overlay run (`scenario-feed.md` §12.5) | `AppearanceSet` built by the overlay backend from the server's last appearance of the player and the feed's equipment list (no look; slots at minor ≥ 1), at most one in flight and at most 4 per second |
+| `DeleteCharacter` and the other commands of `scenario-feed.md` §9.4 | Refused with `NetError::InvalidCommand` (`scenario-feed.md` §9.5) |
 | `Disconnect` | `Disconnect(NO_ERROR)`, then §12.3 |
 
 | Wire | `Event` |
 |---|---|
-| `LoginOk` | `Connected { characters }` (names only) |
+| `LoginOk` | `Connected { characters }` (names), then one `CharacterInfo { name, body, class: None, level: None, look }` per entry, in list order (`look` from `looks` at minor ≥ 1, else none; `scenario-feed.md` §9.7) |
 | `LoginFailed` (final) / `Disconnect` / CONNECTION_CLOSE | `Disconnected { reason: ServerClosed(text or code name) }` |
-| `CharacterList` | No `Event` yet (see OPEN below) |
+| `CharacterList` (answer to `CharacterCreate`) | `CharacterInfo { name, body, class: None, level: None, look }` for the entry with the outstanding name, else `CharacterRefused { name, reason }` with Tessera's text for `SERVER_ERROR` (`character-screens.md` §7.1.1 step 3); other entries emit nothing |
+| `CharacterCreateFailed { code, text }` | `CharacterRefused { name: the outstanding name, reason }` with Tessera's own text per code of §14.4 (unknown codes as 6); `text` logged only (`character-screens.md` §7.1.1 step 4) |
 | `EnterWorldFailed` | A System `ChatMessage` with the reason, then `Disconnect(NO_ERROR)` and `Disconnected { reason: ServerClosed(text) }`, because `Session` has no way back from EnteringWorld. See OPEN below |
-| `WorldEnter` | `WorldEntered { player, name, transform (f32 of pose) }`, then `AppearanceChanged { player, appearance }`, then `LocationReport { cause: Entered, anchor }` |
+| `WorldEnter` | `WorldEntered { player, name, transform (f32 of pose) }`, then `AppearanceChanged { player, appearance }` (with `look` and slots at minor ≥ 1), then `LocationReport { cause: Entered, anchor }` |
 | `LocationReport(TELEPORTED / REQUESTED / CORRECTED)` | `LocationReport { cause: Teleported / Requested / Corrected }`. For TELEPORTED and CORRECTED, also `EntityMoved` for the player with the same position and zero velocity |
 | `TeleportRefused` | `ChatMessage { channel: System, sender: None, text }` |
-| `EntityCreate` | `EntityCreated { id, kind, name, class, location, heading, appearance, tag: None }` |
+| `EntityCreate` | `EntityCreated { id, kind, name, class, location, heading, appearance, tag: None }` (`appearance.look` from `look` at minor ≥ 1) |
 | `MotionBatch` entry | `EntityMoved { id, transform { position, heading }, velocity }` (after §8.6 staleness; interpolation is the client's job above the backend) |
-| `EntityAppearance` | `AppearanceChanged` |
+| `EntityAppearance` | `AppearanceChanged` (`appearance.look` from `look` at minor ≥ 1) |
 | `EntityDestroy` | `EntityDespawned { id }` |
 | `InterestReset` | `EntityDespawned` for every tracked entity except the player. Not `StaticsCleared`, which is about statics and data-placed entities, which this protocol never sends |
 | `ChatMessage` | `ChatMessage { channel, sender: Some(name) / None for System, text }`. `Tell { peer }`: on an echo, `peer` is the recipient |
@@ -2189,10 +2326,16 @@ neutral `Event`/`Command` vocabulary (`crates/net/src/session.rs`).
 | QUIC idle timeout | `Disconnected { reason: TimedOut }` |
 | Local protocol violation or I/O error | `Disconnected { reason: TransportFailed(detail) }` |
 
+> **Partly answered (2026-10-10, v1.1, decision 0025):** the character list after creation
+> (`CharacterList` → `CharacterInfo`, §7.1.1 of `character-screens.md`) and `CharacterCreate`
+> are mapped above; the overlay backend sends `AppearanceSet` without a public `Command`.
+> The rest stays open:
+>
 > **OPEN (for `tessera-net`, not the wire):** `Event` has no variant yet for property
-> changes (`EntityUpdate`), time sync and the world clock (`TimeReply`, `WorldClock`), or the
-> character list after creation. `Command` has none for `CharacterCreate`, `EmoteSet`,
-> `StanceSet`, `AppearanceSet` or registration, and `Connected` has no failure path before
+> changes (`EntityUpdate`; the feed's `PropertyChanged` of `scenario-feed.md` §9.2 carries
+> data property IDs, not §7.1's) and for time sync and the world clock (`TimeReply`,
+> `WorldClock`). `Command` has none for `EmoteSet`, `StanceSet`, a public `AppearanceSet` or
+> registration, and `Connected` has no failure path before
 > world entry. ARCH §19.1 already lists "property changed" and "time sync" events. Adding
 > them is a `tessera-net` API change for the implementer, not a protocol change.
 
@@ -2207,8 +2350,8 @@ neutral `Event`/`Command` vocabulary (`crates/net/src/session.rs`).
 
 > **OPEN:** Client-proposed anchors when walking into out-of-square interiors (§8.7).
 
-> **OPEN:** `tessera-net` events and commands for properties, time, the character list,
-> emotes, stance and appearance changes (Appendix A).
+> **OPEN:** `tessera-net` events and commands for properties, time, emotes, stance and
+> appearance changes (Appendix A; the character list and creation are mapped since v1.1).
 
 > **OPEN:** Default ranges (Say 40 m), interest radius (2 blocks), snapshot rate (15 Hz),
 > interpolation delay (150 ms) and the movement tolerances of §8.3 are design starting
@@ -2436,6 +2579,7 @@ them.
 | 2026-10-09 | §8.3 "Server relaxations" (spec writer, design): a server MAY apply a settling window of at most 10 s after an epoch with an unknown height (skipping only the up and down tests) and a descent credit of at most 100 m; the round-2 OPEN at §8.3 is answered. §15 invariant 8 reworded for the relaxations and for unreported rejections; its implementer OPEN answered. This table gains the 2026-10-07 review row (round-2 OPEN at §18 answered). No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
 | 2026-10-09 | Review fixes (spec writer, design), answering the 2026-10-09 review: blocking (1), §8.3 item 2 now says the credit is in use only with *S* > 0, and a server without it or with *S* = 0 applies steps 5 and 6 unchanged (*d*_c and *C* drop out); §15 invariant 8's parenthesis matches. Blocking (2), §8.3 item 1 gives the down-allowance update in the window, *A*_d ← max(0, *A*_d − *d*_d); invariant 8 states that no allowance is below 0. Non-blocking (a) the window's examples say "for example" and name a `Named` teleport; (b) "the extent check" removed from item 1 (step 4 has it); (c) invariant 8 names *d*_c. (d) needs no change now. No byte changes; minor version 0. Status: changes requested → Revised, awaiting review |
 | 2026-10-10 | §1, §8.3, §15, §17.1 (spec writer, design). §8.3 "Server relaxations": new paragraph "Bounds of the values in force" (a server never applies a window above 10 s or *S* above 100 m; it refuses or clamps; a window of 0 or a reserve that is 0, negative or not a number turns the relaxation off) and new paragraph "Changing the parameters during an epoch" (allowances and *C* capped at once by the new values, no refill at the change; an open window keeps the start of its epoch and takes the new length, 0 or a passed end closes it; a closed window never reopens). §15 invariant 8: with parameters changing within a stretch, the largest values in force bound it. Both implementer notes of §17.1 (2026-10-09 clamping, 2026-10-10 limit change, from the implementations in commits a692dce and e73f00d) answered: the implemented behaviour is adopted. New provenance row. No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
+| 2026-10-10 | v1.1, minor version 1 (spec writer, design; decision 0025): §3 compatible flag bits with payload and the frozen `Hello`/`HelloAck` (round-2 OPEN answered), new §3.1 minor table; §5.3 `Equipped` bit 3 `slot`, `LookEntry`, `Look`; looks appended to `LoginOk`, `CharacterCreate`, `CharacterList`, `WorldEnter`, `EntityCreate`, `EntityAppearance`; `AppearanceSet` carries none; §7.4 slot, look and the receiver rule; §13.1 limits; §15 invariants 10–11; §16.8 vectors; Appendix A maps `CreateCharacter`, `LoginOk`, `CharacterList`, `CharacterCreateFailed` per `character-screens.md` §7.1.1 (Q11) and the overlay's `AppearanceSet`. v1.0 bytes unchanged. Status Accepted → Review |
 
 > **Answered (2026-10-09, spec writer; was OPEN, review, non-blocking, round 2):** the
 > 2026-10-07 review row is added and "Last updated" is current.

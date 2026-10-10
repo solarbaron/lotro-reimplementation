@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Accepted (2026-10-09, re-review passed; first version 2026-10-09, first review changes requested, review fixes the same day; see the review record) |
-| **Last updated** | 2026-10-09 |
+| **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
 | **Review record** | First review, 2026-10-09 (independent review session that wrote no part of this spec; whole spec, new file): **changes requested**, status stays Review. Checked against CLEAN_ROOM.md §5.3: no code or pseudo-code (§5, §6.4, §8.2 are plain steps); no copied prose; no game text (format strings are cited by token and variable ID only); labels and property names are data identifiers needed for interoperability; BIN use is within decision 0011 (offline client UI, no network or login code). Spot checks, read-only against the install-derived dumps: item census of §3.1–§3.2 and §8.3 (151,230 items; 149,695 hover pairs; 1,535 without, all class 796; 148,979 one-click; 150,507 equal pairs; 107,479 compare pairs, 20 zero; layouts 149,684 / 11; all 25 hover-element counts; compare kinds 101,400 / 6,055 / 1,557 / 1,262 / 378 / 20 / 40,558) match; the six name colours and the 32 states of `ColorNameText` (§6.2) match; row-template colours, formats, sizes, margins and states of `Name_Base`, `ArmorValue_Base`, `ItemUniqueness_Base`, `ItemDecay`, `Usage_Cooldown`, `Description_Base`, `ExaminationItemLevel_Base`, `Value_Base`, `Separator_Short_Base` match; all cited `Examination` and `Utils` tokens exist with the stated variable IDs; IV4 holds; worked examples §14.1, §14.4–§14.6 recomputed; binding combinations agree with `items.md` §5.4. **Blocking:** (1) §2 "Tooltip element", §4.1, IT4, IV2, IV3 are stated for every `*_ExamineLayout` element of the examination layout, but that layout has 79 such top-level elements; the stated structure (base `Tooltip_New`, one `ExaminationListBox` child with autofill, entry templates naming top-level elements of the same layout) holds for the 30 elements item records name, not for all 79 (other bases occur, one element fails IV2, one entry template names an element of another layout); and the "330 in one world-event layout" width of §4.1 belongs to an element no item names. Restate the scope (the elements named by item records) or list the exceptions, and make IV2/IV3 testable as scoped. (2) §6.7 step 3: the `Utils` pair format 0x040CF382 has two variables (0x5425, 0x59BF); the spec does not say which receives the level text and which the marker. State it, or add an OPEN with a Tessera rule. (3) §6.4 step 7: the bitfield row cites "the client's list separator (§6.14 OPEN)", but the §6.14 OPEN does not cover a separator; and the "other → the value's generic text" row is undefined. Give the fact or add an OPEN with a Tessera rule for each. (4) Provenance: §6.3 and §6.12–§6.18 state class-library facts (provider classes 1067, 1058, 1059, 1065, 1055, 1092, 1062, 1091, 2808 and the quest-ID provider; row-data properties such as `Examination_DPS`, `Examination_IsGhosted`; source properties such as `Usage_CooldownDuration`, `ItemDecay_Duration`, `Item_EquipmentCategory`), yet IT18 marks those sections Design only, and classes 1062, 1067 and the quest-ID class are missing from the BC source list. Add a BC row (Confirmed, bytecode) for the traced parts, extend the BC list, and keep IT18 for the Tessera rules. **Non-blocking notes:** §2 "for all but 11 items" should read "all but 11 of the 149,695 items with a hover pair"; §6.11 "32-bit product" should state signedness and overflow; §9 "Probable" is outside the provenance vocabulary (cite or mark OPEN); IV7 presumes a currency with `Currency_Value` 1, state that precondition; the OBS row dates the item dump 2026-10-07, check it against `items.md` OBS3. Review fixes 2026-10-09 (spec writer, dirty room): status stays Review (the spec was never Accepted) until a separate session re-reviews it. (1) Scope restated to the 31 elements item records name (30 in the examination layout, one in 0x220008BE): §2, §4.1, IT4, IV2–IV4; the other 49 `*_ExamineLayout` elements are listed as out of scope with their exceptions; the widths of §4.1 corrected (24 named list boxes carry `max_width` 229, seven carry none; new OPEN with a Tessera rule); row IT19. (2) §6.7 step 3: variable 0x5425 receives the level text, 0x59BF the marker (BC, class-library helper), row IT20. (3) §6.4 step 7: the bitfield join (`Utils` token 0x06756762, ascending bit order, failure on an unlabelled bit) and the "other" types (variable left unset, so the row is empty) are now stated from BIN, row IT21; the any-width bit order is an OPEN with a Tessera rule. (4) New row IT22 (BC, Confirmed) for the class-library parts of §6.3 and §6.12–§6.18, BC source list extended by classes 1062, 1067, 1074; IT18 keeps only the Tessera rules; §6.18 names `Quest_DataID` and the row data of the cooldown and decay providers. Non-blocking notes applied: §2 wording, §6.11 signed 32-bit wrapping product, §9 "Probable" replaced by an OPEN with a Tessera rule, IV7 precondition; the OBS item-dump date (2026-10-07) agrees with `items.md` OBS3. Re-review 2026-10-09 (separate dirty-room session, neither the author nor the first reviewer; whole spec, new file, with the review fixes): **passed**, Accepted. Checklist §5.3 met: every statement is a functional fact or a marked Tessera rule; no code or pseudo-code (§5, §6.4, §6.7, §8.2 are plain steps, not listing-shaped); no copied prose; no game text (format strings by token and variable ID only; labels and property names are data identifiers needed for interoperability); every fact has a provenance row (IT1–IT22) with a mark; every unknown is an OPEN with a Tessera rule (Q1–Q20); BIN within decision 0011 (offline client UI only). All four blocking items of the first review are fixed. Spot checks, read-only, with an independent probe over the layout dumps and all 151,230 item records: 31 distinct non-zero (layout, element) pairs named by item records (30 in 0x22000000, `KinshipCharter_ExamineLayout` in 0x220008BE); 79 `*_ExamineLayout` top-level elements in the examination layout (bases `Tooltip_New` 66, `Tooltip_Bare` 11, `Tooltip` 1, none 1); IV2 31 of 31; IV3 784 of 784 (783 in the examination layout, one in 0x220008BE); entry-template counts 1–55; `max_width` 229 in 24 named list boxes and absent in exactly the seven listed (designed 229 and 304, at (5, 5)); the 49 other elements: one with two children, list-box widths 229, 231, 330, 335, 390, 2048 and one absent; IV4 seven of seven; the bitfield generic rows reachable from the 31 elements are exactly the three named, with the stated widths (types 14 and 18); `Utils` 0x040CF382 and 0x06756762 each carry variables 0x5425, 0x59BF, the yes/no tokens none, and the cited `Examination` item-level and quest-ID tokens the stated variables; IT20 against the class-3796 body and the pair helper it calls (first text argument to 0x5425, marker to 0x59BF, an empty side yields the other); IT21 join against the BIN listing of the list-join helper (both non-empty: pair format; one empty: the other); IT22 properties of classes 1058, 1059, 1062, 1065, 1067, 1074, 1091, 2808 as stated. **Non-blocking notes:** IV4 and IV5 say "Confirmed" without a date; §6.7 could say that the provider tests the examined object against class 801 before anything else (the "every item" scope); §6.4 bitfield text "no bit is set" differs from the debug display of `property-system.md` E3 (key-0 name), which the spec already separates, a cross-reference in E3 would help readers. |
@@ -346,6 +346,14 @@ After every row has been filled (§6), the client processes the list box in this
    to the list box's width.
 7. The list box and its frame are laid out again at the resulting size.
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) the size a text row takes after filling.
+> §4.2 says `UICore_Text_fit_to_text` makes the row's height follow its text; whether the
+> row's width follows the text too (which decides the widest row of step 2) is not stated.
+> As implemented: a text row is as wide and as high as its measured text (margins
+> included, wrapped at the list's width limit of §4.1); separators keep their designed
+> size, so on this install they bound the list's width from below (170). Please state the
+> width rule.
+
 A tooltip whose rows all wait for data (the client counts pending rows in
 `UI_Examination_Tooltip_PendingElements`) is shown only when the data arrives
 (`UI_Examination_Tooltip_NotifyWhenAssembled`). **Tessera rule:** all row data is available
@@ -609,6 +617,14 @@ count text (right-justified, formatted as a decimal integer through the format o
 is set; when the display also hides leading zeros, a zero coin is shown only after a larger
 non-zero coin.
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) the parts of
+> `MoneyDisplay_ItemWorthTemplate` and of one coin of `MoneyDisplay_ItemWorthDisplay` (which
+> element holds the label, which a coin's count text, which takes the coin's icon state) are
+> not named, so the worth row cannot be filled through the template by label. As
+> implemented: the row shows code-made parts on one line, the label text, then per coin its
+> count text and an icon image the client supplies (16 × 16 until it is loaded), 2 pixels
+> apart and centred vertically. Please name the template's parts.
+
 > **OPEN:** the default of the two money-display options for the worth row (whether a zero
 > silver coin shows between gold and copper). **Tessera rule:** zero coins are hidden.
 > Example: §14.4.
@@ -627,6 +643,11 @@ item's level and quality, damage from DPS, speed and variance, damage type from
 > (minimum, maximum, damage-type text) and the decimals of the DPS variable. **Tessera rule:**
 > minimum and maximum per the reading of `items.md` §9.4 (marked Reported there), rounded to
 > integers; damage type = display text of `Combat_DamageType`; DPS with one decimal.
+
+> **OPEN:** (implementer, 2026-10-10) the Tessera rule above gives the three values but not
+> which variable receives which. `crates/gamedata` (`tooltip`) fills them in the order the
+> table of §4.2 lists them: 0x2864455 = minimum, 0x48615B5 = maximum, 0x5BE1855 = damage-type
+> text (empty text when the type key has no display text). Confirm or give the order.
 
 <a id="s6-13"></a>
 ### 6.13 Equipment category (BC class 1065, IT22; Tessera rule IT18)
@@ -665,6 +686,17 @@ state `cantuse` (red) when the viewer does not meet it. The level-range row
 > order, with Tessera's own wording; red when the viewer's scripted level, class or race
 > (§11) fails the line.
 
+> **OPEN:** (implementer, 2026-10-10) how a list row names its line element. §4.2 gives the
+> base and state colours of the requirement lines on the entries (`UsageReqsListElement`),
+> and §6.17 the `gameset_*` states of the set lines, but not the property that links the row
+> to that element. The set and effect list rows carry `UICore_ListBox_entry_templates`; the
+> requirements row carries none (on this install it has a struct property
+> `UI_Usage_List_Template` that no spec describes). `crates/gamedata` (`tooltip`) takes the
+> line colours from the first entry template whose element has state colours, else the first
+> with a base colour; for a row without entry templates, from the element §4.2 names for its
+> widget type (`UsageReqsListElement`, `EffectListElement`, `AllowedSlotsElement`), looked
+> up by label in the row's layout; then from the row's own colours. Please state the link.
+
 <a id="s6-16"></a>
 ### 6.16 Effect and stat lines (BC class 1062, IT22; Tessera rule IT18)
 
@@ -680,6 +712,14 @@ into an `Examination_EffectInfo_Array` of `Examination_EffectInfo_Struct` entrie
 > at the item's level, `combat-data.md` §4), and one line per effect of the item's equipper
 > effect list with the effect's `Effect_Name`.
 
+> **OPEN:** (implementer, 2026-10-10) engineering choices where the Tessera rule is silent,
+> for review: (1) no source of a property's *display name* is given; the implementation shows
+> the dictionary name of `Mod_Modified`, then the value (at most two decimals). (2) The target
+> and usage lists show one line per effect of the item's target and usage effect lists
+> (`Effect_Name`); the usage list's header is the row's format, shown when the list has lines.
+> (3) The weapon slayer and property-mod rows (`WeaponSlayerMod_*`, `WeaponPropertyMod_*`,
+> §4.2) have no content rule here; they are built empty like the rows of §6.20.
+
 <a id="s6-17"></a>
 ### 6.17 Item sets (Tessera rule IT18)
 
@@ -691,6 +731,22 @@ equipment container (§11).
 
 > **OPEN:** the exact line composition. **Tessera rule:** member lines with the members'
 > names, bonus lines with the count and the bonus effect names, active per `items.md` §7.1.
+
+> **OPEN:** (implementer, 2026-10-10) `items.md` §7.1 leaves open whether tiers activate
+> cumulatively. The implementation marks the bonus line of count *c* `gameset_active` when the
+> worn member count is at least *c* and the level gate of `items.md` §7.1 passes (cumulative
+> reading); bonus lines list the tier's effect names, then its stat lines (§6.16 rule), after
+> "*c*:". Confirm or replace.
+
+> **OPEN:** (implementer, 2026-10-10) the set level of `items.md` §7.1 ("Set level for count
+> *c*") needs a request's "given level" and the character's `Apparent_Level`. The
+> implementation evaluates each tier's stat lines at that set level with these readings:
+> the given level is the examined item's level; the character's level is the viewer's
+> scripted level (§11), else the examined item's level; the active members of the average
+> rule are the viewer's equipped members (the examined item too when it is equipped), each
+> with its item level; the single-precision average is truncated to an integer level;
+> member-less sets use the given level (the viewer carries no count property). Confirm or
+> replace.
 
 <a id="s6-18"></a>
 ### 6.18 Cooldown, decay, quest, flags (BC classes 1091, 2808, 1074, IT22; Tessera rule IT18)
@@ -715,6 +771,12 @@ equipment container (§11).
 > **OPEN:** the client's duration text format. **Tessera rule:** largest two non-zero units
 > of days, hours, minutes, seconds, with Tessera's own unit wording.
 
+> **OPEN:** (implementer, 2026-10-10) the variables of the cooldown format (0x0973E0EE) are
+> not given, and §4.2 gives 0x58E15 for the decay format only. The implementation renders the
+> row's format with the duration text in both 0x58E15 and 0x5A6195; when the format does not
+> render (a slot without a value, G25) the duration text is shown alone, and when it renders
+> without the duration the duration is appended. Please state the cooldown format's variable.
+
 <a id="s6-19"></a>
 ### 6.19 Description
 
@@ -729,6 +791,19 @@ summoning, decoration-house, world-event, quest-guide, disenchantment, recipe on
 cooldown rows, and the skill-item rows (P2). They are built as empty rows, so §5 removes them;
 the real-data test counts them (§12).
 
+> **OPEN:** (implementer, 2026-10-10) how the rows of this list are recognised, and one
+> conflict. The implementation recognises them by widget type: every examination widget type
+> without a rule in §6.2–§6.19 (for example the legacy, runic, socket-list, upgrade-tier,
+> quest-guide, world-event, lockbox, summoning-cost, recipe and skill-item types) gives an
+> empty row; their entry templates are line templates of those widgets and are not built as
+> nested rows. Generic rows (§6.4) are left empty here only for the `ItemAdvancement_*` labels
+> and the two decoration-house rows (`ItemDecorationNotAllowedInKinshipHouse_Base`,
+> `ItemDecorationOnlyAllowedForHouseOwner_Base`), which §4.2 otherwise lists as generic rows.
+> **Conflict:** `IA_Label_Base` (a field holding the icon and the `ExaminationName` row of the
+> five `IA_*` layouts, 4,902 items) matches `IA_*` but is the only name row of those tooltips;
+> leaving it empty would contradict §12 (`Rendered` = at least the name row). The
+> implementation fills it (icon and name). Please confirm or exempt it explicitly.
+
 ---
 
 <a id="s7"></a>
@@ -739,6 +814,14 @@ the real-data test counts them (§12).
   own value is the row's tag colour.
 - Numbers are decimal integers without grouping unless a format says otherwise.
 - Texts wrap within the list box's `max_width` minus the row's margins (`fonts.md` §7).
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) the wrap width of a row inside the
+> horizontal name-and-icon list (`NameIcon_Row_Base`, §4.3). The name follows the 40-pixel
+> icon field, so wrapping it at the whole `max_width` makes the row 40 pixels wider than the
+> list may be (§5 step 3 never widens past `max_width`). As implemented: each entry of a
+> horizontal list wraps within what is left of the list's width limit after the entries
+> before it (229 − 40 = 189 for the name), and a text part placed at an offset inside its
+> row wraps within the limit less that offset. Please give the rule.
 
 ---
 
@@ -844,6 +927,23 @@ a list box holding the tooltip, a drag bar and a close button), offset by
 > `keymap.md`, by its name). **Tessera rule:** `TOOLTIP_DETACH` while an item tooltip shows
 > pins it.
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) three details of the pinned window:
+> (1) the point the offset (18, 18) is taken from; as implemented, the showing hover
+> tooltip's position, else the §9 position at the pointer; (2) which element closes the
+> window (a close button exists, but no property this spec gives names it); as implemented,
+> every Button of the `PinnedTooltip` window outside the tooltip closes it; (3) the window's
+> size; as implemented, it grows by what the tooltip needs beyond its list box's designed
+> size. Please confirm or give the rules.
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) two more details of the pinned window:
+> (4) which layout's `PinnedTooltip` a pin opens for `KinshipCharter_ExamineLayout`: §2
+> calls 0x220008BE "the examination layout" of those 11 items, but that layout has no
+> `PinnedTooltip`; as implemented, the window always comes from the layout of `UILAYOUT`
+> label `examination` (0x22000000 here), which the client gives the controller; (5) the
+> list box holding the tooltip: as implemented, it is grown to at least the tooltip's size
+> (the window by the same amount), since the painter clips children to it. Please confirm
+> or give the rules.
+
 ---
 
 <a id="s11"></a>
@@ -866,6 +966,21 @@ Hovering a slot of a bag, the paperdoll or a vendor or loot list (`character-pan
 P3) shows the tooltip; the walker needs no other input. The same model serves a server
 backend later: an instance's properties then fill the rows of §6 that records cannot.
 
+> **OPEN:** (implementer, `apps/client/src/character/tooltip.rs`, 2026-10-10) The literal
+> item's minimal tooltip (Tessera rule above) needs a tooltip element and a name-row template,
+> which no item names. As implemented: the element `Item_ExamineLayout` of the layout with
+> `UILAYOUT` label `examination`, and the first entry template of its list box whose row is
+> an `ExaminationName`; without them a literal item shows no tooltip. Also as implemented in
+> the client's conversion of the model for the panel: texts lose their style spans (plain
+> text), and the worth row's coins carry their count texts but no coin image (the coin
+> element of §6.11 is not named, see the OPEN there). Confirm or give the element.
+
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D5):** `scenario-feed.md` §6.1 `item-property $item
+> PROPERTY=VALUE` emits `ItemProperty { item, property, value }` (§9.2 there; values
+> scripted, kinds and limits in §5.8 there). The rows of §6.5 (1–4) and the crafted rows read
+> such a reported property as an instance property (§6.4 provider step 1); without the step
+> the table row "(none)" above still holds. The note as raised:
+>
 > **OPEN (for `scenario-feed.md`, non-blocking):** a step to give an item instance selected
 > properties (binding target, crafter name, inscription) so tooltip rows 1–4 of §6.5 and the
 > crafted rows can be shown in scenarios. Values would be scripted (decision 0024 §4).
@@ -890,6 +1005,26 @@ exactly one category:
 The test also reports, per row template, how many tooltips had it non-empty, and the count
 of rows left empty by §6.20. A failure is a panic, an error escaping the categories, or a
 `Rendered` count that differs from the number of records with a valid hover pair.
+
+> **OPEN:** (implementer, 2026-10-10) "at least the name row" does not hold for 61 of the
+> 149,695 records on this install: `WorldEventProgress_ExamineLayout` (51 items) has no name
+> row among its entry templates, and 10 items of `QuestItem_ExamineLayout` have a `Name` whose
+> text renders empty (the name row is then empty by §6.2). The implementation counts every
+> record whose tooltip element is built as `Rendered` (149,695, as expected) and reports the
+> tooltips without a shown name separately; the real-data test fails only when a layout has a
+> name row and the item's name renders but the row is empty. Restate the category or say what
+> those tooltips show.
+
+> **OPEN:** (implementer, 2026-10-10) which lookup misses count as `RowFailure`. On this
+> install about 71,000 item records have a `Description` naming a token missing from its
+> string table, and 860 tooltips list effects whose `Effect_Name` names a missing token.
+> The implementation treats a lookup miss in a text the examined content names
+> (description and other generic StringInfo values, effect, set and member names) like an
+> empty text (§6.4 step 4: the row or line is left out) and does not count it; a miss in a
+> row's own format or a fixed table token (worth label, coin count, binding, item level),
+> and a record that cannot be read, is a `RowFailure`, as are row templates that cannot be
+> read fully (a cycle of entry templates, more than the implementation's node bound).
+> Confirm, or say what the client shows for such texts.
 
 ---
 
@@ -977,7 +1112,7 @@ Screen 1920 × 1080, cursor 32 × 32, tooltip 240 × 300, pointer (1500, 200): *
 | Q13 | Comparison placement; option default | §8.3 | owner (O81) |
 | Q14 | Anchored mode option | §9 | BIN |
 | Q15 | Pin input | §10 | owner (O81) |
-| Q16 | Instance properties in scenarios | §11 | `scenario-feed.md` owner |
+| Q16 | Instance properties in scenarios | §11 | `scenario-feed.md` owner; answered by decision 0025 D5 |
 | Q17 | Wrap width of list boxes without `max_width` | §4.1 | BIN |
 | Q18 | Bit order of any-width bitfields in generic rows | §6.4 | BIN |
 | Q19 | Quest-ID format choice | §6.18 | BC |
@@ -995,3 +1130,6 @@ O81 (comparison and pinning).
 |---|---|
 | 2026-10-09 | First version (Review), for decision 0024 P1. Provenance OBS (all layouts, all items), BC (examination providers and helpers of the class library), BIN (assembler, list assembly, name colour, generic rows, binding, worth, armour, durability, comparison, placement, pinning). |
 | 2026-10-09 | Review fixes (status stays Review). §2, §4.1, IT4, IV2–IV4 scoped to the 31 tooltip elements item records name; the other 49 `*_ExamineLayout` elements listed as out of scope; list-box widths corrected and an OPEN with a Tessera rule for list boxes without `max_width` (IT19). §6.7 step 3: variables of the pair format (IT20). §6.4 step 7: bitfield list text and join, the "other" types leave the variable unset (IT21), OPEN for the any-width bit order. New row IT22 (BC) for §6.3, §6.12–§6.18, BC list extended (1062, 1067, 1074), IT18 limited to Tessera rules; §6.18 names `Quest_DataID` and the quest-format choice. §6.11 signed wrapping product; §9 OPEN replaces "Probable"; IV7 precondition; §15 Q17–Q20. |
+| 2026-10-10 | Pointers only (no fact changed): the §11 OPEN on instance properties in scenarios and row Q16 point to their answer in decision 0025 (`scenario-feed.md` revision 4, `item-property`). |
+| 2026-10-10 | Implementer OPENs (no fact changed): §6.12 damage variables, §6.15 line-element link of list rows, §6.16 stat names and other effect lists, §6.17 cumulative tiers and set-level readings, §6.18 cooldown variable, §6.20 recognition and `IA_Label_Base`, §12 unnamed tooltips and which lookup misses are row failures. |
+| 2026-10-10 | Implementer OPENs from `crates/ui` (no fact changed): §5 text-row width, §6.11 parts of the worth template, §10 pin offset origin, close button and window size. |

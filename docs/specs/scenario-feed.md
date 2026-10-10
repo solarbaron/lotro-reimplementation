@@ -4,12 +4,12 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-09 |
+| **Status** | Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session) |
 | **Review record** | 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
-| **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it), `crates/gamedata` (selector resolution against the user's install, §8), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, §12), `fuzz/` (§11.4) |
+| **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
 This spec defines the **scenario feed** of decision 0024 §4: a project-defined text file that
@@ -53,7 +53,8 @@ Keywords **MUST**, **MUST NOT**, **SHOULD**, **MAY** as in RFC 2119 and RFC 8174
    or by no install at all. It is not a game server and plays no game.
 
 Out of scope for v1: extended scripting (M9, decision 0017), running class-library code (P7),
-anything on the wire of `tessera-protocol.md`, multi-player scenarios (one player per run).
+anything on the wire of `tessera-protocol.md` (the overlay of §12.5 only uses the test-server
+backend's existing `AppearanceSet`), multi-player scenarios (one player per run).
 
 ---
 
@@ -76,6 +77,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | SplitMix64 generator: increment 0x9E3779B97F4A7C15, multipliers 0xBF58476D1CE4E5B9 and 0x94D049BB133111EB, shifts 30, 27, 31; first output for seed 0 is 0xE220A8397B1DCDAF | G. L. Steele, D. Lea, C. H. Flood, "Fast splittable pseudorandom number generators", OOPSLA 2014; S. Vigna's public-domain reference implementation. Chosen by Tessera (§8.5); outputs recomputed by the spec writer with a throwaway script, 2026-10-09 | Standard |
 | Partial Fisher–Yates shuffle; unbiased bounded integers by rejection | R. Durstenfeld, CACM 7(7), 1964; the rejection threshold (2^64 − *b*) mod *b* is the textbook construction | Standard |
 | UTF-8 | RFC 3629 | Standard |
+| Revision 4 (§18.3): overlay runs, looks and property values, the held-item slot, creation on the test-server backend, plain-sandbox creation, `remove-character`, `stat`, `item-property`, Vector G, the new hostile rows | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (spec writer, design, 2026-10-10); `character-screens.md` §5.2, §7.1, §7.1.1, §7.2, §8, `character-panels.md` §3.4, §7, §9, `item-tooltips.md` §6.5, §11 (Accepted, read 2026-10-10); `tessera-protocol.md` v1.1 §5.3, §6.2, §7.4 (revised the same day); `property-system.md` §3 (type codes), MP4 (the two PID families), §7.3 (bit ↔ key); `player-character.md` §6.2 (`NationalityTable_Nationality`). No game client, server or third-party tool was consulted | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -98,6 +100,9 @@ on the date given), **Standard** (a published algorithm or standard).
 | **Virtual time** | Milliseconds since world entry, advanced in ticks. |
 | **Ref** | A record reference or a literal label: `Ref::Record(DataId)` or `Ref::Literal(String)` (§5.2). |
 | **No install** | The client runs without game data (`--no-data`, or no install found): every selector resolves empty (§8.7). |
+| **Overlay run** | `--scenario` together with `--server`: the feed runs the Character and Inventory groups of a restricted file over the test-server backend (§12.5). |
+| **Look** | A character's creation choices: 1–48 (property, value) entries carried in `Appearance` (§5.8, §9.1). |
+| **Property value** | A scripted value of a data property, written `PROPERTY=VALUE` (§5.8). |
 | **Synthetic scenario** | A scenario whose output does not depend on an install: run with no install, it produces its full intended log. |
 
 ---
@@ -113,6 +118,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | Lexer, parser, static checks, `Scenario`, `ScenarioError` | `tessera-net`, module `scenario` | Depends only on `std` and the crate's existing dependencies, so a fuzz target can drive it (§11.4). |
 | `SelectorResolver` trait, `ResolvedScenario`, sampling (§8.5) | `tessera-net`, module `scenario` | The trait is implemented outside `tessera-net`. |
 | Run-time feed | `tessera-net`, sandbox backend | `SandboxConfig` gains `scenario: Option<Arc<ResolvedScenario>>`. |
+| Overlay backend (§12.5) | `tessera-net`, module `scenario` | Wraps the test-server (`remote`) backend and runs the feed's Character and Inventory groups; compiled only with the feature `scenario`. `tessera-server` links neither it nor `tessera-net` (§15 invariant 1). |
 | Headless driver and canonical log writer | `tessera-net`, module `scenario` | Shared by the client and the net tests, so conformance runs need no window or GPU (§12.3). |
 | Selector evaluation over the install | `tessera-gamedata`, module `selector` | Typed stores over the decoders; returns candidate lists (§8.6). It cannot depend on `tessera-net`, so it has its own query types mirroring §8. |
 | Adapter `SelectorResolver` → `tessera-gamedata` | `apps/client` | Thin mapping between the two query types. |
@@ -190,8 +196,9 @@ depends on `tessera-protocol` only (not on `tessera-net`), which passes.
 A `ResolvedScenario` holds only: the step program (verbs, scripted numbers, durations,
 literal strings, binding indices), the resolved bindings as lists of `ResolvedRecord`
 (§8.6: a `DataId`, a table row number, optionally a `Location` and `Anchor`, optionally a
-resolved name), the enum values resolved from labels outside selectors (§8.6), the resolution
-notes, and the limits in force. Resolved names are install text held in memory only for the
+resolved name), the enum values resolved from labels outside selectors (§8.6), the property
+IDs and value kinds resolved for property values and the resolved looks (§5.8; the values
+themselves are scripted), the resolution notes, and the limits in force. Resolved names are install text held in memory only for the
 one place where an existing event needs a string: actor names in `EntityCreated` /
 `EntitySpawned` written `name(…)` (§5.4). Everything else travels as `DataId` for the client
 half to resolve. Nothing in `tessera-net` opens an archive or interprets a DID.
@@ -271,7 +278,7 @@ of a `key=` option, as an item of a comma-separated list (§6.3), before `:` in 
 | Binding | `$`, a lower-case ASCII letter, then lower-case letters, digits and `_` | At most 32 bytes including `$`. One namespace for all bindings. |
 | Element | binding `[` decimal integer `]` | Index into a selector binding, 0-based, at most 65,535. |
 | Label | `@`, then an ASCII letter or `_`, then letters, digits and `_` | At most 128 bytes including `@`. An enum label of the install (§8.2). |
-| Integer | optional `-`, then 1–20 decimal digits; or `0x` with 1–16 hexadecimal digits | No `+`, no separators, no leading zeros except `0` itself. Hexadecimal only in the `did` family (§8.2) and in `seed=`. The value is read exactly (it fits a signed 128-bit integer) and then checked against the range of its position: `OutOfRange`, or the `LimitExceeded` kind that §11.1 names for that limit (`n=`, `repeat`). Enum values (class, species, sex, slot, damage type, filter values) are 0 … 2^32 − 1. |
+| Integer | optional `-`, then 1–20 decimal digits; or `0x` with 1–16 hexadecimal digits | No `+`, no separators, no leading zeros except `0` itself. Hexadecimal only in the `did` family (§8.2), in `seed=`, in the property number of `pid:` and in property values (§5.8). The value is read exactly (it fits a signed 128-bit integer) and then checked against the range of its position: `OutOfRange`, or the `LimitExceeded` kind that §11.1 names for that limit (`n=`, `repeat`). Enum values (class, species, sex, slot, damage type, filter values) are 0 … 2^32 − 1. |
 | Decimal | optional `-`, digits, optionally `.` and 1–9 digits | No exponent. Converted to the nearest `f64` (ties to even), then range-checked (§11.1). A value an event carries as `f32` is that `f64` converted to the nearest `f32` (ties to even, Rust `as f32`). |
 | Duration | decimal immediately followed by a unit `ms`, `s` or `min` | Converted exactly on the decimal digits (not through a float) to whole milliseconds; a value that is not a whole number of milliseconds (`0.0005s`) is a `BadDuration` error. Negative durations are errors. In a position that requires a duration, a token that is not one (`2h`) is `BadDuration`; likewise `BadNumber`, `BadPosition` and `BadFraction` for the other numeric forms. |
 | Fraction | decimal `/` decimal | `current/max` values; both within the step's range. |
@@ -279,6 +286,8 @@ of a `key=` option, as an item of a comma-separated list (§6.3), before `:` in 
 | String | `"` … `"` | Escapes: `\"`, `\\`, and `\u{H}` with 1–6 hexadecimal digits naming a Unicode scalar value that is not a control character or surrogate. Any other `\` sequence is `BadEscape`. At most 1,024 bytes after unescaping; contexts that need a name allow 64 (§11.1). May be empty only where a step says so. |
 | Text function | `name(`element`)`, `desc(`element`)`, `comment(`element`)`, `role(`element`,`integer`)`, `role-failure(`element`,`integer`)`, `objective(`element`,`integer`)`, `place(`element`)` | One token, no spaces; the integer is 0 … 65,535. Meaning in §5.2 and §5.4 (`place(…)` is a position, not a text). |
 | Timing | `at` followed by a duration token, or a single token `+`duration | §7.2. |
+| Property value | `@Label=VALUE`, or `pid:`INTEGER`:`KIND`=`VALUE | One token (a string inside it may hold spaces and `=`); the key is the text before the first `=`. `KIND` is one of the keywords `bool`, `int`, `int64`, `float`, `enum`, `bitfield32`, `bitfield64`, `did`, `string`, `instance`, `colour`; another word is `UnexpectedToken`. Meaning and value forms: §5.8. |
+| Colour | `rgba:`R`,`G`,`B`,`A` | Four decimal integers 0–255 (`OutOfRange` otherwise), red, green, blue, alpha. Only as a property value. |
 
 **Numeric components.** Each numeric component (an integer, decimal or duration; one
 coordinate of a Position; one side of a Fraction; one item of a numeric or hexadecimal list;
@@ -313,7 +322,7 @@ Settings appear at top level, at most once each, before the first step line or b
 | Statement | Where | Defined in |
 |---|---|---|
 | Header, settings | top level | §4.3 |
-| Declarations: `player`, `character`, `select`, `actor`, `item`, `page`, `option` | top level | §5 |
+| Declarations: `player`, `character`, `select`, `actor`, `item`, `page`, `option`, `look` | top level | §5 |
 | Step line: timing, verb, arguments | top level, `on` and `repeat` bodies | §6, §7.2 |
 | `repeat` block opener: timing `repeat` *N* `every` DURATION | top level and `on` bodies | §7.3 |
 | `on` block opener: `on` pattern [`times=`*N*] | top level | §7.5 |
@@ -342,7 +351,8 @@ for a step line), in any order, each at most once (a repeat is `UnexpectedToken`
 arguments keep their relative order; options do not count as positions. Three key=value forms
 are positional, not options, and keep their place: `resource=REF` as the vital argument of
 `vital`, `quickslot=N` as the skill argument of the input form `use-skill`, and `named:NAME`
-(no `=`). In a `select` line, the tokens after the family (filters, the count, `seed=`) may
+(no `=`). Property values (`@Label=VALUE`, `pid:…=VALUE`, §5.8) are positional too: their key
+is never a keyword, so they cannot be taken for options. In a `select` line, the tokens after the family (filters, the count, `seed=`) may
 come in any order; `seed=` together with `all` is `UnexpectedToken`.
 
 | Production | Definition |
@@ -352,10 +362,15 @@ come in any order; `seed=` together with `all` is `UnexpectedToken`.
 | line | blank-line \| statement |
 | statement | setting \| declaration \| step-line \| block-open \| input-line \| `"end"` |
 | setting | `"title"` STRING \| `"tick"` DURATION \| `"end-at"` DURATION \| `"enter"` STRING \| `"defaults"` (`"on"` \| `"off"`) \| `"requires"` `"install"` |
-| declaration | player-decl \| character-decl \| select-decl \| actor-decl \| item-decl \| page-decl \| option-decl |
+| declaration | player-decl \| character-decl \| select-decl \| actor-decl \| item-decl \| page-decl \| option-decl \| look-decl |
 | player-decl | `"player"` STRING { char-opt } |
 | character-decl | `"character"` STRING { char-opt } |
-| char-opt | `class=`value \| `level=`INTEGER \| `species=`value \| `sex=`sexvalue |
+| char-opt | `class=`value \| `level=`INTEGER \| `species=`value \| `sex=`sexvalue \| `look=`BINDING (a look, §5.8) |
+| look-decl | `"look"` BINDING propval { propval } (1–48 property values, §5.8) |
+| propval | property `=` pvalue (one token) |
+| property | LABEL \| `pid:`INTEGER`:`pkind |
+| pkind | `"bool"` \| `"int"` \| `"int64"` \| `"float"` \| `"enum"` \| `"bitfield32"` \| `"bitfield64"` \| `"did"` \| `"string"` \| `"instance"` \| `"colour"` |
+| pvalue | `"yes"` \| `"no"` \| INTEGER \| DECIMAL \| STRING \| ELEMENT \| LABEL { `"\|"` LABEL } \| COLOUR \| `"none"` |
 | sexvalue | INTEGER \| `"m"` \| `"f"` (§5.1) |
 | select-decl | `"select"` BINDING `"="` family { filter } count [ `seed=`INTEGER ] |
 | family | one keyword of §8.2, or `"did"` hex-list |
@@ -417,15 +432,18 @@ inside the file wins over them. `FileTooLarge` is checked before anything else.
   gender values of the race table's gender entries (`RaceTable_GenderType`, `appearance.md`
   §2.1). The resolver does this (`enum_value`, §8.6); `tessera-net` holds no such values. With
   no install a label or `m`/`f` stays unresolved and the detail is absent. Numbers pass
-  through.
+  through. `look=$l` names a look (§5.8); its resolved entries, when there is at least one,
+  are a detail too (`CharacterInfo.look`).
 - After `Connected`, the feed sends one `CharacterInfo` (§9.2) per declared character with at
   least one detail that has a value (a number, or a label or `m`/`f` that resolved), in
   declaration order; a character whose details are all unresolved gets none. These lines are
   pre-world output (§3.3) and are logged as `pre`.
 - On world entry with the player character: when species and sex are both known, the feed
-  sets the player's base appearance to `Appearance::new(Body::Character { species, sex })`,
-  sent by the sandbox as its usual `AppearanceChanged`. Equipment added later updates it
-  (§6.1 `equip`).
+  sets the player's base appearance to `Appearance::new(Body::Character { species, sex })`
+  with the character's resolved look (§5.8; none when it has no look or none resolved), sent
+  by the sandbox as its usual `AppearanceChanged`. Equipment added later updates it
+  (§6.1 `equip`). The character entered may also be one an `accept-character` step added
+  (§6.1); its details and look are those of that step.
 - The player's entity is the sandbox's own player id; logs write it as `player`.
 
 <a id="s5-2"></a>
@@ -520,8 +538,11 @@ invalid or in another region. A valid `move` gives an unplaceable actor a positi
   0 … 10^15, set (never added) by steps.
 - **Player appearance**: the base appearance (§5.1, or the client's `avatar`, §3.2) plus, in
   ascending equipment slot order, one `Equipped::new(did)` per item in the equipment
-  container whose ref is a record, at most 32. Every change of that list emits
-  `AppearanceChanged` for the player. Without a base appearance (neither species and sex nor
+  container whose ref is a record, at most 32, each with `slot` = its equipment slot when
+  that slot is 1 … 64 (a data slot key, `property-system.md` §7.3) and no slot otherwise
+  (§9.1; decision 0025 D3). The client half places a held item by its slot when one is
+  given (`character-panels.md` §7). Every change of that list emits
+  `AppearanceChanged` for the player (in an overlay run §12.5.4 decides instead). Without a base appearance (neither species and sex nor
   an avatar) no `AppearanceChanged` is emitted, since an `Appearance` needs a `Body`; the
   equipment list is still tracked, and the first base appearance would include it.
 
@@ -556,6 +577,66 @@ which max to repeat). Each piece of state follows the events the feed itself emi
 and generic answers alike (for example a quickslot's content is the one of the last
 `QuickslotChanged` the feed emitted for that slot); a command the feed does not answer changes
 nothing.
+
+<a id="s5-8"></a>
+### 5.8 Property values and looks (revision 4, decision 0025 D2, D5)
+
+**Property values.** A token `PROPERTY=VALUE` names one data property and a scripted value
+for it. It appears in `look` declarations and in the `stat` and `item-property` steps (§6.1).
+
+`PROPERTY` is one of:
+
+- `@Label`: a name of the property dictionary (`property-system.md` §2.1). The resolver
+  returns the property's ID and value kind (`property`, §8.6). With no install, or for a name
+  the dictionary does not have, it stays unresolved (a `label` note with attribute
+  `property`, with an install only).
+- `pid:N:KIND`: the property ID *N* (1 … 4,294,967,295; 0 is `OutOfRange`) with its kind
+  written out. With an install the resolver checks it (`property_by_id`, §8.6): an ID the
+  dictionary does not have gives an `unknown` note, another kind a `mismatch` note, and the
+  value is dropped. With no install, *N* and `KIND` are taken as written.
+
+**Kinds** (Tessera's `PropertyKind`; the resolver maps the dictionary's type code of
+`property-system.md` §3 to it):
+
+| Kind | Type code | Value forms | Range and rule |
+|---|---|---|---|
+| `bool` | 21 | `yes`, `no` | — |
+| `int` | 15 | INTEGER | −2^31 … 2^31 − 1 |
+| `int64` | 19 | INTEGER | −2^63 … 2^63 − 1 |
+| `float` | 9 | INTEGER or DECIMAL | Finite, \|v\| ≤ 10^9; converted as §4.2 (nearest `f64`, then nearest `f32`) |
+| `enum` | 8 | INTEGER, or one LABEL | 0 … 2^32 − 1; a label resolves through the mapper the dictionary names for that property (`enum_value` with context `PropertyKey`, §8.6) |
+| `bitfield32` | 18 | INTEGER (the mask), or LABEL { `\|` LABEL } | Mask 0 … 2^32 − 1; each label's key *k* must be 1 … 32 and sets bit *k* − 1 (`property-system.md` §7.3) |
+| `bitfield64` | 14 | as `bitfield32` | Mask 0 … 2^64 − 1; keys 1 … 64 |
+| `did` | 20 | ELEMENT, or a hexadecimal INTEGER | 0 … 2^32 − 1; an element gives its record's `DataId` (a missing element drops the value) |
+| `string` | 1 | STRING | At most 256 bytes; in a look 0 … 128 bytes of U+0021–U+007E only |
+| `instance` | 7 | INTEGER | 0 … 2^64 − 1; not allowed in a look |
+| `colour` | 16 | COLOUR (`rgba:R,G,B,A`, §4.2) | Each component 0–255 |
+| (unsupported) | every other code | — | The value is dropped with an `unsupported` note |
+
+`none` as the value clears the property (`stat`, `item-property`); it is not allowed in a look.
+
+**Checks.** With `pid:N:KIND` the kind is known when parsing: a value form that does not fit
+the kind, and in a `look` the value `none`, the kind `instance` or a string outside the look
+rule, is `BadValue` at the token; a number outside its kind's range is `OutOfRange` at the
+token. With `@Label` the kind is known only after resolution: a value that does not fit it
+(form or range) is dropped with a `mismatch` note. Labels inside a value resolve like other
+labels (§8.6 item 6; unresolved: the value is dropped, with a `label` note of attribute
+`value` when an install is present). **Dropped** means: a `stat` or `item-property` step is
+a skip when it runs (counted, §10.4); a look entry is left out of its look.
+
+**Looks.** `look $l PROPVAL { PROPVAL }` declares a look of 1–48 property values (a 49th is
+`LimitExceeded(look)` at that token; at most 64 look bindings, `LimitExceeded(looks)`). A
+look is named by `look=$l` on `player`, `character` and `accept-character` (§6.1) and on the
+input form `create-character` (§7.7). Resolution makes each look canonical: the entries
+whose property and value resolved, sorted by ascending property ID; of two entries with the
+same property ID the later one in the line is kept and the earlier one dropped with a
+`duplicate` note; when the encoded size (the `Look` structure of `tessera-protocol.md` §5.3:
+one count byte, then per entry a 4-byte ID and the tagged value) exceeds 768 bytes, entries
+are removed from the highest property ID down until it fits, with one `look` note giving how
+many were cut. A look with no entry left is absent.
+
+The feed derives no value: the dictionary tells the client only which kind a labelled
+property has, and every value is the one written in the file (decision 0024 §4).
 
 ---
 
@@ -603,11 +684,21 @@ otherwise).
 | `wallet` | `coin N` or `REF N` | `WalletChanged` |
 | `character` | (declaration, §5.1) | `CharacterInfo` after `Connected` |
 | `refuse-character` | `STRING TEXT` (only in `on create-character` triggers) | `CharacterRefused` |
-| `accept-character` | `STRING [class=…] [level=…] [species=… sex=…]` (only in `on create-character`) | `CharacterInfo` for the new entry; the name joins the list for `EnterWorld` |
+| `accept-character` | `STRING [class=…] [level=…] [species=… sex=…] [look=($l\|asked)]` (only in `on create-character`) | `CharacterInfo` for the new entry; the name joins the list for `EnterWorld`. `look=$l` gives it that look (§5.8); `look=asked` copies the look of the `CreateCharacter` command whose processing fired the trigger (none when that command carried none). The step's details are what world entry with that name uses (§5.1) |
+| `remove-character` | `STRING` (only in `on create-character` and `on delete-character` triggers) | `CharacterRemoved` (§9.2); the name leaves the list, so `EnterWorld` with it then fails like an unknown name. A name not in the list → skip |
+| `stat` | `ENTITY PROPVAL` (§5.8) | `PropertyChanged { entity, property, value }` (§9.2); `VALUE` `none` → `value` none. A dropped value (§5.8) → skip |
+| `item-property` | `$item PROPVAL` (§5.8) | `ItemProperty { item, property, value }` (§9.2), whether or not the item is in a container; `none` → `value` none. A dropped value → skip |
 
 `slot=VALUE` for `equip` is a number (0 … 65,535) or a label resolved at resolution time
 through the mapper the property dictionary names for `Inventory_DefaultSlot` (`enum_value`,
 §8.6); unresolved (no install, unknown label) → skip.
+
+**Character steps** (§7.5) are `accept-character`, `refuse-character` and `remove-character`;
+only they may stand in `on create-character` and `on delete-character` bodies, and
+`accept-character` and `refuse-character` only in `on create-character` bodies (another
+character step there is `NotAllowedHere`). `stat` and `item-property` are ordinary steps (not
+before world entry). The client keeps the properties the session reports per entity and per
+item, at most 1,024 each (§9.5).
 
 <a id="s6-2"></a>
 ### 6.2 Targeting, skills and combat
@@ -887,7 +978,7 @@ matches anything explicitly; `none` matches an absent value.
 | `friend [STRING]`, `unfriend`, `ignore-player`, `unignore` | list commands | |
 | `choose-travel [entry=N]`, `join-instance [entry=N]`, `leave-instance`, `dismount` | world commands | |
 | `train [entry=N]`, `slot-trait [N]`, `craft [REF]` | progression commands | |
-| `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | |
+| `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | The body may hold only character steps (§6.1) |
 | `close KIND` | `CloseWindow` of that kind | |
 
 A trigger on `create-character` or `delete-character` fires before world entry; its body
@@ -945,7 +1036,8 @@ otherwise), so every line that parses can be built into its command: option numb
 `train`) 1 … 1,024; quickslot numbers 1 … 1,024; trait slots 0 … 1,024; container slots
 (`move-item … slot=`) 0 … 65,535; `equip … slot=` 0 … 65,535 or a label; quantities (`qty=` of
 `buy`, `sell`, `offer-trade`; `split` *Q*) 1 … 10^9; `craft … qty=` 1 … 65,535 (the width of
-`Craft.quantity`); `offer-trade coin=` 0 … 10^15.
+`Craft.quantity`); `offer-trade coin=` 0 … 10^15; `create-character … nationality=` 0 … 2^32 − 1
+or a label.
 
 **The driver's mirror.** Forms that refer to the client's view (a quickslot's content, the
 current target, the open window of a kind, the page it shows) read the driver's mirror, which
@@ -970,7 +1062,7 @@ both see the state before that frame's poll.
 | `join-channel STRING`, `leave-channel STRING`, `invite STRING`, `answer-invite accept\|decline`, `leave-fellowship`, `kick STRING`, `set-leader STRING`, `open-trade ENTITY`, `offer-trade ($item [qty=Q]\|coin=N)`, `trade-ready on\|off`, `friend STRING`, `unfriend STRING`, `ignore-player STRING`, `unignore STRING` | social commands |
 | `choose-travel N`, `join-instance N`, `leave-instance`, `dismount` | world commands |
 | `train N`, `slot-trait N (REF\|none)`, `craft REF [qty=Q]` | progression commands |
-| `create-character STRING [class=VALUE] [species=VALUE sex=VALUE]`, `delete-character STRING` | character commands; `at pre` only. `CreateCharacter.class` is the class value, none when `class=` is absent or its label unresolved; `appearance` is `Appearance::new(Body::Character { species, sex })` when both resolve, otherwise none (§9.4). Unresolved labels here do not skip the line |
+| `create-character STRING [class=VALUE] [species=VALUE sex=VALUE] [nationality=VALUE] [look=$l]`, `delete-character STRING` | character commands; `at pre` only. `CreateCharacter.class` is the class value, none when `class=` is absent or its label unresolved; `nationality` likewise (a number, or a label resolved through the mapper the dictionary names for `NationalityTable_Nationality`, `player-character.md` §6.2; `enum_value` context `Nationality`); `appearance` is `Appearance::new(Body::Character { species, sex })` with the resolved look of `$l` (if any) when species and sex both resolve, otherwise none, and then the look is not sent (§9.4). Unresolved labels here do not skip the line |
 | `close KIND` | `CloseWindow` |
 
 An input line whose target window, slot, page or element does not exist, whose label or
@@ -1155,7 +1247,9 @@ adapter over `tessera-gamedata`; synchronous, called before the session starts, 
 |---|---|---|
 | `has_install` | — | whether data is available |
 | `candidates` | a `SelectorQuery` (family, filters with labels still unresolved, the resolved lists of earlier bindings for reference filters), a candidate limit (1,048,576), an output vector | appends `Candidate { did: DataId, row: u32, location: Option<Location>, anchor: Option<Anchor> }` and returns a `CandidateOutcome { status, unmatched_labels }`. `status` is `Ready`, `Truncated` (more candidates exist than the limit), `NoInstall`, `Unsupported` (family not available), or `Failed(reason)` (the install as a whole could not be opened or read). `unmatched_labels` lists the labels of this query that matched nothing, as (attribute, label) pairs in the order the labels appear in the `select` line, for notes (empty without an install); the result carries them, so no hidden state links two calls. A record that fails to decode is not a candidate (the resolver may log it); it does not make the call fail. When it truncates, the resolver MUST return the first *limit* candidates in canonical order (§8.4), so the result does not depend on its iteration order |
-| `enum_value` | a label context (`Class`, `Species`, `Sex`, `EquipSlot`, `DamageType`) and a label (`@Name`, or `m` / `f` for `Sex`) | `Option<u32>`: the value through the mapper or table of §5.1, §6.1, §6.2 (`AdvTable_Class`, `RaceTable_Race`, `RaceTable_GenderType`, `Inventory_DefaultSlot`, `Effect_DamageType`); `None` without an install or for an unknown label |
+| `enum_value` | a label context (`Class`, `Species`, `Sex`, `EquipSlot`, `DamageType`, `Nationality`, or `PropertyKey(property ID)`) and a label (`@Name`, or `m` / `f` for `Sex`) | `Option<u32>`: the value through the mapper or table of §5.1, §6.1, §6.2, §7.7 (`AdvTable_Class`, `RaceTable_Race`, `RaceTable_GenderType`, `Inventory_DefaultSlot`, `Effect_DamageType`, `NationalityTable_Nationality`), or for `PropertyKey` the key of the label in the enum mapper the dictionary names for that property (type codes 8, 14, 18; `property-system.md` §2.2 `data`); `None` without an install, for an unknown label, or for a property without such a mapper |
+| `property` | a label (`@Name`) | `Option<PropertyInfo { id: u32, kind: PropertyKind }>`: the dictionary's property of that name and its kind (§5.8; `Unsupported` for the other type codes); `None` without an install or for an unknown name |
+| `property_by_id` | a property ID | `Option<PropertyInfo>` as above; `None` without an install or for an ID the dictionary does not define |
 | `display_name` | a `DataId` and, for table families, the row | `Option<String>`: the record's display name or, for a `place` element, the table entry's name; at most 64 bytes, cleaned with `sanitize_text` |
 
 **Resolution, in declaration order of the `select` lines:**
@@ -1172,16 +1266,27 @@ adapter over `tessera-gamedata`; synchronous, called before the session starts, 
    the step's line.
 6. Actor `name(…)` texts are fetched with `display_name` (with the row for a table family);
    labels and `m` / `f` values outside selectors (`class=`, `species=`, `sex=`, `slot=`,
-   `type=`, in declarations, steps and input lines) are resolved with `enum_value`, in line
-   order; each unknown label adds a `label` note (none without an install).
+   `type=`, `nationality=`, in declarations, steps and input lines) are resolved with
+   `enum_value`, in line order; each unknown label adds a `label` note (none without an
+   install).
+7. Property values (§5.8), in line order and, within a line, token order: the property with
+   `property` or `property_by_id` (with an install), then the value's labels with
+   `enum_value` (`PropertyKey`), then the form and range check against the kind. Each value
+   dropped for a reason other than an unresolved label adds a `property` note
+   (`unknown`, `mismatch` or `unsupported`; none without an install, where `pid:` forms are
+   taken as written and `@Label` forms stay unresolved silently). Then each look is made
+   canonical (§5.8), adding `duplicate` `property` notes and a `look` note when cut.
 
 **Notes** are deterministic, in this order, and go to the canonical log (§10.2): one
-`resolve` line per selector in declaration order, then the `label`, `fanout` and `window`
-notes in line order (within a line, in the order of the tokens they concern).
+`resolve` line per selector in declaration order, then the `label`, `fanout`, `window`,
+`property` and `look` notes in line order (within a line, in the order of the tokens they
+concern; a look's `duplicate` and cut notes after the notes of its tokens).
 
 The `ResolvedScenario` that `tessera-net` receives holds `DataId`s, rows, locations, the
-scripted values and literal text, the enum values of item 6 and the resolved names of item 6.
-It holds no property values, no record content and no other install text.
+scripted values and literal text, the enum values of item 6, the resolved names of item 6,
+and the property IDs, kinds and canonical looks of item 7 (whose values are the scripted
+ones). It holds no property value read from the install, no record content and no other
+install text.
 
 <a id="s8-7"></a>
 ### 8.7 No install
@@ -1189,8 +1294,9 @@ It holds no property values, no record content and no other install text.
 With no install (`--no-data`, or no install found and none required), the client passes the
 empty resolver: `has_install` false, `candidates` returns `NoInstall`. Every selector
 resolves empty; every element is missing; steps that need one are skipped; actors without a
-resolvable body spawn as `EntitySpawned`; literal refs and texts work unchanged. Synthetic
-scenarios therefore play fully. A scenario with `requires install` fails with
+resolvable body spawn as `EntitySpawned`; literal refs and texts work unchanged; property
+values written `pid:N:KIND` are taken as written and `@Label` ones stay unresolved (§5.8).
+Synthetic scenarios therefore play fully. A scenario with `requires install` fails with
 `InstallRequired` (exit 4).
 
 ---
@@ -1227,6 +1333,12 @@ names (§10) are the inner variant names, unique across groups.
 | `Price` | `{ coin: u64, items: Vec<(Ref, u32)> }` (at most 8 item costs) |
 | `Side` | `Own` \| `Peer` |
 | `ChatChannel` (existing) | gains `Fellowship` and `Named { name: String }` |
+| `PropertyKind` | `Bool` \| `Int` \| `Int64` \| `Float` \| `Enum` \| `Bitfield32` \| `Bitfield64` \| `Did` \| `String` \| `Instance` \| `Colour` \| `Unsupported` (§5.8) |
+| `PropertyValue` | `Bool(bool)` \| `Int(i32)` \| `Int64(i64)` \| `Float(f32)` (finite) \| `Enum(u32)` \| `Bitfield32(u32)` \| `Bitfield64(u64)` \| `Did(DataId)` \| `String(String)` (≤ 256 bytes, no control characters) \| `Instance(u64)` \| `Colour([u8; 4])` (R, G, B, A) |
+| `LookEntry` | `{ property: u32, value: PropertyValue }`, `property` ≠ 0, `value` not `Instance`, a `String` 0–128 bytes of U+0021–U+007E |
+| `Look` | 1–48 `LookEntry` with strictly ascending `property`, encoded size ≤ 768 bytes (`tessera-protocol.md` §5.3) |
+| `Equipped` (existing, `model.rs`) | gains `slot: Option<u8>`: the data's equipment slot key 1 … 64 that holds the item, when known (decision 0025 D3) |
+| `Appearance` (existing, `model.rs`) | gains `look: Option<Box<Look>>` (decision 0025 D2); `Appearance::is_valid` also checks the `Look` and slot rules above |
 
 Numbers in events are the scripted values: `f32` for vitals and amounts (finite, within the
 ranges of §6), integers elsewhere.
@@ -1238,7 +1350,9 @@ Fields are listed in log order (§10.3).
 
 | Group | Variant | Fields |
 |---|---|---|
-| Character | `CharacterInfo` | `name: String`, `body: Option<Body>`, `class: Option<u32>`, `level: Option<u32>` |
+| Character | `CharacterInfo` | `name: String`, `body: Option<Body>`, `class: Option<u32>`, `level: Option<u32>`, `look: Option<Box<Look>>` |
+| | `CharacterRemoved` | `name: String` |
+| | `PropertyChanged` | `entity: EntityId`, `property: u32`, `value: Option<PropertyValue>` (none: cleared) |
 | | `CharacterRefused` | `name: String`, `reason: Text` |
 | | `LevelChanged` | `entity: EntityId`, `level: u32` |
 | Inventory | `ContainerSize` | `container: Container`, `slots: u16` |
@@ -1248,6 +1362,7 @@ Fields are listed in log order (§10.3).
 | | `ItemRemoved` | `item: ItemId` |
 | | `ItemCondition` | `item: ItemId`, `current: u32`, `max: u32` |
 | | `WalletChanged` | `currency: Currency`, `amount: u64` |
+| | `ItemProperty` | `item: ItemId`, `property: u32`, `value: Option<PropertyValue>` (none: cleared) |
 | Combat | `TargetChanged` | `entity: EntityId`, `target: Option<EntityId>` |
 | | `VitalChanged` | `entity: EntityId`, `vital: Vital`, `current: f32`, `max: f32` |
 | | `CombatState` | `entity: EntityId`, `in_combat: bool` |
@@ -1320,7 +1435,7 @@ Fields are listed in log order (§10.3).
 
 | Group | Variant | Fields |
 |---|---|---|
-| Character | `CreateCharacter` | `name: String`, `appearance: Option<Box<Appearance>>`, `class: Option<u32>` (the creation screen fills both; the input script may leave them out, §7.7) |
+| Character | `CreateCharacter` | `name: String`, `appearance: Option<Box<Appearance>>` (with the look, if any), `class: Option<u32>`, `nationality: Option<u32>` (the creation screen fills all three; the input script may leave them out, §7.7) |
 | | `DeleteCharacter` | `name: String` |
 | Inventory | `MoveItem` | `item: ItemId`, `to: ItemPlace` |
 | | `EquipItem` | `item: ItemId`, `slot: Option<u16>` |
@@ -1360,25 +1475,82 @@ skill.
 <a id="s9-5"></a>
 ### 9.5 Session rules for the new variants
 
-- **States.** Character events are surfaced in `Connected`, `EnteringWorld` and `InWorld`,
-  and in `Closing` by the chat rule (surfaced when the session was `Connected` or `InWorld`
-  before `Disconnect`, stale otherwise); every other new event follows the existing entity
-  rule (surfaced in `InWorld`, stale in `Closing` after entry, invalid before). Character
-  commands are allowed in `Connected`; every other new command in `InWorld`.
+- **States.** Character events (`CharacterInfo`, `CharacterRefused`, `CharacterRemoved`,
+  `LevelChanged`) are surfaced in `Connected`, `EnteringWorld` and `InWorld`, and in `Closing`
+  by the chat rule (surfaced when the session was `Connected` or `InWorld` before
+  `Disconnect`, stale otherwise); every other new event, `PropertyChanged` and
+  `ItemProperty` included, follows the existing entity rule (surfaced in `InWorld`, stale in
+  `Closing` after entry, invalid before). Character commands are allowed in `Connected`;
+  every other new command in `InWorld`.
 - **Validation of commands** (`NetError::InvalidCommand` otherwise): names pass
   `is_valid_name` (the `Named` chat channel's name included); `Ref::Literal` 1–64 bytes
   without control characters; quantities 1 … 10^9 where a command names an item or entry
   (`OfferTrade` without an item: 0); `Price` item lists ≤ 8; a `CreateCharacter` appearance,
-  when present, valid (`Appearance::is_valid`).
+  when present, valid (`Appearance::is_valid`, which covers the look and the slots, §9.1).
 - **Cleaning of events**: as for existing text, inbound strings are cut and cleaned
-  (`MAX_CHAT_LEN` for `Text::Literal` and chat, `MAX_NAME_LEN` for names and literal refs);
-  non-finite vitals, amounts and locations make the event invalid (dropped with a warning,
-  like other invalid events).
-- **Other backends.** The test-server backend refuses the new commands with
+  (`MAX_CHAT_LEN` for `Text::Literal` and chat, `MAX_NAME_LEN` for names and literal refs,
+  256 bytes for `PropertyValue::String`); non-finite vitals, amounts, locations and property
+  floats, and a look or slot that breaks §9.1, make the event invalid (dropped with a
+  warning, like other invalid events).
+- **Client-side bound.** The client half keeps the properties reported by `PropertyChanged`
+  and `ItemProperty`, at most 1,024 per entity and 1,024 per item; a report that would add a
+  further property is ignored with a warning (rate-limited), a report for a property already
+  kept replaces it, and `value` none removes it. They are dropped with their entity or item.
+- **Other backends.** The test-server backend follows §9.7: it takes `CreateCharacter` under
+  `character-screens.md` §7.1.1 and refuses every other new command with
   `NetError::InvalidCommand` (rule 5: its server has no gameplay). It also refuses `Chat` on
   the new channels `Fellowship` and `Named` with `NetError::InvalidCommand` until a minor
-  version of `tessera-protocol.md` gives them a wire form (rule 5 allows chat). The sandbox without a
-  scenario accepts and ignores them (debug log), so client panels can be opened offline.
+  version of `tessera-protocol.md` gives them a wire form (rule 5 allows chat). The sandbox
+  without a scenario answers `CreateCharacter` (§9.6) and accepts and ignores the other new
+  commands (debug log), so client panels can be opened offline. The overlay backend of
+  §12.5 routes the Inventory group to the feed and everything else to the test-server
+  backend.
+
+<a id="s9-6"></a>
+### 9.6 Plain sandbox: creating a character (revision 4, decision 0025 D5)
+
+Without a scenario the sandbox answers `CreateCharacter` itself, in `submit`, with a
+Tessera acknowledgement that applies no game rule (decision 0024 §2.4):
+
+1. If the command's name equals (byte for byte) a name of the sandbox's character list:
+   `CharacterRefused { name, reason: Text::Literal("A character with this name already
+   exists.") }`.
+2. Otherwise, if the list holds 64 names: `CharacterRefused { name, reason:
+   Text::Literal("The character list is full.") }`.
+3. Otherwise the name is appended to the list and the sandbox emits
+   `CharacterInfo { name, body: the appearance's body, class: the command's class, level:
+   None, look: the appearance's look }` (body and look none when the command carried no
+   appearance). The sandbox remembers the command's appearance for that name.
+
+On `EnterWorld` with such a name, the player's base appearance is the remembered appearance
+(look included) instead of the client's configured avatar; without a remembered appearance
+the configured avatar applies as before. The list and the appearances live in memory for
+the sandbox's lifetime only. `DeleteCharacter` stays accepted and ignored (the screens keep
+the delete button ghosted on this backend, `character-screens.md` §7.2). With a scenario the
+feed owns character answers (§7.5) and this rule does not run. Conformance: §14.10.
+
+<a id="s9-7"></a>
+### 9.7 Test-server backend (revision 4, decision 0025 D2, D4)
+
+The normative rule for `CreateCharacter` on the test-server (`remote`) backend is
+`character-screens.md` §7.1.1 (capability, command, `CharacterList` and
+`CharacterCreateFailed` answers, states); `tessera-protocol.md` Appendix A maps it. In
+addition:
+
+- **Look and nationality.** When the negotiated minor version is 1 or higher
+  (`tessera-protocol.md` §3.1) the backend sends the appearance's look with `CharacterCreate`
+  and maps the `looks` of `LoginOk` and `CharacterList` and the `look` of `WorldEnter`,
+  `EntityCreate` and `EntityAppearance` into the events' `Appearance.look` and
+  `CharacterInfo.look`. At minor 0 it sends no look (the creation screen then keeps the
+  choices in its own settings, `character-screens.md` §7.1) and every received look is
+  none. `class` and `nationality` are never sent (`server-content.md` §7).
+- **Held-item slots.** At minor 1 or higher `Equipped.slot` travels both ways; at minor 0 the
+  backend sends no slot and receives none.
+- **Character list at login.** After `Connected` (from `LoginOk`) the backend emits one
+  `CharacterInfo { name, body: Some(the entry's body), class: None, level: None, look: the
+  entry's look }` per entry, in the list's order, so the selection screen can show each
+  character's figure.
+- `DeleteCharacter` and every other new command: refused as in §9.5.
 
 ---
 
@@ -1422,11 +1594,15 @@ for standard output):
 4. `title STRING` if the scenario has a title
 5. Resolution notes (§8.6), one per line:
    `resolve $NAME line=L family=F requested=(N|all) candidates=C got=G [note=(no-install|unsupported|truncated|short)]`,
-   then `label line=L attribute=A label=@X`, `fanout line=L cut=N` and `window line=L cut=N`.
+   then `label line=L attribute=A label=@X`, `fanout line=L cut=N`, `window line=L cut=N`,
+   `property line=L property=P note=(unknown|mismatch|unsupported|duplicate)` (*P* the
+   property as written: `@Name`, or `pid:0x` and 8 upper-case hexadecimal digits) and
+   `look line=L cut=N`.
    *C* is the number of candidates after sorting, deduplication and the cap; *G* the length
    of the stored list; *N* in a cut note the number of elements left out; `attribute` is the
-   filter attribute, or the option key (`class`, `species`, `sex`, `slot`, `type`) outside
-   selectors, and `label` is the label as written (`@Name`, or `m` / `f`). At most one
+   filter attribute, or the option key (`class`, `species`, `sex`, `slot`, `type`,
+   `nationality`) outside selectors, `property` for the property label of a property value
+   or `value` for a label inside its value (§5.8), and `label` is the label as written (`@Name`, or `m` / `f`). At most one
    `note=` is written, the first that applies in the order `no-install`, `unsupported`,
    `truncated`, `short` (`short`: *G* < the requested *N*); `family=did` for the `did`
    family.
@@ -1471,23 +1647,29 @@ an absent optional value is `none`.
 | Boolean | `yes` / `no` |
 | Enum values of §9.1, `EntityKind`, `LocationCause` | lower case, words joined by `-` (`non-player`, `critical`, `quest-offer` …), `Vital::Resource(r)` as `resource:REF`, `Shortcut` as `skill:REF` / `item:ITEM`, `Currency` as `coin` / `item:REF`, `ItemPlace` as `CONTAINER:SLOT` (`backpack:0`, `equipment:12`, `shared:3`) |
 | `Body` | `character:SPECIES:SEX` or `object:0x…` |
-| `Appearance` in a command (`CreateCharacter`) | its `Body` form; `none` when absent |
+| `Appearance` in a command (`CreateCharacter`) | its `Body` form; `none` when absent (its look is written as the command's `look` field) |
+| Property ID | `0x` and 8 upper-case hexadecimal digits |
+| `PropertyValue` | `bool:yes` / `bool:no`, `int:N`, `int64:N`, `float:F` (as an `f32` amount), `enum:N`, `bitfield32:0x` and 8 upper-case hexadecimal digits, `bitfield64:0x` and 16, `did:0x…` (a `DataId`), `string:"…"`, `instance:N`, `colour:R,G,B,A` (decimal); an absent value `none` |
+| `Look` | `[` entries `{property=0x… value=…}` separated by `,` `]` in ascending property order; an absent look `none` |
 | `Price` | `coin:N` followed by `+REF*N` per item cost |
 | Lists | `[` items separated by `,` `]`; a structured item is `{field=value …}` with single spaces |
 
 Existing events: `Connected characters=[…]`; `WorldEntered entity name at facing`;
 `EntitySpawned entity kind name at facing`; `EntityCreated entity kind name class at facing
-body scale equipment idle`; `EntityMoved entity at facing velocity`; `AppearanceChanged entity
-body scale equipment idle`; `LocationReport entity at facing anchor cause` — written in that
-order, where `at` is a position (`Transform`) or `Location` as the event holds, `anchor` is
-`R:X:Y:CELL` (all decimal) or `none`, `equipment` a list of `0x…` (dyes and stowing
-omitted), `idle` a decimal or `none`; `EntityDespawned entity`; `ChatMessage channel sender
+body scale equipment idle look`; `EntityMoved entity at facing velocity`; `AppearanceChanged
+entity body scale equipment idle look`; `LocationReport entity at facing anchor cause` —
+written in that order, where `at` is a position (`Transform`) or `Location` as the event
+holds, `anchor` is `R:X:Y:CELL` (all decimal) or `none`, `equipment` a list of `0x…`, each
+followed by `@SLOT` (decimal) when the entry has a slot (dyes and stowing omitted), `idle` a
+decimal or `none`, `look` as above (revision 4 added `look` and `@SLOT`); `EntityDespawned entity`; `ChatMessage channel sender
 text` with `channel` one of `say`, `yell`, `emote`, `system`, `fellowship`, `tell:"…"`,
 `named:"…"`; `Disconnected reason` with `reason` one of `client-requested`,
 `server-closed:"…"`, `timed-out`, `transport-failed:"…"`. Existing commands: `Connect`,
 `EnterWorld character`, `Teleport destination`, `Chat channel text`, `Disconnect`, where
 `destination` is `location(LOC,H)`, `ground(LOC,H)`, `anchored(LOC,H,R:X:Y:CELL)` or
-`named("…")`, *LOC* a `Location` and *H* a heading as above. A variant added to
+`named("…")`, *LOC* a `Location` and *H* a heading as above. `CreateCharacter` is written
+`name appearance class nationality look`, `look` being the look of its appearance (`none`
+without an appearance or a look). A variant added to
 `Event`, `Command` or one of their groups later MUST be given a log form in this table by the
 revision that adds it; until then the log writer writes its name followed by `unlogged`.
 
@@ -1496,7 +1678,7 @@ revision that adds it; until then the log writer writes its name followed by `un
 
 | Counter | Counts |
 |---|---|
-| `skipped` | steps skipped by the feed (missing element, no active cast or instance, no free or usable slot, an item already placed, the effect-instance cap, window not open) |
+| `skipped` | steps skipped by the feed (missing element, no active cast or instance, no free or usable slot, an item already placed, the effect-instance cap, window not open, a dropped property value, `remove-character` of a name not in the list) |
 | `input-skipped` | input lines the driver could not send (§7.7) |
 | `dropped` | agenda entries discarded at the end or beyond the horizon |
 | `spilled` | events held over by the per-tick cap (§7.4), each counted once, in the tick it was first held over |
@@ -1559,6 +1741,14 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | Unprocessed commands | 1,024 | `submit` returns `NetError::SendQueueFull` (§7.4) |
 | Characters in the list | 64 (declared; `accept-character` beyond it is skipped) | `LimitExceeded(characters)` |
 | Window entry list (REFLIST) | 1,024 items; 32 for `trade-offer` | `LimitExceeded(entries)` |
+| Look bindings | 64 | `LimitExceeded(looks)` |
+| Property values per look | 48 | `LimitExceeded(look)` |
+| Encoded look | 768 bytes (cut from the highest property ID, with a note, §5.8) | — |
+| Property value strings | 256 bytes | `TooLong` |
+| Look strings | 0–128 bytes, only U+0021–U+007E | `BadValue` (`pid:` form) or a `mismatch` note (`@Label` form) |
+| Property value numbers | per kind (§5.8): float finite with \|v\| ≤ 10^9, integers within the kind | `OutOfRange` (`pid:` form) or a `mismatch` note (`@Label` form) |
+| Properties kept by the client half | 1,024 per entity and 1,024 per item (§9.5) | further properties ignored with a warning |
+| Overlay `AppearanceSet` | one in flight, at least 250 ms apart, answer within 10 s (§12.5) | coalesced; a missing answer clears the in-flight mark with a warning |
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the documentation review of P0 and
 > recorded by the P0 exit verifier, 2026-10-09) No row bounds the size of the canonical log
@@ -1605,6 +1795,8 @@ columns count from 1; the column counts Unicode scalar values. The position is:
 | `UnclosedBlock`, `UnexpectedEnd`, `NestingTooDeep`, `NotAllowedHere` | §4.4, §7.5 |
 | `OutOfRange` | §11.1, §7.2 |
 | `LimitExceeded(which)` | §11.1 |
+| `BadValue` | a property value whose form does not fit its written kind, or that a look does not allow (§5.8) |
+| `NotAllowedInOverlay` | a setting, declaration, step, trigger pattern or input line outside the overlay subset, in an overlay run (§12.5.1) |
 
 Resolve errors (`InstallUnreadable`, `InstallRequired`, `ResolveLimit`) carry the line of the
 `select` concerned (line 0 for `InstallRequired`).
@@ -1627,7 +1819,7 @@ Two fuzz targets (appended to `fuzz/Cargo.toml` by the implementer of `crates/ne
 | Target | Input | Asserts |
 |---|---|---|
 | `net_scenario_parse` | arbitrary bytes as a scenario file | parse and static checks return `Ok` or a typed error; no panic; peak allocation within a fixed multiple of the input size |
-| `net_scenario_run` | a scenario file plus bytes that drive a synthetic resolver (candidate counts and DIDs) | resolution, then a headless run of at most 72,000 ticks with the input script; no panic, every limit of §11.1 honoured; the queued events never exceed 2,097,152 weight units (asserted after every tick), and the target runs within libFuzzer's default RSS limit (2,048 MB) on any input, which the weight limit and the per-push checks of §7.4 guarantee |
+| `net_scenario_run` | a scenario file plus bytes that drive a synthetic resolver (candidate counts and DIDs; since revision 4 also the answers of `property`, `property_by_id` and `enum_value`, kinds included); the target also applies the overlay check of §12.5.1 to every file that parses | resolution, then a headless run of at most 72,000 ticks with the input script; no panic, every limit of §11.1 honoured; the queued events never exceed 2,097,152 weight units (asserted after every tick), and the target runs within libFuzzer's default RSS limit (2,048 MB) on any input, which the weight limit and the per-push checks of §7.4 guarantee |
 
 ---
 
@@ -1639,7 +1831,7 @@ Two fuzz targets (appended to `fuzz/Cargo.toml` by the implementer of `crates/ne
 
 | Option | Meaning |
 |---|---|
-| `--scenario FILE` | Play FILE with the sandbox backend. Conflicts with `--server`, `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase`, `--ui-script` (both would drive the player's commands). Works with `--no-data` (empty resolver), `--game-dir`, `--spawn`, `--place`, `--heading`; `--screenshot` only with an install (§12.2). |
+| `--scenario FILE` | Play FILE with the sandbox backend; with `--server`, run it as an overlay over the test-server backend instead (§12.5). Conflicts with `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase`, `--ui-script` (both would drive the player's commands). Works with `--no-data` (empty resolver), `--game-dir`, `--spawn`, `--place`, `--heading` (not in overlay runs, where the server places the player); `--screenshot` only with an install (§12.2). |
 | `--scenario-log FILE` | Write the canonical log (§10) to FILE (`-` = standard output). Requires `--scenario`. |
 | `--scenario-input` | Windowed runs: also play the input script. Headless runs always play it. |
 
@@ -1775,6 +1967,121 @@ but its times follow the wall clock and are not normative.
 > that cannot be drained within 5 s of the session's end is incomplete (exit 5). Confirm
 > or change (a)–(c) and the `LogWrite` ending.
 
+<a id="s12-5"></a>
+### 12.5 Overlay runs: `--scenario` with `--server` (revision 4, decision 0025 D1)
+
+`tessera-client --scenario FILE --server CONNECT …` runs FILE as an **overlay**: the session's
+backend is the `OverlayBackend` of `tessera_net::scenario`, which wraps the test-server
+(`remote`) backend that the `--server` options build as without a scenario. The feed plays
+only the Character and Inventory groups for the local player. Login, the character list,
+character creation, world entry, movement, other entities, chat and teleports stay with the
+server, unchanged.
+
+<a id="s12-5-1"></a>
+#### 12.5.1 The overlay subset
+
+After parsing (§11.2) and before connecting, the client checks the file against this subset.
+The first statement outside it is `NotAllowedInOverlay` at its first token (at the entity
+token for `level` and `stat` with another entity), exit 3; a windowed run reports it the same
+way.
+
+| Part | Allowed |
+|---|---|
+| Settings | `title`, `tick`, `end-at`, `defaults`, `requires install` (not `enter`: the character is chosen on the server) |
+| Declarations | `select`, `item` (not `player`, `character`, `actor`, `page`, `option`, `look`) |
+| Steps | `bag`, `give`, `remove`, `quantity`, `equip`, `unequip`, `condition`, `wallet`, `item-property`; `level` and `stat` with the entity `player` only |
+| Blocks | `repeat`; `on` with the patterns `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item`; `input` |
+| Input lines | `at T` lines (not `at pre`) with the forms `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item` (target `player`, `current` or `none`) |
+
+<a id="s12-5-2"></a>
+#### 12.5.2 Routing and order
+
+- **Commands.** The Inventory group (`MoveItem`, `EquipItem`, `UnequipItem`, `SplitStack`,
+  `DestroyItem`, `UseItem`) goes to the feed, which processes it at its next tick (§7.4) with
+  the generic answers of §7.6 under `defaults on`. Every other command goes to the
+  test-server backend unchanged, which refuses the other new groups (§9.7).
+- **Events.** In each poll the overlay first polls the test-server backend and queues its
+  events, then lets the feed process its due ticks (at most 8, §7.1) and appends the feed's
+  output. The per-tick delivery caps of §7.4 apply to the feed's output only.
+- **Diagnostics.** `scenario_status()` and `scenario_counters()` as in §3.4, and
+  `appearance_shared()`: whether the server advertised `APPEARANCE_CHANGE`.
+
+<a id="s12-5-3"></a>
+#### 12.5.3 Clock and end
+
+- Virtual time 0 is the poll that delivers the server's `WorldEntered`; the feed processes
+  tick 0 in that poll, after the server's events. `now` is the frame time (windowed) or the
+  wall clock, the driver pacing one tick per frame (headless). The server's timing reaches
+  the log, so overlay logs are never normative and never committed (§10.5).
+- The end of the run (§7.3) follows the windowed rules: after `Complete` without `end-at`
+  triggers keep firing; after `end-at` or `Horizon` the feed answers no command (the overlay
+  drops Inventory-group commands with a debug log) and the session with the server goes on.
+- A run-time error of the feed (§11.3) stops the feed (status `Failed`); the session with the
+  server goes on in a windowed run, and a headless run writes the end line and exits 5.
+  When the server's session ends first, the feed stops and a headless run writes
+  `reason=error error=Disconnected line=0` and exits 5 (§12.2).
+
+<a id="s12-5-4"></a>
+#### 12.5.4 The player's look
+
+Let *B* be the appearance of the latest `AppearanceChanged` for the player that the server
+delivered (the first comes with `WorldEnter`), and *E* the feed's equipment list of §5.5
+(slots included). The **desired appearance** is *B* with its equipment replaced by *E*
+(body, scale, idle and look of *B* kept).
+
+With `APPEARANCE_CHANGE` advertised:
+
+1. The feed emits no `AppearanceChanged` for the player.
+2. The overlay marks the appearance **dirty** when *E* changes, and once when the first *B*
+   arrives if *B*'s equipment differs from *E* (so equipment stored on the server from an
+   earlier session is replaced by the scenario's). Nothing else marks it dirty.
+3. At the end of each poll (after the feed's ticks) it sends `AppearanceSet` with the
+   desired appearance (the backend leaves the look off the wire and sends slots only at
+   minor ≥ 1, §9.7) when the appearance is dirty, *B* is known, no `AppearanceSet` is in
+   flight, and at least 250 ms of wall-clock time have passed since the previous one; then it
+   clears dirty and marks one in flight. Several changes in
+   between are thus coalesced into the latest *E*.
+4. The next `AppearanceChanged` for the player from the server clears the in-flight mark
+   (the server answers every `AppearanceSet` with `EntityAppearance`,
+   `tessera-protocol.md` §6.2.17) and becomes the new *B*; it passes to the client half
+   unchanged, so the walker shows what the server holds. Without it within 10 s the mark is
+   cleared with a warning.
+5. A refused `AppearanceSet` (the server answers with the old appearance and a system line)
+   changes nothing in the feed and is not retried until *E* changes again. The inventory
+   panels show the feed's state; the worn look shows the server's.
+
+Without `APPEARANCE_CHANGE`: the feed emits `AppearanceChanged` for the player with the
+desired appearance whenever *E* changes and *B* is known, as the sandbox does (§5.5), and the
+overlay logs once at info level that other players will not see the change.
+
+Observers on the same server see the change as an `AppearanceChanged` of the player's entity
+(their backend maps `EntityAppearance`, `tessera-protocol.md` Appendix A). This is P1 exit
+criterion 3 (decision 0024).
+
+<a id="s12-5-5"></a>
+#### 12.5.5 Bounds and the server's rules
+
+- The server receives from an overlay run only what any client may send: `AppearanceSet`
+  with a body, scale, idle and at most 32 opaque item DIDs (with slots at minor ≥ 1), at most
+  one in flight and at most 4 per second, below the protocol's control budget
+  (`tessera-protocol.md` §13.1). Bags, items, quantities, conditions, wallet, levels, stats and
+  item properties stay in the client and are never sent (LEGAL.md §11.1 rule 5;
+  `server-content.md` §7).
+- `tessera-server` is unchanged: it links neither `tessera-net` nor the feed (§3.1, §15
+  invariant 1), and the server dependency check is unchanged.
+- Conformance: §14.9.
+
+> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) Readings the
+> implementation took where §12.5.4 is silent, for the spec owner to confirm or change:
+> (a) "*B*'s equipment differs from *E*" compares the item DIDs and slots in order, not the
+> dyes or the stowed flag (the feed's list carries none); (b) an `AppearanceSet` the server
+> backend refuses to queue (closed session, full queue) clears the dirty mark with a warning
+> and is not retried until *E* changes again, like a refused one (rule 5); (c) a run-time
+> error of the feed stops the feed without the `Disconnected` the sandbox would emit
+> (§12.5.3: the session with the server goes on); (d) the overlay sends the desired
+> appearance with its slots and the test-server backend's encoder leaves them off at minor 0
+> (§9.7), so the overlay itself never looks at the minor.
+
 ---
 
 <a id="s13"></a>
@@ -1789,14 +2096,21 @@ but its times follow the wall clock and are not normative.
    declarations, steps and input lines, `slot=` of `equip` and `type=` of `damage`/`heal`) are
    labels (`@Label`) that an Accepted
    spec already names, Tessera-defined keywords, or `m` / `f`; numeric enum keys stay in
-   local scenarios (§16). Container slot numbers (`give … slot=`, `unequip … slot=`,
+   local scenarios (§16). Since revision 4 the same holds for property values (§5.8): the
+   property is a dictionary label an Accepted spec names, never `pid:N:KIND`; a value of kind
+   `enum`, `bitfield32` or `bitfield64` is a label (numeric keys and masks are enum keys),
+   one of kind `did` an element, never a number, and other kinds take their literals
+   (booleans, numbers, strings, colours: scripted values, not keys); the `nationality=` of
+   `create-character` is a label too. Whether `pid:` forms may be committed
+   is part of the §16 owner question. Container slot numbers (`give … slot=`, `unequip … slot=`,
    `move-item … slot=`), quickslot and trait slot numbers, entry and option numbers are plain
    numbers, not enum values.
 3. **Local scenarios.** Scenarios that name DIDs the user picked, or that copy text from the
    install, stay local (git-ignored or outside the repository).
 4. **Logs.** Only `install none` logs of committed synthetic scenarios (§10.5).
-5. **Checks.** A test parses every committed scenario, rejects the `did` family and numeric
-   values in the enum positions of rule 2, and replays every committed log. Review uses the checklist of
+5. **Checks.** A test parses every committed scenario, rejects the `did` family, `pid:`
+   property forms and numeric values in the enum positions of rule 2 (the kind of a labelled
+   property is unknown without an install, so its value rule is a review item), and replays every committed log. Review uses the checklist of
    `server-content.md` §9.3 for text (no game names or text).
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
@@ -2055,6 +2369,21 @@ next line.
 | lines 2–4 `input`, `at 1s choose 17`, `end` | `OutOfRange` 3:14 (options 1 … 16, §7.7) |
 | lines 2–4 `input`, `at 1s craft "Stew" qty=70000`, `end` | `OutOfRange` 3:20 (`Craft.quantity` is `u16`, §7.7) |
 | lines 2–5 `end-at 0s`, `input`, `at 0s cancel-cast`, `end` | `OutOfRange` 4:4 (processed in tick 1, after `end-at`, §7.7) |
+| line 2 `at 0s stat player pid:0x7FFF0001:int=1.5` | `BadValue` 2:19 (a decimal for kind `int`, §5.8) |
+| line 2 `at 0s stat player pid:0x7FFF0001:int=2147483648` | `OutOfRange` 2:19 |
+| line 2 `at 0s stat player pid:0:int=1` | `OutOfRange` 2:19 (property ID 0) |
+| line 2 `at 0s stat player pid:0x7FFF0001:text=1` | `UnexpectedToken` 2:19 (unknown kind) |
+| line 2 `at 0s stat player pid:0x7FFF0001:colour=rgba:256,0,0,0` | `OutOfRange` 2:19 |
+| line 2 `look $l pid:0x7FFF0001:int=none` | `BadValue` 2:9 (`none` in a look) |
+| line 2 `look $l pid:0x7FFF0001:string="a b"` | `BadValue` 2:9 (a space in a look string) |
+| line 2 `look $l pid:0x7FFF0001:instance=1` | `BadValue` 2:9 (kind `instance` in a look) |
+| line 2 `look $l` followed by 49 tokens `pid:0x7FFF0001:int=1`, one space apart | `LimitExceeded(look)` 2:1017 (the 49th, §5.8) |
+| line 2 `at 0s remove-character "A"` | `NotAllowedHere` 2:7 (character steps only in pre-world bodies) |
+| lines 2–3 `on delete-character`, `+0s accept-character "A"` | `NotAllowedHere` 3:5 (`accept-character` only in `on create-character`, §6.1) |
+| lines 2–3 `on create-character`, `+0s stat player @Example_Stat=1` | `NotAllowedHere` 3:5 |
+| overlay run (§12.5.1), line 2 `actor $a kind=npc pos=0,0,0` | `NotAllowedInOverlay` 2:1 |
+| overlay run, lines 2–3 `on chat`, `end` | `NotAllowedInOverlay` 2:1 |
+| overlay run, lines 2–5 `item $i "Ring"`, `input`, `at pre destroy $i`, `end` | `NotAllowedInOverlay` 4:1 (no `at pre` lines) |
 
 <a id="s14-6"></a>
 ### 14.6 Vector E: inventory, generic answers, `move … over`, list entries, `end-at`
@@ -2156,7 +2485,9 @@ second targets an occupied slot and the third an item already placed: two skips 
 `at 0s` input is sent in frame 1, so *L* = 0.100 (§7.3): the run does not end at tick 0,
 where the agenda is already empty. The tell gets the feed's generic answer (§7.6). The
 trigger body is due at 0.150 and runs in tick 0.200; the cast's end counts from that tick,
-0.230, so it is emitted at 0.300 (§6.2), and the agenda is empty from then on.
+0.230, so it is emitted at 0.300 (§6.2), and the agenda is empty from then on. (Revision 4
+added the fields `look` to `CharacterInfo` and `nationality` and `look` to `CreateCharacter`,
+§10.3; nothing else in this vector changed.)
 
 ```text
 tessera-scenario-log 1
@@ -2165,10 +2496,10 @@ tick 100
 title "Vector F"
 pre > Connect
 pre Connected characters=["Testa","Bruni"]
-pre CharacterInfo name="Testa" body=none class=none level=5
-pre > CreateCharacter name="Cora" appearance=none class=none
-pre CharacterInfo name="Cora" body=none class=none level=1
-pre > CreateCharacter name="Dora" appearance=none class=none
+pre CharacterInfo name="Testa" body=none class=none level=5 look=none
+pre > CreateCharacter name="Cora" appearance=none class=none nationality=none look=none
+pre CharacterInfo name="Cora" body=none class=none level=1 look=none
+pre > CreateCharacter name="Dora" appearance=none class=none nationality=none look=none
 pre CharacterRefused name="Dora" reason="That name is taken."
 pre > EnterWorld character="Testa"
 0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
@@ -2181,6 +2512,126 @@ pre > EnterWorld character="Testa"
 0.300 CastEnded entity=player outcome=completed
 0.300 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0
 ```
+
+<a id="s14-8"></a>
+### 14.8 Vector G: looks, character removal, stats, item properties (revision 4)
+
+The property IDs below lie outside both ID families of the property dictionary
+(`property-system.md` MP4: below 0x10000000, or 0x1000xxxx), so they name no property of any
+install; the vector runs with no install, where `pid:` forms are taken as written (§5.8).
+
+```text
+tessera-scenario 1
+title "Vector G"
+tick 100ms
+look $face pid:0x7FFF0002:colour=rgba:200,150,100,255 pid:0x7FFF0001:float=0.25 pid:0x7FFF0003:string="80ff"
+player "Testa" look=$face
+character "Ward" level=3
+item $ring "Ring"
+at 0s give $ring
++0s item-property $ring pid:0x7FFF0010:string="Testa"
++0s stat player pid:0x7FFF0020:int=42
++0s stat player @Example_Stat=7
++0.1s stat player pid:0x7FFF0020:int=none
+on delete-character
++0s remove-character "Ward"
++0s remove-character "Nobody"
+end
+input
+at pre delete-character "Ward"
+at pre create-character "Cora" nationality=@Example_Nationality
+end
+```
+
+Expected log. "Testa" has a look and so a `CharacterInfo`, its entries sorted by property ID
+(§5.8); it has no species and sex, so no base appearance and no `AppearanceChanged` (§5.5).
+The deletion fires the trigger in `submit`: "Ward" is removed, "Nobody" is not in the list
+(a skip). The creation fires no trigger and gets no answer (a scenario owns character
+answers; §9.6 does not run); its nationality label stays unresolved without an install and
+writes no note (§8.6 item 6). `@Example_Stat` stays unresolved, so that `stat` step is a skip
+(§5.8). The last step clears the property at 0.100, after which the agenda is empty.
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector G"
+pre > Connect
+pre Connected characters=["Testa","Ward"]
+pre CharacterInfo name="Testa" body=none class=none level=none look=[{property=0x7FFF0001 value=float:0.25},{property=0x7FFF0002 value=colour:200,150,100,255},{property=0x7FFF0003 value=string:"80ff"}]
+pre CharacterInfo name="Ward" body=none class=none level=3 look=none
+pre > DeleteCharacter name="Ward"
+pre CharacterRemoved name="Ward"
+pre > CreateCharacter name="Cora" appearance=none class=none nationality=none look=none
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 ItemAdded item=$ring what="Ring" at=backpack:0 quantity=1
+0.000 ItemProperty item=$ring property=0x7FFF0010 value=string:"Testa"
+0.000 PropertyChanged entity=player property=0x7FFF0020 value=int:42
+0.100 PropertyChanged entity=player property=0x7FFF0020 value=none
+0.100 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0
+```
+
+<a id="s14-9"></a>
+### 14.9 Overlay cases (revision 4)
+
+Overlay runs are not deterministic as logs (§12.5.3); these cases state what the overlay MUST
+send and emit. They run with a **test double** of the test-server backend that advertises the
+capabilities given, negotiates the minor version given, delivers `WorldEntered` and the
+player's `AppearanceChanged` with the base appearance *B*₀ = Character 23/1, scale 1, no idle,
+no look, no items (unless a case says otherwise), and answers each `AppearanceSet` 50 ms later
+with an `AppearanceChanged` for the player carrying the appearance it accepted. The resolver
+is a synthetic one whose `did` family returns its listed DIDs (`install present`). Tick
+100 ms; the clock is the test's. Every case uses:
+
+```text
+tessera-scenario 1
+title "Overlay"
+tick 100ms
+select $gear = did 0x70001234,0x70005678 all
+item $sword $gear[0]
+item $shield $gear[1]
+at 0s give $sword
++0s give $shield
++0s equip $sword slot=17
++0s equip $shield slot=18
+at 0.1s unequip $shield
+at 0.2s equip $shield slot=18
+```
+
+| # | Double | Expected |
+|---|---|---|
+| O1 | `APPEARANCE_CHANGE`, minor 1 | At tick 0: the feed's `ItemAdded` and `ItemMoved` events, no `AppearanceChanged` from the feed, and one `AppearanceSet` with *B*₀'s body and scale and the items 0x70001234 slot 17, 0x70005678 slot 18 (both equips of the tick coalesced). At 0.05 s the double's answer surfaces as the player's `AppearanceChanged` with those items. |
+| O2 | as O1 | The unequip at 0.1 s and the equip at 0.2 s change *E* twice; no `AppearanceSet` before 0.25 s of wall-clock time after the first; one `AppearanceSet` in the first poll at or after 0.25 s, with both items again. Two sends in all. |
+| O3 | no `APPEARANCE_CHANGE`, minor 1 | No `AppearanceSet`. At tick 0 the feed emits the player's `AppearanceChanged` with both items and slots; at 0.1 s with the sword only; at 0.2 s with both. One info log line that observers will not see the change. |
+| O4 | `APPEARANCE_CHANGE`, minor 0 | As O1, but the `AppearanceSet`'s items carry no slot (flag bit 3 clear, `tessera-protocol.md` §5.3) and the answer's items have none. |
+| O5 | as O1, but *B*₀ holds the item 0x70009999 | *B*₀ marks the appearance dirty (its equipment differs from the empty *E*); the send at the end of the tick-0 poll carries both items, so the stored 0x70009999 is replaced. One send at tick 0, as in O1. (With no equip step in the file, that send would carry no items.) |
+| O6 | as O1, but the double refuses every `AppearanceSet` (answers *B*₀) | After the tick-0 send and its answer, no further `AppearanceSet` until *E* changes at 0.1 s; never more than one in flight. |
+| O7 | any | A file with `at 0s say "x"` is refused with `NotAllowedInOverlay` before anything connects (exit 3). |
+
+> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) O7's file
+> `at 0s say "x"` does not parse (`say` needs a sender before its text, §6.4), so it is
+> refused with `MissingArgument` (also exit 3) before the overlay check runs. The
+> conformance test uses `at 0s say player "x"`, which parses and gives
+> `NotAllowedInOverlay` 2:1. O3's "at tick 0 … with both items" is read with §5.5 "every
+> change of that list emits": the two equips of tick 0 give two events in that tick, the
+> sword alone and then both; the test asserts both.
+| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget` is refused with `NetError::InvalidCommand` by the test-server backend. |
+| O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
+
+<a id="s14-10"></a>
+### 14.10 Plain-sandbox creation cases (revision 4)
+
+The plain sandbox (no scenario) with the character list ["Testa"] and a configured avatar:
+
+| # | Commands | Expected events |
+|---|---|---|
+| P1 | `CreateCharacter { name: "Cora", appearance: Character 23/1 with the look [0x7FFF0001 float 0.25], class: Some(5), nationality: Some(2) }`, then `EnterWorld "Cora"` | `CharacterInfo { name: "Cora", body: Character 23/1, class: Some(5), level: None, look: [0x7FFF0001 float 0.25] }`; after `WorldEntered`, the player's `AppearanceChanged` has body 23/1 and that look, not the configured avatar |
+| P2 | `CreateCharacter { name: "Testa", … }` | `CharacterRefused { name: "Testa", reason: "A character with this name already exists." }` |
+| P3 | 63 creations of new names, then a 64th new name | 63 `CharacterInfo`; then `CharacterRefused { reason: "The character list is full." }` |
+| P4 | `CreateCharacter { name: "Dora", appearance: None, class: None, nationality: None }`, then `EnterWorld "Dora"` | `CharacterInfo { name: "Dora", body: None, class: None, level: None, look: None }`; world entry uses the configured avatar |
+| P5 | `DeleteCharacter "Cora"` after P1 | No event; "Cora" stays in the list |
 
 ---
 
@@ -2201,16 +2652,23 @@ pre > EnterWorld character="Testa"
 7. Within a tick, events follow §7.4: commands first, then the agenda by (time, class,
    sequence).
 8. Committed scenarios contain no DID and no game text; committed logs are `install none`.
+9. In an overlay run (§12.5) the server receives nothing from the feed but `AppearanceSet`s,
+   at most one in flight and at most 4 per second; inventory, levels, stats and item
+   properties never leave the client.
+10. Every value of a `PropertyChanged`, `ItemProperty` or look entry the feed emits is the
+    value written in the file (or a `DataId` of a resolved element); the install supplies
+    only property IDs, kinds and label keys (§5.8).
 
 ---
 
 <a id="s16"></a>
 ## 16. Open questions
 
-> **OPEN:** (non-blocking, P1) `CreateCharacter` carries only appearance and class. The
-> creation screen of P1 may need more choices (nationality, slider values of `appearance.md`
-> §6.3, a name generated per `player-character.md` §8.5); they extend the command by a
-> revision of §9.4.
+> **Answered (revision 4, 2026-10-10, decision 0025 D2; was OPEN, non-blocking, P1):**
+> `CreateCharacter` gains `nationality` and its appearance carries the look (slider values
+> and every other choice a creation control writes, §5.8, §9.1, §9.4); the input form
+> `create-character` takes `nationality=` and `look=` (§7.7), and `accept-character` takes
+> `look=` (§6.1). A generated name travels as the command's `name`.
 
 > **OPEN:** (non-blocking, P4) The synchronised start tolerance of `PerformanceStarted` is
 > taken from `instruments.md` when P4 specifies the synchronised `/play`; v1 carries only the
@@ -2220,9 +2678,12 @@ pre > EnterWorld character="Testa"
 > run (for example mid-cast). v1 captures only the frame after the last tick; a later
 > revision may add an input-script line `at T capture NAME`.
 
-> **OPEN:** (owner policy; non-blocking for P0, to be decided before P1) Whether committed
+> **OPEN:** (owner policy; non-blocking for P0, to be decided before P1; listed for the owner
+> in decision 0025, which does not decide it) Whether committed
 > scenarios may use numeric enum keys that an Accepted spec records (for example a slot key),
-> instead of labels only (§13 rule 2). Until decided, labels only, and labels never resolve
+> instead of labels only (§13 rule 2). Since revision 4 the question also covers property
+> values written `pid:N:KIND` and numeric values of the kinds `enum`, `bitfield32`,
+> `bitfield64` (§5.8, §13 rule 2). Until decided, labels only, and labels never resolve
 > without an install (§8.7). Consequence: the no-install CI replay (§10.5) cannot exercise
 > `equip` with a slot (the step and the `EquipItem` generic answer), damage types, or class,
 > species and sex details. Create-character itself is covered, since its class and
@@ -2326,6 +2787,7 @@ pre > EnterWorld character="Testa"
 | 2026-10-09 | First draft (P0, decision 0024 §4): format, model, step vocabulary, timing and triggers, selectors with SplitMix64 sampling, domain events and commands, canonical log, limits, client integration, content rules, vectors. |
 | 2026-10-09 | Review (spec reviewer, separate session): 31 design findings fixed in place (§18.1: R1–R31), Vector E and six hostile rows added; Status set to Accepted, though the same session wrote the fixes. |
 | 2026-10-09 | Revision 3 (spec owner, design role): 31 implementation-phase findings verified (§18.2: S1–S31). Fixed: no welcome line and the feed owns chat (§3.2, §7.6); exact headless spawn and the resolve timeout in force (§3.2, §10.1, §12.2); pre-world output in `submit` (§3.3, §5.1, §7.5); *L* from the processing tick and input lines within `end-at` (§7.3, §7.7); queue weight, per-push checks, run total, effect cap, pre-world bounds, 8 ticks per poll (§7.1, §7.4, §7.5, §11); start = executing tick (§6.2); inventory edge cases (§5.5, §6.1, §7.6); block error kinds (§4.4); numeric components (§4.2); trade side 32 (§6.3, §8.6); input ranges (§7.7); optional create-character class and appearance (§7.7, §9.4); (DID, row) identity (§8.4); `CandidateOutcome` replaces `label_notes` (§8.6); remote chat channels (§9.5); heading `360.00` (§10.3); headless modes and `--screenshot` (§12); invented example name (§4.2). Vector F and eleven hostile rows added. Status back to Review. |
+| 2026-10-10 | Revision 4 (spec writer, design; decision 0025): property values and looks (§4.2, §4.5, §5.8), looks on characters and in the base appearance (§5.1), held-item slots in the player's appearance (§5.5), steps `remove-character`, `stat`, `item-property` and `accept-character … look=` (§6.1), `create-character … nationality= look=` (§7.7), resolver methods `property`, `property_by_id` and contexts `Nationality`, `PropertyKey` (§8.6), new types, events and command field (§9.1–§9.4), session rules and the client-side property bound (§9.5), plain-sandbox creation (§9.6), the test-server backend's creation, looks, slots and character list (§9.7), log forms (§10.2–§10.3), limits and error kinds (§11), overlay runs with `--server` (§12.1, §12.5), content rules (§13), Vector F's new fields, Vector G, overlay and plain-sandbox cases, 15 hostile rows (§14), invariants 9–10 (§15), §16 OPEN 1 answered. Status Accepted → Review (§18.3). |
 
 ---
 
@@ -2471,3 +2933,30 @@ fixed: S12 (gap accepted) and the policy part of S24 (§16 OPEN).
 
 **Status.** Review. Vectors A, B, D and E need no change under the S1 fix; Vector F is new and
 was derived by the spec owner, so it, like Vector E and R1–R31, awaits independent checking.
+
+<a id="s18-3"></a>
+### 18.3 Revision 4: decision 0025
+
+**2026-10-10** (spec writer, design role). Tessera-own design for decision 0024 P1, recorded
+in [decision 0025](../decisions/0025-p1-character-look-on-test-server.md). Inputs: `docs/`
+only (decision 0024, LEGAL.md §11.1, `character-screens.md`, `character-panels.md`,
+`item-tooltips.md`, `property-system.md`, `player-character.md`, `tessera-protocol.md`,
+`test-server.md`, `server-content.md`); no research note, clone, client or decompiler output.
+
+| # | Change | Sections | Answers |
+|---|---|---|---|
+| D1 | Overlay runs: `--scenario` with `--server`, the overlay subset, routing, clock, the player's look through coalesced `AppearanceSet`s | §0, §3.1, §11.1, §12.1, §12.5, §14.5, §14.9, §15 | P1 exit criterion 3; §12.1's conflict with `--server` lifted |
+| D2 | Looks: property values (`PROPERTY=VALUE`), `look` declarations, looks on characters, `CharacterInfo.look`, `Appearance.look`, `CreateCharacter.nationality`, the test-server backend at minor 1 | §2, §4.2, §4.5, §5.1, §5.8, §6.1, §7.7, §8.6, §9.1–§9.4, §9.7, §10, §13 | `character-screens.md` §7.1 OPEN (Q7); §16 OPEN 1 |
+| D3 | `Equipped.slot` filled from the equipment slot | §5.5, §9.1, §10.3 | `character-panels.md` §7 OPEN |
+| D4 | §9.5 and §9.7 adopt `character-screens.md` §7.1.1; `CharacterInfo` per `LoginOk` entry | §9.5, §9.7 | `character-screens.md` §7.1.1 OPEN (Q11) |
+| D5 | Plain-sandbox creation; `remove-character` → `CharacterRemoved`; `stat` → `PropertyChanged`; `item-property` → `ItemProperty`; client-side property bound | §6.1, §9.2, §9.5, §9.6, §14.8, §14.10 | `character-screens.md` §7.2 (feed) and §8 OPENs; `character-panels.md` §9 OPEN; `item-tooltips.md` §11 OPEN (Q16) |
+
+Rule-5 check (LEGAL.md §11.1): nothing in this revision runs in or is linked by
+`tessera-server`; the overlay sends only the appearance messages M7 already has, at a bounded
+rate; values stay scripted (decision 0024 §4; §15 invariant 10). The owner-policy OPEN of §16
+on numeric keys is not decided here and now also covers `pid:` forms.
+
+**Status.** Review. An independent session that wrote no part of revision 4 must check D1–D5
+against the cited specs, re-derive Vector G and the changed lines of Vector F, check the 15
+new hostile rows against the grammar and the position rules, and check that §12.5 agrees with
+`tessera-protocol.md` v1.1 §6.2.17 and Appendix A.

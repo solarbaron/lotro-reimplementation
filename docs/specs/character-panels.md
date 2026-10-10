@@ -103,6 +103,27 @@ every 0.1 s while held), `UIComponent_AvatarInfo_SlotField` (§3.3) and
 > **OPEN:** the rotation step per repeat and per pixel of drag, and the figure's pose. **Tessera
 > rule:** 15° per repeat, 0.5° per pixel, the idle pose (`appearance.md`, `script-table.md`).
 
+> **OPEN:** (implementer, `apps/client/src/character/panel.rs`, 2026-10-10) Three details of
+> the header and the paperdoll that this section does not give. (1) The format of
+> `PlayerRaceClassDisplay`: as implemented, the race's and the class's display texts (enum
+> texts of `Usage_RequiredRaceEntry` and `Usage_ClassType`) joined by one space; an unknown
+> value shows an empty text, not the layout's placeholder. (2) `PlayerName` and `PlayerLevel`
+> are `PropertyDisplay` elements whose fallback widget draws no text: the client creates that
+> type as a text element when the panel opens and sets the text itself (name of the entered
+> character, level of the latest `LevelChanged` or `CharacterInfo`). (3) The paperdoll's
+> figure in `CharacterEquipmentPage_Viewport`: as implemented, the player's walker figure
+> (worn look of the latest `AppearanceChanged`, current pose) drawn alone, unlit with a fixed
+> light, at the origin turned by the paperdoll's yaw, seen from its front by a camera of
+> Tessera's own (vertical field of view 30°, the figure's bounding sphere filling the
+> height); the UI scene 0x21000005 and its camera `Camera_1` are not read. Owner check O82.
+
+> **OPEN:** (implementer, `apps/client/src/character/panel.rs`, 2026-10-10, after review)
+> (4) `PlayerClassIcon` (based on `ClassDisplay_50Template_WithTooltip`): §9 lists the class
+> icon as a header effect of `CharacterInfo`, but neither this spec nor `item-tooltips.md`
+> names where a class's icon image comes from (a property of the class table, or of the
+> template's own elements). As implemented: the element keeps the layout's content (no
+> class icon is set). Please name the image source.
+
 <a id="s3-3"></a>
 ### 3.3 Equipment slots (Confirmed, CP3)
 
@@ -167,6 +188,19 @@ key is 214 and a wrath row shown instead (`HideWhenField`, `game-panels.md` §6)
 > value the session last reported for its property (§9) as an integer (percent rows with one
 > decimal and a percent sign), in state `normal`; a row without a reported value shows an
 > empty value text.
+
+> **OPEN:** (implementer, `apps/client/src/character/panel.rs`, 2026-10-10) The rule above
+> needs, per row, which property it shows and which element shows the value. As implemented:
+> a row element with `UIComponent_VitalDisplay_Type` 1 or 2 shows "current / max" of the
+> reported morale or power (`VitalChanged`); one with
+> `UIComponent_CombatPointsDisplay_StatProperty` (integer) or
+> `UIComponent_CombatPercentDisplay_CacheProperty` (percent) shows the player's last
+> `PropertyChanged` value of the property that names; the text goes on the row element
+> itself. `StatDisplay` rows (`UIComponent_StatDisplay_Type`) are left empty: no mapping from
+> their type values to actor properties is given. On this install the `StatTree` list of the
+> equipment page holds no row elements when the page opens (the rows are made by game code
+> from the `stattree` templates, not traced), so every row stays empty. Please give the row
+> creation rule, the stat-type → property mapping and the value element.
 
 ---
 
@@ -266,6 +300,13 @@ only quality cue (`icon-layers.md` §4).
 
 > **OPEN:** the original's conditions for each overlay. Owner check O83.
 
+> **OPEN:** (implementer, `apps/client/src/character/panel.rs`, 2026-10-10, after review)
+> The rule above does not say what an unknown viewer level or class does (a scenario player
+> without `class=`, the plain sandbox). As implemented: an unknown level or class never
+> makes an item unusable, as `tessera-gamedata`'s tooltip engine shows an unknown viewer
+> value as meeting a requirement row (`item-tooltips.md` §6.15 does not say either; the
+> same question applies there).
+
 ---
 
 <a id="s6"></a>
@@ -290,6 +331,24 @@ changes nothing locally until the matching event arrives:
 > **OPEN:** the original's bindings for use, split and destroy, and whether activating an
 > equipped item unequips it. Owner check O84.
 
+> **OPEN:** (implementer, `apps/client/src/character/panel.rs`, 2026-10-10) The last row's
+> "confirm" is not specified. As implemented (Tessera rule): the first drag of an item out of
+> every window only asks (a system line: drag it out again to destroy it); a second drag of
+> the same item out of every window within 10 s sends `DestroyItem`. Owner check O84.
+
+> **OPEN:** (implementer note, `crates/gamedata/src/inventory`, 2026-10-10) (1) The
+> shift-drop row sends `SplitStack` for a drop on an empty slot, but `SplitStack` carries no
+> target (`scenario-feed.md` §9.4) and the feed puts the new stack at the first free slot of
+> the item's own container (§7.6 there). The slot the player chose is therefore ignored, also
+> when it is in another bag or another container. Which rule applies: a `SplitStack` with a
+> target, a follow-up `MoveItem` once the new item's `ItemAdded` arrives, or "split only
+> within the same container, target ignored"? As implemented: `SplitStack` as the row says,
+> target ignored. (2) "The lowest equipment key in its default slot" is read as the lowest key
+> of the `Equipment` container: a key of the page (§3.3) or one with an API value (2 … 22,
+> §8.2), so a default slot `Mounted` + `Equipment` equips to key 22 although the page has no
+> `Mounted` slot. A drop on a place of the `Equipment` container is handled as a drop on the
+> paperdoll slot of that key (fit check, `EquipItem`), never as a `MoveItem`. Please confirm.
+
 `InventoryControl_MutuallyExclusiveLocation_MappingList` lists holding locations that cannot
 be used together (two pairs here, CP11); the feed does not enforce it (no rules, decision 0024 §2.4).
 
@@ -305,6 +364,12 @@ items in ascending `ContainerSlot` order, held items in their slots). On M7's se
 `Appearance` travels as opaque references (`tessera-protocol.md` §5.3), so observers see the
 change (decision 0024 P1 exit criterion 3).
 
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D3):** `Equipped` gains an optional `slot`, the
+> equipment slot key that holds the item: `scenario-feed.md` §5.5 and §9.1 (the feed fills it
+> from the equipment slot), `tessera-protocol.md` §5.3 (flag bit 3, minor 1) and §7.4. When
+> `slot` is present the walker places the held item in that slot; the Tessera rule below
+> applies only when it is absent (minor-0 servers, other sources). The note as raised:
+>
 > **OPEN (for `scenario-feed.md` and `tessera-protocol.md`, non-blocking for armour):**
 > `Equipped` carries no slot, so an item compatible with both hands cannot say which hand it is
 > in. **Tessera rule until a revision adds the slot:** a held item goes to its
@@ -366,6 +431,11 @@ split and destroy generically (`scenario-feed.md` §7.6), so a scenario with a f
 is enough to test every interaction. A scenario that checks the worn look scripts `equip` steps
 (feed §6.1) or `equip` input lines (feed §7.7).
 
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D5):** `scenario-feed.md` §6.1 `stat ENTITY PROPERTY=VALUE`
+> (property by dictionary label or `pid:N:KIND`, §5.8 there) emits `PropertyChanged { entity,
+> property, value }` (§9.2 there; Character group, surfaced in world, §9.5); values are
+> scripted, never derived. The §3.4 rule reads the last reported value. The note as raised:
+>
 > **OPEN (for `scenario-feed.md`, non-blocking):** the stat rows (§3.4) need scripted values.
 > Proposal for a revision of the feed: a step `stat ENTITY @Label VALUE` resolving the label
 > through the property dictionary at resolution time (`enum_value`-like) and an event
@@ -394,12 +464,12 @@ is enough to test every interaction. A scenario that checks the worn look script
 |---|---|---|---|
 | Q1 | Command that toggles the character panel | §2 | owner (O82) |
 | Q2 | Paperdoll rotation and pose | §3.2 | owner (O82) |
-| Q3 | Stat values and buffed/debuffed | §3.4 | server data; feed proposal §9 |
+| Q3 | Stat values and buffed/debuffed | §3.4 | server data; feed step answered by decision 0025 D5 (§9) |
 | Q4 | Backpack slots per window | §4.3 | owner (O83) |
 | Q5 | Overlay conditions | §5 | owner (O83) |
 | Q8 | Whether `QUICKSLOT_BACKPACK` toggles all bags | §4.1 | owner (O83) |
 | Q6 | Use, split, destroy, unequip inputs | §6 | owner (O84) |
-| Q7 | Held-item hand in `Equipped` | §7 | design (feed and protocol revision) |
+| Q7 | Held-item hand in `Equipped` | §7 | design (feed and protocol revision); answered by decision 0025 D3 |
 
 ---
 
@@ -425,3 +495,4 @@ is enough to test every interaction. A scenario that checks the worn look script
 |---|---|
 | 2026-10-09 | First version (Review), for decision 0024 P1: character panel, equipment page, slot table, stat list, bag windows and sizes, item-slot overlays, interactions as Tessera rules, worn look, plugin `Backpack` and `Equipment` mapping, scenario-feed driving. |
 | 2026-10-09 | Revised after the first-version review (blocking 1–3, non-blocking a–d, f). §4.3: one Tessera rule with numbered steps (bags 1–5 by range, bag 6 shows 75 … *N* − 1; *N* grows on arrival before the first `ContainerSize` and never shrinks without one; that growth fires the plugin `SizeChanged` before the item's `ItemAdded`, as `lua-plugin-api.md` §15.1 states). §8: plugin event derivation and the views' getters removed; `lua-plugin-api.md` §15.1 is their only owner (§9 points there). §4.1: `QUICKSLOT_BACKPACK` is an OPEN with a Tessera rule (Q8, owner check O83). Provenance: dates on CP2–CP7 and CPI2–CPI4; new row CP11 (the `UILAYOUT` entry of `journal`, re-read from the install 2026-10-09; `SmartSortInfo` count and the two mutually exclusive location pairs, from the decoded `InventoryControl` dump). §2 rect written as position and size; §6 split only for stacks of 2 or more; §5 unusable overlay names `Usage_RequiredClassList`. |
+| 2026-10-10 | Pointers only (no fact changed): the OPENs of §7 (held-item slot) and §9 (stat values) and rows Q3, Q7 point to their answers in decision 0025 (`scenario-feed.md` revision 4, `tessera-protocol.md` v1.1). |

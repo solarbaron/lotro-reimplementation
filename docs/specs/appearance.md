@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 (commit d67d923): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of 2026-10-10, §15 unknown made a narrow OPEN, Decision kept; N1 taken; no rule changed). Before: Revised (2026-10-10, review (a fresh session that wrote no part of this spec): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: §15 answer to the confirmation-only OPEN of 2026-10-08 on the deformer start order (new OBS6, A44), raised as non-blocking note N14 by the `script-runtime.md` review of 2026-10-10; no rule changed). Before: Accepted (2026-10-09, re-review of the writer's answer to the review of 2026-10-09 of the OBS5/BIN7 revision: both blocking items fixed; see the review record). Revision of 2026-10-09 (review answer): both blocking items fixed in A42 and §5.6 "What the placement scripts test", the three non-blocking notes taken. Earlier: changes requested (that review, two blocking items, see the review record). Revision under review (2026-10-09, spec writer: the three implementation OPENs of 2026-10-09 in §15 answered from the data (OBS5) and a constant search in the client (BIN7): the label of script key 0x10002BA0, what the placement scripts switch on (new paragraph "What the placement scripts test" in §5.6), the `MonsterPlayer` test in §5.5; rows A41–A43). Before: Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
+| **Status** | Revised (2026-10-10, spec writer, awaiting review: answers to the four implementation OPENs of 2026-10-10 in §15 filed with the face-compositing implementation, from the data (OBS7) and the client (BIN8); §3.5 extended and corrected (composed image slot, compositor and edit rules, the option-off table, `Physics_InWorld` and `CharGen_Stage`, two narrow OPENs with Decisions), §3.3 face sentence corrected, rows A45–A51). Before: Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 (commit d67d923): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of 2026-10-10, §15 unknown made a narrow OPEN, Decision kept; N1 taken; no rule changed). Before: Revised (2026-10-10, review (a fresh session that wrote no part of this spec): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: §15 answer to the confirmation-only OPEN of 2026-10-08 on the deformer start order (new OBS6, A44), raised as non-blocking note N14 by the `script-runtime.md` review of 2026-10-10; no rule changed). Before: Accepted (2026-10-09, re-review of the writer's answer to the review of 2026-10-09 of the OBS5/BIN7 revision: both blocking items fixed; see the review record). Revision of 2026-10-09 (review answer): both blocking items fixed in A42 and §5.6 "What the placement scripts test", the three non-blocking notes taken. Earlier: changes requested (that review, two blocking items, see the review record). Revision under review (2026-10-09, spec writer: the three implementation OPENs of 2026-10-09 in §15 answered from the data (OBS5) and a constant search in the client (BIN7): the label of script key 0x10002BA0, what the placement scripts switch on (new paragraph "What the placement scripts test" in §5.6), the `MonsterPlayer` test in §5.5; rows A41–A43). Before: Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review; 2026-10-08: review of the BIN4 and BIN5 revisions (another fresh session); 2026-10-08: narrow re-review of §3.3 (a further fresh session); 2026-10-09: review of the OBS5/BIN7 revision (a fresh session that wrote no part of this spec); 2026-10-09: re-review of the review answer (a further fresh session that wrote no part of this spec and did not do that review); 2026-10-10: review of the OBS6 revision (a fresh session that wrote no part of this spec and did no earlier review of it); 2026-10-10: re-review of the B1 answer (a further fresh session that wrote no part of this spec and did no earlier review of it) |
@@ -77,6 +77,8 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | OBS5 | Observed 2026-10-09 (same install, data unchanged), read-only, with throwaway probes on the repository's own decoders: the label of script key 0x10002BA0 and of 0x10000324 in enum mapper 0x23000097 and its base 0x230000F8; the six placement scripts of table 0x07000090 node by node (every Switch, When and driven source they read, with the case operators and values), script 0x100007C3 (its `LifeState` and `Agent_ClassificationFilter` Switches), the dictionary definitions of `Agent_ClassificationFilter`, `Item_EquipmentCategory` and the three `Inventory_…EquipmentCategory` properties with their mappers; **all 91,214** 0x79 property sets that carry `Item_EquipmentCategory` (bits per value; the 201 with key 48 `BattleGauntlets`, their `PhysObj` and worn lists); the twelve definitions of key 0x10002BA0 and the include closure of the Human M class table. |
 | BIN7 | Same executable and build as BIN6, read on 2026-10-09 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Question:** does client code write `Inventory_PrimaryEquipmentCategory`, `…Secondary…`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`, i.e. which of the placement scripts' inputs the client sets itself (implementation OPEN of 2026-10-09). **Why M1–M3 were not enough:** the data hold the scripts that read these properties but not who writes them; no running client was available. **Read:** a search of all instructions for the four property IDs as constants, and the one routine that holds one of them. Nothing about network, login, keys, launcher or anti-tamper. |
 | OBS6 | Observed 2026-10-10 (same install, data unchanged), read-only, with a throwaway probe on the repository's script-table decoder: every MeshDeformer (kind 18) and SliderMeshDeformer (kind 81) node of every decodable 0x07 table (7,524), with the node kinds on the path from its script's root, and the include closures of the 14 avatar class tables (`script-table.md` §8.2). |
+| OBS7 | Observed 2026-10-10 (same install, data unchanged), read-only, with throwaway probes on the repository's decoders: every node of all 7,524 decodable 0x07 tables and of all 0x0C scriptlets (every Switch, When, While, ScalarBlend and SetProperty on `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions`, `Physics_InWorld`, `GOP_AvatarFaceCompositing`, `CharGen_Stage` and `GOP_AvatarUpdateVisible`; every driven pair of node kinds 33, 44, 53 and 60 with its source's dictionary definition; every EditMaterial (kind 60) and TextureCompositor (kind 53) node's stored fields); the key-5 gathering order of the 14 avatar class tables (`script-table.md` §8.2 step 2, pre-order, stored include order); the `Startup` trees of the 14 species tables and of scriptlets 0x0C0084DA and 0x0C0091D3; the property dictionary entries of the properties above and of every property whose name contains `Compositor`; enum mapper 0x23000132; a raw byte search of every record of every archive except texture, surface-texture, sound and wave records (1,355,323 records) for the PIDs of `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions` and `GOP_AvatarFaceCompositing`, each hit then decoded with the typed decoder. |
+| BIN8 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-10 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Questions** (the implementation OPENs of 2026-10-10 in §15): does client code read or write `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions`, `Physics_InWorld` or `CharGen_Stage`, and when; which property names the fields of node kinds 33, 44 and 53 carry; where the composed face image goes; how EditMaterial edits are ordered and applied; what starting and stopping a compositor, colour, layer or EditMaterial node does. **Code read:** constant and byte searches of the executable for the four PIDs; the physics component's placement and leave-the-world routines; the two routines that write the reduced-options property and the routine they write it through; the field registrations of the three compositor node kinds; the start and stop routines of the TextureCompositor, ModifyCompositorColor, ModifyCompositorLayer and EditMaterial nodes; the figure's model-component update (compositor composition, the edit sort and its comparison, per-part and per-surface matching, the surface material-list insertion and the effect rebuild that walks that list); the script component's start-up routine; the object property read routine (its choice of store). **Why M1–M3 were not enough:** the data names the properties and nodes but not who else writes the properties, where a composed image is bound or how edits rank; the frame capture of O15 has not been made, and no capture can show an evaluation order. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -124,6 +126,13 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A42 | Five of the six placement scripts (0x10000684, 0x10000593, 0x10000135 stowed; 0x10002981, 0x10002983 wielded) start with a When that the slot's `Script_Item_PhysObj_…` is "not equal to the null DID" and a When that `Inventory_…EquipmentCategory` is "not equal to 0"; the three stowed ones put a When `Script_Item_…_Cosmetic_Hide` "equal to false" between the two; 0x10002981 tests `…_Secondary_Cosmetic_Hide` only inside its shield case, below the category Switch; 0x10002983 has no Hide test. The wielded primary script 0x10002982 is the exception: its root is a Switch on `AvatarVFX_Cosmetic_Locomotion` whose two cases reach, through a Switch on `Combat_Violent` and a category Switch, MeshFX nodes with fixed effect entities and no PhysObj or category gate; only its Default port (a Label, also reached by Goto from those branches) leads to the two gating Whens. Every category Switch has cases of operator 3 (equality of the whole 64-bit value), one value per category with the single bit *k* − 1 of mapper 0x2300004C key *k*; the `BattleGauntlets` case (key 48) holds 0x0000800000000000. Of the 91,214 items with a category, 91,178 hold exactly one bit and 36 store 0; none holds more than one bit; the 201 `BattleGauntlets` items hold 0x0000800000000000; 200 carry a `PhysObj` and 200 a worn list. No instruction of the client holds the property ID of `Inventory_PrimaryEquipmentCategory`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`; the one that holds `…Secondary…` lies in a routine that looks up a list of identifiers and writes no property (§5.6) | OBS5; BIN7 | Confirmed 2026-10-09 (data, all records); BIN (constant search); who sets the three category properties in the original: not traced |
 | A43 | Script 0x100007C3 tests `Agent_ClassificationFilter` with a Switch whose `MonsterPlayer` case has operator 3 (equality) and the value key 1; the property is an enum over mapper 0x2300000F (0 `Undef`, 1 `MonsterPlayer`, 2 `Monster`, 3 `Victim`, 4 `Guard`, 5 `Player`, 6 `DelvingMonster`) with dictionary default 0 (§5.5) | OBS5 | Confirmed 2026-10-09 |
 | A44 | The install holds 8 SliderMeshDeformer nodes, all in `Startup` (key 5) scripts of the species tables, one per avatar closure that has one, and each is a **root** of its script (no Random, Switch, When or other node above it); deformer nodes under Switch, Random or Sequence nodes exist only as MeshDeformer (kind 18) nodes in tables outside the avatar closures (§6.4, §15) | OBS6 | Confirmed 2026-10-10 (all records) |
+| A45 | The fields of node kinds 33, 44 and 53 carry the property names (dictionary names, in stored field order): kind 33 `ModifyCompositorColorScript_CompositorName`, `…_ColorName`, `…_Color`; kind 44 `ModifyCompositorLayerScript_CompositorName`, `…_LayerName`, `…_ImageNumber`, `…_Opacity`; kind 53 `TextureCompositorScript_CompositorName`, `…_ImageCompositorFile`, `…_MeshType`, `…_MaterialType`. Driven pairs name only `…_Color` (218, every kind-33 node) and `…_ImageNumber` (197 of the 199 kind-44 nodes); no other field of the three kinds is driven. Every source property of those 415 pairs has a dictionary default (§3.5, §15) | OBS7 (dictionary; all driven pairs); BIN8 (the client registers exactly these fields, in this order, for the three kinds) | Confirmed 2026-10-10 (names, counts); BIN (registration) |
+| A46 | The figure holds each attached compositor under its name with the node's `MeshType` and `MaterialType`; when a compositor is composed, its image is set as material parameter **3000** (base colour) of every surface whose binding key equals `MaterialType` (2: every surface) on every part whose slot equals `MeshType` (2: every part; 0: none). Colour and layer nodes register their change with the figure while they run and apply to any compositor of that name composed meanwhile; stopping a node withdraws what it registered; a second attach under a taken name is refused, and the refused node's stop removes the compositor of that name (§3.5) | BIN8; OBS7 (the `Inactive` bindings set parameter 3000 on the same slot and binding key) | BIN |
+| A47 | EditMaterial edits register with the figure while they run, in start order; on a rebuild they are sorted by **descending** `Priority` and each is appended as a one-entry material to every matching surface after the surface's materials and after the composed images, so of two edits of one parameter on one surface the lower `Priority` wins (later materials win, `material.md` §9.2), and at equal `Priority` the later-started (with at most 32 registered edits; above that the client's sort does not keep start order). The parameter group selects the value field (1000 `WaveformValue`, 2000 `ColorValue`, 3000 `TextureValue`, 4000 and above `BoolValue`); a `MaterialProperty` below 1000 is reported and skipped. `MeshType` and `MaterialType` match as in A46. Of 2,886 EditMaterial nodes, 2,571 store `MeshType` 2 and 1,242 `MaterialType` 2 (§3.5) | BIN8; OBS7 (counts) | BIN; Confirmed 2026-10-10 (counts) |
+| A48 | No client code references `ScriptSystem_ServerScriptlet` (its PID occurs nowhere in the executable); its dictionary default is true. In the data it is written only by the root SetProperty (value false) of the `Startup` of tables 0x07000042 (kind 1, included by the kind-2 table 0x07000022, so in all 14 avatar closures) and 0x070017EF (in no avatar closure), and carried (false) by one entity, 0x47002764 (not an avatar), as a property of its own set; no other entity and no 0x79 property set carries it as a property (the other records that contain its four bytes hold the same number as a script key or in non-property fields). In every avatar closure the kind-1 tables that define `Startup` are gathered in the order: the species table when it is of kind 1, 0x0700003D, 0x07000010, 0x07000D00, 0x07000433, 0x07001CAA, 0x07000042, 0x07000090, 0x07000035, 0x07000BB2, the body's kind-1 binding table, 0x07000C57 (§3.5) | BIN8 (searches); OBS7 (all nodes, all records, all 14 closures) | BIN; Confirmed 2026-10-10 |
+| A49 | The client writes `Script_UsePvMPReducedOptions` only on the object of the character the player controls: true when a reduced-options mode is switched on, false when it is switched off (two routines that also save and restore a list of option values); what switches the mode was not traced; its dictionary default is false (§3.5) | BIN8; OBS7 (dictionary) | BIN; "the character the player controls" Inferred (the routine that returns the object is the one the client's UI uses for its own character) |
+| A50 | The client's physics component sets `Physics_InWorld` true on its object when the object is first placed at a valid world position (one whose landblock and cell are set and which the world accepts) and false when the object leaves the world; the property has no dictionary default. The script component starts an entity's start-up scripts from its own activation, not from the placement; which of the two comes first for a figure was not traced. Character-screen code sets `CharGen_Stage` on the figures it shows; the enum (mapper 0x23000132) has 0 `Undef`, 1 `ClassSelect`, 3 `Name`, 4 `CharacterSelect`, 6 `Appearance`, 7 `RaceClass` (§3.5) | BIN8; OBS7 (dictionary, mapper) | BIN; order OPEN |
+| A51 | What scriptlet 0x0C0084DA's two bindings do per species table: through 0x0C0091D3 (0x0700041F, 0x07000425, 0x07000491, 0x07001D83, 0x07001D85) `Inactive` stops both compositor scripts and the old-face override edit below it is stored with `Probability` 0; in 0x07002DAD, 0x07002DB0 and 0x07002F08 `Inactive` stops both scripts and runs an EditMaterial setting parameter 3000 of `MeshType` `Head`, `MaterialType` 0x1000006C, priority 5, to a texture stored in the node; in 0x07002F09, 0x0700247C and the four elf tables `Inactive` only stops the compositor scripts. `Active` runs `Compositor` in every table (§3.5) | OBS7 (the 14 species tables, both scriptlets) | Confirmed 2026-10-10 |
 
 ---
 
@@ -378,7 +387,8 @@ rebuilds its appearance when one changes.
 the default **on**, the options panel binds a check box to it, and the character-creation
 screen shows a check box for it only while the species is Dwarf (0x49) or Hobbit (0x51)
 (BIN2). The same property also chooses the face compositor (§3.5): on, the newer one; off,
-the older one or, for some head choices, the newer one. So by default the client shows the
+the older one for the bodies whose species table goes through scriptlet 0x0C0091D3, the newer
+one for the others (corrected 2026-10-10). So by default the client shows the
 toggle files, which agrees with the own value of the 7 avatar entities that name the property
 (true; the property's dictionary default is false, and 4 non-avatar entities name it without
 carrying it, see the OPEN below).
@@ -450,16 +460,22 @@ a TextureCompositor node (53) in one of two scripts: key 0x10002ACD (`Compositor
 compositor name 0x10000001 (the newer face), and key 0x10002ACE (`Compositor_Old`), under
 0x1000000A (the older face). Each attaches one 0x33 record (21 face compositors in all) to
 mesh slot `Head` (0x10000002), material type 0x1000006C (the face-skin binding key). The
-`Startup` script runs one of them: in the tables that define both (0x07002DAD, 0x07002DB0,
-0x07002F08, 0x07002F09 directly; 0x0700041F, 0x07000425, 0x07000491, 0x07001D83 and
-0x07001D85 through scriptlet 0x0C0091D3),
-the newer one runs and the older one is stopped when `GOP_AvatarUpdateVisible` is true, and a
-test on `AC_Mesh_Head` picks one when it is false; the tables 0x0700247C, 0x07003012,
-0x07003013, 0x0700301A and 0x0700301B define only the newer one. Before either runs, a
-scriptlet (0x0C0084DA) checks `GOP_AvatarFaceCompositing`: when it is false neither
-compositor is attached and the head keeps the texture of its own surface.
-`GOP_AvatarFaceCompositing` is a second graphics option, default **on** (BIN2). The
-composition itself (layers, masks, colour multiply, placement) is `misc-records.md` §3.6.
+`Startup` script runs one of them. Through scriptlet 0x0C0091D3 (tables 0x0700041F,
+0x07000425, 0x07000491, 0x07001D83 and 0x07001D85) the newer one runs and the older one is
+stopped when `GOP_AvatarUpdateVisible` is true, and the older one runs and the newer one is
+stopped when it is false. The tables 0x07002DAD, 0x07002DB0, 0x07002F08 and 0x07002F09 define
+both scripts too, but always run the newer one: their test on `AC_Mesh_Head` and their Switch
+on `GOP_AvatarUpdateVisible` are stored with `Probability` 0 and never run (corrected
+2026-10-10, OBS7; the earlier text read them as live). The tables 0x0700247C, 0x07003012,
+0x07003013, 0x0700301A and 0x0700301B define only the newer one. Outside the character screens the
+choice goes through scriptlet 0x0C0084DA, which tests `GOP_AvatarFaceCompositing` only behind
+two other tests; whether a body's start-up reaches that test, and what its "off" branch does,
+differ per species table ("When face compositing is off" below; corrected 2026-10-10: the
+earlier sentence "when it is false neither compositor is attached and the head keeps the
+texture of its own surface" holds only for some bodies). `GOP_AvatarFaceCompositing` is a
+second graphics option, default **on** (BIN2). The composition itself (layers, masks,
+colour multiply, placement) is `misc-records.md` §3.6; where the composed image goes and how
+the colour, layer and material edits combine are below.
 
 Layer choices (node 44, `ImageNumber` driven) and colours (node 33, `Color` driven), per
 compositor name; colour and layer keys are those of `misc-records.md` §3.3:
@@ -500,10 +516,160 @@ hair and beard surfaces, and the shader mixes it in through the surface's dye ma
 (`material.md` §12.3). Skin is tinted twice: in the composited face texture and as the dye
 colour of the skin surfaces.
 
-> **OPEN (narrow):** into which texture slot of the face-skin surface the composed image goes
-> (the TextureCompositor node names the mesh slot and the material type only), and how an
-> EditMaterial node's priority ranks against the surface's own material and dye blocks
-> (`material.md` §9.2). Owner frame capture O15 can settle the first.
+**Field names (A45).** The fields of the three compositor node kinds carry these property
+names (needed for interoperability: a driven pair names its field by PID, and a reader finds
+the PID by looking the name up in the property dictionary at run time): kind 33
+`ModifyCompositorColorScript_CompositorName`, `…_ColorName`, `…_Color`; kind 44
+`ModifyCompositorLayerScript_CompositorName`, `…_LayerName`, `…_ImageNumber`, `…_Opacity`;
+kind 53 `TextureCompositorScript_CompositorName`, `…_ImageCompositorFile`, `…_MeshType`,
+`…_MaterialType` (each in stored field order, `script-table.md` §5.1). In this install only
+`…_Color` (218 pairs, one on every kind-33 node) and `…_ImageNumber` (197 pairs, on 197 of
+the 199 kind-44 nodes) are driven; the sources are `AC_Color_*` (218), `AC_Texture_*` (194)
+and `MP_Texture_*` (3), and every one of them has a dictionary default (white for the
+colours, 0 or 1 for the layer numbers).
+
+> **OPEN (narrow, 2026-10-10):** what a driven field takes when the figure lacks the source
+> property: the source's dictionary default (§5.7 step 3, A36; `script-table.md` T28) or the
+> node's stored value (`script-runtime.md` §5.2, "if it has none, the field keeps its stored
+> value"). Here the two differ for 14 node instances: 8 war-paint colour nodes store a colour
+> while `AC_Color_WarPaint` defaults to white, 4 layer nodes driven by `AC_Texture_Eyeshadow`
+> store 0 while it defaults to 1, 2 driven by `MP_Texture_Secondary` store 1 while it defaults
+> to 0. **Decision (Tessera):** the dictionary default.
+
+**Where the composed image goes (BIN8, A46).** The figure keeps every attached compositor
+under its name, together with the attaching node's `MeshType` and `MaterialType`. Each time a
+compositor is composed, the client makes a material with one entry, parameter **3000** (the
+base-colour texture, `material.md` §8) set to the composed image, and appends it to the
+material list of every matching surface: on every part whose slot equals `MeshType` (2 matches
+every part, 0 matches none), every surface whose binding key equals `MaterialType` (2 matches
+every surface). The data agrees: the "off" branches of three species tables set parameter 3000
+of the same slot and binding key (A51). The node's start and stop rules:
+
+1. A TextureCompositor (53) node attaches its compositor when it starts and removes the
+   compositor **of its name** when it stops (for any reason: its branch, its Switch case, its
+   run). Starting a second one under a name already attached is refused and reported; the
+   refused node still runs, and its stop removes the compositor of that name, whichever node
+   attached it. A later change of a TextureCompositor node's driven fields is ignored.
+2. A ModifyCompositorColor (33) or ModifyCompositorLayer (44) node registers its change with
+   the figure when it starts, whether or not a compositor of that name is attached, and
+   withdraws it when it stops. Whenever a compositor is composed, the registered changes whose
+   compositor name matches are applied to it in registration order; so a change that starts
+   before its compositor applies as soon as the compositor is attached. A layer name that the
+   0x33 record does not have is reported and ignored (`misc-records.md` §3.7). A later change
+   of a driven field (§5.3 of `script-runtime.md`) makes the figure compose that compositor
+   again.
+3. These nodes, and EditMaterial nodes, stay running from their start until they are stopped;
+   their effect lasts exactly as long.
+
+**How material edits combine (BIN8, A47).** An EditMaterial (60) node registers its edit with
+the figure when it starts and withdraws it when it stops; a later change of a driven field
+re-applies the edits. When the figure's surfaces are rebuilt, each surface's material list is,
+in order: the surface's own materials (Tessera puts the figure's material groups, §4.10, §8
+step 6, in this first part; where the client puts them relative to the look edits was not
+traced separately), then the composed image of each matching compositor, then further per-figure overrides
+(not traced; no avatar data was seen to use them), then the edits: all registered edits are
+sorted by **descending** `Priority` and each is appended, as a material with one entry, to
+every matching surface (matching as above). Since a later material wins (`material.md` §9.2),
+of two edits of one parameter on one surface the one with the **lower** `Priority` value takes
+effect; at equal `Priority` the one started later takes effect (the client keeps start order
+among equal priorities when at most 32 edits are registered on the figure; above 32 its order
+of equal priorities is not defined, and Tessera keeps start order). An edit of parameter 3000
+on a surface that also receives a composed image overrides it. The parameter's group (the id
+rounded down to a multiple of 1000) chooses the value field: 1000 `WaveformValue`, 2000
+`ColorValue`, 3000 `TextureValue`, 4000 and above `BoolValue`; a `MaterialProperty` below 1000
+(0 included) is reported and the edit is skipped. Every group is applied, not only colours.
+In this install 2,571 of the 2,886 EditMaterial nodes store `MeshType` 2 and 1,242 store
+`MaterialType` 2.
+
+**When face compositing is off (OBS7, BIN8, A48–A51).** Scriptlet 0x0C0084DA tests, in this
+order:
+
+1. `ScriptSystem_ServerScriptlet` (boolean, dictionary default **true**), a Switch that is not
+   persistent: the case false goes on to step 2; any other value takes the Default port, which
+   runs the binding `Active` at once, without looking at the option.
+2. `Script_UsePvMPReducedOptions` (boolean, default false), not persistent: the case true runs
+   an empty Collection (neither binding runs; nothing is attached or stopped); the Default port
+   goes on to step 3.
+3. `GOP_AvatarFaceCompositing`, a **persistent** Switch: the case false runs the binding
+   `Inactive`, the Default port `Active`. Being persistent, it follows later changes of the
+   option and switches between the two bindings.
+
+Where the values come from:
+
+- No client code reads or writes `ScriptSystem_ServerScriptlet` (A48). The data sets it to
+  false in one place that every avatar meets: the `Startup` of table 0x07000042, a single
+  SetProperty root. That table is of kind 1, so its `Startup` runs in the kind-1 list
+  (`script-table.md` §8.2 step 3), in this gathering order in every avatar closure: the
+  species table when it is of kind 1, 0x0700003D, 0x07000010, 0x07000D00, 0x07000433,
+  0x07001CAA, **0x07000042**, 0x07000090, 0x07000035, 0x07000BB2, the body's kind-1 binding
+  table, 0x07000C57; the kind-2 species tables run after the whole kind-1 list. A figure has
+  no value of its own before that (no avatar entity, game object or property set carries it),
+  so a check that runs earlier reads the dictionary default true.
+- `Script_UsePvMPReducedOptions` is written by the client only on the character the player
+  controls, true while a reduced-options mode is on (A49). Every other figure reads false.
+- `Physics_InWorld` and `CharGen_Stage`: next paragraph.
+
+So, at start-up, by species table (class table → species table, `script-table.md` §8.2):
+
+| Species tables | Where the check runs | Option off at start-up | Its `Inactive` binding |
+|---|---|---|---|
+| 0x0700041F, 0x07000425, 0x07000491, 0x07001D83, 0x07001D85 (kind 2, through scriptlet 0x0C0091D3) | after 0x07000042 | **honoured** | stops both compositor scripts; the old-face override edit below it has `Probability` 0 and never runs, so the head keeps its own surface texture |
+| 0x0700247C (kind 2) | after 0x07000042 | **honoured** | stops `Compositor`; own surface texture |
+| 0x07002DAD, 0x07002DB0, 0x07002F08 (kind 1) | before 0x07000042 | **not honoured**: `Active` runs, the newer compositor is attached | (not reached at start-up) stops both scripts and sets parameter 3000 of slot `Head`, binding key 0x1000006C, priority 5, to a texture stored in the node |
+| 0x07002F09 (kind 1) | before 0x07000042 | **not honoured** | (not reached) stops both scripts |
+| 0x07003012, 0x07003013, 0x0700301A, 0x0700301B (kind 1) | when `Physics_InWorld` turns true (below) | honoured if that happens after the `Startup` of 0x07000042, not honoured if before | stops `Compositor`; own surface texture |
+
+The rows "after 0x07000042" assume the start order of `script-table.md` §8.2 step 3 (kind-1
+list first), which Tessera uses; the client's other start path (kind-2 list first, selected by
+a per-run value list, §8.2 OPEN) would put the kind-2 species tables before 0x07000042 too.
+For the bodies that do not honour the option, a later change of the option does nothing
+either: the non-persistent Switch of step 1 has already finished, and the persistent one of
+step 3 never started. For the honoured ones the step-3 Switch follows the option.
+
+> **OPEN (narrow, 2026-10-10):** whether the client gives a figure `ScriptSystem_ServerScriptlet`
+> by another route than the install: the object properties its server sends are outside what
+> can be observed (`LEGAL.md` §9.3 gate closed). What the install and the client code give is
+> the table above. A comparison in the original client (owner item O15, 2026-10-10 addition)
+> settles it for the four kind-1 rows.
+
+**`Physics_InWorld` and `CharGen_Stage` (BIN8, A50).** The client's physics component sets
+`Physics_InWorld` true on its object the first time the object is placed at a valid world
+position (one whose landblock and cell are set and which the world accepts), and false when the
+object leaves the world; the dictionary has no default for it (an absent value reads false,
+`script-table.md` T28). The code of the character screens sets `CharGen_Stage` (enum mapper
+0x23000132: 0 `Undef`, 1 `ClassSelect`, 3 `Name`, 4 `CharacterSelect`, 6 `Appearance`,
+7 `RaceClass`) on the figures it shows. In the four elf tables one root of `Startup` is a
+persistent Switch on `CharGen_Stage`: stages 6, 1, 3 and 7 run `Compositor` directly, stage 4
+runs it as one step of a Sequence whose other step is a GameCallback, and only the Default port (no stage) holds the persistent
+Switch on `Physics_InWorld` whose case true invokes scriptlet 0x0C0084DA. So figures on the
+character screens get the face from their stage whether or not they are in a world; a figure in
+the world gets it when `Physics_InWorld` becomes true (a persistent Switch re-evaluates on the
+change, `script-runtime.md` §6.6); a figure with neither (a preview outside the world, if the
+client has one) gets no face compositor from these tables. The other species tables test
+`CharGen_Stage` first as well, with the stages 6, 4, 1, 3 and 7 in one case that runs the
+compositor scripts directly and the Default port leading to the check above: a Switch that is
+not persistent in 0x07002DAD, 0x07002DB0, 0x07002F08, 0x07002F09 and scriptlet 0x0C0091D3, a
+persistent one in 0x0700247C.
+
+> **OPEN (narrow, 2026-10-10):** whether a figure's start-up scripts run before or after its
+> first placement in the world (the script component starts them from its own activation; the
+> order of the two was not traced). It decides the last row of the table above.
+>
+> **Decision (Tessera):** a figure placed in the world gets `Physics_InWorld` true after its
+> start-up scripts have run (so the elf rows honour the option); a figure that Tessera shows
+> outside a world without a character-screen stage (the explorer's character viewer) is
+> treated as placed in the world, so that it has a face; character-screen figures carry their
+> `CharGen_Stage`.
+
+> **Rule (replaces the Tessera rule "option off: drop the compositor nodes after the
+> resolution", §15):** a figure's script state starts without `ScriptSystem_ServerScriptlet`
+> (reads true) and with `Script_UsePvMPReducedOptions` false (Tessera has no reduced-options
+> mode); Switches read the value current when they start, in the start order of
+> `script-table.md` §8.2 step 3, and the SetProperty of 0x07000042 changes it during
+> `Startup`. Nothing is dropped after the resolution: the data decides, as in the table above.
+
+> **OPEN (narrow, frame capture O15, optional):** a capture of a face draw call would confirm
+> slot 3000 as the bound face texture (BIN8 already gives it).
 
 ---
 
@@ -2089,8 +2255,11 @@ would put the sole at 0.134 (`skeleton-anim.md` §14.7) — the floating-feet er
 > §6.1 (§5.7 step 3).
 
 > **Resolved** (2026-10-07, OBS2): which colour and texture properties drive which face
-> layers and surfaces (§3.5). **OPEN** (frame capture O15, narrowed): the face-skin texture
-> slot that receives the composed image; the rank of colour edits against dye blocks.
+> layers and surfaces (§3.5). **Resolved** (2026-10-10, BIN8): the face-skin texture slot that
+> receives the composed image (3000) and the rank of material edits (§3.5). **OPEN** (narrow,
+> 2026-10-10, §3.5): a server-supplied `ScriptSystem_ServerScriptlet` (O15 comparison); the
+> order of start-up and first placement in the world (Decision); absent driven sources
+> (Decision).
 
 > **Resolved** (2026-10-07, BIN3): the `section` byte and the u32 after the DID of 0x20
 > records (§4.2, §4.7 rule 4). **OPEN** (narrow): a self-referencing linked-record list
@@ -2657,6 +2826,39 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > the compositor nodes (53, 44, 33) are dropped after the resolution, so the head keeps its
 > own surface texture as this section states, until the OPEN on `ScriptSystem_ServerScriptlet`
 > below is answered. Please confirm or correct.
+>
+> **Answered** (spec writer, 2026-10-10, BIN8, OBS7; §3.5 "Where the composed image goes",
+> "How material edits combine", "When face compositing is off"; A46, A47, A51):
+> (1) **confirmed**: the client sets the composed image as parameter 3000 of the matching
+> surfaces; but `MaterialType` 2, like `MeshType` 2, matches every surface, and `MeshType` 0
+> matches nothing. (2) **corrected**: each edit is its own one-entry material,
+> appended after the surface's materials and after the composed images in **descending**
+> `Priority` order, so the **lowest** `Priority` value takes effect (not the highest); at equal
+> `Priority` the later-started takes effect (as implemented; the client keeps start order up to
+> 32 registered edits, Tessera keeps it always, a Tessera Decision for the rare case above 32);
+> `MaterialType` 2 matches every surface (1,242 of the 2,886 EditMaterial nodes use it); edits
+> of every parameter group are applied (1000 `WaveformValue`, 2000 `ColorValue`, 3000
+> `TextureValue`, 4000 and above `BoolValue`), only ids below 1000 are skipped. (3) **Tessera
+> Decision, kept**, with a narrow OPEN: every source of the compositor driven pairs has a
+> dictionary default (A45), so the default is what an absent source gives under §5.7 step 3
+> (A36, `script-table.md` T28). `script-runtime.md` §5.2 states instead that a field whose
+> source "has none" keeps its stored value; the two readings differ for 14 node instances of
+> this install (8 war-paint colour nodes store a colour, the default is white; 4
+> `AC_Texture_Eyeshadow` layer nodes store 0, the default is 1; 2 `MP_Texture_Secondary` layer
+> nodes store 1, the default is 0), and only when the figure lacks the property.
+> (4) **confirmed and widened**: every look node (33, 44, 53, 60) stays running from its start
+> until it is stopped, and its stop, for any reason (Run with `RunScript_Stop`, a Switch case
+> change, its run or branch stopping), withdraws its effect. (5) **corrected**: a colour or
+> layer change whose compositor is not attached is not dropped; it stays registered while its
+> node runs and applies when a compositor of that name is attached later. A second attach under
+> a taken name is refused, as implemented, but the refused node's stop removes the compositor
+> of that name. (6) and (7) **Tessera Decisions**, kept: the client also caches composed images
+> under a count limit and a memory limit (two client settings whose values were not traced);
+> neither limit changes which image a figure shows. (8) **corrected**: withdraw the
+> post-resolution drop. With the figure state of the §3.5 Rule (no
+> `ScriptSystem_ServerScriptlet` value at creation, `Script_UsePvMPReducedOptions` false) and
+> the §3.5 Decision on `Physics_InWorld`, the data gives the client's result, which is not
+> "every body keeps its own texture": see the table in §3.5.
 
 > **OPEN:** (implementation, 2026-10-10, §3.5 and `script-table.md` §5.1) The dictionary
 > names of the fields of kinds 33 (`CompositorName`, `ColorName`, `Color`), 44
@@ -2668,6 +2870,17 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > with A21: 39, 199, 218 and 2,873 + 13 nodes; 218 of the 218 node-33 instances and 194 of
 > the 199 node-44 instances have a driven pair from an `AC_Color_*` or `AC_Texture_*`
 > property; `EditMaterialScript_ColorValue` finds the 255 + 42 colour edits.)
+>
+> **Answered** (spec writer, 2026-10-10, OBS7, BIN8, A45): kind 33
+> `ModifyCompositorColorScript_CompositorName`, `ModifyCompositorColorScript_ColorName`,
+> `ModifyCompositorColorScript_Color`; kind 44 `ModifyCompositorLayerScript_CompositorName`,
+> `ModifyCompositorLayerScript_LayerName`, `ModifyCompositorLayerScript_ImageNumber`,
+> `ModifyCompositorLayerScript_Opacity`; kind 53 `TextureCompositorScript_CompositorName`,
+> `TextureCompositorScript_ImageCompositorFile`, `TextureCompositorScript_MeshType`,
+> `TextureCompositorScript_MaterialType`, each list in stored field order (the client registers
+> these fields in this order). Look the PIDs up by name in the property dictionary at run time.
+> In this install only `…Color` (218 pairs) and `…ImageNumber` (197 pairs) are driven, so the
+> form-based matching gives the same result here; match by PID. Your census agrees with A21.
 
 > **OPEN:** (implementation, 2026-10-10, §3.5) With the avatar entity's own values and both
 > graphics options on, Tessera's evaluation of `Startup` reaches **no** TextureCompositor
@@ -2686,6 +2899,19 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > set `Physics_InWorld` (to true) on an avatar figure in the world, and from when (before
 > its `Startup` runs, or later, which would re-evaluate the Switch if it is persistent)? Is
 > it also set on figures shown outside the world (character selection, a preview)?
+>
+> **Answered** (spec writer, 2026-10-10, BIN8, OBS7, A50; §3.5 "`Physics_InWorld` and
+> `CharGen_Stage`"): yes. The client's physics component sets `Physics_InWorld` true on an
+> object the first time it is placed at a valid world position and false when it leaves the
+> world. Start-up scripts are started by the script component's own activation, not by the
+> placement; which comes first was **not traced** (narrow OPEN in §3.5). Because the Switch on
+> `Physics_InWorld` is persistent, the compositor is attached in either case once the figure
+> is in the world; the order only decides whether `GOP_AvatarFaceCompositing` off is honoured
+> for these four tables. Figures on the character screens do not need it: the client sets
+> `CharGen_Stage` on them, and the stage cases (6, 1, 3, 7; and 4, in a Sequence with a GameCallback)
+> attach the compositor directly. A figure with neither gets no face from these tables.
+> Tessera Decision (§3.5): set `Physics_InWorld` true after start-up when a figure is placed
+> in the world; the explorer's character viewer counts as placed.
 
 > **OPEN:** (implementation, 2026-10-10, §3.5) With `GOP_AvatarFaceCompositing` false,
 > Tessera still attaches the newer face compositor for Human M and F and River-hobbit M and
@@ -2721,6 +2947,24 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > *Tessera rule until answered:* with the option false, `tessera-mesh` drops the
 > compositor nodes after the resolution (choice (8) of the first OPEN above), so every
 > playable body keeps its head's own texture, as §3.5 states.
+>
+> **Answered** (spec writer, 2026-10-10, BIN8, OBS7, A48, A49; §3.5 "When face compositing is
+> off"): your trace is the client's behaviour as far as the install and the client code go.
+> No client code reads or writes `ScriptSystem_ServerScriptlet` (its PID is nowhere in the
+> executable), and no entity, game object or property set of an avatar carries it, so a figure
+> reads the dictionary default true until the `Startup` of 0x07000042 sets false. The kind-1
+> order is the one Tessera uses (`script-table.md` §8.2 step 3): in every avatar closure the
+> kind-1 species tables (0x07002DAD, 0x07002DB0, 0x07002F08, 0x07002F09, and the four elf
+> tables) are gathered first and 0x07000042 seventh (A48), so the check in 0x07002DAD,
+> 0x07002DB0, 0x07002F08 and 0x07002F09, which their `Startup` reaches at once, reads true and
+> runs `Active`; both start paths of §8.2 keep two kind-1 tables in that order.
+> So with the option off the client attaches the newer face for those four bodies, and the
+> §3.5 sentence "neither compositor is attached" was wrong for them (corrected).
+> `Script_UsePvMPReducedOptions`: false for every figure except the character the player
+> controls, on which the client sets true while a reduced-options mode is on (A49); Tessera
+> uses false. Whether the server sends `ScriptSystem_ServerScriptlet` with an object's
+> properties cannot be observed (narrow OPEN in §3.5; owner item O15 can settle it).
+> **Rule:** withdraw the post-resolution drop (choice (8)); evaluate as the §3.5 Rule states.
 
 ---
 
@@ -2743,6 +2987,7 @@ implemented in `tessera-formats` and `tessera-mesh`.
 | 2026-10-09 (review answer, OBS5) | header; §1 (A42); §5.6 ("What the placement scripts test": gates per script, the 0x10002982 exception, the category count, the Decision's source of the category with an OPEN, A25 caveat); §15 (OBS2 answer wording, placement answer qualified) | Answers the review of 2026-10-09 of the OBS5/BIN7 revision. Blocking 1: 36 of the 91,214 items with `Item_EquipmentCategory` store 0 (91,178 hold one bit, none more); what follows for them is stated. Blocking 2: the three-gate sentence held only for the stowed scripts; the gates of each of the six scripts are now stated, with 0x10002982 as the exception. Non-blocking notes taken. No Decision an implementation follows changed except that the category is taken from the equipped item (stated explicitly). | Spec writer (dirty room) |
 | 2026-10-10 (OBS6) | header; §1 (new OBS6, A44); §15 (answer to the OPEN of 2026-10-08, A33 implemented) | Answers the confirmation-only implementation OPEN of 2026-10-08 that had no answer line (non-blocking note N14 of the `script-runtime.md` review of 2026-10-10): the start order and the "last slider" rule are confirmed; the static treatment of Random ports and slider stops is kept as a Tessera Decision, not exercised by the data (A44). No rule changed. | Spec writer (dirty room) |
 | 2026-10-10 (review answer) | header; §1 (OBS6, A44 wording); §15 (answer of 2026-10-10, new OPEN) | Answers blocking item B1 of the review of 2026-10-10: the unknown that the Answered block stated inline is now a narrow `> **OPEN:**` next to the kept Decision (a stopped run holding a SliderMeshDeformer; a slider node below a Random port; neither in this install, A44). Non-blocking N1 taken ("kind 18", "kind 81"); N2 not taken (counts not re-probed in this session). No rule changed. | Spec writer (dirty room) |
+| 2026-10-10 (OBS7, BIN8) | header; §1 (new OBS7, BIN8, A45–A51); §3.3 (face-compositor sentence); §3.5 (newer/older face selection corrected; new paragraphs on field names, where the composed image goes, how material edits combine, when face compositing is off with a table by species table, `Physics_InWorld` and `CharGen_Stage`; the narrow OPEN on the texture slot and edit rank replaced by facts; new narrow OPENs on absent driven sources, a server-supplied `ScriptSystem_ServerScriptlet` and the start-up/placement order, with Decisions; a Rule replacing the Tessera option-off drop); §13 (O15 line); §15 (four answers); §17 (O15 row) | Answers the four implementation OPENs of 2026-10-10 filed with the face-compositing implementation. From the client (BIN8, decision 0011): no client code touches `ScriptSystem_ServerScriptlet`; the client writes `Script_UsePvMPReducedOptions` only on the controlled character and `Physics_InWorld` from the physics placement; the composed image is parameter 3000 of the matching surfaces; `MeshType` and `MaterialType` 2 match everything; edits are applied in descending `Priority`, so the lowest takes effect; all parameter groups apply; look nodes act while they run; colour and layer changes wait for their compositor. From the data (OBS7): field names of kinds 33, 44, 53; the kind-1 gathering order; what the option-off branches do. Corrections to Accepted text: in 0x07002DAD, 0x07002DB0, 0x07002F08 and 0x07002F09 the older-face path is stored with `Probability` 0 (always the newer face); option off does not drop the compositor for the four kind-1 species tables. Engineering choices (1) and (4) confirmed, (2), (5) and (8) corrected, (3), (6) and (7) Tessera Decisions. Status Accepted → Revised. | Spec writer (dirty room) |
 
 ---
 
@@ -2761,5 +3006,5 @@ Answers to the owner items of `docs/checklists/owner-observations.md` in this sp
 | O11 updated-avatar option | **answered** | A graphics option, default on, bound to `GOP_AvatarUpdateVisible`; with it on, the toggle (newer) style files and the newer face compositor are used; turning it off rebuilds figures with the older files; character creation offers it for Hobbit and Dwarf only (§3.3, §3.5). | Nothing required; a look at the options screen would confirm the default. |
 | O12 random-appearance NPCs | **partly** | Outfits come from Appearance nodes under Switches on the type in the figures' `Startup` scripts, one random piece per group (§7.4); 316 of the 318 placed types have outfits. The picks come from the client's global generator, seeded from the clock at start-up, with no per-object seed (`script-runtime.md` R40, 2026-10-08). | Confirmation that a figure's look changes between visits (expected). Two visits to one figure settle it. |
 | O13 held-item rest positions | **answered** for weapons, shields and ranged items; **partly** overall | Stowed and wielded locations, offsets, rotations and per-species scales by equipment category (§5.6); how offset, rotation and scale apply, including the yaw/pitch/roll order (§5.7, BIN6, 2026-10-09); ranged-slot instruments are stowed by a per-species script (§5.6, A38); class items have no placement script (§5.3). | The in-hand direction of long weapons (one screenshot of a drawn sword from the side), whether class items are ever visible, and whether an equipped shield shows on the forearm out of combat with weapons sheathed (§5.6 "Shields out of combat"). |
-| O15 skin, hair and eye tints, face layers | **answered** for the pairing and the mechanism; **partly** for rendering detail | The face is one texture composited at run time from the face compositor (`misc-records.md` §3.6) with layer choices from `AC_Texture_*` and colours from `AC_Color_*`; hair and beard (and skin surfaces) are tinted through the dye colour 2003 set from `AC_Color_Hair` and `AC_Color_Skin` (§3.5); a second graphics option, default on, turns face compositing off. | Which texture slot of the face-skin surface receives the composed image (one frame capture of a face, as the checklist asks). |
+| O15 skin, hair and eye tints, face layers | **answered** for the pairing and the mechanism; **partly** for rendering detail | The face is one texture composited at run time from the face compositor (`misc-records.md` §3.6) with layer choices from `AC_Texture_*` and colours from `AC_Color_*`; hair and beard (and skin surfaces) are tinted through the dye colour 2003 set from `AC_Color_Hair` and `AC_Color_Skin` (§3.5); a second graphics option, default on, turns face compositing off. | The texture slot is answered (3000, BIN8, 2026-10-10). Left: with face compositing off, whether a Human M or River-hobbit face stays composed in the original client while a Hobbit face does not (§3.5 table; settles the server question); the eyebrow comparison (checklist O15). |
 | O17 static NPCs at the N spots (dress part only) | **needs the owner** | What a figure wears and holds is settled by §7.2–§7.4 and §5.5 (data and BIN2); positions and headings come from the SED data (`entity-descriptor.md`), which the client places as stored. | Presence, position and facing at each spot depend on the original's server and content layers, not on client code; only the in-game `/loc` readings and a look can settle them. |

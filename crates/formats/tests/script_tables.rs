@@ -3827,6 +3827,124 @@ fn persistent_switch_re_evaluates_after_the_start_up() {
     assert!(res.look[0].active());
 }
 
+/// A Run node (kind 5) with its `Persistent` and `UnbindOnDeath` flags.
+fn run_node_flags(id: u32, key: u32, persistent: bool, unbind: bool) -> Vec<u8> {
+    node(
+        5,
+        B::new()
+            .u8(1)
+            .u8(0)
+            .u32(key)
+            .u8(u8::from(persistent))
+            .u8(u8::from(unbind))
+            .u8(0)
+            .u8(0)
+            .u32(3),
+        base(id),
+        &[],
+    )
+}
+
+/// `script-runtime.md` §6.6 R56: when a persistent Switch changes case after the start-up,
+/// the whole left branch stops, and with it the runs of its `Persistent` 1,
+/// `UnbindOnDeath` 0 Run nodes; the runs that `Persistent` 0 or `UnbindOnDeath` 1 Runs of
+/// the branch started keep running, at any depth (a binding Run inside a kept run is kept
+/// with it; a non-binding Run inside a stopped run keeps its own run).
+#[test]
+fn a_case_change_stops_only_the_runs_bound_to_the_left_branch() {
+    const K_P0: u32 = 0x1000_2B01;
+    const K_P1: u32 = 0x1000_2B02;
+    const K_UNBIND: u32 = 0x1000_2B03;
+    const K_P1_OUTER: u32 = 0x1000_2B04;
+    const K_P0_INNER: u32 = 0x1000_2B05;
+    const K_P0_OUTER: u32 = 0x1000_2B06;
+    const K_P1_INNER: u32 = 0x1000_2B07;
+    let mut m = HashMap::new();
+    let left = vec![
+        colour_node(11, 9, 9, [1, 2, 3, 4], &[]),
+        run_node_flags(12, K_P0, false, false),
+        run_node_flags(13, K_P1, true, false),
+        run_node_flags(14, K_UNBIND, true, true),
+        run_node_flags(15, K_P1_OUTER, true, false),
+        run_node_flags(16, K_P0_OUTER, false, false),
+    ];
+    let startup = vec![switch(
+        10,
+        PID_IN_WORLD,
+        &[
+            switch_case(&[(PID_IN_WORLD, 1)], &[]),
+            default_port_pair(&left),
+        ],
+    )];
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[
+                (STARTUP, startup),
+                (
+                    K_P0,
+                    vec![attach_node(20, 1, 0x3300_0001, 0x1000_0002, 0x1000_006C)],
+                ),
+                (K_P1, vec![layer_node(21, 1, 4, 0, &[])]),
+                (K_UNBIND, vec![layer_node(22, 1, 5, 0, &[])]),
+                (
+                    K_P1_OUTER,
+                    vec![
+                        colour_node(23, 1, 9, [5, 6, 7, 8], &[]),
+                        run_node_flags(24, K_P0_INNER, false, false),
+                    ],
+                ),
+                (K_P0_INNER, vec![layer_node(25, 1, 6, 0, &[])]),
+                (
+                    K_P0_OUTER,
+                    vec![run_node_flags(26, K_P1_INNER, true, false)],
+                ),
+                (K_P1_INNER, vec![layer_node(27, 1, 7, 0, &[])]),
+            ],
+        ),
+    );
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let state = |res: &tessera_formats::script_table::resolve::ClipResolution| {
+        res.look
+            .iter()
+            .map(|l| (l.node_id, l.stopped, l.stopped_at))
+            .collect::<Vec<_>>()
+    };
+    // Before the placement every node of the Default branch runs.
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m));
+    let res = r.resolve_with_state(&e, PropertyState::new()).unwrap();
+    assert!(res.look.iter().all(|l| l.active()), "{:?}", res.look);
+    assert_eq!(res.look.len(), 7);
+    // Placed after the start-up: the case changes to the empty one.
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m))
+        .with_after_startup(vec![(PID_IN_WORLD, PropertyValue::Enum(1))]);
+    let res = r.resolve_with_state(&e, PropertyState::new()).unwrap();
+    let stop = Some(7);
+    assert_eq!(
+        state(&res),
+        [
+            // The branch's own node stops.
+            (11, true, stop),
+            // `Persistent` 0: the face stays attached.
+            (20, false, None),
+            // `Persistent` 1, `UnbindOnDeath` 0: stopped with the branch.
+            (21, true, stop),
+            // `UnbindOnDeath` 1: kept.
+            (22, false, None),
+            // A binding run stops, but the `Persistent` 0 run it started does not.
+            (23, true, stop),
+            (25, false, None),
+            // A binding Run inside a kept run is not in the branch any more.
+            (27, false, None),
+        ]
+    );
+}
+
 #[test]
 fn face_nodes_follow_driven_values_and_stops() {
     use tessera_formats::script_table::resolve::LookEffect;

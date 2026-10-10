@@ -1973,6 +1973,15 @@ about π + 0.1 s and π − 0.1 s.
 > setter that takes it. **Tessera default:** every draw of the entity, generic path included
 > (`decals.md` §6.5 OPEN (c)).
 
+> **OPEN (implementer, 2026-10-10, `tessera-material`; engineering choice, no format fact):**
+> Tessera now recognises the world-position liquid of §8.5.5 step 1 by rule (i) of W52
+> alone (a liquid-distortion record none of whose declarations has a binding with a
+> semantic of 38–44; bindings with the older semantics 33–37 do not count), not by its DID.
+> Rule (ii) (no type-5 extra state item) is not used because the decoded interface does not
+> keep the extra state lists; a real-data test checks that both rules select only 0x2B000442
+> in this install. If a later install has a record for which the two rules disagree, which
+> one decides is open.
+
 ---
 
 <a id="s15"></a>

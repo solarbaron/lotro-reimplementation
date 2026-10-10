@@ -3266,6 +3266,7 @@ mod tests {
                     default: v.clone(),
                     binding_count: 1,
                     flag: 0,
+                    transform_bound: false,
                 })
                 .collect(),
             slots: Vec::new(),

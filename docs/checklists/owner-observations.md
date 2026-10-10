@@ -49,7 +49,7 @@ marks the item **done** here.
 | [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | partly answered (`appearance.md` §7.4, §17: where outfits come from); left for the owner: two visits to one figure (same look or not); narrowed 2026-10-08: the picks come from the client's clock-seeded global generator with no per-object seed, so a different look per visit is expected (`script-runtime.md` §8, R40); the two visits confirm it |
 | [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | partly answered (`appearance.md` §5.6, §17: weapons, shields, ranged items); left for the owner: in-hand direction of long weapons (two side screenshots) and whether class items are ever visible; unchanged 2026-10-08 (look) |
 | [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | — | **Answered from the client (2026-10-08)**: all rows (`skeleton-anim.md` §15.1; O14.4 walking speeds 2.5 / 2.25 / 2.57 m/s from `collision.md` §11.8); `/loc` timing and visual checks optional |
-| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority); unchanged 2026-10-08 (frame capture, low priority); 2026-10-10: slot answered from the client (3000), capture no longer needed; open: the eyebrow comparison and a face comparison with face compositing off (low priority) |
+| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority); unchanged 2026-10-08 (frame capture, low priority); 2026-10-10: slot answered from the client (3000), capture no longer needed; open: the eyebrow comparison and a face comparison with face compositing off, an Elf or High-elf face included (low priority) |
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still; unchanged 2026-10-08 (side-by-side look) |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look; unchanged 2026-10-08 (server state and look) |
 | [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O18 mostly answered (2026-10-08; only the jump measurement left); O21, O22, O26 partly answered (2026-10-07); O19, O20, O23–O25, O27 need the original (visual) |
@@ -609,6 +609,17 @@ so the frame capture for the slot is no longer needed. New, low priority:
   River-hobbit faces should stay detailed and the Hobbit M face should turn plain
   (`appearance.md` §3.5, table "When face compositing is off"); a plain Human M face would
   mean the server sends a value the install does not hold.
+
+**2026-10-10 (one more face, same session as above):** whether an elf figure's start-up
+scripts run before or after it is first placed in the world could not be read from the client
+(`appearance.md` §3.5, narrow OPEN). The same comparison settles it.
+
+- **What to do:** with the face-compositing option off, log in (or switch) to an Elf or
+  High-elf character and look closely at its face.
+- **Record:** whether the face keeps the chosen details (eyebrows, scars, war paint, eye
+  colour) or turns plain. Detailed means the figure was placed before its start-up ran (the
+  option is not honoured for the elf bodies); plain means the start-up ran first, as Tessera
+  assumes.
 
 <a id="o16"></a>
 ## O16. Which idle, walk and run clips play (M4)

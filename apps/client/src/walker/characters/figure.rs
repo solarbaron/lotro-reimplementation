@@ -21,7 +21,7 @@
 //!    prepared for the GPU, skinned to the skeleton where the mesh is skinned, its skinned
 //!    vertices deformed once in bind space by the figure's deformation; materials
 //!    resolved with the part's appearance layers (`material.md` §9.3), then the species
-//!    table's colour edits and composited face texture (`appearance.md` §3.5, §8 step 6;
+//!    table's composited face texture and material edits (`appearance.md` §3.5, §8 step 6;
 //!    [`figure_look`], shared with the explorer), into the walker's material plans; held items' parts prepared rigid, keyed by holding location, with an
 //!    attach table of the wearer's locations (`skeleton-anim.md` §8.4), each with its
 //!    stowed or wielded placement (`appearance.md` §5.6).
@@ -59,7 +59,8 @@ use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
 use tessera_material::{ParameterEdit, figure_edits};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_after_startup,
+    figure_look_from_data,
 };
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
@@ -756,8 +757,8 @@ fn build_part(
 }
 
 /// The plan of `surface` with the part's appearance layers whose binding key matches the
-/// surface's (`material.md` §9.3, `appearance.md` §4.10), then the figure look's colour
-/// edits and composed texture for the part's slot (`appearance.md` §3.5, §8 step 6).
+/// surface's (`material.md` §9.3, `appearance.md` §4.10), then the figure look's composed
+/// texture and material edits for the part's slot (`appearance.md` §3.5, §8 step 6).
 fn plan_for(
     ctx: &FigureContext,
     surface: Did,
@@ -798,9 +799,9 @@ fn plan_for(
 }
 
 /// The parameter edits the figure's look makes on a surface with `key` of a part in `slot`
-/// (`appearance.md` §3.5): its colour edits, then the composed face texture as the base
-/// colour (a run-time texture of the shared library, so the object layer's texture loader
-/// finds it).
+/// (`appearance.md` §3.5): the composed face texture as the base colour (a run-time
+/// texture of the shared library, so the object layer's texture loader finds it), then its
+/// material edits by descending priority.
 fn look_edits<S: tessera_material::RecordSource>(
     lib: &MaterialLibrary<S>,
     look: &FigureLook,
@@ -810,11 +811,12 @@ fn look_edits<S: tessera_material::RecordSource>(
     let composed = look
         .compositor_for(slot, key)
         .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
-    figure_edits(
-        lib.runtime_textures(),
-        &look.colour_edits_for(slot, key),
-        composed,
-    )
+    let edits: Vec<ParameterEdit> = look
+        .edits_for(slot, key)
+        .into_iter()
+        .filter_map(ParameterEdit::from_material_edit)
+        .collect();
+    figure_edits(lib.runtime_textures(), &edits, composed)
 }
 
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
@@ -861,9 +863,17 @@ fn select_clips(
     if let Some(asm) = &cat.assembly {
         apply_figure_properties(&mut scripts, c, asm, ctx.assembly);
     }
+    // A figure in the walker is placed in the world: `Physics_InWorld` turns true after its
+    // start-up (`appearance.md` §3.5 Decision).
+    let after_startup = cat
+        .assembly
+        .as_ref()
+        .map(figure_after_startup)
+        .unwrap_or_default();
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
-        .with_random_seed(Some(seed.unwrap_or(0)));
+        .with_random_seed(Some(seed.unwrap_or(0)))
+        .with_after_startup(after_startup);
     let mut idle_clips: Vec<Did> = Vec::new();
     let weight = |c: &ClipCandidate| c.blend_weight * c.chance;
     for state in [MotionState::Idle, MotionState::Walk, MotionState::Run] {
@@ -889,13 +899,7 @@ fn select_clips(
             if let Some(asm) = &cat.assembly {
                 shape = figure_shape(data, asm, c, &r);
             }
-            look = figure_look_from_data(
-                data,
-                &r,
-                ctx.assembly,
-                &LookLimits::default(),
-                Some(&ctx.looks),
-            );
+            look = figure_look_from_data(data, &r, &LookLimits::default(), Some(&ctx.looks));
             appearances = r
                 .appearances
                 .iter()

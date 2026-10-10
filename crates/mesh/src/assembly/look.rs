@@ -7,30 +7,40 @@
 //! TextureCompositor (53), ModifyCompositorLayer (44), ModifyCompositorColor (33) and
 //! EditMaterial (60) nodes whose fields are driven by the character's `AC_*` properties.
 //! Clip selection ([`tessera_formats::script_table::resolve`]) lists those nodes, with
-//! their driven values, in the client's start order ([`ClipResolution::look`]);
-//! [`figure_look`] plays them onto compositor instances (`misc-records.md` §3.7: attach by
-//! name, a second attach under the same name refused, layer and colour changes of an
-//! unknown name ignored), composes each instance's image (`misc-records.md` §3.6) and
-//! collects the colour edits. The explorer and the client share it, so both show the same
-//! face.
+//! their driven values, in the client's start order, and when each was stopped
+//! ([`ClipResolution::look`]); [`figure_look`] replays the starts and stops by the rules of
+//! §3.5 "Where the composed image goes": a TextureCompositor attaches its compositor under
+//! its name (a second attach under a taken name is refused, and any stop of the node removes
+//! the compositor of its name); layer and colour changes register with the figure whether
+//! or not their compositor is attached and apply, in registration order, when it is
+//! composed (a layer name the 0x33 record lacks is reported and skipped); EditMaterial
+//! edits register likewise; a stop withdraws what the node registered. It then composes
+//! each attached compositor's image (`misc-records.md` §3.6). The explorer and the client
+//! share it, so both show the same face.
 //!
 //! [`apply_figure_properties`] puts what the figure's property lookup answers before the
 //! entity's own values into the script state: Tessera's two graphics options
 //! (`GOP_AvatarUpdateVisible`, `GOP_AvatarFaceCompositing`, both default on, §3.3 and
-//! §3.5) and the character's own appearance values ([`super::CharacterSpec::appearance_values`]).
+//! §3.5), `Script_UsePvMPReducedOptions` false (Tessera has no reduced-options mode, §3.5
+//! Rule) and the character's own appearance values
+//! ([`super::CharacterSpec::appearance_values`]). The figure gets no
+//! `ScriptSystem_ServerScriptlet` value, so it reads true until a start-up script sets it.
+//! [`figure_after_startup`] is what a figure placed in the world gets after its start-up:
+//! `Physics_InWorld` true (§3.5 Decision; the explorer's viewer counts as placed), given to
+//! the resolver with `ClipResolver::with_after_startup`. Nothing is dropped after the
+//! resolution: whether `GOP_AvatarFaceCompositing` off removes a face is the data's choice
+//! (§3.5 table).
 //!
-//! Two choices the spec leaves open are Tessera Decisions recorded in `appearance.md` §15:
-//! the composed image replaces the base colour (slot 3000) of the matching surfaces
-//! (`tessera_material::figure_edits` turns a look into material edits), and
-//! of several colour edits of one parameter on one surface the highest `Priority` wins
-//! (the later one on ties), applied after the surface's materials and the figure's groups
-//! (§8 step 6).
+//! Figures on a character screen would carry their `CharGen_Stage` instead of the
+//! placement (§3.5); Tessera has no character screen on this path yet, so every figure
+//! counts as placed in the world.
 //!
-//! With `GOP_AvatarFaceCompositing` off ([`AssemblyOptions::avatar_face_compositing`])
-//! no compositor is attached and the head keeps its own surface texture, as §3.5 states.
-//! The compositor nodes are dropped here, after the resolution, because the data reaches
-//! some of them past the option's check (`appearance.md` §15 OPEN of 2026-10-10 on
-//! `ScriptSystem_ServerScriptlet`).
+//! The look's surfaces (§3.5 "How material edits combine"): a part whose slot equals a
+//! node's `MeshType` (2: every part; 0: none) and a surface whose binding key equals its
+//! `MaterialType` (2: every surface) get the composed image of each matching compositor as
+//! the base colour (3000), then the matching edits sorted by descending `Priority` (start
+//! order among equals), each a material of its own, so the lowest `Priority` takes effect
+//! (`tessera_material::figure_edits`).
 //!
 //! Composition is cached ([`LookCache`], shared by every figure of a client or explorer):
 //! parsed compositor records and decoded source images by DID, composed images by
@@ -47,7 +57,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_formats::appearance::SLOT_ALL;
 use tessera_formats::gameplay::misc::{ImageCompositor, LayerSelection};
-use tessera_formats::script_table::resolve::{ClipResolution, EntityScripts, LookEffect};
+use tessera_formats::script_table::resolve::{
+    ClipResolution, EntityScripts, LookCandidate, LookEffect, MaterialEdit,
+};
 use tessera_formats::{Did, PropertyValue, Record, RgbaImage, Surface};
 use tessera_props::{GameData, RecordSource};
 
@@ -57,9 +69,22 @@ use super::{AssembledCharacter, AssemblyOptions, AssemblyVocabulary};
 /// float for a compositor (`misc-records.md` §3.6.1; bit pattern 0x3B808081).
 pub const COMPOSITOR_COLOUR_SCALE: f32 = f32::from_bits(0x3B80_8081);
 
-/// The material parameter group of colours (`material.md` §5.2: ids 2000–2999 carry four
-/// floats R, G, B, A).
-pub const COLOUR_GROUP: u32 = 2000;
+/// The `MaterialType` that matches every surface (`appearance.md` §3.5, A46, A47).
+pub const MATERIAL_TYPE_ALL: u32 = 2;
+
+/// Lowest material parameter id an edit applies (`appearance.md` §3.5: an id below 1000 is
+/// reported and skipped).
+pub const MIN_EDIT_PARAMETER: u32 = 1000;
+
+/// Whether a look node with `mesh_type` and `material_type` concerns a part in `slot` and a
+/// surface with `binding_key` (`appearance.md` §3.5, A46): `MeshType` 2 matches every part
+/// and 0 none, `MaterialType` 2 matches every surface, otherwise the values must be equal.
+#[must_use]
+pub fn look_matches(mesh_type: u32, material_type: u32, slot: u32, binding_key: u32) -> bool {
+    mesh_type != 0
+        && (mesh_type == SLOT_ALL || mesh_type == slot)
+        && (material_type == MATERIAL_TYPE_ALL || material_type == binding_key)
+}
 
 /// Bounds on one figure's look (hostile-input limits; a species table attaches one or two
 /// compositors with at most a few dozen changes, and a face compositor needs a few dozen
@@ -68,7 +93,8 @@ pub const COLOUR_GROUP: u32 = 2000;
 pub struct LookLimits {
     /// Compositor instances per figure.
     pub max_compositors: usize,
-    /// Colour edits per figure.
+    /// Registered material edits per figure, and registered layer and colour changes per
+    /// figure.
     pub max_edits: usize,
     /// Images and masks decoded per compositor.
     pub max_images: usize,
@@ -106,9 +132,10 @@ pub struct FaceCompositor {
     pub name: u32,
     /// The 0x33 record.
     pub record: Did,
-    /// The `MeshTypeID` slot whose parts receive the texture ([`SLOT_ALL`] = every part).
+    /// The `MeshTypeID` slot whose parts receive the texture ([`SLOT_ALL`] = every part,
+    /// 0 = none).
     pub mesh_type: u32,
-    /// The surface binding key that receives it.
+    /// The surface binding key that receives it ([`MATERIAL_TYPE_ALL`] = every surface).
     pub material_type: u32,
     /// The selection list, one entry per layer of the record (empty when the record did
     /// not load).
@@ -138,54 +165,32 @@ impl FaceCompositor {
             .map(|(_, c)| compositor_colour(*c))
     }
 
-    /// Whether the texture goes to a part in `slot` on a surface with `binding_key`.
+    /// Whether the texture goes to a part in `slot` on a surface with `binding_key`
+    /// ([`look_matches`]).
     #[must_use]
     pub fn applies_to(&self, slot: u32, binding_key: u32) -> bool {
-        (self.mesh_type == SLOT_ALL || self.mesh_type == slot) && self.material_type == binding_key
+        look_matches(self.mesh_type, self.material_type, slot, binding_key)
     }
 }
 
-/// A colour edit (EditMaterial, kind 60) of the figure's surfaces (`appearance.md` §3.5).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ColourEdit {
-    /// The material parameter (2003 = dye colour).
-    pub parameter: u32,
-    /// The `MeshTypeID` slot ([`SLOT_ALL`] = every part).
-    pub mesh_type: u32,
-    /// The surface binding key.
-    pub material_type: u32,
-    /// `Priority`.
-    pub priority: i32,
-    /// The colour as material floats (R, G, B, A), each byte ÷ 255
-    /// (`property-system.md` §4.7).
-    pub colour: [f32; 4],
-}
-
-impl ColourEdit {
-    /// Whether the edit concerns a part in `slot` and a surface with `binding_key`.
-    #[must_use]
-    pub fn applies_to(&self, slot: u32, binding_key: u32) -> bool {
-        (self.mesh_type == SLOT_ALL || self.mesh_type == slot) && self.material_type == binding_key
-    }
-}
-
-/// The figure's look: compositor instances with their images and colour edits.
+/// The figure's look: compositor instances with their images and material edits.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FigureLook {
-    /// Attached compositor instances, in attach order.
+    /// Compositor instances attached at the end, in attach order.
     pub compositors: Vec<FaceCompositor>,
-    /// Colour edits, in start order.
-    pub edits: Vec<ColourEdit>,
-    /// EditMaterial nodes on a parameter that is not a colour (texture, flag or float
-    /// edits; none of the avatar tints, `appearance.md` §3.5): counted, not applied.
-    pub other_edits: usize,
+    /// EditMaterial edits registered at the end, in start order (every parameter group;
+    /// `tessera_material::ParameterEdit::from_material_edit` makes the material entry).
+    pub edits: Vec<MaterialEdit>,
+    /// EditMaterial nodes on a parameter below 1000, reported and skipped (§3.5).
+    pub skipped_edits: usize,
     /// Problems met (missing records, refused attaches, failed compositions, …).
     pub notes: Vec<String>,
 }
 
 impl FigureLook {
     /// The compositor whose image goes to a part in `slot` on a surface with
-    /// `binding_key`: the last attached one with an image.
+    /// `binding_key`: of the matching compositors with an image, each of which is appended
+    /// as a material in attach order, the last one, which takes effect.
     #[must_use]
     pub fn compositor_for(&self, slot: u32, binding_key: u32) -> Option<&FaceCompositor> {
         self.compositors
@@ -194,24 +199,20 @@ impl FigureLook {
             .find(|c| c.image.is_some() && c.applies_to(slot, binding_key))
     }
 
-    /// The colour edits of a part in `slot` on a surface with `binding_key`: one
-    /// (parameter, colour) per edited parameter, the edit with the highest priority, the
-    /// later one on ties (Tessera Decision, `appearance.md` §15). In first-edit order.
+    /// The edits of a part in `slot` on a surface with `binding_key` ([`look_matches`]),
+    /// in the order they are appended (§3.5 "How material edits combine"): by
+    /// **descending** `Priority`, start order among equal priorities. Since a later
+    /// material wins, the lowest `Priority` takes effect, the later-started on ties.
     #[must_use]
-    pub fn colour_edits_for(&self, slot: u32, binding_key: u32) -> Vec<(u32, [f32; 4])> {
-        let mut out: Vec<(u32, i32, [f32; 4])> = Vec::new();
-        for e in self
+    pub fn edits_for(&self, slot: u32, binding_key: u32) -> Vec<&MaterialEdit> {
+        let mut out: Vec<&MaterialEdit> = self
             .edits
             .iter()
-            .filter(|e| e.applies_to(slot, binding_key))
-        {
-            match out.iter_mut().find(|(p, _, _)| *p == e.parameter) {
-                Some(slot) if e.priority >= slot.1 => *slot = (e.parameter, e.priority, e.colour),
-                Some(_) => {}
-                None => out.push((e.parameter, e.priority, e.colour)),
-            }
-        }
-        out.into_iter().map(|(p, _, c)| (p, c)).collect()
+            .filter(|e| look_matches(e.mesh_type, e.material_type, slot, binding_key))
+            .collect();
+        // A stable sort keeps start order among equal priorities.
+        out.sort_by_key(|e| std::cmp::Reverse(e.priority));
+        out
     }
 
     /// Whether anything changes the figure's surfaces.
@@ -246,23 +247,40 @@ pub fn material_colour(bgra: [u8; 4]) -> [f32; 4] {
 
 /// The property values the figure's lookup answers before the entity's own (appearance.md
 /// §3.3 Tessera rule, §3.5): the two graphics options from `options` (as booleans, when
-/// the dictionary names them), then the character's own appearance values
-/// ([`super::ClipInputs::appearance_values`]).
+/// the dictionary names them), `Script_UsePvMPReducedOptions` false (§3.5 Rule: Tessera
+/// has no reduced-options mode, so every figure, the player's own included, reads false),
+/// then the character's own appearance values ([`super::ClipInputs::appearance_values`]).
 #[must_use]
 pub fn figure_script_properties(
     c: &AssembledCharacter,
     vocab: &AssemblyVocabulary,
     options: AssemblyOptions,
 ) -> Vec<(u32, PropertyValue)> {
-    let mut out = Vec::with_capacity(2 + c.clip_inputs.appearance_values.len());
+    let mut out = Vec::with_capacity(3 + c.clip_inputs.appearance_values.len());
     if let Some(p) = vocab.avatar_update_visible {
         out.push((p, PropertyValue::Bool(options.avatar_update_visible)));
     }
     if let Some(p) = vocab.avatar_face_compositing {
         out.push((p, PropertyValue::Bool(options.avatar_face_compositing)));
     }
+    if let Some(p) = vocab.reduced_options {
+        out.push((p, PropertyValue::Bool(false)));
+    }
     out.extend(c.clip_inputs.appearance_values.iter().cloned());
     out
+}
+
+/// What a figure placed in the world gets after its start-up scripts have run
+/// (`appearance.md` §3.5 Decision): `Physics_InWorld` true, when the dictionary names it.
+/// Give it to the figure's resolver with `ClipResolver::with_after_startup`; the explorer's
+/// character viewer uses it too (it counts as placed).
+#[must_use]
+pub fn figure_after_startup(vocab: &AssemblyVocabulary) -> Vec<(u32, PropertyValue)> {
+    vocab
+        .physics_in_world
+        .map(|p| (p, PropertyValue::Bool(true)))
+        .into_iter()
+        .collect()
 }
 
 /// Sets [`figure_script_properties`] in `scripts` (after the figure's property sets, so they
@@ -289,123 +307,174 @@ struct Instance {
     colours: Vec<(u32, [u8; 4])>,
 }
 
+/// A compositor attached while the look is replayed.
+struct Attached {
+    name: u32,
+    record: Did,
+    mesh_type: u32,
+    material_type: u32,
+}
+
 /// Builds the figure's look from the look candidates of `resolution` (its `Startup`
-/// resolution, `appearance.md` §3.5): the active candidates in start order, compositors
-/// read and composed through `read` (a record's bytes, `Ok(None)` when it does not exist).
-///
-/// `options` are the figure's graphics options: with `avatar_face_compositing` off, the
-/// compositor nodes (53, 44, 33) are dropped and only the colour edits remain (§3.5; see
-/// the module documentation). `cache`, when given, is consulted before anything is read or
-/// decoded and keeps what this call composes.
+/// resolution, `appearance.md` §3.5): the picked candidates' starts and stops are replayed
+/// in order (module docs), then each compositor attached at the end is composed with the
+/// layer and colour changes registered for its name, in registration order. Records are
+/// read through `read` (a record's bytes, `Ok(None)` when it does not exist). `cache`,
+/// when given, is consulted before anything is read or decoded and keeps what this call
+/// composes.
 pub fn figure_look<E: std::fmt::Display>(
     resolution: &ClipResolution,
     mut read: impl FnMut(Did) -> Result<Option<Vec<u8>>, E>,
-    options: AssemblyOptions,
     limits: &LookLimits,
     cache: Option<&LookCache>,
 ) -> FigureLook {
     let mut look = FigureLook::default();
-    let mut instances: Vec<Instance> = Vec::new();
-    let mut dropped = 0usize;
-    for cand in resolution.look.iter().filter(|c| c.active()) {
-        match &cand.effect {
-            LookEffect::AttachCompositor(_)
-            | LookEffect::CompositorLayer(_)
-            | LookEffect::CompositorColour(_)
-                if !options.avatar_face_compositing =>
-            {
-                dropped += 1;
+    let cands = &resolution.look;
+    // Stops in replay order: (position, candidate). A stop comes after its node's start;
+    // a stopped node without a position stops right after it started.
+    let mut stops: Vec<(usize, usize)> = cands
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.picked && c.stopped)
+        .map(|(i, c)| {
+            let after = i.saturating_add(1);
+            (c.stopped_at.map_or(after, |a| a.max(after)), i)
+        })
+        .collect();
+    stops.sort_unstable();
+    let mut attached: Vec<Attached> = Vec::new();
+    // Registered layer and colour changes, and edits: candidate indices in start order.
+    let mut changes: Vec<usize> = Vec::new();
+    let mut edits: Vec<usize> = Vec::new();
+    let mut next_stop = stops.iter().peekable();
+    for i in 0..=cands.len() {
+        while let Some(&(_, j)) = next_stop.next_if(|(at, _)| *at <= i) {
+            if let Some(c) = cands.get(j) {
+                stop(c, j, &mut attached, &mut changes, &mut edits);
             }
+        }
+        let Some(c) = cands.get(i).filter(|c| c.picked) else {
+            continue;
+        };
+        match &c.effect {
             LookEffect::AttachCompositor(a) => {
-                if instances.iter().any(|i| i.name == a.compositor) {
+                if attached.iter().any(|x| x.name == a.compositor) {
                     look.note(
                         limits,
                         format!("second compositor under name {:#x} refused", a.compositor),
                     );
-                } else if instances.len() >= limits.max_compositors {
+                } else if attached.len() >= limits.max_compositors {
                     look.note(limits, "too many compositors; the rest are ignored".into());
                 } else {
-                    instances.push(Instance {
+                    attached.push(Attached {
                         name: a.compositor,
                         record: a.file,
                         mesh_type: a.mesh_type,
                         material_type: a.material_type,
-                        layers: Vec::new(),
-                        colours: Vec::new(),
                     });
                 }
             }
-            LookEffect::CompositorLayer(l) => {
-                match instances.iter_mut().find(|i| i.name == l.compositor) {
-                    Some(i) => {
-                        // The setter stores the i32 as read; as an option number it is
-                        // the same 32 bits (`misc-records.md` §3.6.1).
-                        #[allow(clippy::cast_sign_loss)]
-                        let option = l.image_number as u32;
-                        set_or_push(&mut i.layers, l.layer, (l.layer, option, l.opacity));
-                    }
-                    None => look.note(
+            LookEffect::CompositorLayer(_) | LookEffect::CompositorColour(_) => {
+                if changes.len() >= limits.max_edits {
+                    look.note(
                         limits,
-                        format!("layer change of unknown compositor {:#x}", l.compositor),
-                    ),
-                }
-            }
-            LookEffect::CompositorColour(c) => {
-                match instances.iter_mut().find(|i| i.name == c.compositor) {
-                    Some(i) => match i.colours.iter_mut().find(|(k, _)| *k == c.colour) {
-                        Some(e) => e.1 = c.color,
-                        None => i.colours.push((c.colour, c.color)),
-                    },
-                    None => look.note(
-                        limits,
-                        format!("colour change of unknown compositor {:#x}", c.compositor),
-                    ),
+                        "too many compositor changes; the rest are ignored".into(),
+                    );
+                } else {
+                    changes.push(i);
                 }
             }
             LookEffect::EditMaterial(e) => {
-                if e.material_property / 1000 * 1000 != COLOUR_GROUP {
-                    look.other_edits += 1;
-                } else if look.edits.len() >= limits.max_edits {
-                    look.note(limits, "too many colour edits; the rest are ignored".into());
+                if e.material_property < MIN_EDIT_PARAMETER {
+                    look.skipped_edits += 1;
+                    look.note(
+                        limits,
+                        format!("edit of material parameter {} skipped", e.material_property),
+                    );
+                } else if edits.len() >= limits.max_edits {
+                    look.note(
+                        limits,
+                        "too many material edits; the rest are ignored".into(),
+                    );
                 } else {
-                    look.edits.push(ColourEdit {
-                        parameter: e.material_property,
-                        mesh_type: e.mesh_type,
-                        material_type: e.material_type,
-                        priority: e.priority,
-                        colour: material_colour(e.color_value),
-                    });
+                    edits.push(i);
                 }
             }
             _ => {}
         }
     }
-    if dropped > 0 {
-        look.note(
-            limits,
-            format!("face compositing is off: {dropped} compositor nodes not applied"),
-        );
-    }
+    look.edits = edits
+        .iter()
+        .filter_map(|&i| match cands.get(i).map(|c| &c.effect) {
+            Some(LookEffect::EditMaterial(e)) => Some(e.clone()),
+            _ => None,
+        })
+        .collect();
     let mut budget = Budget {
         figure: 0,
         compositor: 0,
     };
-    for inst in instances {
+    for a in attached {
+        let mut inst = Instance {
+            name: a.name,
+            record: a.record,
+            mesh_type: a.mesh_type,
+            material_type: a.material_type,
+            layers: Vec::new(),
+            colours: Vec::new(),
+        };
+        for c in changes.iter().filter_map(|&i| cands.get(i)) {
+            match &c.effect {
+                LookEffect::CompositorLayer(l) if l.compositor == inst.name => {
+                    // The setter stores the i32 as read; as an option number it is the
+                    // same 32 bits (`misc-records.md` §3.6.1).
+                    #[allow(clippy::cast_sign_loss)]
+                    let option = l.image_number as u32;
+                    set_or_push(&mut inst.layers, l.layer, (l.layer, option, l.opacity));
+                }
+                LookEffect::CompositorColour(k) if k.compositor == inst.name => {
+                    match inst.colours.iter_mut().find(|(key, _)| *key == k.colour) {
+                        Some(e) => e.1 = k.color,
+                        None => inst.colours.push((k.colour, k.color)),
+                    }
+                }
+                _ => {}
+            }
+        }
         let c = compose_instance(&inst, &mut read, limits, cache, &mut budget, &mut look);
         look.compositors.push(c);
     }
     look
 }
 
+/// A node's stop (`appearance.md` §3.5 rules 1–3): a TextureCompositor removes the
+/// compositor of its name (whichever node attached it); a layer, colour or material change
+/// is withdrawn.
+fn stop(
+    c: &LookCandidate,
+    index: usize,
+    attached: &mut Vec<Attached>,
+    changes: &mut Vec<usize>,
+    edits: &mut Vec<usize>,
+) {
+    match &c.effect {
+        LookEffect::AttachCompositor(a) => attached.retain(|x| x.name != a.compositor),
+        LookEffect::CompositorLayer(_) | LookEffect::CompositorColour(_) => {
+            changes.retain(|&j| j != index);
+        }
+        LookEffect::EditMaterial(_) => edits.retain(|&j| j != index),
+        _ => {}
+    }
+}
+
 /// [`figure_look`] reading records from `data`.
 pub fn figure_look_from_data<S: RecordSource>(
     data: &GameData<S>,
     resolution: &ClipResolution,
-    options: AssemblyOptions,
     limits: &LookLimits,
     cache: Option<&LookCache>,
 ) -> FigureLook {
-    figure_look(resolution, |d| data.read(d), options, limits, cache)
+    figure_look(resolution, |d| data.read(d), limits, cache)
 }
 
 fn set_or_push(v: &mut Vec<(u32, u32, f32)>, key: u32, entry: (u32, u32, f32)) {

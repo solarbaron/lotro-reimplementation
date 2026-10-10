@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The figure look (`tessera_mesh::assembly::look`, `docs/specs/appearance.md` §3.5) on
 //! arbitrary input: look candidates (attach, layer, colour and edit nodes with arbitrary
-//! fields, picked and stopped flags) built from the first bytes, and record bytes for every
-//! DID the look reads (compositor records and surfaces) cut from the rest. The look runs
-//! with the face-compositing option from the input, twice through one cache (the second
-//! run must give the same images).
+//! fields, picked flags and stop positions) built from the first bytes, and record bytes for
+//! every DID the look reads (compositor records and surfaces) cut from the rest. The look
+//! runs twice through one cache (the second run must give the same images).
 //!
 //! Nothing may panic; every composed image must match its size.
 //!
@@ -23,7 +22,7 @@ use tessera_formats::script_table::resolve::{
 use tessera_formats::script_table::{
     CompositorColourNode, CompositorLayerNode, TextureCompositorNode,
 };
-use tessera_mesh::assembly::AssemblyOptions;
+use tessera_material::ParameterEdit;
 use tessera_mesh::assembly::look::{LookCache, LookLimits, figure_look};
 
 fn u32_at(b: &[u8], i: usize) -> u32 {
@@ -68,10 +67,15 @@ fuzz_target!(|data: &[u8]| {
                 color: c.to_le_bytes(),
             }),
             _ => LookEffect::EditMaterial(MaterialEdit {
-                material_property: 2000 + (c % 2000),
+                material_property: c % 6000,
                 mesh_type: a,
                 material_type: b,
                 priority: d as i32,
+                waveform_value: std::sync::Arc::new(tessera_formats::Waveform {
+                    subtype: d % 12,
+                    values: vec![f32::from_bits(c); 10],
+                    extra: None,
+                }),
                 color_value: d.to_le_bytes(),
                 texture_value: Did(0),
                 bool_value: false,
@@ -83,6 +87,7 @@ fuzz_target!(|data: &[u8]| {
             picked: flags & 1 == 0,
             chance: 1.0,
             stopped: flags & 2 != 0,
+            stopped_at: (flags & 4 != 0).then_some(usize::from(flags >> 3)),
             table: Did(0),
             scriptlet: Did(0),
             node_id: 0,
@@ -113,19 +118,12 @@ fuzz_target!(|data: &[u8]| {
         max_figure_bytes: 3 << 19,
         ..LookLimits::default()
     };
-    let options = AssemblyOptions {
-        avatar_face_compositing: data.first().is_none_or(|b| b & 0x80 == 0),
-        ..AssemblyOptions::default()
-    };
     let cache = LookCache::default();
-    let out = figure_look(&resolution, read, options, &limits, Some(&cache));
-    let again = figure_look(&resolution, read, options, &limits, Some(&cache));
+    let out = figure_look(&resolution, read, &limits, Some(&cache));
+    let again = figure_look(&resolution, read, &limits, Some(&cache));
     assert_eq!(out.compositors.len(), again.compositors.len());
     for (a, b) in out.compositors.iter().zip(&again.compositors) {
         assert_eq!(a.image, b.image, "the cache changes no image");
-    }
-    if !options.avatar_face_compositing {
-        assert!(out.compositors.is_empty());
     }
     for c in &out.compositors {
         if let Some(img) = &c.image {
@@ -137,6 +135,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = out.compositor_for(c.mesh_type, c.material_type);
     }
     for e in &out.edits {
-        let _ = out.colour_edits_for(e.mesh_type, e.material_type);
+        for m in out.edits_for(e.mesh_type, e.material_type) {
+            let _ = ParameterEdit::from_material_edit(m);
+        }
     }
 });

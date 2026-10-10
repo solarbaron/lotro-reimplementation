@@ -1180,6 +1180,7 @@ fuzz_target!(|data: &[u8]| {
             color_value: Some(EM_COLOR),
             texture_value: Some(EM_TEXTURE),
             bool_value: Some(EM_BOOL),
+            ..EditMaterialFieldPids::default()
         },
         ..ScriptVocabulary::default()
     };
@@ -1249,6 +1250,31 @@ fuzz_target!(|data: &[u8]| {
         assert_issues_unique(&res);
         let _ = res.primary(10);
         let _ = res.clips();
+    }
+    // Properties set after the start-up (`appearance.md` §3.5, `Physics_InWorld`): watched
+    // persistent Switches re-evaluate; the lists stay within the caps.
+    let mut late = ClipResolver::new(&total, r.vocabulary().clone(), |d: Did| {
+        Ok::<_, Infallible>(world.get(&d).cloned())
+    })
+    .with_limits(limits)
+    .with_defaults(|pid| (pid % 3 == 0).then_some(PropertyValue::Int(0)))
+    .with_random_seed(Some(1))
+    .with_after_startup(vec![
+        (CHARGEN_STAGE, PropertyValue::Int(i32::from(mode & 7))),
+        (COMBAT_VIOLENT, PropertyValue::Bool(true)),
+        (ENTITY_ELEMENT, PropertyValue::Int(1)),
+    ]);
+    let res = late
+        .resolve(&entity, MotionState::Idle)
+        .expect("fetch never fails");
+    assert!(res.look.len() <= limits.max_candidates);
+    assert!(res.candidates.len() <= limits.max_candidates);
+    assert!(res.appearances.len() <= limits.max_candidates);
+    assert!(res.mesh_fx.len() <= limits.max_candidates);
+    for (i, l) in res.look.iter().enumerate() {
+        if let Some(at) = l.stopped_at {
+            assert!(l.stopped && at > i, "a stop follows its start");
+        }
     }
     let all = r.reachable(&entity).expect("fetch never fails");
     assert!(all.candidates.len() <= limits.max_candidates);

@@ -30,6 +30,10 @@
 //!
 //! [`EntityScripts::running`] marks scripts as running before `Startup` (a mounted rider's
 //! channelling script, read by WhenRunning nodes, §8.4 step 2).
+//! [`ClipResolver::with_after_startup`] gives properties that change **after** the start-up
+//! (a placed figure's `Physics_InWorld`, `appearance.md` §3.5): the persistent Switches on
+//! them that the start-up reached re-evaluate in the end state, and what they start follows
+//! the start-up's candidates.
 //!
 //! Every script run (`Startup`, a start-up name, a Run node) runs **all** the definitions
 //! the lookup gathers (§8.2 steps 2–3, T25, T41) in the client's start order: the
@@ -65,7 +69,7 @@ use std::sync::Arc;
 
 use super::node::{
     AnimationNode, CompositorColourNode, CompositorLayerNode, EditMaterialNode, MeshFxNode, Node,
-    NodeData, NodeKind, PhysicsImpulseNode, PortPayload, PortType, SWITCH_ALL_BITS_SET,
+    NodeData, NodeKind, PhysicsImpulseNode, Port, PortPayload, PortType, SWITCH_ALL_BITS_SET,
     SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, TextureCompositorNode, WhenTest, WhileNode,
     when_op,
 };
@@ -75,7 +79,7 @@ use crate::did::Did;
 use crate::enum_mapper::EnumMapper;
 use crate::error::FormatError;
 use crate::property::{
-    PropertyDictionary, PropertyEntry, PropertyNames, PropertySchema, PropertyValue,
+    PropertyDictionary, PropertyEntry, PropertyNames, PropertySchema, PropertyValue, Waveform,
 };
 use crate::property_set::{PropertySet, PropertySetRecord, object_property_set_did};
 use crate::setup::{ENTITY_PREFIX, EntityDescriptor, MAX_CHAIN_HOPS, ResolveError, TemplateLink};
@@ -297,6 +301,8 @@ pub struct EditMaterialFieldPids {
     pub material_type: Option<u32>,
     /// `EditMaterialScript_Priority`.
     pub priority: Option<u32>,
+    /// `EditMaterialScript_WaveformValue`.
+    pub waveform_value: Option<u32>,
     /// `EditMaterialScript_ColorValue` (`appearance.md` §3.5: driven by `AC_Color_Hair` and
     /// `AC_Color_Skin`).
     pub color_value: Option<u32>,
@@ -316,6 +322,7 @@ impl EditMaterialFieldPids {
             mesh_type: p("EditMaterialScript_MeshType"),
             material_type: p("EditMaterialScript_MaterialType"),
             priority: p("EditMaterialScript_Priority"),
+            waveform_value: p("EditMaterialScript_WaveformValue"),
             color_value: p("EditMaterialScript_ColorValue"),
             texture_value: p("EditMaterialScript_TextureValue"),
             bool_value: p("EditMaterialScript_BoolValue"),
@@ -329,12 +336,63 @@ impl EditMaterialFieldPids {
             self.mesh_type,
             self.material_type,
             self.priority,
+            self.waveform_value,
             self.color_value,
             self.texture_value,
             self.bool_value,
         ]
         .into_iter()
         .flatten()
+    }
+}
+
+/// PIDs of the fields of the three compositor node kinds (`appearance.md` §3.5 "Field
+/// names", A45), by which a driven pair names the field it drives. Each is `None` when the
+/// dictionary lacks the name; a driven pair naming no known field changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CompositorFieldPids {
+    /// `ModifyCompositorColorScript_CompositorName` (kind 33).
+    pub colour_compositor: Option<u32>,
+    /// `ModifyCompositorColorScript_ColorName`.
+    pub colour_name: Option<u32>,
+    /// `ModifyCompositorColorScript_Color`.
+    pub colour: Option<u32>,
+    /// `ModifyCompositorLayerScript_CompositorName` (kind 44).
+    pub layer_compositor: Option<u32>,
+    /// `ModifyCompositorLayerScript_LayerName`.
+    pub layer_name: Option<u32>,
+    /// `ModifyCompositorLayerScript_ImageNumber`.
+    pub image_number: Option<u32>,
+    /// `ModifyCompositorLayerScript_Opacity`.
+    pub opacity: Option<u32>,
+    /// `TextureCompositorScript_CompositorName` (kind 53).
+    pub texture_compositor: Option<u32>,
+    /// `TextureCompositorScript_ImageCompositorFile`.
+    pub file: Option<u32>,
+    /// `TextureCompositorScript_MeshType`.
+    pub mesh_type: Option<u32>,
+    /// `TextureCompositorScript_MaterialType`.
+    pub material_type: Option<u32>,
+}
+
+impl CompositorFieldPids {
+    /// Looks the field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            colour_compositor: p("ModifyCompositorColorScript_CompositorName"),
+            colour_name: p("ModifyCompositorColorScript_ColorName"),
+            colour: p("ModifyCompositorColorScript_Color"),
+            layer_compositor: p("ModifyCompositorLayerScript_CompositorName"),
+            layer_name: p("ModifyCompositorLayerScript_LayerName"),
+            image_number: p("ModifyCompositorLayerScript_ImageNumber"),
+            opacity: p("ModifyCompositorLayerScript_Opacity"),
+            texture_compositor: p("TextureCompositorScript_CompositorName"),
+            file: p("TextureCompositorScript_ImageCompositorFile"),
+            mesh_type: p("TextureCompositorScript_MeshType"),
+            material_type: p("TextureCompositorScript_MaterialType"),
+        }
     }
 }
 
@@ -413,6 +471,8 @@ pub struct ScriptVocabulary {
     pub impulse: ImpulseFieldPids,
     /// EditMaterial field PIDs (§5.3; `appearance.md` §3.5).
     pub edit_material: EditMaterialFieldPids,
+    /// Field PIDs of the compositor kinds 33, 44 and 53 (`appearance.md` §3.5, A45).
+    pub compositor: CompositorFieldPids,
 }
 
 /// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
@@ -508,6 +568,7 @@ impl ScriptVocabulary {
             final_element: opt("Entity_FinalElement"),
             impulse: ImpulseFieldPids::from_names(dict),
             edit_material: EditMaterialFieldPids::from_names(dict),
+            compositor: CompositorFieldPids::from_names(dict),
         })
     }
 }
@@ -1396,11 +1457,11 @@ pub struct MeshFxDriven {
     pub fade_in_time: bool,
 }
 
-/// The scalar fields of an EditMaterial node (kind 60, §5.3) that a figure's look uses
-/// (`appearance.md` §3.5). The node's `WaveformValue` is left out: no look reads it, and
-/// leaving it out keeps every listed candidate small and of fixed size, however large the
-/// stored waveform is.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The fields of an EditMaterial node (kind 60, §5.3) that a figure's look uses
+/// (`appearance.md` §3.5: the parameter's group chooses the value field). The stored
+/// `WaveformValue` is shared with the node, so every listed candidate stays small however
+/// large the stored waveform is.
+#[derive(Debug, Clone, PartialEq)]
 pub struct MaterialEdit {
     /// `MaterialProperty`: the material parameter id (2003 = dye colour).
     pub material_property: u32,
@@ -1410,6 +1471,8 @@ pub struct MaterialEdit {
     pub material_type: u32,
     /// `Priority`.
     pub priority: i32,
+    /// `WaveformValue`: the value of a parameter of group 1000.
+    pub waveform_value: Arc<Waveform>,
     /// `ColorValue`: the four stored bytes (B, G, R, A).
     pub color_value: [u8; 4],
     /// `TextureValue`: a DID, or 0.
@@ -1425,6 +1488,7 @@ impl From<&EditMaterialNode> for MaterialEdit {
             mesh_type: e.mesh_type,
             material_type: e.material_type,
             priority: e.priority,
+            waveform_value: Arc::clone(&e.waveform_value),
             color_value: e.color_value,
             texture_value: e.texture_value,
             bool_value: e.bool_value,
@@ -1434,7 +1498,7 @@ impl From<&EditMaterialNode> for MaterialEdit {
 
 /// What a face-compositing or colour-edit node does to the figure's look
 /// (`appearance.md` §3.5), with its fields after driven values.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum LookEffect {
     /// TextureCompositor (53): attach a compositor record under a name.
@@ -1443,8 +1507,7 @@ pub enum LookEffect {
     CompositorLayer(CompositorLayerNode),
     /// ModifyCompositorColor (33): set a colour of a named compositor.
     CompositorColour(CompositorColourNode),
-    /// EditMaterial (60): edit a material parameter of the figure's surfaces (its scalar
-    /// fields only).
+    /// EditMaterial (60): edit a material parameter of the figure's surfaces.
     EditMaterial(MaterialEdit),
 }
 
@@ -1460,10 +1523,17 @@ pub struct LookCandidate {
     pub picked: bool,
     /// Product of Random shares and node probabilities above it (1 when certain).
     pub chance: f32,
-    /// Whether a Run node with `RunScript_Stop` stopped one of [`LookCandidate::scripts`]
-    /// after the node started (`appearance.md` §3.5: the older face compositor is stopped
-    /// when the newer one runs). A stopped node no longer contributes to the look.
+    /// Whether the node was stopped after it started: a Run node with `RunScript_Stop`
+    /// stopped one of [`LookCandidate::scripts`], or a persistent Switch above it changed
+    /// its case after the start-up ([`ClipResolver::with_after_startup`]). A stopped node
+    /// no longer contributes to the look (`appearance.md` §3.5 rule 3).
     pub stopped: bool,
+    /// When it was stopped: the number of look candidates listed before the stop (so the
+    /// stop happened after the start of candidate `stopped_at − 1` and before the start of
+    /// candidate `stopped_at`). `None` while it runs. A look replays starts and stops in
+    /// this order (`appearance.md` §3.5 rules 1–2: a refused attach's stop removes the
+    /// compositor of its name).
+    pub stopped_at: Option<usize>,
     /// The table whose script started the chain.
     pub table: Did,
     /// The scriptlet holding the node, or the null DID for a table node.
@@ -1587,6 +1657,8 @@ pub struct ClipResolver<'s, S: ?Sized, F, B, E> {
     /// Seed of the Random-node picks of [`AppearanceCandidate::picked`] (see
     /// [`ClipResolver::with_random_seed`]).
     random_seed: Option<u64>,
+    /// Property values set after the start-up (see [`ClipResolver::with_after_startup`]).
+    after_startup: Vec<(u32, PropertyValue)>,
     _marker: PhantomData<fn() -> (B, E)>,
 }
 
@@ -1619,6 +1691,7 @@ where
             defaults: None,
             unset_as_zero: false,
             random_seed: None,
+            after_startup: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -1634,6 +1707,24 @@ where
     #[must_use]
     pub fn with_random_seed(mut self, seed: Option<u64>) -> Self {
         self.random_seed = seed;
+        self
+    }
+
+    /// Property values the entity gets **after** its start-up scripts have run (the
+    /// `Startup` run and the named start-up scripts). A persistent Switch (§7.1,
+    /// `script-runtime.md` §6.6) that the start-up reached on one of these properties
+    /// re-evaluates then: in the state, running scripts and generator at the end of the
+    /// start-up with these values set, it runs its new case when the case changed, and the
+    /// branch it chose at the start-up stops (its look candidates are marked stopped). What
+    /// the new case starts is listed after the start-up's candidates, in start order.
+    ///
+    /// Tessera sets `Physics_InWorld` true this way for a figure placed in the world
+    /// (`appearance.md` §3.5 Decision on `Physics_InWorld`). Only [`ClipResolver::resolve`]
+    /// and [`ClipResolver::resolve_with_state`] use it; the every-branch mode and single
+    /// script runs do not. Costs a second evaluation when such a Switch is reached.
+    #[must_use]
+    pub fn with_after_startup(mut self, values: Vec<(u32, PropertyValue)>) -> Self {
+        self.after_startup = values;
         self
     }
 
@@ -1926,6 +2017,38 @@ where
         all_branches: bool,
         entry: Entry,
     ) -> Result<ClipResolution, ResolveError<E>> {
+        // Properties set after the start-up (`with_after_startup`): a first pass finds
+        // whether a persistent Switch watches one of them and, if so, the state, running
+        // scripts and generator at the end of the start-up, from which the second pass
+        // re-evaluates those Switches.
+        let watch = !all_branches && entry == Entry::Startup && !self.after_startup.is_empty();
+        if !watch {
+            return Ok(self.pass(entity, state, all_branches, entry, After::Off)?.0);
+        }
+        let (first, end) = self.pass(entity, state.clone(), false, entry, After::Detect)?;
+        let Some(mut end) = end else {
+            return Ok(first);
+        };
+        for (pid, v) in &self.after_startup {
+            end.state.set(*pid, v.clone());
+        }
+        Ok(self
+            .pass(entity, state, false, entry, After::Defer(Box::new(end)))?
+            .0)
+    }
+
+    /// One evaluation. With [`After::Detect`] it also returns, when a persistent Switch on a
+    /// property of [`ClipResolver::with_after_startup`] was reached, the context at the end
+    /// of the start-up; with [`After::Defer`] those Switches are re-evaluated in that
+    /// context and what they start is listed after the start-up's own candidates.
+    fn pass(
+        &mut self,
+        entity: &EntityScripts,
+        state: PropertyState,
+        all_branches: bool,
+        entry: Entry,
+        after: After,
+    ) -> Result<(ClipResolution, Option<Deferred>), ResolveError<E>> {
         let entity_tables = entity.tables();
         let closure = self.closure(&entity_tables)?;
         let mut tables = Vec::with_capacity(closure.order.len());
@@ -1980,6 +2103,10 @@ where
             all_branches,
             mesh_fx: Vec::new(),
             look: Vec::new(),
+            after,
+            in_deferred: false,
+            deferred_stops: Vec::new(),
+            branch_stops: Vec::new(),
         };
         if let Entry::Script(key) = entry {
             let defs = ev.gather(key);
@@ -2031,27 +2158,139 @@ where
             res?;
         }
         let Eval {
-            out,
-            impulses,
-            deformers,
-            appearances,
-            mesh_fx,
-            look,
-            issues,
+            mut out,
+            mut impulses,
+            mut deformers,
+            mut appearances,
+            mut mesh_fx,
+            mut look,
+            mut issues,
             visits,
+            after,
+            deferred_stops,
+            branch_stops,
+            state,
+            running,
+            rng,
             ..
         } = ev;
-        Ok(ClipResolution {
-            closure,
-            candidates: out,
-            impulses,
-            deformers,
-            appearances,
-            mesh_fx,
-            look,
-            issues,
-            nodes_visited: visits,
-        })
+        let end = match after {
+            After::Off | After::Detect => None,
+            After::Watched => Some(Deferred::at_end(state, running, rng)),
+            After::Defer(d) => {
+                // The start-up's candidates come first; what the re-evaluated Switches
+                // started follows, and their stops reach back into the start-up's list.
+                let base = look.len();
+                for (script, at) in deferred_stops {
+                    for l in look.iter_mut().filter(|l| l.scripts.contains(&script)) {
+                        mark_stopped(l, base.saturating_add(at));
+                    }
+                }
+                for (from, to, at) in branch_stops {
+                    for l in look.iter_mut().take(to).skip(from) {
+                        mark_stopped(l, base.saturating_add(at));
+                    }
+                }
+                let d = *d;
+                // Both lists together stay within the candidate cap.
+                let cap = self.limits.max_candidates;
+                let mut cut = false;
+                let mut append = |n: usize, extra: usize| {
+                    let room = cap.saturating_sub(n);
+                    cut |= extra > room;
+                    room
+                };
+                let room = append(look.len(), d.look.len());
+                look.extend(d.look.into_iter().take(room).map(|mut l| {
+                    l.stopped_at = l.stopped_at.map(|a| a.saturating_add(base));
+                    l
+                }));
+                let room = append(out.len(), d.out.len());
+                out.extend(d.out.into_iter().take(room));
+                let room = append(impulses.len(), d.impulses.len());
+                impulses.extend(d.impulses.into_iter().take(room));
+                let room = append(deformers.len(), d.deformers.len());
+                deformers.extend(d.deformers.into_iter().take(room));
+                let room = append(appearances.len(), d.appearances.len());
+                appearances.extend(d.appearances.into_iter().take(room));
+                let room = append(mesh_fx.len(), d.mesh_fx.len());
+                mesh_fx.extend(d.mesh_fx.into_iter().take(room));
+                if cut && !issues.contains(&ResolveIssue::Limit("max_candidates")) {
+                    issues.push(ResolveIssue::Limit("max_candidates"));
+                }
+                None
+            }
+        };
+        Ok((
+            ClipResolution {
+                closure,
+                candidates: out,
+                impulses,
+                deformers,
+                appearances,
+                mesh_fx,
+                look,
+                issues,
+                nodes_visited: visits,
+            },
+            end,
+        ))
+    }
+}
+
+/// Marks a look candidate stopped at `at`, unless it was stopped earlier.
+fn mark_stopped(l: &mut LookCandidate, at: usize) {
+    if !l.stopped {
+        l.stopped = true;
+        l.stopped_at = Some(at);
+    }
+}
+
+/// How an evaluation treats the properties set after the start-up
+/// ([`ClipResolver::with_after_startup`]).
+enum After {
+    /// Not at all.
+    Off,
+    /// First pass: watch for a persistent Switch on one of them.
+    Detect,
+    /// First pass, such a Switch was reached.
+    Watched,
+    /// Second pass: re-evaluate such Switches in this context.
+    Defer(Box<Deferred>),
+}
+
+/// The context after the start-up in which persistent Switches re-evaluate
+/// ([`ClipResolver::with_after_startup`]), and what they start there. While a Switch
+/// re-evaluates, the evaluator swaps these fields with its own.
+struct Deferred {
+    state: PropertyState,
+    running: HashSet<u32>,
+    rng: Option<SplitMix64>,
+    out: Vec<ClipCandidate>,
+    impulses: Vec<ImpulseCandidate>,
+    deformers: Vec<DeformerCandidate>,
+    appearances: Vec<AppearanceCandidate>,
+    mesh_fx: Vec<MeshFxCandidate>,
+    look: Vec<LookCandidate>,
+    runs: Vec<RunFrame>,
+    whiles: Vec<WhileFrame>,
+}
+
+impl Deferred {
+    fn at_end(state: PropertyState, running: HashSet<u32>, rng: Option<SplitMix64>) -> Self {
+        Self {
+            state,
+            running,
+            rng,
+            out: Vec::new(),
+            impulses: Vec::new(),
+            deformers: Vec::new(),
+            appearances: Vec::new(),
+            mesh_fx: Vec::new(),
+            look: Vec::new(),
+            runs: Vec::new(),
+            whiles: Vec::new(),
+        }
     }
 }
 
@@ -2235,6 +2474,18 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     all_branches: bool,
     mesh_fx: Vec<MeshFxCandidate>,
     look: Vec<LookCandidate>,
+    /// Properties set after the start-up ([`ClipResolver::with_after_startup`]).
+    after: After,
+    /// Whether a persistent Switch is re-evaluating after the start-up (its context is
+    /// swapped in, see [`Deferred`]).
+    in_deferred: bool,
+    /// Run stops made after the start-up: (script, number of look candidates the
+    /// re-evaluated Switches had listed), applied to the start-up's candidates at the end.
+    deferred_stops: Vec<(u32, usize)>,
+    /// Start-up branches that a re-evaluated Switch left: (first, end) of their look
+    /// candidates in the start-up's list, and the number of look candidates the
+    /// re-evaluated Switches had listed when it happened.
+    branch_stops: Vec<(usize, usize, usize)>,
 }
 
 impl<S, F, B, E> Eval<'_, '_, S, F, B, E>
@@ -2492,7 +2743,7 @@ where
             NodeData::Switch(sw) if n.kind == NodeKind::WHEN => {
                 self.when(n, sw.property, scope, ctx)
             }
-            NodeData::Switch(sw) => self.switch(n, sw.property, scope, ctx),
+            NodeData::Switch(sw) => self.switch(n, sw.property, sw.persistent, scope, ctx),
             NodeData::ScalarBlend { property, .. } => self.blend(n, *property, scope, ctx),
             NodeData::Random { .. } => self.random(n, scope, ctx),
             NodeData::Scriptlet { file, parameters } => {
@@ -2609,12 +2860,38 @@ where
         Ok(())
     }
 
+    /// Marks the look candidates of `script`'s runs stopped (`appearance.md` §3.5 rule 3);
+    /// after the start-up the stop is also kept for the start-up's candidates. `false`
+    /// when the work budget is exhausted.
+    fn stop_look(&mut self, script: u32) -> bool {
+        if !self.charge(self.look.len()) {
+            return false;
+        }
+        let at = self.look.len();
+        for l in &mut self.look {
+            if l.scripts.contains(&script) {
+                mark_stopped(l, at);
+            }
+        }
+        if self.in_deferred {
+            if self.deferred_stops.len() >= self.r.limits.max_candidates {
+                self.limit("max_candidates");
+                return false;
+            }
+            self.deferred_stops.push((script, at));
+        }
+        true
+    }
+
     /// Switch (§7.1): the first matching case in stored order (Decision), else Default.
+    /// A persistent Switch on a property set after the start-up re-evaluates then
+    /// ([`ClipResolver::with_after_startup`]).
     #[inline(never)]
     fn switch<'a>(
         &mut self,
         n: &'a Node,
         property: u32,
+        persistent: bool,
         scope: &Scope<'a>,
         ctx: Ctx,
     ) -> Result<(), ResolveError<E>> {
@@ -2629,6 +2906,91 @@ where
             }
             return Ok(());
         }
+        let Some(case) = self.switch_case(n, property) else {
+            return Ok(());
+        };
+        let first = self.look.len();
+        match case {
+            Some(p) => self.nodes(&p.children, scope, ctx)?,
+            None => self.children(n, Some(PortType::DEFAULT), scope, ctx)?,
+        }
+        let watched = persistent
+            && !self.in_deferred
+            && !matches!(self.after, After::Off)
+            && self.r.after_startup.iter().any(|(p, _)| *p == property);
+        if !watched {
+            return Ok(());
+        }
+        match self.after {
+            After::Detect | After::Watched => {
+                self.after = After::Watched;
+                Ok(())
+            }
+            After::Defer(_) => self.reevaluate(n, property, (case, first), scope, ctx),
+            After::Off => Ok(()),
+        }
+    }
+
+    /// Re-evaluates a persistent Switch after the start-up ([`ClipResolver::with_after_startup`]):
+    /// in the context of [`Deferred`], its case is chosen again; when it differs from
+    /// `before` (the start-up's choice, `None` = Default, and the index of the first look
+    /// candidate that choice listed), the start-up's branch stops and the new one starts.
+    fn reevaluate<'a>(
+        &mut self,
+        n: &'a Node,
+        property: u32,
+        (before, first): (Option<&'a Port>, usize),
+        scope: &Scope<'a>,
+        ctx: Ctx,
+    ) -> Result<(), ResolveError<E>> {
+        let end = self.look.len();
+        self.swap_deferred();
+        self.in_deferred = true;
+        let mut res = Ok(());
+        if let Some(after) = self.switch_case(n, property) {
+            let same = match (before, after) {
+                (Some(a), Some(b)) => std::ptr::eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                if end > first {
+                    self.branch_stops.push((first, end, self.look.len()));
+                }
+                res = match after {
+                    Some(p) => self.nodes(&p.children, scope, ctx),
+                    None => self.children(n, Some(PortType::DEFAULT), scope, ctx),
+                };
+            }
+        }
+        self.in_deferred = false;
+        self.swap_deferred();
+        res
+    }
+
+    /// Swaps the evaluator's state, running scripts, generator, candidate lists and run
+    /// frames with those of the [`Deferred`] context (twice restores them).
+    fn swap_deferred(&mut self) {
+        let After::Defer(d) = &mut self.after else {
+            return;
+        };
+        std::mem::swap(&mut self.state, &mut d.state);
+        std::mem::swap(&mut self.running, &mut d.running);
+        std::mem::swap(&mut self.rng, &mut d.rng);
+        std::mem::swap(&mut self.out, &mut d.out);
+        std::mem::swap(&mut self.impulses, &mut d.impulses);
+        std::mem::swap(&mut self.deformers, &mut d.deformers);
+        std::mem::swap(&mut self.appearances, &mut d.appearances);
+        std::mem::swap(&mut self.mesh_fx, &mut d.mesh_fx);
+        std::mem::swap(&mut self.look, &mut d.look);
+        std::mem::swap(&mut self.runs, &mut d.runs);
+        std::mem::swap(&mut self.whiles, &mut d.whiles);
+    }
+
+    /// The case a Switch takes in the current state: `Some(Some(port))` for a matching case
+    /// (the first in stored order), `Some(None)` for the Default port, `None` when the work
+    /// budget ran out.
+    fn switch_case<'a>(&mut self, n: &'a Node, property: u32) -> Option<Option<&'a Port>> {
         // The cases are scanned against what is left of the budget, so one node with very
         // many ports or case values cannot run far past it either.
         let budget =
@@ -2649,13 +3011,7 @@ where
                 }
             }
         }
-        if !self.charge(cost) {
-            return Ok(());
-        }
-        match case {
-            Some(p) => self.nodes(&p.children, scope, ctx),
-            None => self.children(n, Some(PortType::DEFAULT), scope, ctx),
-        }
+        self.charge(cost).then_some(case)
     }
 
     /// ScalarBlend (§7.3): the anchors bracketing the property value share the weight.
@@ -2899,13 +3255,8 @@ where
         if stop {
             self.running.remove(&script);
             // A stopped run takes its look effects with it (`appearance.md` §3.5).
-            if !self.charge(self.look.len()) {
+            if !self.stop_look(script) {
                 return Ok(());
-            }
-            for l in &mut self.look {
-                if l.scripts.contains(&script) {
-                    l.stopped = true;
-                }
             }
             if !self.all_branches {
                 if !self.charge(self.runs.len()) {
@@ -3216,8 +3567,8 @@ where
 
     /// Lists a face-compositing or colour-edit node (`appearance.md` §3.5) with its driven
     /// values: an EditMaterial field by its `EditMaterialScript_*` PID (scriptlet
-    /// parameters first, then driven properties, as [`Eval::mesh_fx`]); the compositor
-    /// kinds by the form of the driving value ([`apply_look_value`]).
+    /// parameters first, then driven properties, as [`Eval::mesh_fx`]); a compositor field
+    /// by its PID (A45, [`apply_look_field`]).
     fn look(&mut self, n: &Node, mut effect: LookEffect, scope: &Scope<'_>, ctx: Ctx) {
         if self.look.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -3233,7 +3584,16 @@ where
             return;
         }
         let pids = self.r.vocab.edit_material;
+        let compositor = self.r.vocab.compositor;
         let mut driven = false;
+        // A waveform value is copied into the candidate: its size is charged.
+        let copied = |v: &PropertyValue| match v {
+            PropertyValue::Waveform(w) => w
+                .values
+                .len()
+                .saturating_add(w.extra.as_ref().map_or(0, |x| x.pairs.len())),
+            _ => 0,
+        };
         if let LookEffect::EditMaterial(e) = &mut effect {
             for pid in pids.all() {
                 let mut s = Some(scope);
@@ -3243,6 +3603,9 @@ where
                         return;
                     }
                     if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                        if !self.charge(copied(v)) {
+                            return;
+                        }
                         driven |= apply_edit_material_field(e, &pids, pid, v);
                         break;
                     }
@@ -3250,14 +3613,19 @@ where
                 }
             }
         }
+        let mut copy_cost = 0usize;
         for &(field, source) in &n.base.driven {
             let Some(v) = self.r.read(&self.state, source) else {
                 continue;
             };
+            copy_cost = copy_cost.saturating_add(copied(&v));
             driven |= match &mut effect {
                 LookEffect::EditMaterial(e) => apply_edit_material_field(e, &pids, field, &v),
-                other => apply_look_value(other, &v),
+                other => apply_look_field(other, &compositor, field, &v),
             };
+        }
+        if !self.charge(copy_cost) {
+            return;
         }
         self.look.push(LookCandidate {
             effect,
@@ -3265,6 +3633,7 @@ where
             picked: ctx.picked,
             chance: ctx.chance,
             stopped: false,
+            stopped_at: None,
             table: self.table,
             scriptlet: scope.scriptlet,
             node_id: n.base.node_id,
@@ -3731,6 +4100,11 @@ fn apply_edit_material_field(
             e.texture_value = d;
             return true;
         }
+    } else if is(pids.waveform_value) {
+        if let PropertyValue::Waveform(w) = v {
+            e.waveform_value = Arc::new((**w).clone());
+            return true;
+        }
     } else if is(pids.bool_value)
         && let PropertyValue::Bool(b) = v
     {
@@ -3740,38 +4114,78 @@ fn apply_edit_material_field(
     false
 }
 
-/// Applies a driven value to a compositor node by the value's form (Tessera Decision,
-/// `appearance.md` §3.5 implementation note: the dictionary names of the fields of kinds 33,
-/// 44 and 53 are not specified, and every driven pair of the data drives `Color` of kind 33
-/// and `ImageNumber` of kind 44): a colour sets `Color`; an integer sets `ImageNumber`, a
-/// float `Opacity`; a DID sets `ImageCompositorFile`. Any other form changes nothing.
+/// Applies a driven value to the field of a compositor node (kinds 53, 44, 33) that the
+/// driven pair names by PID (`appearance.md` §3.5 "Field names", A45). A value of a form the
+/// field cannot take, and a PID that names no field of the node's kind, change nothing.
 /// Returns whether a field changed.
-fn apply_look_value(effect: &mut LookEffect, v: &PropertyValue) -> bool {
-    match (effect, v) {
-        (LookEffect::CompositorColour(c), PropertyValue::Colour(b)) => {
-            c.color = *b;
+fn apply_look_field(
+    effect: &mut LookEffect,
+    pids: &CompositorFieldPids,
+    field: u32,
+    v: &PropertyValue,
+) -> bool {
+    let is = |p: Option<u32>| p == Some(field);
+    let code = || v.as_bits().and_then(|b| u32::try_from(b).ok());
+    let set_code = |slot: &mut u32| match code() {
+        Some(k) => {
+            *slot = k;
             true
         }
-        (LookEffect::CompositorLayer(l), PropertyValue::Int(i)) => {
-            l.image_number = *i;
-            true
-        }
-        (LookEffect::CompositorLayer(l), PropertyValue::Int64(i)) => match i32::try_from(*i) {
-            Ok(i) => {
-                l.image_number = i;
-                true
+        None => false,
+    };
+    match effect {
+        LookEffect::CompositorColour(c) => {
+            if is(pids.colour) {
+                if let PropertyValue::Colour(b) = v {
+                    c.color = *b;
+                    return true;
+                }
+            } else if is(pids.colour_compositor) {
+                return set_code(&mut c.compositor);
+            } else if is(pids.colour_name) {
+                return set_code(&mut c.colour);
             }
-            Err(_) => false,
-        },
-        (LookEffect::CompositorLayer(l), PropertyValue::Float(f)) => {
-            l.opacity = *f;
-            true
+            false
         }
-        (LookEffect::AttachCompositor(t), PropertyValue::DidRef(d)) => {
-            t.file = *d;
-            true
+        LookEffect::CompositorLayer(l) => {
+            if is(pids.image_number) {
+                let n = match v {
+                    PropertyValue::Int(i) => Some(*i),
+                    PropertyValue::Int64(i) => i32::try_from(*i).ok(),
+                    _ => None,
+                };
+                if let Some(n) = n {
+                    l.image_number = n;
+                    return true;
+                }
+            } else if is(pids.opacity) {
+                if let PropertyValue::Float(f) = v {
+                    l.opacity = *f;
+                    return true;
+                }
+            } else if is(pids.layer_compositor) {
+                return set_code(&mut l.compositor);
+            } else if is(pids.layer_name) {
+                return set_code(&mut l.layer);
+            }
+            false
         }
-        _ => false,
+        LookEffect::AttachCompositor(t) => {
+            if is(pids.file) {
+                if let Some(d) = v.as_did() {
+                    t.file = d;
+                    return true;
+                }
+            } else if is(pids.texture_compositor) {
+                return set_code(&mut t.compositor);
+            } else if is(pids.mesh_type) {
+                return set_code(&mut t.mesh_type);
+            } else if is(pids.material_type) {
+                return set_code(&mut t.material_type);
+            }
+            false
+        }
+        LookEffect::EditMaterial(_) => false,
     }
 }
 

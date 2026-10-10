@@ -174,6 +174,12 @@ const PID_LOOK_OPTION: u32 = 0x1000_0170;
 const PID_LOOK_SKIN: u32 = 0x1000_0171;
 const PID_LOOK_TEXTURE: u32 = 0x1000_0172;
 const PID_EDIT_COLOR: u32 = 0x1000_0173;
+// The figure's placement and the start-up flag (`appearance.md` §3.5).
+const PID_IN_WORLD: u32 = 0x1000_0174;
+const PID_SERVER_FLAG: u32 = 0x1000_0175;
+// Compositor field PIDs (`appearance.md` §3.5 "Field names").
+const PID_FIELD_IMAGE: u32 = 0x1000_0999;
+const PID_FIELD_COLOUR: u32 = 0x1000_0998;
 const STARTUP: u32 = 5;
 const WALKING: u32 = 1;
 const RUNNING: u32 = 2;
@@ -196,7 +202,7 @@ fn schema(pid: u32) -> Option<PropertyType> {
         PID_MOUNT_TYPE | PID_SPECIES => PropertyType::Enum,
         PID_SLOT_ENTITY => PropertyType::DidRef,
         PID_SLOT_SCALE => PropertyType::Vector3,
-        PID_LOOK_OPTION => PropertyType::Enum,
+        PID_LOOK_OPTION | PID_IN_WORLD | PID_SERVER_FLAG => PropertyType::Enum,
         PID_LOOK_SKIN => PropertyType::Colour,
         PID_LOOK_TEXTURE => PropertyType::Int,
         _ => return None,
@@ -3645,13 +3651,19 @@ fn face_world() -> HashMap<Did, Vec<u8>> {
                     K_NEW_FACE,
                     vec![
                         attach_node(20, 1, 0x3300_0001, 0x1000_0002, 0x1000_006C),
-                        layer_node(21, 1, 0x1000_0004, 0, &[(0x1000_0999, PID_LOOK_TEXTURE)]),
+                        layer_node(
+                            21,
+                            1,
+                            0x1000_0004,
+                            0,
+                            &[(PID_FIELD_IMAGE, PID_LOOK_TEXTURE)],
+                        ),
                         colour_node(
                             22,
                             1,
                             0x1000_000B,
                             [0xFF; 4],
-                            &[(0x1000_0998, PID_LOOK_SKIN)],
+                            &[(PID_FIELD_COLOUR, PID_LOOK_SKIN)],
                         ),
                         edit_node(23, 2, 0x1000_006C, 5, &[(PID_EDIT_COLOR, PID_LOOK_SKIN)]),
                     ],
@@ -3663,14 +3675,156 @@ fn face_world() -> HashMap<Did, Vec<u8>> {
 }
 
 fn face_vocab() -> ScriptVocabulary {
-    use tessera_formats::script_table::resolve::EditMaterialFieldPids;
+    use tessera_formats::script_table::resolve::{CompositorFieldPids, EditMaterialFieldPids};
     ScriptVocabulary {
         edit_material: EditMaterialFieldPids {
             color_value: Some(PID_EDIT_COLOR),
             ..EditMaterialFieldPids::default()
         },
+        compositor: CompositorFieldPids {
+            image_number: Some(PID_FIELD_IMAGE),
+            colour: Some(PID_FIELD_COLOUR),
+            ..CompositorFieldPids::default()
+        },
         ..vocab()
     }
+}
+
+/// A driven pair sets the compositor field its PID names, and nothing when the PID names
+/// no field of the node's kind (`appearance.md` §3.5 "Field names").
+#[test]
+fn compositor_fields_are_driven_by_pid() {
+    use tessera_formats::script_table::resolve::LookEffect;
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![
+                    // The image number by its field; the colour PID on a layer node is
+                    // not a field of that kind.
+                    layer_node(1, 1, 4, 0, &[(PID_FIELD_IMAGE, PID_LOOK_TEXTURE)]),
+                    layer_node(2, 1, 5, 0, &[(PID_FIELD_COLOUR, PID_LOOK_TEXTURE)]),
+                ],
+            )],
+        ),
+    );
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let mut state = PropertyState::new();
+    state.set(PID_LOOK_TEXTURE, PropertyValue::Int(3));
+    let res = r.resolve_with_state(&e, state).unwrap();
+    let numbers: Vec<i32> = res
+        .look
+        .iter()
+        .map(|l| match &l.effect {
+            LookEffect::CompositorLayer(l) => l.image_number,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(numbers, [3, 0]);
+    assert!(res.look[0].driven && !res.look[1].driven);
+}
+
+/// A Switch node that does not keep watching (`…_Persistent` false).
+fn switch_once(id: u32, property: u32, ports: &[Vec<u8>]) -> Vec<u8> {
+    node(
+        12,
+        B::new().u32(property).u8(0).u8(0).u8(0),
+        base(id),
+        ports,
+    )
+}
+
+/// The elf pattern of `appearance.md` §3.5: a persistent Switch on the placement flag
+/// whose case runs a one-time check of a flag that a later root of the start-up clears.
+fn placement_world() -> HashMap<Did, Vec<u8>> {
+    let mut m = HashMap::new();
+    let check = switch_once(
+        11,
+        PID_SERVER_FLAG,
+        &[switch_case(
+            &[(PID_SERVER_FLAG, 0)],
+            &[run_node(12, K_NEW_FACE, false)],
+        )],
+    );
+    let startup = vec![
+        switch(
+            10,
+            PID_IN_WORLD,
+            &[
+                switch_case(&[(PID_IN_WORLD, 1)], &[check]),
+                default_port_pair(&[colour_node(13, 9, 9, [1, 2, 3, 4], &[])]),
+            ],
+        ),
+        set_property_node(14, PID_SERVER_FLAG, B::new().u32(0)),
+    ];
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[
+                (STARTUP, startup),
+                (
+                    K_NEW_FACE,
+                    vec![attach_node(20, 1, 0x3300_0001, 0x1000_0002, 0x1000_006C)],
+                ),
+            ],
+        ),
+    );
+    m
+}
+
+#[test]
+fn persistent_switch_re_evaluates_after_the_start_up() {
+    use tessera_formats::script_table::resolve::LookEffect;
+    let m = placement_world();
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let start = || {
+        let mut state = PropertyState::new();
+        state.set(PID_SERVER_FLAG, PropertyValue::Enum(1));
+        state
+    };
+    // Without a placement only the Default branch runs.
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m));
+    let res = r.resolve_with_state(&e, start()).unwrap();
+    assert_eq!(res.look.len(), 1);
+    assert!(res.look[0].active());
+    // Placed before the start-up: the check runs before the flag is cleared.
+    let mut placed = start();
+    placed.set(PID_IN_WORLD, PropertyValue::Enum(1));
+    let res = r.resolve_with_state(&e, placed).unwrap();
+    assert!(res.look.is_empty(), "{:?}", res.look);
+    // Placed after the start-up: the Switch re-evaluates in the end state, the check sees
+    // the cleared flag, the face attaches and the Default branch stops.
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m))
+        .with_after_startup(vec![(PID_IN_WORLD, PropertyValue::Enum(1))]);
+    let res = r.resolve_with_state(&e, start()).unwrap();
+    assert_eq!(res.look.len(), 2, "{:?}", res.look);
+    assert!(res.look[0].stopped);
+    assert_eq!(res.look[0].stopped_at, Some(1));
+    assert!(res.look[1].active());
+    assert!(matches!(
+        res.look[1].effect,
+        LookEffect::AttachCompositor(_)
+    ));
+    assert_eq!(res.look[1].scripts, [K_NEW_FACE]);
+    // Nothing watches another property: one pass, same result as without.
+    let mut r = ClipResolver::new(&schema, face_vocab(), fetch(&m))
+        .with_after_startup(vec![(PID_LOOK_OPTION, PropertyValue::Enum(1))]);
+    let res = r.resolve_with_state(&e, start()).unwrap();
+    assert_eq!(res.look.len(), 1);
+    assert!(res.look[0].active());
 }
 
 #[test]

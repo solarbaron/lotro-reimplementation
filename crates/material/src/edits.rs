@@ -2,12 +2,14 @@
 //! Run-time parameter edits and run-time textures (`appearance.md` §3.5, §8 step 6).
 //!
 //! A figure's species table changes some surface parameters at run time: EditMaterial
-//! nodes set the dye colour (2003) of hair, beard and skin surfaces from the character's
-//! colours, and a face compositor gives the face-skin surface an image composed at run
-//! time. [`ParameterEdit`]s are applied **after** every material of the surface and its
-//! appearance layers (`appearance.md` §8 step 6), as one more material entry per edit, so
-//! the effective set, texture slots, feature flags and dye setup follow the usual rules of
-//! `material.md` §9.2 (an id the shader does not declare is ignored).
+//! nodes set parameters of every group (most of them the dye colour 2003 of hair, beard
+//! and skin surfaces from the character's colours), and a face compositor gives the
+//! face-skin surface an image composed at run time. [`ParameterEdit`]s are applied
+//! **after** every material of the surface and its appearance layers (`appearance.md` §3.5
+//! "How material edits combine", §8 step 6), as one more material entry per edit in the
+//! order given (the composed images first, then the edits), so the effective set, texture
+//! slots, feature flags and dye setup follow the usual rules of `material.md` §9.2 (a later
+//! entry wins; an id the shader does not declare is ignored).
 //!
 //! A composed image is not a record, so it gets a **run-time texture DID** from
 //! [`RuntimeTextures`]: an identity (a digest of the inputs that decide the image) maps to
@@ -24,11 +26,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tessera_formats::{Did, RgbaImage};
+use tessera_formats::script_table::resolve::MaterialEdit;
+use tessera_formats::{Did, RgbaImage, Waveform};
 
 use crate::interface::ShaderInterface;
 use crate::records::{
-    GROUP_COLOR, GROUP_TEXTURE, MaterialRecord, ParamEntry, ParamValue, group_of,
+    FloatCurve, GROUP_COLOR, GROUP_FLAG, GROUP_FLOAT, GROUP_TEXTURE, MaterialRecord, ParamEntry,
+    ParamValue, group_of,
 };
 use crate::resolve::ResolvedMaterial;
 
@@ -38,8 +42,15 @@ use crate::resolve::ResolvedMaterial;
 pub const RUNTIME_TEXTURE_PREFIX: u8 = 0x3F;
 
 /// One parameter change applied after a surface's materials.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParameterEdit {
+    /// A float parameter (group 1000): a curve.
+    Float {
+        /// The parameter id.
+        id: u32,
+        /// The value.
+        curve: FloatCurve,
+    },
     /// A colour parameter (group 2000, `material.md` §5.2): R, G, B, A in 0–1.
     Colour {
         /// The parameter id (2003 = dye colour).
@@ -54,26 +65,79 @@ pub enum ParameterEdit {
         /// The texture.
         list: Did,
     },
+    /// A flag parameter (group 4000 and above): 0 or 1.
+    Flag {
+        /// The parameter id.
+        id: u32,
+        /// The value.
+        value: bool,
+    },
 }
 
 impl ParameterEdit {
+    /// The edit an EditMaterial node makes (`appearance.md` §3.5 "How material edits
+    /// combine"): the parameter's group (the id rounded down to a multiple of 1000) chooses
+    /// the value field: 1000 `WaveformValue` (as its float curve), 2000 `ColorValue` (the
+    /// stored bytes B, G, R, A as R, G, B, A, each ÷ 255, `property-system.md` §4.7), 3000
+    /// `TextureValue`, 4000 and above `BoolValue`. `None` for an id below 1000, which the
+    /// client reports and skips.
+    #[must_use]
+    pub fn from_material_edit(e: &MaterialEdit) -> Option<Self> {
+        let id = e.material_property;
+        let group = group_of(id);
+        if group == GROUP_FLOAT {
+            Some(Self::Float {
+                id,
+                curve: FloatCurve::from_waveform(&e.waveform_value),
+            })
+        } else if group == GROUP_COLOR {
+            let [b, g, r, a] = e.color_value.map(|c| f32::from(c) / 255.0);
+            Some(Self::Colour {
+                id,
+                value: [r, g, b, a],
+            })
+        } else if group == GROUP_TEXTURE {
+            Some(Self::Texture {
+                id,
+                list: e.texture_value,
+            })
+        } else if group >= GROUP_FLAG {
+            Some(Self::Flag {
+                id,
+                value: e.bool_value,
+            })
+        } else {
+            None
+        }
+    }
+
     /// The parameter id.
     #[must_use]
     pub fn id(&self) -> u32 {
         match *self {
-            Self::Colour { id, .. } | Self::Texture { id, .. } => id,
+            Self::Float { id, .. }
+            | Self::Colour { id, .. }
+            | Self::Texture { id, .. }
+            | Self::Flag { id, .. } => id,
         }
     }
 
     /// The material entry of the edit, or `None` when the id is not in the value's group
-    /// (a colour outside 2000–2999 or a texture outside 3000–3999).
+    /// (a float outside 1000–1999, a colour outside 2000–2999, a texture outside 3000–3999
+    /// or a flag below 4000).
     fn entry(&self, shader: &ShaderInterface) -> Option<ParamEntry> {
-        let (id, value) = match *self {
-            Self::Colour { id, value } if group_of(id) == GROUP_COLOR => {
-                (id, ParamValue::Color(value))
+        let (id, value) = match self {
+            Self::Float { id, curve } if group_of(*id) == GROUP_FLOAT => {
+                (*id, ParamValue::Float(curve.clone()))
             }
-            Self::Texture { id, list } if group_of(id) == GROUP_TEXTURE => {
-                (id, ParamValue::Texture(list))
+            Self::Colour { id, value } if group_of(*id) == GROUP_COLOR => {
+                (*id, ParamValue::Color(*value))
+            }
+            Self::Texture { id, list } if group_of(*id) == GROUP_TEXTURE => {
+                (*id, ParamValue::Texture(*list))
+            }
+            Self::Flag { id, value } if group_of(*id) >= GROUP_FLAG => {
+                (*id, ParamValue::Flag(u32::from(*value)))
             }
             _ => return None,
         };
@@ -127,20 +191,19 @@ pub fn apply_edits(
     out
 }
 
-/// The edits of a figure's look on one surface (`appearance.md` §3.5, §8 step 6): the
-/// colour edits `colours` ((parameter, R G B A) in order), then, when `composed` gives an
-/// image with its identity, the image as the base colour ([`COMPOSED_TEXTURE_SLOT`]),
-/// registered in `textures`. An image the registry refuses is left out.
+/// The edits of a figure's look on one surface (`appearance.md` §3.5 "How material edits
+/// combine", §8 step 6): when `composed` gives an image with its identity, the image as the
+/// base colour ([`COMPOSED_TEXTURE_SLOT`]), registered in `textures`, then the parameter
+/// edits `edits` in the order given (the figure's edits sorted by descending priority, so
+/// the lowest priority comes last and takes effect; an edit of the base colour overrides
+/// the composed image). An image the registry refuses is left out.
 #[must_use]
 pub fn figure_edits(
     textures: &RuntimeTextures,
-    colours: &[(u32, [f32; 4])],
+    edits: &[ParameterEdit],
     composed: Option<(u64, &Arc<RgbaImage>)>,
 ) -> Vec<ParameterEdit> {
-    let mut out: Vec<ParameterEdit> = colours
-        .iter()
-        .map(|&(id, value)| ParameterEdit::Colour { id, value })
-        .collect();
+    let mut out = Vec::with_capacity(edits.len().saturating_add(1));
     if let Some((identity, image)) = composed
         && let Some(list) = textures.register(identity, Arc::clone(image))
     {
@@ -149,12 +212,59 @@ pub fn figure_edits(
             list,
         });
     }
+    out.extend_from_slice(edits);
     out
 }
 
-/// The texture slot a composed face image replaces: the base colour (Tessera Decision,
-/// `appearance.md` §3.5 OPEN on the slot; §15 implementation note).
+/// The texture slot a composed face image goes to: the base colour (`appearance.md` §3.5
+/// "Where the composed image goes", A46).
 pub const COMPOSED_TEXTURE_SLOT: u32 = 3000;
+
+impl FloatCurve {
+    /// The curve of a property waveform (`property-system.md` §4.2: a waveform is the float
+    /// curve of `material.md` §5.3, its subtype the mode). Subtypes 0 and above 10, which
+    /// the client evaluates as the base term *B* = v0 + v1 · *t*, become a mode-2 curve with
+    /// parameters (v0, v1, 0, …): mode 2 is *B* + *θ*, and *θ* is 0 with those parameters.
+    /// A mode-10 waveform without its extra part keeps no keyframes.
+    #[must_use]
+    pub fn from_waveform(w: &Waveform) -> Self {
+        let v = |i: usize| w.values.get(i).copied().unwrap_or(0.0);
+        let mut params = [0.0f32; 11];
+        let (mode, param_count) = match w.subtype {
+            1 => (1, 1),
+            2..=9 => (w.subtype, 10),
+            10 => (10, 11),
+            _ => (2, 10),
+        };
+        match w.subtype {
+            0 | 11.. => {
+                params[0] = v(0);
+                params[1] = v(1);
+            }
+            _ => {
+                for (i, p) in params.iter_mut().enumerate().take(10) {
+                    *p = v(i);
+                }
+            }
+        }
+        let mut loop_flag = 0;
+        let mut keys = Vec::new();
+        if mode == 10
+            && let Some(x) = &w.extra
+        {
+            params[10] = x.scalar;
+            loop_flag = u8::from(x.flag);
+            keys.clone_from(&x.pairs);
+        }
+        Self {
+            mode,
+            params,
+            param_count,
+            loop_flag,
+            keys,
+        }
+    }
+}
 
 /// Registry of run-time textures (composed face images).
 #[derive(Debug, Default)]

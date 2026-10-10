@@ -1787,8 +1787,8 @@ impl<'a> Collector<'a> {
         i
     }
 
-    /// [`Collector::surface_material_layered`], then the figure look's colour edits and
-    /// composed face texture for a part in `slot` (`appearance.md` §3.5, §8 step 6; the
+    /// [`Collector::surface_material_layered`], then the figure look's composed face
+    /// texture and material edits for a part in `slot` (`appearance.md` §3.5, §8 step 6; the
     /// client's figure path makes the same edits). Without a look, or with no edit for the
     /// surface, the layered material.
     pub(crate) fn surface_material_look(
@@ -1805,11 +1805,12 @@ impl<'a> Collector<'a> {
         let composed = look
             .compositor_for(slot, key)
             .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
-        let edits = tessera_material::figure_edits(
-            lib.runtime_textures(),
-            &look.colour_edits_for(slot, key),
-            composed,
-        );
+        let edits: Vec<tessera_material::ParameterEdit> = look
+            .edits_for(slot, key)
+            .into_iter()
+            .filter_map(tessera_material::ParameterEdit::from_material_edit)
+            .collect();
+        let edits = tessera_material::figure_edits(lib.runtime_textures(), &edits, composed);
         if edits.is_empty() {
             return self.surface_material_layered(surface, layers);
         }
@@ -1831,8 +1832,23 @@ impl<'a> Collector<'a> {
                 .map(|e| match e {
                     tessera_material::ParameterEdit::Colour { id, value } =>
                         format!("{id} = ({:.3}, {:.3}, {:.3})", value[0], value[1], value[2]),
-                    tessera_material::ParameterEdit::Texture { id, list } => {
+                    tessera_material::ParameterEdit::Texture { id, list }
+                        if list.prefix() == tessera_material::RUNTIME_TEXTURE_PREFIX =>
+                    {
                         format!("{id} = composed image {list}")
+                    }
+                    tessera_material::ParameterEdit::Texture { id, list } => {
+                        format!("{id} = texture {list}")
+                    }
+                    tessera_material::ParameterEdit::Float { id, curve } => {
+                        format!(
+                            "{id} = curve mode {} ({:.3} at 0)",
+                            curve.mode,
+                            curve.evaluate()
+                        )
+                    }
+                    tessera_material::ParameterEdit::Flag { id, value } => {
+                        format!("{id} = {value}")
                     }
                 })
                 .collect::<Vec<_>>()

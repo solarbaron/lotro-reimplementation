@@ -2974,6 +2974,30 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > properties cannot be observed (narrow OPEN in §3.5; owner item O15 can settle it).
 > **Rule:** withdraw the post-resolution drop (choice (8)); evaluate as the §3.5 Rule states.
 
+> **OPEN:** (implementation, 2026-10-10, conformance with the OBS7/BIN8 revision of §3.5;
+> engineering choices recorded for review, no fact asked) Implemented in `tessera-formats`
+> (compositor fields matched by the A45 PIDs; EditMaterial `WaveformValue` carried; look
+> candidates record when they were stopped), `tessera-mesh` (`assembly::look`: starts and
+> stops replayed in order, rules 1–3 of "Where the composed image goes"; the drop withdrawn),
+> `tessera-material` (composed image first, then the edits by descending `Priority`, every
+> group from 1000) and the client and explorer figure paths. Choices: (1) `Physics_InWorld`
+> after the start-up is modelled in the one-pass resolver as a re-evaluation of every
+> persistent Switch on that property that the start-up reached, in the state, running
+> scripts and random picks of the end of the start-up (the start-up's named scripts
+> included); what it starts is listed after the start-up's candidates; when its case
+> changes, only the **look** candidates of the branch it left are withdrawn (animation,
+> MeshFX and Appearance candidates of that branch stay listed; none of the avatar data was
+> seen to need it); persistent When nodes are not re-evaluated. (2) Tessera has no
+> character-screen figure on this path yet, so no figure carries `CharGen_Stage`; every
+> figure, the explorer viewer's included, is placed in the world. (3) A compositor whose
+> image does not compose (missing record, decode failure, limit) adds no material; what the
+> client appends then was not asked. (4) A `WaveformValue` of subtype 0 or above 10 becomes
+> the base-term curve of `property-system.md` §4.2. (5) Bounds: at most 1024 registered
+> material edits and 1024 registered layer and colour changes per figure (beyond them a note,
+> the rest ignored); the deferred candidates share the resolver's candidate cap with the
+> start-up's. (6) A stopped node whose stop position is unknown counts as stopped right after
+> its start.
+
 ---
 
 <a id="s16"></a>

@@ -97,6 +97,9 @@ pub const MAX_SCANS_IN_FLIGHT: usize = 16;
 pub const MAX_LOADS_IN_FLIGHT: usize = 64;
 /// Most requests waiting for one record.
 pub const MAX_WAITING_PER_RECORD: usize = 4096;
+/// Effect records whose animated surface keeps its own curve states (`material.md`
+/// §5.3.1); beyond it a draw evaluates with fresh states.
+pub const MAX_SURFACE_STATES: usize = 4096;
 
 /// Settings of the effects layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +328,9 @@ struct FxState {
     new_textures: Vec<TexRequest>,
     requests: u64,
     refused: u64,
+    /// Curve states of the animated particle surfaces, per effect record (the alpha-test
+    /// reference and texture matrices evaluated per draw, `particle-runtime.md` §9.1.1).
+    surface_states: HashMap<u32, tessera_material::CurveStates>,
 }
 
 impl FxState {
@@ -919,6 +925,7 @@ impl EffectLayer {
                     new_textures: Vec::new(),
                     requests: 0,
                     refused: 0,
+                    surface_states: HashMap::new(),
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1360,7 +1367,11 @@ impl EffectLayer {
         let now = st.now;
         let frame = st.frame;
         let FxState {
-            manager, rng, data, ..
+            manager,
+            rng,
+            data,
+            surface_states,
+            ..
         } = st;
         let mut drawn = Vec::new();
         let mut live = 0usize;
@@ -1406,6 +1417,8 @@ impl EffectLayer {
                 alpha,
                 shading,
                 material,
+                uv,
+                clock,
                 drawable,
                 ..
             } = &*record
@@ -1415,6 +1428,20 @@ impl EffectLayer {
             if !drawable {
                 continue;
             }
+            // The alpha-test reference and the texture matrices at the material clock when
+            // their curves are not constant (`particle-runtime.md` §9.1.1 (d), (e)).
+            let (alpha, uv) = match clock {
+                None => (*alpha, *uv),
+                Some(c) => {
+                    if surface_states.len() >= MAX_SURFACE_STATES
+                        && !surface_states.contains_key(&did)
+                    {
+                        c.at(now, &mut tessera_material::CurveStates::new())
+                    } else {
+                        c.at(now, surface_states.entry(did).or_default())
+                    }
+                }
+            };
             let mut waiting = false;
             let mut lookup = |t: &Option<_>| match t.map(|t| objects.texture(t)) {
                 None | Some(TexLookup::Failed) => None,
@@ -1448,11 +1475,12 @@ impl EffectLayer {
                         .collect(),
                     quad_vertices: inst.quad_vertices,
                     texture: tex,
-                    alpha: *alpha,
+                    alpha,
                     tint: [1.0, 1.0, 1.0, inst.opacity],
                     material: *material,
                     shading: *shading,
                     second_texture: tex2,
+                    uv,
                 });
             }
         }

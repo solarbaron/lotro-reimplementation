@@ -31,7 +31,7 @@ use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
     AlphaMode, AlphaThreshold, Camera, ColorSpace, Filter, FixedBlend, Fog, FrameLighting,
     Material, MeshData, MeshDraw, OffscreenFormat, ParticleDraw, ParticleLayers, ParticleShading,
-    ParticleVertex, RenderError, Renderer, RgbaImage, TextureId, TextureUpload, Wrap,
+    ParticleVertex, RenderError, Renderer, RgbaImage, TextureId, TextureUpload, UvTransform, Wrap,
 };
 
 const WIDTH: u32 = 320;
@@ -605,6 +605,77 @@ fn surface_programs_colour_and_alpha() -> Result<(), RenderError> {
     assert!(p[2] > 240 && p[0] < 10, "fogged: {p:?}");
     let p = centre_pixel_of(&mut r, centre_draw([1.0, 0.0, 0.0, 1.0]), false, Some(fog))?;
     assert!(p[0] > 250 && p[2] < 5, "not fogged: {p:?}");
+    Ok(())
+}
+
+/// `particle-runtime.md` RT-I12: a two-layer program reads its second layer through
+/// texture matrix 1 (here a U translation by 0.5) and its first through matrix 0; a
+/// one-layer program ignores both matrices.
+#[test]
+fn two_layer_programs_apply_texture_matrices_0_and_1() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // Two texels: red at u = 0.25, green at u = 0.75.
+    let strip = r.upload_texture(&TextureUpload {
+        color_space: ColorSpace::Linear,
+        ..TextureUpload::rgba8(2, 1, &[255, 0, 0, 255, 0, 255, 0, 255])
+    })?;
+    let shift = UvTransform {
+        rows: [[1.0, 0.0, 0.5], [0.0, 1.0, 0.0]],
+    };
+    let at_quarter = |mut d: ParticleDraw| {
+        for v in &mut d.vertices {
+            v.uv = [0.25, 0.5];
+        }
+        d
+    };
+    let two_layer = |uv: [UvTransform; 2]| {
+        at_quarter(ParticleDraw {
+            second_texture: Some(strip),
+            alpha: AlphaMode::Opaque,
+            shading: ParticleShading {
+                layers: Some(ParticleLayers::Product),
+                ..ParticleShading::STANDARD
+            },
+            uv,
+            ..centre_draw([1.0; 4])
+        })
+    };
+    let p = centre_pixel_of(&mut r, two_layer([UvTransform::IDENTITY; 2]), false, None)?;
+    assert!(p[0] > 250 && p[1] < 5, "identity: {p:?}");
+    let p = centre_pixel_of(
+        &mut r,
+        two_layer([UvTransform::IDENTITY, shift]),
+        false,
+        None,
+    )?;
+    assert!(
+        p[1] > 250 && p[0] < 5,
+        "second layer at (u + 0.5, v): {p:?}"
+    );
+    // Matrix 0 moves the first layer (here the strip) and not the second (white).
+    let first = at_quarter(ParticleDraw {
+        texture: Some(strip),
+        alpha: AlphaMode::Opaque,
+        shading: ParticleShading {
+            layers: Some(ParticleLayers::Product),
+            ..ParticleShading::STANDARD
+        },
+        uv: [shift, UvTransform::IDENTITY],
+        ..centre_draw([1.0; 4])
+    });
+    let p = centre_pixel_of(&mut r, first, false, None)?;
+    assert!(p[1] > 250 && p[0] < 5, "first layer at matrix 0: {p:?}");
+    // One layer: the matrices are not applied.
+    let one = at_quarter(ParticleDraw {
+        texture: Some(strip),
+        alpha: AlphaMode::Opaque,
+        uv: [shift, shift],
+        ..centre_draw([1.0; 4])
+    });
+    let p = centre_pixel_of(&mut r, one, false, None)?;
+    assert!(p[0] > 250 && p[1] < 5, "one layer at (u, v): {p:?}");
     Ok(())
 }
 

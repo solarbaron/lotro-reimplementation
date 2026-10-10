@@ -379,3 +379,192 @@ fn rule_9_limits() {
     assert!(sim.live_particles() > 10);
     assert!(sim.particles(0).iter().all(|p| p.position.length() < 1e-6));
 }
+
+/// `particles.md` PS10 (§8.6.1 base fix, P54): a controller-3 key followed 0.01 s later by
+/// a controller-6 key. Particles dated at least 0.01 s before the emitter's last
+/// particle-update time (here by distance emission, whose steps lie before the previous
+/// update, §8.4) pass both keys in their spawn-time update; the second key's base fix fills
+/// the empty slot from the first key's counter in order, without a random draw although
+/// the key sets physics flag 0x8, and places the base on that point.
+#[test]
+fn ps10_the_base_fix_fills_an_empty_slot_in_order() {
+    let first = Keyframe {
+        time: 0.0,
+        flags: 0x100 | 0x200,
+        controller: 3,
+        physics_flags: 0x8,
+        points: vec![[0.0, 0.0, 1.0], [0.0, 0.0, 2.0]],
+        ..Keyframe::default()
+    };
+    let mut e = emitter(1.0, 5.0, first);
+    e.emit_interval = 0.0;
+    e.emission_distance = 0.5;
+    e.speed = Curve::constant(0.0);
+    e.keyframes.push(Keyframe {
+        time: 0.01,
+        flags: 0x100,
+        controller: 6,
+        ..Keyframe::default()
+    });
+    let mut ps = system(vec![e]);
+    ps.time_step = 0.05;
+    let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+    let mut rng = Ran2::new(5);
+    // Frames 0.06 s apart, so every frame runs a particle update (`time_step` 0.05).
+    for frame in 0..20u64 {
+        sim.place(
+            frame,
+            frame as f64 * 0.06,
+            Placement::at(Vec3::new(frame as f32, 0.0, 0.0)),
+            &Environment::default(),
+            &mut rng,
+            &OriginAttachments,
+        );
+    }
+    let mut particles: Vec<_> = sim.particles(0).to_vec();
+    assert!(particles.len() > 10, "{}", particles.len());
+    particles.sort_by_key(|p| p.serial);
+    for p in &particles {
+        let expected = if p.serial % 2 == 0 { 1.0 } else { 2.0 };
+        assert!(
+            (p.position.z - expected).abs() < 1e-5 && (p.base.z - expected).abs() < 1e-5,
+            "particle {} at {} (base {})",
+            p.serial,
+            p.position,
+            p.base
+        );
+    }
+}
+
+/// §8.6.1 step 4 and rule §10.12: the slot filled under the first controller-3 key is
+/// kept under a later controller-3 key with fewer points and reduced modulo its point
+/// count; the base fix of the leaving key moves the base to the leaving key's point.
+#[test]
+fn the_point_slot_is_shared_and_reduced_modulo_the_point_count() {
+    let mut e = emitter(
+        30.0,
+        5.0,
+        Keyframe {
+            flags: 0x770,
+            controller: 3,
+            physics_flags: 0,
+            points: vec![[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            ..Keyframe::default()
+        },
+    );
+    e.speed = Curve::constant(0.0);
+    e.keyframes.push(Keyframe {
+        time: 0.3,
+        flags: 0x100,
+        controller: 3,
+        points: vec![[10.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+        ..Keyframe::default()
+    });
+    let mut sim = SystemSim::new(Arc::new(system(vec![e])), 0.0);
+    let mut rng = Ran2::new(9);
+    run(&mut sim, &mut rng, 60);
+    let now = sim.last_update(0).expect("emitter");
+    let mut switched = 0;
+    for p in sim.particles(0) {
+        let slot = p.serial % 3;
+        let first = (slot + 1) as f32;
+        let age = (now - p.spawn_time) as f32;
+        let expected = if age >= 0.3 + 1e-4 {
+            switched += 1;
+            first + [10.0, 20.0][(slot % 2) as usize]
+        } else if age < 0.3 - 1e-4 {
+            first
+        } else {
+            continue;
+        };
+        assert!(
+            (p.position.x - expected).abs() < 1e-4,
+            "particle {} age {age}: {}",
+            p.serial,
+            p.position
+        );
+    }
+    assert!(switched > 5);
+}
+
+/// §8.7: at every base fix the rotation's starting value rises by the new key's `time` ×
+/// `rotation_velocity`; the first controller key (no leaving key) adds nothing.
+#[test]
+fn the_rotation_jumps_at_a_base_fix() {
+    let mut e = emitter(
+        10.0,
+        5.0,
+        Keyframe {
+            flags: 0x770,
+            controller: 6,
+            physics_flags: 0,
+            ..Keyframe::default()
+        },
+    );
+    e.rotation_velocity.z = Curve::constant(2.0);
+    e.keyframes.push(Keyframe {
+        time: 0.5,
+        flags: 0x100,
+        controller: 6,
+        ..Keyframe::default()
+    });
+    let mut sim = SystemSim::new(Arc::new(system(vec![e])), 0.0);
+    let mut rng = Ran2::new(4);
+    run(&mut sim, &mut rng, 60);
+    let now = sim.last_update(0).expect("emitter");
+    let (mut before, mut after) = (0, 0);
+    for p in sim.particles(0) {
+        let age = (now - p.spawn_time) as f32;
+        if age >= 0.5 + 1e-4 {
+            after += 1;
+            assert!((p.rotation[2] - 1.0).abs() < 1e-5, "{:?}", p.rotation);
+            assert!(
+                (p.world_rotation[2] - 1.0).abs() < 1e-5,
+                "{:?}",
+                p.world_rotation
+            );
+        } else if age < 0.5 - 1e-4 {
+            before += 1;
+            assert_eq!(p.rotation, [0.0; 3]);
+        }
+    }
+    assert!(before > 0 && after > 0);
+}
+
+/// §8.6.1 base-fix table, controller 2: the force is scaled by the stored `mass` of the
+/// current mass key, not by the mass interpolated towards the next key.
+#[test]
+fn the_ballistic_base_fix_uses_the_stored_mass() {
+    let mut e = emitter(
+        10.0,
+        5.0,
+        Keyframe {
+            flags: 0x770,
+            controller: 2,
+            physics_flags: tessera_formats::gameplay::particles::PHYSICS_GRAVITY,
+            mass: 1.0,
+            ..Keyframe::default()
+        },
+    );
+    e.speed = Curve::constant(0.0);
+    e.keyframes.push(Keyframe {
+        time: 0.5,
+        flags: 0x100 | 0x08,
+        controller: 6,
+        mass: 3.0,
+        ..Keyframe::default()
+    });
+    let mut sim = SystemSim::new(Arc::new(system(vec![e])), 0.0);
+    let mut rng = Ran2::new(2);
+    run(&mut sim, &mut rng, 60);
+    let now = sim.last_update(0).expect("emitter");
+    let mut switched = 0;
+    for p in sim.particles(0) {
+        if ((now - p.spawn_time) as f32) >= 0.5 + 1e-4 {
+            switched += 1;
+            let expected = -0.5 * 9.8 * 0.25;
+            assert!((p.position.z - expected).abs() < 1e-4, "{}", p.position);
+        }
+    }
+    assert!(switched > 5);
+}

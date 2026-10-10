@@ -26,11 +26,13 @@ use tessera_formats::setup::{
 };
 use tessera_formats::{Did, NodeData, PropertyDictionary, Record as _, ScriptTable, Scriptlet};
 use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
-use tessera_material::{BlendMode, MaterialLibrary, ResolvedMaterial};
+use tessera_material::{
+    BlendMode, CurveStates, MaterialLibrary, ResolvedMaterial, TextureMatrix, TextureMatrixLayout,
+};
 use tessera_particles::glam::{Mat4, Quat};
 use tessera_particles::surface::{LayerCombine, ParticleSurface};
 use tessera_render::{
-    AlphaMode, BlendFactor, BlendOp, FixedBlend, ParticleLayers, ParticleShading,
+    AlphaMode, BlendFactor, BlendOp, FixedBlend, ParticleLayers, ParticleShading, UvTransform,
 };
 use tessera_scriptgraph::{EntityId, ScriptSource};
 use tessera_world::{LandblockBundle, LandblockKey};
@@ -236,14 +238,47 @@ pub struct BlockScan {
     pub owners: Vec<EffectOwner>,
 }
 
+/// The resolved material and texture-matrix bindings of a particle surface whose values
+/// follow the clock ([`ParticleSurface::is_animated`]): the alpha-test reference 1043 or
+/// texture matrix 0 or 1 of a two-layer program (`particle-runtime.md` §9.1.1 answers (d),
+/// (e)).
+#[derive(Debug)]
+pub struct SurfaceClock {
+    /// The surface at time 0.
+    pub look: ParticleSurface,
+    /// Its resolved material.
+    pub material: Arc<ResolvedMaterial>,
+    /// Its shader record's texture-matrix bindings.
+    pub layout: Arc<TextureMatrixLayout>,
+}
+
+impl SurfaceClock {
+    /// The alpha mode and texture matrices of a draw at the material clock `t`, with the
+    /// curve states of the record.
+    #[must_use]
+    pub fn at(&self, t: f64, states: &mut CurveStates) -> (AlphaMode, [UvTransform; 2]) {
+        let s = self.look.at(&self.material, &self.layout, t, states);
+        (
+            surface_alpha(&self.material, s.alpha_test),
+            uv_transforms(s.matrices),
+        )
+    }
+}
+
+/// Texture matrices as the renderer takes them.
+#[must_use]
+pub fn uv_transforms(m: [TextureMatrix; 2]) -> [UvTransform; 2] {
+    m.map(|m| UvTransform { rows: m.rows }.sanitized())
+}
+
 /// A loaded effect record (`particles.md` §4, §6).
 #[derive(Debug)]
 pub enum EffectRecord {
     /// A 0x39 system with the textures, blend state and program of its surface
-    /// (`particle-runtime.md` §9.1, §9.1.1); `texture` is `None` without a surface texture,
+    /// (`particle-runtime.md` §9.1–§9.1.3); `texture` is `None` without a surface texture,
     /// `drawable` false without a surface (the client draws nothing, `particles.md` §8.11)
-    /// and for the frame-buffer distortion program, which Tessera draws as its variant
-    /// without a frame-buffer input (it leaves the target unchanged).
+    /// and for the heat-distortion program, which Tessera draws as its variant without
+    /// feature bit 1 (it leaves the target unchanged, §9.1.2, rule 11).
     Particles {
         /// The record.
         desc: Arc<ParticleSystem>,
@@ -251,12 +286,17 @@ pub enum EffectRecord {
         texture: Option<TexRequest>,
         /// The second colour layer (slot 3001) of a two-layer program.
         second_texture: Option<TexRequest>,
-        /// The surface's blend, alpha test and depth write.
+        /// The surface's blend, depth write and alpha test (§9.1.3) at time 0.
         alpha: AlphaMode,
         /// What the surface's program computes (§9.1.1).
         shading: ParticleShading,
         /// Material colour 2000.
         material: [f32; 4],
+        /// Texture matrices 0 and 1 of a two-layer program at time 0 (identity otherwise).
+        uv: [UvTransform; 2],
+        /// For a surface whose reference or matrices follow the clock: what re-evaluates
+        /// `alpha` and `uv` per draw.
+        clock: Option<Box<SurfaceClock>>,
         /// Whether the system is drawn.
         drawable: bool,
     },
@@ -298,12 +338,13 @@ pub fn particle_shading(s: &ParticleSurface) -> ParticleShading {
 }
 
 /// The renderer's alpha mode for a particle system's surface material: its blend mode,
-/// factors, depth write and alpha test (`particle-runtime.md` §9.1: the draw takes these
-/// states from the surface record's material, `material.md` §7, §11).
-#[must_use]
-pub fn surface_alpha(m: &ResolvedMaterial) -> AlphaMode {
+/// factors and depth write (`particle-runtime.md` §9.1: the draw takes these states from
+/// the surface record's material, `material.md` §7, §11.3), with the alpha test `test` of
+/// the particle surface ([`ParticleSurface::alpha_test`]: §9.1.3, the effective 4004 and
+/// 1043 whatever the mesh opacity-source rule says). The renderer feeds the blend the
+/// particle program's output alpha (§9.1.3 item 1).
+pub fn surface_alpha(m: &ResolvedMaterial, test: Option<f32>) -> AlphaMode {
     let b = m.features.blend;
-    let test = m.features.alpha_test.map(|a| a.threshold);
     match b.mode {
         BlendMode::Opaque => test.map_or(AlphaMode::Opaque, |c| AlphaMode::Mask { cutoff: c }),
         BlendMode::Cutout => AlphaMode::Mask {
@@ -754,14 +795,27 @@ impl EffectData {
                 };
                 Some(match resolved {
                     Some(m) => {
-                        let look = ParticleSurface::of(&m);
+                        let layout = self
+                            .materials
+                            .texture_matrices(m.shader.did)
+                            .map_err(|e| tracing::debug!(%surface, "particle matrices: {e}"))
+                            .unwrap_or_default();
+                        let look = ParticleSurface::of(&m, &layout);
                         EffectRecord::Particles {
                             desc: Arc::new(desc),
                             texture: look.texture.map(own_alpha),
                             second_texture: look.second_layer.map(own_alpha),
-                            alpha: surface_alpha(&m),
+                            alpha: surface_alpha(&m, look.alpha_test),
                             shading: particle_shading(&look),
                             material: look.material_colour,
+                            uv: uv_transforms(look.matrices),
+                            clock: look.is_animated().then(|| {
+                                Box::new(SurfaceClock {
+                                    look,
+                                    material: Arc::clone(&m),
+                                    layout,
+                                })
+                            }),
                             drawable: look.is_drawn(),
                         }
                     }
@@ -772,6 +826,8 @@ impl EffectData {
                         alpha: AlphaMode::Blend,
                         shading: ParticleShading::STANDARD,
                         material: [1.0; 4],
+                        uv: [UvTransform::IDENTITY; 2],
+                        clock: None,
                         drawable: false,
                     },
                 })
@@ -951,6 +1007,10 @@ mod tests {
             material_colour: [1.0; 4],
             texture: None,
             second_layer: None,
+            alpha_test: None,
+            matrices: [TextureMatrix::IDENTITY; 2],
+            reference_animated: false,
+            matrices_animated: false,
         };
         let doubled = particle_shading(&surface(0x2B00_0703));
         assert!(doubled.doubled && doubled.fogged);
@@ -965,16 +1025,10 @@ mod tests {
         assert!(!surface(0x2B00_0084).is_drawn());
     }
 
-    /// A resolved unlit particle material with the given blend and alpha test.
-    fn particle_material(
-        mode: BlendMode,
-        dst: MatFactor,
-        depth_write: bool,
-        test: Option<f32>,
-    ) -> ResolvedMaterial {
-        use tessera_material::{
-            AlphaTest, BlendState, FeatureFlags, ParameterSet, ShaderInterface,
-        };
+    /// A resolved unlit particle material with the given blend and no mesh alpha test
+    /// (the particle test comes from the surface, `particle-runtime.md` §9.1.3).
+    fn particle_material(mode: BlendMode, dst: MatFactor, depth_write: bool) -> ResolvedMaterial {
+        use tessera_material::{BlendState, FeatureFlags, ParameterSet, ShaderInterface};
         let shader = Arc::new(ShaderInterface {
             did: Did(0x2B00_0001),
             declarations: Vec::new(),
@@ -998,10 +1052,7 @@ mod tests {
             slots: Vec::new(),
             features: FeatureFlags {
                 lit: false,
-                alpha_test: test.map(|threshold| AlphaTest {
-                    threshold,
-                    source_slot: 3000,
-                }),
+                alpha_test: None,
                 opacity_slot: Some(3000),
                 blend: BlendState {
                     mode,
@@ -1053,7 +1104,7 @@ mod tests {
             ),
             (BlendMode::Additive, MatFactor::One, BlendFactor::One),
         ] {
-            let alpha = surface_alpha(&particle_material(mode, dst, false, Some(0.5)));
+            let alpha = surface_alpha(&particle_material(mode, dst, false), Some(0.5));
             let AlphaMode::Fixed(f) = alpha else {
                 panic!("{mode:?}: {alpha:?}");
             };
@@ -1065,17 +1116,15 @@ mod tests {
             assert_eq!(reference(alpha, 0.9), Some(r), "{mode:?}");
             assert_eq!(reference(alpha, 0.85), Some(0.0), "{mode:?}");
 
-            let untested = surface_alpha(&particle_material(mode, dst, false, None));
+            let untested = surface_alpha(&particle_material(mode, dst, false), None);
             assert!(matches!(untested, AlphaMode::Blend | AlphaMode::Additive));
             assert_eq!(reference(untested, 1.0), Some(0.0), "{mode:?}");
         }
         // Depth write on: the reference is scaled by *A*.
-        let written = surface_alpha(&particle_material(
-            BlendMode::Additive,
-            MatFactor::One,
-            true,
+        let written = surface_alpha(
+            &particle_material(BlendMode::Additive, MatFactor::One, true),
             Some(0.5),
-        ));
+        );
         assert_eq!(
             reference(written, 0.5),
             Some((0.25_f32 * 255.0).floor() / 255.0)

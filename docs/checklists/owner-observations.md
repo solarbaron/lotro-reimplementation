@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -697,7 +697,7 @@ graphics settings (record any setting you changed) with the expected facts liste
 | [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §10.1, §11.1 | Clock in the UI or `/loc`, stopwatch | partly answered (`environment.md` §10.1, §11.1, §11.5: rate, date, night flag, day-type rule); left for the owner: two (in-game time, UTC) readings for the epoch, and the weather on several days; unchanged 2026-10-08 (the epoch is not in the client) |
 | [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8, `environment.md` §11.7 | Look, `/loc` | partly answered (`environment.md` §10.1, §11.7: fog-distance limits; the distance rules were already from the client); left for the owner: steps 1–6 as a visual check; unchanged 2026-10-08 (visual check) |
 | [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open; not answered from the client in this pass (shadow colour, cascades and fade stay `lighting.md` §9 OPEN; the rest is visual) |
-| [O24](#o24) | Water look: surface, lava, placed water, distant water, puddles cut by the ground (W13), river bed and ripples (W17) | `water.md` §8–§9, `m4-5-visual.md` §4.4, §4.8 | Look, frame capture optional | open; not answerable from the client (visual comparison; reflection, flow and foam stay `water.md` §8 OPEN) |
+| [O24](#o24) | Water look: surface, lava, placed water, distant water, puddles cut by the ground (W13), puddle colour against the mud (W14), river bed and ripples (W17) | `water.md` §8–§9, `m4-5-visual.md` §4.4, §4.8 | Look, frame capture optional | open; not answerable from the client (visual comparison; reflection, flow and foam stay `water.md` §8 OPEN) |
 | [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open; not answerable from the client (visual; radius, fade and density are already the client's, `scenery.md` §8.3–§8.4) |
 | [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §10.1, §11.2–§12, `lighting.md` §10 | Look at set times | partly answered (`environment.md` §10.1: day-type rule, interior fog rules, sun and moon path); left for the owner: the Y1–Y4 look at set times (after O21), sun and moon size, fog on the sky; unchanged 2026-10-08 (look at set times) |
 | [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open; not answerable from the client (visual comparison) |
@@ -930,6 +930,12 @@ edges, fountain water, flow speeds). Two answers settle open points:
   outline all round, as if drawn on top of the ground? The data predict the first
   (`water.md` §8.5.4); a different look would mean the original raises, biases or projects
   puddles in a way the data do not show. Note the graphics settings (reflections on or off).
+- **W14 (puddles in the mine yard; added 2026-10-10):** what colour are the puddles against
+  the mud: a reflection of the sky and the yard (darker or lighter than the mud?), and does
+  each patch grow more opaque toward its far side? Tessera, without a reflection pass, tints
+  them with the fog colour, so they read blue-grey and lighter than the mud
+  (`m4-5-visual.md` row W14); the original's colour is the reflected scene × the diffuse
+  (`water.md` §8.5.4).
 - **W17 (river):** do moving ripples show (`water.md` §8.6.3 OPEN), and is the river bed
   visible through the water, or is the water dark at a few tens of metres? Note whether
   water reflections are enabled and which DirectX version the client runs.

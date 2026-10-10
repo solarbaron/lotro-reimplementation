@@ -11,6 +11,7 @@ use glam::{Mat4, Vec3, Vec4};
 
 use crate::arena::{ArenaStats, MeshArena, MeshConfig, MeshId};
 use crate::context::{ContextOptions, GpuContext};
+use crate::depth_bias::BiasKey;
 use crate::error::{RenderError, Result};
 use crate::frame::{
     Frame, FrameTarget, Pass, PassSpace, Rgba, WorldDraws, screen_projection, texture_runs,
@@ -412,6 +413,8 @@ pub struct Renderer<'w> {
     frame_token: Arc<()>,
     /// UI pass state (`crate::ui`).
     ui: crate::ui::UiState,
+    /// The adapter supports a depth-bias clamp ([`crate::DrawDepthBias::max`]).
+    bias_clamp: bool,
 }
 
 const MAX_DEPTH_CACHE: usize = 4;
@@ -475,6 +478,13 @@ impl PipeKey {
         match self {
             Self::Mesh(k) => k.cull,
             Self::Lit(k) => k.cull,
+        }
+    }
+
+    fn bias(self) -> BiasKey {
+        match self {
+            Self::Mesh(k) => k.bias,
+            Self::Lit(k) => k.bias,
         }
     }
 
@@ -652,6 +662,8 @@ pub(crate) struct WorldFrame<'a> {
     pub premultiplied: bool,
     /// The mesh arena (placed liquid surfaces draw arena meshes, `crate::water`).
     pub arena: &'a crate::arena::MeshArena,
+    /// The adapter supports a depth-bias clamp ([`crate::DrawDepthBias`]).
+    pub bias_clamp: bool,
 }
 
 /// What a render-world module needs to create retained GPU objects.
@@ -818,6 +830,10 @@ impl<'w> Renderer<'w> {
         config: &RendererConfig,
     ) -> Result<Self> {
         let device = &ctx.device;
+        let bias_clamp = crate::depth_bias::clamp_supported(&ctx.adapter);
+        if !bias_clamp {
+            tracing::info!("adapter has no depth-bias clamp; entity bias maxima are left out");
+        }
         let shared = SharedLayouts::new(device);
         let samplers = Samplers::new(device);
         let owner = next_owner_id();
@@ -951,6 +967,7 @@ impl<'w> Renderer<'w> {
             frame_index: 0,
             frame_token: Arc::new(()),
             ui,
+            bias_clamp,
         };
         renderer.apply_surface_config()?;
         renderer.ctx.errors.check()?;
@@ -1412,6 +1429,7 @@ impl<'w> Renderer<'w> {
             owner: self.owner,
             premultiplied,
             arena: &self.arena,
+            bias_clamp: self.bias_clamp,
         };
         let WorldDraws {
             terrain,
@@ -2002,6 +2020,9 @@ impl<'w> Renderer<'w> {
                 } else {
                     (Cull::Back, Cull::Front)
                 };
+                // `decals.md` §6.5 OPEN (c), Tessera default: the entity's bias on every
+                // colour draw (reversed depth negates it).
+                let bias = draw.depth_bias.reversed(self.bias_clamp);
                 let (base_key, blended) = if lit_frame.is_some() {
                     let kind = match m.alpha {
                         AlphaMode::Opaque => LitKind::Opaque,
@@ -2023,6 +2044,7 @@ impl<'w> Renderer<'w> {
                         kind,
                         cull: Cull::Back,
                         skinned,
+                        bias,
                     };
                     (PipeKey::Lit(key), blended)
                 } else {
@@ -2044,6 +2066,7 @@ impl<'w> Renderer<'w> {
                         kind,
                         cull: Cull::Back,
                         skinned,
+                        bias,
                     };
                     (PipeKey::Mesh(key), kind == Kind::Blend)
                 };
@@ -2095,6 +2118,7 @@ impl<'w> Renderer<'w> {
                                 kind,
                                 cull: Cull::None,
                                 skinned,
+                                bias: BiasKey::NONE,
                             }),
                             page,
                             indices: tris.clone(),
@@ -2122,6 +2146,7 @@ impl<'w> Renderer<'w> {
                             kind: Kind::Wire,
                             cull: Cull::None,
                             skinned,
+                            bias: BiasKey::NONE,
                         },
                         page,
                         uniform_offset,
@@ -2144,6 +2169,7 @@ impl<'w> Renderer<'w> {
                         kind: Kind::NormalLines,
                         cull: Cull::None,
                         skinned,
+                        bias: BiasKey::NONE,
                     },
                     page,
                     uniform_offset,
@@ -2161,6 +2187,7 @@ impl<'w> Renderer<'w> {
                 item.key.is_lit(),
                 item.key.skinned(),
                 item.key.cull(),
+                item.key.bias(),
                 item.material,
                 item.page,
             )

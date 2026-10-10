@@ -11,6 +11,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4};
 
+use crate::depth_bias::BiasKey;
 use crate::material::{AlphaMode, DyeMask, Material, MeshShading};
 use crate::mesh::GpuVertex;
 use crate::pipelines::{DEPTH_FORMAT, SharedLayouts};
@@ -211,6 +212,8 @@ pub(crate) struct MeshKey {
     pub cull: Cull,
     /// Skin the vertices with the draw's palette.
     pub skinned: bool,
+    /// The entity's depth bias (`decals.md` §6.5); never applied to the line overlays.
+    pub bias: BiasKey,
 }
 
 /// Layouts and shader shared by every mesh pipeline.
@@ -424,7 +427,11 @@ impl MeshLayouts {
                 depth_write_enabled: Some(key.kind != Kind::Blend),
                 depth_compare: Some(crate::pipelines::DEPTH_COMPARE),
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                // Line topologies take no depth bias.
+                bias: match key.kind {
+                    Kind::Wire | Kind::NormalLines => wgpu::DepthBiasState::default(),
+                    _ => key.bias.state(),
+                },
             }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {

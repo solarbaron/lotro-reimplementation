@@ -408,9 +408,9 @@ fn water_rows_have_their_water() {
 
 /// Checklist row W13 (`water.md` §8.5.4 answer of 2026-10-10, W44): the puddle of the row
 /// (object 0x470015E4 at (105.77, 30.01, 381.46)) has no `Render_DepthBias_Type` in any of
-/// its sets, so the walker draws it with the depth test and no bias, cut where the ground
-/// rises above it; the depth-bias table's type 3, which other puddles set, is a slope-scale
-/// pull toward the camera only (`decals.md` §6.5: no absolute or maximum value).
+/// its sets, so the walker draws it with the depth test and entry 0 (no bias), cut where the
+/// ground rises above it; the depth-bias table's type 3, which other puddles set, is a
+/// slope-scale pull toward the camera only (`decals.md` §6.5: no absolute or maximum value).
 #[test]
 fn puddle_row_has_no_depth_bias() {
     let Some((ctx, mut w)) = world() else { return };
@@ -419,6 +419,14 @@ fn puddle_row_has_no_depth_bias() {
     eprintln!("depth-bias type 3: {b3:?}");
     assert!(b3.slope_scale < 0.0, "type 3 pulls toward the camera");
     assert_eq!((b3.absolute, b3.max), (0.0, 0.0), "slope-scale values only");
+    // An entity without the property gets entry 0 (`decals.md` §6.5 Tessera Decision),
+    // which defines no value here: no bias on any draw of the W13 puddle.
+    let b0 = table.get(0);
+    assert_eq!(
+        (b0.absolute, b0.slope_scale, b0.max),
+        (0.0, 0.0, 0.0),
+        "entry 0: no bias"
+    );
     settle(&mut w, 1, 0x7574, 105.0, 30.0);
     let bundle = w.bundle(key(1, 0x7574)).expect("resident");
     let target = [105.77, 30.01, 381.46];

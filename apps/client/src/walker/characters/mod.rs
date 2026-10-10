@@ -59,7 +59,7 @@ use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_entity::{Changes, Column, Entity, EntityStore, NetId, StoreConfig, Transform};
 use tessera_net::{Appearance, Body, EntityId, Event};
 use tessera_render::glam::{Mat4, Quat, Vec3};
-use tessera_render::{Frame, MeshDraw, MeshId, Renderer, SkinPalette};
+use tessera_render::{DrawDepthBias, Frame, MeshDraw, MeshId, Renderer, SkinPalette};
 use tessera_world::WorldPos;
 use tessera_world::draw_distance::{LodClasses, LodValues};
 
@@ -1633,6 +1633,11 @@ impl CharacterLayer {
             let palette: Option<SkinPalette> = pose
                 .filter(|(skin, _)| !skin.is_empty())
                 .and_then(|(skin, _)| frame.skin_palette(skin).ok());
+            // A placed figure's `Render_DepthBias_Type` entry on every draw of it
+            // (`decals.md` §6.5 OPEN (c), Tessera default); other characters have none.
+            let depth_bias = a
+                .tag
+                .map_or(DrawDepthBias::NONE, |tag| objects.figure_depth_bias(tag));
             drawn += 1;
             for part in &g.parts {
                 let transform = match part.held {
@@ -1654,7 +1659,8 @@ impl CharacterLayer {
                     };
                     let mut d = MeshDraw::new(part.mesh, transform, material)
                         .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
-                        .with_lit(lit);
+                        .with_lit(lit)
+                        .with_depth_bias(depth_bias);
                     if part.skinned
                         && let Some(p) = palette
                     {

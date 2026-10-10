@@ -11,6 +11,7 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::depth_bias::BiasKey;
 use crate::lighting::{
     FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, LightReach, MAX_DRAW_LIGHTS, reference,
 };
@@ -597,6 +598,9 @@ pub(crate) struct LitKey {
     pub kind: LitKind,
     pub cull: Cull,
     pub skinned: bool,
+    /// The entity's depth bias for the colour kinds (`decals.md` §6.5); none for the
+    /// shadow kinds, which keep the shadow pass's own bias.
+    pub bias: BiasKey,
 }
 
 /// Layouts and shaders of the lit and shadow pipelines.
@@ -822,7 +826,7 @@ impl LitLayouts {
                 depth_write_enabled: Some(depth_write),
                 depth_compare: Some(DEPTH_COMPARE),
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                bias: key.bias.state(),
             }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
@@ -864,12 +868,13 @@ impl LitPipelineCache {
     }
 }
 
-/// Shadow pipelines do not depend on the colour format or culling.
+/// Shadow pipelines do not depend on the colour format, culling or the entity's bias.
 fn normalize(key: LitKey) -> LitKey {
     if key.kind.is_shadow() {
         LitKey {
             format: wgpu::TextureFormat::R8Unorm,
             cull: Cull::None,
+            bias: BiasKey::NONE,
             ..key
         }
     } else {

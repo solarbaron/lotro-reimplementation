@@ -59,10 +59,11 @@ use tessera_formats::{Did, Record, RgbaImage, Surface};
 use tessera_material::{CurveState, FloatCurve};
 use tessera_render::glam::{Mat4, Quat, Vec3};
 use tessera_render::{
-    Indices, LightSelection, LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, Pass,
-    PreparedMesh, Renderer, Submesh, TerrainChunk, TerrainChunkData, TerrainDraw, TerrainGloss,
-    TerrainLayer as GpuLayer, TerrainLayerTextures, TerrainOpacity, TerrainProjection,
-    TerrainSpecular, TerrainTransform, TerrainVertices, TextureId, TextureUpload, Wrap,
+    DrawDepthBias, Indices, LightSelection, LitSurface, Material, MeshConfig, MeshData, MeshDraw,
+    MeshId, Pass, PreparedMesh, Renderer, Submesh, TerrainChunk, TerrainChunkData, TerrainDraw,
+    TerrainGloss, TerrainLayer as GpuLayer, TerrainLayerTextures, TerrainOpacity,
+    TerrainProjection, TerrainSpecular, TerrainTransform, TerrainVertices, TextureId,
+    TextureUpload, Wrap,
 };
 use tessera_terrain::{
     AlphaMask, ChunkLayers, CoordinateSet, EdgeLods, HeightSlopeShading, LayerVertices, Lod,
@@ -3182,8 +3183,9 @@ pub fn build_block(
 /// of the block's collision set whose volume contains their origin, or
 /// [`interiors::UNATTACHED`]; a cell mesh its own cell. Which interior objects are loaded
 /// and drawn is the object layer's decision ([`ObjectFrame::interior`]). Each object
-/// carries the slope-scale value of its `Render_DepthBias_Type` entry of `depth_bias`
-/// (`decals.md` §6.5), which its placed liquid surfaces apply (`water.md` §8.5.4 rule).
+/// carries the `Render_DepthBias_Type` entry of `depth_bias` that [`entity_depth_bias`]
+/// gives (`decals.md` §6.5), which every draw of the object applies (§6.5 OPEN (c), Tessera
+/// default; `water.md` §14).
 ///
 /// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
 #[must_use]
@@ -3252,9 +3254,7 @@ pub fn block_objects(
         } else {
             interiors::OUTDOORS
         };
-        let depth_bias = depth_bias
-            .zip(bundle.depth_bias_type_of(e))
-            .map_or(0.0, |(t, i)| t.get(i).slope_scale);
+        let depth_bias = entity_depth_bias(depth_bias, bundle.depth_bias_type_of(e));
         objects.push(ObjectInfo {
             position: pos,
             lod: classes.values(class, false),
@@ -3267,6 +3267,19 @@ pub fn block_objects(
     }
     cell_objects(bundle, looks, &mut instances, &mut objects);
     (instances, objects)
+}
+
+/// The depth bias of a placed entity whose lookup order (`decals.md` §6.5 "Objects",
+/// `entity-descriptor.md` §9.2) finds `Render_DepthBias_Type` = `ty`: that entry of
+/// `table`, or entry 0 when no source holds the property (§6.5 Tessera Decision; an index
+/// of 16 or more also gives entry 0). The entry's slope-scale value and maximum are applied
+/// (W51); its absolute value is left out (`decals.md` §6.5 OPEN (b)). No table: no bias.
+#[must_use]
+pub fn entity_depth_bias(table: Option<&DepthBiasTable>, ty: Option<u32>) -> DrawDepthBias {
+    table.map_or(DrawDepthBias::NONE, |t| {
+        let e = t.get(ty.unwrap_or(0));
+        DrawDepthBias::new(e.slope_scale, e.max)
+    })
 }
 
 /// The LOD values of a cell mesh (`landblock.md` §4.14 OPEN on cell detail levels and
@@ -3358,7 +3371,7 @@ fn cell_objects(
             first,
             count: 1,
             cell: c.index,
-            depth_bias: 0.0,
+            depth_bias: DrawDepthBias::NONE,
         });
     }
 }
@@ -3393,6 +3406,39 @@ pub fn overview_tile(block: &TerrainBlock, shading: &HeightSlopeShading) -> Vec<
 mod tests {
     use super::*;
     use tessera_formats::landblock::{HeightGrid, VertexFlags};
+
+    /// `decals.md` §6.5: an entity's draws take the slope-scale value and maximum of its
+    /// `Render_DepthBias_Type` entry (W51), entry 0 when no source holds the property (the
+    /// Tessera Decision) or the index is out of range; no table, no bias.
+    #[test]
+    fn entity_depth_bias_selects_the_table_entry() {
+        use tessera_world::decals::shading::DepthBias;
+        let mut table = DepthBiasTable::default();
+        table.entries[0] = DepthBias {
+            absolute: 0.0,
+            slope_scale: 0.25,
+            max: 0.0,
+        };
+        table.entries[3] = DepthBias {
+            absolute: 7.0,
+            slope_scale: -0.8,
+            max: -0.01,
+        };
+        assert_eq!(
+            entity_depth_bias(Some(&table), Some(3)),
+            DrawDepthBias::new(-0.8, -0.01),
+            "slope and maximum applied, absolute left out"
+        );
+        assert_eq!(
+            entity_depth_bias(Some(&table), None),
+            DrawDepthBias::slope(0.25)
+        );
+        assert_eq!(
+            entity_depth_bias(Some(&table), Some(99)),
+            DrawDepthBias::slope(0.25)
+        );
+        assert_eq!(entity_depth_bias(None, Some(3)), DrawDepthBias::NONE);
+    }
 
     #[test]
     fn overview_is_north_up_and_sized() {

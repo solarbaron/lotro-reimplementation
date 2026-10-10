@@ -1517,6 +1517,22 @@ spec's rules.
   (no `MotionBatch` inter-arrival times or loss), and the bots poll at 30 Hz, which quantises
   chat latency to about 33 ms.
 
+> **OPEN (implementer, `tessera-server`, 2026-10-10; engineering choices, the spec is
+> silent):** the closed line now records the cause of §11.1 for every path (commit on
+> branch `conform-b17`), so the first gap above is meant to be closed; the review may mark
+> it. Choices made, for review: (a) fields `code`, `reason`, `end` (`server`, `peer`,
+> `none`); for the idle timeout and the transport's description `code` is `-` and `end` is
+> `none`, the reason is `idle timeout` or the transport text; (b) `reason` is written
+> escaped and quoted (the text comes from the peer), the other fields plain; (c) when the
+> cause is a `Disconnect`, the separate field `close` gives the close that ended the
+> connection (`NO_ERROR from peer`, `SERVER_FULL from server`, or the transport text);
+> (d) an application code above 65,535 in a peer's `CONNECTION_CLOSE` is written as
+> `code N`, an undefined one below as well; (e) "received" means a client `Disconnect` the
+> session acted on (§12.3), so a `Disconnect` sent before `Hello`, which is a protocol
+> violation, is not a cause; the violation's immediate close is; (f) a local close without
+> an application code (the endpoint closing) counts as the transport's description. Are
+> these acceptable?
+
 ---
 
 <a id="s16"></a>

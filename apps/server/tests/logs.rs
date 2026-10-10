@@ -13,8 +13,9 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use support::*;
+use tessera_protocol::codes::AppErrorCode;
 use tessera_protocol::fingerprint::Fingerprint;
-use tessera_protocol::message::{Credentials, Message};
+use tessera_protocol::message::{Credentials, Disconnect, Hello, Message};
 
 fn bin() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_tessera-server"));
@@ -360,6 +361,174 @@ fn closed_line_carries_the_connections_own_bytes() {
         (clients[1].1, clients[1].2),
         "the two connections exchanged different amounts"
     );
+}
+
+/// Waits (without blocking the client runtime) for the "connection closed" line of the
+/// client at `client_addr`, keeping every line read in `lines`.
+async fn closed_line(rx: &Receiver<String>, lines: &mut Vec<String>, client_addr: &str) -> String {
+    let find = |lines: &[String]| {
+        lines
+            .iter()
+            .find(|l| l.contains("connection closed") && l.contains(client_addr))
+            .map(|l| strip_ansi(l))
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(l) = find(lines) {
+            return l;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no closed line for {client_addr}: {lines:?}"
+        );
+        while let Ok(l) = rx.try_recv() {
+            lines.push(l);
+        }
+        if find(lines).is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+fn hello_message() -> Message {
+    Message::Hello(Hello {
+        minor_max: 0,
+        client_caps: 0,
+        max_entities: 1024,
+        client_name: "closed-line test".into(),
+    })
+}
+
+/// §11.1 (fifth revision, 2026-10-10), §15.3: the closed line's code and reason record
+/// the cause of the end, in the stated order, for each closing path the server takes: a
+/// peer's `Disconnect` (logout), a peer's close without `Disconnect`, a server
+/// `Disconnect` acknowledged by the peer and one whose linger passed (both
+/// `SERVER_FULL`), and an immediate close on a protocol violation. The idle timeout and the
+/// transport's description are covered by the unit tests of `closing.rs`.
+#[test]
+fn closed_line_records_the_cause_of_the_end() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("data");
+    write_config(&dir, "[limits]\nmax_connections = 1\n");
+    let p = port(5);
+    let mut cmd = bin();
+    cmd.arg("--data-dir")
+        .arg(&dir)
+        .args(["run", "--listen", &format!("127.0.0.1:{p}")]);
+    let (child, mut lines, rx) = start(&mut cmd);
+    let fp_line = lines.iter().find(|l| l.contains("sha256:")).unwrap();
+    let at = fp_line.find("sha256:").unwrap();
+    let fp: Fingerprint = fp_line[at..at + 71].parse().unwrap();
+    let addr = format!("127.0.0.1:{p}").parse().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = |c: &RawClient| c.endpoint.local_addr().unwrap().to_string();
+    let checks: Vec<(&str, String)> = rt.block_on(async {
+        let mut out = Vec::new();
+        // 1. Logout: the peer's Disconnect, answered by the server's NO_ERROR close.
+        let mut d = RawClient::connect(addr, fp).await;
+        d.hello().await;
+        d.send(&Message::Disconnect(Disconnect {
+            code: AppErrorCode::NoError,
+            text: "bye".into(),
+        }))
+        .await;
+        assert!(d.closed_code(WAIT).await.is_some());
+        out.push(("logout", closed_line(&rx, &mut lines, &local(&d)).await));
+        // 2. The peer closes without a Disconnect.
+        let mut e = RawClient::connect(addr, fp).await;
+        e.hello().await;
+        e.conn.close(0x0Du32.into(), b"client crashed");
+        e.endpoint.wait_idle().await;
+        out.push(("peer close", closed_line(&rx, &mut lines, &local(&e)).await));
+        // A holds the one place.
+        let mut a = RawClient::connect(addr, fp).await;
+        a.hello().await;
+        // 3. SERVER_FULL, acknowledged by the peer's NO_ERROR close.
+        let mut b = RawClient::connect(addr, fp).await;
+        b.send(&hello_message()).await;
+        assert_eq!(
+            b.disconnect_code(WAIT).await,
+            Some(AppErrorCode::ServerFull)
+        );
+        b.conn.close(0u32.into(), b"");
+        b.endpoint.wait_idle().await;
+        out.push((
+            "full, acknowledged",
+            closed_line(&rx, &mut lines, &local(&b)).await,
+        ));
+        // 4. SERVER_FULL, and the peer does not answer: the server closes after the linger.
+        let mut c = RawClient::connect(addr, fp).await;
+        c.send(&hello_message()).await;
+        assert_eq!(
+            c.disconnect_code(WAIT).await,
+            Some(AppErrorCode::ServerFull)
+        );
+        assert!(c.closed_code(WAIT).await.is_some());
+        out.push((
+            "full, linger",
+            closed_line(&rx, &mut lines, &local(&c)).await,
+        ));
+        // 5. A protocol violation (a second Hello): the server closes at once.
+        a.send(&hello_message()).await;
+        assert_eq!(
+            a.closed_code(WAIT).await,
+            Some(u64::from(AppErrorCode::ProtocolViolation.to_u16()))
+        );
+        out.push(("violation", closed_line(&rx, &mut lines, &local(&a)).await));
+        out
+    });
+    let (code, _) = terminate(child, &rx);
+    assert_eq!(code, Some(0));
+    let expect = [
+        (
+            "logout",
+            "code=NO_ERROR",
+            "reason=\"bye\"",
+            "end=peer",
+            Some("close=NO_ERROR from server"),
+        ),
+        (
+            "peer close",
+            "code=INTERNAL_ERROR",
+            "reason=\"client crashed\"",
+            "end=peer",
+            None,
+        ),
+        (
+            "full, acknowledged",
+            "code=SERVER_FULL",
+            "reason=\"\"",
+            "end=server",
+            Some("close=NO_ERROR from peer"),
+        ),
+        (
+            "full, linger",
+            "code=SERVER_FULL",
+            "reason=\"\"",
+            "end=server",
+            Some("close=SERVER_FULL from server"),
+        ),
+        (
+            "violation",
+            "code=PROTOCOL_VIOLATION",
+            "reason=",
+            "end=server",
+            None,
+        ),
+    ];
+    for ((name, line), (want, code, reason, end, close)) in checks.iter().zip(expect) {
+        assert_eq!(*name, want);
+        for part in [code, reason, end] {
+            assert!(line.contains(part), "{name}: {part} missing: {line}");
+        }
+        match close {
+            Some(c) => assert!(line.contains(c), "{name}: {c} missing: {line}"),
+            None => assert!(!line.contains("close="), "{name}: close field: {line}"),
+        }
+    }
 }
 
 /// The line without terminal colour sequences (ESC `[` … final letter).

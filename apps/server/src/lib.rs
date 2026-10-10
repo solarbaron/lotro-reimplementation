@@ -41,6 +41,7 @@ pub mod accounts;
 pub mod appearance;
 pub mod characters;
 pub mod cli;
+mod closing;
 pub mod config;
 pub mod conn;
 pub mod content;

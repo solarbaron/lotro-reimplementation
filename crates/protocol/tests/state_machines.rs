@@ -1302,6 +1302,44 @@ fn simultaneous_disconnect_closes_with_no_error() {
     ));
 }
 
+/// The server session keeps the client's `Disconnect` it acted on (for the closed line of
+/// `test-server.md` §11.1): in the normal path and while Closing, the first one only.
+#[test]
+fn server_keeps_the_clients_disconnect() {
+    let frame = |text: &str| {
+        frame_to_vec(&Message::Disconnect(Disconnect {
+            code: AppErrorCode::NoError,
+            text: text.into(),
+        }))
+        .unwrap()
+    };
+    let mut p = Pair::new(ClientConfig::default(), params());
+    p.login();
+    assert!(p.server.peer_disconnect().is_none());
+    let _ = p.server.on_control_data(&frame("bye"), 0);
+    let d = p.server.peer_disconnect().cloned();
+    assert_eq!(
+        d.map(|d| (d.code, d.text)),
+        Some((AppErrorCode::NoError, "bye".into()))
+    );
+    let _ = p.server.on_control_data(&frame("again"), 0);
+    assert_eq!(
+        p.server.peer_disconnect().map(|d| d.text.as_str()),
+        Some("bye")
+    );
+
+    // While Closing after the server's own Disconnect.
+    let mut p = Pair::new(ClientConfig::default(), params());
+    p.login();
+    let _ = p.server.disconnect(AppErrorCode::Kicked, "", 0);
+    while p.server.poll_transmit().is_some() {}
+    let _ = p.server.on_control_data(&frame("ack"), 0);
+    assert_eq!(
+        p.server.peer_disconnect().map(|d| d.text.as_str()),
+        Some("ack")
+    );
+}
+
 #[test]
 fn every_session_end_is_reported_once() {
     // UNSUPPORTED_VERSION after Hello.

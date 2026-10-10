@@ -32,6 +32,9 @@ pub struct CurveState {
     last: f32,
     /// Mode 3: xorshift32 state (never 0).
     rng: u32,
+    /// Mode 3: a value of *r* in [−1, 1] supplied by the caller, used instead of the
+    /// xorshift source while set ([`CurveState::supply_random`]).
+    supplied: Option<f64>,
 }
 
 impl Default for CurveState {
@@ -56,11 +59,28 @@ impl CurveState {
             start: None,
             last: 0.0,
             rng: if seed == 0 { 0x9E37_79B9 } else { seed },
+            supplied: None,
         }
     }
 
-    /// A uniform value in [−1, 1] (xorshift32).
+    /// Makes mode 3 use `r` as its *r* (clamped to [−1, 1]; NaN counts as 0) at every
+    /// evaluation with this state until [`CurveState::clear_random`], instead of the
+    /// state's own source. For callers whose mode-3 curves draw from a shared stream and
+    /// keep nothing between evaluations (`particle-runtime.md` §12 rule 12).
+    pub fn supply_random(&mut self, r: f64) {
+        self.supplied = Some(if r.is_nan() { 0.0 } else { r.clamp(-1.0, 1.0) });
+    }
+
+    /// Returns mode 3 to the state's own source.
+    pub fn clear_random(&mut self) {
+        self.supplied = None;
+    }
+
+    /// A uniform value in [−1, 1]: the supplied value, else the next xorshift32 output.
     fn uniform(&mut self) -> f64 {
+        if let Some(r) = self.supplied {
+            return r;
+        }
         let mut x = self.rng;
         x ^= x << 13;
         x ^= x >> 17;
@@ -127,6 +147,11 @@ impl CurveStates {
         self.states
             .entry(id)
             .or_insert_with(|| CurveState::with_seed(seed))
+    }
+
+    /// Forgets the state of parameter `id` (its next use starts afresh).
+    pub fn remove(&mut self, id: u32) {
+        self.states.remove(&id);
     }
 
     /// Forgets every state: mode-10 curves restart at their next evaluation.
@@ -476,6 +501,23 @@ mod tests {
         assert_eq!(c.evaluate_at(3.0, &mut st), 0.0);
         let v = c.evaluate_at(3.3, &mut st);
         assert!(v.is_finite() && v.abs() < 4.0, "{v}");
+    }
+
+    /// A supplied *r* replaces the state's own mode-3 source until it is cleared.
+    #[test]
+    fn supplied_random_value() {
+        let c = wave(3, [1.0, 0., 0.5, 0., 0., 0., 0., 0., 0., 0.]);
+        let mut st = CurveState::with_seed(7);
+        st.supply_random(-0.5);
+        assert!(close(c.evaluate_at(1.0, &mut st), 0.75));
+        assert!(close(c.evaluate_at(2.0, &mut st), 0.75));
+        st.supply_random(3.0);
+        assert!(close(c.evaluate_at(1.0, &mut st), 1.5));
+        st.supply_random(f64::NAN);
+        assert!(close(c.evaluate_at(1.0, &mut st), 1.0));
+        st.clear_random();
+        let mut fresh = CurveState::with_seed(7);
+        assert_eq!(c.evaluate_at(1.0, &mut st), c.evaluate_at(1.0, &mut fresh));
     }
 
     #[test]

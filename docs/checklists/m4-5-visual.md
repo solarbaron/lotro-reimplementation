@@ -735,6 +735,19 @@ section: clip at fog far whenever fog is on).
 | L6 | 1, 0x3F7C | 47.66, 98.54, 452.12; 0, 0 | 0.5 | **blended (translucent) surface**: a cobweb (SED 0x80213F7C #9, object 0x470004F3 at (47.66, 104.54, 450.35)), surface 0x31000493: lit, `ColorAndOpacity` with alpha test off, so it blends by its texture alpha (`material.md` §11.3) and is drawn in the transparent pass. See W8 for an unlit alpha-blended surface. |
 | L7 | 1, 0x7873 | 78.12, 21.00, 409.00 (20 m above the ground); 0, −89 (redefined 2026-10-09 by the spec writer; was 3, 0x9FE8, 44.36, 23.42, 191.97; 0, −35) | 0.0 (sky key 0x10000070 → 0x1A000000, keyframes *a* = 0, *b* = 1, *f* = 0: the night of row Y4, moonlight 0.55 (74, 81, 158) from bearing 195°, elevation 30°, ambient 0.20 (125, 121, 147) for both colours, fog 1,000 / 2,500) | **baked light map on terrain at night**: `Landblock_LightMap` 0x41102099 (DXT1, 128 × 128; 95 % of its texels black, the rest warm, largest (0.77, 0.48, 0.00)). Under the eye a camp: a campfire with Light SED #210 (object 0x470005C2 at (78.51, 19.33, 390.92), `LightRange` 15, `LightDiffuse` stored (0, 158, 255, 255) = R 255, G 158, B 0, `Light_BakedLandscapeLight` true) inside a ring of logs, between two large tents. The map's pool round the fire: 76 texels above 0.15 between x 71–84 and y 15–30, brightest (0.68, 0.41, 0.00) at (78.12, 18.12, 389.00); no blocking object covers that point. Expected: an **orange pool on the ground round the fire**, the map's texel added to the lighting sum (`terrain-texturing.md` §9.1 step 1, §10). Outside the pool the flat ground gets about (0.18, 0.18, 0.29) (ambient *X* = (0.10, 0.09, 0.12) plus the moonlight 0.55 × (74, 81, 158) / 255 × sin 30°, `lighting.md` §8.1 Tessera Decision *E₀* = *Cd* × *bd*); at the brightest texel about (0.85, 0.59, 0.29): on the same terrain layer red about 4.8 times, green about 3.3 times the value outside, **blue unchanged** (the map's blue is 0). The nine Light SEDs of the camp (#209–#216, #219) all carry `Light_BakedLandscapeLight`, and no light without it stands within 25 m of the pool (this block and its neighbours), so no point light reaches the terrain there (§10, T43). Comparisons: `--disable lights` (the terrain identical, only objects lose their orange light, as in L2) and the same camera at *t* 0.5 (daylight: ambient (226, 230, 240) × 0.2 and a white sun; the same pool is added but stands out far less). |
 
+> **OPEN** (implementer, 2026-10-10, row L3, for the spec writer): the exit check of
+> 2026-10-10 saw the bonfire's ember mesh as an upside-down pyramid under the logs. Tessera
+> draws the object as the data places it: its one part (0x06004C8A, unskinned, setup
+> 0x04003A50, scale 1.3) is authored with the ember pyramid below the object's origin (z
+> −1.13 to 2.16, 0.09 m wide at the bottom), and SED #133 stands at z 392.97 on a raised
+> stone platform (floor at about 393.17; the terrain under it is 389.87; the camp's patrol
+> and generator points also stand at 393.17), so the pyramid lies inside the platform. The
+> row's eye (z 392.73) is 0.44 m **below** that floor, inside the platform, where the
+> one-sided floor is not seen and the buried half of the mesh shows. From an eye above the
+> floor (92.78, 41.64, 394.90; 0, −10) the fire looks as expected: logs over a bed of embers,
+> no pyramid. Not a Tessera error and probably not the data's either: please raise the
+> row's eye (for example to 394.90) and re-check the expected look.
+
 <a id="s4-7"></a>
 ### 4.7 Cameras for judging rows on the image (implementer, 2026-10-08)
 

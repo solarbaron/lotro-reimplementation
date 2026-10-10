@@ -1288,6 +1288,23 @@ For each sky, every sky update produces one state from the blended keyframe valu
 - A debug console command of the client forces the precipitation values (§11.7 step 7);
   Tessera can offer an equivalent debug switch under its own name.
 
+> **OPEN** (implementer, 2026-10-10, for the spec writer; thin line across the sky,
+> `m4-5-visual.md` row W9): from W9's camera at *t* 0.5 (day description 0x1A000000) the
+> walker shows a 2–3 px darker, warmer line at a fixed elevation of about −0.7°, below the
+> horizon, wherever nothing else is drawn there (the sky beyond the sea at the landscape
+> extent; also with `--far-view on`). It comes from the sky dome, object 0x47000A0A (part
+> 0x06000DBD, surface 0x310006F8, texture 0x400010DA, one mip level): the dome's ring at
+> −0.66° has *v* = 0.9999, the bottom edge of the texture, and the surface's effective
+> 4005 and 4006 are 1 (wrap in U and V, `material.md` §8.5) with linear filtering, so a
+> bilinear sample there mixes in the texture's top row. Clamping V for that texture removes
+> the line (experiment only, not kept). The horizon band 0x47000A15 (alpha 0.53) has its
+> middle ring at −0.76° with *v* = 0.9901 and is not involved. Tessera draws what the data
+> asks for, so the line is probably in the data. Questions: (a) does the original show the
+> same line where the sky below the horizon is visible, or does something cover the sky
+> there (fog on sky objects, still OPEN above; a far horizon; the draw order of the sky
+> objects, OPEN above)? (b) Does the original sample sky objects with the surfaces' wrap
+> modes, or with clamp?
+
 > **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** what
 > `InteriorFogType` "None" (2) and "Invalid" (0) do: "no interior override" (the outdoor
 > keyframe fog of the sky key stays in force) or "no fog at all" indoors. Tessera

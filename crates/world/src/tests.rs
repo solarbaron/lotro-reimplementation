@@ -1076,7 +1076,7 @@ fn figures_take_their_instance_sets() {
     assert_eq!(b.figures.len(), 2, "{:?}", b.figures);
     let npc = &b.figures[0];
     assert_eq!(npc.kind, FigureKind::Npc);
-    assert_eq!(npc.entity, 0);
+    assert_eq!(npc.entity, EntityRef::Entity(0));
     assert_eq!(npc.idle, Some(SyntheticWorld::FIGURE_IDLE));
     assert_eq!(npc.random_appearance, None);
     assert_eq!(npc.weenie_type, None);
@@ -1088,7 +1088,7 @@ fn figures_take_their_instance_sets() {
 
     let weenie = &b.figures[1];
     assert_eq!(weenie.kind, FigureKind::Weenie);
-    assert_eq!(weenie.entity, 4);
+    assert_eq!(weenie.entity, EntityRef::Entity(4));
     assert_eq!(
         weenie.random_appearance,
         Some(SyntheticWorld::FIGURE_RANDOM)
@@ -1312,7 +1312,7 @@ fn rigs_of_thirty_bones_or_more_are_figures() {
     assert_eq!(bones, vec![Some(30), Some(29), None]);
     assert_eq!(b.figures.len(), 1, "{:?}", b.figures);
     assert_eq!(b.figures[0].kind, FigureKind::Rig);
-    assert_eq!(b.figures[0].entity, 0);
+    assert_eq!(b.figures[0].entity, EntityRef::Entity(0));
     assert!(b.figures[0].instance.is_none());
     assert_eq!(b.scenery().count(), 2);
     // Turned off.
@@ -1386,6 +1386,93 @@ fn context_loads_region_tables_and_systems() {
     assert!(off.region(1).unwrap().scenery.is_none());
     assert!(off.systems().scenes.is_none() && off.systems().water.is_none());
     assert!(off.systems().collision.is_none());
+}
+
+/// A generated object on a skinned rig of 30 bones or more is a figure (`walker.md` §10.2
+/// Rig row; generated objects become static entities of the same form, `scenery.md`
+/// §7.6), so the walker animates it instead of drawing its bind pose.
+#[test]
+fn generated_rigs_are_figures() {
+    let schema = testkit::schema();
+    let (template, setup) = (0x1F00_0030u32, 0x0400_0030u32);
+    let world = |bones: usize| {
+        let mut s = scenery_world().build();
+        // ON_WATER (the wet block's second generated object) on a skinned rig.
+        s.insert(
+            obj::ON_WATER,
+            testkit::entity_descriptor(obj::ON_WATER, template, &[], &schema),
+            None,
+        );
+        s.insert(template, testkit::visual_template(template, setup), None);
+        s.insert(
+            setup,
+            testkit::setup_with_skeleton(setup, &[0x0600_0001], bones),
+            None,
+        );
+        Arc::new(s)
+    };
+    let ctx = WorldContext::load(world(30), BundleOptions::default()).unwrap();
+    let wet = bundle_of(&ctx, key(10, 20)).unwrap();
+    assert_eq!(objects_of(&wet), vec![obj::SCENERY, obj::ON_WATER]);
+    let g = &wet.generated[1];
+    assert_eq!(g.visual.as_ref().and_then(|v| v.bones), Some(30));
+    // The info record's figures come first (the synthetic block's weenie), then the rig.
+    let generated_figures = |b: &LandblockBundle| {
+        b.figures
+            .iter()
+            .filter(|f| matches!(f.entity, EntityRef::Generated(_)))
+            .count()
+    };
+    let last = wet.figures.len() - 1;
+    let f = &wet.figures[last];
+    assert_eq!(generated_figures(&wet), 1, "{:?}", wet.figures);
+    assert_eq!(f.kind, FigureKind::Rig);
+    assert_eq!(f.entity, EntityRef::Generated(1));
+    assert!(f.instance.is_none() && f.idle.is_none());
+    assert_eq!(g.figure, Some(u32::try_from(last).unwrap()));
+    assert!(std::ptr::eq(wet.figure_entity(f).unwrap(), g));
+    assert_eq!(
+        wet.generated[0].figure, None,
+        "the tree setup has no skeleton"
+    );
+    // Drawn as a character, so not static scenery.
+    assert!(wet.scenery().all(|e| !std::ptr::eq(e, g)));
+    assert!(wet.drawable().any(|e| std::ptr::eq(e, g)));
+    // A dry block places no ON_WATER: no generated figure.
+    let dry = bundle_of(&ctx, key(11, 20)).unwrap();
+    assert_eq!(generated_figures(&dry), 0);
+
+    // 29 bones: scenery. Rigs off, or figures not kept: scenery.
+    let few = WorldContext::load(world(29), BundleOptions::default()).unwrap();
+    assert_eq!(generated_figures(&bundle_of(&few, key(10, 20)).unwrap()), 0);
+    for options in [
+        BundleOptions {
+            min_rig_bones: 0,
+            ..BundleOptions::default()
+        },
+        BundleOptions {
+            keep_figures: false,
+            ..BundleOptions::default()
+        },
+    ] {
+        let off = WorldContext::load(world(30), options).unwrap();
+        let b = bundle_of(&off, key(10, 20)).unwrap();
+        assert_eq!(generated_figures(&b), 0);
+        assert!(b.generated.iter().all(|g| g.figure.is_none()));
+    }
+    // The per-block cap counts dropped generated rigs.
+    let capped = WorldContext::load(
+        world(30),
+        BundleOptions {
+            max_figures_per_block: 0,
+            ..BundleOptions::default()
+        },
+    )
+    .unwrap();
+    let b = bundle_of(&capped, key(10, 20)).unwrap();
+    assert!(b.figures.is_empty());
+    assert_eq!(b.figures_dropped, u32::try_from(wet.figures.len()).unwrap());
+    assert!(b.generated.iter().all(|g| g.figure.is_none()));
 }
 
 #[test]

@@ -414,11 +414,7 @@ fn water_rows_have_their_water() {
 #[test]
 fn puddle_row_has_no_depth_bias() {
     let Some((ctx, mut w)) = world() else { return };
-    let table = ctx
-        .systems()
-        .depth_bias
-        .clone()
-        .expect("depth-bias table");
+    let table = ctx.systems().depth_bias.clone().expect("depth-bias table");
     let b3 = table.get(3);
     eprintln!("depth-bias type 3: {b3:?}");
     assert!(b3.slope_scale < 0.0, "type 3 pulls toward the camera");
@@ -441,7 +437,11 @@ fn puddle_row_has_no_depth_bias() {
         bundle.depth_bias_type_of(puddle)
     );
     assert!(puddle.draw, "W13 puddle drawn");
-    assert_eq!(bundle.depth_bias_type_of(puddle), None, "W13: no depth bias");
+    assert_eq!(
+        bundle.depth_bias_type_of(puddle),
+        None,
+        "W13: no depth bias"
+    );
 }
 
 #[test]

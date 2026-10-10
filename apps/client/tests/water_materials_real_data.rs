@@ -302,11 +302,19 @@ fn water_materials_as_drawn() {
                 // 0.01, exponent 2, fog amount 1 and `WaterFogColor` (0.129, 0.149, 0.133),
                 // the colour its own list tints toward (`water.md` §8.6.4 answer).
                 assert_eq!(p.fresnel_form, WaterFresnelForm::Biased, "{s}: own list");
-                assert!((p.fresnel_bias - 0.01).abs() < 1e-4, "{s}: bias {}", p.fresnel_bias);
+                assert!(
+                    (p.fresnel_bias - 0.01).abs() < 1e-4,
+                    "{s}: bias {}",
+                    p.fresnel_bias
+                );
                 assert!((p.fresnel_exponent - 2.0).abs() < 1e-4, "{s}: exponent");
                 assert!((p.fog_amount - 1.0).abs() < 1e-4, "{s}: fog amount");
                 for (got, want) in p.fog_color.iter().zip([0.129, 0.149, 0.133]) {
-                    assert!((got - want).abs() < 0.002, "{s}: fog colour {:?}", p.fog_color);
+                    assert!(
+                        (got - want).abs() < 0.002,
+                        "{s}: fog colour {:?}",
+                        p.fog_color
+                    );
                 }
                 // The river's Fresnel rises toward grazing angles (8° below the horizon:
                 // |v . n| = sin 8°) instead of staying at its bias.
@@ -328,13 +336,12 @@ fn water_materials_as_drawn() {
     }
     // Checklist row W13 (`water.md` §8.5.4 answer of 2026-10-10, W44): the puddle surface of
     // the mirror record is depth-tested and writes depth (4001 = 4002 = 1).
-    let puddle = lib.resolve_surface(Did(0x3100_0A2A)).expect("puddle surface");
+    let puddle = lib
+        .resolve_surface(Did(0x3100_0A2A))
+        .expect("puddle surface");
     assert_eq!(puddle.shader.did, Did(0x2B00_00AA), "puddle: mirror record");
     assert!(puddle.depth_test(), "puddle: depth test on");
-    assert!(
-        puddle.features.blend.depth_write,
-        "puddle: depth write on"
-    );
+    assert!(puddle.features.blend.depth_write, "puddle: depth write on");
     eprintln!("fastest drawn flow-map layer: {fastest_flow:.2} m/s");
     eprintln!("flow-map surfaces with their record's Fresnel form: {flow_forms}");
     assert!(flow_forms > 0, "no flow-map surface in the water tables");

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 of the review of the OBS7/BIN8 revision (commit 1c24945): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of the OBS7/BIN8 revision; §3.5 rule 2 now states that it replaces the `misc-records.md` §3.7 parenthesis for script nodes and cites BIN8 and A46 for the unknown-layer-name rule; A46 and the §15 answer (5) say the same; wording only, no rule changed). Before: Revised (2026-10-10, review of the OBS7/BIN8 revision (a fresh session that wrote no part of this spec and did no earlier review of it): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: answers to the four implementation OPENs of 2026-10-10 in §15 filed with the face-compositing implementation, from the data (OBS7) and the client (BIN8); §3.5 extended and corrected (composed image slot, compositor and edit rules, the option-off table, `Physics_InWorld` and `CharGen_Stage`, two narrow OPENs with Decisions), §3.3 face sentence corrected, rows A45–A51). Before: Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 (commit d67d923): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of 2026-10-10, §15 unknown made a narrow OPEN, Decision kept; N1 taken; no rule changed). Before: Revised (2026-10-10, review (a fresh session that wrote no part of this spec): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: §15 answer to the confirmation-only OPEN of 2026-10-08 on the deformer start order (new OBS6, A44), raised as non-blocking note N14 by the `script-runtime.md` review of 2026-10-10; no rule changed). Before: Accepted (2026-10-09, re-review of the writer's answer to the review of 2026-10-09 of the OBS5/BIN7 revision: both blocking items fixed; see the review record). Revision of 2026-10-09 (review answer): both blocking items fixed in A42 and §5.6 "What the placement scripts test", the three non-blocking notes taken. Earlier: changes requested (that review, two blocking items, see the review record). Revision under review (2026-10-09, spec writer: the three implementation OPENs of 2026-10-09 in §15 answered from the data (OBS5) and a constant search in the client (BIN7): the label of script key 0x10002BA0, what the placement scripts switch on (new paragraph "What the placement scripts test" in §5.6), the `MonsterPlayer` test in §5.5; rows A41–A43). Before: Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
+| **Status** | Revised (2026-10-10, spec writer, awaiting review: answer to the implementation note of 2026-10-10 in §15 filed with commit 3070b06 (engineering choices (1)–(6), Run nodes in a left Switch branch, the last composed image and parameter 3000), from the data (OBS8) and the client (BIN9); §3.5 extended (no image adds no material, a start whose record does not load is refused, several compositors on one surface with a narrow OPEN and a Decision, stage 0 without `CharGen_Stage`, the `Physics_InWorld` Switches an avatar reaches and what leaving the world stops), rows A52–A55; choices (2), (3), (4) confirmed, (1) confirmed with its narrowing a Decision, (5), (6) Decisions; no earlier rule changed). Before: Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 of the review of the OBS7/BIN8 revision (commit 1c24945): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of the OBS7/BIN8 revision; §3.5 rule 2 now states that it replaces the `misc-records.md` §3.7 parenthesis for script nodes and cites BIN8 and A46 for the unknown-layer-name rule; A46 and the §15 answer (5) say the same; wording only, no rule changed). Before: Revised (2026-10-10, review of the OBS7/BIN8 revision (a fresh session that wrote no part of this spec and did no earlier review of it): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: answers to the four implementation OPENs of 2026-10-10 in §15 filed with the face-compositing implementation, from the data (OBS7) and the client (BIN8); §3.5 extended and corrected (composed image slot, compositor and edit rules, the option-off table, `Physics_InWorld` and `CharGen_Stage`, two narrow OPENs with Decisions), §3.3 face sentence corrected, rows A45–A51). Before: Accepted (2026-10-10, re-review (a fresh session that wrote no part of this spec and did no earlier review of it) of the answer to blocking item B1 (commit d67d923): passed `CLEAN_ROOM.md` §5.3, every item; see the review record). Before: Revised (2026-10-10, spec writer, awaiting re-review: answer to blocking item B1 of the review of 2026-10-10, §15 unknown made a narrow OPEN, Decision kept; N1 taken; no rule changed). Before: Revised (2026-10-10, review (a fresh session that wrote no part of this spec): **changes requested**, one blocking item, see the review record; awaiting the writer's answer). Before: Revised (2026-10-10, spec writer, awaiting review: §15 answer to the confirmation-only OPEN of 2026-10-08 on the deformer start order (new OBS6, A44), raised as non-blocking note N14 by the `script-runtime.md` review of 2026-10-10; no rule changed). Before: Accepted (2026-10-09, re-review of the writer's answer to the review of 2026-10-09 of the OBS5/BIN7 revision: both blocking items fixed; see the review record). Revision of 2026-10-09 (review answer): both blocking items fixed in A42 and §5.6 "What the placement scripts test", the three non-blocking notes taken. Earlier: changes requested (that review, two blocking items, see the review record). Revision under review (2026-10-09, spec writer: the three implementation OPENs of 2026-10-09 in §15 answered from the data (OBS5) and a constant search in the client (BIN7): the label of script key 0x10002BA0, what the placement scripts switch on (new paragraph "What the placement scripts test" in §5.6), the `MonsterPlayer` test in §5.5; rows A41–A43). Before: Accepted (2026-10-09, re-review of the review answer: both blocking items of the review of 2026-10-09 fixed; see the review record). Revision of 2026-10-09 (review answer): §5.7 step 2, the attached-path composition is a Tessera Decision with a narrow OPEN, A35 qualified; §5.7 step 3, OPEN on the holder-factor bits, §6.1 aligned with BIN6, A36; non-blocking notes taken (A37, §5.5 `_Behavior` type, A39). Earlier revision of 2026-10-09: the five implementation OPENs of 2026-10-09 in §15 answered from the data (OBS4) and the client (BIN6); §5.3, §5.5, §5.6 corrected and new §5.7. Previously Accepted 2026-10-09 (full review of the spec state after the merge of main into specs-5; includes the owner-observation change of 2026-10-08, §7.4 O12 OPEN and §17 O12 row) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review; 2026-10-08: review of the BIN4 and BIN5 revisions (another fresh session); 2026-10-08: narrow re-review of §3.3 (a further fresh session); 2026-10-09: review of the OBS5/BIN7 revision (a fresh session that wrote no part of this spec); 2026-10-09: re-review of the review answer (a further fresh session that wrote no part of this spec and did not do that review); 2026-10-10: review of the OBS6 revision (a fresh session that wrote no part of this spec and did no earlier review of it); 2026-10-10: re-review of the B1 answer (a further fresh session that wrote no part of this spec and did no earlier review of it); 2026-10-10: review of the OBS7/BIN8 revision (a further fresh session that wrote no part of this spec and did no earlier review of it); 2026-10-10: re-review of the B1 answer of the OBS7/BIN8 review (a further fresh session that wrote no part of this spec and did no earlier review of it) |
@@ -78,7 +78,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | BIN7 | Same executable and build as BIN6, read on 2026-10-09 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Question:** does client code write `Inventory_PrimaryEquipmentCategory`, `…Secondary…`, `…Ranged…` or `InventoryControl_EquipmentCategoryCachedSlotList`, i.e. which of the placement scripts' inputs the client sets itself (implementation OPEN of 2026-10-09). **Why M1–M3 were not enough:** the data hold the scripts that read these properties but not who writes them; no running client was available. **Read:** a search of all instructions for the four property IDs as constants, and the one routine that holds one of them. Nothing about network, login, keys, launcher or anti-tamper. |
 | OBS6 | Observed 2026-10-10 (same install, data unchanged), read-only, with a throwaway probe on the repository's script-table decoder: every MeshDeformer (kind 18) and SliderMeshDeformer (kind 81) node of every decodable 0x07 table (7,524), with the node kinds on the path from its script's root, and the include closures of the 14 avatar class tables (`script-table.md` §8.2). |
 | OBS7 | Observed 2026-10-10 (same install, data unchanged), read-only, with throwaway probes on the repository's decoders: every node of all 7,524 decodable 0x07 tables and of all 0x0C scriptlets (every Switch, When, While, ScalarBlend and SetProperty on `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions`, `Physics_InWorld`, `GOP_AvatarFaceCompositing`, `CharGen_Stage` and `GOP_AvatarUpdateVisible`; every driven pair of node kinds 33, 44, 53 and 60 with its source's dictionary definition; every EditMaterial (kind 60) and TextureCompositor (kind 53) node's stored fields); the key-5 gathering order of the 14 avatar class tables (`script-table.md` §8.2 step 2, pre-order, stored include order); the `Startup` trees of the 14 species tables and of scriptlets 0x0C0084DA and 0x0C0091D3; the property dictionary entries of the properties above and of every property whose name contains `Compositor`; enum mapper 0x23000132; a raw byte search of every record of every archive except texture, surface-texture, sound and wave records (1,355,323 records) for the PIDs of `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions` and `GOP_AvatarFaceCompositing`, each hit then decoded with the typed decoder. |
+| OBS8 | Observed 2026-10-10 (same install, data unchanged), read-only, with throwaway probes on the repository's decoders: for each of the 14 avatar class tables, a static walk from `Startup` through the closure (Run nodes followed to the scripts they start, Scriptlet nodes into their records), listing every Switch and When on `Physics_InWorld` and `CharGen_Stage` with the node kinds and Run nodes (`Persistent`, `UnbindOnDeath`, `Stop`) below each port, and every TextureCompositor node reached; every TextureCompositor node of all 7,524 decodable tables and 28,992 scriptlets (name, slot, binding key, table and key); which closures contain both a directly attached newer face and the two compositor scripts; scriptlet 0x0C0091D3 and table 0x070004AD in full; the largest number of EditMaterial nodes and of colour and layer nodes in any table's closure (static count). |
 | BIN8 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-10 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Questions** (the implementation OPENs of 2026-10-10 in §15): does client code read or write `ScriptSystem_ServerScriptlet`, `Script_UsePvMPReducedOptions`, `Physics_InWorld` or `CharGen_Stage`, and when; which property names the fields of node kinds 33, 44 and 53 carry; where the composed face image goes; how EditMaterial edits are ordered and applied; what starting and stopping a compositor, colour, layer or EditMaterial node does. **Code read:** constant and byte searches of the executable for the four PIDs; the physics component's placement and leave-the-world routines; the two routines that write the reduced-options property and the routine they write it through; the field registrations of the three compositor node kinds; the start and stop routines of the TextureCompositor, ModifyCompositorColor, ModifyCompositorLayer and EditMaterial nodes; the figure's model-component update (compositor composition, the edit sort and its comparison, per-part and per-surface matching, the surface material-list insertion and the effect rebuild that walks that list); the script component's start-up routine; the object property read routine (its choice of store). **Why M1–M3 were not enough:** the data names the properties and nodes but not who else writes the properties, where a composed image is bound or how edits rank; the frame capture of O15 has not been made, and no capture can show an evaluation order. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| BIN9 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-10 with Ghidra (headless, private read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Questions** (the implementation note of 2026-10-10 in §15, filed with commit 3070b06): what the client appends when a compositor's image does not compose or its record does not load; in which order it visits several compositors that match one surface. **Code read:** the TextureCompositor node's start routine and the attach routine it calls (record load, refusal paths); the figure's surface rebuild and its compositor pass (the walk over the name-keyed compositor table, re-application of registered colour and layer changes, the one-entry 3000 material, per-part and per-surface matching); the compose routine and the accessor of the composed image. **Why M1–M3 were not enough:** no record in this install fails to compose and no figure holds two matching compositors, so the data cannot show these paths; no frame capture can show an order of evaluation. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -133,6 +135,10 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A49 | The client writes `Script_UsePvMPReducedOptions` only on the object of the character the player controls: true when a reduced-options mode is switched on, false when it is switched off (two routines that also save and restore a list of option values); what switches the mode was not traced; its dictionary default is false (§3.5) | BIN8; OBS7 (dictionary) | BIN; "the character the player controls" Inferred (the routine that returns the object is the one the client's UI uses for its own character) |
 | A50 | The client's physics component sets `Physics_InWorld` true on its object when the object is first placed at a valid world position (one whose landblock and cell are set and which the world accepts) and false when the object leaves the world; the property has no dictionary default. The script component starts an entity's start-up scripts from its own activation, not from the placement; which of the two comes first for a figure was not traced. Character-screen code sets `CharGen_Stage` on the figures it shows; the enum (mapper 0x23000132) has 0 `Undef`, 1 `ClassSelect`, 3 `Name`, 4 `CharacterSelect`, 6 `Appearance`, 7 `RaceClass` (§3.5) | BIN8; OBS7 (dictionary, mapper) | BIN; order OPEN |
 | A51 | What scriptlet 0x0C0084DA's two bindings do per species table: through 0x0C0091D3 (0x0700041F, 0x07000425, 0x07000491, 0x07001D83, 0x07001D85) `Inactive` stops both compositor scripts and the old-face override edit below it is stored with `Probability` 0; in 0x07002DAD, 0x07002DB0 and 0x07002F08 `Inactive` stops both scripts and runs an EditMaterial setting parameter 3000 of `MeshType` `Head`, `MaterialType` 0x1000006C, priority 5, to a texture stored in the node; in 0x07002F09, 0x0700247C and the four elf tables `Inactive` only stops the compositor scripts. `Active` runs `Compositor` in every table (§3.5) | OBS7 (the 14 species tables, both scriptlets) | Confirmed 2026-10-10 |
+| A52 | A TextureCompositor start whose 0x33 record cannot be loaded is refused and reported like a start under a name already taken: nothing is attached, the node still runs, and its stop removes the compositor of its name. A compositor whose composition fails keeps no image; at each surface rebuild a compositor without an image adds no material, so the matching surfaces keep their own materials and the edits (§3.5) | BIN9 | BIN |
+| A53 | The surface rebuild visits the attached compositors in the order of the figure's compositor table, keyed by name (grouped by the name modulo the table size), not in start order; each image is a separate one-entry material for parameter 3000, so of two compositors matching one surface the one visited last takes effect. The table size and the order inside a group were not traced (narrow OPEN). Compositor names sharing a slot and binding key: 0x10000001 and 0x1000000A (`Head`, 0x1000006C), 0x10000008 and 0x10000009 (`UpperBody`, 0x1000006C, both only in 0x070004AD, in different cases of one persistent Switch); every path that starts the older or newer face stops the other in an earlier Sequence step, or the other is never started on that figure (the five tables that attach 0x10000001 directly in `Startup` are included by no other table and do not define the compositor scripts) (§3.5) | BIN9 (order); OBS8 (all TextureCompositor nodes, the paths) | BIN; Confirmed 2026-10-10 (data) |
+| A54 | The persistent Switches on `Physics_InWorld` that an avatar's start-up can reach (static walk): the `Startup` of 0x07000090 (all 14 closures; case false: an empty Collection; Default port: a branch with 60 Run nodes: 48 starts with `Persistent` 0, 12 with `Stop` 1, and Switch, WhenRunning, Timer, Sequence and Collection nodes) and the four elf tables (case true: scriptlet 0x0C0084DA with one start and one stop of `Compositor`, both `Persistent` 0; Default port an empty Collection). No When on `Physics_InWorld` is reached. `CharGen_Stage` has no dictionary default, and no case of the face Switches lists stage 0 (§3.5) | OBS8 | Confirmed 2026-10-10 |
+| A55 | Static upper bounds over every table's closure (scriptlets included): at most 311 EditMaterial nodes (closure of 0x07000034) and 31 colour and layer nodes (closure of 0x07000419) (§15) | OBS8 | Confirmed 2026-10-10 |
 
 ---
 
@@ -543,12 +549,38 @@ base-colour texture, `material.md` §8) set to the composed image, and appends i
 material list of every matching surface: on every part whose slot equals `MeshType` (2 matches
 every part, 0 matches none), every surface whose binding key equals `MaterialType` (2 matches
 every surface). The data agrees: the "off" branches of three species tables set parameter 3000
-of the same slot and binding key (A51). The node's start and stop rules:
+of the same slot and binding key (A51). A compositor that has **no composed image** (its
+composition failed) adds no material at all; the matching surfaces keep their own materials
+and the edits below (BIN9, A52). The compositor stays attached, and a later change of a
+driven field composes it again (rule 2).
+
+**Several compositors on one surface (BIN9, OBS8, A53).** The client visits the attached
+compositors in the order of the figure's table of compositors, which is keyed by compositor
+name (grouped by the name modulo the table's size), **not** in start order. Each composed
+image is its own one-entry material, and a later material wins (`material.md` §9.2), so where
+two attached compositors match the same surface only the one visited last sets parameter
+3000 there; an EditMaterial edit of 3000 on that surface overrides both (below). In this
+install no figure ever has two such compositors attached at once: the only compositor names
+that share a slot and binding key are 0x10000001 with 0x1000000A (`Head`, 0x1000006C) and
+0x10000008 with 0x10000009 (`UpperBody`, 0x1000006C, table 0x070004AD), and each pair is only
+started in branches that exclude the other (the older and newer face: every node path that
+starts one stops the other in an earlier step of the same Sequence, or the other is never
+started on that figure; 0x10000008 and 0x10000009: different cases of one persistent Switch).
+
+> **OPEN (narrow, 2026-10-10):** the size of the figure's compositor table and the order
+> inside one of its groups were not traced, so the client's order between two compositors
+> that match one surface is not known. No figure in this install reaches that case.
+>
+> **Decision (Tessera):** visit the attached compositors in the order they were attached;
+> the last one attached sets parameter 3000.
+
+The node's start and stop rules:
 
 1. A TextureCompositor (53) node attaches its compositor when it starts and removes the
    compositor **of its name** when it stops (for any reason: its branch, its Switch case, its
-   run). Starting a second one under a name already attached is refused and reported; the
-   refused node still runs, and its stop removes the compositor of that name, whichever node
+   run). Starting a second one under a name already attached is refused and reported; so is a
+   start whose 0x33 record cannot be loaded (nothing is attached; BIN9, A52). The refused
+   node still runs, and its stop removes the compositor of that name, whichever node
    attached it. A later change of a TextureCompositor node's driven fields is ignored.
 2. A ModifyCompositorColor (33) or ModifyCompositorLayer (44) node registers its change with
    the figure when it starts, whether or not a compositor of that name is attached, and
@@ -654,7 +686,21 @@ client has one) gets no face compositor from these tables. The other species tab
 `CharGen_Stage` first as well, with the stages 6, 4, 1, 3 and 7 in one case that runs the
 compositor scripts directly and the Default port leading to the check above: a Switch that is
 not persistent in 0x07002DAD, 0x07002DB0, 0x07002F08, 0x07002F09 and scriptlet 0x0C0091D3, a
-persistent one in 0x0700247C.
+persistent one in 0x0700247C. A figure without `CharGen_Stage`
+reads stage 0 (`Undef`: the property has no dictionary default, so a Switch reads the zero
+value, `script-runtime.md` §6.2); none of the face Switches has a case for 0, so they take
+their Default ports (OBS8).
+
+The persistent Switches on `Physics_InWorld` that an avatar's start-up can reach are one in
+the `Startup` of 0x07000090 (in all 14 closures) and the one in each of the four elf tables
+(OBS8, A54). Before the figure is placed all of them read false and run an empty Collection
+(case false in 0x07000090, the Default port in the elf tables), so the change to true leaves
+an empty branch. Every Run node below them that starts a script has `Persistent` 0, the elf
+tables' `Run` of `Compositor` included. So when the figure **leaves** the world and the case
+changes back, the client stops the true branch (in the elf tables the scriptlet 0x0C0084DA
+instance with its option Switch) but not the runs those Run nodes started
+(`script-runtime.md` §6.6, R56): an elf figure keeps the face compositor it had, and follows
+a change of the option again only after it is placed again.
 
 > **OPEN (narrow, 2026-10-10):** whether a figure's start-up scripts run before or after its
 > first placement in the world (the script component starts them from its own activation; the
@@ -2264,7 +2310,8 @@ would put the sole at 0.134 (`skeleton-anim.md` §14.7) — the floating-feet er
 > receives the composed image (3000) and the rank of material edits (§3.5). **OPEN** (narrow,
 > 2026-10-10, §3.5): a server-supplied `ScriptSystem_ServerScriptlet` (O15 comparison); the
 > order of start-up and first placement in the world (Decision); absent driven sources
-> (Decision).
+> (Decision); the client's order between two compositors that match one surface (Decision:
+> attach order; no instance in this install, BIN9, OBS8).
 
 > **Resolved** (2026-10-07, BIN3): the `section` byte and the u32 after the DID of 0x20
 > records (§4.2, §4.7 rule 4). **OPEN** (narrow): a self-referencing linked-record list
@@ -3005,6 +3052,63 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > the rest ignored); the deferred candidates share the resolver's candidate cap with the
 > start-up's. (6) A stopped node whose stop position is unknown counts as stopped right after
 > its start.
+>
+> **Answered** (spec writer, 2026-10-10, BIN9, OBS8, A52–A55; `script-runtime.md` §6.6 R56;
+> §3.5 "Where the composed image goes", "Several compositors on one surface", "`Physics_InWorld`
+> and `CharGen_Stage`"):
+>
+> (1) **Confirmed for this install; the narrowing is a Tessera Decision.** In the client a
+> change of `Physics_InWorld` re-evaluates every persistent Switch on it that is running at
+> that moment, in the state of that moment (`script-runtime.md` §6.5–§6.6); with the §3.5
+> Decision (placed after the start-up) that is the end-of-start-up state you use. The Switches
+> an avatar's start-up can reach are the one of 0x07000090 (all 14 closures) and those of the
+> four elf tables (A54); no When on the property is reached, so not re-evaluating persistent
+> Whens changes nothing here (the client would, `script-runtime.md` §7). A case change stops
+> the **whole** left branch, every kind (`script-runtime.md` §6.6, R56), not only its look
+> nodes; but before placement all these Switches run an empty Collection, so the change to
+> true withdraws nothing, and your narrowing to look candidates is never exercised.
+> **Decision (Tessera):** keep it until Tessera models a figure that leaves the world. For that
+> later case: every Run node below these Switches that starts a script has `Persistent` 0, so
+> leaving the world stops the branch but not the scripts it started, so an elf figure keeps
+> the face compositor it had (§3.5).
+>
+> (2) **Confirmed** as the §3.5 Decision states it. The client sets `CharGen_Stage` only from
+> the character-screen code (A50). A figure without it reads stage 0 (`Undef`; no dictionary
+> default, `script-runtime.md` §6.2); no face Switch has a case for 0, so they take their
+> Default ports, as you evaluate. Treating the explorer viewer as placed is the §3.5 Decision.
+>
+> (3) **Confirmed** (BIN9, A52): when a compositor has no composed image, the client appends
+> nothing for it; the surfaces keep their own materials and the edits. A start whose 0x33
+> record cannot be loaded attaches nothing (reported), and the node still runs as in rule 1.
+> A limit of Tessera's own that stops a composition counts the same way.
+>
+> (4) **Confirmed** by `property-system.md` §4.2 (V8, BIN): for subtypes 0 and above 10 the
+> client's evaluator returns the base term *B* = v0 + v1 · *t* (after the 3,600-second wrap),
+> and the EditMaterial `WaveformValue` is that waveform type.
+>
+> (5) **Tessera Decision**, accepted. No client limit was traced. The data stays far below
+> your bounds: at most 311 EditMaterial nodes and 31 colour and layer nodes in any closure,
+> counted statically (A55). Sharing the resolver's candidate cap is an engineering choice.
+>
+> (6) **Tessera Decision**, accepted. In the client a node's effect lasts exactly from its
+> start to its stop (§3.5 rule 3); a resolver that cannot place a stop has no client rule to
+> follow, and counting the node as stopped right after its start (so it never contributes) is
+> Tessera's choice. It differs from the client only where such a node really ran longer.
+>
+> **Run nodes inside a left branch** (asked with this note): the client stops the scripts that a
+> Run node of the left branch started only when that Run has `Persistent` 1, `UnbindOnDeath` 0
+> and is still running; scripts started by `Persistent` 0 Runs keep running
+> (`script-runtime.md` §6.6, R56). Every Run that starts `Compositor` or `Compositor_Old` in the
+> avatar data has `Persistent` 0; the compositor scripts are stopped only by Run nodes with
+> `Stop` 1 (A51, A54).
+>
+> **Only the last image matters for parameter 3000:** yes. Each composed image is a separate
+> one-entry material and a later material wins (`material.md` §9.2), so of several compositors
+> matching one surface only the last one appended sets 3000 there, and any EditMaterial edit of
+> 3000 on that surface overrides it. "Last" is the client's order of its name-keyed compositor
+> table, not start order (A53); in this install no figure has two matching compositors attached
+> at once, so there is one image per surface. **Decision (Tessera)** for the order (narrow OPEN
+> in §3.5): attach order, the last one attached wins.
 
 ---
 
@@ -3029,6 +3133,7 @@ implemented in `tessera-formats` and `tessera-mesh`.
 | 2026-10-10 (review answer) | header; §1 (OBS6, A44 wording); §15 (answer of 2026-10-10, new OPEN) | Answers blocking item B1 of the review of 2026-10-10: the unknown that the Answered block stated inline is now a narrow `> **OPEN:**` next to the kept Decision (a stopped run holding a SliderMeshDeformer; a slider node below a Random port; neither in this install, A44). Non-blocking N1 taken ("kind 18", "kind 81"); N2 not taken (counts not re-probed in this session). No rule changed. | Spec writer (dirty room) |
 | 2026-10-10 (OBS7, BIN8) | header; §1 (new OBS7, BIN8, A45–A51); §3.3 (face-compositor sentence); §3.5 (newer/older face selection corrected; new paragraphs on field names, where the composed image goes, how material edits combine, when face compositing is off with a table by species table, `Physics_InWorld` and `CharGen_Stage`; the narrow OPEN on the texture slot and edit rank replaced by facts; new narrow OPENs on absent driven sources, a server-supplied `ScriptSystem_ServerScriptlet` and the start-up/placement order, with Decisions; a Rule replacing the Tessera option-off drop); §13 (O15 line); §15 (four answers); §17 (O15 row) | Answers the four implementation OPENs of 2026-10-10 filed with the face-compositing implementation. From the client (BIN8, decision 0011): no client code touches `ScriptSystem_ServerScriptlet`; the client writes `Script_UsePvMPReducedOptions` only on the controlled character and `Physics_InWorld` from the physics placement; the composed image is parameter 3000 of the matching surfaces; `MeshType` and `MaterialType` 2 match everything; edits are applied in descending `Priority`, so the lowest takes effect; all parameter groups apply; look nodes act while they run; colour and layer changes wait for their compositor. From the data (OBS7): field names of kinds 33, 44, 53; the kind-1 gathering order; what the option-off branches do. Corrections to Accepted text: in 0x07002DAD, 0x07002DB0, 0x07002F08 and 0x07002F09 the older-face path is stored with `Probability` 0 (always the newer face); option off does not drop the compositor for the four kind-1 species tables. Engineering choices (1) and (4) confirmed, (2), (5) and (8) corrected, (3), (6) and (7) Tessera Decisions. Status Accepted → Revised. | Spec writer (dirty room) |
 | 2026-10-10 (review answer, BIN8) | header; §1 (A46); §3.5 ("Where the composed image goes", rule 2); §15 (answer (5)) | Answers blocking item B1 of the review of the OBS7/BIN8 revision. Rule 2 now says that, for script nodes, it replaces the parenthesis of `misc-records.md` §3.7 on an unknown compositor name (the change is kept while its node runs, not dropped), and cites BIN8 and A46 instead of `misc-records.md` §3.7 for the unknown-layer-name rule (reported at composition, that change skipped); A46 and the §15 answer (5) carry the same wording. Whether the client reports a missing compositor name when the node starts is stated as not traced (no visible effect). Wording only, no rule changed; `misc-records.md` is not edited. | Spec writer (dirty room) |
+| 2026-10-10 (OBS8, BIN9) | header; §1 (new OBS8, BIN9, A52–A55); §3.5 ("Where the composed image goes": a compositor without an image; new paragraph "Several compositors on one surface" with a narrow OPEN and a Decision; rule 1: a start whose 0x33 record cannot be loaded; "`Physics_InWorld` and `CharGen_Stage`": stage 0, the reachable `Physics_InWorld` Switches, leaving the world); §13 (O15 line); §15 (answer to the implementation note of 2026-10-10) | Answers the implementation note filed with commit 3070b06. From the client (BIN9, decision 0011): a compositor without a composed image adds no material; a start whose 0x33 record does not load is refused like a taken name; the rebuild visits compositors in the order of a name-keyed table, not start order. From the data (OBS8): no figure attaches two compositors matching one surface at once; the `Physics_InWorld` Switches an avatar reaches leave an empty branch when the figure is placed, and every Run below them that starts a script has `Persistent` 0; static bounds of look nodes. With `script-runtime.md` §6.6 (R56): a case change stops the whole left branch, and scripts started by `Persistent` 0 Runs keep running. Choices (2), (3), (4) confirmed; (1) confirmed, its narrowing to look candidates a Tessera Decision (never exercised); (5), (6) Tessera Decisions; only the last image matters for parameter 3000 (order Decision: attach order). No earlier rule changed. Status Accepted → Revised. | Spec writer (dirty room) |
 
 ---
 

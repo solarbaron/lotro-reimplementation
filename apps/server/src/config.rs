@@ -1091,6 +1091,48 @@ tolerance = 1.25
         assert_eq!(c.movement, Config::default().movement);
     }
 
+    /// §4.1 and §8.3: `[movement]` values outside their range, including the relaxations
+    /// beyond the protocol's bounds (`tessera-protocol.md` §8.3 "Bounds of the values in
+    /// force"), are refused, never clamped; the range ends are accepted as given.
+    #[test]
+    fn movement_out_of_range_is_refused_not_clamped() {
+        for (key, bad) in [
+            ("settle_grace_s", "10.001"),
+            ("settle_grace_s", "60.0"),
+            ("settle_grace_s", "-1.0"),
+            ("settle_grace_s", "nan"),
+            ("settle_grace_s", "inf"),
+            ("slide_reserve", "100.001"),
+            ("slide_reserve", "-0.5"),
+            ("slide_reserve", "nan"),
+            ("slide_reserve", "-inf"),
+            ("window_s", "0.2"),
+            ("window_s", "5.5"),
+            ("max_down_speed", "201.0"),
+            ("max_horizontal_speed", "nan"),
+        ] {
+            let (c, f) = Config::parse(&format!("[movement]\n{key} = {bad}\n"));
+            assert!(
+                f.iter()
+                    .any(|f| f.line == 2 && f.rule == Rule::Config && f.message.contains(key)),
+                "{key} = {bad}: {f:?}"
+            );
+            assert_eq!(c.movement, Config::default().movement, "{key} = {bad}");
+        }
+        let (c, f) = Config::parse("[movement]\nsettle_grace_s = 10.0\nslide_reserve = 100.0\n");
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(
+            (c.movement.settle_grace_s, c.movement.slide_reserve),
+            (10.0, 100.0)
+        );
+        let (c, f) = Config::parse("[movement]\nsettle_grace_s = 0.0\nslide_reserve = 0.0\n");
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(
+            (c.movement.settle_grace_s, c.movement.slide_reserve),
+            (0.0, 0.0)
+        );
+    }
+
     #[test]
     fn chat_and_memory_ranges() {
         // §4.6: the chat keys stop at the protocol's limits (they may only tighten them).

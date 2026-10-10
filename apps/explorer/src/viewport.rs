@@ -861,11 +861,7 @@ fn material(
     Material {
         base_color,
         base_texture: tex(g.base),
-        alpha: match g.alpha {
-            AlphaKind::Opaque => AlphaMode::Opaque,
-            AlphaKind::Mask(cutoff) => AlphaMode::Mask { cutoff },
-            AlphaKind::Blend => AlphaMode::Blend,
-        },
+        alpha: render_alpha(g.alpha),
         two_sided: g.two_sided,
         normal_texture: tex(g.normal),
         normal_green_up: false,
@@ -876,6 +872,16 @@ fn material(
             texture: tex(g.gloss),
         }),
         unlit: g.unlit,
+    }
+}
+
+/// The renderer's alpha mode of a planned material's alpha kind.
+pub(crate) fn render_alpha(alpha: AlphaKind) -> AlphaMode {
+    match alpha {
+        AlphaKind::Opaque => AlphaMode::Opaque,
+        AlphaKind::Mask(cutoff) => AlphaMode::Mask { cutoff },
+        AlphaKind::TestBlend(cutoff) => AlphaMode::TestBlend { cutoff },
+        AlphaKind::Blend => AlphaMode::Blend,
     }
 }
 

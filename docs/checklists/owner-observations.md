@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O88, the far sea of row W2, and O89, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -76,6 +76,8 @@ marks the item **done** here.
 | [O84](#o84) | Equipping, unequipping, using, splitting and destroying items | `character-panels.md` §6 | Look | open (P1) |
 | [O85](#o85) | Character selection and race/class screens: order of screens, lists, defaults | `character-screens.md` §2–§4, §6 | Look | open (P1) |
 | [O86](#o86) | Appearance and name screen: controls, randomise, nationality colours | `character-screens.md` §5 | Look | open (P1) |
+| [O88](#o88) | Far sea at row W2: as dark as Tessera's, or reflecting the sky? | `water.md` §8.4, §8.6.4; `m4-5-visual.md` W2 | Look | open (M4.5) |
+| [O89](#o89) | Fallen soldiers generated in landblock 3, 0xD7E7: pose and cloth colours | `appearance.md` §7.4; `m4-5-visual.md` §4.6 (L5 note) | Look | open (M4.5) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -85,7 +87,7 @@ on the reference machine and needs no observation.
 M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md#m4-5-status)):
 criterion 4 (walking on collision): O18 (only the jump measurement left since 2026-10-08), O19; criterion 6 (visual checklist): O20 (terrain,
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
-fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
+fog rows, with the W9 sky line), O27, O88 (W2 far sea), O89 (figures seen from L5); the default-settings profile behind criteria 5 and 6: O21, O22.
 
 M5 exit criteria that wait on these items ([ROADMAP M5 status](../ROADMAP.md#m5-status)):
 criterion 2 (native panels): O39; criterion 3 (user skin, optional cross-check): O41;
@@ -980,6 +982,14 @@ distance and colour.
 - **Still for the owner:** the Y1–Y4 look at the four times of day, as described above.
   Do O21 step 1 first: the real time at which to stand there follows from the epoch.
 
+**2026-10-10 (new question, row W9 of `m4-5-visual.md` §4.4; `environment.md` §12):** from W9's
+camera (high above a sea that ends at the landscape extent), Tessera shows the sky dome below
+the horizon and, about 0.66° below the horizon, a thin darker line: the dome's equator, where
+its texture wraps (the data's address mode; no sky-specific rule is known in the client). In
+the original client, from the same camera at noon (*t* 0.5): what fills the view just below
+the horizon beyond the sea (sky, fog colour, distant water or land)? Is a thin line visible
+there? Record yes / no and, if there is a line, its colour compared with the sky above it.
+
 <a id="o27"></a>
 ## O27. Terrain near and far bands (M4.5)
 
@@ -1412,3 +1422,46 @@ of drifts up to 22.6 m/s; the spec gives 0.15–0.9 m/s.
 
 **Record:** for each row, same / different, with a few words on what differs. Speeds as
 "slower / about the same / faster". No screenshots of the original in the repository.
+
+<a id="o88"></a>
+## O88. Far sea at row W2 (M4.5, added 2026-10-10)
+
+**Spec:** `water.md` §8.4 (the reflection pass is OPEN) and §8.6.4 (Tessera rule without a
+reflection pass); row W2 of `docs/checklists/m4-5-visual.md` §4.4 and its camera in §4.7.1.
+
+**Background:** at W2's camera (12 m out over the sea of region 3, heading 172, looking 10°
+down, noon), Tessera draws the far sea very dark. Tessera has no reflection pass: where the
+original mixes in the reflected sky toward grazing angles, Tessera puts the refracted view
+through the water. So the far sea can be darker in Tessera than in the original.
+
+**What to do:** stand at W2's camera in the original client at noon (*t* 0.5, O21) and look
+at the sea between the near water and the far shore.
+
+**Record:** is the far sea near black, a dark blue-green, or a bright band that reflects the
+sky? Where does it change from seeing the bed to reflecting (near, middle, far)? A few words;
+no screenshots in the repository.
+
+<a id="o89"></a>
+## O89. Fallen soldiers generated in landblock 3, 0xD7E7 (M4.5, added 2026-10-10)
+
+**Spec:** `appearance.md` §7.4 ("Random dye colours", A58); the L5 note of
+`docs/checklists/m4-5-visual.md` §4.6; `walker.md` §10.2 (generated rigs as figures).
+
+**Background:** the scenery generator places 54 figures in this block: nine objects of
+fallen soldiers (three types, three objects each), lying in dead idles. Tessera dresses them
+from the start-up scripts of their class table. The data gives their cloth a random colour
+from short lists: dark greens, olives and grey browns for the hooded type, near-black upper
+bodies for the other two, and brown, grey or black hair. A first drawing showed three of them
+in a magenta tunic. That is a placeholder colour which the data always replaces, so it is not
+expected.
+
+**What to do:** from L5's camera (block 3, 0xD7E8, looking south over the boundary into
+0xD7E7), or by walking into 0xD7E7, look at the figures lying on the ground in the original
+client. Visit twice, on two different days or after a relog, to see whether colours and
+pieces change.
+
+**Record:** are there fallen figures here at all (if not, the generated rigs may not be drawn
+in the original)? Do they lie on the ground, and in which poses (on the back, on the side,
+face down)? Colours of the hooded figures' cloth and of the others' upper bodies, in your own
+words. Same or different on the second visit?
+

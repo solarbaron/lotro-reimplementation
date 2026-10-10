@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -1401,9 +1401,15 @@ characters in the list and which is selected first; the order of races (by speci
 own words) and of classes for two races; which racial traits the race panel lists (all, or
 only some); whether changing race keeps the selected class; on each screen, which of the
 back, continue and exit buttons, the turntable buttons and the avatar-update check box are
-shown (`character-screens.md` §2.3), when exit appears, how fast and in what steps the
-turntable turns the figure; whether the delete button is offered and what happens after a
-deletion is confirmed.
+shown (`character-screens.md` §2.3), when exit appears; whether the delete button is offered
+and what happens after a deletion is confirmed. Expectations from the client
+(`character-screens.md` §2.1–§2.3, §4.1, revised 2026-10-10), to confirm by look: on every
+screen the figure stands on its scene's spot facing the camera when the screen opens, whole
+from head to feet, with the race's scenery, lights and effects around it; a turn button
+moves the view around the figure (the scenery behind it turns too), about 20° per press and
+smoothly while held, and dragging over the picture does the same; zoom eases in and out; the
+gender buttons show the chosen one lit, and for a race with one gender the gender buttons are
+not shown at all.
 
 <a id="o86"></a>
 ## O86. Appearance and name screen (P1)
@@ -1415,7 +1421,12 @@ nationality and look at the hair, skin and eye colour choices; try the random-na
 
 **Record:** what randomise changes (all controls or some; the name too?); whether the colour
 choices change with the nationality (fewer swatches, other swatches, or only the default);
-the kind of widget each control kind uses (arrows, swatches, slider).
+the kind of widget each control kind uses (arrows, swatches, slider). Expectations from the
+client (`character-screens.md` §5.2.1–§5.2.2, revised 2026-10-10), to confirm by look: each
+control is labelled with its own name (each colour control a different one), the style and
+face controls show "current of total" beside the arrows, groups (where a race has them) have
+their own headers in a fixed order and start open; a fresh character shows the first style of
+every style control (head and hair present on every race and sex).
 
 ## O87. Water, waterfalls and puddles after the water fix (2026-10-10)
 

@@ -2860,7 +2860,7 @@ where
                 values,
                 definitions,
             } => {
-                self.slider_deformer(n, values, *definitions);
+                self.slider_deformer(n, values, *definitions, scope);
                 Ok(())
             }
             NodeData::PhysicsImpulse(p) => {
@@ -3917,7 +3917,13 @@ where
     }
 
     /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
-    fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did) {
+    ///
+    /// Scriptlet-driven pairs apply after the driven ones (`appearance.md` §7.4.1 rule 1,
+    /// which holds for every kind; edge cases, A65): a string sets the value string, a DID
+    /// the definitions record. They set a value, not a source: `values_source` stays the
+    /// driven pair's (the MeshDeformer Decision of §7.4.1 applied alike; no node of the
+    /// install has such a pair).
+    fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did, scope: &Scope<'_>) {
         if self.deformers.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
             return;
@@ -3955,9 +3961,35 @@ where
         if !self.charge(cost) {
             return;
         }
-        let values = text(&self.state, values_source, values).map(str::to_owned);
+        let mut definitions = driven_defs.unwrap_or(definitions);
+        let slider_pids = (self.r.vocab.slider_values, self.r.vocab.slider_definitions);
+        let mut from_param: Option<&str> = None;
+        let Some(pairs) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in pairs {
+            if slider_pids.0 == Some(field) {
+                if let PropertyValue::String(s) = v {
+                    from_param = Some(s.as_str());
+                }
+            } else if slider_pids.1 == Some(field)
+                && let Some(d) = v.as_did()
+            {
+                definitions = d;
+            }
+        }
+        // The copy of a parameter's string is charged like the driven one.
+        if let Some(s) = from_param
+            && !self.charge(s.len())
+        {
+            return;
+        }
+        let values = match from_param {
+            Some(s) => Some(s.to_owned()),
+            None => text(&self.state, values_source, values).map(str::to_owned),
+        };
         self.deformers.push(DeformerCandidate::Slider {
-            definitions: driven_defs.unwrap_or(definitions),
+            definitions,
             values,
             values_source,
             table: self.table,

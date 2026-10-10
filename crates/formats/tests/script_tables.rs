@@ -2339,6 +2339,103 @@ fn mesh_deformer_pairs_are_bound_by_field_pid() {
     ));
 }
 
+/// `appearance.md` §7.4.1 rule 1 and its edge cases (A65): a SliderMeshDeformer's fields
+/// take scriptlet-driven pairs like any kind's, after the driven pairs; a found parameter
+/// wins at the start (the value string, the definitions record), a parameter the invocation
+/// lacks leaves the field, and the driven source stays the one the figure follows.
+#[test]
+fn slider_deformer_takes_scriptlet_driven_pairs() {
+    use tessera_formats::script_table::resolve::DeformerCandidate;
+    const SLIDERS: u32 = 0x0C00_0310;
+    /// The definitions field (`BoneSlider_SliderDefinitionsFile`).
+    const PID_SLIDER_DEFS: u32 = 0x1000_0309;
+    /// A string parameter no invocation holds.
+    const PID_ABSENT: u32 = 0x1000_030A;
+    let slider = |id: u32, driven: &[(u32, u32)], from_params: &[(u32, u32)]| {
+        node(
+            81,
+            B::new().pascal("8000").u32(0x7800_0001),
+            base_pairs(id, driven, from_params),
+            &[],
+        )
+    };
+    let mut m = HashMap::new();
+    m.insert(
+        Did(SLIDERS),
+        scriptlet(
+            &[
+                // Driven and scriptlet-driven on the value string: the parameter wins; the
+                // definitions record comes from a DID parameter.
+                slider(
+                    1,
+                    &[(PID_SLIDER_VALUES, PID_SLIDER_ARRAY)],
+                    &[
+                        (PID_SLIDER_VALUES, PID_SLIDER_VALUES),
+                        (PID_SLIDER_DEFS, PID_PHYS_OBJ),
+                    ],
+                ),
+                // A parameter the invocation lacks: the stored string, not driven.
+                slider(2, &[], &[(PID_SLIDER_VALUES, PID_ABSENT)]),
+                // Driven only.
+                slider(3, &[(PID_SLIDER_VALUES, PID_SLIDER_ARRAY)], &[]),
+            ],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![scriptlet_pairs(
+                    1,
+                    SLIDERS,
+                    pset(&[
+                        (PID_SLIDER_VALUES, B::new().pascal("ff00")),
+                        (PID_PHYS_OBJ, B::new().u32(0x7800_0002)),
+                    ]),
+                    &[],
+                    &[],
+                )],
+            )],
+        ),
+    );
+    let mut v = shape_vocab();
+    v.slider_definitions = Some(PID_SLIDER_DEFS);
+    let mut r = ClipResolver::new(&shape_schema, v, fetch(&m));
+    let mut e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    e.properties
+        .set(PID_SLIDER_ARRAY, PropertyValue::String("80ff".into()));
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    assert!(res.issues.is_empty(), "{:?}", res.issues);
+    let sliders: Vec<(u32, Option<&str>, Option<u32>)> = res
+        .deformers
+        .iter()
+        .map(|d| match d {
+            DeformerCandidate::Slider {
+                definitions,
+                values,
+                values_source,
+                ..
+            } => (definitions.0, values.as_deref(), *values_source),
+            d => panic!("{d:?}"),
+        })
+        .collect();
+    assert_eq!(
+        sliders,
+        [
+            (0x7800_0002, Some("ff00"), Some(PID_SLIDER_ARRAY)),
+            (0x7800_0001, Some("8000"), None),
+            (0x7800_0001, Some("80ff"), Some(PID_SLIDER_ARRAY)),
+        ]
+    );
+}
+
 /// `script-table.md` §6.2: starting a clip never stops another clip of the same layer, so
 /// two held nodes on one layer are both held clips of the figure, in evaluation order.
 #[test]
@@ -4241,6 +4338,253 @@ fn a_dye_chain_without_a_colour_sets_white() {
     let edits = dye_edits(Some(1), false);
     assert_eq!(edits[0].2, [0xFF; 4]);
     assert_eq!(edits[1].2, [0xFF; 4]);
+}
+
+// --- The random-type dye chains of `appearance.md` §7.4 "Expected" (A62, A64) ---
+
+/// The hair chain's outer scriptlet (only types 336 and 341–344 invoke it) and the
+/// scriptlet it runs, whose three edits pair only their colour.
+const HAIR_OUTER: u32 = 0x0C00_82EE;
+const HAIR_INNER: u32 = 0x0C00_82ED;
+/// The every-part chain the fallen soldiers' Labels run, and the scriptlet it runs, whose
+/// edit pairs the slot and the binding key too.
+const PARTS_OUTER: u32 = 0x0C00_8218;
+const PARTS_INNER: u32 = 0x0C00_8223;
+/// `Appearance_RandomAppearanceType` (an enum).
+const PID_RANDOM_TYPE: u32 = 0x1000_0184;
+/// `EditMaterialScript_MaterialType` (the binding key field) and the parameter feeding it.
+const PID_EDIT_KEY: u32 = 0x1000_0185;
+const PID_PARAM_KEY: u32 = 0x1000_0186;
+/// The slots the hair chain's edits store (`Beard`, `Crest`) and `UpperBody`.
+const SLOT_BEARD: u32 = 0x1000_0007;
+const SLOT_CREST: u32 = 0x1000_000E;
+const SLOT_UPPER_BODY: u32 = 0x1000_000C;
+
+fn random_type_schema(pid: u32) -> Option<PropertyType> {
+    match pid {
+        PID_RANDOM_TYPE | PID_PARAM_KEY => Some(PropertyType::Enum),
+        _ => dye_schema(pid),
+    }
+}
+
+fn random_type_vocab() -> ScriptVocabulary {
+    let mut v = dye_vocab();
+    v.edit_material.material_type = Some(PID_EDIT_KEY);
+    v
+}
+
+/// An EditMaterial node of the dye colour (2003) with the placeholder, the stored slot
+/// `mesh` and binding key `key`, whose fields come from parameters by `from_params`.
+fn slot_edit(id: u32, mesh: u32, key: u32, from_params: &[(u32, u32)]) -> Vec<u8> {
+    node(
+        60,
+        B::new()
+            .u32(2003)
+            .u32(mesh)
+            .u32(key)
+            .bytes(&20i32.to_le_bytes())
+            .u32(1)
+            .f32(0.0)
+            .bytes(&PLACEHOLDER)
+            .u32(0)
+            .u8(0),
+        base_pairs(id, &[], from_params),
+        &[],
+    )
+}
+
+/// An outer chain scriptlet (§7.4 steps 1–2): a Sequence of a Random over SetProperty nodes
+/// of the dye value, then a Scriptlet node invoking `inner` that fills the dye value from
+/// the figure (driven pair) and passes the slot and key down (scriptlet-driven pairs).
+fn outer_chain(inner: u32) -> Vec<u8> {
+    let setters: Vec<(u32, Vec<Vec<u8>>)> = DYE_COLOURS
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            (
+                1,
+                vec![set_property_node(
+                    10 + i as u32,
+                    PID_DYE_VALUE,
+                    B::new().bytes(c),
+                )],
+            )
+        })
+        .collect();
+    let invoke = scriptlet_pairs(
+        3,
+        inner,
+        pset(&[
+            (PID_DYE_VALUE, B::new().bytes(&[0xFF; 4])),
+            (PID_PARAM_MESH, B::new().u32(2)),
+            (PID_PARAM_KEY, B::new().u32(2)),
+        ]),
+        &[(PID_DYE_VALUE, PID_DYE_VALUE)],
+        &[
+            (PID_PARAM_MESH, PID_PARAM_MESH),
+            (PID_PARAM_KEY, PID_PARAM_KEY),
+        ],
+    );
+    scriptlet(
+        &[node(
+            6,
+            B::new().u8(0).u32(1),
+            base(1),
+            &[
+                port(6, Some(B::new().u32(1)), &[random(2, &setters)]),
+                port(6, Some(B::new().u32(2)), &[invoke]),
+            ],
+        )],
+        &[],
+    )
+}
+
+/// An invocation of an outer chain with every part (2) and binding key 0x10000024.
+fn every_part(id: u32, outer: u32) -> Vec<u8> {
+    scriptlet_pairs(
+        id,
+        outer,
+        pset(&[
+            (PID_PARAM_MESH, B::new().u32(2)),
+            (PID_PARAM_KEY, B::new().u32(0x1000_0024)),
+        ]),
+        &[],
+        &[],
+    )
+}
+
+/// A figure world shaped as `appearance.md` §7.4 "Expected" describes it: a Switch on the
+/// random type whose cases 336 and 341–344 invoke the hair chain directly, and whose case
+/// 0xD8 reaches, by a Goto, a Label (under a case that never runs) invoking the every-part
+/// chain.
+fn random_type_world() -> HashMap<Did, Vec<u8>> {
+    let mut m = HashMap::new();
+    let colour = [(PID_EDIT_COLOR, PID_DYE_VALUE)];
+    m.insert(
+        Did(HAIR_INNER),
+        scriptlet(
+            &[
+                slot_edit(1, SLOT_BEARD, 0x1000_000B, &colour),
+                slot_edit(2, 2, 0x1000_0024, &colour),
+                slot_edit(3, SLOT_CREST, 0x1000_002F, &colour),
+            ],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(PARTS_INNER),
+        scriptlet(
+            &[slot_edit(
+                1,
+                SLOT_UPPER_BODY,
+                0x1000_0073,
+                &[
+                    (PID_EDIT_COLOR, PID_DYE_VALUE),
+                    (PID_EDIT_MESH, PID_PARAM_MESH),
+                    (PID_EDIT_KEY, PID_PARAM_KEY),
+                ],
+            )],
+            &[],
+        ),
+    );
+    m.insert(Did(HAIR_OUTER), outer_chain(HAIR_INNER));
+    m.insert(Did(PARTS_OUTER), outer_chain(PARTS_INNER));
+    let mut cases: Vec<Vec<u8>> = [336u32, 341, 342, 343, 344]
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| {
+            switch_case(
+                &[(PID_RANDOM_TYPE, t)],
+                &[every_part(20 + i as u32, HAIR_OUTER)],
+            )
+        })
+        .collect();
+    cases.push(switch_case(
+        &[(PID_RANDOM_TYPE, 0xD8)],
+        &[goto_node(30, "soldier")],
+    ));
+    let hidden = switch(
+        40,
+        PID_NEVER,
+        &[switch_case(
+            &[(PID_NEVER, 99)],
+            &[label_node(41, "soldier", &[every_part(42, PARTS_OUTER)])],
+        )],
+    );
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(STARTUP, vec![switch(1, PID_RANDOM_TYPE, &cases), hidden])],
+        ),
+    );
+    m
+}
+
+/// The active colour edits of a figure of random type `ty`: (scriptlet, slot, binding key,
+/// colour).
+fn random_type_edits(ty: u32, seed: u64) -> Vec<(u32, u32, u32, [u8; 4])> {
+    use tessera_formats::script_table::resolve::LookEffect;
+    let m = random_type_world();
+    let mut r = ClipResolver::new(&random_type_schema, random_type_vocab(), fetch(&m))
+        .with_random_seed(Some(seed));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let mut state = PropertyState::new();
+    state.set(PID_RANDOM_TYPE, PropertyValue::Enum(ty));
+    let res = r.resolve_with_state(&e, state).unwrap();
+    assert!(res.issues.is_empty(), "{:?}", res.issues);
+    res.look
+        .iter()
+        .filter(|l| l.active())
+        .map(|l| match &l.effect {
+            LookEffect::EditMaterial(e) => {
+                (l.scriptlet.0, e.mesh_type, e.material_type, e.color_value)
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+/// `appearance.md` §7.4 "Expected" and §7.4.1 rule 4 (A62, A64), on a synthetic figure:
+/// only the random types 336 and 341–344 reach the hair chain 0x0C0082ED, and there its
+/// three edits colour their stored slots and keys (the beard with 0x1000000B, every part
+/// with 0x10000024, `Crest` with 0x1000002F) although the invocation passes `MeshType` and
+/// `MaterialType` in; a figure whose case reaches its Label by a Goto (the fallen soldiers'
+/// 0xD8) runs the every-part chain 0x0C008223 with every part and key 0x10000024, never
+/// 0x0C0082ED; a type without a case colours nothing.
+#[test]
+fn only_the_hair_types_reach_the_hair_chain_slots() {
+    for seed in 0..8u64 {
+        for ty in [336u32, 341, 342, 343, 344] {
+            let edits = random_type_edits(ty, seed);
+            let slots: Vec<(u32, u32, u32)> = edits
+                .iter()
+                .map(|&(s, mesh, key, _)| (s, mesh, key))
+                .collect();
+            assert_eq!(
+                slots,
+                [
+                    (HAIR_INNER, SLOT_BEARD, 0x1000_000B),
+                    (HAIR_INNER, 2, 0x1000_0024),
+                    (HAIR_INNER, SLOT_CREST, 0x1000_002F),
+                ],
+                "type {ty}, seed {seed}"
+            );
+            let colour = edits[0].3;
+            assert!(DYE_COLOURS.contains(&colour), "{colour:?}");
+            assert!(edits.iter().all(|e| e.3 == colour), "one chosen colour");
+        }
+        let soldier = random_type_edits(0xD8, seed);
+        assert_eq!(soldier.len(), 1, "{soldier:x?}");
+        let (s, mesh, key, colour) = soldier[0];
+        assert_eq!((s, mesh, key), (PARTS_INNER, 2, 0x1000_0024));
+        assert!(DYE_COLOURS.contains(&colour), "{colour:?}");
+        assert!(random_type_edits(149, seed).is_empty());
+    }
 }
 
 fn label_node(id: u32, name: &str, children: &[Vec<u8>]) -> Vec<u8> {

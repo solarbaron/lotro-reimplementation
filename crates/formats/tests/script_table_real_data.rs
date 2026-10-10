@@ -992,7 +992,10 @@ fn look_nodes_decode_and_follow_the_census() {
 /// hold that parameter (each fills it from the figure's value by a driven pair of the same
 /// PID), and the generated fallen soldiers of 3, 0xD7E7 (objects 0x47007170–0x47007178):
 /// every fed edit their start-up reaches takes a chosen colour in place of its stored
-/// placeholder, with its own material parameter.
+/// placeholder, with its own material parameter. The soldiers of types 0xD8 and 0xD6 reach
+/// 0x0C008223 on every part (key 0x10000024) and on `UpperBody` (key 0x10000073), never the
+/// hair chain 0x0C0082ED, which only the types 336 and 341–344 reach (§7.4 "Expected",
+/// corrected 2026-10-10, A64).
 #[test]
 fn random_dye_chains_replace_the_placeholder() {
     use tessera_formats::script_table::NodeData;
@@ -1089,6 +1092,9 @@ fn random_dye_chains_replace_the_placeholder() {
     let mut bindings: BTreeSet<u32> = BTreeSet::new();
     // The (slot, binding key) of the coloured edits of the hair chain 0x0C0082ED.
     let mut hair_chain: BTreeSet<(u32, u32)> = BTreeSet::new();
+    // Per (object, seed) of the types 0xD8 and 0xD6: the (slot, binding key) of the
+    // coloured edits of 0x0C008223.
+    let mut goto_chains: BTreeMap<(u32, u64), BTreeSet<(u32, u32)>> = BTreeMap::new();
     // Edits left with the parameter's stored white (no SetProperty of the chain ran).
     let mut white = 0usize;
     for object in 0x4700_7170u32..=0x4700_7178 {
@@ -1124,6 +1130,12 @@ fn random_dye_chains_replace_the_placeholder() {
                     if record == Did(HAIR_CHAIN) {
                         hair_chain.insert((e.mesh_type, e.material_type));
                     }
+                    if record == Did(PARTS_CHAIN) && object <= 0x4700_7175 {
+                        goto_chains
+                            .entry((object, seed))
+                            .or_default()
+                            .insert((e.mesh_type, e.material_type));
+                    }
                 }
             }
         }
@@ -1143,18 +1155,37 @@ fn random_dye_chains_replace_the_placeholder() {
     // The outer scriptlets' binding keys reach the edits that pair them (`UpperBody`
     // 0x10000073, `Accessory1` 0x10000018, `Crest` 0x10000024, every surface 2), so the
     // Goto chains of types 0xD8 and 0xD6 run too.
-    eprintln!("hair chain 0x0C0082ED edits reached by the seeded start-ups: {hair_chain:x?}");
     assert!(
         [2, 0x1000_0018, 0x1000_0024, 0x1000_0073]
             .iter()
             .all(|k| bindings.contains(k)),
         "binding keys of the coloured edits: {bindings:x?}"
     );
+    // §7.4 "Expected" (A64): no path from the soldiers' cases reaches 0x0C0082EE, so no
+    // seeded start-up runs the hair chain 0x0C0082ED.
+    assert!(
+        hair_chain.is_empty(),
+        "hair chain 0x0C0082ED edits reached by the seeded start-ups: {hair_chain:x?}"
+    );
+    // Each start-up of types 0xD8 and 0xD6 reaches, through its Goto, a Label that runs
+    // 0x0C008218 → 0x0C008223 on every part with key 0x10000024, and through the colour-7
+    // Label 0x0C008232 → 0x0C008223 on `UpperBody` with key 0x10000073.
+    for object in 0x4700_7170u32..=0x4700_7175 {
+        for seed in 0..8u64 {
+            let got = goto_chains.get(&(object, seed));
+            assert!(
+                got.is_some_and(|g| g.contains(&(2, 0x1000_0024))
+                    && g.contains(&(SLOT_UPPER_BODY, 0x1000_0073))),
+                "object {object:x}, seed {seed}: {got:x?}"
+            );
+        }
+    }
     // `appearance.md` §7.4.1 rule 4 (A62): the three edits of the hair chain 0x0C0082ED pair
     // only their colour, so they keep their stored slot and key although the invocation
     // holds `MeshType` and `MaterialType`: the beard (0x1000000B), every part (0x10000024)
-    // and `Crest` (0x1000002F). Every branch of the soldiers' start-up (the hair chain
-    // sits behind a Goto) shows them.
+    // and `Crest` (0x1000002F). Only an evaluation that walks every Switch case (ignoring
+    // the random-type test) reaches them from these tables, through the cases 336 and
+    // 341–344 (§7.4 "Expected").
     let mut every_branch: BTreeSet<(u32, u32)> = BTreeSet::new();
     for object in 0x4700_7170u32..=0x4700_7178 {
         let chain =
@@ -1170,9 +1201,6 @@ fn random_dye_chains_replace_the_placeholder() {
             }
         }
     }
-    for (slot, key) in &hair_chain {
-        assert!(every_branch.contains(&(*slot, *key)), "{slot:x} {key:x}");
-    }
     assert_eq!(
         every_branch,
         BTreeSet::from([
@@ -1185,7 +1213,10 @@ fn random_dye_chains_replace_the_placeholder() {
 }
 
 /// The hair chain of `appearance.md` §7.4 (A62) and the slots its edits store (`Beard`,
-/// `Crest`).
+/// `Crest`); only the random types 336 and 341–344 reach it (A64).
 const HAIR_CHAIN: u32 = 0x0C00_82ED;
+/// The every-part chain that 0x0C008218 and 0x0C008232 run (A64) and the `UpperBody` slot.
+const PARTS_CHAIN: u32 = 0x0C00_8223;
+const SLOT_UPPER_BODY: u32 = 0x1000_000C;
 const HAIR_SLOT_BEARD: u32 = 0x1000_0007;
 const HAIR_SLOT_CREST: u32 = 0x1000_000E;

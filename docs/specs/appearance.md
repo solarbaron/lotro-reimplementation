@@ -3510,6 +3510,25 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > (4) **Confirmed**: that is the §7.4.1 Goto recursion Decision, stated per Label node and
 > record.
 
+> **OPEN:** (implementation, 2026-10-10, §7.4 and §7.4.1 edge cases, engineering choices;
+> no instance in the install) Conformed to the OBS13 revision: the real-data dye test now
+> expects the fallen soldiers of types 0xD8 and 0xD6 to reach 0x0C008223 (every part with
+> key 0x10000024, `UpperBody` with 0x10000073) and never 0x0C0082ED, and a synthetic figure
+> checks that only the types 336 and 341–344 reach the three A62 slots. Choices, please
+> confirm or correct:
+> (1) SliderMeshDeformer: a scriptlet-driven pair of the value string (a string value) or of
+> the definitions field (a DID) replaces the driven value at the node's start, and the driven
+> source stays the one the figure follows, as in the MeshDeformer Decision. The figure
+> assembly, for both kinds, uses the figure's current value of a driven source rather than
+> the start value, so on a node with both pairs the scriptlet-driven value is not seen.
+> (2) The walker's effect scan (which estimates how far an owner's effects reach, walking
+> every branch) follows a Scriptlet node's `ScriptletScript_File` pair: a driven pair reads
+> the owner's stored value or the dictionary default, a scriptlet-driven pair every DID
+> value that the invocations of the node's record pass in that parameter (rules 2–3, the
+> scan keeping all of them), and a scriptlet is walked again when an invocation brings a
+> parameter value it had not seen (at most 64 DID parameters per scriptlet and 1,024 walks
+> per owner, Tessera bounds).
+
 ---
 
 <a id="s16"></a>

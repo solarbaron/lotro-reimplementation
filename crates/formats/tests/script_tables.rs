@@ -4000,3 +4000,293 @@ fn face_nodes_follow_driven_values_and_stops() {
         other => panic!("{other:?}"),
     }
 }
+
+// --- random dye chains (appearance.md §7.4 "Random dye colours"; script-runtime.md §5.2,
+// §15, §17) ---
+
+/// The figure property a dye chain's SetProperty nodes set (a colour).
+const PID_DYE_VALUE: u32 = 0x1000_0180;
+/// A scriptlet parameter that chooses the mesh type, passed down by scriptlet-driven pairs.
+const PID_PARAM_MESH: u32 = 0x1000_0181;
+/// `EditMaterialScript_MeshType`.
+const PID_EDIT_MESH: u32 = 0x1000_0182;
+/// A property no Switch case matches.
+const PID_NEVER: u32 = 0x1000_0183;
+const DYE_OUTER: u32 = 0x0C00_0050;
+const DYE_INNER: u32 = 0x0C00_0051;
+/// The stored placeholder colour of the edits, as stored (B, G, R, A): R 153, G 21, B 113.
+const PLACEHOLDER: [u8; 4] = [113, 21, 153, 255];
+/// The colours the chain's Random chooses from, as stored (B, G, R, A).
+const DYE_COLOURS: [[u8; 4]; 4] = [
+    [20, 60, 30, 255],
+    [25, 70, 40, 255],
+    [30, 80, 50, 255],
+    [35, 90, 60, 255],
+];
+
+fn dye_schema(pid: u32) -> Option<PropertyType> {
+    match pid {
+        PID_DYE_VALUE => Some(PropertyType::Colour),
+        PID_PARAM_MESH | PID_NEVER => Some(PropertyType::Enum),
+        _ => schema(pid),
+    }
+}
+
+fn dye_vocab() -> ScriptVocabulary {
+    use tessera_formats::script_table::resolve::EditMaterialFieldPids;
+    ScriptVocabulary {
+        edit_material: EditMaterialFieldPids {
+            color_value: Some(PID_EDIT_COLOR),
+            mesh_type: Some(PID_EDIT_MESH),
+            ..EditMaterialFieldPids::default()
+        },
+        ..vocab()
+    }
+}
+
+/// A base block with driven and scriptlet-driven pairs.
+fn base_pairs(id: u32, driven: &[(u32, u32)], from_params: &[(u32, u32)]) -> B {
+    let mut b = B::new().tsize(1, driven.len() as u32);
+    for &(f, s) in driven {
+        b = b.u32(f).u32(s);
+    }
+    b = b.tsize(1, from_params.len() as u32);
+    for &(f, p) in from_params {
+        b = b.u32(f).u32(p);
+    }
+    b.u8(0).u8(1).f32(1.0).f32(0.0).f32(1.0).u32(id)
+}
+
+/// An EditMaterial node of material parameter `property` with the placeholder colour,
+/// whose fields come from scriptlet parameters by `from_params`.
+fn dye_edit(id: u32, property: u32, from_params: &[(u32, u32)]) -> Vec<u8> {
+    node(
+        60,
+        B::new()
+            .u32(property)
+            .u32(2)
+            .u32(0x1000_0073)
+            .bytes(&20i32.to_le_bytes())
+            .u32(1)
+            .f32(0.0)
+            .bytes(&PLACEHOLDER)
+            .u32(0)
+            .u8(0),
+        base_pairs(id, &[], from_params),
+        &[],
+    )
+}
+
+/// A Scriptlet node with pairs (no bound ports).
+fn scriptlet_pairs(
+    id: u32,
+    file: u32,
+    params: B,
+    driven: &[(u32, u32)],
+    from_params: &[(u32, u32)],
+) -> Vec<u8> {
+    node(
+        19,
+        B::new().u32(file).bytes(&params.build()),
+        base_pairs(id, driven, from_params),
+        &[],
+    )
+}
+
+/// The chain of `appearance.md` §7.4: a Sequence whose step 1 is a Random over SetProperty
+/// nodes of the dye value and whose step 2 is a Scriptlet node holding the dye value
+/// (stored white), driven by the figure's value, and passing the mesh parameter down.
+fn dye_chain(id: u32, with_colours: bool) -> Vec<u8> {
+    let setters: Vec<(u32, Vec<Vec<u8>>)> = DYE_COLOURS
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            (
+                1,
+                vec![set_property_node(
+                    id + 10 + i as u32,
+                    PID_DYE_VALUE,
+                    B::new().bytes(c),
+                )],
+            )
+        })
+        .collect();
+    let invoke = scriptlet_pairs(
+        id + 2,
+        DYE_INNER,
+        pset(&[(PID_DYE_VALUE, B::new().bytes(&[0xFF; 4]))]),
+        &[(PID_DYE_VALUE, PID_DYE_VALUE)],
+        &[(PID_PARAM_MESH, PID_PARAM_MESH)],
+    );
+    let mut steps = Vec::new();
+    if with_colours {
+        steps.push(port(6, Some(B::new().u32(1)), &[random(id + 1, &setters)]));
+    }
+    steps.push(port(6, Some(B::new().u32(2)), &[invoke]));
+    node(6, B::new().u8(0).u32(1), base(id), &steps)
+}
+
+fn dye_world(with_colours: bool) -> HashMap<Did, Vec<u8>> {
+    let mut m = HashMap::new();
+    // The invoked scriptlet: edits of 2003 and 2013, both coloured from the dye value
+    // parameter, the first also taking its mesh type from the passed-down parameter.
+    m.insert(
+        Did(DYE_INNER),
+        scriptlet(
+            &[
+                dye_edit(
+                    1,
+                    2003,
+                    &[
+                        (PID_EDIT_COLOR, PID_DYE_VALUE),
+                        (PID_EDIT_MESH, PID_PARAM_MESH),
+                    ],
+                ),
+                dye_edit(2, 2013, &[(PID_EDIT_COLOR, PID_DYE_VALUE)]),
+                // An edit fed by no pair keeps its stored colour.
+                dye_edit(3, 2000, &[]),
+            ],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(DYE_OUTER),
+        scriptlet(&[dye_chain(100, with_colours)], &[]),
+    );
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![scriptlet_pairs(
+                    1,
+                    DYE_OUTER,
+                    pset(&[(PID_PARAM_MESH, B::new().u32(7))]),
+                    &[],
+                    &[],
+                )],
+            )],
+        ),
+    );
+    m
+}
+
+/// The active EditMaterial candidates: (parameter, mesh type, colour).
+fn dye_edits(seed: Option<u64>, with_colours: bool) -> Vec<(u32, u32, [u8; 4])> {
+    use tessera_formats::script_table::resolve::LookEffect;
+    let m = dye_world(with_colours);
+    let mut r = ClipResolver::new(&dye_schema, dye_vocab(), fetch(&m)).with_random_seed(seed);
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let res = r.resolve_with_state(&e, PropertyState::new()).unwrap();
+    assert!(res.issues.is_empty(), "{:?}", res.issues);
+    res.look
+        .iter()
+        .filter(|l| l.active())
+        .map(|l| match &l.effect {
+            LookEffect::EditMaterial(e) => (e.material_property, e.mesh_type, e.color_value),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+/// `appearance.md` §7.4 (OBS10, A58): the Scriptlet node's driven pair fills its dye
+/// parameter with the colour the Random chose, and every edit fed by that parameter takes
+/// it, whichever material parameter it edits; the placeholder is never left on them.
+#[test]
+fn random_dye_chain_replaces_the_placeholder() {
+    let mut seen = std::collections::HashSet::new();
+    for seed in 0..32u64 {
+        let edits = dye_edits(Some(seed), true);
+        assert_eq!(edits.len(), 3, "{edits:?}");
+        let (p0, mesh0, c0) = edits[0];
+        let (p1, mesh1, c1) = edits[1];
+        assert_eq!((p0, p1), (2003, 2013), "the parameter is each node's own");
+        assert_eq!(mesh0, 7, "the outer parameter is passed down");
+        assert_eq!(mesh1, 2, "no pair: the stored mesh type");
+        assert!(DYE_COLOURS.contains(&c0), "seed {seed}: {c0:?}");
+        assert_eq!(c0, c1, "one chosen colour for both edits");
+        assert_eq!(
+            edits[2],
+            (2000, 2, PLACEHOLDER),
+            "an unfed edit keeps its value"
+        );
+        seen.insert(c0);
+    }
+    // Only the picked SetProperty sets the value: the seeds reach several colours.
+    assert!(seen.len() >= 3, "{seen:?}");
+}
+
+/// Without a SetProperty of the chain the parameter keeps its stored white
+/// (`appearance.md` §7.4).
+#[test]
+fn a_dye_chain_without_a_colour_sets_white() {
+    let edits = dye_edits(Some(1), false);
+    assert_eq!(edits[0].2, [0xFF; 4]);
+    assert_eq!(edits[1].2, [0xFF; 4]);
+}
+
+fn label_node(id: u32, name: &str, children: &[Vec<u8>]) -> Vec<u8> {
+    node(
+        25,
+        B::new().pascal(name),
+        base(id),
+        &[port(6, Some(B::new().u32(1)), children)],
+    )
+}
+
+fn goto_node(id: u32, name: &str) -> Vec<u8> {
+    node(61, B::new().pascal(name), base(id), &[])
+}
+
+/// `script-runtime.md` §15: a Goto starts the Label of its name in its own definition,
+/// wherever that Label stands (here under a case that never runs); a Goto whose Label is
+/// already running through it starts nothing more; an unknown name starts nothing.
+#[test]
+fn goto_starts_its_label_once() {
+    use tessera_formats::script_table::resolve::LookEffect;
+    let hidden = switch(
+        3,
+        PID_NEVER,
+        &[switch_case(
+            &[(PID_NEVER, 99)],
+            &[label_node(
+                4,
+                "chain",
+                &[goto_node(5, "chain"), dye_edit(6, 2013, &[])],
+            )],
+        )],
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![goto_node(1, "chain"), goto_node(2, "missing"), hidden],
+            )],
+        ),
+    );
+    let mut r = ClipResolver::new(&dye_schema, dye_vocab(), fetch(&m)).with_random_seed(Some(3));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let res = r.resolve_with_state(&e, PropertyState::new()).unwrap();
+    let edits: Vec<u32> = res
+        .look
+        .iter()
+        .map(|l| match &l.effect {
+            LookEffect::EditMaterial(e) => e.material_property,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(edits, [2013]);
+    assert_eq!(res.look[0].node_id, 6);
+}

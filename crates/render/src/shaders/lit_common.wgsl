@@ -55,7 +55,7 @@ const LIT_SRGB_EMISSIVE: u32 = 8192u;
 const LIT_SRGB_GLOW: u32 = 16384u;
 const LIT_SRGB_OPACITY: u32 = 32768u;
 // A fixed-function blend (AlphaMode::Fixed): the output alpha a blend factor reads is the
-// opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
+// tested opacity alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const LIT_FACTOR_OPACITY: u32 = 65536u;
 // A second colour layer (material.md §10.3): sampled at texture matrix 1, its RGB added
 // (LIT_LAYER_ADD) or multiplied; its alpha multiplies the base alpha only with

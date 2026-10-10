@@ -105,16 +105,41 @@ impl Layering {
     ///   nothing (it is never skipped); a group with both 0 does nothing;
     /// - overrides apply in list order, so the **last** one applied wins.
     ///
-    /// At most `max` groups are taken (a hostile list stays bounded). `None` when no group
-    /// changes anything (the surface's own look).
+    /// At most `max` groups are taken (a hostile list stays bounded): when more match, the
+    /// **last** `max` in group-list order are kept and the earlier ones dropped, with a
+    /// warning (`material.md` §18, answer to the implementer note of commit b949a54, item
+    /// 6: later groups win, so dropping the earliest changes the result least; the bound
+    /// itself is a Tessera Decision). `None` when no group changes anything (the surface's
+    /// own look).
     #[must_use]
     pub fn from_groups(
         groups: impl IntoIterator<Item = (Option<Did>, Did)>,
         max: usize,
     ) -> Option<Self> {
+        let mut kept: std::collections::VecDeque<(Option<Did>, Did)> =
+            std::collections::VecDeque::with_capacity(max.min(64));
+        let mut dropped = 0_usize;
+        for group in groups {
+            if max == 0 {
+                dropped = dropped.saturating_add(1);
+                continue;
+            }
+            if kept.len() == max {
+                kept.pop_front();
+                dropped = dropped.saturating_add(1);
+            }
+            kept.push_back(group);
+        }
+        if dropped > 0 {
+            tracing::warn!(
+                dropped,
+                max,
+                "more material groups match one surface than the bound; the earliest dropped"
+            );
+        }
         let mut out = Self::default();
         let mut any = false;
-        for (shader, material) in groups.into_iter().take(max) {
+        for (shader, material) in kept {
             if let Some(sh) = shader.filter(|d| !d.is_null()) {
                 if let Some(prev) = out.shader_override.replace(sh) {
                     out.earlier_overrides.push(prev);

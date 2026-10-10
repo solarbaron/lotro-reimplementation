@@ -2201,6 +2201,20 @@ Added by the clean-room implementation of M4.5 (`crates/material` modules `trans
 >    and later materials replace earlier values), so dropping the earliest changes the
 >    result least; keeping the first 16 would drop the winning override.
 
+> **OPEN (implementer, clean room, 2026-10-10, filed with the conformance fix of commit
+> 802da66 after its branch verification; engineering choice, please confirm or correct):**
+> for answer item 2 (a) (a non-finite 1043 falls back to the `alpha_ref` of the drawn
+> permutation's render-state block), Tessera takes the **record-level** value: the most
+> common `alpha_ref` over all of the record's render-state blocks (ties to the first met),
+> which the §18 answer of 2026-10-07 on the alpha-test threshold allows ("or, record-level,
+> the most common value"). Tessera draws one pass per record and does not pick a permutation
+> per draw, so the drawn permutation's own block value is not at hand. The same value
+> serves the walker, the explorer and particle surfaces (`particle-runtime.md` §9.1.3);
+> only then, when it is missing or not finite, 0.5. With finite 1043 values, as in every
+> record of this install, the choice changes nothing. Question: is the record-level value
+> acceptable for the non-finite case too, or must a renderer that draws per permutation
+> take each permutation's own block value?
+
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)
 

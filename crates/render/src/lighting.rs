@@ -871,10 +871,12 @@ pub mod reference {
         opacity > threshold
     }
 
-    /// Output alpha of the lit base pass (`lighting.md` §5.12, §5.13): the opacity texel
-    /// `base_opacity` × *M*.alpha when the base role carries the opacity (`Some`), else
-    /// *M*.alpha; times the vertex alpha where the record reads vertex colours (1
-    /// otherwise). Clamped to 0–1 as written to the target; a NaN gives 0.
+    /// Output alpha of a lit record (`lighting.md` §5.12, §5.13, row L41; `material.md`
+    /// §11.3, MA61): the tested opacity `base_opacity` (`material.md` §11.2 table, whatever
+    /// its source; `None` without an opacity-bearing role, *α* = 1) × *M*.alpha, times the
+    /// vertex alpha where the record reads vertex colours (1 otherwise); the same in the base
+    /// passes and the additive light passes. Clamped to 0–1 as written to the target; a NaN
+    /// gives 0.
     #[must_use]
     pub fn output_alpha(base_opacity: Option<f32>, material_alpha: f32, vertex_alpha: f32) -> f32 {
         let a = base_opacity.unwrap_or(1.0) * material_alpha * vertex_alpha;

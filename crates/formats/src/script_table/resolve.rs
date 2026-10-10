@@ -2349,17 +2349,46 @@ struct Scope<'a> {
     parent: Option<&'a Scope<'a>>,
     invoker: Option<&'a Node>,
     params: Option<&'a PropertySet>,
+    /// Parameter values the invoking Scriptlet node's driven and scriptlet-driven pairs
+    /// wrote at its start (`script-runtime.md` §5.2; `appearance.md` §7.4 "Random dye
+    /// colours", Tessera Decision: a pair writes the parameter of its field PID). They
+    /// replace the stored parameter of the same PID; the last write of a PID wins.
+    filled: Vec<(u32, Cow<'a, PropertyValue>)>,
+    /// The roots of the record context the scope's nodes belong to: the running
+    /// definition's roots for a table, the scriptlet's roots for an invocation. A Goto
+    /// looks for its Label there (`script-runtime.md` §15 step 1).
+    roots: &'a [Node],
     scriptlet: Did,
 }
 
 impl<'a> Scope<'a> {
-    fn root() -> Self {
+    fn root(roots: &'a [Node]) -> Self {
         Self {
             parent: None,
             invoker: None,
             params: None,
+            filled: Vec::new(),
+            roots,
             scriptlet: Did(0),
         }
+    }
+
+    /// The value of the scriptlet parameter `pid` in this invocation: a value written by
+    /// the invoking node's pairs, else the stored parameter.
+    fn param(&self, pid: u32) -> Option<&PropertyValue> {
+        self.filled
+            .iter()
+            .rev()
+            .find(|(p, _)| *p == pid)
+            .map(|(_, v)| v.as_ref())
+            .or_else(|| self.params.and_then(|p| p.get(pid)))
+    }
+
+    /// The number of parameter entries a lookup in this scope scans.
+    fn param_entries(&self) -> usize {
+        self.params
+            .map_or(0, |p| p.entries.len())
+            .saturating_add(self.filled.len())
     }
 
     /// The children bound to `name` and the scope they run in: the innermost invocation
@@ -2390,6 +2419,8 @@ impl<'a> Scope<'a> {
 enum Call {
     Scriptlet(Did),
     Script(u32),
+    /// A Goto running its Label (`script-runtime.md` §15), by the Label node's address.
+    Goto(usize),
 }
 
 /// The firing order of a Sequence step or Timer port (§7.6): a total order, so sorting
@@ -2633,7 +2664,6 @@ where
             binds,
         });
         let saved = self.table;
-        let root = Scope::root();
         let mut res = Ok(());
         for &(ti, si) in defs {
             if self.stopped {
@@ -2646,6 +2676,7 @@ where
                 continue;
             };
             self.table = t.did;
+            let root = Scope::root(&sc.roots);
             res = self.nodes(&sc.roots, &root, ctx);
             if res.is_err() {
                 break;
@@ -2801,12 +2832,18 @@ where
                 self.invoke(n, *file, parameters, scope, ctx)
             }
             NodeData::ScriptletParameter { name } => self.parameter(n, name, scope, ctx),
+            NodeData::Goto { name } => self.goto(name, scope, ctx),
             NodeData::Run(run) => self.run(run, ctx),
             NodeData::WhenRunning { scripts, .. } => self.when_running(n, scripts, scope, ctx),
             NodeData::SetProperty {
                 property, value, ..
             } => {
-                self.set_property(n, *property, value.as_deref());
+                // With seeded picks only a picked branch sets its property: a Random over
+                // SetProperty nodes chooses one value (`appearance.md` §7.4 "Random dye
+                // colours" step 1). Without a generator every branch keeps setting it.
+                if ctx.picked || self.rng.is_none() || self.all_branches {
+                    self.set_property(n, *property, value.as_deref());
+                }
                 Ok(())
             }
             NodeData::MeshFx(m) => {
@@ -2874,7 +2911,7 @@ where
             NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
             NodeData::Label { .. } => self.children(n, None, scope, ctx),
             NodeData::While(w) => self.while_node(n, w, scope, ctx),
-            // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
+            // OnStop runs only when its branch stops; effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
         }
@@ -3272,16 +3309,111 @@ where
             self.report_record(file);
             return Ok(());
         };
+        let Some(filled) = self.scriptlet_pairs(n, scope) else {
+            return Ok(());
+        };
         let inner = Scope {
             parent: Some(scope),
             invoker: Some(n),
             params: Some(parameters),
+            filled,
+            roots: &s.roots,
             scriptlet: file,
         };
         self.calls.push(Call::Scriptlet(file));
         let res = self.nodes(&s.roots, &inner, ctx);
         self.calls.pop();
         res
+    }
+
+    /// Goto (`script-runtime.md` §15): starts the first Label of its name in its own record
+    /// context (the running definition of a table, all roots of a scriptlet) as its own
+    /// child, with the Goto's context; nothing else stops or jumps. No such Label: nothing
+    /// starts. Tessera choices: the Label is the first in a depth-first walk of the roots in
+    /// stored order (ports and children in stored order), names compare exactly, and a Goto
+    /// whose Label is already running through a Goto on the current path starts nothing
+    /// (an offline evaluation lists each start once).
+    #[inline(never)]
+    fn goto<'a>(&mut self, name: &str, scope: &Scope<'a>, ctx: Ctx) -> Result<(), ResolveError<E>> {
+        let Some(label) = self.find_label(scope.roots, name) else {
+            return Ok(());
+        };
+        let key = Call::Goto(std::ptr::from_ref(label) as usize);
+        if self.calls.contains(&key) {
+            return Ok(());
+        }
+        if self.calls.len() >= self.r.limits.max_call_depth {
+            self.limit("max_call_depth");
+            return Ok(());
+        }
+        self.calls.push(key);
+        let res = self.node(label, scope, ctx);
+        self.calls.pop();
+        res
+    }
+
+    /// The first Label named `name` in the trees of `roots` (depth first, stored order).
+    /// Every node looked at is charged; `None` when there is none or the budget ran out.
+    fn find_label<'a>(&mut self, roots: &'a [Node], name: &str) -> Option<&'a Node> {
+        let mut stack: Vec<&'a Node> = roots.iter().rev().collect();
+        while let Some(n) = stack.pop() {
+            if !self.charge(1) {
+                return None;
+            }
+            if let NodeData::Label { name: l } = &n.data
+                && l == name
+            {
+                return Some(n);
+            }
+            for p in n.ports.iter().rev() {
+                stack.extend(p.children.iter().rev());
+            }
+        }
+        None
+    }
+
+    /// The parameter values a Scriptlet node's pairs write at its start
+    /// (`script-runtime.md` §5.2): each driven pair whose source has a value, then each
+    /// scriptlet-driven pair whose parameter the enclosing invocation (`scope`, the
+    /// invocation of the record holding the node, §17) has. A pair writes the parameter of
+    /// its field PID (`appearance.md` §7.4, Tessera Decision): this is how a dye chain's
+    /// Scriptlet node hands the figure's `Appearance_RandomDyeColorValue` to the
+    /// EditMaterial nodes inside, and how an outer scriptlet's parameters pass down.
+    /// `None` when the work budget ran out.
+    fn scriptlet_pairs<'b>(
+        &mut self,
+        n: &Node,
+        scope: &'b Scope<'_>,
+    ) -> Option<Vec<(u32, Cow<'b, PropertyValue>)>> {
+        let (driven, from_params) = (&n.base.driven, &n.base.scriptlet_driven);
+        if driven.is_empty() && from_params.is_empty() {
+            return Some(Vec::new());
+        }
+        let cost = driven.len().saturating_add(
+            from_params
+                .len()
+                .saturating_mul(scope.param_entries().saturating_add(1)),
+        );
+        if !self.charge(cost) {
+            return None;
+        }
+        let mut filled: Vec<(u32, Cow<'b, PropertyValue>)> = Vec::new();
+        for &(field, source) in driven {
+            // A run-time value is copied (the state keeps only small values; a dictionary
+            // default is charged by its size).
+            if let Some(v) = self.r.read(&self.state, source).map(Cow::into_owned) {
+                if !self.charge(value_size(&v)) {
+                    return None;
+                }
+                filled.push((field, Cow::Owned(v)));
+            }
+        }
+        for &(field, parameter) in from_params {
+            if let Some(v) = scope.param(parameter) {
+                filled.push((field, Cow::Borrowed(v)));
+            }
+        }
+        Some(filled)
     }
 
     /// ScriptletParameter (§7.8): the bound children in the caller's scope, else the
@@ -3599,18 +3731,18 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         };
         for pid in pids.all() {
             let mut s = Some(scope);
             while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
+                let entries = sc.param_entries();
                 if !self.charge(entries.saturating_add(1)) {
                     return;
                 }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                if let Some(v) = sc.param(pid) {
                     apply_mesh_fx_field(&mut c, &pids, pid, v);
                     break;
                 }
@@ -3660,11 +3792,11 @@ where
             for pid in pids.all() {
                 let mut s = Some(scope);
                 while let Some(sc) = s {
-                    let entries = sc.params.map_or(0, |p| p.entries.len());
+                    let entries = sc.param_entries();
                     if !self.charge(entries.saturating_add(1)) {
                         return;
                     }
-                    if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                    if let Some(v) = sc.param(pid) {
                         if !self.charge(copied(v)) {
                             return;
                         }
@@ -3686,6 +3818,31 @@ where
                 other => apply_look_field(other, &compositor, field, &v),
             };
         }
+        // Scriptlet-driven pairs (`script-runtime.md` §5.2): the parameter of the
+        // invocation of the node's own record (`scope`, §17), as the invoking node's pairs
+        // filled it. This is how a random dye chain's colour replaces the stored
+        // placeholder of its EditMaterial nodes, whichever parameter each edits
+        // (`appearance.md` §7.4 "Random dye colours").
+        if !n.base.scriptlet_driven.is_empty() {
+            let scan = n
+                .base
+                .scriptlet_driven
+                .len()
+                .saturating_mul(scope.param_entries().saturating_add(1));
+            if !self.charge(scan) {
+                return;
+            }
+            for &(field, parameter) in &n.base.scriptlet_driven {
+                let Some(v) = scope.param(parameter) else {
+                    continue;
+                };
+                copy_cost = copy_cost.saturating_add(copied(v));
+                driven |= match &mut effect {
+                    LookEffect::EditMaterial(e) => apply_edit_material_field(e, &pids, field, v),
+                    other => apply_look_field(other, &compositor, field, v),
+                };
+            }
+        }
         if !self.charge(copy_cost) {
             return;
         }
@@ -3706,7 +3863,7 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         });
@@ -3778,11 +3935,11 @@ where
         for pid in pids.all() {
             let mut s = Some(scope);
             while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
+                let entries = sc.param_entries();
                 if !self.charge(entries.saturating_add(1)) {
                     return;
                 }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                if let Some(v) = sc.param(pid) {
                     params.push((pid, v));
                     break;
                 }
@@ -3893,11 +4050,11 @@ where
         for pid in pids.all() {
             let mut s = Some(scope);
             while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
+                let entries = sc.param_entries();
                 if !self.charge(entries.saturating_add(1)) {
                     return;
                 }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
+                if let Some(v) = sc.param(pid) {
                     params.push((pid, v));
                     break;
                 }
@@ -3934,7 +4091,7 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         };
@@ -4118,6 +4275,21 @@ fn apply_mesh_fx_field(
     {
         node.fade_in_time = f;
         c.driven.fade_in_time = true;
+    }
+}
+
+/// A rough size of a value copied by the evaluator, in work units: the elements of
+/// strings, waveforms, structs and arrays (top level), 0 for a fixed-size value.
+fn value_size(v: &PropertyValue) -> usize {
+    match v {
+        PropertyValue::String(t) => t.len(),
+        PropertyValue::Waveform(w) => w
+            .values
+            .len()
+            .saturating_add(w.extra.as_ref().map_or(0, |x| x.pairs.len())),
+        PropertyValue::Struct(_) | PropertyValue::Array(_) => v.children().len(),
+        PropertyValue::BitfieldAny(_) | PropertyValue::StringInfo(_) => 1,
+        _ => 0,
     }
 }
 

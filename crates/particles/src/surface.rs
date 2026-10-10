@@ -260,7 +260,7 @@ impl ParticleSurface {
         let two_layers = program.layers.is_some();
         let base = Self {
             program,
-            material_colour: m.tint().map(|c| if c.is_finite() { c } else { 1.0 }),
+            material_colour: material_colour(m.tint()),
             texture: slot(ids::DIFFUSE),
             second_layer: program.layers.and_then(|_| slot(ids::SECOND_LAYER)),
             alpha_test: tested.then_some(FALLBACK_ALPHA_THRESHOLD),
@@ -373,9 +373,13 @@ impl ParticleSurface {
                 .default_alpha_ref
                 .filter(|r| r.is_finite())
                 .unwrap_or(FALLBACK_ALPHA_THRESHOLD);
+            // The raw value, not the finite-made one (which turns NaN into 0): a non-finite
+            // 1043, constant or animated, falls back to the render-state reference, then 0.5
+            // (`material.md` §18).
             self.alpha_test = Some(
                 m.params
-                    .float_at(ALPHA_THRESHOLD, t, states)
+                    .curve(ALPHA_THRESHOLD)
+                    .map(|c| c.evaluate_at(t, states.state(ALPHA_THRESHOLD)))
                     .filter(|r| r.is_finite())
                     .unwrap_or(fallback),
             );
@@ -400,9 +404,40 @@ impl ParticleSurface {
     }
 }
 
+/// The material colour 2000 made finite: a non-finite colour channel is 1 (white), while a
+/// NaN alpha counts as 0 and an infinite one is clamped to [0, 1], so *A* = *M*.alpha of the
+/// per-draw reference follows `material.md` §18 (answer to the implementer note of commit
+/// b949a54, item 2 (b)).
+fn material_colour(c: [f32; 4]) -> [f32; 4] {
+    let rgb = |v: f32| if v.is_finite() { v } else { 1.0 };
+    let a = c[3];
+    let alpha = if a.is_nan() {
+        0.0
+    } else if a.is_finite() {
+        a
+    } else {
+        a.clamp(0.0, 1.0)
+    };
+    [rgb(c[0]), rgb(c[1]), rgb(c[2]), alpha]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_colour_alpha_rule() {
+        assert_eq!(
+            material_colour([0.5, 0.25, 1.0, 0.75]),
+            [0.5, 0.25, 1.0, 0.75]
+        );
+        assert_eq!(
+            material_colour([f32::NAN, 0.5, f32::INFINITY, f32::NAN]),
+            [1.0, 0.5, 1.0, 0.0]
+        );
+        assert_eq!(material_colour([1.0; 4].map(|_| f32::INFINITY))[3], 1.0);
+        assert_eq!(material_colour([0.0, 0.0, 0.0, f32::NEG_INFINITY])[3], 0.0);
+    }
 
     /// shader, blend, tests, texture alpha, vertex colour, doubled, fogged, layers.
     type Row = (
@@ -745,8 +780,9 @@ mod tests {
                 bindings: Vec::new(),
             });
             let mut raw = [0u8; RENDER_STATE_SIZE];
-            // SRCALPHA / INVSRCALPHA, no depth write.
+            // SRCALPHA / INVSRCALPHA, no depth write; block reference 0.9.
             raw[..7].copy_from_slice(&[5, 6, 1, 7, 0, 2, 0]);
+            raw[11..15].copy_from_slice(&0.9f32.to_le_bytes());
             let record = ShaderRecord {
                 did: Did(did),
                 reserved: 0,
@@ -801,6 +837,26 @@ mod tests {
             assert_eq!(ParticleSurface::of(&m, &layout).alpha_test, None);
             let (m, layout) = surface(0x2B00_070F, 0.0, false, FloatCurve::constant(0.65));
             assert_eq!(ParticleSurface::of(&m, &layout).alpha_test, None);
+        }
+
+        /// `material.md` §18: a non-finite 1043, constant or animated, falls back to the
+        /// render-state reference (0.9 here), not to 0.
+        #[test]
+        fn non_finite_reference_falls_back_to_the_block_value() {
+            let (m, layout) = surface(0x2B00_070F, 0.0, true, FloatCurve::constant(f32::NAN));
+            let s = ParticleSurface::of(&m, &layout);
+            assert_eq!(s.alpha_test, Some(0.9));
+            // An animated curve whose value is not finite (mode 2 with an infinite slope).
+            let mut ramp = FloatCurve::constant(0.5);
+            ramp.mode = 2;
+            ramp.params[1] = f32::INFINITY;
+            ramp.param_count = 10;
+            let (m, layout) = surface(0x2B00_070F, 0.0, true, ramp);
+            let s = ParticleSurface::of(&m, &layout);
+            assert!(s.reference_animated);
+            let mut rng = Ran2::new(1);
+            let at = s.at(&m, &layout, 2.0, &mut CurveStates::new(), &mut rng);
+            assert_eq!(at.alpha_test, Some(0.9));
         }
 
         /// §9.1.1 answer (e): a reference curve that is not constant is evaluated at the

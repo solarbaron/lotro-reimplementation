@@ -49,7 +49,7 @@ pub(crate) mod lit_flag {
     pub const OPACITY_SHIFT: u32 = 7;
     /// sRGB re-encode bit of material texture `i` (binding order).
     pub const SRGB_SHIFT: u32 = 9;
-    /// The output alpha is the opacity source alone ([`crate::AlphaMode::Fixed`],
+    /// The output alpha is the tested opacity alone ([`crate::AlphaMode::Fixed`],
     /// `material.md` §11.3).
     pub const FACTOR_OPACITY: u32 = 1 << 16;
     /// A second colour layer is drawn (`material.md` §10.3).
@@ -173,11 +173,11 @@ pub(crate) fn lit_fields(
         flags |= lit_flag::OPACITY_SUM;
     }
     // material.md §11.3, rule for unlit records: "opacity" in a blend factor is the §11.2
-    // opacity source, or 1 without one (not × M.alpha).
+    // tested opacity, or 1 without an opacity-bearing role (not × M.alpha).
     if matches!(material.alpha, crate::AlphaMode::Fixed(_)) {
         flags |= lit_flag::FACTOR_OPACITY;
     }
-    // The blended fragment stages run the alpha test too (render.md R-D11, material.md
+    // The blended fragment stages run the alpha test too (render.md §4.3 `Fixed`, material.md
     // §11.2): a fixed blend with its record's threshold, every other blended kind with −1
     // (no fragment discarded).
     match material.alpha {
@@ -1020,7 +1020,7 @@ mod tests {
         assert_eq!(u.lit[3], 20.0);
     }
 
-    /// material.md §11.3: only fixed blends read the opacity source alone.
+    /// material.md §11.3: only fixed blends read the tested opacity alone.
     #[test]
     fn fixed_blends_flag_the_factor_opacity() {
         for (alpha, want) in [

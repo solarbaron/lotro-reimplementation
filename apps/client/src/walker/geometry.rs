@@ -216,6 +216,7 @@ impl LitInputs {
             test: false,
             depth_write: true,
             reference: 0.5,
+            block_reference: None,
             material_alpha: 1.0,
             src_alpha: false,
             alpha_to_coverage: false,
@@ -765,11 +766,18 @@ fn lit_inputs(
         .flatten()
         .filter(|&d| d > VARIANT_DYE_MASK)
         .map(own(ids::GLOW));
+    // A NaN material alpha counts as 0 (and an infinite one is clamped), as *A* of the
+    // reference does (`material.md` §18, answer to the implementer note of commit b949a54,
+    // item 2 (b)), so a NaN-alpha surface is translucent and invisible, not opaque.
     let color = [
         unit(tint[0], 1.0),
         unit(tint[1], 1.0),
         unit(tint[2], 1.0),
-        unit(tint[3], 1.0),
+        if tint[3].is_nan() {
+            0.0
+        } else {
+            tint[3].clamp(0.0, 1.0)
+        },
     ];
     // The reference R of `material.md` §11.2 (steps 1–3) at the material's own alpha: the
     // quantised threshold (× A in depth-writing permutations) when the test is on, else 0

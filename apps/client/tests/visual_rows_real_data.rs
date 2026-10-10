@@ -14,7 +14,7 @@
 //! | Y1–Y4 | sky key A by the walker's lookup (`camera_sky_key`: landblock-info set, block map, else 2) → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
 //! | Y5 | the indoor record's inputs at the IN1 start (cell 9 of 0x802191A6) by the walker's lookup (cell, landblock info, block map): key B 1, ambient *X* = *Y*, linear fog 0.059–90 in R 11, G 14, B 2 (`landblock.md` §4.13 worked example) |
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
-//! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7, [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle |
+//! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7; L5 and L7 as corrected and redefined in §4.6 on 2026-10-09; [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle; L5 must show a faint white sheen round the sun's mirror point against the mirrored camera, L7 a warm light-map pool on the terrain that `--disable lights` leaves unchanged ([`check_row_images`]) |
 //!
 //! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: the record's own colour list; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
 //! | W13 (depth state) | the row's puddle has no `Render_DepthBias_Type` (`water.md` W44), so it is drawn with the depth test and no bias; the depth-bias table's type 3 is a slope-scale value only |
@@ -123,7 +123,7 @@ const T_ROWS: [TRow; 16] = [
     TRow { id: "T3", region: 2, block: 0x65B1, target: [139.41, 106.00], stack: &[850], ceiling: false, light_map: None },
     TRow { id: "T4", region: 2, block: 0x4F32, target: [139.42, 64.30], stack: &[195], ceiling: false, light_map: None },
     TRow { id: "T5", region: 3, block: 0x9FE8, target: [44.36, 27.70], stack: &[0, 297, 306, 57], ceiling: false, light_map: Some(0x4116_792D) },
-    TRow { id: "T6", region: 3, block: 0x7FBD, target: [52.91, 49.90], stack: &[67], ceiling: false, light_map: None },
+    TRow { id: "T6", region: 3, block: 0xD7E8, target: [36.67, 21.67], stack: &[67], ceiling: false, light_map: None },
     TRow { id: "T7", region: 3, block: 0x49E7, target: [24.31, 121.73], stack: &[290, 274], ceiling: false, light_map: None },
     TRow { id: "T8", region: 4, block: 0x25BC, target: [34.19, 44.50], stack: &[385, 257, 232], ceiling: false, light_map: None },
     TRow { id: "T9", region: 4, block: 0xAC6E, target: [67.77, 93.62], stack: &[609, 613], ceiling: false, light_map: Some(0x411A_D5A6) },
@@ -634,14 +634,21 @@ struct RowCamera {
     target: Option<[f64; 3]>,
 }
 
-/// The cameras of `m4-5-visual.md` §4.7 (2026-10-08). T4, T5 and T12 look at their
-/// target from a side with no object in between; T15 and T16 keep the row's camera and
+/// The sun's mirror point P of row L5 (`m4-5-visual.md` §4.6, corrected 2026-10-09),
+/// block-local.
+const L5_MIRROR: [f64; 3] = [36.67, 21.68, 165.80];
+
+/// The cameras of `m4-5-visual.md` §4.7 (2026-10-08) and the corrected L5 and L7 of §4.6.
+/// T4, T5 and T12 look at their target from a side with no object in between; T15 and T16 keep the row's camera and
 /// add an image without the sky's lighting (`lighting.md` §8.1 defaults) to show the
 /// ceiling layers; L2 looks down on the ground under light #460, with and without the
-/// point lights; L5 puts the mirror point of the sun on sunlit paving and adds the
-/// mirrored camera with the sun behind it; L7 keeps the row's camera at night and noon.
+/// point lights. L5 and L7 are the rows as corrected and redefined on 2026-10-09
+/// (`m4-5-visual.md` §4.6): L5 looks at the sun's mirror point on open layer-67 paving of
+/// 0xD7E8, with the mirrored camera (sun behind the eye) for comparison; L7 looks down on
+/// the camp of 0x7873 at night, with `--disable lights` and noon for comparison. Their
+/// expected looks are measured by [`check_row_images`].
 #[rustfmt::skip]
-const CAMERAS: [RowCamera; 14] = [
+const CAMERAS: [RowCamera; 15] = [
     RowCamera { id: "T4", region: 2, block: 0x4F32, eye: [151.42, 64.30, 416.83], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([139.42, 64.30, 410.83]) },
     RowCamera { id: "T5", region: 3, block: 0x9FE8, eye: [44.36, 37.70, 193.97], heading: 180.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([44.36, 27.70, 188.97]) },
     RowCamera { id: "T12", region: 5, block: 0x4F62, eye: [132.98, 105.99, 323.65], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([124.98, 105.99, 319.65]) },
@@ -652,16 +659,54 @@ const CAMERAS: [RowCamera; 14] = [
     RowCamera { id: "Y2", region: 4, block: 0xC755, eye: [33.74, 131.37, 157.20], heading: 180.0, pitch: 10.0, t: 0.25, extra: &[], target: None },
     RowCamera { id: "L2", region: 1, block: 0x8FF3, eye: [90.30, 42.41, 630.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &[], target: Some([90.30, 42.41, 615.00]) },
     RowCamera { id: "L2-nolights", region: 1, block: 0x8FF3, eye: [90.30, 42.41, 630.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &["--disable", "lights"], target: Some([90.30, 42.41, 615.00]) },
-    RowCamera { id: "L5", region: 3, block: 0x7FBD, eye: [64.59, 53.19, 196.00], heading: 195.0, pitch: -25.0, t: 0.5, extra: &[], target: Some([62.80, 46.50, 192.02]) },
-    RowCamera { id: "L5-away", region: 3, block: 0x7FBD, eye: [61.01, 39.81, 196.00], heading: 15.0, pitch: -25.0, t: 0.5, extra: &[], target: Some([62.80, 46.50, 192.02]) },
-    RowCamera { id: "L7", region: 3, block: 0x9FE8, eye: [44.36, 23.42, 191.97], heading: 0.0, pitch: -35.0, t: 0.0, extra: &[], target: Some([44.36, 27.70, 188.97]) },
-    RowCamera { id: "L7-noon", region: 3, block: 0x9FE8, eye: [44.36, 23.42, 191.97], heading: 0.0, pitch: -35.0, t: 0.5, extra: &[], target: Some([44.36, 27.70, 188.97]) },
+    RowCamera { id: "L5", region: 3, block: 0xD7E8, eye: [38.45, 28.34, 169.78], heading: 195.0, pitch: -25.0, t: 0.5, extra: &[], target: Some(L5_MIRROR) },
+    RowCamera { id: "L5-away", region: 3, block: 0xD7E8, eye: [34.88, 15.02, 169.78], heading: 15.0, pitch: -25.0, t: 0.5, extra: &[], target: Some(L5_MIRROR) },
+    RowCamera { id: "L7", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &[], target: Some([78.12, 18.12, 389.00]) },
+    RowCamera { id: "L7-nolights", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &["--disable", "lights"], target: Some([78.12, 18.12, 389.00]) },
+    RowCamera { id: "L7-noon", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.5, extra: &[], target: Some([78.12, 18.12, 389.00]) },
 ];
 
 /// Vertical field of view of the walker, degrees (`walker.md` §11.8).
 const FOV_Y: f64 = 45.0;
 /// Aspect ratio of the rendered images (1600 × 900).
 const ASPECT: f64 = 16.0 / 9.0;
+
+/// Where block-local point `p` lies in the view of camera `c`: the distance along the view
+/// axis and the angles right of and above the axis (radians). Compass heading: 0 = +y
+/// (north), 90 = +x (east); Z up.
+fn view_angles(c: &RowCamera, p: [f64; 3]) -> (f64, f64, f64) {
+    let (h, pi) = (c.heading.to_radians(), c.pitch.to_radians());
+    let fwd = [h.sin() * pi.cos(), h.cos() * pi.cos(), pi.sin()];
+    let right = [h.cos(), -h.sin(), 0.0];
+    let up = [
+        right[1] * fwd[2] - right[2] * fwd[1],
+        right[2] * fwd[0] - right[0] * fwd[2],
+        right[0] * fwd[1] - right[1] * fwd[0],
+    ];
+    let d: Vec<f64> = (0..3).map(|i| p[i] - c.eye[i]).collect();
+    let dot = |a: &[f64; 3]| a.iter().zip(&d).map(|(x, y)| x * y).sum::<f64>();
+    let (f, r, u) = (dot(&fwd), dot(&right), dot(&up));
+    (f, r.atan2(f), u.atan2(f))
+}
+
+/// The pixel (x right, y down) of block-local point `p` in the 1600 × 900 image of camera
+/// `c` (perspective with [`FOV_Y`]); `None` behind the eye.
+fn pixel_of(c: &RowCamera, p: [f64; 3]) -> Option<[f64; 2]> {
+    let (f, ah, av) = view_angles(c, p);
+    let tv = (FOV_Y / 2.0).to_radians().tan();
+    let th = tv * ASPECT;
+    (f > 0.0).then(|| {
+        [
+            IMAGE_W / 2.0 * (1.0 + ah.tan() / th),
+            IMAGE_H / 2.0 * (1.0 - av.tan() / tv),
+        ]
+    })
+}
+
+/// Size of the rendered images, pixels.
+const IMAGE_W: f64 = 1600.0;
+/// See [`IMAGE_W`].
+const IMAGE_H: f64 = 900.0;
 
 #[test]
 fn row_cameras_frame_their_targets() {
@@ -671,20 +716,8 @@ fn row_cameras_frame_their_targets() {
         assert!((0.0..=1.0).contains(&c.t), "{}: time of day", c.id);
         assert!((-89.0..=89.0).contains(&c.pitch), "{}: pitch", c.id);
         let Some(target) = c.target else { continue };
-        let (h, p) = (c.heading.to_radians(), c.pitch.to_radians());
-        // Compass heading: 0 = +y (north), 90 = +x (east); Z up.
-        let fwd = [h.sin() * p.cos(), h.cos() * p.cos(), p.sin()];
-        let right = [h.cos(), -h.sin(), 0.0];
-        let up = [
-            right[1] * fwd[2] - right[2] * fwd[1],
-            right[2] * fwd[0] - right[0] * fwd[2],
-            right[0] * fwd[1] - right[1] * fwd[0],
-        ];
-        let d: Vec<f64> = (0..3).map(|i| target[i] - c.eye[i]).collect();
-        let dot = |a: &[f64; 3]| a.iter().zip(&d).map(|(x, y)| x * y).sum::<f64>();
-        let (f, r, u) = (dot(&fwd), dot(&right), dot(&up));
+        let (f, ah, av) = view_angles(c, target);
         assert!(f > 0.0, "{}: target behind the camera", c.id);
-        let (ah, av) = (r.atan2(f), u.atan2(f));
         assert!(
             ah.abs() < half_h && av.abs() < half_v,
             "{}: target {:.1}° right, {:.1}° up of the view axis",
@@ -693,7 +726,156 @@ fn row_cameras_frame_their_targets() {
             av.to_degrees()
         );
     }
+    // The image checks' points lie inside their images.
+    for (id, p) in IMAGE_POINTS {
+        let c = camera(id);
+        let px = pixel_of(c, p).unwrap_or_else(|| panic!("{id}: point behind the eye"));
+        assert!(
+            (BOX_HALF..IMAGE_W - BOX_HALF).contains(&px[0])
+                && (BOX_HALF..IMAGE_H - BOX_HALF).contains(&px[1]),
+            "{id}: point {p:?} at pixel {px:?}"
+        );
+    }
+    // The pixel mapping: the view centre, and P of L5 near it (5° below, `m4-5-visual.md`
+    // §4.6).
+    let l5 = camera("L5");
+    let centre = [l5.eye[0], l5.eye[1], l5.eye[2]];
+    let (h, p) = (l5.heading.to_radians(), l5.pitch.to_radians());
+    let ahead = [
+        centre[0] + h.sin() * p.cos(),
+        centre[1] + h.cos() * p.cos(),
+        centre[2] + p.sin(),
+    ];
+    let px = pixel_of(l5, ahead).expect("ahead");
+    assert!((px[0] - 800.0).abs() < 1e-6 && (px[1] - 450.0).abs() < 1e-6);
+    let px = pixel_of(l5, L5_MIRROR).expect("P ahead");
+    assert!(
+        (px[0] - 800.0).abs() < 10.0 && px[1] > 450.0 && px[1] < 650.0,
+        "{px:?}"
+    );
 }
+
+/// The camera of [`CAMERAS`] with `id`.
+fn camera(id: &str) -> &'static RowCamera {
+    CAMERAS
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("no camera {id}"))
+}
+
+/// Half the side of the small boxes of [`IMAGE_POINTS`], pixels.
+const BOX_HALF: f64 = 8.0;
+
+/// Block-local points of the L7 images measured in boxes of 2 × [`BOX_HALF`] pixels:
+/// terrain inside the light map's pool (x 71–84, y 15–30, `m4-5-visual.md` §4.6 L7) and
+/// outside it, where no placed object, tent or log is drawn over the ground in the view.
+const IMAGE_POINTS: [(&str, [f64; 3]); 3] =
+    [("L7", L7_POOL), ("L7", L7_POOL_SOUTH), ("L7", L7_OUTSIDE)];
+/// Terrain in L7's light-map pool, east of the fire.
+const L7_POOL: [f64; 3] = [82.0, 18.12, 389.0];
+/// Terrain in L7's light-map pool, south-east of the fire.
+const L7_POOL_SOUTH: [f64; 3] = [82.0, 16.5, 389.0];
+/// Terrain east of L7's pool (dirt, outside x 71–84).
+const L7_OUTSIDE: [f64; 3] = [90.0, 18.12, 389.0];
+
+/// Mean colour (0–255 per channel, as stored) of the `w` × `h` pixel box of `png` centred
+/// on `centre`.
+fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64; 3] {
+    let file = std::fs::File::open(png_path).expect("open the screenshot");
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .expect("png header");
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("png size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    assert_eq!(info.bit_depth, png::BitDepth::Eight, "8-bit screenshot");
+    let (iw, ih) = (info.width as usize, info.height as usize);
+    let channels = info.color_type.samples();
+    let span = |a: f64, n: usize| (a.max(0.0) as usize).min(n);
+    let (x0, x1) = (span(centre[0] - w / 2.0, iw), span(centre[0] + w / 2.0, iw));
+    let (y0, y1) = (span(centre[1] - h / 2.0, ih), span(centre[1] + h / 2.0, ih));
+    let (mut sum, mut count) = ([0.0f64; 3], 0usize);
+    for row in y0..y1 {
+        for col in x0..x1 {
+            let i = (row * iw + col) * channels;
+            if let Some(px) = buf.get(i..i + 3) {
+                for (s, v) in sum.iter_mut().zip(px) {
+                    *s += f64::from(*v);
+                }
+                count += 1;
+            }
+        }
+    }
+    sum.map(|s| s / count.max(1) as f64)
+}
+
+/// The measurable expectations of the corrected rows L5 and L7 (`m4-5-visual.md` §4.6) on
+/// the images of [`row_cameras_render`] in `out`. Returns the failures.
+///
+/// - **L5**: a faint white sheen round the sun's mirror point P. In the 200 × 140 px box
+///   round P every channel is brighter towards the sun than from the mirrored camera (P
+///   with the sun behind the eye), by at least [`L5_SHEEN_MIN`] and at most the largest
+///   gloss of `terrain-texturing.md` §9.4 (0.20, as 0–255) plus [`L5_SHEEN_SLACK`]: a sheen,
+///   not a broad highlight.
+/// - **L7**: an orange pool from the light map on the terrain. Inside the pool red is at
+///   least [`L7_WARM`] times blue and red/blue at least [`L7_WARMER`] times that of the dirt
+///   outside the pool; point lights carry `Light_BakedLandscapeLight`, so the terrain is
+///   the same with `--disable lights` (each channel within [`L7_SAME`]).
+fn check_row_images(out: &std::path::Path) -> Vec<String> {
+    let mut fails = Vec::new();
+    let image = |id: &str| out.join(format!("{id}.png"));
+    let at = |id: &str, p: [f64; 3], w: f64, h: f64| {
+        let px = pixel_of(camera(id), p).expect("point ahead");
+        box_rgb(&image(id), px, w, h)
+    };
+    // L5.
+    let toward = at("L5", L5_MIRROR, 200.0, 140.0);
+    let away = at("L5-away", L5_MIRROR, 200.0, 140.0);
+    let diff: Vec<f64> = toward.iter().zip(&away).map(|(a, b)| a - b).collect();
+    eprintln!("L5: towards the sun {toward:.1?}, mirrored {away:.1?}, difference {diff:.1?}");
+    if diff
+        .iter()
+        .any(|d| !(L5_SHEEN_MIN..=0.2 * 255.0 + L5_SHEEN_SLACK).contains(d))
+    {
+        fails.push(format!("L5: sheen {diff:.1?} not a faint white sheen"));
+    }
+    // L7.
+    let side = 2.0 * BOX_HALF;
+    let warmth = |c: [f64; 3]| c[0] / c[2].max(1.0);
+    let outside = at("L7", L7_OUTSIDE, side, side);
+    for p in [L7_POOL, L7_POOL_SOUTH] {
+        let night = at("L7", p, side, side);
+        let unlit = at("L7-nolights", p, side, side);
+        eprintln!(
+            "L7 {p:?}: {night:.1?} (without lights {unlit:.1?}); outside the pool {outside:.1?}"
+        );
+        if warmth(night) < L7_WARM || warmth(night) < L7_WARMER * warmth(outside) {
+            fails.push(format!(
+                "L7 {p:?}: pool {night:.1?} not warm against {outside:.1?}"
+            ));
+        }
+        if night
+            .iter()
+            .zip(&unlit)
+            .any(|(a, b)| (a - b).abs() > L7_SAME)
+        {
+            fails.push(format!(
+                "L7 {p:?}: terrain {night:.1?} changes without point lights {unlit:.1?}"
+            ));
+        }
+    }
+    fails
+}
+
+/// Smallest per-channel brightening of L5's sheen (0–255).
+const L5_SHEEN_MIN: f64 = 6.0;
+/// Allowance above the largest gloss for L5's sheen (0–255).
+const L5_SHEEN_SLACK: f64 = 10.0;
+/// Smallest red/blue ratio in L7's pool.
+const L7_WARM: f64 = 3.0;
+/// Smallest ratio of red/blue in L7's pool to red/blue outside it.
+const L7_WARMER: f64 = 2.0;
+/// Largest per-channel change of L7's terrain without point lights (0–255).
+const L7_SAME: f64 = 2.0;
 
 /// Frames per second of the paced headless loop.
 const FPS: u64 = 60;
@@ -801,6 +983,8 @@ fn row_cameras_render() {
         }
     }
     assert!(unsettled.is_empty(), "not settled: {unsettled:?}");
+    let fails = check_row_images(&out);
+    assert!(fails.is_empty(), "row images: {fails:?}");
 }
 
 /// What a water row's image must show in the walker's fallback diagnostic of its last

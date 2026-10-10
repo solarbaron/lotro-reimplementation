@@ -801,10 +801,7 @@ fn appearance_group_with_shader_override_and_dye() {
     assert_eq!(r.diffuse(), Some(Did(0x4000_0042)));
 
     // No override: the surface's own shader.
-    let plain = Layering {
-        shader_override: None,
-        materials: vec![],
-    };
+    let plain = Layering::default();
     let r = lib.resolve_layered(Did(0x3100_0003), &plain).unwrap();
     assert_eq!(r.shader.did, Did(0x2B00_0010));
     let none = AppearanceGroup {
@@ -2200,8 +2197,8 @@ fn edits_apply_after_every_material() {
     // The dyeable surface with the blue dye material layered, then a colour edit of 2003
     // and a texture edit of 3000: both win over the materials.
     let layer = Layering {
-        shader_override: None,
         materials: vec![Did(0x3000_0003)],
+        ..Layering::default()
     };
     let image = std::sync::Arc::new(tessera_formats::RgbaImage {
         width: 2,
@@ -2485,6 +2482,52 @@ fn last_override_in_list_order_wins() {
     // The cap bounds the groups taken.
     let capped = Layering::from_groups(groups, 1).unwrap();
     assert_eq!(capped.shader_override, Some(Did(0x2B00_0010)));
+}
+
+/// Rule 5 (Tessera Decision): an override that fails to load counts as 0, so the shader is
+/// the one the surface had before it: the latest earlier override that loads, else the
+/// surface's own. The group's material half is kept.
+#[test]
+fn failed_override_falls_back_and_keeps_the_material() {
+    let lib = library(base_store());
+    let missing = Did(0x2B00_0099);
+    // An earlier override that loads, then one that does not: the earlier one stays.
+    let layer = Layering::from_groups(
+        [
+            (Some(Did(0x2B00_0020)), Did(0)),
+            (Some(missing), Did(0x3000_0003)),
+        ],
+        16,
+    )
+    .unwrap();
+    assert_eq!(layer.shader_override, Some(missing));
+    assert_eq!(layer.earlier_overrides, vec![Did(0x2B00_0020)]);
+    let r = lib.resolve_layered(Did(0x3100_0003), &layer).unwrap();
+    assert_eq!(r.shader.did, Did(0x2B00_0020));
+    assert!(
+        r.materials.contains(&Did(0x3000_0003)),
+        "material half kept"
+    );
+    // Only a failing override: the surface's own shader record.
+    let layer = Layering::from_groups([(Some(missing), Did(0x3000_0003))], 16).unwrap();
+    let r = lib.resolve_layered(Did(0x3100_0003), &layer).unwrap();
+    assert_eq!(r.shader.did, Did(0x2B00_0010));
+    assert!(
+        r.materials.contains(&Did(0x3000_0003)),
+        "material half kept"
+    );
+    // Every override failing (repeated ones tried once): still the surface's own.
+    let layer = Layering::from_groups(
+        [
+            (Some(missing), Did(0)),
+            (Some(Did(0x2B00_0098)), Did(0)),
+            (Some(missing), Did(0)),
+        ],
+        16,
+    )
+    .unwrap();
+    let r = lib.resolve_layered(Did(0x3100_0003), &layer).unwrap();
+    assert_eq!(r.shader.did, Did(0x2B00_0010));
 }
 
 /// Rule 4: the composed images go after the surface's own materials and before the group

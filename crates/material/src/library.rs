@@ -86,6 +86,11 @@ impl Default for LibraryConfig {
 pub struct Layering {
     /// Replaces the surface record's shader when set.
     pub shader_override: Option<Did>,
+    /// The overrides of earlier matched groups that `shader_override` replaced, in
+    /// group-list order (earliest first). They are the fallbacks of §9.3 rule 5: when an
+    /// override fails to load it counts as 0, so the shader is the one the surface had
+    /// before it (the latest earlier override that loads, else the surface's own).
+    pub earlier_overrides: Vec<Did>,
     /// Materials applied after the surface record's materials, in order.
     pub materials: Vec<Did>,
 }
@@ -111,7 +116,9 @@ impl Layering {
         let mut any = false;
         for (shader, material) in groups.into_iter().take(max) {
             if let Some(sh) = shader.filter(|d| !d.is_null()) {
-                out.shader_override = Some(sh);
+                if let Some(prev) = out.shader_override.replace(sh) {
+                    out.earlier_overrides.push(prev);
+                }
                 any = true;
             }
             if !material.is_null() {
@@ -179,6 +186,7 @@ impl AppearanceGroup {
         materials.extend(dye_material.filter(|d| !d.is_null()));
         Layering {
             shader_override: (!self.shader_override.is_null()).then_some(self.shader_override),
+            earlier_overrides: Vec::new(),
             materials,
         }
     }
@@ -585,21 +593,19 @@ impl<S: RecordSource> MaterialLibrary<S> {
         )
     }
 
-    /// Resolves surface record `did` with a figure's look (`material.md` §9.3 rules 3–4,
+    /// Resolves surface record `did` with a figure's look (`material.md` §9.3 rules 3–5,
     /// `appearance.md` §3.5): *H* is the layer's shader override when set, else the
-    /// surface's shader record; *L* is the surface record's own materials, then the
+    /// surface's shader record; an override that fails to load counts as 0 (rule 5), so
+    /// *H* falls back to the latest earlier override that loads, else the surface's own
+    /// shader record (only that one failing fails the resolution); *L* is the surface record's own materials, then the
     /// composed images, then the layer's materials, then the look edits. The effective set
     /// is built once over the whole list (§9.2), so a material appended before an override
     /// applies to the override's declarations. Not cached.
     pub fn resolve_look(&self, did: Did, look: &SurfaceLook<'_>) -> Result<ResolvedMaterial> {
         let surface = self.surface_record(did)?;
-        let shader = look
-            .layer
-            .and_then(|l| l.shader_override)
-            .unwrap_or(surface.shader);
         let layer_materials: &[Did] = look.layer.map_or(&[], |l| l.materials.as_slice());
         let own = last_occurrences(&surface.materials, |d| *d);
-        let iface = self.shader(shader)?;
+        let iface = self.look_shader(did, surface.shader, look.layer)?;
         let mut skipped = Vec::new();
         let mut load = |dids: &[Did]| -> Vec<Arc<MaterialRecord>> {
             let mut out = Vec::with_capacity(dids.len());
@@ -644,6 +650,41 @@ impl<S: RecordSource> MaterialLibrary<S> {
         resolved.materials = stored;
         resolved.skipped = skipped;
         Ok(resolved.with_surface(did, surface.binding_key))
+    }
+
+    /// The shader record of a look (§9.3 rules 2 and 5): the layer's overrides from the
+    /// last applied back to the first, skipping (and reporting) those that fail to load,
+    /// then the surface's own shader record, whose failure is the result's.
+    fn look_shader(
+        &self,
+        surface: Did,
+        own: Did,
+        layer: Option<&Layering>,
+    ) -> Result<Arc<ShaderInterface>> {
+        let overrides = layer
+            .into_iter()
+            .flat_map(|l| {
+                l.shader_override
+                    .into_iter()
+                    .chain(l.earlier_overrides.iter().rev().copied())
+            })
+            .filter(|d| !d.is_null());
+        let mut failed: Vec<Did> = Vec::new();
+        for o in overrides {
+            if failed.contains(&o) {
+                continue;
+            }
+            match self.shader(o) {
+                Ok(iface) => return Ok(iface),
+                // The surface's own record failing is the resolution's failure.
+                Err(e) if o == own => return Err(e),
+                Err(e) => {
+                    tracing::debug!(%surface, shader = %o, error = %e, "shader override left out");
+                    failed.push(o);
+                }
+            }
+        }
+        self.shader(own)
     }
 
     /// Resolves a mesh's surface list: submesh *i* uses surface record *i* (§9.1).

@@ -116,11 +116,7 @@ impl SourceShared {
             instance: f.instance.clone(),
             kind: f.kind,
             role: figure_role(f.kind, f.weenie_type, self.catalog.as_deref()),
-            iid: b
-                .entities
-                .get(f.entity as usize)
-                .and_then(|e| e.iid)
-                .map(|i| i.0),
+            iid: b.figure_entity(f).and_then(|e| e.iid).map(|i| i.0),
         })
     }
 }

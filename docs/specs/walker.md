@@ -419,6 +419,27 @@ the area, figures whose character is not created yet or still building, figures 
 assembly failed, and figures the sandbox's hysteresis ring (radius + 1) still holds beyond
 the character distance. Interior figures follow `--interiors`.
 
+> **OPEN** (implementer, 2026-10-10, for the spec writer; generated rigs): the Rig row names
+> "a Physics entity". `scenery.md` §7.6 says the client turns every generated object into
+> a static-entity creation request of the same form as the landblock-info statics, so
+> Tessera now reads the Rig row as covering generated objects too: a drawn generated object
+> whose setup's skeleton has at least 30 bones is a figure (no instance set, no IID, its
+> idle from the object's own script table). Before, such objects stayed static instances in
+> the skeleton's bind pose (arms straight out), for example the 54 generated figures of
+> landblock 3, 0xD7E7 seen from row L5 of `m4-5-visual.md` §4.6; as figures they lie on the
+> ground in the pose their data's idle gives. Please confirm the reading (and whether the
+> original animates generated rigs at all), or state the rule for generated objects.
+>
+> **OPEN** (implementer, 2026-10-10, for the spec writer; bind pose beyond the area): the
+> exit check of 2026-10-10 also saw figures with arms straight out in rows T11 and T12.
+> On this branch the row cameras of T11 and T12 and their surroundings show every served
+> figure posed; the figures there without any idle candidate (`§10.4`, reference pose) are
+> skinned banners. The remaining source of bind-pose figures is this section's rule that
+> figures beyond the served area (more than 2 landblocks from the player) stay static
+> instances in their bind pose. Is that the look the original gives at those distances, or
+> should such figures be left out or drawn in a pose (for example the first sample of their
+> idle)?
+
 <a id="s10-3"></a>
 ### 10.3 Event vocabulary (`tessera-net`, ARCHITECTURE §19.1)
 

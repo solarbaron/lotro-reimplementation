@@ -36,7 +36,7 @@ use tessera_render::{
     AlphaMode, BlendFactor, BlendOp, FixedBlend, ParticleLayers, ParticleShading, UvTransform,
 };
 use tessera_scriptgraph::{EntityId, ScriptSource};
-use tessera_world::{LandblockBundle, LandblockKey};
+use tessera_world::{EntityRef, LandblockBundle, LandblockKey};
 
 use crate::audio::loader::fetch;
 use crate::walker::figures::figure_tag;
@@ -859,7 +859,11 @@ impl EffectData {
             .figures
             .iter()
             .enumerate()
-            .filter_map(|(i, f)| Some((f.entity, (u32::try_from(i).ok()?, f.instance.clone()))))
+            .filter_map(|(i, f)| match f.entity {
+                // Start-up scripts are scanned for the info record's entities only.
+                EntityRef::Entity(e) => Some((e, (u32::try_from(i).ok()?, f.instance.clone()))),
+                EntityRef::Generated(_) => None,
+            })
             .collect();
         for (ei, e) in bundle.entities.iter().enumerate() {
             if owners.len() >= MAX_OWNERS_PER_BLOCK {

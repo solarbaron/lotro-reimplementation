@@ -13,6 +13,9 @@
 //!   [`Body::Object`], the instance set's starting idle, and scale 1 (the instance set's
 //!   `Render_AdjustableScale` is part of the assembled model scale, `appearance.md` §6.1)
 //!   or, without an instance set, the entity's own scale.
+//! - Generated objects on a skinned rig are figures too (`FigureKind::Rig`, a
+//!   [`tessera_world::EntityRef::Generated`] entity; `scenery.md` §7.6): served like a
+//!   placed rig, without an instance set or IID.
 //! - **Class**: the weenie's game object (none for Physics figures).
 //! - Interior figures are left out unless interiors are drawn.
 
@@ -265,6 +268,82 @@ mod tests {
         let info = lock(&shared).figure_info(created[1].0).expect("resident");
         assert_eq!(info.kind, FigureKind::Weenie);
         assert_eq!(info.role, Some(WeenieRole::Marker));
+    }
+
+    /// A generated object on a skinned rig is served like a placed rig (`walker.md` §10.2
+    /// Rig row, `scenery.md` §7.6): the character layer animates it, and its static
+    /// instance (bind pose) is left out while the character is drawn.
+    #[test]
+    fn generated_rigs_become_sandbox_entries() {
+        let schema = tessera_world::testkit::schema();
+        let (template, setup) = (0x1F00_0030u32, 0x0400_0030u32);
+        let mut src = SyntheticWorld {
+            scenery: true,
+            water_level: Some(12),
+            ..SyntheticWorld::rectangle(1, 10..=11, 20..=20)
+        }
+        .build();
+        src.insert(
+            obj::ON_WATER,
+            tessera_world::testkit::entity_descriptor(obj::ON_WATER, template, &[], &schema),
+            None,
+        );
+        src.insert(
+            template,
+            tessera_world::testkit::visual_template(template, setup),
+            None,
+        );
+        src.insert(
+            setup,
+            tessera_world::testkit::setup_with_skeleton(setup, &[obj::TREE_PARTS[0]], 36),
+            None,
+        );
+        let ctx = WorldContext::load(Arc::new(src), BundleOptions::default()).unwrap();
+        let key = LandblockKey::new(1, 10, 20).unwrap();
+        let bsrc = BundleSource::new(Arc::clone(ctx.source()));
+        let frame = tessera_assets::RecordSource::read_record(&bsrc, key.data_did().0).unwrap();
+        let b = Arc::new(build_bundle(&ctx, key.data_did(), &frame, &|| false).unwrap());
+        let (index, f) = b
+            .figures
+            .iter()
+            .enumerate()
+            .find(|(_, f)| matches!(f.entity, tessera_world::EntityRef::Generated(_)))
+            .expect("a generated rig");
+        assert_eq!(f.kind, FigureKind::Rig);
+        let g = b.figure_entity(f).unwrap();
+        let entries = figure_entries(&b, None, false, 100);
+        let e = entries
+            .iter()
+            .find(|e| tag_parts(e.tag) == Some((key, u32::try_from(index).unwrap())))
+            .expect("served");
+        let fig = e.figure.as_ref().unwrap();
+        assert_eq!(fig.kind, EntityKind::NonPlayer);
+        assert_eq!(fig.class, None);
+        assert_eq!(fig.appearance.body, Body::Object(DataId(obj::ON_WATER)));
+        assert_eq!(fig.appearance.idle, None);
+        let p = g.placement.position;
+        let l = e.placement.location;
+        assert_eq!(
+            (l.x, l.y, l.z),
+            (
+                10.0 * 160.0 + f64::from(p[0]),
+                20.0 * 160.0 + f64::from(p[1]),
+                f64::from(p[2])
+            )
+        );
+        // The figure's tag finds it again, without an IID (generated objects have none).
+        let mut shared = SourceShared {
+            default_region: 1,
+            ready: true,
+            ..SourceShared::default()
+        };
+        shared
+            .figures
+            .insert(key, FigureBlock::Ready(Arc::clone(&b)));
+        let info = shared.figure_info(e.tag).expect("resident");
+        assert_eq!(info.kind, FigureKind::Rig);
+        assert_eq!(info.iid, None);
+        assert!(info.instance.is_none());
     }
 
     #[test]

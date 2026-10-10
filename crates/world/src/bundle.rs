@@ -14,8 +14,9 @@
 //! - the **figures** among them ([`PlacedFigure`]): weenie placements (type 6), Physics
 //!   entities whose instance property set (the landblock weenie list, `appearance.md`
 //!   §7.2) makes them NPC-like figures, and Physics entities on an animated rig of
-//!   [`BundleOptions::min_rig_bones`] bones or more, each with its instance set. Only the figures'
-//!   instance sets are kept (covered by the info record's share of
+//!   [`BundleOptions::min_rig_bones`] bones or more, each with its instance set, then the
+//!   generated objects on such a rig (`scenery.md` §7.6: generated objects become static
+//!   entities of the same form). Only the figures' instance sets are kept (covered by the info record's share of
 //!   [`LandblockBundle::heap_bytes`]); the rest of the weenie list is dropped unless
 //!   [`BundleOptions::keep_weenies`] (`walker.md` §10);
 //! - the area name, when an [`AreaNameSource`](crate::AreaNameSource) is attached;
@@ -361,15 +362,19 @@ pub enum FigureKind {
     /// A Physics entity that passes the draw rule and whose setup has a skeleton of at
     /// least [`BundleOptions::min_rig_bones`] bones, without NPC properties: a character
     /// or creature rig placed as scenery (soldiers in formation, statues of animated rigs).
+    /// Generated objects count as Physics entities here: the client turns them into static
+    /// entities of the same form as the landblock's (`scenery.md` §7.6), so a generated
+    /// object with such a skeleton is a rig too (implementer reading, `walker.md` §10.2).
     Rig,
 }
 
-/// A figure placed by the landblock: an entity of [`LandblockBundle::entities`] that the
-/// sandbox serves as a created entity rather than the walker drawing it as scenery.
+/// A figure placed by the landblock: an entity of [`LandblockBundle::entities`], or a
+/// generated object of [`LandblockBundle::generated`] that is a [`FigureKind::Rig`], that
+/// the sandbox serves as a created entity rather than the walker drawing it as scenery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedFigure {
-    /// Index into [`LandblockBundle::entities`].
-    pub entity: u32,
+    /// The entity or generated object ([`LandblockBundle::entity`]).
+    pub entity: EntityRef,
     /// Why it is a figure.
     pub kind: FigureKind,
     /// The instance property set of the entity's IID in the landblock weenie list
@@ -412,7 +417,8 @@ pub struct LandblockBundle {
     /// placed at the landblock origin with the identity rotation, as that section says,
     /// not skipped. They are in [`LandblockBundle::entities`] too; this counts them.
     pub unplaced_entities: u32,
-    /// Figures among the entities, in entity order.
+    /// Figures among the entities, in entity order, then the generated rigs in generated
+    /// order.
     pub figures: Vec<PlacedFigure>,
     /// Figures beyond [`BundleOptions::max_figures_per_block`], left as plain entities.
     pub figures_dropped: u32,
@@ -693,7 +699,7 @@ impl LandblockBundle {
     /// The entity of a figure.
     #[must_use]
     pub fn figure_entity(&self, figure: &PlacedFigure) -> Option<&PlacedEntity> {
-        self.entities.get(figure.entity as usize)
+        self.entity(figure.entity)
     }
 
     /// The minimap image for the active content layers (§6.3), if the block has a tile.
@@ -1054,7 +1060,7 @@ pub fn build_bundle(
             };
             e.figure = u32::try_from(figures.len()).ok();
             figures.push(PlacedFigure {
-                entity: u32::try_from(n).unwrap_or(u32::MAX),
+                entity: EntityRef::Entity(u32::try_from(n).unwrap_or(u32::MAX)),
                 kind,
                 instance,
                 idle,
@@ -1087,6 +1093,13 @@ pub fn build_bundle(
         &mut problems,
         &mut stages,
     )?;
+    generated_rigs(
+        ctx,
+        &mut world.generated,
+        &mut figures,
+        &mut figures_dropped,
+    );
+    stages.mark("generated rigs");
     let mut chains = ChainReads::default();
     let entity_lod_classes = entity_placement_enums(
         ctx,
@@ -1551,6 +1564,49 @@ fn build_world_parts(
     }
     stages.mark("lights");
     Ok(out)
+}
+
+/// Marks the generated objects that are rigs as figures (`walker.md` §10.2, Rig row): drawn
+/// (the draw rule), with a skeleton of at least [`BundleOptions::min_rig_bones`] bones.
+/// The client turns generated objects into static entities of the same form as the
+/// landblock's statics (`scenery.md` §7.6), so the Rig row applies to them as to a Physics
+/// entity; without this they stay static instances in the skeleton's bind pose. They have
+/// no instance set, idle or weenie list entry. Figures beyond
+/// [`BundleOptions::max_figures_per_block`] are counted in `dropped` and stay scenery.
+fn generated_rigs(
+    ctx: &WorldContext,
+    generated: &mut [PlacedEntity],
+    figures: &mut Vec<PlacedFigure>,
+    dropped: &mut u32,
+) {
+    let opts = ctx.options();
+    if !opts.keep_figures || opts.min_rig_bones == 0 {
+        return;
+    }
+    for (n, g) in generated.iter_mut().enumerate() {
+        let rig = g.draw
+            && g.visual
+                .as_ref()
+                .and_then(|v| v.bones)
+                .is_some_and(|b| b >= opts.min_rig_bones);
+        if !rig {
+            continue;
+        }
+        let Ok(index) = u32::try_from(n) else { break };
+        if figures.len() >= opts.max_figures_per_block {
+            *dropped = dropped.saturating_add(1);
+            continue;
+        }
+        g.figure = u32::try_from(figures.len()).ok();
+        figures.push(PlacedFigure {
+            entity: EntityRef::Generated(index),
+            kind: FigureKind::Rig,
+            instance: None,
+            idle: None,
+            random_appearance: None,
+            weenie_type: g.visual.as_ref().and_then(|v| v.weenie_type),
+        });
+    }
 }
 
 /// A generated object as a placed entity (`scenery.md` §7.6): type Physics, its frame and

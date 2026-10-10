@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-10; review of the 2026-10-10 revision passed: the implementer OPEN (a)–(e) of §9.1.1 answered, new §9.1.2 (permutation feature bit 1: soft particles and heat distortion) and §9.1.3 (opacity of particle draws against the mesh rule, and in premultiplied passes), BIN and BIN-S passes of 2026-10-10, OBS3, RT25–RT30, rules 10–11, Q-RT9). Before: Revised (2026-10-10), Accepted (2026-10-09), Revised (2026-10-09), Accepted (2026-10-08) |
+| **Status** | Revised (2026-10-10, second revision of the day, awaiting review: the implementer OPEN of §9.1.1 on curve states answered from BIN pass (i) and OBS3 (one state per loaded surface record, not per 0x39 record); new RT31, rule 12, RT-I13–RT-I14, Q-RT10). Before: Accepted (2026-10-10, review of the first 2026-10-10 revision passed), Revised (2026-10-10), Accepted (2026-10-09), Revised (2026-10-09), Accepted (2026-10-08) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, not the author), 2026-10-08; independent reviewer of the 2026-10-09 revision (separate dirty-room session, AI-assisted, not the author), 2026-10-09; independent reviewer of the 2026-10-10 revision (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10 |
@@ -60,11 +60,11 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 
 | Tag | Source |
 |---|---|
-| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. **Pass of 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): (h) what decides whether a draw uses a shader record's permutations that read the scene depth or the frame-buffer image (the variants of §9.1.2): the routine that builds the frame's permutation feature mask, its inputs and the user options behind them, found from the option description that names heat distortion. Same reasons: a code path; the data holds only the permutations and their keys. |
+| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. **Pass of 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): (h) what decides whether a draw uses a shader record's permutations that read the scene depth or the frame-buffer image (the variants of §9.1.2): the routine that builds the frame's permutation feature mask, its inputs and the user options behind them, found from the option description that names heat distortion. Same reasons: a code path; the data holds only the permutations and their keys. **Pass (i), 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): whose curve objects a particle draw evaluates, and where a mode-10 curve keeps its state: the particle draw routine and the arguments of its draw calls, the routine that builds a surface record's effect, the parameter-copy routine, the curve evaluator, the surface object's constructor and the writers of its rebuild flag, and the fetch that fills the 0x39 record's surface slot. Same reasons: a code path; the data holds only the curves. |
 | OBS | User install (Steam), read in place and read-only on 2026-10-08: all 7,526 script tables (7,524 decodable, as in `script-table.md`) and 28,992 scriptlets of `client_gamelogic.dat`, every Particle node (41,354); all 11,155 records with prefix 0x39 and all 254 with prefix 0x44 of `client_general.dat`; the master property dictionary 0x34000000. |
 | BIN-S | **M4 (decision 0011), shader programs.** The compiled programs stored in the 19 shader records that particle surfaces use (same build as BIN; the records are game data), disassembled with a public shader disassembler in the dirty room on 2026-10-09: every Direct3D 10/11 (kind 4) vertex and pixel program of the 19 records, and the OpenGL (kind 3) pixel programs of 0x2B00070F and 0x2B0007F2 as a cross-check (they agree). **Question:** how the alpha test and the blend's source alpha of a particle draw use the texture, the vertex colour and the material colour with the draw's tint (the implementer question of §9.1.1). **Why M1–M3 were not enough:** the data gives the parameters and render states but not what the programs compute; no frame capture is available (M3); no published source describes these programs (M2). **Second pass, 2026-10-10** (same tools): the Direct3D 10/11 vertex and pixel programs of 0x2B000084 (both variants), of the depth-reading variants of the nine records that have one, and the vertex programs of the eight two-layer records and of the one-layer records. **Questions:** what the heat-distortion and soft-particle variants compute (§9.1.2) and which texture coordinates each layer reads (§9.1.1, implementer item (d)). Same reasons. |
 | OBS2 | User install (Steam), read in place and read-only on 2026-10-09 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoders used as a tool for the script tables; the record layouts of `material.md` §4–§7 for surfaces and shader records): the `surface` field of all 11,155 records with prefix 0x39, the 1,179 distinct surface records they name, their materials and shader records (effective 4002, 4004, 1043 and 2000 by `material.md` §9.2); the driven pairs of all 41,354 Particle nodes of all script tables and scriptlets. |
-| OBS3 | User install (Steam), read in place and read-only on 2026-10-10 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoder used as a tool for the 0x39 records; the record layouts of `material.md` §4–§7): `uses_video_post` and `surface` of all 11,155 records with prefix 0x39; the permutation keys and samplers of the 19 shader records of §9.1.1; the effective values (`material.md` §9.2) of 1043, 1160, 1174, 4004 and the texture-matrix parameters 1001–1004, 1017–1020, 1033–1034 and 1070–1073 of every particle surface. |
+| OBS3 | User install (Steam), read in place and read-only on 2026-10-10 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoder used as a tool for the 0x39 records; the record layouts of `material.md` §4–§7): `uses_video_post` and `surface` of all 11,155 records with prefix 0x39; the permutation keys and samplers of the 19 shader records of §9.1.1; the effective values (`material.md` §9.2) of 1043, 1160, 1174, 4004 and the texture-matrix parameters 1001–1004, 1017–1020, 1033–1034 and 1070–1073 of every particle surface; later the same day, with the repository's `tessera-material` resolver as a tool, the mode of every curve among 1043 and those texture-matrix values that is not constant, and the number of 0x39 records naming each surface (RT31). |
 | PS | [`particles.md`](particles.md) (Accepted 2026-10-08): layouts, censuses, the simulation of one 0x39 system (§8), start gating (§7.1.2), fork effects (§6.5). |
 | SR | [`script-runtime.md`](script-runtime.md) §2.1, §3 (contexts, node start, completion, stop). |
 | SE | [`setup.md`](setup.md) §5.2 (render scale; `Model_ParticleScale`, PID 0x5A0). |
@@ -91,7 +91,7 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | RT17 | Fork draw batches select one of the seven UNIQUEDB fork shaders by a blend-mode index 0–6 (§10.2) | BIN; PS §6.4 (the keys) | Confirmed (BIN) |
 | RT18 | Census of Particle-node fields (§5.2) | OBS | Confirmed |
 | RT19 | Tessera rules (§12) | This spec | Decision |
-| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag; an attached instance's own opacity; driven fields after the start; the frame-buffer image of distortion draws (Q-RT1–Q-RT9) | BIN (partial) | OPEN |
+| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag; an attached instance's own opacity; driven fields after the start; the frame-buffer image of distortion draws; other triggers of a surface effect rebuild (Q-RT1–Q-RT10) | BIN (partial) | OPEN |
 | RT21 | Particle surfaces: the 11,153 systems with a surface name 1,179 distinct surface records, which use 19 shader records, all unlit and drawn in one pass; their blend is SRCALPHA / INVSRCALPHA or SRCALPHA / ONE (one record also has a frame-buffer-less variant ZERO / ONE); effective alpha test on in 8 surfaces, off in 1,049, not declared in 122; effective depth write off in 1,177, on in 2 (§9.1.1) | OBS2 | Confirmed (2026-10-09) |
 | RT22 | What the 19 records' programs compute: the alpha test reads the texture's opacity alone; the output alpha is the texture opacity × vertex alpha × material alpha in most records, with the exceptions of §9.1.1; colour, doubling and fog per record (§9.1.1) | BIN-S | Confirmed (BIN-S) |
 | RT23 | The draw's colour multiplier (1, 1, 1, instance opacity) is the per-object tint that `material.md` §8.3 multiplies into material colour 2000, so the per-draw alpha-test rules of `material.md` §11.2 apply to particle draws with *A* = 2000 alpha × instance opacity (§9.1.1) | BIN (the draw call hands the surface's material, shader, transform and colour to the renderer, RT16); `material.md` §8.3, §11.2 | Inferred |
@@ -102,6 +102,7 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | RT28 | Every particle surface that declares alpha test (4004) has a constant (mode 1) reference 1043 (1,057 surfaces); 1,148 particle surfaces declare 1174, 43 of them with value 0 (§9.1.1, §9.1.2) | OBS3 | Confirmed (2026-10-10) |
 | RT29 | 209 systems draw 0x2B000084: 112 with `uses_video_post` = 0, 97 with 1 (§9.1.2) | OBS3 | Confirmed (2026-10-10) |
 | RT30 | Particle draws take their alpha test and the source alpha of their blend from the programs of §9.1.1, not from the mesh opacity-source rule of `render.md` §4.3; in a premultiplied pass they follow `render.md` §6.10 "Fixed blends" with that source alpha (§9.1.3) | BIN-S (the programs, RT22); `render.md` §4.3, §6.10 | Decision, built on Confirmed (BIN-S) program facts |
+| RT31 | Curve state of particle draws: a mode-10 curve keeps its start time and last value in the curve object; the curves a particle draw evaluates are copies held by the effect built for the loaded surface record (built at its first draw after loading, and on a marked rebuild), so there is one state per loaded surface record; mode 3 has no per-curve state. Census: non-constant curves among 1043 and the texture-matrix values of the 1,179 particle surfaces use modes 2 (154 surfaces), 4 (25), 7 (8), 3 (3), 10 (2; 3 systems, one surface named by two 0x39 records) and 6 (1); none is a 1043; 694 particle surfaces are named by more than one 0x39 record (§9.1.1) | BIN (pass (i)); OBS3 | Confirmed (BIN + OBS); that one surface DID gives one shared loaded object is Inferred (the object manager was not traced); other rebuild triggers OPEN (Q-RT10) |
 
 ---
 
@@ -730,13 +731,42 @@ input the output alpha is further multiplied by the soft-particle factor of para
 > without frame lighting has none, which matches the client with fog off (it uploads distances
 > so large that *f* stays 0, `lighting.md` §10).
 
-> **OPEN:** (implementer, 2026-10-10; engineering choice, the spec is silent) Whose curve
+> **Answered (2026-10-10, BIN pass (i), OBS3; RT31; was OPEN, implementer, 2026-10-10;
+> engineering choice, the spec is silent):** Whose curve
 > states (`material.md` §5.3.1: the random source of mode 3, the key search of mode 10) the
 > per-draw evaluation of 1043 and of texture matrices 0 and 1 uses. The walker keeps one set
 > per 0x39 record, shared by all its instances and kept while the record is cached (bounded),
 > and evaluates at the material clock; the explorer preview evaluates at its own simulated
 > time with fresh states per frame. Only surfaces with a curve that is not constant are
 > re-evaluated (none for 1043 in this install, RT28).
+> Answer: the client keeps the states **per loaded surface record**, not per 0x39 record.
+> - Mode 3 keeps no state of its own: every evaluation draws from the client's one global
+>   generator (`material.md` §5.3.1, §3.3 here; rule 1).
+> - A mode-10 curve keeps its state (start time and last value) inside the curve object
+>   itself (BIN). The curves a particle draw evaluates (1043 and the values of texture matrices
+>   0 and 1) are copies held by the **effect the client builds for the loaded surface
+>   record**. The draw call of §9.1 receives that surface's shader record and built effect
+>   (RT16). The client builds the effect from the shader record's defaults and the surface's
+>   materials (`material.md` §9.2), copying each curve. It does so the first time the surface
+>   is drawn after it loads, and again whenever the surface is marked for a rebuild (Q-RT10).
+>   A new build starts every mode-10 curve afresh.
+> - So one state set serves every 0x39 record that names the surface, all their instances
+>   and any other draw of that surface record. The 0x39 record reaches its surface through the
+>   client's shared object fetch by DID (`particles.md` §4.1, P50), so all users of one
+>   surface DID share one loaded surface while it is loaded. That the fetch returns the
+>   already-loaded object is Inferred: the object manager behind it was not traced.
+> - Every draw evaluates at the global clock (§9.1). Evaluations at one clock give the same
+>   value, so drawing a surface several times per frame changes nothing; a mode-10 curve
+>   starts at the first evaluation after a build.
+> - The data (OBS3): over the 1,179 particle surfaces, the curves of 1043 and of the
+>   texture-matrix values that are not constant use modes 2 (154 surfaces), 4 (25), 7 (8),
+>   3 (3), 10 (2) and 6 (1); no 1043 is among them. The choice of owner is visible only on
+>   the two mode-10 surfaces (3 systems). One of them is named by two 0x39 records, which
+>   share one state in the client.
+>
+> Rule 12 states what Tessera does: key the states by surface record DID; a preview keeps
+> its states for the length of its run. Fresh states every frame freeze a mode-10 curve at
+> its start value.
 
 <a id="s9-1-2"></a>
 #### 9.1.2 Permutation feature bit 1: soft particles and heat distortion (BIN, BIN-S, OBS3; RT25, RT26, RT29)
@@ -982,7 +1012,7 @@ nothing; revisit them when `particles.md` Q1 is answered.
 
 > **Answered (2026-10-09; was OPEN, implementer, 2026-10-09):** the removal-time reading is
 > the rule (rule 7 reworded).
-8. Q-RT1 to Q-RT9: the Decisions given in their callouts.
+8. Q-RT1 to Q-RT10: the Decisions given in their callouts.
 9. **Engineering limits for hostile records** (answers the implementer OPEN of 2026-10-08;
    the data never reaches them: a real-data run of all 11,155 records over 5 s peaks at 1,320
    live particles in one system):
@@ -1007,6 +1037,14 @@ nothing; revisit them when `particles.md` Q1 is answered.
     the client does with `Render.VideoPostEffects` off or `Render.SurfaceReflections` at 0: no
     soft-particle factor, and 0x2B000084 draws nothing. (Revisit when `render.md` gives the
     particle stage a depth and colour copy of the scene; the formulas are in §9.1.2.)
+12. **Curve states of particle draws** (§9.1.1, answer of 2026-10-10; RT31): keep one set of
+    curve states per surface record DID, shared by every 0x39 record and every instance that
+    draws that surface, and by any other draw of it. Create it when the surface's effective
+    values are first evaluated; discard it with the surface's entry in the material cache, so a
+    surface loaded again starts its mode-10 curves afresh, as a rebuilt effect does in the
+    client. Evaluate at the material clock of `material.md` §5.3.1. Mode 3 draws from the
+    shared stream of rule 1. A preview or test that runs on its own simulated time keeps its
+    states for the length of its run, never per frame.
 
 ---
 
@@ -1042,6 +1080,16 @@ Against the install (all hold in this install, OBS) or synthetic fixtures:
   the constant 0.5 and whose other matrix values are the identity samples the second layer at
   (*u* + 0.5, *v*) and the first at (*u*, *v*); a one-layer surface with the same values samples
   at (*u*, *v*).
+- **RT-I13** (synthetic; rule 12): two 0x39 records name one surface whose second-layer
+  translation 1019 is a mode-10 curve with `loop` 0, `period` 1 s and the pairs (0, 0) and
+  (1, 100). A system of the first record is drawn from clock 10 on, a system of the second from
+  clock 10.5 on. Both read one state, started at clock 10: at clock 10.5 both read 0.5, and
+  from clock 11 on both read the held last value. A state per 0x39 record would give the
+  second system its start value 0.001 (position 0.1, `material.md` §5.3.1) at clock 10.5.
+- **RT-I14:** among the 1,179 particle surfaces, the curves of 1043 and of the texture-matrix
+  values (1001–1004, 1017–1020, 1033–1034, 1070–1073) that are not constant use modes 2, 3, 4,
+  6, 7 and 10 only; exactly two surfaces have a mode-10 curve, and no 1043 curve is non-constant
+  (OBS3, RT31).
 
 ---
 
@@ -1169,6 +1217,12 @@ lacks 0x8). The quads face the camera (`particles.md` §8.12, default corners).
 > M4 on the frame's render-target set-up and the callers of the mask builder. **Decision
 > (Tessera):** rule 11 (the variants without bit 1), which needs none of these answers.
 
+> **OPEN (Q-RT10):** When the client marks a loaded surface record's effect for a rebuild
+> other than at its first draw after loading (§9.1.1 answer of 2026-10-10). A rebuild copies
+> the curves again and so restarts every mode-10 curve of that surface. Suggested method: M4
+> on the writers of the surface's rebuild flag. **Decision (Tessera):** rule 12 (a new state
+> set only when the surface is loaded again).
+
 Still open in `particles.md`: Q1 (fork effect image and simulation; the blend-mode index source
 of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rotation` mode), Q13
 (weather schedule). `particles.md` Q4 is answered by §6.4 here.
@@ -1187,7 +1241,10 @@ of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rota
 - `script-runtime.md` §3.1 / kind table: the Particle node's start, instance and stop hook are
   §5.4, §5.5 and §7.1 here; context flag 0x40 is read by it (Q-RT2).
 - `setup.md` §5.2: "how an effect combines the two is for the particle specs" is §6.4 here.
-- `material.md` §5.3.1: the "client's global random generator" of mode 3 is §3.3 here.
+- `material.md` §5.3.1: the "client's global random generator" of mode 3 is §3.3 here. The
+  "start time and last value" of a mode-10 curve live in each copy of the curve; for surface
+  records the copies belong to the effect built per loaded surface record (§9.1.1 answer of
+  2026-10-10, RT31), which may be worth stating there for meshes too.
 
 - `material.md` §11.3 (rule for unlit records) and §20.1 (output alpha of unlit blended
   records), `render.md` §4.3 (`Fixed` row, "whether *M*.alpha and the vertex alpha enter in the
@@ -1216,6 +1273,7 @@ These are suggestions for the owners of those specs; this spec edits none of the
 
 | Date | Sections | Change |
 |---|---|---|
+| 2026-10-10 | Header, §1 (BIN pass (i), OBS3 widened, RT20 widened, new RT31), §9.1.1 (implementer OPEN answered), §12 (rule 8, new rule 12), §13 (new RT-I13, RT-I14), §15 (new Q-RT10), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. **Implementer OPEN of §9.1.1 (curve states) answered:** mode 3 has no per-curve state (global generator); a mode-10 curve keeps its state in the curve object, and the curves a particle draw evaluates are copies held by the effect the client builds for the loaded surface record (at its first draw after loading, and on a marked rebuild), so the client keeps one state per loaded surface record, shared by all 0x39 records naming it (BIN pass (i)). The walker's per-0x39-record states differ from that; the preview's fresh states per frame freeze mode-10 curves at their start. Census (OBS3): non-constant 1043 and texture-matrix curves of particle surfaces use modes 2, 3, 4, 6, 7 and 10; two surfaces have a mode-10 curve (3 systems; one surface named by two records). New rule 12 (states per surface record DID, dropped with the surface's cache entry); Q-RT10 (other rebuild triggers) with its Decision. |
 | 2026-10-10 | Header, §1 (BIN pass (h), BIN-S second pass, new OBS3; RT20 widened; new RT25–RT30), §9.1.1 (texture matrices in the notation; implementer OPEN answered), new §9.1.2, new §9.1.3, §12 (rules 10–11), §13 (RT-I10–RT-I12), §15 (Q-RT9), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. **Implementer OPEN (a)–(e) of §9.1.1 answered:** (a), (b), (c) confirmed as Tessera rules 10 and 11; (d) replaced: the two-layer records read layer 1 at texture matrix 0 and layer 2 at texture matrix 1, which are not the identity on 182 of the 206 two-layer particle surfaces (BIN-S, OBS3); (e) the client evaluates 1043 per draw, all particle references of this install are constant, fog confirmed. **New facts:** the conditions of permutation feature bit 1 (BIN, RT25), the soft-particle factor and the heat-distortion formula of its variants (BIN-S, RT26). **New Decision §9.1.3** (asked by the task of 2026-10-10): particle draws take the alpha test and the blend's source alpha from the §9.1.1 programs, not from the mesh opacity-source rule of `render.md` §4.3, and follow `render.md` §6.10 R12 in premultiplied passes with that alpha. Implementers re-check `crates/particles` `surface.rs` and `crates/render` `particles.rs` (texture matrices of the two-layer records; per-draw 1043 for non-constant curves). |
 | 2026-10-09 | Header, §1 (BIN-S, OBS2; RT21–RT24; RT20 widened), §3.2, §5.4, new §9.1.1, §9.2, §10.2, §12 (rules 7–9), §15 (Q-RT7, Q-RT8), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. New §9.1.1 from the programs of the 19 shader records that particle surfaces use (BIN-S) and a census of those surfaces (OBS2): the alpha test reads the texture's opacity alone; the blend's source alpha is texture opacity × vertex alpha × material alpha in most records, with three exceptions; colour, doubling and fog per record; the per-draw alpha-test rules of `material.md` §11.2 with *A* = tint alpha (Inferred). §5.4: census of driven pairs (2 nodes, both on the effect DID from a session-only property) and the walker rules (a)–(g); §3.2: the walker's "drawn" rule; §9.2: the local-space frames as a Decision until `particles.md` Q8; §10.2: fork effects without the library as a Tessera rule; §12: rule 7 reworded (removal-time reading), new rule 9 (engineering limits). All implementer OPENs of 2026-10-08 and 2026-10-09 marked Answered (§9.2 in part). New OPENs Q-RT7 (owner opacity of an attached instance) and Q-RT8 (driven fields after the start), each with a Decision. |
 | 2026-10-09 | §3.2, §5.4, §9.2, §12 | Implementer OPEN notes only (clean room): the walker's owners and "drawn" (§3.2), its choices for redirect, gating, driven fields, opacity, water and scales (§5.4), the corrected distance-emission note of §9.2, the two readings of rule §12.7. No fact changed. |

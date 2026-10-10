@@ -1587,6 +1587,18 @@ spec's rules.
 > which the server chose, so it is rule 2's cause from the server, not transport text (gap
 > above). The first §15.3 gap of the fifth revision is closed.
 
+> **OPEN:** (implementer, `tessera-server`, 2026-10-10; engineering choices, not facts.)
+> The two §15.3 gaps above (endpoint close at shutdown written as transport text; `close`
+> written plain) are fixed in `apps/server` on branch `conform-b18`; the spec writer may mark
+> them closed. Two choices the spec leaves open, for confirmation: (a) the escape syntax of
+> `reason` and `close` in the `text` format is Rust's string debug form (`\"`, `\\`, `\n`,
+> `\r`, `\t`, `\0`, every other control character as `\u{…}`; some non-control characters,
+> for example combining marks, may be escaped the same way); §11.1 names what is
+> escaped but not how. (b) At shutdown, after the endpoint close and its 2 s idle wait, the
+> network thread waits at most 1.1 s more (the 1 s drain bound plus a margin) for the
+> connections that close ended to write their closed lines, so that §14 invariant 10 holds
+> at exit; §12.1 step 6 does not bound "flush logs".
+
 ---
 
 <a id="s16"></a>

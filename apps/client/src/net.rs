@@ -331,6 +331,12 @@ pub struct World {
     motd_shown: bool,
     /// `--scenario-log` of a windowed scenario run (`scenario-feed.md` §12.4).
     scenario_log: Option<crate::scenario::live_log::LiveLog>,
+    /// `--scenario-input` of a windowed scenario run (`scenario-feed.md` §7.7, §12.4): the
+    /// input script's player.
+    scenario_input: Option<tessera_net::scenario::InputPlayer>,
+    /// After the input script's `at pre` lines: the character to enter, and whether the
+    /// poll that delivers their answers has happened (the world is entered after it).
+    pending_enter: Option<(Option<String>, bool)>,
 }
 
 impl World {
@@ -452,6 +458,8 @@ impl World {
             paused: false,
             motd_shown: false,
             scenario_log: None,
+            scenario_input: None,
+            pending_enter: None,
         })
     }
 
@@ -470,6 +478,65 @@ impl World {
     pub fn set_scenario_log(&mut self, mut log: crate::scenario::live_log::LiveLog, now: Instant) {
         log.command(now, &Command::Connect);
         self.scenario_log = Some(log);
+    }
+
+    /// Plays the scenario's input script (`--scenario-input` of a windowed run,
+    /// `scenario-feed.md` §12.4) from now on: its `at pre` lines after `Connected` (the
+    /// world is entered one poll later, so a character they create can be entered), and
+    /// each timed line before the poll that lets the feed process its tick. Call right
+    /// after creating the session.
+    pub fn set_scenario_input(&mut self, player: tessera_net::scenario::InputPlayer) {
+        self.scenario_input = Some(player);
+    }
+
+    /// Sends an input line's command, or counts the line as skipped (§7.7).
+    fn send_input(
+        &mut self,
+        now: Instant,
+        player: &mut tessera_net::scenario::InputPlayer,
+        line: tessera_net::scenario::InputLine,
+    ) {
+        match line.command {
+            Some(c) => {
+                if let Err(e) = self.send(now, c) {
+                    tracing::debug!("scenario input line {} refused: {e}", line.line);
+                    player.skip(line.line, "refused by the session");
+                }
+            }
+            None => player.skip(line.line, "target does not exist"),
+        }
+    }
+
+    /// Sends the timed input lines due by the tick the feed processes next.
+    fn play_due_input(&mut self, now: Instant) {
+        use tessera_net::scenario::ScenarioStatus;
+        if self.player.is_none() {
+            return;
+        }
+        let Some(ScenarioStatus::Running { time_ms }) = self.scenario_status() else {
+            return;
+        };
+        let Some(mut player) = self.scenario_input.take() else {
+            return;
+        };
+        let next_tick = (time_ms / player.tick_ms()).saturating_add(1);
+        while let Some(line) = player.next_due(next_tick) {
+            self.send_input(now, &mut player, line);
+        }
+        self.scenario_input = Some(player);
+    }
+
+    /// Sends the input script's `at pre` lines; returns whether there were any.
+    fn play_pre_input(&mut self, now: Instant) -> bool {
+        let Some(mut player) = self.scenario_input.take() else {
+            return false;
+        };
+        let any = player.has_pre();
+        while let Some(line) = player.next_pre() {
+            self.send_input(now, &mut player, line);
+        }
+        self.scenario_input = Some(player);
+        any
     }
 
     /// Sends `command`, writing it to the scenario log when the session accepts it.
@@ -817,6 +884,7 @@ impl World {
             return;
         }
         self.paused = false;
+        self.play_due_input(now);
         self.session.poll_into(now, &mut self.events);
         let events = std::mem::take(&mut self.events);
         let mut disconnected = false;
@@ -824,11 +892,15 @@ impl World {
             if let Some(log) = &mut self.scenario_log {
                 log.event(now, ev);
             }
+            if let Some(input) = &mut self.scenario_input {
+                input.observe(ev);
+            }
             disconnected |= matches!(ev, Event::Disconnected { .. });
             self.apply(now, ev);
         }
         self.events = events;
         self.events.clear();
+        self.enter_after_pre_input(now, disconnected);
         if self.scenario_log.as_ref().is_some_and(|l| !l.is_closed()) {
             let status = self.scenario_status();
             let counters = self
@@ -836,9 +908,41 @@ impl World {
                 .backend::<SandboxBackend>()
                 .and_then(SandboxBackend::scenario_counters);
             let closed = disconnected || self.state() == SessionState::Closed;
+            let input_skipped = self
+                .scenario_input
+                .as_ref()
+                .map_or(0, tessera_net::scenario::InputPlayer::skipped);
             if let Some(log) = &mut self.scenario_log {
-                log.after_poll(now, status, counters, closed);
+                log.after_poll(now, status, counters, closed, input_skipped);
             }
+        }
+    }
+
+    /// Enters the world one poll after the input script's `at pre` lines were sent (their
+    /// answers, such as a created character, have arrived by then).
+    fn enter_after_pre_input(&mut self, now: Instant, disconnected: bool) {
+        match self.pending_enter.take() {
+            Some(_) if disconnected => {}
+            Some((name, false)) => self.pending_enter = Some((name, true)),
+            Some((name, true)) => {
+                let character = name.or_else(|| {
+                    self.scenario_input
+                        .as_ref()
+                        .and_then(|p| p.characters().first().cloned())
+                });
+                match character {
+                    Some(character) => {
+                        if let Err(e) = self.send(now, Command::EnterWorld { character }) {
+                            tracing::warn!("net: enter world failed: {e}");
+                        }
+                    }
+                    None => {
+                        tracing::warn!("net: the account has no characters");
+                        self.push_chat(ChatLine::system("This account has no characters."));
+                    }
+                }
+            }
+            None => {}
         }
     }
 
@@ -860,6 +964,12 @@ impl World {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
                 tracing::info!(characters = %names.join(","), "net: connected");
                 self.show_motd();
+                if self.play_pre_input(now) {
+                    // A character the `at pre` lines create is entered one poll later;
+                    // an unknown one ends the session (§12.2 step 3).
+                    self.pending_enter = Some((self.character.clone(), false));
+                    return;
+                }
                 let chosen = match self.character.as_deref() {
                     Some(w) => {
                         let key = name_key(w);

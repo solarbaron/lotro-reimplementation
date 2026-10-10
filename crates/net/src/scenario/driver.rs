@@ -3,23 +3,14 @@
 //! session, plays the input script, keeps the mirror the input forms read, and writes the
 //! canonical log.
 
-use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::ast::{
-    ChannelArg, EntityArg, InputCmd, InputTarget, RefArg, SkillSource, SlotContent, WindowKind,
-};
-use super::feed::{FinishReason, ScenarioStatus, actor_id, item_id, page_parts};
+use super::feed::{FinishReason, ScenarioStatus};
+use super::input::{InputLine, InputPlayer};
 use super::log::{EndCounters, EndReason, LogTime, LogWriter};
 use super::resolve::ResolvedScenario;
-use crate::domain::{
-    CharacterCommand, CombatCommand, CombatEvent, DialogueOption, InventoryCommand, ItemPlace,
-    NpcCommand, NpcEvent, ProgressionCommand, ProgressionEvent, Ref, Shortcut, SocialCommand,
-    SocialEvent, Text, WindowId, WorldCommand, WorldEvent,
-};
-use crate::model::{Appearance, Body, ChatChannel, EntityId};
 use crate::sandbox::SandboxBackend;
 use crate::session::{Command, Event, Session};
 
@@ -62,23 +53,6 @@ pub struct DriverFrame<'a> {
     pub session: &'a Session,
 }
 
-/// The content of a `DialogueShown`: speaker, text and options.
-type DialogueContent = (Option<EntityId>, Text, Vec<DialogueOption>);
-
-/// What the input forms read: the client's view as of the previous poll (§7.7).
-#[derive(Debug, Default)]
-struct Mirror {
-    player: Option<EntityId>,
-    quickslots: BTreeMap<u16, Shortcut>,
-    target: Option<EntityId>,
-    windows: [Option<WindowId>; 8],
-    /// The content of the last `DialogueShown` of the open dialogue window. The event
-    /// carries no page identity, so `choose $page N` compares this with the named page's
-    /// content (pages with identical content cannot be told apart).
-    dialogue: Option<DialogueContent>,
-    characters: Vec<String>,
-}
-
 /// Runs a resolved scenario headless over a [`Session`] whose backend is a
 /// [`SandboxBackend`] playing it, and writes the canonical log (`scenario-feed.md` §12.2).
 ///
@@ -91,11 +65,10 @@ pub struct HeadlessDriver<W: io::Write> {
     sc: Arc<ResolvedScenario>,
     log: Option<LogWriter<W>>,
     log_failed: bool,
-    mirror: Mirror,
+    input: InputPlayer,
     tick: u64,
     resolve_timeout: Duration,
     max_ticks: Option<u64>,
-    input_skipped: u64,
     events: Vec<Event>,
 }
 
@@ -111,13 +84,12 @@ impl<W: io::Write> HeadlessDriver<W> {
         Self {
             session,
             tick: scenario.tick_ms().max(1),
+            input: InputPlayer::new(Arc::clone(&scenario)),
             sc: scenario,
             log,
             log_failed: false,
-            mirror: Mirror::default(),
             resolve_timeout,
             max_ticks: None,
-            input_skipped: 0,
             events: Vec::new(),
         }
     }
@@ -136,6 +108,14 @@ impl<W: io::Write> HeadlessDriver<W> {
     #[must_use]
     pub fn with_max_ticks(mut self, ticks: u64) -> Self {
         self.max_ticks = Some(ticks);
+        self
+    }
+
+    /// Lowers the log's size limit to `bytes` (at most
+    /// [`MAX_LOG_BYTES`](super::MAX_LOG_BYTES)); for tests.
+    #[must_use]
+    pub fn with_log_limit(mut self, bytes: u64) -> Self {
+        self.log = self.log.map(|l| l.with_limit(bytes));
         self
     }
 
@@ -173,33 +153,15 @@ impl<W: io::Write> HeadlessDriver<W> {
         // Pre-world: Connect, the `at pre` lines, EnterWorld.
         self.send(base, LogTime::Pre, Command::Connect);
         self.poll(base, LogTime::Pre, |_| LogTime::Pre, &mut frame);
-        let pre: Vec<(u32, InputCmd)> = if self.sc.plays_input() {
-            self.sc
-                .prog
-                .input
-                .iter()
-                .filter(|l| l.time.is_none())
-                .map(|l| (l.line, l.cmd.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        for (line, cmd) in pre {
-            match self.build(&cmd) {
-                Some(c) => {
-                    if !self.send(base, LogTime::Pre, c) {
-                        self.skip_input(line, "refused by the session");
-                    }
-                }
-                None => self.skip_input(line, "target does not exist"),
-            }
+        while let Some(line) = self.input.next_pre() {
+            self.send_input(base, LogTime::Pre, line);
             self.poll(base, LogTime::Pre, |_| LogTime::Pre, &mut frame);
         }
         let enter = self
             .sc
             .enter_character()
             .map(str::to_owned)
-            .or_else(|| self.mirror.characters.first().cloned());
+            .or_else(|| self.input.characters().first().cloned());
         let Some(enter) = enter else {
             return self.finish(LogTime::Pre, error("Disconnected", 0));
         };
@@ -236,42 +198,15 @@ impl<W: io::Write> HeadlessDriver<W> {
         if let Some(o) = self.check(0, false) {
             return o;
         }
-        // Timed input, by frame then time then file order.
-        let mut timed: Vec<(u64, u64, u32, InputCmd)> = if self.sc.plays_input() {
-            self.sc
-                .prog
-                .input
-                .iter()
-                .filter_map(|l| {
-                    let t = l.time?;
-                    Some((t.div_ceil(self.tick).max(1), t, l.line, l.cmd.clone()))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        timed.sort_by_key(|(f, t, _, _)| (*f, *t));
-        let mut next_input = 0usize;
         let horizon = super::parse::HORIZON_MS.div_ceil(self.tick) + 4_096;
         let limit = self.max_ticks.map_or(horizon, |m| m.min(horizon));
         for k in 1..=limit {
             let ms = k * self.tick;
             let now = t0 + Duration::from_millis(ms);
             let time = LogTime::At(ms);
-            while let Some((f, _, line, cmd)) = timed.get(next_input) {
-                if *f != k {
-                    break;
-                }
-                let (line, cmd) = (*line, cmd.clone());
-                next_input += 1;
-                match self.build(&cmd) {
-                    Some(c) => {
-                        if !self.send(now, time, c) {
-                            self.skip_input(line, "refused by the session");
-                        }
-                    }
-                    None => self.skip_input(line, "target does not exist"),
-                }
+            // Timed input, by tick then time then file order.
+            while let Some(line) = self.input.next_due(k) {
+                self.send_input(now, time, line);
             }
             let disconnected = self.poll(now, time, |_| time, &mut frame);
             if let Some(o) = self.check(ms, disconnected) {
@@ -285,10 +220,16 @@ impl<W: io::Write> HeadlessDriver<W> {
         self.finish(LogTime::At(limit * self.tick), error("Horizon", 0))
     }
 
-    /// Counts an input line that sends nothing (§7.7).
-    fn skip_input(&mut self, line: u32, why: &'static str) {
-        self.input_skipped += 1;
-        tracing::debug!(line, why, "scenario input line skipped");
+    /// Sends an input line's command, or counts it as skipped (§7.7).
+    fn send_input(&mut self, now: Instant, time: LogTime, line: InputLine) {
+        match line.command {
+            Some(c) => {
+                if !self.send(now, time, c) {
+                    self.input.skip(line.line, "refused by the session");
+                }
+            }
+            None => self.input.skip(line.line, "target does not exist"),
+        }
     }
 
     fn counters(&self) -> EndCounters {
@@ -299,7 +240,7 @@ impl<W: io::Write> HeadlessDriver<W> {
             .unwrap_or_default();
         EndCounters {
             skipped: c.skipped,
-            input_skipped: self.input_skipped,
+            input_skipped: self.input.skipped(),
             dropped: c.dropped,
             spilled: c.spilled,
         }
@@ -328,15 +269,26 @@ impl<W: io::Write> HeadlessDriver<W> {
                     line: e.line,
                 },
             )),
+            // The log reached its size limit: stop at once (exit 5).
+            _ if self.log_overflowed() => {
+                Some(self.finish(LogTime::At(ms), error("LogOverflow", 0)))
+            }
             _ if disconnected => Some(self.finish(LogTime::At(ms), error("Disconnected", 0))),
             None => Some(self.finish(LogTime::At(ms), error("Disconnected", 0))),
             _ => None,
         }
     }
 
+    /// Whether the log reached its size limit ([`LogWriter::overflowed`]).
+    fn log_overflowed(&self) -> bool {
+        self.log.as_ref().is_some_and(LogWriter::overflowed)
+    }
+
     fn finish(&mut self, time: LogTime, reason: EndReason) -> DriverOutcome {
         let mut reason = reason;
-        if self.log_failed {
+        if self.log_overflowed() {
+            reason = error("LogOverflow", 0);
+        } else if self.log_failed {
             reason = error("LogWrite", 0);
         }
         let counters = self.counters();
@@ -392,7 +344,7 @@ impl<W: io::Write> HeadlessDriver<W> {
             if matches!(e, Event::Disconnected { .. }) {
                 disconnected = true;
             }
-            self.observe(e);
+            self.input.observe(e);
         }
         frame(&DriverFrame {
             now,
@@ -402,321 +354,6 @@ impl<W: io::Write> HeadlessDriver<W> {
         });
         self.events = events;
         disconnected
-    }
-
-    fn observe(&mut self, e: &Event) {
-        let m = &mut self.mirror;
-        match e {
-            Event::Connected { characters } => {
-                m.characters = characters.iter().map(|c| c.name.clone()).collect();
-            }
-            Event::WorldEntered { player, .. } => m.player = Some(*player),
-            Event::Combat(CombatEvent::QuickslotChanged { slot, content }) => match content {
-                Some(c) => {
-                    m.quickslots.insert(*slot, c.clone());
-                }
-                None => {
-                    m.quickslots.remove(slot);
-                }
-            },
-            Event::Combat(CombatEvent::TargetChanged { entity, target })
-                if Some(*entity) == m.player =>
-            {
-                m.target = *target;
-            }
-            Event::Npc(NpcEvent::DialogueShown {
-                window,
-                speaker,
-                text,
-                options,
-            }) => {
-                m.windows[WindowKind::Dialogue.index()] = Some(*window);
-                m.dialogue = Some((*speaker, text.clone(), options.clone()));
-            }
-            Event::Npc(NpcEvent::QuestOffered { window, .. }) => {
-                m.windows[WindowKind::QuestOffer.index()] = Some(*window);
-            }
-            Event::Npc(NpcEvent::VendorShown { window, .. }) => {
-                m.windows[WindowKind::Vendor.index()] = Some(*window);
-            }
-            Event::Npc(NpcEvent::LootShown { window, .. }) => {
-                m.windows[WindowKind::Loot.index()] = Some(*window);
-            }
-            Event::Progression(ProgressionEvent::TrainerShown { window, .. }) => {
-                m.windows[WindowKind::Trainer.index()] = Some(*window);
-            }
-            Event::World(WorldEvent::TravelShown { window, .. }) => {
-                m.windows[WindowKind::Travel.index()] = Some(*window);
-            }
-            Event::World(WorldEvent::InstanceListShown { window, .. }) => {
-                m.windows[WindowKind::Instances.index()] = Some(*window);
-            }
-            Event::Social(SocialEvent::TradeShown { window, .. }) => {
-                m.windows[WindowKind::Trade.index()] = Some(*window);
-            }
-            Event::Npc(NpcEvent::WindowClosed { window }) => {
-                for (i, w) in m.windows.iter_mut().enumerate() {
-                    if *w == Some(*window) {
-                        *w = None;
-                        if i == WindowKind::Dialogue.index() {
-                            m.dialogue = None;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // --- Building commands from input forms ------------------------------------------
-
-    fn id(&self, e: EntityArg) -> Option<EntityId> {
-        match e {
-            EntityArg::Player => self.mirror.player,
-            EntityArg::Actor(i) => Some(actor_id(i)),
-        }
-    }
-
-    fn rref(&self, r: &RefArg) -> Option<Ref> {
-        match r {
-            RefArg::Literal(s) => Some(Ref::Literal(s.clone())),
-            RefArg::Element(el) => self.sc.element(*el).map(|c| Ref::Record(c.did)),
-        }
-    }
-
-    fn window(&self, kind: WindowKind) -> Option<WindowId> {
-        self.mirror.windows[kind.index()]
-    }
-
-    fn target(&self, t: InputTarget) -> Option<Option<EntityId>> {
-        match t {
-            InputTarget::None => Some(None),
-            InputTarget::Current => Some(self.mirror.target),
-            InputTarget::Entity(e) => self.id(e).map(Some),
-        }
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn build(&self, cmd: &InputCmd) -> Option<Command> {
-        Some(match cmd {
-            InputCmd::Target(e) => {
-                let target = match e {
-                    None => None,
-                    Some(e) => Some(self.id(*e)?),
-                };
-                Command::Combat(CombatCommand::SelectTarget { target })
-            }
-            InputCmd::UseSkill { skill, target } => {
-                let target = self.target(*target)?;
-                match skill {
-                    SkillSource::Ref(r) => Command::Combat(CombatCommand::UseSkill {
-                        what: self.rref(r)?,
-                        target,
-                    }),
-                    SkillSource::Quickslot(n) => match self.mirror.quickslots.get(n)? {
-                        Shortcut::Skill(r) => Command::Combat(CombatCommand::UseSkill {
-                            what: r.clone(),
-                            target,
-                        }),
-                        Shortcut::Item(i) => {
-                            Command::Inventory(InventoryCommand::UseItem { item: *i, target })
-                        }
-                    },
-                }
-            }
-            InputCmd::UseItem { item, target } => Command::Inventory(InventoryCommand::UseItem {
-                item: item_id(*item),
-                target: self.target(*target)?,
-            }),
-            InputCmd::Use(e) => Command::Npc(NpcCommand::UseEntity {
-                entity: self.id(*e)?,
-            }),
-            InputCmd::CancelCast => Command::Combat(CombatCommand::CancelCast),
-            InputCmd::Choose { page, option } => {
-                let window = self.window(WindowKind::Dialogue)?;
-                if let Some(p) = page {
-                    // The open window must show content identical to `$page`'s (§7.7).
-                    let shown = self.mirror.dialogue.as_ref()?;
-                    if page_parts(&self.sc, *p, self.mirror.player).as_ref() != Some(shown) {
-                        return None;
-                    }
-                }
-                Command::Npc(NpcCommand::ChooseOption {
-                    window,
-                    option: *option,
-                })
-            }
-            InputCmd::Track { quest, on } => Command::Npc(NpcCommand::TrackQuest {
-                quest: self.rref(quest)?,
-                tracked: *on,
-            }),
-            InputCmd::Accept | InputCmd::Decline => Command::Npc(NpcCommand::AnswerQuest {
-                window: self.window(WindowKind::QuestOffer)?,
-                accept: matches!(cmd, InputCmd::Accept),
-            }),
-            InputCmd::Abandon(q) => Command::Npc(NpcCommand::AbandonQuest {
-                quest: self.rref(q)?,
-            }),
-            InputCmd::Buy { entry, qty } => Command::Npc(NpcCommand::Buy {
-                window: self.window(WindowKind::Vendor)?,
-                entry: *entry,
-                quantity: *qty,
-            }),
-            InputCmd::Sell { item, qty } => Command::Npc(NpcCommand::Sell {
-                window: self.window(WindowKind::Vendor)?,
-                item: item_id(*item),
-                quantity: *qty,
-            }),
-            InputCmd::TakeLoot(e) => Command::Npc(NpcCommand::TakeLoot {
-                window: self.window(WindowKind::Loot)?,
-                entry: *e,
-            }),
-            InputCmd::Equip { item, slot } => {
-                let slot = u16::try_from(self.sc.enum_value(*slot)?).ok()?;
-                Command::Inventory(InventoryCommand::EquipItem {
-                    item: item_id(*item),
-                    slot: Some(slot),
-                })
-            }
-            InputCmd::Unequip(i) => {
-                Command::Inventory(InventoryCommand::UnequipItem { item: item_id(*i) })
-            }
-            InputCmd::MoveItem { item, to, slot } => {
-                Command::Inventory(InventoryCommand::MoveItem {
-                    item: item_id(*item),
-                    to: ItemPlace {
-                        container: *to,
-                        slot: *slot,
-                    },
-                })
-            }
-            InputCmd::Destroy(i) => {
-                Command::Inventory(InventoryCommand::DestroyItem { item: item_id(*i) })
-            }
-            InputCmd::Split { item, qty } => Command::Inventory(InventoryCommand::SplitStack {
-                item: item_id(*item),
-                quantity: *qty,
-            }),
-            InputCmd::Quickslot { slot, content } => {
-                let content = match content {
-                    SlotContent::Empty => None,
-                    SlotContent::Item(i) => Some(Shortcut::Item(item_id(*i))),
-                    SlotContent::Ref(r) => Some(Shortcut::Skill(self.rref(r)?)),
-                };
-                Command::Combat(CombatCommand::SetQuickslot {
-                    slot: *slot,
-                    content,
-                })
-            }
-            InputCmd::Chat { text, channel } => Command::Chat {
-                channel: match channel {
-                    ChannelArg::Say => ChatChannel::Say,
-                    ChannelArg::Yell => ChatChannel::Yell,
-                    ChannelArg::Emote => ChatChannel::Emote,
-                    ChannelArg::Fellowship => ChatChannel::Fellowship,
-                    ChannelArg::Tell(peer) => ChatChannel::Tell {
-                        peer: peer.clone()?,
-                    },
-                    ChannelArg::Named(n) => ChatChannel::Named { name: n.clone() },
-                },
-                text: text.clone(),
-            },
-            InputCmd::JoinChannel(n) => {
-                Command::Social(SocialCommand::JoinChannel { name: n.clone() })
-            }
-            InputCmd::LeaveChannel(n) => {
-                Command::Social(SocialCommand::LeaveChannel { name: n.clone() })
-            }
-            InputCmd::Invite(n) => {
-                Command::Social(SocialCommand::InviteToFellowship { name: n.clone() })
-            }
-            InputCmd::AnswerInvite(a) => {
-                Command::Social(SocialCommand::AnswerInvite { accept: *a })
-            }
-            InputCmd::LeaveFellowship => Command::Social(SocialCommand::LeaveFellowship),
-            InputCmd::Kick(n) => {
-                Command::Social(SocialCommand::KickFromFellowship { name: n.clone() })
-            }
-            InputCmd::SetLeader(n) => {
-                Command::Social(SocialCommand::SetFellowshipLeader { name: n.clone() })
-            }
-            InputCmd::OpenTrade(e) => Command::Social(SocialCommand::OpenTrade {
-                entity: self.id(*e)?,
-            }),
-            InputCmd::OfferTrade { item, coin } => {
-                let window = self.window(WindowKind::Trade)?;
-                match item {
-                    Some((i, q)) => Command::Social(SocialCommand::OfferTrade {
-                        window,
-                        item: Some(item_id(*i)),
-                        quantity: *q,
-                        coin: 0,
-                    }),
-                    None => Command::Social(SocialCommand::OfferTrade {
-                        window,
-                        item: None,
-                        quantity: 0,
-                        coin: *coin,
-                    }),
-                }
-            }
-            InputCmd::TradeReady(r) => Command::Social(SocialCommand::SetTradeReady {
-                window: self.window(WindowKind::Trade)?,
-                ready: *r,
-            }),
-            InputCmd::Friend(n) => Command::Social(SocialCommand::AddFriend { name: n.clone() }),
-            InputCmd::Unfriend(n) => {
-                Command::Social(SocialCommand::RemoveFriend { name: n.clone() })
-            }
-            InputCmd::IgnorePlayer(n) => Command::Social(SocialCommand::Ignore { name: n.clone() }),
-            InputCmd::Unignore(n) => Command::Social(SocialCommand::Unignore { name: n.clone() }),
-            InputCmd::ChooseTravel(e) => Command::World(WorldCommand::ChooseTravel {
-                window: self.window(WindowKind::Travel)?,
-                entry: *e,
-            }),
-            InputCmd::JoinInstance(e) => Command::World(WorldCommand::JoinInstance {
-                window: self.window(WindowKind::Instances)?,
-                entry: *e,
-            }),
-            InputCmd::LeaveInstance => Command::World(WorldCommand::LeaveInstance),
-            InputCmd::Dismount => Command::World(WorldCommand::Dismount),
-            InputCmd::Train(e) => Command::Progression(ProgressionCommand::TrainSkill {
-                window: self.window(WindowKind::Trainer)?,
-                entry: *e,
-            }),
-            InputCmd::SlotTrait { slot, what } => {
-                Command::Progression(ProgressionCommand::SlotTrait {
-                    slot: *slot,
-                    what: match what {
-                        Some(r) => Some(self.rref(r)?),
-                        None => None,
-                    },
-                })
-            }
-            InputCmd::Craft { recipe, qty } => Command::Progression(ProgressionCommand::Craft {
-                recipe: self.rref(recipe)?,
-                quantity: *qty,
-            }),
-            InputCmd::CreateCharacter { name, class, body } => {
-                let class = class.and_then(|c| self.sc.enum_value(c));
-                let appearance = body.and_then(|(s, x)| {
-                    let species = self.sc.enum_value(s)?;
-                    let sex = self.sc.enum_value(x)?;
-                    Some(Box::new(Appearance::new(Body::Character { species, sex })))
-                });
-                Command::Character(CharacterCommand::CreateCharacter {
-                    name: name.clone(),
-                    appearance,
-                    class,
-                })
-            }
-            InputCmd::DeleteCharacter(n) => {
-                Command::Character(CharacterCommand::DeleteCharacter { name: n.clone() })
-            }
-            InputCmd::Close(kind) => Command::Npc(NpcCommand::CloseWindow {
-                window: self.window(*kind)?,
-            }),
-        })
     }
 }
 

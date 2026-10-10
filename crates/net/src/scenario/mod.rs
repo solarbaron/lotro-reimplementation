@@ -17,7 +17,8 @@
 //!    [`SandboxConfig::scenario`](crate::sandbox::SandboxConfig::scenario). The feed runs
 //!    on a virtual clock in ticks; [`Session`](crate::Session) works unchanged.
 //! 4. **Log** with [`HeadlessDriver`] (headless runs) or [`format_event`] /
-//!    [`format_command`] / [`LogWriter`] (the canonical log of §10).
+//!    [`format_command`] / [`LogWriter`] (the canonical log of §10). A client that owns
+//!    its session (a windowed run) plays the input script with [`InputPlayer`].
 //!
 //! ```
 //! use std::sync::Arc;
@@ -43,6 +44,7 @@ mod driver;
 mod error;
 pub(crate) mod feed;
 mod forms;
+mod input;
 mod lex;
 mod log;
 mod parse;
@@ -57,10 +59,11 @@ pub use error::{
     Limit, ResolveError, RuntimeErrorKind, ScenarioError, ScenarioErrorKind, ScenarioRuntimeError,
 };
 pub use feed::{FinishReason, ScenarioCounters, ScenarioStatus};
+pub use input::{InputLine, InputPlayer};
 pub use lex::MAX_FILE_BYTES;
 pub use log::{
-    ACTOR_ID_BASE, EndCounters, EndReason, LogContext, LogTime, LogWriter, format_command,
-    format_end, format_event, quote,
+    ACTOR_ID_BASE, EndCounters, EndReason, LogContext, LogTime, LogWriter, MAX_LOG_BYTES,
+    format_command, format_end, format_event, quote,
 };
 pub use resolve::{MAX_CANDIDATES, ResolveNote, ResolvedScenario, ShortfallNote};
 pub use select::{

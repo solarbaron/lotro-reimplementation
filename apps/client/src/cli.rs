@@ -466,8 +466,8 @@ pub struct Args {
     pub scenario_log: Option<PathBuf>,
 
     /// Windowed scenario runs: also play the scenario's input script (headless runs always
-    /// play it). Not played yet in windowed runs (`scenario-feed.md` §12.4 OPEN): the run
-    /// ends as if it were, and a warning says so.
+    /// play it), on the feed's clock: each line goes out before the feed processes its
+    /// tick, the `at pre` lines before the world is entered.
     #[arg(long, requires = "scenario")]
     pub scenario_input: bool,
 

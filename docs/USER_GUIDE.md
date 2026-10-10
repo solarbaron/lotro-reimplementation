@@ -263,7 +263,7 @@ nothing is computed from the game's rules.
 |---|---|
 | `--scenario FILE` | Play FILE with the sandbox. Cannot be combined with `--server` (§3.12), `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase` or `--ui-script`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading`; `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
 | `--scenario-log FILE` | Write the run's event log to FILE (`-` for standard output). Needs `--scenario` (refused with exit code 2 otherwise). FILE is created or overwritten without asking; the scenario file's own path is refused (exit code 2). A log can grow very large (below). |
-| `--scenario-input` | Windowed runs: also play the file's `input` block (headless runs always play it). Not played in windowed runs yet: the option is accepted and a warning says so. |
+| `--scenario-input` | Windowed runs: also play the file's `input` block (headless runs always play it). Each line is sent when the scenario's clock reaches it, the `at pre` lines before the world is entered. |
 
 **Headless runs.** `--headless --scenario FILE` needs nothing else to end the run: the
 scenario runs on its own virtual clock, as fast as it can, to its end, then the client
@@ -295,16 +295,16 @@ load, and such runs are not guaranteed to give the same log every time. With an 
 
 **Windowed runs.** Without `--headless`, the walker plays the scenario in real time. A HUD
 line shows its state, and when it ends the world stays open. Logs of windowed runs carry
-wall-clock times, so they differ from run to run. A windowed run writes its log from the
-frame loop: send it to a file, and do not pipe `--scenario-log -` into a reader that can stop
-reading (such as `less`), or the window freezes while the reader waits. A file whose `enter`
-character only an `accept-character` step adds needs `--headless`: windowed runs do not play
-the `input` block yet, so such a run is refused with exit status 2.
+wall-clock times, so they differ from run to run. The log is written in the background, so a
+slow disk or a reader of `--scenario-log -` that stops reading (such as `less`) never freezes
+the window; if the writing falls too far behind, the log stops with `error=LogWrite` and the
+client exits with status 5. The `input` block is played only with `--scenario-input`; a file
+whose `enter` character only an `accept-character` step adds needs it (or `--headless`), and
+without it such a run is refused with exit status 2.
 
-**Log size.** A scenario file is at most 1 MiB, but its log is not limited by anything but
-the run's event cap: a file built to do so (a trigger that answers many input lines with long
-chat lines) can make a log of many gigabytes and still exit 0. Run scenario files from
-others without `--scenario-log FILE`, or send the log to a place where size is limited.
+**Log size.** A scenario file is at most 1 MiB, and its log at most 256 MiB: a file built
+to make a larger one (a trigger that answers many input lines with long chat lines) ends the
+run at that size with exit status 5, the log's last line saying `error=LogOverflow`.
 
 **The file at a glance.** A UTF-8 text file, by convention `NAME.scenario`. The first line
 that is not blank or a comment is `tessera-scenario 1`; `#` starts a comment, so a file may
@@ -313,7 +313,7 @@ begin with its SPDX header comment. Settings (`title`, `tick`, `end-at`, `enter`
 `select`, `actor`, `item`, `page`, `option`) and step lines. A step line starts with `at TIME`
 (absolute) or `+TIME` (after the previous line). `on PATTERN … end` answers a command you
 send, `repeat N every TIME … end` repeats steps, and `input … end` lists the commands a
-headless run sends for you. This original example plays without an install:
+headless run (or a windowed one with `--scenario-input`) sends for you. This original example plays without an install:
 
 ```
 tessera-scenario 1
@@ -365,9 +365,9 @@ install and must not carry game content:
   Container slot numbers (`give`, `unequip` and `move-item … slot=`), quickslot and trait
   slot numbers, entry and option numbers are plain numbers and are fine.
 - **Original text only.** No names, dialogue, quest, item or place text from the game; every
-  literal string is your own. Committed scenarios are licensed GPL-3.0-or-later and start
-  with the header comment `# SPDX-License-Identifier: GPL-3.0-or-later` (the committed-scenario
-  test checks it).
+  literal string is your own. Committed scenarios are licensed GPL-3.0-or-later or CC0-1.0
+  and start with the header comment `# SPDX-License-Identifier: GPL-3.0-or-later` (or
+  `CC0-1.0`); the committed-scenario test checks it.
 - **Keep the rest local.** A scenario that names record IDs you picked (the `did` selector
   family exists for that) or copies text from your install stays on your machine, outside
   the repository or git-ignored. So does every log of a run with an install: it lists record

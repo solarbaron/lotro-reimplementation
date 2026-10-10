@@ -124,11 +124,15 @@ fn committed_scenarios_follow_the_content_rules() {
                 n + 1
             );
         }
+        // §13 rule 1: GPL-3.0-or-later or CC0-1.0, stated by the SPDX header comment.
         assert!(
-            text.lines()
-                .next()
-                .is_some_and(|l| l.contains("SPDX-License-Identifier: GPL-3.0-or-later")),
-            "{}: SPDX header",
+            text.lines().next().is_some_and(|l| {
+                l.starts_with('#')
+                    && ["GPL-3.0-or-later", "CC0-1.0"]
+                        .iter()
+                        .any(|id| l.trim_end() == format!("# SPDX-License-Identifier: {id}"))
+            }),
+            "{}: SPDX header (GPL-3.0-or-later or CC0-1.0)",
             path.display()
         );
     }

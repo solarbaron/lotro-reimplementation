@@ -34,11 +34,13 @@
 # include_bytes! whose target leaves that crate's directory fails, and so does an include
 # whose argument is not a plain string literal (except one built from env!("OUT_DIR")).
 #
-# Deviation from scenario-feed.md §3.1: the spec allows `tessera-net` without the feature
-# `scenario` in tessera-server's graph. This guard refuses tessera-net in any form, because
-# the exception does not hold in a workspace build: tessera-client turns on tessera-net's
-# default features (`scenario` included), and feature unification gives them to the server
-# too. Recorded as an OPEN in scenario-feed.md §3.1.
+# tessera-net: scenario-feed.md §3.1 still lists `tessera-net` without the feature
+# `scenario` as allowed in tessera-server's graph. This guard refuses tessera-net in any
+# form, because the exception does not hold in a workspace build: tessera-client turns on
+# tessera-net's default features (`scenario` included), and feature unification gives them
+# to the server too. Raised as an OPEN in §3.1; the spec's independent review of revision 3
+# (2026-10-09) agreed (drop the exception) and confirmed the dev-dependency and in-process
+# host checks below; the spec text follows at its next revision.
 #
 # Usage: tools/check-server-deps.sh [-p PACKAGE] [--root DIR] [--self-test]
 #   (no option)    check tessera-server and every server host

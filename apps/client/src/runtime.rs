@@ -42,6 +42,19 @@ fn attach_scenario_log(world: &mut World, args: &Args, now: Instant) {
     }
 }
 
+/// Hands a windowed scenario's input script (`--scenario-input`, `scenario-feed.md` §12.4)
+/// to `world` (no-op when the scenario does not play it).
+fn attach_scenario_input(
+    world: &mut World,
+    scenario: Option<&Arc<tessera_net::scenario::ResolvedScenario>>,
+) {
+    if let Some(sc) = scenario
+        && sc.plays_input()
+    {
+        world.set_scenario_input(tessera_net::scenario::InputPlayer::new(Arc::clone(sc)));
+    }
+}
+
 /// Non-presentation client state.
 #[derive(Debug)]
 pub struct Runtime {
@@ -66,6 +79,8 @@ pub struct Runtime {
     held_walker_session: Option<tessera_net::sandbox::SandboxConfig>,
     /// The character a scenario enters with (`scenario-feed.md` §4.3 `enter`).
     scenario_character: Option<String>,
+    /// The windowed scenario, for the walker's session (its input script).
+    scenario: Option<Arc<tessera_net::scenario::ResolvedScenario>>,
     /// The windowed scenario's log and the scenario, for the walker's session.
     scenario_log: Option<(
         crate::scenario::live_log::LiveLogSlot,
@@ -230,6 +245,7 @@ impl Runtime {
                     let mut w = World::sandbox_with(now, config)?;
                     w.set_character(scenario_character.clone());
                     attach_scenario_log(&mut w, args, now);
+                    attach_scenario_input(&mut w, args.scenario_prepared.as_ref());
                     Ok(Some(w))
                 }),
                 None => World::plain(now, remote.as_ref())
@@ -269,6 +285,7 @@ impl Runtime {
             hold_walker_session: false,
             held_walker_session: None,
             scenario_character,
+            scenario: args.scenario_prepared.clone(),
             scenario_log: args
                 .scenario_log_slot
                 .clone()
@@ -345,6 +362,7 @@ impl Runtime {
                 {
                     w.set_scenario_log(log, now);
                 }
+                attach_scenario_input(&mut w, self.scenario.as_ref());
                 self.world = Some(w);
             }
             Some(Err(e)) => tracing::error!("world session unavailable: {e}"),
@@ -706,6 +724,98 @@ mod tests {
             lines
                 .last()
                 .is_some_and(|l| l.contains(" end reason=complete ")),
+            "{log}"
+        );
+    }
+    /// A windowed run with `--scenario-input` plays the input script (`scenario-feed.md`
+    /// §12.4): the `at pre` line creates the `enter` character before the world is entered
+    /// (no longer refused), timed lines go out on the feed's clock, and a line without its
+    /// window is counted as `input-skipped`.
+    #[test]
+    fn a_windowed_scenario_plays_its_input_script() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("i.scenario");
+        std::fs::File::create(&file)
+            .and_then(|mut f| {
+                f.write_all(
+                    b"tessera-scenario 1\ntick 50ms\nplayer \"Testa\"\nenter \"Cora\"\n\
+                      on create-character name=\"Cora\"\n+0s accept-character \"Cora\"\nend\n\
+                      on chat\n+0s system \"Heard\"\nend\n\
+                      input\nat pre create-character \"Cora\"\nat 0.1s chat \"hi\"\n\
+                      at 0.2s accept\nend\n",
+                )
+            })
+            .expect("scenario file");
+        let log_path = dir.path().join("i.log");
+        let argv = [
+            "t",
+            "--no-data",
+            "--data-dir",
+            dir.path().to_str().expect("utf-8"),
+            "--scenario",
+            file.to_str().expect("utf-8"),
+            "--scenario-log",
+            log_path.to_str().expect("utf-8"),
+        ];
+        // Without --scenario-input the enter character could never exist: refused.
+        let plain = Args::try_parse_from(argv).expect("args");
+        let refused = crate::scenario::prepare(&plain, &crate::scenario::InstallChoice::None)
+            .expect_err("refused without --scenario-input");
+        assert_eq!(refused.exit_code(), crate::scenario::EXIT_USAGE);
+        let mut args =
+            Args::try_parse_from(argv.iter().chain(&["--scenario-input"])).expect("args");
+        let resolved = crate::scenario::prepare(&args, &crate::scenario::InstallChoice::None)
+            .expect("prepares");
+        assert!(resolved.plays_input());
+        args.scenario_prepared = Some(Arc::new(resolved));
+        let out = std::fs::File::create(&log_path).expect("log");
+        args.scenario_log_slot = Some(crate::scenario::live_log::LiveLogSlot::new(Box::new(out)));
+        let start = Instant::now();
+        let mut rt = Runtime::start(&args, start).expect("runtime");
+        let mut finished = false;
+        for k in 0..400u64 {
+            rt.tick(start + Duration::from_millis(10 * k));
+            let w = rt.world.as_ref().expect("world");
+            if matches!(
+                w.scenario_status(),
+                Some(tessera_net::scenario::ScenarioStatus::Finished { .. })
+            ) {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "the scenario finished");
+        let w = rt.world.as_ref().expect("world");
+        let player = w.player().expect("in the world");
+        assert_eq!(
+            w.entities().get(&player).map(|e| e.name.as_str()),
+            Some("Cora"),
+            "the character the input script created"
+        );
+        rt.shutdown();
+        drop(rt);
+        let log = std::fs::read_to_string(&log_path).expect("log");
+        let lines: Vec<&str> = log.lines().collect();
+        let at = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} missing:\n{log}"))
+        };
+        let create = at("pre > CreateCharacter name=\"Cora\"");
+        let info = at("pre CharacterInfo name=\"Cora\"");
+        let enter = at("pre > EnterWorld character=\"Cora\"");
+        let chat = at("> Chat channel=say text=\"hi\"");
+        let heard = at("text=\"Heard\"");
+        assert!(
+            create < info && info < enter && enter < chat && chat < heard,
+            "{log}"
+        );
+        assert!(!lines[chat].starts_with("pre "), "{log}");
+        let last = lines.last().copied().unwrap_or_default();
+        assert!(
+            last.contains(" end reason=complete ") && last.contains(" input-skipped=1 "),
             "{log}"
         );
     }

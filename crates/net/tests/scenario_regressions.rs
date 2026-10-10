@@ -575,3 +575,72 @@ fn driver_frames_carry_the_virtual_clock() {
         "{log}"
     );
 }
+
+/// A log that reaches its size limit ends the run at once with `error=LogOverflow` (exit 5),
+/// keeping every whole line written before it (`scenario-feed.md` §11.1 OPEN, the review's
+/// recommended bound).
+#[test]
+fn a_log_at_its_size_limit_ends_with_log_overflow() {
+    let text = "tessera-scenario 1\ntick 50ms\nplayer \"Testa\"\n\
+                at 0s repeat 1000 every 50ms\n+0s system \"A line of the scenario log\"\nend\n";
+    let resolved = Arc::new(resolve(text, &mut EmptyResolver));
+    let config = SandboxConfig {
+        scenario: Some(Arc::clone(&resolved)),
+        ..SandboxConfig::default()
+    };
+    let session = Session::new(SandboxBackend::new(config).expect("sandbox"));
+    let mut driver =
+        HeadlessDriver::new(session, Arc::clone(&resolved), Some(Vec::new())).with_log_limit(4_096);
+    let outcome = driver.run();
+    assert_eq!(outcome.exit_code(), 5);
+    let log = String::from_utf8(driver.into_log().expect("log")).expect("utf-8");
+    let (body, last) = log.trim_end_matches('\n').rsplit_once('\n').expect("lines");
+    assert!(body.len() < 4_096, "{}", body.len());
+    assert!(
+        last.contains(" end reason=error ") && last.ends_with(" error=LogOverflow line=0"),
+        "{last}"
+    );
+    // The run stopped at the poll that overflowed, long before the scenario's end.
+    let LogTime::At(ms) = outcome.time else {
+        panic!("{:?}", outcome.time)
+    };
+    assert!(ms < 10_000, "{ms}");
+    // The same run without the lowered limit completes.
+    assert_eq!(run_resolved(resolve(text, &mut EmptyResolver)).1, 0);
+}
+
+/// The public input player yields the input script as the headless driver plays it:
+/// `at pre` lines first, timed lines by tick (time, then file order), and a line whose
+/// window is not open builds no command (§7.7).
+#[test]
+fn the_input_player_yields_lines_by_tick() {
+    use tessera_net::scenario::InputPlayer;
+    let text = "tessera-scenario 1\ntick 100ms\nplayer \"Testa\"\n\
+                input\nat 0.25s chat \"c\"\nat 0s chat \"a\"\nat pre delete-character \"X\"\n\
+                at 0.1s accept\nat 0.1s chat \"b\"\nend\n";
+    let mut resolved = resolve(text, &mut EmptyResolver);
+    resolved.set_plays_input(false);
+    let mut silent = InputPlayer::new(Arc::new(resolved.clone()));
+    assert!(silent.is_done(), "nothing to play without plays_input");
+    assert!(silent.next_pre().is_none() && silent.next_due(u64::MAX).is_none());
+    resolved.set_plays_input(true);
+    let mut p = InputPlayer::new(Arc::new(resolved));
+    assert_eq!(p.tick_ms(), 100);
+    let pre = p.next_pre().expect("pre line");
+    assert_eq!(
+        (pre.line, pre.command.map(|c| c.name())),
+        (7, Some("DeleteCharacter"))
+    );
+    assert!(p.next_pre().is_none());
+    // Tick 1 holds the lines at 0 s and 0.1 s: `a` (time 0), then `accept` and `b` (file
+    // order at 0.1 s); `accept` has no quest-offer window.
+    let names: Vec<(u32, Option<&str>)> = std::iter::from_fn(|| p.next_due(1))
+        .map(|l| (l.line, l.command.map(|c| c.name())))
+        .collect();
+    assert_eq!(names, vec![(6, Some("Chat")), (8, None), (9, Some("Chat"))]);
+    p.skip(8, "target does not exist");
+    assert_eq!(p.skipped(), 1);
+    assert!(p.next_due(2).is_none(), "0.25 s is due in tick 3");
+    assert_eq!(p.next_due(3).map(|l| l.line), Some(5));
+    assert!(p.is_done());
+}

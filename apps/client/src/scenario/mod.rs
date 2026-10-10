@@ -180,10 +180,11 @@ pub fn prepare(args: &Args, install: &InstallChoice) -> Result<ResolvedScenario,
         .resolve(resolver.as_dyn())
         .map_err(|e| PrepareError::Resolve(format!("{shown}:{e}")))?;
     let headless = is_headless(args);
-    if !headless {
+    let plays_input = headless || args.scenario_input;
+    if !plays_input {
         check_windowed_enter(&resolved)?;
     }
-    resolved.set_plays_input(headless || args.scenario_input);
+    resolved.set_plays_input(plays_input);
     tracing::info!(
         file = %shown,
         title = resolved.title().unwrap_or(""),
@@ -194,9 +195,9 @@ pub fn prepare(args: &Args, install: &InstallChoice) -> Result<ResolvedScenario,
     Ok(resolved)
 }
 
-/// Refuses a windowed run whose `enter` character only an `accept-character` step adds
-/// (§4.3): the step fires on the input script's pre-world `create-character`, which a
-/// windowed run does not play yet (§12.4 OPEN (1)), so the run could never enter.
+/// Refuses a windowed run without `--scenario-input` whose `enter` character only an
+/// `accept-character` step adds (§4.3): the step fires on the input script's pre-world
+/// `create-character`, which such a run does not play, so it could never enter.
 ///
 /// # Errors
 ///
@@ -215,7 +216,7 @@ fn check_windowed_enter(scenario: &ResolvedScenario) -> Result<(), PrepareError>
     }
     Err(PrepareError::Usage(format!(
         "the scenario enters with \"{}\", a character only its input script creates; \
-         windowed runs do not play the input script yet, so play it with --headless",
+         play it with --scenario-input (or --headless), which plays the input script",
         enter.escape_debug()
     )))
 }
@@ -350,14 +351,6 @@ pub fn run(mut args: Args) -> u8 {
     let install = install.root();
     if headless {
         return run_headless(&args, resolved, install);
-    }
-    if args.scenario_input {
-        // The input script's only player is the headless driver, which owns the session
-        // (`scenario-feed.md` §12.4 OPEN): the windowed client cannot send its lines yet.
-        tracing::warn!(
-            "--scenario-input: the input script is not played in windowed runs yet; play \
-             the scenario with --headless to run it"
-        );
     }
     // `--scenario-log` (§12.4): the world session writes it, with wall-clock times.
     let slot = match open_log(&args, install) {
@@ -594,13 +587,16 @@ mod tests {
              at 0s system \"hi\"\ninput\nat pre create-character \"Wren\"\nend\n",
         );
         let path = f.path().to_str().unwrap();
-        for extra in [&[][..], &["--scenario-input"][..]] {
-            let mut v = vec!["--no-data", "--scenario", path];
-            v.extend_from_slice(extra);
-            let e = prepare(&args(&v), &InstallChoice::None).expect_err("refused");
-            assert_eq!(e.exit_code(), EXIT_USAGE);
-            assert!(e.to_string().contains("Wren"), "{e}");
-        }
+        let e = prepare(
+            &args(&["--no-data", "--scenario", path]),
+            &InstallChoice::None,
+        )
+        .expect_err("refused");
+        assert_eq!(e.exit_code(), EXIT_USAGE);
+        assert!(e.to_string().contains("Wren"), "{e}");
+        // `--scenario-input` plays the input script windowed, so it enters (§12.4).
+        let a = args(&["--no-data", "--scenario", path, "--scenario-input"]);
+        assert!(prepare(&a, &InstallChoice::None).is_ok());
         // Headless runs play the input script, so they enter.
         let a = args(&["--no-data", "--headless", "--scenario", path]);
         assert!(prepare(&a, &InstallChoice::None).is_ok());
@@ -692,7 +688,8 @@ mod tests {
             &InstallChoice::None,
         )
         .expect("prepares");
-        let _log = broken.take(&sc);
+        // The header reaches the writer thread, which fails; dropping the log waits for it.
+        drop(broken.take(&sc));
         assert_eq!(windowed_exit_code(EXIT_OK, Some(&broken)), EXIT_RUNTIME);
     }
 }

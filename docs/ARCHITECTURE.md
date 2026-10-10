@@ -1188,9 +1188,10 @@ breaking change: `Event::Character(CharacterEvent)`, `Event::Inventory(…)`,
 `Event::Combat(…)`, `Event::Npc(…)`, `Event::Social(…)`, `Event::World(…)`,
 `Event::Progression(…)`, and the same groups for `Command`. Variant names must be unique
 among all events and among all commands, groups included, because `Event::name`,
-`Command::name` and the canonical log use the inner name only. They are unique today, but
-no test enforces it yet; a milestone that adds a variant checks it by hand until one does
-(open item: a `tessera-net` unit test over every `name()` string). Record references travel
+`Command::name` and the canonical log use the inner name only. The `tessera-net` unit test
+`session::name_tests` enforces it: it reads every `name()` of `Event`, `Command` and their
+groups from the source and fails on a repeated name or a name that differs from its
+variant. Record references travel
 as `DataId` or as literal labels (`Ref`), texts as literals or as references the client half
 resolves (`Text`); `tessera-net` interprets neither. Numbers are whatever the driving backend
 sends: the scenario feed's are scripted, never derived (decision 0024 §2.4).
@@ -1433,7 +1434,8 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
    action snapshot ([0014](decisions/0014-ui-input-bridge.md) D8).
 2. `Session::poll`: apply server events to the entity store (entity ID → transform,
    property set, render/audio components). A windowed scenario run with `--scenario-log`
-   also writes the polled events to the log here (§21, exception (d)).
+   also formats the polled events for the log here and hands them to the log's writer
+   thread (§21); with `--scenario-input` it sends the input lines due before the poll.
 3. Simulation at fixed rates, interpolated for rendering (Decision, see "Simulation steps"
    below): the character controller (`tessera-physics`) on its own 1/60 s step; the other
    local simulation (free-fly controller, camera) on the 30 Hz tick.
@@ -1565,7 +1567,7 @@ Rules:
   by profiling.
 - No blocking I/O on the main thread after start-up. A missing asset is a placeholder for
   a frame, never a stall. Stated exceptions: (a)–(c) are needed because the plugin API's
-  calls are synchronous and must complete or fail before they return; (d) is a stop-gap:
+  calls are synchronous and must complete or fail before they return:
   - **(a)** the header probe of `SetBackground(path)`: one synchronous read of at most
     64 bytes, cached per path ([0015](decisions/0015-ui-rendering.md) §4.4). The
     `Plugins/` index walk runs on a worker and is not an exception;
@@ -1577,14 +1579,14 @@ Rules:
     This is the precedent that 0015 §4.4 cites for (a) ("of the same kind that `import`
     already needs"); that wording stands, and its reference for it is this exception, not
     §18.2;
-  - **(d)** (P0, until a writer thread replaces it) the `--scenario-log` of a windowed
-    scenario run: frame-loop step 2 writes each polled event and accepted command as one
-    line into a buffered file or standard output. It is bounded only by the feed's limits
-    (`scenario-feed.md` §11.1: at most 8 ticks of 4,096 events per poll, lines of up to
-    about 1 KiB), and a standard-output reader that stops reading blocks the frame. Planned
-    fix: a writer thread behind a bounded channel that drops lines (and ends the log with
-    `reason=error`) rather than block. The headless driver draws no frames and is not
-    affected.
+  - the `--scenario-log` of a windowed scenario run is not an exception: frame-loop step 2
+    only formats each polled event and accepted command into memory, and a writer thread
+    (`apps/client/src/scenario/live_log.rs`) does the I/O behind a bounded channel (256
+    chunks; a chunk the full channel refuses stays with the frame and goes with the next
+    one). The frame never waits: when 16 MiB are formatted but not yet written (a
+    standard-output reader that stopped reading), the log drops the lines from there on and
+    ends with `reason=error error=LogWrite` (exit 5). The headless driver draws no frames,
+    so its writes delay no frame.
 - Worker pool: a dedicated pool with a priority queue (Decision), not a general
   work-stealing pool, because priority and cancellation matter more than throughput.
 

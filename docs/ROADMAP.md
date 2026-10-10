@@ -1457,6 +1457,16 @@ no test yet checks that event and command `name()` strings are unique (ARCH §19
 windowed input script is not played (§12.4 OPEN), and whether in-process server hosts must
 stay feed-free (§3.1 OPEN item 3).
 
+Follow-ups (2026-10-09, after the spec's independent review passed, Accepted): the windowed
+log is written by a writer thread behind a bounded channel (ARCH §21, exception (d) gone);
+`tessera-net` `session::name_tests` checks that every event and command `name()` is unique
+(ARCH §19.1); windowed runs play the input script with `--scenario-input` through the new
+public `tessera_net::scenario::InputPlayer` (§12.4 OPEN (1); the refusal of an `enter`
+character that only the input script creates now applies only without the option); logs
+stop at 256 MiB with `error=LogOverflow`, exit 5 (§11.1 OPEN, the review's recommended
+bound); the content test accepts CC0-1.0 headers (§13 OPEN). The review's rulings on §3.1
+guard item 1 (refuse `tessera-net` in any form) and module naming match the code as it was.
+
 ---
 
 <a id="m9"></a>

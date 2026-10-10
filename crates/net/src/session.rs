@@ -920,3 +920,147 @@ fn clean_text(event: &mut Event) -> bool {
         _ => false,
     }
 }
+
+/// `Event::name` and `Command::name` give the inner variant's name of a grouped value, so
+/// variant names must be unique among all events and among all commands, groups included
+/// (`docs/ARCHITECTURE.md` §19.1). The test reads every `name()` of `Event`, `Command` and
+/// their group enums from the source: each `match` is exhaustive (the compiler checks
+/// that), so every variant has an arm, and a new variant is covered without editing the
+/// test.
+#[cfg(test)]
+mod name_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// An arm of a `name()` match.
+    #[derive(Debug)]
+    enum Arm {
+        /// `Self::Variant … => "Name",`
+        Literal { variant: String, name: String },
+        /// `Self::Group(x) => x.name(),`
+        Group(String),
+    }
+
+    /// Every `name(&self) -> &'static str` in `src`: (impl type, its arms).
+    fn name_fns(src: &str) -> Vec<(String, Vec<Arm>)> {
+        let mut out = Vec::new();
+        let mut current_impl: Option<String> = None;
+        let mut lines = src.lines();
+        while let Some(line) = lines.next() {
+            if let Some(rest) = line.strip_prefix("impl ")
+                && let Some(ty) = rest.strip_suffix(" {")
+                && ty.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                current_impl = Some(ty.to_owned());
+                continue;
+            }
+            if line.trim() != "pub fn name(&self) -> &'static str {" {
+                continue;
+            }
+            let ty = current_impl.clone().expect("name() inside an impl");
+            assert_eq!(lines.next().map(str::trim), Some("match self {"), "{ty}");
+            let mut arms = Vec::new();
+            for arm in lines.by_ref() {
+                let arm = arm.trim();
+                if arm == "}" {
+                    break;
+                }
+                let (pattern, value) = arm.split_once(" => ").expect("an arm");
+                let variant = pattern
+                    .strip_prefix("Self::")
+                    .expect("a Self:: pattern")
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .expect("a variant")
+                    .to_owned();
+                if let Some(name) = value.strip_prefix('"').and_then(|v| v.strip_suffix("\",")) {
+                    arms.push(Arm::Literal {
+                        variant,
+                        name: name.to_owned(),
+                    });
+                } else {
+                    assert!(value.ends_with(".name(),"), "{ty}: unexpected arm {arm}");
+                    arms.push(Arm::Group(variant));
+                }
+            }
+            assert!(!arms.is_empty(), "{ty}: no arms");
+            out.push((ty, arms));
+        }
+        out
+    }
+
+    /// Checks one family (`Event` or `Command`): every literal equals its variant, every
+    /// group arm has a group enum `GroupSuffix` with its own `name()`, and the names are
+    /// unique across the family.
+    fn check_family(fns: &BTreeMap<String, Vec<Arm>>, root: &str) -> usize {
+        let top = fns
+            .get(root)
+            .unwrap_or_else(|| panic!("{root}::name not found"));
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        let mut add = |ty: &str, arms: &[Arm], groups: &mut BTreeSet<String>| {
+            for arm in arms {
+                match arm {
+                    Arm::Literal { variant, name } => {
+                        assert_eq!(variant, name, "{ty}::{variant} is logged as {name}");
+                        if let Some(first) = seen.insert(name.clone(), ty.to_owned()) {
+                            panic!("{root} name {name} is used by {first} and {ty}");
+                        }
+                    }
+                    Arm::Group(g) => {
+                        groups.insert(g.clone());
+                    }
+                }
+            }
+        };
+        let mut groups = BTreeSet::new();
+        add(root, top, &mut groups);
+        assert!(!groups.is_empty(), "{root} has groups");
+        for g in &groups {
+            let ty = format!("{g}{root}");
+            let arms = fns
+                .get(&ty)
+                .unwrap_or_else(|| panic!("{ty}::name not found"));
+            let mut nested = BTreeSet::new();
+            add(&ty, arms, &mut nested);
+            assert!(nested.is_empty(), "{ty}: groups do not nest");
+        }
+        // Every group enum of the family is reached from the root.
+        for ty in fns.keys() {
+            if let Some(g) = ty.strip_suffix(root)
+                && !g.is_empty()
+            {
+                assert!(groups.contains(g), "{ty} is not a group of {root}");
+            }
+        }
+        seen.len()
+    }
+
+    #[test]
+    fn event_and_command_names_are_unique() {
+        let mut fns = BTreeMap::new();
+        for src in [include_str!("session.rs"), include_str!("domain.rs")] {
+            for (ty, arms) in name_fns(src) {
+                assert!(fns.insert(ty.clone(), arms).is_none(), "{ty}: two name()s");
+            }
+        }
+        let events = check_family(&fns, "Event");
+        let commands = check_family(&fns, "Command");
+        // The P0 vocabulary (`scenario-feed.md` §9) is far larger than this.
+        assert!(
+            events > 50 && commands > 40,
+            "{events} events, {commands} commands"
+        );
+    }
+
+    #[test]
+    fn name_reports_the_inner_variant() {
+        use crate::domain::{CharacterCommand, CharacterEvent};
+        let e = super::Event::Character(CharacterEvent::LevelChanged {
+            entity: crate::model::EntityId(1),
+            level: 2,
+        });
+        assert_eq!(e.name(), "LevelChanged");
+        let c = super::Command::Character(CharacterCommand::DeleteCharacter { name: "A".into() });
+        assert_eq!(c.name(), "DeleteCharacter");
+        assert_eq!(super::Command::Connect.name(), "Connect");
+    }
+}

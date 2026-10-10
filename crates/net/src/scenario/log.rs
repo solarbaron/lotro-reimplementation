@@ -1183,13 +1183,23 @@ pub fn format_end(reason: EndReason, c: EndCounters) -> String {
     )
 }
 
+/// The size limit of a canonical log before its end line: 256 MiB. The spec bounds the
+/// file and the run but not the log (`scenario-feed.md` §11.1 OPEN); this is the bound the
+/// review recommended, Tessera's choice until the spec owner decides. A header, command or
+/// event line that would pass it fails with [`io::ErrorKind::FileTooLarge`]
+/// ([`LogWriter::overflowed`]); the run then ends with `error=LogOverflow` (exit 5).
+pub const MAX_LOG_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Writes the canonical log: header, command and event lines with the exclusions of
-/// §10.2 item 6, and the end line.
+/// §10.2 item 6, and the end line. At most [`MAX_LOG_BYTES`] before the end line.
 #[derive(Debug)]
 pub struct LogWriter<W: io::Write> {
     out: W,
     ctx: LogContext,
     hidden: HashSet<EntityId>,
+    written: u64,
+    limit: u64,
+    overflowed: bool,
 }
 
 impl<W: io::Write> LogWriter<W> {
@@ -1199,7 +1209,17 @@ impl<W: io::Write> LogWriter<W> {
             out,
             ctx: LogContext::new(scenario),
             hidden: HashSet::new(),
+            written: 0,
+            limit: MAX_LOG_BYTES,
+            overflowed: false,
         }
+    }
+
+    /// Lowers the size limit to `bytes` (at most [`MAX_LOG_BYTES`]); for tests.
+    #[must_use]
+    pub fn with_limit(mut self, bytes: u64) -> Self {
+        self.limit = bytes.min(MAX_LOG_BYTES);
+        self
     }
 
     /// The naming context.
@@ -1213,14 +1233,50 @@ impl<W: io::Write> LogWriter<W> {
         self.out
     }
 
+    /// The underlying writer, for example to take the bytes written to a `Vec<u8>` so far.
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.out
+    }
+
+    /// The bytes written before the end line.
+    #[must_use]
+    pub fn written(&self) -> u64 {
+        self.written
+    }
+
+    /// Whether a line was refused because the log reached its size limit
+    /// ([`MAX_LOG_BYTES`]); every later line is refused too, only the end line is written.
+    #[must_use]
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    /// Writes one line (with its LF) within the size limit.
+    fn put(&mut self, line: &str) -> io::Result<()> {
+        let len = u64::try_from(line.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        if self.overflowed || self.written.saturating_add(len) > self.limit {
+            self.overflowed = true;
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "the scenario log reached its size limit",
+            ));
+        }
+        self.out.write_all(line.as_bytes())?;
+        self.out.write_all(b"\n")?;
+        self.written = self.written.saturating_add(len);
+        Ok(())
+    }
+
     /// Writes the header and resolution notes (§10.2 items 1–5).
     ///
     /// # Errors
     ///
-    /// Any I/O error of the writer.
+    /// Any I/O error of the writer, or the size limit.
     pub fn header(&mut self, scenario: &ResolvedScenario) -> io::Result<()> {
         for line in scenario.log_header() {
-            writeln!(self.out, "{line}")?;
+            self.put(&line)?;
         }
         Ok(())
     }
@@ -1229,12 +1285,13 @@ impl<W: io::Write> LogWriter<W> {
     ///
     /// # Errors
     ///
-    /// Any I/O error of the writer.
+    /// Any I/O error of the writer, or the size limit.
     pub fn command(&mut self, time: LogTime, command: &Command) -> io::Result<()> {
         if matches!(command, Command::Move { .. } | Command::QueryLocation) {
             return Ok(());
         }
-        writeln!(self.out, "{time} > {}", format_command(command, &self.ctx))
+        let line = format!("{time} > {}", format_command(command, &self.ctx));
+        self.put(&line)
     }
 
     /// Writes an event line, unless the log excludes it (statics, tagged entities and
@@ -1242,7 +1299,7 @@ impl<W: io::Write> LogWriter<W> {
     ///
     /// # Errors
     ///
-    /// Any I/O error of the writer.
+    /// Any I/O error of the writer, or the size limit.
     pub fn event(&mut self, time: LogTime, event: &Event) -> io::Result<()> {
         self.ctx.observe(event);
         match event {
@@ -1263,10 +1320,11 @@ impl<W: io::Write> LogWriter<W> {
             Event::EntityDespawned { id } if self.hidden.remove(id) => return Ok(()),
             _ => {}
         }
-        writeln!(self.out, "{time} {}", format_event(event, &self.ctx))
+        let line = format!("{time} {}", format_event(event, &self.ctx));
+        self.put(&line)
     }
 
-    /// Writes the end line.
+    /// Writes the end line (outside the size limit) and flushes.
     ///
     /// # Errors
     ///

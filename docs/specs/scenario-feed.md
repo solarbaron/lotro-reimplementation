@@ -1567,6 +1567,15 @@ any input, every allocation bounded by the limits below, and each violation a ty
 > whether a log-size limit belongs here (for example 256 MiB, a typed `LogOverflow`
 > run-time error, exit code 5) or whether the USER_GUIDE warning is enough.
 
+> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of
+> `tessera_net::scenario` and `apps/client`, 2026-10-09) Implemented as the review
+> recommended, pending this decision: `MAX_LOG_BYTES` = 268,435,456 bytes counts the header,
+> note, command and event lines (each with its LF); the end line is outside the limit. A
+> line that would pass it is not written, the run stops after that poll (headless) or at
+> the next poll (windowed), the end line is `reason=error … error=LogOverflow line=0` and the
+> client exits 5. `LogOverflow` is not a `RuntimeErrorKind` of the feed (the feed does not
+> fail; only the log does), and §10.2 item 7 and the §12.2 exit table do not name it yet.
+
 <a id="s11-2"></a>
 ### 11.2 Static errors
 
@@ -1746,6 +1755,26 @@ but its times follow the wall clock and are not normative.
 > the end line (or `reason=error error=Disconnected` when the session ends first, including
 > closing the window), its counters have `input-skipped=0`, and a write failure exits 5.
 
+> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
+> 2026-10-09, after the review's rulings on the OPEN above) Point (1) is now implemented
+> with the public input player the review endorsed, `tessera_net::scenario::InputPlayer`,
+> which the headless driver uses too (the headless log is unchanged). A windowed run with
+> `--scenario-input`: (a) sends the `at pre` lines after `Connected`, in file order and in
+> the same frame, and sends `EnterWorld` (the `enter` character, else the first of
+> `Connected`) after the next poll, so a character an `accept-character` step adds can be
+> entered; the refusal (exit 2) applies only without `--scenario-input`; (b) before each
+> poll while the feed runs, sends the timed lines due by tick *k* + 1, where *k* is the
+> feed's last processed tick (`time_ms` / tick of `scenario_status`), so no line reaches
+> the feed before its tick and a lagging feed receives lines late, never early; (c) counts
+> lines that send nothing as `input-skipped`, which the windowed end line now carries. The
+> windowed `--scenario-log` is formatted on the frame thread and written by a writer thread
+> behind a bounded channel (256 chunks; a chunk the full channel refuses stays with the
+> frame thread and is offered again with the next one); when 16 MiB (16,777,216 bytes) are
+> formatted but not yet written, the log drops the lines from there on and ends with
+> `reason=error … error=LogWrite line=0` (exit 5) instead of blocking the frame; a log
+> that cannot be drained within 5 s of the session's end is incomplete (exit 5). Confirm
+> or change (a)–(c) and the `LogWrite` ending.
+
 ---
 
 <a id="s13"></a>
@@ -1781,6 +1810,13 @@ but its times follow the wall clock and are not normative.
 > CC0-1.0, but the content test of rule 5 (`apps/client/tests/scenarios.rs`) requires the
 > `GPL-3.0-or-later` SPDX header and the USER_GUIDE says so. Either drop "(or CC0-1.0)" here
 > or widen the test.
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
+> 2026-10-09) Following the review's ruling on the two OPENs above, the content test now
+> accepts a first line `# SPDX-License-Identifier: GPL-3.0-or-later` or
+> `# SPDX-License-Identifier: CC0-1.0` (and the USER_GUIDE says so), and the committed
+> scenarios stay in `apps/client/tests/scenarios/`; rule 1 still names
+> `apps/client/scenarios/` until the next revision.
 
 ---
 

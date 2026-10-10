@@ -151,7 +151,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1's criteria 1–4 pass on branch `p1`, to be merged (below).
+  criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 and P3 are next.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
@@ -197,9 +197,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   windowed input script not played (§12.4), windowed log written on the main thread (ARCH §21
   (d)), no uniqueness test for event/command names, whether in-process server hosts must stay
   feed-free (§3.1), numeric enum keys in committed scenarios (owner, before P1, §16).
-- **P1 (characters, inventory and equipment; branch `p1` in worktree `wt-p1`, exit
+- **P1 (characters, inventory and equipment; merged to main 2026-10-10 (ad01231), exit
   verification 2026-10-10, criterion 1 re-checked the same day on 93b3dfd)**
-  (`docs/ROADMAP.md` P1 status): criteria 1–4 pass; to be merged. Criterion 1: lists,
+  (`docs/ROADMAP.md` P1 status): criteria 1–4 pass. Checks on the merge commit: fmt, clippy
+  (workspace, fuzz), release tests with the install 5,848 passed, 0 failed; content, SPDX,
+  server deps, DCO clean. Criterion 1: lists,
   creation, entry and look transfer pass on real data; the creation viewport draws its
   figure (shared figure path, `CharGen_Stage`, composed face, colour controls live, 15 / 15
   bodies) and received looks carry colours and face layers

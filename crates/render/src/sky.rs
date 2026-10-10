@@ -328,7 +328,7 @@ pub(crate) fn build_hook(
                 _ => None,
             };
             // A fixed blend with an alpha test takes the testing stage too (render.md
-            // R-D11).
+            // §4.3 `Fixed`).
             let masked = match surface.kind {
                 SurfaceKind::Mask | SurfaceKind::TestBlend => true,
                 SurfaceKind::Fixed(b) => b.alpha_test.is_some(),

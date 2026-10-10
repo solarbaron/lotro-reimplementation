@@ -67,7 +67,7 @@ pub enum AlphaMode {
     /// The same blend state as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`], but the
     /// source alpha is the output alpha as for [`AlphaMode::Blend`] (opacity × *M*.alpha,
     /// so a caller can fade the surface by *M*.alpha), where [`AlphaMode::Fixed`] reads the
-    /// opacity source alone (`material.md` §11.3). An additive surface whose render state
+    /// tested opacity alone (`material.md` §11.3). An additive surface whose render state
     /// writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE shaders have depth write
     /// on) uses [`AlphaMode::Fixed`] with `depth_write` set.
     Additive,
@@ -128,8 +128,9 @@ pub enum BlendOp {
     Max,
 }
 
-/// The alpha-test threshold of a fixed blend (`material.md` §11.2: parameter 1043, used
-/// when 4004 is on and an opacity source exists): fragments whose opacity is at most the
+/// The alpha-test threshold of a fixed blend: the caller's per-draw reference *R*
+/// (`material.md` §11.2 steps 1–3, from 1043 when 4004 is on and the record has an
+/// opacity-bearing role; `render.md` §4.3): fragments whose tested opacity is at most the
 /// threshold are discarded. Compared and hashed by its bits, so it can key pipelines. A
 /// value that is not finite acts as 0.5.
 #[derive(Debug, Clone, Copy)]
@@ -185,9 +186,10 @@ pub struct FixedBlend {
     pub op: BlendOp,
     /// Depth write (`depth_write` of the render-state block, `material.md` §7.6, §11.3).
     pub depth_write: bool,
-    /// The record's alpha test (`material.md` §11.2, `render.md` §4.8 R-D11): `None` when
-    /// the record has none (4004 off or no opacity source). It tests the opacity source, as
-    /// for lit surfaces (§11.2); a discarded fragment writes neither colour nor depth.
+    /// The record's alpha test (`material.md` §11.2, `render.md` §4.3 `Fixed`; R-D11
+    /// withdrawn): `None` when the record has none (4004 off or no opacity-bearing role).
+    /// It tests the tested opacity against the caller's reference *R*, as for lit
+    /// surfaces (§11.2); a discarded fragment writes neither colour nor depth.
     pub alpha_test: Option<AlphaThreshold>,
 }
 
@@ -929,7 +931,7 @@ mod tests {
         assert_eq!(s.color.operation, wgpu::BlendOperation::Max);
     }
 
-    /// `render.md` R-D11: the alpha test of a fixed blend; thresholds compare by bits.
+    /// `render.md` §4.3 `Fixed`: the alpha test of a fixed blend; thresholds compare by bits.
     #[test]
     fn fixed_blend_alpha_test() {
         assert_eq!(FixedBlend::ADDITIVE.cutoff(), -1.0);

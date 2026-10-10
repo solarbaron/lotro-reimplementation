@@ -239,6 +239,10 @@ impl DrawState {
 ///   of opacity 0 are discarded), else nothing is discarded (`None`).
 ///
 /// A fragment is discarded when its tested opacity is ≤ the returned reference.
+///
+/// Hostile values (`material.md` §18): a non-finite reference is 0.5 (the caller has already
+/// fallen back to the record's render-state reference, `tessera-particles`); *A* is clamped
+/// to [0, 1] and a NaN *A* counts as 0.
 #[must_use]
 pub fn draw_reference(
     test: Option<f32>,
@@ -247,10 +251,10 @@ pub fn draw_reference(
     a: f32,
 ) -> Option<f32> {
     let off = source_alpha.then_some(0.0);
-    let Some(r) = test.filter(|r| r.is_finite()) else {
+    let Some(r) = test.map(cutoff) else {
         return off;
     };
-    let a = if a.is_finite() { a } else { 0.0 };
+    let a = if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) };
     let r = if depth_write {
         r * a
     } else if a < 0.9 {
@@ -614,9 +618,30 @@ pub(crate) fn build_hook(
             skipped += 1;
             continue;
         }
+        // Non-finite colour channels are 1; a NaN alpha counts as 0 and an infinite one is
+        // clamped (`material.md` §18, *A* of the per-draw reference).
         let finite = |c: f32| if c.is_finite() { c } else { 1.0 };
-        let tint = d.tint.map(finite);
-        let material = d.material.map(finite);
+        let alpha = |c: f32| {
+            if c.is_nan() {
+                0.0
+            } else if c.is_finite() {
+                c
+            } else {
+                c.clamp(0.0, 1.0)
+            }
+        };
+        let tint = [
+            finite(d.tint[0]),
+            finite(d.tint[1]),
+            finite(d.tint[2]),
+            alpha(d.tint[3]),
+        ];
+        let material = [
+            finite(d.material[0]),
+            finite(d.material[1]),
+            finite(d.material[2]),
+            alpha(d.material[3]),
+        ];
         let sh = d.shading;
         let st = draw_state(d.alpha);
         let reference = if sh.tests_texture {
@@ -835,9 +860,16 @@ mod tests {
         assert!((r - (102.0 / 255.0)).abs() < 1e-6, "{r}");
         let r = draw_reference(Some(0.65), true, true, 1.0).unwrap();
         assert!((r - 165.0 / 255.0).abs() < 1e-6, "{r}");
-        // Hostile values: a non-finite A counts as 0, a non-finite reference as no test.
+        // Hostile values (material.md §18): a NaN A counts as 0, an infinite one is
+        // clamped; a non-finite reference is 0.5.
         assert_eq!(draw_reference(Some(0.8), true, true, f32::NAN), Some(0.0));
-        assert_eq!(draw_reference(Some(f32::NAN), true, true, 1.0), Some(0.0));
+        assert_eq!(draw_reference(Some(0.8), false, true, f32::NAN), Some(0.0));
+        let r = draw_reference(Some(0.8), true, true, f32::INFINITY).unwrap();
+        assert!((r - 204.0 / 255.0).abs() < 1e-6, "{r}");
+        let r = draw_reference(Some(0.8), true, true, 2.0).unwrap();
+        assert!((r - 204.0 / 255.0).abs() < 1e-6, "{r}");
+        let r = draw_reference(Some(f32::NAN), true, true, 1.0).unwrap();
+        assert!((r - 127.0 / 255.0).abs() < 1e-6, "{r}");
         // The source factor of the draw states.
         assert!(draw_state(AlphaMode::Blend).source_alpha());
         assert!(draw_state(AlphaMode::Additive).source_alpha());

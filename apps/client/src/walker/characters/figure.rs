@@ -756,7 +756,8 @@ fn build_part(
     })
 }
 
-/// Most material groups layered onto one surface (a hostile group list stays bounded).
+/// Most material groups layered onto one surface (a hostile group list stays bounded;
+/// on overflow the last ones in group-list order are kept, `material.md` §18).
 pub const MAX_SURFACE_GROUPS: usize = 16;
 
 /// The plan of `surface` with the figure's look (`material.md` §9.3 rules 1–4,

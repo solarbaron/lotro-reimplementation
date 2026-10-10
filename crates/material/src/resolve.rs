@@ -808,6 +808,7 @@ impl ResolvedMaterial {
             reference: f
                 .alpha_test
                 .map_or(crate::resolve::FALLBACK_ALPHA_THRESHOLD, |a| a.threshold),
+            block_reference: self.shader.default_alpha_ref,
             material_alpha: self.material_alpha() * tint_alpha,
             src_alpha: f.blend.src == BlendFactor::SrcAlpha,
             alpha_to_coverage: false,
@@ -817,8 +818,9 @@ impl ResolvedMaterial {
     /// [`ResolvedMaterial::alpha_reference`] with *r* evaluated at the material clock `t`
     /// seconds (§11.2 "*r* … evaluated at the clock", §5.3.1), with the drawn instance's
     /// curve states: when the alpha test is on and the effective 1043 is an animated curve,
-    /// *r* is its value at `t` (always finite); otherwise *r* does not depend on the clock
-    /// and is the time-0 threshold.
+    /// *r* is its value at `t`; a non-finite value falls back like a non-finite constant
+    /// one (the block's `alpha_ref`, then 0.5; `material.md` §18), not to 0. Otherwise *r*
+    /// does not depend on the clock and is the time-0 threshold.
     #[must_use]
     pub fn alpha_reference_at(
         &self,
@@ -828,9 +830,14 @@ impl ResolvedMaterial {
     ) -> AlphaReference {
         let mut reference = self.alpha_reference(tint_alpha);
         if self.alpha_reference_animated()
-            && let Some(r) = self.params.float_at(ids::ALPHA_THRESHOLD, t, states)
+            && let Some(c) = self.params.curve(ids::ALPHA_THRESHOLD)
         {
-            reference.reference = r;
+            let r = c.evaluate_at(t, states.state(ids::ALPHA_THRESHOLD));
+            reference.reference = if r.is_finite() {
+                r
+            } else {
+                fallback_alpha_threshold(&self.shader)
+            };
         }
         reference
     }

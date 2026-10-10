@@ -33,8 +33,8 @@ const SF_OPACITY_ONE: u32 = 64u;
 // An unlit surface drawn without distance fog (WorldSurfaceOptions::fog off; lighting.md §7
 // code 0x00).
 const SF_NO_FOG: u32 = 128u;
-// A fixed-function blend (AlphaMode::Fixed): the opacity a blend factor reads is the opacity
-// texel alone, not x M.alpha (material.md §11.3, rule for unlit records).
+// A fixed-function blend (AlphaMode::Fixed): the opacity a blend factor reads is the tested
+// opacity alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const SF_FACTOR_OPACITY: u32 = 256u;
 // A second colour layer (material.md §10.3): RGB added (SF_LAYER_ADD) or multiplied; its
 // alpha multiplies the base alpha only with SF_LAYER_ALPHA (role ColorAndOpacity2, MA54);

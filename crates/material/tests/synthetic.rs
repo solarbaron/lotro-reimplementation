@@ -2479,9 +2479,36 @@ fn last_override_in_list_order_wins() {
     // Reversed list: the other override wins.
     let reversed = Layering::from_groups(groups.into_iter().rev(), 16).unwrap();
     assert_eq!(reversed.shader_override, Some(Did(0x2B00_0010)));
-    // The cap bounds the groups taken.
+    // The cap bounds the groups taken, keeping the **last** ones (§18, implementer note
+    // of commit b949a54, item 6): the winning override survives.
     let capped = Layering::from_groups(groups, 1).unwrap();
-    assert_eq!(capped.shader_override, Some(Did(0x2B00_0010)));
+    assert_eq!(capped.shader_override, Some(Did(0x2B00_0020)));
+    assert!(capped.materials.is_empty());
+    assert!(capped.earlier_overrides.is_empty());
+    let reversed_capped = Layering::from_groups(groups.into_iter().rev(), 1).unwrap();
+    assert_eq!(reversed_capped.shader_override, Some(Did(0x2B00_0010)));
+    assert_eq!(reversed_capped.materials, vec![Did(0x3000_0003)]);
+}
+
+/// §18 (implementer note of commit b949a54, item 6): on overflow the last `max` groups in
+/// list order are kept, the earlier ones dropped.
+#[test]
+fn group_overflow_keeps_the_last_groups() {
+    let groups: Vec<(Option<Did>, Did)> = (0..20_u32)
+        .map(|i| (Some(Did(0x2B00_1000 + i)), Did(0x3000_1000 + i)))
+        .collect();
+    let layer = Layering::from_groups(groups.iter().copied(), 16).unwrap();
+    assert_eq!(layer.shader_override, Some(Did(0x2B00_1013)));
+    let expected: Vec<Did> = (4..20_u32).map(|i| Did(0x3000_1000 + i)).collect();
+    assert_eq!(layer.materials, expected);
+    let earlier: Vec<Did> = (4..19_u32).map(|i| Did(0x2B00_1000 + i)).collect();
+    assert_eq!(layer.earlier_overrides, earlier);
+    // Exactly at the bound nothing is dropped.
+    let exact = Layering::from_groups(groups.iter().copied().take(16), 16).unwrap();
+    assert_eq!(exact.materials.len(), 16);
+    assert_eq!(exact.materials[0], Did(0x3000_1000));
+    // A bound of 0 takes nothing.
+    assert_eq!(Layering::from_groups(groups.iter().copied(), 0), None);
 }
 
 /// Rule 5 (Tessera Decision): an override that fails to load counts as 0, so the shader is

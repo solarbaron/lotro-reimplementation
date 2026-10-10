@@ -49,7 +49,7 @@ fn sky_shade(in: SkyOut) -> SkyShaded {
     var out: SkyShaded;
     out.color = base.rgb * m.rgb;
     out.opacity = surface_opacity_texel(base);
-    // A fixed blend reads the opacity source, not x M.alpha (material.md §11.3); the
+    // A fixed blend reads the tested opacity, not x M.alpha (material.md §11.3); the
     // keyframe opacity (tint alpha, Render_Opacity) still scales it.
     let a = select(surface_opacity(base) * m.a, out.opacity * sky.tint.a,
         surface_flag(SF_FACTOR_OPACITY));

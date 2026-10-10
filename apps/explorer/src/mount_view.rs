@@ -271,7 +271,8 @@ pub(crate) fn build_mount(
     let dict = registry.dictionary();
     let vocab = AssemblyVocabulary::from_game_data(data).map_err(|e| e.to_string())?;
     let mut asm =
-        CharacterAssembler::new(GameDataSource::new(data).map_err(|e| e.to_string())?, vocab);
+        CharacterAssembler::new(GameDataSource::new(data).map_err(|e| e.to_string())?, vocab)
+            .with_options(ctx.assembly_options());
     let c = asm
         .assemble_object(mesh.entity, None)
         .map_err(|e| format!("mount entity {}: {e}", mesh.entity))?;

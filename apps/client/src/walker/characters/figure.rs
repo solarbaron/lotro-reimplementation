@@ -59,7 +59,7 @@ use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
 use tessera_material::{ParameterEdit, figure_edits};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
 };
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
@@ -346,8 +346,12 @@ pub struct FigureContext {
     pub mesh_config: MeshConfig,
     /// Decoded clips.
     pub clips: ClipStore,
+    /// Composed faces and their decoded sources, shared by every figure (`appearance.md`
+    /// §3.5; figures with the same face compose it once).
+    pub looks: LookCache,
     /// Tessera's answers for the options a figure's property lookup reads first
-    /// (`appearance.md` §3.3: the updated-avatar option).
+    /// (`appearance.md` §3.3: the updated-avatar option; §3.5: the face-compositing
+    /// option).
     pub assembly: AssemblyOptions,
 }
 
@@ -373,6 +377,7 @@ impl FigureContext {
             materials,
             mesh_config,
             clips: ClipStore::default(),
+            looks: LookCache::default(),
             assembly: AssemblyOptions::default(),
         }
     }
@@ -884,7 +889,13 @@ fn select_clips(
             if let Some(asm) = &cat.assembly {
                 shape = figure_shape(data, asm, c, &r);
             }
-            look = figure_look_from_data(data, &r, &LookLimits::default());
+            look = figure_look_from_data(
+                data,
+                &r,
+                ctx.assembly,
+                &LookLimits::default(),
+                Some(&ctx.looks),
+            );
             appearances = r
                 .appearances
                 .iter()

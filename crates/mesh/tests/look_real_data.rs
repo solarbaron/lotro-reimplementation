@@ -7,16 +7,21 @@
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Archives are opened read-only;
 //! nothing is written. Output is DIDs, keys and counts only. Run with
 //! `cargo test -p tessera-mesh --release --test look_real_data -- --nocapture`.
+//!
+//! The look's time per figure, without and with the shared [`LookCache`], is printed on
+//! every run and asserted only with `TESSERA_PERF=1` (release build, idle machine;
+//! `docs/DEVELOPMENT.md`).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use tessera_formats::script_table::resolve::{
     ClipResolution, ClipResolver, MotionState, ScriptVocabulary, collect_entity_scripts,
 };
 use tessera_formats::{Did, EnumMapper};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
 };
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblyOptions, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
@@ -83,11 +88,14 @@ const OLDER_FACE: u32 = 0x1000_000A;
 /// The face-skin binding key the compositors attach to (§3.5).
 const FACE_SKIN: u32 = 0x1000_006C;
 /// Bodies whose `Startup` evaluation reaches no compositor node although the closure holds
-/// some (`appearance.md` §15 OPEN of 2026-10-10).
+/// some: their species tables run the compositor only when `Physics_InWorld` is true,
+/// which nothing sets for a figure (`appearance.md` §15 OPEN of 2026-10-10).
 const NO_FACE_OPEN: [&str; 4] = ["P5", "P6", "P10", "P11"];
-/// Bodies whose newer face is attached even with `GOP_AvatarFaceCompositing` off
-/// (`appearance.md` §15 OPEN of 2026-10-10).
-const COMPOSITING_OFF_OPEN: [&str; 4] = ["P3", "P4", "P13", "P14"];
+
+/// `TESSERA_PERF=1`: also assert the look's time per figure.
+fn perf() -> bool {
+    std::env::var_os("TESSERA_PERF").is_some_and(|v| v == "1")
+}
 
 struct Probe {
     data: &'static GameData,
@@ -117,7 +125,7 @@ impl Probe {
 
     fn look(&self, c: &AssembledCharacter, options: AssemblyOptions) -> FigureLook {
         let r = self.resolve(c, options);
-        figure_look_from_data(self.data, &r, &LookLimits::default())
+        figure_look_from_data(self.data, &r, options, &LookLimits::default(), None)
     }
 }
 
@@ -161,7 +169,7 @@ fn playable_bodies_get_composited_faces_and_tints() {
                     f.image.as_ref().map_or_else(
                         || "no image".into(),
                         |i| format!("{}×{}", i.width, i.height)
-                    )
+                    ) + &format!(", {} KiB decoded", f.source_bytes >> 10)
                 )
             })
             .collect();
@@ -186,6 +194,13 @@ fn playable_bodies_get_composited_faces_and_tints() {
         // §3.5: with both options on, the newer face is attached to the head's face skin
         // and composes. Elf and High-elf bodies reach no compositor node (appearance.md §15
         // OPEN of 2026-10-10): reported, not failed.
+        if look
+            .notes
+            .iter()
+            .any(|n| n.contains("budget") || n.contains("too large"))
+        {
+            failures.push(format!("{row}: a look limit was reached: {:?}", look.notes));
+        }
         match look.compositors.iter().find(|f| f.name == NEWER_FACE) {
             Some(f) if f.image.is_some() && f.mesh_type == head && f.material_type == FACE_SKIN => {
                 composed += 1;
@@ -212,12 +227,7 @@ fn playable_bodies_get_composited_faces_and_tints() {
                 ..on
             },
         );
-        if !off.compositors.is_empty() && COMPOSITING_OFF_OPEN.contains(&row) {
-            gaps.push(format!(
-                "{row}: {} compositors with face compositing off (OPEN)",
-                off.compositors.len()
-            ));
-        } else if !off.compositors.is_empty() {
+        if !off.compositors.is_empty() {
             failures.push(format!(
                 "{row}: {} compositors with face compositing off",
                 off.compositors.len()
@@ -321,4 +331,81 @@ fn appearance_values_drive_the_look() {
         "the colour changes the image"
     );
     assert_ne!(face.image, default_face.image);
+}
+
+#[test]
+fn the_look_cache_reuses_composed_faces() {
+    let Some(data) = data() else { return };
+    let registry = data.registry().unwrap();
+    let dict = registry.dictionary();
+    let script_vocab = ScriptVocabulary::from_data(dict, |d| {
+        data.enum_mapper(d).ok().flatten().map(|m| (*m).clone())
+    })
+    .expect("script vocabulary");
+    let asm_vocab = AssemblyVocabulary::from_game_data(data).expect("vocabulary");
+    let probe = Probe {
+        data,
+        script_vocab,
+        asm_vocab: asm_vocab.clone(),
+    };
+    let mut asm = CharacterAssembler::new(GameDataSource::new(data).expect("source"), asm_vocab);
+    let on = AssemblyOptions::default();
+    let limits = LookLimits::default();
+    let cache = LookCache::default();
+    let (mut cold, mut uncached, mut warm) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    let mut figures = 0u32;
+    for (row, label, sex) in BODIES {
+        if NO_FACE_OPEN.contains(&row) {
+            continue;
+        }
+        let species = enum_key(data, "RaceTable_Race", label).unwrap_or_else(|| panic!("{label}"));
+        let c = asm
+            .assemble_character(&CharacterSpec::new(species, sex))
+            .expect("body assembles");
+        let r = probe.resolve(&c, on);
+        let t = Instant::now();
+        let plain = figure_look_from_data(data, &r, on, &limits, None);
+        uncached += t.elapsed();
+        let t = Instant::now();
+        let first = figure_look_from_data(data, &r, on, &limits, Some(&cache));
+        cold += t.elapsed();
+        let t = Instant::now();
+        let second = figure_look_from_data(data, &r, on, &limits, Some(&cache));
+        warm += t.elapsed();
+        figures += 1;
+        // The cache changes nothing but the time: equal images, shared on a hit.
+        assert_eq!(plain.compositors.len(), first.compositors.len(), "{row}");
+        for ((p, f), s) in plain
+            .compositors
+            .iter()
+            .zip(&first.compositors)
+            .zip(&second.compositors)
+        {
+            assert_eq!(p.image, f.image, "{row}: cached composition differs");
+            assert_eq!(p.identity, s.identity, "{row}");
+            match (&f.image, &s.image) {
+                (Some(a), Some(b)) => assert!(std::sync::Arc::ptr_eq(a, b), "{row}: not reused"),
+                (None, None) => {}
+                _ => panic!("{row}: cache hit differs"),
+            }
+            assert_eq!(s.source_bytes, 0, "{row}: a hit decodes nothing");
+        }
+    }
+    let per = |d: Duration| d / figures.max(1);
+    eprintln!(
+        "look per figure over {figures} bodies: uncached {:?}, first with cache {:?}, repeat \
+         {:?}; cache holds {:?}",
+        per(uncached),
+        per(cold),
+        per(warm),
+        cache.len()
+    );
+    if perf() {
+        // A repeated face costs no decoding: well under a millisecond per figure.
+        assert!(
+            per(warm) < Duration::from_millis(2),
+            "repeat {:?}",
+            per(warm)
+        );
+    }
 }

@@ -35,7 +35,7 @@ use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, EnumMapper};
 use tessera_havok::{AnimationData, Clip, Envelope, Tagfile, Transform};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
 };
 use tessera_mesh::assembly::shape::{FigureShape, FigureSliders, ShapeDriver, figure_shape};
 use tessera_mesh::assembly::{
@@ -917,7 +917,8 @@ pub fn build_character(
     let bone_types = Labels::of_mapper(data, data.lookup_path(&["EMAPPER", "BoneType"])?);
     let vocab = AssemblyVocabulary::from_game_data(data)?;
     let asm_vocab = vocab.clone();
-    let mut asm = CharacterAssembler::new(GameDataSource::new(data)?, vocab);
+    let mut asm = CharacterAssembler::new(GameDataSource::new(data)?, vocab)
+        .with_options(ctx.assembly_options());
     cancelled(job)?;
 
     // 1. Assemble (appearance.md §8 steps 1–6, 9).
@@ -1013,7 +1014,7 @@ pub fn build_character(
             dict,
             catalog,
             c,
-            (&asm_vocab, asm.options()),
+            (&asm_vocab, asm.options(), &ctx.looks),
             rider_mount.as_ref(),
         ),
         None => (
@@ -1528,7 +1529,7 @@ fn select_clips<S: tessera_props::RecordSource>(
     dict: &tessera_formats::PropertyDictionary,
     catalog: &Catalog,
     c: &AssembledCharacter,
-    (asm_vocab, options): (&AssemblyVocabulary, AssemblyOptions),
+    (asm_vocab, options, looks): (&AssemblyVocabulary, AssemblyOptions, &LookCache),
     mount: Option<&crate::mount_view::RiderMount>,
 ) -> (ClipSelection, FigureShape, Option<MountMesh>) {
     let mut out = ClipSelection::default();
@@ -1611,7 +1612,8 @@ fn select_clips<S: tessera_props::RecordSource>(
         if state == StateArg::Idle {
             idle_clips = r.clips();
             shape = figure_shape(data, asm_vocab, c, &r);
-            out.look = figure_look_from_data(data, &r, &LookLimits::default());
+            out.look =
+                figure_look_from_data(data, &r, options, &LookLimits::default(), Some(looks));
             out.appearances = r
                 .appearances
                 .iter()

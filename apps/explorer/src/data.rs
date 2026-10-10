@@ -86,6 +86,14 @@ pub struct DataContext {
     pub max_texture_side: AtomicUsize,
     /// The world model of the M4.5 views (loaded on first use, on a worker).
     pub world: crate::world::WorldState,
+    /// Tessera's `[Graphics]` settings: the updated-avatar and face-compositing options a
+    /// figure's lookup answers first (`appearance.md` §3.3, §3.5), as in the client.
+    /// [`DataContext::open`] reads them from the settings file; [`DataContext::from_set`]
+    /// starts with the defaults.
+    pub graphics: tessera_settings::GraphicsPrefs,
+    /// Composed faces and their decoded sources, shared by every character build
+    /// (`appearance.md` §3.5).
+    pub looks: tessera_mesh::assembly::look::LookCache,
 }
 
 impl std::fmt::Debug for DataContext {
@@ -96,6 +104,20 @@ impl std::fmt::Debug for DataContext {
             .field("locale", &self.strings.as_ref().and_then(Strings::locale))
             .finish_non_exhaustive()
     }
+}
+
+/// Tessera's `[Graphics]` settings from the user's settings file (never fails; problems are
+/// logged). Reading never writes the game's files.
+fn graphics_prefs() -> tessera_settings::GraphicsPrefs {
+    let Ok(store) = tessera_settings::SettingsStore::open_default() else {
+        return tessera_settings::GraphicsPrefs::default();
+    };
+    let loaded = store.load();
+    let (p, warnings) = tessera_settings::GraphicsPrefs::from_settings(&loaded.settings);
+    for w in &warnings {
+        tracing::warn!("settings: {w}");
+    }
+    p
 }
 
 /// Default largest texture side before the UI reports the real one.
@@ -112,7 +134,18 @@ impl DataContext {
         for p in set.problems() {
             tracing::info!(problem = %p.message, "archive set");
         }
-        Ok(Self::from_set(dir.to_path_buf(), set, language))
+        let mut ctx = Self::from_set(dir.to_path_buf(), set, language);
+        ctx.graphics = graphics_prefs();
+        Ok(ctx)
+    }
+
+    /// The figure options of [`DataContext::graphics`].
+    #[must_use]
+    pub fn assembly_options(&self) -> tessera_mesh::assembly::AssemblyOptions {
+        tessera_mesh::assembly::AssemblyOptions {
+            avatar_update_visible: self.graphics.avatar_update_visible,
+            avatar_face_compositing: self.graphics.avatar_face_compositing,
+        }
     }
 
     /// Builds the context over an already opened set (tests, tools).
@@ -165,6 +198,8 @@ impl DataContext {
             materials,
             max_texture_side: AtomicUsize::new(DEFAULT_MAX_TEXTURE_SIDE),
             world,
+            graphics: tessera_settings::GraphicsPrefs::default(),
+            looks: tessera_mesh::assembly::look::LookCache::default(),
         }
     }
 

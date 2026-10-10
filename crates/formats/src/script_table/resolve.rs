@@ -1396,9 +1396,45 @@ pub struct MeshFxDriven {
     pub fade_in_time: bool,
 }
 
+/// The scalar fields of an EditMaterial node (kind 60, §5.3) that a figure's look uses
+/// (`appearance.md` §3.5). The node's `WaveformValue` is left out: no look reads it, and
+/// leaving it out keeps every listed candidate small and of fixed size, however large the
+/// stored waveform is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialEdit {
+    /// `MaterialProperty`: the material parameter id (2003 = dye colour).
+    pub material_property: u32,
+    /// `MeshType`: the `MeshTypeID` slot, 2 = every part.
+    pub mesh_type: u32,
+    /// `MaterialType`: the surface binding key.
+    pub material_type: u32,
+    /// `Priority`.
+    pub priority: i32,
+    /// `ColorValue`: the four stored bytes (B, G, R, A).
+    pub color_value: [u8; 4],
+    /// `TextureValue`: a DID, or 0.
+    pub texture_value: Did,
+    /// `BoolValue`.
+    pub bool_value: bool,
+}
+
+impl From<&EditMaterialNode> for MaterialEdit {
+    fn from(e: &EditMaterialNode) -> Self {
+        Self {
+            material_property: e.material_property,
+            mesh_type: e.mesh_type,
+            material_type: e.material_type,
+            priority: e.priority,
+            color_value: e.color_value,
+            texture_value: e.texture_value,
+            bool_value: e.bool_value,
+        }
+    }
+}
+
 /// What a face-compositing or colour-edit node does to the figure's look
 /// (`appearance.md` §3.5), with its fields after driven values.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum LookEffect {
     /// TextureCompositor (53): attach a compositor record under a name.
@@ -1407,8 +1443,9 @@ pub enum LookEffect {
     CompositorLayer(CompositorLayerNode),
     /// ModifyCompositorColor (33): set a colour of a named compositor.
     CompositorColour(CompositorColourNode),
-    /// EditMaterial (60): edit a material parameter of the figure's surfaces.
-    EditMaterial(Box<EditMaterialNode>),
+    /// EditMaterial (60): edit a material parameter of the figure's surfaces (its scalar
+    /// fields only).
+    EditMaterial(MaterialEdit),
 }
 
 /// A face-compositing or colour-edit node (kinds 53, 44, 33, 60) that a resolution reached
@@ -2506,7 +2543,18 @@ where
                 Ok(())
             }
             NodeData::EditMaterial(e) => {
-                self.look(n, LookEffect::EditMaterial(e.clone()), scope, ctx);
+                // Only the scalar fields are copied (fixed size, no heap), and only after
+                // the candidate cap ([`Eval::look`] checks it again before listing).
+                if self.look.len() < self.r.limits.max_candidates {
+                    self.look(
+                        n,
+                        LookEffect::EditMaterial(MaterialEdit::from(&**e)),
+                        scope,
+                        ctx,
+                    );
+                } else {
+                    self.limit("max_candidates");
+                }
                 Ok(())
             }
             NodeData::Appearance {
@@ -3643,7 +3691,7 @@ fn apply_mesh_fx_field(
 /// Sets the EditMaterial field `field` of `e` from `v` when the value has the field's form;
 /// returns whether a field changed.
 fn apply_edit_material_field(
-    e: &mut EditMaterialNode,
+    e: &mut MaterialEdit,
     pids: &EditMaterialFieldPids,
     field: u32,
     v: &PropertyValue,

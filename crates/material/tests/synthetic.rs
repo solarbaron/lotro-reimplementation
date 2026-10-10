@@ -2284,12 +2284,28 @@ fn runtime_textures_are_bounded() {
         pixels: vec![0; 3],
     });
     assert_eq!(reg.register(7, bad), None);
-    // The oldest entries go first once the entry cap is reached.
-    for i in 0..RuntimeTextures::MAX_ENTRIES as u64 {
-        reg.register(0x10_0000_0000 + i, img(3)).unwrap();
+    // The least recently used entries go first once the entry cap is reached: `b` is
+    // registered again (a hit) after `a`, so `a` goes first.
+    assert_eq!(reg.register(0x0200_0005, img(2)), Some(b));
+    let mut issued = vec![a, b];
+    for i in 0..RuntimeTextures::MAX_ENTRIES as u64 - 1 {
+        issued.push(reg.register(0x10_0000_0000 + i, img(3)).unwrap());
     }
     assert_eq!(reg.len(), RuntimeTextures::MAX_ENTRIES);
     assert!(reg.get(a).is_none());
+    assert_eq!(reg.get(b).unwrap().pixels[0], 2);
+    // A request counts as a use too: `b` was just requested, so the next registration
+    // evicts the oldest other entry, not `b`.
+    issued.push(reg.register(0x20_0000_0000, img(4)).unwrap());
+    assert!(reg.get(b).is_some());
+    // DIDs are never handed out twice, not even after their entry was forgotten.
+    let mut sorted = issued.clone();
+    sorted.sort_by_key(|d| d.0);
+    sorted.dedup();
+    assert_eq!(sorted.len(), issued.len());
+    // `a`'s identity registered again gets a new DID.
+    let again = reg.register(0x0100_0005, img(1)).unwrap();
+    assert!(!issued.contains(&again));
     // Not a run-time DID.
     assert!(reg.get(Did(0x4000_0001)).is_none());
 }

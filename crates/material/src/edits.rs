@@ -14,9 +14,12 @@
 //! one DID with prefix [`RUNTIME_TEXTURE_PREFIX`], which [`crate::MaterialLibrary::texture`]
 //! answers from the registry instead of the archives. Equal identities share one DID, so
 //! figures with the same face share one texture. The registry is bounded
-//! ([`RuntimeTextures::MAX_ENTRIES`], [`RuntimeTextures::MAX_BYTES`]); the oldest entries
-//! are forgotten first (a texture already uploaded stays on the GPU; a later request for a
-//! forgotten DID fails like a missing texture).
+//! ([`RuntimeTextures::MAX_ENTRIES`], [`RuntimeTextures::MAX_BYTES`]); the least recently
+//! registered or requested entries are forgotten first (a texture already uploaded stays on
+//! the GPU; a later request for a forgotten DID fails like a missing texture). DIDs are
+//! handed out in sequence and never reissued for another identity until 2^24 − 1 further
+//! registrations have passed, so a texture cache keyed by DID never shows an old image
+//! under a new identity.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -163,8 +166,21 @@ pub struct RuntimeTextures {
 struct Registry {
     by_did: HashMap<Did, (u64, Arc<RgbaImage>)>,
     by_identity: HashMap<u64, Did>,
+    /// DIDs, least recently registered or requested first.
     order: VecDeque<Did>,
     bytes: usize,
+    /// The low 24 bits of the last DID handed out.
+    last: u32,
+}
+
+impl Registry {
+    /// Moves `did` to the back of the eviction order.
+    fn touch(&mut self, did: Did) {
+        if let Some(pos) = self.order.iter().position(|d| *d == did) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(did);
+    }
 }
 
 impl RuntimeTextures {
@@ -174,8 +190,9 @@ impl RuntimeTextures {
     pub const MAX_BYTES: usize = 256 << 20;
 
     /// The DID for `image` under `identity`: the DID already handed out for that identity
-    /// (the stored image is kept), else a new one. `None` when the image alone exceeds
-    /// [`RuntimeTextures::MAX_BYTES`] or its pixel buffer does not match its size.
+    /// (the stored image is kept and the entry counts as recently used), else the next DID
+    /// of the sequence. `None` when the image alone exceeds [`RuntimeTextures::MAX_BYTES`]
+    /// or its pixel buffer does not match its size.
     pub fn register(&self, identity: u64, image: Arc<RgbaImage>) -> Option<Did> {
         let size = image.pixels.len();
         let expected = u64::from(image.width)
@@ -186,6 +203,7 @@ impl RuntimeTextures {
         }
         let mut r = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(&did) = r.by_identity.get(&identity) {
+            r.touch(did);
             return Some(did);
         }
         while r.by_did.len() >= Self::MAX_ENTRIES || r.bytes.saturating_add(size) > Self::MAX_BYTES
@@ -198,21 +216,23 @@ impl RuntimeTextures {
                 r.bytes = r.bytes.saturating_sub(img.pixels.len());
             }
         }
-        // The low 24 bits of the identity, probing upwards past DIDs in use (the registry
-        // holds at most MAX_ENTRIES, so a free one is found within that many steps).
+        // The next DID of the sequence (low 24 bits 1 ..= 0xFFFFFF, wrapping), past DIDs
+        // still in use (the registry holds at most MAX_ENTRIES, so a free one is found
+        // within that many steps).
         let base = u32::from(RUNTIME_TEXTURE_PREFIX) << 24;
-        let mut low = (identity as u32) & 0x00FF_FFFF;
-        let mut did = Did(base | low);
+        let mut low = r.last;
+        let mut did = Did(0);
         for _ in 0..=Self::MAX_ENTRIES {
-            if !r.by_did.contains_key(&did) && low != 0 {
+            low = if low >= 0x00FF_FFFF { 1 } else { low + 1 };
+            did = Did(base | low);
+            if !r.by_did.contains_key(&did) {
                 break;
             }
-            low = (low + 1) & 0x00FF_FFFF;
-            did = Did(base | low);
         }
-        if r.by_did.contains_key(&did) {
+        if did.0 == 0 || r.by_did.contains_key(&did) {
             return None;
         }
+        r.last = low;
         r.by_did.insert(did, (identity, image));
         r.by_identity.insert(identity, did);
         r.order.push_back(did);
@@ -226,8 +246,10 @@ impl RuntimeTextures {
         if did.prefix() != RUNTIME_TEXTURE_PREFIX {
             return None;
         }
-        let r = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        r.by_did.get(&did).map(|(_, img)| Arc::clone(img))
+        let mut r = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let img = r.by_did.get(&did).map(|(_, img)| Arc::clone(img))?;
+        r.touch(did);
+        Some(img)
     }
 
     /// Number of images held.

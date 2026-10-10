@@ -26,11 +26,24 @@
 //! (the later one on ties), applied after the surface's materials and the figure's groups
 //! (§8 step 6).
 //!
-//! Everything is bounded ([`LookLimits`]); records that are missing or undecodable become
-//! notes, never errors.
+//! With `GOP_AvatarFaceCompositing` off ([`AssemblyOptions::avatar_face_compositing`])
+//! no compositor is attached and the head keeps its own surface texture, as §3.5 states.
+//! The compositor nodes are dropped here, after the resolution, because the data reaches
+//! some of them past the option's check (`appearance.md` §15 OPEN of 2026-10-10 on
+//! `ScriptSystem_ServerScriptlet`).
+//!
+//! Composition is cached ([`LookCache`], shared by every figure of a client or explorer):
+//! parsed compositor records and decoded source images by DID, composed images by
+//! (record, identity), each bounded by entries and bytes and evicted least recently used.
+//! Figures with the same face compose it once.
+//!
+//! Everything is bounded ([`LookLimits`]: counts, texels of one image, decoded bytes per
+//! compositor and per figure); records that are missing or undecodable become notes, never
+//! errors.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_formats::appearance::SLOT_ALL;
 use tessera_formats::gameplay::misc::{ImageCompositor, LayerSelection};
@@ -49,7 +62,8 @@ pub const COMPOSITOR_COLOUR_SCALE: f32 = f32::from_bits(0x3B80_8081);
 pub const COLOUR_GROUP: u32 = 2000;
 
 /// Bounds on one figure's look (hostile-input limits; a species table attaches one or two
-/// compositors with at most a few dozen changes).
+/// compositors with at most a few dozen changes, and a face compositor needs a few dozen
+/// images of 512 × 512 texels or fewer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LookLimits {
     /// Compositor instances per figure.
@@ -58,8 +72,15 @@ pub struct LookLimits {
     pub max_edits: usize,
     /// Images and masks decoded per compositor.
     pub max_images: usize,
-    /// Texels of one decoded image or of the composed canvas.
+    /// Texels of one decoded image (and so of the composed canvas, which takes the size of
+    /// its base image).
     pub max_texels: u64,
+    /// Decoded RGBA8 bytes (width × height × 4) of the source images of one compositor,
+    /// checked before each image is decoded.
+    pub max_compositor_bytes: u64,
+    /// Decoded RGBA8 bytes of one figure: the source images of all its compositors and
+    /// their composed images.
+    pub max_figure_bytes: u64,
     /// Notes kept per figure.
     pub max_notes: usize,
 }
@@ -70,7 +91,9 @@ impl Default for LookLimits {
             max_compositors: 8,
             max_edits: 1024,
             max_images: 256,
-            max_texels: 4096 * 4096,
+            max_texels: 1024 * 1024,
+            max_compositor_bytes: 64 << 20,
+            max_figure_bytes: 128 << 20,
             max_notes: 32,
         }
     }
@@ -98,6 +121,9 @@ pub struct FaceCompositor {
     /// A stable 64-bit digest of (record, selection, colours): equal digests compose equal
     /// images, so callers can share one texture between figures.
     pub identity: u64,
+    /// Decoded RGBA8 bytes of the source images the composition used (0 when the image
+    /// came from the [`LookCache`]).
+    pub source_bytes: u64,
 }
 
 impl FaceCompositor {
@@ -266,15 +292,30 @@ struct Instance {
 /// Builds the figure's look from the look candidates of `resolution` (its `Startup`
 /// resolution, `appearance.md` §3.5): the active candidates in start order, compositors
 /// read and composed through `read` (a record's bytes, `Ok(None)` when it does not exist).
+///
+/// `options` are the figure's graphics options: with `avatar_face_compositing` off, the
+/// compositor nodes (53, 44, 33) are dropped and only the colour edits remain (§3.5; see
+/// the module documentation). `cache`, when given, is consulted before anything is read or
+/// decoded and keeps what this call composes.
 pub fn figure_look<E: std::fmt::Display>(
     resolution: &ClipResolution,
     mut read: impl FnMut(Did) -> Result<Option<Vec<u8>>, E>,
+    options: AssemblyOptions,
     limits: &LookLimits,
+    cache: Option<&LookCache>,
 ) -> FigureLook {
     let mut look = FigureLook::default();
     let mut instances: Vec<Instance> = Vec::new();
+    let mut dropped = 0usize;
     for cand in resolution.look.iter().filter(|c| c.active()) {
         match &cand.effect {
+            LookEffect::AttachCompositor(_)
+            | LookEffect::CompositorLayer(_)
+            | LookEffect::CompositorColour(_)
+                if !options.avatar_face_compositing =>
+            {
+                dropped += 1;
+            }
             LookEffect::AttachCompositor(a) => {
                 if instances.iter().any(|i| i.name == a.compositor) {
                     look.note(
@@ -339,8 +380,18 @@ pub fn figure_look<E: std::fmt::Display>(
             _ => {}
         }
     }
+    if dropped > 0 {
+        look.note(
+            limits,
+            format!("face compositing is off: {dropped} compositor nodes not applied"),
+        );
+    }
+    let mut budget = Budget {
+        figure: 0,
+        compositor: 0,
+    };
     for inst in instances {
-        let c = compose_instance(&inst, &mut read, limits, &mut look);
+        let c = compose_instance(&inst, &mut read, limits, cache, &mut budget, &mut look);
         look.compositors.push(c);
     }
     look
@@ -350,9 +401,11 @@ pub fn figure_look<E: std::fmt::Display>(
 pub fn figure_look_from_data<S: RecordSource>(
     data: &GameData<S>,
     resolution: &ClipResolution,
+    options: AssemblyOptions,
     limits: &LookLimits,
+    cache: Option<&LookCache>,
 ) -> FigureLook {
-    figure_look(resolution, |d| data.read(d), limits)
+    figure_look(resolution, |d| data.read(d), options, limits, cache)
 }
 
 fn set_or_push(v: &mut Vec<(u32, u32, f32)>, key: u32, entry: (u32, u32, f32)) {
@@ -362,10 +415,39 @@ fn set_or_push(v: &mut Vec<(u32, u32, f32)>, key: u32, entry: (u32, u32, f32)) {
     }
 }
 
+/// Decoded bytes charged so far: the figure's and the current compositor's.
+struct Budget {
+    figure: u64,
+    compositor: u64,
+}
+
+impl Budget {
+    /// Charges `bytes` when both budgets allow it.
+    fn charge(&mut self, bytes: u64, limits: &LookLimits) -> bool {
+        let figure = self.figure.saturating_add(bytes);
+        let compositor = self.compositor.saturating_add(bytes);
+        if figure > limits.max_figure_bytes || compositor > limits.max_compositor_bytes {
+            return false;
+        }
+        self.figure = figure;
+        self.compositor = compositor;
+        true
+    }
+}
+
+/// RGBA8 bytes of a `width` × `height` image.
+fn rgba_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(4)
+}
+
 fn compose_instance<E: std::fmt::Display>(
     inst: &Instance,
     read: &mut impl FnMut(Did) -> Result<Option<Vec<u8>>, E>,
     limits: &LookLimits,
+    cache: Option<&LookCache>,
+    budget: &mut Budget,
     look: &mut FigureLook,
 ) -> FaceCompositor {
     let mut out = FaceCompositor {
@@ -377,23 +459,11 @@ fn compose_instance<E: std::fmt::Display>(
         colours: inst.colours.clone(),
         image: None,
         identity: 0,
+        source_bytes: 0,
     };
-    let record = match read(inst.record) {
-        Ok(Some(bytes)) => match ImageCompositor::parse_expecting(&bytes, inst.record) {
-            Ok(r) => r,
-            Err(e) => {
-                look.note(limits, format!("compositor {}: {e}", inst.record));
-                return out;
-            }
-        },
-        Ok(None) => {
-            look.note(limits, format!("compositor {} is missing", inst.record));
-            return out;
-        }
-        Err(e) => {
-            look.note(limits, format!("compositor {}: {e}", inst.record));
-            return out;
-        }
+    budget.compositor = 0;
+    let Some(record) = load_record(inst.record, read, cache, limits, look) else {
+        return out;
     };
     let mut selection = record.default_selection();
     for &(key, option, opacity) in &inst.layers {
@@ -411,61 +481,205 @@ fn compose_instance<E: std::fmt::Display>(
     }
     out.identity = identity(inst.record, &selection, &inst.colours);
     out.selection.clone_from(&selection);
-    let mut images: HashMap<Did, RgbaImage> = HashMap::new();
+    let key = (inst.record, out.identity);
+    // A kept composition is charged what composing it charged (its sources and its
+    // image), so the cache never changes which images a figure gets; when that no longer
+    // fits the budgets, the image is composed again and cut where the budget ends.
+    if let Some(hit) = cache.and_then(|c| c.composed(key))
+        && budget.charge(hit.charged, limits)
+    {
+        for n in &hit.notes {
+            look.note(limits, n.clone());
+        }
+        out.image.clone_from(&hit.image);
+        return out;
+    }
+    // Notes of this composition, kept with the cached result; `reuse` turns false when the
+    // result depends on more than the identity (a read error, a budget or a count limit).
+    let mut notes: Vec<String> = Vec::new();
+    let mut reuse = true;
+    let mut images: HashMap<Did, Arc<RgbaImage>> = HashMap::new();
     let required = record.required_images(&selection);
     if required.len() > limits.max_images {
-        look.note(
-            limits,
-            format!(
-                "compositor {} needs {} images; only {} are loaded",
-                inst.record,
-                required.len(),
-                limits.max_images
-            ),
-        );
+        reuse = false;
+        notes.push(format!(
+            "compositor {} needs {} images; only {} are loaded",
+            inst.record,
+            required.len(),
+            limits.max_images
+        ));
     }
     for did in required.into_iter().take(limits.max_images) {
-        match load_image(did, read, limits) {
-            Ok(img) => {
+        match load_image(did, read, limits, cache, budget) {
+            Ok((img, decoded)) => {
+                out.source_bytes = out.source_bytes.saturating_add(decoded);
                 images.insert(did, img);
             }
-            Err(e) => look.note(limits, format!("compositor image {did}: {e}")),
+            Err(ImageFailure::Budget) => {
+                reuse = false;
+                notes.push(format!(
+                    "compositor {}: decoded-bytes budget exceeded at image {did}; the rest \
+                     are not loaded",
+                    inst.record
+                ));
+                break;
+            }
+            Err(ImageFailure::Read(e)) => {
+                reuse = false;
+                notes.push(format!("compositor image {did}: {e}"));
+            }
+            Err(ImageFailure::Data(e)) => notes.push(format!("compositor image {did}: {e}")),
         }
     }
-    let composed = record.compose(&selection, |k| out.colour(k), |d| images.get(&d));
-    match composed {
+    let composed = record.compose(
+        &selection,
+        |k| out.colour(k),
+        |d| images.get(&d).map(AsRef::as_ref),
+    );
+    drop(images);
+    let image = match composed {
         Ok(Some(img)) => {
-            if u64::from(img.width) * u64::from(img.height) <= limits.max_texels {
-                out.image = Some(Arc::new(img));
+            let bytes = rgba_bytes(img.width, img.height);
+            if u64::from(img.width) * u64::from(img.height) > limits.max_texels {
+                notes.push(format!("compositor {} image too large", inst.record));
+                None
+            } else if !budget.charge(bytes, limits) {
+                reuse = false;
+                notes.push(format!(
+                    "compositor {}: decoded-bytes budget exceeded",
+                    inst.record
+                ));
+                None
             } else {
-                look.note(
-                    limits,
-                    format!("compositor {} image too large", inst.record),
-                );
+                Some(Arc::new(img))
             }
         }
-        Ok(None) => look.note(limits, format!("compositor {} has no layers", inst.record)),
-        Err(f) => look.note(
-            limits,
-            format!("compositor {} did not compose: {f:?}", inst.record),
-        ),
+        Ok(None) => {
+            notes.push(format!("compositor {} has no layers", inst.record));
+            None
+        }
+        Err(f) => {
+            notes.push(format!("compositor {} did not compose: {f:?}", inst.record));
+            None
+        }
+    };
+    for n in &notes {
+        look.note(limits, n.clone());
     }
+    if reuse && let Some(c) = cache {
+        c.keep_composed(
+            key,
+            Arc::new(Composed {
+                image: image.clone(),
+                notes,
+                charged: budget.compositor,
+            }),
+        );
+    }
+    out.image = image;
     out
 }
 
+/// The parsed compositor record `did`, from the cache or read and parsed (and kept);
+/// `None` (with a note) when it is missing or does not parse.
+fn load_record<E: std::fmt::Display>(
+    did: Did,
+    read: &mut impl FnMut(Did) -> Result<Option<Vec<u8>>, E>,
+    cache: Option<&LookCache>,
+    limits: &LookLimits,
+    look: &mut FigureLook,
+) -> Option<Arc<ImageCompositor>> {
+    if let Some(r) = cache.and_then(|c| c.record(did)) {
+        return Some(r);
+    }
+    let bytes = match read(did) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            look.note(limits, format!("compositor {did} is missing"));
+            return None;
+        }
+        Err(e) => {
+            look.note(limits, format!("compositor {did}: {e}"));
+            return None;
+        }
+    };
+    match ImageCompositor::parse_expecting(&bytes, did) {
+        Ok(r) => {
+            let r = Arc::new(r);
+            if let Some(c) = cache {
+                c.keep_record(did, Arc::clone(&r), bytes.len());
+            }
+            Some(r)
+        }
+        Err(e) => {
+            look.note(limits, format!("compositor {did}: {e}"));
+            None
+        }
+    }
+}
+
+/// Why a source image is not available.
+enum ImageFailure {
+    /// The decoded-bytes budget would be exceeded.
+    Budget,
+    /// The record source failed (may succeed later).
+    Read(String),
+    /// The record is missing, not a surface, too large or does not decode.
+    Data(String),
+}
+
+/// Source image `did` and the bytes this call decoded (0 for a cache hit), charged to
+/// `budget` before it is decoded.
 fn load_image<E: std::fmt::Display>(
     did: Did,
     read: &mut impl FnMut(Did) -> Result<Option<Vec<u8>>, E>,
     limits: &LookLimits,
-) -> Result<RgbaImage, String> {
-    let bytes = read(did)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "missing".to_owned())?;
-    let s = Surface::parse_expecting(&bytes, did).map_err(|e| e.to_string())?;
-    if u64::from(s.width) * u64::from(s.height) > limits.max_texels {
-        return Err(format!("{} × {} texels is too large", s.width, s.height));
+    cache: Option<&LookCache>,
+    budget: &mut Budget,
+) -> Result<(Arc<RgbaImage>, u64), ImageFailure> {
+    if let Some(img) = cache.and_then(|c| c.source(did)) {
+        if !budget.charge(rgba_bytes(img.width, img.height), limits) {
+            return Err(ImageFailure::Budget);
+        }
+        return Ok((img, 0));
     }
-    s.to_rgba8().map_err(|e| e.to_string())
+    let bytes = read(did)
+        .map_err(|e| ImageFailure::Read(e.to_string()))?
+        .ok_or_else(|| ImageFailure::Data("missing".to_owned()))?;
+    let s = Surface::parse_expecting(&bytes, did).map_err(|e| ImageFailure::Data(e.to_string()))?;
+    let too_large = |w: u32, h: u32| u64::from(w) * u64::from(h) > limits.max_texels;
+    if too_large(s.width, s.height) {
+        return Err(ImageFailure::Data(format!(
+            "{} × {} texels is too large",
+            s.width, s.height
+        )));
+    }
+    // A JPEG surface stores no size in its header: its decode is bounded by the surface
+    // decoder (`surface.md`), and its size is checked and charged after decoding.
+    let jpeg = s.is_jpeg();
+    if !jpeg && !budget.charge(rgba_bytes(s.width, s.height), limits) {
+        return Err(ImageFailure::Budget);
+    }
+    let img = s
+        .to_rgba8()
+        .map_err(|e| ImageFailure::Data(e.to_string()))?;
+    let decoded = rgba_bytes(img.width, img.height);
+    if jpeg {
+        if too_large(img.width, img.height) {
+            return Err(ImageFailure::Data(format!(
+                "{} × {} texels is too large",
+                img.width, img.height
+            )));
+        }
+        if !budget.charge(decoded, limits) {
+            return Err(ImageFailure::Budget);
+        }
+    }
+    let img = Arc::new(img);
+    if let Some(c) = cache {
+        c.keep_source(did, Arc::clone(&img));
+    }
+    Ok((img, decoded))
 }
 
 /// FNV-1a over the inputs that decide a composed image.
@@ -491,4 +705,162 @@ fn identity(record: Did, selection: &[LayerSelection], colours: &[(u32, [u8; 4])
         eat(&c);
     }
     h
+}
+
+/// A composed image kept by the [`LookCache`], with the notes its composition made and
+/// the decoded bytes it charged (its sources and its image).
+#[derive(Debug)]
+struct Composed {
+    image: Option<Arc<RgbaImage>>,
+    notes: Vec<String>,
+    charged: u64,
+}
+
+/// A map bounded by entries and bytes that forgets the least recently used entry first.
+#[derive(Debug)]
+struct Lru<K, V> {
+    map: HashMap<K, (V, usize)>,
+    /// Keys, least recently used first.
+    order: VecDeque<K>,
+    bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
+}
+
+impl<K: Copy + Eq + Hash, V: Clone> Lru<K, V> {
+    fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+            max_entries,
+            max_bytes,
+        }
+    }
+
+    fn touch(&mut self, k: K) {
+        if let Some(pos) = self.order.iter().position(|x| *x == k) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(k);
+    }
+
+    fn get(&mut self, k: K) -> Option<V> {
+        let v = self.map.get(&k)?.0.clone();
+        self.touch(k);
+        Some(v)
+    }
+
+    fn insert(&mut self, k: K, v: V, size: usize) {
+        if size > self.max_bytes || self.max_entries == 0 {
+            return;
+        }
+        if let Some((_, old)) = self.map.remove(&k) {
+            self.bytes = self.bytes.saturating_sub(old);
+        }
+        while self.map.len() >= self.max_entries || self.bytes.saturating_add(size) > self.max_bytes
+        {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, n)) = self.map.remove(&old) {
+                self.bytes = self.bytes.saturating_sub(n);
+            }
+        }
+        self.map.insert(k, (v, size));
+        self.bytes = self.bytes.saturating_add(size);
+        self.touch(k);
+    }
+
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
+/// What a [`LookCache`] holds.
+#[derive(Debug)]
+struct CacheState {
+    records: Lru<Did, Arc<ImageCompositor>>,
+    sources: Lru<Did, Arc<RgbaImage>>,
+    composed: Lru<(Did, u64), Arc<Composed>>,
+}
+
+/// Composition cache shared by the figures of one client or explorer (module docs):
+/// compositor records and decoded source images by DID, composed images by (record,
+/// identity). Each part is bounded by entries and bytes; the least recently used entry is
+/// forgotten first. Results that depend on more than their inputs (a read error, a limit
+/// reached) are not kept. Thread-safe; the lock is never held while reading or decoding.
+#[derive(Debug)]
+pub struct LookCache {
+    inner: Mutex<CacheState>,
+}
+
+impl Default for LookCache {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(CacheState {
+                records: Lru::new(Self::MAX_RECORDS, Self::MAX_RECORD_BYTES),
+                sources: Lru::new(Self::MAX_SOURCES, Self::MAX_SOURCE_BYTES),
+                composed: Lru::new(Self::MAX_COMPOSED, Self::MAX_COMPOSED_BYTES),
+            }),
+        }
+    }
+}
+
+impl LookCache {
+    /// Compositor records kept.
+    pub const MAX_RECORDS: usize = 64;
+    /// Stored bytes of the compositor records kept.
+    pub const MAX_RECORD_BYTES: usize = 8 << 20;
+    /// Decoded source images kept.
+    pub const MAX_SOURCES: usize = 512;
+    /// RGBA8 bytes of the decoded source images kept.
+    pub const MAX_SOURCE_BYTES: usize = 96 << 20;
+    /// Composed images kept.
+    pub const MAX_COMPOSED: usize = 128;
+    /// RGBA8 bytes of the composed images kept.
+    pub const MAX_COMPOSED_BYTES: usize = 96 << 20;
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheState> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn record(&self, did: Did) -> Option<Arc<ImageCompositor>> {
+        self.lock().records.get(did)
+    }
+
+    fn keep_record(&self, did: Did, r: Arc<ImageCompositor>, stored: usize) {
+        self.lock().records.insert(did, r, stored);
+    }
+
+    fn source(&self, did: Did) -> Option<Arc<RgbaImage>> {
+        self.lock().sources.get(did)
+    }
+
+    fn keep_source(&self, did: Did, img: Arc<RgbaImage>) {
+        let size = img.pixels.len();
+        self.lock().sources.insert(did, img, size);
+    }
+
+    fn composed(&self, key: (Did, u64)) -> Option<Arc<Composed>> {
+        self.lock().composed.get(key)
+    }
+
+    fn keep_composed(&self, key: (Did, u64), c: Arc<Composed>) {
+        let size = c.image.as_ref().map_or(0, |i| i.pixels.len());
+        self.lock().composed.insert(key, c, size);
+    }
+
+    /// Entries held: (compositor records, source images, composed images).
+    #[must_use]
+    pub fn len(&self) -> (usize, usize, usize) {
+        let s = self.lock();
+        (s.records.len(), s.sources.len(), s.composed.len())
+    }
+
+    /// Whether nothing is held.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == (0, 0, 0)
+    }
 }

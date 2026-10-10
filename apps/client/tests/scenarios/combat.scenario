@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Targeting, skills and combat (docs/specs/scenario-feed.md §6.2): vitals, quickslots,
+# casts, delays, interrupts, cooldowns, effects, damage, healing, defeat and revival, with
+# triggers on the player's commands and a repeat block. Synthetic: literal refs play
+# without an install; with one, the skill and effect selectors fill the elements.
+tessera-scenario 1
+title "Practice yard"
+tick 100ms
+player "Tamsin"
+select $strikes = skill harmful=yes n=2 seed=7
+select $auras = effect role=vital-over-time n=1 seed=3
+actor $dummy kind=creature name="Straw target" pos=0,4,0 facing=180 level=5
+actor $coach kind=npc name="Coach" pos=-2,1,0
+
+at 0s spawn $dummy
++0s spawn $coach
++0s vital player health 820/820
++0s vital player power 300/300
++0s vital player resource="Focus" 0/5
++0s vital $dummy health 1500/1500
++0s quickslot 1 "Quick jab"
++0s quickslot 2 $strikes[0]
++0s quickslot 3 "Steady breath"
++0s say $coach "Strike when ready."
+
+on target $dummy times=1
++0s combat player on
++0s combat $dummy on
+end
+on use-skill quickslot=1
++0s cast player "Quick jab" 600ms target=$dummy
++0.6s damage player $dummy 145 result=critical with="Quick jab" left=1355
++0s vital player resource="Focus" 1/5
++0s cooldown "Quick jab" 1.5s
+end
+on use-skill quickslot=3
++0s cast player "Steady breath" 2s kind=channel
++0.2s delay player 500ms
++0.5s effect player "Second wind" for=3s stacks=2
+end
+
+at 3s repeat 3 every 300ms
++0s say $dummy "creaks" channel=emote
+end
+at 4s cast $dummy "Flail" 2s target=player
++0.5s interrupt $dummy
++0.1s damage $dummy player 60 result=parry left=760
++0.2s heal none player 60 left=820
++0.2s effect $dummy "Bleeding" for=2s from=player
++0s effect $dummy "Bleeding" for=4s from=player
++0.2s effect $dummy $auras[0] for=1s
++0.5s effect-end $dummy "Bleeding"
++0.3s damage player $dummy 1355 vital=health result=normal left=0
++0s defeat $dummy by=player
++0s combat player off
++0s combat $dummy off
++0s target player none
++1s revive $dummy
++0s vital $dummy health 1500/1500
++0s cooldown "Quick jab" clear
++0s say $coach "Again!" channel=yell
+
+input
+at 0.5s target $dummy
+at 0.8s use-skill quickslot=1
+at 2s use-skill quickslot=3
+at 2.5s cancel-cast
+end

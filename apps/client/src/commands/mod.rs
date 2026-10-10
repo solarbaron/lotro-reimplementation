@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The client's one command dispatcher (decision 0020): the registry of
 //! `chat-window.md` §7.1 and §8.2 ([`registry`]), the line pipeline of §7.2–§7.4
-//! ([`line`]), the words read from the install ([`text`]) and the client's built-in
+//! ([`line`](mod@line)), the words read from the install ([`text`]) and the client's built-in
 //! commands. Every source of typed command text feeds the dispatcher: the walker's chat
 //! overlay and the start-up lines of `--command` through [`Dispatcher::submit`] (the `Say`
 //! mode), and the M5 chat window's entry line through [`Dispatcher::submit_in`] with the

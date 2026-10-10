@@ -32,6 +32,11 @@
 use std::time::Instant;
 
 use crate::NetError;
+use crate::domain::{
+    CharacterCommand, CharacterEvent, CombatCommand, CombatEvent, InventoryCommand, InventoryEvent,
+    NpcCommand, NpcEvent, ProgressionCommand, ProgressionEvent, SocialCommand, SocialEvent,
+    WorldCommand, WorldEvent,
+};
 use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
     EntityId, EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement,
@@ -180,6 +185,49 @@ pub enum Event {
         /// Why.
         reason: DisconnectReason,
     },
+    /// A character event (character list details, levels;
+    /// `docs/specs/scenario-feed.md` §9.2).
+    Character(CharacterEvent),
+    /// An inventory event (containers, items, wallet).
+    Inventory(InventoryEvent),
+    /// A combat event (targets, vitals, casts, effects, damage).
+    Combat(CombatEvent),
+    /// An NPC window event (dialogue, quests, vendors, loot).
+    Npc(NpcEvent),
+    /// A social event (channels, fellowship, trade, lists, music).
+    Social(SocialEvent),
+    /// A world event (markers, travel, mounts, instances).
+    World(WorldEvent),
+    /// A progression event (experience, skills, traits, crafting, reputation).
+    Progression(ProgressionEvent),
+}
+
+impl Event {
+    /// The variant's name, for logs; for a grouped event the inner variant's name.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Connected { .. } => "Connected",
+            Self::WorldEntered { .. } => "WorldEntered",
+            Self::EntitySpawned { .. } => "EntitySpawned",
+            Self::EntityMoved { .. } => "EntityMoved",
+            Self::StaticSpawned { .. } => "StaticSpawned",
+            Self::StaticsCleared => "StaticsCleared",
+            Self::EntityCreated { .. } => "EntityCreated",
+            Self::AppearanceChanged { .. } => "AppearanceChanged",
+            Self::LocationReport { .. } => "LocationReport",
+            Self::EntityDespawned { .. } => "EntityDespawned",
+            Self::ChatMessage { .. } => "ChatMessage",
+            Self::Disconnected { .. } => "Disconnected",
+            Self::Character(e) => e.name(),
+            Self::Inventory(e) => e.name(),
+            Self::Combat(e) => e.name(),
+            Self::Npc(e) => e.name(),
+            Self::Social(e) => e.name(),
+            Self::World(e) => e.name(),
+            Self::Progression(e) => e.name(),
+        }
+    }
 }
 
 /// Something the client asks the world source to do.
@@ -233,10 +281,25 @@ pub enum Command {
     /// Close the session gracefully. The backend answers with
     /// [`Event::Disconnected`].
     Disconnect,
+    /// A character command (allowed while connected, before world entry).
+    Character(CharacterCommand),
+    /// An inventory command.
+    Inventory(InventoryCommand),
+    /// A combat command.
+    Combat(CombatCommand),
+    /// An NPC window command.
+    Npc(NpcCommand),
+    /// A social command.
+    Social(SocialCommand),
+    /// A world command.
+    World(WorldCommand),
+    /// A progression command.
+    Progression(ProgressionCommand),
 }
 
 impl Command {
-    /// A short static name, for logs and errors.
+    /// A short static name, for logs and errors; for a grouped command the inner variant's
+    /// name.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
@@ -247,6 +310,13 @@ impl Command {
             Self::QueryLocation => "QueryLocation",
             Self::Chat { .. } => "Chat",
             Self::Disconnect => "Disconnect",
+            Self::Character(c) => c.name(),
+            Self::Inventory(c) => c.name(),
+            Self::Combat(c) => c.name(),
+            Self::Npc(c) => c.name(),
+            Self::Social(c) => c.name(),
+            Self::World(c) => c.name(),
+            Self::Progression(c) => c.name(),
         }
     }
 }
@@ -423,10 +493,17 @@ impl Session {
         let allowed = match &command {
             Command::Connect => self.state == S::Idle,
             Command::EnterWorld { .. } => self.state == S::Connected,
+            Command::Character(_) => self.state == S::Connected,
             Command::Move { .. }
             | Command::Chat { .. }
             | Command::Teleport { .. }
-            | Command::QueryLocation => self.state == S::InWorld,
+            | Command::QueryLocation
+            | Command::Inventory(_)
+            | Command::Combat(_)
+            | Command::Npc(_)
+            | Command::Social(_)
+            | Command::World(_)
+            | Command::Progression(_) => self.state == S::InWorld,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
         if !allowed {
@@ -669,7 +746,15 @@ impl Session {
             | Event::StaticSpawned { .. }
             | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
-            Event::ChatMessage { .. } => match self.state {
+            Event::Combat(e) if !e.is_valid() => Verdict::Invalid("non-finite vital or amount"),
+            Event::World(e) if !e.is_valid() => Verdict::Invalid("invalid marker location"),
+            Event::Inventory(_)
+            | Event::Combat(_)
+            | Event::Npc(_)
+            | Event::Social(_)
+            | Event::World(_)
+            | Event::Progression(_) => self.world_verdict(),
+            Event::ChatMessage { .. } | Event::Character(_) => match self.state {
                 S::Connected | S::EnteringWorld | S::InWorld => Verdict::Surface,
                 // Chat that answered an interrupted connect or world entry
                 // (e.g. a welcome line) is stale once Disconnect was sent.
@@ -756,6 +841,11 @@ fn validate(command: &Command) -> Result<(), NetError> {
                         "tell recipient empty, too long or has control characters",
                     ));
                 }
+                ChatChannel::Named { name } if !is_valid_name(name) => {
+                    return Err(NetError::InvalidCommand(
+                        "channel name empty, too long or has control characters",
+                    ));
+                }
                 _ => {}
             }
         }
@@ -767,6 +857,13 @@ fn validate(command: &Command) -> Result<(), NetError> {
             }
         }
         Command::Connect | Command::Disconnect | Command::QueryLocation => {}
+        Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Npc(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Social(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::World(c) => c.validate().map_err(NetError::InvalidCommand)?,
+        Command::Progression(c) => c.validate().map_err(NetError::InvalidCommand)?,
     }
     Ok(())
 }
@@ -803,14 +900,167 @@ fn clean_text(event: &mut Event) -> bool {
             if let Some(sender) = sender {
                 changed |= clean(sender, MAX_NAME_LEN);
             }
-            if let ChatChannel::Tell { peer } = channel {
-                changed |= clean(peer, MAX_NAME_LEN);
+            match channel {
+                ChatChannel::Tell { peer } => changed |= clean(peer, MAX_NAME_LEN),
+                ChatChannel::Named { name } => changed |= clean(name, MAX_NAME_LEN),
+                _ => {}
             }
             changed
         }
         Event::Disconnected {
             reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
         } => clean(why, MAX_CHAT_LEN),
+        Event::Character(e) => e.clean(),
+        Event::Inventory(e) => e.clean(),
+        Event::Combat(e) => e.clean(),
+        Event::Npc(e) => e.clean(),
+        Event::Social(e) => e.clean(),
+        Event::World(e) => e.clean(),
+        Event::Progression(e) => e.clean(),
         _ => false,
+    }
+}
+
+/// `Event::name` and `Command::name` give the inner variant's name of a grouped value, so
+/// variant names must be unique among all events and among all commands, groups included
+/// (`docs/ARCHITECTURE.md` §19.1). The test reads every `name()` of `Event`, `Command` and
+/// their group enums from the source: each `match` is exhaustive (the compiler checks
+/// that), so every variant has an arm, and a new variant is covered without editing the
+/// test.
+#[cfg(test)]
+mod name_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// An arm of a `name()` match.
+    #[derive(Debug)]
+    enum Arm {
+        /// `Self::Variant … => "Name",`
+        Literal { variant: String, name: String },
+        /// `Self::Group(x) => x.name(),`
+        Group(String),
+    }
+
+    /// Every `name(&self) -> &'static str` in `src`: (impl type, its arms).
+    fn name_fns(src: &str) -> Vec<(String, Vec<Arm>)> {
+        let mut out = Vec::new();
+        let mut current_impl: Option<String> = None;
+        let mut lines = src.lines();
+        while let Some(line) = lines.next() {
+            if let Some(rest) = line.strip_prefix("impl ")
+                && let Some(ty) = rest.strip_suffix(" {")
+                && ty.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                current_impl = Some(ty.to_owned());
+                continue;
+            }
+            if line.trim() != "pub fn name(&self) -> &'static str {" {
+                continue;
+            }
+            let ty = current_impl.clone().expect("name() inside an impl");
+            assert_eq!(lines.next().map(str::trim), Some("match self {"), "{ty}");
+            let mut arms = Vec::new();
+            for arm in lines.by_ref() {
+                let arm = arm.trim();
+                if arm == "}" {
+                    break;
+                }
+                let (pattern, value) = arm.split_once(" => ").expect("an arm");
+                let variant = pattern
+                    .strip_prefix("Self::")
+                    .expect("a Self:: pattern")
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .expect("a variant")
+                    .to_owned();
+                if let Some(name) = value.strip_prefix('"').and_then(|v| v.strip_suffix("\",")) {
+                    arms.push(Arm::Literal {
+                        variant,
+                        name: name.to_owned(),
+                    });
+                } else {
+                    assert!(value.ends_with(".name(),"), "{ty}: unexpected arm {arm}");
+                    arms.push(Arm::Group(variant));
+                }
+            }
+            assert!(!arms.is_empty(), "{ty}: no arms");
+            out.push((ty, arms));
+        }
+        out
+    }
+
+    /// Checks one family (`Event` or `Command`): every literal equals its variant, every
+    /// group arm has a group enum `GroupSuffix` with its own `name()`, and the names are
+    /// unique across the family.
+    fn check_family(fns: &BTreeMap<String, Vec<Arm>>, root: &str) -> usize {
+        let top = fns
+            .get(root)
+            .unwrap_or_else(|| panic!("{root}::name not found"));
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        let mut add = |ty: &str, arms: &[Arm], groups: &mut BTreeSet<String>| {
+            for arm in arms {
+                match arm {
+                    Arm::Literal { variant, name } => {
+                        assert_eq!(variant, name, "{ty}::{variant} is logged as {name}");
+                        if let Some(first) = seen.insert(name.clone(), ty.to_owned()) {
+                            panic!("{root} name {name} is used by {first} and {ty}");
+                        }
+                    }
+                    Arm::Group(g) => {
+                        groups.insert(g.clone());
+                    }
+                }
+            }
+        };
+        let mut groups = BTreeSet::new();
+        add(root, top, &mut groups);
+        assert!(!groups.is_empty(), "{root} has groups");
+        for g in &groups {
+            let ty = format!("{g}{root}");
+            let arms = fns
+                .get(&ty)
+                .unwrap_or_else(|| panic!("{ty}::name not found"));
+            let mut nested = BTreeSet::new();
+            add(&ty, arms, &mut nested);
+            assert!(nested.is_empty(), "{ty}: groups do not nest");
+        }
+        // Every group enum of the family is reached from the root.
+        for ty in fns.keys() {
+            if let Some(g) = ty.strip_suffix(root)
+                && !g.is_empty()
+            {
+                assert!(groups.contains(g), "{ty} is not a group of {root}");
+            }
+        }
+        seen.len()
+    }
+
+    #[test]
+    fn event_and_command_names_are_unique() {
+        let mut fns = BTreeMap::new();
+        for src in [include_str!("session.rs"), include_str!("domain.rs")] {
+            for (ty, arms) in name_fns(src) {
+                assert!(fns.insert(ty.clone(), arms).is_none(), "{ty}: two name()s");
+            }
+        }
+        let events = check_family(&fns, "Event");
+        let commands = check_family(&fns, "Command");
+        // The P0 vocabulary (`scenario-feed.md` §9) is far larger than this.
+        assert!(
+            events > 50 && commands > 40,
+            "{events} events, {commands} commands"
+        );
+    }
+
+    #[test]
+    fn name_reports_the_inner_variant() {
+        use crate::domain::{CharacterCommand, CharacterEvent};
+        let e = super::Event::Character(CharacterEvent::LevelChanged {
+            entity: crate::model::EntityId(1),
+            level: 2,
+        });
+        assert_eq!(e.name(), "LevelChanged");
+        let c = super::Command::Character(CharacterCommand::DeleteCharacter { name: "A".into() });
+        assert_eq!(c.name(), "DeleteCharacter");
+        assert_eq!(super::Command::Connect.name(), "Connect");
     }
 }

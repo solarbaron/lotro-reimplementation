@@ -49,6 +49,29 @@ struct Gfx {
     window: Arc<Window>,
 }
 
+/// Longest scenario title shown in the window caption, in bytes (`scenario-feed.md` §4.3).
+pub const MAX_CAPTION_TITLE: usize = 128;
+
+/// A scenario title for the window caption: control characters replaced by spaces, runs of
+/// white space collapsed, at most [`MAX_CAPTION_TITLE`] bytes (cut at a character
+/// boundary); `None` without a title or when nothing printable remains.
+#[must_use]
+pub fn scenario_caption(title: Option<&str>) -> Option<String> {
+    let cleaned: String = title?
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut end = cleaned.len().min(MAX_CAPTION_TITLE);
+    while !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    let t = cleaned[..end].trim_end();
+    (!t.is_empty()).then(|| t.to_owned())
+}
+
 #[derive(Debug)]
 struct App {
     args: Args,
@@ -68,6 +91,9 @@ struct App {
     ui: Option<crate::ui_host::client::ClientUi>,
     /// The settings' `[Input]` section (double-click time and rectangle, `keymap.md` §7.7).
     input_prefs: tessera_settings::InputPrefs,
+    /// `"<scenario title> - "` for the window caption of a scenario run with a title
+    /// (`scenario-feed.md` §4.3 `title`), see [`scenario_caption`].
+    scenario_caption: Option<String>,
     /// The window's scale factor the mapper's timing was last computed for.
     scale_factor: f64,
 }
@@ -142,6 +168,11 @@ impl App {
         if let Some(u) = ui.as_mut() {
             u.prepare(&mut runtime);
         }
+        let args_caption = args
+            .scenario_prepared
+            .as_deref()
+            .and_then(|sc| scenario_caption(sc.title()))
+            .map(|t| format!("{t} - "));
         Ok(Self {
             args,
             runtime: Some(runtime),
@@ -157,6 +188,7 @@ impl App {
             status_panel: TextPanel::default(),
             input_prefs: crate::ui_host::cursor::input_prefs(),
             scale_factor: 1.0,
+            scenario_caption: args_caption,
         })
     }
 
@@ -168,8 +200,12 @@ impl App {
 
     fn create_gfx(&self, event_loop: &ActiveEventLoop) -> anyhow::Result<Gfx> {
         let (w, h) = self.args.size;
+        let title = match &self.scenario_caption {
+            Some(c) => format!("Tessera - {}", c.trim_end_matches(" - ")),
+            None => "Tessera".to_owned(),
+        };
         let attrs = Window::default_attributes()
-            .with_title("Tessera")
+            .with_title(title)
             .with_inner_size(PhysicalSize::new(w, h))
             .with_min_inner_size(PhysicalSize::new(64u32, 64u32));
         let window = Arc::new(
@@ -294,8 +330,10 @@ impl App {
                 DataStatus::NoData(_) => "no data",
                 DataStatus::Ready { .. } => "data ready",
             };
-            gfx.window
-                .set_title(&format!("Tessera - {what} - {data} - {fps:.0} fps"));
+            let caption = self.scenario_caption.as_deref().unwrap_or("");
+            gfx.window.set_title(&format!(
+                "Tessera - {caption}{what} - {data} - {fps:.0} fps"
+            ));
             self.title_at = now;
             self.frames_since_title = 0;
         }
@@ -503,8 +541,9 @@ impl App {
                 .as_ref()
                 .and_then(|w| w.describe())
                 .unwrap_or_else(|| "loading".into());
+            let caption = self.scenario_caption.as_deref().unwrap_or("");
             gfx.window
-                .set_title(&format!("Tessera walker - {place} - {fps:.0} fps"));
+                .set_title(&format!("Tessera walker - {caption}{place} - {fps:.0} fps"));
             self.title_at = now;
             self.frames_since_title = 0;
         }
@@ -723,6 +762,19 @@ impl ApplicationHandler for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scenario_titles_are_cleaned_for_the_caption() {
+        assert_eq!(super::scenario_caption(None), None);
+        assert_eq!(super::scenario_caption(Some(" \t\n")), None);
+        assert_eq!(
+            super::scenario_caption(Some("Evening\u{7}at  the\ninn ")).as_deref(),
+            Some("Evening at the inn")
+        );
+        let long = "é".repeat(100);
+        let c = super::scenario_caption(Some(&long)).expect("caption");
+        assert!(c.len() <= super::MAX_CAPTION_TITLE && c.chars().all(|ch| ch == 'é'));
+    }
+
     use super::*;
 
     #[test]

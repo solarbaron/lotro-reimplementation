@@ -9,6 +9,7 @@
 #   cargo deny check                         (and --manifest-path fuzz/Cargo.toml)
 #   tools/check-content.sh                   forbidden content and trademark words
 #   tools/check-spdx.sh                      SPDX headers
+#   tools/check-server-deps.sh               tessera-server and its hosts link no data crate (--self-test too)
 #   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers (unpushed
 #                                            commits; --all checks the whole history)
 #   (cd fuzz && cargo fmt --all -- --check && cargo clippy --bins --locked -- -D warnings)
@@ -148,6 +149,31 @@ jobs:
       - name: fuzz workspace (stable type-check)
         working-directory: fuzz
         run: cargo clippy --bins --locked -- -D warnings
+
+  # LEGAL.md §11.1 rules 1 and 5, server-content.md §3.2 and §10 E1, scenario-feed.md
+  # §3.1, decision 0024 §2.3 (P0 exit criterion 4): tessera-server never links a
+  # data-decoding crate, tessera-gamedata or the scenario feed (tessera-net). Allowlist: only
+  # tessera-server, tessera-protocol and crates.io packages may appear in its graph (normal,
+  # build and dev edges; default and all features; every target; and the workspace build
+  # with unified features). Server hosts (tessera-loadtest) are checked too, and a source
+  # scan refuses #[path]/include! from outside. Needs no build (cargo tree only).
+  server-deps:
+    name: server dependency guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
+      - name: Self-test the guard
+        run: tools/check-server-deps.sh --self-test
+      - name: Check tessera-server and its hosts
+        run: tools/check-server-deps.sh
 
   test:
     name: test (${{ matrix.os }})

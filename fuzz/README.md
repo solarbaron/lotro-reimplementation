@@ -159,6 +159,8 @@ stable without libFuzzer.
 | `formats_gameplay_combat` | every combat object kind over an object payload and a property set with a total synthetic schema and a class tree from the input; synthetic progressions, modifier entries, sandbox combination and trait-cell keys | `docs/specs/combat-data.md` §2–§10 |
 | `formats_gameplay_creatures` | encounter table round trip; typed creature and AI views, generator profiles (grammar checks, static resolution, evaluation capped at 256 objects), template store; spawn index and patrol chains over a landblock-info record | `docs/specs/creatures.md` §2–§7 |
 | `formats_gameplay_items` | item views and rules over decoded and harness-built property sets with a class parent map: kind rules, value, DPS, timing, wear and armour tables, modifiers, effects, sockets, sets, relics, legacy readers | `docs/specs/items.md` §2–§9 |
+| `net_scenario_parse` | `tessera_net::scenario` parser and static checks on arbitrary bytes, then 200 ticks of playback with the empty resolver; parse peak allocation bounded by a counting allocator | `docs/specs/scenario-feed.md` §4–§7, §11 |
+| `net_scenario_run` | a scenario (bytes before the first NUL) resolved by a synthetic resolver driven by the bytes after it (statuses, counts, DIDs, rows, labels, enum values, display names), then the headless driver with its input script; per-poll event bound and queued-weight limit | `scenario-feed.md` §7.4, §8.6, §11.1, §11.4, §12 |
 
 ## Running
 

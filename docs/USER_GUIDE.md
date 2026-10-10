@@ -7,9 +7,11 @@ the three programs, the options worth knowing, the controls, where Tessera keeps
 and how to report a problem. Every option named here exists in the programs' own `--help`
 output; run that for the complete, current list.
 
-Tessera is not playable yet. The client is an offline **world walker**: you walk or fly
-over the world as an animated avatar, among the characters the data places, with no
-server, no combat and no game UI.
+Tessera is not playable yet. The client is mainly an offline **world walker**: you walk or
+fly over the world as an animated avatar, among the characters the data places, with no
+combat. It can also join Tessera's own test server (not the game's servers) and attach an
+early game UI with Lua plugins (§3.12). Scenario files (§3.11) script gameplay events for
+testing; they play back what the file says and compute nothing.
 
 ---
 
@@ -192,7 +194,7 @@ cargo run --release -p tessera-client -- --fly-path 1:100:100,1:140:100 --headle
 | Option | Meaning |
 |---|---|
 | `--screenshot PNG` | Render the spawn offscreen once everything around it has loaded (or `--settle-timeout` passed), save it as PNG and exit. Implies `--headless`. |
-| `--headless` | Run the walker offscreen without a window. Needs one of `--screenshot`, `--fly-path`, `--duration` or `--walk-path` to end the run. |
+| `--headless` | Run without a window: the walker offscreen, or for `--scenario` without `--screenshot`, `--place` or a height-less `--spawn` (always without an install) only the scenario driver, with no walker and no GPU. Needs one of `--screenshot`, `--fly-path`, `--duration`, `--ui-script` (§3.12), `--walk-path` or `--scenario` (§3.11) to end the run. |
 | `--no-hud` | Hide the HUD and the minimap (clean screenshots). |
 | `--smoke` | Initialise everything, render a few frames of the simple test scene (a texture from your install on a quad; `--surface DID` picks which) offscreen, then exit: a quick check that the GPU path works. `--frames N` (default 8), `--data-timeout SECS` (default 120) and `--smoke-out FILE` (write the last frame as a PPM image) go with it. |
 | `--exit-after-frames N` | Windowed: close the window after N frames. |
@@ -245,6 +247,146 @@ cargo run --release -p tessera-client -- --walk-path docs/checklists/m4-5-visual
 The client hosts Lua plugins from `Plugins/` in Tessera's data folder (or `--plugins DIR`,
 read-only). `--load-plugin NAME` loads one by its descriptor name after discovery
 (repeatable). Plugin support is at an early stage.
+
+<a id="scenarios"></a>
+### 3.11 Scenario runs
+
+A **scenario file** scripts what a game world would tell the client: characters, actors,
+items, vitals, casts, effects, dialogue, quest states, vendor and loot lists, map markers,
+chat lines and the like, as timed steps and as scripted answers to your commands ("when the
+player targets the signpost, say …"). The client's offline sandbox plays it back as the same
+events a server would send, so the gameplay panels of later milestones can be tested without
+a server. It is a test tool, not a game: every number and outcome comes from the file, and
+nothing is computed from the game's rules.
+
+| Option | Meaning |
+|---|---|
+| `--scenario FILE` | Play FILE with the sandbox. Cannot be combined with `--server` (§3.12), `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase` or `--ui-script`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading`; `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
+| `--scenario-log FILE` | Write the run's event log to FILE (`-` for standard output). Needs `--scenario` (refused with exit code 2 otherwise). FILE is created or overwritten without asking; the scenario file's own path is refused (exit code 2). A log can grow very large (below). |
+| `--scenario-input` | Windowed runs: also play the file's `input` block (headless runs always play it). Each line is sent when the scenario's clock reaches it, the `at pre` lines before the world is entered. |
+
+**Headless runs.** `--headless --scenario FILE` needs nothing else to end the run: the
+scenario runs on its own virtual clock, as fast as it can, to its end, then the client
+exits. Without an install (`--no-data`, or none found) it needs no window and no GPU. The
+same file, the same install (or none) and the same options give the same log, byte for
+byte, on every run, so a log is a good regression check.
+
+```sh
+cargo run --release -p tessera-client -- --headless --no-data \
+    --scenario my-test.scenario --scenario-log -
+```
+
+| Exit status | Meaning |
+|---|---|
+| 0 | The scenario finished |
+| 1 | Another client failure |
+| 2 | Command-line error (for example a scenario file that does not exist) |
+| 3 | The file has an error; the message names `FILE:LINE:COLUMN` |
+| 4 | Its selectors could not be resolved (for example `requires install` without an install, or an install you named that cannot be read) |
+| 5 | The run failed (a run-time error in the scenario, the log could not be written, or the session ended early) |
+
+**Where the player stands.** Without `--spawn` or `--place`, a headless scenario run puts
+the player at a fixed spot (region 0, the origin, facing east) whatever the install, so no
+terrain has to load. A scenario that needs real terrain should give an exact position with a
+height, `--spawn R,X,Y,x,y,z`. `--place` and `--spawn` without a height wait for the area to
+load, and such runs are not guaranteed to give the same log every time. With an install,
+`--screenshot PNG` captures the frame after the scenario's end (it is refused with
+`--no-data`).
+
+**Windowed runs.** Without `--headless`, the walker plays the scenario in real time. A HUD
+line shows its state, and when it ends the world stays open. Logs of windowed runs carry
+wall-clock times, so they differ from run to run. The log is written in the background, so a
+slow disk or a reader of `--scenario-log -` that stops reading (such as `less`) never freezes
+the window; if the writing falls too far behind, the log stops with `error=LogWrite` and the
+client exits with status 5. The `input` block is played only with `--scenario-input`; a file
+whose `enter` character only an `accept-character` step adds needs it (or `--headless`), and
+without it such a run is refused with exit status 2.
+
+**Log size.** A scenario file is at most 1 MiB, and its log at most 256 MiB: a file built
+to make a larger one (a trigger that answers many input lines with long chat lines) ends the
+run at that size with exit status 5, the log's last line saying `error=LogOverflow`.
+
+**The file at a glance.** A UTF-8 text file, by convention `NAME.scenario`. The first line
+that is not blank or a comment is `tessera-scenario 1`; `#` starts a comment, so a file may
+begin with its SPDX header comment. Settings (`title`, `tick`, `end-at`, `enter`,
+`defaults`, `requires install`) come first, then declarations (`player`, `character`,
+`select`, `actor`, `item`, `page`, `option`) and step lines. A step line starts with `at TIME`
+(absolute) or `+TIME` (after the previous line). `on PATTERN … end` answers a command you
+send, `repeat N every TIME … end` repeats steps, and `input … end` lists the commands a
+headless run (or a windowed one with `--scenario-input`) sends for you. This original example plays without an install:
+
+```
+tessera-scenario 1
+title "Garden test"
+tick 100ms
+player "Wren"
+actor $post kind=object name="Signpost" pos=0,5,0
+select $herbs = item kind=general n=3 seed=1
+
+at 0s spawn $post
++0s vital player health 500/500
++0s say $post "Welcome to the garden."
++1s give $herbs
+at 2s damage none player 40 left=460
+
+on target $post
++0s say $post "Read me."
+end
+
+input
+at 1s target $post
+end
+```
+
+The complete format (every step, trigger and command, the limits and the log format) is in
+[`docs/specs/scenario-feed.md`](specs/scenario-feed.md); the scenarios in
+`apps/client/tests/scenarios/` show every group of steps.
+
+**Selectors.** A scenario never names game records by number. A `select` line describes
+them instead, for example `select $swords = item kind=weapon n=3 seed=7` (three weapons,
+picked with seed 7), `select $quests = quest all` or `select $skills = skill class=@Label
+n=5 seed=7`. Steps use the whole set (`give $herbs` gives every element) or one element as
+a record reference: `quest $quests[0] active`, or, for items, a declaration first
+(`item $sword $swords[0]`, then `give $sword`; `give $swords[0]` is an error). The
+client resolves selectors against your own install before the run starts; the log's
+`resolve` lines say how many records each one found. Without an install every selector
+resolves empty and steps that need one of its elements are skipped, while literal strings
+(`"Quick jab"`) work everywhere, so a scenario built from literals plays fully with
+`--no-data`. A file with `requires install` refuses to run without one (exit status 4).
+
+**Rules for scenario files you share or commit.** Shared scenarios must work for everyone's
+install and must not carry game content:
+
+- **Selectors only.** No record IDs: no `select … = did …` lines and no attribute value that
+  is a record ID. Enum values (in filters, in the `class=`, `species=` and `sex=` options,
+  in `slot=` of `equip` and in `type=` of `damage` and `heal`) are written as labels
+  (`@Label`) that an Accepted spec names, as Tessera's own keywords, or as `m` / `f`;
+  numeric enum values are for local files only, so `equip $x slot=3` cannot be committed.
+  Container slot numbers (`give`, `unequip` and `move-item … slot=`), quickslot and trait
+  slot numbers, entry and option numbers are plain numbers and are fine.
+- **Original text only.** No names, dialogue, quest, item or place text from the game; every
+  literal string is your own. Committed scenarios are licensed GPL-3.0-or-later or CC0-1.0
+  and start with the header comment `# SPDX-License-Identifier: GPL-3.0-or-later` (or
+  `CC0-1.0`); the committed-scenario test checks it.
+- **Keep the rest local.** A scenario that names record IDs you picked (the `did` selector
+  family exists for that) or copies text from your install stays on your machine, outside
+  the repository or git-ignored. So does every log of a run with an install: it lists record
+  IDs from your install and may hold its text. Only `install none` logs of synthetic
+  scenarios may be committed, and a test replays them.
+
+<a id="server-ui"></a>
+### 3.12 Test server and game UI
+
+These parts are early; `tessera-client --help` lists every option that goes with them.
+
+| Option | Meaning |
+|---|---|
+| `--server HOST:PORT` | Play on a **Tessera test server** (`tessera-server`, Tessera's own protocol; never the game's servers) instead of the built-in sandbox. Also takes a connect string `tessera://HOST:PORT[?pin=sha256:…]`. Needs `--account NAME`; `--character NAME` picks the character (default: the account's first). The password comes from `TESSERA_PASSWORD` or a prompt, never from the command line. The server places the character, so `--spawn`, `--place` and `--crowd` do not apply. |
+| `--server-fingerprint FP`, `--trust-new-server`, `--known-servers FILE` | How the server's key is trusted: a pinned fingerprint, or the known-servers file next to Tessera's settings file; `--trust-new-server` records an unknown key on first use (check the fingerprint the client logs with the server's operator first). |
+| `--ui` | Attach the game UI: panels, chat, plugin windows. `--open-panel NAME`, `--skin NAME`, `--ui-script` and `--ui-report FILE` imply it. |
+| `--ui-script` | Run the scripted UI measurement (implies `--ui`); with `--headless` it runs offscreen and ends the run. `--ui-report FILE` writes its report as Markdown. |
+
+`--showcase` (§3) shows the early texture showcase instead of the walker.
 
 ---
 

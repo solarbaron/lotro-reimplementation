@@ -320,7 +320,13 @@ fn showcase_texture(config: &LoaderConfig, set: &ArchiveSet, ctx: &Ctx) {
     }
 }
 
-fn find_install(explicit: Option<&Path>) -> Result<GameInstall, String> {
+/// The first usable install: `explicit` (`--game-dir`), else `TESSERA_GAME_DIR`, else
+/// automatic discovery (`tessera_install::discover_with`); rejected candidates are logged.
+///
+/// # Errors
+///
+/// The reason no install is usable, for the no-data notice.
+pub fn find_install(explicit: Option<&Path>) -> Result<GameInstall, String> {
     let env = SearchEnv::from_process();
     let discovery = tessera_install::discover_with(&env, explicit)
         .map_err(|e| format!("install not usable: {e}"))?;

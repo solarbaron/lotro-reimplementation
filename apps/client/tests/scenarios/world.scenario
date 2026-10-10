@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Map, travel, mounts and instances (docs/specs/scenario-feed.md §6.5): map markers, a
+# travel window and a journey, a teleport, a mount, instance lists and the player's world
+# commands. Synthetic; with an install the selectors add records. The signpost (a region-1
+# place) spawns only with the player in region 1: --spawn 1,X,Y,x,y,z (default: region 0).
+tessera-scenario 1
+title "Crossroads"
+tick 100ms
+player "Tamsin"
+select $spots = place region=1 n=2 seed=5
+select $routes = travel-destination n=3 seed=8
+select $pockets = instance n=2 seed=2
+actor $signpost kind=object name="Signpost" pos=place($spots[0])
+actor $stablehand kind=npc name="Stablehand" pos=5,-2,0
+
+at 0s spawn $stablehand
++0s spawn $signpost
++0s marker $camp 10,20,0 "Camp"
++0s marker $well -15,5,0 "Old well" quest="Lost satchel"
++0.5s marker $camp 12,22,0 "Camp, moved"
++0.5s travel-list dest="North road","River ford","Hill fort" from=$stablehand coin=50,80
++0.5s say $stablehand "Pick a road."
+
+on choose-travel entry=2
++0s close travel
++0s travel "River ford" 3s
++3s teleport 400,-250,12 facing=45
+end
+on dismount
++0s mount player none
+end
+
+at 7s mount player "Grey pony"
++1s travel-list dest=$routes from=$stablehand coin=60
++0.5s close travel
++0.5s instances "Flooded cellar","Bell tower"
+on join-instance entry=1
++0s close instances
++0s instance "Flooded cellar"
+end
+on leave-instance
++0s instance none
+end
+at 11s instances $pockets
++0.5s close instances
++0.5s marker-remove $well
+
+input
+at 1.6s choose-travel 2
+at 7.5s dismount
+at 9.5s join-instance 1
+at 10.5s leave-instance
+end

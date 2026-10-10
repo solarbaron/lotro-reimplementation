@@ -1,0 +1,44 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Market morning"
+resolve $wares line=10 family=item requested=4 candidates=0 got=0 note=no-install
+resolve $errands line=11 family=quest requested=2 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$grocer kind=non-player name="Grocer" at=2.000,2.000,0.000 facing=225.00
+0.000 EntitySpawned entity=$warden kind=non-player name="Gate warden" at=-3.000,2.000,0.000 facing=123.69
+0.000 WalletChanged currency=coin amount=900
+0.500 > UseEntity entity=$grocer
+0.500 DialogueShown window=1 speaker=$grocer text="Fresh from the orchard. Care to look?" options=[{option=1 text="Show me your wares."},{option=2 text="Not today."},{option=3 text="Goodbye."}]
+1.000 > ChooseOption window=1 option=1
+1.000 WindowClosed window=1
+1.000 VendorShown window=2 vendor=$grocer entries=[{entry=1 what="Russet apple" price=coin:12 stock=20},{entry=2 what="Pear cider" price=coin:30 stock=20},{entry=3 what="Honey cake" price=coin:45 stock=20}]
+1.500 > Buy window=2 entry=2 quantity=1
+1.500 WalletChanged currency=coin amount=870
+1.500 ItemAdded item=$cider what="Pear cider" at=backpack:0 quantity=1
+2.000 > CloseWindow window=2
+2.000 WindowClosed window=2
+3.000 > UseEntity entity=$warden
+3.000 QuestOffered window=3 quest="Lost satchel" giver=$warden
+3.500 > AnswerQuest window=3 accept=yes
+3.500 QuestState quest="Lost satchel" state=active
+3.500 WindowClosed window=3
+3.700 QuestObjective quest="Lost satchel" objective=1 count=0 total=1 done=no
+3.700 QuestTracked quest="Lost satchel" tracked=yes
+6.000 QuestObjective quest="Lost satchel" objective=1 count=1 total=1 done=yes
+6.000 QuestState quest="Lost satchel" state=completed
+6.500 LootShown window=4 source=$warden entries=[{entry=1 what="Satchel strap" quantity=1},{entry=2 what="Brass buckle" quantity=1}] coin=75
+6.800 LootTaken window=4 entry=1
+7.200 > TakeLoot window=4 entry=2
+7.200 LootTaken window=4 entry=2
+7.200 ItemAdded item=item:2 what="Brass buckle" at=backpack:1 quantity=1
+7.500 > CloseWindow window=4
+7.500 WindowClosed window=4
+8.300 VendorShown window=5 vendor=$grocer entries=[]
+9.300 WindowClosed window=5
+9.300 QuestState quest="Lost satchel" state=removed
+9.300 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

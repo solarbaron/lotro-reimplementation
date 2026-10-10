@@ -3954,6 +3954,7 @@ dependencies = [
  "tessera-dat",
  "tessera-entity",
  "tessera-formats",
+ "tessera-gamedata",
  "tessera-havok",
  "tessera-input",
  "tessera-install",
@@ -3973,6 +3974,7 @@ dependencies = [
  "tessera-text",
  "tessera-ui",
  "tessera-world",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -4068,6 +4070,18 @@ dependencies = [
  "image",
  "proptest",
  "tessera-dat",
+ "tessera-wstate",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-gamedata"
+version = "0.1.0"
+dependencies = [
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
  "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",

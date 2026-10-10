@@ -140,7 +140,9 @@ pub(crate) fn wire_chat_channel(c: &ChatChannel) -> Option<wire::ChatChannel> {
         ChatChannel::Yell => wire::ChatChannel::Yell,
         ChatChannel::Emote => wire::ChatChannel::Emote,
         ChatChannel::Tell { peer } => wire::ChatChannel::Tell { peer: peer.clone() },
-        ChatChannel::System => return None,
+        // Fellowship and named channels have no wire form until a minor version of
+        // `tessera-protocol.md` adds them (scenario-feed.md §9.5).
+        ChatChannel::System | ChatChannel::Fellowship | ChatChannel::Named { .. } => return None,
     })
 }
 

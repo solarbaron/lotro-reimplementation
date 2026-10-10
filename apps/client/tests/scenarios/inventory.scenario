@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Characters and inventory (docs/specs/scenario-feed.md §6.1): the character list and its
+# triggers, containers, items, quantities, condition, wallet and the inventory commands.
+# Synthetic: it plays fully without an install; with one, the weapon selector fills the
+# fan-out `give`. Every name and text is invented for Tessera.
+tessera-scenario 1
+title "Packing for the road"
+tick 50ms
+player "Tamsin" level=12
+character "Orrin" level=3
+select $blades = item kind=weapon equippable=yes n=3 seed=11
+actor $porter kind=npc name="Porter" pos=3,1,0
+actor $crate kind=object name="Supply crate" pos=1,2,0 facing=180 level=1
+item $loaf "Travel loaf" qty=6
+item $rope "Coil of rope"
+item $lamp "Shuttered lamp"
+item $tent "Canvas tent"
+
+at 0s spawn $porter
++0s spawn $crate
++0s bag 8
++0s bag 20 container=vault
++0s give $loaf
++0s give $rope slot=3
++0s give $lamp
++0s give $tent to=vault
++0s give $rope
++0s wallet coin 4520
++0s wallet "Copper token" 12
++0.2s give $blades
++0.2s quantity $loaf 4
++0s condition $lamp 40/100
++0.5s level player 13
++0s say $porter "That should keep you fed for a week."
++0.5s move $porter 3,4,0 over=400ms
++0.5s face $porter player
++0.2s despawn $crate
++0.3s remove $rope
+
+on create-character name="Wren"
++0s accept-character "Wren" level=1
+end
+on create-character
++0s refuse-character "Quill" "Only invented names are kept here."
+end
+
+input
+at pre create-character "Wren"
+at pre create-character "Quill"
+at 1s split $loaf 2
+at 1.2s move-item $lamp to=backpack slot=5
+at 1.4s destroy $tent
+at 1.6s quickslot 1 $loaf
+at 1.8s move-item $loaf to=backpack slot=1
+end

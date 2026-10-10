@@ -164,6 +164,12 @@ pub trait WalkerSession {
         let _ = (now, channel, text);
         false
     }
+    /// The HUD's scenario line (`--scenario`, `scenario-feed.md` §12.4): the scenario's
+    /// state and, while it lags behind the frame time, the lag. The default has none.
+    fn scenario_line(&self, now: Instant) -> Option<String> {
+        let _ = now;
+        None
+    }
 }
 
 /// Most session entity events applied in one frame (decision 0008: the store's change
@@ -608,7 +614,7 @@ pub const CHARACTER_CELL_RAISE: f64 = 0.05;
 ///   lookup of the resident landblocks at its feet raised by [`CHARACTER_CELL_RAISE`], the
 ///   lookup that movement code would run (`collision.md` §5.8.1).
 ///
-/// `figure_cell` is [`ObjectLayer::figure_cell`]; `lookup` the cell lookup at a position
+/// `figure_cell` is `ObjectLayer::figure_cell`; `lookup` the cell lookup at a position
 /// (the walker passes [`WorldStreamer::cell_at`]'s owner landblock and cell number).
 #[must_use]
 pub fn character_cell(
@@ -743,6 +749,8 @@ pub struct Walker {
     net_line: Option<String>,
     /// The far view (`--far-view on`).
     far_view: Option<farview::FarViewLayer>,
+    /// The HUD's scenario line (`--scenario`, P0).
+    scenario_line: Option<String>,
     /// Draw the HUD text (`walker_hud`, `walker.md` §6).
     show_hud: bool,
     /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
@@ -1036,6 +1044,7 @@ impl Walker {
             chat: chat::ChatOverlay::default(),
             net_line: None,
             far_view,
+            scenario_line: None,
             show_hud: true,
             show_minimap: true,
         })
@@ -1436,6 +1445,7 @@ impl Walker {
                 .net_status()
                 .filter(|s| s.link.is_some())
                 .map(|s| hud::net_line(&s));
+            self.scenario_line = w.scenario_line(now);
         }
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
@@ -1731,10 +1741,13 @@ impl Walker {
             w.drain_chat(&mut chat_in);
         }
         let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
-        if self
-            .chat
-            .receive(&chat_in, self.net_line.is_some(), notice, now)
-        {
+        if self.chat.receive(
+            &chat_in,
+            // A scenario owns the chat: its system lines go to the overlay too.
+            self.net_line.is_some() || self.scenario_line.is_some(),
+            notice,
+            now,
+        ) {
             self.notice = None;
         }
         chat::dispatch(&mut self.chat, commands, &mut world, now);
@@ -2262,6 +2275,9 @@ impl Walker {
         ));
         if let Some(net) = &self.net_line {
             out.push((net.clone(), GREY));
+        }
+        if let Some(line) = &self.scenario_line {
+            out.push((line.clone(), GOLD));
         }
         let Some(pos) = self.focus() else {
             let s = lock(&self.shared);

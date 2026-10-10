@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Social (docs/specs/scenario-feed.md §6.4): chat channels, a named channel, fellowship,
+# friends and ignore lists, a performance, a trade, and the feed's answer to the player's
+# chat. Synthetic: needs no install. Every name and text is invented for Tessera.
+tessera-scenario 1
+title "Evening at the inn"
+tick 100ms
+player "Tamsin"
+character "Orrin"
+actor $bard kind=player name="Lute player" pos=4,0,0
+actor $host kind=npc name="Innkeeper" pos=0,3,0
+item $ring "Copper ring"
+
+at 0s spawn $bard
++0s spawn $host
++0s give $ring
++0s system "The common room fills up."
++0s say $host "Welcome in! Find a seat by the fire."
++0.5s say $bard "Any requests?" channel=yell
++0.5s say "Hooded stranger" "Psst." channel=tell
++0.3s say $bard "tunes the lute" channel=emote
++0.3s channel join "Fireside"
++0.2s say "Pip" "Who is up for a song?" channel=named:"Fireside"
++0.5s invite "Lute player"
++0.5s fellowship player $bard leader=player
++0.2s say $bard "Glad to join." channel=fellowship
++0.5s perform $bard "Harvest reel" delay=500ms
++3s perform-stop $bard
++0.5s friends "Lute player":on "Pip":off
++0.2s ignore "Hooded stranger"
++0.5s trade $bard
++0.2s trade-offer peer items="Silver whistle" coin=40
++0.2s trade-ready peer on
+
+on offer-trade
++0.2s trade-offer own items=$ring
+end
+on trade-ready
++0.2s close trade
++0s remove $ring
++0s system "Trade complete."
+end
+
+at 10s fellowship none
++0s channel leave "Fireside"
+
+input
+at 1s chat "Good evening, everyone."
+at 1.5s chat "Over here!" channel=yell
+at 2s chat "hello" channel=tell:"Lute player"
+at 2.5s join-channel "Fireside"
+at 8.5s offer-trade $ring
+at 9s trade-ready on
+at 9.5s friend "Pip"
+end

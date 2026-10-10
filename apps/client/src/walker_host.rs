@@ -36,6 +36,10 @@ pub const DEFAULT_SPAWN: &str = "1,126,140";
 /// Landblocks around the player whose figures (NPCs, weenie placements) the sandbox
 /// serves (Chebyshev radius): 5 × 5 blocks, within the walker's near ring (3).
 pub const FIGURE_RADIUS: u8 = 2;
+/// How long the walker's sandbox waits for a spawn or teleport lookup (terrain height,
+/// place name) before giving up; also the resolve timeout of a scenario run with an
+/// install (`scenario-feed.md` §3.2).
+pub const WALKER_RESOLVE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The spawn point the command line asks for.
 ///
@@ -111,7 +115,7 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
         region,
         spawn,
         spawn_point: Some(spawn_point),
-        resolve_timeout: MAX_RESOLVE_TIMEOUT.min(Duration::from_secs(300)),
+        resolve_timeout: MAX_RESOLVE_TIMEOUT.min(WALKER_RESOLVE_TIMEOUT),
         statics: StaticConfig {
             radius: FIGURE_RADIUS,
             ..StaticConfig::default()

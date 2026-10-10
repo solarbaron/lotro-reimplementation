@@ -141,11 +141,26 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
         Command::QueryLocation => Routed::Net(NetCommand::QueryLocation),
         Command::Chat { channel, text } => {
             let channel = convert::wire_chat_channel(&channel).ok_or(NetError::InvalidCommand(
-                "cannot send on the system channel",
+                match channel {
+                    crate::ChatChannel::System => "cannot send on the system channel",
+                    _ => "chat channel has no wire form on the test server",
+                },
             ))?;
             Routed::Net(NetCommand::Chat(channel, text))
         }
         Command::Disconnect => Routed::Disconnect,
+        // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5).
+        Command::Character(_)
+        | Command::Inventory(_)
+        | Command::Combat(_)
+        | Command::Npc(_)
+        | Command::Social(_)
+        | Command::World(_)
+        | Command::Progression(_) => {
+            return Err(NetError::InvalidCommand(
+                "gameplay commands are not available on the test server",
+            ));
+        }
     })
 }
 
@@ -551,6 +566,49 @@ pub fn session(config: RemoteConfig) -> Result<Session, NetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gameplay_commands_and_new_channels_are_refused() {
+        use crate::domain::{CombatCommand, Ref};
+        let mut m = Mapper::new(
+            crate::sandbox::world::StaticConfig::default(),
+            crate::interp::InterpConfig::default(),
+            None,
+        );
+        let refused = |r: Result<Routed, NetError>| matches!(r, Err(NetError::InvalidCommand(_)));
+        assert!(refused(route(
+            Command::Combat(CombatCommand::UseSkill {
+                what: Ref::Literal("x".into()),
+                target: None
+            }),
+            &mut m
+        )));
+        for channel in [
+            crate::ChatChannel::Fellowship,
+            crate::ChatChannel::Named {
+                name: "Lore".into(),
+            },
+            crate::ChatChannel::System,
+        ] {
+            assert!(refused(route(
+                Command::Chat {
+                    channel,
+                    text: "hi".into()
+                },
+                &mut m
+            )));
+        }
+        assert!(matches!(
+            route(
+                Command::Chat {
+                    channel: crate::ChatChannel::Say,
+                    text: "hi".into()
+                },
+                &mut m
+            ),
+            Ok(Routed::Net(_))
+        ));
+    }
 
     #[test]
     fn backend_is_send() {

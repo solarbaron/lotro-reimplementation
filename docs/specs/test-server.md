@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (independent review 2026-10-10 of the second revision of 2026-10-10, commit 0afa1db: CLEAN_ROOM.md §5.3 passed, every item; §11.1 and §15.3 agree with `tessera-server` as stated; see the review record). Before: Revised (2026-10-10, spec writer: §15.3 gap list updated, the statistics line's resident memory is no longer a gap and the "connection closed" line's byte counts still are; §11.1 states that the closed line's bytes are per-connection totals counted like the statistics line's, and folds in the review notes (a) (interval boundaries are the start times of the ticks that write the lines) and (b) (the kind byte of a unidirectional stream is not counted); no rule of the server changes; awaiting review, see the change log). Before: **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §11.1 statistics line and §14 invariant 9 agree with `tessera-server` since commit 9ce64c8; §4.1 and §8.3 agree with `tessera-protocol.md` §8.3 as revised and accepted 2026-10-10; see the review record). Before: Revised (2026-10-10, spec writer: §11.1 statistics line defined exactly (interval, longest tick reset per line, byte rates), §3.1 content refusal status, §4.1 and §8.3 parameters fixed for a run and the protocol's new rules for changes and out-of-bound values, §8.3 run-out OPEN restated with its consequence and test, §14 invariant 9, §15.1 rows brought up to date, reviewer row filled in; ready for review, awaiting re-review; see the change log). Before: **Accepted** (2026-10-09: independent whole-spec re-review of the revision of 2026-10-09 passed CLEAN_ROOM.md §5.3, every item; first whole-spec acceptance; see the review record). Before: Revised (2026-10-09: the blocking item of the whole-spec review of 2026-10-09 is fixed, §4.6 `log_chat` row moved into the `[chat]` table; non-blocking (a), (b), (d), (e) also addressed, (c) noted; awaiting re-review, see the change log). Before: Review, **changes requested** (independent whole-spec review 2026-10-09, one blocking item, see the review record). Before that: Review (2026-10-09: prepared for its first whole-spec review; every implementer note of §15.1 and §15.2 folded into the text or kept as a stated OPEN or implementation gap; provenance and cross-references checked against `tessera-protocol.md` v1.0 as revised 2026-10-09) |
+| **Status** | **Revised** (2026-10-10, third revision of the day, spec writer: §11.1 lists the "connection closed" line's fields normatively and adds the bound of 1 s on waiting for the connection's stream writers before that line; §14 invariant 10; §15.3 marks the closed line's byte counts closed (commit a744d7e); no wire rule, limit or default changes; awaiting review, see the change log). Before: **Accepted** (independent review 2026-10-10 of the second revision of 2026-10-10, commit 0afa1db: CLEAN_ROOM.md §5.3 passed, every item; §11.1 and §15.3 agree with `tessera-server` as stated; see the review record). Before: Revised (2026-10-10, spec writer: §15.3 gap list updated, the statistics line's resident memory is no longer a gap and the "connection closed" line's byte counts still are; §11.1 states that the closed line's bytes are per-connection totals counted like the statistics line's, and folds in the review notes (a) (interval boundaries are the start times of the ticks that write the lines) and (b) (the kind byte of a unidirectional stream is not counted); no rule of the server changes; awaiting review, see the change log). Before: **Accepted** (independent review 2026-10-10 of the revision of 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; §11.1 statistics line and §14 invariant 9 agree with `tessera-server` since commit 9ce64c8; §4.1 and §8.3 agree with `tessera-protocol.md` §8.3 as revised and accepted 2026-10-10; see the review record). Before: Revised (2026-10-10, spec writer: §11.1 statistics line defined exactly (interval, longest tick reset per line, byte rates), §3.1 content refusal status, §4.1 and §8.3 parameters fixed for a run and the protocol's new rules for changes and out-of-bound values, §8.3 run-out OPEN restated with its consequence and test, §14 invariant 9, §15.1 rows brought up to date, reviewer row filled in; ready for review, awaiting re-review; see the change log). Before: **Accepted** (2026-10-09: independent whole-spec re-review of the revision of 2026-10-09 passed CLEAN_ROOM.md §5.3, every item; first whole-spec acceptance; see the review record). Before: Revised (2026-10-09: the blocking item of the whole-spec review of 2026-10-09 is fixed, §4.6 `log_chat` row moved into the `[chat]` table; non-blocking (a), (b), (d), (e) also addressed, (c) noted; awaiting re-review, see the change log). Before: Review, **changes requested** (independent whole-spec review 2026-10-09, one blocking item, see the review record). Before that: Review (2026-10-09: prepared for its first whole-spec review; every implementer note of §15.1 and §15.2 folded into the text or kept as a stated OPEN or implementation gap; provenance and cross-references checked against `tessera-protocol.md` v1.0 as revised 2026-10-09) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room; the content is design, plus one terrain height observed for the default spawn, §1) |
 | **Reviewer** | Claude review session in the spec-reviewer role (did not write this spec, its revisions or its code), whole-spec reviews 2026-10-09 (changes requested, then passed on re-review); partial review 2026-10-08; see the record. The revision of 2026-10-10 was reviewed 2026-10-10 by another Claude review session in the same role (passed) |
@@ -60,6 +60,7 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 | Statistics line of §11.1: interval boundaries, the longest tick reset at every line, bytes per second from the bytes of the interval, overruns counted since start (2026-10-10) | Design decision of the spec writer, 2026-10-10, adopting the behaviour of the clean-room `tessera-server` (commit 9ce64c8, which logged since-start figures before); no dirty-room input | Design |
 | Movement parameters fixed for a run; out-of-range values refused at load; the protocol's rules for changing them and for out-of-bound relaxations (§4.1, §8.3, 2026-10-10) | `tessera-protocol.md` §8.3 "Bounds of the values in force" and "Changing the parameters during an epoch" (revised 2026-10-10, awaiting review) | Project |
 | §11.1 byte counting made exact (2026-10-10, second revision of that date): the "connection closed" line's bytes in and out are per-connection totals counted like the statistics line's; the kind byte of a server-initiated unidirectional stream is not counted; the server time of a statistics line is the start time of the tick that writes it | Design decision of the spec writer, 2026-10-10, taking up the review notes (a) and (b) of 2026-10-10; matches the counting and the interval boundaries of `tessera-server` (commits 9ce64c8, 51aa8be), which the review record checked; the kind byte rule is `tessera-protocol.md` §2.3 rule 1 | Design |
+| "Connection closed" line (§11.1, third revision of 2026-10-10): its fields (connection number, source address, duration in ms, bytes in, bytes out, code and reason); the wait for the connection's stream writers before the line, bounded at 1 s, with the line written regardless when the bound passes; §14 invariant 10 | Design decision of the spec writer, 2026-10-10, adopting the behaviour of the clean-room `tessera-server` (commit a744d7e, which added the byte counts and the bounded wait); the 1 s bound is an engineering choice, not a measured value; no dirty-room input | Design |
 | Readings adopted from the implementer notes of 2026-10-07 and 2026-10-08 (§2.2, §2.3, §3.4, §3.5, §5.3, §6.2, §6.4, §8.1, §8.3, §8.4, §10.1, §10.2, §11.1, §12, §13) | The clean-room implementations of `apps/server` and `apps/loadtest`, their notes reviewed and adopted by the spec writer (design), 2026-10-09 | Design |
 
 ---
@@ -1057,16 +1058,42 @@ by the flow-control windows of `tessera-protocol.md` §2.1 and are not counted s
 `tracing` events, one line each, in `text` or `json` format (§4.8). At info level:
 
 - start: version, protocol version, listen addresses, fingerprint, content `id`, instances;
-- connection accepted (connection number, source address) and closed (code, reason, duration,
-  bytes in and out). The closed line's bytes in and out are those of this connection alone,
-  from its acceptance to its end, counted as the statistics line counts them (below); they
-  are totals in bytes, not rates;
+- connection accepted (connection number, source address) and the **"connection closed"
+  line** (below);
 - login success (canonical account, source address), registration, world entry (account,
   character, instance), leaving the world;
 - kicks, `SLOW_CONSUMER`, `FLOODING`, `SERVER_FULL`, refused teleports at debug;
 - every `stats_interval_s`, the **statistics line** (below).
 
 At warn or error: configuration problems, failed saves, overruns, reload failures.
+
+**"Connection closed" line** (revised 2026-10-10). Every accepted connection gets exactly one
+such info line, written once the connection has ended, whatever the cause (a `Disconnect`, a
+kick, a protocol error, an idle timeout, a lost peer or shutdown). Fields:
+
+| Field | Meaning | Unit |
+|---|---|---|
+| connection number | The number given in this connection's "connection accepted" line | — |
+| source address | The peer's address and port, as in the accepted line | — |
+| duration | Time from the connection's acceptance to its end, rounded down | ms |
+| bytes in | Bytes received on this connection from its acceptance to its end, counted as the statistics line counts bytes in (below): the protocol's stream frames and datagram messages as read from QUIC | bytes |
+| bytes out | Bytes sent on this connection from its acceptance to its end, counted as the statistics line counts bytes out: the stream frames and datagram messages handed to QUIC, without the kind byte that opens each server-initiated unidirectional stream | bytes |
+| code and reason | How the connection ended: the close code and reason when a `CONNECTION_CLOSE` with an application code was sent or received (`tessera-protocol.md` §14.1), otherwise the transport's description of the end (timeout, reset, local shutdown). The two MAY be written as one field | — |
+
+Bytes in and out are this connection's own totals, never shares of the server's figures and
+never rates; summed over every connection they equal the bytes the statistics lines count
+over the same span, apart from the case of the drain bound below.
+
+**Drain bound.** Outgoing data of a connection is handed to QUIC by its stream writers (one
+for the control stream, one per open server-initiated unidirectional stream). Before writing
+the closed line the server MUST wait for every writer of that connection to finish, so that
+the line's bytes out include every byte they handed to QUIC, and it MUST wait **at most 1 s**
+in total (measured from the end of the connection). When the bound passes with a writer still
+running, the line is written at once with the bytes counted up to that moment; bytes that
+writer hands to QUIC afterwards still count in the statistics line but not in this
+connection's closed line. The wait MUST NOT hold up the simulation thread or any other
+connection. Writers normally end at once, because the connection's queues are closed when it
+ends; the bound only guards against one that does not.
 
 **Statistics line** (revised 2026-10-10). With `stats_interval_s` > 0 the simulation thread
 writes one info line per **interval**. The first interval starts when the simulation starts;
@@ -1336,6 +1363,10 @@ settings: tuning it through the environment (for example glibc's `MALLOC_ARENA_M
    duration among the ticks completed since the previous line (or the start), and its byte
    rates equal the bytes of that interval × 10⁶ / the interval's length in µs, rounded down.
    A tick in which a line is written completes after it and counts toward the next interval.
+10. Every accepted connection produces exactly one "connection closed" line (§11.1), written
+    at most 1 s after the connection ends. When its writers finished within that bound, the
+    line's bytes in and out equal exactly the bytes the peer sent and received as protocol
+    stream frames and datagram messages on that connection (the stream kind byte excluded).
 
 ---
 
@@ -1413,10 +1444,10 @@ The resident-memory notes were resolved on 2026-10-08 (§13.3, change log).
 For the owners of `apps/server`, `apps/loadtest` and `crates/net`; none of them changes this
 spec's rules.
 
-- The "connection closed" line has no byte counts: it carries the code and reason and the
-  duration, but not the connection's bytes in and out (§11.1). (Closed 2026-10-10: the
-  statistics line reports resident memory where the platform reports it, since commit
-  51aa8be.)
+- (Closed 2026-10-10: the "connection closed" line carries the connection's own bytes in
+  and out, after a wait of at most 1 s for its stream writers, since commit a744d7e (§11.1).
+  Closed 2026-10-10: the statistics line reports resident memory where the platform reports
+  it, since commit 51aa8be.)
 - On Windows only Ctrl+C triggers a graceful shutdown (§12.1 SHOULD items).
 - `tessera-net`: no way to drop a connection without `Disconnect`; moves carry the backend's
   current epoch only; `Event::WorldEntered` does not carry the instance of `WorldEnter`;
@@ -1441,3 +1472,4 @@ spec's rules.
 | 2026-10-09 | Revision after the whole-spec review of 2026-10-09 (spec writer); status Review (changes requested) → Revised. Blocking (1): §4.6 `log_chat` (bool, default false, §11.2) moved into the `[chat]` table before the paragraph, so the table lists every `[chat]` key (§4.1). Non-blocking: (a) §5.3 `facing` conversion stated in words (heading = 90° − `facing` in radians, reduced to (−π, π]) instead of naming a crate function; (b) §8.1 and §15.1 give the tick start ⌊*k* · 10⁶ / `tick_rate`⌋ µs inline instead of the name `tick_start(k)`; (d) author role reads "Spec writer (dirty room; …)"; (e) §4.7 `memory_budget_mib` lower bound 64 → 83 (the smallest value the constraint can meet: 19 MiB Argon2id floor × 1 worker + 64 MiB), no change in accepted configurations. (c) left as a re-check item: §4.5 and §8.3 must be re-read if the 2026-10-09 revisions of `tessera-protocol.md` §8.3 or `collision.md` change in their reviews. No new facts; provenance unchanged. |
 | 2026-10-10 | Revision (spec writer); status Accepted → Revised, ready for review. §11.1: the statistics line is defined field by field: interval boundaries (from the start of the simulation, then from each line), the longest tick of the interval reset at every line, bytes per second from the bytes of the interval (protocol frames and datagram messages, rounded down), overruns counted since start, three connection counts; new §14 invariant 9; §13.4 names the since-start longest tick as a report figure (adopted from commit 9ce64c8). §4.1: values outside their range are refused, never clamped; `[movement]` fixed for the run. §8.3: new paragraph on the parameters and `tessera-protocol.md` §8.3's new rules (bounds of the values in force, changing the parameters during an epoch, revised 2026-10-10); the run-out OPEN restated with its consequence (a correction of a legitimate player, never an accepted cheat) and the stepped calculation that would close it; §15 entry points to it. §3.1: a content file in an installation is refused with status 3 (`INSTALL-PATH`), a data directory with status 4 (re-review note (ii)). Header: **Reviewer** row names the 2026-10-09 reviewer (note (iii)). §15.1: the loopback row says both exemptions (connection limit and handshake cap); the statistics row points to the new §11.1. The 2026-10-09 OPENs on the settling grace and credit (grace credit bounded by *A*_d, faces just steeper than 45°) were already answered in §8.3; checked, no change. Two provenance rows (Design for §11.1, Project for §4.1/§8.3). Re-review note (i) checked: `tessera-protocol.md` §8.3 item 1 now names a `Named` teleport; its 2026-10-10 revision adds rules only and changes none of the values §4.5, §8.3 and invariant 8 rely on |
 | 2026-10-10 | Second revision of the day (spec writer); status Accepted → Revised, awaiting review. §15.3: the gap "no resident memory in the statistics line" is closed (reported where the platform does, since commit 51aa8be); the "connection closed" line still lacks the connection's bytes in and out and stays listed. §11.1: the closed line's bytes in and out are defined as the connection's own totals from acceptance to end, counted as for the statistics line; review notes (a) and (b) of 2026-10-10 folded in (the server time of a statistics line is the start time of the tick that writes it, which fixes the interval length that divides the byte counts; the kind byte that opens each server-initiated unidirectional stream, `tessera-protocol.md` §2.3 rule 1, is not counted). Provenance row for these three facts (Design). No limit, default, status or wire rule changes; `tessera-server` already counts and bounds as stated, except the closed line's byte counts (§15.3) |
+| 2026-10-10 | Third revision of the day (spec writer); status Accepted → Revised, awaiting review. §11.1: the "connection closed" line has its own paragraph and field table (connection number, source address, duration in ms, bytes in, bytes out, code and reason), one line per accepted connection whatever the cause of the end; new normative drain bound: the server waits for the connection's stream writers before the line, at most 1 s, then writes it regardless, with later bytes counted only in the statistics line; the wait holds up neither the simulation nor other connections. §14: new invariant 10. §15.3: the closed line's byte counts are marked closed (commit a744d7e); no gap of `apps/server` on logging remains. One provenance row (Design). Adopts the behaviour of `tessera-server` since commit a744d7e; no wire rule, limit, default or status changes |

@@ -137,6 +137,12 @@ pub struct ConnShared {
     /// then waits for it instead of acting on the flag, so events forwarded before it are
     /// handled first.
     pub close_queued: AtomicBool,
+    /// Bytes received on this connection since its acceptance, counted as
+    /// [`Stats::bytes_in`] counts them (`test-server.md` §11.1, "connection closed").
+    pub bytes_in: AtomicU64,
+    /// Bytes sent on this connection since its acceptance, counted as
+    /// [`Stats::bytes_out`] counts them (the stream-kind byte is not counted).
+    pub bytes_out: AtomicU64,
     kill_code: AtomicU16,
     kill_notify: tokio::sync::Notify,
 }
@@ -159,6 +165,8 @@ impl ConnShared {
                 moves_dropped: AtomicU64::new(0),
                 closed: AtomicBool::new(false),
                 close_queued: AtomicBool::new(false),
+                bytes_in: AtomicU64::new(0),
+                bytes_out: AtomicU64::new(0),
                 kill_code: AtomicU16::new(NO_KILL),
                 kill_notify: tokio::sync::Notify::new(),
             },
@@ -218,6 +226,31 @@ impl ConnShared {
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => false,
         }
+    }
+
+    /// Counts `n` bytes received on this connection, in its own total and the server's
+    /// (§11.1).
+    pub fn count_in(&self, stats: &Stats, n: usize) {
+        let n = n as u64;
+        self.bytes_in.fetch_add(n, Ordering::Relaxed);
+        stats.bytes_in.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Counts `n` bytes handed to QUIC for this connection, in its own total and the
+    /// server's (§11.1).
+    pub fn count_out(&self, stats: &Stats, n: usize) {
+        let n = n as u64;
+        self.bytes_out.fetch_add(n, Ordering::Relaxed);
+        stats.bytes_out.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// This connection's bytes in and out so far (§11.1, the "connection closed" line).
+    #[must_use]
+    pub fn bytes(&self) -> (u64, u64) {
+        (
+            self.bytes_in.load(Ordering::Relaxed),
+            self.bytes_out.load(Ordering::Relaxed),
+        )
     }
 
     /// Bytes this connection has queued but not sent.
@@ -657,6 +690,24 @@ fn status_kib(text: &str, field: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §11.1: a connection's bytes in and out are its own totals; the server's counters
+    /// add every connection's.
+    #[test]
+    fn connection_bytes_are_its_own_totals() {
+        let stats = Stats::default();
+        let (a, _ra) = ConnShared::new(1, "192.0.2.1:1".parse().unwrap(), 1);
+        let (b, _rb) = ConnShared::new(2, "192.0.2.2:1".parse().unwrap(), 1);
+        a.count_in(&stats, 10);
+        a.count_out(&stats, 7);
+        b.count_in(&stats, 100);
+        a.count_out(&stats, 3);
+        b.count_out(&stats, 1_000);
+        assert_eq!(a.bytes(), (10, 10));
+        assert_eq!(b.bytes(), (100, 1_000));
+        let s = stats.snapshot();
+        assert_eq!((s.bytes_in, s.bytes_out), (110, 1_010));
+    }
 
     /// §11.1: the statistics line reports the longest tick over the interval (not since
     /// start) and bytes per second (not cumulative bytes).

@@ -38,6 +38,9 @@ const CONTROL_BACKLOG_LIMIT: usize = 256 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 /// How often a paused control stream is re-checked.
 const PAUSE_POLL: Duration = Duration::from_millis(20);
+/// Longest wait for a closed connection's stream writers before its "connection closed"
+/// line (engineering bound; they normally end at once).
+const WRITER_DRAIN: Duration = Duration::from_secs(1);
 /// QUIC handshakes in progress from one source address (loopback exempt).
 const MAX_HANDSHAKES_PER_ADDRESS: usize = 4;
 
@@ -357,6 +360,9 @@ struct Task {
     paused_since: Option<u64>,
     /// The control-backlog slow-consumer rule has fired (it fires once).
     slow_reported: bool,
+    /// The control and unidirectional stream writers; awaited before the "connection
+    /// closed" line so that it carries every byte they handed to QUIC (§11.1).
+    writers: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Task {
@@ -476,10 +482,7 @@ impl Task {
                     match m.channel() {
                         Channel::Datagram => {
                             if let Ok(b) = encode_datagram(&m) {
-                                self.ctx
-                                    .stats
-                                    .bytes_out
-                                    .fetch_add(b.len() as u64, Ordering::Relaxed);
+                                self.shared.count_out(&self.ctx.stats, b.len());
                                 let _ = self.conn.send_datagram(b.into());
                             }
                         }
@@ -514,14 +517,14 @@ impl Task {
                 Transmit::OpenStream(kind) => {
                     let (tx, rx) = unbounded_channel::<Vec<u8>>();
                     let counter = Arc::clone(&self.shared);
-                    tokio::spawn(uni_writer(
+                    self.writers.push(tokio::spawn(uni_writer(
                         self.conn.clone(),
                         kind,
                         rx,
                         counter,
                         self.internal_tx.clone(),
                         Arc::clone(&self.ctx.stats),
-                    ));
+                    )));
                     match kind {
                         StreamKind::World => self.world_tx = Some(tx),
                         StreamKind::Chat => self.chat_tx = Some(tx),
@@ -580,10 +583,7 @@ impl Task {
             Outbound::Datagram(b) => {
                 if self.core.may_send_world() {
                     self.ctx.stats.messages_out.fetch_add(1, Ordering::Relaxed);
-                    self.ctx
-                        .stats
-                        .bytes_out
-                        .fetch_add(b.len() as u64, Ordering::Relaxed);
+                    self.shared.count_out(&self.ctx.stats, b.len());
                     let _ = self.conn.send_datagram(b.into());
                 }
             }
@@ -609,13 +609,14 @@ async fn uni_writer(
             .open_uni()
             .await
             .map_err(quinn::WriteError::ConnectionLost)?;
+        // The kind byte is not a frame and is not counted (test-server.md §11.1).
         s.write_all(&[kind.to_byte()]).await?;
         while let Some(b) = rx.recv().await {
             let n = b.len();
             let r = s.write_all(&b).await;
             counter.fetch_sub(n, Ordering::Relaxed);
             r?;
-            stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+            shared.count_out(&stats, n);
         }
         Ok(())
     }
@@ -647,9 +648,7 @@ async fn control_writer(
                 let n = b.len();
                 if !failed {
                     match send.write_all(&b).await {
-                        Ok(()) => {
-                            stats.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
-                        }
+                        Ok(()) => shared.count_out(&stats, n),
                         Err(e) => {
                             failed = true;
                             if matches!(e, quinn::WriteError::Stopped(_)) {
@@ -748,6 +747,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         internal_tx,
         paused_since: None,
         slow_reported: false,
+        writers: Vec::new(),
     };
     if admitted
         && ctx
@@ -799,13 +799,13 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
                 Ok((send, r)) => {
                     if recv.is_none() && task.ctl_tx.is_none() {
                         let (tx, rx) = unbounded_channel();
-                        tokio::spawn(control_writer(
+                        task.writers.push(tokio::spawn(control_writer(
                             send,
                             rx,
                             Arc::clone(&shared),
                             task.internal_tx.clone(),
                             Arc::clone(&ctx.stats),
-                        ));
+                        )));
                         task.ctl_tx = Some(tx);
                         recv = Some(r);
                         buf = vec![0u8; READ_CHUNK];
@@ -820,7 +820,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
                 let now = task.now();
                 match r {
                     Ok(Some(n)) => {
-                        ctx.stats.bytes_in.fetch_add(n as u64, Ordering::Relaxed);
+                        shared.count_in(&ctx.stats, n);
                         task.core.push_control(&buf[..n]);
                         task.pump_control(now);
                     }
@@ -839,7 +839,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             }
             d = conn.read_datagram(), if datagrams_open => match d {
                 Ok(bytes) => {
-                    ctx.stats.bytes_in.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    shared.count_in(&ctx.stats, bytes.len());
                     ctx.stats.messages_in.fetch_add(1, Ordering::Relaxed);
                     let now = task.now();
                     let inbound = task.core.on_datagram(&bytes, now);
@@ -893,12 +893,31 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             _ => {}
         }
     }
+    // With their senders dropped and the connection closed the writers end at once; the
+    // bound only guards against a writer that does not.
+    let writers = std::mem::take(&mut task.writers);
+    let _ = tokio::time::timeout(WRITER_DRAIN, async {
+        for w in writers {
+            let _ = w.await;
+        }
+    })
+    .await;
     if admitted {
         ctx.release(addr);
     }
     ctx.stats.connections.fetch_sub(1, Ordering::AcqRel);
     let duration_ms = ctx.clock.now().saturating_sub(accepted_at) / 1_000;
-    tracing::info!(conn = id, %addr, duration_ms, reason = %end, "connection closed");
+    // This connection's own totals from acceptance to end, in bytes (§11.1).
+    let (bytes_in, bytes_out) = shared.bytes();
+    tracing::info!(
+        conn = id,
+        %addr,
+        duration_ms,
+        bytes_in,
+        bytes_out,
+        reason = %end,
+        "connection closed"
+    );
 }
 
 #[cfg(test)]

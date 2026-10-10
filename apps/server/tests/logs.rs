@@ -254,6 +254,114 @@ fn statistics_line_reports_interval_figures() {
     }
 }
 
+/// §11.1 (revised 2026-10-10), §15.3: the "connection closed" line carries the connection's
+/// own bytes in and out, totals from acceptance to end, counted as the statistics line
+/// counts them (frames and datagrams; not the kind byte of a server-opened stream).
+#[test]
+fn closed_line_carries_the_connections_own_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("data");
+    write_config(&dir, "");
+    let mut add = bin();
+    add.arg("--data-dir")
+        .arg(&dir)
+        .args(["account", "add", "carol", "--password-stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = add.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"carol test pass\n")
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    let p = port(4);
+    let mut cmd = bin();
+    cmd.arg("--data-dir")
+        .arg(&dir)
+        .args(["run", "--listen", &format!("127.0.0.1:{p}")]);
+    let (child, mut lines, rx) = start(&mut cmd);
+    let fp_line = lines.iter().find(|l| l.contains("sha256:")).unwrap();
+    let at = fp_line.find("sha256:").unwrap();
+    let fp: Fingerprint = fp_line[at..at + 71].parse().unwrap();
+    let addr = format!("127.0.0.1:{p}").parse().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // (client address, bytes it sent, bytes it received) per connection.
+    let clients: Vec<(String, u64, u64)> = rt.block_on(async {
+        // One connection logs in (control and chat streams), one only greets.
+        let mut a = RawClient::connect(addr, fp).await;
+        a.hello().await;
+        a.login("carol", "carol test pass").await.unwrap();
+        let mut b = RawClient::connect(addr, fp).await;
+        b.hello().await;
+        let mut out = Vec::new();
+        for c in [&mut a, &mut b] {
+            // Everything the server sent has arrived before the client closes.
+            c.drain(Duration::from_millis(500)).await;
+            let (sent, received) = c.byte_counts();
+            out.push((c.endpoint.local_addr().unwrap().to_string(), sent, received));
+            c.conn.close(0u32.into(), b"");
+            c.endpoint.wait_idle().await;
+        }
+        out
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while lines
+        .iter()
+        .filter(|l| l.contains("connection closed"))
+        .count()
+        < clients.len()
+    {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(l) => lines.push(l),
+            Err(_) => break,
+        }
+    }
+    let (code, _) = terminate(child, &rx);
+    assert_eq!(code, Some(0));
+    for (client_addr, sent, received) in &clients {
+        let line = strip_ansi(
+            lines
+                .iter()
+                .find(|l| l.contains("connection closed") && l.contains(client_addr.as_str()))
+                .unwrap_or_else(|| panic!("no closed line for {client_addr}: {lines:?}")),
+        );
+        let field = |name: &str| -> u64 {
+            let key = format!("{name}=");
+            let at = line
+                .find(&key)
+                .unwrap_or_else(|| panic!("{name} missing: {line}"));
+            line[at + key.len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap_or_else(|_| panic!("{name} is not a number: {line}"))
+        };
+        assert!(*sent > 0 && *received > 0, "{client_addr} exchanged bytes");
+        assert_eq!(
+            field("bytes_in"),
+            *sent,
+            "bytes in of {client_addr}: {line}"
+        );
+        assert_eq!(
+            field("bytes_out"),
+            *received,
+            "bytes out of {client_addr}: {line}"
+        );
+    }
+    assert_ne!(
+        (clients[0].1, clients[0].2),
+        (clients[1].1, clients[1].2),
+        "the two connections exchanged different amounts"
+    );
+}
+
 /// The line without terminal colour sequences (ESC `[` … final letter).
 fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());

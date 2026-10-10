@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (review of the decision-alignment revision of 2026-10-06 with its repair and second repair, the last three change-log rows, passed on 2026-10-06: accepted after revision for decisions 0014/0015; they change only Tessera rules, no fact about the original, and section numbers and anchors are unchanged). That text revised the spec Accepted earlier on 2026-10-06, so implementers re-check the code listed under "Implementers re-check" in the last three change-log rows |
-| Last updated | 2026-10-06 |
+| Status | **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
+| Last updated | 2026-10-09 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent), a different session from the writer |
-| Review record | Review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| Review record | **Re-review of the P1 revision and its review fixes (diff against `main`: header, P41, P81–P83, §15 enum paragraph and OPEN, §15.1, §18 lead-in and checks 66–69, §19, §20), 2026-10-09, independent review session that wrote no part of the revision or its fixes and did not do the first review: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping or behaviour; no code or pseudo-code (the argument lists in braces name event-table fields, as §9.3 does); API, mapper and property labels are interoperability identifiers; no game text (the literal item text is scenario input), assets, keys, hostnames or traffic; no closed gate touched (no M4 method used for this revision, no official-server traffic). Every Tessera rule of §15.1 is under P83 (**Tessera rule**, DEC); the API facts are P81 (Reported) and P82 (Reported + Confirmed). The four blocking items of the first review are answered: (1) §15 enum paragraph, P41, the §15 OPEN and its §19 line point to or follow P82; (2) the §15.1 OPEN is in §19; OPEN markers before §19 counted 56 on `main`, 57 after the P1 revision and 57 now, as the change log says; (3) P83 and the §18 lead-in for 66–69; (4) the two getter tables cover all 13 `Item` and 15 `ItemInfo` getters of §16 with present, absent and literal-item values. Spot-checks (read-only, 2026-10-09): mappers 0x230000EE (base 0x23000101), 0x230000FA, 0x230000FB and 0x23000067 decoded from the install: `ContainerSlot` keys 2–22 match API `Equipment` 1–21 (key 3 ↔ `Chest` 2, as check 68 uses), keys 23–25 are the FX slots, `ItemDurability` 1–7 and `ItemWearState` 1–4 match their keys and names, `ItemQuality` key 4 is `Uncommon` = 4 (check 69); Appendix A `ItemCategory`, `ItemDurability`, `ItemWearState` have `Undefined = 0` (the Absent columns); `scenario-feed.md` on branch `p0` has the `MoveItem` and `DestroyItem` answers of §7.6 and the `ItemQuantity`, `ItemCondition` events of §9.2 that checks 67 and the getter table cite; `character-panels.md` §4.3 rule 1 gives the *N* = *B* + 6 of check 66 and its rule 5 now agrees with the `SizeChanged` row; `icon-layers.md` §3.1 step 1 and `item-tooltips.md` §11 agree with the `GetIconImageID` and `GetWearState` rows. All agree. **Non-blocking notes:** (a) the §20 row on `character-panels.md` §8.1 is stale: that spec (9bced79) already reduced §8 to a pointer to §15.1 and states the `SizeChanged` rule in §4.3 rule 5, so its "Current text" no longer exists; mark it applied or drop it; (b) the new §20 lead-in parenthetical "on O4 (the `character-panels.md` row on Tessera rules, DEC)" reads as if O4 were its basis; reword; (c) P82 "name for name" is loose: the data names differ in form (`Pocket1`, `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`, `Mounted`) and the API has aliases (`Shield`, `Instrument`); say "slot for slot" or point to `character-panels.md` §8.2; (d) state the order of the two plugin events when one feed `ItemMoved` crosses containers (backpack `ItemRemoved` versus `ItemEquipped`, check 68 asserts none), and whether a move within `Equipment` between keys 2–22 gives `ItemUnequipped` then `ItemEquipped` or nothing; (e) `GetNameWithQuantity(q)` for infinite or very large *q* ("decimal integer part" is undefined for infinity); (f) check 67 continues the scenario of check 66 ("the slot-4 item", size 30); say so. Earlier: first review of the P1 revision, 2026-10-09: changes requested, four blocking items (§15 not reconciled with P82; §15.1 OPEN missing from §19; no Tessera-rule provenance row; incomplete getter coverage, absent-property and literal-item values) and notes (a)–(f), all answered by the review fixes of 2026-10-09. Before that: review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
 | Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface), [`plugin-runtime.md`](plugin-runtime.md) (interpreter, limits, collector step). Tessera decisions that place this API in the client: [0014](../decisions/0014-ui-input-bridge.md) (input reaches the UI and plugins; frame-loop placement of all plugin code, D8) and [0015](../decisions/0015-ui-rendering.md) (how surfaces, nested surfaces, opacity, clipping and rotation are drawn) |
 
@@ -132,7 +132,7 @@ mark **Tessera rule** and need no observation.
 | P38 | Text markup tags `b`, `i`, `u`, `p`, `li`, `rgb=#RRGGBB` | BIN (the client's only markup tag parser), S2 | **Confirmed** 2026-10-05 (BIN) |
 | P39 | `GetMoneyComponents` returns copper, silver (0–999), gold, in that order | BIN | **Confirmed** 2026-10-05 (BIN only; corrects S2) |
 | P40 | Shortcut data string formats per shortcut type (§14.6) | BIN | **Confirmed** 2026-10-05 (BIN only) |
-| P41 | `Class`, `Race`, `Language`, `ShortcutType`, `ItemQuality`, `ItemCategory`, `CraftTier` and `ChatType` values are keys of the matching data enum mappers; `Equipment` slot values are not | O4, BIN | **Confirmed** 2026-10-05 |
+| P41 | `Class`, `Race`, `Language`, `ShortcutType`, `ItemQuality`, `ItemCategory`, `CraftTier` and `ChatType` values are keys of the matching data enum mappers; `Equipment` slot values are not (they are `ContainerSlot` keys minus one, P82, added 2026-10-09) | O4, BIN | **Confirmed** 2026-10-05 |
 | P42 | `SetBackground` raises a Lua error when an image file cannot be opened or has an unsupported format | BIN | **Confirmed** 2026-10-05 (BIN only) |
 | P43 | During start-up the client sets the C runtime locale for all categories to a name chosen by its game language: `English` for `Turbine.Language` 2 and for any value not listed, `english-uk` for 0x10000001, `french` for 0x10000003, `german` for 0x10000004. That locale governs the `isalnum` tests of P5 and P14 and the decimal separator of the plugin-data writer (§3.4, §10.4) | BIN (repair session 2026-10-05: the single call that sets all categories, and its four name choices keyed by the language value; the plugin-data number formatter passes no explicit locale, so it uses this global one). **Why M1–M3 were not enough:** locale use is code, not data; S3 only reports that comma-separated files exist | **Confirmed** 2026-10-05 (BIN only) |
 | P44 | Under the standard Windows locale data these four names select code page 1252; `English` and `english-uk` use `.` as decimal separator, `french` and `german` use `,`. In code page 1252 `isalnum` is true for some units 0x80–0xFF (accented letters such as 0xE9) | General platform knowledge (Windows C runtime locale names and code-page 1252 character classes), consistent with S3's reports of comma files | **Reported** |
@@ -172,6 +172,9 @@ mark **Tessera rule** and need no observation.
 | P78 | When an element has its own surface: it **wants** one when its object-mode value is non-zero, or, without a value, when it is a root panel (every plugin window); the surface exists while it wants one **and** its own visibility flag is set or `UICore_Element_KeepObjectWhenHidden` is true; the client re-evaluates this on object-mode, root-flag and visibility changes; hiding saves the surface's rotation and showing restores it; a surface for an element without an object-mode value is CanvasResize; `SetRotation` on a window without a surface clears the saved state, sets object mode 1 unless the plugin set a non-zero mode, and then targets the nearest ancestor surface; no element of the 13 resolved trees of the plugin layout (188 elements, states included) sets `UICore_Element_KeepObjectWhenHidden` | BIN (repair of the fourth pass, 2026-10-06: the root-panel constructor, the object-mode property handler, the element's visibility setter and show/hide step, the surface creation and installation steps, the surface-state save on hide, the window rotation setter); O7 (property census, read-only, 2026-10-06); `ui-behaviour.md` §11.2 (agrees) | **Confirmed** 2026-10-06 (BIN; census O7); whether an unshown top-level window reaches the screen root's surface, OPEN (§13.20) |
 | P79 | Frame-loop placement of plugin code in Tessera: input handlers in step 1, the UI tick, `Update`, the plugin host's deferred work (sliced by whole items, 2 ms per frame) and the collector step in step 7; every plugin load (queued `LoadPlugin`, `/plugins load`, manager UI, autoload at login; the last three a Tessera reading of D8) as a step-7 deferred item, none before the first `Plugins/` index (0015 §4.4); asynchronous `PluginData.Load` handlers and writes as deferred items; game-raised plugin events (`Turbine.Chat.Received`, the gameplay views' `…Changed` events) and the logout unload queued as deferred work; the `Received` skip set (interim, pending a revision of 0014, open review item 1); the client-exit unload after the last frame; blocking writes at unload and when the frame clock steps (interim rules, 0014 "Other improvements"); pointer-move coalescing; hit tests against current geometry; the pointer lock as client state; command names and IDs, activation order, timing, repeats and toggle types of the actions the UI receives; typed characters and `opaque_keys`; Escape with a UI attached; the scroll actions over plugin controls (§3.3, §6.2, §6.3, §6.6, §9.4, §9.7, §10.6, §11.1, §11.3, §12, §13.3, §13.11–§13.13, §15) | DEC (0014 D1–D9, "Escape with a UI attached", Known differences 6, 7, 10, 12, 15, 16, 18, 21, open review items 1 and 2, "Other improvements"; 0015 §4.4) | **Tessera rule** (no observation; the original's timing is OPEN where stated) |
 | P80 | Drawing of plugin surfaces in Tessera: a nested surface is a separate composition entry with its own opacity only, clipped by its nearest enclosing window and every enclosing window above it, turning with its surfaced ancestors; stand-in surfaces for top-level windows in object mode 0; mode-0 child windows drawn into the nearest surface above; mode 2 repeat addressing and Tile parents; the mode-change refresh; first paints, caps and the image checks of `SetBackground(path)` (§13.2, §13.8, §13.17–§13.21); the clip chain built from windows (interim, pending a revision of 0015, open review item 1) | DEC (0015 Decision 1.1, 1.5–1.8, U4 (c), §2.1, §2.3, §4.3–§4.4, §7, open review item 1) | **Tessera rule** (no observation; the original's composition of nested surfaces is OPEN, §13.18, §13.19) |
+| P81 | `Backpack:GetSize()` returns the backpack's size; `Backpack:GetItem(index)` takes 1 … `GetSize()` and returns the item there or nil; `Equipment:GetItem(index)` takes a slot of the `Equipment` enumeration and returns nil for an empty slot; `Equipment:GetSize()` is the number of items that can be equipped; `LocalPlayer:GetBackpack()`, `GetEquipment()` return those objects; `ItemInfo` getters as listed in §16 | S2 (class and member pages of `Backpack`, `Equipment`, `LocalPlayer`, `ItemInfo`) | **Reported** |
+| P82 | The `Equipment` enumeration's values 1 … 21 equal the data's `ContainerSlot` keys 2 … 22 minus one, name for name (`Head` … `Class`, `Bridle` ↔ `Mounted`); the keys 23 … 25 (weapon FX slots) have no API value; `ItemDurability` 1–7 and `ItemWearState` 1–4 equal the keys and names of mappers 0x230000FA and 0x230000FB (§15.1) | S2/S3 (Appendix A values); O4-type observation 2026-10-09 of the `ContainerSlot` mapper 0x230000EE (`character-panels.md` OBS) | **Reported** (API values) + **Confirmed** (data keys and names) |
+| P83 | Inventory views in Tessera (§15.1): the getter-to-property mapping of `Item` and `ItemInfo`; one `Backpack` and one `Equipment` object per apartment, one `ItemInfo` per record DID per apartment; nil from `GetItem` for a non-integer or out-of-range index; `Equipment:GetSize()` = 21; `Backpack` and `Equipment` events derived from the feed's `ItemAdded`, `ItemMoved`, `ItemRemoved` and `ContainerSize`, moves between containers included; `SizeChanged` whenever *N* changes, also through an arriving item before the first `ContainerSize`; `GetMaxQuantity` = `GetMaxStackSize`; `IsMagic` false; `GetQualityImageID` 0; the `GetNameWithQuantity` form; the values for absent properties and for literal items | DEC ([0024](../decisions/0024-parity-track.md) P1); `character-panels.md` §4.3, §8, §9 | **Tessera rule** (no observation; the original's values are OPEN, §15.1) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -3317,12 +3320,95 @@ left out of the count; it is also a key of every mapper listed (O4).
 | `ChatType` | chat text types (0x230002A8; base 0x230002A9) | 34 | 33 | 33 |
 | `Action` | input actions (0x230000AF; base 0x23000176) | 270 | 269 | 269 (§14.4) |
 
-`Equipment` slot values do not match a data enum (they are the API's own numbering);
-`EffectCategory` matches only partly. > **OPEN:** whether `Alignment`, `Profession`,
-`Vocation`, `ItemDurability`, `ItemWearState`, `ReadyState`, `SkillType`, `EffectCategory`
-and the stance enums follow a data enum.
+`Equipment` slot values are not keys of a data enum mapper, but they follow one at a fixed
+offset: value = `ContainerSlot` key − 1 for the keys 2 … 22 (P82, §15.1). `ItemDurability`
+and `ItemWearState` equal the keys of their data enums (P82, §15.1). `EffectCategory`
+matches only partly.
+
+> **OPEN:** whether `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`,
+> `EffectCategory` and the stance enums follow a data enum (narrowed 2026-10-09: `Equipment`,
+> `ItemDurability` and `ItemWearState` are answered by P82).
 
 Differences of this build from S2 and from the S3 dump: see §16.
+
+<a id="s15-1"></a>
+### 15.1 Inventory views in Tessera (decision 0024 P1)
+
+The views read the session's inventory model (`character-panels.md` §8–§9), which the
+scenario feed fills in the sandbox (`scenario-feed.md` §5.5, §9.2) and a server backend
+would fill the same way. Every `…Changed`, `ItemAdded` etc. event follows the delivery rule
+of the first paragraph of §15 (queued, delivered in frame-loop step 7). (`scenario-feed.md`
+is Accepted on branch `p0`; its links resolve once that branch is merged.)
+
+The facts about the original are P81 (S2) and P82 (data keys). Everything else in this
+section is a **Tessera rule** (P83): it says how Tessera derives the API values from its own
+inventory model, not how the original does.
+
+**Containers.**
+
+| View | Rule |
+|---|---|
+| `LocalPlayer:GetBackpack()` | One `Backpack` object per apartment (§9.5 singletons). |
+| `Backpack:GetSize()` | The backpack size *N* of `character-panels.md` §4.3. |
+| `Backpack:GetItem(i)` | The item in backpack slot *i* − 1 for integer *i* in 1 … *N*; nil for an empty slot, a non-integer, or *i* outside 1 … *N*. |
+| `Backpack` events | `ItemAdded { Index, Item }` for each item that enters the backpack (feed `ItemAdded` into the backpack, or `ItemMoved` from another container into it); `ItemRemoved { Index, Item }` for each that leaves it (feed `ItemRemoved` of a backpack item, or `ItemMoved` from the backpack to another container); `ItemMoved { OldIndex, NewIndex, Item }` for a move within the backpack (a swap gives two events in the feed's order). Indices are 1-based (slot + 1). |
+| `Backpack.SizeChanged` | Whenever *N* takes a new value: on a `ContainerSize` of `Backpack` that changes it, and, before the first `ContainerSize`, when an arriving item raises *N* through the "highest occupied slot + 1" term of `character-panels.md` §4.3; in that case `SizeChanged` is queued before the item's `ItemAdded`. No event when *N* stays the same. |
+| `LocalPlayer:GetEquipment()` | One `Equipment` object per apartment. |
+| `Equipment:GetItem(slot)` | The item in data slot key `slot` + 1 for integer `slot` in 1 … 21 (P82); nil for an empty slot or any other value. |
+| `Equipment:GetSize()` | 21 (the number of API slot values, P82). |
+| `Equipment` events | `ItemEquipped { Index = key − 1, Item }` when an item enters the `Equipment` container at a key 2 … 22, `ItemUnequipped { Index, Item }` when it leaves; nothing for keys outside 2 … 22. |
+
+**Items.** "The record" is the item's data record (`items.md`), read through its property
+set with inheritance. A **literal item** (`scenario-feed.md` §5.2) has no record. "Absent"
+means the record (with its inherited properties) does not carry the property.
+
+`Item` getters (an `Item` is an `Entity`):
+
+| Getter | Value (record present) | Absent | Literal item |
+|---|---|---|---|
+| `GetName()` (from `Entity`) | rendered `Name` | empty string | the literal text |
+| `GetItemInfo()` | the `ItemInfo` of the record: one object per record DID per apartment | — | an `ItemInfo` of its own, one per `Item` object, with the literal-item values of the next table |
+| `GetQuantity()` | the feed's quantity (last `ItemQuantity`, else the quantity it arrived with) | — | the same |
+| `GetWearState()` | the state of `item-tooltips.md` §11 after an `ItemCondition`; before one, the `Item_WearState` key | 0 (`Undefined`) | 0, or the `ItemCondition` state |
+| `GetCategory()`, `GetDurability()`, `GetQuality()`, `GetMaxStackSize()`, `IsMagic()`, `GetQualityImageID()`, `GetBackgroundImageID()`, `GetUnderlayImageID()`, `GetShadowImageID()` | the same value as the getter of that name on `GetItemInfo()` | as there | as there |
+| `GetIconImageID()` | `icon-layers.md` §3.1 step 1 for an item instance (the instance's checkpointed override when the item carries one, else `Icon_Layer_ImageDID`) | 0 | 0 |
+| `QuantityChanged` | after each feed `ItemQuantity` of the item that changes its quantity | — | the same |
+
+`ItemInfo` getters:
+
+| Getter | Value (record present) | Absent | Literal item |
+|---|---|---|---|
+| `GetName()` | rendered `Name` | empty string | the literal text |
+| `GetDescription()` | rendered `Description` | empty string | empty string |
+| `GetNameWithQuantity(q)` | for *q* ≤ 1 (or not a number) the name; otherwise the decimal integer part of *q*, one space, then the rendered `PluralName` | without `PluralName`: the name in its place | the same rule with the literal text as name and no `PluralName` |
+| `GetCategory()` | the `Item_Class` key, unchanged (also when it is not a member of `ItemCategory`, P41) | 0 (`Undefined`) | 0 |
+| `GetDurability()` | the `Item_DurabilityEnum` key (= `ItemDurability` value, P82) | 0 (`Undefined`) | 0 |
+| `GetQuality()` | the `Item_Quality` key (= `ItemQuality` value, P41) | 0 (`Undefined`) | 0 |
+| `GetMaxStackSize()` | `Inventory_MaxQuantity` | 1 | 1 |
+| `GetMaxQuantity()` | the value of `GetMaxStackSize()` | 1 | 1 |
+| `IsUnique()` | `Inventory_Unique` | false | false |
+| `IsMagic()` | false | false | false |
+| `GetIconImageID()` | `Icon_Layer_ImageDID` (`icon-layers.md` §2.2) | 0 | 0 |
+| `GetBackgroundImageID()` | `Icon_Layer_BackgroundDID` | 0 | 0 |
+| `GetUnderlayImageID()` | `Icon_Layer_UnderlayDID` | 0 | 0 |
+| `GetShadowImageID()` | `Icon_Layer_ShadowDID` | 0 | 0 |
+| `GetQualityImageID()` | 0 | 0 | 0 |
+
+An image getter returns 0 also when the property is present with value 0. Plugins pass a
+non-zero value to `SetBackground` (§13.8); 0 means "no image".
+
+**Item enums (answers part of the §15 OPEN on enums, 2026-10-09):** `ItemDurability` and
+`ItemWearState` follow data enums name for name and value for value: `ItemDurability` 1–7 =
+the keys of mapper 0x230000FA (`Item_DurabilityEnum`: `Substantial`, `Brittle`, `Normal`,
+`Tough`, `Flimsy`, `Indestructible`, `Weak`), `ItemWearState` 1–4 = the keys of mapper
+0x230000FB (`Item_WearState`: `Damaged`, `Pristine`, `Broken`, `Worn`) (P82). The getters
+therefore return the data keys unchanged.
+
+> **OPEN:** what the original's `IsMagic()`, `GetMaxQuantity()` (as opposed to
+> `GetMaxStackSize()`), `GetQualityImageID()` and `GetNameWithQuantity()` return; what its
+> getters return when the item's data lacks the property; and whether `ItemAdded` and
+> `ItemRemoved` fire for moves between containers. **Tessera rules** as in the tables above
+> (P83).
 
 ---
 
@@ -3821,6 +3907,41 @@ facts about the original.
     not use the deferred work of later frames. (Skip sets: L0 empty; L1 {A}; L2 {B}; L3 and
     L4 {A, B}.)
 
+Invariants 66–69 check §15.1 against a scenario feed (`scenario-feed.md`), not against the
+original: the API facts P81 and P82 (1-based backpack indices, `Equipment` value = data key
+− 1) and the Tessera rules P83 (event derivation from the feed, `Equipment:GetSize()`, the
+`SizeChanged` rule, the values for absent properties and literal items).
+
+66. **Backpack view (§15.1; decision 0024 P1 criterion 4):** a scenario that sets the
+    backpack to 30 slots and gives three item records at slots 0, 4 and 29 yields
+    `GetSize() == 30`, `GetItem(1)`, `GetItem(5)`, `GetItem(30)` non-nil with the records'
+    names, `GetItem(2)`, `GetItem(0)`, `GetItem(31)` and `GetItem(1.5)` nil; a plugin's
+    `ItemAdded` handler saw indices 1, 5 and 30 in that order. A scenario without a `bag`
+    step that gives one item at slot *B* + 5, where *B* is the install's
+    `InventoryControl_BaseBackpackSlots` (`character-panels.md` §4.3, read at run time),
+    delivers `SizeChanged` (after which `GetSize() == B + 6`) before that item's `ItemAdded`
+    with `Index` *B* + 6.
+67. **Backpack events:** with `defaults on` (`scenario-feed.md` §7.6), a `MoveItem` input
+    line moving the slot-4 item to backpack slot 10 gives one `ItemMoved` with `OldIndex` 5,
+    `NewIndex` 11; a `DestroyItem` input line for it then gives `ItemRemoved` with `Index`
+    11; a `bag 40` step gives `SizeChanged` and then `GetSize() == 40`; a second `bag 40`
+    step gives no event.
+68. **Equipment view:** equipping an item record at data key 3 (`Chest`) gives
+    `ItemEquipped` with `Index` 2 (`Turbine.Gameplay.Equipment.Chest`),
+    `GetItem(Turbine.Gameplay.Equipment.Chest)` returns it, `GetItem(1)` is nil,
+    `GetSize() == 21`; unequipping gives `ItemUnequipped` with `Index` 2 and a backpack
+    `ItemAdded`.
+69. **Item details:** for an item record with `Item_Quality` 4 and `Inventory_MaxQuantity`
+    50, `GetItemInfo():GetQuality() == 4` (`Turbine.Gameplay.ItemQuality.Uncommon`),
+    `GetItemInfo():GetMaxStackSize() == 50`, `GetMaxStackSize() == 50` and
+    `GetItemInfo():GetMaxQuantity() == 50`; `GetItemInfo()` called twice returns the same object. For an
+    item record without `Item_DurabilityEnum`, `Item_WearState` and `Inventory_Unique`,
+    `GetDurability()` and `GetWearState()` are 0 and `GetItemInfo():IsUnique()` is false. A
+    literal item's `GetName()` and `GetItemInfo():GetName()` are its literal text,
+    `GetItemInfo():GetQuality()`, `GetCategory()` and every image getter are 0,
+    `GetMaxStackSize()` is 1, and `GetItemInfo():GetNameWithQuantity(3)` is "3", a space and
+    the literal text.
+
 ---
 
 ## 19. Open questions (summary)
@@ -3871,8 +3992,12 @@ All `> **OPEN:**` callouts above:
   order of plugin-created elements against the drag bar (§14.2.3); interaction details of
   the game-object controls (§14.5).
 - Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which of
-  the remaining enums follow a data enum (§15); when the original delivers the gameplay
-  views' `…Changed` events (§15).
+  `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the
+  stance enums follow a data enum (§15); when the original delivers the gameplay views'
+  `…Changed` events (§15); what the original's `ItemInfo:IsMagic()`, `GetMaxQuantity()`,
+  `GetQualityImageID()` and `GetNameWithQuantity()` return, what its item getters return
+  when the data lacks the property, and whether `ItemAdded`/`ItemRemoved` fire for moves
+  between containers (§15.1).
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -3903,11 +4028,17 @@ The clean-room implementation of `tessera-ui` (2026-10-07) added two callouts: t
 `Click` and `MouseClick` on a plugin button (§13.6) and what `GetSize()` reports for a
 control in stretch mode 1 after `SetSize` (§13.18).
 
+The P1 revision of 2026-10-09 (§15.1) and its review fixes of the same day narrowed the §15
+callout on enums (`Equipment`, `ItemDurability` and `ItemWearState` answered by P82) and
+added one callout (§15.1: the original's values of four `ItemInfo` getters, of getters on
+absent properties, and events for moves between containers).
+
 ---
 
 ## 20. Corrections to other specs
 
-These rest on the disassembly of client build 4906.0071.1794.4035 (BIN) and on O4. They are
+These rest on the disassembly of client build 4906.0071.1794.4035 (BIN) and on O4 (the
+`character-panels.md` row on Tessera rules, DEC). They are
 recorded here, not applied, because this session owns only this file.
 
 | Target | Current text | Correction | Basis |
@@ -3925,6 +4056,7 @@ recorded here, not applied, because this session owns only this file.
 | `ui-layout.md` §5.9 (`UICore_Element_ObjectOpacity`) | "Opacity of the element's own drawing surface (root panels and elements that code gives a surface)" | Addition: the plugin API's `SetOpacity` writes this property; every plugin window is a root panel with a surface, other plugin controls have one only while their stretch mode is not 0; dictionary default 1.0, range 0–1 (§13.19 here, O7). | BIN (fourth pass), O7 |
 | `fonts.md` §9.4 | "The default font of a new plugin label is an OPEN of `lua-plugin-api.md` §13.4" | Answered: `GetFont()` is 0 until `SetFont`; the text is drawn in the text element's font, which for plain labels is the locale default font of `fonts.md` §9.1 and for game-styled controls the font of their layout element (§13.4 here). | BIN (fourth pass) |
 | `ui-behaviour.md` §9.2 OPEN ("the plugin-side combination of `Window:SetScale` with the group scale") | OPEN | Answered in §13.21 here: `SetScale(f)` sets the window's own scale, which replaces its group's value; the effective scale is `f` × `UIScale_Global` for windows that take part in the global scale, else `f`, and it is applied by the §9.2 rule. | BIN (fourth pass) |
+| `character-panels.md` §8.1 (Tessera mapping) | `ItemAdded` per `ItemAdded` into `Backpack`; `SizeChanged` per `ContainerSize` of `Backpack` | Align with §15.1 here (P83): `ItemAdded` also per `ItemMoved` from another container into the backpack; `SizeChanged` whenever *N* changes, including growth through an arriving item before the first `ContainerSize` (queued before that item's `ItemAdded`), and not for a `ContainerSize` that leaves *N* unchanged. Added 2026-10-09. | DEC (0024 P1) |
 | `plugin-api-usage.md` §6.3 (OPEN, O2) and §6.9 (OPEN, O9) | Whether class-table replacements reach instances; whether `WriteLine` renders markup | Both answered yes: §8.6 and §11.1 here (P76, P75). | BIN (fourth pass), O7 |
 
 ---
@@ -4064,3 +4196,5 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-06 | Decision-alignment revision (spec writer, dirty room), applying the owner-Accepted decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge) and [0015](../decisions/0015-ui-rendering.md) (UI rendering) to Tessera's own rules; no new research, **no fact about the original changed** (BIN, O and S statements are untouched; where a body sentence overstated a fact that is OPEN, it was narrowed to the known part). Status Accepted → **Revised, awaiting review**. Section numbers and anchors unchanged. **Changed Tessera rules:** §3.3 collector step "may rely on the default collector" → "must" (`plugin-runtime.md` §9.2, 0014 D8); "between frames" read as frame-loop steps 1 and 7 with the client-exit exception (0014 D8, owners list); the deferred-work list gains the game-raised events and the logout unload, sliced by whole items (2 ms, at least one item, order kept); the Tessera order of the §3.3 OPEN now names steps 1, 7 and 8. §6.2 queued `LoadPlugin` = step-7 deferred work. §6.3 when each unload runs (in the requesting call, logout in step 7, client exit after the last frame). §6.6 and §11.1 OPENs: error and `WriteLine` lines reach `Received` as queued step-7 events, "next pump" retired. §9.4 `Update` is never sliced; plugin timers are `Update` handlers. §9.7 hit tests read the current geometry. §10.6 asynchronous `Load` handlers and writes are step-7 items. §11.3 new paragraph: every chat line is a queued `Received` event delivered in step 7 (0014 Known difference 21), and the queued line records the apartments whose `Received` dispatch produced it so that §9.6's non-re-entrancy holds (the fix of 0014 open review item 1). §13.1 opacity bullet narrowed to children drawn into the window's surface. §13.2 surface size limits (0015 §7). §13.3 Escape note (0014 "Escape with a UI attached"). §13.8 Tessera checks of `SetBackground(path)`: whole-tree index, 64-byte header probe, `.png`/`.bmp` refused, late decode failure reported (0015 §4.3–§4.4). §13.11 the pointer lock is client state (0014 D7) and the search reads current geometry (0014 D8). §13.12.1 what the input layer delivers: command names and IDs, toggle types from table A of ACTIONMAP key 1, actions never offered, repeats per hold (0014 D1, D7, D9; Known differences 6, 7, 10, 12). §13.12.2 the two-action order follows 0014 D4 (replacing "the order of the bindings in the effective key map"); mouse buttons during the lock (0014 D7, Known difference 16); types 3–5 agree with D7. §13.12.3 coalesced movements and current-geometry `X`/`Y` (Known difference 15). §13.12.5 hover clock from the coalesced movement, tick in step 7. §13.12.6 scroll actions active over every hovered plugin control (0014 D5). §13.13 OPEN: text-box consumption, typed characters and the `opaque_keys` narrowing of step 2 (0014 D2, D6, D7, Known difference 18). §13.17 composition cross-reference. §13.18 OPEN Tessera rule replaced ("straight source-over, clipped to its window only" → 0015 Decision 1.6–1.8): separate entry, premultiplied filtering, canvas-above order, clip by the nearest enclosing window and every window above (spec question 12), own opacity, inherited rotation, mode 2 repeat addressing and Tile parents (spec question 11), mode-change refresh (spec question 15), caps. §13.19 OPEN Tessera rule "window opacity applies to nested surfaces" → **own opacity only** (0015 Decision 1.7, owner question 3, spec question 1); body sentences on fading "all its children" narrowed to children drawn into the surface; "Tessera draws every shown window through a surface" → stand-in surface for top-level mode-0 windows only, mode-0 child windows drawn into the nearest surface above (0015 Decision 1.1, spec question 13); first paint and the logical show (0015 Decision 1.8). §13.20 stand-ins are not rotation targets; composition reads surface rotation, non-finite angles are 0 (0015 §2.3, §7). §13.21 rule 1 against `ui-behaviour.md` §9.2 step 6 (spec question 2). Appendix B `WriteLine` row timing. **Provenance:** source key DEC and mark **Tessera rule**; rows P79 (0014) and P80 (0015). **Invariants** 59–64 added (Tessera rules). **OPEN callouts:** 47 before §19 (42 before; 5 new, listed in §19; none closed). **Implementers re-check:** plugin-host scheduling and the deferred-work queue (§3.3, §6.2, §6.3, §10.6), `Received` and `…Changed` delivery (§11.3, §15), input routing to plugin controls (§13.11–§13.13), the composition of plugin surfaces, opacity, clip and rotation (§13.18–§13.20), and `SetBackground(path)` checks (§13.8). **Not applied here (other owners):** ARCHITECTURE §18.1/§20.3/§21, `plugin-runtime.md` §8.3/§10.3, `ui-layout.md` §5.9/§6.6/§8.4, `ui-behaviour.md` §4.9/§7.4/§9.2.1, `keymap.md`, `game-panels.md`, `render.md`. |
 | 2026-10-06 | Repair of the decision-alignment revision (spec writer, dirty room), answering its first review (changes requested); no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **Autoload placed in the frame:** the §3.3 deferred-work list now holds every plugin load: queued `LoadPlugin` requests, `/plugins load` and manager-UI loads, and the autoload loads, one item per autoloaded plugin, queued in Tessera's autoload order when the session reports the login (a Tessera reading of 0014 D8, as in `plugin-runtime.md` §8.4 and `plugin-descriptor.md` §8.1); no load runs before the first `Plugins/` index (0015 §4.4); §6.2 gains a "when each load runs" paragraph and its OPEN's Tessera text says the same; invariant 62 now includes autoload and `/plugins load`. (2) **First paint (§13.19):** the 100 ms bound is limited to windows and to nested surfaces shown while no generation runs; a nested surface shown during its group's generation is drawn at the next generation's swap (0015 Decision 1.5, 1.8, U4 (c): 8 or 41 frames); the events cited are the §9.6 setter table and §9.7, not "the events of §9.6". (3) **Pending decision revisions framed as such:** the `Received` skip rule moved from §11.3 body text into a new OPEN ("Tessera rule until decision 0014 is revised", as `plugin-runtime.md` §8.4), and it now also covers several echoing apartments: a line raised while a queued `Received` is delivered inherits that event's skip set plus the running apartment (new invariant 65; §6.6, §11.1, invariant 61 and Appendix B point to it); the window-built clip chain of §13.18 moved into a new OPEN ("Tessera rule until decision 0015 is revised", its open review item 1). (4) **P79** now cites 0014 D1–D9, "Escape with a UI attached", Known differences 6, 7, 10, 12, 15, 16, 18, 21, open review items 1 and 2, "Other improvements" and 0015 §4.4, and lists §6.2, §6.6, §9.4, §9.7, §10.6, §12 and §13.3; **P80** adds 0015 Decision 1.5, U4 (c) and open review item 1. (5) **New OPENs with interim Tessera rules:** blocking `PluginData` writes and flushes when an unload closes a state inside a frame (§6.3, cross-referenced from §10.6; ARCHITECTURE §21; same as `plugin-runtime.md` §8.4); when the frame clock behind `GetGameTime()` and the hover delay advances (§3.3: once per frame, right after the previous present and before any step-1 work, so every plugin call of one frame sees one value; §12 and §13.12.5 point to it). (6) **Invariant 63** says the 50-movement burst arrives within one frame. Appendix B `UnloadScriptState` row aligned with §6.3 (runs where asked, 0014 D8). **OPEN callouts:** 51 before §19 (47 before; 4 new, listed in §19; none closed). **Implementers re-check:** load scheduling, autoload included (§3.3, §6.2), the `Received` skip set (§11.3), the frame clock (§3.3), first-paint waits of nested surfaces (§13.19). **Left for other owners:** decision 0014 (skip set into D8 and Known difference 21; the frame clock; the ARCHITECTURE §21 exception) and decision 0015 (clip chain from windows) are locked records; `chat-window.md` §10 item 9 should point to the §11.3 OPEN here. |
 | 2026-10-06 | Second repair of the decision-alignment revision (spec writer, dirty room), answering the second review round; no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **§3.3 deferred work made consistent:** the at-least-one-item rule of 0014 D8 now carries its one exception, from 0015 §4.4: while the first `Plugins/` file index is not ready and the head of the queue is a load, that frame's deferred work stops at the load, no item runs and the items behind it wait, so queue order is kept; refreshed indexes never hold back a load; this is the rule of `plugin-runtime.md` §8.4 "Wait for the first file index", which §3.3 now cites. (2) **§18:** the lead-in to the Tessera-rule invariants reads 59–65 (invariant 65 is the §11.3 interim rule). (3) **§13.18 mode-1 row** (non-blocking): the reason why the children of a resized Stretch control are not laid out again is now `ui-behaviour.md` §9.2.1 (a Stretch element resize keeps the layout box), not `ui-layout.md` §8.4 step 1, which Tessera applies only under root-panel parents (`ui-layout.md` §8.4 scope OPEN); the behaviour is unchanged. **OPEN callouts:** count unchanged (no new or closed callout). **Implementers re-check:** deferred-work slicing while the first index is pending (§3.3). **Left for other owners:** decision 0014 D8 (locked) does not name the first-index exception to its at-least-one-item rule; it should, when 0014 is next revised, together with the skip set already listed. |
+| 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting review): new §15.1 (inventory views: `GetBackpack`, `GetEquipment`, `Item`, `ItemInfo` over the session's inventory model and the scenario feed), provenance P81–P82 (API facts S2, the `Equipment` ↔ `ContainerSlot` key relation from the data), §18 checks 66–69 for decision 0024 P1 exit criterion 4. No other text changed; section numbers and anchors unchanged. Implementers re-check: the `Turbine.Gameplay` inventory views in `crates/plugins`. |
+| 2026-10-09 | Review fixes for the P1 revision (spec writer, dirty room; no new research; status stays **Revised**, awaiting re-review by a session other than the writer and the first reviewer). Blocking (1): §15 enum paragraph and P41 now point to P82 (`Equipment` value = `ContainerSlot` key − 1; `ItemDurability`, `ItemWearState` follow their data enums); the §15 enum OPEN and its §19 line narrowed to `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the stance enums. (2): the §15.1 OPEN is listed in §19, with a closing note. (3): new provenance row P83 (**Tessera rule**, DEC 0024 P1, `character-panels.md` §4.3, §8, §9) covering every Tessera rule of §15.1; §15.1 says which facts are P81/P82 and which P83; §18 has a lead-in for checks 66–69. (4): §15.1 rewritten with a containers table and two getter tables covering every `Item` and `ItemInfo` getter of §16, each with its value for a present property, an absent property and a literal item; `GetItemInfo()` identity (one object per record DID per apartment) stated; the §15.1 OPEN widened to the original's values for absent properties. Non-blocking: (a) the delivery rule points to §15's first paragraph; (b) note that `scenario-feed.md` links resolve after `p0` is merged; (c) and (e) a `SizeChanged` rule for growth before the first `ContainerSize`, and a §20 row asking `character-panels.md` §8.1 to align; (d) check 67 names the `MoveItem` and `DestroyItem` input lines with `defaults on`; (f) blank lines fixed. Checks 66, 67, 69 extended. OPEN count: 57 callout markers in §1–§18 before and after (one narrowed, one widened; none closed, none added). Section numbers and anchors unchanged. Implementers re-check: `Turbine.Gameplay` `Backpack`, `Equipment`, `Item`, `ItemInfo` in `crates/plugins`. |

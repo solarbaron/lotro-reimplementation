@@ -96,7 +96,9 @@ fn surface_base_at(uv0: vec2<f32>, uv1: vec2<f32>) -> vec4<f32> {
         return base;
     }
     if (surface_flag(SF_LAYER_OPACITY_ONLY)) {
-        return vec4<f32>(base.rgb, min(2.0 * base.a * layer2.a, 1.0));
+        // 2 x both layer alphas, unclamped: the material alpha multiplies it next and only
+        // the output (the 8-bit target) clamps (material.md §20.1, MA46).
+        return vec4<f32>(base.rgb, 2.0 * base.a * layer2.a);
     }
     var rgb = base.rgb * layer2.rgb;
     if (surface_flag(SF_LAYER_ADD)) {

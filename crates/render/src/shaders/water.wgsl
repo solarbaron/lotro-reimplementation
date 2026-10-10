@@ -524,6 +524,11 @@ fn shade_flow(in: WaterOut) -> vec3<f32> {
         fog = clamp((dist - frame.fog.x - 100.0) * frame.fog.y, 0.0, 1.0);
     }
     color = frame_apply_fog(color, fog);
+    // 0x2B0005EC step 5: each channel clamped to 0-1 after the fog, before the far-draw
+    // fade of fs_water.
+    if (!layered) {
+        color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
     return color;
 }
 

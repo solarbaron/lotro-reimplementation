@@ -442,7 +442,7 @@ fn kitchen_sink_is_deterministic_and_complete() {
     assert_eq!(a, b);
     for line in [
         "title \"Sink \\u{e9}\"",
-        "0.000 EntityCreated entity=$foe kind=creature name=\"Foe\" class=none at=0:0.000,4.000,0.000 facing=180.00 body=character:1:2 scale=2 equipment=[] idle=none",
+        "0.000 EntityCreated entity=$foe kind=creature name=\"Foe\" class=none at=0:0.000,4.000,0.000 facing=180.00 body=character:1:2 scale=2 equipment=[] idle=none look=none",
         "0.000 LevelChanged entity=player level=5",
         "0.000 ContainerSize container=vault slots=8",
         "0.000 ItemAdded item=$gem what=\"Gem\" at=shared:3 quantity=1",

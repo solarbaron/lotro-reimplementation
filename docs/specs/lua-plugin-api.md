@@ -3410,6 +3410,41 @@ therefore return the data keys unchanged.
 > `ItemRemoved` fire for moves between containers. **Tessera rules** as in the tables above
 > (P83).
 
+> **OPEN:** (implementer note, `crates/gamedata/src/inventory`, 2026-10-10; review note (d))
+> The order of the plugin events of one feed `ItemMoved` that crosses containers, and a move
+> within `Equipment` between keys 2 … 22, are not stated. As implemented: the leaving event
+> first (`Backpack.ItemRemoved` or `ItemUnequipped`), then the entering one; a move within
+> `Equipment` gives `ItemUnequipped` (old key) then `ItemEquipped` (new key); when the
+> arrival raises *N* (`character-panels.md` §4.3 rule 1), `SizeChanged` precedes both.
+
+> **OPEN:** (implementer note, `crates/gamedata/src/inventory`, 2026-10-10) After a
+> `ContainerSize` shrinks the backpack to *N*, items left at slots ≥ *N* are shown by no bag
+> (`character-panels.md` §4.3) and `GetItem` never returns them, but the `Backpack` events
+> row above still derives `ItemMoved`, `ItemAdded` and `ItemRemoved` with their indices
+> slot + 1 > `GetSize()` when such an item moves or is removed. The `character-panels.md`
+> §4.3 rule 5 promise (indices in 1 … `GetSize()`) covers only growth. Should slots ≥ *N* count
+> as outside the backpack for the events (no event, or `ItemAdded`/`ItemRemoved` when an item
+> crosses *N*)? As implemented: the row as written (events with indices above `GetSize()`).
+
+> **OPEN:** (implementer note, `apps/client/src/character/plugin.rs`, 2026-10-10, after
+> review) The tables do not say what the views do when the player leaves the world (a
+> `Disconnected`, or a second `WorldEntered` that clears the inventory model). As
+> implemented: every item the views held leaves them as if it were removed, in ascending
+> place order (`Backpack.ItemRemoved` with its old index, `Equipment.ItemUnequipped` for keys
+> 2 … 22, nothing for keys 23 … 25), then `Backpack.SizeChanged` fires only when *N* changed.
+
+> **OPEN:** (implementer note, `crates/plugins/src/inventory.rs`, 2026-10-10; review note (e))
+> Three values the tables above leave open. (1) `GetNameWithQuantity(q)` for a *q* that is
+> not finite (infinity, NaN) or is a string such as `"3"`: as implemented, the name (treated
+> as "not a number"); a finite *q* > 1 of any size gives all digits of its integer part.
+> (2) Whether `GetItem` and the events return **one `Item` object per item per apartment**
+> (so `ItemAdded`'s `Item == GetItem(Index)`, and fields or handlers set on it, such as
+> `QuantityChanged`, persist): as implemented, yes, keyed by the item ID, as long as the
+> item is in a container or a plugin holds the object; an item that left every container
+> answers its getters with the last values seen. (3) `Backpack:GetItem` and
+> `Equipment:GetItem` with an argument that is not a number (nil, a string): as implemented,
+> nil, like a non-integer.
+
 ---
 
 ## 16. API inventory (client build 4906.0071.1794.4035)

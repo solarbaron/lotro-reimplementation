@@ -130,6 +130,19 @@ pub trait AssemblySource {
         Ok(None)
     }
 
+    /// The `Inventory_CompatibleSlot` bits of an item (a game object or its property set),
+    /// `None` when absent or unknown. Read only for held items equipped without a slot
+    /// (`character-panels.md` §7 Tessera rule: the second item for one hand goes to the
+    /// secondary hand when it fits there). The default implementation knows none.
+    ///
+    /// # Errors
+    ///
+    /// Only when the source fails.
+    fn compatible_slots(&mut self, item: Did) -> Result<Option<u64>, Self::Error> {
+        let _ = item;
+        Ok(None)
+    }
+
     /// The dictionary default of property `pid`, `None` when the dictionary has none (an
     /// absent toggle property reads it, `appearance.md` §3.3 Rule). The default
     /// implementation knows none.
@@ -191,6 +204,9 @@ impl<T: AssemblySource + ?Sized> AssemblySource for &mut T {
     }
     fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, Self::Error> {
         (**self).held_scale(entity)
+    }
+    fn compatible_slots(&mut self, item: Did) -> Result<Option<u64>, Self::Error> {
+        (**self).compatible_slots(item)
     }
     fn property_default(&mut self, pid: u32) -> Result<Option<PropertyValue>, Self::Error> {
         (**self).property_default(pid)
@@ -542,6 +558,20 @@ impl<S: RecordSource> AssemblySource for GameDataSource<'_, S> {
     fn held_scale(&mut self, entity: Did) -> Result<Option<[f32; 3]>, PropsError> {
         Ok(match self.body(entity)? {
             Lookup::Found(b) => Some(b.model_scale()),
+            _ => None,
+        })
+    }
+
+    fn compatible_slots(&mut self, item: Did) -> Result<Option<u64>, PropsError> {
+        let registry = self.data.registry()?;
+        let Some(pid) = tessera_formats::PropertyNames::pid_of(
+            registry.dictionary(),
+            "Inventory_CompatibleSlot",
+        ) else {
+            return Ok(None);
+        };
+        Ok(match self.object_properties(item)? {
+            Lookup::Found(set) => set.get(pid).and_then(PropertyValue::as_bits),
             _ => None,
         })
     }

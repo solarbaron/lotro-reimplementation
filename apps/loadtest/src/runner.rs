@@ -488,7 +488,7 @@ fn provision_all(
                         s.password.expose(),
                         &s.character,
                         register,
-                        raw::bot_appearance(s.index),
+                        (raw::bot_appearance(s.index), raw::bot_look(s.index)),
                     )
                     .await;
                     (s.account, r)

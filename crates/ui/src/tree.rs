@@ -223,6 +223,18 @@ pub(crate) struct Element {
     pub pending_scale: Option<(f32, bool)>,
     /// A modal-dialog container (`Ui::open_panel`): destroyed with its last dialog.
     pub dialog_container: bool,
+    /// Game code asks for the examination tooltip of this element on hover
+    /// (`item-tooltips.md` §9, Tessera rule: every item slot requests it).
+    pub examine: bool,
+    /// The drag description game code gives this element as a drag source
+    /// (`ui-behaviour.md` §7.1 step 4).
+    pub drag_payload: Option<crate::drag::DragPayload>,
+    /// The element whose copy is the drag icon when this element is the source (§7.1
+    /// step 4: a game widget's own icon); `None` leaves it to the container (step 5).
+    pub drag_icon_from: Option<ElementKey>,
+    /// The accept check game code sets on a drop target (§7.3 step 1): with `Some(mask)`
+    /// a drag whose payload has no bit of `mask` in its `fits` is refused.
+    pub drop_mask: Option<u32>,
 }
 
 impl Element {
@@ -279,6 +291,10 @@ impl Element {
             rotation: [0.0; 3],
             pending_scale: None,
             dialog_container: false,
+            examine: false,
+            drag_payload: None,
+            drag_icon_from: None,
+            drop_mask: None,
             desc,
         }
     }

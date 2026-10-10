@@ -16,6 +16,7 @@ use mlua::{Lua, MultiValue, Table, Value};
 use tessera_script::{api_fn, host_error};
 
 use crate::gameplay_enums as en;
+use crate::inventory::{self, InventoryViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
@@ -158,16 +159,22 @@ impl LocalPlayerEvent {
 }
 
 /// A game-raised gameplay event queued for step 7 (`plugin-runtime.md` §8.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameplayEvent {
     /// A change of the local player.
     LocalPlayer(LocalPlayerEvent),
+    /// A change of the backpack, the equipment or an item (`lua-plugin-api.md` §15.1).
+    Inventory(InventoryViewEvent),
 }
 
 /// What a view object is (its native payload).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     LocalPlayer,
+    /// The apartment's `LocalPlayer:GetBackpack()` object.
+    Backpack,
+    /// The apartment's `LocalPlayer:GetEquipment()` object.
+    Equipment,
     Empty,
     /// A skill list of this many skills.
     SkillList(u32),
@@ -316,7 +323,7 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         api_fn(lua, "GetName", move |lua, this: Table| {
             Ok(match view_of(lua, &this)? {
                 Some(View::LocalPlayer) => source(&c).map(|i| i.name),
-                _ => None,
+                _ => inventory::item_name(&c, lua, &this)?,
             })
         })?,
     )?;
@@ -386,15 +393,14 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         ],
     )?;
 
-    // Empty views (plugin-api-usage.md §7.4).
+    // Empty views (plugin-api-usage.md §7.4); the backpack and equipment read the
+    // inventory source (§15.1, `inventory`).
     let backpack = b.class(&gp, "Backpack", Some(&object), None)?;
     stubs(
         lua,
         &backpack,
         "Backpack",
         &[
-            ("GetItem", Default_::Nil),
-            ("GetSize", Default_::Zero),
             ("PerformItemDrop", Default_::Nil),
             ("PerformShortcutDrop", Default_::Nil),
         ],
@@ -545,51 +551,10 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         )?;
     }
 
-    // Items, effects, party and the rest: tables with default getters.
+    // Items (§15.1, `inventory`), effects, party and the rest: tables with default
+    // getters.
     let item = b.class(&gp, "Item", Some(&entity), None)?;
-    stubs(
-        lua,
-        &item,
-        "Item",
-        &[
-            ("GetItemInfo", Default_::Nil),
-            ("GetBackgroundImageID", Default_::Zero),
-            ("GetCategory", Default_::Zero),
-            ("GetDurability", Default_::Zero),
-            ("GetIconImageID", Default_::Zero),
-            ("GetMaxStackSize", Default_::Zero),
-            ("GetQuality", Default_::Zero),
-            ("GetQualityImageID", Default_::Zero),
-            ("GetQuantity", Default_::Zero),
-            ("GetShadowImageID", Default_::Zero),
-            ("GetUnderlayImageID", Default_::Zero),
-            ("GetWearState", Default_::Zero),
-            ("IsMagic", Default_::False),
-        ],
-    )?;
     let item_info = b.class(&gp, "ItemInfo", Some(&object), None)?;
-    stubs(
-        lua,
-        &item_info,
-        "ItemInfo",
-        &[
-            ("GetBackgroundImageID", Default_::Zero),
-            ("GetCategory", Default_::Zero),
-            ("GetDescription", Default_::Empty),
-            ("GetDurability", Default_::Zero),
-            ("GetIconImageID", Default_::Zero),
-            ("GetMaxQuantity", Default_::Zero),
-            ("GetMaxStackSize", Default_::Zero),
-            ("GetName", Default_::Empty),
-            ("GetNameWithQuantity", Default_::Empty),
-            ("GetQuality", Default_::Zero),
-            ("GetQualityImageID", Default_::Zero),
-            ("GetShadowImageID", Default_::Zero),
-            ("GetUnderlayImageID", Default_::Zero),
-            ("IsMagic", Default_::False),
-            ("IsUnique", Default_::False),
-        ],
-    )?;
     let bank_item = b.class(&gp, "BankItem", Some(&item), None)?;
     stubs(
         lua,
@@ -623,11 +588,17 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     for (k, v) in en::EQUIPMENT {
         equipment.raw_set(*k, f64::from(*v))?;
     }
-    stubs(
+    inventory::install(
         lua,
-        &equipment,
-        "Equipment",
-        &[("GetItem", Default_::Nil), ("GetSize", Default_::Zero)],
+        ctx,
+        &inventory::Classes {
+            backpack: &backpack,
+            equipment: &equipment,
+            item: &item,
+            item_info: &item_info,
+        },
+        Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Backpack))),
+        Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Equipment))),
     )?;
     let party = b.class(&gp, "Party", Some(&object), None)?;
     stubs(
@@ -715,23 +686,39 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             }
         })?,
     )?;
-    let views: [(&'static str, &'static str, Table); 6] = [
+    let views: [(&'static str, &'static str, Table, View); 6] = [
         (
             "GetClassAttributes",
             "ClassAttributes",
             class_attributes.clone(),
+            View::Empty,
         ),
-        ("GetRaceAttributes", "RaceAttributes", attributes.clone()),
-        ("GetBackpack", "Backpack", backpack.clone()),
-        ("GetEquipment", "Equipment", equipment.clone()),
-        ("GetVault", "Vault", vault.clone()),
-        ("GetSharedStorage", "SharedStorage", shared_storage.clone()),
+        (
+            "GetRaceAttributes",
+            "RaceAttributes",
+            attributes.clone(),
+            View::Empty,
+        ),
+        ("GetBackpack", "Backpack", backpack.clone(), View::Backpack),
+        (
+            "GetEquipment",
+            "Equipment",
+            equipment.clone(),
+            View::Equipment,
+        ),
+        ("GetVault", "Vault", vault.clone(), View::Empty),
+        (
+            "GetSharedStorage",
+            "SharedStorage",
+            shared_storage.clone(),
+            View::Empty,
+        ),
     ];
-    for (m, key, class) in views {
+    for (m, key, class, view) in views {
         local_player.raw_set(
             m,
             api_fn(lua, m, move |lua, _: MultiValue| {
-                cached_view(lua, key, &class, View::Empty)
+                cached_view(lua, key, &class, view)
             })?,
         )?;
     }
@@ -960,10 +947,22 @@ fn install_attribute_classes(
     Ok(())
 }
 
-/// Deliver a queued gameplay event to the apartment (its `LocalPlayer` instance, if a
-/// plugin asked for one).
-pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: GameplayEvent) {
-    let GameplayEvent::LocalPlayer(e) = ev;
+/// Deliver a queued gameplay event to the apartment: to its `LocalPlayer` instance, its
+/// backpack or equipment view, or an item's object, if a plugin asked for one.
+pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
+    let e = match ev {
+        GameplayEvent::LocalPlayer(e) => *e,
+        GameplayEvent::Inventory(inv) => {
+            inventory::deliver(ap, inv, |lua, name| {
+                let cache: Table = lua.named_registry_value(VIEWS_KEY).ok()?;
+                match cache.raw_get::<Value>(name).ok()? {
+                    Value::Table(t) => Some(t),
+                    _ => None,
+                }
+            });
+            return;
+        }
+    };
     let target = match ap.lua().named_registry_value::<Value>(LOCAL_PLAYER_KEY) {
         Ok(Value::Table(t)) => t,
         _ => return,

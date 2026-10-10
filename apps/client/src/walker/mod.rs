@@ -170,12 +170,31 @@ pub trait WalkerSession {
         let _ = now;
         None
     }
+    /// The install's creation controls received looks are read with (decision 0025 D2),
+    /// once loaded. The default has none (figures then show no look).
+    fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
+        None
+    }
 }
 
 /// Most session entity events applied in one frame (decision 0008: the store's change
 /// lists are unbounded, so the client bounds what it applies); the rest wait, in order, for
 /// the next frames.
 pub const MAX_ENTITY_EVENTS_PER_FRAME: usize = 4096;
+
+/// Vertical field of view of the paperdoll's portrait, degrees (Tessera choice; the UI
+/// scene's camera, `character-panels.md` §3.2, is not read yet).
+pub const PORTRAIT_FOV_DEGREES: f32 = 30.0;
+/// The portrait camera's distance as a multiple of the one at which the figure's bounding
+/// sphere just fills the view's height (below 1: closer; Tessera choice).
+pub const PORTRAIT_FILL: f32 = 0.6;
+/// The creation viewport's zoom (`character-screens.md` §2.3): the camera's distance as a
+/// fraction of the unzoomed one (Tessera framing while the UI scene's zoom cameras are not
+/// read, §2.1 OPEN).
+pub const PREVIEW_ZOOM_FILL: f32 = 0.5;
+/// The zoomed camera's aim above the figure's centre, in bounding-sphere radii (the sphere
+/// is the parts' box with a metre of margin, so a quarter radius lands on the upper body).
+pub const PREVIEW_ZOOM_RAISE: f32 = 0.25;
 
 /// Sky colour (linear) when no environment is drawn.
 pub const SKY: Rgba = env::NO_SKY;
@@ -1431,6 +1450,7 @@ impl Walker {
         let t_chars = Instant::now();
         if let Some(w) = world.as_deref_mut() {
             w.drain_entity_events(&mut self.entity_events, MAX_ENTITY_EVENTS_PER_FRAME);
+            self.characters.set_look_data(w.look_data());
         }
         self.characters.apply_events(
             &mut self.entity_events,
@@ -1669,6 +1689,10 @@ impl Walker {
             self.phase_ms[0] = ms(t0, t1);
             self.phase_ms[1] = ms(t1, t2);
             self.phase_ms[2] = ms(t2, Instant::now());
+        } else {
+            // No viewer yet (the character screens before world entry): the textures of
+            // the screens' figure still load.
+            self.objects.update_textures(renderer, &mut budget);
         }
         // Characters: the avatar follows the walk controller; figures, animation.
         let pose = self.controls.avatar().map(|(feet, yaw)| {
@@ -2553,6 +2577,112 @@ impl Walker {
             out.push((text.clone(), GOLD));
         }
         out
+    }
+
+    /// Draws the player's figure alone into `frame` as the paperdoll's portrait
+    /// (`character-panels.md` §3.2, `render.md` §6.10): a premultiplied-alpha pass
+    /// (`Pass::premultiplied_alpha`, the external-content target's contract) cleared to
+    /// transparent black, the
+    /// figure at the origin turned by `yaw_degrees` (the paperdoll's turn), seen from its
+    /// front at the height of its bounding sphere's centre, unlit with the walker's fixed
+    /// light. Returns whether a figure was drawn (`false` while it is not on the GPU).
+    pub fn draw_portrait(&mut self, frame: &mut Frame, yaw_degrees: f32) -> bool {
+        let player = self.characters.player_id();
+        self.draw_alone(frame, player, yaw_degrees, false)
+    }
+
+    /// Shows the character screens' figure (`character-screens.md` §2.1, §6) or removes it
+    /// (`None`); see [`CharacterLayer::set_preview`]. Call every frame the screens are open
+    /// with their current figure ([`crate::screens::viewport::figure_job`]).
+    pub fn set_preview(
+        &mut self,
+        job: Option<(
+            characters::figure::FigureRequest,
+            characters::figure::LookChoices,
+        )>,
+    ) {
+        self.characters.set_preview(job, Instant::now());
+    }
+
+    /// The character screens' figure: what was requested and how far it has come.
+    #[must_use]
+    pub fn preview(&self) -> Option<characters::FigureStatus> {
+        self.characters.preview()
+    }
+
+    /// Draws the character screens' figure alone into `frame` for the creation viewport
+    /// (`character-screens.md` §2.1), as [`Walker::draw_portrait`] draws the paperdoll's:
+    /// turned by the turntable's `yaw_degrees`; `zoomed` frames the upper part of the
+    /// figure (§2.3 zoom; Tessera framing while the scene's cameras are not read, §2.1
+    /// OPEN). Returns whether a figure was drawn.
+    pub fn draw_preview(&mut self, frame: &mut Frame, yaw_degrees: f32, zoomed: bool) -> bool {
+        self.draw_alone(frame, Some(characters::PREVIEW_ID), yaw_degrees, zoomed)
+    }
+
+    /// One figure alone into `frame` ([`Walker::draw_portrait`]).
+    fn draw_alone(
+        &mut self,
+        frame: &mut Frame,
+        id: Option<EntityId>,
+        yaw_degrees: f32,
+        zoomed: bool,
+    ) -> bool {
+        let Some(id) = id else {
+            frame
+                .world_pass("portrait", &Camera::default())
+                .premultiplied_alpha();
+            return false;
+        };
+        let mut draws = Vec::new();
+        let yaw = yaw_degrees.to_radians();
+        let bounds = self
+            .characters
+            .portrait_draws(frame, id, yaw, &self.objects, &mut draws);
+        let (centre, radius) = bounds.unwrap_or((Vec3::new(0.0, 0.0, 1.0), 1.0));
+        let radius = if radius.is_finite() && radius > 0.01 {
+            radius
+        } else {
+            1.0
+        };
+        // Zoomed: half the distance, aimed a quarter radius above the centre (the head and
+        // upper body of a standing figure).
+        let (centre, fill) = if zoomed {
+            (
+                centre + Vec3::Z * (radius * PREVIEW_ZOOM_RAISE),
+                PORTRAIT_FILL * PREVIEW_ZOOM_FILL,
+            )
+        } else {
+            (centre, PORTRAIT_FILL)
+        };
+        // The figure faces its local +Y at yaw 0: the camera looks back at it along −Y
+        // from in front, at a distance where the bounding sphere's diameter fills about the
+        // view's height.
+        let fov = PORTRAIT_FOV_DEGREES.to_radians();
+        let distance = radius / (fov * 0.5).tan() * fill;
+        let camera = Camera {
+            eye: centre + Vec3::Y * distance,
+            target: centre,
+            up: Vec3::Z,
+            projection: Perspective {
+                fov_y: fov,
+                near: (distance - radius * 2.0).max(0.05),
+                far: distance + radius * 2.0,
+            },
+        };
+        let pass = frame.world_pass("portrait", &camera);
+        // `render.md` §6.10: fixed blends write the target's alpha by the premultiplied
+        // rule (an opaque "destination ZERO" surface covers what lies behind the viewport).
+        pass.premultiplied_alpha();
+        pass.lighting(Lighting {
+            direction: Vec3::new(0.6, -0.3, 0.75),
+            color: [1.0, 0.97, 0.9],
+            ambient: [0.45, 0.46, 0.5],
+        });
+        let drawn = !draws.is_empty();
+        for d in draws {
+            pass.mesh(d);
+        }
+        drawn
     }
 
     /// Records the frame: the world pass (terrain, objects, avatar) and the overlay (HUD,

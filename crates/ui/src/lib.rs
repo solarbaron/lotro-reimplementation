@@ -76,6 +76,7 @@ mod wm;
 
 pub use bridge::{CommandOffer, Phase, UiChange, UiInput};
 pub use control::{Background, ControlKind};
+pub use drag::DragPayload;
 pub use env::{ImageRef, ImageState, MemoryEnv, NullEnv, PreparedText, TextRequest, UiEnv};
 pub use events::{Answer, Command, ControlEvent, Message, MsgArg, UiEvent};
 pub use focus::{BandChange, BandEntry};

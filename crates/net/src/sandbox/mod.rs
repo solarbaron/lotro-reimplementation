@@ -80,6 +80,7 @@ pub use world::{
 };
 
 use crate::NetError;
+use crate::domain::{CharacterCommand, CharacterEvent, Text};
 use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId,
     EntityKind, Location, LocationCause, RegionId, Transform, Vec3,
@@ -453,7 +454,13 @@ pub struct SandboxBackend {
     /// The scenario feed, when the configuration has a scenario.
     #[cfg(feature = "scenario")]
     feed: Option<Feed>,
+    /// Characters created in this sandbox without a scenario (`scenario-feed.md` §9.6),
+    /// with the appearance of their `CreateCharacter`; in memory only.
+    created: Vec<(String, Option<Appearance>)>,
 }
+
+/// Most names of the plain sandbox's character list (`scenario-feed.md` §9.6).
+pub const MAX_SANDBOX_CHARACTERS: usize = 64;
 
 impl SandboxBackend {
     /// Creates a sandbox without world data: no named places, no ground
@@ -491,6 +498,7 @@ impl SandboxBackend {
             scratch: Vec::new(),
             #[cfg(feature = "scenario")]
             feed,
+            created: Vec::new(),
         })
     }
 
@@ -533,7 +541,47 @@ impl SandboxBackend {
         if let Some(f) = &self.feed {
             return f.characters().to_vec();
         }
-        self.config.characters.clone()
+        let mut names = self.config.characters.clone();
+        names.extend(self.created.iter().map(|(n, _)| n.clone()));
+        names
+    }
+
+    /// The plain sandbox's answer to `CreateCharacter` (`scenario-feed.md` §9.6): Tessera's
+    /// own acknowledgement, no game rule.
+    fn create_character(
+        &mut self,
+        now: Instant,
+        name: String,
+        appearance: Option<Box<Appearance>>,
+        class: Option<u32>,
+    ) {
+        let names = self.characters();
+        let refused = if names.contains(&name) {
+            Some("A character with this name already exists.")
+        } else if names.len() >= MAX_SANDBOX_CHARACTERS {
+            Some("The character list is full.")
+        } else {
+            None
+        };
+        let event = match refused {
+            Some(text) => CharacterEvent::CharacterRefused {
+                name,
+                reason: Text::Literal(text.to_owned()),
+            },
+            None => {
+                let appearance = appearance.map(|a| *a);
+                let event = CharacterEvent::CharacterInfo {
+                    name: name.clone(),
+                    body: appearance.as_ref().map(|a| a.body),
+                    class,
+                    level: None,
+                    look: appearance.as_ref().and_then(|a| a.look.clone()),
+                };
+                self.created.push((name, appearance));
+                event
+            }
+        };
+        self.emit(now, Event::Character(event));
     }
 
     /// Whether the scenario feed takes in-world commands now.
@@ -887,7 +935,13 @@ impl SandboxBackend {
             self.phase = Phase::InWorld;
             return;
         }
-        if let Some(appearance) = self.config.avatar.clone() {
+        // A character created in this sandbox enters with its creation appearance (§9.6).
+        let created = self
+            .created
+            .iter()
+            .find(|(n, _)| *n == character)
+            .and_then(|(_, a)| a.clone());
+        if let Some(appearance) = created.or_else(|| self.config.avatar.clone()) {
             self.emit(
                 now,
                 Event::AppearanceChanged {
@@ -1294,6 +1348,15 @@ impl Backend for SandboxBackend {
                     self.emit(now, event);
                 }
             }
+            (
+                Phase::Connected,
+                Command::Character(CharacterCommand::CreateCharacter {
+                    name,
+                    appearance,
+                    class,
+                    ..
+                }),
+            ) => self.create_character(now, name, appearance, class),
             (Phase::Connected, Command::EnterWorld { character }) => {
                 self.begin_enter(now, character);
             }

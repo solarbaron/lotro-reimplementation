@@ -1855,6 +1855,16 @@ impl ObjectLayer {
         self.refresh_stats();
     }
 
+    /// Per frame while there is no viewer to stream around (the character screens before
+    /// world entry, `character-screens.md` §2.1): only the textures that the layer's users
+    /// acquired (the screens' figure, [`Self::acquire_textures`]) are requested, collected
+    /// and uploaded within `budget`; nothing is activated or evicted.
+    pub fn update_textures(&mut self, renderer: &mut Renderer<'_>, budget: &mut UploadBudget) {
+        self.request_textures(Instant::now());
+        self.poll_textures();
+        self.upload_textures(renderer, budget);
+    }
+
     /// The activation pass (module docs, [`activate_blocks`]), then the references it
     /// takes and drops.
     fn activate(&mut self, camera: [f64; 3], frame: &ObjectFrame) {

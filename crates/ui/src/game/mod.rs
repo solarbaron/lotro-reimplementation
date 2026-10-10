@@ -40,12 +40,22 @@
 //! | [`quickslot`] | quickslot bars | GP §10 |
 //! | [`escape`] | Escape with the game UI attached | GP §16 |
 //! | [`chat`] | chat windows, tabs, logs, entry line, command line | `chat-window.md` |
+//! | [`charvocab`] | labels of the P1 types, element IDs, states, properties | naming notes |
+//! | [`examine`] | examination tooltips of items: build, assembly, placement, pins | `item-tooltips.md` |
+//! | [`items`] | item slots, bag lists, item drag and drop | `character-panels.md` §3.3, §4.1, §5, §6; `ui-behaviour.md` §7 |
+//! | [`avatar`] | viewports as external-content hosts, the paperdoll's turning | `render.md` §6.10, `character-panels.md` §3.2 |
+//! | [`creation`] | choice lists, steppers, sliders, swatches of the creation screens | `character-screens.md` §3–§5 |
 
+pub mod avatar;
+pub mod charvocab;
 pub mod chat;
+pub mod creation;
 pub mod data;
 pub mod dragbox;
 pub mod escape;
+pub mod examine;
 pub mod hidewhen;
+pub mod items;
 pub mod map;
 mod panels;
 pub mod quickslot;
@@ -54,6 +64,7 @@ pub mod simple;
 pub mod vocab;
 pub mod worldmap;
 
+pub use charvocab::CharVocab;
 pub use data::{
     GameData, HideCondition, MapLookup, MapSource, NoShortcuts, SandboxData, Shortcut, Shortcuts,
 };
@@ -221,6 +232,99 @@ pub(crate) fn set_image_ref(ui: &mut Ui, k: ElementKey, image: &ImageRef, draw_m
                 path: path.clone(),
             }],
         ),
+    }
+}
+
+/// An item icon as the client gives it to the P1 widgets (`icon-layers.md` §3).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum IconImage {
+    /// An icon the client composed (`tessera-material`'s icon composition, the exact §3.3
+    /// arithmetic), named by an image reference its [`crate::UiEnv`] resolves.
+    Composed(ImageRef),
+    /// The layer surfaces, bottom to top (`icon-layers.md` §3.1–§3.2): the UI shows each
+    /// as its own field at the icon's top-left corner, blended with the UI compositor's
+    /// Alphablend (`ui-layout.md` §9.6.1). A Tessera fallback for a client that cannot
+    /// name a composed icon; at most [`MAX_ICON_LAYERS`] layers are shown.
+    ///
+    /// Each layer field is sized to its image's own size, clipped to the icon element's
+    /// box, so a smaller layer is drawn once and not tiled (§3.4: no layer is scaled, a
+    /// smaller one leaves the rest untouched). While an image is not loaded its field has
+    /// the icon's size; [`fit_icon_layers`] sizes the fields again once the images are
+    /// loaded. Differences from the §3 composite: the layers are not clipped to the bottom
+    /// layer's size when it is smaller than the icon element, a missing bottom layer still
+    /// shows the others (§3.1 gives no icon), and the two blends round differently.
+    Layers(Vec<ImageRef>),
+}
+
+/// Most layers an [`IconImage::Layers`] shows (Tessera cap; item stacks have five).
+pub const MAX_ICON_LAYERS: usize = 16;
+
+/// Element ID of the code-made layer fields of an [`IconImage::Layers`] icon, below the
+/// icon element (Tessera's code range, see [`creation::CODE_ELEMENT_ID_BASE`]).
+pub const ICON_LAYER_ID: u32 = 0x7EFF_FF01;
+
+/// Shows `icon` on element `k` (or clears it): a composed icon becomes `k`'s image; layers
+/// become code-made child fields at `k`'s top-left corner, bottom first, each of its
+/// image's size within `k`'s box ([`IconImage::Layers`]). Layer fields of an earlier call
+/// are removed first.
+pub(crate) fn set_icon(ui: &mut Ui, k: ElementKey, icon: Option<&IconImage>) {
+    for c in ui.children(k) {
+        if ui.element_id(c) == Some(ICON_LAYER_ID) {
+            ui.destroy(c);
+        }
+    }
+    match icon {
+        Some(IconImage::Composed(img)) => set_image_ref(ui, k, img, examine::DRAW_OVER),
+        Some(IconImage::Layers(layers)) => {
+            set_image(ui, k, 0, 0);
+            let b = ui.layout_box(k).unwrap_or_default();
+            for img in layers.iter().take(MAX_ICON_LAYERS) {
+                let (w, h) = layer_size(ui, img, (b.w(), b.h()));
+                let mut d = ElementDesc {
+                    element_id: ICON_LAYER_ID,
+                    ..ElementDesc::default()
+                };
+                d.block.rect.width = w;
+                d.block.rect.height = h;
+                d.block.has_position = true;
+                let Some(f) = examine::code_element(ui, k, WidgetClass::Field, d) else {
+                    break;
+                };
+                set_image_ref(ui, f, img, examine::DRAW_OVER);
+            }
+        }
+        None => set_image(ui, k, 0, 0),
+    }
+}
+
+/// The size of a layer field: the image's own size within `bx` (width, height) when the
+/// image is loaded, else `bx`.
+fn layer_size(ui: &mut Ui, img: &ImageRef, bx: (i32, i32)) -> (i32, i32) {
+    let (bw, bh) = (bx.0.max(0), bx.1.max(0));
+    match ui.env.image(img) {
+        crate::env::ImageState::Ready(i) => (
+            i32::try_from(i.width()).unwrap_or(i32::MAX).min(bw),
+            i32::try_from(i.height()).unwrap_or(i32::MAX).min(bh),
+        ),
+        _ => (bw, bh),
+    }
+}
+
+/// Sizes the layer fields of an [`IconImage::Layers`] icon on `k` again to their images'
+/// sizes within `k`'s box: call after images that were still loading when the icon was
+/// set have arrived (or after `k` was resized). Does nothing for an element without
+/// layer fields.
+pub fn fit_icon_layers(ui: &mut Ui, k: ElementKey) {
+    let b = ui.layout_box(k).unwrap_or_default();
+    for c in ui.children(k) {
+        if ui.element_id(c) != Some(ICON_LAYER_ID) {
+            continue;
+        }
+        let Some((img, _)) = ui.base_image(c) else {
+            continue;
+        };
+        let (w, h) = layer_size(ui, &img, (b.w(), b.h()));
+        ui.set_layout_box(c, crate::geom::IBox::from_xywh(0, 0, w, h));
     }
 }
 

@@ -109,7 +109,7 @@ enum ChatSlot {
     /// A `ChatSend` forwarded to the simulation and not answered yet.
     Forwarded,
     /// A session-made `ChatRejected` waiting for the forwarded ones before it.
-    Held(Transmit),
+    Held(Box<Transmit>),
 }
 
 /// One connection's protocol state.
@@ -155,6 +155,14 @@ impl ConnectionCore {
     #[must_use]
     pub fn state(&self) -> ServerState {
         self.session.state()
+    }
+
+    /// The negotiated minor version (0 before `Hello`); frames of
+    /// [`poll_transmit`](Self::poll_transmit) are encoded under it (`tessera-protocol.md`
+    /// §3.1).
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.session.minor()
     }
 
     /// Whether the session ended.
@@ -213,7 +221,7 @@ impl ConnectionCore {
                     .any(|s| matches!(s, ChatSlot::Forwarded))
             {
                 self.held += 1;
-                self.chat_order.push_back(ChatSlot::Held(t));
+                self.chat_order.push_back(ChatSlot::Held(Box::new(t)));
             } else {
                 self.out.push_back(t);
             }
@@ -232,7 +240,7 @@ impl ConnectionCore {
         while matches!(self.chat_order.front(), Some(ChatSlot::Held(_))) {
             if let Some(ChatSlot::Held(t)) = self.chat_order.pop_front() {
                 self.held = self.held.saturating_sub(1);
-                self.out.push_back(t);
+                self.out.push_back(*t);
             }
         }
     }
@@ -449,16 +457,18 @@ impl ConnectionCore {
             SessionCmd::AcceptLogin {
                 account,
                 characters,
+                looks,
             } => self
                 .session
-                .accept_login(account, characters, now)
+                .accept_login_with_looks(account, characters, looks, now)
                 .map(|()| None),
             SessionCmd::RejectLogin { code, retry_after } => {
                 self.session.reject_login(code, retry_after, "", now)
             }
-            SessionCmd::CharacterCreated(list) => {
-                self.session.character_created(list).map(|()| None)
-            }
+            SessionCmd::CharacterCreated { characters, looks } => self
+                .session
+                .character_created_with_looks(characters, looks)
+                .map(|()| None),
             SessionCmd::RejectCharacter(code) => {
                 self.session.reject_character(code, "").map(|()| None)
             }

@@ -39,6 +39,10 @@ pub enum Limit {
     Entries,
     /// More than 64 characters in the character list.
     Characters,
+    /// More than 64 look bindings (`scenario-feed.md` §5.8).
+    Looks,
+    /// More than 48 property values in one look (§5.8).
+    Look,
 }
 
 impl Limit {
@@ -62,6 +66,8 @@ impl Limit {
             Self::Did => "did",
             Self::Entries => "entries",
             Self::Characters => "characters",
+            Self::Looks => "looks",
+            Self::Look => "look",
         }
     }
 }
@@ -132,6 +138,12 @@ pub enum ScenarioErrorKind {
     OutOfRange,
     /// A limit of `scenario-feed.md` §11.1.
     LimitExceeded(Limit),
+    /// A property value whose form does not fit its written kind, or that a look does not
+    /// allow (§5.8).
+    BadValue,
+    /// A setting, declaration, step, trigger pattern or input line outside the overlay
+    /// subset, in an overlay run (§12.5.1).
+    NotAllowedInOverlay,
 }
 
 impl fmt::Display for ScenarioErrorKind {
@@ -167,6 +179,8 @@ impl fmt::Display for ScenarioErrorKind {
             Self::NestingTooDeep => "NestingTooDeep",
             Self::NotAllowedHere => "NotAllowedHere",
             Self::OutOfRange => "OutOfRange",
+            Self::BadValue => "BadValue",
+            Self::NotAllowedInOverlay => "NotAllowedInOverlay",
             Self::LimitExceeded(l) => return write!(f, "LimitExceeded({})", l.name()),
         };
         f.write_str(s)

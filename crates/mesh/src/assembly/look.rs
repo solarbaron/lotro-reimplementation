@@ -36,9 +36,10 @@
 //! replays those stops like any other. Nothing is dropped after the resolution: whether
 //! `GOP_AvatarFaceCompositing` off removes a face is the data's choice (§3.5 table).
 //!
-//! Figures on a character screen would carry their `CharGen_Stage` instead of the
-//! placement (§3.5); Tessera has no character screen on this path yet, so every figure
-//! counts as placed in the world.
+//! Figures on a character screen carry their `CharGen_Stage` instead of the placement
+//! (§3.5 Decision): [`figure_on_screen`] is the value to set in the figure's script state
+//! before its start-up runs, and such a figure gets no `Physics_InWorld` after it. Every
+//! other figure counts as placed in the world.
 //!
 //! The look's surfaces (§3.5 "How material edits combine"): a part whose slot equals a
 //! node's `MeshType` (2: every part; 0: none) and a surface whose binding key equals its
@@ -285,6 +286,21 @@ pub fn figure_after_startup(vocab: &AssemblyVocabulary) -> Vec<(u32, PropertyVal
     vocab
         .physics_in_world
         .map(|p| (p, PropertyValue::Bool(true)))
+        .into_iter()
+        .collect()
+}
+
+/// What a figure shown on a character screen carries from the start (`appearance.md`
+/// §3.5 Decision: "character-screen figures carry their `CharGen_Stage`"): the stage key
+/// `stage` (a key of the `CharGen_Stage` mapper, `character-screens.md` §2.2) as an enum
+/// value, when the dictionary names the property. Set it in the figure's script state
+/// before resolving its clips and look, and give such a figure no [`figure_after_startup`]
+/// values (it is not placed in a world).
+#[must_use]
+pub fn figure_on_screen(vocab: &AssemblyVocabulary, stage: u32) -> Vec<(u32, PropertyValue)> {
+    vocab
+        .chargen_stage
+        .map(|p| (p, PropertyValue::Enum(stage)))
         .into_iter()
         .collect()
 }

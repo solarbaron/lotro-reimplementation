@@ -448,6 +448,7 @@ impl RawClient {
         self.send(&Message::CharacterCreate(CharacterCreate {
             name: name.into(),
             appearance: a,
+            look: tessera_protocol::types::Look::none(),
         }))
         .await;
         match self.control().await {

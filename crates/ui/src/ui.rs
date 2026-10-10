@@ -696,20 +696,38 @@ impl Ui {
     /// UI, so destroying *m* elements costs O(*m* + *N*) for *N* live elements. A modal
     /// dialog's container goes with its last dialog.
     pub fn destroy(&mut self, k: ElementKey) {
-        if k == self.screen || !self.exists(k) {
-            return;
-        }
-        let old_parent = self.parent(k);
-        self.detach_raw(k);
+        self.destroy_many(&[k]);
+    }
+
+    /// Destroys several elements and their subtrees as [`Ui::destroy`] does, with one pass
+    /// over the UI for all of them: O(*m* + *N*) for *m* destroyed elements and *N* live
+    /// ones, however many roots `keys` names. Keys that are gone, repeated, the screen
+    /// root, or below another key of the list are fine.
+    pub fn destroy_many(&mut self, keys: &[ElementKey]) {
+        let mut doomed: HashSet<ElementKey> = HashSet::new();
         let mut all = Vec::new();
-        let mut stack = vec![k];
-        while let Some(c) = stack.pop() {
-            if let Some(e) = self.el(c) {
-                stack.extend(e.children.iter().copied());
-                all.push(c);
+        let mut old_parents = Vec::new();
+        for &k in keys {
+            if k == self.screen || !self.exists(k) || doomed.contains(&k) {
+                continue;
+            }
+            old_parents.push(self.parent(k));
+            self.detach_raw(k);
+            let mut stack = vec![k];
+            while let Some(c) = stack.pop() {
+                if doomed.contains(&c) {
+                    continue;
+                }
+                if let Some(e) = self.el(c) {
+                    stack.extend(e.children.iter().copied());
+                    doomed.insert(c);
+                    all.push(c);
+                }
             }
         }
-        let doomed: HashSet<ElementKey> = all.iter().copied().collect();
+        if all.is_empty() {
+            return;
+        }
         let tree_fixes = self.forget_all(&all, &doomed);
         for c in all {
             if self.arena.remove(c).is_some() {
@@ -719,12 +737,13 @@ impl Ui {
         for (tree, r) in tree_fixes {
             self.tree_after_removal(tree, r);
         }
-        if let Some(p) = old_parent
-            && self
+        for p in old_parents.into_iter().flatten() {
+            if self
                 .el(p)
                 .is_some_and(|e| e.dialog_container && e.children.is_empty())
-        {
-            self.destroy(p);
+            {
+                self.destroy(p);
+            }
         }
     }
 
@@ -951,7 +970,8 @@ impl Ui {
             None => e.root_panel,
         } || e.widget.meter.as_ref().is_some_and(|m| m.alpha_test)
             || e.drag_icon
-            || self.tooltip.panel == Some(k);
+            || self.tooltip.panel == Some(k)
+            || self.tooltip.extra.contains(&k);
         let shown = e.visible || self.prop(k, self.v.pids.keep_object_when_hidden).bool();
         wants && shown
     }

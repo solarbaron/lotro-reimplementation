@@ -262,6 +262,7 @@ fn vocab() -> AssemblyVocabulary {
         avatar_face_compositing: Some(97),
         reduced_options: Some(98),
         physics_in_world: Some(99),
+        chargen_stage: Some(100),
         npc_props_visible: Some(23),
         secondary_scale: Some(24),
         npc_items: vec![(10, Some(11)), (12, Some(13)), (14, None)],

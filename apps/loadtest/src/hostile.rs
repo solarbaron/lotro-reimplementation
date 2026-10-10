@@ -50,11 +50,21 @@ pub enum Attack {
     BadLogin,
     /// A client-opened unidirectional stream with junk.
     UniStream,
+    /// The client-to-server negative vectors of `tessera-protocol.md` §16.8 (protocol 1.1:
+    /// looks and slots), one per attack in turn (`test-server.md` §13.1).
+    ///
+    /// The attackers hold no account, so each vector follows `Hello` directly, before any
+    /// login: the server must survive it and close with `PROTOCOL_VIOLATION`, but a
+    /// `CharacterCreate` or `AppearanceSet` is already out of its state there. Whether the
+    /// server's v1.1 decoding refuses each vector in the message's own state is checked by
+    /// the `hostile_v11_vectors_are_protocol_violations` test (`tests/v11_looks.rs`), which
+    /// logs in first.
+    MinorOneVectors,
 }
 
 impl Attack {
     /// Every attack.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::UdpGarbage,
         Self::StreamGarbage,
         Self::TruncatedFrame,
@@ -65,6 +75,7 @@ impl Attack {
         Self::HandshakeHold,
         Self::BadLogin,
         Self::UniStream,
+        Self::MinorOneVectors,
     ];
 
     /// Short name for the report.
@@ -81,6 +92,7 @@ impl Attack {
             Self::HandshakeHold => "handshake-hold",
             Self::BadLogin => "bad-login",
             Self::UniStream => "uni-stream",
+            Self::MinorOneVectors => "v11-vectors",
         }
     }
 }
@@ -196,6 +208,7 @@ impl HostileRun {
                             counters: Arc::clone(&c),
                             rng: seed.fork(),
                             pace: config.pace,
+                            next_vector: 0,
                         };
                         tasks.push(tokio::spawn(ctx.run()));
                     }
@@ -260,6 +273,8 @@ struct Attacker {
     counters: Arc<Counters>,
     rng: Rng,
     pace: Duration,
+    /// The next §16.8 vector of [`Attack::MinorOneVectors`].
+    next_vector: usize,
 }
 
 /// Longest any one attack may take.
@@ -497,6 +512,19 @@ impl Attacker {
                 }
                 self.settle(&l.conn, CLOSE_WAIT).await;
             }
+            Attack::MinorOneVectors => {
+                let vectors = raw::negative_vectors_v11();
+                let Some(v) = vectors.get(self.next_vector % vectors.len().max(1)) else {
+                    return;
+                };
+                self.next_vector = self.next_vector.wrapping_add(1);
+                let Some(mut l) = self.link(endpoint).await else {
+                    return;
+                };
+                let _ = l.send(&raw::hello_minor(v.minor_max)).await;
+                let _ = l.send_raw(&v.frame).await;
+                self.settle(&l.conn, CLOSE_WAIT).await;
+            }
             Attack::UniStream => {
                 let Ok(conn) = raw::connect(endpoint, &self.target, Duration::from_secs(5)).await
                 else {
@@ -582,6 +610,7 @@ impl Attacker {
                 Message::CharacterCreate(CharacterCreate {
                     name: "Nobody".into(),
                     appearance: raw::bot_appearance(0),
+                    look: raw::bot_look(0),
                 }),
             ],
             _ => vec![Message::Pong { nonce: 1 }, raw::hello()],

@@ -63,6 +63,7 @@ fn world_lifecycle_end_to_end() {
         p.world(Message::EntityAppearance(EntityAppearance {
             id: 43,
             appearance: Appearance::new(Body::Object { did: 0x7900_0001 }),
+            look: tessera_protocol::types::Look::none(),
         }))
         .await;
         p.chat(Message::ChatMessage(ChatMessage {

@@ -138,7 +138,8 @@ impl Parser {
                 Verb::RefuseCharacter { name, reason }
             }
             "accept-character" => {
-                let mut st = self.split(tokens, 1, &["class", "level", "species", "sex"])?;
+                let mut st =
+                    self.split(tokens, 1, &["class", "level", "species", "sex", "look"])?;
                 let name = self.name_string(st.arg(0)?)?;
                 st.no_more(1)?;
                 if st.opts.iter().any(|(k, _, _)| k == "species")
@@ -146,9 +147,30 @@ impl Parser {
                 {
                     return Err(self.e(K::MissingArgument, tokens[0].col));
                 }
-                let details = self.char_details(&mut st, name.clone())?;
+                let details = self.char_details(&mut st, name.clone(), true)?;
                 self.accepted_names.push(name);
                 Verb::AcceptCharacter(details)
+            }
+            "remove-character" => {
+                let st = self.split(tokens, 1, &[])?;
+                let name = self.name_string(st.arg(0)?)?;
+                st.no_more(1)?;
+                Verb::RemoveCharacter(name)
+            }
+            "stat" => {
+                // Property values are positional (§4.4): no option keys.
+                let st = self.split(tokens, 1, &[])?;
+                let entity = self.entity(st.arg(0)?)?;
+                let prop = self.prop_value(st.arg(1)?, false)?;
+                st.no_more(2)?;
+                Verb::Stat { entity, prop }
+            }
+            "item-property" => {
+                let st = self.split(tokens, 1, &[])?;
+                let item = self.item(st.arg(0)?)?;
+                let prop = self.prop_value(st.arg(1)?, false)?;
+                st.no_more(2)?;
+                Verb::ItemProperty { item, prop }
             }
             "target" => {
                 let st = self.split(tokens, 1, &[])?;
@@ -736,6 +758,34 @@ impl Parser {
             _ => return Err(self.unknown_word(word, vt.col)),
         };
         Ok(v)
+    }
+
+    /// Records a step outside the overlay subset (§12.5.1): `tokens` start at the verb.
+    pub(crate) fn overlay_verb(&mut self, verb: &Verb, tokens: &[Token]) {
+        use super::ast::EntityArg;
+        let allowed = match verb {
+            Verb::Bag { .. }
+            | Verb::Give { .. }
+            | Verb::GiveFan { .. }
+            | Verb::Remove(_)
+            | Verb::Quantity { .. }
+            | Verb::Equip { .. }
+            | Verb::Unequip { .. }
+            | Verb::Condition { .. }
+            | Verb::Wallet { .. }
+            | Verb::ItemProperty { .. } => true,
+            Verb::Level { entity, .. } | Verb::Stat { entity, .. } => {
+                if *entity != EntityArg::Player {
+                    let col = tokens.get(1).map_or(tokens[0].col, |t| t.col);
+                    self.not_in_overlay(col);
+                }
+                true
+            }
+            _ => false,
+        };
+        if !allowed {
+            self.not_in_overlay(self.stmt_col);
+        }
     }
 
     /// Verbs with one positional argument and no options.

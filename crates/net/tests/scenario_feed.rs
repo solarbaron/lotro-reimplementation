@@ -380,7 +380,7 @@ end
     has(&log, "pre > DeleteCharacter name=\"Old\"");
     has(
         &log,
-        "pre CharacterInfo name=\"New\" body=character:7:1 class=7 level=none",
+        "pre CharacterInfo name=\"New\" body=character:7:1 class=7 level=none look=none",
     );
 }
 
@@ -773,6 +773,7 @@ fn session_validates_new_commands() {
         name: "A".into(),
         appearance: None,
         class: None,
+        nationality: None,
     });
     assert!(session.send(now, create.clone()).is_err());
     session.send(now, Command::Connect).unwrap();
@@ -782,6 +783,7 @@ fn session_validates_new_commands() {
         name: String::new(),
         appearance: None,
         class: None,
+        nationality: None,
     });
     assert!(session.send(now, bad).is_err());
     // In-world commands are refused before world entry.

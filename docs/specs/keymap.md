@@ -2733,6 +2733,23 @@ Not translated, with the reason:
   not named above: no Tessera action yet. Tessera's `fly_*` actions have no original
   counterpart and keep their defaults.
 
+> **OPEN:** (implementer, `crates/input` and `apps/client`, 2026-10-10, decision 0024 P1)
+> The P1 panels need input commands this table does not have: `ToggleJournalPanel` (the
+> character panel, `character-panels.md` §2 Tessera rule), `QUICKSLOT_BACKPACK1` … `6` (the
+> bag windows, §4.1) and `QUICKSLOT_BACKPACK` (every bag, §4.1 OPEN, Q8), and
+> `TOOLTIP_DETACH` (pinning, `item-tooltips.md` §10 Tessera rule). As implemented, the
+> table has five more rows, section `Main`, context `global`, button actions:
+> `ToggleJournalPanel` → `toggle_character`, `QUICKSLOT_BACKPACK` → `toggle_bags`,
+> `QUICKSLOT_BACKPACK1` … `6` → `toggle_bag_1` … `toggle_bag_6` (paired in order),
+> `TOOLTIP_DETACH` → `pin_tooltip`; so the mapper reports those command names and the game
+> UI host runs them when the UI declines the command. Tessera's own default strokes (§8):
+> `toggle_character` C, `toggle_bags` B, `toggle_bag_1` I, `pin_tooltip` Ctrl+T, the other
+> bags unbound. Two questions for a spec writer: (1) which input map holds these commands in
+> the original's default records (the rows assume `Main`); (2) step 5 of §12.14.1 unbinds an
+> action whose commands have no binding in the effective map, so an import from data whose
+> `Main` lacks them would leave the panels without keys. Confirm or give the rows, and
+> whether Tessera's defaults should stay in that case.
+
 <a id="s12-14-3"></a>
 #### 12.14.3 Controls
 

@@ -5,8 +5,10 @@
 //! Typed stores over `tessera-props` and `tessera-wstate` for items, skills, effects,
 //! creatures, quests, economy, map and progression records, and the resolution of
 //! scenario selectors (`docs/specs/scenario-feed.md` §8) against the user's install.
-//! Tooltip and description evaluation arrive in later milestones. Layer L3; it depends on
-//! `tessera-formats`, `tessera-props`, `tessera-text` and `tessera-wstate` only.
+//! The P1 models live in modules: item tooltips ([`tooltip`]), the creation screens'
+//! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]). Layer
+//! L3; it depends on `tessera-formats`, `tessera-props`, `tessera-text` and
+//! `tessera-wstate` only.
 //!
 //! Client and tools only: `tessera-server` must never link this crate (LEGAL.md §11.1
 //! rule 5; enforced by a CI check on the server's dependency graph).
@@ -19,6 +21,9 @@
 //! | [`Candidate`], [`CandidateOutcome`], [`Resolution`], [`ResolveNote`] | Candidates and resolved lists with their notes | §8.4, §8.6 |
 //! | [`SplitMix64`], [`sample`], [`canonical_cmp`], [`sort_dedup`], [`apply_count`] | Canonical order and seeded sampling | §8.4, §8.5 |
 //! | [`ItemRecord`], [`QuestEntry`] and the per-family methods of [`GameDataStore`] | Minimal typed entry points that later milestones grow | `items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md` |
+//! | [`tooltip`] | Item examination tooltip model (P1) | `item-tooltips.md` |
+//! | [`chargen`] | Selection and creation lists, names (P1) | `character-screens.md`, `player-character.md` |
+//! | [`inventory`] | The local player's inventory model (P1) | `character-panels.md`, `lua-plugin-api.md` §15.1 |
 //!
 //! # Hostile input
 //!
@@ -44,13 +49,16 @@
 
 #![warn(missing_docs)]
 
+pub mod chargen;
 mod error;
 mod filter;
 mod index;
+pub mod inventory;
 mod order;
 mod query;
 mod store;
 mod tables;
+pub mod tooltip;
 mod vocab;
 
 pub use error::{GameDataError, Result};

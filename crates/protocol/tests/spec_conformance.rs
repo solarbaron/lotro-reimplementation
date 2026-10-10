@@ -1648,6 +1648,7 @@ fn c_app(x: &App) -> pt::Appearance {
                 dye: i.dye,
                 secondary_dye: i.dye2,
                 stowed: i.stowed,
+                slot: None,
             })
             .collect(),
     }
@@ -1748,6 +1749,7 @@ fn to_crate(m: &Msg) -> Message {
         Msg::LoginOk(acc, list) => Message::LoginOk(pm::LoginOk {
             account: acc.clone(),
             characters: c_chars(list),
+            looks: Vec::new(),
         }),
         Msg::LoginFailed(code, retry, text) => Message::LoginFailed(pm::LoginFailed {
             code: LoginFailedCode::from_u16(*code),
@@ -1757,9 +1759,11 @@ fn to_crate(m: &Msg) -> Message {
         Msg::CharacterCreate(n, x) => Message::CharacterCreate(pm::CharacterCreate {
             name: n.clone(),
             appearance: c_app(x),
+            look: tessera_protocol::types::Look::none(),
         }),
         Msg::CharacterList(list) => Message::CharacterList(pm::CharacterList {
             characters: c_chars(list),
+            looks: Vec::new(),
         }),
         Msg::CharacterCreateFailed(code, text) => Message::CharacterCreateFailed(pm::Failure {
             code: CharacterCreateFailedCode::from_u16(*code),
@@ -1826,6 +1830,7 @@ fn to_crate(m: &Msg) -> Message {
             server_time: *time,
             pose: c_pose(pose),
             appearance: c_app(app),
+            look: tessera_protocol::types::Look::none(),
         }),
         Msg::LocationReport {
             cause,
@@ -1876,6 +1881,7 @@ fn to_crate(m: &Msg) -> Message {
             motion: c_motion(*motion),
             appearance: c_app(app),
             properties: c_props(props),
+            look: tessera_protocol::types::Look::none(),
         }),
         Msg::EntityUpdate(id, props) => Message::EntityUpdate(pm::EntityUpdate {
             id: *id,
@@ -1884,6 +1890,7 @@ fn to_crate(m: &Msg) -> Message {
         Msg::EntityAppearance(id, x) => Message::EntityAppearance(pm::EntityAppearance {
             id: *id,
             appearance: c_app(x),
+            look: tessera_protocol::types::Look::none(),
         }),
         Msg::EntityDestroy(id, reason) => Message::EntityDestroy(pm::EntityDestroy {
             id: *id,

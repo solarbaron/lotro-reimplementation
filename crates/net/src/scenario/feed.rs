@@ -31,7 +31,8 @@ use crate::domain::{
 };
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, DisconnectReason, EntityId, Equipped, Location,
-    LocationCause, MAX_EQUIPMENT, Transform, Vec3, heading_from_compass_degrees,
+    LocationCause, Look, MAX_EQUIP_SLOT, MAX_EQUIPMENT, PropertyValue, Transform, Vec3,
+    heading_from_compass_degrees,
 };
 use crate::session::{Command, Event};
 
@@ -289,7 +290,14 @@ pub(crate) struct Feed {
     counters: ScenarioCounters,
     player: Option<PlayerState>,
     base_appearance: Option<Appearance>,
-    last_equipment: Vec<DataId>,
+    last_equipment: Vec<(DataId, Option<u8>)>,
+    /// Changes of the equipment list (§5.5), for the overlay (§12.5.4).
+    equipment_generation: u64,
+    /// Whether the feed emits the player's `AppearanceChanged` itself (off in an overlay
+    /// run whose server takes `AppearanceSet`, §12.5.4).
+    emit_appearance: bool,
+    /// Details of the characters `accept-character` added: body and look (§5.1).
+    accepted: BTreeMap<String, (Option<Body>, Option<Look>)>,
     actors: Vec<ActorState>,
     items: Vec<ItemState>,
     runtime_items: u64,
@@ -373,6 +381,24 @@ fn len64(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
+/// A property value's weight: ⌈b/64⌉ for a string.
+fn pw(v: Option<&PropertyValue>) -> u64 {
+    match v {
+        Some(PropertyValue::String(s)) => sw(s),
+        _ => 0,
+    }
+}
+
+/// A look's weight: one per entry plus its strings.
+fn lw(l: Option<&Look>) -> u64 {
+    l.map_or(0, |l| {
+        l.entries
+            .iter()
+            .map(|e| 1 + pw(Some(&e.value)))
+            .sum::<u64>()
+    })
+}
+
 /// The weight of an event (§7.4): 1, plus 1 per list element, plus ⌈b/64⌉ per string.
 pub(crate) fn weight(e: &Event) -> u64 {
     1 + match e {
@@ -380,8 +406,10 @@ pub(crate) fn weight(e: &Event) -> u64 {
         Event::WorldEntered { name, .. } | Event::EntitySpawned { name, .. } => sw(name),
         Event::EntityCreated {
             name, appearance, ..
-        } => sw(name) + len64(appearance.equipment.len()),
-        Event::AppearanceChanged { appearance, .. } => len64(appearance.equipment.len()),
+        } => sw(name) + len64(appearance.equipment.len()) + lw(appearance.look.as_deref()),
+        Event::AppearanceChanged { appearance, .. } => {
+            len64(appearance.equipment.len()) + lw(appearance.look.as_deref())
+        }
         Event::ChatMessage {
             channel,
             sender,
@@ -396,12 +424,15 @@ pub(crate) fn weight(e: &Event) -> u64 {
                 }
         }
         Event::Character(c) => match c {
-            CharacterEvent::CharacterInfo { name, .. } => sw(name),
+            CharacterEvent::CharacterInfo { name, look, .. } => sw(name) + lw(look.as_deref()),
+            CharacterEvent::CharacterRemoved { name } => sw(name),
+            CharacterEvent::PropertyChanged { value, .. } => pw(value.as_ref()),
             CharacterEvent::CharacterRefused { name, reason } => sw(name) + tw(reason),
             _ => 0,
         },
         Event::Inventory(i) => match i {
             InventoryEvent::ItemAdded { what, .. } => rw(what),
+            InventoryEvent::ItemProperty { value, .. } => pw(value.as_ref()),
             InventoryEvent::WalletChanged {
                 currency: Currency::Item(r),
                 ..
@@ -626,6 +657,9 @@ impl Feed {
             player: None,
             base_appearance: None,
             last_equipment: Vec::new(),
+            equipment_generation: 0,
+            emit_appearance: true,
+            accepted: BTreeMap::new(),
             actors: Vec::new(),
             items,
             runtime_items: 0,
@@ -693,9 +727,13 @@ impl Feed {
         std::mem::take(&mut self.relocations)
     }
 
-    /// The scenario's base appearance for `character` (§5.1): only for the `player`
-    /// with species and sex both resolved.
+    /// The scenario's base appearance for `character` (§5.1): for the `player`, or a
+    /// character an `accept-character` step added, with species and sex both resolved,
+    /// and the character's resolved look.
     pub(crate) fn base_appearance_for(&self, character: &str) -> Option<Appearance> {
+        if let Some((body, look)) = self.accepted.get(character) {
+            return body.map(|b| Appearance::new(b).with_look(look.clone()));
+        }
         if !self.sc.prog.has_player {
             return None;
         }
@@ -703,9 +741,36 @@ impl Feed {
         if p.name != character {
             return None;
         }
-        let species = self.sc.enum_value(p.species?)?;
-        let sex = self.sc.enum_value(p.sex?)?;
-        Some(Appearance::new(Body::Character { species, sex }))
+        let (body, _, look) = self.sc.details(p, None);
+        body.map(|b| Appearance::new(b).with_look(look))
+    }
+
+    /// Sets whether the feed emits the player's `AppearanceChanged` when the equipment
+    /// list changes (off in an overlay run with `APPEARANCE_CHANGE`, §12.5.4).
+    pub(crate) fn set_emit_appearance(&mut self, on: bool) {
+        self.emit_appearance = on;
+    }
+
+    /// The equipment list *E* of §5.5 (slots included), in ascending equipment slot
+    /// order, at most 32 items.
+    pub(crate) fn equipment_list(&self) -> Vec<Equipped> {
+        self.last_equipment
+            .iter()
+            .map(|&(d, slot)| Equipped {
+                slot,
+                ..Equipped::new(d)
+            })
+            .collect()
+    }
+
+    /// A counter that changes whenever the equipment list changes.
+    pub(crate) fn equipment_generation(&self) -> u64 {
+        self.equipment_generation
+    }
+
+    /// Replaces the base appearance (the overlay's *B*, §12.5.4) without emitting.
+    pub(crate) fn set_base_appearance(&mut self, base: Option<Appearance>) {
+        self.base_appearance = base;
     }
 
     // --- Output ----------------------------------------------------------------------
@@ -851,15 +916,8 @@ impl Feed {
     pub(crate) fn on_connected(&mut self, sink: &mut Vec<Event>) {
         let sc = Arc::clone(&self.sc);
         for c in &sc.prog.characters {
-            let class = c.class.and_then(|e| sc.enum_value(e));
-            let body = match (c.species, c.sex) {
-                (Some(s), Some(x)) => match (sc.enum_value(s), sc.enum_value(x)) {
-                    (Some(species), Some(sex)) => Some(Body::Character { species, sex }),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if class.is_none() && body.is_none() && c.level.is_none() {
+            let (body, class, look) = sc.details(c, None);
+            if class.is_none() && body.is_none() && c.level.is_none() && look.is_none() {
                 continue;
             }
             self.push_pre(
@@ -868,6 +926,7 @@ impl Feed {
                     body,
                     class,
                     level: c.level,
+                    look: look.map(Box::new),
                 }),
                 sink,
             );
@@ -920,26 +979,46 @@ impl Feed {
                         );
                         continue;
                     }
-                    let class = d.class.and_then(|e| sc.enum_value(e));
-                    let body = match (d.species, d.sex) {
-                        (Some(s), Some(x)) => match (sc.enum_value(s), sc.enum_value(x)) {
-                            (Some(species), Some(sex)) => Some(Body::Character { species, sex }),
-                            _ => None,
-                        },
+                    let asked = match cmd {
+                        CharacterCommand::CreateCharacter {
+                            appearance: Some(a),
+                            ..
+                        } => a.look.as_deref(),
                         _ => None,
                     };
+                    let (body, class, look) = sc.details(d, asked);
                     if !known {
                         self.characters.push(d.name.clone());
                     }
+                    self.accepted.insert(d.name.clone(), (body, look.clone()));
                     self.push_pre(
                         Event::Character(CharacterEvent::CharacterInfo {
                             name: d.name.clone(),
                             body,
                             class,
                             level: d.level,
+                            look: look.map(Box::new),
                         }),
                         sink,
                     );
+                }
+                Verb::RemoveCharacter(name) => {
+                    if let Some(i) = self.characters.iter().position(|c| c == name) {
+                        self.characters.remove(i);
+                        self.accepted.remove(name);
+                        self.push_pre(
+                            Event::Character(CharacterEvent::CharacterRemoved {
+                                name: name.clone(),
+                            }),
+                            sink,
+                        );
+                    } else {
+                        self.counters.skipped += 1;
+                        tracing::debug!(
+                            line = line.line,
+                            "scenario step skipped: character not in the list"
+                        );
+                    }
                 }
                 Verb::RefuseCharacter { name, reason } => match resolve_text(&sc, reason) {
                     Some(reason) => {
@@ -1303,18 +1382,28 @@ impl Feed {
         Ok(ItemId(len64(self.items.len())))
     }
 
-    /// Emits `AppearanceChanged` when the equipment list of §5.5 changed.
+    /// Emits `AppearanceChanged` when the equipment list of §5.5 changed (each item with
+    /// its equipment slot as `slot` when that is 1 … 64).
     fn appearance_check(&mut self) -> Rt<()> {
-        let list: Vec<DataId> = self
+        let list: Vec<(DataId, Option<u8>)> = self
             .equip_records
-            .values()
+            .iter()
             .take(MAX_EQUIPMENT)
-            .copied()
+            .map(|(&slot, &d)| {
+                let key = u8::try_from(slot)
+                    .ok()
+                    .filter(|s| (1..=MAX_EQUIP_SLOT).contains(s));
+                (d, key)
+            })
             .collect();
         if list == self.last_equipment {
             return Ok(());
         }
         self.last_equipment = list;
+        self.equipment_generation = self.equipment_generation.wrapping_add(1);
+        if !self.emit_appearance {
+            return Ok(());
+        }
         let (Some(base), Some(id)) = (
             self.base_appearance.clone(),
             self.player.as_ref().map(|p| p.id),
@@ -1322,11 +1411,14 @@ impl Feed {
             return Ok(());
         };
         let mut a = base;
-        for d in &self.last_equipment {
+        for &(d, slot) in &self.last_equipment {
             if a.equipment.len() >= MAX_EQUIPMENT {
                 break;
             }
-            a.equipment.push(Equipped::new(*d));
+            a.equipment.push(Equipped {
+                slot,
+                ..Equipped::new(d)
+            });
         }
         self.push(Event::AppearanceChanged {
             id,
@@ -2244,7 +2336,24 @@ impl Feed {
                     amount: *amount,
                 }))?;
             }
-            Verb::RefuseCharacter { .. } | Verb::AcceptCharacter(_) => {}
+            Verb::RefuseCharacter { .. } | Verb::AcceptCharacter(_) | Verb::RemoveCharacter(_) => {}
+            Verb::Stat { entity, prop } => {
+                let id = need!(self.id(*entity));
+                let (property, value) = need!(sc.prop(*prop));
+                self.push(Event::Character(CharacterEvent::PropertyChanged {
+                    entity: id,
+                    property,
+                    value,
+                }))?;
+            }
+            Verb::ItemProperty { item, prop } => {
+                let (property, value) = need!(sc.prop(*prop));
+                self.push(Event::Inventory(InventoryEvent::ItemProperty {
+                    item: item_id(*item),
+                    property,
+                    value,
+                }))?;
+            }
             Verb::Target { entity, target } => {
                 let id = need!(self.id(*entity));
                 let target = need!(self.opt_id(*target));

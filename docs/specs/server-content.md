@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Draft. Needs the project owner's confirmation before any public test build ([LEGAL.md §11.1](../LEGAL.md#111-servers)) |
-| **Last updated** | 2026-10-06 |
+| **Status** | Draft. Needs the project owner's confirmation before any public test build ([LEGAL.md §11.1](../LEGAL.md#111-servers)). Revised 2026-10-10 for [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (looks and held-item slots as opaque references, §4.1, §4.2, §7, §9.2, §11); that revision passed an independent review on 2026-10-10 (see Reviewer). The status stays Draft until the owner's confirmation |
+| **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (policy and design; no data observed, no dirty-room input) |
-| **Reviewer** | none yet |
+| **Reviewer** | Revision of 2026-10-10 (decision 0025: §1 C14–C15, §2, §4.1 R3 and R7, §4.2, §7, §9.2, §11 invariants 6–7, §12 counsel item): independent review 2026-10-10 by a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, against CLEAN_ROOM.md §5.3 and LEGAL.md §11.1 rules 1, 2 and 5: **passed**. Checked: the new rules agree with `tessera-protocol.md` v1.1 §5.3 and §7.4 (bounds: 32 items with slots, one look of at most 48 entries and 768 bytes), `test-server.md` §3.5, §5.4 and §6.4, and decision 0025; class and nationality stay out (§7, R7); `tessera-server` on branch `p1` stores looks per character, judges none and never logs them in bulk. Note for the owner: LEGAL.md §11.1 rule 2 names record numbers (DIDs, enum keys); a look also holds player-chosen values (floats, colours, short codes). §4.2 argues why that is not content and the counsel OPEN of §12 now names looks; the owner's confirmation should cover them explicitly. The spec as a whole has had no independent review; it stays Draft for the owner |
 | **Implements into** | `apps/server` (`tessera-server`: content loader, `check-content`, data-directory guard, default world), `apps/loadtest` (bots use only what this spec allows), `tools/check-content.sh` (repository guard, unchanged) |
 | **Companion documents** | [LEGAL.md](../LEGAL.md) §4.1, §7, §8, §10, §11, §11.1, §12, §16. [Decision 0003](../decisions/0003-game-data-in-place.md), [0004](../decisions/0004-server-strategy.md), [0012](../decisions/0012-numeric-constants.md), [0030](../decisions/0030-tessera-protocol-transport.md). `tessera-protocol.md` (wire format, §0, §7.4, §9.1, §15 invariant 9). `test-server.md` (server behaviour and the content-file format). `coordinates.md` §4 and §7 |
 
@@ -60,6 +60,8 @@ decided by this spec (normative for Tessera servers, subject to the owner's conf
 | C11 | The repository already contains bare numeric positions without game text: the walker's default spawn `1,126,140` (`walker.md` §1 option table, `coordinates.md` §8.4 example B) and twenty reference positions named only by DIDs (`docs/checklists/m3-reference-locations.md`) | Read 2026-10-06 | Project |
 | C12 | The engine must run with original placeholder content so it has uses that do not depend on game data | LEGAL.md §11 last paragraph | Policy |
 | C13 | Everything else in this spec: definitions, the coordinate rule, the relay rules, the operator rules, the commit rules and the checklist | This spec, 2026-10-06 | Design |
+| C14 | Looks (a character's creation choices as up to 48 opaque (property ID, value) pairs, at most 768 bytes) and held-item slot keys in appearances, protocol 1.1; class and nationality never sent | `tessera-protocol.md` §3.1, §5.3, §7.4 (v1.1, 2026-10-10); decision 0025 | Project |
+| C15 | The 2026-10-10 additions to §4.1, §4.2, §7, §9.2 and §11 | This spec, 2026-10-10 (spec writer, design; no dirty-room input) | Design |
 
 No game data was read for this spec.
 
@@ -71,11 +73,12 @@ No game data was read for this spec.
 | Term | Meaning here |
 |---|---|
 | **Game data** | Anything that comes from the game's installation or its publisher: the archives and any part of them, records decoded from them, extracted textures, meshes, animations, sounds, music, fonts, UI art, strings and any text (names of places, people, items, quests; dialogue; descriptions), quest and NPC logic, item, quest, deed, NPC, loot or map databases, Lua UI files, client binaries, keys and hostnames |
-| **Opaque reference** | A number that identifies a record or an enum value **in a client's own install**: a DID (32-bit data ID), a species key or sex value, an animation key, a starting-idle key, a dye code. On its own it carries no expression and no data. Only a program with a copy of the data can turn it into anything |
+| **Opaque reference** | A number that identifies a record or an enum value **in a client's own install**: a DID (32-bit data ID), a species key or sex value, an animation key, a starting-idle key, a dye code, an equipment slot key, a data property ID. On its own it carries no expression and no data. Only a program with a copy of the data can turn it into anything |
+| **Look** | A character's creation choices: up to 48 pairs of a data property ID (an opaque reference) and the value the player chose for it on the creation screen (a number, colour, short code string or reference), meaningless without the data (`tessera-protocol.md` §5.3, §7.4) |
 | **Position** | A region number plus coordinates (or a landblock index plus a block-local offset), as in `coordinates.md` §4 and §7 |
 | **Server content** | Everything a server holds or sends that is not produced by its players: the world definition (spawn points, simulated actors, message of the day, server name), and any data files it ships with |
 | **Content file** | The file that defines a server's world (`test-server.md` §5) |
-| **Player-supplied value** | A value a player's client sends during play: account and character names, chat text, appearance, emote and stance keys, movement, teleport destinations |
+| **Player-supplied value** | A value a player's client sends during play: account and character names, chat text, appearance (look included), emote and stance keys, movement, teleport destinations |
 | **Operator** | Whoever runs a server process |
 | **Private server** | A server whose accounts the operator creates for people they know, which is not listed, advertised or open to registration by strangers (§8) |
 
@@ -134,9 +137,10 @@ reference means.
 ### 4.1 What is relayed
 
 The protocol carries opaque references in appearances (body species key and sex value, or
-an object DID; scale; starting-idle key; up to 32 equipped item DIDs with dye codes), in the
-`EMOTE` property (an animation key) and in an entity's optional class DID
-(`tessera-protocol.md` §5.3, §7.3–§7.5). For players, these are **chosen by each player's
+an object DID; scale; starting-idle key; up to 32 equipped item DIDs with dye codes and, from
+protocol 1.1, their equipment slot keys; from protocol 1.1 a look of up to 48 data property
+IDs with the player's chosen values), in the `EMOTE` property (an animation key) and in an
+entity's optional class DID (`tessera-protocol.md` §5.3, §7.3–§7.5). For players, these are **chosen by each player's
 client from that player's own install**: the client picks an outfit or an emote it can
 resolve, and sends the numbers.
 
@@ -147,10 +151,11 @@ relay them to other clients, under these conditions:
 |---|---|
 | R1 | **Player origin.** The references the server stores and relays come from players' clients, as the protocol carries them. The server never invents, completes or "corrects" them from any list |
 | R2 | **Uninterpreted.** The server checks only the protocol's limits (counts, ranges, non-zero) and its own policy switches that do not depend on meaning (for example: object bodies allowed or not, `test-server.md` §6.4). It never looks a reference up in anything |
-| R3 | **Bounded per character.** At most what the protocol allows per appearance (one body, 32 items). Nothing else per reference is stored: no names, no counts, no "seen" lists |
+| R3 | **Bounded per character.** At most what the protocol allows per appearance (one body, 32 items with their slots, one look of at most 48 entries and 768 bytes). Nothing else per reference is stored: no names, no counts, no "seen" lists. A look is stored as created and never changed, completed or merged by the server |
 | R4 | **No collection.** The server MUST NOT aggregate references across players or over time into a list, catalogue, index, statistics table or export (for example "every item DID players wore"). Logs MUST NOT dump appearances in bulk; a debug log line about one message is fine |
 | R5 | **No publication.** The server's data directory (character files) is private operator state. Its references are never published, committed or offered for download |
 | R6 | **No game text alongside.** A reference is never paired with a name, label or description from the game, in the server, its files or its logs |
+| R7 | **No gameplay choices.** The creation choices that only the game's rules use (class, nationality) are neither sent nor stored (§7). Look strings are short codes (0–128 bytes of printable ASCII without spaces) that clients apply as property values and never show as text |
 
 <a id="s4-2"></a>
 ### 4.2 Why relaying a reference is not distributing content
@@ -174,6 +179,16 @@ relay them to other clients, under these conditions:
   of references (§9.2). A player's outfit, chosen live and relayed live, is not such a file.
 - Collection (R4) would turn relaying into building a database out of the data's
   identifiers, which edges towards C8. The no-collection rule keeps the server a relay.
+- **Looks** (C14) add the values a player chose on Tessera's creation screen: a colour, a
+  height fraction, a style index, a short slider code. Each is paired with a property ID of
+  the player's own install. Like an outfit, a look is one player's live choice, not an
+  authored arrangement of the game's content; it holds no part of any record, and a client
+  without the data can do nothing with it. A receiving client applies only entries its own
+  install's creation controls could have written (`tessera-protocol.md` §7.4), so a look
+  cannot steer anything else. The server keeps one look per character (R3) and collects
+  none (R4).
+- A **slot key** says which of the player's hands holds an item. It is an enum key of the
+  player's install, like the species key, and is bounded by the 32 items.
 
 > **OPEN (counsel):** LEGAL.md §16 lists no question about references relayed by a server.
 > This reasoning should be added to the questions for counsel before any public test build
@@ -283,6 +298,8 @@ or without game data:
 
 - combat, skills, effects, health and death, experience and levels, classes as gameplay;
 - quests, deeds, dialogue, conversations, instances or encounters from the game;
+- character classes and nationalities as stored character data (a creating client's class
+  and nationality are dropped before the wire, `tessera-protocol.md` Appendix A);
 - NPC, creature or monster behaviour, spawning or placement taken from the data or from
   knowledge of the game;
 - items as gameplay (inventory, loot, vendors, crafting, trade, currency, auctions,
@@ -291,7 +308,7 @@ or without game data:
 - server-side copies of the static world (§3.1 item 3).
 
 **In scope** (T2) for a Tessera server: accounts local to the server; characters as a name,
-an appearance of opaque references and a position; presence and movement; emotes and
+an appearance of opaque references (its look and slots included, §4.1) and a position; presence and movement; emotes and
 stances as opaque keys chosen by clients; chat; the world clock as a number; teleports to
 numeric or content-named positions; simple **project-made test actors** whose behaviour is
 generic and defined by Tessera's own content (walking a circle, standing), not drawn from the
@@ -349,8 +366,10 @@ Every committed content file starts with an SPDX header comment and is original.
 <a id="s9-2"></a>
 ### 9.2 Opaque references in committed content
 
-Committed content SHOULD hold no opaque references (the default world holds none, §6.2). A
-file MAY hold **at most 8** when a test needs a specific body or item, if each one:
+Committed content SHOULD hold no opaque references (the default world holds none, §6.2).
+Content files never hold looks (`test-server.md` §5.4). A file MAY hold **at most 8**
+references when a test needs a specific body or item (an item's slot key counts as one), if
+each one:
 
 - was read by the contributor from their own install with Tessera's tools (P3 applies);
 - is written as a bare number with a neutral comment in the contributor's words ("a body
@@ -418,7 +437,10 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
    is rejected by `check-content`.
 5. A server started with registration on and a non-private listen address does not start.
 6. Nothing in a server's data directory lists references or positions across characters:
-   each character file holds that character's own appearance and last position only.
+   each character file holds that character's own appearance (look and slots included) and
+   last position only.
+7. A server never sends or stores a character's class or nationality, and never sends a look
+   other than the one the character's own client created.
 
 ---
 
@@ -433,8 +455,9 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 > **OPEN (owner):** a later, read-only use of the operator's own install by the server for
 > terrain and collision (§3.2).
 
-> **OPEN (counsel):** add relayed opaque references (§4.2) and numeric positions in content
-> (§5.3) to LEGAL.md §16 before any public test build.
+> **OPEN (counsel):** add relayed opaque references (§4.2), including looks (property IDs
+> with player-chosen values, decision 0025), and numeric positions in content (§5.3) to
+> LEGAL.md §16 before any public test build.
 
 > **OPEN:** (M7 exit check, 2026-10-07, from the protocol review R.7) two text slips for the
 > spec writer: §3.2 cites `tessera-protocol.md` §9.3 for movement validation, which is §8.3
@@ -449,3 +472,5 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 | Date | Change |
 |---|---|
 | 2026-10-06 | First draft (M7). Derived from LEGAL.md §4, §5, §7, §8, §10–§12; confirmed for Tessera servers in LEGAL.md §11.1 pending the owner |
+| 2026-10-10 | Decision 0025 (spec writer, design): §1 C14–C15; §2 opaque references include slot keys and data property IDs, new term "look"; §4.1 relays looks and slots, R3 bound extended, new R7 (no class or nationality, look strings never text); §4.2 reasoning for looks and slots; §7 classes and nationalities stay out; §9.2 content holds no looks, a slot counts as a reference; §11 invariants 6–7; §12 counsel item extended. LEGAL.md §11.1 unchanged. Status stays Draft (owner); the revision awaits an independent review |
+| 2026-10-10 | Independent review of the decision-0025 revision (spec reviewer, Clean-Room-Role: review): passed (Reviewer row). Status stays Draft for the owner (LEGAL.md §11.1) |

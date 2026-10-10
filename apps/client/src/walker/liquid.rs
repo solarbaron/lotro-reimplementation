@@ -319,7 +319,7 @@ pub fn liquid_frame(s: &LiquidSurface) -> LiquidFrame {
 }
 
 /// The renderer's textures of an own-program drawing from the resolved textures in
-/// [`OWN_TEXTURES`] order: the normal (or distortion) map and the others.
+/// `OWN_TEXTURES` order: the normal (or distortion) map and the others.
 #[must_use]
 pub fn draw_textures(ids: [Option<TextureId>; OWN_TEXTURES]) -> (Option<TextureId>, WaterTextures) {
     let [normal, flow, foam, noise, c0, c1, emissive] = ids;

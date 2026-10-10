@@ -268,6 +268,26 @@ impl Parser {
             .ok_or_else(|| self.e(K::MissingArgument, at.col))?;
         let cmd = self.input_cmd(&tokens[2..], at.col)?;
         let _ = cmd_tok;
+        // The overlay subset (§12.5.1): `at T` lines with inventory forms only, a use-item
+        // target being the player, the current target or none.
+        let overlay_ok = time.is_some()
+            && match &cmd {
+                InputCmd::Equip { .. }
+                | InputCmd::Unequip(_)
+                | InputCmd::MoveItem { .. }
+                | InputCmd::Destroy(_)
+                | InputCmd::Split { .. } => true,
+                InputCmd::UseItem { target, .. } => matches!(
+                    target,
+                    InputTarget::Current
+                        | InputTarget::None
+                        | InputTarget::Entity(super::ast::EntityArg::Player)
+                ),
+                _ => false,
+            };
+        if !overlay_ok {
+            self.not_in_overlay(at.col);
+        }
         self.prog.input.push(InputLine {
             line: self.line,
             time,
@@ -287,7 +307,7 @@ impl Parser {
             "chat" => &["channel"],
             "offer-trade" => &["qty", "coin"],
             "craft" => &["qty"],
-            "create-character" => &["class", "species", "sex"],
+            "create-character" => &["class", "species", "sex", "nationality", "look"],
             _ => &[],
         };
         let mut st = self.split(tokens, 1, keys)?;
@@ -503,7 +523,29 @@ impl Parser {
                     (None, None) => None,
                     _ => return Err(self.e(K::MissingArgument, first_col)),
                 };
-                (InputCmd::CreateCharacter { name, class, body }, 1)
+                let nationality = match st.opt("nationality") {
+                    Some((v, c)) => {
+                        Some(self.enum_arg(&v, c, LabelContext::Nationality, "nationality")?)
+                    }
+                    None => None,
+                };
+                let look = match st.opt("look") {
+                    Some((v, c)) => match self.look_arg(&v, c, false)? {
+                        super::ast::LookArg::Binding(i) => Some(i),
+                        super::ast::LookArg::Asked => None,
+                    },
+                    None => None,
+                };
+                (
+                    InputCmd::CreateCharacter {
+                        name,
+                        class,
+                        body,
+                        nationality,
+                        look,
+                    },
+                    1,
+                )
             }
             "delete-character" => (InputCmd::DeleteCharacter(name0(self, &st)?), 1),
             "close" => (InputCmd::Close(self.window_kind(st.arg(0)?)?), 1),

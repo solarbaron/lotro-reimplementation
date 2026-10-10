@@ -10,10 +10,19 @@
 //! `docs/specs/tessera-protocol.md`). With a remote backend, other entities are drawn from
 //! snapshot interpolation ([`World::sample_entity`], §8.6), [`World::net_status`] has the
 //! connection state, round-trip time and clock offset for the HUD, and the walker's chat
-//! overlay reads [`World::drain_hud_chat`].
+//! overlay reads [`World::drain_hud_chat`]. With `--scenario` and `--server` the backend is
+//! the scenario overlay over the test server ([`World::overlay`], `scenario-feed.md`
+//! §12.5).
+//!
+//! Every event also reaches the local player's state ([`World::player_state`]: inventory,
+//! scripted properties, header, worn look; decision 0024 P1), whose changes the runtime takes
+//! each frame ([`World::take_player_changes`]) for the plugin views and the character
+//! panels. The character screens (`--character-select`) poll the session themselves before
+//! world entry ([`World::set_external_poll`], [`World::apply_polled`]).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tessera_net::interp::Sample;
@@ -283,6 +292,10 @@ impl crate::walker::WalkerSession for World {
     fn scenario_line(&self, now: Instant) -> Option<String> {
         World::scenario_line(self, now)
     }
+
+    fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
+        self.look_data.clone()
+    }
 }
 
 /// The client's view of the world source.
@@ -337,7 +350,30 @@ pub struct World {
     /// After the input script's `at pre` lines: the character to enter, and whether the
     /// poll that delivers their answers has happened (the world is entered after it).
     pending_enter: Option<(Option<String>, bool)>,
+    /// The local player's state (decision 0024 P1): inventory, properties, header, look.
+    p1: crate::character::PlayerState,
+    /// Its changes not yet taken ([`World::take_player_changes`]), at most
+    /// [`MAX_PLAYER_CHANGES`].
+    p1_changes: std::collections::VecDeque<crate::character::PlayerChange>,
+    /// Whether the changes are kept for a consumer ([`World::set_collect_player_changes`]).
+    collect_p1_changes: bool,
+    /// The install's creation controls, for the walker's figures to read received looks
+    /// with ([`World::set_look_data`]).
+    look_data: Option<Arc<crate::screens::ScreenData>>,
+    /// Changes dropped because nobody took them.
+    p1_dropped: u64,
+    /// The client enters the world itself (the character screens, `--character-select`):
+    /// no automatic `EnterWorld` on `Connected`.
+    manual_enter: bool,
+    /// Someone else polls the session ([`World::apply_polled`]): [`World::update`] does
+    /// not.
+    external_poll: bool,
 }
+
+/// Most player-state changes kept for [`World::take_player_changes`] between two takes;
+/// beyond it the oldest are dropped (and logged), and consumers resynchronise from the
+/// state.
+pub const MAX_PLAYER_CHANGES: usize = 1 << 16;
 
 impl World {
     /// A session with the in-process sandbox backend, already asked to connect.
@@ -374,6 +410,35 @@ impl World {
         source: Option<Box<dyn WorldSource>>,
         statics: Option<tessera_net::sandbox::world::StaticConfig>,
     ) -> Result<Self, NetError> {
+        Self::remote_with(now, settings, source, statics, None)
+    }
+
+    /// An overlay run (`--scenario` with `--server`, `scenario-feed.md` §12.5, decision
+    /// 0025 D1): the test server of `settings` with `scenario`'s Character and Inventory
+    /// groups played locally for the player by the overlay backend; the player's worn look
+    /// travels to the server as `AppearanceSet` when it advertised `APPEARANCE_CHANGE`.
+    /// The caller has checked the file with `Scenario::check_overlay`.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::remote`].
+    pub fn overlay(
+        now: Instant,
+        settings: &RemoteSettings,
+        scenario: std::sync::Arc<tessera_net::scenario::ResolvedScenario>,
+        source: Option<Box<dyn WorldSource>>,
+        statics: Option<tessera_net::sandbox::world::StaticConfig>,
+    ) -> Result<Self, NetError> {
+        Self::remote_with(now, settings, source, statics, Some(scenario))
+    }
+
+    fn remote_with(
+        now: Instant,
+        settings: &RemoteSettings,
+        source: Option<Box<dyn WorldSource>>,
+        statics: Option<tessera_net::sandbox::world::StaticConfig>,
+        scenario: Option<std::sync::Arc<tessera_net::scenario::ResolvedScenario>>,
+    ) -> Result<Self, NetError> {
         let mut config = settings.config()?;
         if let Some(s) = statics {
             config.statics = s;
@@ -389,7 +454,17 @@ impl World {
             Some(s) => RemoteBackend::with_boxed_world(config, s)?,
             None => RemoteBackend::new(config)?,
         };
-        let mut world = Self::from_session(now, Session::new(backend))?;
+        let session = match scenario {
+            Some(sc) => {
+                tracing::info!(
+                    title = sc.title().unwrap_or(""),
+                    "scenario overlay over the test server (scenario-feed.md §12.5)"
+                );
+                Session::new(tessera_net::scenario::OverlayBackend::new(backend, sc))
+            }
+            None => Session::new(backend),
+        };
+        let mut world = Self::from_session(now, session)?;
         world.character.clone_from(&settings.character);
         world.pinned = pinned;
         Ok(world)
@@ -407,9 +482,12 @@ impl World {
         config: SandboxConfig,
         source: impl WorldSource + 'static,
     ) -> Result<Self, NetError> {
-        match remote {
-            Some(r) => Self::remote(now, r, Some(Box::new(source)), Some(config.statics)),
-            None => Self::sandbox_with_world(now, config, source),
+        match (remote, config.scenario.clone()) {
+            (Some(r), Some(sc)) => {
+                Self::overlay(now, r, sc, Some(Box::new(source)), Some(config.statics))
+            }
+            (Some(r), None) => Self::remote(now, r, Some(Box::new(source)), Some(config.statics)),
+            (None, _) => Self::sandbox_with_world(now, config, source),
         }
     }
 
@@ -460,7 +538,105 @@ impl World {
             scenario_log: None,
             scenario_input: None,
             pending_enter: None,
+            p1: crate::character::PlayerState::new(crate::character::state::NO_INSTALL_BAGS),
+            p1_changes: std::collections::VecDeque::new(),
+            collect_p1_changes: true,
+            look_data: None,
+            p1_dropped: 0,
+            manual_enter: false,
+            external_poll: false,
         })
+    }
+
+    /// The local player's state (inventory, properties, header, look).
+    #[must_use]
+    pub fn player_state(&self) -> &crate::character::PlayerState {
+        &self.p1
+    }
+
+    /// Takes the player-state changes since the last call, in order.
+    pub fn take_player_changes(&mut self) -> Vec<crate::character::PlayerChange> {
+        Vec::from(std::mem::take(&mut self.p1_changes))
+    }
+
+    /// The install's creation controls the walker's figures read received looks with
+    /// (decision 0025 D2; the runtime gives them once the P1 data has loaded).
+    pub fn set_look_data(&mut self, data: Option<Arc<crate::screens::ScreenData>>) {
+        self.look_data = data;
+    }
+
+    /// Keeps the player-state changes for [`World::take_player_changes`] (`true`, the
+    /// default) or drops them at once (`false`: a run without a consumer, such as the
+    /// headless overlay driver). The state itself is kept either way.
+    pub fn set_collect_player_changes(&mut self, on: bool) {
+        self.collect_p1_changes = on;
+        if !on {
+            self.p1_changes.clear();
+        }
+    }
+
+    /// Uses the install's bag layout (`character-panels.md` §4.2–§4.3) from now on.
+    pub fn set_bag_layout(&mut self, bags: tessera_gamedata::inventory::BagLayout) {
+        let mut out = Vec::new();
+        self.p1.set_bags(bags, &mut out);
+        self.push_player_changes(out);
+    }
+
+    fn push_player_changes(&mut self, out: Vec<crate::character::PlayerChange>) {
+        if !self.collect_p1_changes {
+            return;
+        }
+        for c in out {
+            if self.p1_changes.len() >= MAX_PLAYER_CHANGES {
+                self.p1_changes.pop_front();
+                self.p1_dropped += 1;
+                if self.p1_dropped.is_power_of_two() {
+                    tracing::warn!(
+                        dropped = self.p1_dropped,
+                        "player-state changes not taken; oldest dropped"
+                    );
+                }
+            }
+            self.p1_changes.push_back(c);
+        }
+    }
+
+    /// Sends a command for the player (an item interaction of the character panels, a
+    /// character-screen command), writing it to the scenario log when one is written.
+    ///
+    /// # Errors
+    ///
+    /// As `Session::send`.
+    pub fn send_command(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
+        self.send(now, command)
+    }
+
+    /// The client enters the world itself (`true`: the character screens send
+    /// `EnterWorld`; no automatic entry on `Connected`).
+    pub fn set_manual_enter(&mut self, on: bool) {
+        self.manual_enter = on;
+    }
+
+    /// The session (the character screens drive it before world entry).
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
+    /// While `true`, [`World::update`] leaves the session alone: the character screens
+    /// poll it and hand the events over with [`World::apply_polled`].
+    pub fn set_external_poll(&mut self, on: bool) {
+        self.external_poll = on;
+    }
+
+    /// Applies events that were polled from the session by someone else (the character
+    /// screens' pump) as if [`World::update`] had polled them.
+    pub fn apply_polled(&mut self, now: Instant, events: &[Event]) {
+        for ev in events {
+            if let Some(log) = &mut self.scenario_log {
+                log.event(now, ev);
+            }
+            self.apply(now, ev);
+        }
     }
 
     /// Sets the character to enter when the session connects (a scenario's `enter`
@@ -555,9 +731,28 @@ impl World {
     /// The scenario's status when the sandbox plays one (`scenario-feed.md` §3.4).
     #[must_use]
     pub fn scenario_status(&self) -> Option<tessera_net::scenario::ScenarioStatus> {
+        if let Some(o) = self.overlay_backend() {
+            return Some(o.scenario_status());
+        }
         self.session
             .backend::<SandboxBackend>()
             .and_then(SandboxBackend::scenario_status)
+    }
+
+    /// The overlay backend of an overlay run (`scenario-feed.md` §12.5).
+    #[must_use]
+    pub fn overlay_backend(&self) -> Option<&tessera_net::scenario::OverlayBackend<RemoteBackend>> {
+        self.session
+            .backend::<tessera_net::scenario::OverlayBackend<RemoteBackend>>()
+    }
+
+    fn scenario_counters(&self) -> Option<tessera_net::scenario::ScenarioCounters> {
+        if let Some(o) = self.overlay_backend() {
+            return Some(o.scenario_counters());
+        }
+        self.session
+            .backend::<SandboxBackend>()
+            .and_then(SandboxBackend::scenario_counters)
     }
 
     /// The HUD's scenario line (`scenario-feed.md` §12.4): the state, the virtual time and,
@@ -585,7 +780,7 @@ impl World {
     /// The test-server backend, when this session uses one.
     #[must_use]
     pub fn remote_backend(&self) -> Option<&RemoteBackend> {
-        self.session.backend::<RemoteBackend>()
+        self.session.remote_backend()
     }
 
     /// The interpolated state of a remote entity at `now` (`tessera-protocol.md` §8.6:
@@ -873,6 +1068,9 @@ impl World {
     /// queue is full of events that are never dropped ([`MAX_QUEUED_ENTITY_EVENTS`]),
     /// nothing is polled until it drains.
     pub fn update(&mut self, now: Instant) {
+        if self.external_poll {
+            return;
+        }
         if self.queue_saturated() {
             if !self.paused {
                 tracing::warn!(
@@ -903,10 +1101,7 @@ impl World {
         self.enter_after_pre_input(now, disconnected);
         if self.scenario_log.as_ref().is_some_and(|l| !l.is_closed()) {
             let status = self.scenario_status();
-            let counters = self
-                .session
-                .backend::<SandboxBackend>()
-                .and_then(SandboxBackend::scenario_counters);
+            let counters = self.scenario_counters();
             let closed = disconnected || self.state() == SessionState::Closed;
             let input_skipped = self
                 .scenario_input
@@ -948,6 +1143,11 @@ impl World {
 
     fn apply(&mut self, now: Instant, ev: &Event) {
         self.events_seen += 1;
+        let mut changes = Vec::new();
+        self.p1.apply(ev, &mut changes);
+        if !changes.is_empty() {
+            self.push_player_changes(changes);
+        }
         if matches!(
             ev,
             Event::EntityCreated { .. }
@@ -964,6 +1164,9 @@ impl World {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
                 tracing::info!(characters = %names.join(","), "net: connected");
                 self.show_motd();
+                if self.manual_enter {
+                    return;
+                }
                 if self.play_pre_input(now) {
                     // A character the `at pre` lines create is entered one poll later;
                     // an unknown one ends the session (§12.2 step 3).
@@ -1264,6 +1467,32 @@ pub fn describe_failure(f: &RemoteFailure, pinned: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_changes_are_bounded_and_can_be_switched_off() {
+        use crate::character::PlayerChange;
+        let mut world = World::sandbox(Instant::now()).expect("sandbox");
+        let changes = |n: usize, base: u32| -> Vec<PlayerChange> {
+            (0..n)
+                .map(|i| PlayerChange::Property {
+                    property: base + u32::try_from(i).unwrap_or(0),
+                })
+                .collect()
+        };
+        // Full buffer: each further change drops the oldest (a ring, not a shift).
+        world.push_player_changes(changes(MAX_PLAYER_CHANGES + 10, 0));
+        let taken = world.take_player_changes();
+        assert_eq!(taken.len(), MAX_PLAYER_CHANGES);
+        assert_eq!(taken[0], PlayerChange::Property { property: 10 });
+        assert!(world.take_player_changes().is_empty());
+        // Without a consumer nothing is kept.
+        world.set_collect_player_changes(false);
+        world.push_player_changes(changes(5, 0));
+        assert!(world.take_player_changes().is_empty());
+        world.set_collect_player_changes(true);
+        world.push_player_changes(changes(2, 0));
+        assert_eq!(world.take_player_changes().len(), 2);
+    }
 
     #[test]
     fn sandbox_enters_world_and_shuts_down() {

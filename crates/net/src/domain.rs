@@ -15,8 +15,8 @@
 //! sandbox backend is the first that does.
 
 use crate::model::{
-    Appearance, Body, DataId, EntityId, Location, MAX_CHAT_LEN, MAX_NAME_LEN, is_valid_name,
-    sanitize_text,
+    Appearance, Body, DataId, EntityId, Location, Look, MAX_CHAT_LEN, MAX_NAME_LEN,
+    MAX_PROPERTY_STRING_LEN, PropertyValue, is_valid_name, sanitize_text,
 };
 
 /// An item instance, assigned by the world source; meaningful within one session.
@@ -357,6 +357,23 @@ pub enum CharacterEvent {
         class: Option<u32>,
         /// Its level, when known.
         level: Option<u32>,
+        /// Its look (creation choices), when known (decision 0025 D2).
+        look: Option<Box<Look>>,
+    },
+    /// A name left the character list (`scenario-feed.md` §6.1 `remove-character`).
+    CharacterRemoved {
+        /// The removed name.
+        name: String,
+    },
+    /// A data property of an entity was set or cleared (`scenario-feed.md` §6.1 `stat`).
+    /// Follows the entity rule of §9.5 (surfaced in the world only).
+    PropertyChanged {
+        /// The entity.
+        entity: EntityId,
+        /// The data property ID (of the user's install).
+        property: u32,
+        /// The value; `None` clears the property.
+        value: Option<PropertyValue>,
     },
     /// A character could not be created.
     CharacterRefused {
@@ -380,6 +397,8 @@ impl CharacterEvent {
     pub fn name(&self) -> &'static str {
         match self {
             Self::CharacterInfo { .. } => "CharacterInfo",
+            Self::CharacterRemoved { .. } => "CharacterRemoved",
+            Self::PropertyChanged { .. } => "PropertyChanged",
             Self::CharacterRefused { .. } => "CharacterRefused",
             Self::LevelChanged { .. } => "LevelChanged",
         }
@@ -443,6 +462,16 @@ pub enum InventoryEvent {
         /// The amount held.
         amount: u64,
     },
+    /// A data property of an item instance was set or cleared (`scenario-feed.md` §6.1
+    /// `item-property`).
+    ItemProperty {
+        /// The item.
+        item: ItemId,
+        /// The data property ID (of the user's install).
+        property: u32,
+        /// The value; `None` clears the property.
+        value: Option<PropertyValue>,
+    },
 }
 
 impl InventoryEvent {
@@ -457,6 +486,7 @@ impl InventoryEvent {
             Self::ItemRemoved { .. } => "ItemRemoved",
             Self::ItemCondition { .. } => "ItemCondition",
             Self::WalletChanged { .. } => "WalletChanged",
+            Self::ItemProperty { .. } => "ItemProperty",
         }
     }
 }
@@ -1012,6 +1042,8 @@ pub enum CharacterCommand {
         appearance: Option<Box<Appearance>>,
         /// Its class value, when chosen.
         class: Option<u32>,
+        /// Its nationality value, when chosen (decision 0025 D2). Never sent to a server.
+        nationality: Option<u32>,
     },
     /// Delete a character.
     DeleteCharacter {
@@ -1574,22 +1606,64 @@ fn clean_price(p: &mut Price) -> bool {
     changed
 }
 
+/// Whether a property value of an event is valid: a float is finite (strings are cut and
+/// cleaned instead, §9.5).
+fn property_value_ok(v: Option<&PropertyValue>) -> bool {
+    !matches!(v, Some(PropertyValue::Float(f)) if !f.is_finite())
+}
+
+/// Cuts and cleans a property string (`scenario-feed.md` §9.5).
+fn clean_property_value(v: &mut Option<PropertyValue>) -> bool {
+    match v {
+        Some(PropertyValue::String(s)) => clean_string(s, MAX_PROPERTY_STRING_LEN),
+        _ => false,
+    }
+}
+
 impl CharacterEvent {
+    /// Whether the event's look and property values follow §9.1 (invalid events are
+    /// dropped).
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::CharacterInfo { look, .. } => look.as_ref().is_none_or(|l| l.is_valid()),
+            Self::PropertyChanged { value, .. } => property_value_ok(value.as_ref()),
+            _ => true,
+        }
+    }
+
+    /// Whether the event follows the entity rule of §9.5 (surfaced in the world only)
+    /// rather than the character-list rule.
+    pub(crate) fn is_entity_event(&self) -> bool {
+        matches!(self, Self::PropertyChanged { .. })
+    }
+
     pub(crate) fn clean(&mut self) -> bool {
         match self {
-            Self::CharacterInfo { name, .. } => clean_string(name, MAX_NAME_LEN),
+            Self::CharacterInfo { name, .. } | Self::CharacterRemoved { name } => {
+                clean_string(name, MAX_NAME_LEN)
+            }
             Self::CharacterRefused { name, reason } => {
                 clean_string(name, MAX_NAME_LEN) | clean_text(reason)
             }
+            Self::PropertyChanged { value, .. } => clean_property_value(value),
             Self::LevelChanged { .. } => false,
         }
     }
 }
 
 impl InventoryEvent {
+    /// Whether the event's property value is valid (finite float).
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::ItemProperty { value, .. } => property_value_ok(value.as_ref()),
+            _ => true,
+        }
+    }
+
     pub(crate) fn clean(&mut self) -> bool {
         match self {
             Self::ItemAdded { what, .. } => clean_ref(what),
+            Self::ItemProperty { value, .. } => clean_property_value(value),
             Self::WalletChanged {
                 currency: Currency::Item(r),
                 ..

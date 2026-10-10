@@ -4,7 +4,7 @@
 
 use tessera_protocol::client::{ClientConfig, ClientEvent, ClientSession, ClientState, CloseCause};
 use tessera_protocol::codes::{AppErrorCode, ChatRejectedCode, LoginFailedCode};
-use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec};
+use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec, frame_to_vec_minor};
 use tessera_protocol::message::*;
 use tessera_protocol::movement::{MoveVerdict, MovementLimits, MovementValidator};
 use tessera_protocol::server::{ServerEvent, ServerParams, ServerSession, ServerState};
@@ -82,7 +82,7 @@ impl Pair {
                                 .on_datagram(&b, self.now)
                                 .map(|e| e.into_iter().collect())
                         } else {
-                            let b = frame_to_vec(&m).unwrap();
+                            let b = frame_to_vec_minor(&m, self.client.minor()).unwrap();
                             self.server.on_control_data(&b, self.now)
                         };
                         match r {
@@ -114,15 +114,15 @@ impl Pair {
                                     .map(|e| e.into_iter().collect())
                             }
                             Channel::Control => {
-                                let b = frame_to_vec(&m).unwrap();
+                                let b = frame_to_vec_minor(&m, self.server.minor()).unwrap();
                                 self.client.on_control_data(&b, self.now)
                             }
                             Channel::World => {
-                                let b = frame_to_vec(&m).unwrap();
+                                let b = frame_to_vec_minor(&m, self.server.minor()).unwrap();
                                 self.client.on_stream_data(StreamKind::World, &b, self.now)
                             }
                             Channel::Chat => {
-                                let b = frame_to_vec(&m).unwrap();
+                                let b = frame_to_vec_minor(&m, self.server.minor()).unwrap();
                                 self.client.on_stream_data(StreamKind::Chat, &b, self.now)
                             }
                         };
@@ -245,6 +245,7 @@ fn world_enter() -> WorldEnter {
             species: 23,
             sex: 1,
         }),
+        look: tessera_protocol::types::Look::none(),
     }
 }
 
@@ -267,6 +268,7 @@ fn bram(id: u64, region: u16) -> EntityCreate {
             sex: 2,
         }),
         properties: vec![Property::new(pid::STANCE, Value::Enum(0))],
+        look: tessera_protocol::types::Look::none(),
     }
 }
 
@@ -285,7 +287,7 @@ fn happy_path() {
     assert!(!p.client.may_read(StreamKind::World));
     let ev = p.take_client_events();
     assert!(
-        matches!(&ev[..], [ClientEvent::LoggedIn { account, characters }]
+        matches!(&ev[..], [ClientEvent::LoggedIn { account, characters, .. }]
         if account == "alice" && characters.len() == 1)
     );
 
@@ -307,7 +309,7 @@ fn happy_path() {
     p.pump();
     assert!(matches!(
         &p.take_client_events()[..],
-        [ClientEvent::CharacterList(_)]
+        [ClientEvent::CharacterList { .. }]
     ));
 
     p.enter();
@@ -567,8 +569,8 @@ fn invalid_account_and_empty_password_are_answered_by_the_session() {
 #[test]
 fn unsupported_version() {
     let mut params = params();
-    params.min_minor = 1;
-    params.max_minor = 2;
+    params.min_minor = 2;
+    params.max_minor = 3;
     let p = Pair::new(ClientConfig::default(), params);
     assert_eq!(p.client.state(), ClientState::Closed);
     assert!(matches!(
@@ -1344,8 +1346,8 @@ fn server_keeps_the_clients_disconnect() {
 fn every_session_end_is_reported_once() {
     // UNSUPPORTED_VERSION after Hello.
     let mut prm = params();
-    prm.min_minor = 1;
-    prm.max_minor = 1;
+    prm.min_minor = 2;
+    prm.max_minor = 2;
     let p = Pair::new(ClientConfig::default(), prm);
     let closed = |ev: &[ServerEvent]| {
         ev.iter()
@@ -1466,6 +1468,7 @@ fn failed_encode_leaves_the_buffer_unchanged() {
         dye: Some(2.0),
         secondary_dye: None,
         stowed: false,
+        slot: None,
     });
     let mut out = vec![0xAA];
     assert!(
@@ -1478,4 +1481,87 @@ fn failed_encode_leaves_the_buffer_unchanged() {
     let bad = Value::Array(vec![Value::Float32(1.0), Value::Float32(f32::NAN)]);
     assert!(bad.encode(&mut out, false).is_err());
     assert_eq!(out, vec![0xBB]);
+}
+
+/// v1.1 (§3.1): both sides at minor 1 carry looks and slots; a v1.0 client negotiates
+/// minor 0 and receives none.
+#[test]
+fn minor_1_negotiation_and_looks() {
+    use tessera_protocol::types::{Equipped, Look, LookEntry, LookValue};
+    let look = Look {
+        entries: vec![LookEntry {
+            property: 0x7FFF_0001,
+            value: LookValue::Float32(0.25),
+        }],
+    };
+    for (client_max, expect) in [(1u16, 1u16), (0, 0)] {
+        let config = ClientConfig {
+            minor_max: client_max,
+            ..ClientConfig::default()
+        };
+        let mut p = Pair::new(config, params());
+        assert_eq!(p.server.minor(), expect);
+        assert_eq!(p.client.minor(), expect);
+        p.client
+            .login(
+                Credentials {
+                    account: "alice".into(),
+                    password: "pw".into(),
+                },
+                p.now,
+            )
+            .unwrap();
+        p.pump();
+        p.take_server_events();
+        p.server
+            .accept_login_with_looks(
+                "alice".into(),
+                vec![CharacterSummary {
+                    name: "Aldith".into(),
+                    body: Body::Character {
+                        species: 23,
+                        sex: 1,
+                    },
+                }],
+                vec![look.clone()],
+                p.now,
+            )
+            .unwrap();
+        p.pump();
+        let ev = p.take_client_events();
+        let want = if expect == 1 {
+            vec![look.clone()]
+        } else {
+            Vec::new()
+        };
+        assert!(
+            matches!(&ev[..], [ClientEvent::LoggedIn { looks, .. }] if *looks == want),
+            "{ev:?}"
+        );
+        let mut app = Appearance::new(Body::Character {
+            species: 23,
+            sex: 1,
+        });
+        app.equipment.push(Equipped {
+            item: 7,
+            slot: Some(17),
+            ..Equipped::default()
+        });
+        p.client
+            .create_character_with_look("Bram".into(), app, look.clone())
+            .unwrap();
+        p.pump();
+        let sev = p.take_server_events();
+        let (want_look, want_slot) = if expect == 1 {
+            (look.clone(), Some(17))
+        } else {
+            (Look::none(), None)
+        };
+        assert!(
+            matches!(&sev[..], [ServerEvent::CharacterCreate(c)]
+                if c.look == want_look && c.appearance.equipment[0].slot == want_slot),
+            "{sev:?}"
+        );
+        assert!(p.server_violation.is_none() && p.client_violation.is_none());
+    }
 }

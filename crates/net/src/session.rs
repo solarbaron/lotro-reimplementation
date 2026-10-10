@@ -748,6 +748,11 @@ impl Session {
             | Event::EntityDespawned { .. } => self.world_verdict(),
             Event::Combat(e) if !e.is_valid() => Verdict::Invalid("non-finite vital or amount"),
             Event::World(e) if !e.is_valid() => Verdict::Invalid("invalid marker location"),
+            Event::Character(e) if !e.is_valid() => {
+                Verdict::Invalid("invalid look or property value")
+            }
+            Event::Inventory(e) if !e.is_valid() => Verdict::Invalid("non-finite property value"),
+            Event::Character(e) if e.is_entity_event() => self.world_verdict(),
             Event::Inventory(_)
             | Event::Combat(_)
             | Event::Npc(_)

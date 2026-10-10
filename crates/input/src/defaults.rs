@@ -56,6 +56,18 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_fly"),
         b("toggle_debug"),
         b("open_chat"),
+        // P1 panels (`character-panels.md` §2, §4.1; `item-tooltips.md` §10): Tessera
+        // actions for the commands `ToggleJournalPanel`, `QUICKSLOT_BACKPACK`,
+        // `QUICKSLOT_BACKPACK1` … `6` and `TOOLTIP_DETACH` (`keymap.md` §12.14.2 OPEN).
+        b("toggle_character"),
+        b("toggle_bags"),
+        b("toggle_bag_1"),
+        b("toggle_bag_2"),
+        b("toggle_bag_3"),
+        b("toggle_bag_4"),
+        b("toggle_bag_5"),
+        b("toggle_bag_6"),
+        b("pin_tooltip"),
         // camera
         b("mouselook").with_modifiers(sub),
         ActionDef::axis("look_x"),
@@ -175,6 +187,16 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_fly", vec![D("Ctrl+F")]),
         (GLOBAL, "toggle_debug", vec![D("F3")]),
         (GLOBAL, "open_chat", vec![D("Enter"), D("NumpadEnter")]),
+        // P1 panels: Tessera's own default keys (`keymap.md` §12.14.2 OPEN).
+        (GLOBAL, "toggle_character", vec![D("C")]),
+        (GLOBAL, "toggle_bags", vec![D("B")]),
+        (GLOBAL, "toggle_bag_1", vec![D("I")]),
+        (GLOBAL, "toggle_bag_2", vec![]),
+        (GLOBAL, "toggle_bag_3", vec![]),
+        (GLOBAL, "toggle_bag_4", vec![]),
+        (GLOBAL, "toggle_bag_5", vec![]),
+        (GLOBAL, "toggle_bag_6", vec![]),
+        (GLOBAL, "pin_tooltip", vec![D("Ctrl+T")]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,

@@ -260,7 +260,12 @@ impl Backend for InboundHarness {
                 self.driver
                     .handshake_complete(self.now, PeerDatagrams::MaxPayload(1200));
             }
-            Routed::Net(cmd) => self.driver.command(cmd, self.now),
+            Routed::Net(cmd) => {
+                if let Some(name) = cmd.creation() {
+                    self.mapper.outstanding_create = Some(name);
+                }
+                self.driver.command(cmd, self.now);
+            }
             Routed::Move(slot) => self.latest_move = Some(slot),
             Routed::Disconnect => self.driver.disconnect(self.now),
         }

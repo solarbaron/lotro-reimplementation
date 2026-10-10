@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tessera_net::remote::{FirstUse, Password, RemoteBackend, RemoteConfig, Trust};
 use tessera_net::{Event, Session};
 use tessera_protocol::frame::{
-    FrameDecoder, StreamKind, decode_datagram, encode_datagram, frame_to_vec,
+    FrameDecoder, StreamKind, decode_datagram, encode_datagram, frame_to_vec_minor,
 };
 use tessera_protocol::message::*;
 use tessera_protocol::transport::{ServerIdentity, endpoint_config, server_transport_config};
@@ -152,6 +152,8 @@ pub struct Peer {
     chat: Option<quinn::SendStream>,
     datagrams: Option<mpsc::Receiver<Message>>,
     start: Instant,
+    /// The negotiated minor the peer encodes and decodes under (0 unless set).
+    minor: u16,
 }
 
 impl Peer {
@@ -192,6 +194,7 @@ impl Peer {
             chat: None,
             datagrams: Some(rx),
             start,
+            minor: 0,
         }
     }
 
@@ -206,11 +209,18 @@ impl Peer {
             chat: None,
             datagrams: None,
             start: Instant::now(),
+            minor: 0,
         }
     }
 
     pub fn conn(&self) -> &quinn::Connection {
         self.conn.as_ref().expect("no connection")
+    }
+
+    /// Sets the negotiated minor version for every frame after the `HelloAck`.
+    pub fn set_minor(&mut self, minor: u16) {
+        self.minor = minor;
+        self.decoder.set_minor(minor);
     }
 
     /// The peer's server clock, µs.
@@ -272,7 +282,7 @@ impl Peer {
     }
 
     pub async fn send(&mut self, m: Message) {
-        let bytes = frame_to_vec(&m).unwrap();
+        let bytes = frame_to_vec_minor(&m, self.minor).unwrap();
         self.send_raw(&bytes).await;
     }
 
@@ -313,7 +323,7 @@ impl Peer {
     }
 
     pub async fn world(&mut self, m: Message) {
-        let bytes = frame_to_vec(&m).unwrap();
+        let bytes = frame_to_vec_minor(&m, self.minor).unwrap();
         self.world_raw(&bytes).await;
     }
 
@@ -327,7 +337,7 @@ impl Peer {
     }
 
     pub async fn chat(&mut self, m: Message) {
-        let bytes = frame_to_vec(&m).unwrap();
+        let bytes = frame_to_vec_minor(&m, self.minor).unwrap();
         self.chat
             .as_mut()
             .expect("chat stream")
@@ -382,6 +392,7 @@ impl Peer {
                     },
                 })
                 .collect(),
+            looks: Vec::new(),
         }))
         .await;
         self.open(StreamKind::Chat).await;
@@ -408,6 +419,7 @@ impl Peer {
                 anchor: None,
             },
             appearance: appearance(),
+            look: tessera_protocol::types::Look::none(),
         }))
         .await;
         self.world(Message::WorldClock(WorldClock {
@@ -485,6 +497,7 @@ pub fn entity_create(id: u64, server_time: u64, x: f64, vx: f32) -> Message {
             sex: 2,
         }),
         properties: vec![Property::new(pid::STANCE, Value::Enum(1))],
+        look: tessera_protocol::types::Look::none(),
     })
 }
 

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Characters, inventory and equipment for the P1 panels (decision 0024 P1;
+# docs/specs/character-panels.md §4.3, §6, §9; lua-plugin-api.md §15.1 checks 66 and 67):
+# backpack size and bag ranges, items at chosen slots, quantities, conditions, the wallet,
+# the player's level, scripted player and item properties named by dictionary labels, and
+# the item interactions of the panels as input lines. Synthetic: it plays without an
+# install (literal items; the labelled properties and slots stay unresolved and their
+# steps are skipped). Every name and text is invented for Tessera.
+tessera-scenario 1
+title "Bags in order"
+tick 50ms
+player "Tamsin" level=7
+item $loaf "Travel loaf" qty=6
+item $rope "Coil of rope"
+item $lamp "Shuttered lamp"
+item $cloak "Grey cloak"
+item $kettle "Tin kettle"
+
+at 0s bag 30
++0s give $loaf slot=0
++0s give $rope slot=4
++0s give $lamp slot=29
++0s give $cloak
++0s wallet coin 1250
++0.1s quantity $loaf 5
++0s condition $lamp 0/80
++0s condition $rope 10/40
++0.1s level player 8
++0s stat player @Combat_Stats_CriticalPoints_Unified=12
++0s item-property $cloak @Item_Quality=3
++0s equip $cloak slot=@Chest
++0.2s bag 40
++0.1s bag 40
++0.1s give $kettle slot=35
+
+input
+at 0.6s move-item $rope to=backpack slot=10
+at 0.7s split $loaf 2
+at 0.8s destroy $lamp
+at 0.9s move-item $kettle to=backpack slot=0
+at 1s equip $cloak slot=@Chest
+at 1.1s unequip $cloak
+end

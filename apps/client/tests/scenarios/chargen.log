@@ -1,0 +1,22 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "A new face at the gate"
+pre > Connect
+pre Connected characters=["Ward","Linden"]
+pre CharacterInfo name="Ward" body=none class=none level=3 look=none
+pre CharacterInfo name="Linden" body=none class=none level=7 look=none
+pre > CreateCharacter name="Dora" appearance=none class=none nationality=none look=none
+pre CharacterRefused name="Dora" reason="Only names invented for this gate are kept."
+pre > CreateCharacter name="Cora" appearance=none class=none nationality=none look=none
+pre CharacterInfo name="Cora" body=none class=none level=1 look=none
+pre > CreateCharacter name="Bryn" appearance=none class=none nationality=none look=none
+pre CharacterInfo name="Bryn" body=none class=none level=1 look=none
+pre > DeleteCharacter name="Ward"
+pre CharacterRemoved name="Ward"
+pre > DeleteCharacter name="Linden"
+pre > CreateCharacter name="Ezra" appearance=none class=none nationality=none look=none
+pre > EnterWorld character="Cora"
+0.000 WorldEntered entity=player name="Cora" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

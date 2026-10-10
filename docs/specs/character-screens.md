@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-10, third re-review of the revision of 2026-10-10, commit 72d3f84, passed; see the review record). Before: Revised (2026-10-10, spec writer: the second re-review's non-blocking notes answered, (k) names compared in NFC form in §7.1 and §7.1.1 step 3, (l) new §7.1.1 step 6 and §7.3 refusal of `EnterWorld` while a creation is outstanding, (m) §9 step 5 names a fresh account and `max_characters`; (e) settled, `scenario-feed.md` is on main; provenance rows CS16–CS18; awaiting review, see the change log). Before: Accepted (2026-10-10, second re-review passed; first version 2026-10-09, review and re-review of 2026-10-09 changes requested, revisions the same day; see the review record) |
+| **Status** | **Accepted** (2026-10-10, third re-review of the revision of 2026-10-10, commit 72d3f84, passed; see the review record). Merged into branch `p1` (2026-10-10): P1's pointer rows to [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (no fact changed) and the P1 implementer OPENs are not covered by that review and await the P1 review (see the change log). Before: Revised (2026-10-10, spec writer: the second re-review's non-blocking notes answered, (k) names compared in NFC form in §7.1 and §7.1.1 step 3, (l) new §7.1.1 step 6 and §7.3 refusal of `EnterWorld` while a creation is outstanding, (m) §9 step 5 names a fresh account and `max_characters`; (e) settled, `scenario-feed.md` is on main; provenance rows CS16–CS18; awaiting review, see the change log). Before: Accepted (2026-10-10, second re-review passed; first version 2026-10-09, review and re-review of 2026-10-09 changes requested, revisions the same day; see the review record) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Independent spec-review sessions that wrote no part of this spec and no code (Clean-Room-Role: review): review and re-review 2026-10-09, second and third re-reviews 2026-10-10 |
@@ -83,6 +83,22 @@ variants in the gender entry (`player-character.md` §5.2–§5.3).
 `CharGen_Base_Field` also holds `GamePlay_ExaminationTooltip_Activatable` (a `Field`,
 192 × 128 at 571, 12, CS15), by its label the in-world examination tooltip's anchor. **Tessera
 rule (P1):** never created on these screens (they have no examinable objects).
+
+> **OPEN:** (implementer, `apps/client/src/screens/viewport.rs`, `apps/client/src/walker`,
+> 2026-10-10) Where the figure stands in the race's `RaceTable_UIScene` and how the scene's
+> camera element (U4 of `misc-records.md` §4.2) frames it are not stated: the scene's
+> elements carry placements, but which element (or which point) the screens' figure is
+> placed at, and with which heading, is not given; nor whether the six `chargen_viewport`
+> values above (shadows, bloom, ambient light, fake shadow colour, deshade, rim lighting)
+> apply to the figure. The figures of the creation stages also play other idle clips than in
+> the world (the species tables' scripts choose them by `CharGen_Stage`), and these clips
+> turn some bodies away from a camera on the figure's front. As implemented: the viewport
+> hosts external content (`render.md` §6.10) into which the client draws the figure alone,
+> as the paperdoll's portrait: at the origin, turned by the turntable, seen from its front
+> at the height of its bounding sphere's centre with a fixed light, on a transparent
+> background; the zoom (§2.3) halves the distance and aims a quarter of the sphere's radius
+> higher. The scene's objects, lights and cameras are not drawn. Please give the figure's
+> place and heading in the scene and the rule for the viewport's lighting values.
 
 <a id="s2-2"></a>
 ### 2.2 Screens and stages (Confirmed, CS2)
@@ -204,6 +220,13 @@ The selected character stands in the viewport: its race's scene and
 > rule:** the session's order; the first entry, or the one entered last in this run, is
 > selected; a click selects, a double click enters.
 
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10) The description
+> format CS11 is Probable only and its variable names are not tied to the row. As
+> implemented: the row's `CharGen_CharacterSelect_Character_Description` shows Tessera's
+> own line "Level *n* *race* *class*" with the parts the session told (race: the
+> `RaceTable_Gender_Race_Name` of the row's body; class: `AdvTable_ClassName`). Please
+> confirm the format and its variables, or give the rule.
+
 ---
 
 <a id="s4"></a>
@@ -242,8 +265,30 @@ a disabled overlay) per race.
 | Movie | `AdvTable_CharGen_ClassSelect_Movie_DID` (P1: hidden) |
 | Disabled overlay | classes gated by store items or account tokens (§7.4) — **Tessera rule:** every class of the race enabled |
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) the element labels of the race and class
+> buttons' parts. §4.1 and §4.2 say the buttons show an icon and a name but do not name the
+> parts; a review probe of the install reported `CharGen_Race_Select_Race_Name` and
+> `CharGen_Race_Select_Race_Icon` in `CharGen_Race_Select_Race_Template`, and
+> `CharGen_Class_Select_Class_Name` and `CharGen_Class_Select_Class_Icon` in
+> `CharGen_Class_Select_Class_Template` (the template roots are Buttons with a full-size
+> background and frame pieces). The parts of `CharGen_Nationality_Entry_Template` (§5.1)
+> are not named either. As implemented: the parts are looked up by those labels; when a
+> label does not resolve, **Tessera rule:** the label goes to the first `Text` element
+> below the entry (never the entry's own Button) and the icon to the first square element
+> below it that is not of the entry's own size. Please confirm the labels and name the
+> nationality entry's parts.
+
 Changing race keeps the class if the new race allows it, else selects the first class of the
 list (**Tessera rule**). A choice is valid by `player-character.md` §5.4.
+
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10) The parts of
+> `Chargen_Race_Info_Panel` and `CharGen_Class_Info_Panel` are not named, nor the list that
+> holds the `CharGen_Race_Select_Racial_Trait_Template` rows, nor where a trait's icon and
+> name come from (the race table's `AdvTable_Trait_WC` names a trait record; its name and
+> icon properties are not stated). As implemented: the texts go to the `Text` elements below
+> the panel that the layout gives no text, in tree order (race panel: the description;
+> class panel: the name, then the description); the class icon, the movie button and the
+> trait rows are not shown. Please name the parts and the trait record's fields.
 
 <a id="s4-3"></a>
 ### 4.3 Other elements of the race-and-class screen
@@ -302,6 +347,56 @@ edge modes 1, 5, 1, 5): **Tessera rule:** shows the selected nationality's
 > the time; each template is a labelled row with previous/next arrows (styles, presets), a
 > swatch grid (colours) or a slider (floats).
 
+> **OPEN:** (implementer note, `crates/gamedata/src/chargen`, 2026-10-10) "In stored order,
+> grouped under `AppearanceUIGroup` headers" does not say how the headers are ordered when a
+> group's controls are not adjacent. As implemented: groups in the order of their first
+> control, controls in stored order within a group, controls without `AppearanceUI_Group`
+> under one header-less group. Likewise §4.2: a class key without a
+> `CharGen_ClassPriority_Entry` (none in this install) is listed after the prioritised
+> classes, in stored order. Two more Tessera rules are implemented without a spec line:
+> (a) when the install's `AppearanceUI_Availability` mapper has no `CharGen` label, every
+> control is offered at creation (logged), including controls available only for appearance
+> modification; (b) after a race change (§4.1, §6) the gender is kept when the new race has a
+> gender entry of it, else the new race's first gender entry is selected (as for classes in
+> §4.2). Please confirm both.
+
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10) The "Writes" column
+> does not settle every property a look entry can name (decision 0025 D2 carries only
+> property values): (1) a style control without `AppearanceUI_ControlScriptPropertyName`
+> (hair, beard, ears) names no property, so its choice cannot travel in a look; (2) "and
+> `AC_Avatar_Height` where named" does not say where the second property is named; (3) the
+> number of slider bytes of a slider control is not stated. As implemented: (1) such a
+> style is applied to the creating client's own figure only and is not kept in the
+> settings either (they store look entries); (2) a body-scale control writes the property
+> its control struct names in `AppearanceUI_ControlPropertyName`, else `AC_BoneScale_Test`;
+> (3) one byte per pair of the avatar's own `AC_BoneSlider_Value_Array` (or the property's
+> dictionary default), written as upper-case hex pairs. Colours travel as RGBA (the data's
+> B, G, R, A order is converted). Please give the rule.
+
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10, after review) (4) The
+> head control's `AppearanceUI_ControlScriptPropertyName` is `AC_Mesh_Head`, which the
+> dictionary types as a float, and the block variants of style entries are not 0.00,
+> 0.01, … (for example 0.00–0.04, 0.30–0.34, 0.40–0.44 for one head entry; hair lists
+> 0.30, 0.301, 0.302, …). As implemented: style choice *i* is the *i*-th block of the APR
+> entry (blocks of equal variant merged, NaN dropped); the figure's modifier is that
+> block's own `variant`, so `appearance.md` §3.2.1 rule 2 selects exactly that block; a
+> float style property (`AC_Mesh_Head`) is written as that `variant`, an integer one as
+> the index; a received value is mapped back to the block with exactly that variant, else
+> to the block rule 2 selects. Please confirm the value written to `AC_Mesh_Head` and the
+> order of the choices (the `AppearanceUI_EndOldOptionsControlValue` /
+> `AppearanceUI_OldOptionsWeightValue` ordering of `appearance.md` §3.4 is not applied).
+
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10) Element labels the
+> screens need but §3–§5 do not name: on `CharGen_Menu_Panel` the quit, options and plugin
+> manager buttons (§3 "shown"), the account-type and slots-available labels of the title
+> box, the randomise button of `CharGen_Appearance_Panel`, the `AppearanceUIGroup` header
+> element of the control list, the parts of `CharGen_Nationality_Entry_Template` and of the
+> nationality information panel, and the inner parts of the six control templates. As
+> implemented: those elements are left as the layout creates them (quit is the client's
+> Escape), nationality entries get the fallback parts rule of the §4.2 OPEN, controls get
+> the fallback widgets of the §5.2 OPEN, and Tessera's delete confirmation (§7.2) is an
+> error-list line answered by a second click on Delete. Please name the labels.
+
 <a id="s5-3"></a>
 ### 5.3 Name
 
@@ -329,6 +424,17 @@ generator and is never created in P1 (**Tessera rule**).
 | Name check before sending | `player-character.md` §8.6 and the name-rule control §8.1; the session's own check decides (§7.1) |
 | Tutorial choice | offered when the race's `RaceTable_AllowSkipTutorial` is true (reading of the name); **Tessera rule:** hidden in P1 (the sandbox has no tutorial) |
 
+> **OPEN:** (implementer note, `crates/gamedata/src/chargen`, 2026-10-10) The name check needs
+> a rule-set key and a context bit for character names and an order of the checks
+> (`misc-records.md` §9.3 OPEN (1), which lets Tessera choose). As implemented: the rule set
+> of the first key of the generator's `RandomNameGeneration_ValidNameRules` that the
+> name-filter table holds, the lowest bit of its `letter_classes` as context, the string
+> check (§9.1 there) on the name as typed, then the name check (§9.2 there). The taboo check
+> (§10.1 there) is not applied (its tokenizer is OPEN and the workspace has no
+> PCRE-compatible matcher). Letter, digit and printable are approximated by the standard
+> library's Unicode properties (alphabetic; numeric and not alphabetic; not a control and not
+> a common format character). Please confirm the choice or give the rule.
+
 <a id="s5-4"></a>
 ### 5.4 Create buttons
 
@@ -353,6 +459,43 @@ the create button in the race-change service; hidden.
 
 The viewport follows the selection at once (figure rebuilt by `appearance.md` §8 on every
 change of a control).
+
+> **OPEN:** (implementer note, `apps/client/src/screens`, 2026-10-10, after review; not a
+> spec gap, an implementation gap recorded so that P1 criterion 1 is not claimed early)
+> (1) The client's figure path (`walker::characters::figure`) takes only the
+> `AC_Avatar_Height` and `AC_BoneScale_Test` values of a creation figure, so styles,
+> colours, face layers and slider strings reach the assembler's `CharacterSpec` (the
+> screens build it) but not the drawn viewport figure. (2) The client's start-up does not
+> open these screens yet: they run headless (tests, the scenario driver) only, so no
+> screenshot of them exists. Both are to be closed in the client before P1 criterion 1 is
+> claimed. (3) The §7.1 settings key of a test server is its connect string, which the
+> start-up must pass; without it (the display name is the same for every server by
+> default) the choices are neither kept nor applied.
+
+> **OPEN:** (implementer, `apps/client/src/screens`, `apps/client/src/walker`, 2026-10-10;
+> follow-up of the two notes above and below) Item (1) is closed in the client: the
+> viewport's figure is the walker's, built through the shared figure path
+> (`tessera-mesh` assembly and `assembly::look`) with every creation control applied: styles,
+> slider string, the two heights and, as the character's own appearance values, every value
+> a set control writes (colours, face layers, the head value), so the species tables compose
+> the face and tint hair and skin from them (`appearance.md` §3.5); it is rebuilt on every
+> change (the old figure stays drawn until the new one is ready). Figures on these screens
+> carry the stage's `CharGen_Stage` key (§2.2: 4 on the selection screen, 7 for the
+> race-select entity, 6 on the appearance screen, read from the mapper by label) from the
+> start of their scripts and are not placed in a world (`appearance.md` §3.5 Decision). Not
+> specified, as implemented: before world entry nothing streams around a viewer, so the
+> client loads only the textures of the screens' figure. Question: the stage key of a figure
+> shown on the appearance stage while the name is typed (stage 3 `Name` has no layout of its
+> own in this build, §2.2): 6 is used; please confirm.
+
+> **OPEN:** (implementer, `apps/client/src/pre_world.rs`, 2026-10-10; follow-up of the note
+> above) Item (2): `tessera-client --character-select` (windowed, with the game UI) now opens
+> these screens at start-up: the world session does not enter by itself and is polled by the
+> screens until `WorldEntered`, then the walker continues; Escape on the screens quits the
+> client. Item (3): the start-up passes `CONNECT#ACCOUNT` (the `--server` connect string and
+> the `--account` name) as the settings key. Item (1) stays open: the viewport's figure is not
+> drawn. Not specified, as implemented: the screens are not offered in headless runs, with
+> `--scenario` or with `--character`.
 
 ---
 
@@ -444,6 +587,35 @@ there).
    second outstanding request is fatal (§13.1 "Outstanding requests"); likewise step 2
    refuses a further `CreateCharacter`. The screen shows such a refusal as §7.3 says. (CS17)
 
+> **Answered (2026-10-10, revision (k) and (l) on main, commit 72d3f84, Accepted; merged into
+> branch `p1`):** step 3 compares the list entry's name with the outstanding name in NFC form
+> and emits `CharacterInfo` with **the entry's name** (the NFC form the server stored), not the
+> requested name; §7.1 compares the event's name with the requested name in NFC form, so the
+> screen's success rule holds and the row shows the name as the event carries it. The name is
+> sent as given (step 2). Step 6: a creation is outstanding from the moment the backend sends
+> `CharacterCreate` until step 3 or step 4 clears it or the session ends. Still open from the
+> note: the local `SERVER_ERROR` answer to a `CharacterCreate` the network side cannot send
+> is not stated in §7.1.1 (spec owner). The note as raised:
+>
+> **OPEN:** (implementer note, `crates/net/src/remote`, 2026-10-10; review note (k)) Step 3
+> does not say how "an entry with the outstanding name" is compared, and §7.1's success rule
+> compares with the requested name. `test-server.md` §6.4 stores and lists the NFC form, so a
+> name sent in another normal form is created yet missed by a byte comparison (reported as
+> `SERVER_ERROR`; every retry then gets `NAME_TAKEN`). As implemented: the backend sends the
+> name as given, looks for an entry with exactly that name, else for one whose NFC form equals
+> the NFC form of the outstanding name, and emits `CharacterInfo` under the requested
+> (outstanding) name, so the screen's rule holds; the server finds the character by its name
+> key on `EnterWorld`. Also as implemented (step 2): the name is recorded as outstanding only
+> once the command is queued for the network side; a `CharacterCreate` that the network side
+> then cannot send is answered locally as `SERVER_ERROR`, and the end of the session clears
+> the outstanding creation. Spec owner to confirm or choose another rule (for example: the
+> backend sends the NFC form), here and in `scenario-feed.md` §9.7.
+
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D4):**
+> `scenario-feed.md` §9.5 and §9.7 and `tessera-protocol.md` Appendix A now point to §7.1.1
+> and map `CreateCharacter` → `CharacterCreate`, `CharacterList` → `CharacterInfo` /
+> `CharacterRefused` and `CharacterCreateFailed` → `CharacterRefused`. The note as raised:
+>
 > **OPEN (required revision of `scenario-feed.md` §9.5 and `tessera-protocol.md` Appendix A,
 > for their owner; does not block this spec):** §9.5 "Other backends" still says the
 > test-server backend refuses every new command, `CreateCharacter` included, and Appendix A
@@ -453,6 +625,15 @@ there).
 > `CharacterCreateFailed` → `CharacterRefused`. Until they are revised, §7.1.1 governs
 > `CreateCharacter` on the `remote` backend.
 
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D2):**
+> protocol 1.1 carries a **look** (up to 48 opaque property-ID and value pairs, at most 768
+> bytes) beside the appearance: `tessera-protocol.md` §3.1, §5.3, §6.2.7, §7.4 (with the
+> receiving client's rule), `test-server.md` §3.5 and §6.4 (storage), `server-content.md`
+> §4.1 (R3, R7); `tessera-net`'s `Appearance.look` and `CreateCharacter.nationality`,
+> `scenario-feed.md` §5.8, §9.1, §9.4, §9.7. The Tessera rule below still applies where no
+> look is stored: on a minor-0 connection and across restarts of the plain sandbox. The
+> note as raised:
+>
 > **OPEN (design, blocks the "look" part of P1 exit criterion 1 on M7's server):** the
 > `Appearance` model carries a body (species and sex), a scale, worn items and an idle, but
 > not the creation choices (styles, face layers, colours, height, sliders: the values of the
@@ -463,6 +644,29 @@ there).
 > with limits stated there. **Tessera rule until then:** the client keeps the choices of the
 > characters it created in its own settings, keyed by server and character name, and applies
 > them to its own figure only.
+
+> **OPEN:** (implementer note, `apps/client/src/walker/characters`, 2026-10-10) The walker's
+> figures apply a received look under the receiver rule of `tessera-protocol.md` §7.4 (the
+> player's own figure and every observed character): the accepted entries set the creation
+> controls of §5.2 as the selection screen does, and the figure gets the heights
+> (`AC_Avatar_Height`, `AC_BoneScale_Test`), the chosen styles and the slider string.
+> The figure path now takes styles and the slider string too (`FigureLook`), which also
+> serves item (1) of the §6 OPEN. Colour controls and face layers are not drawn:
+> `tessera-mesh`'s `CharacterSpec` has no field for them. Until the assembler takes them,
+> the "look" part of P1 exit criterion 1 holds for heights, styles and sliders only.
+
+> **OPEN:** (implementer, `apps/client/src/walker/characters`, 2026-10-10; follow-up of the
+> note above) The assembler now takes the character's own appearance values
+> (`CharacterSpec::appearance_values`), so a received look draws colours and face layers too:
+> every entry the receiver rule accepts sets its creation control as on the screens, and
+> every set control's written property and value become the figure's own property values,
+> set in its script state after its property sets (look colours, R, G, B, A, converted to the
+> data's B, G, R, A order). The figure then composes its face and tints hair and skin from
+> them like any figure (`appearance.md` §3.5). Not specified, as implemented: an accepted
+> entry whose value no control of the receiving install accepts (a face-layer option the
+> compositor lacks, a value outside a float range) is dropped with its control, so the
+> property keeps the avatar's own value; please confirm, or say whether the value should
+> be set as received.
 
 <a id="s7-2"></a>
 ### 7.2 Deleting
@@ -483,6 +687,11 @@ with `NetError::InvalidCommand` (for example a backend added later without a rul
 screen adds an error line to `CharGen_ErrorTextList` (Tessera's own text), keeps the row and
 treats the button as ghosted for the rest of the session.
 
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D5):**
+> `scenario-feed.md` §6.1 `remove-character` (in `on create-character` and `on
+> delete-character` bodies) emits `CharacterRemoved { name }` (§9.2 there). The note as
+> raised:
+>
 > **OPEN (for `scenario-feed.md`, non-blocking):** the feed has no step that removes a name
 > from the character list, so a scenario cannot answer a deletion (`scenario-feed.md` §7.5;
 > its §16 OPEN (3)). Proposal: a `remove-character STRING` step allowed in `on
@@ -523,6 +732,11 @@ A scenario for P1 criterion 1 declares no characters, scripts `on create-charact
 (`enter` setting); the test asserts that the screen sent a `CreateCharacter` whose appearance
 resolves (§9).
 
+> **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D5):**
+> the plain sandbox answers `CreateCharacter` itself (`scenario-feed.md` §9.6, cases §14.10):
+> success is a `CharacterInfo` with the command's body, class and look, so the §7.1 table's
+> "none" for the plain sandbox is superseded by that rule. The note as raised:
+>
 > **OPEN (for `scenario-feed.md` §9.5, non-blocking):** the plain sandbox (no scenario)
 > ignores `CreateCharacter`, so creating a character in an ordinary offline session does
 > nothing. Proposal: the sandbox's generic answer adds the name (if valid and new) to its list
@@ -558,7 +772,7 @@ For the install at `TESSERA_GAME_DIR`:
    `NAME_TAKEN`: the server checks the name before the character count, `test-server.md`
    §6.4, so this holds even when the account is full);
    with `character_creation` false the New button is ghosted and nothing is sent. The look
-   seen by other clients is limited by the §7.1 OPEN (Q7).
+   seen by other clients is limited by the §7.1 OPEN (Q7; answered by decision 0025 D2).
 
 Each step reports per-choice results; a failure is a panic or an unreported error.
 
@@ -588,11 +802,11 @@ Each step reports per-choice results; a failure is a panic or an unreported erro
 | Q4 | Class order (`player-character.md` Q2) | §4.2 | owner (O85) |
 | Q5 | Randomise and control widgets | §5.2 | owner (O86) |
 | Q6 | Nationality dye override (`player-character.md` Q14) | §5.1 | owner (O86) |
-| Q7 | Creation choices in `Appearance` | §7.1 | design decision (protocol minor) |
-| Q8 | Deletion in scenarios; plain-sandbox creation | §7.2, §8 | `scenario-feed.md` owner |
+| Q7 | Creation choices in `Appearance` | §7.1 | design decision (protocol minor); answered by decision 0025 D2 |
+| Q8 | Deletion in scenarios; plain-sandbox creation | §7.2, §8 | `scenario-feed.md` owner; answered by decision 0025 D5 |
 | Q9 | Deletion on M7's server | §7.2 | design decision (protocol minor) |
 | Q10 | Stage visibility of back, continue, exit, turntable and avatar-update toggle; turn speed | §2.3 | owner (O85) |
-| Q11 | `scenario-feed.md` §9.5 and `tessera-protocol.md` Appendix A to point to the `remote` creation rule | §7.1.1 | their owners (revision; §7.1.1 governs meanwhile) |
+| Q11 | `scenario-feed.md` §9.5 and `tessera-protocol.md` Appendix A to point to the `remote` creation rule | §7.1.1 | their owners (revision; §7.1.1 governs meanwhile); answered by decision 0025 D4 |
 
 ---
 
@@ -605,3 +819,4 @@ Each step reports per-choice results; a failure is a panic or an unreported erro
 | 2026-10-09 | Revision after the independent review of 2026-10-09 (changes requested); status stays Review. Blocking (1): new §2.3 names the shared controls of `chargen` under `ControlsParent` (back, exit, continue, the turntable group, the avatar-update toggle) with boxes, base elements and button data, and gives the P1 rule per stage, Exit hidden, the ghosted Continue, the turntable and the toggle; §2.1 and §5.2 point there. Blocking (2): §5.3 states that `CharGen_Name_Entry_Field` is an element with a base reference to the `Text` element `ChargenNameTextEntry` of layout 0x22000002, overridden to editable, selectable and one line. Blocking (3): §7.2 gives the delete rule per backend (scenario feed enabled; plain sandbox and M7 server ghosted, never send), the handling of an `InvalidCommand` refusal and a new protocol OPEN; §3 delete row follows. Non-blocking (a) §7.1 cites `LEGAL.md` §11.1 rule 5; (b) §2.2 corrected (side panels anchor by their own edge modes; per-screen table); (c) provenance row CS11 for the description format; (d) P1 rules for the admin and debug name elements (§5.3), the locked-continue store button and the loading blockers (new §4.3), the nationality text (§5.2), the choose-available-characters dialog (§3). Provenance rows CS8–CS13 added; §11 Q9, Q10; owner check O85 extended. (e) unchanged: `scenario-feed.md` links resolve after branch `p0` is merged. |
 | 2026-10-09 | Revision after the independent re-review of 2026-10-09 (changes requested); status stays Review. Blocking R2-1, answered by option (i): §7.1 now states that the screens issue `CreateCharacter` on every backend and see only `CharacterInfo` / `CharacterRefused`, with the New button rule per backend and the Create, refusal and time-out rules; new §7.1.1 gives the `remote` backend's rule (capability `CHARACTER_CREATION` from `HelloAck`, acceptance conditions, `CharacterCreate` with the class dropped, `CharacterList` → `CharacterInfo`, `CharacterCreateFailed` → `CharacterRefused` with Tessera's text per §14.4 code, states) as the rule that narrows `scenario-feed.md` §9.5, with an OPEN for the matching revision of that section and of `tessera-protocol.md` Appendix A; provenance row CS14; §3 New row, §9 step 5 (M7 part of P1 criterion 1) and §11 Q11 follow. Non-blocking: (f) `CharGen_ContinueLocked_BuyNowButton` added to CS12 and §4.3; (g) §2.2 selection row: `CharGen_Notice_FinishingLogout` is a direct child of the root; (h) `ECommBrowser` (§3) and `GamePlay_ExaminationTooltip_Activatable` (§2.1) never created in P1; (i) the **Probable** mark and the **Spec** source defined in the §1 key; (j) §4.3 loading blockers named as based on `Chargen_Silver_Border`. Provenance row CS15 (OBS, re-checked with the value-decoding probe 2026-10-09). (e) unchanged. |
 | 2026-10-10 | Revision (spec writer) after the second re-review's non-blocking notes; status Accepted → Revised, awaiting review. (k) §7.1: names are compared in NFC form (Tessera's test server stores and lists the NFC form, `test-server.md` §6.4), for success and for failure; §7.1.1 step 3 matches the list entry by NFC form and emits `CharacterInfo` with the entry's name. (l) New §7.1.1 step 6: a creation stays outstanding after the screen's 10 s time-out until the server answers or the session ends, and the `remote` backend refuses `EnterWorld` (and a further `CreateCharacter`, step 2) with `NetError::InvalidCommand` meanwhile (`tessera-protocol.md` §6.2.10, §13.1); §7.1 says the time-out is the screen's only and how a late answer is handled; §7.3 gives the selection screen's handling of the refusal (error line, stays, Enter kept enabled). (m) §9 step 5 runs on a fresh data directory and a fresh account with `max_characters` at least the race count read at run time, and states why the duplicate creation still yields code 1. (e) settled: branch `p0` is merged (a1fb29f) and `scenario-feed.md` is on main; its cited sections (§3.3, §5.1, §6.1, §7.5, §7.7, §9.2, §9.4, §9.5) are unchanged from the reviewed text (later commits add only OPEN callouts in §11.1, §12.4 and §13); the companion row, CS13 and CS14 now cite main. Provenance rows CS16–CS18. Q11 stays open (`scenario-feed.md` §9.5 still refuses `CreateCharacter` on the test-server backend). |
+| 2026-10-10 | Pointers only (no fact changed): the OPENs of §7.1 (look), §7.1.1 (Q11), §7.2 (feed removal) and §8 (plain-sandbox creation) and rows Q7, Q8, Q11 point to their answers in decision 0025 (`scenario-feed.md` revision 4, `tessera-protocol.md` v1.1). The §7.2 protocol-deletion OPEN (Q9) stays open. Merged with main's revision (k)–(m) above (branch `p1`, 2026-10-10): main's "Q11 stays open" is superseded by decision 0025 D4 (`scenario-feed.md` revision 4 revises §9.5); the §7.1.1 implementer OPEN on name comparison is marked answered by (k) and (l), except the local `SERVER_ERROR` for an unsendable command; §9 step 5 points Q7 to decision 0025 D2. Status: main's acceptance covers the text reviewed at 72d3f84; P1's pointer rows and implementer OPENs await the P1 review. |

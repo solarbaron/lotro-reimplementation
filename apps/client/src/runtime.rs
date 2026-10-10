@@ -97,6 +97,13 @@ pub struct Runtime {
     ui_chat_dropped: u64,
     character: Option<String>,
     texture_settled: bool,
+    /// Characters, inventory and equipment (decision 0024 P1): the install facts, the
+    /// plugin inventory views and the changes for the game UI.
+    pub p1: crate::character::CharacterHub,
+    /// Whether the P1 facts are loaded once the archives open (walker runs).
+    load_p1: bool,
+    /// `--character-select`: the world session waits for the character screens.
+    character_select: bool,
 }
 
 /// Most session chat lines held for the game UI until it takes them.
@@ -241,6 +248,16 @@ impl Runtime {
             // No walker (`--no-data`): the plain sandbox with the spawn of `--spawn`,
             // `--place` and `--heading` (`scenario-feed.md` §12.1), as a headless run.
             None => match scenario {
+                // `--scenario` with `--server`: an overlay run (`scenario-feed.md` §12.5).
+                Some(sc) if remote.is_some() => remote
+                    .as_ref()
+                    .map(|r| {
+                        let mut w = World::overlay(now, r, sc, None, None)?;
+                        attach_scenario_log(&mut w, args, now);
+                        attach_scenario_input(&mut w, args.scenario_prepared.as_ref());
+                        Ok(Some(w))
+                    })
+                    .unwrap_or(Ok(None)),
                 Some(sc) => crate::scenario::headless_config(args, sc).and_then(|config| {
                     let mut w = World::sandbox_with(now, config)?;
                     w.set_character(scenario_character.clone());
@@ -274,6 +291,9 @@ impl Runtime {
             crate::audio::player_music::MusicConfig::from_args(args, &root),
         ));
         plugins.set_startup_commands(args.commands.clone());
+        let mut p1 = crate::character::CharacterHub::new();
+        p1.want_screens(args.character_select);
+        p1.attach_plugins(plugins.manager_mut());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -296,6 +316,9 @@ impl Runtime {
             ui_chat_dropped: 0,
             character: None,
             texture_settled: false,
+            p1,
+            load_p1: walker,
+            character_select: args.character_select,
         })
     }
 
@@ -354,6 +377,16 @@ impl Runtime {
         };
         match world {
             Some(Ok(mut w)) => {
+                if let Some(d) = self.p1.data() {
+                    w.set_bag_layout(d.bags());
+                }
+                w.set_look_data(self.p1.screens().cloned());
+                if self.character_select {
+                    // The character screens poll the session and enter the world
+                    // (`pre_world`); nothing polls it before they open.
+                    w.set_manual_enter(true);
+                    w.set_external_poll(true);
+                }
                 if self.scenario_character.is_some() {
                     w.set_character(self.scenario_character.clone());
                 }
@@ -368,6 +401,33 @@ impl Runtime {
             Some(Err(e)) => tracing::error!("world session unavailable: {e}"),
             None => {}
         }
+    }
+
+    /// The character screens cannot open (`--character-select` with no screen data, no
+    /// facts or no game UI): the world session goes back to entering the account's first
+    /// character itself, as without the flag, and a system line says why. Sessions started
+    /// later enter on their own too.
+    pub fn abandon_character_select(&mut self, reason: &str) {
+        if !self.character_select {
+            return;
+        }
+        self.character_select = false;
+        tracing::warn!("character screens unavailable ({reason}); entering the first character");
+        if let Some(w) = &mut self.world {
+            w.set_manual_enter(false);
+            w.set_external_poll(false);
+        }
+        if self.notices.len() < 64 {
+            self.notices.push(format!(
+                "The character screens are unavailable ({reason}); entering the first character."
+            ));
+        }
+    }
+
+    /// Whether the world session waits for the character screens (`--character-select`).
+    #[must_use]
+    pub fn waits_for_character_screens(&self) -> bool {
+        self.character_select
     }
 
     /// Keeps the walker's sandbox settings when the walker is ready instead of starting
@@ -416,6 +476,9 @@ impl Runtime {
                     m.attach_data(Arc::clone(&set), &root);
                 }
                 self.plugins.attach_data(Arc::clone(&set));
+                if self.load_p1 {
+                    self.p1.start_loading(root.clone());
+                }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
             }
@@ -453,8 +516,20 @@ impl Runtime {
 
     /// Per-frame update of the world session and the plugin host.
     pub fn tick(&mut self, now: Instant) {
+        if let Some(d) = self.p1.poll()
+            && let Some(w) = &mut self.world
+        {
+            w.set_bag_layout(d.bags());
+            w.set_look_data(self.p1.screens().cloned());
+            // Items that arrived before the facts: the plugin views and the panels
+            // re-read them now.
+            self.p1.resync(w.player_state());
+        }
         if let Some(world) = &mut self.world {
             world.update(now);
+            let changes = world.take_player_changes();
+            self.p1
+                .after_events(world.player_state(), changes, self.plugins.manager_mut());
             for line in world.take_chat() {
                 if line.sender.is_empty() && self.notices.len() < 64 {
                     self.notices.push(line.text.clone());

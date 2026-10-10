@@ -218,12 +218,13 @@ fn absent_missing_and_transparent_layers_change_nothing() {
     assert_eq!(clear.image.unwrap(), base);
     // Drawing the transparent layer for real gives the same pixels too.
     let mut drawn = base.clone();
-    draw_centred(&mut drawn, &comp.layer(Did(CLEAR)).unwrap()).unwrap();
+    draw_over(&mut drawn, &comp.layer(Did(CLEAR)).unwrap(), 0, 0).unwrap();
     assert_eq!(drawn, base);
 }
 
 #[test]
-fn smaller_image_is_centred() {
+fn smaller_image_sits_top_left() {
+    // §3.4 and §8: a 2×2 image on a 4×4 background covers pixels (0, 0)–(1, 1).
     let mut src = Source::new();
     src.insert(BG, rgb(BG, 4, 4, &[[0, 0, 0]; 16]));
     src.insert(IMAGE, argb(IMAGE, 2, 2, &[[255, 255, 255, 255]; 4]));
@@ -234,7 +235,7 @@ fn smaller_image_is_centred() {
     assert_eq!((img.width, img.height), (4, 4));
     for y in 0..4 {
         for x in 0..4 {
-            let white = (1..=2).contains(&x) && (1..=2).contains(&y);
+            let white = x < 2 && y < 2;
             assert_eq!(px(&img, x, y)[0], if white { 255 } else { 0 }, "({x},{y})");
         }
     }
@@ -252,27 +253,34 @@ fn larger_image_is_clipped() {
         .image
         .unwrap();
     assert_eq!((img.width, img.height), (4, 4));
-    // Offset −1: canvas (0,0) shows image (1,1).
-    assert_eq!(px(&img, 0, 0), [1, 1, 0, 255]);
-    assert_eq!(px(&img, 3, 3), [4, 4, 0, 255]);
+    // Top-left placement: the image's top-left 4×4 shows, its last columns and rows drop.
+    assert_eq!(px(&img, 0, 0), [0, 0, 0, 255]);
+    assert_eq!(px(&img, 3, 3), [3, 3, 0, 255]);
 }
 
 #[test]
-fn canvas_without_background_is_largest_layer() {
+fn canvas_is_the_bottom_layer() {
+    // §3.4: the canvas is the bottom layer's size, whatever the other layers' sizes.
     let mut src = Source::new();
     src.insert(SHADOW, argb(SHADOW, 3, 1, &[[0, 0, 0, 255]; 3]));
     src.insert(IMAGE, argb(IMAGE, 1, 5, &[[255, 0, 0, 255]; 5]));
-    let img = composer(src)
-        .compose_item(props(&[(names::SHADOW, SHADOW), (names::IMAGE, IMAGE)]))
-        .image
-        .unwrap();
-    assert_eq!((img.width, img.height), (3, 5));
-    assert_eq!(px(&img, 0, 2), [0, 0, 0, 255]);
-    assert_eq!(px(&img, 1, 2), [255, 0, 0, 255]);
-    assert_eq!(px(&img, 0, 0), [0; 4]);
+    let stack = IconStack::from_entries([
+        StackEntry::new(LayerRole::Shadow, Did(SHADOW), None),
+        StackEntry::new(LayerRole::Image, Did(IMAGE), None),
+    ])
+    .unwrap();
+    let img = composer(src).compose(&stack).image.unwrap();
+    assert_eq!((img.width, img.height), (3, 1));
+    assert_eq!(px(&img, 0, 0), [255, 0, 0, 255]);
+    assert_eq!(px(&img, 1, 0), [0, 0, 0, 255]);
     assert_eq!(
         canvas_size(&[(LayerRole::Image, (8, 8)), (LayerRole::Background, (4, 2))]),
-        Some((4, 2))
+        Some((8, 8))
+    );
+    assert_eq!(
+        canvas_size(&[(LayerRole::Background, (0, 2)), (LayerRole::Image, (3, 3))]),
+        None,
+        "an empty bottom layer means no icon (§3.1)"
     );
     assert_eq!(canvas_size(&[]), None);
 }
@@ -521,6 +529,7 @@ fn empty_layers_are_absent() {
     src.insert(BG, rgb(BG, 0, 0, &[]));
     src.insert(UNDER, rgb(UNDER, 0, 7, &[]));
     src.insert(IMAGE, argb(IMAGE, 2, 2, &[[9, 8, 7, 255]; 4]));
+    src.insert(OVER, rgb(OVER, 2, 2, &[[1, 1, 1]; 4]));
     assert!(matches!(
         decode_layer(Did(BG), &rgb(BG, 0, 0, &[])),
         Err(MaterialError::Empty {
@@ -529,26 +538,27 @@ fn empty_layers_are_absent() {
         })
     ));
     let comp = composer(src);
-    // An empty Background does not set a 0×0 canvas: the image alone decides.
-    for bg in [BG, UNDER] {
-        let c = comp.compose_item(props(&[(names::BACKGROUND, bg), (names::IMAGE, IMAGE)]));
-        let img = c.image.unwrap();
-        assert_eq!((img.width, img.height), (2, 2));
-        assert!(matches!(
-            c.layers[0].status,
-            LayerStatus::Skipped(MaterialError::Empty { .. })
-        ));
-        assert!(matches!(
-            c.layers[1].status,
-            LayerStatus::Drawn {
-                width: 2,
-                height: 2
-            }
-        ));
-    }
+    // An empty bottom layer cannot be loaded: no icon (§3.1).
+    let c = comp.compose_item(props(&[(names::BACKGROUND, BG), (names::IMAGE, IMAGE)]));
+    assert!(c.image.is_none());
+    assert!(matches!(
+        c.layers[0].status,
+        LayerStatus::Skipped(MaterialError::Empty { .. })
+    ));
+    // An empty layer above the bottom is skipped.
+    let c = comp.compose_item(props(&[
+        (names::BACKGROUND, OVER),
+        (names::UNDERLAY, UNDER),
+        (names::IMAGE, IMAGE),
+    ]));
+    assert_eq!(c.image.unwrap().pixels, [9, 8, 7, 255].repeat(4));
+    assert!(matches!(
+        c.layers[1].status,
+        LayerStatus::Skipped(MaterialError::Empty { .. })
+    ));
     // A stack of only an empty layer is "no icon".
     assert!(comp.compose(&IconStack::single(Did(UNDER))).image.is_none());
-    // The same for caller-built images.
+    // The same for caller-built images: an empty image is absent.
     let empty = RgbaImage {
         width: 0,
         height: 7,
@@ -563,72 +573,115 @@ fn empty_layers_are_absent() {
         compose_images(&[(LayerRole::Single, &empty)]).unwrap(),
         None
     );
-    let img = compose_images(&[(LayerRole::Background, &empty), (LayerRole::Image, &ok)])
+    // An empty bottom layer means no icon on this path too, as in `compose_item` above
+    // (§3.1); an empty layer above the bottom is skipped.
+    assert_eq!(
+        compose_images(&[(LayerRole::Background, &empty), (LayerRole::Image, &ok)]).unwrap(),
+        None
+    );
+    let img = compose_images(&[(LayerRole::Background, &ok), (LayerRole::Image, &empty)])
         .unwrap()
         .unwrap();
     assert_eq!(img, ok);
-    assert_eq!(canvas_size(&[(LayerRole::Background, (0, 4))]), None);
-    assert_eq!(
-        canvas_size(&[(LayerRole::Background, (0, 4)), (LayerRole::Image, (3, 2))]),
-        Some((3, 2))
-    );
 }
 
 #[test]
-fn larger_transparent_layer_without_background_changes_nothing() {
-    // §8: a fully transparent layer gives the same result as leaving it out, even when
-    // it is larger than the others and there is no Background.
+fn transparent_layers_above_the_bottom_change_nothing() {
+    // §3.3 step 1, IL7, §8: a fully transparent layer above the bottom gives the same
+    // result as leaving it out, even when it is larger than the canvas.
     let mut src = Source::new();
     src.insert(CLEAR, argb(CLEAR, 4, 4, &[[0; 4]; 16]));
-    src.insert(IMAGE, argb(IMAGE, 2, 2, &[[1, 2, 3, 255]; 4]));
+    src.insert(BG, rgb(BG, 2, 2, &[[7, 7, 7]; 4]));
+    src.insert(IMAGE, argb(IMAGE, 2, 2, &[[1, 2, 3, 128]; 4]));
     let comp = composer(src);
     let alone = comp
-        .compose_item(props(&[(names::IMAGE, IMAGE)]))
+        .compose_item(props(&[(names::BACKGROUND, BG), (names::IMAGE, IMAGE)]))
         .image
         .unwrap();
-    let with_clear = comp.compose_item(props(&[(names::SHADOW, CLEAR), (names::IMAGE, IMAGE)]));
+    let with_clear = comp.compose_item(props(&[
+        (names::BACKGROUND, BG),
+        (names::SHADOW, CLEAR),
+        (names::IMAGE, IMAGE),
+    ]));
     assert!(matches!(
-        with_clear.layers[0].status,
+        with_clear.layers[1].status,
         LayerStatus::Transparent {
             width: 4,
             height: 4
         }
     ));
     assert_eq!(with_clear.image.unwrap(), alone);
-    assert_eq!((alone.width, alone.height), (2, 2));
-    // Only transparent layers: "no icon", as if none were set.
-    let only = comp.compose_item(props(&[(names::SHADOW, CLEAR)]));
-    assert!(only.image.is_none());
+    // A transparent bottom layer still sets the canvas (§3.4): its 4×4 stays.
+    let stack = IconStack::from_entries([
+        StackEntry::new(LayerRole::Background, Did(CLEAR), None),
+        StackEntry::new(LayerRole::Image, Did(IMAGE), None),
+    ])
+    .unwrap();
+    let img = comp.compose(&stack).image.unwrap();
+    assert_eq!((img.width, img.height), (4, 4));
+    assert_eq!(px(&img, 0, 0), [1, 2, 3, 128]);
+    assert_eq!(px(&img, 3, 3), [0; 4]);
     // The same through compose_images.
     let clear = comp.layer(Did(CLEAR)).unwrap();
+    let bg = comp.layer(Did(BG)).unwrap();
     let image = comp.layer(Did(IMAGE)).unwrap();
     assert_eq!(
-        compose_images(&[(LayerRole::Shadow, &clear), (LayerRole::Image, &image)]).unwrap(),
+        compose_images(&[
+            (LayerRole::Background, &bg),
+            (LayerRole::Shadow, &clear),
+            (LayerRole::Image, &image)
+        ])
+        .unwrap(),
         Some(alone)
     );
     assert_eq!(
-        compose_images(&[(LayerRole::Shadow, &clear)]).unwrap(),
-        None
+        compose_images(&[(LayerRole::Shadow, &clear)])
+            .unwrap()
+            .map(|i| (i.width, i.height)),
+        Some((4, 4))
     );
 }
 
 #[test]
-fn absent_override_falls_back_to_base_layer() {
+fn caller_fallback_and_checkpointed_override() {
     let mut src = Source::new();
     src.insert(BG, rgb(BG, 2, 2, &[[5, 5, 5]; 4]));
     src.insert(IMAGE, argb(IMAGE, 2, 2, &[[200, 0, 0, 255]; 4]));
-    src.insert(OVER, vec![0xAB; 3]); // undecodable override
+    src.insert(OVER, vec![0xAB; 3]); // undecodable
     let comp = composer(src);
     let base = comp
         .compose_item(props(&[(names::BACKGROUND, BG), (names::IMAGE, IMAGE)]))
         .image
         .unwrap();
+    // §8: the checkpointed override wins over the Image.
+    let c = comp.compose_item(props(&[
+        (names::BACKGROUND, BG),
+        (names::IMAGE_OVERRIDE_CHECKPOINTED, BG),
+        (names::IMAGE, IMAGE),
+    ]));
+    assert_eq!(c.layers[1].entry.did, Did(BG));
+    assert_eq!(c.image.unwrap().pixels, [5, 5, 5, 255].repeat(4));
+    // A missing checkpointed override leaves the icon without a picture (§5.6).
+    let c = comp.compose_item(props(&[
+        (names::BACKGROUND, BG),
+        (names::IMAGE_OVERRIDE_CHECKPOINTED, 0x4100_0099),
+        (names::IMAGE, IMAGE),
+    ]));
+    assert_eq!(c.skipped().count(), 1);
+    assert_eq!(c.image.unwrap().pixels, [5, 5, 5, 255].repeat(4));
+    // A caller-built stack's fallback still stands in for an absent entry.
     for bad in [0x4100_0099, OVER] {
-        let c = comp.compose_item(props(&[
-            (names::BACKGROUND, BG),
-            (names::IMAGE_OVERRIDE, bad),
-            (names::IMAGE, IMAGE),
-        ]));
+        let stack = IconStack::from_entries([
+            StackEntry::new(LayerRole::Background, Did(BG), None),
+            StackEntry {
+                role: LayerRole::Image,
+                did: Did(bad),
+                property: Some(names::IMAGE_OVERRIDE),
+                fallback: Some(Did(IMAGE)),
+            },
+        ])
+        .unwrap();
+        let c = comp.compose(&stack);
         assert_eq!(c.image.as_ref(), Some(&base), "override {bad:#x}");
         let image = &c.layers[1];
         assert_eq!(image.entry.did, Did(IMAGE));
@@ -642,22 +695,6 @@ fn absent_override_falls_back_to_base_layer() {
         ));
         assert!(c.skipped().next().is_none());
     }
-    // A valid override still wins, with nothing superseded.
-    let c = comp.compose_item(props(&[
-        (names::BACKGROUND, BG),
-        (names::IMAGE_OVERRIDE, BG),
-        (names::IMAGE, IMAGE),
-    ]));
-    assert_eq!(c.layers[1].entry.did, Did(BG));
-    assert!(c.layers[1].superseded.is_none());
-    // Both absent: skipped, with the override's error kept.
-    let c = comp.compose_item(props(&[
-        (names::IMAGE_OVERRIDE, 0x4100_0099),
-        (names::IMAGE, 0x4100_0098),
-    ]));
-    assert!(c.image.is_none());
-    assert_eq!(c.skipped().count(), 1);
-    assert!(c.layers[0].superseded.is_some());
 }
 
 #[test]

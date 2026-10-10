@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Item cards (`items.md`): identity, binding, the stats the value, DPS and armour tables
-//! give (§9.2–§9.5), stat modifiers, effect lists, requirements, sockets and links. The
-//! icon layers come from the icon view's composer (`icon-layers.md`), requested by the UI.
+//! give (§9.2–§9.5), stat modifiers, effect lists, requirements, sockets and links, and a
+//! preview of the item's examination tooltip (`item-tooltips.md`). The icon layers come
+//! from the icon view's composer (`icon-layers.md`), requested by the UI.
 
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use tessera_dat::ArchiveSet;
 use tessera_formats::Did;
 use tessera_formats::gameplay::combat::Progression;
 use tessera_formats::gameplay::items::{
@@ -10,8 +15,16 @@ use tessera_formats::gameplay::items::{
     item_value, weapon_damage,
 };
 
+use tessera_gamedata::GameDataStore;
+use tessera_gamedata::tooltip::{
+    InstallTooltipData, Row, RowContent, TooltipEngine, TooltipModel, TooltipRequest, Viewer,
+};
+use tessera_text::Strings;
+use tessera_wstate::ObjectStore;
+
 use super::card::{Section, opt_text, opt_yes, yes};
 use super::{Built, Cx, Object, combat};
+use crate::data::LocalTables;
 
 /// A short name of an item kind.
 fn kind_name(k: ItemKind) -> &'static str {
@@ -138,6 +151,7 @@ pub(super) fn card(cx: &Cx<'_>, obj: &Object<'_>) -> Option<Built> {
     b.card.add(effects);
 
     b.card.add(requirements(cx, &view));
+    b.card.add(tooltip_preview(cx, obj.did));
 
     let mut sockets = Section::new(
         "Sockets (§5.11)",
@@ -199,6 +213,174 @@ pub(super) fn card(cx: &Cx<'_>, obj: &Object<'_>) -> Option<Built> {
         ("Usage requirements (§5.10)", schema.requirements.all()),
     ];
     Some(b)
+}
+
+/// The tooltip engine of the item cards over the explorer's install.
+type PreviewEngine = TooltipEngine<InstallTooltipData<'static, Arc<ArchiveSet>>>;
+
+/// The tooltip engine for the install of `cx`, built on the worker that first needs it
+/// and kept for the process (one per install directory; the engine caches layouts and
+/// records). Its own record store and strings share the explorer's archive set.
+fn preview_engine(cx: &Cx<'_>) -> Result<&'static PreviewEngine, String> {
+    static ENGINES: Mutex<Vec<(PathBuf, &'static PreviewEngine)>> = Mutex::new(Vec::new());
+    let mut engines = ENGINES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, e)) = engines.iter().find(|(d, _)| *d == cx.ctx.dir) {
+        return Ok(e);
+    }
+    let member = cx
+        .ctx
+        .local_member
+        .ok_or_else(|| "no language archive: no texts".to_owned())?;
+    let mut strings = Strings::new(LocalTables::new(Arc::clone(&cx.ctx.set), member));
+    if let Some(locale) = cx.ctx.strings.as_ref().and_then(Strings::locale) {
+        strings = strings.with_locale(locale.clone());
+    }
+    // The engine borrows its store for as long as it lives: both stay for the process.
+    let store: &'static GameDataStore<Arc<ArchiveSet>> = Box::leak(Box::new(GameDataStore::new(
+        ObjectStore::new(Arc::clone(&cx.ctx.set)),
+        Vec::new(),
+    )));
+    let data = InstallTooltipData::new(store, Arc::new(strings)).map_err(|e| e.to_string())?;
+    let engine: &'static PreviewEngine = Box::leak(Box::new(TooltipEngine::new(data)));
+    engines.push((cx.ctx.dir.clone(), engine));
+    Ok(engine)
+}
+
+/// A colour as `#AARRGGBB`, or a dash.
+fn colour_text(c: Option<u32>) -> String {
+    c.map_or_else(|| "—".to_owned(), |c| format!("#{c:08X}"))
+}
+
+/// Adds the shown rows of `row` (nested lists and pairs flattened) to the preview.
+fn preview_rows(s: &mut Section, row: &Row, depth: usize) {
+    let label = format!(
+        "{}{}",
+        "  ".repeat(depth),
+        row.label.as_deref().unwrap_or("(unlabelled)")
+    );
+    let state = row.state.clone().unwrap_or_default();
+    match &row.content {
+        RowContent::Lines { header, lines } => {
+            for l in header.iter().chain(lines) {
+                s.push(
+                    vec![
+                        label.clone(),
+                        l.text.plain_text(),
+                        colour_text(l.colour),
+                        l.state.clone().unwrap_or_default(),
+                    ],
+                    Vec::new(),
+                );
+            }
+        }
+        RowContent::List(rows) if depth < 4 => {
+            for r in rows.iter().filter(|r| !r.is_empty()) {
+                preview_rows(s, r, depth + 1);
+            }
+        }
+        RowContent::Pair { left, right } if depth < 4 => {
+            for r in [left, right]
+                .into_iter()
+                .flatten()
+                .filter(|r| !r.is_empty())
+            {
+                preview_rows(s, r, depth + 1);
+            }
+        }
+        RowContent::Separator => s.push(vec![label, "—".into(), String::new(), state], Vec::new()),
+        RowContent::Icon { item, .. } => s.push(
+            vec![label, format!("icon of {item}"), String::new(), state],
+            vec![item.0],
+        ),
+        RowContent::Image(d) => s.push(
+            vec![label, format!("image {d}"), String::new(), state],
+            vec![d.0],
+        ),
+        _ => s.push(
+            vec![label, row.plain_text(), colour_text(row.colour), state],
+            Vec::new(),
+        ),
+    }
+}
+
+fn preview_model(s: &mut Section, m: &TooltipModel) {
+    for r in m.shown_rows() {
+        preview_rows(s, r, 0);
+    }
+    for f in &m.failures {
+        s.push(
+            vec![
+                "row failure".into(),
+                format!("{}: {}", f.template, f.reason),
+                String::new(),
+                String::new(),
+            ],
+            Vec::new(),
+        );
+    }
+}
+
+/// The hover tooltip of the item for a viewer with no known class, race, level or
+/// equipment (`item-tooltips.md` §3–§8), row by row with its colours and states, then its
+/// attached comparison tooltips.
+fn tooltip_preview(cx: &Cx<'_>, did: Did) -> Section {
+    let mut s = Section::new(
+        "Tooltip preview (item-tooltips.md)",
+        &["row", "text", "colour", "state"],
+    );
+    let engine = match preview_engine(cx) {
+        Ok(e) => e,
+        Err(e) => {
+            s.push(
+                vec!["unavailable".into(), e, String::new(), String::new()],
+                Vec::new(),
+            );
+            return s;
+        }
+    };
+    match engine.build(&TooltipRequest::hover(did), &Viewer::default()) {
+        Ok(m) => {
+            if let Some(f) = &m.frame {
+                s.push(
+                    vec![
+                        "tooltip element".into(),
+                        format!(
+                            "{} in {} (width {})",
+                            f.label.as_deref().unwrap_or("?"),
+                            f.at.layout,
+                            m.assembly.width
+                        ),
+                        String::new(),
+                        String::new(),
+                    ],
+                    vec![f.at.layout.0],
+                );
+            }
+            preview_model(&mut s, &m);
+            for (slot, t) in &m.comparison.tooltips {
+                s.push(
+                    vec![
+                        "attached tooltip".into(),
+                        format!("{:?}, slot {slot:#x}", m.comparison.kind),
+                        String::new(),
+                        String::new(),
+                    ],
+                    Vec::new(),
+                );
+                preview_model(&mut s, t);
+            }
+        }
+        Err(e) => s.push(
+            vec![
+                "no tooltip".into(),
+                e.to_string(),
+                String::new(),
+                String::new(),
+            ],
+            Vec::new(),
+        ),
+    }
+    s
 }
 
 /// Value, DPS, damage and armour, read from the tables the item names (§9.2–§9.5).

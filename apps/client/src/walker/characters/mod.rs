@@ -64,13 +64,20 @@ use tessera_world::WorldPos;
 use tessera_world::draw_distance::{LodClasses, LodValues};
 
 use self::catalog::WeenieRole;
-use self::figure::{FigureAsset, FigureContext, FigureKey, FigureRequest, build_figure};
+use self::figure::{
+    FigureAsset, FigureContext, FigureKey, FigureRequest, LookChoices, build_figure_with_look,
+};
 use self::motion::{Locomotion, drive, make_animator};
 use super::UploadBudget;
 use super::geometry::{MaterialPlan, TexRequest};
 use super::objects::{ObjectLayer, surface_draw};
 use super::source::SourceShared;
 use super::view::{Anchor, Frustum};
+
+/// The entity ID of the character screens' figure ([`CharacterLayer::set_preview`]): the
+/// highest ID, which no session gives (the sandbox counts up from small IDs; the test-server
+/// backend's local IDs count up from 2⁶³).
+pub const PREVIEW_ID: EntityId = EntityId(u64::MAX);
 
 /// Most items of one appearance considered (equal to `tessera_net`'s limit).
 pub const MAX_EQUIPMENT: usize = tessera_net::model::MAX_EQUIPMENT;
@@ -297,6 +304,9 @@ struct Actor {
     /// Its fade was advanced in the previous frame: otherwise the fade restarts (the first
     /// frame of its state; `walker.md` §14.5 row W-O3).
     seen_before: bool,
+    /// The character screens' figure ([`CharacterLayer::set_preview`]): never drawn in
+    /// the world, always animated, drawn alone into the screens' viewport.
+    preview: bool,
 }
 
 struct GpuPart {
@@ -380,6 +390,8 @@ enum SlotState {
 struct Slot {
     key: Option<FigureKey>,
     request: Option<FigureRequest>,
+    /// The look choices built with the request.
+    look: LookChoices,
     generation: u64,
     refs: u32,
     unused_since: Option<Instant>,
@@ -446,6 +458,16 @@ pub struct CharacterLayer {
     distances: CharacterFrame,
     /// The LOD-class table (`walker.md` §11.4.3; `None`: missing).
     lod_classes: Option<Arc<LodClasses>>,
+    /// The install's creation controls per player avatar: the receiver rule of received
+    /// looks and their translation into figure choices (decision 0025 D2).
+    looks: Option<Arc<crate::screens::ScreenData>>,
+    /// The last appearance with a look of each entity whose figure is a playable body,
+    /// applied again when [`Self::looks`] changes.
+    look_appearances: HashMap<Entity, Appearance>,
+    /// [`Self::looks`] changed: the look appearances are applied again at the next events.
+    looks_changed: bool,
+    /// Look entries ignored by the receiver rule (for the rate-limited log).
+    look_ignored: u64,
 }
 
 impl std::fmt::Debug for CharacterLayer {
@@ -463,7 +485,66 @@ fn seed_of(id: EntityId) -> u32 {
     (x as u32) ^ ((x >> 32) as u32)
 }
 
+/// How far the figure of an entity has come ([`CharacterLayer::figure_of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FigureState {
+    /// Queued or building on the workers.
+    Pending,
+    /// Built: its parts (held parts included) and how many of them are held items.
+    Built {
+        /// Parts of the figure.
+        parts: usize,
+        /// Parts that are held items (`appearance.md` §8 step 9).
+        held: usize,
+    },
+    /// The build failed.
+    Failed,
+}
+
+/// The figure an entity has: what was requested and how far it has come.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureStatus {
+    /// The request (body, worn and held items with their slots).
+    pub request: FigureRequest,
+    /// The look choices of a received look or of the creation screen (styles, slider
+    /// string, appearance values).
+    pub look: LookChoices,
+    /// Its state.
+    pub state: FigureState,
+    /// What the species tables' look gave the built figure (`None` before it is built).
+    pub face: Option<figure::FaceSummary>,
+}
+
 impl CharacterLayer {
+    /// The figure entity `id` has (tests and tools; `None` without one).
+    #[must_use]
+    pub fn figure_of(&self, id: EntityId) -> Option<FigureStatus> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        let slot = self.actors.get(e)?.slot?;
+        let s = self.slots.get(slot as usize)?;
+        let count = |a: &FigureAsset| FigureState::Built {
+            parts: a.parts.len(),
+            held: a.parts.iter().filter(|p| p.held.is_some()).count(),
+        };
+        let state = match &s.state {
+            SlotState::Building(_) | SlotState::Queued => FigureState::Pending,
+            SlotState::Waiting(a, _) => count(a),
+            SlotState::Ready(g) => count(&g.asset),
+            SlotState::Failed | SlotState::Free => FigureState::Failed,
+        };
+        let face = match &s.state {
+            SlotState::Waiting(a, _) => Some(a.face.clone()),
+            SlotState::Ready(g) => Some(g.asset.face.clone()),
+            _ => None,
+        };
+        Some(FigureStatus {
+            request: s.request.clone()?,
+            look: s.look.clone(),
+            state,
+            face,
+        })
+    }
+
     /// A layer whose figure and sampling jobs run on `pool`.
     #[must_use]
     pub fn new(config: CharacterConfig, ctx: Arc<FigureContext>, pool: &WorkerPool) -> Self {
@@ -503,7 +584,68 @@ impl CharacterLayer {
             hide_player: false,
             distances: CharacterFrame::default(),
             lod_classes: None,
+            looks: None,
+            look_appearances: HashMap::new(),
+            looks_changed: false,
+            look_ignored: 0,
         }
+    }
+
+    /// The install's creation controls the received looks are read with (decision 0025
+    /// D2); figures already shown with a look are requested again when they change.
+    pub fn set_look_data(&mut self, data: Option<Arc<crate::screens::ScreenData>>) {
+        let same = match (&self.looks, &data) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.looks = data;
+        self.looks_changed = !self.look_appearances.is_empty();
+    }
+
+    /// The figure choices of `appearance`'s look (decision 0025 D2): its entries filtered
+    /// by the receiver rule (a property a creation control of the body's player avatar
+    /// writes in this install, with a matching value kind), then turned into heights,
+    /// styles, the slider string and the appearance values (colours, face layers, …) as
+    /// the creation screen's controls turn them, so the figure composes its face and tints
+    /// from them (`appearance.md` §3.5).
+    fn look_choices(&mut self, appearance: &Appearance) -> (Option<f32>, Option<f32>, LookChoices) {
+        let (Some(look), Some(data), Body::Character { species, sex }) =
+            (&appearance.look, &self.looks, appearance.body)
+        else {
+            return (None, None, LookChoices::default());
+        };
+        let Some(detail) = data.avatar(species, sex) else {
+            return (None, None, LookChoices::default());
+        };
+        let (accepted, ignored) = crate::screens::controls::accept_look(look, detail);
+        if ignored > 0 {
+            let before = self.look_ignored;
+            self.look_ignored = self.look_ignored.saturating_add(ignored as u64);
+            // Rate-limited: once per power of two of the running count.
+            if (before + 1..=self.look_ignored).any(u64::is_power_of_two) {
+                tracing::debug!(
+                    ignored,
+                    total = self.look_ignored,
+                    "look entries ignored by the receiver rule"
+                );
+            }
+        }
+        let mut choices = crate::screens::AppearanceChoices::default();
+        choices.apply_entries(detail, &accepted);
+        let spec = choices.character_spec(detail, &data.pids, species, sex);
+        (
+            spec.avatar_height,
+            spec.bone_scale,
+            LookChoices {
+                styles: spec.styles,
+                slider_values: spec.slider_values,
+                appearance_values: spec.appearance_values,
+            },
+        )
     }
 
     /// Counters of the last frame.
@@ -671,8 +813,8 @@ impl CharacterLayer {
     // ----- figures ---------------------------------------------------------------------
 
     /// Takes a reference to the figure of `req`, queueing its job when it is new.
-    fn acquire(&mut self, req: FigureRequest) -> u32 {
-        let key = req.key();
+    fn acquire(&mut self, req: FigureRequest, look: LookChoices) -> u32 {
+        let key = req.key_with(&look);
         if let Some(&slot) = self.by_key.get(&key) {
             let s = &mut self.slots[slot as usize];
             s.refs += 1;
@@ -685,6 +827,7 @@ impl CharacterLayer {
                 self.slots.push(Slot {
                     key: None,
                     request: None,
+                    look: LookChoices::default(),
                     generation: 0,
                     refs: 0,
                     unused_since: None,
@@ -697,6 +840,7 @@ impl CharacterLayer {
         s.generation += 1;
         s.key = Some(key.clone());
         s.request = Some(req);
+        s.look = look;
         s.refs = 1;
         s.unused_since = None;
         s.state = SlotState::Queued;
@@ -738,6 +882,7 @@ impl CharacterLayer {
             let Some(req) = s.request.clone() else {
                 continue;
             };
+            let look = s.look.clone();
             let token = CancelToken::new();
             let guard = JobGuard {
                 slot,
@@ -749,7 +894,7 @@ impl CharacterLayer {
                 .pool
                 .spawn(Priority::Visible, token.clone(), move |job| {
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        build_figure(&ctx, &req, &|| job.is_cancelled())
+                        build_figure_with_look(&ctx, &req, &look, &|| job.is_cancelled())
                     }));
                     guard.send(match r {
                         Ok(Ok(a)) => Ok(a),
@@ -1041,6 +1186,7 @@ impl CharacterLayer {
             fade: tessera_world::draw_distance::DrawFade::new(),
             seen: false,
             seen_before: false,
+            preview: false,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -1050,6 +1196,7 @@ impl CharacterLayer {
     }
 
     fn despawn(&mut self, e: Entity) {
+        self.look_appearances.remove(&e);
         if let Some(a) = self.actors.remove(e)
             && let Some(slot) = a.slot
         {
@@ -1071,6 +1218,12 @@ impl CharacterLayer {
         });
         let role = info.as_ref().and_then(|i| i.role);
         let hidden = matches!(role, Some(WeenieRole::Marker)) && !self.config.markers;
+        if appearance.look.is_some() && matches!(appearance.body, Body::Character { .. }) {
+            self.look_appearances.insert(e, appearance.clone());
+        } else {
+            self.look_appearances.remove(&e);
+        }
+        let (avatar_height, bone_scale, look) = self.look_choices(appearance);
         let req = FigureRequest {
             body: appearance.body,
             equipment: appearance
@@ -1087,14 +1240,15 @@ impl CharacterLayer {
                 .and_then(|i| i.instance.as_ref())
                 .and(actor.tag),
             static_only: matches!(role, Some(WeenieRole::Door | WeenieRole::Marker)),
-            avatar_height: None,
-            bone_scale: None,
+            avatar_height,
+            bone_scale,
             // `appearance.md` §7.4 Decision: a placed figure's script picks are seeded
             // from its instance ID.
             seed: info.as_ref().and_then(|i| i.iid),
+            chargen_stage: None,
         };
         let slot = (!hidden && matches!(req.body, Body::Character { .. } | Body::Object(_)))
-            .then(|| self.acquire(req));
+            .then(|| self.acquire(req, look));
         if let Some(old) = actor.slot {
             self.release(old);
         }
@@ -1130,6 +1284,17 @@ impl CharacterLayer {
                 self.despawn(e);
             }
             self.player = player;
+        }
+        if std::mem::take(&mut self.looks_changed) {
+            // The look data arrived (or changed): figures with a look are requested again.
+            let pending: Vec<(Entity, Appearance)> = self
+                .look_appearances
+                .iter()
+                .map(|(e, a)| (*e, a.clone()))
+                .collect();
+            for (e, a) in pending {
+                self.set_appearance(e, &a, shared);
+            }
         }
         for ev in events.drain(..) {
             match ev {
@@ -1374,12 +1539,14 @@ impl CharacterLayer {
                 continue;
             }
             // Beyond the animation distance a character keeps its last pose, but it gets
-            // one job for its first pose wherever it is (it is not drawn without one).
-            let near = eye.is_none_or(|eye| {
-                let dx = tf.position[0] - eye.x;
-                let dy = tf.position[1] - eye.y;
-                eye.region == a.region && dx.hypot(dy) <= far
-            });
+            // one job for its first pose wherever it is (it is not drawn without one). The
+            // screens' figure is always animated.
+            let near = a.preview
+                || eye.is_none_or(|eye| {
+                    let dx = tf.position[0] - eye.x;
+                    let dy = tf.position[1] - eye.y;
+                    eye.region == a.region && dx.hypot(dy) <= far
+                });
             if !near && scheduler.has_pose(anim.instance) {
                 continue;
             }
@@ -1550,7 +1717,7 @@ impl CharacterLayer {
                 continue;
             };
             let is_player = Some(a.net) == self.player;
-            if a.hidden {
+            if a.hidden || a.preview {
                 continue;
             }
             // A placed figure is either a character or a static instance, never both
@@ -1679,6 +1846,148 @@ impl CharacterLayer {
         self.stats.palette_ms = t.elapsed().as_secs_f64() * 1e3;
     }
 
+    /// The player's entity, once known.
+    #[must_use]
+    pub fn player_id(&self) -> Option<EntityId> {
+        self.player
+    }
+
+    /// Shows `job`'s figure as the character screens' figure (`character-screens.md` §2.1,
+    /// §6: the viewport follows the selection at once), or removes it (`None`). The figure
+    /// is the entity [`PREVIEW_ID`]: built on the asset workers like every other figure,
+    /// always animated, never drawn in the world; [`CharacterLayer::portrait_draws`] with
+    /// [`PREVIEW_ID`] draws it alone. A new request keeps the previous figure drawn until
+    /// the new one is on the GPU; an unchanged one costs a key comparison.
+    pub fn set_preview(&mut self, job: Option<(FigureRequest, LookChoices)>, now: Instant) {
+        let existing = self.store.entity_for(NetId(PREVIEW_ID.0));
+        let Some((req, look)) = job else {
+            if let Some(e) = existing {
+                self.despawn(e);
+                self.apply_changes();
+            }
+            return;
+        };
+        let e = match existing {
+            Some(e) => e,
+            None => {
+                let Some(e) = self.spawn(
+                    PREVIEW_ID,
+                    0,
+                    [0.0; 3],
+                    std::f32::consts::FRAC_PI_2,
+                    None,
+                    now,
+                ) else {
+                    return;
+                };
+                if let Some(a) = self.actors.get_mut(e) {
+                    a.snap = false;
+                    a.preview = true;
+                }
+                e
+            }
+        };
+        let key = req.key_with(&look);
+        let Some(old) = self.actors.get(e).map(|a| a.slot) else {
+            return;
+        };
+        let same = old
+            .and_then(|s| self.slots.get(s as usize))
+            .and_then(|s| s.key.as_ref())
+            .is_some_and(|k| *k == key);
+        if same {
+            return;
+        }
+        let slot = self.acquire(req, look);
+        if let Some(old) = old {
+            self.release(old);
+        }
+        if let Some(a) = self.actors.get_mut(e) {
+            a.slot = Some(slot);
+        }
+    }
+
+    /// The figure the character screens show ([`CharacterLayer::set_preview`]): what was
+    /// requested and how far it has come.
+    #[must_use]
+    pub fn preview(&self) -> Option<FigureStatus> {
+        self.figure_of(PREVIEW_ID)
+    }
+
+    /// The draws of entity `id`'s figure alone, as a portrait (the paperdoll viewport,
+    /// `character-panels.md` §3.2, `render.md` §6.10): at the origin, turned by `yaw`
+    /// radians about the vertical axis, with its current pose, unlit and opaque. Returns
+    /// the figure's bounding sphere (centre, radius) in that frame; `None` while the figure
+    /// is not on the GPU.
+    pub fn portrait_draws(
+        &self,
+        frame: &mut Frame,
+        id: EntityId,
+        yaw: f32,
+        objects: &ObjectLayer,
+        out: &mut Vec<MeshDraw>,
+    ) -> Option<(Vec3, f32)> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        let render = self.store.render(e)?;
+        let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+        else {
+            return None;
+        };
+        let scale = Vec3::from_array(g.asset.model_scale);
+        let scale = if scale.is_finite() && scale.min_element() > 0.0 {
+            scale
+        } else {
+            Vec3::ONE
+        };
+        let yaw = if yaw.is_finite() { yaw } else { 0.0 };
+        let world =
+            Mat4::from_scale_rotation_translation(scale, Quat::from_rotation_z(yaw), Vec3::ZERO);
+        let pose: Option<PoseView<'_>> = match self.store.anim(e) {
+            Some(anim) => self
+                .scheduler
+                .pose(anim.instance)
+                .map(|p| (p.skin.as_slice(), p.attach.as_slice())),
+            None => g
+                .rest
+                .as_ref()
+                .map(|r| (r.skin.as_slice(), r.attach.as_slice())),
+        };
+        let palette: Option<SkinPalette> = pose
+            .filter(|(skin, _)| !skin.is_empty())
+            .and_then(|(skin, _)| frame.skin_palette(skin).ok());
+        for part in &g.parts {
+            let transform = match part.held {
+                None => world,
+                Some(key) => {
+                    let Some(m) = pose.and_then(|(_, attach)| {
+                        attach.iter().find(|(k, _)| *k == key).map(|(_, m)| *m)
+                    }) else {
+                        continue;
+                    };
+                    world * m
+                }
+            };
+            for (i, plan) in part.plans.iter().enumerate() {
+                let Some((material, lit)) =
+                    surface_draw(plan, &|t| objects.texture(t), false, 1.0, false)
+                else {
+                    continue;
+                };
+                let mut d = MeshDraw::new(part.mesh, transform, material)
+                    .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
+                    .with_lit(lit);
+                if part.skinned
+                    && let Some(p) = palette
+                {
+                    d = d.with_skin(p);
+                }
+                out.push(d);
+            }
+        }
+        let centre = world.transform_point3(g.center);
+        Some((centre, g.radius * scale.max_element()))
+    }
+
     /// Frees every GPU resource and cancels outstanding work (shutdown).
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>, objects: &mut ObjectLayer) {
         let all: Vec<Entity> = self.actors.entities().to_vec();
@@ -1741,6 +2050,209 @@ mod tests {
             .filter(|s| !matches!(s.state, SlotState::Free))
             .map(|s| s.refs)
             .collect()
+    }
+
+    /// Look data for one playable body (species 0x0A01, male): a head style (property
+    /// 0x100, int; variants 0, 0.01, 0.02) and a body scale (0x102, float).
+    fn look_data() -> Arc<crate::screens::ScreenData> {
+        use crate::screens::controls::{
+            AvatarDetail, ControlChoices, ControlDetail, ControlValue, ScreenPids,
+        };
+        use tessera_formats::Did;
+        use tessera_gamedata::chargen::{
+            AppearanceControl, ChargenData, ControlKind, GenderEntry, RaceChoice, RaceRecord,
+        };
+        use tessera_net::PropertyKind;
+        let avatar = Did(0x7000_0A01);
+        let record = RaceRecord {
+            race: 0x0A01,
+            genders: vec![GenderEntry {
+                gender: tessera_gamedata::GENDER_MALE,
+                player_avatar: Some(avatar),
+                ..GenderEntry::default()
+            }],
+            ..RaceRecord::default()
+        };
+        let chargen = ChargenData {
+            races: vec![RaceChoice::from_record(Did(0x7000_00A0), record)],
+            ..ChargenData::default()
+        };
+        let control = |index, kind| AppearanceControl {
+            index,
+            availability: 1,
+            group: None,
+            kind,
+        };
+        let detail = AvatarDetail {
+            entity: Some(Did(0x4700_1000)),
+            controls: vec![
+                ControlDetail {
+                    control: control(
+                        0,
+                        ControlKind::Style {
+                            file: None,
+                            key: Some(0x1000_0009),
+                            script_property: Some(0x100),
+                        },
+                    ),
+                    writes: Some((0x100, PropertyKind::Int)),
+                    choices: ControlChoices::Styles {
+                        key: Some(0x1000_0009),
+                        variants: vec![0.0, 0.01, 0.02],
+                    },
+                    default: Some(ControlValue::Style(0)),
+                },
+                ControlDetail {
+                    control: control(
+                        1,
+                        ControlKind::BodyScale {
+                            min: Some(0.0),
+                            max: Some(1.0),
+                        },
+                    ),
+                    writes: Some((0x102, PropertyKind::Float)),
+                    choices: ControlChoices::Range { min: 0.0, max: 1.0 },
+                    default: Some(ControlValue::Float(0.5)),
+                },
+            ],
+            notes: Vec::new(),
+        };
+        Arc::new(crate::screens::ScreenData {
+            chargen,
+            names: None,
+            avatars: std::iter::once((avatar, detail)).collect(),
+            pids: ScreenPids {
+                bone_scale: Some(0x102),
+                ..ScreenPids::default()
+            },
+            stage_keys: crate::screens::data::StageKeys::default(),
+        })
+    }
+
+    /// `character-screens.md` §2.1, §6: the screens' figure is one entity of its own; an
+    /// unchanged request keeps its figure, a changed one takes a new figure and releases
+    /// the old, `None` removes it; it never enters the world's draws.
+    #[test]
+    fn the_screens_figure_follows_its_request() {
+        let mut l = layer();
+        let req = |stage: u32, height: Option<f32>| FigureRequest {
+            body: Body::Character {
+                species: 0x0A01,
+                sex: tessera_gamedata::GENDER_MALE,
+            },
+            equipment: Vec::new(),
+            instance: None,
+            instance_key: None,
+            static_only: false,
+            avatar_height: height,
+            bone_scale: None,
+            seed: None,
+            chargen_stage: Some(stage),
+        };
+        let look = LookChoices {
+            appearance_values: vec![(
+                0x101,
+                tessera_formats::PropertyValue::Colour([1, 2, 3, 255]),
+            )],
+            ..LookChoices::default()
+        };
+        assert!(l.preview().is_none());
+        l.set_preview(Some((req(6, None), look.clone())), Instant::now());
+        let p = l.preview().expect("the screens' figure");
+        assert_eq!(p.request.chargen_stage, Some(6));
+        assert_eq!(p.look, look);
+        assert_eq!(refs(&l), vec![1]);
+        // The same request again: the same figure, no new reference.
+        l.set_preview(Some((req(6, None), look.clone())), Instant::now());
+        assert_eq!(refs(&l), vec![1]);
+        // Another choice: a new figure; the old one is released.
+        l.set_preview(Some((req(6, Some(0.5)), look.clone())), Instant::now());
+        assert_eq!(refs(&l), vec![0, 1]);
+        assert_eq!(l.preview().unwrap().request.avatar_height, Some(0.5));
+        // Never a world figure: no tag, not a session entity, not the player.
+        assert!(l.placed().next().is_none());
+        assert!(l.player_id().is_none());
+        l.set_preview(None, Instant::now());
+        assert!(l.preview().is_none());
+        assert!(l.store().is_empty());
+    }
+
+    #[test]
+    fn received_looks_reach_the_figure_under_the_receiver_rule() {
+        use tessera_net::{Look, LookEntry, PropertyValue};
+        let mut l = layer();
+        let look = Look {
+            entries: vec![
+                LookEntry {
+                    property: 0x100,
+                    value: PropertyValue::Int(2),
+                },
+                // Not written by any control here: ignored.
+                LookEntry {
+                    property: 0x101,
+                    value: PropertyValue::Int(1),
+                },
+                LookEntry {
+                    property: 0x102,
+                    value: PropertyValue::Float(0.75),
+                },
+                // Not written either (a hostile peer's string): ignored.
+                LookEntry {
+                    property: 0x103,
+                    value: PropertyValue::String("x".into()),
+                },
+            ],
+        };
+        let appearance = Appearance::new(Body::Character {
+            species: 0x0A01,
+            sex: tessera_gamedata::GENDER_MALE,
+        })
+        .with_look(Some(look));
+        let event = |id: u64| Event::EntityCreated {
+            id: EntityId(id),
+            kind: EntityKind::Player,
+            name: String::new(),
+            class: None,
+            location: Location::new(RegionId(1), 100.0, 200.0, 5.0),
+            heading: 0.0,
+            appearance: Box::new(appearance.clone()),
+            tag: None,
+        };
+        // Before the look data: the race's default figure.
+        apply(&mut l, vec![event(5)], None);
+        let f = l.figure_of(EntityId(5)).expect("figure");
+        assert!(f.look.is_empty());
+        assert_eq!(f.request.bone_scale, None);
+        // The data arrives: the figure is requested again with the look.
+        l.set_look_data(Some(look_data()));
+        apply(&mut l, Vec::new(), None);
+        let f = l.figure_of(EntityId(5)).expect("figure");
+        assert_eq!(
+            f.look.styles,
+            vec![tessera_mesh::assembly::StyleChoice {
+                key: 0x1000_0009,
+                modifier: 0.02
+            }]
+        );
+        assert_eq!(f.request.bone_scale, Some(0.75));
+        assert_eq!(f.request.avatar_height, None);
+        // Every accepted value reaches the figure's script state (colours and face layers
+        // the same way), so the species tables compose and tint with it.
+        assert_eq!(
+            f.look.appearance_values,
+            vec![
+                (0x100, tessera_formats::PropertyValue::Int(2)),
+                (0x102, tessera_formats::PropertyValue::Float(0.75)),
+            ]
+        );
+        assert_eq!(f.request.chargen_stage, None, "a figure in the world");
+        // A second entity with the same look shares the figure.
+        apply(&mut l, vec![event(6)], None);
+        let a = l.figure_of(EntityId(6)).expect("figure");
+        assert_eq!(a.look, f.look);
+        assert_eq!(refs(&l).iter().filter(|r| **r > 0).count(), 1);
+        // Two ignored entries per look applied with the data (entities 5 and 6).
+        assert_eq!(l.look_ignored, 4);
     }
 
     #[test]

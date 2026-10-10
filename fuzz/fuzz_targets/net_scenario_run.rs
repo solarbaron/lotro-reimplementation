@@ -18,9 +18,9 @@ use tessera_net::model::{Anchor, Landblock, Location, RegionId};
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::scenario::{
     Alt, Candidate, CandidateOutcome, CandidateStatus, FilterValue, HeadlessDriver, LabelContext,
-    Scenario, SelectorQuery, SelectorResolver,
+    PropertyInfo, Scenario, SelectorQuery, SelectorResolver,
 };
-use tessera_net::{DataId, Session};
+use tessera_net::{DataId, PropertyKind, Session};
 
 /// Most ticks of one run (one hour at the default 50 ms tick).
 const MAX_TICKS: u64 = 72_000;
@@ -176,6 +176,36 @@ impl SelectorResolver for Bytes<'_> {
             b => Some(format!("Name {b}")),
         }
     }
+
+    // Revision 4 (§5.8, §8.6): property answers, kinds included, from the bytes too.
+    fn property(&mut self, _label: &str) -> Option<PropertyInfo> {
+        self.property_info(None)
+    }
+
+    fn property_by_id(&mut self, id: u32) -> Option<PropertyInfo> {
+        self.property_info(Some(id))
+    }
+}
+
+impl Bytes<'_> {
+    fn property_info(&mut self, id: Option<u32>) -> Option<PropertyInfo> {
+        if !self.install {
+            return None;
+        }
+        let b = self.u8();
+        if b == 0 {
+            return None;
+        }
+        let kind = PropertyKind::from_type_code(u32::from(self.u8() % 24));
+        // An ID unlike the one asked for, or 0, now and then (a misbehaving resolver).
+        let id = match (b, id) {
+            (1, _) => 0,
+            (2, Some(i)) => i.wrapping_add(1),
+            (_, Some(i)) => i,
+            (_, None) => 0x7000_0000 | u32::from(self.u16()),
+        };
+        Some(PropertyInfo { id, kind })
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -186,6 +216,11 @@ fuzz_target!(|data: &[u8]| {
     let Ok(scenario) = Scenario::parse(text) else {
         return;
     };
+    // The overlay check of §12.5.1 on every file that parses: a typed answer, no panic.
+    if let Err(e) = scenario.check_overlay() {
+        assert!(e.line >= 1 && e.column >= 1);
+    }
+    let _ = (scenario.uses_pid_forms(), scenario.property_labels().len());
     let mut resolver = Bytes::new(rest);
     let Ok(resolved) = scenario.resolve(&mut resolver) else {
         return;

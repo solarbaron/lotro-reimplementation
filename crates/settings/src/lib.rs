@@ -57,6 +57,9 @@
 //!
 //! * [`AudioSettings`] reads and writes the additive `[audio]` section (kept in
 //!   [`Settings::extra`]) and imports the original client's `[Sound]` volumes read-only.
+//! * [`CreatedCharacters`] reads and writes the `[[CreatedCharacters]]` array: the creation
+//!   choices of characters made on the creation screen, by server and name, kept where the
+//!   session cannot carry them (`character-screens.md` §7.1).
 //!
 //! All reads are bounded by [`MAX_FILE_SIZE`], the structural depth of a
 //! document by [`MAX_NESTING_DEPTH`], every list by its `MAX_*`
@@ -69,6 +72,7 @@
 pub use toml;
 
 mod audio;
+mod creation;
 mod error;
 mod graphics;
 mod input;
@@ -81,6 +85,11 @@ mod ui;
 pub use audio::{
     AudioSettings, MAX_CHANNEL_LABEL_LEN, MAX_CHANNEL_VOLUMES, MAX_PLAYING_SOUNDS_LIMIT,
     SECTION_AUDIO, SoundImport, audio_keys,
+};
+pub use creation::{
+    CREATED_SECTION, CreatedCharacters, CreationChoices, MAX_CREATED_CHARACTERS,
+    MAX_CREATED_SECTION_BYTES, MAX_KEY_BYTES, MAX_LOOK_STRING_BYTES, MAX_STORED_LOOK_ENTRIES,
+    StoredLookEntry, StoredValue,
 };
 pub use error::{LoadWarning, Result, SettingsError};
 pub use graphics::{AVATAR_UPDATE_VISIBLE_KEY, GRAPHICS_SECTION, GraphicsPrefs};

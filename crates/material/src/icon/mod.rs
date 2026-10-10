@@ -3,8 +3,14 @@
 //!
 //! Item icons are not stored as finished images: an object's property set names up to
 //! five layer surfaces, which are stacked bottom to top (Background, Underlay, Shadow,
-//! Image, Overlay) with straight-alpha source-over blending. Other icon families (skills,
-//! effects, traits, large item pictures) use the same machinery with one or two layers.
+//! Image, Overlay) with the client's integer source-over rule on stored values (§3.3).
+//! The canvas is a copy of the bottom layer and every further layer sits at its top-left
+//! corner (§3.4). Other icon families (skills, effects, traits, large item pictures) use
+//! the same machinery with one or two layers.
+//!
+//! Item quality plays no part in composition (§4): the Background the item names is drawn
+//! as it is, never substituted or tinted; its tile is the only quality cue of an icon (the
+//! quality colours the item's name, `item-tooltips.md` §6.2).
 //!
 //! The pieces, from high to low level:
 //!
@@ -12,15 +18,16 @@
 //! |---|---|---|
 //! | [`IconStack`] | Which surfaces make up an icon, in draw order, from a `name → DID` lookup | §2, §3.2, §5 |
 //! | [`IconComposer`], [`composer_over`] | Reads, decodes and caches layer surfaces from a closure or a [`crate::RecordSource`], then composes | §3.1 |
-//! | [`compose_images`], [`compose_images_with_limit`] | Composes already decoded layers: canvas rule, centring, clipping | §3.3, §3.4 |
+//! | [`compose_images`], [`compose_images_with_limit`] | Composes already decoded layers: bottom-layer canvas, top-left placement, clipping | §3.3, §3.4 |
 //! | [`decode_layer`], [`decode_layer_with_limit`] | One surface record → straight-alpha RGBA8, with a size limit | §2.3, §3.1 |
-//! | [`source_over`], [`draw_over`], [`draw_centred`] | The blend operator and placement | §3.3, §3.4 |
+//! | [`source_over`], [`draw_over`] | The blend operator and placement | §3.3, §3.4 |
 //!
-//! A layer that is missing, cannot be read, does not decode, has no pixels or is too
-//! large is logged and left out; composition goes on without it (§3.1). An override that
-//! is absent gives way to its base layer (§5.6). A fully transparent layer counts as
-//! absent too (§8). The outcome of every layer is reported in
-//! [`Composition::layers`].
+//! A layer above the bottom that is missing, cannot be read, does not decode, has no
+//! pixels or is too large is logged and left out; composition goes on without it (§3.1).
+//! When the **bottom** layer is missing or unreadable there is no icon (§3.1). A fully
+//! transparent layer above the bottom changes nothing (§3.3 step 1, IL7) and is not
+//! blended; a transparent bottom layer still sets the canvas. The outcome of every layer is
+//! reported in [`Composition::layers`].
 //!
 //! ```
 //! use tessera_formats::{Did, RgbaImage};
@@ -130,19 +137,15 @@ pub fn decode_layer_with_limit(did: Did, payload: &[u8], max_dimension: u32) -> 
     Ok(image)
 }
 
-/// The canvas size of a stack (`icon-layers.md` §3.4): the first Background layer's
-/// size when there is one, otherwise the largest width and the largest height among the
-/// layers. Entries with no pixels (width or height 0) are absent and ignored. `None` for
-/// no (non-empty) layers.
+/// The canvas size of a stack (`icon-layers.md` §3.4): the bottom layer's size, that is
+/// the first entry's. `None` for no layers, and for a bottom layer with width or height 0,
+/// which cannot be loaded and so means no icon (§3.1).
 #[must_use]
 pub fn canvas_size(layers: &[(LayerRole, (u32, u32))]) -> Option<(u32, u32)> {
-    let present = || layers.iter().filter(|(_, (w, h))| *w > 0 && *h > 0);
-    if let Some((_, size)) = present().find(|(r, _)| *r == LayerRole::Background) {
-        return Some(*size);
-    }
-    let w = present().map(|(_, (w, _))| *w).max()?;
-    let h = present().map(|(_, (_, h))| *h).max()?;
-    Some((w, h))
+    layers
+        .first()
+        .map(|(_, size)| *size)
+        .filter(|(w, h)| *w > 0 && *h > 0)
 }
 
 /// Composes decoded layers, bottom first (`icon-layers.md` §3.3, §3.4), with the default
@@ -153,11 +156,13 @@ pub fn compose_images(layers: &[(LayerRole, &RgbaImage)]) -> Result<Option<RgbaI
 
 /// Composes decoded layers, bottom first (`icon-layers.md` §3.3, §3.4).
 ///
-/// A layer with no pixels (width or height 0) or with alpha 0 at every pixel is taken
-/// as absent (§3.1, §8: the same result as leaving it out); it neither sets the canvas
-/// size nor is drawn. The canvas starts fully transparent and has the size given by
-/// [`canvas_size`] over the remaining layers. Each layer is centred (offset
-/// ⌊(canvas − layer) / 2⌋ per axis, clipped) and drawn with [`source_over`].
+/// The first entry is the bottom layer: when it has no pixels (width or height 0) it
+/// cannot be loaded and the result is no icon (§3.1), as [`IconComposer::compose`] gives
+/// for a bottom entry it cannot load. A further layer with no pixels is absent. The
+/// canvas is an exact copy of the bottom layer (its size, its pixels; §3.3 "Bottom
+/// layer", §3.4), even when it is transparent. Every further layer is drawn with [`source_over`]
+/// with its top-left corner on the canvas's top-left corner, clipped to the canvas (§3.4);
+/// a further layer with alpha 0 everywhere changes nothing (§3.3 step 1) and is skipped.
 ///
 /// Returns `Ok(None)` when no layer remains ("no icon"), and an error for a malformed
 /// image, an image above `max_dimension` (clamped to `1..=`[`MAX_LAYER_DIMENSION_CEILING`]),
@@ -173,43 +178,40 @@ pub fn compose_images_with_limit(
             limit: MAX_STACK_LAYERS,
         });
     }
-    let mut visible = Vec::with_capacity(layers.len());
-    for &(role, image) in layers {
+    let mut visible: Vec<(LayerRole, &RgbaImage)> = Vec::with_capacity(layers.len());
+    for &(_, image) in layers {
         validate_image(image)?;
         check_dims(image.width, image.height, limit)?;
-        if image.width > 0 && image.height > 0 && !is_fully_transparent(image) {
+    }
+    for (i, &(role, image)) in layers.iter().enumerate() {
+        let empty = image.width == 0 || image.height == 0;
+        if i == 0 {
+            if empty {
+                return Ok(None);
+            }
+            visible.push((role, image));
+        } else if !empty && !is_fully_transparent(image) {
             visible.push((role, image));
         }
     }
     compose_visible(&visible)
 }
 
-/// Composes layers that are valid, within the size limit, non-empty and not fully
-/// transparent.
+/// Composes layers that are valid, within the size limit and non-empty, bottom first: the
+/// canvas is a copy of the first, the others are drawn at (0, 0) (§3.3, §3.4).
 fn compose_visible(layers: &[(LayerRole, &RgbaImage)]) -> Result<Option<RgbaImage>> {
-    let sizes: Vec<(LayerRole, (u32, u32))> = layers
-        .iter()
-        .map(|(role, image)| (*role, (image.width, image.height)))
-        .collect();
-    let Some((w, h)) = canvas_size(&sizes) else {
+    let Some(((_, bottom), rest)) = layers.split_first() else {
         return Ok(None);
     };
-    let mut canvas = blank(w, h);
-    for (_, image) in layers {
-        draw_centred(&mut canvas, image)?;
+    validate_image(bottom)?;
+    if bottom.width == 0 || bottom.height == 0 {
+        return Ok(None);
+    }
+    let mut canvas = (*bottom).clone();
+    for (_, image) in rest {
+        draw_over(&mut canvas, image, 0, 0)?;
     }
     Ok(Some(canvas))
-}
-
-/// A fully transparent canvas. Sizes are bounded by [`MAX_LAYER_DIMENSION_CEILING`] by
-/// the callers, so the buffer is at most 256 MiB (16 MiB at the default limit).
-fn blank(width: u32, height: u32) -> RgbaImage {
-    let len = usize::try_from(u64::from(width) * u64::from(height) * 4).unwrap_or(0);
-    RgbaImage {
-        width,
-        height,
-        pixels: vec![0; len],
-    }
 }
 
 /// What happened to one layer of a stack.
@@ -223,8 +225,8 @@ pub enum LayerStatus {
         height: u32,
     },
     /// The layer decoded but is transparent at every pixel (for example the shared
-    /// placeholder surface, §2.3). It is treated as absent (§8): it does not count for the
-    /// canvas size and is not blended.
+    /// placeholder surface, §2.3). Above the bottom it changes nothing and is not blended
+    /// (§3.3 step 1, IL7); as the bottom layer it still sets the canvas (§3.4).
     Transparent {
         /// Layer width.
         width: u32,
@@ -232,7 +234,7 @@ pub enum LayerStatus {
         height: u32,
     },
     /// The layer was left out: missing, unreadable, undecodable, empty or too large
-    /// (§3.1).
+    /// (§3.1). For the bottom layer this means no icon.
     Skipped(MaterialError),
 }
 
@@ -506,20 +508,35 @@ where
 
     /// Composes `stack` (`icon-layers.md` §3).
     ///
-    /// Every entry is read and decoded; an override that is absent gives way to its base
-    /// layer ([`StackEntry::fallback`]), and a layer that is still absent is logged at
-    /// debug level and left out (§3.1). The remaining layers are composed with
-    /// [`compose_images`] rules (fully transparent layers count as absent) under this
-    /// composer's size limit. `image` is `None` when no layer is left.
+    /// Every entry is read and decoded; an entry that is absent gives way to its
+    /// [`StackEntry::fallback`] when it has one (caller-built stacks), and a layer that is
+    /// still absent is logged at debug level. The stack's first entry is the bottom layer:
+    /// when it is absent there is **no icon** (§3.1). Absent layers above it are left out;
+    /// the rest are composed with [`compose_images`] rules (the canvas is a copy of the
+    /// bottom layer, even a transparent one; fully transparent layers above it change
+    /// nothing) under this composer's size limit.
     pub fn compose(&self, stack: &IconStack) -> Composition {
         let mut outcomes = Vec::with_capacity(stack.len());
         let mut drawn: Vec<(LayerRole, Arc<CachedLayer>)> = Vec::with_capacity(stack.len());
-        for &entry in stack.entries() {
+        let mut bottom_missing = false;
+        for (i, &entry) in stack.entries().iter().enumerate() {
             let (outcome, layer) = self.resolve_entry(entry);
-            if let Some(layer) = layer.filter(|l| !l.transparent) {
-                drawn.push((outcome.entry.role, layer));
+            match layer {
+                Some(layer) if i == 0 || !layer.transparent => {
+                    drawn.push((outcome.entry.role, layer));
+                }
+                Some(_) => {}
+                None if i == 0 => bottom_missing = true,
+                None => {}
             }
             outcomes.push(outcome);
+        }
+        if bottom_missing {
+            tracing::debug!("icon bottom layer left out: no icon");
+            return Composition {
+                image: None,
+                layers: outcomes,
+            };
         }
         let refs: Vec<(LayerRole, &RgbaImage)> =
             drawn.iter().map(|(r, l)| (*r, l.image.as_ref())).collect();

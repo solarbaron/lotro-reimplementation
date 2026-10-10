@@ -6,7 +6,7 @@ use super::select::{Family, Filter, LabelContext};
 use crate::domain::{
     CastKind, CastOutcome, Container, CraftOutcome, DeltaKind, HitResult, QuestStatus, Side,
 };
-use crate::model::{DataId, EntityKind};
+use crate::model::{DataId, EntityKind, PropertyKind};
 
 /// An element `$sel[i]` of a selector binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub(crate) struct LabelSite {
     pub label: String,
     pub line: u32,
     pub col: u32,
-    /// The option key: `class`, `species`, `sex`, `slot` or `type`.
+    /// The option key: `class`, `species`, `sex`, `slot`, `type` or `nationality`.
     pub attribute: &'static str,
 }
 
@@ -225,6 +225,66 @@ pub(crate) struct CharDetails {
     pub level: Option<u32>,
     pub species: Option<EnumArg>,
     pub sex: Option<EnumArg>,
+    pub look: Option<LookArg>,
+}
+
+/// `look=` of a character (§5.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LookArg {
+    /// A look binding (index into [`Program::looks`]).
+    Binding(u32),
+    /// `look=asked` (`accept-character` only): the look of the command that fired.
+    Asked,
+}
+
+/// The property of a property value (§5.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PropKey {
+    /// `@Label`, resolved with `property`.
+    Label(String),
+    /// `pid:N:KIND`.
+    Pid(u32, PropertyKind),
+}
+
+/// The value form of a property value as written (§5.8).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PValue {
+    /// `yes` / `no`.
+    Bool(bool),
+    /// An integer and whether it was written in `0x` hexadecimal.
+    Int(i128, bool),
+    /// A decimal with a fraction part.
+    Decimal(f64),
+    /// A string.
+    Str(String),
+    /// An element.
+    Element(Element),
+    /// One label or `@A|@B|…`.
+    Labels(Vec<String>),
+    /// `rgba:R,G,B,A`.
+    Colour([u8; 4]),
+    /// `none`.
+    None,
+}
+
+/// One property value `PROPERTY=VALUE` (§5.8); index into [`Program::props`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PropSite {
+    pub line: u32,
+    pub col: u32,
+    pub key: PropKey,
+    pub value: PValue,
+    /// Inside a `look` declaration (look rules apply).
+    pub in_look: bool,
+}
+
+/// A `look` declaration (§5.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LookDecl {
+    pub name: String,
+    pub line: u32,
+    /// Indices into [`Program::props`], in line order.
+    pub props: Vec<u32>,
 }
 
 /// One step verb with its arguments (§6).
@@ -286,6 +346,15 @@ pub(crate) enum Verb {
         reason: TextArg,
     },
     AcceptCharacter(CharDetails),
+    RemoveCharacter(String),
+    Stat {
+        entity: EntityArg,
+        prop: u32,
+    },
+    ItemProperty {
+        item: u32,
+        prop: u32,
+    },
     Target {
         entity: EntityArg,
         target: Option<EntityArg>,
@@ -714,6 +783,8 @@ pub(crate) enum InputCmd {
         name: String,
         class: Option<EnumArg>,
         body: Option<(EnumArg, EnumArg)>,
+        nationality: Option<EnumArg>,
+        look: Option<u32>,
     },
     DeleteCharacter(String),
     Close(WindowKind),
@@ -821,4 +892,10 @@ pub(crate) struct Program {
     pub input: Vec<InputLine>,
     pub labels: Vec<LabelSite>,
     pub cuts: Vec<CutSite>,
+    /// Look declarations (§5.8).
+    pub looks: Vec<LookDecl>,
+    /// Every property value, in line and token order (§5.8).
+    pub props: Vec<PropSite>,
+    /// The first statement outside the overlay subset (§12.5.1): line and column.
+    pub overlay_violation: Option<(u32, u32)>,
 }

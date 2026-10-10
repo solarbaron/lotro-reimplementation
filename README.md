@@ -71,6 +71,14 @@ plays scripted gameplay events on a virtual clock and writes the same event log 
 run, scenario selectors resolve against the user's install, the scenario parser is fuzzed,
 and CI checks that `tessera-server` links no data-decoding crate; the scenario-feed spec still
 waits for an independent re-review before it can be Accepted.
+**P1 (characters, inventory and equipment) is in its exit phase**
+([P1 status](docs/ROADMAP.md#p1-status)): with `--character-select` the selection and
+creation screens offer every race, gender, class and appearance control of the install, and
+made characters enter the world, offline or on a test server that passes their look on; the
+character panel with its paperdoll and the bag windows show scripted inventory, every one of
+151,230 item records gets its examination tooltip or a category, equipping changes the worn
+look, and plugins read `GetBackpack()` and `GetEquipment()`. Still open: the creation
+viewport's figure is not drawn, and colours and face layers of a look are not applied.
 
 | Area | State |
 |---|---|
@@ -95,6 +103,7 @@ waits for an independent re-review before it can be Accepted.
 | UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
+| Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

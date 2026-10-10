@@ -749,6 +749,295 @@ pub const MAX_APPEARANCE_SCALE: f32 = 100.0;
 /// fractions and 1.0 is the base look (`docs/specs/appearance.md` §4.9).
 pub const MAX_DYE_CODE: f32 = 1.0;
 
+/// Largest equipment slot key of [`Equipped::slot`] (keys are 1 ..= 64, the data's
+/// equipment slot keys, decision 0025 D3).
+pub const MAX_EQUIP_SLOT: u8 = 64;
+
+/// Most entries of a [`Look`] (decision 0025 D2).
+pub const MAX_LOOK_ENTRIES: usize = 48;
+
+/// Largest encoded size of a [`Look`]: one count byte, then per entry a 4-byte property ID
+/// and the tagged value (`tessera-protocol.md` §5.3).
+pub const MAX_LOOK_BYTES: usize = 768;
+
+/// Longest [`PropertyValue::String`] inside a look (each byte U+0021 ..= U+007E).
+pub const MAX_LOOK_STRING_LEN: usize = 128;
+
+/// Longest [`PropertyValue::String`] elsewhere (`scenario-feed.md` §9.1).
+pub const MAX_PROPERTY_STRING_LEN: usize = 256;
+
+/// The value kind of a data property (`scenario-feed.md` §5.8, §9.1): Tessera's names for
+/// the dictionary's type codes the feed supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PropertyKind {
+    /// Type code 21.
+    Bool,
+    /// Type code 15: 32-bit signed integer.
+    Int,
+    /// Type code 19: 64-bit signed integer.
+    Int64,
+    /// Type code 9: 32-bit float.
+    Float,
+    /// Type code 8: an enum key.
+    Enum,
+    /// Type code 18.
+    Bitfield32,
+    /// Type code 14.
+    Bitfield64,
+    /// Type code 20: a data ID.
+    Did,
+    /// Type code 1.
+    String,
+    /// Type code 7: a 64-bit instance ID.
+    Instance,
+    /// Type code 16: RGBA colour.
+    Colour,
+    /// Every other type code: values are dropped.
+    Unsupported,
+}
+
+impl PropertyKind {
+    /// The kind of a dictionary type code (`property-system.md` §3, as `scenario-feed.md`
+    /// §5.8 lists it); every code not listed is [`Unsupported`](Self::Unsupported).
+    #[must_use]
+    pub fn from_type_code(code: u32) -> Self {
+        match code {
+            21 => Self::Bool,
+            15 => Self::Int,
+            19 => Self::Int64,
+            9 => Self::Float,
+            8 => Self::Enum,
+            18 => Self::Bitfield32,
+            14 => Self::Bitfield64,
+            20 => Self::Did,
+            1 => Self::String,
+            7 => Self::Instance,
+            16 => Self::Colour,
+            _ => Self::Unsupported,
+        }
+    }
+
+    /// The keyword of the scenario format (`bool`, `int`, …; `unsupported` for the rest).
+    #[must_use]
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::Int64 => "int64",
+            Self::Float => "float",
+            Self::Enum => "enum",
+            Self::Bitfield32 => "bitfield32",
+            Self::Bitfield64 => "bitfield64",
+            Self::Did => "did",
+            Self::String => "string",
+            Self::Instance => "instance",
+            Self::Colour => "colour",
+            Self::Unsupported => "unsupported",
+        }
+    }
+
+    /// The kind a scenario keyword names (not `unsupported`).
+    #[must_use]
+    pub fn from_keyword(s: &str) -> Option<Self> {
+        Some(match s {
+            "bool" => Self::Bool,
+            "int" => Self::Int,
+            "int64" => Self::Int64,
+            "float" => Self::Float,
+            "enum" => Self::Enum,
+            "bitfield32" => Self::Bitfield32,
+            "bitfield64" => Self::Bitfield64,
+            "did" => Self::Did,
+            "string" => Self::String,
+            "instance" => Self::Instance,
+            "colour" => Self::Colour,
+            _ => return None,
+        })
+    }
+}
+
+/// A scripted or chosen value of a data property (`scenario-feed.md` §9.1). Opaque to
+/// `tessera-net`: the client half applies it.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PropertyValue {
+    /// A boolean.
+    Bool(bool),
+    /// A 32-bit integer.
+    Int(i32),
+    /// A 64-bit integer.
+    Int64(i64),
+    /// A finite float.
+    Float(f32),
+    /// An enum key.
+    Enum(u32),
+    /// A 32-bit mask.
+    Bitfield32(u32),
+    /// A 64-bit mask.
+    Bitfield64(u64),
+    /// A data ID.
+    Did(DataId),
+    /// At most [`MAX_PROPERTY_STRING_LEN`] bytes, no control characters.
+    String(String),
+    /// A 64-bit instance ID (never in a look).
+    Instance(u64),
+    /// Red, green, blue, alpha.
+    Colour([u8; 4]),
+}
+
+impl PropertyValue {
+    /// The value's kind.
+    #[must_use]
+    pub fn kind(&self) -> PropertyKind {
+        match self {
+            Self::Bool(_) => PropertyKind::Bool,
+            Self::Int(_) => PropertyKind::Int,
+            Self::Int64(_) => PropertyKind::Int64,
+            Self::Float(_) => PropertyKind::Float,
+            Self::Enum(_) => PropertyKind::Enum,
+            Self::Bitfield32(_) => PropertyKind::Bitfield32,
+            Self::Bitfield64(_) => PropertyKind::Bitfield64,
+            Self::Did(_) => PropertyKind::Did,
+            Self::String(_) => PropertyKind::String,
+            Self::Instance(_) => PropertyKind::Instance,
+            Self::Colour(_) => PropertyKind::Colour,
+        }
+    }
+
+    /// True when a float is finite and a string is at most [`MAX_PROPERTY_STRING_LEN`]
+    /// bytes without control characters.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::Float(v) => v.is_finite(),
+            Self::String(s) => {
+                s.len() <= MAX_PROPERTY_STRING_LEN && !s.chars().any(char::is_control)
+            }
+            _ => true,
+        }
+    }
+
+    /// True when the value may stand in a [`Look`]: valid, not an instance, and a string
+    /// is 0 ..= [`MAX_LOOK_STRING_LEN`] bytes of U+0021 ..= U+007E.
+    #[must_use]
+    pub fn is_look_value(&self) -> bool {
+        match self {
+            Self::Instance(_) => false,
+            Self::String(s) => is_look_string(s),
+            other => other.is_valid(),
+        }
+    }
+
+    /// Bytes of the value's tagged encoding in a look (`tessera-protocol.md` §5.3: a tag
+    /// byte, then the payload; a string has a 2-byte length).
+    #[must_use]
+    pub fn look_encoded_len(&self) -> usize {
+        1 + match self {
+            Self::Bool(_) => 1,
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Enum(_)
+            | Self::Did(_)
+            | Self::Bitfield32(_)
+            | Self::Colour(_) => 4,
+            Self::Int64(_) | Self::Bitfield64(_) | Self::Instance(_) => 8,
+            Self::String(s) => 2 + s.len(),
+        }
+    }
+}
+
+/// Whether `s` is a valid look string: at most [`MAX_LOOK_STRING_LEN`] bytes, each
+/// U+0021 ..= U+007E (printable ASCII without space).
+#[must_use]
+pub fn is_look_string(s: &str) -> bool {
+    s.len() <= MAX_LOOK_STRING_LEN && s.bytes().all(|b| (0x21..=0x7E).contains(&b))
+}
+
+/// One entry of a [`Look`]: a data property ID of the user's install and its value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookEntry {
+    /// The property ID, non-zero.
+    pub property: u32,
+    /// The value (never [`PropertyValue::Instance`]).
+    pub value: PropertyValue,
+}
+
+/// A character's creation choices (decision 0025 D2, `scenario-feed.md` §9.1): 1 ..=
+/// [`MAX_LOOK_ENTRIES`] entries with strictly ascending property IDs, at most
+/// [`MAX_LOOK_BYTES`] encoded. Opaque to `tessera-net` and to the test server; a client
+/// applies an entry only under `tessera-protocol.md` §7.4 "Receiving a look".
+#[derive(Debug, Clone, PartialEq)]
+pub struct Look {
+    /// The entries, `property` strictly ascending.
+    pub entries: Vec<LookEntry>,
+}
+
+impl Look {
+    /// The encoded size: one count byte, then per entry 4 bytes of ID and the tagged value.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        1 + self
+            .entries
+            .iter()
+            .map(|e| 4 + e.value.look_encoded_len())
+            .sum::<usize>()
+    }
+
+    /// True when the look has 1 ..= [`MAX_LOOK_ENTRIES`] entries, non-zero strictly
+    /// ascending IDs, look values only, and fits [`MAX_LOOK_BYTES`].
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let mut last = 0u32;
+        !self.entries.is_empty()
+            && self.entries.len() <= MAX_LOOK_ENTRIES
+            && self.entries.iter().all(|e| {
+                let ok = e.property > last && e.value.is_look_value();
+                last = e.property;
+                ok
+            })
+            && self.encoded_len() <= MAX_LOOK_BYTES
+    }
+
+    /// The canonical look of `entries` (`scenario-feed.md` §5.8): entries that are not look
+    /// values or have property 0 are left out, the rest sorted by property ID, of two with
+    /// the same ID the later one kept, then entries removed from the highest ID down until
+    /// the encoding fits [`MAX_LOOK_BYTES`] and the count [`MAX_LOOK_ENTRIES`]. Returns the
+    /// look (`None` when no entry is left), the property IDs dropped as duplicates (in
+    /// input order) and the number of entries cut for size.
+    #[must_use]
+    pub fn canonical(entries: Vec<LookEntry>) -> (Option<Self>, Vec<u32>, usize) {
+        let mut indexed: Vec<(usize, LookEntry)> = entries
+            .into_iter()
+            .filter(|e| e.property != 0 && e.value.is_look_value())
+            .enumerate()
+            .collect();
+        // Stable by property, then input order; keep the last of each property.
+        indexed.sort_by_key(|(i, e)| (e.property, *i));
+        let mut dup: Vec<(usize, u32)> = Vec::new();
+        let mut kept: Vec<LookEntry> = Vec::with_capacity(indexed.len());
+        let mut iter = indexed.into_iter().peekable();
+        while let Some((i, e)) = iter.next() {
+            if iter.peek().is_some_and(|(_, n)| n.property == e.property) {
+                dup.push((i, e.property));
+            } else {
+                kept.push(e);
+            }
+        }
+        dup.sort_unstable();
+        let mut look = Self { entries: kept };
+        let mut cut = 0;
+        while !look.entries.is_empty()
+            && (look.encoded_len() > MAX_LOOK_BYTES || look.entries.len() > MAX_LOOK_ENTRIES)
+        {
+            look.entries.pop();
+            cut += 1;
+        }
+        let dup = dup.into_iter().map(|(_, p)| p).collect();
+        ((!look.entries.is_empty()).then_some(look), dup, cut)
+    }
+}
+
 /// What a figure's body is, in Tessera's neutral terms. The values are the
 /// data's own (enum keys and record DIDs, opaque to this crate); the client
 /// resolves them to geometry and clips.
@@ -781,10 +1070,14 @@ pub struct Equipped {
     pub secondary_dye: Option<f32>,
     /// Held items: stowed (sheathed) instead of in the hand.
     pub stowed: bool,
+    /// The data's equipment slot key (1 ..= [`MAX_EQUIP_SLOT`]) that holds the item, when
+    /// known (decision 0025 D3). Lets an item that fits either hand say which hand holds it;
+    /// without it the client half applies its own rule (`character-panels.md` §7).
+    pub slot: Option<u8>,
 }
 
 impl Equipped {
-    /// An item with its default dyes, in the hand when held.
+    /// An item with its default dyes, in the hand when held, without a slot.
     #[must_use]
     pub const fn new(item: DataId) -> Self {
         Self {
@@ -792,15 +1085,26 @@ impl Equipped {
             dye: None,
             secondary_dye: None,
             stowed: false,
+            slot: None,
         }
     }
 
-    /// True when both dye codes are absent or finite within `0 ..= MAX_DYE_CODE`.
+    /// The same item held by equipment slot key `slot`.
+    #[must_use]
+    pub const fn in_slot(mut self, slot: u8) -> Self {
+        self.slot = Some(slot);
+        self
+    }
+
+    /// True when both dye codes are absent or finite within `0 ..= MAX_DYE_CODE` and the
+    /// slot, when present, is 1 ..= [`MAX_EQUIP_SLOT`].
     #[must_use]
     pub fn is_valid(&self) -> bool {
         let ok =
             |d: Option<f32>| d.is_none_or(|v| v.is_finite() && (0.0..=MAX_DYE_CODE).contains(&v));
-        ok(self.dye) && ok(self.secondary_dye)
+        ok(self.dye)
+            && ok(self.secondary_dye)
+            && self.slot.is_none_or(|s| (1..=MAX_EQUIP_SLOT).contains(&s))
     }
 }
 
@@ -818,10 +1122,12 @@ pub struct Appearance {
     /// The data's starting-idle animation value (an enum key), if the figure
     /// has one (`docs/specs/appearance.md` §7.2).
     pub idle: Option<u32>,
+    /// A character's creation choices, when known (decision 0025 D2).
+    pub look: Option<Box<Look>>,
 }
 
 impl Appearance {
-    /// A body at scale 1 with nothing equipped.
+    /// A body at scale 1 with nothing equipped and no look.
     #[must_use]
     pub fn new(body: Body) -> Self {
         Self {
@@ -829,7 +1135,15 @@ impl Appearance {
             scale: 1.0,
             equipment: Vec::new(),
             idle: None,
+            look: None,
         }
+    }
+
+    /// The same appearance with `look`.
+    #[must_use]
+    pub fn with_look(mut self, look: Option<Look>) -> Self {
+        self.look = look.map(Box::new);
+        self
     }
 
     /// The same appearance with `item` equipped.
@@ -840,7 +1154,8 @@ impl Appearance {
     }
 
     /// True when the scale is finite and in range, there are at most
-    /// [`MAX_EQUIPMENT`] items and every item [is valid](Equipped::is_valid).
+    /// [`MAX_EQUIPMENT`] items, every item [is valid](Equipped::is_valid) and the look,
+    /// when present, [is valid](Look::is_valid).
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.scale.is_finite()
@@ -848,5 +1163,84 @@ impl Appearance {
             && self.scale <= MAX_APPEARANCE_SCALE
             && self.equipment.len() <= MAX_EQUIPMENT
             && self.equipment.iter().all(Equipped::is_valid)
+            && self.look.as_ref().is_none_or(|l| l.is_valid())
+    }
+}
+
+#[cfg(test)]
+mod look_tests {
+    use super::*;
+
+    fn entry(property: u32, value: PropertyValue) -> LookEntry {
+        LookEntry { property, value }
+    }
+
+    #[test]
+    fn canonical_sorts_dedups_and_cuts() {
+        let (look, dups, cut) = Look::canonical(vec![
+            entry(3, PropertyValue::Int(1)),
+            entry(1, PropertyValue::Bool(true)),
+            entry(3, PropertyValue::Int(2)),
+            entry(0, PropertyValue::Int(9)),
+            entry(4, PropertyValue::Instance(1)),
+            entry(5, PropertyValue::String("a b".into())),
+        ]);
+        let look = look.unwrap();
+        assert_eq!(
+            look.entries,
+            vec![
+                entry(1, PropertyValue::Bool(true)),
+                entry(3, PropertyValue::Int(2))
+            ]
+        );
+        assert_eq!(dups, vec![3]);
+        assert_eq!(cut, 0);
+        assert!(look.is_valid());
+        // 7 strings of 120 bytes: 890 bytes, one cut from the top.
+        let big: Vec<LookEntry> = (1..=7)
+            .map(|p| entry(p, PropertyValue::String("x".repeat(120))))
+            .collect();
+        let (look, _, cut) = Look::canonical(big);
+        assert_eq!(cut, 1);
+        let look = look.unwrap();
+        assert_eq!(look.entries.last().map(|e| e.property), Some(6));
+        assert!(look.encoded_len() <= MAX_LOOK_BYTES && look.is_valid());
+        assert_eq!(Look::canonical(Vec::new()).0, None);
+    }
+
+    #[test]
+    fn validity_rules() {
+        let ok = Look {
+            entries: vec![entry(1, PropertyValue::Float(0.5))],
+        };
+        assert!(ok.is_valid());
+        assert!(!Look { entries: vec![] }.is_valid());
+        assert!(
+            !Look {
+                entries: vec![entry(1, PropertyValue::Float(f32::NAN))]
+            }
+            .is_valid()
+        );
+        assert!(
+            !Look {
+                entries: vec![
+                    entry(2, PropertyValue::Int(1)),
+                    entry(1, PropertyValue::Int(1))
+                ]
+            }
+            .is_valid()
+        );
+        let mut a = Appearance::new(Body::Character { species: 1, sex: 1 });
+        a.equipment.push(Equipped::new(DataId(1)).in_slot(65));
+        assert!(!a.is_valid());
+        a.equipment[0].slot = Some(64);
+        assert!(a.clone().with_look(Some(ok)).is_valid());
+        assert_eq!(PropertyKind::from_type_code(9), PropertyKind::Float);
+        assert_eq!(PropertyKind::from_type_code(2), PropertyKind::Unsupported);
+        assert_eq!(
+            PropertyKind::from_keyword("colour"),
+            Some(PropertyKind::Colour)
+        );
+        assert!(!PropertyValue::String("x".repeat(257)).is_valid());
     }
 }

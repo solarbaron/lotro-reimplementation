@@ -37,6 +37,7 @@ fn greeting() -> Vec<HarnessInput> {
                 name: "Aldith".into(),
                 body: Body::Character { species: 1, sex: 1 },
             }],
+            looks: Vec::new(),
         }))),
         HarnessInput::OpenStream(0x43),
     ]
@@ -55,6 +56,7 @@ fn world_enter() -> Vec<u8> {
             anchor: None,
         },
         appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+        look: tessera_protocol::types::Look::none(),
     }))
 }
 

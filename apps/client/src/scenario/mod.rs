@@ -25,6 +25,8 @@
 
 pub mod live_log;
 
+pub mod overlay;
+pub mod plugins;
 pub mod resolver;
 pub mod screenshot;
 
@@ -168,6 +170,13 @@ pub fn prepare(args: &Args, install: &InstallChoice) -> Result<ResolvedScenario,
     let scenario = Scenario::parse(&bytes)
         .map_err(|e| PrepareError::Parse(e.with_file(&shown).to_string()))?;
     drop(bytes);
+    let overlay = args.server.is_some();
+    if overlay {
+        // §12.5.1: the overlay subset, checked before anything connects (exit 3).
+        scenario
+            .check_overlay()
+            .map_err(|e| PrepareError::Parse(e.with_file(&shown).to_string()))?;
+    }
     if let InstallChoice::Unusable(reason) = install {
         // The run was asked to use this install: fail as an unreadable one does (§8.6),
         // even when no selector would have reached it.
@@ -181,7 +190,7 @@ pub fn prepare(args: &Args, install: &InstallChoice) -> Result<ResolvedScenario,
         .map_err(|e| PrepareError::Resolve(format!("{shown}:{e}")))?;
     let headless = is_headless(args);
     let plays_input = headless || args.scenario_input;
-    if !plays_input {
+    if !plays_input && !overlay {
         check_windowed_enter(&resolved)?;
     }
     resolved.set_plays_input(plays_input);
@@ -349,6 +358,9 @@ pub fn run(mut args: Args) -> u8 {
         }
     };
     let install = install.root();
+    if headless && args.server.is_some() {
+        return overlay::run_headless(&args, resolved);
+    }
     if headless {
         return run_headless(&args, resolved, install);
     }
@@ -435,7 +447,32 @@ pub fn run_headless(args: &Args, scenario: Arc<ResolvedScenario>, install: Optio
         }
     };
     let mut driver = HeadlessDriver::new(Session::new(backend), scenario, log);
-    let outcome = driver.run();
+    if args.load_plugins.is_empty() {
+        let outcome = driver.run();
+        return finish(driver.into_log(), outcome.exit_code(), &outcome);
+    }
+    // `--load-plugin`: the plugin host with the inventory views, fed by every poll
+    // (decision 0024 P1 exit criterion 4; `plugins::ScenarioPlugins`).
+    let data = install.and_then(|root| match crate::character::CharacterData::open(root) {
+        Ok(d) => Some(Arc::new(d)),
+        Err(e) => {
+            tracing::warn!("character data unavailable: {e}");
+            None
+        }
+    });
+    let root = crate::runtime::data_root(args);
+    let plugins_dir = args.plugins.clone().unwrap_or_else(|| root.join("Plugins"));
+    let mut sp = plugins::ScenarioPlugins::start(
+        &plugins_dir,
+        root.join("plugindata"),
+        &args.load_plugins,
+        data,
+    );
+    let outcome = driver.run_with(|events| sp.observe(events));
+    if !sp.all_loaded() {
+        tracing::warn!("not every plugin named with --load-plugin loaded");
+    }
+    sp.shutdown();
     finish(driver.into_log(), outcome.exit_code(), &outcome)
 }
 

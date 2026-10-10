@@ -9,7 +9,7 @@ use tessera_protocol::types as wt;
 
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, Destination, EntityKind, Equipped, Landblock,
-    Location, RegionId, Transform, Vec3,
+    Location, Look, LookEntry, PropertyValue, RegionId, Transform, Vec3,
 };
 
 pub(crate) fn location(l: &wt::Location) -> Location {
@@ -72,7 +72,15 @@ pub(crate) fn body(b: &wt::Body) -> Body {
     }
 }
 
+/// The model appearance of a wire appearance (no look).
+#[cfg(test)]
 pub(crate) fn appearance(a: &wt::Appearance) -> Appearance {
+    appearance_with_look(a, &wt::Look::none())
+}
+
+/// The model appearance of a wire appearance and the look that travels beside it (minor
+/// ≥ 1; an empty wire look is none).
+pub(crate) fn appearance_with_look(a: &wt::Appearance, l: &wt::Look) -> Appearance {
     Appearance {
         body: body(&a.body),
         scale: a.scale,
@@ -84,9 +92,72 @@ pub(crate) fn appearance(a: &wt::Appearance) -> Appearance {
                 dye: e.dye,
                 secondary_dye: e.secondary_dye,
                 stowed: e.stowed,
+                slot: e.slot,
             })
             .collect(),
         idle: a.idle,
+        look: look(l).map(Box::new),
+    }
+}
+
+/// The model look of a wire look; `None` when it is empty. The decoder has checked every
+/// rule of §5.3 already.
+pub(crate) fn look(l: &wt::Look) -> Option<Look> {
+    if l.entries.is_empty() {
+        return None;
+    }
+    let entries = l
+        .entries
+        .iter()
+        .map(|e| LookEntry {
+            property: e.property,
+            value: match &e.value {
+                wt::LookValue::Bool(b) => PropertyValue::Bool(*b),
+                wt::LookValue::Int32(v) => PropertyValue::Int(*v),
+                wt::LookValue::Int64(v) => PropertyValue::Int64(*v),
+                wt::LookValue::Float32(v) => PropertyValue::Float(*v),
+                wt::LookValue::Enum(v) => PropertyValue::Enum(*v),
+                wt::LookValue::DataId(v) => PropertyValue::Did(DataId(*v)),
+                wt::LookValue::String(s) => PropertyValue::String(s.clone()),
+                wt::LookValue::Bitfield32(v) => PropertyValue::Bitfield32(*v),
+                wt::LookValue::Bitfield64(v) => PropertyValue::Bitfield64(*v),
+                wt::LookValue::Colour(c) => PropertyValue::Colour(*c),
+            },
+        })
+        .collect();
+    Some(Look { entries })
+}
+
+/// The wire look of a model look (empty for none). Entries the wire cannot carry (an
+/// instance value, which a valid look never holds) are left out.
+pub(crate) fn wire_look(l: Option<&Look>) -> wt::Look {
+    let Some(l) = l else {
+        return wt::Look::none();
+    };
+    wt::Look {
+        entries: l
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let value = match &e.value {
+                    PropertyValue::Bool(b) => wt::LookValue::Bool(*b),
+                    PropertyValue::Int(v) => wt::LookValue::Int32(*v),
+                    PropertyValue::Int64(v) => wt::LookValue::Int64(*v),
+                    PropertyValue::Float(v) => wt::LookValue::Float32(*v),
+                    PropertyValue::Enum(v) => wt::LookValue::Enum(*v),
+                    PropertyValue::Did(d) => wt::LookValue::DataId(d.0),
+                    PropertyValue::String(s) => wt::LookValue::String(s.clone()),
+                    PropertyValue::Bitfield32(v) => wt::LookValue::Bitfield32(*v),
+                    PropertyValue::Bitfield64(v) => wt::LookValue::Bitfield64(*v),
+                    PropertyValue::Colour(c) => wt::LookValue::Colour(*c),
+                    _ => return None,
+                };
+                Some(wt::LookEntry {
+                    property: e.property,
+                    value,
+                })
+            })
+            .collect(),
     }
 }
 
@@ -109,6 +180,8 @@ pub(crate) fn wire_appearance(a: &Appearance) -> Option<wt::Appearance> {
             dye: e.dye,
             secondary_dye: e.secondary_dye,
             stowed: e.stowed,
+            // Sent only at minor ≥ 1; the encoder leaves it off at minor 0 (§3.1).
+            slot: e.slot,
         })
         .collect();
     Some(out)
@@ -185,9 +258,31 @@ mod tests {
             dye: Some(0.25),
             secondary_dye: None,
             stowed: true,
+            slot: Some(17),
         });
         let w = wire_appearance(&a).unwrap();
         assert_eq!(appearance(&w), a);
+        let l = Look {
+            entries: vec![
+                LookEntry {
+                    property: 1,
+                    value: PropertyValue::Float(0.5),
+                },
+                LookEntry {
+                    property: 2,
+                    value: PropertyValue::Colour([1, 2, 3, 4]),
+                },
+                LookEntry {
+                    property: 3,
+                    value: PropertyValue::String("80ff".into()),
+                },
+            ],
+        };
+        let wl = wire_look(Some(&l));
+        assert!(wl.check().is_ok());
+        let back = appearance_with_look(&w, &wl);
+        assert_eq!(back.look.as_deref(), Some(&l));
+        assert_eq!(look(&tessera_protocol::types::Look::none()), None);
         assert!(wire_appearance(&Appearance::new(Body::Object(DataId(0)))).is_none());
     }
 

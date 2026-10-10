@@ -385,6 +385,12 @@ pub struct Args {
     #[arg(long, value_name = "NAME", requires = "server")]
     pub character: Option<String>,
 
+    /// Open the character selection and creation screens before entering the world
+    /// (`character-screens.md`): pick, create, delete and enter a character there instead
+    /// of entering the first one (or `--character`). Needs an install; implies `--ui`.
+    #[arg(long, conflicts_with_all = ["character", "headless", "smoke", "showcase", "walk_path", "fly_path", "scenario", "no_data"])]
+    pub character_select: bool,
+
     // ----- audio -----
     /// Audio backend: `auto` (the output device, else silent mixing; the windowed
     /// default), `device`, `null` (mixed and discarded; the default for `--headless` and
@@ -435,8 +441,9 @@ pub struct Args {
     #[arg(long)]
     pub ui: bool,
 
-    /// Open a panel at start, by number (`P1`–`P15`) or layout label (repeatable; implies
-    /// `--ui`).
+    /// Open a panel at start, by number (`P1`–`P15`) or layout label, or a P1 panel once
+    /// the player is in the world: `character` (the character panel), `bag1` … `bag6`,
+    /// `bags` (repeatable; implies `--ui`).
     #[arg(long = "open-panel", value_name = "NAME")]
     pub open_panel: Vec<String>,
 
@@ -478,12 +485,15 @@ pub struct Args {
     /// windows, inventory, ...) whose records are chosen by selectors against the install
     /// (none resolve without one). With `--headless` it runs on the scenario's virtual
     /// clock to its end and exits 0 (finished), 3 (parse error), 4 (resolve error) or 5
-    /// (run-time error); otherwise the walker plays it in real time.
+    /// (run-time error); otherwise the walker plays it in real time. With `--server` it runs
+    /// as an overlay over the test server: only its inventory and character steps for the
+    /// player play locally, the server keeps everything else, and other players see the
+    /// worn look (`scenario-feed.md` §12.5).
     #[arg(
         long,
         value_name = "FILE",
         value_parser = parse_scenario_path,
-        conflicts_with_all = ["server", "walk_path", "fly_path", "duration", "smoke", "showcase", "ui_script"]
+        conflicts_with_all = ["walk_path", "fly_path", "duration", "smoke", "showcase", "ui_script"]
     )]
     pub scenario: Option<PathBuf>,
 
@@ -907,6 +917,7 @@ impl Args {
     pub fn ui_enabled(&self) -> bool {
         self.walker()
             && (self.ui
+                || self.character_select
                 || !self.open_panel.is_empty()
                 || self.skin.is_some()
                 || self.ui_script
@@ -1024,6 +1035,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn character_select_needs_an_install() {
+        assert!(Args::try_parse_from(["t", "--character-select", "--no-data"]).is_err());
+        assert!(Args::try_parse_from(["t", "--character-select"]).is_ok());
+    }
+
+    #[test]
     fn surface_did_parsing() {
         assert_eq!(parse_surface_did("0x41000123"), Ok(0x4100_0123));
         assert_eq!(parse_surface_did("0x4100_0123"), Ok(0x4100_0123));
@@ -1134,9 +1151,21 @@ mod tests {
         // Options that need --scenario, and the tasks it conflicts with.
         assert!(Args::try_parse_from(["t", "--scenario-log", "x"]).is_err());
         assert!(Args::try_parse_from(["t", "--scenario-input"]).is_err());
+        // With `--server` it is an overlay run (`scenario-feed.md` §12.5).
+        assert!(
+            Args::try_parse_from([
+                "t",
+                "--scenario",
+                s,
+                "--server",
+                "127.0.0.1:1",
+                "--account",
+                "a"
+            ])
+            .is_ok()
+        );
         for other in [
-            &["--server", "127.0.0.1:1", "--account", "a"][..],
-            &["--walk-path", s],
+            &["--walk-path", s][..],
             &["--fly-path", "1:2,3:4"],
             &["--duration", "3"],
             &["--smoke"],

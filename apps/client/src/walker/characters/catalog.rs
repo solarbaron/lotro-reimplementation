@@ -247,6 +247,7 @@ impl CharacterCatalog {
                 dye: i.dye,
                 secondary_dye: i.dye2,
                 stowed: i.stowed,
+                slot: None,
             });
         }
         Ok(a)

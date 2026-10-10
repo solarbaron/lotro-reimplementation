@@ -139,6 +139,7 @@ fuzz_target!(|data: &[u8]| {
                         did: 1 + u32::from(b(2)),
                     }
                 }),
+                look: tessera_protocol::types::Look::none(),
             })),
             3 => Some(Message::EnterWorld(EnterWorld {
                 name: ["Aldith", "Bram", "Cade", "Dun", "zz"][usize::from(b(0)) % 5].into(),

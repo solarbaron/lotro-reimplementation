@@ -142,6 +142,9 @@ impl Ui {
             self.prop(k, p.context_menu).bool()
                 || (self.prop(k, p.tooltips_on).bool() && self.has_tooltip_text(k))
                 || (self.prop(k, p.container).bool() && !self.prop(k, p.disallow_drag_in).bool())
+                // Tessera rule: an element that asks for an examination tooltip on hover
+                // (`item-tooltips.md` §9) is hovered like one with tooltip text.
+                || e.examine
         };
         let scroll_host = || -> bool {
             e.widget

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Character creation before world entry (docs/specs/character-screens.md §7, §8;
+# docs/specs/scenario-feed.md §5.1, §5.8, §6.1, §7.5, §7.7): the commands the creation and
+# selection screens send, answered by triggers: an accepted creation that copies the asked
+# look, a refused name, a deletion answered by a removal, a creation no trigger answers, and
+# world entry with the created character. Synthetic: it plays fully without an install; with
+# one, the look's labels resolve. Every name and text is invented for Tessera.
+tessera-scenario 1
+title "A new face at the gate"
+tick 100ms
+enter "Cora"
+character "Ward" level=3
+character "Linden" level=7
+look $plain @AC_BoneScale_Test=0.75 @AC_Color_Hair=rgba:120,80,40,255
+on create-character name="Cora"
++0s accept-character "Cora" level=1 look=asked
+end
+on create-character name="Bryn"
++0s accept-character "Bryn" level=1 look=$plain
+end
+on create-character name="Dora"
++0s refuse-character "Dora" "Only names invented for this gate are kept."
+end
+on delete-character "Ward"
++0s remove-character "Ward"
+end
+on delete-character
++0s remove-character "Nobody"
+end
+input
+at pre create-character "Dora"
+at pre create-character "Cora" look=$plain
+at pre create-character "Bryn"
+at pre delete-character "Ward"
+at pre delete-character "Linden"
+at pre create-character "Ezra"
+end

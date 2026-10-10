@@ -472,6 +472,7 @@ fn characters_from_the_command_line() {
                 species: 1,
                 sex: 1,
             })),
+            look: tessera_protocol::types::Look::none(),
         }],
     };
     std::fs::write(dir.join("characters/alice.toml"), file.to_toml()).unwrap();

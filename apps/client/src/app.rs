@@ -405,6 +405,10 @@ impl App {
             self.status_panel
                 .set(&mut gfx.renderer, vec![(text, [240, 240, 235])], 2);
         }
+        if let (Some(walker), Some(ui)) = (host.walker.as_mut(), self.ui.as_mut()) {
+            // The paperdoll's portrait, before the frame that composes it.
+            ui.render_portraits(walker, &mut gfx.renderer);
+        }
         let result = match gfx.renderer.begin_frame() {
             Ok(Some(mut frame)) => {
                 match host.walker.as_mut() {
@@ -524,6 +528,7 @@ impl App {
         }
         if quit
             || flight_done
+            || self.ui.as_ref().is_some_and(|u| u.quit_requested())
             || self
                 .args
                 .exit_after_frames

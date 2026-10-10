@@ -18,7 +18,7 @@
 //!   blocks next to the far field mesh at the finest level and ignore the far neighbour
 //!   for their seam, so their edge has every sample the far stitch fans to (§5.2).
 //! - **Work** (FD3): sector reads, imposter-table reads, batch builds and sprite placement
-//!   run on the layer's own worker threads ([`super::jobs::JobRunner`]); results are swapped
+//!   run on the layer's own worker threads (`super::jobs::JobRunner`); results are swapped
 //!   in per sector and uploaded within a per-frame cap ([`MAX_UPLOADS_PER_FRAME`]).
 //! - **Textures** come from the object layer's texture store (colour lists, the detail
 //!   texture of UNIQUEDB key 0x7A, the two imposter atlases), reference-counted per sector.

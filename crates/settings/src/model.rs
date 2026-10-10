@@ -1663,6 +1663,12 @@ mod tests {
                 }
             ));
         }
+        // A full [[CreatedCharacters]] section of worst-case entries.
+        let mut created = crate::CreatedCharacters::default();
+        for i in 0..crate::MAX_CREATED_CHARACTERS {
+            assert!(created.remember(crate::creation::tests::worst_entry(i)));
+        }
+        created.store(&mut s);
         let text = s.to_toml_string().unwrap();
         assert!(
             (text.len() as u64) < crate::MAX_FILE_SIZE * 3 / 4,

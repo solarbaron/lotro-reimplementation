@@ -70,4 +70,9 @@ pub enum GameDataError {
     /// A record that the operation needs is not an object record.
     #[error("{0} is not an object record")]
     NotObject(Did),
+
+    /// A record or element the operation needs is not in the install (named by its
+    /// WEENIECONTENT, DID-map or element label).
+    #[error("the install has no {0}")]
+    MissingRecord(String),
 }

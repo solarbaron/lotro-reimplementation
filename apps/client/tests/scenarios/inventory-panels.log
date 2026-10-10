@@ -1,0 +1,35 @@
+tessera-scenario-log 1
+install none
+tick 50
+title "Bags in order"
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre CharacterInfo name="Tamsin" body=none class=none level=7 look=none
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 ContainerSize container=backpack slots=30
+0.000 ItemAdded item=$loaf what="Travel loaf" at=backpack:0 quantity=6
+0.000 ItemAdded item=$rope what="Coil of rope" at=backpack:4 quantity=1
+0.000 ItemAdded item=$lamp what="Shuttered lamp" at=backpack:29 quantity=1
+0.000 ItemAdded item=$cloak what="Grey cloak" at=backpack:1 quantity=1
+0.000 WalletChanged currency=coin amount=1250
+0.100 ItemQuantity item=$loaf quantity=5
+0.100 ItemCondition item=$lamp current=0 max=80
+0.100 ItemCondition item=$rope current=10 max=40
+0.200 LevelChanged entity=player level=8
+0.400 ContainerSize container=backpack slots=40
+0.500 ContainerSize container=backpack slots=40
+0.600 > MoveItem item=$rope to=backpack:10
+0.600 ItemMoved item=$rope at=backpack:10
+0.600 ItemAdded item=$kettle what="Tin kettle" at=backpack:35 quantity=1
+0.700 > SplitStack item=$loaf quantity=2
+0.700 ItemQuantity item=$loaf quantity=3
+0.700 ItemAdded item=item:6 what="Travel loaf" at=backpack:2 quantity=2
+0.800 > DestroyItem item=$lamp
+0.800 ItemRemoved item=$lamp
+0.900 > MoveItem item=$kettle to=backpack:0
+0.900 ItemMoved item=$kettle at=backpack:0
+0.900 ItemMoved item=$loaf at=backpack:35
+1.100 > UnequipItem item=$cloak
+1.100 end reason=complete skipped=3 input-skipped=1 dropped=0 spilled=0

@@ -11,7 +11,7 @@
 //! | [`dye`] | Dye blend, dye colours of a dye material, dye block selection | `material.md` §12 |
 //! | [`edits`] | Run-time parameter edits applied after a surface's materials, run-time textures (composed face images) | `appearance.md` §3.5, §8 step 6 |
 //! | [`MaterialLibrary`] | Surface → material → texture list → texture chain over a [`RecordSource`], with caches | `material.md` §9, `texture-list.md` §5.2 |
-//! | [`icon`] | Layered icon composition: layer properties, order, straight-alpha source-over, canvas and centring | `docs/specs/icon-layers.md` |
+//! | [`icon`] | Layered icon composition: layer properties, order, integer blend rule, canvas from the bottom layer, layers at the top-left | `docs/specs/icon-layers.md` |
 //! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
 //! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants, the distance-fog switch | `lighting.md` §4.1; `material.md` §8.3, §11 |
 //! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface; the water program families | `water.md` §8.2, §8.5.6, §8.6 |

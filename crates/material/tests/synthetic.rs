@@ -2694,6 +2694,64 @@ fn sum_records_add_the_second_layer_alpha() {
     }
 }
 
+/// §11.2: *r* is the effective 1043 evaluated at the clock (§5.3.1). An animated 1043
+/// moves R with the material clock; a constant one does not.
+#[test]
+fn alpha_reference_follows_the_clock() {
+    use tessera_material::CurveStates;
+    let did = 0x2B00_0700;
+    let keyed = V::Keyed(
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0],
+        1,
+        vec![(0.0, 0.0), (1.0, 50.0), (0.0, 100.0)],
+    );
+    let r = resolve_one(
+        roles_shader(did, &[3000], &["ColorAndOpacity"], 0.65),
+        did,
+        &[(
+            0x3000_0701,
+            material(0x3000_0701, &[entry(1043, keyed, &[], 0)]),
+        )],
+    );
+    assert!(r.alpha_reference_animated());
+    // The curve state is the instance's: evaluate the expected value with a twin state.
+    let mut states = CurveStates::new();
+    let mut twin = CurveStates::new();
+    let mut seen = Vec::new();
+    for step in 0..8 {
+        let t = f64::from(step) * 0.5;
+        let at = r.alpha_reference_at(1.0, t, &mut states);
+        let expected = r.params.float_at(1043, t, &mut twin).unwrap();
+        assert_eq!(at.reference, expected, "r is 1043 at t = {t}");
+        assert!(at.test && at.depth_write);
+        assert_eq!(
+            at.reference(),
+            (expected * 255.0).floor() / 255.0,
+            "R quantises r at t = {t}"
+        );
+        seen.push(at.reference());
+    }
+    assert!(
+        seen.iter().any(|&x| x != seen[0]),
+        "R changes with the clock: {seen:?}"
+    );
+    // A constant 1043: R is the same at every time, and equals the time-0 reference.
+    let constant = resolve_one(
+        roles_shader(did, &[3000], &["ColorAndOpacity"], 0.65),
+        did,
+        &[],
+    );
+    assert!(!constant.alpha_reference_animated());
+    for t in [0.0, 1.25, 7.0] {
+        assert_eq!(
+            constant
+                .alpha_reference_at(1.0, t, &mut CurveStates::new())
+                .reference(),
+            165.0 / 255.0
+        );
+    }
+}
+
 /// §11.2 per draw: R from the resolved material, the 165 / 255 boundary, the fade by the
 /// depth-write switch and the R = 0 / −1 rule.
 #[test]

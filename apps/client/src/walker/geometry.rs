@@ -173,6 +173,33 @@ impl LitInputs {
         .reference()
     }
 
+    /// The lit inputs with the reference inputs `reference` (`material.md` §11.2): *r*
+    /// evaluated at this frame's clock for an animated 1043. The cutoffs that carry *R*
+    /// (an alpha mask, a tested blend, a fixed blend's test) take the new *R*; surfaces
+    /// whose opacity is not drawn keep their mode.
+    #[must_use]
+    pub fn with_reference(self, reference: AlphaReference) -> Self {
+        let r = reference.reference();
+        let alpha = if self.opacity_from_base {
+            match self.alpha {
+                AlphaMode::Mask { .. } => AlphaMode::Mask { cutoff: r },
+                AlphaMode::TestBlend { .. } => AlphaMode::TestBlend { cutoff: r },
+                AlphaMode::Fixed(b) => AlphaMode::Fixed(tessera_render::FixedBlend {
+                    alpha_test: (r >= 0.0).then_some(tessera_render::AlphaThreshold(r)),
+                    ..b
+                }),
+                other => other,
+            }
+        } else {
+            self.alpha
+        };
+        Self {
+            alpha,
+            reference,
+            ..self
+        }
+    }
+
     /// The lit inputs of a submesh whose material could not be resolved.
     pub const FALLBACK: Self = Self {
         color: [0.8, 0.8, 0.8, 1.0],
@@ -357,6 +384,10 @@ pub struct MaterialPlan {
     pub uv: [UvTransform; 2],
     /// A curve of texture matrix 0 or 1 changes with time.
     pub animated_uv: bool,
+    /// The alpha reference *r* (1043) is an animated curve (`material.md` §11.2: *r* is
+    /// evaluated at the clock); the walker sets *R* every frame
+    /// ([`MaterialPlan::with_reference`]). Such a plan is not drawn instanced.
+    pub animated_reference: bool,
     /// The emissive texture reads texture matrix 1 (`material.md` §8.4).
     pub emissive_uv1: bool,
     /// The surface is drawn by its own program (`material.md` §11.6).
@@ -377,6 +408,7 @@ impl MaterialPlan {
         layer2: None,
         uv: [UvTransform::IDENTITY; 2],
         animated_uv: false,
+        animated_reference: false,
         emissive_uv1: false,
         own: None,
     };
@@ -424,6 +456,30 @@ impl MaterialPlan {
             && self.lit.opacity2.is_none()
             && self.lit.glow_mask.is_none()
             && self.own.is_none()
+            && !self.animated_reference
+    }
+
+    /// The plan with the reference inputs `reference` (*r* at this frame's clock,
+    /// `material.md` §11.2): the alpha mask of the M2 plan and the lit inputs
+    /// ([`LitInputs::with_reference`]) take the new *R*.
+    #[must_use]
+    pub fn with_reference(self, reference: AlphaReference) -> Self {
+        let alpha = match self.alpha {
+            AlphaKind::Mask(_) => {
+                let r = reference.reference();
+                AlphaKind::Mask(if r.is_finite() {
+                    r.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                })
+            }
+            other => other,
+        };
+        Self {
+            alpha,
+            lit: self.lit.with_reference(reference),
+            ..self
+        }
     }
 }
 
@@ -612,6 +668,7 @@ pub fn plan_material_with(
         layer2,
         uv,
         animated_uv,
+        animated_reference: own.is_none() && m.alpha_reference_animated(),
         emissive_uv1,
         own,
     }
@@ -1380,6 +1437,48 @@ mod tests {
             Some(SecondOpacityPlan::Emissive { sum: true })
         );
         assert_eq!(plan.lit.emissive.map(|t| t.did), Some(0x4100_0003));
+    }
+
+    /// `material.md` §11.2: *r* is evaluated at the clock, so a frame's *R* replaces the
+    /// plan's in the cutoffs that carry it; a constant 1043 does not animate the plan.
+    #[test]
+    fn plans_take_the_reference_of_the_frame() {
+        let co = (ids::DIFFUSE, 0x4100_0001, "ColorAndOpacity");
+        let m = lit_material(&[co], Some(0.65), TestedOpacity::Slot(ids::DIFFUSE));
+        let plan = plan_material(&m);
+        assert!(!plan.animated_reference, "a constant 1043 does not animate");
+        assert!(plan.instanceable());
+        let at = |r: f32| AlphaReference {
+            reference: r,
+            ..plan.lit.reference
+        };
+        let p = plan.with_reference(at(0.8));
+        assert_eq!(p.lit.alpha, AlphaMode::TestBlend { cutoff: 0.8 });
+        assert_eq!(p.lit.reference.reference, 0.8);
+        assert_eq!(p.lit.reference_at(0.5), 0.4);
+        // An alpha mask (M2 plan and lit cutoff) takes the new R too.
+        let mut mask = plan;
+        mask.alpha = AlphaKind::Mask(165.0 / 255.0);
+        mask.lit.alpha = AlphaMode::Mask {
+            cutoff: 165.0 / 255.0,
+        };
+        let p = mask.with_reference(at(0.5));
+        assert_eq!(p.alpha, AlphaKind::Mask(127.0 / 255.0));
+        assert_eq!(
+            p.lit.alpha,
+            AlphaMode::Mask {
+                cutoff: 127.0 / 255.0
+            }
+        );
+        // A surface whose opacity is not drawn keeps its mode.
+        let mut opaque = plan;
+        opaque.lit.opacity_from_base = false;
+        opaque.lit.alpha = AlphaMode::Opaque;
+        assert_eq!(opaque.with_reference(at(0.1)).lit.alpha, AlphaMode::Opaque);
+        // A plan with an animated reference is drawn per object, not instanced.
+        let mut animated = plan;
+        animated.animated_reference = true;
+        assert!(!animated.instanceable());
     }
 
     #[test]

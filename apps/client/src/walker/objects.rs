@@ -251,12 +251,13 @@ impl PartDecoder {
                 // diagnostic says so).
                 let layout = self.materials.texture_matrices(m.shader.did).ok();
                 let plan = plan_material_with(&m, layout.as_deref());
-                let anim = (plan.animated_uv || plan.own.is_some()).then(|| {
-                    Arc::new(SurfaceAnim {
-                        material: m,
-                        layout: layout.unwrap_or_default(),
-                    })
-                });
+                let anim = (plan.animated_uv || plan.animated_reference || plan.own.is_some())
+                    .then(|| {
+                        Arc::new(SurfaceAnim {
+                            material: m,
+                            layout: layout.unwrap_or_default(),
+                        })
+                    });
                 (plan, anim)
             }
             Err(e) => {
@@ -2727,6 +2728,15 @@ impl ObjectLayer {
                             draws += 1;
                             continue;
                         }
+                        // `material.md` §11.2: R from 1043 at this frame's clock.
+                        let timed;
+                        let plan = match anim {
+                            Some(a) if plan.animated_reference => {
+                                timed = plan.with_reference(self.anim.alpha_reference(a));
+                                &timed
+                            }
+                            _ => plan,
+                        };
                         let Some((material, mut lit)) =
                             surface_draw(plan, &lookup, frame.lit, opacity, casts)
                         else {

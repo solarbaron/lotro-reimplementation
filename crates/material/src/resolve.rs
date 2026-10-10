@@ -796,6 +796,9 @@ impl ResolvedMaterial {
     /// is `tint_alpha` (1 without a tint): *T₀* the alpha test, *W* the blend's depth
     /// write, *r* the threshold at time 0, *A* = [`ResolvedMaterial::material_alpha`] ×
     /// `tint_alpha`, the source factor SRCALPHA, no alpha-to-coverage (Tessera has none).
+    /// §11.2 evaluates *r* at the clock: when 1043 animates
+    /// ([`ResolvedMaterial::alpha_reference_animated`]), use
+    /// [`ResolvedMaterial::alpha_reference_at`].
     #[must_use]
     pub fn alpha_reference(&self, tint_alpha: f32) -> AlphaReference {
         let f = &self.features;
@@ -809,6 +812,38 @@ impl ResolvedMaterial {
             src_alpha: f.blend.src == BlendFactor::SrcAlpha,
             alpha_to_coverage: false,
         }
+    }
+
+    /// [`ResolvedMaterial::alpha_reference`] with *r* evaluated at the material clock `t`
+    /// seconds (§11.2 "*r* … evaluated at the clock", §5.3.1), with the drawn instance's
+    /// curve states: when the alpha test is on and the effective 1043 is an animated curve,
+    /// *r* is its value at `t` (always finite); otherwise *r* does not depend on the clock
+    /// and is the time-0 threshold.
+    #[must_use]
+    pub fn alpha_reference_at(
+        &self,
+        tint_alpha: f32,
+        t: f64,
+        states: &mut CurveStates,
+    ) -> AlphaReference {
+        let mut reference = self.alpha_reference(tint_alpha);
+        if self.alpha_reference_animated()
+            && let Some(r) = self.params.float_at(ids::ALPHA_THRESHOLD, t, states)
+        {
+            reference.reference = r;
+        }
+        reference
+    }
+
+    /// Whether *r* of [`ResolvedMaterial::alpha_reference_at`] follows the clock: the
+    /// alpha test is on and the effective 1043 is an animated curve (§5.3).
+    #[must_use]
+    pub fn alpha_reference_animated(&self) -> bool {
+        self.features.alpha_test.is_some()
+            && self
+                .params
+                .curve(ids::ALPHA_THRESHOLD)
+                .is_some_and(FloatCurve::is_animated)
     }
 
     /// Depth test: off only when the effective 4001 DepthTest is 0 (§8.5); on when the

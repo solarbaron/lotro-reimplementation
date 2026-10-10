@@ -1575,13 +1575,27 @@ Owner observations in the original client: O80–O86 and O88–O90
 ([owner-observations.md](checklists/owner-observations.md)); they do not block the criteria.
 
 <a id="p1-status"></a>
-**Status:** in progress (started 2026-10-10, branch `p1`; exit verification 2026-10-10).
-Criteria 2, 3 and 4 pass; criterion 1 is partly met: every list, check, creation and look
-transfer passes on real data, but the creation viewport's figure is not drawn and received
-looks draw heights, styles and body sliders only (no colours or face layers). No criterion
-needs an observation in the original client; the owner rows O80–O86 and O88–O90
+**Status:** exit criteria 1–4 pass (started 2026-10-10, branch `p1`; exit verification
+2026-10-10, independent re-check of criterion 1 the same day on commit 93b3dfd); to be
+merged. The re-check found criterion 1 met: the creation viewport draws its figure and
+received looks carry colours and face layers; visual defects of that figure stay open
+(criterion 1 row, "Remaining issues"). No criterion needs an observation in the original
+client; the owner rows O80–O86 and O88–O90
 ([owner-observations.md](checklists/owner-observations.md)) block nothing until P8.
-Checks on branch `p1` (uncommitted tree, 2026-10-10): `cargo fmt --check` (workspace and
+
+Re-check on 93b3dfd (2026-10-10, install present, `TESSERA_PERF` unset, machine under load
+from other builds): `cargo fmt --check` (workspace and `fuzz/`), clippy `-D warnings`
+(workspace `--all-targets --all-features`; `fuzz/` `--bins`), `tools/check-server-deps.sh`,
+`tools/check-content.sh` (1,798 files) and `tools/check-spdx.sh` (1,700 files): clean;
+`cargo test --release --workspace --no-fail-fast` with the install: **5,813 passed, 0
+failed, 10 ignored** (415 test binaries). Criterion tests re-run on their own:
+`character_screens_real_data` 5 / 5, `chargen_viewport_real_data` 1 / 1,
+`character_screens` 11 / 11, `pre_world_real_data` 1 / 1, `item_tooltips_real_data` 1 / 1,
+`character_panels_real_data` 1 / 1, `worn_look_real_data` 2 / 2, `plugin_inventory_checks`
+8 / 8, `chargen_real_data`, `inventory_real_data`, `tooltip_real_data` 1 / 1 each,
+`v11_looks` 3 / 3, `inventory_views` 15 / 15.
+
+Earlier exit verification, checks on branch `p1` (uncommitted tree, 2026-10-10): `cargo fmt --check` (workspace and
 `fuzz/`); clippy `-D warnings` (workspace `--all-targets`, also `--all-features`; `fuzz/`
 `--bins`); rustdoc `-D warnings` on the twelve crates P1 touched (after two link fixes in
 `tessera-protocol` and `tessera-net`); `cargo test --workspace --release` with the install:
@@ -1599,21 +1613,27 @@ then passed three runs in a row (2 / 2 each). `tools/fuzz-smoke.sh -t 60` on
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | **partly met** | Lists: `character_screens_real_data` step 1 drives the screen model through 8 races, 15 (race, gender) entries and 130 (race, gender, class) choices, every one offered and valid (equal to `offered()`, 0 `problems()`); `chargen_real_data`: 69 (race, class) entries, 12 classes, 29 nationalities, 486 (race, gender, nationality, class) choices accepted, 15 default figures assembled with 0 diagnostics, 51 random names generated and accepted. Body choices: step 2 opens the appearance screen for all 15 bodies (10–20 controls each, 8–17 written properties), randomised looks are valid, and the 15 default figures and 15 race-select entities build through the walker's figure path (0 failed). Entering: step 4 creates and enters one character per body through the scenario feed (15 / 15, 5–13 look entries each); `pre_world_real_data` enters the world from the screens with the selected character. Test server: step 5 creates one character per race on an in-process `tessera-server` at protocol 1.1, refuses a taken name, and a second client receives the look (5 entries); with creation off New is greyed and nothing is sent; `apps/loadtest/tests/v11_looks.rs` (3 / 3): looks stored, relayed to minor-1 peers and kept from minor-0 peers, hostile 1.1 vectors are protocol violations. **Not met:** the figure in the creation viewport is not drawn (`character-screens.md` §6 OPEN), and a received look draws heights, styles and body sliders only; colours and face layers wait for fields in `tessera-mesh`'s `CharacterSpec` (§7.1 implementer OPEN). The screens have no headless picture; `--character-select` is windowed only. |
+| 1 | **pass** (re-check 2026-10-10) | Lists: `character_screens_real_data` step 1 drives the screen model through 8 races, 15 (race, gender) entries and 130 (race, gender, class) choices, every one offered and valid (equal to `offered()`, 0 `problems()`); `chargen_real_data`: 69 (race, class) entries, 12 classes, 29 nationalities, 486 (race, gender, nationality, class) choices accepted, 15 default figures assembled with 0 diagnostics, 51 random names generated and accepted. Body choices: step 2 opens the appearance screen for all 15 bodies (10–20 controls each, 8–17 written properties), randomised looks are valid, and the 15 default figures and 15 race-select entities build through the walker's figure path (0 failed). Entering: step 4 creates and enters one character per body through the scenario feed (15 / 15, 5–13 look entries each); `pre_world_real_data` enters the world from the screens with the selected character. Test server: step 5 creates one character per race on an in-process `tessera-server` at protocol 1.1, refuses a taken name, and a second client receives the look (5 entries); with creation off New is greyed and nothing is sent; `apps/loadtest/tests/v11_looks.rs` (3 / 3): looks stored, relayed to minor-1 peers and kept from minor-0 peers, hostile 1.1 vectors are protocol violations. **Re-check on 93b3dfd (pass):** the viewport's figure is built through the shared figure path with every creation control applied and the stage's `CharGen_Stage` key, and drawn alone into `chargen_viewport`: step 2 of `character_screens_real_data` gives all 15 creation figures a composed face from their stage, and a colour control changes the look of 15 / 15; `chargen_viewport_real_data` (the `--character-select` start-up, headless, `--no-hud --no-ui-hud`) draws the race-select and appearance figures of the first, a middle and the last race (4,342–6,739 covered pixels in the preview pass), each with a composed face, each following a colour control, the turntable turning and zooming. A received look now carries colours and face layers: step 5's second client receives 6 entries and draws a figure with a composed face (10 edits). Pictures viewed (13 creation-screen frames and one second-client frame, private scratch, not committed): hobbit, Beorning and River-hobbit females on the race-and-class and appearance stages; the recoloured figures show the chosen blue (hobbit eyes, River-hobbit skin); the second client sees the created character with its received colours among the server's default wanderers. **Visual defects (open, not blocking the criterion):** (a) the appearance stage's default figure of the Beorning female (the avatar's own values, no style set) is drawn without a head (eyes only); its randomised looks have one; whether the creation defaults should choose styles beyond the avatar's own values is a question for `character-screens.md` §6 / `appearance.md` §3.4 (not filed: this re-check edits no spec); (b) the River-hobbit female on the appearance stage stands low in the viewport, its legs cut off at the viewport's lower edge, and faces away from the camera (framing and stage clip: `character-screens.md` §2.1 implementer OPEN); (c) the test captures a frame as soon as the figure is built and covers pixels, so under load parts whose textures are still loading can be missing from a picture (one Beorning race-select frame lacked torso and arms; the earlier run's frame of the same figure was complete); (d) the gender buttons show no selected state (in the race-and-class pictures the Male button is drawn in its gold art while a female body is shown; the spec states no selected state). The screens' figure is lit by the portrait's fixed light; the UI scene's objects, lights and cameras are not drawn (§2.1 OPEN). |
 | 2 | **pass** | `tessera-client` `item_tooltips_real_data`: all 151,230 item records categorised, 149,695 Rendered, modelled, converted and laid out in the examination tooltip panel (0 not laid out, 0 template failures, largest 314 × 1,101 px), 1,535 NoTooltip, 0 errors escaping the categories; `tessera-gamedata` `tooltip_real_data`: the same counts, 0 LayoutUnreadable, 0 ElementMissing, 0 RowFailure; IV2 31 / 31 elements, IV3 784 / 784 templates, IV4 7 / 7. 61 Rendered tooltips have no name row or an empty name (51 world-event layouts, 10 empty names; `item-tooltips.md` §12 OPEN). Panel picture (`character_panels_real_data` with `TESSERA_SHEET_DIR`, viewed): Journal_Window with 23 paperdoll slots, the equipped chest icon after the drag, bag 1 (15 slots) and the pinned tooltip; the pinned tooltip shows a dictionary name for a stat line (§6.16 OPEN) and the worth without coin images (§11 OPEN). |
 | 3 | **pass** | `worn_look_real_data` (2 / 2, three runs): a headless scenario gives and equips a chest piece and a primary weapon; the avatar's figure request then holds both records with slots 3 and 17, and the figure goes from 7 parts with 0 held to 7 parts with 1 held. Screenshots (verifier, `--scenario … --screenshot` at region 1, block (126, 140), heading 180, viewed): before the equip the figure wears its default clothes, after it a different chest piece and trousers, with the weapon as a held part. Server: client A runs the equips as an overlay run on an in-process `tessera-server`, observer B receives `AppearanceChanged` with the chest record in slot 3; `v11_looks.rs` `o9_observers_see_the_overlay_players_equipment` passes. |
 | 4 | **pass** | `plugin_inventory_checks` (8 / 8) runs `lua-plugin-api.md` §18 checks 66–69 through the client's plugin host on scenarios (`ScenarioPlugins`, the path of `--scenario --headless --load-plugin`): `GetBackpack` size and growth, backpack events, `GetEquipment` with the install's chest records, item details of 64 install items compared with the raw property sets, and the literal Lua string for a quality-4, max-quantity-50 record; `tessera-plugins` `inventory_views` 15 / 15 (identity across prunes, queued delivery, getters agree with `ItemInfo`); `inventory_real_data`: 23 paperdoll slots, CPI1–CPI3, 20 slots visible to plugins. |
 
-Remaining issues: criterion 1's visual parts (above); decision 0025 is Proposed, and
-`scenario-feed.md` revision 4, `tessera-protocol.md` v1.1 and `test-server.md` are in
-Review, `server-content.md` Draft (owner); the stat rows of the character panel stay empty on
+Remaining issues: the creation figure's visual defects (a)–(d) of the criterion 1 row; in
+a normal `--character-select` run the walker HUD and the game HUD still draw over the
+screens (implementer's report, not re-checked; the pictures hide them with
+`--no-hud --no-ui-hud`); the P1 implementer OPENs of
+`character-screens.md` §2.1, §6 and §7.1 await the spec writer and the P1 review;
+`server-content.md` stays Draft (owner; decision 0025 and the other specs it revised were
+Accepted on 2026-10-10, commit 286b70d); the stat rows of the character panel stay empty on
 this install (`character-panels.md` §3.4 OPEN); the bag-column settings are written on the
 main thread (ARCH §21 OPEN); `lua-plugin-api.md` §19 does not list the three new §15.1
 implementer OPENs (spec-writer bookkeeping); a plugin apartment with about 8,000 live native
 objects raises "out of Lua stack" (Lua error, no panic); `tessera-loadtest`'s hostile mode
 sends the 1.1 vectors without logging in (`test-server.md` §13.1 OPEN).
 
-Open going in: the specs of decision 0025 (`scenario-feed.md` revision 4,
+Open going in (before the re-check; since then decision 0025, `scenario-feed.md` revision 4,
+`tessera-protocol.md` v1.1 and `test-server.md` are Accepted and commit 93b3dfd draws the
+figure and the received colours and faces): the specs of decision 0025 (`scenario-feed.md` revision 4,
 `tessera-protocol.md` v1.1, `test-server.md`, and `server-content.md`, still Draft with the
 owner's confirmation pending) await an independent review, and decision 0025
 is Proposed until it passes; the creation viewport's figure is not drawn yet

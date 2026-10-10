@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (independent re-review 2026-10-09 of the review-fix revision of 2026-10-09: CLEAN_ROOM.md §5.3 passed, every item; both blocking items of the earlier 2026-10-09 review fixed; §8.3 "Server relaxations" and §15 invariant 8 agree with `test-server.md` §4.5, §8.3, §8.4 and §14; no byte changes, minor version 0; implementers re-check `MovementValidator` and `tessera-server` against §8.3; see the review record). Before: Revised (2026-10-09, spec writer, design: the two blocking items of the 2026-10-09 review are fixed in §8.3 "Server relaxations" and §15 invariant 8, with non-blocking notes (a)–(c); no byte changes, minor version 0; awaiting review). Before: Revised, **changes requested** (independent review 2026-10-09 of the 2026-10-09 revision: two blocking items, see the review record). Before that: Revised (2026-10-09, spec writer, design: §8.3 "Server relaxations" answers the round-2 OPEN on the settling grace, and invariant 8 is reworded for them and for unreported rejections; no byte two peers exchange changes, the minor version stays 0; awaiting review). Before that: Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
+| **Status** | **Revised** (2026-10-10, spec writer, design: §8.3 "Server relaxations" gains two normative paragraphs, "Bounds of the values in force" and "Changing the parameters during an epoch", answering the two implementer notes of 2026-10-09 and 2026-10-10 in §17.1; §15 invariant 8 covers a change of the parameters within a stretch; no byte changes, minor version 0; awaiting review, see the change log). Before: **Accepted** (independent re-review 2026-10-09 of the review-fix revision of 2026-10-09: CLEAN_ROOM.md §5.3 passed, every item; both blocking items of the earlier 2026-10-09 review fixed; §8.3 "Server relaxations" and §15 invariant 8 agree with `test-server.md` §4.5, §8.3, §8.4 and §14; no byte changes, minor version 0; implementers re-check `MovementValidator` and `tessera-server` against §8.3; see the review record). Before: Revised (2026-10-09, spec writer, design: the two blocking items of the 2026-10-09 review are fixed in §8.3 "Server relaxations" and §15 invariant 8, with non-blocking notes (a)–(c); no byte changes, minor version 0; awaiting review). Before: Revised, **changes requested** (independent review 2026-10-09 of the 2026-10-09 revision: two blocking items, see the review record). Before that: Revised (2026-10-09, spec writer, design: §8.3 "Server relaxations" answers the round-2 OPEN on the settling grace, and invariant 8 is reworded for them and for unreported rejections; no byte two peers exchange changes, the minor version stays 0; awaiting review). Before that: Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
 | **Protocol version** | 1.0 (major 1 in ALPN `tessera/1`, minor 0 in `Hello`) |
-| **Last updated** | 2026-10-09 |
+| **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | reviewer (did not write the code), 2026-10-07; second round 2026-10-07 ([R.7](#review-r7)). Method and results: [Review](#review) |
 | **Review record** | Re-review 2026-10-09 of the review-fix revision of 2026-10-09 (commit c118f62; `git diff main` of this file: §8.3 "Server relaxations", §15 invariant 8, the answered callouts and the §18 rows) by a Claude review session in the spec-reviewer role that wrote neither this spec, its revisions nor `test-server.md`, against CLEAN_ROOM.md §5.3 and the blocking items of the earlier review below: **passed**, every item. Checklist: functional design facts only; no code or pseudo-code (the update rules are formulas stated in prose); no copied prose; no game text, keys, hostnames or traffic; provenance (the relaxations fall under the Design row, the limits under the Project row); invariants testable; unknowns marked OPEN; no closed gate (Tessera's own protocol). Earlier blocking items: (1) fixed, §8.3 item 2 now applies only with *S* > 0, and a server without the credit or with *S* = 0 applies steps 5 and 6 unchanged; invariant 8's parenthesis matches. (2) fixed, item 1 gives *A*_d ← max(0, *A*_d − *d*_d) in the window, and the credit's update *A*_d − min(*d*_d, *A*_d) is the same value, as the text says. Non-blocking (a)–(c) of that review are done; (d) re-checked: `collision.md` on this branch changes only a provenance row, none of the cited speeds. Compatibility checked: the relaxations change no byte and need no client change; with them, the horizontal excess over *A*ₕ summed over a stretch is at most *C* at its start + Σ*d*_c ≤ *S* + Σ*d*_c, *C* stays in [0, *S*] because the rejection test bounds the excess by *d*_c + *C*, and every allowance stays ≥ 0, so invariant 8 holds as worded; outside the window the up and down tests bound rise and descent by *V* · (*t* + *W*) from allowances that are never negative. Against `test-server.md` (Accepted 2026-10-09): §4.5 ranges (`settle_grace_s` 0–10 s, `slide_reserve` 0–100 m) lie within the bounds; §8.3 steps 5 and 6 (*d*_c, the rejection test, *A*ₕ, *A*ᵤ, *A*_d and *C* updates; *C* cleared at every epoch; "with *S* = 0 the credit is off") are the same rules; its grace skips only the up and down tests and runs from the ground epoch across corrections, as item 1's last sentence permits; its §8.4 grace cases (world entry or `Named` teleport to a `ground` spawn, `Ground` destinations; none for `@` player targets) are positions of unknown height, covered by item 1; its §14 invariant 8 is the protocol's, including the *S* = 0 case. Non-blocking, for a later revision: (i) invariant 8's "outside a settling window" could say "over a stretch that lies wholly after the window ends", since a stretch that starts inside it is not bounded vertically. (ii) The §8.6 round-2 OPEN still quotes *V*_d 60 and *V*ₕ 7.5 (before 2026-10-08); with the descent credit a relayed slide run-out (up to about 42.7 m/s, `test-server.md` §8.3) exceeds *V*ₕ · Δt + 5 m per snapshot when `snapshot_rate` is below about 6.8 Hz (34.2 m/s · Δt > 5 m), so the snap rule settled there should account for it. (iii) R.3's movement bullet and R.7 row 2 still read "OPEN at §8.3"; the reviewer of the next round may mark them answered. (iv) The **Reviewer** row names only the 2026-10-07 rounds; copy this review there in the next revision. Earlier: Review 2026-10-09 of the 2026-10-09 revision (§8.3 "Server relaxations", §15 invariant 8, §18 rows and the answered callouts; `git diff main`) by a Claude review session in the spec-reviewer role that wrote neither this spec, the revision nor `test-server.md`, against CLEAN_ROOM.md §5.3 and the round-2 notes of [R.7](#review-r7): **changes requested**. Checklist: functional design facts only, no code or pseudo-code (the update rules are stated as formulas in prose), no copied prose, no game text, keys, hostnames or traffic, provenance (Design, with the §8.3 limits row as Project), invariants testable, no closed gate: pass, except the two items below. Earlier blocking items: none (2026-10-07); the round-2 §8.3 note (R.7 #2), the implementer note on invariant 8 and the §18 note are answered. Checked: the relaxations change no byte and need no client change; the bounds (10 s, 100 m) contain `test-server.md` §4.5 and §8.3 (3 s, 58 m; ranges 0–10 s and 0–100 m); the window skips only the up and down tests and runs from the epoch that opened it across corrections, as `test-server.md` §8.3 says; the credit rules (*d*_c, the rejection test, the updates of *A*ₕ, *A*_d and *C*) are identical in both specs and keep *C* in [0, *S*]; invariant 8 holds for them (the excess over *A*ₕ telescopes to at most *S* + Σ*d*_c) and agrees with `test-server.md` §14 invariant 8 for *S* > 0; the 2026-10-08 limits (*V*ₕ 8.5 = 6.5 + 30 %, *V*ᵤ 10, *V*_d 120 = the speed cap) agree with `collision.md` §10.3, §11.3 and §12.3 as on this branch (that row's "needs a reviewer's confirmation" is hereby given). **Blocking:** (1) §8.3 item 2 says "With *S* = 0 this is step 5 exactly", but with *S* = 0 the stated test is still *d*ₕ > *A*ₕ + *d*_c (only *C* stays 0), so every descending move gains *d*_c of horizontal allowance. `test-server.md` §8.3 ("with *S* = 0 the credit is off: *d*_c and *C* drop out") and its invariant 8 ("with *S* = 0, at most *V*ₕ · (*t* + *W*)") rely on the other reading, so a server built from this text with `slide_reserve` 0 breaks that invariant. State that a server without the credit, or with *S* = 0, applies step 5 unchanged (*d*_c and *C* drop out), and word invariant 8's parenthesis to match ("*S* = 0 and no counted descent without the credit"). (2) §8.3 item 1 gives the up-allowance update in the window (*A*ᵤ ← max(0, *A*ᵤ − *d*ᵤ)) but not the down one; without the credit, step 6 then subtracts the full *d*_d and *A*_d goes negative after a large claimed drop (an allowance below 0 exists nowhere else in §8.3, and the first descent after the window is then rejected), while with the credit item 2 keeps *A*_d ≥ 0 as `test-server.md` §8.3 does. State *A*_d ← max(0, *A*_d − *d*_d) for the window. Non-blocking: (a) the window's parenthesis lists world entry and `Ground` destinations; `tessera-server` also opens it after a `Named` teleport to a `ground` spawn (`test-server.md` §8.4), which the general clause covers; say "for example" or name it. (b) Item 1 lists "the extent check" beside steps 1–4, which already contain it. (c) Invariant 8's "the descent they count" could name *d*_c of §8.3 item 2. (d) The relaxations cite `collision.md` §12, itself Revised and awaiting review on this branch; re-check if its speeds change. |
@@ -89,6 +89,7 @@ background only and not normative.
 | 30 Hz simulation tick; network thread with a single-threaded async runtime and bounded channels | `docs/ARCHITECTURE.md` §20.3, §19.4 | Project |
 | Property value kinds mirrored in §7.2 | `tessera_props::Value` (21 kinds), read 2026-10-06 | Project |
 | quinn 0.11 defaults (CUBIC congestion control, 30 s idle timeout, worst-case 1-RTT datagram overhead) | quinn-proto 0.11.19 source in the local cargo registry, 2026-10-06 | Reported (background only; §2 states the normative values) |
+| §8.3 bounds of the values in force and changing the parameters during an epoch; invariant 8 across a change (2026-10-10) | Design decision of the spec writer, 2026-10-10, adopting the readings of the clean-room `MovementValidator` (implementer notes of 2026-10-09 and 2026-10-10, §17.1); no dirty-room input | Design |
 | Test vectors (§16) | Computed 2026-10-06 by a throwaway encoder written from §5–§7 (dirty scratch directory, not committed); each frame was checked to have length = 2 + body | Computed |
 
 ---
@@ -1326,6 +1327,33 @@ the wire, and a client needs no change for either (it sends as §8.2 requires).
    which the controller of `collision.md` §12 can make faster than *V*ₕ, be paid by the descent
    that produced it.
 
+**Bounds of the values in force** (added 2026-10-10). The bounds above (window at most 10 s,
+*S* at most 100 m) apply to the values a server uses. A server MUST NOT apply a larger value:
+where one is configured it either refuses the configuration or applies the bound in its
+place. A window length of 0, and a reserve that is 0, negative or not a number, turn the
+relaxation off. With no relaxation configured, steps 5 and 6 apply unchanged.
+
+**Changing the parameters during an epoch** (added 2026-10-10). A server MAY change *V*ₕ,
+*V*ᵤ, *V*_d, *W*, *S* or the window length while players are in the world. At the moment of
+a change, for each player:
+
+1. The allowances are capped at once by the new values: *A*ₕ ← min(*A*ₕ, *V*ₕ · *W*),
+   *A*ᵤ ← min(*A*ᵤ, *V*ᵤ · *W*), *A*_d ← min(*A*_d, *V*_d · *W*), and *C* ← min(*C*, *S*)
+   (*C* = 0 when the new *S* is 0). The change does not by itself refill them; server time
+   that has passed since the last refill is refilled at the next check at the rates then in
+   force.
+2. An open settling window keeps its start, the start of the epoch that opened it (item 1),
+   and from then on ends at that start plus the new length. A new length of 0 closes it. A
+   new length that puts the end at or before the moment of the change closes it at once.
+3. A window that was already closed at the moment of the change (its end under the old
+   length had passed, or it was closed by a teleport epoch or an earlier change) stays
+   closed, whatever the new length. A change never opens a window; only the start of an
+   epoch with an unknown height does (item 1).
+
+So an open window never lasts more than 10 s from the start of its epoch, and no allowance
+or credit ever exceeds the cap of the values in force. Invariant 8 (§15) covers stretches in
+which the values change.
+
 `test-server.md` §8.3 gives `tessera-server`'s use of both (settling window 3 s after a `ground`
 spawn or a `Ground` destination, *S* = 58 m) and the reasoning. Invariant 8 (§15) counts them.
 
@@ -1885,7 +1913,10 @@ protocol violation, because codes are informational.
    *V*_d · (*t* + *W*). No allowance is ever below 0. Every rejection that is reported advances
    the epoch (rejections beyond the 4 corrections per second of §8.3 step 7 are dropped
    without a report). (Reworded 2026-10-09; parenthesis and allowance floor revised 2026-10-09
-   after review.)
+   after review.) When the server changes the parameters within the stretch (§8.3 "Changing
+   the parameters during an epoch"), the bounds hold with the largest *V*ₕ, *V*ᵤ, *V*_d, *W*
+   and *S* in force at any time during the stretch, and no allowance ever exceeds *V* · *W*
+   nor *C* exceeds *S* for the values in force at that moment. (Added 2026-10-10.)
 
 > **Answered (2026-10-09, spec writer; was OPEN, implementer note):** invariant 8 now says
 > "every rejection that is reported advances the epoch", as the review had confirmed.
@@ -2273,6 +2304,26 @@ silent or ambiguous. The code follows each note; a reviewer should confirm or co
 > **OPEN:** (implementer note) §4.7: after `LoginFailed(RATE_LIMITED, retry_after)` the
 > client session refuses `Login` and `Register` until `retry_after` seconds have passed.
 
+> **Answered (2026-10-10, spec writer, design; was OPEN, implementer note 2026-10-09):** §8.3
+> "Server relaxations", out-of-bound values. Confirmed: a validator that clamps a configured
+> window above 10 s to 10 s and a reserve above 100 m to 100 m conforms, as does a server that
+> refuses such a configuration; §8.3 "Bounds of the values in force" now says so, and that a
+> reserve that is 0, negative or not a number turns the credit off. Both relaxations are off
+> unless configured. Opening the window per epoch whose starting height the server does not
+> know, measuring it from that epoch's start, keeping it across corrections and closing it at
+> the next teleport epoch is item 1 as written. `tessera-server` refuses out-of-range values
+> at load (`test-server.md` §4.1, §4.5), so its clamping never acts.
+
+> **Answered (2026-10-10, spec writer, design; was OPEN, implementer note 2026-10-10):** §8.3
+> settling window and allowances when the limits change during an epoch. The implemented
+> choice is adopted as the rule, now normative in §8.3 "Changing the parameters during an
+> epoch": the window stays measured from the start of the epoch that opened it, with the new
+> length; a length of 0 or an end at or before the change closes it; a closed window never
+> reopens; the allowances and *C* are capped by the new *V* · *W* and *S* at the moment of the
+> change, and time not yet refilled is refilled at the next check at the new rates. Invariant
+> 8 (§15) states the bound across a change. `tessera-server` v1 never changes the limits while
+> running (`test-server.md` §4.1), so the rule binds the validator and any server that does.
+
 ---
 
 ### 17.2 Implementer notes (`tessera-net` test-server backend, 2026-10-06)
@@ -2384,6 +2435,7 @@ them.
 | 2026-10-08 | §1, §7.3, §8.3: default limits follow the `collision.md` §12 controller: *V*ₕ 8.5 m/s (was 1.25 × `RUN_SPEED` = 7.5), *V*ᵤ 10 m/s (unchanged, reasoned anew), *V*_d 120 m/s (was 60); `WALK_SPEED`/`RUN_SPEED` no longer set a limit. No bytes change. Reasoning in `test-server.md` §4.5. Spec writer (design); needs a reviewer's confirmation |
 | 2026-10-09 | §8.3 "Server relaxations" (spec writer, design): a server MAY apply a settling window of at most 10 s after an epoch with an unknown height (skipping only the up and down tests) and a descent credit of at most 100 m; the round-2 OPEN at §8.3 is answered. §15 invariant 8 reworded for the relaxations and for unreported rejections; its implementer OPEN answered. This table gains the 2026-10-07 review row (round-2 OPEN at §18 answered). No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
 | 2026-10-09 | Review fixes (spec writer, design), answering the 2026-10-09 review: blocking (1), §8.3 item 2 now says the credit is in use only with *S* > 0, and a server without it or with *S* = 0 applies steps 5 and 6 unchanged (*d*_c and *C* drop out); §15 invariant 8's parenthesis matches. Blocking (2), §8.3 item 1 gives the down-allowance update in the window, *A*_d ← max(0, *A*_d − *d*_d); invariant 8 states that no allowance is below 0. Non-blocking (a) the window's examples say "for example" and name a `Named` teleport; (b) "the extent check" removed from item 1 (step 4 has it); (c) invariant 8 names *d*_c. (d) needs no change now. No byte changes; minor version 0. Status: changes requested → Revised, awaiting review |
+| 2026-10-10 | §1, §8.3, §15, §17.1 (spec writer, design). §8.3 "Server relaxations": new paragraph "Bounds of the values in force" (a server never applies a window above 10 s or *S* above 100 m; it refuses or clamps; a window of 0 or a reserve that is 0, negative or not a number turns the relaxation off) and new paragraph "Changing the parameters during an epoch" (allowances and *C* capped at once by the new values, no refill at the change; an open window keeps the start of its epoch and takes the new length, 0 or a passed end closes it; a closed window never reopens). §15 invariant 8: with parameters changing within a stretch, the largest values in force bound it. Both implementer notes of §17.1 (2026-10-09 clamping, 2026-10-10 limit change, from the implementations in commits a692dce and e73f00d) answered: the implemented behaviour is adopted. New provenance row. No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
 
 > **Answered (2026-10-09, spec writer; was OPEN, review, non-blocking, round 2):** the
 > 2026-10-07 review row is added and "Last updated" is current.

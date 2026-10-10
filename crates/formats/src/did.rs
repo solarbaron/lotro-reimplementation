@@ -274,7 +274,8 @@ pub enum DidKind {
     /// 0x25000000–0x26FFFFFF; spec §2.1, status R, BIN). Not accepted by the string-table
     /// decoder.
     StringTableReported,
-    /// 0x27: per-region imposter tables (DB type RENDER_IMPOSTER_TABLE; layout OPEN).
+    /// 0x27: per-region imposter tables (DB type RENDER_IMPOSTER_TABLE; layout `misc-records.md`
+    /// §5, decoder [`crate::imposter`]).
     ImposterTable,
     /// 0x28: DID maps.
     DataIdMap,

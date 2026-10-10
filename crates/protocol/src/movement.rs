@@ -236,17 +236,17 @@ impl MovementValidator {
         self.last_time = now;
     }
 
-    /// Changes the limits at server time `now` (µs). The allowances and the credit are
-    /// capped at once by the new *V* · *W* and reserve *S*. An open settling window stays
-    /// measured from the start of the epoch that opened it, with the new length: a shorter
-    /// one may end it at once, a zero one closes it. A window that had already ended by
-    /// `now` stays closed even if the new length would cover `now`.
+    /// Changes the limits at server time `now` (µs), as §8.3 "Changing the parameters
+    /// during an epoch" says. The allowances and the credit are capped at once by the new
+    /// *V* · *W* and reserve *S*, and not refilled: the time since the last refill is
+    /// refilled at the next check at the new rates. An open settling window keeps the start
+    /// of the epoch that opened it and takes the new length; a zero length, or one that puts
+    /// the end at or before `now`, closes it. A window already closed at `now` stays closed
+    /// whatever the new length: a change never opens one.
     pub fn set_limits(&mut self, limits: MovementLimits, now: u64) {
-        if !self.settling_at(now) {
-            self.settle_start = None;
-        }
+        let was_open = self.settling_at(now);
         self.limits = limits;
-        if self.window_us() == 0 {
+        if !was_open || self.window_us() == 0 || !self.settling_at(now) {
             self.settle_start = None;
         }
         let w = self.limits.window.as_secs_f64();
@@ -951,6 +951,250 @@ mod tests {
             MoveVerdict::Corrected(_)
         ));
         assert_eq!(v.check(&burst(&v, 1, 0.0, 1.9), 0), MoveVerdict::Accepted);
+    }
+
+    /// §8.3 "Changing the parameters during an epoch" item 1: the change caps the
+    /// allowances (also through *W*) but refills nothing; the time since the last refill is
+    /// refilled at the next check at the rates in force then.
+    #[test]
+    fn set_limits_caps_without_refilling() {
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        // Spend all of A_h (8.5 m) at time 0.
+        assert_eq!(v.check(&burst(&v, 1, 8.5, 0.0), 0), MoveVerdict::Accepted);
+        assert!(v.allow_h.abs() < 1e-9);
+        // Doubling V_h half a second later does not refill A_h at the change.
+        let fast = MovementLimits {
+            horizontal_speed: 17.0,
+            ..MovementLimits::default()
+        };
+        v.set_limits(fast, 500_000);
+        assert!(
+            v.allow_h.abs() < 1e-9,
+            "refilled at the change: {}",
+            v.allow_h
+        );
+        // At the next check the half second refills at the new rate: 8.5 m, where the old
+        // rate would give 4.25 m.
+        let mut w = v.clone();
+        assert!(matches!(
+            w.check(&burst(&w, 2, 8.6, 0.0), 500_000),
+            MoveVerdict::Corrected(_)
+        ));
+        assert_eq!(
+            v.check(&burst(&v, 2, 8.4, 0.0), 500_000),
+            MoveVerdict::Accepted
+        );
+        // A shorter W caps all three allowances at once: 1 s → 0.25 s.
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        let short = MovementLimits {
+            window: Duration::from_millis(250),
+            ..MovementLimits::default()
+        };
+        v.set_limits(short, 0);
+        assert!((v.allow_h - 8.5 * 0.25).abs() < 1e-9);
+        assert!((v.allow_up - 10.0 * 0.25).abs() < 1e-9);
+        assert!((v.allow_down - 120.0 * 0.25).abs() < 1e-9);
+        // A longer W raises no allowance at the change.
+        v.set_limits(MovementLimits::default(), 0);
+        assert!((v.allow_h - 8.5 * 0.25).abs() < 1e-9);
+        // A new S of 0 empties the credit.
+        let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (fail, now) = drive(&mut v, &mut seq, 0, steady(10, 0.0, -50.0));
+        assert_eq!(fail, None);
+        assert!(v.descent_credit() > 0.0);
+        v.set_limits(
+            MovementLimits {
+                descent_credit: Some(0.0),
+                ..server_limits()
+            },
+            now,
+        );
+        assert_eq!(v.descent_credit(), 0.0);
+    }
+
+    /// §8.3 "Changing the parameters during an epoch" items 2 and 3: a change never opens a
+    /// window, also when none was ever opened in the epoch.
+    #[test]
+    fn set_limits_never_opens_a_window() {
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        v.set_limits(server_limits(), 0);
+        assert!(!v.settling_at(0));
+        assert!(matches!(
+            v.check(&burst(&v, 1, 0.0, 50.0), 0),
+            MoveVerdict::Corrected(_)
+        ));
+        // A window opened under a zero length stays shut when the length grows.
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        v.open_settling_window();
+        v.set_limits(server_limits(), 0);
+        assert!(!v.settling_at(0));
+        // An open window keeps its start: at 2 s, a new length of 2 s ends it at once (the
+        // end equals the change), 2.5 s leaves it open until 2.5 s.
+        for (len_ms, open_until) in [(2_000, None), (2_500, Some(2_500_000u64))] {
+            let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
+            v.open_settling_window();
+            v.set_limits(
+                MovementLimits {
+                    settling_window: Duration::from_millis(len_ms),
+                    ..server_limits()
+                },
+                2_000_000,
+            );
+            assert_eq!(v.settling_at(2_000_000), open_until.is_some());
+            if let Some(end) = open_until {
+                assert!(v.settling_at(end - 1) && !v.settling_at(end));
+            }
+        }
+    }
+
+    /// §8.3 "Bounds of the values in force": a window above 10 s acts as 10 s across a
+    /// change too, so an open window never lasts more than 10 s from its epoch's start.
+    #[test]
+    fn set_limits_keeps_the_window_bound() {
+        let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
+        v.open_settling_window();
+        v.set_limits(
+            MovementLimits {
+                settling_window: Duration::from_secs(3_600),
+                ..server_limits()
+            },
+            1_000_000,
+        );
+        assert!(v.settling_at(9_999_999));
+        assert!(!v.settling_at(10_000_000));
+    }
+
+    /// `tessera-protocol.md` §15 invariant 8 across parameter changes (§8.3 "Changing the
+    /// parameters during an epoch"): pseudo-random moves with the parameters changed at
+    /// pseudo-random times, no settling window. Every stretch of every epoch is bounded by
+    /// the largest values in force during it; no allowance exceeds *V* · *W* nor the credit
+    /// *S* of the values in force, and none is below 0.
+    #[test]
+    fn invariant_8_holds_across_parameter_changes() {
+        let mut rng: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng >> 11) as f64 / (1u64 << 53) as f64
+        };
+        #[derive(Clone, Copy)]
+        struct P {
+            vh: f64,
+            vu: f64,
+            vd: f64,
+            w: f64,
+            s: f64,
+        }
+        let of = |l: &MovementLimits| P {
+            vh: l.horizontal_speed,
+            vu: l.up_speed,
+            vd: l.down_speed,
+            w: l.window.as_secs_f64(),
+            s: l.reserve(),
+        };
+        let (mut accepted, mut changes) = (0, 0);
+        for run in 0..40 {
+            let mut limits = if run % 2 == 0 {
+                server_limits()
+            } else {
+                MovementLimits::default()
+            };
+            let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+            // (from µs, parameters in force from then on).
+            let mut history: Vec<(u64, P)> = vec![(0, of(&limits))];
+            // (time µs, d_h, d_u, d_d) of the accepted moves of the current epoch.
+            let mut moves: Vec<(u64, f64, f64, f64)> = Vec::new();
+            let mut now = 0u64;
+            let mut seq = 0u32;
+            for _ in 0..400 {
+                now += (next() * 150_000.0) as u64;
+                if next() < 0.08 {
+                    limits = MovementLimits {
+                        horizontal_speed: 2.0 + next() * 18.0,
+                        up_speed: 2.0 + next() * 18.0,
+                        down_speed: 20.0 + next() * 130.0,
+                        window: Duration::from_secs_f64(0.25 + next() * 2.75),
+                        descent_credit: match (next() * 3.0) as u32 {
+                            0 => None,
+                            1 => Some(0.0),
+                            _ => Some(next() * 120.0),
+                        },
+                        ..limits
+                    };
+                    v.set_limits(limits, now);
+                    history.push((now, of(&limits)));
+                    changes += 1;
+                }
+                let p = of(&limits);
+                let check_caps = |v: &MovementValidator| {
+                    let eps = 1e-9;
+                    assert!(v.allow_h >= 0.0 && v.allow_h <= p.vh * p.w + eps);
+                    assert!(v.allow_up >= 0.0 && v.allow_up <= p.vu * p.w + eps);
+                    assert!(v.allow_down >= 0.0 && v.allow_down <= p.vd * p.w + eps);
+                    assert!(v.credit >= 0.0 && v.credit <= p.s + eps);
+                };
+                check_caps(&v);
+                seq += 1;
+                let dt = 0.066_667;
+                let (h, vz) = (next() * 40.0, next() * 90.0 - 70.0);
+                let m = burst(&v, seq, h * dt, vz * dt);
+                let before = v.epoch();
+                match v.check(&m, now) {
+                    MoveVerdict::Accepted => {
+                        accepted += 1;
+                        let dz = vz * dt;
+                        moves.push((now, h * dt, dz.max(0.0), (-dz).max(0.0)));
+                    }
+                    _ => {
+                        if v.epoch() != before {
+                            moves.clear();
+                        }
+                    }
+                }
+                check_caps(&v);
+                // Every stretch ending at the newest move.
+                let Some(&(t_end, _, _, _)) = moves.last() else {
+                    continue;
+                };
+                let (mut dh, mut du, mut dd) = (0.0, 0.0, 0.0);
+                for &(t, h, u, d) in moves.iter().rev() {
+                    dh += h;
+                    du += u;
+                    dd += d;
+                    // The largest values in force at any time in [t, t_end].
+                    let mut m = P {
+                        vh: 0.0,
+                        vu: 0.0,
+                        vd: 0.0,
+                        w: 0.0,
+                        s: 0.0,
+                    };
+                    for (i, &(from, q)) in history.iter().enumerate() {
+                        let until = history.get(i + 1).map_or(u64::MAX, |n| n.0);
+                        if from <= t_end && until > t {
+                            m.vh = m.vh.max(q.vh);
+                            m.vu = m.vu.max(q.vu);
+                            m.vd = m.vd.max(q.vd);
+                            m.w = m.w.max(q.w);
+                            m.s = m.s.max(q.s);
+                        }
+                    }
+                    let span = (t_end - t) as f64 / 1e6 + m.w;
+                    let eps = 1e-6;
+                    // Outside a window every accepted descent is counted (d_c = d_d), and
+                    // without the credit the bound only gains.
+                    assert!(dh <= m.vh * span + m.s + dd + eps, "run {run}: {dh}");
+                    assert!(du <= m.vu * span + eps, "run {run}: up {du}");
+                    assert!(dd <= m.vd * span + eps, "run {run}: down {dd}");
+                }
+            }
+        }
+        assert!(
+            accepted > 4_000 && changes > 600,
+            "{accepted} accepted, {changes} changes"
+        );
     }
 
     /// §8.3 "Server relaxations" item 2: *S* ≤ 100 m whatever is configured.

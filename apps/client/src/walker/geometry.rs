@@ -17,6 +17,7 @@ use tessera_material::diagnose::{base_reason, opacity_slot};
 use tessera_material::layers::{
     LayerAlpha as MaterialLayerAlpha, LayerCombine, SECOND_LAYER_ROLES, second_layer_plan,
 };
+use tessera_material::records::AddressMode;
 use tessera_material::vocab::ids;
 use tessera_material::{
     BlendMode, CurveStates, FallbackReason, LiquidSurface, MaterialKind, ResolvedMaterial,
@@ -25,6 +26,7 @@ use tessera_material::{
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
 use tessera_render::{
     AlphaMode, Indices, LayerAlpha, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh, UvTransform,
+    Wrap,
 };
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
@@ -52,13 +54,48 @@ pub enum AlphaKind {
 
 /// The texture a plan samples: `did` is a texture list (or surface) DID; `variant` is
 /// [`VARIANT_OPAQUE`], [`VARIANT_OWN_ALPHA`], [`VARIANT_ALPHA_ONLY`] or, for any other
-/// value, the DID of a separate opacity texture whose alpha replaces `did`'s.
+/// value, the DID of a separate opacity texture whose alpha replaces `did`'s; `wrap` the
+/// address modes it is sampled with (the GPU texture is uploaded once per mode in use).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TexRequest {
     /// Base texture (or the opacity texture for [`VARIANT_ALPHA_ONLY`]).
     pub did: u32,
     /// Alpha source (see the type docs).
     pub variant: u32,
+    /// Address modes U and V of the sampler (`material.md` §7.5, §8.5).
+    pub wrap: Wrap,
+}
+
+impl TexRequest {
+    /// A request sampled with wrap (repeat) on both axes.
+    #[must_use]
+    pub const fn new(did: u32, variant: u32) -> Self {
+        Self {
+            did,
+            variant,
+            wrap: Wrap::Repeat,
+        }
+    }
+
+    /// The same request with the address modes `wrap`.
+    #[must_use]
+    pub const fn with_wrap(self, wrap: Wrap) -> Self {
+        Self { wrap, ..self }
+    }
+}
+
+/// The address modes of texture slot `id` of `m`: its effective sampler state
+/// (`material.md` §7.5 with the 4005 / 4006 flags applied, §8.5). Clamp (3) and border (4)
+/// clamp to the edge texel (Tessera Decision: the sampler state stores no border colour,
+/// `material.md` §19); wrap (1), any other code and a slot without a sampler tile.
+#[must_use]
+pub fn slot_wrap(m: &ResolvedMaterial, id: u32) -> Wrap {
+    let clamps = |a: AddressMode| matches!(a, AddressMode::Clamp | AddressMode::Border);
+    m.slot(id)
+        .and_then(|s| s.sampler.as_ref())
+        .map_or(Wrap::Repeat, |st| {
+            Wrap::from_axes(clamps(st.address_u()), clamps(st.address_v()))
+        })
 }
 
 /// Where the gloss *g* of a lit surface comes from (`lighting.md` §5.2 item 5,
@@ -198,10 +235,8 @@ pub fn own_textures(surface: &LiquidSurface) -> [Option<TexRequest>; OWN_TEXTURE
     };
     // DIDs 0–3 would collide with the variant codes; they are never real.
     list.map(|d| {
-        d.filter(|d| d.0 > VARIANT_DYE_MASK).map(|d| TexRequest {
-            did: d.0,
-            variant: VARIANT_OWN_ALPHA,
-        })
+        d.filter(|d| d.0 > VARIANT_DYE_MASK)
+            .map(|d| TexRequest::new(d.0, VARIANT_OWN_ALPHA))
     })
 }
 
@@ -382,37 +417,28 @@ pub fn plan_material_with(
     let diffuse = slot_tex(ids::DIFFUSE);
     let texture = match (diffuse, opacity) {
         (None, None) => None,
-        (Some(d), None) => Some(TexRequest {
-            did: d,
-            variant: VARIANT_OPAQUE,
-        }),
-        (Some(d), Some(ids::DIFFUSE)) => Some(TexRequest {
-            did: d,
-            variant: VARIANT_OWN_ALPHA,
-        }),
+        (Some(d), None) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+        (Some(d), Some(ids::DIFFUSE)) => Some(TexRequest::new(d, VARIANT_OWN_ALPHA)),
         (d, Some(slot)) => match (d, slot_tex(slot)) {
             // An opacity slot without a texture: opacity 1 (material.md §18 OPEN).
-            (Some(d), None) => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OPAQUE,
-            }),
-            (Some(d), Some(a)) if a == d => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OWN_ALPHA,
-            }),
+            (Some(d), None) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+            (Some(d), Some(a)) if a == d => Some(TexRequest::new(d, VARIANT_OWN_ALPHA)),
             // DIDs 0–3 would collide with the variant codes; they are never real.
-            (Some(d), Some(a)) if a > VARIANT_DYE_MASK => Some(TexRequest { did: d, variant: a }),
-            (Some(d), Some(_)) => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OPAQUE,
-            }),
-            (None, Some(a)) => Some(TexRequest {
-                did: a,
-                variant: VARIANT_ALPHA_ONLY,
-            }),
+            (Some(d), Some(a)) if a > VARIANT_DYE_MASK => Some(TexRequest::new(d, a)),
+            (Some(d), Some(_)) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+            (None, Some(a)) => Some(TexRequest::new(a, VARIANT_ALPHA_ONLY)),
             (None, None) => None,
         },
     };
+    // The sampler of the slot the texture comes from (`material.md` §8.5): the diffuse
+    // slot, or the opacity slot for an opacity map without a base colour texture.
+    let texture = texture.map(|t| {
+        let slot = match (diffuse, opacity) {
+            (None, Some(a)) => a,
+            _ => ids::DIFFUSE,
+        };
+        t.with_wrap(slot_wrap(m, slot))
+    });
     let kind = MaterialKind::of(m);
     let empty = TextureMatrixLayout::default();
     let mut states = CurveStates::new();
@@ -445,10 +471,8 @@ pub fn plan_material_with(
             .filter(|l| l.texture.0 > VARIANT_DYE_MASK)
             .map(|l| {
                 (
-                    TexRequest {
-                        did: l.texture.0,
-                        variant: VARIANT_OWN_ALPHA,
-                    },
+                    TexRequest::new(l.texture.0, VARIANT_OWN_ALPHA)
+                        .with_wrap(slot_wrap(m, ids::SECOND_LAYER)),
                     l.combine == LayerCombine::Add,
                     match l.alpha {
                         MaterialLayerAlpha::Ignored => LayerAlpha::Ignored,
@@ -505,8 +529,8 @@ pub fn plan_material_with(
     // §10.2): the texture keeps its own alpha; the opacity stays 1.
     let texture = match (texture, lit.gloss) {
         (Some(t), GlossFrom::BaseAlpha) if t.variant == VARIANT_OPAQUE => Some(TexRequest {
-            did: t.did,
             variant: VARIANT_OWN_ALPHA,
+            ..t
         }),
         (t, _) => t,
     };
@@ -563,16 +587,15 @@ fn lit_inputs(
     let f = &m.features;
     let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture).map(|d| d.0);
     let role = |id: u32| m.slot(id).and_then(|s| s.role.as_deref());
-    let own = |did: u32| TexRequest {
-        did,
-        variant: VARIANT_OWN_ALPHA,
+    let own = |id: u32| {
+        move |did: u32| TexRequest::new(did, VARIANT_OWN_ALPHA).with_wrap(slot_wrap(m, id))
     };
     let opacity_from_base = texture.is_some_and(|t| layered || t.variant != VARIANT_OPAQUE)
         && !matches!(alpha, AlphaKind::Opaque);
     let normal = if f.normal_mapped {
         slot_tex(ids::NORMAL)
             .filter(|&d| d > VARIANT_DYE_MASK)
-            .map(own)
+            .map(own(ids::NORMAL))
     } else {
         None
     };
@@ -605,12 +628,12 @@ fn lit_inputs(
         .then(|| slot_tex(ids::EMISSIVE))
         .flatten()
         .filter(|&d| d > VARIANT_DYE_MASK)
-        .map(own);
+        .map(own(ids::EMISSIVE));
     let glow_mask = lit_glow
         .then(|| slot_tex(ids::GLOW))
         .flatten()
         .filter(|&d| d > VARIANT_DYE_MASK)
-        .map(own);
+        .map(own(ids::GLOW));
     let color = [
         unit(tint[0], 1.0),
         unit(tint[1], 1.0),
@@ -715,10 +738,7 @@ pub fn plan_material_dyed(m: &ResolvedMaterial) -> MaterialPlan {
     let channel = |mask: Option<tessera_formats::Did>, color: [f32; 4]| {
         let list = mask?;
         (list.0 > VARIANT_DYE_MASK).then_some((
-            TexRequest {
-                did: list.0,
-                variant: VARIANT_DYE_MASK,
-            },
+            TexRequest::new(list.0, VARIANT_DYE_MASK),
             [
                 srgb_unit_to_linear(color[0]),
                 srgb_unit_to_linear(color[1]),

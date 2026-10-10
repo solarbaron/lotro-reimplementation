@@ -699,12 +699,7 @@ mod tests {
         let plan = plan_material_with(&anim.material, Some(&anim.layout));
         let own = plan.own.expect("routed");
         assert_eq!(own.kind, tessera_material::MaterialKind::Water);
-        let req = |did| {
-            Some(TexRequest {
-                did,
-                variant: VARIANT_OWN_ALPHA,
-            })
-        };
+        let req = |did| Some(TexRequest::new(did, VARIANT_OWN_ALPHA));
         assert_eq!(own.textures[0], req(0x4100_0001));
         assert_eq!(own.textures[1], req(0x4100_0002));
         assert_eq!(own.textures[3], req(0x4100_0003));

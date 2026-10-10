@@ -1186,10 +1186,7 @@ pub fn layer_textures(layers: &BlockLayers) -> Vec<TexRequest> {
                 .into_iter()
                 .flatten()
             {
-                let r = TexRequest {
-                    did: did.0,
-                    variant: VARIANT_OWN_ALPHA,
-                };
+                let r = TexRequest::new(did.0, VARIANT_OWN_ALPHA);
                 if !out.contains(&r) {
                     out.push(r);
                 }
@@ -1422,10 +1419,7 @@ impl TerrainLayer {
         let tri = layers.triangle_at(x, y)?;
         let top = layers.layers_at(tri).last()?;
         let diffuse = top.textures().diffuse?;
-        let mean = objects.mean(TexRequest {
-            did: diffuse.0,
-            variant: VARIANT_OWN_ALPHA,
-        })?;
+        let mean = objects.mean(TexRequest::new(diffuse.0, VARIANT_OWN_ALPHA))?;
         let s = top.params().diffuse_colour;
         Some([mean[0] * s[0], mean[1] * s[1], mean[2] * s[2]])
     }
@@ -1563,10 +1557,7 @@ impl TerrainLayer {
                 let Some(did) = l.textures().diffuse else {
                     continue;
                 };
-                let t = TexRequest {
-                    did: did.0,
-                    variant: VARIANT_OWN_ALPHA,
-                };
+                let t = TexRequest::new(did.0, VARIANT_OWN_ALPHA);
                 match (objects.small(t), objects.lookup(t)) {
                     (Some(c), _) => {
                         diffuse.insert(did, c);
@@ -2464,10 +2455,7 @@ fn chunk_textures(
     let mut complete = true;
     let mut shared = |did: Option<Did>| -> Option<TextureId> {
         let did = did?;
-        match objects.lookup(TexRequest {
-            did: did.0,
-            variant: VARIANT_OWN_ALPHA,
-        }) {
+        match objects.lookup(TexRequest::new(did.0, VARIANT_OWN_ALPHA)) {
             TexLookup::Ready(id) => Some(id),
             TexLookup::Failed => None,
             TexLookup::Pending => {

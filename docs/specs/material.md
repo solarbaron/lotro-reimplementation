@@ -2238,6 +2238,20 @@ open:
 >   layer alpha alone" does not arise in this install.
 > - **(e)** **Tessera Decision (kept);** the original's loading behaviour is not traced.
 
+> **OPEN** (implementer, 2026-10-10, walker and `tessera-render`; engineering choices, no
+> format fact): the walker now samples object textures with each slot's effective address
+> modes (§7.5 bytes 8 and 9 with 4005 / 4006 applied, §8.5) instead of wrap everywhere. (a)
+> Border (code 4) is drawn as clamp to the edge texel: the 40-byte sampler state of §7.5
+> stores no border colour, and the colour the original uses (the device default, or a
+> render state) is not known. (b) A base texture whose alpha is taken from another slot's
+> texture (an opacity map composed into one image, §19 Decision of 2026-10-07) is sampled
+> with the address modes of the diffuse slot 3000; an opacity map drawn without a base
+> texture with those of its own slot. Whether the original's opacity sampler ever differs
+> from the diffuse sampler on a surface record is not checked. (c) Dye masks (§12.2) are
+> sampled with wrap; normal, emissive, glow and second-layer textures with their own slot's
+> modes; the samplers of the water and lava programs (`water.md` §8) keep their own fixed
+> modes. (d) Address modes other than 1, 3 and 4 (none occur, §7.5) are drawn as wrap.
+
 
 ---
 

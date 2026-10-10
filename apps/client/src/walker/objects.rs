@@ -2224,26 +2224,26 @@ impl ObjectLayer {
 
     fn poll_textures(&mut self) {
         for c in self.textures.poll_completions(4096) {
-            let t = TexRequest {
-                did: c.key.did,
-                variant: c.key.variant,
-            };
-            let Some(e) = self.gpu_tex.get_mut(&t) else {
-                continue;
-            };
-            if !matches!(e.state, TexState::Loading(_)) {
-                continue;
+            // One decoded image serves every address mode it is sampled with.
+            let base = TexRequest::new(c.key.did, c.key.variant);
+            for wrap in Wrap::ALL {
+                let Some(e) = self.gpu_tex.get_mut(&base.with_wrap(wrap)) else {
+                    continue;
+                };
+                if !matches!(e.state, TexState::Loading(_)) {
+                    continue;
+                }
+                e.state = match &c.outcome {
+                    Outcome::Ready(img) => TexState::Waiting(Arc::clone(img)),
+                    Outcome::Failed(err) if err.is_data_error() => {
+                        tracing::debug!(texture = %c.key, "texture failed: {err}");
+                        TexState::Failed(texture_failure_reason(err))
+                    }
+                    Outcome::Failed(_) | Outcome::Cancelled => {
+                        TexState::Retry(Instant::now() + RETRY_AFTER)
+                    }
+                };
             }
-            e.state = match c.outcome {
-                Outcome::Ready(img) => TexState::Waiting(img),
-                Outcome::Failed(err) if err.is_data_error() => {
-                    tracing::debug!(texture = %c.key, "texture failed: {err}");
-                    TexState::Failed(texture_failure_reason(&err))
-                }
-                Outcome::Failed(_) | Outcome::Cancelled => {
-                    TexState::Retry(Instant::now() + RETRY_AFTER)
-                }
-            };
         }
         for e in self.gpu_tex.values_mut() {
             if let TexState::Loading(h) = &e.state
@@ -2278,7 +2278,7 @@ impl ObjectLayer {
             let result = match img.levels.as_slice() {
                 [one] => renderer.upload_texture(&TextureUpload {
                     label: Some(&label),
-                    wrap: Wrap::Repeat,
+                    wrap: t.wrap,
                     color_space,
                     ..TextureUpload::rgba8(one.width, one.height, &one.pixels)
                 }),
@@ -2294,6 +2294,7 @@ impl ObjectLayer {
                     renderer.upload_texture_mips(&MipChainUpload {
                         label: Some(&label),
                         color_space,
+                        wrap: t.wrap,
                         ..MipChainUpload::new(&mips)
                     })
                 }
@@ -3153,10 +3154,7 @@ mod tests {
 
     #[test]
     fn surface_draws_wait_for_their_base_texture() {
-        let tex = TexRequest {
-            did: 0x4000_0001,
-            variant: VARIANT_OWN_ALPHA,
-        };
+        let tex = TexRequest::new(0x4000_0001, VARIANT_OWN_ALPHA);
         let mut plan = MaterialPlan::FALLBACK;
         plan.texture = Some(tex);
         plan.alpha = AlphaKind::Mask(0.5);

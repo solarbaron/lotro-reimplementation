@@ -16,13 +16,13 @@
 
 mod ui_common;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tessera_client::ui_host::UiHost;
 use tessera_client::ui_host::cursor::{CursorWindow, activation_timing};
 use tessera_input::{MouseButton, RawEvent};
 use tessera_settings::{CursorMode, InputPrefs};
-use ui_common::{Rig, write_plugin};
+use ui_common::{Rig, pump_plugins_until, write_plugin};
 
 /// Writes one line per `Received` event of the message `review-*`.
 const LISTENER: &str = r#"
@@ -97,16 +97,12 @@ fn a_plugin_error_is_an_error_line() {
     // No install: plugins may load (`chat-window.md` §10 item 3).
     plugins.data_unavailable();
     plugins.set_ui_binding(Some(host.plugin_ui().binding()));
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // A progress wait (no wall-clock deadline): until the error line, or the host idle.
     let mut lines = Vec::new();
-    while Instant::now() < deadline {
-        plugins.pump();
-        lines.extend(plugins.take_chat());
-        if lines.iter().any(|(_, t)| t.contains("review-boom")) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    pump_plugins_until(&mut plugins, 5000, |p| {
+        lines.extend(p.take_chat());
+        lines.iter().any(|(_, t)| t.contains("review-boom"))
+    });
     let errors: Vec<&(u32, String)> = lines
         .iter()
         .filter(|(_, t)| t.contains("review-boom"))
@@ -261,7 +257,7 @@ const HIJACK: &str = r#"
 local cmd = Turbine.ShellCommand()
 function cmd:Execute(command, args) end
 Turbine.Shell.AddCommand("reviewcmd", cmd)
-Turbine.Shell.GetCommands = function() while true do end end
+Turbine.Shell.GetCommands = function() hijacked = true while true do end end
 Turbine.Shell.WriteLine("hijack: ready")
 "#;
 
@@ -271,13 +267,12 @@ fn the_command_list_never_runs_plugin_code() {
     rig.attach(&["Hijack"]);
     rig.wait_loaded(1);
     assert!(rig.said("hijack: ready"), "{:?}", rig.lines());
-    let t = Instant::now();
     let names = rig.plugins.command_names();
-    assert!(
-        t.elapsed() < Duration::from_secs(2),
-        "took {:?}",
-        t.elapsed()
-    );
+    // The replacement marks the apartment before it loops; no wall-clock check needed.
+    let hijacked = rig.plugins.manager().with_lua("H", |lua| {
+        lua.load("return hijacked == true").eval::<bool>().ok()
+    });
+    assert_eq!(hijacked, Some(Some(false)), "GetCommands replacement ran");
     assert!(names.iter().any(|n| n == "reviewcmd"), "{names:?}");
     assert!(names.iter().any(|n| n == "plugins"), "{names:?}");
     rig.shutdown();

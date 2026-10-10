@@ -15,6 +15,53 @@ use tessera_input::{
     InputMapper, KeyCode, MouseButton, RawEvent, StandardActions, default_keymap, default_registry,
 };
 
+/// Whether the plugin host is waiting on work outside the frame loop: the plugin file
+/// index walk on its worker (plugin loads wait for the first index) or the install's
+/// command words (loads wait for them too). Both always finish, however loaded the
+/// machine, so progress waits do not count frames or pumps while this holds.
+#[must_use]
+pub fn plugins_busy(p: &Plugins) -> bool {
+    !p.command_words_settled() || p.manager().scan_running()
+}
+
+/// Whether the plugin host can make no more progress on its own: nothing outside the
+/// frame loop runs ([`plugins_busy`]), no deferred work is queued and no plugin-data write
+/// is outstanding.
+#[must_use]
+pub fn plugins_idle(p: &Plugins) -> bool {
+    let m = p.manager();
+    !plugins_busy(p) && m.deferred_len() == 0 && m.pending_writes() == 0
+}
+
+/// Pumps `p` (without a game UI) until `done` holds; returns whether it does. The wait
+/// follows progress, not the wall clock: pumps while the host is busy outside the frame
+/// loop are not counted, it ends early once the host is idle, and otherwise gives up
+/// after `max` counted pumps (each runs at least one deferred item).
+pub fn pump_plugins_until(
+    p: &mut Plugins,
+    max: usize,
+    mut done: impl FnMut(&mut Plugins) -> bool,
+) -> bool {
+    let mut counted = 0usize;
+    while counted < max {
+        p.pump();
+        if done(p) {
+            return true;
+        }
+        if plugins_busy(p) {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        if plugins_idle(p) {
+            // One more pump flushes what the last item wrote.
+            p.pump();
+            return done(p);
+        }
+        counted += 1;
+    }
+    done(p)
+}
+
 /// The default screen of the rig.
 pub const SCREEN: (u32, u32) = (1600, 900);
 
@@ -141,9 +188,24 @@ impl Rig {
         done(self)
     }
 
-    /// Loads queued plugins: frames until `n` plugins are loaded.
+    /// Loads queued plugins: frames until `n` plugins are loaded. Frames while the plugin
+    /// file index walk runs on its worker are not counted ([`plugins_busy`]), so a loaded
+    /// machine only makes the wait longer; after that every frame runs deferred work.
     pub fn wait_loaded(&mut self, n: usize) {
-        let ok = self.frames_until(5000, |r| r.plugins.manager().loaded_plugins().len() >= n);
+        let mut counted = 0usize;
+        let ok = loop {
+            if self.plugins.manager().loaded_plugins().len() >= n {
+                break true;
+            }
+            if counted >= 5000 {
+                break false;
+            }
+            self.frame();
+            if !plugins_busy(&self.plugins) {
+                counted += 1;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
         assert!(
             ok,
             "plugins loaded: {:?}; chat: {:?}",

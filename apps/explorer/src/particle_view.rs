@@ -335,7 +335,9 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
 ///
 /// With a surface ([`PreviewSim::with_surface`]) the run keeps one set of curve states for
 /// that surface for its whole length (`particle-runtime.md` §12 rule 12) and evaluates the
-/// look at every step, as a frame draws it; a restart starts the states afresh.
+/// look at every drawn frame, as the walker does: at the clock of the frame drawn, after
+/// the system's draw, with mode-3 curves drawing from the shared stream next (§9.1.1 (d),
+/// (e); RT33); a restart starts the states afresh.
 #[derive(Debug, Clone)]
 pub struct PreviewSim {
     desc: Arc<ParticleSystem>,
@@ -371,7 +373,7 @@ impl PreviewSim {
     }
 
     /// This simulation drawn with the surface of `src`: its look at time 0, re-evaluated at
-    /// every step when the surface is animated.
+    /// every drawn frame when the surface is animated.
     #[must_use]
     pub fn with_surface(mut self, src: &PreviewSource) -> Self {
         self.base = src.look;
@@ -390,7 +392,7 @@ impl PreviewSim {
         *self = fresh;
     }
 
-    /// The surface's look at the last step.
+    /// The surface's look at the last drawn frame (the look at time 0 before any draw).
     #[must_use]
     pub fn look(&self) -> PreviewLook {
         self.look
@@ -423,9 +425,6 @@ impl PreviewSim {
             &mut self.rng,
             &OriginAttachments,
         );
-        if let Some(c) = &self.clock {
-            self.look = c.look_at(self.base, self.time, &mut self.states, &mut self.rng);
-        }
         self.frame += 1;
         self.time += 1.0 / STEPS_PER_SECOND;
     }
@@ -459,12 +458,22 @@ impl PreviewSim {
         }
     }
 
-    /// The current frame drawn from `camera`.
+    /// The current frame drawn from `camera`, and the surface's look ([`PreviewSim::look`])
+    /// evaluated at that frame's clock after it, in the walker's order.
     pub fn draw(&mut self, camera: &Camera) -> Option<SystemDraw> {
-        let now = (self.time - 1.0 / STEPS_PER_SECOND).max(0.0);
+        let now = self.drawn_clock();
         let view = CameraView::look_at(camera.eye, camera.target);
         self.sim.instance_frame()?;
-        self.sim.draw(now, &view, &mut self.rng)
+        let drawn = self.sim.draw(now, &view, &mut self.rng)?;
+        if let Some(c) = &self.clock {
+            self.look = c.look_at(self.base, now, &mut self.states, &mut self.rng);
+        }
+        Some(drawn)
+    }
+
+    /// The clock of the last placed frame: the one [`PreviewSim::draw`] draws.
+    fn drawn_clock(&self) -> f64 {
+        (self.time - 1.0 / STEPS_PER_SECOND).max(0.0)
     }
 }
 
@@ -1346,6 +1355,116 @@ mod tests {
         assert_eq!(a.time(), 0.0);
         let (c, r) = draw_sphere(None);
         assert!(r >= 0.5 && c[2].is_finite());
+    }
+
+    /// An animated particle surface: program 0x2B00_070F (it tests the texture) with alpha
+    /// test 4004 on and reference 1043 = `reference`, on a blend without depth write.
+    fn animated_clock(reference: tessera_material::FloatCurve) -> Arc<PreviewClock> {
+        use tessera_material::records::{
+            PERMUTATION_KEY_WORDS, ParamEntry, ParamValue, Permutation, RENDER_STATE_SIZE,
+            RenderState,
+        };
+        use tessera_material::{ShaderInterface, ShaderRecord};
+        let mut raw = [0u8; RENDER_STATE_SIZE];
+        // SRCALPHA / INVSRCALPHA, no depth write.
+        raw[..7].copy_from_slice(&[5, 6, 1, 7, 0, 2, 0]);
+        let record = ShaderRecord {
+            did: Did(0x2B00_070F),
+            reserved: 0,
+            params: vec![
+                ParamEntry {
+                    id: 1043,
+                    group: 1000,
+                    value: ParamValue::Float(reference),
+                    flag: 0,
+                    bindings: Vec::new(),
+                },
+                ParamEntry {
+                    id: 4004,
+                    group: 4000,
+                    value: ParamValue::Flag(1),
+                    flag: 0,
+                    bindings: Vec::new(),
+                },
+            ],
+            permutations: vec![Permutation {
+                key: [0; PERMUTATION_KEY_WORDS],
+                programs: None,
+                samplers: Vec::new(),
+                extra_items: Vec::new(),
+                render_state: RenderState { raw },
+            }],
+        };
+        let layout = Arc::new(TextureMatrixLayout::from_record(&record));
+        let shader = Arc::new(ShaderInterface::from_record(&record));
+        let material = Arc::new(ResolvedMaterial::resolve(shader, &[]));
+        let look = ParticleSurface::of(&material, &layout);
+        assert!(look.is_animated());
+        Arc::new(PreviewClock {
+            look,
+            material,
+            layout,
+        })
+    }
+
+    /// The look is evaluated at every drawn frame, at that frame's clock and after the
+    /// system's draw, as the walker does (`particle-runtime.md` §9.1.1 (e), rule 12, RT33).
+    #[test]
+    fn surface_look_follows_the_drawn_frame() {
+        let cam = Camera {
+            eye: Vec3::new(0.0, -4.0, 1.0),
+            target: Vec3::new(0.0, 0.0, 0.5),
+            ..Camera::default()
+        };
+        let source = |clock: Arc<PreviewClock>| PreviewSource {
+            did: 0x3900_0001,
+            desc: system(),
+            texture: None,
+            second_texture: None,
+            look: PreviewLook::default(),
+            clock: Some(clock),
+            notes: Vec::new(),
+        };
+        let threshold = |look: PreviewLook| match look.alpha {
+            AlphaMode::Fixed(f) => f.alpha_test.map(|t| t.value()),
+            _ => None,
+        };
+        // A ramp 0.5 + 0.1 t: the drawn frame's clock, not the next step's.
+        let mut ramp = tessera_material::FloatCurve::constant(0.5);
+        ramp.mode = 2;
+        ramp.params[1] = 0.1;
+        ramp.param_count = 10;
+        let mut sim = PreviewSim::new(system(), 1).with_surface(&source(animated_clock(ramp)));
+        sim.run_to(1.0);
+        let now = sim.drawn_clock();
+        assert!(sim.draw(&cam).is_some());
+        let got = threshold(sim.look()).expect("tested");
+        assert!(
+            (f64::from(got) - (0.5 + 0.1 * now)).abs() < 1e-5,
+            "{got} at {now}"
+        );
+        // A mode-3 flicker 0.5 + 0.25 r takes its r from the shared stream after the
+        // system's draw.
+        let mut flicker = tessera_material::FloatCurve::constant(0.5);
+        flicker.mode = 3;
+        flicker.params[2] = 0.25;
+        flicker.param_count = 10;
+        let clock = animated_clock(flicker);
+        let mut sim = PreviewSim::new(system(), 5).with_surface(&source(Arc::clone(&clock)));
+        sim.run_to(0.5);
+        let mut probe = sim.clone();
+        let view = CameraView::look_at(cam.eye, cam.target);
+        let now = probe.drawn_clock();
+        assert!(probe.sim.draw(now, &view, &mut probe.rng).is_some());
+        let want = clock.look_at(
+            PreviewLook::default(),
+            now,
+            &mut CurveStates::new(),
+            &mut probe.rng,
+        );
+        assert!(sim.draw(&cam).is_some());
+        assert_eq!(sim.look(), want);
+        assert_eq!(sim.rng, probe.rng, "the same draws from the shared stream");
     }
 
     #[test]

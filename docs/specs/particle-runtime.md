@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09; revision of 2026-10-09 reviewed: implementer OPENs of §3.2, §5.4, §9.2, §10.2 and §12 answered, new §9.1.1 (BIN-S, OBS2), RT21–RT24, Q-RT7, Q-RT8). Before: Revised (2026-10-09), Accepted (2026-10-08) |
-| **Last updated** | 2026-10-09 |
+| **Status** | Accepted (2026-10-10; review of the 2026-10-10 revision passed: the implementer OPEN (a)–(e) of §9.1.1 answered, new §9.1.2 (permutation feature bit 1: soft particles and heat distortion) and §9.1.3 (opacity of particle draws against the mesh rule, and in premultiplied passes), BIN and BIN-S passes of 2026-10-10, OBS3, RT25–RT30, rules 10–11, Q-RT9). Before: Revised (2026-10-10), Accepted (2026-10-09), Revised (2026-10-09), Accepted (2026-10-08) |
+| **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, not the author), 2026-10-08; independent reviewer of the 2026-10-09 revision (separate dirty-room session, AI-assisted, not the author), 2026-10-09 |
-| **Review record** | Review 2026-10-09 of the revision (diff against main, CLEAN_ROOM.md §5.3): **passed**, Accepted. All nine checklist items hold for the changed text: functional facts, Tessera rules and Decisions only; no code or pseudo-code; no copied prose; property names only as interoperability identifiers; no game text, assets or keys; every new fact has a provenance row (BIN-S, OBS2; RT21–RT24) with its mark; unknowns are OPEN (Q-RT7, Q-RT8, each with a Decision). Spot-check, read-only on 2026-10-09 with the repository decoders as a tool: 11,155 records with prefix 0x39, 11,153 with a surface, 1,179 distinct surface records, 19 shader records, the surface and system counts of every row of the §9.1.1 table, effective 4004 on 8 / off 1,049 / not declared 122 and 4002 on 2 / off 1,177 all reproduced exactly (RT21). The BIN-S program readings (RT22) and the RT24 census were not re-derived. Non-blocking notes: (1) §9.1.1 rule 1 summarises `material.md` §11.2 per-draw steps 2–3 but not step 1 (alpha-to-coverage keeps the reference) or the 8-bit rounding; §11.2 remains authoritative, a pointer to its steps 1–4 would help; (2) a stray semicolon before the parenthesis in rule 1; (3) the Answered callout after §12 rule 7 interrupts the numbered list. Earlier: review 2026-10-08 **passed**, Accepted; details and non-blocking notes in the review log (decision 0018). |
+| **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, not the author), 2026-10-08; independent reviewer of the 2026-10-09 revision (separate dirty-room session, AI-assisted, not the author), 2026-10-09; independent reviewer of the 2026-10-10 revision (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10 |
+| **Review record** | Review 2026-10-09 of the revision (diff against main, CLEAN_ROOM.md §5.3): **passed**, Accepted. All nine checklist items hold for the changed text: functional facts, Tessera rules and Decisions only; no code or pseudo-code; no copied prose; property names only as interoperability identifiers; no game text, assets or keys; every new fact has a provenance row (BIN-S, OBS2; RT21–RT24) with its mark; unknowns are OPEN (Q-RT7, Q-RT8, each with a Decision). Spot-check, read-only on 2026-10-09 with the repository decoders as a tool: 11,155 records with prefix 0x39, 11,153 with a surface, 1,179 distinct surface records, 19 shader records, the surface and system counts of every row of the §9.1.1 table, effective 4004 on 8 / off 1,049 / not declared 122 and 4002 on 2 / off 1,177 all reproduced exactly (RT21). The BIN-S program readings (RT22) and the RT24 census were not re-derived. Non-blocking notes: (1) §9.1.1 rule 1 summarises `material.md` §11.2 per-draw steps 2–3 but not step 1 (alpha-to-coverage keeps the reference) or the 8-bit rounding; §11.2 remains authoritative, a pointer to its steps 1–4 would help; (2) a stray semicolon before the parenthesis in rule 1; (3) the Answered callout after §12 rule 7 interrupts the numbered list. Review 2026-10-10 of the 2026-10-10 revision (commit 6dd06d3: header, §1 BIN (h), BIN-S second pass, OBS3, RT20, RT25–RT30, §2, §9.1.1 notation and callout, new §9.1.2–§9.1.3, §12 rules 8, 10, 11, §13 RT-I10–RT-I12, §15 Q-RT9, §16, §17) against CLEAN_ROOM.md §5.3: **passed**, Accepted. All nine checklist items hold: functional facts, formulas in words and Tessera rules only; no code or pseudo-code (the shader formulas are arithmetic, not instruction listings); no copied prose; the option names and the 1160 label are interoperability identifiers already used by `install-layout.md` and `material.md` §8.0, and the option description is paraphrased; no game text, assets or keys; every new fact has a row with its mark (RT25 BIN, RT26–RT27 BIN-S + OBS, RT28–RT29 OBS, RT30 Decision); the unknowns are OPEN Q-RT9 with a Decision; nothing under a closed gate. Spot-checks, read-only on 2026-10-10: with the repository decoders, 11,155 records, 11,153 with a surface, 1,179 surfaces, 19 shader records; RT29 209 systems on 0x2B000084, 97 with `uses_video_post` 1; RT28 1,057 surfaces with 4004, all with a mode-1 1043, 1,148 with 1174 (43 at 0, 997 at 0.3); RT27 206 two-layer surfaces, 182 not identity (34 first set, 178 second), 171 animated (3, 170); RT26 and RT-I11: in each of the nine named records exactly one Direct3D 10/11 permutation has bit 1 of key word 1 and it alone samples the depth-stencil source, 0x2B000084 has bit-1 permutations for kinds 1, 3, 4 sampling the frame-buffer source and ZERO / ONE variants excluding it, the other nine records never use bit 1. RT25 re-derived in an own headless decompilation: the mask builder sets value 2 only from two frame flags (cleared and restored around a further draw by its caller), the render-target-effects byte and a non-zero `Render.SurfaceReflections` (variable matched to the option by its registration); the byte is set from `Render.VideoPostEffects`, two device flags and a hardware class of at least 2. The soft-particle factor (view depth − 0.1, divide by *k*, saturate, alpha only), the heat-distortion steps and the two-layer texture matrices (two matrices in the two-layer vertex programs, none in the one-layer ones) agree with the disassembled programs. **Non-blocking:** (1) the routine that sets the render-target-effects byte clears it again under one further device condition; it falls under "not traced further" and Q-RT9, but could be named there. (2) §9.1.1 notation leaves a short line ("*V* = the vertex colour, which carries the") after the inserted sentence; rewrap at the next edit. Earlier: review 2026-10-08 **passed**, Accepted; details and non-blocking notes in the review log (decision 0018). |
 | **Implements into** | `apps/client` (Particle-node instances, effect attachment to entities, lingering and removal, the per-frame order), `crates/render` (particle draw calls, draw order inside a system), `crates/formats` (no new decoding; the Particle node's extra byte of `script-table.md` §4.1 gets its meaning here), a shared random source (§3.3) |
 | **Companion specs** | [`particles.md`](particles.md) (record layouts §4, §6; the simulation of one 0x39 system §8; start gating §7.1.2; node record choice §7.1.1; fork effects §6.5). [`script-table.md`](script-table.md) §4.1 (the extra byte after a Particle node's base block), §5.3 (Particle node fields). [`script-runtime.md`](script-runtime.md) §2.1 (contexts: intensity, flags), §3 (node start, completion, stop). [`setup.md`](setup.md) §5.2 (render scale, `Model_ParticleScale`). [`skeleton-anim.md`](skeleton-anim.md) (holding locations, bone types). [`material.md`](material.md) §5.3.1 (clock, curve evaluation), §4 and §7 (surface records and their blend states). [`water.md`](water.md) (water surfaces). |
 
@@ -60,10 +60,11 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 
 | Tag | Source |
 |---|---|
-| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. |
+| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. **Pass of 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): (h) what decides whether a draw uses a shader record's permutations that read the scene depth or the frame-buffer image (the variants of §9.1.2): the routine that builds the frame's permutation feature mask, its inputs and the user options behind them, found from the option description that names heat distortion. Same reasons: a code path; the data holds only the permutations and their keys. |
 | OBS | User install (Steam), read in place and read-only on 2026-10-08: all 7,526 script tables (7,524 decodable, as in `script-table.md`) and 28,992 scriptlets of `client_gamelogic.dat`, every Particle node (41,354); all 11,155 records with prefix 0x39 and all 254 with prefix 0x44 of `client_general.dat`; the master property dictionary 0x34000000. |
-| BIN-S | **M4 (decision 0011), shader programs.** The compiled programs stored in the 19 shader records that particle surfaces use (same build as BIN; the records are game data), disassembled with a public shader disassembler in the dirty room on 2026-10-09: every Direct3D 10/11 (kind 4) vertex and pixel program of the 19 records, and the OpenGL (kind 3) pixel programs of 0x2B00070F and 0x2B0007F2 as a cross-check (they agree). **Question:** how the alpha test and the blend's source alpha of a particle draw use the texture, the vertex colour and the material colour with the draw's tint (the implementer question of §9.1.1). **Why M1–M3 were not enough:** the data gives the parameters and render states but not what the programs compute; no frame capture is available (M3); no published source describes these programs (M2). |
+| BIN-S | **M4 (decision 0011), shader programs.** The compiled programs stored in the 19 shader records that particle surfaces use (same build as BIN; the records are game data), disassembled with a public shader disassembler in the dirty room on 2026-10-09: every Direct3D 10/11 (kind 4) vertex and pixel program of the 19 records, and the OpenGL (kind 3) pixel programs of 0x2B00070F and 0x2B0007F2 as a cross-check (they agree). **Question:** how the alpha test and the blend's source alpha of a particle draw use the texture, the vertex colour and the material colour with the draw's tint (the implementer question of §9.1.1). **Why M1–M3 were not enough:** the data gives the parameters and render states but not what the programs compute; no frame capture is available (M3); no published source describes these programs (M2). **Second pass, 2026-10-10** (same tools): the Direct3D 10/11 vertex and pixel programs of 0x2B000084 (both variants), of the depth-reading variants of the nine records that have one, and the vertex programs of the eight two-layer records and of the one-layer records. **Questions:** what the heat-distortion and soft-particle variants compute (§9.1.2) and which texture coordinates each layer reads (§9.1.1, implementer item (d)). Same reasons. |
 | OBS2 | User install (Steam), read in place and read-only on 2026-10-09 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoders used as a tool for the script tables; the record layouts of `material.md` §4–§7 for surfaces and shader records): the `surface` field of all 11,155 records with prefix 0x39, the 1,179 distinct surface records they name, their materials and shader records (effective 4002, 4004, 1043 and 2000 by `material.md` §9.2); the driven pairs of all 41,354 Particle nodes of all script tables and scriptlets. |
+| OBS3 | User install (Steam), read in place and read-only on 2026-10-10 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoder used as a tool for the 0x39 records; the record layouts of `material.md` §4–§7): `uses_video_post` and `surface` of all 11,155 records with prefix 0x39; the permutation keys and samplers of the 19 shader records of §9.1.1; the effective values (`material.md` §9.2) of 1043, 1160, 1174, 4004 and the texture-matrix parameters 1001–1004, 1017–1020, 1033–1034 and 1070–1073 of every particle surface. |
 | PS | [`particles.md`](particles.md) (Accepted 2026-10-08): layouts, censuses, the simulation of one 0x39 system (§8), start gating (§7.1.2), fork effects (§6.5). |
 | SR | [`script-runtime.md`](script-runtime.md) §2.1, §3 (contexts, node start, completion, stop). |
 | SE | [`setup.md`](setup.md) §5.2 (render scale; `Model_ParticleScale`, PID 0x5A0). |
@@ -90,11 +91,17 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | RT17 | Fork draw batches select one of the seven UNIQUEDB fork shaders by a blend-mode index 0–6 (§10.2) | BIN; PS §6.4 (the keys) | Confirmed (BIN) |
 | RT18 | Census of Particle-node fields (§5.2) | OBS | Confirmed |
 | RT19 | Tessera rules (§12) | This spec | Decision |
-| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag; an attached instance's own opacity; driven fields after the start (Q-RT1–Q-RT8) | BIN (partial) | OPEN |
+| RT20 | Whether an owner that is not drawn places its effects; the exact per-frame order; context flag 0x40; bounds culling; beams; the 0xC000 draw flag; an attached instance's own opacity; driven fields after the start; the frame-buffer image of distortion draws (Q-RT1–Q-RT9) | BIN (partial) | OPEN |
 | RT21 | Particle surfaces: the 11,153 systems with a surface name 1,179 distinct surface records, which use 19 shader records, all unlit and drawn in one pass; their blend is SRCALPHA / INVSRCALPHA or SRCALPHA / ONE (one record also has a frame-buffer-less variant ZERO / ONE); effective alpha test on in 8 surfaces, off in 1,049, not declared in 122; effective depth write off in 1,177, on in 2 (§9.1.1) | OBS2 | Confirmed (2026-10-09) |
 | RT22 | What the 19 records' programs compute: the alpha test reads the texture's opacity alone; the output alpha is the texture opacity × vertex alpha × material alpha in most records, with the exceptions of §9.1.1; colour, doubling and fog per record (§9.1.1) | BIN-S | Confirmed (BIN-S) |
 | RT23 | The draw's colour multiplier (1, 1, 1, instance opacity) is the per-object tint that `material.md` §8.3 multiplies into material colour 2000, so the per-draw alpha-test rules of `material.md` §11.2 apply to particle draws with *A* = 2000 alpha × instance opacity (§9.1.1) | BIN (the draw call hands the surface's material, shader, transform and colour to the renderer, RT16); `material.md` §8.3, §11.2 | Inferred |
 | RT24 | Driven pairs on Particle nodes: 2 of 41,354 nodes, both driving `ParticleScript_ParticleID` from a property with no stored value in the archives (`QuestState_True_Particle`, `QuestState_False_Particle`); no scriptlet-driven pairs (§5.4) | OBS2; `particles.md` §7.1.2 (the two properties have no stored value) | Confirmed (2026-10-09) |
+| RT25 | The frame's permutation feature mask has bit 1 (value 2) set only when the client's render-target effects are active (the `Render.VideoPostEffects` option on and the graphics device qualifying), the `Render.SurfaceReflections` option is not 0, and two internal frame flags are set (cleared while an auxiliary view is drawn); permutations whose key word 1 has bit 1 are drawn only then, those whose word 2 has it only otherwise (§9.1.2) | BIN (2026-10-10: the mask builder, its two callers, the readers of both options, the option registrations); `lighting.md` §3.1 (key words) | Confirmed (BIN); the auxiliary view and the device conditions not traced |
+| RT26 | Of the 19 particle shader records, 9 have a Direct3D 10/11 variant that requires bit 1 and reads the scene depth (soft particles) and 0x2B000084 has variants for three back ends that require bit 1 and read the frame-buffer image (heat distortion); every other permutation of the 19 excludes bit 1 or does not mention it; the soft-particle factor and the distortion formula of §9.1.2 | OBS3 (keys and samplers); BIN-S (second pass, the Direct3D 10/11 programs of every such variant) | Confirmed (BIN-S + OBS); the content of the depth image Inferred from `lighting.md` §11 |
+| RT27 | The eight two-layer records read the first layer at texture matrix 0 and the second at texture matrix 1 (`material.md` §8.4), both applied to the vertex UV pair; the eleven one-layer records apply no texture matrix; on the 206 two-layer particle surfaces 182 have a matrix that is not the identity and 171 an animated one, nearly all in the second layer (§9.1.1) | BIN-S (second pass: every vertex program of the 19 records); OBS3 | Confirmed (BIN-S + OBS) |
+| RT28 | Every particle surface that declares alpha test (4004) has a constant (mode 1) reference 1043 (1,057 surfaces); 1,148 particle surfaces declare 1174, 43 of them with value 0 (§9.1.1, §9.1.2) | OBS3 | Confirmed (2026-10-10) |
+| RT29 | 209 systems draw 0x2B000084: 112 with `uses_video_post` = 0, 97 with 1 (§9.1.2) | OBS3 | Confirmed (2026-10-10) |
+| RT30 | Particle draws take their alpha test and the source alpha of their blend from the programs of §9.1.1, not from the mesh opacity-source rule of `render.md` §4.3; in a premultiplied pass they follow `render.md` §6.10 "Fixed blends" with that source alpha (§9.1.3) | BIN-S (the programs, RT22); `render.md` §4.3, §6.10 | Decision, built on Confirmed (BIN-S) program facts |
 
 ---
 
@@ -114,7 +121,7 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | Rotation | `particles.md` §8.12 (modes 3) and §8.7 (growth with age) |
 | Texture-sheet animation | `particles.md` §8.10 |
 | Billboarding and orientation modes | `particles.md` §8.12 |
-| Blend modes | §9.1 here (material of the surface record, `material.md`); fork effects §10.2 |
+| Blend modes | §9.1–§9.1.3 here (material of the surface record, `material.md`; the programs, permutation variants and opacity of particle draws); fork effects §10.2 |
 | Sorting between systems and passes | `particles.md` §8.15; inside a system §9.2 here |
 | Forks (child effects) | `particles.md` §6.3–§6.5; run-time level §10 here |
 | Culling, LOD, caps | `particles.md` §7.1.2 (options), §8.11 (32,768 vertices), §8.13 (distance fade, not-drawn state); §9.3 here |
@@ -646,7 +653,14 @@ in 122; depth write (4002) off in 1,177, on in 2 (Confirmed, OBS2).
 **What the programs compute (BIN-S).** Notation: *T* = the colour-texture sample (slot 3000);
 in the two-layer records *T*.alpha is the product of both layers' alphas and *T*.rgb the
 product (0x2B000703, 0x2B00071B, 0x2B000742, 0x2B000776, 0x2B00077A) or the sum (0x2B0007AD,
-0x2B000717, 0x2B00072D) of both layers' colours. *V* = the vertex colour, which carries the
+0x2B000717, 0x2B00072D) of both layers' colours. In these eight records the first layer is read at
+texture matrix 0 and the second at texture matrix 1 (`material.md` §8.4, both applied to the
+vertex UV pair, the matrices evaluated at the draw's clock); the eleven one-layer records read
+their texture at the vertex UV unchanged (BIN-S second pass, RT27). Of the 206 two-layer particle
+surfaces, 182 have a matrix that is not the identity (178 in the second layer, 34 in the first)
+and 171 an animated one (a curve that is not constant; 170 in the second layer), by their
+effective values of 1001–1004, 1017–1020, 1033–1034 and 1070–1073 (OBS3).
+*V* = the vertex colour, which carries the
 particle colour of `particles.md` §8.6.2. *M* = the material colour 2000 times the draw's tint
 (`material.md` §8.3); the tint is the colour multiplier (1, 1, 1, instance opacity) of §9.1
 (RT23, Inferred).
@@ -691,26 +705,122 @@ input the output alpha is further multiplied by the soft-particle factor of para
    observation that these unlit programs do multiply the vertex and material alphas into the
    blend's source alpha is offered to the owners of `material.md` and `render.md` (§16).
 
-> **OPEN:** (implementer, 2026-10-09) Engineering choices of the implementation
-> (`crates/particles` `surface.rs`, `crates/render` `particles.rs`, the walker and the
-> explorer) where this section gives no fact for Tessera; confirm or replace:
-> (a) a particle surface whose shader record is not one of the 19 (none in this install) is
-> drawn as the common row of its blend class: *T* × *V* × *M*, alpha *T*.alpha × *V*.alpha ×
-> *M*.alpha, the test on *T*.alpha, one layer, no doubling, fogged when the destination
-> factor is not ONE;
-> (b) 0x2B000084 (frame-buffer distortion) is drawn as its variant without a frame-buffer
-> input, that is not at all, although Tessera could offer a copy of the scene;
-> (c) the soft-particle factor of parameter 1174 is not applied (particle draws get no depth
-> input);
-> (d) the second layer of the two-layer records is sampled at the vertex texture coordinates
-> without texture matrices 0 and 1 (`material.md` §8.4), as Tessera applies no texture
-> matrices to particle draws;
-> (e) the alpha-test reference is the effective 1043 value of the surface's material as
-> resolved once, not the curve evaluated at the clock at every draw (the draw carries it
-> whenever the material's alpha test is on, also with depth write off, where the renderer
-> applies rule 1's switch at *A* < 0.9; corrected 2026-10-09); and fog uses the
-> distance fog of the world pass (none in passes without frame lighting, such as the
-> explorer preview).
+> **Answered (2026-10-10; was OPEN, implementer, 2026-10-09):** the five engineering choices,
+> item by item.
+> (a) **Confirmed** as Tessera rule 10: a surface whose shader record is not one of the 19 is
+> drawn as the common row of its blend class (*T* × *V* × *M*; alpha *T*.alpha × *V*.alpha ×
+> *M*.alpha; the test on *T*.alpha by rule 1; one layer at the vertex UV; no doubling; fogged
+> unless the destination factor is ONE).
+> (b) **Confirmed** as Tessera rule 11: 0x2B000084 is drawn in its variant without permutation
+> feature bit 1, which leaves the target unchanged, so nothing is drawn. The client draws the
+> distortion variant only while bit 1 is active (§9.1.2: render-target effects and surface
+> reflections on); the formula is recorded there.
+> (c) **Confirmed** as Tessera rule 11: no soft-particle factor. The client applies it only in the
+> variants that require bit 1 (§9.1.2).
+> (d) **Replaced:** the client applies texture matrix 0 to the first layer and texture matrix 1
+> to the second in all eight two-layer records (notation above, RT27); 182 of the 206 two-layer
+> particle surfaces have a matrix that is not the identity, 171 an animated one. Evaluate both
+> per `material.md` §8.4 at the draw's clock and apply them; one-layer records apply none.
+> (e) **Reference: replaced in part.** The client evaluates the 1043 curve at the clock for every
+> draw (`material.md` §11.2). Every particle surface of this install has a constant reference
+> (RT28), so a value resolved once is identical here; for a curve that is not constant, evaluate
+> it per draw. The rest of (e) is confirmed: the reference is carried whenever the material's
+> alpha test is on, also with depth write off, where rule 1's switch at *A* < 0.9 applies.
+> **Fog: confirmed.** The programs read the frame's distance fog (`lighting.md` §10); a pass
+> without frame lighting has none, which matches the client with fog off (it uploads distances
+> so large that *f* stays 0, `lighting.md` §10).
+
+<a id="s9-1-2"></a>
+#### 9.1.2 Permutation feature bit 1: soft particles and heat distortion (BIN, BIN-S, OBS3; RT25, RT26, RT29)
+
+**Selection (BIN, RT25).** The client picks the permutation of each draw with a feature mask
+of the frame: a permutation is used when every bit of its key word 1 is in the mask and no bit
+of its key word 2 is (`lighting.md` §3.1). Bit 1 (value 2) of the mask is set only when all of
+the following hold, and is clear otherwise:
+
+1. the client's render-target effects are active: the user option `Render.VideoPostEffects`
+   (a switch whose description names heat distortion, motion blur and glare) is on, and the
+   graphics device qualifies (two device capability flags and a hardware class of at least 2;
+   not traced further);
+2. the user option `Render.SurfaceReflections` (water and mirror reflections) is not 0;
+3. two internal flags of the frame are set; the client clears them while it draws an auxiliary
+   view and sets them again afterwards (which view was not traced).
+
+The option names are those of the user's preference file, given for interoperability.
+
+**Which particle permutations depend on it (OBS3, RT26).** Nine of the 19 records (0x2B00070F,
+0x2B0007EB, 0x2B00071B, 0x2B0007AD, 0x2B000703, 0x2B0007CB, 0x2B000742, 0x2B000717,
+0x2B0007F2) have a Direct3D 10/11 colour permutation that requires bit 1 and reads the scene
+depth image, beside one that excludes bit 1 and reads no depth. 0x2B000084 has variants that
+require bit 1 and read the frame-buffer image (Direct3D 9 shader model 2.0, OpenGL and Direct3D
+10/11) and variants that exclude it (blend ZERO / ONE). The other nine records do not use bit 1.
+
+**Soft-particle factor (BIN-S, the nine records; parameter 1174).** With *k* = the effective
+1174 and *w* = the fragment's view depth (the clip-space w of the vertex, interpolated):
+
+- if *k* ≤ 0, the factor is 1;
+- otherwise the depth image is read at the fragment's pixel position divided by the first two
+  values of the frame's viewport constant (by their use, the viewport's width and height),
+  *D* = its first channel, and the factor is clamp((*D* − (*w* − 0.1)) / *k*, 0, 1).
+
+The output alpha of §9.1.1 is multiplied by the factor; the colour is not. The depth image is,
+by inference, the view depth minus 0.1 that lit and unlit programs write as their second output
+(`lighting.md` §11), so the factor fades a particle where it comes within *k* metres of the scene
+behind it. Effective 1174 on particle surfaces: 0.3 on 997 of 1,148, 0 on 43 (RT28).
+
+**Heat distortion (BIN-S, 0x2B000084, Direct3D 10/11).** With *T* the colour-texture sample at the
+vertex UV and *V* the vertex colour:
+
+1. screen coordinates *S* = (*x* / *w* × 0.5 + 0.5, −*y* / *w* × 0.5 + 0.5) from the fragment's
+   clip position (*x*, *y*, *w*);
+2. offset: *S* + (*T*.alpha − 0.5) × *h* on both axes, *h* = the effective 1160
+   (`c_HeatDistortionAmount`, 19 surfaces, 0.004 to 0.6);
+3. the result is mapped into the frame-buffer image by the viewport's scale and offset and that
+   image is sampled there;
+4. output colour = the sample (no vertex colour, no material colour, no fog); output alpha =
+   *T*.alpha × *V*.alpha; blend SRCALPHA / INVSRCALPHA.
+
+Which image the frame-buffer input holds, and when the client copies it, was not traced, also for
+the 97 of the 209 distortion systems that are drawn after post-processing (`uses_video_post` = 1,
+`particles.md` §8.15; RT29). See Q-RT9.
+
+**Tessera (rule 11).** Particle draws use the variants that exclude bit 1, as the client does with
+either option off: no soft-particle factor, and 0x2B000084 draws nothing. `render.md` offers no
+depth or colour copy of the scene to the particle stage; the facts above are what a later revision
+needs if it does.
+
+<a id="s9-1-3"></a>
+#### 9.1.3 Opacity of particle draws against the mesh rule, and in premultiplied passes (Decision; RT30)
+
+1. **Particle draws follow §9.1.1, not the mesh opacity-source rule.** For a 0x39 system drawn by
+   §9.1, the alpha test reads *T*.alpha (both layers' product in two-layer records) with the
+   per-draw reference of `material.md` §11.2 steps 1–4 and *A* = *M*.alpha (§9.1.1 rule 1), and the
+   SRCALPHA / INVSRCALPHA factors of the blend read the program's output alpha of the §9.1.1
+   table (in the common rows *T*.alpha × *V*.alpha × *M*.alpha). The mesh rules do **not**
+   apply: neither the `Fixed` row of `render.md` §4.3 (the factors read the `material.md` §11.2
+   opacity source alone, without *M*.alpha and the vertex alpha, and no alpha test) nor the
+   `material.md` §11.3 sentence "opacity in a factor is the opacity source of §11.2, or 1". The
+   difference shows in three places: the instance opacity and the distance fade (in *M*.alpha)
+   and the particle colour's alpha with the fade envelope (in *V*.alpha) fade particles through
+   the blend; the `Color`-role records 0x2B0007F2 and 0x2B000726, which have no opacity source,
+   blend by *V*.alpha × *M*.alpha, where the mesh rule would read 1; and alpha-tested particle
+   surfaces keep their test. A renderer that maps a particle surface to a generic fixed-blend
+   state must therefore feed that state the particle program's output alpha.
+2. **Premultiplied passes.** A particle draw in a pass with the premultiplied option follows
+   `render.md` §6.10 "Fixed blends" (R12), with the output alpha of item 1 as the source alpha:
+   - the "alpha" rows (SRCALPHA / INVSRCALPHA, ADD) are source-over (its exception 1): colour as
+     recorded, alpha with `One` / `OneMinusSrcAlpha`, so the stored alpha is *a* + (1 − *a*) ×
+     the destination alpha, *a* the output alpha;
+   - the "additive" rows (SRCALPHA / ONE, ADD) keep the destination alpha;
+   - the ZERO / ONE variant of 0x2B000084 leaves the target unchanged (and draws nothing under
+     rule 11);
+   - no particle record of this install has a blend with destination factor ZERO (exception 2);
+     a record outside the 19 (rule 10) that has one follows `render.md` §6.10 with the same
+     output alpha.
+
+   Colour and alpha are clamped to [0, 1] before blending (the doubled rows can exceed 1), as
+   the blend unit of a normalised target does. Outside premultiplied passes the blend state of
+   the surface's material is used as it is.
 
 <a id="s9-2"></a>
 ### 9.2 Order of particles inside a system (BIN)
@@ -864,7 +974,7 @@ nothing; revisit them when `particles.md` Q1 is answered.
 
 > **Answered (2026-10-09; was OPEN, implementer, 2026-10-09):** the removal-time reading is
 > the rule (rule 7 reworded).
-8. Q-RT1 to Q-RT8: the Decisions given in their callouts.
+8. Q-RT1 to Q-RT9: the Decisions given in their callouts.
 9. **Engineering limits for hostile records** (answers the implementer OPEN of 2026-10-08;
    the data never reaches them: a real-data run of all 11,155 records over 5 s peaks at 1,320
    live particles in one system):
@@ -879,6 +989,16 @@ nothing; revisit them when `particles.md` Q1 is answered.
 
 > **Answered (2026-10-09; was OPEN, implementer, 2026-10-08):** the limits are recorded as
 > Tessera rule 9.
+
+10. **Unknown particle shader records** (none in this install; §9.1.1 answer (a)): a surface
+    whose shader record is not one of the 19 of §9.1.1 is drawn as the common row of its blend
+    class: colour *T* × *V* × *M*, output alpha *T*.alpha × *V*.alpha × *M*.alpha, the alpha test
+    on *T*.alpha by §9.1.1 rule 1, one layer at the vertex UV, no doubling, fogged unless the
+    destination factor is ONE; its opacity follows §9.1.3.
+11. **Permutation feature bit 1** (§9.1.2): particle draws use the variants that exclude it, as
+    the client does with `Render.VideoPostEffects` off or `Render.SurfaceReflections` at 0: no
+    soft-particle factor, and 0x2B000084 draws nothing. (Revisit when `render.md` gives the
+    particle stage a depth and colour copy of the scene; the formulas are in §9.1.2.)
 
 ---
 
@@ -904,6 +1024,16 @@ Against the install (all hold in this install, OBS) or synthetic fixtures:
   after the death of particle *k* of *n*, the former last particle takes position *k*.
 - **RT-I9:** an attached finite effect is removed at most 2 s (plus one frame) after its end
   test first passes.
+- **RT-I10:** every particle surface that declares 4004 has a constant (mode 1) 1043 curve
+  (1,057 of 1,057).
+- **RT-I11:** among the 19 shader records of §9.1.1, the permutations whose key word 1 has bit 1
+  are exactly those that sample the depth image (nine records, Direct3D 10/11 only) or the
+  frame-buffer image (0x2B000084 only); every permutation of the 19 that samples neither has bit 1
+  clear in word 1.
+- **RT-I12** (synthetic): a two-layer particle surface whose second-layer translation 1019 is
+  the constant 0.5 and whose other matrix values are the identity samples the second layer at
+  (*u* + 0.5, *v*) and the first at (*u*, *v*); a one-layer surface with the same values samples
+  at (*u*, *v*).
 
 ---
 
@@ -1024,6 +1154,13 @@ lacks 0x8). The quads face the camera (`particles.md` §8.12, default corners).
 > **Decision (Tessera):** fields are read at the start only, as for Sound nodes
 > (`script-runtime.md` OPEN-3).
 
+> **OPEN (Q-RT9):** For the bit-1 variants of §9.1.2: which image the frame-buffer input of
+> 0x2B000084 holds and when the client copies it, in the main pass and in the pass after
+> post-processing (97 of the 209 distortion systems, RT29); which auxiliary view clears the
+> two frame flags of condition 3; and the device conditions of condition 1. Suggested method:
+> M4 on the frame's render-target set-up and the callers of the mask builder. **Decision
+> (Tessera):** rule 11 (the variants without bit 1), which needs none of these answers.
+
 Still open in `particles.md`: Q1 (fork effect image and simulation; the blend-mode index source
 of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rotation` mode), Q13
 (weather schedule). `particles.md` Q4 is answered by §6.4 here.
@@ -1051,6 +1188,17 @@ of §10.2), Q2, Q8 (local-space frames, light attenuation, streak in `world_rota
   that the fixed blend reads, and the alpha test reads the texture's opacity alone (BIN-S). If
   any mesh surface uses these records, the same holds there.
 
+- `water.md` §8.4 OPEN ("how the client chooses the permutation"), `material.md` §7.4 and
+  `lighting.md` §3.1: feature bit 1 of the frame's permutation mask, which the water
+  permutations with the frame-buffer copy and the depth texture require, is set only under the
+  three conditions of §9.1.2 (`Render.VideoPostEffects` with a qualifying device,
+  `Render.SurfaceReflections` not 0, outside an auxiliary view) (BIN, RT25). The other bits of the
+  mask were not traced.
+- `render.md` §4.3 and §6.10: §9.1.3 states how particle draws feed the fixed-blend factors
+  (the program's output alpha, not the opacity source) and how they behave in premultiplied
+  passes; a renderer that routes particle surfaces through the `Fixed` alpha mode needs a way to
+  pass that alpha.
+
 These are suggestions for the owners of those specs; this spec edits none of them.
 
 ---
@@ -1060,6 +1208,7 @@ These are suggestions for the owners of those specs; this spec edits none of the
 
 | Date | Sections | Change |
 |---|---|---|
+| 2026-10-10 | Header, §1 (BIN pass (h), BIN-S second pass, new OBS3; RT20 widened; new RT25–RT30), §9.1.1 (texture matrices in the notation; implementer OPEN answered), new §9.1.2, new §9.1.3, §12 (rules 10–11), §13 (RT-I10–RT-I12), §15 (Q-RT9), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. **Implementer OPEN (a)–(e) of §9.1.1 answered:** (a), (b), (c) confirmed as Tessera rules 10 and 11; (d) replaced: the two-layer records read layer 1 at texture matrix 0 and layer 2 at texture matrix 1, which are not the identity on 182 of the 206 two-layer particle surfaces (BIN-S, OBS3); (e) the client evaluates 1043 per draw, all particle references of this install are constant, fog confirmed. **New facts:** the conditions of permutation feature bit 1 (BIN, RT25), the soft-particle factor and the heat-distortion formula of its variants (BIN-S, RT26). **New Decision §9.1.3** (asked by the task of 2026-10-10): particle draws take the alpha test and the blend's source alpha from the §9.1.1 programs, not from the mesh opacity-source rule of `render.md` §4.3, and follow `render.md` §6.10 R12 in premultiplied passes with that alpha. Implementers re-check `crates/particles` `surface.rs` and `crates/render` `particles.rs` (texture matrices of the two-layer records; per-draw 1043 for non-constant curves). |
 | 2026-10-09 | Header, §1 (BIN-S, OBS2; RT21–RT24; RT20 widened), §3.2, §5.4, new §9.1.1, §9.2, §10.2, §12 (rules 7–9), §15 (Q-RT7, Q-RT8), §16 | Spec writer (dirty room); status Accepted → Revised, awaiting review. New §9.1.1 from the programs of the 19 shader records that particle surfaces use (BIN-S) and a census of those surfaces (OBS2): the alpha test reads the texture's opacity alone; the blend's source alpha is texture opacity × vertex alpha × material alpha in most records, with three exceptions; colour, doubling and fog per record; the per-draw alpha-test rules of `material.md` §11.2 with *A* = tint alpha (Inferred). §5.4: census of driven pairs (2 nodes, both on the effect DID from a session-only property) and the walker rules (a)–(g); §3.2: the walker's "drawn" rule; §9.2: the local-space frames as a Decision until `particles.md` Q8; §10.2: fork effects without the library as a Tessera rule; §12: rule 7 reworded (removal-time reading), new rule 9 (engineering limits). All implementer OPENs of 2026-10-08 and 2026-10-09 marked Answered (§9.2 in part). New OPENs Q-RT7 (owner opacity of an attached instance) and Q-RT8 (driven fields after the start), each with a Decision. |
 | 2026-10-09 | §3.2, §5.4, §9.2, §12 | Implementer OPEN notes only (clean room): the walker's owners and "drawn" (§3.2), its choices for redirect, gating, driven fields, opacity, water and scales (§5.4), the corrected distance-emission note of §9.2, the two readings of rule §12.7. No fact changed. |
 | 2026-10-08 | all | First version, status Review. Run-time behaviour from a third M4 pass (row BIN) and a census of all 41,354 Particle nodes (OBS): entry points, clock and random generator, the stored never-ending byte, node start gates, attached and dropped paths, water probe, redirect, attachment frames, the owner's scale vectors, stop / linger / removal, particle storage order, draw calls, fork blend-mode table; worked example; Q-RT1–Q-RT6. |

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-10, review of the revision of commit 9e9a29a passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §10.3 second-layer alpha by role (MA54), §19 implementer OPEN (a)–(e) answered (MA55), the two non-blocking notes of the last review (row order MA52/MA53, the §11.6 lava wording); awaiting review). Before: **Accepted** (2026-10-09, review of the revision answering `water.md` item B1 passed, see the review record). Before: Revised (2026-10-09, spec writer: §11.6 lava row and recognition rule, answering `water.md` review item B1; row MA53; change-log row for the §19 implementer callout). Before: **Accepted** (2026-10-09, review of the water-feature revision passed, see the review record). Before: Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; review 2026-10-09: **passed**, Accepted). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
+| **Status** | **Revised** (2026-10-10, spec writer: §9.3 shader-only groups, which override wins and where group materials go (MA56, MA57); §11.2 per-draw alpha-test steps reworded and the Direct3D 9 shader-class condition added (MA58, MA59); §14 MT14–MT15; answering the implementer OPENs filed with commit 82f0fc7; awaiting review). Before: **Accepted** (2026-10-10, review of the revision of commit 9e9a29a passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §10.3 second-layer alpha by role (MA54), §19 implementer OPEN (a)–(e) answered (MA55), the two non-blocking notes of the last review (row order MA52/MA53, the §11.6 lava wording); awaiting review). Before: **Accepted** (2026-10-09, review of the revision answering `water.md` item B1 passed, see the review record). Before: Revised (2026-10-09, spec writer: §11.6 lava row and recognition rule, answering `water.md` review item B1; row MA53; change-log row for the §19 implementer callout). Before: **Accepted** (2026-10-09, review of the water-feature revision passed, see the review record). Before: Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; review 2026-10-09: **passed**, Accepted). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -87,6 +87,8 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | SH-W | [`water.md`](water.md) tag SH2 (2026-10-09): the OpenGL text and the Direct3D 10/11 programs (the latter under decision 0011, as BIN-S) of the water, mirror, liquid and two-layer records, read to settle how two colour layers combine and which records need their own drawing. Every record of §10.3 was checked in both back ends (all colour permutations of passes 0x00, 0x04, 0x05, 0x3E–0x40). |
 | SH-W3 | Spec writer's own probes of 2026-10-10 (dirty room; install data unchanged since 2026-10-04), recorded with `water.md` tags SH3 and OBS3: the OpenGL text (method M1) of **every** program permutation of every shader record used by a surface record that samples a second colour layer (`Color2` 17 records, `ColorAndGloss2` 5, `ColorAndDye2` 1, `ColorAndOpacity2` 38, `ColorTexture2` 1), followed from the second sampler to the output alpha; and the census of every texture-transform binding (semantics 33–44) of all 510 shader records by pass code. **Question:** whether the second layer's alpha joins the opacity whatever its role, and whether a record-wide set-to-matrix table equals each colour permutation's (§19 implementer OPEN). No program text is reproduced. |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §6.3, §8.2 (the terrain layer's use of the same transform and parameters). |
+| BIN-H | **M4 (decision 0011), pass of 2026-10-10.** Same build (`x64/lotroclient64.exe` 4906.0071.1794.4035), decompiled with a headless disassembler on a private read-only copy of the analysis project (deleted afterwards). **Questions** (the implementer OPENs of 2026-10-10 filed with commit 82f0fc7): (o) what a matched appearance group whose `material` is 0 does with a non-zero `shader_override`; (p) which override wins when several matched groups carry one, and where the groups' materials go relative to composed face images and look edits; (q) the exact alpha-test comparison, the quantisation of the reference and when the reference is multiplied by the material alpha. **Code read:** the block merge that inserts groups into a figure's group list; the figure's model component (group list to per-figure override list, surface rebuild order: parts, compositors, groups, edits); the per-part group application (slot and binding-key test, shader replacement, material append); the cell and the portrait paths that apply groups; the surface record loader; the per-draw alpha-test setup and the device-capability routine that sets its shader class. **Why M1–M3 were not enough:** the data shows only that the 277 groups with `material` 0 all carry a shader override, not what the client does with them; no frame capture (M3) is available; nothing is published (M2). **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| SH-H | Spec writer's own probes of 2026-10-10 (dirty room, method M1; install data unchanged since 2026-10-04): the OpenGL text of **every** program of all 510 shader records searched for the alpha-test comparison; every 0x20 record re-parsed for groups with `material` 0 and for groups that reach binding key 0x10000036; the surface records, materials and base textures of mesh 0x0600C2E7 decoded. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -145,6 +147,10 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | MA53 | The lava record 0x2B000810 is not drawn by the generic path either: its slot 3000 is one of two flow-phase colour layers that its emissive layer hides in this install, and its program follows `water.md` §8.6.5; it is the only shader record that declares 1057, has a `FlowTexture` sampler and has no `FrameBufferTexture` sampler (§11.6) | SH-W (`water.md` W40); OBS (all 510 shader records, 2026-10-09; `water.md` W41) | Confirmed (interface); BIN (program, Direct3D 10/11) |
 | MA54 | The second colour layer's alpha reaches the output alpha only when its role is `ColorAndOpacity2` (always paired with a `ColorAndOpacity` first layer; alphas multiplied) or `ColorTexture2` (§20.1, × 2); in every program of the records whose second layer is `Color2`, `ColorAndGloss2` or `ColorAndDye2` it does not (§10.3) | SH-W3 (OpenGL text, every permutation of every such record used by surface records) | Confirmed (programs, OpenGL) |
 | MA55 | In every permutation with programs of passes 0x00–0x05 and 0x3E–0x41, the texture-transform bindings of set *k* (1001/1002, 1017/1018, 1033, 1070/1071 for set 0; the next ids for sets 1 and 2) name items of matrix *k*; the 273 + 42 crossed bindings of §8.4 occur only in passes 0x07–0x0A and 0x42 of 0x2B000765, 0x2B000772, 0x2B0009CE and 0x2B0009CF, plus the seven bindings of set 1 on matrix 2 in one permutation without programs of 0x2B00076E (§19) | SH-W3 (all 510 records) | Confirmed |
+| MA56 | A matched appearance group acts in two independent parts: a non-zero `shader_override` replaces the surface's shader record, a non-zero `material` is appended to its material list; a group with `material` 0 and an override therefore replaces the shader and appends nothing (§9.3). All 277 groups with `material` 0 carry an override (136 distinct override records over all 22,151 overrides, every one resolves) | BIN-H (o); SH-H (census of all 84,261 groups) | BIN (rule); census Confirmed 2026-10-10 |
+| MA57 | A figure's groups are applied in the order of its group list (ascending priority, ties in application order); each override replaces the previous one, so the last applied wins; on a rebuild a figure surface's list is: its own materials, composed images, group materials, look edits; a cell applies its groups in the same way (§9.3) | BIN-H (p) | BIN |
+| MA58 | Every alpha-test comparison in the OpenGL programs discards a fragment when the tested opacity is at or below the reference: 2,135 occurrences in 194 shader records, all of one form (§11.2) | SH-H | Confirmed 2026-10-10 |
+| MA59 | Per-draw reference: multiplied by the alpha *A* only in permutations whose own depth-write state is on (switched off for *A* < 0.9 in the others), never when alpha-to-coverage is on or on a Direct3D 9 device whose shader class is model 2.0 or above drawing with a pixel program; then ⌊reference × 255⌋ / 255 in single precision; the value handed to the programs is that, 0 or −1 by the permutation's alpha-test switch before these steps (§11.2) | BIN-H (q) | BIN |
 
 ---
 
@@ -1110,9 +1116,10 @@ match nothing in their own block and likewise act only on other parts (the weare
 other worn items). The former count "46,885 of 47,895 (97.9%)" compared keys only. Over all
 84,261 groups, `binding_key` is 1 in 894, 2 in 406 and 0 in 1. For a matched submesh:
 
-- *H* = `shader_override` if non-zero, else the surface record's shader;
-- *L* = the surface record's materials, then the group's material, then any dye material
-  (§12.3).
+- *H* = `shader_override` if non-zero, else the surface record's shader (with several matched
+  groups: the override of the last one applied, rule 2 below);
+- *L* = the surface record's materials, then the group's material if it is not 0, then any
+  dye material (§12.3).
 
 The surface record's own materials are the mesh's default look. An appearance group
 layered on top gives the item's look.
@@ -1120,6 +1127,51 @@ layered on top gives the item's look.
 How a matched group changes the surface (BIN-R (i)): a non-zero `shader_override` replaces the
 surface's shader record, and the group's material is appended after the materials the surface
 already has (its own, then those appended earlier), so the layering of §9.2 applies.
+
+**Shader-only groups and several overrides (BIN-H (o), (p); MA56, MA57; added 2026-10-10).**
+The rules, for every surface that a group matches by the binding rule above:
+
+1. **The two fields act independently.** When `shader_override` is not 0, it replaces the
+   surface's current shader record. When `material` is not 0, that material is appended to the
+   end of the surface's material list. A group whose `material` is 0 and whose
+   `shader_override` is not 0 therefore **replaces the shader and appends nothing**; it must not
+   be skipped. A group with both fields 0 does nothing (none exists in this install). Census
+   (SH-H): all 277 groups with `material` 0 carry an override; the 22,151 overrides name 136
+   distinct shader records, and every one of them resolves. Example: block 0 of the Human F
+   hair records 0x20001257 and 0x20002AEF holds exactly two groups, both shader-only and both
+   on slot `Crest`: 0x2B000A03 for binding key 0x10000024 (on mesh 0x0600C2E7 it replaces
+   0x2B0009DF of surface record 0x31008E23) and 0x2B000A05 for binding key 0x10000041 (no
+   surface of that mesh has this key; the group acts only on another `Crest` part that has it).
+2. **Order and which override wins.** A figure applies the groups of all its applied blocks
+   one after the other in the order of its group list: ascending group priority, and among
+   equal priorities the order in which the blocks were applied (`appearance.md` §4.10). Each
+   override replaces whatever shader record the surface has at that moment (its own, or an
+   earlier group's), so of several matched groups that carry an override **the one applied
+   last wins**: the highest priority, and at equal priority the later one. "First override
+   wins" is wrong. Material appends follow the same order.
+3. **Replacing the shader keeps the list.** An override removes no material. The effective
+   parameter set (§9.2) is built once, from the final shader record and the whole final list
+   (own materials, then everything appended), so a material appended before a later override
+   is applied to the declarations of the later shader record; entries it does not declare are
+   ignored (§9.2 step 3).
+4. **Position of the group materials on a figure.** Each time the client rebuilds a figure's
+   surfaces it starts from the parts' own materials and appends, in this order: the composed
+   images of the attached compositors (`appearance.md` §3.5), then the group materials of
+   rule 2, then the look edits (EditMaterial, `appearance.md` §3.5). Compositors and edits
+   never change the shader record; only groups do.
+5. **Cells and load failures.** A cell applies the groups of its own description with the
+   same per-part rule, in the order of that list. When a non-zero `material` or
+   `shader_override` fails to load, a figure keeps the half that loaded (and reports the
+   failure), while a cell skips that group entirely (and reports it). In this install every
+   override and every non-zero group material resolves, so the two never differ. **Tessera
+   rule (Decision):** treat a failed half as 0 in both paths (keep the other half).
+
+> **Answered 2026-10-10 (BIN-H, SH-H; MA56, MA57; was OPEN, implementer, clean room,
+> 2026-10-10, filed with commit 82f0fc7):** (1) a matched group whose `material` is 0 and whose
+> `shader_override` is not 0 still replaces the surface's shader record and appends nothing
+> (rule 1); Tessera's figure paths must not skip such groups. (2) When several matched groups
+> carry overrides, the last one applied in group-list order wins (rule 2); one rule for every
+> path, figures and cells alike, so the path that takes the first override is wrong.
 
 > **Answered 2026-10-07 (BIN-R (i); was OPEN):** the 1,010 groups whose key matches no surface
 > of their block's parts are matched against all parts of the entity (rule above). The fields
@@ -1250,8 +1302,14 @@ In this dirty room, the constant names were used once, only as evidence for the 
 
 - **Enabled** when *H* declares 4004 and the effective 4004 = 1, **and** the slot roles
   provide an opacity source (below).
-- **Threshold** = the effective 1043 (§5.3 evaluation). The programs discard a fragment when
-  opacity ≤ threshold, so a fragment is kept only when opacity **>** threshold (BIN, MA22).
+- **Threshold** = the effective 1043 (§5.3 evaluation), adjusted per draw into the reference
+  *R* of the steps below. The comparison is **strict**: the programs keep a fragment only when
+  its tested opacity is **greater than** *R*, and discard it when the opacity is **equal to or
+  below** *R* (BIN, MA22; Confirmed in the OpenGL text of every record, SH-H, MA58: all 2,135
+  alpha-test comparisons in the programs of 194 shader records have this one form). The tested
+  opacity is the texel opacity of the opacity source below (with two colour layers, the product
+  of both alphas); it is **not** multiplied by the material alpha *A* (the output alpha is
+  multiplied by *A* afterwards, §11.3), and vertex-colour alpha is not part of it.
   Render-state byte 3 is the depth comparison, not an alpha comparison (§7.6); the block's
   `alpha_ref` (0.8 or 0.9) is the reference of permutations that 1043 does not bind (corrected
   2026-10-07, BIN-R (j)). Every record that declares 4004 also declares 1043 (MT8), so on this
@@ -1276,24 +1334,63 @@ Rule: with no opacity source, alpha test is off. Confirmed by the programs (BIN)
 record behind the 142 surfaces (0x2B0009DA) and the next one (0x2B000A22) read the
 threshold only in their view-space-normal pass (0x42), never in a colour pass.
 
-**What the client does per draw (BIN-R (l), MA44).** For each permutation it draws, the client
-takes that permutation's alpha-test switch and reference (render-state bytes 6 and 7–14,
-replaced by 4004 and 1043 through their bindings, §7.3.1), evaluates the reference curve at the
-clock, and then, with *A* = the material colour's alpha × the per-object tint's alpha (§8.3):
+**What the client does per draw (BIN-R (l), BIN-H (q); MA44, MA59; wording revised
+2026-10-10).** The client computes, for each permutation it draws, the reference *R* that the
+programs compare with. Its inputs:
 
-1. If alpha test is on and the client's alpha-to-coverage option is on (whether or not the
-   frame is multisampled), it keeps the reference as it is and skips step 2.
-2. Otherwise, if alpha test is on and the permutation writes depth, the reference becomes
-   reference × *A*; if alpha test is on and the permutation does not write depth, alpha test is
-   switched off for the draw when *A* < 0.9.
-3. The reference handed to the programs is ⌊reference × 255⌋ / 255 when alpha test is on
-   (for example 0.65 becomes 165 / 255 ≈ 0.647; 0.8 stays 204 / 255 = 0.8). When alpha test is
-   off but the permutation's `src_blend` is 5 (SRCALPHA), the reference is 0, so fragments with
-   alpha 0 are discarded in blended passes; otherwise it is −1 (nothing is discarded). The
-   programs discard when the tested value is ≤ the reference (MA22).
+- *T₀*: the permutation's alpha-test switch (render-state byte 6, §7.6, after the 4004 binding,
+  §7.3.1), as it stands before the steps below;
+- *W*: the permutation's **own depth-write switch** (render-state byte 4, after its binding).
+  It is a property of each permutation, not the name of a pass: it is 1 in every block of the
+  base and shadow-depth passes (codes 0x04, 0x05, 0x0A, 0x3E–0x40) and 0 in the additive
+  light passes, the glow pass 0x08 and the **depth pass 0x09** (§7.6). A reader must not
+  take "depth" in a pass name to mean *W* = 1;
+- *r*: the alpha reference (render-state bytes 7–14, replaced by 1043 through its binding),
+  evaluated at the clock;
+- *A*: the alpha of the material colour (effective 2000, else the block's `material_color`)
+  × the alpha of the per-object tint (§8.3), a number in [0, 1].
+
+Steps, in this order (*T* starts equal to *T₀*):
+
+1. **Alpha-to-coverage keeps *r*.** If *T₀* is on and the client's alpha-to-coverage option is
+   on (whether or not the frame is multisampled), *r* is left unchanged and step 2 is skipped.
+2. **Material-alpha adjustment.** Otherwise, if *T* is on:
+   - *W* = 1: *r* becomes *r* × *A* (single-precision product). At *A* = 1 nothing changes.
+   - *W* = 0: *r* is unchanged, and if *A* < 0.9 the alpha test is switched off for this draw
+     (*T* becomes off). At *A* ≥ 0.9 nothing changes.
+
+   The client skips this step also when it runs on a Direct3D 9 device whose shader class is
+   model 2.0 or above (vertex and pixel shader versions both 2.0 or more, unless a client option
+   caps the class) and the draw has a pixel program. No code that gives the Direct3D 10/11 or
+   OpenGL devices a shader class was found (they keep the "no class" value they are created
+   with), so on those back ends step 2 applies (see the OPEN below).
+3. **Quantisation and the value handed to the programs.**
+   - *T* on: *R* = ⌊*r* × 255⌋ / 255, with the multiplication by 255, the floor and the
+     division done in single precision on the *r* of step 2. Examples at *A* = 1: 0.65 gives
+     165 / 255 ≈ 0.6471; 0.8 gives 204 / 255 = 0.8; 0.9 gives 229 / 255 ≈ 0.8980; 0.5 gives
+     127 / 255 ≈ 0.4980. Example with *W* = 1 and *A* = 0.5: 0.65 → 0.325 → ⌊82.875⌋ = 82 →
+     *R* = 82 / 255 ≈ 0.3216. So a texel of opacity 166 / 255 is kept against 0.65 and one of
+     165 / 255 is discarded.
+   - *T* off, and either *T₀* was on (step 2 switched the test off) or the permutation's
+     `src_blend` is 5 (SRCALPHA): *R* = 0, so only fragments of opacity 0 are discarded.
+   - Otherwise: *R* = −1, so nothing is discarded.
 4. **Alpha-to-coverage:** when the client's alpha-to-coverage graphics option is on, the frame
-   is multisampled and the permutation alpha-tests, the client also enables alpha-to-coverage
-   for the draw.
+   is multisampled and *T₀* is on, the client also enables alpha-to-coverage for the draw.
+
+Testable consequences: with *A* = 1 and alpha-to-coverage off, *R* depends only on *r* and
+*T₀*; a fading object (*A* < 1) keeps its cut-out in depth-writing permutations with a lower
+reference, and loses the alpha test (but keeps *R* = 0) in the others once *A* < 0.9.
+
+> **Tessera rule (Decision, 2026-10-10):** apply steps 1–3 as written, with step 2 applied (as
+> on the Direct3D 10/11 and OpenGL back ends in the code read); Tessera has no Direct3D 9
+> shader class. Compute step 3 in single precision.
+
+> **Answered 2026-10-10 (BIN-H (q), SH-H; MA58, MA59; was a confirmation request of the
+> implementer, clean room, 2026-10-10, commit 82f0fc7):** the comparison is "keep only when the
+> opacity is greater than *R*" (confirmed over every program); the quantisation is the floor of *r* × 255 in single
+> precision, divided by 255; the multiply by *A* applies to permutations whose own depth-write
+> switch is on, not to "the depth pass" (pass 0x09 does not write depth). New: the Direct3D 9
+> shader-class condition of step 2.
 
 The Direct3D 9 fixed-function path uses the same reference as an 8-bit alpha-test value with
 the comparison "greater" (BIN-R (l)). **Edge softening:** the original softens cut-out edges
@@ -1303,14 +1400,18 @@ multisampling, with alpha-to-coverage.
 > **Answered 2026-10-07 (BIN-R (k), (l); was OPEN):** the client uses both: alpha-to-coverage
 > (an option, multisampling only) and the 4007 second draw (§8.5).
 
-> **OPEN:** Two per-draw conditions of the client were not identified. (1) A mode supplied by
+> **OPEN:** Per-draw conditions of the client that were not identified. (1) A mode supplied by
 > the caller of the per-draw setup: with it, alpha test and depth write are switched off when
 > the client's material-detail option is at its lowest setting or alpha test is already off
 > (only for permutations whose `dst_blend` is not ONE), and an alpha-tested reference becomes
-> reference + (1 − reference) × (1 − *A*) with *A* then taken as 1. (2) A device state bit
-> under which a blended pass without alpha test gets reference −1 instead of 0. Both need
-> further disassembly of the callers (method M4); owner observation of fading objects in the
-> original could tell whether (1) is the fade-out path.
+> reference + (1 − reference) × (1 − *A*) with *A* then taken as 1 (this replaces step 2 when
+> the mode is set). (2) A device state bit under which a blended pass without alpha test gets
+> reference −1 instead of 0. (3) A device flag (BIN-H) under which alpha test and depth write
+> are switched off for the draw and its depth comparison is set to 5, after step 2. (4)
+> Whether the Direct3D 10/11 and OpenGL devices are ever given a shader class (step 2): no
+> code doing so was found in the executable, but those back ends' own libraries were not read.
+> (1)–(3) need further disassembly of the callers (method M4); owner observation of fading
+> objects in the original could tell whether (1) is the fade-out path.
 
 <a id="s11-3"></a>
 ### 11.3 Blend mode (layout Confirmed, rule Inferred)
@@ -1590,6 +1691,8 @@ Real-data tests assert these. Failures are reported per record and do not stop a
 | MT11 | Render-state block: `depth_write` and `alpha_test` ∈ {0, 1}; both curves mode 1, so 39 bytes | Confirmed, all 31,519 (2026-10-07) |
 | MT12 | Every binding with semantic 33 or 34 names an item of type 1, 35 of type 2, 36 or 37 of type 3, 38–44 of type 5 (§7.3.1) | Confirmed, all 121,939 (2026-10-07) |
 | MT13 | Every texture binding (semantic 10) names a sampler whose `source` is 0 | Confirmed, all 78,326 (2026-10-07) |
+| MT14 | Every appearance group with `material` 0 has a non-zero `shader_override`, and every non-zero `shader_override` resolves to a 0x2B record (§9.3) | Confirmed, 277 and 22,151 of all 84,261 groups (2026-10-10) |
+| MT15 | *R* of §11.2 step 3 for *T* on and *A* = 1: 0.65 → 165 / 255, 0.8 → 204 / 255, 0.9 → 229 / 255, 0.5 → 127 / 255; with *W* = 1 and *A* = 0.5, 0.65 → 82 / 255 | Synthetic (BIN rule, MA59) |
 
 Hostile-input rules: every count is checked against the bytes left before allocating;
 string lengths are a u8; program blob sizes must fit in the record.
@@ -2114,3 +2217,4 @@ Answers of 2026-10-07 (BIN-R, BIN-S4):
 | 2026-10-09 | §11.6, §18 | Spec writer (dirty room), second water-feature revision after Tessera's whole-world fallback probe: §11.6 mirror row covers the six static mirror surfaces (`water.md` §8.5.4, W36); the §18 OPEN on a sampler without a texture records the two drawn surface records with slot 3000 at 0 (not water). No fact of the generic path changed; status stays Revised. |
 | 2026-10-09 | header, §1, §11.6, §19 | Spec writer (dirty room), answering `water.md` review item B1 (lava 0x2B000810) and the two non-blocking notes of this spec's review of 2026-10-09. §11.6: a lava row and a fourth recognition rule (declares 1057, has a `FlowTexture` sampler, no `FrameBufferTexture` sampler; only 0x2B000810 of the 510 records; disjoint from the other three rules, census re-run 2026-10-09); the sentence that left lava "outside" (and so to the generic path) replaced; drawing by `water.md` §8.6.5. §1: row MA53. §19: records the implementer callout on the fallback diagnostic added on this branch (commit b1da85a, clean-room implementer; no fact of the original in it); a lava group in that grouping follows from the new §11.6 rule. Status Accepted → Revised, awaiting review. |
 | 2026-10-10 | header, §1, §10.3, §11.6, §19 | Spec writer (dirty room), new tag SH-W3 (own probes: second-layer alpha in every OpenGL program of the two-layer records; transform-binding census by pass), rows MA54 and MA55. §10.3: which second layers carry opacity (`ColorAndOpacity2` and `ColorTexture2` only; never `Color2`, `ColorAndGloss2`, `ColorAndDye2`). §19: the implementer OPEN of 2026-10-09 answered ((a) equivalent for colour passes, (b) lava and 0x2B0000B7 corrected, (c) confirmed, (d) corrected, (e) kept as a Tessera Decision). Non-blocking notes of the last review: rows MA52 and MA53 in numeric order; §11.6 lava row says the emissive layer is read at the mesh UV plus 1063 × *B*. Status Accepted → Revised, awaiting review. |
+| 2026-10-10 | header, §1, §9.3, §11.2, §14 | Spec writer (dirty room), answering the implementer OPENs filed with commit 82f0fc7 (branch `hairfix`; on merge, its two OPEN callouts on §9.3 and `appearance.md` §3.5 are superseded by the Answered callouts). New tags BIN-H (M4 pass under decision 0011) and SH-H (own probes), rows MA56–MA59. §9.3: a matched group with `material` 0 and a non-zero `shader_override` replaces the shader and appends nothing; overrides apply in group-list order, the last applied wins; replacing the shader keeps the material list; on a figure the group materials come after the composed images and before the look edits; cells apply groups the same way; load failures and a Tessera Decision. §11.2: the comparison stated as "keep only when opacity > *R*" (Confirmed over all OpenGL programs); the per-draw steps restated with named inputs (*T₀*, *W*, *r*, *A*), the multiply tied to the permutation's own depth-write switch (pass 0x09 does not write depth), single-precision quantisation with worked examples, the rule for *R* = 0 or −1 corrected (it follows the switch before step 2, not after), the Direct3D 9 shader-class condition, a Tessera Decision; the OPEN extended with (3) and (4). §14: MT14, MT15. Status Accepted → Revised, awaiting review. |

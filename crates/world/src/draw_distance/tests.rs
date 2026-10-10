@@ -316,6 +316,47 @@ fn worked_example_class_of_a_placement() {
     assert_eq!(c, Some(0xB));
 }
 
+/// `water.md` WA19 (§14 (a), W49–W50; `decals.md` §6.5 "Objects"): `Render_DepthBias_Type`
+/// is found in the entity lookup order. A SED with an instance set, a value on its 0x47
+/// object and none in either set gets the object's value; a value in both sets and on the
+/// object gives the sets' value (the one SED of the census with 4 on the SED and 3 on its
+/// object gets 4).
+#[test]
+fn depth_bias_type_follows_the_entity_lookup_order() {
+    const BIAS: u32 = 0x5100_0002;
+    let schema: HashMap<u32, PropertyType> =
+        [(BIAS, PropertyType::from_code(8))].into_iter().collect();
+    let set = |ty: Option<u32>| {
+        let entries: Vec<(u32, TestValue)> = ty
+            .map(|c| vec![(BIAS, TestValue::Enum(c))])
+            .unwrap_or_default();
+        PropertySet::parse(&property_set(&entries), &schema).unwrap()
+    };
+    let chain = |ty: Option<u32>| ObjectProperties {
+        levels: vec![crate::scenery::ChainLevel {
+            did: Did(0x4700_C32A),
+            sets: vec![set(ty)],
+        }],
+        incomplete: false,
+    };
+    let t = placement_lod_class(
+        BIAS,
+        Some(&set(None)),
+        Some(&set(None)),
+        Some(&chain(Some(3))),
+    );
+    assert_eq!(t, Some(3), "the object's value");
+    let t = placement_lod_class(
+        BIAS,
+        Some(&set(Some(4))),
+        Some(&set(Some(4))),
+        Some(&chain(Some(3))),
+    );
+    assert_eq!(t, Some(4), "the sets' value");
+    let t = placement_lod_class(BIAS, Some(&set(None)), Some(&set(None)), Some(&chain(None)));
+    assert_eq!(t, None, "no source: the caller takes entry 0");
+}
+
 #[test]
 fn fades_take_one_and_a_half_seconds() {
     let mut f = DrawFade::new();

@@ -699,6 +699,22 @@ choice for a given back end as the original's.
 > and clamp. Leave the absolute value out until (b) is answered; every definition of this
 > install leaves it absent.
 
+> **OPEN (implementer, 2026-10-10, `tessera-render`, the walker; engineering choices made
+> while conforming to the default above, no format fact):** (a) "Every draw" is applied to
+> every colour draw of a placed entity in the main view: generic-path meshes (M2 and lit
+> pipelines), instanced batches (batched only with instances of the same entry), own-program
+> liquid surfaces, and the character layer's draws of a placed figure. Shadow-map draws keep
+> the shadow pass's own bias and do not add the entity's entry, since a slope bias toward
+> the camera (up to 10 here) applied in the light's depth would cause shadow acne or
+> detached shadows; the line overlays of debug views take none. Cell meshes, network
+> characters and far-view sprites have no entry and draw without a bias. (b) With the
+> reversed depth buffer the maximum is negated together with the slope-scale value (so the
+> clamp keeps its direction), and it is left out on adapters without a depth-bias clamp
+> (`DEPTH_BIAS_CLAMP` downlevel flag). (c) Hostile-input bounds: slope-scale magnitude capped
+> at 64, maximum magnitude at 1 (the whole depth range), non-finite values 0. (d) A stored
+> index of 16 or more draws with entry 0, like a missing value. Spec writer: say whether the
+> original's shadow or depth passes apply the entry, if that is ever traced.
+
 <a id="s6-6"></a>
 ### 6.6 Batching and render phase
 

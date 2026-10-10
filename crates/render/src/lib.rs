@@ -169,6 +169,7 @@
 mod arena;
 mod camera;
 mod context;
+mod depth_bias;
 mod error;
 mod far_view;
 mod frame;
@@ -196,6 +197,7 @@ pub use context::{
     ContextOptions, ENV_ADAPTER_NAME, ENV_BACKEND, ENV_POWER_PREF, GPU_WAIT_TIMEOUT, GpuContext,
     rank_adapter,
 };
+pub use depth_bias::{DrawDepthBias, MAX_DEPTH_BIAS, MAX_DEPTH_BIAS_CLAMP};
 pub use error::{RenderError, Result};
 pub use far_view::{
     DEFAULT_SPRITE_ALPHA_TEST, DistantSprite, FAR_GRID_CULL, FAR_STITCH_CULL, FarFadeParams,
@@ -249,10 +251,9 @@ pub use ui::{
 };
 pub use water::{
     DistortionParams, FresnelForm as WaterFresnelForm, LiquidMeshDraw, LiquidShading,
-    MAX_DEPTH_BIAS as MAX_LIQUID_DEPTH_BIAS, MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS,
-    MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily,
-    WaterFlowParams, WaterParams, WaterQuad, WaterTextures, fresnel as water_fresnel, water_fade,
-    wave_height as water_wave_height,
+    MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES,
+    MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily, WaterFlowParams, WaterParams, WaterQuad,
+    WaterTextures, fresnel as water_fresnel, water_fade, wave_height as water_wave_height,
 };
 
 /// Re-export of the math library used in the public API.

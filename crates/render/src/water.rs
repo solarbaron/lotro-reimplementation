@@ -41,6 +41,7 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::arena::MeshId;
+use crate::depth_bias::{BiasKey, DrawDepthBias};
 use crate::error::{RenderError, Result};
 use crate::far_view::FarFadeParams;
 use crate::frame::Pass;
@@ -459,29 +460,11 @@ pub struct LiquidMeshDraw {
     pub textures: WaterTextures,
     /// The caller's object handle for the light selection of lit liquids.
     pub light_object: Option<u64>,
-    /// Slope-scale depth bias of the placed entity's `Render_DepthBias_Type` entry, as the
-    /// depth-bias table stores it (`decals.md` §6.5: negative pulls toward the camera with a
-    /// depth buffer that grows with distance; 0: no bias). Applied as the Tessera default of
-    /// `decals.md` §6.5 OPEN (c) (`water.md` §8.5.4 rule for puddles); the renderer negates
-    /// it for its reversed depth (§6.5 Tessera Decision). Clamped to ±[`MAX_DEPTH_BIAS`];
-    /// a non-finite value is 0. The table's absolute and maximum values are not applied
-    /// (none is set in the reference install; `decals.md` §6.5 OPEN (b)).
-    pub depth_bias: f32,
-}
-
-/// Largest magnitude of [`LiquidMeshDraw::depth_bias`] (the table's values lie within ±10,
-/// `decals.md` §6.5).
-pub const MAX_DEPTH_BIAS: f32 = 64.0;
-
-/// The slope-scale bias of a draw for the reversed-depth world passes, as the bits of the
-/// pipeline key: 0 for none, non-finite or −0.
-fn reversed_slope_bits(stored: f32) -> u32 {
-    let v = if stored.is_finite() {
-        -stored.clamp(-MAX_DEPTH_BIAS, MAX_DEPTH_BIAS)
-    } else {
-        0.0
-    };
-    if v == 0.0 { 0 } else { v.to_bits() }
+    /// The depth bias of the placed entity's `Render_DepthBias_Type` entry, as the
+    /// depth-bias table stores it (`decals.md` §6.5); applied as the Tessera default of
+    /// §6.5 OPEN (c), which covers every draw of the entity (`water.md` §8.5.4 rule for
+    /// puddles, §14). See [`DrawDepthBias`] for the sign, the clamp and the bounds.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl Pass {
@@ -778,8 +761,8 @@ struct WaterPipeKey {
     /// `None`: both faces; `Some(false)`: back faces culled; `Some(true)`: front faces
     /// (mirrored transforms).
     cull: Option<bool>,
-    /// Slope-scale depth bias for the reversed depth ([`reversed_slope_bits`]; 0: none).
-    slope_bias: u32,
+    /// Depth bias for the reversed depth ([`DrawDepthBias`]).
+    bias: BiasKey,
 }
 
 /// Pipelines of the water, built lazily.
@@ -904,11 +887,7 @@ impl WaterState {
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                bias: wgpu::DepthBiasState {
-                    constant: 0,
-                    slope_scale: f32::from_bits(key.slope_bias),
-                    clamp: 0.0,
-                },
+                bias: key.bias.state(),
                 ..world_depth(key.depth_write)
             }),
             multisample: wgpu::MultisampleState::default(),
@@ -1107,7 +1086,7 @@ pub(crate) fn build_hook(
             blend: false,
             depth_write: true,
             cull: None,
-            slope_bias: 0,
+            bias: BiasKey::NONE,
         },
     );
     for ((draw, range), n) in draws.iter().zip(ranges).zip(cells) {
@@ -1240,7 +1219,7 @@ pub(crate) fn build_hook(
                 blend: blended,
                 depth_write,
                 cull: cull.map(|_| mirrored),
-                slope_bias: reversed_slope_bits(d.depth_bias),
+                bias: d.depth_bias.reversed(ctx.bias_clamp),
             },
         ) else {
             continue;
@@ -1521,19 +1500,6 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
-    }
-
-    /// `decals.md` §6.5 Tessera Decision (sign): the stored slope-scale value is negated for
-    /// the reversed depth; hostile values are bounded or dropped.
-    #[test]
-    fn depth_bias_for_reversed_depth() {
-        assert_eq!(reversed_slope_bits(0.0), 0);
-        assert_eq!(reversed_slope_bits(-0.0), 0);
-        assert_eq!(f32::from_bits(reversed_slope_bits(-0.8)), 0.8);
-        assert_eq!(f32::from_bits(reversed_slope_bits(2.0)), -2.0);
-        assert_eq!(f32::from_bits(reversed_slope_bits(1e9)), -MAX_DEPTH_BIAS);
-        assert_eq!(reversed_slope_bits(f32::NAN), 0);
-        assert_eq!(reversed_slope_bits(f32::INFINITY), 0);
     }
 
     #[test]

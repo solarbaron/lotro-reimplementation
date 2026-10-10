@@ -11,6 +11,7 @@ use std::mem::size_of;
 use tessera_formats::Did;
 
 use crate::records::{GROUP_TEXTURE, ParamEntry, ParamValue, SamplerState, ShaderRecord, group_of};
+use crate::transform::TransformValue;
 use crate::vocab::{ChannelPacking, SlotKind, choose_role, ids};
 
 /// A declared parameter: its id and default value (§7.2).
@@ -24,6 +25,10 @@ pub struct Declaration {
     pub binding_count: usize,
     /// The per-entry flag byte (§8.6).
     pub flag: u8,
+    /// Some binding entry has a semantic of 38–44, so the declaration writes a value of a
+    /// type-5 texture-transform item (§7.3.1, §7.7). For a repeated id, any of its entries.
+    /// The interface rule of `water.md` W52 reads it.
+    pub transform_bound: bool,
 }
 
 /// A texture slot declared by a shader: role and sampler state (§10.1).
@@ -144,14 +149,19 @@ impl ShaderInterface {
         let mut decl_entries: Vec<&ParamEntry> = Vec::with_capacity(record.params.len());
         let mut index_of: HashMap<u32, usize> = HashMap::new();
         for entry in &record.params {
-            let decl = Declaration {
+            let mut decl = Declaration {
                 id: entry.id,
                 default: entry.value.clone(),
                 binding_count: entry.bindings.len(),
                 flag: entry.flag,
+                transform_bound: entry
+                    .bindings
+                    .iter()
+                    .any(|b| TransformValue::from_semantic(b.semantic).is_some()),
             };
             match index_of.get(&entry.id) {
                 Some(&i) => {
+                    decl.transform_bound |= declarations[i].transform_bound;
                     declarations[i] = decl;
                     decl_entries[i] = entry;
                 }
@@ -299,6 +309,17 @@ impl ShaderInterface {
     #[must_use]
     pub fn declares(&self, id: u32) -> bool {
         self.declaration(id).is_some()
+    }
+
+    /// Whether some declaration binds a value of a type-5 texture-transform item (a binding
+    /// with a semantic of 38–44, [`Declaration::transform_bound`]).
+    ///
+    /// Among the liquid-distortion records, the one that binds none reads the world position
+    /// *B* in place of the mesh UV (`water.md` §8.5.5 step 1, W52 rule (i): 0x2B000442 in the
+    /// reference install, whose five transform bindings use the older semantics 33–37).
+    #[must_use]
+    pub fn binds_transform_items(&self) -> bool {
+        self.declarations.iter().any(|d| d.transform_bound)
     }
 
     /// The texture slot `id`, if declared.

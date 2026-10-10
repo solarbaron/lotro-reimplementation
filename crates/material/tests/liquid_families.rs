@@ -474,22 +474,34 @@ fn distortion_material_reads_texture_matrix_0() {
     assert!(d.all_finite());
 }
 
-/// `water.md` §8.5.5 step 5: the output of 0x2B00063E is multiplied by the vertex colour;
-/// 0x2B000442 reads *B* (step 1).
+/// `water.md` §8.5.5 step 5: the output of 0x2B00063E is multiplied by the vertex colour
+/// (by DID). Step 1: the layers read *B* exactly when no declaration has a binding with a
+/// semantic of 38–44 (W52 rule (i), 0x2B000442 in the reference install), whatever the DID;
+/// bindings with the older semantics 33–37 do not count.
 #[test]
-fn distortion_records_by_did() {
-    let decls = [
+fn distortion_records_by_interface_and_did() {
+    let base = [
         float(1057, 0.01),
         float(1048, 0.5),
         texture(3011, 0x4100_0030, 0),
         texture(3000, 0x4100_0031, 1),
     ];
     let samplers = [("LiquidNormalTexture", 0), ("LiquidDiffuseTexture", 0)];
-    for (did, vertex_color, world) in [
-        (0x2B00_063E, true, false),
-        (0x2B00_0442, false, true),
-        (0x2B00_04B5, false, false),
+    // Scale U of matrix 0 (semantic 41) or the older scale U curve (semantic 36).
+    let transform = || entry(1001, V::Const(1.0), &[(41, 0, 0)], 0);
+    let older = || entry(1001, V::Const(1.0), &[(36, 0, 0)], 0);
+    for (did, extra, vertex_color, world) in [
+        (0x2B00_063E, Some(transform()), true, false),
+        (0x2B00_04B5, Some(transform()), false, false),
+        (0x2B00_0442, Some(older()), false, true),
+        (0x2B00_0442, None, false, true),
+        // The DID alone decides nothing: a record of another DID without semantic 38–44
+        // reads *B*, and 0x2B000442 with one reads UV′.
+        (0x2B00_0442, Some(transform()), false, false),
+        (0x2B00_04B5, Some(older()), false, true),
     ] {
+        let mut decls = base.to_vec();
+        decls.extend(extra);
         let lib = one_surface(did, &decls, &samplers, &[]);
         let Some(LiquidSurface::Distortion(d)) = evaluate(&lib, 0.0) else {
             panic!("{did:#x}: distortion expected");
@@ -497,6 +509,15 @@ fn distortion_records_by_did() {
         assert_eq!(d.vertex_color, vertex_color, "{did:#x}");
         assert_eq!(d.world_coordinates, world, "{did:#x}");
     }
+    // A repeated declaration keeps the transform binding of an earlier entry.
+    let mut decls = base.to_vec();
+    decls.push(transform());
+    decls.push(entry(1001, V::Const(2.0), &[], 0));
+    let lib = one_surface(0x2B00_0442, &decls, &samplers, &[]);
+    let Some(LiquidSurface::Distortion(d)) = evaluate(&lib, 0.0) else {
+        panic!("distortion expected");
+    };
+    assert!(!d.world_coordinates);
 }
 
 /// `material.md` §10.3: the second colour layer and its combine rule per record.

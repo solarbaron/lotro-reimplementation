@@ -27,6 +27,7 @@ use glam::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::arena::MeshConfig;
+use crate::depth_bias::{BiasKey, DrawDepthBias};
 use crate::error::{RenderError, Result};
 use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
@@ -424,6 +425,12 @@ pub struct InstanceBatch {
     /// surfaces' own [`WorldSurface::uv`]. Surfaces past the list keep their own. `None`:
     /// every surface keeps its own.
     pub uv: Option<Arc<[[UvTransform; 2]]>>,
+    /// The depth bias of the placed entities the batch draws (`decals.md` §6.5: their
+    /// `Render_DepthBias_Type` entry, the Tessera default of OPEN (c) applying it to every
+    /// draw of an entity), on every colour draw of the batch; the shadow-map draws keep the
+    /// shadow pass's own bias. Batch only instances that share it. [`DrawDepthBias::NONE`]
+    /// by default.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl InstanceBatch {
@@ -438,6 +445,7 @@ impl InstanceBatch {
             max_distance: None,
             frill: None,
             uv: None,
+            depth_bias: DrawDepthBias::NONE,
         }
     }
 
@@ -1165,6 +1173,8 @@ struct PipeKey {
     /// face is culled (`docs/specs/render.md` §2.3 Mirrored transforms; unused when
     /// two-sided).
     mirrored: bool,
+    /// The batch's depth bias for the reversed depth ([`DrawDepthBias`]).
+    bias: BiasKey,
 }
 
 /// Pipelines and layouts of the instanced path, built lazily, kept for the renderer's
@@ -1311,7 +1321,10 @@ impl InstancedState {
                 },
                 ..Default::default()
             },
-            depth_stencil: Some(world_depth(write)),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                bias: key.bias.state(),
+                ..world_depth(write)
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: shader,
@@ -1721,6 +1734,7 @@ pub(crate) fn build_hook(
         ];
         let shadow_range = as_u32(start)..as_u32(gpu.len());
         let mut counted_part = None;
+        let bias = batch.depth_bias.reversed(ctx.bias_clamp);
         for (pi, part) in model.parts.iter().enumerate() {
             let Some(surface) = model.surfaces.get(part.surface) else {
                 continue;
@@ -1769,6 +1783,7 @@ pub(crate) fn build_hook(
                         },
                         two_sided: surface.two_sided,
                         mirrored: *mirrored && !surface.two_sided,
+                        bias,
                     },
                 ) else {
                     continue;

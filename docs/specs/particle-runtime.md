@@ -768,6 +768,20 @@ input the output alpha is further multiplied by the soft-particle factor of para
 > its states for the length of its run. Fresh states every frame freeze a mode-10 curve at
 > its start value.
 
+> **OPEN:** (implementer, 2026-10-10; engineering choices under rule 12, the spec is silent)
+> How rule 12 is applied, for review: (a) mode 3: before each evaluation, the state of
+> every mode-3 curve that the draw evaluates is replaced by a fresh one seeded from one draw
+> of the shared stream (one draw per mode-3 curve per evaluation, `material.md` §5.3.1
+> allows any uniform source), so nothing carries over between evaluations; (b) walker: the
+> states are keyed by the surface DID (`surface`, else `extra_surface`) and live as long as
+> the effects layer, because the walker's effect-record cache holds each surface's resolved
+> material for the session and never drops it (so "discard with the cache entry" does not
+> occur); at most 4,096 surfaces keep states, beyond that a draw uses fresh states;
+> (c) explorer preview: the look is evaluated at every simulation step (30 per second) with
+> states kept for the run and started afresh on a restart; each sheet column is a run of
+> its own from time 0. Are these acceptable, or should the walker drop a surface's states
+> at some other point (for example when no system drawing the surface remains)?
+
 <a id="s9-1-2"></a>
 #### 9.1.2 Permutation feature bit 1: soft particles and heat distortion (BIN, BIN-S, OBS3; RT25, RT26, RT29)
 

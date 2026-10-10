@@ -63,6 +63,12 @@ impl Driver {
     fn tick(&mut self, took_us: u64) -> (u64, Option<StatsLine>) {
         self.k += 1;
         let start = tick_start(self.k, DEFAULT_TICK_RATE);
+        self.tick_late(start, took_us)
+    }
+
+    /// Runs the next tick, which starts at `start` (at or after its due time, §8.1), and
+    /// records `took_us` as its duration.
+    fn tick_late(&mut self, start: u64, took_us: u64) -> (u64, Option<StatsLine>) {
         let before = self.sim.last_stats_line().cloned();
         self.sim.tick(start);
         self.stats.record_tick(took_us);
@@ -149,6 +155,45 @@ fn each_line_reports_its_own_interval() {
     assert!(lines[0].1.overruns < last.overruns);
     // The since-start longest tick stays for the reports (§13.4).
     assert_eq!(d.stats.snapshot().tick_max_us, 90_000);
+}
+
+/// §11.1 (revised 2026-10-10): the server time of a line is the time at which the tick that
+/// writes it starts, which may be later than its due time; the interval boundaries are those
+/// start times and the byte rates divide by their difference.
+#[test]
+fn line_time_is_the_start_of_a_late_tick() {
+    let mut d = Driver::new(1);
+    let mut lines: Vec<(u64, StatsLine, u64, u64)> = Vec::new();
+    let (mut bytes_in, mut bytes_out) = (0u64, 0u64);
+    for i in 0..200u64 {
+        d.k += 1;
+        // Every tick starts late, by a varying amount up to just under one period.
+        let due = tick_start(d.k, DEFAULT_TICK_RATE);
+        let start = due + 1 + (i * 7_919) % 33_000;
+        d.stats.bytes_in.fetch_add(13 * i + 1, Ordering::Relaxed);
+        d.stats.bytes_out.fetch_add(17 * i + 2, Ordering::Relaxed);
+        bytes_in += 13 * i + 1;
+        bytes_out += 17 * i + 2;
+        if let (start, Some(line)) = d.tick_late(start, 1_000) {
+            assert_ne!(start, due);
+            lines.push((start, line, bytes_in, bytes_out));
+            (bytes_in, bytes_out) = (0, 0);
+        }
+    }
+    assert!(lines.len() >= 5, "{} lines", lines.len());
+    let mut interval_start = 0;
+    for (n, (start, line, bytes_in, bytes_out)) in lines.iter().enumerate() {
+        assert_eq!(
+            line.at_us, *start,
+            "line {n}: the tick's start, not its due time"
+        );
+        assert_eq!(line.interval_start_us, interval_start, "line {n}");
+        assert!(line.at_us >= interval_start + 1_000_000, "line {n}");
+        let len = line.at_us - interval_start;
+        assert_eq!(line.interval.bytes_in_per_s, bytes_in * 1_000_000 / len);
+        assert_eq!(line.interval.bytes_out_per_s, bytes_out * 1_000_000 / len);
+        interval_start = line.at_us;
+    }
 }
 
 /// §11.1 counts at the time of the line: one figure per instance, entities in all

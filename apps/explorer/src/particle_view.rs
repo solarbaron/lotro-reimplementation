@@ -112,7 +112,7 @@ pub struct PreviewSource {
     pub second_texture: Option<Arc<RgbaImage>>,
     /// The surface's blend state and program at time 0.
     pub look: PreviewLook,
-    /// For an animated surface: what [`PreviewSource::look_at`] re-evaluates.
+    /// For an animated surface: what [`PreviewSim::look`] re-evaluates at every step.
     pub clock: Option<Arc<PreviewClock>>,
     /// What could not be resolved.
     pub notes: Vec<String>,
@@ -208,22 +208,21 @@ pub fn surface_alpha(m: &ResolvedMaterial, test: Option<f32>) -> AlphaMode {
     }
 }
 
-impl PreviewSource {
-    /// The look at preview time `t`: the alpha-test reference and the texture matrices
-    /// evaluated at `t` when their curves are not constant (fresh curve states per call,
-    /// enough for a preview), else [`PreviewSource::look`].
-    #[must_use]
-    pub fn look_at(&self, t: f64) -> PreviewLook {
-        let Some(c) = &self.clock else {
-            return self.look;
-        };
-        let s = c
-            .look
-            .at(&c.material, &c.layout, t, &mut CurveStates::new());
+impl PreviewClock {
+    /// `base` with the alpha-test reference and the texture matrices evaluated at `t` with
+    /// the run's curve states `states` and the run's stream `rng` (mode 3).
+    fn look_at(
+        &self,
+        base: PreviewLook,
+        t: f64,
+        states: &mut CurveStates,
+        rng: &mut Ran2,
+    ) -> PreviewLook {
+        let s = self.look.at(&self.material, &self.layout, t, states, rng);
         PreviewLook {
-            alpha: surface_alpha(&c.material, s.alpha_test),
+            alpha: surface_alpha(&self.material, s.alpha_test),
             uv: uv_transforms(s.matrices),
-            ..self.look
+            ..base
         }
     }
 }
@@ -333,6 +332,10 @@ pub fn load_source(ctx: &DataContext, did: u32) -> Result<PreviewSource, Explore
 }
 
 /// A running simulation of the preview.
+///
+/// With a surface ([`PreviewSim::with_surface`]) the run keeps one set of curve states for
+/// that surface for its whole length (`particle-runtime.md` §12 rule 12) and evaluates the
+/// look at every step, as a frame draws it; a restart starts the states afresh.
 #[derive(Debug, Clone)]
 pub struct PreviewSim {
     desc: Arc<ParticleSystem>,
@@ -342,10 +345,14 @@ pub struct PreviewSim {
     frame: u64,
     time: f64,
     pending: f64,
+    base: PreviewLook,
+    clock: Option<Arc<PreviewClock>>,
+    states: CurveStates,
+    look: PreviewLook,
 }
 
 impl PreviewSim {
-    /// A fresh simulation with `seed`, at time 0.
+    /// A fresh simulation with `seed`, at time 0, drawn with the default look.
     #[must_use]
     pub fn new(desc: Arc<ParticleSystem>, seed: u32) -> Self {
         Self {
@@ -356,12 +363,37 @@ impl PreviewSim {
             frame: 0,
             time: 0.0,
             pending: 0.0,
+            base: PreviewLook::default(),
+            clock: None,
+            states: CurveStates::new(),
+            look: PreviewLook::default(),
         }
     }
 
-    /// Starts again from time 0 with `seed`.
+    /// This simulation drawn with the surface of `src`: its look at time 0, re-evaluated at
+    /// every step when the surface is animated.
+    #[must_use]
+    pub fn with_surface(mut self, src: &PreviewSource) -> Self {
+        self.base = src.look;
+        self.look = src.look;
+        self.clock = src.clock.clone();
+        self.states = CurveStates::new();
+        self
+    }
+
+    /// Starts again from time 0 with `seed` (the surface's curve states afresh).
     pub fn restart(&mut self, seed: u32) {
-        *self = Self::new(Arc::clone(&self.desc), seed);
+        let mut fresh = Self::new(Arc::clone(&self.desc), seed);
+        fresh.base = self.base;
+        fresh.look = self.base;
+        fresh.clock = self.clock.take();
+        *self = fresh;
+    }
+
+    /// The surface's look at the last step.
+    #[must_use]
+    pub fn look(&self) -> PreviewLook {
+        self.look
     }
 
     /// The seed.
@@ -391,6 +423,9 @@ impl PreviewSim {
             &mut self.rng,
             &OriginAttachments,
         );
+        if let Some(c) = &self.clock {
+            self.look = c.look_at(self.base, self.time, &mut self.states, &mut self.rng);
+        }
         self.frame += 1;
         self.time += 1.0 / STEPS_PER_SECOND;
     }
@@ -825,7 +860,8 @@ impl ParticlePreview {
                 let _ = thread.tx.send(Cmd::Texture(0, src.texture.clone()));
                 let _ = thread.tx.send(Cmd::Texture(1, src.second_texture.clone()));
                 self.thread = Some(thread);
-                self.sim = Some(PreviewSim::new(Arc::clone(&src.desc), self.seed));
+                self.sim =
+                    Some(PreviewSim::new(Arc::clone(&src.desc), self.seed).with_surface(&src));
                 self.source = Some(src);
                 self.loader = None;
             }
@@ -918,7 +954,7 @@ impl ParticlePreview {
         }
         let camera = self.orbit.camera();
         let drawn = sim.draw(&camera);
-        let look = src.look_at(sim.time());
+        let look = sim.look();
         if !self.framed && drawn.is_some() {
             let (c, r) = draw_sphere(drawn.as_ref());
             self.orbit.frame(c, r * 1.2, width / height);
@@ -1074,7 +1110,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
     let mut frame_orbit = OrbitView::new();
     let mut spheres = Vec::new();
     for &t in &times {
-        let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
+        let mut probe = PreviewSim::new(Arc::clone(&src.desc), plan.seed).with_surface(&src);
         probe.run_to(t);
         let drawn = probe.draw(&frame_orbit.camera());
         if drawn.as_ref().is_some_and(|d| d.vertex_count() > 0) {
@@ -1089,7 +1125,7 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
     );
     let mut images = vec![blank; cols * rows];
     for (c, &t) in times.iter().enumerate() {
-        let mut sim = PreviewSim::new(Arc::clone(&src.desc), plan.seed);
+        let mut sim = PreviewSim::new(Arc::clone(&src.desc), plan.seed).with_surface(&src);
         sim.run_to(t);
         let mut counts = Vec::new();
         for (r, angle) in angles.iter().enumerate() {
@@ -1100,9 +1136,9 @@ pub fn run_particle_sheet(plan: &ParticleSheetPlan) -> Result<SheetReport, Explo
             let camera = frame_orbit.camera();
             let drawn = sim.draw(&camera);
             counts.push(drawn.as_ref().map_or(0, SystemDraw::vertex_count));
-            let draws = drawn.as_ref().map_or_else(Vec::new, |s| {
-                render_draws(s, gpu.textures(), src.look_at(sim.time()))
-            });
+            let draws = drawn
+                .as_ref()
+                .map_or_else(Vec::new, |s| render_draws(s, gpu.textures(), sim.look()));
             let img = gpu
                 .render(draws, &camera, tw, th)
                 .map_err(ExplorerError::Worker)?;

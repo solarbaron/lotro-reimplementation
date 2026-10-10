@@ -1034,7 +1034,7 @@ fn liquid_alpha_test_reads_the_output_alpha() -> Result<(), RenderError> {
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
-                depth_bias: 0.0,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
             });
         })?;
         r.destroy_mesh(plane);
@@ -1043,6 +1043,77 @@ fn liquid_alpha_test_reads_the_output_alpha() -> Result<(), RenderError> {
             "vertex alpha {vertex_alpha}, material alpha {material_alpha}: {px:?} vs {want:?}"
         );
     }
+    Ok(())
+}
+
+/// `water.md` §8.5.5 step 5 (W52, WA19): the lit liquid (0x2B0007D0) tests the alpha of the
+/// distorted `ColorAndOpacity` texel alone, before any multiply: a texel alpha above the
+/// reference is kept even when texel alpha × material alpha is at or below it, with that
+/// product as its output alpha; a texel alpha at or below the reference is discarded at any
+/// material alpha; the record has no vertex-colour input, so a vertex alpha changes nothing.
+#[test]
+fn lit_liquid_alpha_test_reads_the_texel_alpha() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.2, 0.4, 0.6];
+    let mut mesh = floor_mesh_with_uv(0.0);
+    mesh.colors = Some(vec![[1.0, 1.0, 1.0, 0.1]; 4]);
+    let plane = r.upload_mesh(&mesh)?;
+    // Texel alpha 0.8 and 0.4 (exact in 8 bits).
+    let high = solid(&mut r, [255, 255, 255, 204])?;
+    let low = solid(&mut r, [255, 255, 255, 102])?;
+    let draw = |r: &mut Renderer<'static>,
+                texel: TextureId,
+                material_alpha: f32,
+                test: Option<f32>,
+                vertex_color: bool| {
+        let liquid = tessera_render::DistortionParams {
+            lit: true,
+            vertex_color,
+            alpha_test: test,
+            color: [1.0, 1.0, 1.0, material_alpha],
+            ..tessera_render::DistortionParams::default()
+        };
+        scene_px(r, floor_rgb, no_sun(1.0), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Distortion(liquid),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(texel), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
+            });
+        })
+        .map(|(px, _)| px)
+    };
+    let floor_px = scene_px(&mut r, floor_rgb, no_sun(1.0), |_| {})?.0;
+    // Texel 0.8 > 0.5 although 0.8 × 0.4 = 0.32 <= 0.5: kept, blended by 0.32.
+    let kept = draw(&mut r, high, 0.4, Some(0.5), false)?;
+    assert!(kept != floor_px, "kept: {kept:?} vs floor {floor_px:?}");
+    // The same output alpha 0.32 without a test (texel 0.4 × material 0.8) draws the same.
+    let untested = draw(&mut r, low, 0.8, None, false)?;
+    assert!(
+        kept.iter().zip(untested).all(|(a, b)| a.abs_diff(b) <= 2),
+        "output alpha = texel × material: {kept:?} vs {untested:?}"
+    );
+    // Texel 0.4 <= 0.5: discarded at material alpha 1.
+    let discarded = draw(&mut r, low, 1.0, Some(0.5), false)?;
+    assert_eq!(discarded, floor_px, "texel alpha at or below the reference");
+    // The vertex alpha 0.1 takes no part, even with the vertex-colour flag set.
+    let with_vertex = draw(&mut r, high, 0.4, Some(0.5), true)?;
+    assert!(
+        kept.iter()
+            .zip(with_vertex)
+            .all(|(a, b)| a.abs_diff(b) <= 2),
+        "no vertex multiply: {kept:?} vs {with_vertex:?}"
+    );
+    r.destroy_mesh(plane);
     Ok(())
 }
 
@@ -1080,7 +1151,7 @@ fn liquid_vertex_colour() -> Result<(), RenderError> {
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
-                depth_bias: 0.0,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
             });
         })?;
         assert!(
@@ -1250,7 +1321,7 @@ fn mirror_surfaces_follow_section_8_5_4() -> Result<(), RenderError> {
                 light_object: None,
                 // Type 3 of the puddle objects (`water.md` W44): a slope-scale bias only,
                 // which leaves a surface seen straight on where it is.
-                depth_bias: -0.8,
+                depth_bias: tessera_render::DrawDepthBias::slope(-0.8),
             });
         })?;
         assert!(close(px, want), "bias {bias}: {px:?} vs {want:?}");
@@ -1289,7 +1360,7 @@ fn placed_water_and_liquid_meshes_use_their_own_programs() -> Result<(), RenderE
             normal_map: None,
             textures: tessera_render::WaterTextures::default(),
             light_object: None,
-            depth_bias: 0.0,
+            depth_bias: tessera_render::DrawDepthBias::NONE,
         });
     })?;
     assert!(close(px, [0.6, 0.6, 0.3]), "placed water: {px:?}");
@@ -1311,7 +1382,7 @@ fn placed_water_and_liquid_meshes_use_their_own_programs() -> Result<(), RenderE
                     ..tessera_render::WaterTextures::default()
                 },
                 light_object: None,
-                depth_bias: 0.0,
+                depth_bias: tessera_render::DrawDepthBias::NONE,
             });
         })?;
         assert!(close(px, want), "liquid alpha {alpha}: {px:?} vs {want:?}");

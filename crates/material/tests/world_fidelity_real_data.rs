@@ -12,6 +12,8 @@
 //!   surface record resolves through the water material chain of `water.md` §8.2 (76
 //!   distinct surfaces over the six water shader records), and each of those six shader
 //!   records gives a water material on its own defaults.
+//! - `liquid_world_position_rule`: the interface rule of `water.md` W52 selects exactly
+//!   0x2B000442 among the four liquid-distortion records.
 //!
 //! Run with `TESSERA_GAME_DIR=… cargo test --release -p tessera-material --test
 //! world_fidelity_real_data -- --nocapture --test-threads 1`. Only counts and DIDs are
@@ -24,10 +26,13 @@ use std::sync::OnceLock;
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::water::decode_water_table;
 use tessera_formats::{Did, Record};
+use tessera_material::interface::ProgramFamily;
+use tessera_material::liquid::liquid_reads_world_position;
 use tessera_material::records::{CullMode, ParamValue};
 use tessera_material::{
     CurveState, CurveStates, MaterialLibrary, MaterialRecord, ObjectInputs, RecordSource,
-    ShaderRecord, SurfaceInputs, SurfaceRecord, TextureMatrixLayout, WaterMaterial, WaterParams,
+    ShaderInterface, ShaderRecord, SurfaceInputs, SurfaceRecord, TextureMatrixLayout,
+    WaterMaterial, WaterParams,
 };
 
 fn archives() -> Option<&'static ArchiveSet> {
@@ -243,6 +248,48 @@ fn record_counts_and_surface_inputs() {
         surface_dids.len()
     );
     assert_eq!(non_finite_raw, 0);
+}
+
+/// `water.md` W52 (§8.5.5, §14 (c)): among the liquid-distortion records of `material.md`
+/// §11.6, 0x2B000442 is the only one none of whose declarations has a binding with a
+/// semantic of 38–44 (rule (i), which Tessera uses to read the world position *B*) and the
+/// only one with no type-5 extra state item in any permutation (rule (ii), cross-check).
+#[test]
+fn liquid_world_position_rule() {
+    let Some(set) = archives() else { return };
+    let mut liquids = Vec::new();
+    let mut world = Vec::new();
+    let mut no_type5 = Vec::new();
+    for did in dids_with_prefix(set, 0x2B) {
+        let rec = ShaderRecord::parse_expecting(&read(set, did), did)
+            .unwrap_or_else(|e| panic!("shader {did:#010X}: {e}"));
+        let interface = ShaderInterface::from_record(&rec);
+        if interface.family != ProgramFamily::LiquidDistortion {
+            continue;
+        }
+        liquids.push(did);
+        if liquid_reads_world_position(&interface) {
+            world.push(did);
+        }
+        if !rec
+            .permutations
+            .iter()
+            .flat_map(|p| &p.extra_items)
+            .any(|i| i.item_type == 5)
+        {
+            no_type5.push(did);
+        }
+    }
+    let hex = |v: &[u32]| v.iter().map(|d| format!("{d:#010X}")).collect::<Vec<_>>();
+    println!(
+        "liquid-distortion records {:?}; world position (rule (i)) {:?}; no type-5 item {:?}",
+        hex(&liquids),
+        hex(&world),
+        hex(&no_type5)
+    );
+    assert_eq!(liquids.len(), 4, "four liquid-distortion records (W52)");
+    assert_eq!(world, [0x2B00_0442], "rule (i)");
+    assert_eq!(no_type5, world, "rule (ii) selects the same record");
 }
 
 #[test]

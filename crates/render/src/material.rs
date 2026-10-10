@@ -15,6 +15,7 @@
 use glam::{Mat4, Vec3};
 
 use crate::arena::MeshId;
+use crate::depth_bias::DrawDepthBias;
 use crate::frame::Rgba;
 use crate::skin::SkinPalette;
 use crate::texture::TextureId;
@@ -807,6 +808,11 @@ pub struct MeshDraw {
     /// [`crate::LightReach::parent`] by the automatic light selection (`lighting.md` §8.5
     /// step 3). `None`: the draw is no light's parent.
     pub light_object: Option<u64>,
+    /// The depth bias of the placed entity the draw belongs to (`decals.md` §6.5: its
+    /// `Render_DepthBias_Type` entry, the Tessera default of OPEN (c) applying it to every
+    /// draw of the entity). Applied to the colour draws of world passes; the shadow-map
+    /// draws keep the shadow pass's own bias. [`DrawDepthBias::NONE`] by default.
+    pub depth_bias: DrawDepthBias,
 }
 
 impl MeshDraw {
@@ -821,7 +827,15 @@ impl MeshDraw {
             skin: None,
             lit: LitSurface::default(),
             light_object: None,
+            depth_bias: DrawDepthBias::NONE,
         }
+    }
+
+    /// Set the entity's depth bias (see [`Self::depth_bias`]).
+    #[must_use]
+    pub fn with_depth_bias(mut self, bias: DrawDepthBias) -> Self {
+        self.depth_bias = bias;
+        self
     }
 
     /// Mark the draw as part of the object with handle `object` (see

@@ -236,14 +236,50 @@ impl EquippedItem {
     }
 }
 
-/// A chosen style: the modifier that replaces an appearance-list element's own modifier
-/// for its key (`appearance.md` §8 step 3: head, hair and beard styles).
+/// A chosen style (`appearance.md` §8 step 3: head, hair and beard styles), in one of two
+/// forms:
+///
+/// - **Modifier only** (`element` `None`): the modifier replaces the own modifier of every
+///   appearance-list element with key `key`, in every list.
+/// - **A written element** (`element` `Some`): the appearance-list element that a
+///   creation screen's style control writes (`appearance.md` §3.4 "Starting values on the
+///   creation screen"): it replaces every element of the figure's `Appearance_InstanceList`
+///   with the same key, in place, or is appended when there is none; the figure then picks
+///   its record by the toggle rule (§3.3) and its block by §3.2.1. `key` and `modifier`
+///   equal the element's own.
+///
+/// Choices apply in order: a later written element for the same key replaces an earlier
+/// one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StyleChoice {
     /// The `AppearanceKey` of the list element (`FaceTexture`, `HeadMesh`, `BeardMesh`, …).
     pub key: u32,
-    /// The block selector to use (style index / 100).
+    /// The block selector to use (the chosen block's `variant`).
     pub modifier: f32,
+    /// The instance-list element the choice writes, or `None` for a modifier only.
+    pub element: Option<tessera_formats::appearance::AppearanceKeyInfo>,
+}
+
+impl StyleChoice {
+    /// A modifier-only choice for `key`.
+    #[must_use]
+    pub fn modifier(key: u32, modifier: f32) -> Self {
+        Self {
+            key,
+            modifier,
+            element: None,
+        }
+    }
+
+    /// A choice that writes `element` into the figure's instance list.
+    #[must_use]
+    pub fn element(element: tessera_formats::appearance::AppearanceKeyInfo) -> Self {
+        Self {
+            key: element.key,
+            modifier: element.modifier,
+            element: Some(element),
+        }
+    }
 }
 
 /// A playable figure to assemble (`appearance.md` §2, §8).

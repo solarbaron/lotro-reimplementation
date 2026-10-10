@@ -900,6 +900,18 @@ impl<S: AssemblySource> CharacterAssembler<S> {
 
         // Step 3: the appearance elements (§4.7 rule 2, §8 step 3).
         let (instance_list, instance_list_origin) = self.instance_list(&input);
+        // The elements a creation screen's style controls write (`appearance.md` §3.4):
+        // each replaces the instance list's elements of its key in place, or is appended.
+        let instance_list = match input.spec {
+            Some(spec) if spec.styles.iter().take(64).any(|c| c.element.is_some()) => {
+                let mut list = instance_list.unwrap_or_else(|| body.instance_list.clone());
+                for e in spec.styles.iter().take(64).filter_map(|c| c.element) {
+                    write_list_element(&mut list, e);
+                }
+                Some(list)
+            }
+            _ => instance_list,
+        };
         let mut watched: Vec<u32> = Vec::new();
         let lists = body
             .template_appearance
@@ -934,10 +946,16 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 watched.push(p);
             }
             let file = info.file_for(toggle_true);
-            // A player's chosen style replaces the modifier for its key (§8 step 3).
+            // A player's chosen modifier-only style replaces the modifier for its key (§8
+            // step 3); written elements are already in the instance list.
             let modifier = input
                 .spec
-                .and_then(|s| s.styles.iter().take(64).find(|c| c.key == info.key))
+                .and_then(|s| {
+                    s.styles
+                        .iter()
+                        .take(64)
+                        .find(|c| c.key == info.key && c.element.is_none())
+                })
                 .map_or(info.modifier, |c| c.modifier);
             cx.add_element(source, file, info.key, modifier);
         }
@@ -1372,6 +1390,20 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             }
         }
         parts
+    }
+}
+
+/// Writes `element` into an instance list (`appearance.md` §3.4): every element with the
+/// same key is replaced in place; without one it is appended (the list stays bounded by
+/// the caller's 64 choices).
+fn write_list_element(list: &mut Vec<AppearanceKeyInfo>, element: AppearanceKeyInfo) {
+    let mut found = false;
+    for e in list.iter_mut().filter(|e| e.key == element.key) {
+        *e = element;
+        found = true;
+    }
+    if !found {
+        list.push(element);
     }
 }
 

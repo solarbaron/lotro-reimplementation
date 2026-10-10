@@ -4,9 +4,17 @@
 //! player made, the look they become (decision 0025 D2), the receiver rule for looks
 //! (`tessera-protocol.md` §7.4 "Receiving a look") and the figure they give.
 //!
-//! **Values.** A control's value is a [`ControlValue`]; a control without a value keeps
-//! the avatar's own value, which is the default (`appearance.md` §3.4). Only controls with a
-//! value enter the look, so a look carries what the player set.
+//! **Values.** A control's value is a [`ControlValue`]; a control without a value shows its
+//! starting value ([`ControlDetail::default`], `character-screens.md` §5.2.1, `appearance.md`
+//! §3.4): built in list order ([`AvatarDetail::list_order`]), every style starts at the block
+//! its key's first element of the avatar's `Appearance_InstanceList` names (exactly), else at
+//! its first block, each style writing its element back before the next is built; the other
+//! kinds start at the avatar's own value, a presets control at its first preset (not
+//! applied). Only controls the player set enter the look, so a look carries what the player
+//! set.
+//!
+//! **Labels** (§5.2.2): each control carries its own `AppearanceUI_ControlStringName`, its
+//! default lock state and, for a style, its toggle record and property ([`ControlMeta`]).
 //!
 //! **Colours** are RGBA in the look and in the model (`tessera-net`'s order); the data
 //! stores colour properties as B, G, R, A (`appearance.md` §3.5), converted on reading.
@@ -15,13 +23,16 @@
 //! *i*-th block, and the figure's modifier is that block's own `variant`, so the block
 //! rule of `appearance.md` §3.2.1 (rule 2: the greatest `variant` not above the modifier)
 //! selects exactly that block. Variants are not 0.00, 0.01, … in general (heads of
-//! 0.00–0.04, 0.30–0.34, …).
+//! 0.00–0.04, 0.30–0.34, …). Every style control gives the figure the appearance-list
+//! element it writes (`appearance.md` §3.4: its key, its own record, the block's `variant`,
+//! its toggle record and property; [`StyleChoice::element`]) and sets its
+//! `AppearanceUI_ControlScriptPropertyName` (`AC_Mesh_Head`) to the same value.
 //!
 //! **Tessera rules** (the spec names the written property but not every detail; OPEN in
 //! `character-screens.md` §5.2): a style control writes its
 //! `AppearanceUI_ControlScriptPropertyName` when it has one (a `Float` property, such as
 //! `AC_Mesh_Head`, holds the chosen block's `variant`; an integer property the block
-//! index), and otherwise only its [`StyleChoice`] for the figure; a body-scale
+//! index) in the look; a body-scale
 //! control writes the property its struct names in `AppearanceUI_ControlPropertyName`, else
 //! `AC_BoneScale_Test`; slider bytes are one byte per slider, written as upper-case hex
 //! pairs; the slider count is the length of the avatar's own slider string (or the
@@ -29,7 +40,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tessera_formats::appearance::AppearanceRecord;
+use tessera_formats::StringInfo;
+use tessera_formats::appearance::{AppearanceKeyInfo, AppearanceListPids, AppearanceRecord};
 use tessera_formats::gameplay::misc::ImageCompositor;
 use tessera_formats::{Did, EntityDescriptor, PropertyType, Record as _};
 use tessera_gamedata::SplitMix64;
@@ -99,9 +111,25 @@ pub enum ControlChoices {
     Nothing,
 }
 
+/// What the screens show and write of a control besides its value (`character-screens.md`
+/// §5.2.2; `appearance.md` §3.4).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ControlMeta {
+    /// `AppearanceUI_ControlStringName`: the control's own name, shown in its template's
+    /// label part (§5.2.2 rule 1).
+    pub label: Option<StringInfo>,
+    /// `AppearanceUI_ControlDefaultLockState`: the lock button starts lit (§5.2.2 rule 4).
+    pub default_locked: bool,
+    /// A style control's `AppearanceUI_APRToggleFile` and `AppearanceUI_APRTogglePropertyName`,
+    /// written with its appearance-list element (`appearance.md` §3.4).
+    pub style_toggle: Option<(Did, u32)>,
+}
+
 /// One creation control with what it writes and offers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlDetail {
+    /// Its name, lock state and style toggle.
+    pub meta: ControlMeta,
     /// The control as `tessera-gamedata` read it.
     pub control: AppearanceControl,
     /// The property the control writes and its value kind (from the dictionary), when the
@@ -109,7 +137,9 @@ pub struct ControlDetail {
     pub writes: Option<(u32, PropertyKind)>,
     /// What it offers.
     pub choices: ControlChoices,
-    /// The avatar's own value (the default), when it has one.
+    /// The starting value (`character-screens.md` §5.2.1, `appearance.md` §3.4): a style's
+    /// block found through the figure's instance list (else the first), the avatar's own
+    /// value for the other kinds, the first preset for a presets control.
     pub default: Option<ControlValue>,
 }
 
@@ -139,6 +169,30 @@ impl ControlDetail {
             ControlChoices::Styles { variants, .. } => variants.len(),
             _ => 0,
         }
+    }
+
+    /// The appearance-list element style `index` writes (`appearance.md` §3.4): the
+    /// control's key and own record, the block's `variant` as modifier, and the control's
+    /// toggle record and property when it names both; `None` for another kind, a style
+    /// without a record or key, or an index out of range.
+    #[must_use]
+    pub fn style_element(&self, index: usize) -> Option<AppearanceKeyInfo> {
+        let ControlKind::Style {
+            file: Some(file),
+            key: Some(key),
+            ..
+        } = self.control.kind
+        else {
+            return None;
+        };
+        let modifier = self.style_variant(u32::try_from(index).ok()?)?;
+        Some(AppearanceKeyInfo {
+            key,
+            file,
+            modifier,
+            toggle_file: self.meta.style_toggle.map(|t| t.0),
+            toggle_property: self.meta.style_toggle.map(|t| t.1),
+        })
     }
 
     /// The figure modifier of style `index`: that block's `variant`.
@@ -227,6 +281,19 @@ pub fn style_for_modifier(variants: &[f32], modifier: f32) -> Option<u32> {
     u32::try_from(i).ok()
 }
 
+/// Writes `e` into an appearance list (`appearance.md` §3.4): it replaces every element with
+/// the same key in place, or is appended when there is none.
+fn write_list_element(list: &mut Vec<AppearanceKeyInfo>, e: AppearanceKeyInfo) {
+    let mut found = false;
+    for x in list.iter_mut().filter(|x| x.key == e.key) {
+        *x = e;
+        found = true;
+    }
+    if !found && list.len() < MAX_CONTROL_CHOICES {
+        list.push(e);
+    }
+}
+
 /// The hex-pair slider string of `bytes` (upper case).
 #[must_use]
 pub fn slider_string(bytes: &[u8]) -> String {
@@ -297,6 +364,21 @@ pub struct ScreenPids {
     pub bone_scaling_control: Option<u32>,
     /// `Chargen_AvatarPresetsArray`.
     pub presets_array: Option<u32>,
+    /// `AppearanceUI_BoneSliderControl`.
+    pub bone_slider_control: Option<u32>,
+    /// `AppearanceUI_PresetsControl`.
+    pub presets_control: Option<u32>,
+    /// `AppearanceUI_ControlStringName`.
+    pub string_name: Option<u32>,
+    /// `AppearanceUI_ControlDefaultLockState`.
+    pub default_lock: Option<u32>,
+    /// `AppearanceUI_APRToggleFile`.
+    pub apr_toggle_file: Option<u32>,
+    /// `AppearanceUI_APRTogglePropertyName`.
+    pub apr_toggle_property: Option<u32>,
+    /// `UICore_Viewport_AmbientLight` (the creation viewport's ambient input,
+    /// `character-screens.md` §2.1.1 step 4).
+    pub viewport_ambient: Option<u32>,
 }
 
 impl ScreenPids {
@@ -318,6 +400,13 @@ impl ScreenPids {
             dyemap_control: p("AppearanceUI_DyeMapControl"),
             bone_scaling_control: p("AppearanceUI_BoneScalingControl"),
             presets_array: p("Chargen_AvatarPresetsArray"),
+            bone_slider_control: p("AppearanceUI_BoneSliderControl"),
+            presets_control: p("AppearanceUI_PresetsControl"),
+            string_name: p("AppearanceUI_ControlStringName"),
+            default_lock: p("AppearanceUI_ControlDefaultLockState"),
+            apr_toggle_file: p("AppearanceUI_APRToggleFile"),
+            apr_toggle_property: p("AppearanceUI_APRTogglePropertyName"),
+            viewport_ambient: p("UICore_Viewport_AmbientLight"),
         }
     }
 }
@@ -339,6 +428,19 @@ impl AvatarDetail {
     #[must_use]
     pub fn writable(&self) -> BTreeMap<u32, PropertyKind> {
         self.controls.iter().filter_map(|c| c.writes).collect()
+    }
+
+    /// Positions in [`AvatarDetail::controls`] in the list order of `character-screens.md`
+    /// §5.2 (ungrouped controls first, then the groups by ascending key; stored order
+    /// within each): the order the screens build and start the controls in (§5.2.1).
+    #[must_use]
+    pub fn list_order(&self) -> Vec<usize> {
+        let controls: Vec<AppearanceControl> = self.controls.iter().map(|c| c.control).collect();
+        tessera_gamedata::chargen::group_controls(&controls)
+            .iter()
+            .flat_map(|g| g.controls.iter().map(|c| c.index))
+            .filter_map(|index| self.controls.iter().position(|c| c.control.index == index))
+            .collect()
     }
 
     /// The control with stored index `index`.
@@ -434,11 +536,11 @@ pub fn read_avatar_detail<S: RecordSource>(
         }
     };
     let pids = ScreenPids::resolve(&reg);
-    let set = match entity_set(gd, &reg, controls.entity) {
+    let (set, instance_list) = match entity_set(gd, &reg, controls.entity) {
         Ok(s) => s,
         Err(e) => {
             out.notes.push(e);
-            PropertySet::new()
+            (PropertySet::new(), Vec::new())
         }
     };
     let list: Vec<&PropertySet> = pids
@@ -466,22 +568,102 @@ pub fn read_avatar_detail<S: RecordSource>(
             &mut out.notes,
         ));
     }
+    style_starting_values(&mut out, instance_list);
     out
+}
+
+/// The starting values of the style controls (`character-screens.md` §5.2.1,
+/// `appearance.md` §3.4): in list order, each style control finds the first element of the
+/// figure's `Appearance_InstanceList` with its key and starts at the last block whose
+/// `variant` equals that element's modifier (exactly), else at its first block; it then
+/// writes its element back (replacing the elements of its key, or appended), so a later
+/// control sees what an earlier one wrote. `Appearance_ClassList` is not consulted.
+fn style_starting_values(detail: &mut AvatarDetail, mut list: Vec<AppearanceKeyInfo>) {
+    for i in detail.list_order() {
+        let Some(c) = detail.controls.get_mut(i) else {
+            continue;
+        };
+        let ControlChoices::Styles {
+            key: Some(key),
+            variants,
+        } = &c.choices
+        else {
+            continue;
+        };
+        if variants.is_empty() {
+            continue;
+        }
+        let start = list
+            .iter()
+            .find(|e| e.key == *key)
+            .and_then(|e| variants.iter().rposition(|v| *v == e.modifier))
+            .unwrap_or(0);
+        c.default = u32::try_from(start).ok().map(ControlValue::Style);
+        if let Some(e) = c.style_element(start) {
+            write_list_element(&mut list, e);
+        }
+    }
 }
 
 static EMPTY: std::sync::LazyLock<PropertySet> = std::sync::LazyLock::new(PropertySet::new);
 
+/// The avatar entity's own property set and its own `Appearance_InstanceList` (the
+/// figure's instance list of `appearance.md` §3.4, at most [`MAX_CONTROL_CHOICES`]
+/// elements).
 fn entity_set<S: RecordSource>(
     gd: &GameData<S>,
     reg: &PropertyRegistry,
     entity: Did,
-) -> Result<PropertySet, String> {
+) -> Result<(PropertySet, Vec<AppearanceKeyInfo>), String> {
     let bytes = gd
         .read(entity)
         .map_err(|e| e.to_string())?
         .ok_or("the avatar entity is missing")?;
     let desc = EntityDescriptor::parse_expecting(&bytes, entity, reg).map_err(|e| e.to_string())?;
-    PropertySet::from_raw(desc.properties).map_err(|e| e.to_string())
+    let list = AppearanceListPids::from_names(&|n: &str| reg.pid(n))
+        .ok()
+        .and_then(|p| Some(p.read_list(&desc.properties, p.instance_list?)))
+        .unwrap_or_default();
+    let mut list = list;
+    list.truncate(MAX_CONTROL_CHOICES);
+    let set = PropertySet::from_raw(desc.properties).map_err(|e| e.to_string())?;
+    Ok((set, list))
+}
+
+/// The name, lock state and style toggle of control `c` (`character-screens.md` §5.2.2;
+/// `appearance.md` §3.4): each read from the control's inner struct, else from the control
+/// itself.
+fn control_meta(pids: &ScreenPids, c: &PropertySet, control: &AppearanceControl) -> ControlMeta {
+    let inner_pid = match control.kind {
+        ControlKind::Style { .. } => pids.apr_control,
+        ControlKind::FaceLayer => pids.compositor_control,
+        ControlKind::Colour { .. } => pids.dyemap_control,
+        ControlKind::BodyScale { .. } => pids.bone_scaling_control,
+        ControlKind::Sliders { .. } => pids.bone_slider_control,
+        ControlKind::Presets { .. } => pids.presets_control,
+        ControlKind::Unknown => None,
+    };
+    let inner = inner(c, inner_pid);
+    let field = |pid: Option<u32>| {
+        let pid = pid?;
+        inner.and_then(|s| s.get(pid)).or_else(|| c.get(pid))
+    };
+    let style_toggle = match control.kind {
+        ControlKind::Style { .. } => field(pids.apr_toggle_file)
+            .and_then(Value::as_did)
+            .filter(|d| !d.is_null())
+            .zip(field(pids.apr_toggle_property).and_then(key_of)),
+        _ => None,
+    };
+    ControlMeta {
+        label: field(pids.string_name)
+            .and_then(Value::as_string_info)
+            .cloned(),
+        default_locked: field(pids.default_lock)
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        style_toggle,
+    }
 }
 
 fn control_detail<S: RecordSource>(
@@ -496,6 +678,7 @@ fn control_detail<S: RecordSource>(
     let written = |pid: Option<u32>| pid.map(|p| (p, kind_of(reg, p)));
     let own = |pid: Option<u32>| pid.and_then(|p| entity.get(p));
     let mut d = ControlDetail {
+        meta: control_meta(pids, c, control),
         control: *control,
         writes: None,
         choices: ControlChoices::Nothing,
@@ -515,24 +698,10 @@ fn control_detail<S: RecordSource>(
                 }),
                 _ => Vec::new(),
             };
-            // The avatar's own value: a float property holds a modifier, an integer one an
-            // index; without one the entity's list modifier, which is 0 for every avatar
-            // (`appearance.md` §3.3), chooses.
-            let own_value = own(script_property);
-            let own_index = match d.writes {
-                Some((_, PropertyKind::Float)) => own_value
-                    .and_then(float_of)
-                    .and_then(|f| style_for_modifier(&variants, f)),
-                _ => own_value
-                    .and_then(int_of)
-                    .and_then(|i| u32::try_from(i).ok()),
-            }
-            .or_else(|| style_for_modifier(&variants, 0.0));
-            let count = variants.len();
+            // The starting value comes from the figure's instance list
+            // (`style_starting_values`); the first block until then.
+            d.default = (!variants.is_empty()).then_some(ControlValue::Style(0));
             d.choices = ControlChoices::Styles { key, variants };
-            d.default = Some(ControlValue::Style(
-                own_index.filter(|i| (*i as usize) < count).unwrap_or(0),
-            ));
         }
         ControlKind::FaceLayer => {
             let s = inner(c, pids.compositor_control);
@@ -551,8 +720,16 @@ fn control_detail<S: RecordSource>(
                 }),
                 _ => Vec::new(),
             };
+            // The figure's own value, else the property's dictionary default
+            // (`appearance.md` §3.4); a value outside the choices starts at the first.
             let own_option = own(property)
                 .and_then(int_of)
+                .or_else(|| {
+                    property
+                        .and_then(|p| reg.default_value(p))
+                        .as_ref()
+                        .and_then(int_of)
+                })
                 .and_then(|i| u32::try_from(i).ok());
             d.default = own_option
                 .filter(|o| options.contains(o))
@@ -612,6 +789,8 @@ fn control_detail<S: RecordSource>(
                     })
                 })
                 .unwrap_or_default();
+            // The first preset, not applied at build time (`character-screens.md` §5.2.1).
+            d.default = (!presets.is_empty()).then_some(ControlValue::Preset(0));
             d.choices = ControlChoices::Presets(presets);
         }
         ControlKind::Unknown => {}
@@ -855,13 +1034,20 @@ impl AppearanceChoices {
     }
 
     /// The figure of these choices for `tessera-mesh`'s assembler (`appearance.md` §8):
-    /// styles as [`StyleChoice`]s (modifier = the chosen block's `variant`), the slider
-    /// string, the `AC_BoneScale_Test` and `AC_Avatar_Height` values, and every set
-    /// control's written property with its value as the character's own appearance value
-    /// ([`CharacterSpec::appearance_values`]: colours, face layers, the head value, heights
-    /// and sliders; colours in the data's B, G, R, A order), so the species tables compose
-    /// the face and tint hair and skin with them (`appearance.md` §3.5). Controls without a
-    /// value keep the avatar's own (§3.4: the defaults).
+    ///
+    /// - every style control, in list order, writes its appearance-list element with its
+    ///   value (the set one, else its starting value; `appearance.md` §3.4) as a
+    ///   [`StyleChoice::element`], and its script property (`AC_Mesh_Head`) with the same
+    ///   value as the character's own appearance value; a style control without a record
+    ///   gives a modifier-only choice when set;
+    /// - the slider string, the `AC_BoneScale_Test` and `AC_Avatar_Height` values, and every
+    ///   other set control's written property with its value as the character's own
+    ///   appearance value ([`CharacterSpec::appearance_values`]: colours, face layers,
+    ///   heights and sliders; colours in the data's B, G, R, A order), so the species tables
+    ///   compose the face and tint hair and skin with them (`appearance.md` §3.5).
+    ///
+    /// Other controls without a value keep the avatar's own (their starting value is the
+    /// figure's own, which they write back unchanged).
     #[must_use]
     pub fn character_spec(
         &self,
@@ -871,16 +1057,39 @@ impl AppearanceChoices {
         sex: u32,
     ) -> CharacterSpec {
         let mut spec = CharacterSpec::new(species, sex);
+        let put = |spec: &mut CharacterSpec, c: &ControlDetail, v: &ControlValue| {
+            if let Some((pid, _)) = c.writes
+                && let Some(v) = c.look_value(v).as_ref().and_then(data_value)
+            {
+                spec.appearance_values.retain(|(p, _)| *p != pid);
+                spec.appearance_values.push((pid, v));
+            }
+        };
+        for i in detail.list_order() {
+            let Some(c) = detail.controls.get(i) else {
+                continue;
+            };
+            let set = self.values.get(&c.control.index);
+            let Some(ControlValue::Style(s)) = set.or(c.default.as_ref()) else {
+                continue;
+            };
+            match c.style_element(*s as usize) {
+                Some(e) => spec.styles.push(StyleChoice::element(e)),
+                None => match (set, &c.choices, c.style_variant(*s)) {
+                    (Some(_), ControlChoices::Styles { key: Some(k), .. }, Some(m)) => {
+                        spec.styles.push(StyleChoice::modifier(*k, m));
+                    }
+                    _ => continue,
+                },
+            }
+            put(&mut spec, c, &ControlValue::Style(*s));
+        }
         for (i, v) in &self.values {
             let Some(c) = detail.control(*i) else {
                 continue;
             };
             match (v, &c.choices) {
-                (ControlValue::Style(s), ControlChoices::Styles { key: Some(k), .. }) => {
-                    if let Some(modifier) = c.style_variant(*s) {
-                        spec.styles.push(StyleChoice { key: *k, modifier });
-                    }
-                }
+                (ControlValue::Style(_), _) => continue,
                 (ControlValue::Sliders(b), _) => spec.slider_values = Some(slider_string(b)),
                 (ControlValue::Float(f), _) => {
                     let pid = c.writes.map(|w| w.0);
@@ -892,12 +1101,7 @@ impl AppearanceChoices {
                 }
                 _ => {}
             }
-            if let Some((pid, _)) = c.writes
-                && let Some(v) = c.look_value(v).as_ref().and_then(data_value)
-            {
-                spec.appearance_values.retain(|(p, _)| *p != pid);
-                spec.appearance_values.push((pid, v));
-            }
+            put(&mut spec, c, v);
         }
         spec
     }
@@ -965,6 +1169,7 @@ mod tests {
     /// presets.
     pub(crate) fn avatar() -> AvatarDetail {
         let style = |index, key, prop| ControlDetail {
+            meta: Default::default(),
             control: control(
                 index,
                 ControlKind::Style {
@@ -986,6 +1191,7 @@ mod tests {
                 style(0, 0x1000_0009, Some(0x100)),
                 style(1, 0x1000_0032, None),
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(
                         2,
                         ControlKind::Colour {
@@ -998,6 +1204,7 @@ mod tests {
                     default: Some(ControlValue::Colour([10, 20, 30, 255])),
                 },
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(
                         3,
                         ControlKind::BodyScale {
@@ -1010,18 +1217,21 @@ mod tests {
                     default: Some(ControlValue::Float(0.5)),
                 },
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(4, ControlKind::Sliders { definitions: None }),
                     writes: Some((0x103, PropertyKind::String)),
                     choices: ControlChoices::Sliders { count: 3 },
                     default: Some(ControlValue::Sliders(vec![0x80; 3])),
                 },
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(5, ControlKind::FaceLayer),
                     writes: Some((0x104, PropertyKind::Int)),
                     choices: ControlChoices::Options(vec![1, 2, 5]),
                     default: Some(ControlValue::Option(1)),
                 },
                 ControlDetail {
+                    meta: Default::default(),
                     control: control(6, ControlKind::Presets { file: None }),
                     writes: None,
                     choices: ControlChoices::Presets(vec![vec![
@@ -1195,6 +1405,84 @@ mod tests {
         assert_eq!(mid, Some(ControlValue::Style(1)));
     }
 
+    /// `appearance.md` §3.4 "Starting values on the creation screen": in list order, each
+    /// style control starts at the block its key's first instance-list element names
+    /// (exactly), else its first block, and writes its element back; every style control
+    /// gives the figure its element (own record, toggle record) with its value.
+    #[test]
+    fn style_controls_start_from_the_instance_list_and_write_their_elements() {
+        let mut d = avatar();
+        d.controls[1].meta.style_toggle = Some((Did(0x2000_0002), 0x200));
+        // The hair control (index 1) in group 3, so it comes after the ungrouped ones.
+        d.controls[1].control.group = Some(3);
+        let order = d.list_order();
+        assert_eq!(order.last(), Some(&1), "grouped controls last");
+        let list = vec![
+            AppearanceKeyInfo {
+                key: 0x1000_0009,
+                file: Did(0x2000_0099),
+                modifier: 0.3,
+                toggle_file: None,
+                toggle_property: None,
+            },
+            AppearanceKeyInfo {
+                key: 0x1000_0009,
+                file: Did(0x2000_0098),
+                modifier: 0.31,
+                toggle_file: None,
+                toggle_property: None,
+            },
+        ];
+        style_starting_values(&mut d, list);
+        assert_eq!(
+            d.controls[0].default,
+            Some(ControlValue::Style(2)),
+            "0.3 exactly"
+        );
+        assert_eq!(
+            d.controls[1].default,
+            Some(ControlValue::Style(0)),
+            "no element"
+        );
+        // A modifier no block has exactly: the first block.
+        let mut e = avatar();
+        style_starting_values(
+            &mut e,
+            vec![AppearanceKeyInfo {
+                key: 0x1000_0009,
+                file: Did(0x2000_0099),
+                modifier: 0.305,
+                toggle_file: None,
+                toggle_property: None,
+            }],
+        );
+        assert_eq!(e.controls[0].default, Some(ControlValue::Style(0)));
+        // The figure: both style controls write their elements in list order, the set
+        // value or the starting one.
+        let mut c = AppearanceChoices::default();
+        assert!(c.set(&d, 1, ControlValue::Style(3)));
+        let spec = c.character_spec(&d, &ScreenPids::default(), 0x51, 0x1000);
+        let el: Vec<_> = spec.styles.iter().map(|s| s.element.unwrap()).collect();
+        assert_eq!(el.len(), 2);
+        assert_eq!(
+            (el[0].key, el[0].file, el[0].modifier),
+            (0x1000_0009, Did(0x2000_0001), 0.3)
+        );
+        assert_eq!(el[0].toggle_file, None);
+        assert_eq!((el[1].key, el[1].modifier), (0x1000_0032, 0.31));
+        assert_eq!(
+            (el[1].toggle_file, el[1].toggle_property),
+            (Some(Did(0x2000_0002)), Some(0x200))
+        );
+        // The head's script property takes the starting value (index 2 as an integer).
+        assert_eq!(
+            spec.appearance_values,
+            vec![(0x100, tessera_formats::PropertyValue::Int(2))]
+        );
+        // The look carries only what the player set.
+        assert!(c.look(&d).is_none(), "the hair names no property");
+    }
+
     /// Closing `character-screens.md` §6 OPEN (1) and the §7.1 look note: colours, face
     /// layers and every other written value reach the assembler as the character's own
     /// appearance values, colours in the data's B, G, R, A order; unset controls are left
@@ -1205,10 +1493,10 @@ mod tests {
         let d = avatar();
         let pids = ScreenPids::default();
         let mut c = AppearanceChoices::default();
-        assert!(
-            c.character_spec(&d, &pids, 0x51, 0x1000)
-                .appearance_values
-                .is_empty()
+        // Nothing set: only the head style's starting value is written (§3.4).
+        assert_eq!(
+            c.character_spec(&d, &pids, 0x51, 0x1000).appearance_values,
+            vec![(0x100, D::Int(0))]
         );
         assert!(c.set(&d, 0, ControlValue::Style(2)));
         assert!(c.set(&d, 1, ControlValue::Style(1)));

@@ -461,7 +461,7 @@ fn appearance_controls_section_5_2() {
         7,
         "unknown bit keeps all"
     );
-    // Groups in first-appearance order.
+    // Ungrouped controls first, then groups by ascending key (§5.2, CS25).
     let groups = group_controls(&creation);
     let shape: Vec<(Option<u32>, Vec<usize>)> = groups
         .iter()
@@ -470,11 +470,16 @@ fn appearance_controls_section_5_2() {
     assert_eq!(
         shape,
         vec![
-            (Some(2), vec![0, 4]),
+            (None, vec![3, 6]),
             (Some(1), vec![2, 5]),
-            (None, vec![3, 6])
+            (Some(2), vec![0, 4])
         ]
     );
+    // Group 0 counts as no group; a list without ungrouped controls starts with a group.
+    let mut zero = creation.clone();
+    zero[1].group = Some(0);
+    assert_eq!(group_controls(&zero)[0].controls[0].index, 2);
+    assert_eq!(group_controls(&creation[..1])[0].group, Some(2));
     assert!(read_controls(&PropertySet::new(), &pids()).is_err());
     assert!(shows_avatar_update_toggle(0x49));
     assert!(shows_avatar_update_toggle(0x51));

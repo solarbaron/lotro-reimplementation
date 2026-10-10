@@ -19,12 +19,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
 use tessera_dat::ArchiveSet;
-use tessera_formats::Did;
+use tessera_formats::{Did, PropertyValue};
 use tessera_material::{LiquidSurface, MaterialLibrary, WaterMaterial};
 
 use super::liquid::SurfaceAnim;
 use tessera_world::WorldContext;
 use tessera_world::frills::{FrillObjectValues, FrillSettings};
+use tessera_world::objects::DrawFlags;
 
 /// Most objects and water surfaces kept; requests beyond it are not made.
 pub const MAX_RESOLVED: usize = 1 << 16;
@@ -42,6 +43,22 @@ pub struct ObjectAnswer {
     /// Its frill values along the 0x47 chain (`scenery.md` §8.3 rules 6–7), with the
     /// engine's default settings.
     pub frill: FrillObjectValues,
+    /// Its draw-suppression values along the chain (`entity-descriptor.md` §9).
+    pub draw: DrawFlags,
+    /// Its `Render_Color` along the chain (stored bytes B, G, R, A), when a level has one.
+    pub colour: Option<[u8; 4]>,
+    /// Its `Render_Opacity` along the chain, when a level has one.
+    pub opacity: Option<f32>,
+}
+
+/// The PIDs of the per-object tint properties `Render_Color` and `Render_Opacity`
+/// (`character-screens.md` §2.1.1, `material.md` §8.3), looked up by name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TintPids {
+    /// `Render_Color`.
+    pub colour: Option<u32>,
+    /// `Render_Opacity`.
+    pub opacity: Option<u32>,
 }
 
 impl ObjectAnswer {
@@ -51,6 +68,9 @@ impl ObjectAnswer {
         Self {
             parts: Arc::from(Vec::new()),
             frill: FrillObjectValues::default(),
+            draw: DrawFlags::default(),
+            colour: None,
+            opacity: None,
         }
     }
 }
@@ -69,6 +89,7 @@ pub trait Lookups: Send + 'static {
 struct InstallLookups {
     ctx: Arc<WorldContext>,
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
+    tint: TintPids,
 }
 
 impl Lookups for InstallLookups {
@@ -86,9 +107,26 @@ impl Lookups for InstallLookups {
             &ctx.systems().pids.frills,
             &FrillSettings::default(),
         );
+        let colour =
+            props
+                .as_deref()
+                .zip(self.tint.colour)
+                .and_then(|(p, pid)| match p.get(pid)? {
+                    PropertyValue::Colour(c) => Some(*c),
+                    _ => None,
+                });
+        let opacity = props
+            .as_deref()
+            .zip(self.tint.opacity)
+            .and_then(|(p, pid)| p.get(pid)?.as_f64())
+            .map(|v| v as f32)
+            .filter(|v| v.is_finite());
         ObjectAnswer {
             parts: Arc::clone(&r.parts),
             frill,
+            draw: r.draw,
+            colour,
+            opacity,
         }
     }
 
@@ -156,7 +194,8 @@ fn guarded<T>(what: &str, did: Did, f: impl FnOnce() -> T, fallback: impl FnOnce
 }
 
 impl Resolver {
-    /// A resolver reading through `ctx` (objects) and `materials` (water surfaces).
+    /// A resolver reading through `ctx` (objects, with the tint values of `tint`) and
+    /// `materials` (water surfaces).
     ///
     /// # Errors
     ///
@@ -164,8 +203,13 @@ impl Resolver {
     pub fn new(
         ctx: Arc<WorldContext>,
         materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
+        tint: TintPids,
     ) -> std::io::Result<Self> {
-        Self::with_lookups(InstallLookups { ctx, materials })
+        Self::with_lookups(InstallLookups {
+            ctx,
+            materials,
+            tint,
+        })
     }
 
     /// A resolver whose thread answers through `lookups`.
@@ -357,6 +401,9 @@ mod tests {
                     opaque: false,
                     ..FrillObjectValues::default()
                 },
+                draw: DrawFlags::default(),
+                colour: None,
+                opacity: None,
             }
         }
 

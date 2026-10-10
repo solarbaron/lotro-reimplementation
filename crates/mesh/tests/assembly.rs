@@ -651,10 +651,7 @@ fn ties_go_to_the_later_slot_and_styles_replace_modifiers() {
 
     // The chosen style replaces the list modifier: style 0.01 is the setup's own hair.
     let mut spec = human(&[]);
-    spec.styles.push(StyleChoice {
-        key: KEY_HAIR,
-        modifier: 0.01,
-    });
+    spec.styles.push(StyleChoice::modifier(KEY_HAIR, 0.01));
     let c = asm.assemble_character(&spec).unwrap();
     assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
     assert!(!c.part_in(CREST).unwrap().is_default());
@@ -1808,4 +1805,64 @@ fn defaults_and_offers_share_the_part_budget() {
     let c = asm.assemble_character(&human(&all)).unwrap();
     assert_eq!(c.parts.len(), 6);
     assert!(c.parts.iter().all(|p| p.is_default()));
+}
+
+/// `appearance.md` §3.4 "Starting values on the creation screen": a style control writes an
+/// instance-list element with its own record (and toggle record), replacing the instance
+/// list's elements of its key in place or being appended; the class list keeps its own.
+#[test]
+fn written_style_elements_replace_or_join_the_instance_list() {
+    const HAIR2_REC: u32 = 0x2000_0101;
+    const HAIR2: u32 = 0x0600_00E2;
+    let mut s = world();
+    s.meshes
+        .insert(Did(HAIR2), mesh_summary(HAIR2, CREST, 1600, true));
+    s.appearances.insert(
+        Did(HAIR2_REC),
+        record(
+            HAIR2_REC,
+            vec![(KEY_HAIR, vec![block(0.0, &[(1.0, CREST, HAIR2)], &[])])],
+        ),
+    );
+    let written = |file: u32, modifier: f32, toggle: Option<u32>| {
+        StyleChoice::element(AppearanceKeyInfo {
+            key: KEY_HAIR,
+            file: Did(file),
+            modifier,
+            toggle_file: toggle.map(Did),
+            toggle_property: toggle.map(|_| P_UPDATE),
+        })
+    };
+    // Appended: the entity has no instance list; the written element follows the class
+    // list's hair and wins the slot.
+    let mut asm = assembler(s.clone());
+    let mut spec = human(&[]);
+    spec.styles.push(written(HAIR2_REC, 0.0, None));
+    let c = asm.assemble_character(&spec).unwrap();
+    let crest = c.part_in(CREST).unwrap();
+    assert_eq!(crest.mesh, Did(HAIR2));
+    assert_eq!(crest.source(), Some(SourceRef::InstanceList(0)));
+    // The toggle record replaces the file while the updated-avatar option is on (§3.3).
+    let mut spec = human(&[]);
+    spec.styles.push(written(HAIR2_REC, 0.01, Some(HAIR_REC)));
+    let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
+    assert!(c.watched_properties.contains(&P_UPDATE));
+    // In place: an instance-list element of the key is replaced, not doubled; a later
+    // written element replaces an earlier one.
+    s.bodies.get_mut(&Did(AVATAR)).unwrap().instance_list =
+        vec![key_info(KEY_HAIR, HAIR_REC, 0.01)];
+    let mut asm = assembler(s);
+    let mut spec = human(&[]);
+    spec.styles.push(written(HAIR_REC, 0.01, None));
+    spec.styles.push(written(HAIR2_REC, 0.0, None));
+    let c = asm.assemble_character(&spec).unwrap();
+    let crest = c.part_in(CREST).unwrap();
+    assert_eq!(crest.mesh, Did(HAIR2));
+    assert_eq!(crest.source(), Some(SourceRef::InstanceList(0)));
+    // A modifier-only choice still replaces every list's modifier of its key.
+    let mut spec = human(&[]);
+    spec.styles.push(StyleChoice::modifier(KEY_HAIR, 0.01));
+    let c = asm.assemble_character(&spec).unwrap();
+    assert_eq!(c.part_in(CREST).unwrap().mesh, Did(E));
 }

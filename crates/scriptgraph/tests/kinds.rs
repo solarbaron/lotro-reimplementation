@@ -111,16 +111,25 @@ fn goto_calls_its_label_and_stops_nothing() {
 }
 
 #[test]
-fn self_reaching_goto_is_bounded() {
+fn self_reaching_goto_starts_its_label_once() {
     // A Label whose subtree reaches a Goto of its own name recurses synchronously in the
-    // original (§21); the nesting guard ends it.
-    let roots = vec![label("loop", vec![goto("loop")])];
+    // original (§21). Tessera Decision (`appearance.md` §7.4, Goto recursion): a Goto whose
+    // Label already runs through a Goto on the start path starts nothing.
+    let roots = vec![label("loop", vec![sound(SND, true, 0.0, 0), goto("loop")])];
     let mut rt = single(vec![(KEY, roots)]);
     let mut sink = RecordingSink::new();
     spawn(&mut rt, &mut sink);
     rt.start_script(&mut sink, E, KEY).unwrap();
+    // The Label in place and the first Goto's call: two starts, then the guard.
+    assert_eq!(sink.sound_starts().count(), 2);
     assert!(
         rt.issues()
+            .contains(&RuntimeIssue::GotoRecursion("loop".into())),
+        "{:?}",
+        rt.issues()
+    );
+    assert!(
+        !rt.issues()
             .iter()
             .any(|i| matches!(i, RuntimeIssue::Limit(_))),
         "{:?}",
@@ -128,6 +137,24 @@ fn self_reaching_goto_is_bounded() {
     );
     rt.despawn(&mut sink, E).unwrap();
     assert_eq!(rt.stats().instances, 0);
+}
+
+#[test]
+fn goto_matches_its_label_name_exactly() {
+    // `appearance.md` §7.4 rule 6: byte for byte, case counts.
+    let roots = vec![collection(vec![
+        label("Silence", vec![sound(SND, true, 0.0, 0)]),
+        goto("silence"),
+    ])];
+    let mut rt = single(vec![(KEY, roots)]);
+    let mut sink = RecordingSink::new();
+    spawn(&mut rt, &mut sink);
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    assert_eq!(sink.sound_starts().count(), 1, "only the Label in place");
+    assert!(
+        rt.issues()
+            .contains(&RuntimeIssue::LabelNotFound("silence".into()))
+    );
 }
 
 #[test]
@@ -942,4 +969,89 @@ fn when_running_ping_pong_is_bounded() {
     rt.despawn(&mut sink, E).unwrap();
     assert_eq!(rt.stats().instances, 0);
     assert!(sink.playing.is_empty());
+}
+
+/// `appearance.md` §7.4.1 rules 1–4: a Scriptlet node's pairs write the parameters its own
+/// set holds (else its `ScriptletScript_File` field, else they are dropped); a
+/// scriptlet-driven pair inside reads only that invoking node's set; nothing reaches a
+/// field by PID without a pair.
+#[test]
+fn scriptlet_pairs_write_own_parameters_and_inner_pairs_read_only_that_set() {
+    const OUTER: u32 = 0x0C00_0030;
+    const INNER: u32 = 0x0C00_0031;
+    const CHOSEN: u32 = 0x0C00_0032;
+    const SND3: u32 = 0x2A00_0003;
+    const SND4: u32 = 0x2A00_0004;
+    const SND5: u32 = 0x2A00_0005;
+    const SND6: u32 = 0x2A00_0006;
+    const SND7: u32 = 0x2A00_0007;
+    const FILE_FIELD: u32 = 0x1F01;
+    const UNHELD: u32 = 0x1F02;
+    let did = |d: u32| PropertyValue::DidRef(Did(d));
+    let mut src = MemorySource::new();
+    // INNER: a Sound fed by its invocation's OTHER.
+    let mut fed = sound(SND3, true, 0.0, 0);
+    fed.base.scriptlet_driven.push((pid::SOUND_ID, pid::OTHER));
+    src.insert_scriptlet(Did(INNER), scriptlet_record(vec![fed]));
+    // (a) passes OUTER's OTHER down with a pair of its own;
+    let mut a = scriptlet(INNER, vec![(pid::OTHER, did(SND))], Vec::new());
+    a.base.scriptlet_driven.push((pid::OTHER, pid::OTHER));
+    // (b) holds no OTHER: the Sound keeps its stored id, whatever OUTER holds;
+    let b = scriptlet(INNER, Vec::new(), Vec::new());
+    // (c) a driven pair from the entity replaces the held OTHER; a driven pair of a PID
+    // that is neither a parameter nor a field is dropped;
+    let mut c = scriptlet(INNER, vec![(pid::OTHER, did(SND))], Vec::new());
+    c.base.driven.push((pid::OTHER, pid::EFFECT_SOURCE));
+    c.base.driven.push((UNHELD, pid::EFFECT_SOURCE));
+    // (d) an unpaired Sound keeps its id although OUTER's set holds `SOUND_ID`.
+    let d = sound(SND6, true, 0.0, 0);
+    src.insert_scriptlet(
+        Did(OUTER),
+        scriptlet_record(vec![collection(vec![a, b, c, d])]),
+    );
+    src.insert_scriptlet(
+        Did(CHOSEN),
+        scriptlet_record(vec![sound(SND7, true, 0.0, 0)]),
+    );
+    let call = scriptlet(
+        OUTER,
+        vec![(pid::OTHER, did(SND2)), (pid::SOUND_ID, did(SND5))],
+        Vec::new(),
+    );
+    // A placeholder (file 0) whose driven `ScriptletScript_File` pair chooses the record.
+    let mut placeholder = scriptlet(0, Vec::new(), Vec::new());
+    placeholder.base.driven.push((FILE_FIELD, pid::PARTICLE_ID));
+    src.insert_table(
+        Did(TABLE),
+        table(
+            2,
+            Vec::new(),
+            vec![(KEY, vec![collection(vec![call, placeholder])])],
+        ),
+    );
+    let mut v = vocab();
+    v.scriptlet_file = Some(FILE_FIELD);
+    let mut rt = Runtime::new(src, catalog(), v);
+    let mut sink = RecordingSink::new();
+    rt.spawn_entity(
+        &mut sink,
+        E,
+        init(vec![
+            (pid::EFFECT_SOURCE, did(SND4)),
+            (pid::PARTICLE_ID, did(CHOSEN)),
+        ]),
+    )
+    .unwrap();
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    let mut started: Vec<u32> = sink.sound_starts().map(|(_, s)| s.sound.0).collect();
+    started.sort_unstable();
+    let mut want = vec![SND2, SND3, SND4, SND6, SND7];
+    want.sort_unstable();
+    assert_eq!(started, want);
+    assert!(
+        rt.issues()
+            .contains(&RuntimeIssue::ScriptletPairDropped { pid: UNHELD }),
+        "{:?}",
+        rt.issues()
+    );
 }

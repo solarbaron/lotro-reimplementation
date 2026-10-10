@@ -13,6 +13,11 @@
 //! - [`output_alpha`]: the output alpha of a lit record in every colour pass (base and
 //!   additive light passes alike), the tested opacity × the material alpha, clamped to
 //!   [0, 1] (§11.3 Tessera rule).
+//! - [`MISSING_TEXTURE_ALPHA`] and [`TestedOpacity::evaluate_textured`]: a slot whose
+//!   effective texture is 0 reads as an all-ones texel (§18, Tessera Decision answered
+//!   2026-10-10), so a missing opacity texture contributes alpha 1: a product is the other
+//!   alpha alone, a **sum** the other alpha + 1 (kept whenever the other alpha is above 0
+//!   or *R* < 1; output alpha min(1, (alpha + 1) × *A*)).
 //!
 //! ```
 //! use tessera_material::alpha::{AlphaReference, keeps};
@@ -49,6 +54,12 @@ pub const OPACITY_ROLES: [(u32, &str); 4] = [
     (ids::EMISSIVE, "EmissiveAndOpacity"),
     (ids::SECOND_LAYER, "ColorAndOpacity2"),
 ];
+
+/// The alpha a slot whose effective texture is 0 contributes to the tested opacity and the
+/// output alpha (`material.md` §18, Tessera Decision answered 2026-10-10): the texture reads
+/// as a texel whose four channels are 1, the white texture `render.md` §4.3 binds for an
+/// unset texture. The case does not occur in the install the spec counts (MA63).
+pub const MISSING_TEXTURE_ALPHA: f32 = 1.0;
 
 /// Threshold of the material alpha below which a permutation that does not write depth
 /// switches its alpha test off (`material.md` §11.2 step 2).
@@ -145,6 +156,26 @@ impl TestedOpacity {
             Self::Product(a, b) => alpha(a) * alpha(b),
             Self::Sum(a, b) => alpha(a) + alpha(b),
         }
+    }
+
+    /// [`TestedOpacity::evaluate`] where `alpha(slot)` is `None` for a slot whose effective
+    /// texture is 0: that slot reads [`MISSING_TEXTURE_ALPHA`] (`material.md` §18 Decision),
+    /// one rule for every slot and both combinations. A lone source without a texture tests
+    /// 1, a product is the other alpha alone and a sum is the other alpha + 1 (at least 1,
+    /// so under the strict comparison of [`keeps`] it is kept whenever the other alpha is
+    /// above 0 or *R* < 1).
+    #[must_use]
+    pub fn evaluate_textured(self, alpha: impl Fn(u32) -> Option<f32>) -> f32 {
+        self.evaluate(|slot| alpha(slot).unwrap_or(MISSING_TEXTURE_ALPHA))
+    }
+
+    /// Whether a missing texture in `slot` (effective texture 0) **adds** 1 to the tested
+    /// opacity instead of dropping out of it: `slot` is one of the two alphas of a
+    /// [`TestedOpacity::Sum`] (`material.md` §18 Decision). In a product a missing texture
+    /// leaves the other alpha alone, and a lone source tests 1.
+    #[must_use]
+    pub fn missing_adds_one(self, slot: u32) -> bool {
+        matches!(self, Self::Sum(a, b) if a == slot || b == slot)
     }
 }
 
@@ -426,6 +457,58 @@ mod tests {
         assert_eq!(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.25);
         // A sum above 1 is always kept (R ≤ 1).
         assert!(keeps(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.0));
+    }
+
+    /// `material.md` §18 (Tessera Decision, wording of 2026-10-10): a sum record whose second
+    /// opacity texture is 0 tests the base alpha + 1, outputs min(1, (alpha + 1) × A), and is
+    /// kept whenever the base alpha is above 0 or R < 1.
+    #[test]
+    fn missing_opacity_texture_reads_one() {
+        let sum = TestedOpacity::Sum(ids::DIFFUSE, ids::EMISSIVE);
+        let base = |a: f32| move |s: u32| (s == ids::DIFFUSE).then_some(a);
+        // Base alpha + 1.
+        assert_eq!(sum.evaluate_textured(base(0.5)), 1.5);
+        assert_eq!(sum.evaluate_textured(base(0.0)), 1.0);
+        // Output alpha min(1, (alpha + 1) × A): the §18 examples, at least A.
+        let out = |a: f32, m: f32| output_alpha(sum.evaluate_textured(base(a)), m);
+        assert!((out(0.5, 0.4) - 0.6).abs() < 1e-6);
+        assert_eq!(out(0.5, 0.8), 1.0);
+        assert_eq!(out(0.0, 0.4), 0.4);
+        assert_eq!(out(0.5, 1.0), 1.0);
+        for m in [0.0_f32, 0.1, 0.4, 0.8, 1.0] {
+            for a in [0.0_f32, 0.25, 0.5, 1.0] {
+                assert!(out(a, m) >= m);
+            }
+        }
+        // Kept whenever the base alpha is above 0 or R < 1; a base alpha of 0 (sum exactly
+        // 1) is discarded at R = 1, which a threshold of 1.0 gives at A = 1.
+        let r1 = AlphaReference::tested(1.0, 1.0, true).reference();
+        assert_eq!(r1, 1.0);
+        assert!(!keeps(sum.evaluate_textured(base(0.0)), r1));
+        assert!(keeps(sum.evaluate_textured(base(1.0 / 255.0)), r1));
+        for t in [0.0_f32, 0.3, 0.65, 0.9, 0.999] {
+            let r = AlphaReference::tested(t, 1.0, true).reference();
+            assert!(r < 1.0);
+            assert!(keeps(sum.evaluate_textured(base(0.0)), r));
+        }
+        // The same rule in every slot and both combinations: a product is the other alpha
+        // alone, a lone source tests 1, a sum with the base missing is the second + 1.
+        let product = TestedOpacity::Product(ids::DIFFUSE, ids::OPACITY);
+        assert_eq!(product.evaluate_textured(base(0.5)), 0.5);
+        assert_eq!(
+            TestedOpacity::Slot(ids::OPACITY).evaluate_textured(|_| None),
+            1.0
+        );
+        let second = |s: u32| (s == ids::EMISSIVE).then_some(0.25);
+        assert_eq!(sum.evaluate_textured(second), 1.25);
+        assert_eq!(sum.evaluate_textured(|_| None), 2.0);
+        // Present textures evaluate as before.
+        assert_eq!(sum.evaluate_textured(|_| Some(0.5)), 1.0);
+        assert!(sum.missing_adds_one(ids::EMISSIVE));
+        assert!(sum.missing_adds_one(ids::DIFFUSE));
+        assert!(!sum.missing_adds_one(ids::OPACITY));
+        assert!(!product.missing_adds_one(ids::OPACITY));
+        assert!(!TestedOpacity::Slot(ids::DIFFUSE).missing_adds_one(ids::DIFFUSE));
     }
 
     #[test]

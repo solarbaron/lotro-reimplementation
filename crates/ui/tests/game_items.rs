@@ -13,7 +13,7 @@ use tessera_ui::events::{Message, MsgArg};
 use tessera_ui::game::avatar::{AvatarInfo, Viewports};
 use tessera_ui::game::creation::{
     Choice, ChoiceParts, Slider, Stepper, SwatchGrid, fill_choices, fill_choices_with,
-    select_choice, selected_choice,
+    select_choice, selected_choice, show_icon_once,
 };
 use tessera_ui::game::examine::ExamTemplate;
 use tessera_ui::game::items::{
@@ -923,6 +923,21 @@ fn choice_entries_show_the_label_and_icon_in_their_parts() {
     let entries = fill_choices_with(&mut ui, list, t, parts, &choices);
     check(&mut ui, entries[0].unwrap());
     assert_eq!(ui.list_entries(list).len(), 1);
+    // `show_icon_once`: the part's own image goes and one field of the image's size (4 × 4
+    // here) shows it once, not tiled (character-screens.md §4.1 Tessera rule).
+    let icon = ui.find_descendant(entries[0].unwrap(), C_ICON).unwrap();
+    show_icon_once(&mut ui, icon, &ImageRef::Did(0x4100_0001));
+    assert_eq!(ui.base_image(icon), None);
+    let fields: Vec<(i32, i32)> = ui
+        .children(icon)
+        .into_iter()
+        .filter(|c| ui.element_id(*c) == Some(ICON_LAYER_ID))
+        .map(|c| {
+            let b = ui.layout_box(c).unwrap();
+            (b.w(), b.h())
+        })
+        .collect();
+    assert_eq!(fields, vec![(4, 4)]);
     // The parts of the three lists resolve from the vocabulary.
     let ids = cv().ids;
     assert_eq!(ChoiceParts::race(&ids).name, Some(ids.race_name));

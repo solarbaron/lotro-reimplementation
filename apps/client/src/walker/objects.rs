@@ -1016,16 +1016,16 @@ pub fn faded_alpha(mode: AlphaMode) -> AlphaMode {
 /// "What the client does per draw"): the material alpha *A* becomes the plan's × `fade`,
 /// so a depth-writing permutation tests against ⌊*r* × *A* × 255⌋ / 255 and one that does
 /// not switches its test off (*R* = 0) below *A* 0.9. Surfaces whose opacity is not drawn
-/// keep their mode.
+/// keep their mode, except a fixed blend, whose test carries *R* whenever *R* ≥ 0
+/// (`render.md` §4.3 `Fixed`, row R-A3).
 #[must_use]
 pub fn faded_alpha_at(lit: &LitInputs, fade: f32) -> AlphaMode {
     let mode = faded_alpha(lit.alpha);
-    if !lit.opacity_from_base {
-        return mode;
-    }
     let r = lit.reference_at(fade);
     match mode {
-        AlphaMode::TestBlend { cutoff } if cutoff >= 0.0 => AlphaMode::TestBlend { cutoff: r },
+        AlphaMode::TestBlend { cutoff } if cutoff >= 0.0 && lit.opacity_from_base => {
+            AlphaMode::TestBlend { cutoff: r }
+        }
         AlphaMode::Fixed(b) if b.alpha_test.is_some() => AlphaMode::Fixed(FixedBlend {
             alpha_test: (r >= 0.0).then_some(AlphaThreshold(r)),
             ..b
@@ -1184,6 +1184,11 @@ pub fn surface_draw(
                     sum,
                 }
             }
+            // `material.md` §18 Decision: the missing texture reads alpha 1, base + 1.
+            (true, Some(SecondOpacityPlan::MissingInSum)) => Opacity::BaseWith {
+                second: SecondOpacity::One,
+                sum: true,
+            },
             (true, Some(SecondOpacityPlan::Texture { texture, sum })) => {
                 match ready(Some(texture)) {
                     Some(id) => Opacity::BaseWith {
@@ -3236,8 +3241,17 @@ mod tests {
                 ..fixed
             })
         );
-        // No opacity drawn: the mode of `faded_alpha`.
+        // A fixed blend's test carries R whenever R ≥ 0, also when its opacity is not
+        // drawn (`render.md` §4.3 `Fixed`, row R-A3).
         lit.opacity_from_base = false;
+        assert_eq!(
+            faded_alpha_at(&lit, 0.5),
+            AlphaMode::Fixed(FixedBlend {
+                alpha_test: Some(AlphaThreshold(82.0 / 255.0)),
+                ..fixed
+            })
+        );
+        // No opacity drawn: the mode of `faded_alpha`.
         lit.alpha = AlphaMode::Opaque;
         assert_eq!(faded_alpha_at(&lit, 0.5), AlphaMode::BLEND_DEPTH_WRITE);
     }

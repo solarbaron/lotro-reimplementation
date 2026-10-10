@@ -1126,6 +1126,16 @@ already has (its own, then those appended earlier), so the layering of §9.2 app
 > `a` and `g` are answered by `setup.md` §8.3; how group priorities combine stays OPEN in
 > `appearance.md` §4.10.
 
+> **OPEN (implementer, clean room, 2026-10-10):** what a matched group whose `material` is 0
+> (277 groups, `setup.md` §8.3) does when its `shader_override` is non-zero: does the override
+> still replace the surface's shader record with nothing appended? Example: the Human F
+> default hair block (0x20001257 block 0) holds only two such groups (shader overrides
+> 0x2B000A03 for binding key 0x10000024 and 0x2B000A05 for 0x10000041). Tessera's figure
+> paths currently skip groups with material 0 entirely, override included. Also unstated:
+> when several matched groups carry overrides, whether the last one wins (the reading of
+> "replaces" in list order) — Tessera's figure path takes the first, its cell-look path the
+> last.
+
 ---
 
 <a id="s10"></a>

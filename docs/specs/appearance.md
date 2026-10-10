@@ -516,6 +516,16 @@ hair and beard surfaces, and the shader mixes it in through the surface's dye ma
 (`material.md` §12.3). Skin is tinted twice: in the composited face texture and as the dye
 colour of the skin surfaces.
 
+> **OPEN (implementer, clean room, 2026-10-10):** the Human F default hair (`Crest` mesh
+> 0x0600C2E7 of 0x20001257 block 0) has three surfaces; the one with binding key 0x10000036
+> (surface record 0x31008E46, shader record 0x2B0007D1, `ColorAndOpacity` with alpha test 0.65,
+> two-sided) is drawn by Tessera as a near-black beaded net over the bun: its texels are dark
+> and its shader record does not declare 2003, so the `AC_Color_Hair` edit that the table
+> above lists for key 0x10000036 has no effect under `material.md` §9.2 step 3. Does the
+> original client show this dark net on the default Human F hair, and if it tints it, through
+> which parameter or rule? (Owner comparison with the original, or the writer's trace of how
+> an edit of an undeclared parameter is handled.)
+
 **Field names (A45).** The fields of the three compositor node kinds carry these property
 names (needed for interoperability: a driven pair names its field by PID, and a reader finds
 the PID by looking the name up in the property dictionary at run time): kind 33

@@ -29,6 +29,12 @@
 //! effective 1043, evaluated at the draw's clock when the curve is not constant
 //! ([`ParticleSurface::at`]).
 //!
+//! Curve states (§9.1.1 answer of 2026-10-10, rule 12): the caller keeps one
+//! [`CurveStates`] per surface record DID, shared by every 0x39 record and instance that
+//! draws that surface, for as long as the surface stays loaded (a preview: for its run).
+//! Mode 10 keeps its start time and last value there; mode 3 keeps no state and draws from
+//! the shared particle stream ([`Ran2`], rule 1) at every evaluation.
+//!
 //! [`SurfaceProgram::of`] gives the row of a known record; [`SurfaceProgram::fallback`]
 //! is rule 10 for any other shader record (none in the data): the common row of its blend
 //! class. [`ParticleSurface::of`] combines the row with a resolved surface material: the
@@ -50,12 +56,18 @@ use tessera_formats::Did;
 use tessera_material::records::BlendFactor;
 use tessera_material::resolve::FALLBACK_ALPHA_THRESHOLD;
 use tessera_material::vocab::ids;
-use tessera_material::{CurveStates, ResolvedMaterial, TextureMatrix, TextureMatrixLayout};
+use tessera_material::{
+    CurveState, CurveStates, ResolvedMaterial, TextureMatrix, TextureMatrixLayout,
+};
+
+use crate::rng::Ran2;
 
 /// Effective 4004: the alpha-test switch (`material.md` §11.2).
 const ALPHA_TEST: u32 = ids::ALPHA_TEST;
 /// Effective 1043: the alpha-test reference (`material.md` §11.2).
 const ALPHA_THRESHOLD: u32 = ids::ALPHA_THRESHOLD;
+/// The random curve mode of `material.md` §5.3.1.
+const RANDOM_MODE: u32 = 3;
 
 /// The blend class of a row of §9.1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -272,11 +284,15 @@ impl ParticleSurface {
         self.reference_animated || self.matrices_animated
     }
 
-    /// This surface at the draw's clock `t` (`material.md` §5.3.1), with the curve states
-    /// of the drawn instance: the 1043 reference and the texture matrices re-evaluated
-    /// where they are not constant (`particle-runtime.md` §9.1.1 answers (d) and (e)),
-    /// everything else as it is. `m` and `layout` must be the ones given to
-    /// [`ParticleSurface::of`].
+    /// This surface at the draw's clock `t` (`material.md` §5.3.1): the 1043 reference and
+    /// the texture matrices re-evaluated where they are not constant
+    /// (`particle-runtime.md` §9.1.1 answers (d) and (e)), everything else as it is. `m`
+    /// and `layout` must be the ones given to [`ParticleSurface::of`].
+    ///
+    /// `states` are the curve states of the surface record (rule 12: one set per surface
+    /// DID, not per 0x39 record or instance), where mode-10 curves keep their start time
+    /// and last value. Mode-3 curves keep no state: each evaluation draws from `rng`, the
+    /// shared particle stream (rule 1).
     #[must_use]
     pub fn at(
         &self,
@@ -284,12 +300,41 @@ impl ParticleSurface {
         layout: &TextureMatrixLayout,
         t: f64,
         states: &mut CurveStates,
+        rng: &mut Ran2,
     ) -> Self {
         if !self.is_animated() {
             return *self;
         }
         let t = if t.is_finite() { t } else { 0.0 };
+        self.reseed_random_curves(m, layout, states, rng);
         self.evaluated(m, layout, t, states, false)
+    }
+
+    /// Gives every mode-3 curve that [`ParticleSurface::at`] evaluates a fresh state seeded
+    /// by one draw of `rng`, so its value comes from the shared stream and nothing of an
+    /// earlier evaluation carries over (rule 12; `material.md` §5.3.1 lets mode 3 use any
+    /// uniform source).
+    fn reseed_random_curves(
+        &self,
+        m: &ResolvedMaterial,
+        layout: &TextureMatrixLayout,
+        states: &mut CurveStates,
+        rng: &mut Ran2,
+    ) {
+        let reference =
+            (self.alpha_test.is_some() && self.reference_animated).then_some(ALPHA_THRESHOLD);
+        let matrices = layout
+            .matrices
+            .iter()
+            .filter(|b| self.program.layers.is_some() && self.matrices_animated && b.matrix <= 1)
+            .flat_map(|b| b.params.iter().flatten().copied());
+        for id in reference.into_iter().chain(matrices) {
+            if m.params.curve(id).is_some_and(|c| c.mode == RANDOM_MODE) {
+                // A draw in (0, 1) scaled to a 32-bit seed; 0 is replaced by the state.
+                let seed = (rng.next_f64() * f64::from(u32::MAX)) as u32;
+                *states.state(id) = CurveState::with_seed(seed);
+            }
+        }
     }
 
     fn evaluated(
@@ -603,6 +648,7 @@ mod tests {
             TextureMatrixLayout,
         };
 
+        use crate::rng::Ran2;
         use crate::surface::ParticleSurface;
 
         fn float(id: u32, value: FloatCurve, binding: Option<(u16, u32)>) -> ParamEntry {
@@ -633,6 +679,16 @@ mod tests {
             test: bool,
             reference: FloatCurve,
         ) -> (Arc<ResolvedMaterial>, TextureMatrixLayout) {
+            surface_with(did, FloatCurve::constant(translate_u1), test, reference)
+        }
+
+        /// [`surface`] with any curve for 1019.
+        fn surface_with(
+            did: u32,
+            translate_u1: FloatCurve,
+            test: bool,
+            reference: FloatCurve,
+        ) -> (Arc<ResolvedMaterial>, TextureMatrixLayout) {
             let mut params = Vec::new();
             for (slot, set) in [
                 (0u32, [1017, 1018, 1033, 1001, 1002, 1070, 1071]),
@@ -640,12 +696,12 @@ mod tests {
             ] {
                 for (k, id) in set.into_iter().enumerate() {
                     let v = match (slot, k) {
-                        (1, 0) => translate_u1,
-                        (_, 3 | 4) => 1.0,
-                        _ => 0.0,
+                        (1, 0) => translate_u1.clone(),
+                        (_, 3 | 4) => FloatCurve::constant(1.0),
+                        _ => FloatCurve::constant(0.0),
                     };
                     let semantic = 38 + u16::try_from(k).unwrap_or(0);
-                    params.push(float(id, FloatCurve::constant(v), Some((semantic, slot))));
+                    params.push(float(id, v, Some((semantic, slot))));
                 }
             }
             params.push(float(1043, reference, None));
@@ -727,8 +783,11 @@ mod tests {
             let s = ParticleSurface::of(&m, &layout);
             assert!(s.reference_animated && s.is_animated());
             let mut states = CurveStates::new();
-            let r = |t: f64, states: &mut CurveStates| {
-                s.at(&m, &layout, t, states).alpha_test.unwrap_or(f32::NAN)
+            let mut rng = Ran2::new(1);
+            let mut r = |t: f64, states: &mut CurveStates| {
+                s.at(&m, &layout, t, states, &mut rng)
+                    .alpha_test
+                    .unwrap_or(f32::NAN)
             };
             assert!((r(0.0, &mut states) - 0.5).abs() < 1e-6);
             assert!((r(2.0, &mut states) - 0.7).abs() < 1e-5);
@@ -736,7 +795,68 @@ mod tests {
 
             let (m, layout) = surface(0x2B00_070F, 0.0, true, FloatCurve::constant(0.8));
             let c = ParticleSurface::of(&m, &layout);
-            assert_eq!(c.at(&m, &layout, 5.0, &mut states), c);
+            assert_eq!(c.at(&m, &layout, 5.0, &mut states, &mut rng), c);
+        }
+
+        /// `particle-runtime.md` RT-I13 (rule 12): two 0x39 records that name one surface
+        /// read one state set, kept per surface record, started by the first draw at clock
+        /// 10: at 10.5 both read 0.5, from 11 on the held last value. A state per 0x39
+        /// record would give the second system its start value 0.001 at 10.5.
+        #[test]
+        fn rt_i13_one_curve_state_per_surface_record() {
+            let mut keyed = FloatCurve::constant(0.0);
+            keyed.mode = 10;
+            keyed.params[10] = 1.0;
+            keyed.param_count = 11;
+            keyed.loop_flag = 0;
+            keyed.keys = vec![(0.0, 0.0), (1.0, 100.0)];
+            let (m, layout) = surface_with(0x2B00_0703, keyed, false, FloatCurve::constant(0.5));
+            let s = ParticleSurface::of(&m, &layout);
+            assert!(s.matrices_animated);
+            let u = |look: ParticleSurface| look.matrices[1].apply(0.0, 0.0).0;
+            let mut rng = Ran2::new(3);
+            // The caller's map from surface DID to states (both records name this surface).
+            let mut per_surface = CurveStates::new();
+            let first = u(s.at(&m, &layout, 10.0, &mut per_surface, &mut rng));
+            // The start value: position 0.1 % of the period (`material.md` §5.3.1).
+            assert!((first - 0.001).abs() < 1e-5, "{first}");
+            let a = u(s.at(&m, &layout, 10.5, &mut per_surface, &mut rng));
+            let b = u(s.at(&m, &layout, 10.5, &mut per_surface, &mut rng));
+            assert!((a - 0.5).abs() < 1e-5 && (b - 0.5).abs() < 1e-5, "{a} {b}");
+            let held = u(s.at(&m, &layout, 11.2, &mut per_surface, &mut rng));
+            assert!((held - u(s.at(&m, &layout, 12.0, &mut per_surface, &mut rng))).abs() < 1e-6);
+            // A fresh state at 10.5 (a state per record) starts at the first key instead.
+            let fresh = u(s.at(&m, &layout, 10.5, &mut CurveStates::new(), &mut rng));
+            assert!((fresh - 0.001).abs() < 1e-5, "{fresh}");
+        }
+
+        /// Rule 12: a mode-3 curve keeps no state; every evaluation draws from the shared
+        /// stream, so the same stream gives the same values whatever the state set holds.
+        #[test]
+        fn random_curves_draw_from_the_shared_stream() {
+            let mut flicker = FloatCurve::constant(0.5);
+            flicker.mode = 3;
+            flicker.params[2] = 0.25;
+            flicker.param_count = 10;
+            let (m, layout) = surface(0x2B00_070F, 0.0, true, flicker);
+            let s = ParticleSurface::of(&m, &layout);
+            assert!(s.reference_animated);
+            let run = |states: &mut CurveStates| {
+                let mut rng = Ran2::new(7);
+                (0..8)
+                    .map(|k| {
+                        s.at(&m, &layout, f64::from(k), states, &mut rng)
+                            .alpha_test
+                            .unwrap_or(f32::NAN)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let mut used = CurveStates::new();
+            let first = run(&mut used);
+            assert_eq!(run(&mut used), first, "no state carries over");
+            assert_eq!(run(&mut CurveStates::new()), first);
+            assert!(first.iter().all(|v| (0.25..=0.75).contains(v)), "{first:?}");
+            assert!(first.windows(2).any(|w| w[0] != w[1]), "{first:?}");
         }
 
         /// Rule 10: a shader record outside the table draws as the common row of its blend

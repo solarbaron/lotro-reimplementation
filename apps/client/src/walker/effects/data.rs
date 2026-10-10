@@ -29,6 +29,7 @@ use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
 use tessera_material::{
     BlendMode, CurveStates, MaterialLibrary, ResolvedMaterial, TextureMatrix, TextureMatrixLayout,
 };
+use tessera_particles::Ran2;
 use tessera_particles::glam::{Mat4, Quat};
 use tessera_particles::surface::{LayerCombine, ParticleSurface};
 use tessera_render::{
@@ -254,10 +255,16 @@ pub struct SurfaceClock {
 
 impl SurfaceClock {
     /// The alpha mode and texture matrices of a draw at the material clock `t`, with the
-    /// curve states of the record.
+    /// curve states of the surface record (`particle-runtime.md` §12 rule 12) and the
+    /// shared stream `rng` for mode-3 curves.
     #[must_use]
-    pub fn at(&self, t: f64, states: &mut CurveStates) -> (AlphaMode, [UvTransform; 2]) {
-        let s = self.look.at(&self.material, &self.layout, t, states);
+    pub fn at(
+        &self,
+        t: f64,
+        states: &mut CurveStates,
+        rng: &mut Ran2,
+    ) -> (AlphaMode, [UvTransform; 2]) {
+        let s = self.look.at(&self.material, &self.layout, t, states, rng);
         (
             surface_alpha(&self.material, s.alpha_test),
             uv_transforms(s.matrices),

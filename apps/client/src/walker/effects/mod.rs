@@ -32,7 +32,10 @@
 //! Positions are simulated in region coordinates relative to a base point fixed per region
 //! (so that `f32` values stay small near where the walker started), and moved into the
 //! render frame when drawn. The clock is the material clock (`material.md` §5.3.1), and one
-//! shared [`Ran2`] serves every system (§3.3, §12 rule 1).
+//! shared [`Ran2`] serves every system (§3.3, §12 rule 1). The curve states of animated
+//! particle surfaces are kept per surface record DID, shared by every 0x39 record and
+//! instance that draws the surface (§9.1.1, §12 rule 12); the walker's record cache keeps
+//! a surface's resolved material for the session, so its states last as long.
 //!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
 //! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are not drawn (the
@@ -97,8 +100,9 @@ pub const MAX_SCANS_IN_FLIGHT: usize = 16;
 pub const MAX_LOADS_IN_FLIGHT: usize = 64;
 /// Most requests waiting for one record.
 pub const MAX_WAITING_PER_RECORD: usize = 4096;
-/// Effect records whose animated surface keeps its own curve states (`material.md`
-/// §5.3.1); beyond it a draw evaluates with fresh states.
+/// Animated particle surface records that keep their own curve states (`material.md`
+/// §5.3.1, `particle-runtime.md` §12 rule 12); beyond it a draw of another surface
+/// evaluates with fresh states.
 pub const MAX_SURFACE_STATES: usize = 4096;
 
 /// Settings of the effects layer.
@@ -328,8 +332,9 @@ struct FxState {
     new_textures: Vec<TexRequest>,
     requests: u64,
     refused: u64,
-    /// Curve states of the animated particle surfaces, per effect record (the alpha-test
-    /// reference and texture matrices evaluated per draw, `particle-runtime.md` §9.1.1).
+    /// Curve states of the animated particle surfaces, per surface record DID (the
+    /// alpha-test reference and texture matrices evaluated per draw, `particle-runtime.md`
+    /// §9.1.1, §12 rule 12: shared by every 0x39 record naming the surface).
     surface_states: HashMap<u32, tessera_material::CurveStates>,
 }
 
@@ -1402,7 +1407,7 @@ impl EffectLayer {
         let mut systems = 0usize;
         let mut vertices = 0usize;
         for i in draw_order(&ranks) {
-            let Some((key, d, _)) = drawn.get(i) else {
+            let Some((key, d, surface)) = drawn.get(i) else {
                 continue;
             };
             let Some(did) = manager.did_of(*key) else {
@@ -1429,16 +1434,17 @@ impl EffectLayer {
                 continue;
             }
             // The alpha-test reference and the texture matrices at the material clock when
-            // their curves are not constant (`particle-runtime.md` §9.1.1 (d), (e)).
+            // their curves are not constant (`particle-runtime.md` §9.1.1 (d), (e)), with
+            // the states of the surface record (rule 12) and mode 3 from the shared stream.
             let (alpha, uv) = match clock {
                 None => (*alpha, *uv),
                 Some(c) => {
                     if surface_states.len() >= MAX_SURFACE_STATES
-                        && !surface_states.contains_key(&did)
+                        && !surface_states.contains_key(surface)
                     {
-                        c.at(now, &mut tessera_material::CurveStates::new())
+                        c.at(now, &mut tessera_material::CurveStates::new(), rng)
                     } else {
-                        c.at(now, surface_states.entry(did).or_default())
+                        c.at(now, surface_states.entry(*surface).or_default(), rng)
                     }
                 }
             };

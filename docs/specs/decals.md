@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-10, fourth review passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §6.5 answers part of OPEN (c) from `water.md` §14 (second implementer OPEN of 2026-10-10): how `Render_DepthBias_Type` reaches an entity and which lookup order finds it, which table values reach the rasteriser state, the Tessera default extended to every draw of the entity; new tags BIN2 and OBS2, rows DC23–DC25, §12 Q6; awaiting review; see §13). Before: Accepted (2026-10-09, third review). Revised 2026-10-09 (spec writer): the two non-blocking notes of the first review taken up, §2.1 and DC3 (stored order counted) and §6.5 (total 52,028); §10 invariant 2 restated after the second review. No rule changed. Before: Accepted (2026-10-09) |
+| **Status** | **Revised** (2026-10-10, spec writer: answers the implementer OPEN of 2026-10-10 in §6.5 (items (a)–(d), filed with commit 19fbe32): which draws and passes of an entity apply `Render_DepthBias_Type` (every draw of the entity's scene node, depth and shadow-map passes included, entry 2 in the shadow-map pass for an entity with entry 0), the component's initial value, the reversed-depth and clamp rule, value limits and indices of 16 or more; the three non-blocking notes of the fourth review taken up; new tag BIN3, rows DC26–DC30, §12 Q6, §13; awaiting review). Before: **Accepted** (2026-10-10, fourth review passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §6.5 answers part of OPEN (c) from `water.md` §14 (second implementer OPEN of 2026-10-10): how `Render_DepthBias_Type` reaches an entity and which lookup order finds it, which table values reach the rasteriser state, the Tessera default extended to every draw of the entity; new tags BIN2 and OBS2, rows DC23–DC25, §12 Q6; awaiting review; see §13). Before: Accepted (2026-10-09, third review). Revised 2026-10-09 (spec writer): the two non-blocking notes of the first review taken up, §2.1 and DC3 (stored order counted) and §6.5 (total 52,028); §10 invariant 2 restated after the second review. No rule changed. Before: Accepted (2026-10-09) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (independent dirty-room spec reviewer, not the author) |
@@ -61,6 +61,7 @@ behaviour is not known or not reproduced.
 | OBS | Observed in the user's install on 2026-10-08 by throwaway probes in the dirty-room scratch area, with the repository's decoders used as tools. **All** 49,636 landblock-info records of regions 1–5 and 14 decoded; **all** 3,253,862 SEDs and **all** 3,768,840 per-instance property sets read; the **16,511** Decal SEDs examined field by field (flags, IID kind, object, frame, properties, instance set, content layers); **all** 40,643 0x47 physics objects of `client_gamelogic.dat` decoded, with their parent chains; **all** 0x78–0x7F stand-alone property sets searched for the depth-bias and decal properties; the master property dictionary (0x34000000) read for every property whose name contains `Decal` or `DepthBias`; the enum mappers 0x23000297 (with base 0x23000298), 0x230002A7, 0x230000E5 and 0x2300008D (with base 0x23000165); the `UNIQUEDB` DID map 0x28000002; the LOD-class table 0x32000000; the 140 surface records named by decals resolved with `material.md` §9 (shader record, blend family, depth write); the terrain heights 0x800RXXYY under every outdoor Decal SED whose local +Y points down (§4.2 check). |
 | BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-08 with the Ghidra 12 decompiler and listings on a read-only copy of the shared analysed project (deleted afterwards), for facts only, by address. **Questions:** (1) which class a Decal SED becomes, which fields it has, from which properties they are filled and with which initial values; (2) where the decal object's parameters come from (SED, instance set, marker object), and what happens to the SED's scale; (3) how the projection volume is placed relative to the SED frame, and how its size enters; (4) which surfaces are collected, under which conditions, and how they are clipped, culled and textured; (5) what `Render_AllowDecals` and `Render_ForceDecals` do on the receiving side; (6) how the decal's colour, light and opacity are computed and what `DecalVolume_LightingBlend` does; (7) how `DecalVolume_DepthBias` and `Render_DepthBias_Type` reach a draw, and where the depth-bias definitions come from; (8) how `DecalVolume_LODClass` sets the draw distance; (9) when the geometry is built and rebuilt; (10) how the script Decal node maps onto the same object. **Why M1–M3 were not enough:** the data hold only parameter values and the marker objects; the box placement, the clipping, the receiver rules, the colour arithmetic, the depth-bias wiring and the draw-distance rule are code paths with no trace in any record; no published source describes them (M2); no frame capture or running client was available to this session (M3), and a capture would show the result but not the rules or the constants. **Code read:** the decal-volume class registration, constructor, field setters, serialisation and LOD-class lookup; the landblock streaming index's decal creation; the SED property collector and its object-chain recursion; the decal manager (registration, batching, per-frame update, vertex writer, batch draw); the decal geometry builder, its polygon clipper and its terrain collector; the scene's decal node (bounds, distance range) and the shared distance-fade routine; the entity and cell scene nodes' decal acceptance tests and triangle collectors; the render component's property handler (allow, force, depth-bias type); the renderer's start-up loading of the depth-bias definitions; the script Decal node's field registration and run routine. No network, login, launcher or anti-tamper code. |
 | BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), Ghidra 12 headless on a private copy of the analysed project (deleted afterwards), 2026-10-10; recorded in `water.md` as tag BIN5, questions (o)–(q). **Questions:** (11) how `Render_DepthBias_Type` reaches an entity's render component and in which form it is stored; (12) which draws of an entity apply it; (13) which values of a table entry reach the rasteriser. **Why M1–M3 were not enough:** the run-time path from a property to a draw leaves no trace in any record; no running client is available for M3. **Code read:** the render component's watched-property list and property-change handler, the depth-bias definition loader, one graphics back end's rasteriser-state cache, the two draw routines that build its key and its depth-bias index setter, and a search for readers of the stored value and call sites of the setter. No network, login, launcher or anti-tamper code. |
+| BIN3 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Same client build (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), Ghidra 12 headless on a private copy of the analysed project (deleted afterwards), 2026-10-10; recorded in `water.md` as tag BIN6. **Questions:** (14) which draws of an entity, in which passes, apply the value its render component stores (implementer OPEN of §6.5, item (a)); (15) the stored value before any property notification; (16) what an index of 16 or more does; (17) which values the depth-bias loader negates, and for which back end; (18) every call site of the graphics device's depth-bias index setter. **Why M1–M3 were not enough:** which draws use the stored value is run-time behaviour that no record holds; no running client is available for M3, and a frame capture would show a bias on a draw but not which property or rule chose it. **Code read:** the render component's constructor and property-change handler; the graphics device's method table, its depth-bias index setter and every call of that table slot on the device (a search of the whole executable for calls through the slot, each receiver checked); the entity scene node's per-pass draw and its geometry-only draw; the part draw down to the per-pass permutation lookup; the decal batch draw; the rasteriser-state key builder; the depth-bias loader and the setting that selects the back end. **Correction:** BIN2 searched the wrong slot of the device's method table for the setter's call sites, which is why it found none; DC25's "not found" is replaced by DC27–DC28. No network, login, launcher or anti-tamper code. |
 | OBS2 | Observed in the user's install on 2026-10-10 by a throwaway probe (the repository's decoders used as tools; recorded in `water.md` as tag OBS4): `Render_DepthBias_Type` on every SED of all 49,636 landblock-info records, in the SED's own set, in its instance set, along its 0x47 chain and, for Weenie SEDs, in the 0x70 object's set and its `PhysObj` chain. |
 | ED | [`entity-descriptor.md`](entity-descriptor.md) (Accepted): SED layout, lookup order, content-layer test, creation of Decal nodes (rows E14, E19, E24–E27, E30–E32). |
 | MAT, LGT, MESH, ENV, PS | [`material.md`](material.md), [`lighting.md`](lighting.md), [`mesh.md`](mesh.md), [`environment.md`](environment.md), [`property-system.md`](property-system.md): facts reused, cited by section. |
@@ -91,7 +92,12 @@ behaviour is not known or not reproduced.
 | DC22 | The script Decal node builds the same decal class; field correspondence of §8 | BIN (question 10); ST §5.3 | BIN |
 | DC23 | `Render_DepthBias_Type` is a watched property of the entity's render component, delivered by the property-change notifications of the entity's layered property collection (the lookup order of `entity-descriptor.md` §9.2) and stored as the delivered integer, unchanged (§6.5) | BIN2 (question 11) | BIN |
 | DC24 | Where `Render_DepthBias_Type` is found: 52,028 Physics SEDs, all with an instance set; 49,338 in both their own and their instance set (same value), 2,690 only along the 0x47 chain, 1 in its own set and on its object with different values; no other SED type, 0x70 object or `PhysObj` chain; the lookup order of ED §9.2 and the order instance set, own set, chain give the same value for every SED (§6.5) | OBS2 | Confirmed |
-| DC25 | One back end builds a rasteriser-state object per (fill mode, cull mode, depth-bias index in key bits 4–7, two flags) and fills it with the entry's absolute, slope-scale and maximum values; the draws that set the index from an entity's render component were not found (§6.5) | BIN2 (questions 12, 13) | BIN; consumer OPEN |
+| DC25 | One back end builds a rasteriser-state object per (fill mode, cull mode, depth-bias index in key bits 4–7, two flags) and fills it with the entry's absolute, slope-scale and maximum values; the draws that set the index from an entity's render component were not found (§6.5; superseded 2026-10-10 by DC27–DC28, BIN2 searched the wrong method slot) | BIN2 (questions 12, 13); BIN3 | BIN; consumer answered by DC27 |
+| DC26 | The render component's stored `Render_DepthBias_Type` starts at 0 (entry 0) and keeps that value until a notification delivers another; the delivered value is stored with no range check (§6.5) | BIN3 (15); BIN2 (question 11) | BIN |
+| DC27 | The entity's scene node draws its parts in a pass (the pass code of `lighting.md` §3.2, which also selects each material's permutation for the pass) with the device's depth-bias index set to the stored value and resets it to 0 afterwards, in every pass it draws, the depth pass 0x09 and the shadow-map pass 0x0A included; in pass 0x0A a stored 0 is replaced by entry 2; outside passes 0x09 and 0x0A a part's cross-fade second-level draw (`mesh.md` §8.8) uses entry 14 or 13 and leaves the index at 0 for the object's remaining parts; the node's second, geometry-only draw routine uses the stored value unchanged (§6.5) | BIN3 (14) | BIN; cross-fade reading Inferred |
+| DC28 | Every call site of the device's depth-bias index setter: the two draw routines of DC27, the decal batch draw (the batch's `DecalVolume_DepthBias` entry, confirming DC18), one object list and one triangle-list item list with a value of their own (object kinds not identified), and fixed entries 1 and 15 around four other draws; each resets the index to 0 after its draws, so every other draw uses entry 0; no call site reads the render component of an entity other than the routines of DC27 (§6.5) | BIN3 (18) | BIN; uses of the unidentified sites OPEN |
+| DC29 | The rasteriser-state key holds the index shifted left by 4 bits, combined with fill, cull and two flag bits; the entry is read from key bits 4–7; an index of 16 or more therefore selects the entry of its low four bits and sets key bits above bit 7 (bit 8 is one of the two flags) (§6.5) | BIN3 (16) | BIN |
+| DC30 | The loader negates only the slope-scale value, and only for back-end code 0 (the first value of the user's graphics-core preference); the absolute and maximum values are never negated; no value is range-checked; a value stored with another type than float counts as 0 (§6.5) | BIN3 (17) | BIN |
 
 ---
 
@@ -638,9 +644,12 @@ first, then key **0x164** (`GameDepthBiasDefs`, 0x780001F6 here). In each it rea
 `Render_DepthBias_Type` (the entry index, mapper 0x23000297), and optional
 `Render_DepthBias_AbsoluteDepthBias`, `Render_DepthBias_SlopeScaleDepthBias` and
 `Render_DepthBias_MaxDepthBias` (each 0 when absent). An index of 16 or more is reported and
-skipped; a later definition of an index replaces an earlier one. For one of the graphics back
-ends (the one with internal back-end code 0; which one was not identified) the slope-scale
-value is negated when stored.
+skipped; a later definition of an index replaces an earlier one. Each value is taken as
+stored, with no range check; a value stored with another type than float counts as 0 (BIN3,
+DC30). For the graphics back end with internal code 0 the slope-scale value is negated when
+stored; the absolute and maximum values are never negated (DC30). The code is the value of
+the user's graphics-core preference, so code 0 is that preference's first value; which
+graphics interface it names was not identified.
 
 On this install the engine set defines indices 0, 1, 2, 13, 14 and 15 and the game set
 indices 3–12; every definition gives only a slope-scale value (absolute and maximum are
@@ -648,19 +657,22 @@ absent, so 0); index 0 has no value (no bias). The values carry the sign the lab
 negative for `BiasForward*`, `SlopeScale_Negative*`, positive for `BiasBackward*` and the
 positive `SlopeScale_*` labels, with magnitudes from 0.4 to 10. Read them at run time.
 
-**Decals.** A decal batch's draw sets the device's depth-bias state to the entry
-`DecalVolume_DepthBias` selects and resets it to entry 0 afterwards (BIN). That the three
-floats become the constant bias, the slope-scale bias and the bias clamp of the back end's
-rasteriser state is Inferred from their names; the back-end code was not read. The default 1 (`SlopeScale_NegativeOne`) applies the
-engine's slope-scale value of that entry.
+**Decals.** A decal batch's draw sets the device's depth-bias index to the entry
+`DecalVolume_DepthBias` selects and resets it to entry 0 afterwards (BIN; confirmed again by
+BIN3, DC28). The rasteriser state built for that index carries all three values of the entry
+(next paragraph). The default 1 (`SlopeScale_NegativeOne`) applies the engine's slope-scale
+value of that entry.
 
-**Rasteriser state (BIN2, DC25; added 2026-10-10).** One graphics back end keeps the current
+**Rasteriser state (BIN2, DC25; BIN3, DC29).** One graphics back end keeps the current
 depth-bias index as device state, set by a device call, and builds a rasteriser-state object
-per key of fill mode, cull mode, depth-bias index (key bits 4–7, so 0–15) and two flags. It
-fills each object with all three values of the entry: absolute, slope-scale and maximum. So
-the original applies all three. How the back end converts the absolute value to its depth
-units, and the other back ends, were not traced; that the maximum is the bias clamp is still
-read from its name.
+per key. The key combines the fill mode, the cull mode, two flags and the index shifted left
+by four bits; the entry is read from key bits 4–7. The back end fills each object with all
+three values of the entry: absolute, slope-scale and maximum. So the original applies all
+three. How the back end converts the absolute value to its depth units, and the other back
+ends, were not traced; that the maximum is the bias clamp is read from its name. An index of
+16 or more selects the entry of its low four bits, and its higher bits land on the key's
+upper bits (bit 4 of the index sets one of the two flags) (DC29); no value of this install
+reaches 16 (DC24, §10 invariant 5).
 
 **Objects.** `Render_DepthBias_Type` selects an entry of the same table for an entity: the
 render component stores the value from the entity's properties (BIN). More precisely
@@ -668,52 +680,141 @@ render component stores the value from the entity's properties (BIN). More preci
 properties. The component learns it from the property-change notifications of the entity's
 layered property collection, the same path as `Render_LODClass` (`walker.md` §11.4.3), and
 stores the delivered integer unchanged, with no range check. The value is therefore the first
-one the entity's lookup order finds (`entity-descriptor.md` §9.2, E26). That order is the
-per-instance set (the landblock's instance property set for the IID when one exists, else the
-SED's own set, never both), then the named 0x47 object and its parents. For a 0x70 object it
-is the object's property set, then its `PhysObj` chain (E24). The order instance set, own
-set, chain gives the same value for every SED of this install (DC24): every one of the 52,028
-Physics SEDs that find a value has an instance set. 49,338 carry the value in both sets, with
-the same value, and 2,690 find it only along the chain. One (0x802515A0, object 0x4700C32A)
-has 4 on the SED and 3 on the object, and gets 4 in both orders. No other SED type, 0x70
-object or `PhysObj` chain carries the property. Where no source holds it the component gets
-no notification. Its initial value was not resolved to an entry; **Tessera Decision:** entry
-0. On Physics SEDs (by the
-entity lookup order) it occurs 52,028 times: 0: 2,567; 1: 64; 2: 42; 3: 20,290; 4: 2,417;
-5: 1,188; 6: 272; 7: 1,936; 8: 18,073; 9: 2,080; 10: 1,174; 11: 423; 12: 1,468; 13: 30;
-15: 4 (Confirmed). How the object draws apply it was not traced (OPEN below).
+one the entity's lookup order finds (`entity-descriptor.md` §9.2, E26). For an entity built
+from a SED that order is the per-instance set (the landblock's instance property set for the
+IID when one exists, else the SED's own set, never both), then the named 0x47 object and its
+parents. For Weenie SEDs the census also searched the 0x70 object's property set and its
+`PhysObj` chain (the sources of `entity-descriptor.md` E24); none carries the property, so
+their place in the order does not matter here. The order instance set, own set, chain gives
+the same value for every SED of this install (DC24): every one of the 52,028 Physics SEDs
+that find a value has an instance set. 49,338 carry the value in both sets, with the same
+value, and 2,690 find it only along the chain. One (0x802515A0, object 0x4700C32A) has 4 on
+the SED and 3 on the object, and gets 4 in both orders. No other SED type, 0x70 object or
+`PhysObj` chain carries the property. Where no source holds it the component gets no
+notification and keeps its initial value, 0, so entry 0 (BIN3, DC26; this replaces the
+earlier Tessera Decision, which gave the same entry). On Physics SEDs (by the entity lookup
+order) it occurs 52,028 times: 0: 2,567; 1: 64; 2: 42; 3: 20,290; 4: 2,417; 5: 1,188;
+6: 272; 7: 1,936; 8: 18,073; 9: 2,080; 10: 1,174; 11: 423; 12: 1,468; 13: 30; 15: 4
+(Confirmed).
 
-**Tessera Decision (sign).** With a depth buffer whose values grow with distance, apply the
-stored slope-scale value unchanged (negative pulls the surface towards the camera, matching
-the `Forward` labels); with a reversed depth buffer, negate it. Tests must not treat the sign
-choice for a given back end as the original's.
+**Which draws apply it (BIN3, DC27, DC28; added 2026-10-10).** An entity is drawn by its
+scene node. The node's draw routine for one pass receives the pass code (`lighting.md` §3.2;
+the same code selects each material's permutation for the pass) and works as follows:
 
-> **OPEN:** (a) which back end has internal code 0 (the negated slope); (b) how a back end
-> scales the absolute bias (unused by this install's definitions; the absolute value does
-> reach the rasteriser state, DC25); (c) whether and in which passes entity draws apply
-> `Render_DepthBias_Type`. The lookup and storage are answered (DC23). The session of
-> 2026-10-10 found neither a reader of the stored value nor a call of the index setter that
-> takes it (DC25). **Tessera default (revised 2026-10-10):** apply the entry to **every** draw
-> of the entity, own-program and generic-path draws alike, like the decal's, so coplanar
-> overlay meshes do not flicker. Apply slope-scale and maximum as the rasteriser's slope bias
-> and clamp. Leave the absolute value out until (b) is answered; every definition of this
-> install leaves it absent.
+1. Take the value the render component stores. If the pass is the shadow-map pass 0x0A and
+   the value is 0, take entry 2 (`SlopeScale_One`, a positive slope-scale value here)
+   instead.
+2. Set the device's depth-bias index to that entry.
+3. Draw every part of the object in the pass, each with its own material, whatever its
+   program family (generic, water, mirror, liquid distortion, lava: all are parts).
+4. Outside the passes 0x09 and 0x0A, a part that also has a cross-fade second level
+   (`mesh.md` §8.8) is drawn a second time at that level, with its opacity times the part's
+   weight, under entry 14 (`SlopeScale_Nudge`) or entry 13 (`SlopeScale_NegativeNudge`),
+   depending on which of the part's two further level slots holds the second level. After
+   that draw the index is set to 0, and the object's remaining parts in this pass draw with
+   entry 0, not with the stored value. (That these draws are the cross-fade of `mesh.md`
+   §8.8 is Inferred from the two level slots and the weight; which slot is the finer level
+   is OPEN below.)
+5. After the last part, set the index to 0.
 
-> **OPEN (implementer, 2026-10-10, `tessera-render`, the walker; engineering choices made
-> while conforming to the default above, no format fact):** (a) "Every draw" is applied to
-> every colour draw of a placed entity in the main view: generic-path meshes (M2 and lit
-> pipelines), instanced batches (batched only with instances of the same entry), own-program
-> liquid surfaces, and the character layer's draws of a placed figure. Shadow-map draws keep
-> the shadow pass's own bias and do not add the entity's entry, since a slope bias toward
-> the camera (up to 10 here) applied in the light's depth would cause shadow acne or
-> detached shadows; the line overlays of debug views take none. Cell meshes, network
-> characters and far-view sprites have no entry and draw without a bias. (b) With the
-> reversed depth buffer the maximum is negated together with the slope-scale value (so the
-> clamp keeps its direction), and it is left out on adapters without a depth-bias clamp
-> (`DEPTH_BIAS_CLAMP` downlevel flag). (c) Hostile-input bounds: slope-scale magnitude capped
-> at 64, maximum magnitude at 1 (the whole depth range), non-finite values 0. (d) A stored
-> index of 16 or more draws with entry 0, like a missing value. Spec writer: say whether the
-> original's shadow or depth passes apply the entry, if that is ever traced.
+So the stored entry applies in every pass in which the node draws the entity: the colour and
+glow passes, the depth pass 0x09 and the shadow-map pass 0x0A. In pass 0x0A a caster without
+an entry draws with entry 2, and a caster with an entry draws with its own entry, the
+`Forward` entries included. A second draw routine of the same node, which draws the parts'
+geometry without a material pass (its use was not identified), applies the stored value
+unchanged, without the replacement by entry 2.
+
+**Other draws (BIN3, DC28).** The device's setter has these other call sites, and no more:
+the decal batch draw (above); an object list and a list of triangle-list items that each
+carry an entry of their own (the object kinds were not identified); and fixed entries 1 and
+15 around four further draws (not identified). Every site resets the index to 0 after its
+draws, so every draw outside them uses entry 0, and no site reads an entity's render
+component except the two node routines above. It follows (Inferred from the complete list)
+that the draws of other scene objects, such as cell geometry, terrain, particle systems
+(including those an entity's scripts start, which are scene objects of their own) and
+sprites drawn by their own routines, use entry 0 unless one of the unidentified sites is
+theirs. Whether network characters and placed figures are drawn by the same entity node was
+not traced; if they are, their entry comes from their own properties, and no install record
+gives them one (DC24).
+
+**Tessera Decision (sign and clamp).** With a depth buffer whose values grow with distance,
+apply the stored slope-scale value unchanged (negative pulls the surface towards the camera,
+matching the `Forward` labels); with a reversed depth buffer, negate it, and negate the
+maximum with it. In the rasterisers Tessera targets a clamp limits the bias only towards its
+own sign (a positive clamp caps a positive bias, a negative clamp a negative one, 0 clamps
+nothing), so negating both keeps the clamp in effect. The original's loader never negates the
+maximum (DC30); every maximum of this install is 0, so the difference cannot be seen. Tests
+must not treat the sign choice for a given back end as the original's.
+
+> **OPEN:** (a) which graphics interface the back-end code 0 names (the negated slope;
+> narrowed 2026-10-10 to the first value of the user's graphics-core preference, DC30);
+> (b) how a back end scales the absolute bias (unused by this install's definitions; the
+> absolute value does reach the rasteriser state, DC25); (d) in step 4 of "Which draws apply
+> it", which of the two further level slots holds the finer level, so which second level gets
+> entry 14 and which entry 13; (e) the objects drawn by the unidentified call sites of DC28,
+> and whether network characters and placed figures use the entity node of DC27. Item (c)
+> (whether and in which passes entity draws apply `Render_DepthBias_Type`) is answered:
+> "Which draws apply it" (BIN3, DC26–DC28). **Tessera defaults:** (a) the sign rule above;
+> (b) leave the absolute value out (every definition of this install leaves it absent);
+> (d) Tessera draws no cross-fade (`mesh.md` §8.8 default), so nothing to choose; (e) draw
+> objects other than entities and decals with entry 0, and characters with the entry their
+> properties give (none here).
+
+> **Answered 2026-10-10 (BIN3, DC26–DC30; was OPEN, implementer, 2026-10-10,
+> `tessera-render`, the walker; engineering choices made while conforming to the default
+> above, no format fact):** (a) "Every draw" is applied to every colour draw of a placed
+> entity in the main view: generic-path meshes (M2 and lit pipelines), instanced batches
+> (batched only with instances of the same entry), own-program liquid surfaces, and the
+> character layer's draws of a placed figure. Shadow-map draws keep the shadow pass's own
+> bias and do not add the entity's entry, since a slope bias toward the camera (up to 10
+> here) applied in the light's depth would cause shadow acne or detached shadows; the line
+> overlays of debug views take none. Cell meshes, network characters and far-view sprites
+> have no entry and draw without a bias. (b) With the reversed depth buffer the maximum is
+> negated together with the slope-scale value (so the clamp keeps its direction), and it is
+> left out on adapters without a depth-bias clamp (`DEPTH_BIAS_CLAMP` downlevel flag).
+> (c) Hostile-input bounds: slope-scale magnitude capped at 64, maximum magnitude at 1 (the
+> whole depth range), non-finite values 0. (d) A stored index of 16 or more draws with
+> entry 0, like a missing value. Spec writer: say whether the original's shadow or depth
+> passes apply the entry, if that is ever traced.
+>
+> **Answer**, item by item:
+>
+> - **(a) Colour draws confirmed; shadow pass differs from the original, kept as a Tessera
+>   Decision.** The original applies the entity's entry to every part of the entity in every
+>   pass its scene node draws ("Which draws apply it"): generic and own-program parts alike,
+>   so Tessera's colour-draw coverage is right, and batching instances only with instances of
+>   the same entry keeps it. The placed figure's character layer is right too (no figure of
+>   this install has an entry). The **depth pass 0x09** applies the entry unchanged: if
+>   Tessera draws entities in a depth-only pass (a depth pre-pass or an occlusion pass), apply
+>   it there as well. The **shadow-map pass 0x0A** applies it too, with entry 2 for an entity
+>   whose entry is 0, so Tessera's choice departs from the original. **Tessera Decision
+>   (deviation, kept):** Tessera's sun shadow pass keeps its own raster bias (`render.md`,
+>   the shadow pass of the lit pipeline) and ignores the entity's entry. Reason: Tessera's
+>   shadow map, its depth range and its comparison are its own, and the original's shadow
+>   comparison, with which its raster bias pairs, is not specified, so the original's entry
+>   values do not carry over. A renderer that reproduces the original's shadow map may use
+>   the entity's entry, or entry 2 for an entity with entry 0, as step 1 says. Debug
+>   overlays are Tessera's own; no rule applies. Cell meshes and far-view sprites draw with
+>   entry 0 in the original too (Inferred, DC28): confirmed. Network characters: the
+>   original's characters would use the entry their own properties deliver; Tessera has none
+>   for them, so entry 0 matches. Particle systems started by an entity's scripts do not take
+>   the entity's entry (entry 0). Cross-fade second-level draws (step 4) do not arise, since
+>   Tessera does not cross-fade levels (`mesh.md` §8.8 default).
+> - **(b) Confirmed.** Negating the maximum with the slope-scale value under a reversed depth
+>   buffer keeps the clamp in effect (Tessera Decision, sign and clamp, above); the original
+>   negates only the slope (DC30), which no definition of this install can show, since every
+>   maximum is 0. Leaving the clamp out on adapters without depth-bias clamping is accepted:
+>   no definition of this install sets a maximum.
+> - **(c) Accepted as a Tessera Decision.** The original bounds nothing: values are used as
+>   stored, and a value of another type than float counts as 0 (DC30). Tessera's caps (slope
+>   magnitude 64, maximum magnitude 1) and the replacement of non-finite values by 0 are
+>   hostile-input bounds; they never bind on this install (|slope| ≤ 10, absolute and maximum
+>   absent).
+> - **(d) Accepted as a Tessera Decision.** The original selects the entry of the low four bits
+>   and sets flag bits of the rasteriser state from the higher bits (DC29). No value of this
+>   install reaches 16 (the mapper has 0–15; DC24). Tessera may keep entry 0 for such a value;
+>   a renderer that wants the original's entry takes the low four bits, and none should set
+>   rasteriser flags from the index.
 
 <a id="s6-6"></a>
 ### 6.6 Batching and render phase
@@ -848,6 +949,15 @@ Builder (synthetic fixtures):
     only through the back-face test (§4.4: terrain triangles follow
     `UseLandscapeBackfaceCulling`).
 
+Renderer (synthetic depth-bias table and entities; added 2026-10-10):
+
+12. An entity whose stored entry is *k* (0 ≤ *k* < 16) is drawn in every colour pass and
+    every depth-only pass other than Tessera's sun shadow pass with entry *k* (no cross-fade
+    drawn), and after its draws the current entry is 0; an entity without a value is drawn
+    with entry 0 (§6.5, DC26–DC27).
+13. A decal batch is drawn with the entry its `DecalVolume_DepthBias` selects, and after it
+    the current entry is 0 (§6.5, DC28).
+
 ---
 
 <a id="s11"></a>
@@ -904,7 +1014,7 @@ stored as +2.0, +0.8, +0.4.
 | Q3 | Visible effect of build-time receiver selection; other rebuild triggers | §4.8 | rebuild on residency changes (Decision) |
 | Q4 | The two internal scene-node states of §5.1 | §5.1 | ordinary objects not in them |
 | Q5 | The two ambient colours averaged into *A*; the tint *T* | §6.3 | *A* = *A₀*; *T* = 1 |
-| Q6 | Back end with code 0; absolute-bias scaling; which entity draws apply `Render_DepthBias_Type` (its lookup and storage answered 2026-10-10, DC23) | §6.5 | sign by depth convention; apply to every draw of the entity, generic path included; entry 0 when no value is found |
+| Q6 | Graphics interface of back-end code 0; absolute-bias scaling; which cross-fade slot is the finer level; objects of the unidentified setter call sites, and whether characters use the entity node (which entity draws apply `Render_DepthBias_Type` answered 2026-10-10, DC26–DC28) | §6.5 | sign and clamp by depth convention; the entity's entry on every draw of the entity except Tessera's own shadow pass (Decision); entry 0 for other objects, for entities without a value and for an index of 16 or more |
 | Q7 | Source of the frame's decal switch; draw positions of phases 2, 4, 5 | §6.6 | decals always on; all phases after the opaque pass |
 | Q8 | Script decal frame, lifespan and ramps | §8 | owned by `script-runtime.md` |
 
@@ -919,3 +1029,4 @@ stored as +2.0, +0.8, +0.4.
 | 2026-10-09 | Non-blocking notes of the first review taken up (spec writer): §6.5, the total of `Render_DepthBias_Type` on Physics SEDs is 52,028 (the per-value counts were right; their sum was misprinted as 51,028); DC3 and the §2.1 table now say that the instance set holds the same entries as the SED's own set, in another stored order in 1,671 of 16,511 (re-counted over all landblock-info records). No rule changed. Status Revised, awaiting review. |
 | 2026-10-09 | Blocking item (1) of the second review fixed (spec writer): §10 invariant 2 no longer says the per-instance set "equals" the SED's own set; it now requires the same entries (PIDs and values) and the same header, independent of stored order, as DC3 states. No rule or count changed. Status Revised, awaiting re-review. |
 | 2026-10-10 | Spec writer (dirty room), answering `water.md` §14 (second implementer OPEN of 2026-10-10, items (a), (b)). Status Accepted → Revised, awaiting review. New tags BIN2 (Ghidra, questions 11–13) and OBS2 (census of `Render_DepthBias_Type` over every SED); rows DC23–DC25. §6.5: how the render component receives and stores `Render_DepthBias_Type` (watched property, entity lookup order of `entity-descriptor.md` §9.2) and the census showing that the order instance set, own set, chain gives the same value; all three entry values reach one back end's rasteriser state; OPEN (b) and (c) narrowed; the Tessera default now covers every draw of the entity (generic path included) and entry 0 when no value is found. §12 Q6 updated. No rule for decals changed; no section number or anchor changed. |
+| 2026-10-10 | Spec writer (dirty room), answering the implementer OPEN of 2026-10-10 in §6.5 (items (a)–(d), filed with commit 19fbe32) and the three non-blocking notes of the fourth review. Status Accepted → Revised, awaiting review. New tag BIN3 (Ghidra, questions 14–18; corrects BIN2's search, which looked at the wrong slot of the device's method table), rows DC26–DC30; DC25 superseded by DC27–DC28 for the consumer. §6.5: the table paragraph adds that values are not range-checked and that only the slope is negated, for back-end code 0 (the first value of the graphics-core preference); the Decals paragraph no longer says the back end was not read (note 1); the rasteriser-state paragraph gives the key layout and the effect of an index of 16 or more; the Objects paragraph separates the SED lookup from the Weenie census (note 2), joins the broken sentence (note 3) and gives the initial value 0 (BIN, replacing the Decision with the same entry); new paragraphs "Which draws apply it" (every pass of the entity's scene node, depth and shadow-map passes included, entry 2 in the shadow-map pass for entry 0, entries 13 and 14 for cross-fade second levels) and "Other draws" (the complete list of the setter's call sites); the sign Decision covers the clamp; OPEN (c) answered, (d) and (e) added; the implementer OPEN answered item by item (shadow pass kept as a Tessera deviation). §10 invariants 12–13 added; §12 Q6 updated. No section number or anchor changed. |

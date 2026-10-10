@@ -245,6 +245,13 @@ impl ParticleSurface {
     /// The surface of a resolved material whose shader record binds the texture matrices
     /// of `layout` (`MaterialLibrary::texture_matrices`; an empty layout binds none).
     /// Non-finite material colour components are 1.
+    ///
+    /// Its values are a **snapshot at clock 0, not a draw**: where a value follows the
+    /// clock ([`ParticleSurface::is_animated`]), every draw evaluates it again with
+    /// [`ParticleSurface::at`], so the snapshot of such a value is never drawn. In the
+    /// snapshot a mode-3 curve reads its centre value *B* (*r* = 0): building it takes
+    /// nothing from the shared stream, which mode 3 draws from only at draws
+    /// (`particle-runtime.md` §12 rule 12, RT33), and uses no other random source.
     #[must_use]
     pub fn of(m: &ResolvedMaterial, layout: &TextureMatrixLayout) -> Self {
         let program = SurfaceProgram::of_material(m);
@@ -274,7 +281,17 @@ impl ParticleSurface {
                             .is_some_and(tessera_material::FloatCurve::is_animated)
                     }),
         };
-        base.evaluated(m, layout, 0.0, &mut CurveStates::new(), true)
+        let mut states = CurveStates::new();
+        let values = layout
+            .matrices
+            .iter()
+            .flat_map(|b| b.params.iter().flatten().copied());
+        for id in std::iter::once(ALPHA_THRESHOLD).chain(values) {
+            if m.params.curve(id).is_some_and(|c| c.mode == RANDOM_MODE) {
+                states.state(id).supply_random(0.0);
+            }
+        }
+        base.evaluated(m, layout, 0.0, &mut states, true)
     }
 
     /// Whether a value depends on the clock ([`ParticleSurface::at`] then changes it).
@@ -872,6 +889,10 @@ mod tests {
                     })
                     .collect::<Vec<_>>()
             };
+            // The snapshot at load is not a draw: it reads the centre value B and takes
+            // nothing from any random source.
+            assert_eq!(s.alpha_test, Some(0.5));
+            assert_eq!(ParticleSurface::of(&m, &layout), s);
             let mut used = CurveStates::new();
             let first = run(&mut used);
             assert!(used.is_empty(), "mode 3 keeps no state");
@@ -907,6 +928,9 @@ mod tests {
             );
             let s = ParticleSurface::of(&m, &layout);
             assert!(s.matrices_animated);
+            // The snapshot at load reads the centre values B (r = 0).
+            let (u0, v0) = s.matrices[1].apply(0.0, 0.0);
+            assert!((f64::from(u0) - b_u).abs() < 1e-6 && (f64::from(v0) - b_v).abs() < 1e-6);
             let mut rng = Ran2::new(11);
             let mut reference = Ran2::new(11);
             let mut states = CurveStates::new();

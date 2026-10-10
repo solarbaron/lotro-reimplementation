@@ -15,9 +15,17 @@
 //! drags across it turn the camera and the wheel zooms (§2.3). The turn buttons act on
 //! every hot click; the turn and zoom buttons are ghosted by the model's rules (§2.3). The
 //! gender group's selection follows the chosen sex and the group hides for a race with one
-//! gender entry (§4.1). The appearance controls (§5.2.2) are built in the list order with a
-//! header per group, each showing its own name in the template's label part and its current
-//! choice in the template's current-choice part, its arrows and lock button bound.
+//! gender entry (§4.1). The appearance controls (§5.2.2) are built in the list order: the
+//! ungrouped controls, then one row per group made from the group template
+//! `CharGen_AppearanceUIGroupChoice_BaseField` (CS33) holding its controls in its inner list,
+//! with the group's display text, its lock button and its expand and collapse buttons
+//! (Tessera rule: collapsing hides the inner list and shrinks the row); each control shows
+//! its own name in the template's label part and its current choice in the template's
+//! current-choice part, its arrows and lock button bound. On the selection screen the
+//! figure under the pointer is found each frame (`crate::pre_world::PreWorld::hover_frame`,
+//! §2.3) and takes `Hover`. The nationality entries go to the first list box of the
+//! nationality panel, the race icons are drawn once at their own size (Tessera rules of
+//! §4.1 and §5.1, which do not name these parts).
 //!
 //! **Tessera rules** (OPEN in `character-screens.md` §4.2): a character row's description
 //! is Tessera's own line "Level *n* *race* *class*" with the parts the session told (the
@@ -34,10 +42,10 @@ use tessera_formats::{Did, StringInfo};
 use tessera_net::domain::Text;
 use tessera_ui::game::creation::{
     Choice, ChoiceParts, Slider, Stepper, SwatchGrid, fill_choices_with, select_choice,
-    selected_choice,
+    selected_choice, show_icon_once,
 };
 use tessera_ui::game::examine::ExamTemplate;
-use tessera_ui::game::{find_below, subtree};
+use tessera_ui::game::{find_below, fit_icon_layers, subtree};
 use tessera_ui::{ElementKey, IBox, ImageRef, Ui, UiEvent, WidgetClass};
 
 use super::backend::ButtonRule;
@@ -224,6 +232,16 @@ label_table! {
         bone_slider = "BoneScalingAppearanceUIElement_Slider",
         /// The colour template's picker part.
         colour_choice = "ColorChoice",
+        /// The group template (§5.2.2, CS33): one row per group holding its controls.
+        group_template = "CharGen_AppearanceUIGroupChoice_BaseField",
+        /// The group template's label part.
+        group_label = "AppearanceUIGroupUIElement_Label",
+        /// The group template's expand button.
+        group_expand = "AppearanceUIGroupUIElement_ButtonExpand",
+        /// The group template's collapse button.
+        group_collapse = "AppearanceUIGroupUIElement_ButtonCollapse",
+        /// The group template's inner list of controls.
+        group_list = "CharGen_AppearanceUI_Controls_Listbox",
         /// The nationality text above the controls.
         nationality_text = "CharGen_Appearance_Nationality_Text",
         /// The name field.
@@ -323,6 +341,24 @@ struct ControlRow {
     index: usize,
     widget: ControlWidget,
     lock: Option<ElementKey>,
+}
+
+/// One group row of the control list (§5.2.2, CS33): the group template's instance with
+/// its label, buttons and inner list.
+#[derive(Debug, Clone, Copy)]
+struct GroupRow {
+    /// The `AppearanceUI_Group` key.
+    key: u32,
+    /// The row.
+    row: ElementKey,
+    /// The inner list holding the group's controls.
+    list: Option<ElementKey>,
+    /// The group's lock button.
+    lock: Option<ElementKey>,
+    /// The expand button.
+    expand: Option<ElementKey>,
+    /// The collapse button.
+    collapse: Option<ElementKey>,
 }
 
 /// The format token of the current-choice text and its two argument IDs
@@ -437,6 +473,10 @@ pub struct ScreenUi {
     errors: Vec<String>,
     controls_for: Option<ControlsFor>,
     controls: Vec<ControlRow>,
+    /// The group rows of the control list (§5.2.2).
+    groups: Vec<GroupRow>,
+    /// The collapsed groups the control list was built with.
+    collapsed_built: std::collections::BTreeSet<u32>,
     name_shown: String,
     /// The viewport's ambient input (`UICore_Viewport_AmbientLight`, §2.1.1 step 4).
     ambient: [f32; 3],
@@ -444,8 +484,19 @@ pub struct ScreenUi {
     dragging: bool,
     race_info: (Vec<ElementKey>, Option<u64>),
     class_info: (Vec<ElementKey>, Option<u64>),
+    /// The list box that holds the nationality entries ([`first_list_below`]).
+    nationality_list: Option<ElementKey>,
     /// Layouts or elements that could not be opened or found.
     pub missing: Vec<String>,
+}
+
+/// The list that holds a panel's entries (**Tessera rule**, `character-screens.md` §5.1
+/// OPEN: the nationality list is not named): `panel` itself when it is a list box, else
+/// the first list box below it in tree order.
+fn first_list_below(ui: &Ui, panel: ElementKey) -> Option<ElementKey> {
+    subtree(ui, panel)
+        .into_iter()
+        .find(|k| ui.class(*k).is_some_and(WidgetClass::is_list))
 }
 
 /// The `Text` elements below `panel` that the layout gives no text (where the screens
@@ -624,6 +675,8 @@ impl ScreenUi {
             ids.female,
             ids.random_name,
             ids.create,
+            ids.group_expand,
+            ids.group_collapse,
         ]
         .into_iter()
         .flatten()
@@ -691,6 +744,23 @@ impl ScreenUi {
         // Where the information panels' texts go (module docs), found before any is set.
         s.race_info.0 = free_texts(ui, s.el(ids.race_info), 1);
         s.class_info.0 = free_texts(ui, s.el(ids.class_info), 2);
+        let nationality_panel = s.el(ids.nationality_panel);
+        s.nationality_list = nationality_panel.and_then(|p| first_list_below(ui, p));
+        match s.nationality_list {
+            None if nationality_panel.is_some() => {
+                s.missing.push("the nationality list".into());
+            }
+            None => {}
+            Some(list) => {
+                // A click on an entry or a selection in the list chooses the nationality.
+                if let Some(id) = ui.element_id(list) {
+                    ui.register_handler(id, select);
+                }
+                if let Some(id) = ids.nationality_template {
+                    ui.register_handler(id, click);
+                }
+            }
+        }
         s
     }
 
@@ -703,6 +773,22 @@ impl ScreenUi {
     pub fn viewport_box(&self, ui: &Ui) -> Option<IBox> {
         self.el(self.refs.ids.viewport)
             .map(|k| ui.absolute_layout_box(k))
+    }
+
+    /// Where the pointer is over the viewport: (column, row) in the viewport's pixels and
+    /// the viewport's size, when the viewport is the element under the pointer (not
+    /// covered by a panel); `None` otherwise.
+    #[must_use]
+    pub fn viewport_pointer(&self, ui: &Ui) -> Option<((f32, f32), (u32, u32))> {
+        let k = self.el(self.refs.ids.viewport)?;
+        if ui.hovered() != Some(k) {
+            return None;
+        }
+        let (x, y) = ui.pointer()?;
+        let b = ui.absolute_layout_box(k);
+        let w = u32::try_from(b.w()).ok().filter(|w| *w > 0)?;
+        let h = u32::try_from(b.h()).ok().filter(|h| *h > 0)?;
+        Some((((x - b.l) as f32, (y - b.t) as f32), (w, h)))
     }
 
     /// What the walker renders into the viewport this frame: its content id, its layout
@@ -903,7 +989,16 @@ impl ScreenUi {
                     .collect()
             };
             // The names and icons come from the selected gender's entries (§4.1).
-            Self::fill(
+            let race_icons: Vec<Option<ImageRef>> = data
+                .chargen
+                .races
+                .iter()
+                .map(|r| {
+                    let g = sex.and_then(|x| r.gender(x)).or_else(|| r.genders.first());
+                    image(g.and_then(|g| g.icon))
+                })
+                .collect();
+            let refilled = Self::fill(
                 ui,
                 self.el(ids.race_list),
                 template(self.refs.layouts.race_class, ids.race_template),
@@ -916,6 +1011,20 @@ impl ScreenUi {
                 stamp_of(&sex),
                 race_choices,
             );
+            // Each icon once at its own size, not tiled over its part (§4.1 OPEN, Tessera
+            // rule), sized again once its image has loaded.
+            if let Some(icon_id) = ids.race_icon {
+                for (entry, img) in self.races.entries.iter().zip(&race_icons) {
+                    let Some(part) = entry.and_then(|e| find_below(ui, e, icon_id)) else {
+                        continue;
+                    };
+                    match img {
+                        Some(img) if refilled => show_icon_once(ui, part, img),
+                        Some(_) => fit_icon_layers(ui, part),
+                        None => {}
+                    }
+                }
+            }
             if let (Some(list), Some(i)) = (
                 self.el(ids.race_list),
                 races.iter().position(|s| *s == species),
@@ -987,7 +1096,7 @@ impl ScreenUi {
             let nat_keys: Vec<u32> = nats.iter().map(|(k, _)| *k).collect();
             Self::fill(
                 ui,
-                self.el(ids.nationality_panel),
+                self.nationality_list,
                 template(self.refs.layouts.appearance, ids.nationality_template),
                 ChoiceParts::default(),
                 &mut self.nationalities,
@@ -1003,6 +1112,15 @@ impl ScreenUi {
                         .collect()
                 },
             );
+            if let (Some(list), Some(i)) = (
+                self.nationality_list,
+                model
+                    .creation()
+                    .nationality
+                    .and_then(|n| nat_keys.iter().position(|k| *k == n)),
+            ) {
+                select_choice(ui, list, &self.nationalities.entries, i);
+            }
             if let Some(k) = self.el(ids.nationality_text) {
                 let name = model
                     .creation()
@@ -1098,39 +1216,60 @@ impl ScreenUi {
         let Some(list) = self.el(ids.controls_list) else {
             return;
         };
-        if body != self.controls_for {
+        if body != self.controls_for || model.creation().collapsed_groups != self.collapsed_built {
             for row in self.controls.drain(..) {
                 row.widget.release(ui);
             }
+            self.groups.clear();
             ui.list_clear(list);
             self.controls_for = body;
+            self.collapsed_built
+                .clone_from(&model.creation().collapsed_groups);
             let Some(detail) = model.current_avatar() else {
                 return;
             };
             let layout = self.refs.layouts.appearance;
             let nationality = model.creation().nationality.unwrap_or(0);
-            let mut shown_group: Option<u32> = None;
+            // The group whose row is being filled: (key, its row, the list its controls go
+            // to); `None` while ungrouped controls are listed.
+            let mut open: Option<(u32, Option<GroupRow>)> = None;
             for i in detail.list_order() {
                 let Some(c) = detail.controls.get(i) else {
                     continue;
                 };
-                // A group header before the first control of each group (§5.2.2 rule 3).
+                // One row per group, made from the group template, holding the group's
+                // controls in its inner list (§5.2.2 rule 3, CS33).
                 if let Some(g) = c.control.group.filter(|g| *g != 0)
-                    && shown_group != Some(g)
+                    && open.as_ref().map(|(k, _)| *k) != Some(g)
                 {
-                    shown_group = Some(g);
+                    if let Some((_, Some(row))) = open.take() {
+                        self.finish_group(ui, list, row, model);
+                    }
                     let name = model
                         .data()
                         .group_names
                         .get(&g)
                         .and_then(|i| texts.text(i))
                         .unwrap_or_default();
-                    self.add_group_header(ui, list, &name);
+                    let row = self.new_group_row(ui, g, &name);
+                    if row.is_none() {
+                        // Without the group template: a header row before the controls.
+                        self.add_group_header(ui, list, &name);
+                    }
+                    open = Some((g, row));
                 }
-                if let Some(row) = self.add_control(ui, list, layout, model, c, nationality, texts)
+                let target = match &open {
+                    Some((_, Some(GroupRow { list: Some(l), .. }))) => *l,
+                    _ => list,
+                };
+                if let Some(row) =
+                    self.add_control(ui, target, layout, model, c, nationality, texts)
                 {
                     self.controls.push(row);
                 }
+            }
+            if let Some((_, Some(row))) = open.take() {
+                self.finish_group(ui, list, row, model);
             }
         }
         // Values from the model.
@@ -1187,11 +1326,78 @@ impl ScreenUi {
                 ui.switch_state(k, if locked { st.highlight } else { st.normal });
             }
         }
+        for g in &self.groups {
+            if let Some(k) = g.lock {
+                let locked = model.creation().locked_groups.contains(&g.key);
+                ui.switch_state(k, if locked { st.highlight } else { st.normal });
+            }
+        }
     }
 
-    /// A group header row (§5.2.2 rule 3) at the end of `list` showing `name`: the style
-    /// template with only its label part shown (Tessera rule, `character-screens.md`
-    /// §5.2.2 OPEN: the header's own layout is named by its DID only).
+    /// A group row from the group template (§5.2.2, CS33) showing `name`, not yet in the
+    /// control list; `None` without the template.
+    fn new_group_row(&mut self, ui: &mut Ui, key: u32, name: &str) -> Option<GroupRow> {
+        let ids = self.refs.ids;
+        let tpl = template(self.refs.layouts.appearance, ids.group_template)?;
+        let row = ui.create_element(None, Did(tpl.layout), tpl.element).ok()?;
+        let part = |ui: &Ui, id: Option<u32>| id.and_then(|id| find_below(ui, row, id));
+        if let Some(k) = part(ui, ids.group_label) {
+            ui.set_text(k, Some(name.to_owned()));
+        }
+        let list =
+            part(ui, ids.group_list).filter(|k| ui.class(*k).is_some_and(WidgetClass::is_list));
+        if list.is_none() {
+            tracing::debug!("group template without its control list; controls listed after it");
+        }
+        Some(GroupRow {
+            key,
+            row,
+            list,
+            lock: part(ui, ids.control_lock),
+            expand: part(ui, ids.group_expand),
+            collapse: part(ui, ids.group_collapse),
+        })
+    }
+
+    /// Ends a group row: its height follows its controls (the inner list stretches with
+    /// the row, edge modes 5, 5, 5, 5), or, collapsed, the row shrinks to the part above its
+    /// list and the list is hidden (**Tessera rule**, §5.2.2); the expand button shows
+    /// while collapsed, the collapse button while expanded; then the row is added to the
+    /// control list.
+    fn finish_group(&mut self, ui: &mut Ui, outer: ElementKey, g: GroupRow, model: &ScreenModel) {
+        let collapsed = model.creation().collapsed_groups.contains(&g.key);
+        let rb = ui.layout_box(g.row).unwrap_or_default();
+        if let Some(list) = g.list {
+            let lb = ui.layout_box(list).unwrap_or_default();
+            let content: i32 = ui
+                .list_entries(list)
+                .iter()
+                .filter_map(|e| ui.layout_box(*e))
+                .fold(0i32, |a, b| a.saturating_add(b.h()));
+            let h = if collapsed {
+                lb.t.max(0)
+            } else {
+                rb.h().saturating_add(content.saturating_sub(lb.h()))
+            };
+            ui.resize(g.row, rb.w(), h.max(1));
+            ui.set_shown(list, !collapsed);
+        }
+        if let Some(k) = g.expand {
+            ui.set_shown(k, collapsed);
+        }
+        if let Some(k) = g.collapse {
+            ui.set_shown(k, !collapsed);
+        }
+        if ui.list_add(outer, g.row, None).is_err() {
+            ui.destroy(g.row);
+            return;
+        }
+        self.groups.push(g);
+    }
+
+    /// A group header row at the end of `list` showing `name`, used only when the install
+    /// lacks the group template of §5.2.2 (CS33): the style template with only its label
+    /// part shown, the group's controls following it in the same list (Tessera fallback).
     fn add_group_header(&mut self, ui: &mut Ui, list: ElementKey, name: &str) {
         let ids = self.refs.ids;
         let Some(tpl) = template(self.refs.layouts.appearance, ids.apr_template) else {
@@ -1328,6 +1534,23 @@ impl ScreenUi {
     ) -> Vec<Action> {
         let mut out = Vec::new();
         let ids = self.refs.ids;
+        // The group rows' lock, expand and collapse buttons (§5.2.2).
+        if let UiEvent::Game { message } = ev
+            && message.msg == ui.vocab().msgs.button_click
+            && let Some(g) = self.groups.iter().find(|g| {
+                [g.lock, g.expand, g.collapse]
+                    .into_iter()
+                    .flatten()
+                    .any(|k| k == message.source)
+            })
+        {
+            out.push(if g.lock == Some(message.source) {
+                Action::ToggleGroupLock(g.key)
+            } else {
+                Action::CollapseGroup(g.key, g.collapse == Some(message.source))
+            });
+            return out;
+        }
         // Control widgets first (they listen on their own code elements and on the
         // templates' arrows).
         if let Some(detail) = model.current_avatar() {
@@ -1474,6 +1697,12 @@ impl ScreenUi {
                 out.extend(pick(ui, &self.races).map(Action::Race));
             } else if src == ids.class_list {
                 out.extend(pick(ui, &self.classes).map(Action::Class));
+            } else if Some(message.source) == self.nationality_list {
+                out.extend(
+                    pick(ui, &self.nationalities)
+                        .filter(|n| model.creation().nationality != Some(*n))
+                        .map(Action::Nationality),
+                );
             }
         } else if message.msg == msgs.mouse_dbl_click && src == ids.character_list {
             out.push(Action::Enter);

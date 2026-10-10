@@ -196,6 +196,10 @@ pub const PREVIEW_ZOOM_FILL: f32 = 0.5;
 /// The zoomed camera's aim above the figure's centre, in bounding-sphere radii (the sphere
 /// is the parts' box with a metre of margin, so a quarter radius lands on the upper body).
 pub const PREVIEW_ZOOM_RAISE: f32 = 0.25;
+/// How far the screens' figure box reaches beyond its joints, metres (Tessera rule of
+/// `character-screens.md` §2.3 for "under the pointer": the joints' box widened by the
+/// body around them and the head above its joint).
+pub const PREVIEW_PICK_PAD: f32 = 0.15;
 
 /// Sky colour (linear) when no environment is drawn.
 pub const SKY: Rgba = env::NO_SKY;
@@ -988,7 +992,15 @@ impl Walker {
         let config_region = config.region;
         let config_bench = config.bench;
         let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
-        let resolver = Resolver::new(Arc::clone(&ctx), objects.materials())?;
+        let tint = catalog
+            .data
+            .registry()
+            .map(|r| resolver::TintPids {
+                colour: r.pid("Render_Color"),
+                opacity: r.pid("Render_Opacity"),
+            })
+            .unwrap_or_default();
+        let resolver = Resolver::new(Arc::clone(&ctx), objects.materials(), tint)?;
         let systems = config.systems;
         let far_view = (config.far_view.enabled)
             .then(|| farview::FarViewLayer::new(Arc::clone(&ctx), &config.far_view));
@@ -2662,6 +2674,18 @@ impl Walker {
     #[must_use]
     pub fn preview(&self) -> Option<characters::FigureStatus> {
         self.characters.preview()
+    }
+
+    /// The box of the screens' figure as posed now, standing at `view`'s figure frame
+    /// ([`characters::CharacterLayer::posed_bounds`] with [`PREVIEW_PICK_PAD`]): what the
+    /// screens test the pointer's ray against (`character-screens.md` §2.3 Tessera rule).
+    #[must_use]
+    pub fn preview_bounds(&self, view: &stage::StageView) -> Option<(Vec3, Vec3)> {
+        self.characters.posed_bounds(
+            characters::PREVIEW_ID,
+            &|s| view.figure_transform(s),
+            PREVIEW_PICK_PAD,
+        )
     }
 
     /// Whether the screens' figure for the current request is still loading (§4.3 loading

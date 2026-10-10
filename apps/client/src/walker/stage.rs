@@ -7,7 +7,9 @@
 //! **Presentation (the Tessera rule of §2.1.1):** every Physics element whose object
 //! resolves to geometry and is not suppressed (its own `Render_Draw`, `Render_DrawMeshes`
 //! and `Render_NeverAddToScene` win over its object chain's, `entity-descriptor.md` §9) is
-//! drawn at its placement and `Render_AdjustableScale` through the object layer's
+//! drawn at its placement and `Render_AdjustableScale`, tinted by its `Render_Color` and
+//! `Render_Opacity` (the per-object tint of `material.md` §8.3, the element's own values
+//! winning over its object chain's), through the object layer's
 //! instanced models (the parts are referenced there like sky objects; a part whose surfaces
 //! cannot be instanced is not drawn, logged once); every Light element is a point light of
 //! the pass (`lighting.md` §8.3: the range in force by day, the intensity curve at the
@@ -107,12 +109,87 @@ impl StageView {
     }
 }
 
+impl StageView {
+    /// The ray from the camera through the point (`x`, `y`) of a viewport of `size` pixels
+    /// (origin top-left): (origin, unit direction); `None` for unusable values. The field
+    /// of view is the vertical one (`walker.md` W17 OPEN), the aspect the viewport's.
+    #[must_use]
+    pub fn ray(&self, size: (u32, u32), x: f32, y: f32) -> Option<(Vec3, Vec3)> {
+        let cam = self.camera()?;
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        if !(w >= 1.0 && h >= 1.0 && x.is_finite() && y.is_finite()) {
+            return None;
+        }
+        let forward = (cam.target - cam.eye).normalize_or_zero();
+        let up = cam.up.normalize_or_zero();
+        let right = forward.cross(up).normalize_or_zero();
+        let up = right.cross(forward);
+        let t = (cam.projection.fov_y * 0.5).tan();
+        let nx = 2.0 * x / w - 1.0;
+        let ny = 1.0 - 2.0 * y / h;
+        let d = (forward + right * (nx * t * w / h) + up * (ny * t)).normalize_or_zero();
+        (d != Vec3::ZERO && d.is_finite()).then_some((cam.eye, d))
+    }
+}
+
+impl StageView {
+    /// Where point `p` appears in a viewport of `size` pixels (origin top-left), the
+    /// inverse of [`StageView::ray`]; `None` behind the camera or for unusable values.
+    #[must_use]
+    pub fn project(&self, size: (u32, u32), p: Vec3) -> Option<(f32, f32)> {
+        let cam = self.camera()?;
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        if !(w >= 1.0 && h >= 1.0 && p.is_finite()) {
+            return None;
+        }
+        let forward = (cam.target - cam.eye).normalize_or_zero();
+        let right = forward.cross(cam.up).normalize_or_zero();
+        let up = right.cross(forward);
+        let v = p - cam.eye;
+        let depth = v.dot(forward);
+        if depth.is_nan() || depth <= 1e-6 {
+            return None;
+        }
+        let t = (cam.projection.fov_y * 0.5).tan();
+        let nx = v.dot(right) / (depth * t * w / h);
+        let ny = v.dot(up) / (depth * t);
+        let (x, y) = ((nx + 1.0) * 0.5 * w, (1.0 - ny) * 0.5 * h);
+        (x.is_finite() && y.is_finite()).then_some((x, y))
+    }
+}
+
+/// Whether the ray (`origin`, `dir`) meets the box (`lo`, `hi`) in front of its origin
+/// (slab test).
+#[must_use]
+pub fn ray_hits_box(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> bool {
+    if !(origin.is_finite() && dir.is_finite() && lo.is_finite() && hi.is_finite()) {
+        return false;
+    }
+    let (mut near, mut far) = (0.0f32, f32::MAX);
+    for i in 0..3 {
+        let (o, d, a, b) = (origin[i], dir[i], lo[i], hi[i]);
+        if d.abs() < 1e-12 {
+            if o < a || o > b {
+                return false;
+            }
+            continue;
+        }
+        let (t1, t2) = ((a - o) / d, (b - o) / d);
+        near = near.max(t1.min(t2));
+        far = far.min(t1.max(t2));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Clone)]
 enum Placed {
     /// Waiting for the resolver.
     Waiting,
-    /// Drawn with these parts.
-    Drawn(Arc<[Did]>),
+    /// Drawn with these parts and this per-object tint (§2.1.1).
+    Drawn(Arc<[Did]>, [f32; 4]),
     /// Suppressed or without geometry.
     Skipped,
 }
@@ -191,7 +268,7 @@ impl StageLayer {
                     new_parts.push(p.0);
                 }
             }
-            *state = Placed::Drawn(answer.parts);
+            *state = Placed::Drawn(answer.parts, o.tint(answer.colour, answer.opacity));
         }
         if !new_parts.is_empty() {
             objects.acquire_model_parts(&new_parts);
@@ -241,7 +318,7 @@ impl StageLayer {
         let drawn = self
             .placed
             .iter()
-            .filter(|(_, s)| matches!(s, Placed::Drawn(_)))
+            .filter(|(_, s)| matches!(s, Placed::Drawn(..)))
             .count();
         let skipped = self
             .placed
@@ -281,11 +358,13 @@ impl StageLayer {
     pub fn draw(&mut self, pass: &mut Pass, objects: &mut ObjectLayer) -> usize {
         let mut batches: HashMap<u32, Vec<GpuInstance>> = HashMap::new();
         for (m, state) in &self.placed {
-            let Placed::Drawn(parts) = state else {
+            let Placed::Drawn(parts, tint) = state else {
                 continue;
             };
             for p in parts.iter() {
-                batches.entry(p.0).or_default().push(GpuInstance::new(*m));
+                let mut i = GpuInstance::new(*m);
+                i.tint = *tint;
+                batches.entry(p.0).or_default().push(i);
             }
         }
         let mut drawn = 0;
@@ -353,6 +432,32 @@ mod tests {
             ..v
         };
         assert!(bad.camera().is_none());
+        // The ray through the viewport's centre is the view direction; one through the
+        // right edge leans to the camera's right (+X when looking along −Y with +Z up).
+        let (o, d) = v.ray((200, 100), 100.0, 50.0).expect("ray");
+        assert!((o - v.eye).length() < 1e-6 && (d - Vec3::NEG_Y).length() < 1e-5);
+        let (_, d) = v.ray((200, 100), 200.0, 50.0).expect("ray");
+        assert!(d.x < -0.5, "{d}");
+        assert!(v.ray((0, 100), 0.0, 0.0).is_none());
+        // Projection is the inverse of the ray.
+        let (o, d) = v.ray((200, 100), 37.0, 81.0).expect("ray");
+        let (x, y) = v.project((200, 100), o + d * 3.0).expect("in front");
+        assert!(
+            (x - 37.0).abs() < 1e-2 && (y - 81.0).abs() < 1e-2,
+            "{x} {y}"
+        );
+        assert!(
+            v.project((200, 100), v.eye - Vec3::NEG_Y).is_none(),
+            "behind"
+        );
+        let (lo, hi) = (Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.5, 0.5, 2.0));
+        assert!(ray_hits_box(Vec3::new(0.0, 3.0, 1.0), Vec3::NEG_Y, lo, hi));
+        assert!(
+            !ray_hits_box(Vec3::new(0.0, 3.0, 1.0), Vec3::Y, lo, hi),
+            "behind"
+        );
+        assert!(!ray_hits_box(Vec3::new(2.0, 3.0, 1.0), Vec3::NEG_Y, lo, hi));
+        assert!(!ray_hits_box(Vec3::NAN, Vec3::NEG_Y, lo, hi));
         let (fl, reach) = StageLayer::default().lighting([2.0, f32::NAN, 0.25], 0.0);
         assert_eq!(fl.ambient, [1.0, 0.0, 0.25]);
         assert!(fl.sun.is_none() && fl.lights.is_empty() && reach.is_empty());

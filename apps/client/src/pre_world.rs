@@ -49,6 +49,8 @@ pub struct PreWorld {
     scratch: Vec<Event>,
     state: PreWorldState,
     seed: u64,
+    /// The last answer of [`PreWorld::hover_frame`].
+    hover_hit: bool,
 }
 
 impl PreWorld {
@@ -79,6 +81,7 @@ impl PreWorld {
             scratch: Vec::new(),
             state: PreWorldState::Open,
             seed: 0x5EED_0001,
+            hover_hit: false,
         }
     }
 
@@ -122,6 +125,45 @@ impl PreWorld {
     pub fn portrait(&self, ui: &Ui) -> Option<crate::character::panel::Portrait> {
         let view = self.screens.viewport();
         self.ui.as_ref()?.portrait(ui, &view)
+    }
+
+    /// The hover test of the selection screen (`character-screens.md` §2.3, CS32): each
+    /// frame the figure under the pointer is found with `bounds` (the walker's box of the
+    /// screens' figure standing in `view`), by the **Tessera rule** of §2.3: the ray from
+    /// the camera through the pointer meets the figure's posed box. A change of the answer
+    /// is the figure's `Hover` or `Idle` (the model keeps the clicked figure's value).
+    pub fn hover_frame(
+        &mut self,
+        ui: &Ui,
+        now: Instant,
+        bounds: &dyn Fn(
+            &crate::walker::stage::StageView,
+        )
+            -> Option<(tessera_render::glam::Vec3, tessera_render::glam::Vec3)>,
+    ) {
+        let model = self.screens.model();
+        if model.stage() != crate::screens::Stage::Select {
+            return;
+        }
+        let view = self.screens.viewport();
+        let hit = self
+            .ui
+            .as_ref()
+            .and_then(|s| s.viewport_pointer(ui))
+            .and_then(|(p, size)| {
+                let stage = crate::screens::viewport::stage_view(
+                    &view,
+                    crate::screens::ui::RECORDED_AMBIENT,
+                )?;
+                let (lo, hi) = bounds(&stage)?;
+                let (o, d) = stage.ray(size, p.0, p.1)?;
+                Some(crate::walker::stage::ray_hits_box(o, d, lo, hi))
+            })
+            .unwrap_or(false);
+        if hit != self.hover_hit {
+            self.hover_hit = hit;
+            self.screens.act(Action::FigureHover(hit), now);
+        }
     }
 
     /// Reports whether the viewport's figure is still loading (§4.3 loading notice).

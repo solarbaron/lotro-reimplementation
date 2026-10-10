@@ -276,6 +276,10 @@ impl ClientUi {
         };
         match state {
             crate::pre_world::PreWorldState::Open => {
+                {
+                    let ui = host.ui();
+                    pre.hover_frame(&ui, now, &|v| walker.preview_bounds(v));
+                }
                 walker.set_preview(pre.figure_job());
                 walker.set_preview_scene(pre.scene());
                 pre.set_figure_loading(walker.preview_loading());

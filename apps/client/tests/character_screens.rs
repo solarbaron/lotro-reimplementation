@@ -766,3 +766,63 @@ fn enter_refused_while_a_creation_is_outstanding() {
         &tessera_client::screens::texts::ErrorLine::Own(OwnText::CreationStillOutstanding)
     );
 }
+
+/// §2.1.4, §2.3 (CS32): the selection figure takes `Hover` while the pointer is on it and
+/// `Idle` when it leaves, unless it is the clicked figure, which keeps its value; a new
+/// stage clears the click. The race-and-class figure is created always selectable.
+#[test]
+fn hover_and_click_set_the_selection_figure_action() {
+    let (mut m, now) = select_model();
+    let keys = m.data().stage_keys;
+    let action = |m: &ScreenModel| viewport_state(m).action;
+    assert_eq!(action(&m), keys.idle);
+    assert!(!viewport_state(&m).always_selectable);
+    m.apply(Action::FigureHover(true), now);
+    assert_eq!(action(&m), keys.hover);
+    m.apply(Action::FigureHover(false), now);
+    assert_eq!(action(&m), keys.idle);
+    // A press over the figure makes it the clicked figure: it keeps `Hover`.
+    m.apply(Action::FigureHover(true), now);
+    m.apply(Action::DragStart(10.0), now);
+    m.apply(Action::DragEnd, now);
+    m.apply(Action::FigureHover(false), now);
+    assert_eq!(action(&m), keys.hover, "the clicked figure keeps its value");
+    // A press beside the figure: no clicked figure; the pointer is off it.
+    m.apply(Action::DragStart(10.0), now);
+    m.apply(Action::DragEnd, now);
+    m.apply(Action::FigureHover(true), now);
+    m.apply(Action::FigureHover(false), now);
+    assert_eq!(action(&m), keys.idle);
+    // Hover is a selection-screen rule; the creation figure is always selectable.
+    m.apply(Action::New, now);
+    m.apply(Action::FigureHover(true), now);
+    assert_eq!(action(&m), keys.idle);
+    assert!(viewport_state(&m).always_selectable);
+}
+
+/// §5.2.2 group template (Tessera rules): a locked group's controls keep their values when
+/// randomised; collapsing and expanding a group is remembered per body.
+#[test]
+fn group_locks_and_collapse() {
+    let (mut m, now) = select_model();
+    m.apply(Action::New, now);
+    m.apply(Action::Continue, now);
+    assert_eq!(m.stage(), Stage::Appearance);
+    m.apply(Action::Control(0, ControlValue::Style(1)), now);
+    m.apply(Action::ToggleGroupLock(1), now);
+    assert!(m.creation().locked_groups.contains(&1));
+    for seed in 0..8 {
+        m.apply(Action::Randomise(seed), now);
+        assert_eq!(
+            m.creation().appearance.values.get(&0),
+            Some(&ControlValue::Style(1)),
+            "a locked group keeps its controls"
+        );
+    }
+    m.apply(Action::ToggleGroupLock(1), now);
+    assert!(m.creation().locked_groups.is_empty());
+    m.apply(Action::CollapseGroup(1, true), now);
+    assert!(m.creation().collapsed_groups.contains(&1));
+    m.apply(Action::CollapseGroup(1, false), now);
+    assert!(m.creation().collapsed_groups.is_empty());
+}

@@ -342,6 +342,24 @@ is her in-world idle (0x05008EE7 here) and the Stout-axe body's is its in-world 
 > **OPEN:** what `RaceTable_RaceSelect_Entity` (§4.1) is used for; it is not the figure of any
 > stage traced here. **Tessera rule:** not used by the screens.
 
+> **OPEN:** (implementer, `apps/client/src/walker/characters/figure.rs`, 2026-10-10; an
+> implementation gap recorded so that the rules above are not claimed complete, not a spec
+> gap) The walker's figure path evaluates a figure's scripts once for a fixed property state
+> (the static clip resolution of `script-table.md` §11.3), not with the running graph of
+> `script-runtime.md`. As implemented for the screens' figures: the key labelled `Chargen` is
+> appended to the figure's start-up names (after `Startup` and the class table's names), and
+> `Render_AlwaysSelectable` is set on the race-and-class figure; the figure loops its
+> `LoopForever` clips (the most likely one per layer) and plays once, from the start, the
+> one-shot clips of §6.10 that are started for certain (no Random share below 0.999), the
+> first per layer, with the start time, end, `RampOut` fade and removal of §6.10 steps 3–5
+> and 8 (`RandomizeStartTime` draws from the figure's seed). Not played: gestures that a
+> Random node chooses, and later steps of Sequences and Timers (they need the running
+> graph); MeshFX props of the class branches are not attached. A change of the stage key
+> (race-and-class to appearance) or of `CharGen_Action` builds the figure again with the new
+> value from its start instead of switching the running script, so transition ports do not
+> run and the idle restarts. Real data (2026-10-10): the stance check of CSI9 on Tessera's
+> side passes for every body on both creation stages (`chargen_bodies_real_data`).
+
 > **Answered (2026-10-10, BIN2, OBS3, CS28–CS30):** the stance comes from the start-up script
 > `Chargen`, which the screens add to every stage figure (above); a one-shot stage clip plays
 > once and is removed; the figure stands on the marker and the cameras ignore its size. The
@@ -384,6 +402,19 @@ scaling parent holds the centre parts:
 | Appearance and name | `CharGen_Appearance_Panel_Left` | `CharGen_Appearance_Panel_Right` | `ControlsParent` (this layout's own): create, race-change, advanced-start and name-entry panels |
 
 > **OPEN:** the original's order of stages and its back navigation. **Tessera rule:** §6.
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) how the side panels fit a window whose
+> aspect differs from the 1440 × 900 design. In this install both side panels of the
+> appearance screen have object mode Stretch and edge modes
+> (5, 5, 6, 5) and (6, 5, 5, 5); laid out by `ui-layout.md` §8.4 they take the window's
+> height and a width of height × their design aspect (at 1280 × 720: 400 × 720 from
+> 500 × 900), but their children keep their design boxes, so the right panel's controls and
+> current-choice texts reach about 65 pixels beyond the window's right edge and both panels'
+> lower parts beyond its bottom. Whether the original scales a Stretch panel's content to the
+> panel's new size here (`ui-behaviour.md` §9.2.1 element resize: the layout box kept and a
+> scale vector set) or lays its children out again is the question raised in
+> `ui-layout.md` §8.4 (OPEN of 2026-10-10). Not changed in Tessera: the defect stays until it
+> is answered.
 
 <a id="s2-3"></a>
 ### 2.3 Shared controls (Confirmed data, CS8; turntable and zoom BIN, CS21; stage rules are Tessera rules)
@@ -495,6 +526,16 @@ Which stage shows which control is game code, not data. **Tessera rule (P1):**
 > §2.1.4) is not detected, since the viewport has no picking of its figure yet, so the
 > selection figure carries 2.
 
+> **OPEN:** (implementer, `apps/client/src/pre_world.rs`, 2026-10-10; engineering choices of
+> the Tessera rule for "under the pointer") As implemented: "the figure's drawn triangles"
+> are not tested; the box is the posed figure's joints (the pose's model-space bone
+> positions) widened by 0.15 m on every side, and the ray is tested only while the viewport
+> is the UI element under the pointer (a panel over the viewport hides the figure from it).
+> The press that starts a drag over the viewport is the `SelectLeft`: with the figure under
+> the pointer it becomes the clicked figure, without it there is none; a new selected
+> character or another stage clears it. A change of `CharGen_Action` builds the figure again
+> (§2.1.4 implementer OPEN), so its idle restarts when the pointer moves onto or off it.
+
 ---
 
 <a id="s3"></a>
@@ -585,6 +626,15 @@ buttons have `UICore_Button_boolean_button` true and the `Chargen_Race_Select_Ge
    sets the GroupBox's `UICore_GroupBox_selected_button` to that sex's button (**Tessera
    rule**; the original's entry default is O85).
 
+> **OPEN:** (implementer, `apps/client/src/screens/ui.rs`, 2026-10-10) how the race icon fills
+> its part. With the part looked up as the §4.2 OPEN says (`CharGen_Race_Select_Race_Icon`),
+> the gender entries' `RaceTable_RaceSelect_Icon` images are smaller than that part, so
+> drawn as element images (`ui-layout.md` §9.6: native size, tiled over the element) each
+> row shows one and a half icons across and down, reaching into the next row. **Tessera rule
+> as implemented:** the icon is drawn once at its own size from the part's top-left corner
+> (a child field of the image's size, as for layered item icons), not tiled. Please name the
+> part that shows the icon and say whether the image is tiled, scaled or drawn once.
+
 <a id="s4-2"></a>
 ### 4.2 Class list
 
@@ -649,6 +699,13 @@ panel shows the selected nationality's `NationalityTable_Name`, `NationalityTabl
 (`NationalityTable_Naming_Guideline_Array`, `player-character.md` §6.2). The nationality's
 dye-map overrides apply to the colour controls (§6.2 there, OPEN Q14; **Tessera rule:** the
 override replaces the control's palette image).
+
+> **OPEN:** (implementer, `apps/client/src/screens/ui.rs`, 2026-10-10) the list that holds the
+> nationality entries is not named: `CharGen_Nationality_Select_Panel` is a panel, not a list
+> box, so entries added to it are refused and the list showed nothing. **Tessera rule as
+> implemented:** the entries go to the first list box below the panel (tree order); a click
+> on an entry or a selection in that list chooses the nationality, and the chosen one is the
+> list's selection. Please name the list element.
 
 <a id="s5-2"></a>
 ### 5.2 Appearance controls
@@ -847,6 +904,24 @@ Rules (BIN):
 > list before the group's controls; groups stay expanded (no expand or collapse buttons).
 > Also as implemented: a click on a lock button toggles the lock (its `highlight` state).
 > Please name the header layout's label (or another run-time way to find it).
+
+> **OPEN:** (implementer, `apps/client/src/screens/ui.rs`, 2026-10-10) how tall a group row
+> is. The template's inner list (edge modes 5, 5, 5, 5) is 11 high and holds no fixed number
+> of controls; the rule that sizes the row to its controls was not given. **Tessera rule as
+> implemented:** an expanded row is the template's height plus the summed heights of its
+> controls less the inner list's own height (the list stretches with the row); a collapsed
+> row is as high as the inner list's top, with the list hidden.
+>
+> **OPEN:** (implementer, `apps/client/src/screens/controls.rs`, 2026-10-10; an
+> implementation gap, not a spec gap) Rule 2 lets a face-layer control with
+> `AppearanceUI_MinControlValue` 0 take the value 0, and `appearance.md` §3.4 starts it at the
+> figure's own value, else the dictionary default, which is 0 for several controls of this
+> install. As implemented: the choices are the layer's option numbers at or above the minimum
+> (1 to *m*); a starting value that is not among them, 0 included, starts at the first choice.
+> Offering 0 made the Elf male's face composition exceed the decoded-image budget of
+> `tessera-mesh` (`LookLimits`, 64 MiB per compositor, 128 MiB per figure) on this install
+> (no face composed); with twice those budgets it composed. Kept as is until the budgets are
+> reviewed with the owner (memory per figure job).
 
 <a id="s5-3"></a>
 ### 5.3 Name

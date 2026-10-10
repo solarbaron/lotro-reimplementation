@@ -67,6 +67,10 @@ pub struct CharacterCatalog {
     pub assembly: Option<AssemblyVocabulary>,
     /// Script vocabulary (`None` when a required name is missing).
     pub scripts: Option<ScriptVocabulary>,
+    /// The script key labelled `Chargen` among the values of `ScriptTable_ScriptID`: the
+    /// start-up script the character screens add to their figures
+    /// (`character-screens.md` §2.1.4, CS28); `None` when the install lacks the label.
+    pub chargen_script: Option<u32>,
     /// What is missing, for the log and the HUD.
     pub problems: Vec<String>,
 }
@@ -115,6 +119,7 @@ impl CharacterCatalog {
             weenie_roles: HashMap::new(),
             assembly: None,
             scripts: None,
+            chargen_script: None,
             problems: Vec::new(),
         };
         let registry = match data.registry() {
@@ -173,6 +178,13 @@ impl CharacterCatalog {
             if let Some(k) = property_key(&data, "WeenieType", label) {
                 out.weenie_roles.insert(k, role);
             }
+        }
+        // Read by its label at run time (§2.1.4: key 0x100004AB of the script-key mapper in
+        // the reference install).
+        out.chargen_script = property_key(&data, "ScriptTable_ScriptID", "Chargen");
+        if out.chargen_script.is_none() {
+            out.problems
+                .push("script key Chargen not found by label (creation-screen stances)".into());
         }
         match AssemblyVocabulary::from_game_data(&data) {
             Ok(v) => out.assembly = Some(v),

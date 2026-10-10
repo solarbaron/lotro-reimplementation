@@ -9,8 +9,10 @@
 //!   figure path and carry the stage's `CharGen_Stage` key;
 //! - the appearance-stage figure takes its face from its stage (a composed face) and
 //!   follows a colour control at once (a new figure with another look);
-//! - the walker draws the figure alone into the viewport's external content (pixels of the
-//!   preview pass), and the full frame with the UI is captured.
+//! - the walker draws the figure into the viewport's race scene: drawn alone at the
+//!   window's size it covers a visible area, lies wholly inside the picture and (unturned)
+//!   stands on the scene's marker (§2.1.2–§2.1.4), the ray through the pointer on the figure
+//!   finds it (§2.3), and the full frame with the UI is captured.
 //!
 //! With `TESSERA_SHEET_DIR` set, the frames are written there as PNG (never committed:
 //! they show the install's art). Prints counts and keys only. Skipped (reported as passed)
@@ -22,7 +24,7 @@ mod chargen_common;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use chargen_common::{Client, game_dir};
+use chargen_common::{Client, SIZE, game_dir};
 use tessera_client::screens::controls::ControlChoices;
 use tessera_client::screens::{Action, ControlValue, Stage};
 
@@ -73,11 +75,43 @@ fn the_creation_viewport_draws_the_figure_of_the_choices() {
             c.until("the race-and-class figure", |c| {
                 c.figure_shown() && c.preview_pixels().0
             });
-            let (drawn, covered) = c.preview_pixels();
+            let f = c.framing(SIZE);
             eprintln!(
-                "race {species:#x}/{sex:#x}: race-and-class figure drawn {drawn}, {covered} pixels"
+                "race {species:#x}/{sex:#x}: race-and-class figure present {}, in frame {}, on the marker {}",
+                f.present(),
+                f.in_frame(),
+                f.on_marker()
             );
-            assert!(drawn && covered > 0, "the race-and-class figure is drawn");
+            assert!(
+                f.present() && f.in_frame() && f.on_marker(),
+                "the race-and-class figure stands framed on its marker: {f:?}"
+            );
+            // The figure under the pointer (§2.3 Tessera rule, as the selection screen
+            // finds it): the ray through the middle of its posed box meets it, the one
+            // through the viewport's corner does not.
+            let view =
+                c.ui.pre_world()
+                    .map(|p| p.screens().viewport())
+                    .expect("screens");
+            let stage = tessera_client::screens::viewport::stage_view(
+                &view,
+                tessera_client::screens::ui::RECORDED_AMBIENT,
+            )
+            .expect("a stage camera");
+            let (lo, hi) = c
+                .host
+                .walker
+                .as_ref()
+                .and_then(|w| w.preview_bounds(&stage))
+                .expect("the figure's box");
+            let (x, y) = stage.project(SIZE, (lo + hi) * 0.5).expect("in view");
+            let hit = |x: f32, y: f32| {
+                stage
+                    .ray(SIZE, x, y)
+                    .is_some_and(|(o, d)| tessera_client::walker::stage::ray_hits_box(o, d, lo, hi))
+            };
+            assert!(hit(x, y), "the pointer on the figure finds it");
+            assert!(!hit(1.0, 1.0), "the pointer in the corner does not");
             c.capture(sheet.as_ref(), &format!("chargen-raceclass-{species:02x}"));
             pictures += 1;
         }
@@ -120,13 +154,19 @@ fn the_creation_viewport_draws_the_figure_of_the_choices() {
         if face.composed() {
             composed += 1;
         }
-        let (drawn, covered) = c.preview_pixels();
+        let f = c.framing(SIZE);
         eprintln!(
-            "race {species:#x}/{sex:#x}: creation figure drawn {drawn}, {covered} pixels, {} compositors, {} edits",
+            "race {species:#x}/{sex:#x}: creation figure present {}, in frame {}, {} compositors, {} edits",
+            f.present(),
+            f.in_frame(),
             face.compositors.len(),
             face.edits
         );
-        assert!(drawn && covered > 0, "the creation figure is drawn");
+        // Turned by the turntable: whole and in frame (the marker row is checked unturned).
+        assert!(
+            f.present() && f.in_frame(),
+            "the creation figure is drawn whole in the viewport: {f:?}"
+        );
         c.capture(sheet.as_ref(), &format!("chargen-appearance-{species:02x}"));
         pictures += 1;
         // A colour control: the drawn figure follows at once (a new figure, another look).

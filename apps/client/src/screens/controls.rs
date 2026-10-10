@@ -720,8 +720,16 @@ fn control_detail<S: RecordSource>(
                 }),
                 _ => Vec::new(),
             };
+            // The figure's own value, else the property's dictionary default
+            // (`appearance.md` §3.4); a value outside the choices starts at the first.
             let own_option = own(property)
                 .and_then(int_of)
+                .or_else(|| {
+                    property
+                        .and_then(|p| reg.default_value(p))
+                        .as_ref()
+                        .and_then(int_of)
+                })
                 .and_then(|i| u32::try_from(i).ok());
             d.default = own_option
                 .filter(|o| options.contains(o))

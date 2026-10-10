@@ -71,6 +71,7 @@ fn figure(env: &Env, spec: &str, height: Option<f32>) -> FigureAsset {
         chargen_stage: None,
         chargen_action: None,
         class: None,
+        always_selectable: false,
     };
     build_figure(&env.ctx, &req, &|| false).expect("figure builds")
 }

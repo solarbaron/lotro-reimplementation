@@ -8,9 +8,10 @@
 //! camera frame and field of view of this moment ([`super::turntable::Turntable::camera`]),
 //! the figure's frame (the scene's marker, §2.1.2) and the stage figure (§2.1.4: the
 //! selected character with `CharGen_Stage` 4 and `CharGen_Action` 2 or 3; a new figure of
-//! the chosen race and gender with `CharGen_Stage` 1, `CharGen_Action` 2 and `Agent_Class`
-//! on the race-and-class stage; the same figure with `CharGen_Stage` 6 on the appearance
-//! stage). [`figure_job`] turns the figure into a request of the walker's figure path with
+//! the chosen race and gender with `CharGen_Stage` 1, `CharGen_Action` 2, `Agent_Class` and
+//! `Render_AlwaysSelectable` on the race-and-class stage; the same figure with
+//! `CharGen_Stage` 6 on the appearance stage; each runs the start-up script `Chargen`,
+//! which the walker's figure path adds). [`figure_job`] turns the figure into a request of the walker's figure path with
 //! every creation control applied (styles from the controls' own records, slider string,
 //! heights and the appearance values from which the species tables compose the face and
 //! tint hair and skin), and [`stage_view`] gives the walker the camera and the figure's
@@ -67,6 +68,9 @@ pub struct ViewportState {
     pub action: u32,
     /// The `Agent_Class` the figure carries (race-and-class and appearance stages).
     pub class: Option<u32>,
+    /// The figure is the race-and-class figure (kept on the appearance stage), created
+    /// with `Render_AlwaysSelectable` true (§2.1.4, CS28).
+    pub always_selectable: bool,
     /// The figure.
     pub figure: FigureChoice,
 }
@@ -143,6 +147,7 @@ pub fn viewport_state(model: &ScreenModel) -> ViewportState {
         stage,
         action,
         class,
+        always_selectable: model.stage() != Stage::Select,
         figure,
     }
 }
@@ -187,6 +192,7 @@ pub fn figure_job(
         chargen_stage: Some(state.stage),
         chargen_action: Some(state.action),
         class: state.class,
+        always_selectable: state.always_selectable,
     };
     let mut look = LookChoices::default();
     if let Some(d) = data.avatar(*species, *sex) {

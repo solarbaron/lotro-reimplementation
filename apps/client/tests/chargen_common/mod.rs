@@ -211,17 +211,62 @@ impl Client<'_> {
         (drawn, image)
     }
 
-    /// The viewport drawn at 320 × 360: (figure drawn, covered pixels).
+    /// Whether the viewport's figure is drawn (a small picture of the viewport).
     pub fn preview_pixels(&mut self) -> (bool, usize) {
         let (drawn, image) = self.preview_image((320, 360));
-        let covered = image
-            .data
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .filter(|p| p[3] > 0)
-            .count();
-        (drawn, covered)
+        (drawn, image.data.len() / 4)
+    }
+
+    /// Where the figure stands in the viewport drawn at `size` (the race scene left out,
+    /// so only the figure covers the black background; `character-screens.md` §2.1.2–
+    /// §2.1.4): the figure's pixel box and the row of the marker the figure stands on.
+    pub fn framing(&mut self, size: (u32, u32)) -> Framing {
+        let view = self
+            .ui
+            .pre_world()
+            .map(|p| p.screens().viewport())
+            .expect("the screens are open");
+        let stage = tessera_client::screens::viewport::stage_view(
+            &view,
+            tessera_client::screens::ui::RECORDED_AMBIENT,
+        );
+        let alone = stage.map(|s| tessera_client::walker::stage::StageView { scene: None, ..s });
+        let walker = self.host.walker.as_mut().expect("walker");
+        // The lowest joint's height above the marker.
+        let lowest = stage.and_then(|s| {
+            walker.preview_bounds(&s).map(|(lo, _)| {
+                lo.z + tessera_client::walker::PREVIEW_PICK_PAD - s.figure_position.z
+            })
+        });
+        let target = self
+            .renderer
+            .create_offscreen_target(size.0, size.1, OffscreenFormat::Rgba8Unorm)
+            .expect("target");
+        let mut frame = self.renderer.begin_offscreen_frame(&target).expect("frame");
+        let drawn = walker.draw_preview(&mut frame, alone.as_ref());
+        self.renderer.end_frame(frame).expect("end frame");
+        let image = self.renderer.read_pixels(&target).expect("read back");
+        let (w, h) = (size.0 as usize, size.1 as usize);
+        let (mut x0, mut y0, mut x1, mut y1, mut n) = (usize::MAX, usize::MAX, 0, 0, 0usize);
+        for (i, p) in image.data.as_chunks::<4>().0.iter().enumerate() {
+            if p[0].max(p[1]).max(p[2]) > 6 {
+                let (x, y) = (i % w, i / w);
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+                n += 1;
+            }
+        }
+        let marker = stage.and_then(|s| s.project(size, s.figure_position));
+        Framing {
+            drawn,
+            pixels: n,
+            bbox: (n > 0).then_some((x0, y0, x1, y1)),
+            size: (w, h),
+            marker,
+            lowest,
+        }
     }
 
     /// The whole frame with the UI, written to `sheet` as `name`.png when given.
@@ -255,5 +300,43 @@ impl Client<'_> {
             w.shutdown(&mut renderer);
         }
         rt.shutdown();
+    }
+}
+
+/// Where the figure stands in the viewport ([`Client::framing`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Framing {
+    /// The walker drew a figure.
+    pub drawn: bool,
+    /// Pixels the figure covers.
+    pub pixels: usize,
+    /// The figure's pixel box (left, top, right, bottom).
+    pub bbox: Option<(usize, usize, usize, usize)>,
+    /// The picture's size.
+    pub size: (usize, usize),
+    /// Where the marker the figure stands on appears (column, row).
+    pub marker: Option<(f32, f32)>,
+    /// The height of the figure's lowest joint above the marker, metres.
+    pub lowest: Option<f32>,
+}
+
+impl Framing {
+    /// The figure is drawn and covers a visible area (at least 0.5 % of the picture).
+    pub fn present(&self) -> bool {
+        self.drawn && self.pixels * 200 >= self.size.0 * self.size.1
+    }
+
+    /// The whole figure is inside the picture: its box touches no edge.
+    pub fn in_frame(&self) -> bool {
+        self.bbox.is_some_and(|(x0, y0, x1, y1)| {
+            x0 > 0 && y0 > 0 && x1 + 1 < self.size.0 && y1 + 1 < self.size.1
+        })
+    }
+
+    /// The figure stands on the marker: its lowest joint (a foot) lies between 0.12 m
+    /// below and 0.25 m above the marker, so it is neither sunk into the ground nor
+    /// floating (a figure standing waist-deep has its feet about half a metre below).
+    pub fn on_marker(&self) -> bool {
+        self.lowest.is_some_and(|z| (-0.12..=0.25).contains(&z))
     }
 }

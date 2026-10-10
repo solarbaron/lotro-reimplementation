@@ -118,6 +118,12 @@ pub struct Creation {
     /// Locked controls (stored indices; §5.2.2 rule 4: they start locked when their struct
     /// says so; Tessera rule: randomise skips them).
     pub locked: std::collections::BTreeSet<usize>,
+    /// Locked groups (`AppearanceUI_Group` keys; §5.2.2 group lock, Tessera rule:
+    /// randomise skips every control of a locked group).
+    pub locked_groups: std::collections::BTreeSet<u32>,
+    /// Collapsed groups (`AppearanceUI_Group` keys; §5.2.2 Tessera rule: a collapsed
+    /// group hides its controls; groups start expanded).
+    pub collapsed_groups: std::collections::BTreeSet<u32>,
     /// The name field.
     pub name: String,
 }
@@ -211,6 +217,10 @@ pub enum Action {
     FigureHover(bool),
     /// A control's lock button (§5.2.2 rule 4).
     ToggleLock(usize),
+    /// A group's lock button (§5.2.2 group template; group key).
+    ToggleGroupLock(u32),
+    /// A group's expand (false) or collapse (true) button (§5.2.2 group template).
+    CollapseGroup(u32, bool),
     /// The `GOP_AvatarUpdateVisible` check box (§2.3).
     AvatarUpdateVisible(bool),
 }
@@ -250,6 +260,11 @@ pub struct ScreenModel {
     created: Vec<CreatedCharacter>,
     figure_loading: bool,
     hover: bool,
+    /// The selection figure is the clicked figure (§2.3: a `SelectLeft` on the viewport
+    /// over it); it keeps its `CharGen_Action` while the pointer moves on or off it.
+    clicked: bool,
+    /// The pointer is on the selection figure now (the last [`Action::FigureHover`]).
+    pointer_on_figure: bool,
     /// The stage camera the turntable was last reset for (§2.1.3: setting it resets).
     camera_for: Option<CameraKey>,
 }
@@ -279,6 +294,8 @@ impl ScreenModel {
             created: Vec::new(),
             figure_loading: false,
             hover: false,
+            clicked: false,
+            pointer_on_figure: false,
             camera_for: None,
         }
     }
@@ -622,6 +639,8 @@ impl ScreenModel {
         if self.stage != stage {
             self.stage = stage;
             self.hover = false;
+            self.clicked = false;
+            self.pointer_on_figure = false;
             self.errors.clear();
             self.follow_camera();
         }
@@ -841,6 +860,8 @@ impl ScreenModel {
                     if self.selected != Some(i) {
                         self.confirm = None;
                         self.hover = false;
+                        self.clicked = false;
+                        self.pointer_on_figure = false;
                     }
                     self.selected = Some(i);
                     self.follow_camera();
@@ -951,6 +972,11 @@ impl ScreenModel {
                 self.turntable.turn_click(t, now);
             }
             Action::DragStart(x) => {
+                // The press is a `SelectLeft` on the viewport: the figure under the pointer
+                // becomes the clicked figure, or none (§2.3, CS32).
+                if self.stage == Stage::Select {
+                    self.clicked = self.pointer_on_figure;
+                }
                 self.follow_camera();
                 self.turntable.drag_start(x);
             }
@@ -962,7 +988,29 @@ impl ScreenModel {
             }
             Action::ZoomIn => self.zoom_to(1.0, now),
             Action::ZoomOut => self.zoom_to(0.0, now),
-            Action::FigureHover(on) => self.hover = on && self.stage == Stage::Select,
+            // §2.1.4, §2.3 (CS32): the figure gets `Hover` when it becomes the object under
+            // the pointer and `Idle` when it stops being it, unless it is the clicked one.
+            Action::FigureHover(on) => {
+                let on = on && self.stage == Stage::Select;
+                self.pointer_on_figure = on;
+                if !self.clicked {
+                    self.hover = on;
+                }
+            }
+            Action::ToggleGroupLock(group) => {
+                if self.stage == Stage::Appearance && !self.creation.locked_groups.remove(&group) {
+                    self.creation.locked_groups.insert(group);
+                }
+            }
+            Action::CollapseGroup(group, collapsed) => {
+                if self.stage == Stage::Appearance {
+                    if collapsed {
+                        self.creation.collapsed_groups.insert(group);
+                    } else {
+                        self.creation.collapsed_groups.remove(&group);
+                    }
+                }
+            }
             Action::ToggleLock(index) => {
                 if self.stage == Stage::Appearance
                     && self
@@ -995,8 +1043,19 @@ impl ScreenModel {
             &|c| data.chargen.palette_for(&c.control, nationality),
             sampler,
         );
-        // Locked controls keep their value (Tessera rule of §5.2.2 rule 4).
-        for i in &self.creation.locked {
+        // Locked controls, and every control of a locked group, keep their value (Tessera
+        // rules of §5.2.2).
+        let group_locked: Vec<usize> = d
+            .controls
+            .iter()
+            .filter(|c| {
+                c.control
+                    .group
+                    .is_some_and(|g| self.creation.locked_groups.contains(&g))
+            })
+            .map(|c| c.control.index)
+            .collect();
+        for i in self.creation.locked.iter().chain(&group_locked) {
             match before.values.get(i) {
                 Some(v) => {
                     self.creation.appearance.values.insert(*i, v.clone());
@@ -1088,6 +1147,8 @@ impl ScreenModel {
                         .collect()
                 })
                 .unwrap_or_default();
+            self.creation.locked_groups.clear();
+            self.creation.collapsed_groups.clear();
             self.creation.nationality = self.data.chargen.default_nationality(species);
             self.creation.name.clear();
         }

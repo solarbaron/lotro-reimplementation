@@ -91,6 +91,34 @@ pub struct SceneObject {
     pub scale: [f32; 3],
     /// The element's own draw-suppression values (they win over the object's).
     pub draw: DrawFlags,
+    /// The element's own `Render_Color` (stored bytes B, G, R, A); it wins over the
+    /// object chain's (§2.1.1 "Colour and opacity of scene objects").
+    pub colour: Option<[u8; 4]>,
+    /// The element's own `Render_Opacity`; it wins over the object chain's.
+    pub opacity: Option<f32>,
+}
+
+impl SceneObject {
+    /// The per-object tint of `material.md` §8.3 (§2.1.1, Tessera rule): R, G and B of
+    /// `Render_Color` as fractions of 255 and `Render_Opacity` as the fourth value, the
+    /// element's own values winning over `chain_colour` and `chain_opacity` (its object
+    /// chain's); white and 1 where a property is absent. The colour's alpha byte is ignored
+    /// (§2.1.1 OPEN); the opacity is clamped to [0, 1].
+    #[must_use]
+    pub fn tint(&self, chain_colour: Option<[u8; 4]>, chain_opacity: Option<f32>) -> [f32; 4] {
+        let [r, g, b] = self
+            .colour
+            .or(chain_colour)
+            .map_or([1.0; 3], |[b, g, r, _]| {
+                [r, g, b].map(|c| f32::from(c) / 255.0)
+            });
+        let a = self
+            .opacity
+            .filter(|v| v.is_finite())
+            .or(chain_opacity.filter(|v| v.is_finite()))
+            .map_or(1.0, |v| v.clamp(0.0, 1.0));
+        [r, g, b, a]
+    }
 }
 
 /// A Light element: a point light at its placement (§2.1.1 rule 2).
@@ -226,6 +254,8 @@ pub fn load_scene<S: RecordSource>(
     }
     let names = mapper_of(gd, reg, "RaceTable_Chargen_Camera");
     let scale_pid = reg.pid("Render_AdjustableScale");
+    let colour_pid = reg.pid("Render_Color");
+    let opacity_pid = reg.pid("Render_Opacity");
     let draw_pids = [
         reg.pid("Render_Draw"),
         reg.pid("Render_DrawMeshes"),
@@ -287,6 +317,15 @@ pub fn load_scene<S: RecordSource>(
                         render_draw_meshes: flag(set, draw_pids[1]),
                         never_add_to_scene: flag(set, draw_pids[2]),
                     },
+                    colour: set.zip(colour_pid).and_then(|(s, p)| match s.get(p)? {
+                        PropertyValue::Colour(c) => Some(*c),
+                        _ => None,
+                    }),
+                    opacity: set
+                        .zip(opacity_pid)
+                        .and_then(|(s, p)| s.get(p)?.as_f64())
+                        .map(|v| v as f32)
+                        .filter(|v| v.is_finite()),
                 });
             }
             Some(LIGHT_TYPE) => {
@@ -442,6 +481,32 @@ mod tests {
         // Hostile inputs stay finite.
         let (f, fov) = rig.frame(f32::NAN, f32::INFINITY);
         assert!(f.position.is_finite() && fov.is_finite());
+    }
+
+    #[test]
+    fn scene_objects_tint_by_their_own_values_first() {
+        let mut o = SceneObject {
+            object: Did(0x4700_0001),
+            frame: SceneFrame::ORIGIN,
+            scale: [1.0; 3],
+            draw: DrawFlags::default(),
+            colour: None,
+            opacity: None,
+        };
+        assert_eq!(o.tint(None, None), [1.0; 4], "white and opaque");
+        // Stored B, G, R, A: red 255, green 0, blue 51; the alpha byte is ignored.
+        assert_eq!(
+            o.tint(Some([51, 0, 255, 112]), Some(0.5)),
+            [1.0, 0.0, 0.2, 0.5]
+        );
+        o.colour = Some([0, 255, 0, 255]);
+        o.opacity = Some(2.0);
+        assert_eq!(
+            o.tint(Some([51, 0, 255, 112]), Some(0.5)),
+            [0.0, 1.0, 0.0, 1.0]
+        );
+        o.opacity = Some(f32::NAN);
+        assert_eq!(o.tint(None, Some(0.25))[3], 0.25);
     }
 
     #[test]

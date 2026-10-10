@@ -884,6 +884,7 @@ fn step_5_test_server_creation_and_looks() {
             chargen_stage: None,
             chargen_action: None,
             class: None,
+            always_selectable: false,
         };
         let choices = tessera_client::walker::characters::figure::LookChoices {
             styles: spec.styles,

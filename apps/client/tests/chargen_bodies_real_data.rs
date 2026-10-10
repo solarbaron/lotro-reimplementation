@@ -2,7 +2,9 @@
 //! Every body of the install on the creation screens (read-only; `docs/specs/
 //! character-screens.md` §2.1, §4.1, §5.2.1, §6): for each race and each of its gender
 //! entries, the race-and-class figure and the default appearance-stage figure are built,
-//! drawn in the viewport and pictured.
+//! drawn in the viewport and pictured; each keeps a whole-skeleton stance below layer 110
+//! (its `Chargen` script, §2.1.4, CSI9) and stands wholly in the window-sized viewport on
+//! the scene's marker (§2.1.2, §2.1.3).
 //!
 //! With `TESSERA_SHEET_DIR` set, the viewport pictures (`body-<species>-<sex>-<stage>.png`)
 //! and the whole frames are written there (never committed: they show the install's art).
@@ -13,7 +15,7 @@ mod chargen_common;
 
 use std::path::PathBuf;
 
-use chargen_common::{Client, game_dir};
+use chargen_common::{Client, SIZE, game_dir};
 use tessera_client::screens::{Action, Stage};
 use tessera_client::walker_host::save_png;
 
@@ -38,6 +40,7 @@ fn every_body_stands_in_the_creation_viewport() {
             .data()
             .clone();
     let mut bodies = 0usize;
+    let mut failures = Vec::new();
     for race in &data.chargen.races {
         let species = race.species();
         for g in &race.genders {
@@ -61,8 +64,33 @@ fn every_body_stands_in_the_creation_viewport() {
                 });
                 // A few frames for the pose.
                 c.run_for(std::time::Duration::from_millis(500));
-                let (drawn, image) = c.preview_image((480, 640));
+                let (drawn, image) = c.preview_image(SIZE);
                 assert!(drawn, "{species:#x}/{sex:#x} {stage}: the figure is drawn");
+                // CSI9 on Tessera's side: the figure keeps a looping clip below layer 110
+                // that drives the whole skeleton (its `Chargen` stance, §2.1.4).
+                let idle = c
+                    .host
+                    .walker
+                    .as_ref()
+                    .and_then(|w| w.preview())
+                    .map(|p| p.idle)
+                    .unwrap_or_default();
+                let stance = idle
+                    .iter()
+                    .any(|(layer, once, weights)| *layer < 110 && !once && !weights);
+                // The whole figure in the window-sized viewport, standing on the marker.
+                let f = c.framing(SIZE);
+                eprintln!(
+                    "body {species:#x}/{sex:#x} {stage}: stance {stance} ({idle:?}), present {}, in frame {}, on the marker {}",
+                    f.present(),
+                    f.in_frame(),
+                    f.on_marker()
+                );
+                if !(stance && f.present() && f.in_frame() && f.on_marker()) {
+                    failures.push(format!(
+                        "{species:#x}/{sex:#x} {stage}: stance {stance}, {f:?}"
+                    ));
+                }
                 let ((objects, skipped, parts, lights), settled) = c
                     .host
                     .walker
@@ -82,8 +110,12 @@ fn every_body_stands_in_the_creation_viewport() {
             bodies += 1;
         }
     }
-    eprintln!("{bodies} bodies drawn on both creation stages");
+    eprintln!(
+        "{bodies} bodies drawn on both creation stages, {} not standing framed on the marker",
+        failures.len()
+    );
     assert!(bodies > 0);
+    assert!(failures.is_empty(), "{failures:#?}");
     c.act(Action::Back);
     c.act(Action::Back);
     c.act(Action::Quit);

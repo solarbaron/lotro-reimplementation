@@ -667,3 +667,161 @@ fn shown_values_follow_the_model() {
     assert_eq!(button_tooltip(&ButtonRule::Ghosted(None)), None);
     screen.close(&mut ui);
 }
+
+/// The chargen layouts with the group template of §5.2.2 (CS33: label, lock, expand and
+/// collapse buttons, the inner list stretching with the row) and a nationality panel whose
+/// list is a list box below it (§5.1 OPEN, Tessera rule).
+fn layouts_with_groups() -> Vec<tessera_formats::ui_layout::UiLayout> {
+    let t = v().types;
+    let mut all = layouts();
+    let looks = all.pop().expect("the appearance layout");
+    let mut elements = looks.elements;
+    let list = edges(
+        el(
+            "CharGen_AppearanceUI_Controls_Listbox",
+            t.list_box,
+            3,
+            33,
+            250,
+            11,
+        ),
+        [5, 5, 5, 5],
+    );
+    elements.push(with(
+        el(
+            "CharGen_AppearanceUIGroupChoice_BaseField",
+            t.field,
+            0,
+            0,
+            261,
+            40,
+        ),
+        vec![
+            el("AppearanceUIGroupUIElement_Label", t.text, 16, 10, 180, 17),
+            el("AppearanceUIElement_LockButton", t.button, 208, 5, 24, 24),
+            el(
+                "AppearanceUIGroupUIElement_ButtonExpand",
+                t.button,
+                234,
+                5,
+                24,
+                24,
+            ),
+            el(
+                "AppearanceUIGroupUIElement_ButtonCollapse",
+                t.button,
+                234,
+                5,
+                24,
+                24,
+            ),
+            list,
+        ],
+    ));
+    // The nationality panel with an unnamed list box, and its entry template.
+    if let Some(root) = elements.first_mut() {
+        let panel = with(
+            el(
+                "CharGen_Nationality_Select_Panel",
+                t.field,
+                20,
+                80,
+                300,
+                400,
+            ),
+            vec![typed(0x1000_8F10, t.list_box, 10, 40, 280, 300)],
+        );
+        *root = child(root.clone(), z(panel, 0, 99));
+    }
+    elements.push(with(
+        el(
+            "CharGen_Nationality_Entry_Template",
+            t.button,
+            0,
+            0,
+            261,
+            45,
+        ),
+        vec![typed(0x1000_8F11, t.text, 10, 0, 200, 45)],
+    ));
+    all.push(layout(LOOKS, 1440, 900, elements));
+    all
+}
+
+#[test]
+fn group_rows_hold_their_controls_and_nationalities_fill_their_list() {
+    let mut data = (*synthetic_data()).clone();
+    data.group_names.insert(1, token(7).unwrap());
+    let texts = Texts([(7, "Skin")].into_iter().collect());
+    let mut ui = ui_with(env_with(layouts_with_groups()), 1440, 900);
+    let mut screen = ScreenUi::open(&mut ui, refs());
+    assert!(screen.missing.is_empty(), "{:?}", screen.missing);
+    let now = Instant::now();
+    let mut m = ScreenModel::new(std::sync::Arc::new(data), BackendKind::PlainSandbox);
+    m.handle_event(
+        &tessera_net::Event::Connected {
+            characters: vec![tessera_net::CharacterSummary { name: "Ada".into() }],
+        },
+        now,
+    );
+    m.apply(Action::New, now);
+    m.apply(Action::Continue, now);
+    assert_eq!(m.stage(), Stage::Appearance);
+    screen.sync(&mut ui, &m, &texts);
+    // One row for the group (every synthetic control is in group 1), holding the three
+    // controls in its inner list; the row is as tall as the template plus its controls
+    // less the inner list's own height (40 + 40 + 80 + 74 − 11).
+    let controls = find(&ui, "CharGen_Appearance_Controls_Listbox");
+    let rows = ui.list_entries(controls);
+    assert_eq!(rows.len(), 1, "one group row");
+    let row = rows[0];
+    assert_eq!(
+        text_below(&mut ui, row, "AppearanceUIGroupUIElement_Label"),
+        "Skin"
+    );
+    let inner = tessera_ui::game::find_below(&ui, row, id("CharGen_AppearanceUI_Controls_Listbox"))
+        .expect("inner list");
+    assert_eq!(ui.list_entries(inner).len(), 3);
+    assert_eq!(ui.layout_box(row).unwrap().h(), 40 + 40 + 80 + 74 - 11);
+    let button =
+        |ui: &Ui, label: &str| tessera_ui::game::find_below(ui, row, id(label)).expect(label);
+    assert!(!ui.is_visible(button(&ui, "AppearanceUIGroupUIElement_ButtonExpand")));
+    // Collapse: the row shrinks to the part above its list, the expand button shows.
+    let collapse = button(&ui, "AppearanceUIGroupUIElement_ButtonCollapse");
+    let a = {
+        let ev = msg(&ui, collapse, ui.vocab().msgs.button_click);
+        screen.handle_event(&mut ui, &ev, &m, 1)
+    };
+    assert_eq!(a, vec![Action::CollapseGroup(1, true)]);
+    m.apply(a[0].clone(), now);
+    screen.sync(&mut ui, &m, &texts);
+    let row = ui.list_entries(controls)[0];
+    assert_eq!(ui.layout_box(row).unwrap().h(), 33);
+    let expand =
+        tessera_ui::game::find_below(&ui, row, id("AppearanceUIGroupUIElement_ButtonExpand"))
+            .unwrap();
+    assert!(ui.is_visible(expand));
+    // The group's lock button.
+    let lock =
+        tessera_ui::game::find_below(&ui, row, id("AppearanceUIElement_LockButton")).unwrap();
+    let a = {
+        let ev = msg(&ui, lock, ui.vocab().msgs.button_click);
+        screen.handle_event(&mut ui, &ev, &m, 1)
+    };
+    assert_eq!(a, vec![Action::ToggleGroupLock(1)]);
+    // The nationality entries are in the panel's list box; a click chooses one.
+    let nat_list = tessera_ui::game::find_below(
+        &ui,
+        find(&ui, "CharGen_Nationality_Select_Panel"),
+        0x1000_8F10,
+    )
+    .unwrap();
+    let entries = ui.list_entries(nat_list);
+    assert_eq!(entries.len(), 2, "nationalities A and B");
+    let a = {
+        let ev = msg(&ui, entries[1], ui.vocab().msgs.button_click);
+        screen.handle_event(&mut ui, &ev, &m, 1)
+    };
+    assert_eq!(a, vec![Action::Nationality(NAT_B)]);
+    screen.close(&mut ui);
+}

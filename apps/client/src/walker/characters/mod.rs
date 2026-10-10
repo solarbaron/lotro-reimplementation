@@ -513,6 +513,11 @@ pub struct FigureStatus {
     pub state: FigureState,
     /// What the species tables' look gave the built figure (`None` before it is built).
     pub face: Option<figure::FaceSummary>,
+    /// The built figure's idle clips as (data layer, one-shot, partial), in animator order,
+    /// partial meaning that the clip drives only part of the skeleton (`UseBoneOpacity`
+    /// with a track weight below 1); empty before it is built (tests: the creation-stage
+    /// stance of `character-screens.md` CSI9).
+    pub idle: Vec<(u32, bool, bool)>,
 }
 
 impl CharacterLayer {
@@ -537,11 +542,31 @@ impl CharacterLayer {
             SlotState::Ready(g) => Some(g.asset.face.clone()),
             _ => None,
         };
+        let idle = match &s.state {
+            SlotState::Waiting(a, _) => Some(a),
+            SlotState::Ready(g) => Some(&g.asset),
+            _ => None,
+        }
+        .map(|a| {
+            a.clips
+                .idle
+                .iter()
+                .map(|c| {
+                    let partial = c.track_weights
+                        && c.clip
+                            .track_weights()
+                            .is_some_and(|w| w.iter().any(|x| *x < 0.999));
+                    (c.layer, c.once.is_some(), partial)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
         Some(FigureStatus {
             request: s.request.clone()?,
             look: s.look.clone(),
             state,
             face,
+            idle,
         })
     }
 
@@ -1248,6 +1273,7 @@ impl CharacterLayer {
             chargen_stage: None,
             chargen_action: None,
             class: None,
+            always_selectable: false,
         };
         let slot = (!hidden && matches!(req.body, Body::Character { .. } | Body::Object(_)))
             .then(|| self.acquire(req, look));
@@ -2029,6 +2055,65 @@ impl CharacterLayer {
         Some((centre, g.radius * scale.max_element()))
     }
 
+    /// The box of entity `id`'s figure as posed now, in the frame `place` gives for the
+    /// figure's whole-body scale: the positions of its joints (the pose's model-space bone
+    /// transforms; the reference pose before the first one) widened by `pad` metres on
+    /// every side, else its bounding sphere's box. `None` while the figure is not on the
+    /// GPU. Used to find the figure under the pointer (`character-screens.md` §2.3) and to
+    /// check the framing in tests.
+    #[must_use]
+    pub fn posed_bounds(
+        &self,
+        id: EntityId,
+        place: &dyn Fn(Vec3) -> Mat4,
+        pad: f32,
+    ) -> Option<(Vec3, Vec3)> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        let render = self.store.render(e)?;
+        let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+        else {
+            return None;
+        };
+        let scale = Vec3::from_array(g.asset.model_scale);
+        let scale = if scale.is_finite() && scale.min_element() > 0.0 {
+            scale
+        } else {
+            Vec3::ONE
+        };
+        let world = place(scale);
+        let pad = if pad.is_finite() { pad.max(0.0) } else { 0.0 };
+        let joints: Vec<Vec3> = match self
+            .store
+            .anim(e)
+            .and_then(|a| self.scheduler.pose(a.instance))
+        {
+            Some(p) => p.model.iter().map(|m| m.w_axis.truncate()).collect(),
+            None => g
+                .asset
+                .skeleton
+                .as_ref()
+                .map(|s| {
+                    s.reference_model()
+                        .iter()
+                        .map(|m| m.w_axis.truncate())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for j in joints.iter().filter(|j| j.is_finite()) {
+            let w = world.transform_point3(*j);
+            lo = lo.min(w);
+            hi = hi.max(w);
+        }
+        if lo.x <= hi.x {
+            return Some((lo - Vec3::splat(pad), hi + Vec3::splat(pad)));
+        }
+        let c = world.transform_point3(g.center);
+        let r = g.radius * scale.max_element();
+        Some((c - Vec3::splat(r), c + Vec3::splat(r)))
+    }
+
     /// Frees every GPU resource and cancels outstanding work (shutdown).
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>, objects: &mut ObjectLayer) {
         let all: Vec<Entity> = self.actors.entities().to_vec();
@@ -2194,6 +2279,7 @@ mod tests {
             chargen_stage: Some(stage),
             chargen_action: None,
             class: None,
+            always_selectable: false,
         };
         let look = LookChoices {
             appearance_values: vec![(

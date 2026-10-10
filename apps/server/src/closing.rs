@@ -11,9 +11,18 @@
 //!    the end that sent it), never replaced by a later `CONNECTION_CLOSE`;
 //! 2. else the application code and reason of the `CONNECTION_CLOSE` that ended the
 //!    connection (the server's own when it closed at once, the peer's when the peer closed
-//!    without a `Disconnect`);
+//!    without a `Disconnect`); a close of the whole endpoint with an application code (the
+//!    `SERVER_SHUTDOWN` of §12.1 step 6) counts as the server's own close with that code on
+//!    every connection it ends, although quinn reports those only as closed locally
+//!    ("Graceful shutdown" of §11.1, sixth revision);
 //! 3. else the idle timeout (no end);
 //! 4. else the transport's description of the end (no end).
+//!
+//! The fields are written as §11.1 "Fields of the cause" says: `code` (a §14.1 name,
+//! `code N`, or `-`), `reason`, `end` (`server`, `peer`, `none`) and, only when the cause
+//! is a `Disconnect`, `close`. The connection task hands `reason` and `close` to `tracing`
+//! as string values, which the `text` format writes quoted with `"`, `\` and every
+//! control character escaped and the `json` format as JSON strings.
 
 use std::fmt;
 
@@ -78,7 +87,9 @@ impl fmt::Display for QuicEnd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PeerApplication { code, .. } => write!(f, "{} from peer", code_name(*code)),
-            Self::Local => f.write_str("closed by server"),
+            // Closed locally with no application code the server recorded: the
+            // transport's description (§11.1 rule 4).
+            Self::Local => write!(f, "{}", quinn::ConnectionError::LocallyClosed),
             Self::IdleTimeout => f.write_str("idle timeout"),
             Self::Other(text) => f.write_str(text),
         }
@@ -161,10 +172,19 @@ impl CauseTracker {
     }
 
     /// The server closed the QUIC connection with `code` and `reason`. The first close
-    /// counts (quinn ignores later ones).
+    /// counts (quinn ignores later ones); the caller records only a close that took effect,
+    /// that is one made while the connection was still open.
     pub fn closed_by_server(&mut self, code: AppErrorCode, reason: &str) {
         self.local_close
             .get_or_insert_with(|| (code, reason.to_owned()));
+    }
+
+    /// The server closed its whole QUIC endpoint with `code` and `reason` (§12.1 step 6),
+    /// and this connection ended closed locally: it counts as the server's own close with
+    /// that code and reason (§11.1 "Graceful shutdown"), unless a close of the connection
+    /// itself took effect first (that one counts, as quinn ignores later closes).
+    pub fn closed_with_endpoint(&mut self, code: AppErrorCode, reason: &str) {
+        self.closed_by_server(code, reason);
     }
 
     /// The cause, once the connection ended as `end` (§11.1 order).
@@ -196,8 +216,9 @@ impl CauseTracker {
                     end: Some(End::Server),
                     close: None,
                 },
-                // Closed locally without an application code (for example the endpoint
-                // closing): the transport's description.
+                // Closed locally without an application code the server chose: the
+                // transport's description (rule 4). The endpoint close at shutdown is not
+                // this case: it is recorded by `closed_with_endpoint`.
                 None => Cause {
                     code: None,
                     reason: quinn::ConnectionError::LocallyClosed.to_string(),
@@ -341,6 +362,75 @@ mod tests {
         // A server close recorded later turns it into rule 2.
         t.closed_by_server(AppErrorCode::InternalError, "INTERNAL_ERROR");
         assert_eq!(t.finish(&QuicEnd::Local).end, Some(End::Server));
+    }
+
+    /// §14 invariant 11: a connection ended by the endpoint close of §12.1 step 6 without
+    /// a `Disconnect` gives `SERVER_SHUTDOWN` from the server (rule 2), never the
+    /// transport's local-close text.
+    #[test]
+    fn endpoint_close_without_disconnect() {
+        let mut t = CauseTracker::new();
+        t.closed_with_endpoint(AppErrorCode::ServerShutdown, "SERVER_SHUTDOWN");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(c.code_text(), "SERVER_SHUTDOWN");
+        assert_eq!(c.reason, "SERVER_SHUTDOWN");
+        assert_eq!(c.end_text(), "server");
+        assert_eq!(c.close, None);
+    }
+
+    /// The endpoint close after the server's `Disconnect(SERVER_SHUTDOWN)` (§12.1 step 5)
+    /// that the peer did not acknowledge: the cause is the `Disconnect`, and `close` reads
+    /// `SERVER_SHUTDOWN from server`.
+    #[test]
+    fn endpoint_close_after_a_disconnect() {
+        let mut t = CauseTracker::new();
+        t.disconnect_sent(AppErrorCode::ServerShutdown, "");
+        t.closed_with_endpoint(AppErrorCode::ServerShutdown, "SERVER_SHUTDOWN");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(c.code_text(), "SERVER_SHUTDOWN");
+        assert_eq!(c.reason, "");
+        assert_eq!(c.end_text(), "server");
+        assert_eq!(c.close.as_deref(), Some("SERVER_SHUTDOWN from server"));
+    }
+
+    /// A close of the connection that took effect before the endpoint close keeps its own
+    /// code (quinn ignores the later close).
+    #[test]
+    fn own_close_before_the_endpoint_close_counts() {
+        let mut t = CauseTracker::new();
+        t.closed_by_server(AppErrorCode::ProtocolViolation, "PROTOCOL_VIOLATION");
+        t.closed_with_endpoint(AppErrorCode::ServerShutdown, "SERVER_SHUTDOWN");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(c.code_text(), "PROTOCOL_VIOLATION");
+        assert_eq!(c.end_text(), "server");
+    }
+
+    /// The fallback immediate close when no `Disconnect` could be queued: the code the
+    /// server meant to send, from the server, no `close`.
+    #[test]
+    fn fallback_close_without_a_queued_disconnect() {
+        let mut t = CauseTracker::new();
+        t.closed_by_server(AppErrorCode::SlowConsumer, "SLOW_CONSUMER");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(c.code_text(), "SLOW_CONSUMER");
+        assert_eq!(c.reason, "SLOW_CONSUMER");
+        assert_eq!(c.end_text(), "server");
+        assert_eq!(c.close, None);
+    }
+
+    /// A `Disconnect` whose connection then ended closed locally with no recorded close:
+    /// `close` is the transport's description, as for any other unexplained end.
+    #[test]
+    fn disconnect_then_unexplained_local_close() {
+        let mut t = CauseTracker::new();
+        t.disconnect_sent(AppErrorCode::Kicked, "");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(
+            c.close,
+            Some(quinn::ConnectionError::LocallyClosed.to_string())
+        );
+        let c = t.finish(&QuicEnd::IdleTimeout);
+        assert_eq!(c.close.as_deref(), Some("idle timeout"));
     }
 
     #[test]

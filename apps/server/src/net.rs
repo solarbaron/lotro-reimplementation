@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tessera_protocol::codes::AppErrorCode;
@@ -58,6 +58,10 @@ pub(crate) struct NetCtx {
     per_addr: Mutex<HashMap<IpAddr, usize>>,
     handshakes_per_addr: Mutex<HashMap<IpAddr, usize>>,
     accepting: AtomicBool,
+    /// The application code and reason the server closed its QUIC endpoints with (§12.1
+    /// step 6), set before the close: a connection that then ends closed locally counts as
+    /// closed by the server with them (§11.1 "Graceful shutdown").
+    endpoint_close: OnceLock<(AppErrorCode, String)>,
 }
 
 impl NetCtx {
@@ -79,6 +83,7 @@ impl NetCtx {
             per_addr: Mutex::new(HashMap::new()),
             handshakes_per_addr: Mutex::new(HashMap::new()),
             accepting: AtomicBool::new(true),
+            endpoint_close: OnceLock::new(),
         }
     }
 
@@ -251,18 +256,33 @@ pub(crate) fn start(
                             {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
                             }
+                            // Recorded before the close, so that every connection it
+                            // ends logs it as the server's own close (§11.1).
+                            let code = AppErrorCode::ServerShutdown;
+                            let (code, reason) = ctx
+                                .endpoint_close
+                                .get_or_init(|| (code, code.name().to_owned()));
                             for ep in &endpoints {
                                 ep.close(
-                                    quinn::VarInt::from_u32(u32::from(
-                                        AppErrorCode::ServerShutdown.to_u16(),
-                                    )),
-                                    b"SERVER_SHUTDOWN",
+                                    quinn::VarInt::from_u32(u32::from(code.to_u16())),
+                                    reason.as_bytes(),
                                 );
                             }
                             for ep in &endpoints {
                                 let _ =
                                     tokio::time::timeout(Duration::from_secs(2), ep.wait_idle())
                                         .await;
+                            }
+                            // Let the connection tasks the close ended write their closed
+                            // lines (each waits at most WRITER_DRAIN for its writers) before
+                            // the runtime stops (§14 invariant 10).
+                            let deadline = tokio::time::Instant::now()
+                                + WRITER_DRAIN
+                                + Duration::from_millis(100);
+                            while ctx.stats.net_tasks.load(Ordering::Acquire) > 0
+                                && tokio::time::Instant::now() < deadline
+                            {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
                             }
                             let _ = done.send(());
                             return;
@@ -371,6 +391,19 @@ struct Task {
 impl Task {
     fn now(&self) -> u64 {
         self.ctx.clock.now()
+    }
+
+    /// Closes the QUIC connection with `code` and `reason`, recording the close for the
+    /// closed line only when it takes effect: once the connection is closed (by the peer,
+    /// an earlier close or the endpoint close) quinn ignores further closes (§11.1).
+    fn close_conn(&mut self, code: AppErrorCode, reason: &str) {
+        if self.conn.close_reason().is_none() {
+            self.cause.closed_by_server(code, reason);
+        }
+        self.conn.close(
+            quinn::VarInt::from_u32(u32::from(code.to_u16())),
+            reason.as_bytes(),
+        );
     }
 
     fn report_closed(&mut self) {
@@ -553,13 +586,7 @@ impl Task {
                         let _ = t.send(CtlWrite::Finish);
                     }
                 }
-                Transmit::Close { code, reason } => {
-                    self.cause.closed_by_server(code, &reason);
-                    self.conn.close(
-                        quinn::VarInt::from_u32(u32::from(code.to_u16())),
-                        reason.as_bytes(),
-                    );
-                }
+                Transmit::Close { code, reason } => self.close_conn(code, &reason),
             }
         }
     }
@@ -805,8 +832,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             e = conn.closed() => break e,
             () = shared.killed() => {
                 let code = shared.kill_requested().unwrap_or(AppErrorCode::InternalError);
-                task.cause.closed_by_server(code, code.name());
-                conn.close(quinn::VarInt::from_u32(u32::from(code.to_u16())), code.name().as_bytes());
+                task.close_conn(code, code.name());
                 task.report_closed();
                 break conn.closed().await;
             }
@@ -896,6 +922,14 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         }
         task.flush();
     };
+    // A local end after the endpoint close of §12.1 step 6 is the server's close with
+    // that code and reason, unless the connection's own close took effect first (§11.1
+    // "Graceful shutdown").
+    if matches!(end, quinn::ConnectionError::LocallyClosed)
+        && let Some((code, reason)) = ctx.endpoint_close.get()
+    {
+        task.cause.closed_with_endpoint(*code, reason);
+    }
     let cause = task.cause.finish(&QuicEnd::of(&end));
     let inbound = task.core.connection_closed(connection_end(&end));
     task.forward(inbound);
@@ -937,10 +971,14 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         duration_ms,
         bytes_in,
         bytes_out,
+        // `code` and `end` come from fixed sets and are written plain; `reason` and `close`
+        // can carry text the peer chose, so they are string values: the `text` format
+        // quotes them with `"`, `\` and every control character escaped, the `json`
+        // format writes JSON strings (§11.1 "Fields of the cause").
         code = %cause.code_text(),
-        reason = ?cause.reason,
+        reason = cause.reason.as_str(),
         end = %cause.end_text(),
-        close = cause.close.as_deref().map(tracing::field::display),
+        close = cause.close.as_deref(),
         "connection closed"
     );
 }

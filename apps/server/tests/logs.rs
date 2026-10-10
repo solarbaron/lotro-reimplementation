@@ -399,12 +399,20 @@ fn hello_message() -> Message {
     })
 }
 
-/// §11.1 (fifth revision, 2026-10-10), §15.3: the closed line's code and reason record
-/// the cause of the end, in the stated order, for each closing path the server takes: a
-/// peer's `Disconnect` (logout), a peer's close without `Disconnect`, a server
+/// The reason phrase of a peer's close that tries to end the field and imitate others.
+const HOSTILE_REASON: &[u8] = b"a\"b\\c\nend=server close=\"x\"";
+
+/// §11.1 (sixth revision, 2026-10-10), §14 invariant 11: the closed line's `code`,
+/// `reason`, `end` and `close` record the cause of the end, in the stated order, for each
+/// closing path the server takes: a peer's `Disconnect` after `Hello` (logout), a peer's
+/// close without `Disconnect` (a defined code, and an undefined one with a reason phrase
+/// that tries to end the field), a peer's `Disconnect` before `Hello`, a server
 /// `Disconnect` acknowledged by the peer and one whose linger passed (both
-/// `SERVER_FULL`), and an immediate close on a protocol violation. The idle timeout and the
-/// transport's description are covered by the unit tests of `closing.rs`.
+/// `SERVER_FULL`), and an immediate close on a protocol violation. `reason` and `close`
+/// are quoted and escaped, `code` and `end` plain. The idle timeout, the fallback close
+/// without a queued `Disconnect` and the transport's description are covered by the unit
+/// tests of `closing.rs`; the endpoint close at shutdown by
+/// `closed_line_records_the_endpoint_close_at_shutdown`.
 #[test]
 fn closed_line_records_the_cause_of_the_end() {
     let tmp = tempfile::tempdir().unwrap();
@@ -443,6 +451,30 @@ fn closed_line_records_the_cause_of_the_end() {
         e.conn.close(0x0Du32.into(), b"client crashed");
         e.endpoint.wait_idle().await;
         out.push(("peer close", closed_line(&rx, &mut lines, &local(&e)).await));
+        // 2b. The same with a code §14.1 does not define and a hostile reason phrase.
+        let mut f = RawClient::connect(addr, fp).await;
+        f.hello().await;
+        f.conn.close(0x1_0000u32.into(), HOSTILE_REASON);
+        f.endpoint.wait_idle().await;
+        out.push((
+            "peer close, odd code",
+            closed_line(&rx, &mut lines, &local(&f)).await,
+        ));
+        // 2c. A Disconnect before Hello: a protocol violation, closed at once by the server.
+        let mut g = RawClient::connect(addr, fp).await;
+        g.send(&Message::Disconnect(Disconnect {
+            code: AppErrorCode::NoError,
+            text: "early".into(),
+        }))
+        .await;
+        assert_eq!(
+            g.closed_code(WAIT).await,
+            Some(u64::from(AppErrorCode::ProtocolViolation.to_u16()))
+        );
+        out.push((
+            "early disconnect",
+            closed_line(&rx, &mut lines, &local(&g)).await,
+        ));
         // A holds the one place.
         let mut a = RawClient::connect(addr, fp).await;
         a.hello().await;
@@ -488,7 +520,7 @@ fn closed_line_records_the_cause_of_the_end() {
             "code=NO_ERROR",
             "reason=\"bye\"",
             "end=peer",
-            Some("close=NO_ERROR from server"),
+            Some("close=\"NO_ERROR from server\""),
         ),
         (
             "peer close",
@@ -498,18 +530,32 @@ fn closed_line_records_the_cause_of_the_end() {
             None,
         ),
         (
+            "peer close, odd code",
+            "code=code 65536",
+            r#"reason="a\"b\\c\nend=server close=\"x\"" end=peer"#,
+            "end=peer",
+            None,
+        ),
+        (
+            "early disconnect",
+            "code=PROTOCOL_VIOLATION",
+            "reason=",
+            "end=server",
+            None,
+        ),
+        (
             "full, acknowledged",
             "code=SERVER_FULL",
             "reason=\"\"",
             "end=server",
-            Some("close=NO_ERROR from peer"),
+            Some("close=\"NO_ERROR from peer\""),
         ),
         (
             "full, linger",
             "code=SERVER_FULL",
             "reason=\"\"",
             "end=server",
-            Some("close=SERVER_FULL from server"),
+            Some("close=\"SERVER_FULL from server\""),
         ),
         (
             "violation",
@@ -526,9 +572,197 @@ fn closed_line_records_the_cause_of_the_end() {
         }
         match close {
             Some(c) => assert!(line.contains(c), "{name}: {c} missing: {line}"),
-            None => assert!(!line.contains("close="), "{name}: close field: {line}"),
+            // The reason may itself contain the text " close=" (quoted, so it is no field).
+            None => assert!(
+                !line.replace(reason, "").contains(" close="),
+                "{name}: close field: {line}"
+            ),
+        }
+        assert!(!line.contains('\n'), "{name}: one line: {line}");
+    }
+}
+
+/// Starts `run` on `port` with `extra` configuration and returns the child, the lines so
+/// far, the line channel, the pinned fingerprint and the address.
+fn start_server(
+    dir: &Path,
+    extra: &str,
+    port: u16,
+) -> (
+    Child,
+    Vec<String>,
+    Receiver<String>,
+    Fingerprint,
+    std::net::SocketAddr,
+) {
+    write_config(dir, extra);
+    let mut cmd = bin();
+    cmd.arg("--data-dir")
+        .arg(dir)
+        .args(["run", "--listen", &format!("127.0.0.1:{port}")]);
+    let (child, lines, rx) = start(&mut cmd);
+    let fp_line = lines.iter().find(|l| l.contains("sha256:")).unwrap();
+    let at = fp_line.find("sha256:").unwrap();
+    let fp: Fingerprint = fp_line[at..at + 71].parse().unwrap();
+    let addr = format!("127.0.0.1:{port}").parse().unwrap();
+    (child, lines, rx, fp, addr)
+}
+
+/// SIGTERM from a blocking task, so the clients of `rt` keep running (and stay connected)
+/// while the server shuts down; returns the exit status and the remaining lines.
+async fn terminate_async(child: Child, rx: Receiver<String>) -> (Option<i32>, Vec<String>) {
+    tokio::task::spawn_blocking(move || terminate(child, &rx))
+        .await
+        .unwrap()
+}
+
+/// §11.1 "Graceful shutdown" (sixth revision), §14 invariant 11, §15.3: a connection that
+/// the endpoint close of §12.1 step 6 ends is logged as closed by the server with
+/// `SERVER_SHUTDOWN`, never with the transport's local-close text: without a `Disconnect`
+/// (a connection refused for a full server that has not sent `Hello`, which the step-5
+/// message does not reach) under rule 2, and after the step-5 `Disconnect` that the peer
+/// does not acknowledge with `close` = `SERVER_SHUTDOWN from server`.
+#[test]
+fn closed_line_records_the_endpoint_close_at_shutdown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("data");
+    let (child, lines, rx, fp, addr) =
+        start_server(&dir, "[limits]\nmax_connections = 1\n", port(6));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = |c: &RawClient| c.endpoint.local_addr().unwrap().to_string();
+    let (code, rest, a_addr, b_addr) = rt.block_on(async {
+        // A holds the one place and is told SERVER_SHUTDOWN; it never answers.
+        let mut a = RawClient::connect(addr, fp).await;
+        a.hello().await;
+        // B is past the handshake but refused (no place) and silent: no Disconnect.
+        let b = RawClient::connect(addr, fp).await;
+        let (code, rest) = terminate_async(child, rx).await;
+        let (a_addr, b_addr) = (local(&a), local(&b));
+        drop((a, b));
+        (code, rest, a_addr, b_addr)
+    });
+    assert_eq!(code, Some(0));
+    let all: Vec<String> = lines
+        .into_iter()
+        .chain(rest)
+        .map(|l| strip_ansi(&l))
+        .collect();
+    let find = |client: &str| {
+        all.iter()
+            .find(|l| l.contains("connection closed") && l.contains(client))
+            .unwrap_or_else(|| panic!("no closed line for {client}: {all:?}"))
+            .clone()
+    };
+    let a = find(&a_addr);
+    for part in [
+        "code=SERVER_SHUTDOWN",
+        "reason=\"\"",
+        "end=server",
+        "close=\"SERVER_SHUTDOWN from server\"",
+    ] {
+        assert!(a.contains(part), "disconnected: {part} missing: {a}");
+    }
+    let b = find(&b_addr);
+    for part in [
+        "code=SERVER_SHUTDOWN",
+        "reason=\"SERVER_SHUTDOWN\"",
+        "end=server",
+    ] {
+        assert!(b.contains(part), "no disconnect: {part} missing: {b}");
+    }
+    assert!(!b.contains(" close="), "no disconnect: close field: {b}");
+    // Never the transport's generic local-close text, as cause or as `close`.
+    let local_text = quinn::ConnectionError::LocallyClosed.to_string();
+    for l in [&a, &b] {
+        for field in ["reason", "close"] {
+            let bad = format!("{field}={local_text:?}");
+            assert!(!l.contains(&bad), "transport text: {l}");
         }
     }
+}
+
+/// §11.1 "Fields of the cause": in the `json` format every field of the cause is a JSON
+/// string holding the value itself (no quotes of the text format inside), with a hostile
+/// reason phrase escaped by JSON; `close` is absent unless the cause is a `Disconnect`.
+#[test]
+fn closed_line_cause_fields_in_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("data");
+    let (child, mut lines, rx, fp, addr) = start_server(
+        &dir,
+        "[limits]\nmax_connections = 1\n[log]\nformat = \"json\"\n",
+        port(7),
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = |c: &RawClient| c.endpoint.local_addr().unwrap().to_string();
+    let (logout, hostile, shutdown, code) = rt.block_on(async {
+        let mut d = RawClient::connect(addr, fp).await;
+        d.hello().await;
+        d.send(&Message::Disconnect(Disconnect {
+            code: AppErrorCode::NoError,
+            text: "bye".into(),
+        }))
+        .await;
+        assert!(d.closed_code(WAIT).await.is_some());
+        let logout = closed_line(&rx, &mut lines, &local(&d)).await;
+        let mut e = RawClient::connect(addr, fp).await;
+        e.hello().await;
+        e.conn.close(0x1_0000u32.into(), HOSTILE_REASON);
+        e.endpoint.wait_idle().await;
+        let hostile = closed_line(&rx, &mut lines, &local(&e)).await;
+        // A holds the place; B is refused and silent until the endpoint close.
+        let mut a = RawClient::connect(addr, fp).await;
+        a.hello().await;
+        let b = RawClient::connect(addr, fp).await;
+        let b_addr = local(&b);
+        let (code, rest) = terminate_async(child, rx).await;
+        drop((a, b));
+        let shutdown = rest
+            .into_iter()
+            .find(|l| l.contains("connection closed") && l.contains(&b_addr))
+            .unwrap_or_else(|| panic!("no closed line for {b_addr}"));
+        (logout, hostile, shutdown, code)
+    });
+    assert_eq!(code, Some(0));
+    for part in [
+        r#""code":"NO_ERROR""#,
+        r#""reason":"bye""#,
+        r#""end":"peer""#,
+        r#""close":"NO_ERROR from server""#,
+    ] {
+        assert!(logout.contains(part), "logout: {part} missing: {logout}");
+    }
+    for part in [
+        r#""code":"code 65536""#,
+        r#""reason":"a\"b\\c\nend=server close=\"x\"""#,
+        r#""end":"peer""#,
+    ] {
+        assert!(hostile.contains(part), "hostile: {part} missing: {hostile}");
+    }
+    assert!(
+        !hostile.contains(r#""close":"#),
+        "hostile: close field: {hostile}"
+    );
+    for part in [
+        r#""code":"SERVER_SHUTDOWN""#,
+        r#""reason":"SERVER_SHUTDOWN""#,
+        r#""end":"server""#,
+    ] {
+        assert!(
+            shutdown.contains(part),
+            "shutdown: {part} missing: {shutdown}"
+        );
+    }
+    assert!(
+        !shutdown.contains(r#""close":"#),
+        "shutdown: close field: {shutdown}"
+    );
 }
 
 /// The line without terminal colour sequences (ESC `[` … final letter).

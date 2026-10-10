@@ -24,7 +24,7 @@ use tessera_protocol::Message;
 use tessera_protocol::codes::AppErrorCode;
 use tessera_protocol::frame::parse_frame_length;
 use tessera_protocol::limits::FRAME_LENGTH_FIELD;
-use tessera_protocol::message::{Hello, MoveInput};
+use tessera_protocol::message::{Disconnect, Hello, MoveInput};
 use tessera_protocol::server::{ServerEvent, ServerParams, ServerSession, ServerState};
 use tessera_protocol::session::{ConnectionEnd, PeerDatagrams, StreamEnd, StreamRef, Transmit};
 
@@ -177,6 +177,13 @@ impl ConnectionCore {
             self.session.state(),
             ServerState::CharacterSelect | ServerState::InWorld
         )
+    }
+
+    /// The client's `Disconnect` the session acted on, if any (`test-server.md` §11.1, the
+    /// cause of the end).
+    #[must_use]
+    pub fn peer_disconnect(&self) -> Option<&Disconnect> {
+        self.session.peer_disconnect()
     }
 
     /// Messages dropped under §13.2.

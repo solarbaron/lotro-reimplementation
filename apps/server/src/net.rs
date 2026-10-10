@@ -18,12 +18,13 @@ use std::time::Duration;
 use tessera_protocol::codes::AppErrorCode;
 use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec};
 use tessera_protocol::limits::{CONTROL_QUEUE_GRACE, HANDSHAKE_TIMEOUT};
-use tessera_protocol::message::Channel;
+use tessera_protocol::message::{Channel, Message};
 use tessera_protocol::server::{ServerEvent, ServerParams};
 use tessera_protocol::session::{ConnectionEnd, StreamEnd, StreamRef, Transmit};
 use tessera_protocol::transport::{ServerIdentity, peer_datagrams, server_endpoint};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
+use crate::closing::{CauseTracker, QuicEnd};
 use crate::config::Config;
 use crate::conn::{ConnectionCore, Inbound};
 use crate::error::ServerError;
@@ -363,6 +364,8 @@ struct Task {
     /// The control and unidirectional stream writers; awaited before the "connection
     /// closed" line so that it carries every byte they handed to QUIC (§11.1).
     writers: Vec<tokio::task::JoinHandle<()>>,
+    /// What the "connection closed" line's cause is chosen from (§11.1).
+    cause: CauseTracker,
 }
 
 impl Task {
@@ -456,9 +459,21 @@ impl Task {
                 break;
             }
             let inbound = self.core.decode_control(now, budget);
+            self.note_peer_disconnect();
             self.forward(inbound);
         }
         self.update_pause(now);
+    }
+
+    /// Records the peer's `Disconnect` once the session acted on it, before anything the
+    /// session queued meanwhile is sent (§11.1: the first `Disconnect` sent or received
+    /// is the cause of the end).
+    fn note_peer_disconnect(&mut self) {
+        if !self.cause.has_disconnect()
+            && let Some(d) = self.core.peer_disconnect()
+        {
+            self.cause.disconnect_received(d.code, &d.text);
+        }
     }
 
     fn update_pause(&mut self, now: u64) {
@@ -497,6 +512,9 @@ impl Task {
                                         .is_some_and(|t| t.send(CtlWrite::Data(b)).is_ok());
                                     if ok {
                                         self.shared.control_unsent.fetch_add(n, Ordering::Relaxed);
+                                        if let Message::Disconnect(d) = &m {
+                                            self.cause.disconnect_sent(d.code, &d.text);
+                                        }
                                     }
                                     continue;
                                 }
@@ -536,6 +554,7 @@ impl Task {
                     }
                 }
                 Transmit::Close { code, reason } => {
+                    self.cause.closed_by_server(code, &reason);
                     self.conn.close(
                         quinn::VarInt::from_u32(u32::from(code.to_u16())),
                         reason.as_bytes(),
@@ -748,6 +767,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         paused_since: None,
         slow_reported: false,
         writers: Vec::new(),
+        cause: CauseTracker::new(),
     };
     if admitted
         && ctx
@@ -785,6 +805,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
             e = conn.closed() => break e,
             () = shared.killed() => {
                 let code = shared.kill_requested().unwrap_or(AppErrorCode::InternalError);
+                task.cause.closed_by_server(code, code.name());
                 conn.close(quinn::VarInt::from_u32(u32::from(code.to_u16())), code.name().as_bytes());
                 task.report_closed();
                 break conn.closed().await;
@@ -875,6 +896,7 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         }
         task.flush();
     };
+    let cause = task.cause.finish(&QuicEnd::of(&end));
     let inbound = task.core.connection_closed(connection_end(&end));
     task.forward(inbound);
     task.report_closed();
@@ -915,7 +937,10 @@ async fn connection_task(ctx: Arc<NetCtx>, incoming: quinn::Incoming) {
         duration_ms,
         bytes_in,
         bytes_out,
-        reason = %end,
+        code = %cause.code_text(),
+        reason = ?cause.reason,
+        end = %cause.end_text(),
+        close = cause.close.as_deref().map(tracing::field::display),
         "connection closed"
     );
 }

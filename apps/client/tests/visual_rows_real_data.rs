@@ -16,7 +16,7 @@
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
 //! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7, [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle |
 //!
-//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs (`TESSERA_WATER_ROWS=W12,W13` limits the rows) |
+//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 implementer OPEN; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
 //!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
 //! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed. The images of
@@ -765,6 +765,44 @@ enum WaterExpect {
     Routed,
     /// Only the generic expectations (below).
     Any,
+    /// The generic expectations, and landscape water that stays see-through beyond the near
+    /// field: the mean luminance of a band at the screen centre (water about 27 m away at
+    /// W17) is at least [`SEE_THROUGH_RATIO`] × that of a band near the bottom edge (water
+    /// within 15 m, where the `water.md` §8.6.4 step 3 tint is 0). Checklist row W17: the
+    /// bed seen through the river, not a near-black band past 15 m.
+    SeeThrough,
+}
+
+/// Smallest centre-to-bottom luminance ratio of [`WaterExpect::SeeThrough`].
+const SEE_THROUGH_RATIO: f64 = 0.45;
+
+/// Mean luminance (0–1, Rec. 709 weights on the stored values) of the rectangle of `png`
+/// between the fractions `y` (top, bottom) and `x` (left, right) of its size.
+fn band_luma(png_path: &std::path::Path, y: (f64, f64), x: (f64, f64)) -> f64 {
+    let file = std::fs::File::open(png_path).expect("open the screenshot");
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .expect("png header");
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("png size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    let (w, h) = (info.width as usize, info.height as usize);
+    let channels = info.color_type.samples();
+    assert_eq!(info.bit_depth, png::BitDepth::Eight, "8-bit screenshot");
+    let span = |a: f64, n: usize| ((a * n as f64) as usize).min(n);
+    let (mut sum, mut count) = (0.0f64, 0usize);
+    for row in span(y.0, h)..span(y.1, h) {
+        for col in span(x.0, w)..span(x.1, w) {
+            let i = (row * w + col) * channels;
+            if let Some(px) = buf.get(i..i + 3) {
+                sum += (0.2126 * f64::from(px[0])
+                    + 0.7152 * f64::from(px[1])
+                    + 0.0722 * f64::from(px[2]))
+                    / 255.0;
+                count += 1;
+            }
+        }
+    }
+    sum / count.max(1) as f64
 }
 
 /// The cameras of the water rows of `m4-5-visual.md` §4.4 (W7 lava, W8 placed water) and
@@ -780,7 +818,7 @@ const WATER_CAMERAS: [(RowCamera, WaterExpect); 10] = [
     (RowCamera { id: "W14", region: 1, block: 0xE243, eye: [100.50, 78.00, 318.50], heading: 180.0, pitch: -20.0, t: 0.5, extra: &[], target: Some([100.52, 63.84, 314.06]) }, WaterExpect::Routed),
     (RowCamera { id: "W15", region: 1, block: 0x4D7F, eye: [105.30, 60.00, 473.00], heading: 0.0, pitch: -12.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
     (RowCamera { id: "W16", region: 1, block: 0x9832, eye: [50.00, 80.00, 407.50], heading: 271.0, pitch: -10.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
-    (RowCamera { id: "W17", region: 5, block: 0x6758, eye: [70.00, 65.00, 396.00], heading: 64.5, pitch: -8.0, t: 0.5, extra: &[], target: None }, WaterExpect::Any),
+    (RowCamera { id: "W17", region: 5, block: 0x6758, eye: [70.00, 65.00, 396.00], heading: 64.5, pitch: -8.0, t: 0.5, extra: &[], target: None }, WaterExpect::SeeThrough),
 ];
 
 /// The water rows' cameras frame their targets (no install needed).
@@ -817,7 +855,8 @@ fn water_row_cameras_frame_their_targets() {
 /// last frame shows no own-program record (`material.md` §11.6) on the generic path, no
 /// animated texture matrix drawn still and no second colour layer left out of a record that
 /// `material.md` §10.3 covers; at W8 and W12–W14 the placed water, fountain and puddle
-/// surfaces must be drawn by their own programs. Skipped unless both `TESSERA_VISUAL_SHOTS`
+/// surfaces must be drawn by their own programs, and at W17 the river must stay see-through
+/// beyond the near field ([`WaterExpect::SeeThrough`]). Skipped unless both `TESSERA_VISUAL_SHOTS`
 /// and `TESSERA_GAME_DIR` are set, or when no GPU adapter exists.
 #[test]
 fn water_rows_render() {
@@ -930,6 +969,21 @@ fn water_rows_render() {
         }
         if *expect == WaterExpect::Routed && f.own_program_routed == 0 {
             fails.push("no surface drawn by its own program".to_owned());
+        }
+        if *expect == WaterExpect::SeeThrough {
+            let centre = band_luma(&png, (0.48, 0.56), (0.3, 0.7));
+            let near = band_luma(&png, (0.88, 0.96), (0.3, 0.7));
+            eprintln!(
+                "{}: luminance centre {centre:.3}, bottom {near:.3}, ratio {:.2}",
+                c.id,
+                centre / near.max(1e-6)
+            );
+            if centre < SEE_THROUGH_RATIO * near {
+                fails.push(format!(
+                    "water dark past the near field (centre {centre:.3} < {SEE_THROUGH_RATIO} \
+                     x bottom {near:.3})"
+                ));
+            }
         }
         report(c.id, &fails, &mut failed, "settled, no water fallback");
     }

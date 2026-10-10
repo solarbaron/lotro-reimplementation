@@ -111,6 +111,20 @@ pub struct WaterFlowParams {
     pub rotation: f32,
 }
 
+/// The Fresnel form of a flow-map draw (`water.md` §8.6.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FresnelForm {
+    /// `water.md` §8.4 step 5: *f* = bias + (1 − bias) × (1 − |*v* · *n*|)^exponent. The
+    /// plain families, and the flow-map record without layers 1 and 2 (0x2B0005EC, whose
+    /// own programs use this form, §8.6.4).
+    #[default]
+    Biased,
+    /// `water.md` §8.6.4 step 4 (0x2B0007FD): *f* = bias × (1 − |*v* · *n*|)^(1 / exponent),
+    /// the bias multiplies and the exponent is inverted. Read only by
+    /// [`WaterFamily::Flow`]; the other families always use [`FresnelForm::Biased`].
+    Scaled,
+}
+
 /// The water parameters of a surface (`water.md` §8.2: the `c_Water…` material
 /// parameters the 0x2B0000A8 programs read). [`Default`] gives that record's shader
 /// defaults; a surface's materials override them. Colours are stored-value RGB.
@@ -140,6 +154,8 @@ pub struct WaterParams {
     pub fresnel_bias: f32,
     /// 1051 `c_WaterFresnelExponent`.
     pub fresnel_exponent: f32,
+    /// How 1050 and 1051 combine ([`FresnelForm`]; flow-map draws only).
+    pub fresnel_form: FresnelForm,
     /// 1054 `c_WaterSpecularPower`.
     pub specular_power: f32,
     /// 1066 `c_WaterOverbrightAmount` (lava: the brightness).
@@ -177,6 +193,7 @@ impl Default for WaterParams {
             refraction_distortion: 0.04,
             fresnel_bias: 0.1,
             fresnel_exponent: 2.0,
+            fresnel_form: FresnelForm::Biased,
             specular_power: 80.0,
             overbright: 1.0,
             fake_specular_threshold: 0.25,
@@ -366,6 +383,9 @@ pub struct DistortionParams {
     pub two_sided: bool,
     /// Depth write.
     pub depth_write: bool,
+    /// The output (colour and alpha) is multiplied by the vertex colour (`water.md` §8.5.5
+    /// step 5: 0x2B00063E).
+    pub vertex_color: bool,
 }
 
 impl Default for DistortionParams {
@@ -383,6 +403,7 @@ impl Default for DistortionParams {
             alpha_test: None,
             two_sided: false,
             depth_write: false,
+            vertex_color: false,
         }
     }
 }
@@ -510,6 +531,11 @@ const TEXTURE_BITS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 mod fl {
     pub const WORLD_UV: u32 = 1;
     pub const ALPHA_TEST: u32 = 2;
+    /// Flow-map water with the 0x2B0007FD Fresnel ([`super::FresnelForm::Scaled`]).
+    pub const FRESNEL_SCALED: u32 = 4;
+    /// The liquid's output is multiplied by the vertex colour (0x2B00063E, `water.md`
+    /// §8.5.5 step 5).
+    pub const VERTEX_COLOR: u32 = 8;
 }
 
 /// Per-quad instance data (must match `QuadIn` in `water.wgsl`).
@@ -576,6 +602,11 @@ impl WaterUniform {
             WaterFamily::Flow => fam::FLOW,
             WaterFamily::Lava => fam::LAVA,
         };
+        let flags = if p.family == WaterFamily::Flow && p.fresnel_form == FresnelForm::Scaled {
+            self::fl::FRESNEL_SCALED
+        } else {
+            0
+        };
         let fl = &p.flow;
         Self {
             model: Mat4::IDENTITY.to_cols_array_2d(),
@@ -627,7 +658,7 @@ impl WaterUniform {
                 0.0,
                 0.0,
             ],
-            kind: [family, present, srgb, 0],
+            kind: [family, present, srgb, flags],
             flow0: [
                 f(fl.foam_offset[0], 0.0),
                 f(fl.foam_offset[1], 0.0),
@@ -678,6 +709,9 @@ impl WaterUniform {
         }
         if d.alpha_test.is_some() {
             flags |= fl::ALPHA_TEST;
+        }
+        if d.vertex_color {
+            flags |= fl::VERTEX_COLOR;
         }
         self.kind[3] = flags;
         // Waves only for the unlit records (§8.5.5 step 2).
@@ -1376,9 +1410,11 @@ fn wrap_pi(s: f32) -> f32 {
     s - tau * ((s + std::f32::consts::PI) / tau).floor()
 }
 
-/// CPU twin of the Fresnel factor of `water.md` §8.4 step 5 for |*v* · *n*| = `v_dot_n`,
-/// with the parameters as the pipeline uploads them (non-finite values replaced by the
-/// defaults, the exponent clamped to 0–4096) and 0⁰ = 1.
+/// CPU twin of the Fresnel factor for |*v* · *n*| = `v_dot_n`, with the parameters as the
+/// pipeline uploads them (non-finite values replaced by the defaults, the exponent clamped
+/// to 0–4096) and 0⁰ = 1: `water.md` §8.4 step 5, or for a flow-map draw with
+/// [`FresnelForm::Scaled`] §8.6.4 step 4 (bias × (1 − |*v* · *n*|)^(1 / exponent), 0 for
+/// an exponent of 0).
 #[must_use]
 pub fn fresnel(params: &WaterParams, v_dot_n: f32) -> f32 {
     let d = WaterParams::default();
@@ -1386,6 +1422,18 @@ pub fn fresnel(params: &WaterParams, v_dot_n: f32) -> f32 {
     let bias = f(params.fresnel_bias, d.fresnel_bias);
     let e = f(params.fresnel_exponent, d.fresnel_exponent).clamp(0.0, MAX_WATER_POWER);
     let x = f(1.0 - v_dot_n.abs(), 0.0).clamp(0.0, 1.0);
+    if params.family == WaterFamily::Flow && params.fresnel_form == FresnelForm::Scaled {
+        let inv = if e > 0.0 { 1.0 / e } else { 0.0 };
+        let p = if inv <= 0.0 {
+            1.0
+        } else if x <= 0.0 {
+            0.0
+        } else {
+            x.powf(inv)
+        };
+        // The shader's flow Fresnel: an exponent of 0 gives inv 0 and x⁰ = 1.
+        return bias * p;
+    }
     let p = if e <= 0.0 {
         1.0
     } else if x <= 0.0 {
@@ -1554,6 +1602,53 @@ mod tests {
             );
             assert!((w.sin() - s.sin()).abs() < 1e-3);
         }
+    }
+
+    /// `water.md` §8.6.4: flow-map water with [`FresnelForm::Scaled`] (0x2B0007FD) multiplies
+    /// by the bias and inverts the exponent; with [`FresnelForm::Biased`] (0x2B0005EC, its own
+    /// programs) it is the §8.4 step 5 form; the form is ignored outside the flow family.
+    #[test]
+    fn flow_fresnel_forms() {
+        let flow = |form| WaterParams {
+            family: WaterFamily::Flow,
+            fresnel_bias: 0.01,
+            fresnel_exponent: 2.0,
+            fresnel_form: form,
+            ..WaterParams::default()
+        };
+        let scaled = flow(FresnelForm::Scaled);
+        let biased = flow(FresnelForm::Biased);
+        // |v . n| = 0.75: x = 0.25.
+        assert!((fresnel(&scaled, 0.75) - 0.01 * 0.5).abs() < 1e-6);
+        assert!((fresnel(&biased, 0.75) - (0.01 + 0.99 * 0.0625)).abs() < 1e-6);
+        // Grazing: the bias alone (scaled) against 1 (biased).
+        assert!((fresnel(&scaled, 0.0) - 0.01).abs() < 1e-6);
+        assert!((fresnel(&biased, 0.0) - 1.0).abs() < 1e-6);
+        // Straight down: 0 against the bias.
+        assert_eq!(fresnel(&scaled, 1.0), 0.0);
+        assert!((fresnel(&biased, 1.0) - 0.01).abs() < 1e-6);
+        // Exponent 0: x^(1/0) is taken as x^0 = 1, never inf or NaN.
+        let zero = WaterParams {
+            fresnel_exponent: 0.0,
+            ..scaled
+        };
+        assert!((fresnel(&zero, 0.5) - 0.01).abs() < 1e-6);
+        assert!(
+            fresnel(
+                &WaterParams {
+                    fresnel_exponent: f32::NAN,
+                    ..scaled
+                },
+                0.3
+            )
+            .is_finite()
+        );
+        // Outside the flow family the form does not apply.
+        let plain = WaterParams {
+            family: WaterFamily::Plain,
+            ..scaled
+        };
+        assert!((fresnel(&plain, 0.0) - 1.0).abs() < 1e-6);
     }
 
     #[test]

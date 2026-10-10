@@ -74,6 +74,11 @@ const T_EMISSIVE: u32 = 64u;
 const FL_WORLD_UV: u32 = 1u;
 // The liquid's alpha test is on.
 const FL_ALPHA_TEST: u32 = 2u;
+// Flow-map water with the 0x2B0007FD Fresnel of §8.6.4 step 4 (else §8.4 step 5, the form of
+// 0x2B0005EC's own programs).
+const FL_FRESNEL_SCALED: u32 = 4u;
+// The liquid's output is multiplied by the vertex colour (0x2B00063E, §8.5.5 step 5).
+const FL_VERTEX_COLOR: u32 = 8u;
 
 @group(1) @binding(0) var<uniform> water: Water;
 @group(1) @binding(1) var t_normal: texture_2d<f32>;
@@ -123,6 +128,8 @@ struct WaterOut {
     @location(5) normal: vec3<f32>,
     @location(6) tangent: vec3<f32>,
     @location(7) binormal: vec3<f32>,
+    // The mesh's vertex colour (white on landscape quads).
+    @location(8) color: vec4<f32>,
 };
 
 const PI: f32 = 3.14159265358979;
@@ -201,6 +208,7 @@ fn vs_water(@builtin(vertex_index) vi: u32, q: QuadIn) -> WaterOut {
     out.normal = vec3<f32>(0.0, 0.0, 1.0);
     out.tangent = vec3<f32>(1.0, 0.0, 0.0);
     out.binormal = vec3<f32>(0.0, 1.0, 0.0);
+    out.color = vec4<f32>(1.0);
     return out;
 }
 
@@ -226,6 +234,7 @@ fn vs_water_mesh(v: MeshIn) -> WaterOut {
     out.normal = frame_normalize(m3 * v.normal.xyz, vec3<f32>(0.0, 0.0, 1.0));
     out.tangent = m3 * v.tangent.xyz * select(1.0, -1.0, v.tangent.w < 0.0);
     out.binormal = m3 * v.binormal.xyz;
+    out.color = v.color;
     return out;
 }
 
@@ -431,7 +440,8 @@ fn flow_phases(in: WaterOut, flow_texel: vec4<f32>, noise_texel: vec4<f32>) -> P
 
 // Flow-map water: the normal of §8.6.2 (layers 1 and 2 when the record has them) and the
 // colour of the §8.6.4 OpenGL list with the reflection replaced by the refraction sample,
-// alpha 1 (Tessera rule of §8.6.4).
+// alpha 1 (Tessera rule of §8.6.4), with each record's own Fresnel form (implementer OPEN
+// in §8.6.4: 0x2B0007FD step 4, 0x2B0005EC §8.4 step 5).
 fn shade_flow(in: WaterOut) -> vec3<f32> {
     let t = frame.eye.w;
     let flow_texel = stored(textureSample(t_flow, s_clamp, in.uv), T_FLOW);
@@ -479,13 +489,20 @@ fn shade_flow(in: WaterOut) -> vec3<f32> {
     let dist = length(to_eye);
     let wt = clamp(0.1 * dist - 0.5, 0.0, 1.0) * water.misc2.x;
     let tinted = fr + wt * (lc * lc * water.fog_color.rgb - fr);
-    // 4. Fresnel f = 1050 x max(1 - |v . N|, 0)^(1 / 1051).
+    // 4. Fresnel: 0x2B0007FD f = 1050 x max(1 - |v . N|, 0)^(1 / 1051); 0x2B0005EC
+    // f = 1050 + (1 - 1050)(1 - |v . N|)^1051 (§8.4 step 5).
     let v = frame_normalize(to_eye, vec3<f32>(0.0, 0.0, 1.0));
-    var inv = 0.0;
-    if (water.misc1.x > 0.0) {
-        inv = 1.0 / water.misc1.x;
+    let x = max(1.0 - abs(dot(v, n)), 0.0);
+    var f = 0.0;
+    if ((water.kind.w & FL_FRESNEL_SCALED) != 0u) {
+        var inv = 0.0;
+        if (water.misc1.x > 0.0) {
+            inv = 1.0 / water.misc1.x;
+        }
+        f = water.misc0.w * water_pow(x, inv);
+    } else {
+        f = water.misc0.w + (1.0 - water.misc0.w) * water_pow(x, water.misc1.x);
     }
-    let f = water.misc0.w * water_pow(max(1.0 - abs(dot(v, n)), 0.0), inv);
     // 5. Colour and specular.
     let h = frame_normalize(v - light.travel, n);
     var color = mix(tinted, r, f) * water.water_color.rgb * water.misc1.z
@@ -646,8 +663,14 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         }
         return vec4<f32>(frame_apply_fog(2.0 * texel.rgb * sum, in.fog.x), alpha);
     }
-    // 5. Unlit: colour x material colour x 1066, fogged.
-    return vec4<f32>(frame_apply_fog(texel.rgb * m.rgb * water.misc1.z, in.fog.x), alpha);
+    // 5. Unlit: colour x material colour x 1066 (x the vertex colour, RGBA, in 0x2B00063E),
+    // fogged.
+    var vc = vec4<f32>(1.0);
+    if ((water.kind.w & FL_VERTEX_COLOR) != 0u) {
+        vc = in.color;
+    }
+    return vec4<f32>(frame_apply_fog(texel.rgb * m.rgb * water.misc1.z * vc.rgb, in.fog.x),
+        alpha * vc.a);
 }
 
 // Opaque families (plain, plain on UV, older bump, flow map, lava): alpha 1, written with

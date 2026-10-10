@@ -23,7 +23,7 @@ use tessera_material::{
 };
 use tessera_render::{
     DistortionParams, LiquidShading, MirrorParams, TextureId, UvTransform, WaterFamily,
-    WaterFlowParams, WaterParams, WaterTextures,
+    WaterFlowParams, WaterFresnelForm as FresnelForm, WaterParams, WaterTextures,
 };
 
 use super::geometry::{OWN_TEXTURES, texture_matrices_at};
@@ -155,17 +155,22 @@ fn rgb(c: [f32; 4]) -> [f32; 3] {
 /// - older bump water: 1055 and 1056 for the layer coordinates of §8.5.6, drawn by §8.4 with
 ///   `WaterColor` white and the refraction tinted by `c_WaterDeepColor` (Tessera rule there);
 /// - flow-map water: 1057 and 1058 as the phase rates and 1063 as the scale (layer 0), and
-///   layers 1 and 2 only for the records that have them (§8.6.2, §8.6.4 Tessera rule).
+///   layers 1 and 2 only for the records that have them (§8.6.2, §8.6.4 Tessera rule); the
+///   record with layers (0x2B0007FD) takes the Fresnel of §8.6.4 step 4, the one without
+///   (0x2B0005EC) its own programs' form, §8.4 step 5 (implementer OPEN in §8.6.4).
 #[must_use]
 pub fn water_params(m: &WaterMaterial) -> WaterParams {
     let p = &m.params;
-    let (family, layers) = match m.family {
-        MaterialFamily::Plain => (WaterFamily::Plain, 3),
-        MaterialFamily::PlainUv => (WaterFamily::PlainUv, 3),
-        MaterialFamily::OlderBump => (WaterFamily::OlderBump, 3),
-        MaterialFamily::Flow { normal_layers } => {
-            (WaterFamily::Flow, if normal_layers { 3 } else { 1 })
-        }
+    let (family, layers, fresnel_form) = match m.family {
+        MaterialFamily::Plain => (WaterFamily::Plain, 3, FresnelForm::Biased),
+        MaterialFamily::PlainUv => (WaterFamily::PlainUv, 3, FresnelForm::Biased),
+        MaterialFamily::OlderBump => (WaterFamily::OlderBump, 3, FresnelForm::Biased),
+        MaterialFamily::Flow {
+            normal_layers: true,
+        } => (WaterFamily::Flow, 3, FresnelForm::Scaled),
+        MaterialFamily::Flow {
+            normal_layers: false,
+        } => (WaterFamily::Flow, 1, FresnelForm::Biased),
     };
     let bump = family == WaterFamily::OlderBump;
     let f = &m.flow;
@@ -186,6 +191,7 @@ pub fn water_params(m: &WaterMaterial) -> WaterParams {
         refraction_distortion: p.refraction_distortion,
         fresnel_bias: p.fresnel_bias,
         fresnel_exponent: p.fresnel_exponent,
+        fresnel_form,
         specular_power: p.specular_power,
         overbright: p.overbright,
         fake_specular_threshold: p.fake_specular_threshold,
@@ -263,6 +269,7 @@ pub fn distortion_params(d: &DistortionMaterial) -> DistortionParams {
         alpha_test: d.alpha_test,
         two_sided: d.two_sided,
         depth_write: d.depth_write,
+        vertex_color: d.vertex_color,
     }
 }
 
@@ -579,10 +586,20 @@ mod tests {
         assert_eq!(p.normal_layers, 3);
         assert_eq!(p.normal_speed[0], [1.0, 1.0]);
         assert_eq!(p.wave_amplitude, 0.0);
+        assert_eq!(
+            p.fresnel_form,
+            FresnelForm::Scaled,
+            "0x2B0007FD: §8.6.4 step 4"
+        );
         let one = water_params(&water(MaterialFamily::Flow {
             normal_layers: false,
         }));
         assert_eq!(one.normal_layers, 1);
+        assert_eq!(
+            one.fresnel_form,
+            FresnelForm::Biased,
+            "0x2B0005EC: its own programs' §8.4 step 5 form"
+        );
     }
 
     /// §8.5.6 Tessera rule: older bump water is drawn white with the deep colour as the

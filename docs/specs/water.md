@@ -1129,6 +1129,21 @@ colour is the reflection × the diffuse. With 1100 = 0 the reflection is not dis
 1106 = 0 the Fresnel normal is (0, 0, 1). The Tessera rule above applies to all nine; on the
 opaque mirrors it gives a flat fog-tinted surface until a reflection pass exists.
 
+> **OPEN (implementer, 2026-10-10; checklist row W13 of `m4-5-visual.md` §4.8, for the spec
+> writer or the owner):** the puddle object 0x470015E4 draws mesh 0x0600183D, a single flat
+> 2 × 2 quad (17.4 m across at scale 8.7) whose centre lies 0.23 m above the ground. Where the
+> terrain under it rises above the quad, the depth test hides the quad, so Tessera shows the
+> polygon where quad and terrain intersect (hard edges, one soft corner where the diffuse
+> alpha's rounded edge is visible) instead of the texture's soft outline that row W13
+> expects. The shape is the same at every mesh detail level and through the generic and the
+> mirror drawing, so it is not the §8.5.4 formula. Steps 1–5 give depth write on and back
+> faces culled but say nothing about the depth test or a depth offset. Question: does the
+> original also clip puddle quads against the terrain, or does it keep them visible some
+> other way, for example a depth bias from `Render_DepthBias_Type` on the puddle's SED or
+> object (`decals.md` §6.5 and its OPEN (c), not implemented in Tessera), the depth test off
+> for this record, or placing or projecting the quad onto the ground? Tessera draws them as
+> stated (depth test on, no bias) until answered.
+
 <a id="s8-5-5"></a>
 #### 8.5.5 Liquid-distortion records (W32)
 
@@ -1150,6 +1165,12 @@ and `LiquidDiffuseTexture` on slot 3000) and 0x2B0007D0 (lit; samplers `Distorti
    alpha (× vertex colour, RGBA, in 0x2B00063E); the alpha test of the program discards at or
    below the threshold. 0x2B0007D0 lights the distorted colour like any lit `ColorAndOpacity`
    surface (`lighting.md` §5).
+
+   > **OPEN (implementer, 2026-10-10):** the spec gives no interface rule that tells
+   > 0x2B00063E apart; Tessera recognises the vertex-colour record by its DID, as it does
+   > 0x2B000442 for step 1. Tessera multiplies colour and alpha by the vertex colour after the
+   > alpha test, which reads the texel alpha alone (which alpha the program tests is not
+   > stated).
 
 Example: the gate waterfall 0x31003228 (0x2B0004B5) has texture matrix 0 scale (0.3, 0.2) and
 V translation mode 2 `w[6]` −0.001; speeds (0.005, −0.1), (0.015, −0.2), (−0.01, −0.2); scales
@@ -1306,6 +1327,21 @@ and 2 for 0x2B0007FD (its Direct3D 10/11 form) and steps 1–6 only for 0x2B0005
 layers 1 and 2), and the colour of the OpenGL list above with the reflection replaced by the
 refraction sample (§8.4 Tessera rule), alpha 1. Never apply §8.3's scroll formula to 1057 and 1058 of these
 records.
+
+> **OPEN (implementer, 2026-10-10, `tessera-render` water pipeline; checklist row W17 of
+> `m4-5-visual.md` §4.8):** the Tessera rule above gives both records "the colour of the
+> OpenGL list", whose step 4 is the Fresnel of 0x2B0007FD (bias × (1 − |*v* · *N*|)^(1 / exponent)),
+> while the paragraph on 0x2B0005EC states that its own programs use the §8.4 step 5 form
+> (bias + (1 − bias) × (1 − |*v* · *N*|)^exponent). Applied literally to the river surface
+> 0x310066D5 (Fresnel bias 0.01) the multiplied form keeps *f* ≤ 0.01, so beyond about 15 m
+> the step 3 tint (fog amount 1) pulls the whole river to *L*꜀² × `WaterFogColor`, a
+> near-black band, where row W17 expects the bed seen through the water with reflection
+> rising toward grazing angles. **Tessera (implementer choice until answered):** each record
+> keeps its own Fresnel form (0x2B0007FD step 4; 0x2B0005EC §8.4 step 5, told apart by
+> whether the record declares layers 1 and 2), the rest of the OpenGL list (refraction,
+> *L*꜀, tint, colour, specular, fog) unchanged for both. Spec writer: confirm this reading of
+> the Tessera rule, or state the colour of 0x2B0005EC without a depth texture (its own depth
+> tint needs one) another way.
 
 <a id="s8-6-5"></a>
 #### 8.6.5 Lava: 0x2B000810 (added 2026-10-09, third revision; W40, W41)

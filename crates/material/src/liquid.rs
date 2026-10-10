@@ -42,6 +42,11 @@ pub mod mirror_ids {
 /// Tessera recognises it by DID (implementer OPEN in `water.md` §14).
 pub const LIQUID_WORLD_RECORDS: [u32; 1] = [0x2B00_0442];
 
+/// The liquid-distortion records whose output is multiplied by the vertex colour, RGBA
+/// (`water.md` §8.5.5 step 5: 0x2B00063E). The spec gives no interface rule for it; Tessera
+/// recognises it by DID like [`LIQUID_WORLD_RECORDS`].
+pub const LIQUID_VERTEX_COLOR_RECORDS: [u32; 1] = [0x2B00_063E];
+
 const WHITE: [f32; 4] = [1.0; 4];
 
 fn colour4(m: &ResolvedMaterial, id: u32, d: [f32; 4]) -> [f32; 4] {
@@ -172,6 +177,9 @@ pub struct DistortionMaterial {
     pub two_sided: bool,
     /// Depth write (`material.md` §11.3).
     pub depth_write: bool,
+    /// The output (colour and alpha) is multiplied by the vertex colour
+    /// ([`LIQUID_VERTEX_COLOR_RECORDS`]).
+    pub vertex_color: bool,
 }
 
 impl DistortionMaterial {
@@ -220,6 +228,7 @@ impl DistortionMaterial {
                 .map(|a| curve_finite(a.threshold)),
             two_sided: material.features.two_sided,
             depth_write: material.features.blend.depth_write,
+            vertex_color: LIQUID_VERTEX_COLOR_RECORDS.contains(&material.shader.did.0),
         })
     }
 

@@ -246,10 +246,10 @@ pub use ui::{
     UiRotation, UiSource, UiStats, UiViewMode,
 };
 pub use water::{
-    DistortionParams, LiquidMeshDraw, LiquidShading, MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS,
-    MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily,
-    WaterFlowParams, WaterParams, WaterQuad, WaterTextures, fresnel as water_fresnel, water_fade,
-    wave_height as water_wave_height,
+    DistortionParams, FresnelForm as WaterFresnelForm, LiquidMeshDraw, LiquidShading,
+    MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES,
+    MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily, WaterFlowParams, WaterParams, WaterQuad,
+    WaterTextures, fresnel as water_fresnel, water_fade, wave_height as water_wave_height,
 };
 
 /// Re-export of the math library used in the public API.

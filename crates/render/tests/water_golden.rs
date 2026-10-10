@@ -838,6 +838,18 @@ fn scene_px(
     lighting: FrameLighting,
     add: impl FnOnce(&mut tessera_render::Pass),
 ) -> Result<([u8; 4], tessera_render::FrameStats), RenderError> {
+    scene_px_from(r, floor_rgb, lighting, Vec3::new(2.0, 2.0, 100.0), add)
+}
+
+/// [`scene_px`] with the eye (the shading's view vector; the projection stays top-down) at
+/// `eye`.
+fn scene_px_from(
+    r: &mut Renderer<'static>,
+    floor_rgb: [f32; 3],
+    lighting: FrameLighting,
+    eye: Vec3,
+    add: impl FnOnce(&mut tessera_render::Pass),
+) -> Result<([u8; 4], tessera_render::FrameStats), RenderError> {
     let floor_mesh = r.upload_mesh(&floor(-1.0))?;
     let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
     let mut frame = r.begin_offscreen_frame(&target)?;
@@ -848,7 +860,7 @@ fn scene_px(
                 view_proj: top_down(),
             },
         )
-        .eye(Vec3::new(2.0, 2.0, 100.0))
+        .eye(eye)
         .clear([0.0, 0.0, 0.0, 1.0])
         .frame_lighting(lighting)
         .mesh(
@@ -873,6 +885,100 @@ fn scene_px(
         r.read_pixels(&target)?.pixel(8, 8).unwrap_or_default(),
         stats,
     ))
+}
+
+/// `water.md` §8.6.4 with the implementer OPEN there: flow-map water seen obliquely from
+/// 31.6 m (eye 30 m south and 10 m above the centre, |*v* · *N*| = 0.316), fog amount 1 and a
+/// black fog colour, so the tinted refraction is black and the colour is *f* × the floor. The
+/// 0x2B0005EC form (§8.4 step 5) with bias 0.01 and exponent 2 gives *f* = 0.473 and shows the
+/// floor; the 0x2B0007FD form (step 4) gives 0.0083 (black), as checklist row W17 found.
+#[test]
+fn flow_fresnel_form_per_record() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.8, 0.4, 0.2];
+    for (form, f) in [
+        (
+            tessera_render::WaterFresnelForm::Biased,
+            0.01 + 0.99 * 0.684f32.powi(2),
+        ),
+        (
+            tessera_render::WaterFresnelForm::Scaled,
+            0.01 * 0.684f32.sqrt(),
+        ),
+    ] {
+        let p = WaterParams {
+            family: tessera_render::WaterFamily::Flow,
+            normal_speed: [[1.0, 1.0], [0.0; 2], [0.0; 2]],
+            normal_scale: [10.0, 1.0, 1.0],
+            normal_layers: 1,
+            fresnel_bias: 0.01,
+            fresnel_exponent: 2.0,
+            fresnel_form: form,
+            fog_amount: 1.0,
+            fog_color: [0.0; 3],
+            specular_color: [0.0; 3],
+            ..WaterParams::default()
+        };
+        let (px, _) = scene_px_from(
+            &mut r,
+            floor_rgb,
+            no_sun(2.0),
+            Vec3::new(2.0, 2.0 - 30.0, 10.0),
+            |pass| {
+                pass.water(WaterDraw::new(quad(), None, p));
+            },
+        )?;
+        let want = floor_rgb.map(|c| c * f);
+        assert!(close(px, want), "{form:?}: {px:?} vs {want:?}");
+    }
+    Ok(())
+}
+
+/// `water.md` §8.5.5 step 5: the unlit liquid of 0x2B00063E multiplies colour and alpha by
+/// the vertex colour; the other liquids ignore it.
+#[test]
+fn liquid_vertex_colour() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor_rgb = [0.2, 0.4, 0.6];
+    let mut mesh = floor_mesh_with_uv(0.0);
+    mesh.colors = Some(vec![[0.5, 1.0, 0.25, 0.5]; 4]);
+    let plane = r.upload_mesh(&mesh)?;
+    let texel = solid(&mut r, [255, 255, 255, 255])?;
+    for (vertex_color, want) in [
+        // 0.5 x (0.5, 1, 0.25) + 0.5 x floor.
+        (true, [0.35, 0.7, 0.425]),
+        // Opaque white.
+        (false, [1.0, 1.0, 1.0]),
+    ] {
+        let liquid = tessera_render::DistortionParams {
+            vertex_color,
+            ..tessera_render::DistortionParams::default()
+        };
+        let (px, _) = scene_px(&mut r, floor_rgb, no_sun(1.0), |p| {
+            p.liquid_mesh(tessera_render::LiquidMeshDraw {
+                mesh: plane,
+                submesh: None,
+                transform: Mat4::IDENTITY,
+                shading: tessera_render::LiquidShading::Distortion(liquid),
+                normal_map: None,
+                textures: tessera_render::WaterTextures {
+                    color: [Some(texel), None],
+                    ..tessera_render::WaterTextures::default()
+                },
+                light_object: None,
+            });
+        })?;
+        assert!(
+            close(px, want),
+            "vertex colour {vertex_color}: {px:?} vs {want:?}"
+        );
+    }
+    r.destroy_mesh(plane);
+    Ok(())
 }
 
 fn no_sun(time: f32) -> FrameLighting {

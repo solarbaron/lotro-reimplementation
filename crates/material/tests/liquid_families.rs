@@ -463,6 +463,7 @@ fn distortion_material_reads_texture_matrix_0() {
         panic!("distortion expected");
     };
     assert!(!d.world_coordinates);
+    assert!(!d.vertex_color, "only 0x2B00063E reads the vertex colour");
     assert_eq!(d.speed[0], [0.005, -0.1]);
     assert_eq!(d.distortion, 1.0);
     assert_eq!(d.overbright, 1.15);
@@ -471,6 +472,31 @@ fn distortion_material_reads_texture_matrix_0() {
     assert_eq!(d.normal_map, Some(Did(0x4100_0030)));
     assert_eq!(d.diffuse, Some(Did(0x4100_0031)));
     assert!(d.all_finite());
+}
+
+/// `water.md` §8.5.5 step 5: the output of 0x2B00063E is multiplied by the vertex colour;
+/// 0x2B000442 reads *B* (step 1).
+#[test]
+fn distortion_records_by_did() {
+    let decls = [
+        float(1057, 0.01),
+        float(1048, 0.5),
+        texture(3011, 0x4100_0030, 0),
+        texture(3000, 0x4100_0031, 1),
+    ];
+    let samplers = [("LiquidNormalTexture", 0), ("LiquidDiffuseTexture", 0)];
+    for (did, vertex_color, world) in [
+        (0x2B00_063E, true, false),
+        (0x2B00_0442, false, true),
+        (0x2B00_04B5, false, false),
+    ] {
+        let lib = one_surface(did, &decls, &samplers, &[]);
+        let Some(LiquidSurface::Distortion(d)) = evaluate(&lib, 0.0) else {
+            panic!("{did:#x}: distortion expected");
+        };
+        assert_eq!(d.vertex_color, vertex_color, "{did:#x}");
+        assert_eq!(d.world_coordinates, world, "{did:#x}");
+    }
 }
 
 /// `material.md` §10.3: the second colour layer and its combine rule per record.

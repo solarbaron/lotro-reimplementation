@@ -28,7 +28,7 @@ use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::Did;
 use tessera_material::interface::ProgramFamily;
 use tessera_material::{CurveStates, LibraryConfig, LiquidSurface, MaterialLibrary};
-use tessera_render::WaterFamily;
+use tessera_render::{WaterFamily, WaterFresnelForm};
 use tessera_world::water::WaterSystem;
 use tessera_world::{BundleOptions, WorldContext};
 
@@ -258,6 +258,7 @@ fn water_materials_as_drawn() {
         (0x3100_66D5, &[]),
     ];
     let mut fastest_flow = 0.0f32;
+    let mut flow_forms = 0usize;
     for &s in &table_surfaces {
         let Ok(m) = lib.resolve_surface(s) else {
             continue;
@@ -283,6 +284,27 @@ fn water_materials_as_drawn() {
         );
         if p.family == WaterFamily::Flow {
             fastest_flow = rates.iter().flatten().fold(fastest_flow, |a, &r| a.max(r));
+            // §8.6.4 (implementer OPEN there): each flow-map record keeps its own Fresnel
+            // form, 0x2B0007FD step 4 (with layers 1 and 2), 0x2B0005EC §8.4 step 5.
+            let want = match w.shader.0 {
+                0x2B00_07FD => Some(WaterFresnelForm::Scaled),
+                0x2B00_05EC => Some(WaterFresnelForm::Biased),
+                _ => None,
+            };
+            if let Some(want) = want {
+                assert_eq!(p.fresnel_form, want, "{s}: Fresnel form of {}", w.shader);
+                flow_forms += 1;
+            }
+            if s.0 == 0x3100_66D5 {
+                // Checklist row W17: the river's Fresnel rises toward grazing angles (8° below
+                // the horizon: |v . n| = sin 8°) instead of staying at its bias.
+                let grazing = tessera_render::water_fresnel(&p, 8f32.to_radians().sin());
+                eprintln!("  {s}: Fresnel at 8° below the horizon {grazing:.3}");
+                assert!(
+                    grazing > 0.3,
+                    "{s}: Fresnel {grazing} at a grazing view (checklist row W17)"
+                );
+            }
         }
         if let Some((_, want)) = expected.iter().find(|(d, _)| *d == s.0) {
             let got: Vec<f32> = rates.iter().flatten().copied().collect();
@@ -293,6 +315,8 @@ fn water_materials_as_drawn() {
         }
     }
     eprintln!("fastest drawn flow-map layer: {fastest_flow:.2} m/s");
+    eprintln!("flow-map surfaces with their record's Fresnel form: {flow_forms}");
+    assert!(flow_forms > 0, "no flow-map surface in the water tables");
     for (d, _) in &expected {
         assert!(
             table_surfaces.contains(&Did(*d)),

@@ -2868,6 +2868,14 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > the §3.5 Decision on `Physics_InWorld`, the data gives the client's result, which is not
 > "every body keeps its own texture": see the table in §3.5.
 
+> **OPEN:** (implementation, 2026-10-10, §3.5, engineering choice recorded for review) A
+> figure registers its composed face as a run-time texture while its materials are planned,
+> and requests it only when it is first drawn. So that registrations of other figures in
+> between (a crowd) cannot forget it, a registered image is held until its first request in
+> a pending pool of its own (at most 4,096 images and 1 GiB of RGBA8; past that the oldest
+> pending image is forgotten with a warning), and only then joins the least-recently-used
+> pool of 256 images and 256 MiB. Please confirm or correct.
+
 > **OPEN:** (implementation, 2026-10-10, §3.5 and `script-table.md` §5.1) The dictionary
 > names of the fields of kinds 33 (`CompositorName`, `ColorName`, `Color`), 44
 > (`CompositorName`, `LayerName`, `ImageNumber`, `Opacity`) and 53 (`CompositorName`,

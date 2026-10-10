@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Render surfaces end to end: `Surface::parse` + `to_rgba8` on arbitrary records, on
-//! arbitrary bytes wrapped as an embedded JPEG (code 500), and the DXT block decoder.
+//! arbitrary bytes wrapped as an embedded JPEG (code 500), and the DXT block decoder. A
+//! surface that decodes must decode to `Surface::decoded_size`, the size read before
+//! decoding.
 //!
 //! Run with a memory cap so that decompression bombs count as failures, e.g.
 //! `cargo fuzz run formats_surface -- -malloc_limit_mb=512 -rss_limit_mb=1024`.
@@ -15,11 +17,14 @@ fn render(record: &[u8]) {
     let Ok(s) = Surface::parse(record) else {
         return;
     };
+    // The size read without decoding (callers check and charge it before decoding).
+    let declared = s.decoded_size();
     if let Ok(img) = s.to_rgba8() {
         assert_eq!(
             img.pixels.len() as u64,
             u64::from(img.width) * u64::from(img.height) * 4
         );
+        assert_eq!(declared, Some((img.width, img.height)));
         if !s.is_jpeg() {
             assert_eq!((img.width, img.height), (s.width, s.height));
         }

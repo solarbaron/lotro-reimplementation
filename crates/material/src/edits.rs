@@ -13,10 +13,12 @@
 //! [`RuntimeTextures`]: an identity (a digest of the inputs that decide the image) maps to
 //! one DID with prefix [`RUNTIME_TEXTURE_PREFIX`], which [`crate::MaterialLibrary::texture`]
 //! answers from the registry instead of the archives. Equal identities share one DID, so
-//! figures with the same face share one texture. The registry is bounded
-//! ([`RuntimeTextures::MAX_ENTRIES`], [`RuntimeTextures::MAX_BYTES`]); the least recently
-//! registered or requested entries are forgotten first (a texture already uploaded stays on
-//! the GPU; a later request for a forgotten DID fails like a missing texture). DIDs are
+//! figures with the same face share one texture. The registry is bounded: an image waits,
+//! pinned, until its first request (within [`RuntimeTextures::MAX_PENDING`] and
+//! [`RuntimeTextures::MAX_PENDING_BYTES`]), then joins the requested images
+//! ([`RuntimeTextures::MAX_ENTRIES`], [`RuntimeTextures::MAX_BYTES`]), of which the least
+//! recently registered or requested are forgotten first (a texture already uploaded stays
+//! on the GPU; a later request for a forgotten DID fails like a missing texture). DIDs are
 //! handed out in sequence and never reissued for another identity until 2^24 − 1 further
 //! registrations have passed, so a texture cache keyed by DID never shows an old image
 //! under a new identity.
@@ -157,42 +159,113 @@ pub fn figure_edits(
 pub const COMPOSED_TEXTURE_SLOT: u32 = 3000;
 
 /// Registry of run-time textures (composed face images).
+///
+/// Entries live in two pools. A registered image waits in the **pending** pool until its
+/// first request ([`RuntimeTextures::get`]): a figure registers its face while its
+/// materials are planned and requests the texture only later, when it is first drawn, so
+/// pending entries are not displaced by other figures' registrations in between (a crowd
+/// registers hundreds of faces in one burst). The pending pool has its own, larger bounds
+/// ([`RuntimeTextures::MAX_PENDING`], [`RuntimeTextures::MAX_PENDING_BYTES`]) for figures
+/// that are dropped or never drawn; only past them is the oldest pending entry forgotten.
+/// A requested entry moves to the **requested** pool, bounded by
+/// [`RuntimeTextures::MAX_ENTRIES`] and [`RuntimeTextures::MAX_BYTES`], least recently
+/// registered or requested first.
 #[derive(Debug, Default)]
 pub struct RuntimeTextures {
     inner: Mutex<Registry>,
 }
 
+#[derive(Debug)]
+struct Entry {
+    identity: u64,
+    image: Arc<RgbaImage>,
+    /// Registered and not requested since.
+    pending: bool,
+}
+
+/// One pool's eviction order and pixel bytes.
 #[derive(Debug, Default)]
-struct Registry {
-    by_did: HashMap<Did, (u64, Arc<RgbaImage>)>,
-    by_identity: HashMap<u64, Did>,
+struct Pool {
     /// DIDs, least recently registered or requested first.
     order: VecDeque<Did>,
     bytes: usize,
+}
+
+impl Pool {
+    fn remove(&mut self, did: Did) {
+        if let Some(pos) = self.order.iter().position(|d| *d == did) {
+            self.order.remove(pos);
+        }
+    }
+
+    /// Moves `did` to the back of the eviction order.
+    fn touch(&mut self, did: Did) {
+        self.remove(did);
+        self.order.push_back(did);
+    }
+}
+
+#[derive(Debug, Default)]
+struct Registry {
+    by_did: HashMap<Did, Entry>,
+    by_identity: HashMap<u64, Did>,
+    pending: Pool,
+    requested: Pool,
     /// The low 24 bits of the last DID handed out.
     last: u32,
 }
 
 impl Registry {
-    /// Moves `did` to the back of the eviction order.
-    fn touch(&mut self, did: Did) {
-        if let Some(pos) = self.order.iter().position(|d| *d == did) {
-            self.order.remove(pos);
+    /// Forgets the oldest entries of one pool until it holds fewer than `entries` images
+    /// and `incoming` more bytes fit in `bytes`.
+    fn shrink(&mut self, pending: bool, entries: usize, bytes: usize, incoming: usize) {
+        loop {
+            let pool = if pending {
+                &mut self.pending
+            } else {
+                &mut self.requested
+            };
+            if pool.order.len() < entries && pool.bytes.saturating_add(incoming) <= bytes {
+                return;
+            }
+            let Some(old) = pool.order.pop_front() else {
+                return;
+            };
+            if let Some(e) = self.by_did.remove(&old) {
+                if pending {
+                    tracing::warn!(
+                        did = %old,
+                        "run-time texture forgotten before its first request (pending bound)"
+                    );
+                }
+                self.by_identity.remove(&e.identity);
+                let pool = if pending {
+                    &mut self.pending
+                } else {
+                    &mut self.requested
+                };
+                pool.bytes = pool.bytes.saturating_sub(e.image.pixels.len());
+            }
         }
-        self.order.push_back(did);
     }
 }
 
 impl RuntimeTextures {
-    /// Most images kept.
+    /// Most requested images kept.
     pub const MAX_ENTRIES: usize = 256;
-    /// Most pixel bytes kept.
+    /// Most pixel bytes of requested images kept.
     pub const MAX_BYTES: usize = 256 << 20;
+    /// Most images kept that were registered and not requested yet (above the largest
+    /// sandbox crowd, 1,024 figures, with room for placed figures).
+    pub const MAX_PENDING: usize = 4096;
+    /// Most pixel bytes of images registered and not requested yet.
+    pub const MAX_PENDING_BYTES: usize = 1 << 30;
 
     /// The DID for `image` under `identity`: the DID already handed out for that identity
     /// (the stored image is kept and the entry counts as recently used), else the next DID
-    /// of the sequence. `None` when the image alone exceeds [`RuntimeTextures::MAX_BYTES`]
-    /// or its pixel buffer does not match its size.
+    /// of the sequence, held as pending until its first request. `None` when the image
+    /// alone exceeds [`RuntimeTextures::MAX_BYTES`] or its pixel buffer does not match its
+    /// size.
     pub fn register(&self, identity: u64, image: Arc<RgbaImage>) -> Option<Did> {
         let size = image.pixels.len();
         let expected = u64::from(image.width)
@@ -203,26 +276,22 @@ impl RuntimeTextures {
         }
         let mut r = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(&did) = r.by_identity.get(&identity) {
-            r.touch(did);
+            let pending = r.by_did.get(&did).is_some_and(|e| e.pending);
+            if pending {
+                r.pending.touch(did);
+            } else {
+                r.requested.touch(did);
+            }
             return Some(did);
         }
-        while r.by_did.len() >= Self::MAX_ENTRIES || r.bytes.saturating_add(size) > Self::MAX_BYTES
-        {
-            let Some(old) = r.order.pop_front() else {
-                break;
-            };
-            if let Some((id, img)) = r.by_did.remove(&old) {
-                r.by_identity.remove(&id);
-                r.bytes = r.bytes.saturating_sub(img.pixels.len());
-            }
-        }
+        r.shrink(true, Self::MAX_PENDING, Self::MAX_PENDING_BYTES, size);
         // The next DID of the sequence (low 24 bits 1 ..= 0xFFFFFF, wrapping), past DIDs
-        // still in use (the registry holds at most MAX_ENTRIES, so a free one is found
-        // within that many steps).
+        // still in use (the registry holds at most MAX_PENDING + MAX_ENTRIES, so a free
+        // one is found within that many steps).
         let base = u32::from(RUNTIME_TEXTURE_PREFIX) << 24;
         let mut low = r.last;
         let mut did = Did(0);
-        for _ in 0..=Self::MAX_ENTRIES {
+        for _ in 0..=Self::MAX_PENDING + Self::MAX_ENTRIES {
             low = if low >= 0x00FF_FFFF { 1 } else { low + 1 };
             did = Did(base | low);
             if !r.by_did.contains_key(&did) {
@@ -233,23 +302,58 @@ impl RuntimeTextures {
             return None;
         }
         r.last = low;
-        r.by_did.insert(did, (identity, image));
+        r.by_did.insert(
+            did,
+            Entry {
+                identity,
+                image,
+                pending: true,
+            },
+        );
         r.by_identity.insert(identity, did);
-        r.order.push_back(did);
-        r.bytes = r.bytes.saturating_add(size);
+        r.pending.order.push_back(did);
+        r.pending.bytes = r.pending.bytes.saturating_add(size);
+        tracing::debug!(%did, pending = r.pending.order.len(), "run-time texture registered");
         Some(did)
     }
 
-    /// The image of run-time texture `did`, if the registry holds it.
+    /// The image of run-time texture `did`, if the registry holds it. The first request
+    /// of a pending entry moves it to the requested pool.
     #[must_use]
     pub fn get(&self, did: Did) -> Option<Arc<RgbaImage>> {
         if did.prefix() != RUNTIME_TEXTURE_PREFIX {
             return None;
         }
         let mut r = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let img = r.by_did.get(&did).map(|(_, img)| Arc::clone(img))?;
-        r.touch(did);
+        let (img, pending) = r
+            .by_did
+            .get(&did)
+            .map(|e| (Arc::clone(&e.image), e.pending))?;
+        if pending {
+            r.pending.remove(did);
+            r.pending.bytes = r.pending.bytes.saturating_sub(img.pixels.len());
+            // Room in the requested pool; `did` itself is not in it yet.
+            r.shrink(false, Self::MAX_ENTRIES, Self::MAX_BYTES, img.pixels.len());
+            if let Some(e) = r.by_did.get_mut(&did) {
+                e.pending = false;
+            }
+            r.requested.order.push_back(did);
+            r.requested.bytes = r.requested.bytes.saturating_add(img.pixels.len());
+        } else {
+            r.requested.touch(did);
+        }
         Some(img)
+    }
+
+    /// Number of images held that were registered and not requested since.
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending
+            .order
+            .len()
     }
 
     /// Number of images held.

@@ -177,7 +177,7 @@ pub use string_info::{StringArg, StringArgValue, StringArgs, StringInfo, StringS
 pub use string_table::{
     MessagePart, MessageParts, StringTable, StringTableEntry, StringTableIssue,
 };
-pub use surface::{RgbaImage, Surface, SurfaceFormat};
+pub use surface::{JpegFrame, RgbaImage, Surface, SurfaceFormat, jpeg_frame};
 pub use terrain_type::{TerrainType, TerrainTypeTable};
 pub use texture_list::{ChainLevel, TextureList, TextureListKind, cap_chain_resolution};
 pub use water::{FogZoneTable, WaterTable};

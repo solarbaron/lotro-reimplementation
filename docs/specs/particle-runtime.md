@@ -832,6 +832,16 @@ input the output alpha is further multiplied by the soft-particle factor of para
 >   only how often mode 3 draws and when a looping mode-10 curve restarts (at the first step at
 >   or after a whole period), both within what a preview may show.
 
+> **OPEN:** (implementation, 2026-10-10, rule 12 and RT33, engineering choices recorded for
+> review) (a) When a surface is loaded Tessera builds a snapshot of its values at clock 0
+> (`tessera-particles` `ParticleSurface::of`). Every value that follows the clock is evaluated
+> again at each draw, so the snapshot of such a value is never drawn; in the snapshot a mode-3
+> curve reads its centre value *B* (*r* = 0), so loading a surface takes nothing from the
+> shared stream and uses no other random source. (b) The explorer preview now evaluates the
+> look once per drawn frame, at that frame's clock and after the system's draw (the walker's
+> order), instead of at every simulation step as answer (c) above allowed. Please confirm or
+> correct.
+
 <a id="s9-1-2"></a>
 #### 9.1.2 Permutation feature bit 1: soft particles and heat distortion (BIN, BIN-S, OBS3; RT25, RT26, RT29)
 

@@ -361,6 +361,76 @@ fn decoded_bytes_are_budgeted() {
     );
 }
 
+/// A JPEG surface (format 500, header size 0 × 0) whose stream is only a start-of-image
+/// marker, a three-component baseline frame header declaring `w` × `h` and the end-of-image
+/// marker: it has no tables and no scan, so decoding it fails.
+fn jpeg_header_only(did: u32, w: u16, h: u16) -> Vec<u8> {
+    let mut stream = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 17, 8];
+    stream.extend_from_slice(&h.to_be_bytes());
+    stream.extend_from_slice(&w.to_be_bytes());
+    stream.push(3);
+    for c in 1..=3u8 {
+        stream.extend_from_slice(&[c, 0x11, 0]);
+    }
+    stream.extend_from_slice(&[0xFF, 0xD9]);
+    let mut out = Vec::new();
+    let len = u32::try_from(stream.len()).unwrap();
+    for v in [did, 0, 0, 0, 500, len] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&stream);
+    out
+}
+
+#[test]
+fn jpeg_sources_are_checked_before_decoding() {
+    let on = AssemblyOptions::default();
+    // A frame header claiming a huge image is refused by its declared size: the note is
+    // the texel check's, not a decode error, so nothing was decoded.
+    let mut m = records();
+    m.insert(
+        Did(0x4100_0001),
+        jpeg_header_only(0x4100_0001, 0xFFFF, 0xFFFF),
+    );
+    let look = plain(&face([0, 0, 128, 255]), &m);
+    assert!(look.compositors[0].image.is_none());
+    assert!(
+        look.notes
+            .iter()
+            .any(|n| n.contains("65535 × 65535 texels is too large")),
+        "{:?}",
+        look.notes
+    );
+    // A small declared size is charged against the budget before decoding.
+    m.insert(Did(0x4100_0001), jpeg_header_only(0x4100_0001, 2, 1));
+    let tight = LookLimits {
+        max_compositor_bytes: 4,
+        ..LookLimits::default()
+    };
+    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), on, &tight, None);
+    assert!(look.compositors[0].image.is_none());
+    assert!(
+        look.notes.iter().any(|n| n.contains("budget")),
+        "{:?}",
+        look.notes
+    );
+    // Within the limits the stream is decoded, and its decode error is a note.
+    let look = plain(&face([0, 0, 128, 255]), &m);
+    assert!(look.compositors[0].image.is_none());
+    assert!(!look.notes.is_empty());
+    // A stream without a readable frame header is refused too.
+    let mut broken = jpeg_header_only(0x4100_0001, 2, 1);
+    broken.truncate(28);
+    broken[20..24].copy_from_slice(&4u32.to_le_bytes());
+    m.insert(Did(0x4100_0001), broken);
+    let look = plain(&face([0, 0, 128, 255]), &m);
+    assert!(
+        look.notes.iter().any(|n| n.contains("frame header")),
+        "{:?}",
+        look.notes
+    );
+}
+
 #[test]
 fn face_compositing_off_attaches_no_compositor() {
     let m = records();

@@ -647,33 +647,30 @@ fn load_image<E: std::fmt::Display>(
         .map_err(|e| ImageFailure::Read(e.to_string()))?
         .ok_or_else(|| ImageFailure::Data("missing".to_owned()))?;
     let s = Surface::parse_expecting(&bytes, did).map_err(|e| ImageFailure::Data(e.to_string()))?;
-    let too_large = |w: u32, h: u32| u64::from(w) * u64::from(h) > limits.max_texels;
-    if too_large(s.width, s.height) {
+    // The size the surface decodes to, read without decoding (for a JPEG surface, whose
+    // header size is not used, the stream's frame header), so an oversize image is refused
+    // and the budget charged before any pixel memory is allocated.
+    let (width, height) = s
+        .decoded_size()
+        .ok_or_else(|| ImageFailure::Data("JPEG frame header not found".to_owned()))?;
+    if u64::from(width) * u64::from(height) > limits.max_texels {
         return Err(ImageFailure::Data(format!(
-            "{} × {} texels is too large",
-            s.width, s.height
+            "{width} × {height} texels is too large"
         )));
     }
-    // A JPEG surface stores no size in its header: its decode is bounded by the surface
-    // decoder (`surface.md`), and its size is checked and charged after decoding.
-    let jpeg = s.is_jpeg();
-    if !jpeg && !budget.charge(rgba_bytes(s.width, s.height), limits) {
+    let decoded = rgba_bytes(width, height);
+    if !budget.charge(decoded, limits) {
         return Err(ImageFailure::Budget);
     }
     let img = s
         .to_rgba8()
         .map_err(|e| ImageFailure::Data(e.to_string()))?;
-    let decoded = rgba_bytes(img.width, img.height);
-    if jpeg {
-        if too_large(img.width, img.height) {
-            return Err(ImageFailure::Data(format!(
-                "{} × {} texels is too large",
-                img.width, img.height
-            )));
-        }
-        if !budget.charge(decoded, limits) {
-            return Err(ImageFailure::Budget);
-        }
+    // The surface decoder checks that a JPEG decodes to the frame read above.
+    if (img.width, img.height) != (width, height) {
+        return Err(ImageFailure::Data(format!(
+            "decoded {} × {} differs from the declared {width} × {height}",
+            img.width, img.height
+        )));
     }
     let img = Arc::new(img);
     if let Some(c) = cache {

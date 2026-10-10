@@ -318,6 +318,8 @@ pub(crate) struct Shared {
     pub state: Mutex<SharedState>,
     pub index: Mutex<IndexState>,
     pub gameplay: Mutex<Option<Arc<dyn LocalPlayerSource>>>,
+    /// The source of the inventory views (`lua-plugin-api.md` §15.1).
+    pub inventory: Mutex<Option<Arc<dyn crate::inventory::InventorySource>>>,
     pub next_id: AtomicU64,
 }
 

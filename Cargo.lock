@@ -4045,6 +4045,7 @@ dependencies = [
  "tessera-assets",
  "tessera-dat",
  "tessera-formats",
+ "tessera-gamedata",
  "tessera-havok",
  "tessera-install",
  "tessera-material",
@@ -4080,6 +4081,7 @@ name = "tessera-gamedata"
 version = "0.1.0"
 dependencies = [
  "tessera-formats",
+ "tessera-mesh",
  "tessera-props",
  "tessera-text",
  "tessera-wstate",
@@ -4183,6 +4185,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

@@ -3,8 +3,9 @@
 
 use crate::error::{ProtocolError, Result};
 use crate::limits::{
-    LANDBLOCK_SIZE, MAX_ANCHOR_OFFSET, MAX_APPEARANCE_SCALE, MAX_EQUIPMENT, MAX_LANDBLOCK,
-    MAX_LOCATION_COORDINATE, MAX_NAME_LEN, MAX_PLACE_LEN,
+    LANDBLOCK_SIZE, MAX_ANCHOR_OFFSET, MAX_APPEARANCE_SCALE, MAX_EQUIP_SLOT, MAX_EQUIPMENT,
+    MAX_LANDBLOCK, MAX_LOCATION_COORDINATE, MAX_LOOK_BYTES, MAX_LOOK_ENTRIES, MAX_LOOK_STRING_LEN,
+    MAX_NAME_LEN, MAX_PLACE_LEN, MIN_EQUIP_SLOT, MINOR_LOOKS,
 };
 use crate::wire::{Reader, TextRule, Writer};
 
@@ -315,7 +316,7 @@ impl Body {
     }
 }
 
-/// One equipped item (5, 9 or 13 bytes).
+/// One equipped item (5, 9 or 13 bytes; at minor ≥ 1 also 6, 10 or 14).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Equipped {
     /// DID of the item record, non-zero (opaque).
@@ -326,6 +327,9 @@ pub struct Equipped {
     pub secondary_dye: Option<f32>,
     /// Stowed (flag bit 2).
     pub stowed: bool,
+    /// The data's equipment slot key that holds the item, 1–64 (flag bit 3, minor ≥ 1 only;
+    /// §5.3, §7.4). At minor 0 it is neither sent nor received.
+    pub slot: Option<u8>,
 }
 
 fn check_dye(field: &'static str, v: f32) -> Result<()> {
@@ -338,15 +342,30 @@ fn check_dye(field: &'static str, v: f32) -> Result<()> {
     Ok(())
 }
 
+fn check_slot(slot: u8) -> Result<u8> {
+    if (MIN_EQUIP_SLOT..=MAX_EQUIP_SLOT).contains(&slot) {
+        Ok(slot)
+    } else {
+        Err(ProtocolError::OutOfRange("equipped.slot"))
+    }
+}
+
 impl Equipped {
     pub(crate) fn encode(&self, w: &mut Writer<'_>) -> Result<()> {
         if self.item == 0 {
             return Err(ProtocolError::OutOfRange("equipped.item"));
         }
+        // At minor 0 the slot is left off: the v1.0 layout exactly (§15 invariant 10).
+        let slot = if w.minor() >= MINOR_LOOKS {
+            self.slot.map(check_slot).transpose()?
+        } else {
+            None
+        };
         w.u32(self.item);
         let flags = u8::from(self.dye.is_some())
             | u8::from(self.secondary_dye.is_some()) << 1
-            | u8::from(self.stowed) << 2;
+            | u8::from(self.stowed) << 2
+            | u8::from(slot.is_some()) << 3;
         w.u8(flags);
         if let Some(d) = self.dye {
             check_dye("equipped.dye", d)?;
@@ -355,6 +374,9 @@ impl Equipped {
         if let Some(d) = self.secondary_dye {
             check_dye("equipped.secondary_dye", d)?;
             w.f32("equipped.secondary_dye", d)?;
+        }
+        if let Some(s) = slot {
+            w.u8(s);
         }
         Ok(())
     }
@@ -365,7 +387,8 @@ impl Equipped {
             return Err(ProtocolError::OutOfRange("equipped.item"));
         }
         let flags = r.u8()?;
-        if flags & 0xF8 != 0 {
+        let reserved = if r.minor() >= MINOR_LOOKS { 0xF0 } else { 0xF8 };
+        if flags & reserved != 0 {
             return Err(ProtocolError::ReservedBits("equipped.flags"));
         }
         let dye = if flags & 1 != 0 {
@@ -382,12 +405,266 @@ impl Equipped {
         } else {
             None
         };
+        let slot = if flags & 8 != 0 {
+            Some(check_slot(r.u8()?)?)
+        } else {
+            None
+        };
         Ok(Self {
             item,
             dye,
             secondary_dye,
             stowed: flags & 4 != 0,
+            slot,
         })
+    }
+}
+
+/// The value of one look entry (minor ≥ 1, §5.3): a tagged value of §7.2 restricted to the
+/// ten tags a look allows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LookValue {
+    /// Tag 0x01.
+    Bool(bool),
+    /// Tag 0x02.
+    Int32(i32),
+    /// Tag 0x03.
+    Int64(i64),
+    /// Tag 0x04, finite.
+    Float32(f32),
+    /// Tag 0x05: an enum key (opaque).
+    Enum(u32),
+    /// Tag 0x06: a DID (opaque).
+    DataId(u32),
+    /// Tag 0x07: 0–128 bytes, each 0x21–0x7E (printable ASCII without space).
+    String(String),
+    /// Tag 0x09.
+    Bitfield32(u32),
+    /// Tag 0x0A.
+    Bitfield64(u64),
+    /// Tag 0x0D: R, G, B, A.
+    Colour([u8; 4]),
+}
+
+/// Whether `s` is a valid look string: 0–128 bytes, each 0x21–0x7E (§5.3).
+#[must_use]
+pub fn is_look_string(s: &str) -> bool {
+    s.len() <= MAX_LOOK_STRING_LEN && s.bytes().all(|b| (0x21..=0x7E).contains(&b))
+}
+
+impl LookValue {
+    /// The §7.2 tag byte.
+    #[must_use]
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::Bool(_) => 0x01,
+            Self::Int32(_) => 0x02,
+            Self::Int64(_) => 0x03,
+            Self::Float32(_) => 0x04,
+            Self::Enum(_) => 0x05,
+            Self::DataId(_) => 0x06,
+            Self::String(_) => 0x07,
+            Self::Bitfield32(_) => 0x09,
+            Self::Bitfield64(_) => 0x0A,
+            Self::Colour(_) => 0x0D,
+        }
+    }
+
+    /// Bytes of the tagged encoding (tag included).
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        1 + match self {
+            Self::Bool(_) => 1,
+            Self::Int32(_) | Self::Float32(_) | Self::Enum(_) | Self::DataId(_) => 4,
+            Self::Bitfield32(_) | Self::Colour(_) => 4,
+            Self::Int64(_) | Self::Bitfield64(_) => 8,
+            Self::String(s) => 2 + s.len(),
+        }
+    }
+
+    fn check(&self) -> Result<()> {
+        match self {
+            Self::Float32(v) if !v.is_finite() => Err(ProtocolError::NonFinite("look.value")),
+            Self::String(s) if s.len() > MAX_LOOK_STRING_LEN => Err(ProtocolError::StringLength {
+                field: "look.value",
+                len: s.len(),
+                min: 0,
+                max: MAX_LOOK_STRING_LEN,
+            }),
+            Self::String(s) if !is_look_string(s) => Err(ProtocolError::LookString),
+            _ => Ok(()),
+        }
+    }
+
+    fn encode(&self, w: &mut Writer<'_>) -> Result<()> {
+        self.check()?;
+        w.u8(self.tag());
+        match self {
+            Self::Bool(b) => w.bool(*b),
+            Self::Int32(v) => w.i32(*v),
+            Self::Int64(v) => w.i64(*v),
+            Self::Float32(v) => w.f32("look.value", *v)?,
+            Self::Enum(v) | Self::DataId(v) | Self::Bitfield32(v) => w.u32(*v),
+            Self::Bitfield64(v) => w.u64(*v),
+            Self::String(s) => {
+                // len <= 128 (checked above).
+                w.u16(u16::try_from(s.len()).unwrap_or(u16::MAX));
+                w.raw(s.as_bytes());
+            }
+            Self::Colour(c) => w.raw(c),
+        }
+        Ok(())
+    }
+
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let tag = r.u8()?;
+        Ok(match tag {
+            0x01 => Self::Bool(r.bool("look.value")?),
+            0x02 => Self::Int32(r.i32()?),
+            0x03 => Self::Int64(r.i64()?),
+            0x04 => Self::Float32(r.f32("look.value")?),
+            0x05 => Self::Enum(r.u32()?),
+            0x06 => Self::DataId(r.u32()?),
+            0x07 => {
+                let len = usize::from(r.u16()?);
+                if len > MAX_LOOK_STRING_LEN {
+                    return Err(ProtocolError::StringLength {
+                        field: "look.value",
+                        len,
+                        min: 0,
+                        max: MAX_LOOK_STRING_LEN,
+                    });
+                }
+                let raw = r.bytes(len)?;
+                if !raw.iter().all(|b| (0x21..=0x7E).contains(b)) {
+                    return Err(ProtocolError::LookString);
+                }
+                // Printable ASCII is UTF-8.
+                Self::String(String::from_utf8_lossy(raw).into_owned())
+            }
+            0x09 => Self::Bitfield32(r.u32()?),
+            0x0A => Self::Bitfield64(r.u64()?),
+            0x0D => {
+                let b = r.bytes(4)?;
+                Self::Colour([b[0], b[1], b[2], b[3]])
+            }
+            other => return Err(ProtocolError::LookTag(other)),
+        })
+    }
+}
+
+/// One entry of a [`Look`]: an opaque data property ID of the client's install and a value
+/// (minor ≥ 1, §5.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookEntry {
+    /// The property ID, non-zero (opaque; unrelated to the protocol's own property IDs).
+    pub property: u32,
+    /// The value.
+    pub value: LookValue,
+}
+
+/// A character's creation choices (minor ≥ 1, §5.3, §7.4): 0–48 entries with strictly
+/// ascending property IDs, at most 768 bytes encoded. Empty means "no look".
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Look {
+    /// The entries, `property` strictly ascending.
+    pub entries: Vec<LookEntry>,
+}
+
+impl Look {
+    /// The empty look ("none").
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Whether the look has no entry.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Bytes of the encoding: one count byte, then per entry 4 bytes of ID and the tagged
+    /// value.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        1 + self
+            .entries
+            .iter()
+            .map(|e| 4 + e.value.encoded_len())
+            .sum::<usize>()
+    }
+
+    /// Checks every wire rule of §5.3: at most 48 entries, IDs non-zero and strictly
+    /// ascending, allowed values, at most 768 bytes.
+    ///
+    /// # Errors
+    ///
+    /// The first rule broken.
+    pub fn check(&self) -> Result<()> {
+        if self.entries.len() > MAX_LOOK_ENTRIES {
+            return Err(ProtocolError::Count {
+                field: "look",
+                count: self.entries.len(),
+                min: 0,
+                max: MAX_LOOK_ENTRIES,
+            });
+        }
+        let mut last = 0u32;
+        for e in &self.entries {
+            if e.property <= last {
+                return Err(ProtocolError::IdOrder("look"));
+            }
+            last = e.property;
+            e.value.check()?;
+        }
+        let len = self.encoded_len();
+        if len > MAX_LOOK_BYTES {
+            return Err(ProtocolError::LookTooLarge(len));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn encode(&self, w: &mut Writer<'_>) -> Result<()> {
+        self.check()?;
+        // <= 48 entries (checked above).
+        w.u8(u8::try_from(self.entries.len()).unwrap_or(u8::MAX));
+        for e in &self.entries {
+            w.u32(e.property);
+            e.value.encode(w)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let start = r.remaining();
+        let n = usize::from(r.u8()?);
+        if n > MAX_LOOK_ENTRIES {
+            return Err(ProtocolError::Count {
+                field: "look",
+                count: n,
+                min: 0,
+                max: MAX_LOOK_ENTRIES,
+            });
+        }
+        let mut entries = Vec::with_capacity(n);
+        let mut last = 0u32;
+        for _ in 0..n {
+            let property = r.u32()?;
+            if property <= last {
+                return Err(ProtocolError::IdOrder("look"));
+            }
+            last = property;
+            let value = LookValue::decode(r)?;
+            let used = start - r.remaining();
+            if used > MAX_LOOK_BYTES {
+                return Err(ProtocolError::LookTooLarge(used));
+            }
+            entries.push(LookEntry { property, value });
+        }
+        Ok(Self { entries })
     }
 }
 

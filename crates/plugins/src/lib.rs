@@ -14,7 +14,9 @@
 //!   step-7 deferred work and the collector step (`plugin-runtime.md` §8.4, §9.2).
 //! - The core `Turbine` namespace (`Engine`, `Shell`, `Chat`, `PluginData`,
 //!   `PluginManager`, …) and `Turbine.Gameplay`'s read-only local-player views fed by a
-//!   [`LocalPlayerSource`] the client implements ([`gameplay`]).
+//!   [`LocalPlayerSource`] the client implements ([`gameplay`]); the inventory views
+//!   (`Backpack`, `Equipment`, `Item`, `ItemInfo`) fed by an [`InventorySource`] and
+//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -45,6 +47,7 @@ pub mod gameplay;
 mod gameplay_enums;
 mod host;
 mod import;
+pub mod inventory;
 mod manager;
 mod object;
 pub mod options;
@@ -66,6 +69,7 @@ pub use host::{
     HostApi, LANGUAGE_ENGLISH, PluginDataLocation, ScriptErrorReport, WorkerJob,
     sanitize_folder_name,
 };
+pub use inventory::{InventoryItem, InventorySource, InventoryViewEvent, ItemInfoData};
 pub use manager::{
     DEFAULT_APARTMENT, DEFAULT_DEFERRED_SLICE, LoadedPluginInfo, ManagerConfig, PluginManager,
 };

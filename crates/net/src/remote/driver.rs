@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use tessera_protocol::client::{ClientConfig, ClientEvent, ClientSession, ClientState, CloseCause};
-use tessera_protocol::codes::{AppErrorCode, ClientFailure};
+use tessera_protocol::codes::{AppErrorCode, CharacterCreateFailedCode, ClientFailure};
 use tessera_protocol::frame::StreamKind;
 use tessera_protocol::limits::{DEFAULT_TICK_RATE, STANDING_SPEED};
 use tessera_protocol::message::{
@@ -23,7 +23,9 @@ use tessera_protocol::movement::MoveScheduler;
 use tessera_protocol::session::{
     ConnectionEnd, PeerDatagrams, StreamEnd, StreamRef, Transmit, Violation,
 };
-use tessera_protocol::types::{Appearance, Destination, Location, Motion, Vec3};
+use tessera_protocol::types::{
+    Appearance, Body, CharacterSummary, Destination, Location, Look, Motion, Vec3,
+};
 use tessera_protocol::value::Stance;
 
 use super::stats::{RemoteFailure, RemoteStats, ServerInfo};
@@ -39,8 +41,22 @@ const PING_INTERVAL: u64 = 2_000_000;
 pub(crate) enum Inbound {
     /// `HelloAck`: what the server said about itself.
     Greeted(ServerInfo),
-    /// Logged in.
-    Connected { characters: Vec<String> },
+    /// Logged in: the characters (name and body) and, at minor ≥ 1, their looks (one per
+    /// character; empty at minor 0).
+    Connected {
+        characters: Vec<(String, Body)>,
+        looks: Vec<Look>,
+    },
+    /// `CharacterList`: the answer to `CharacterCreate` (§6.2.8).
+    CharacterList {
+        characters: Vec<CharacterSummary>,
+        looks: Vec<Look>,
+    },
+    /// `CharacterCreateFailed` (§6.2.9): the code and the server's text.
+    CharacterCreateFailed {
+        code: CharacterCreateFailedCode,
+        text: String,
+    },
     /// `WorldEnter`.
     WorldEntered(Box<WorldEnter>),
     /// `LocationReport`.
@@ -84,12 +100,32 @@ impl Inbound {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NetCommand {
     EnterWorld(String),
+    /// `CharacterCreate` (`character-screens.md` §7.1.1 step 2).
+    CreateCharacter {
+        name: String,
+        appearance: Box<Appearance>,
+        look: Look,
+    },
     Teleport(Destination),
     QueryLocation,
     Chat(ChatChannel, String),
-    Emote { anim: u32, looping: bool },
+    Emote {
+        anim: u32,
+        looping: bool,
+    },
     Stance(Stance),
     Appearance(Box<Appearance>),
+}
+
+impl NetCommand {
+    /// The name of a `CreateCharacter`: the main thread records it as the outstanding
+    /// creation once the command is queued (`character-screens.md` §7.1.1 step 2).
+    pub(crate) fn creation(&self) -> Option<String> {
+        match self {
+            Self::CreateCharacter { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// The player's movement as the main thread last reported it.
@@ -140,6 +176,11 @@ impl Driver {
             forced: false,
             next_ping: 0,
         }
+    }
+
+    /// The negotiated minor version (§3.1); control frames are encoded under it.
+    pub(crate) fn minor(&self) -> u16 {
+        self.session.minor()
     }
 
     /// Whether the end of the session was reported ([`Inbound::Closed`] queued).
@@ -282,8 +323,16 @@ impl Driver {
     // --- commands ---
 
     pub(crate) fn command(&mut self, cmd: NetCommand, now: u64) {
+        let creation = cmd.creation().is_some();
         let r = match cmd {
             NetCommand::EnterWorld(name) => self.session.enter_world(name, now),
+            NetCommand::CreateCharacter {
+                name,
+                appearance,
+                look,
+            } => self
+                .session
+                .create_character_with_look(name, *appearance, look),
             NetCommand::Teleport(d) => self.session.teleport(d).map(|_| ()),
             NetCommand::QueryLocation => self.session.query_location().map(|_| ()),
             NetCommand::Chat(channel, text) => self.session.chat(channel, text),
@@ -295,6 +344,15 @@ impl Driver {
             // The main thread validated the command against its own view of the state;
             // the network may have moved on (for example a close in flight). Not fatal.
             tracing::debug!(error = %e, "command not sent");
+            if creation {
+                // The main thread recorded the creation as outstanding when it queued it;
+                // no answer will come, so answer it here (SERVER_ERROR, §7.1.1 step 4) to
+                // clear the mark and tell the screen.
+                self.push(Inbound::CharacterCreateFailed {
+                    code: CharacterCreateFailedCode::ServerError,
+                    text: format!("not sent: {e}"),
+                });
+            }
         }
         self.refresh_state();
     }
@@ -374,10 +432,22 @@ impl Driver {
                 self.push(Inbound::Greeted(info));
                 self.login(now);
             }
-            ClientEvent::LoggedIn { characters, .. } => {
+            ClientEvent::LoggedIn {
+                characters, looks, ..
+            } => {
                 self.forget_credentials();
                 self.push(Inbound::Connected {
-                    characters: characters.into_iter().map(|c| c.name).collect(),
+                    characters: characters.into_iter().map(|c| (c.name, c.body)).collect(),
+                    looks,
+                });
+            }
+            ClientEvent::CharacterList { characters, looks } => {
+                self.push(Inbound::CharacterList { characters, looks });
+            }
+            ClientEvent::CharacterCreateFailed(f) => {
+                self.push(Inbound::CharacterCreateFailed {
+                    code: f.code,
+                    text: f.text,
                 });
             }
             ClientEvent::LoginFailed(f) => {
@@ -674,15 +744,49 @@ mod tests {
         let ok = frame_to_vec(&Message::LoginOk(LoginOk {
             account: "alice".into(),
             characters: vec![],
+            looks: vec![],
         }))
         .unwrap();
         d.on_control(&ok, 3);
         assert!(matches!(d.pending.pop_front(), Some(Inbound::Greeted(_))));
         assert_eq!(
             d.pending.pop_front(),
-            Some(Inbound::Connected { characters: vec![] })
+            Some(Inbound::Connected {
+                characters: vec![],
+                looks: vec![]
+            })
         );
         assert!(d.credentials.is_none(), "credentials forgotten after login");
+    }
+
+    /// A `CreateCharacter` the session refuses to send is answered locally with
+    /// SERVER_ERROR, so the main thread's outstanding creation is cleared.
+    #[test]
+    fn unsent_creation_is_answered() {
+        let mut d = driver();
+        // Still awaiting HelloAck: not in CharacterSelect, the session refuses.
+        d.command(
+            NetCommand::CreateCharacter {
+                name: "Cora".into(),
+                appearance: Box::new(Appearance::new(Body::Character {
+                    species: 23,
+                    sex: 1,
+                })),
+                look: Look::none(),
+            },
+            2,
+        );
+        assert!(matches!(
+            d.pending.back(),
+            Some(Inbound::CharacterCreateFailed {
+                code: CharacterCreateFailedCode::ServerError,
+                ..
+            })
+        ));
+        // Other refused commands push nothing.
+        let before = d.pending.len();
+        d.command(NetCommand::QueryLocation, 3);
+        assert_eq!(d.pending.len(), before);
     }
 
     #[test]

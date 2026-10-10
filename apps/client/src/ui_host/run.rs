@@ -71,6 +71,11 @@ fn render_frame(
     walker: &mut Walker,
     ui: Option<&mut ClientUi>,
 ) -> anyhow::Result<()> {
+    let mut ui = ui;
+    if let Some(ui) = ui.as_deref_mut() {
+        // The paperdoll's portrait, before the frame that composes it.
+        ui.render_portraits(walker, renderer);
+    }
     let mut frame = renderer.begin_offscreen_frame(target)?;
     walker.draw(renderer, &mut frame);
     if let Some(ui) = ui {

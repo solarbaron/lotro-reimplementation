@@ -45,6 +45,8 @@ tessera-physics.workspace = true
 tessera-wstate.workspace = true
 # Particle preview of 0x39 records and `--particles DID --sheet`: the particle runtime.
 tessera-particles.workspace = true
+# Tooltip preview on the item card (`item-tooltips.md`): the examination tooltip model.
+tessera-gamedata.workspace = true
 # No "default_fonts": egui's bundled fonts are OFL-1.1 / Ubuntu Font Licence, outside the
 # licence allow list (deny.toml). UI fonts come from the system at run time (src/fonts.rs).
 eframe = { version = "0.36", default-features = false, features = [

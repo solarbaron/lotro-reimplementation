@@ -10,7 +10,8 @@ use tessera_protocol::codes::*;
 use tessera_protocol::connect::{ConnectString, KnownServers, ServerKey};
 use tessera_protocol::fingerprint::{Fingerprint, certificate_spki};
 use tessera_protocol::frame::{
-    FrameDecoder, decode_datagram, decode_frame_message, encode_datagram, frame_to_vec, split_frame,
+    FrameDecoder, decode_datagram, decode_frame_message, decode_frame_message_minor,
+    encode_datagram, frame_to_vec, frame_to_vec_minor, split_frame,
 };
 use tessera_protocol::message::*;
 use tessera_protocol::types::*;
@@ -113,6 +114,7 @@ fn appearance() -> impl Strategy<Value = Appearance> {
             dye: d,
             secondary_dye: s,
             stowed,
+            slot: None,
         });
     (
         body(),
@@ -282,6 +284,7 @@ fn messages() -> impl Strategy<Value = Message> {
                 Message::LoginOk(LoginOk {
                     account,
                     characters,
+                    looks: Vec::new(),
                 })
             })
             .boxed(),
@@ -296,11 +299,20 @@ fn messages() -> impl Strategy<Value = Message> {
             .boxed(),
         (text(64), appearance())
             .prop_map(|(name, appearance)| {
-                Message::CharacterCreate(CharacterCreate { name, appearance })
+                Message::CharacterCreate(CharacterCreate {
+                    name,
+                    appearance,
+                    look: tessera_protocol::types::Look::none(),
+                })
             })
             .boxed(),
         characters()
-            .prop_map(|characters| Message::CharacterList(CharacterList { characters }))
+            .prop_map(|characters| {
+                Message::CharacterList(CharacterList {
+                    characters,
+                    looks: Vec::new(),
+                })
+            })
             .boxed(),
         (any::<u16>(), text(256))
             .prop_map(|(c, text)| {
@@ -375,6 +387,7 @@ fn messages() -> impl Strategy<Value = Message> {
                         server_time,
                         pose,
                         appearance,
+                        look: tessera_protocol::types::Look::none(),
                     })
                 },
             )
@@ -440,6 +453,7 @@ fn messages() -> impl Strategy<Value = Message> {
                         motion,
                         appearance,
                         properties,
+                        look: tessera_protocol::types::Look::none(),
                     })
                 },
             )
@@ -450,7 +464,11 @@ fn messages() -> impl Strategy<Value = Message> {
             .boxed(),
         (any::<u64>(), appearance())
             .prop_map(|(id, appearance)| {
-                Message::EntityAppearance(EntityAppearance { id, appearance })
+                Message::EntityAppearance(EntityAppearance {
+                    id,
+                    appearance,
+                    look: tessera_protocol::types::Look::none(),
+                })
             })
             .boxed(),
         (any::<u64>(), any::<bool>())
@@ -890,4 +908,123 @@ fn limits_and_rejections() {
         decode_frame_message(Channel::Control, Side::Server, 0x0001, &[]),
         Err(E::WrongDirection { .. })
     ));
+}
+
+// --- minor 1 (v1.1): looks and slots ---
+
+fn look_value() -> impl Strategy<Value = LookValue> {
+    prop_oneof![
+        any::<bool>().prop_map(LookValue::Bool),
+        any::<i32>().prop_map(LookValue::Int32),
+        any::<i64>().prop_map(LookValue::Int64),
+        (-1.0e9f32..1.0e9).prop_map(LookValue::Float32),
+        any::<u32>().prop_map(LookValue::Enum),
+        any::<u32>().prop_map(LookValue::DataId),
+        proptest::string::string_regex("[!-~]{0,16}")
+            .unwrap()
+            .prop_map(LookValue::String),
+        any::<u32>().prop_map(LookValue::Bitfield32),
+        any::<u64>().prop_map(LookValue::Bitfield64),
+        any::<[u8; 4]>().prop_map(LookValue::Colour),
+    ]
+}
+
+fn look() -> impl Strategy<Value = Look> {
+    vec((1u32.., look_value()), 0..=48).prop_map(|mut v| {
+        v.sort_by_key(|(p, _)| *p);
+        v.dedup_by_key(|(p, _)| *p);
+        let mut look = Look {
+            entries: v
+                .into_iter()
+                .map(|(property, value)| LookEntry { property, value })
+                .collect(),
+        };
+        while look.encoded_len() > 768 {
+            look.entries.pop();
+        }
+        look
+    })
+}
+
+fn appearance_v11() -> impl Strategy<Value = Appearance> {
+    (appearance(), vec(proptest::option::of(1u8..=64), 32)).prop_map(|(mut a, slots)| {
+        for (e, s) in a.equipment.iter_mut().zip(slots) {
+            e.slot = s;
+        }
+        a
+    })
+}
+
+fn round_trip_at(m: &Message, minor: u16) -> Result<Message, TestCaseError> {
+    let side = sender(m);
+    let bytes = frame_to_vec_minor(m, minor).map_err(|e| TestCaseError::fail(e.to_string()))?;
+    let (raw, used) = split_frame(&bytes).unwrap().unwrap();
+    prop_assert_eq!(used, bytes.len());
+    let back = decode_frame_message_minor(m.channel(), side, raw.ty, raw.body, minor)
+        .map_err(|e| TestCaseError::fail(e.to_string()))?;
+    prop_assert_eq!(frame_to_vec_minor(&back, minor).unwrap(), bytes);
+    Ok(back)
+}
+
+fn strip(a: &Appearance) -> Appearance {
+    let mut a = a.clone();
+    for e in &mut a.equipment {
+        e.slot = None;
+    }
+    a
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 1024, ..ProptestConfig::default() })]
+
+    #[test]
+    fn v11_messages_round_trip_and_project_to_v10(
+        name in "[A-Za-z]{1,16}",
+        app in appearance_v11(),
+        look in look(),
+        id in 1u64..,
+    ) {
+        let create = Message::CharacterCreate(CharacterCreate {
+            name: name.clone(),
+            appearance: app.clone(),
+            look: look.clone(),
+        });
+        prop_assert_eq!(&round_trip_at(&create, 1)?, &create);
+        // At minor 0 the look and the slots are left off (§15 invariant 10).
+        let v10 = round_trip_at(&create, 0)?;
+        prop_assert_eq!(v10, Message::CharacterCreate(CharacterCreate {
+            name: name.clone(),
+            appearance: strip(&app),
+            look: Look::none(),
+        }));
+        let ea = Message::EntityAppearance(EntityAppearance { id, appearance: app.clone(), look: look.clone() });
+        prop_assert_eq!(&round_trip_at(&ea, 1)?, &ea);
+        let ok = Message::LoginOk(LoginOk {
+            account: "a".into(),
+            characters: vec![CharacterSummary { name, body: app.body }],
+            looks: vec![look],
+        });
+        prop_assert_eq!(&round_trip_at(&ok, 1)?, &ok);
+        let set = Message::AppearanceSet(app);
+        prop_assert_eq!(&round_trip_at(&set, 1)?, &set);
+    }
+
+    #[test]
+    fn v11_mutated_frames_never_panic(app in appearance_v11(), look in look(), flips in vec((any::<usize>(), any::<u8>()), 1..6)) {
+        let m = Message::CharacterCreate(CharacterCreate { name: "x".into(), appearance: app, look });
+        let mut bytes = frame_to_vec_minor(&m, 1).unwrap();
+        for (i, b) in flips {
+            let n = bytes.len();
+            bytes[i % n] ^= b;
+        }
+        for minor in [0, 1, 2] {
+            let mut d = FrameDecoder::with_minor(Channel::Control, Side::Client, minor);
+            let mut input: &[u8] = &bytes;
+            while !input.is_empty() {
+                if d.push(&mut input).is_err() {
+                    break;
+                }
+            }
+        }
+    }
 }

@@ -708,6 +708,9 @@ impl Bot {
         ) {
             Ok(mut c) => {
                 c.client.client_name = format!("tessera-loadtest {}", env!("CARGO_PKG_VERSION"));
+                // A share of bots stays at minor 0, so observers at both minors meet
+                // (test-server.md §13.1).
+                c.client.minor_max = crate::raw::bot_minor(self.spec.index);
                 c
             }
             Err(e) => {

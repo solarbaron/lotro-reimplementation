@@ -49,11 +49,11 @@ pub enum AlphaKind {
 }
 
 /// The texture a plan samples: `did` is a texture list (or surface) DID; `variant` is
-/// [`VARIANT_OPAQUE`], [`VARIANT_OWN_ALPHA`], [`VARIANT_ALPHA_ONLY`] or, for any other
+/// `VARIANT_OPAQUE`, `VARIANT_OWN_ALPHA`, `VARIANT_ALPHA_ONLY` or, for any other
 /// value, the DID of a separate opacity texture whose alpha replaces `did`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TexRequest {
-    /// Base texture (or the opacity texture for [`VARIANT_ALPHA_ONLY`]).
+    /// Base texture (or the opacity texture for `VARIANT_ALPHA_ONLY`).
     pub did: u32,
     /// Alpha source (see the type docs).
     pub variant: u32,
@@ -164,7 +164,7 @@ pub const OWN_TEXTURES: usize = 7;
 pub struct OwnPlan {
     /// The record family.
     pub kind: MaterialKind,
-    /// The textures the drawing samples ([`OWN_TEXTURES`] order), each with its own alpha.
+    /// The textures the drawing samples (`OWN_TEXTURES` order), each with its own alpha.
     pub textures: [Option<TexRequest>; OWN_TEXTURES],
 }
 
@@ -258,8 +258,8 @@ pub struct MaterialPlan {
     pub base_color: [f32; 4],
     /// Skip lighting.
     pub unlit: bool,
-    /// Dye: the mask texture ([`VARIANT_DYE_MASK`]) and the linear dye colour. Only
-    /// figures use dye ([`plan_material_dyed`]); static objects never do (`walker.md` §4).
+    /// Dye: the mask texture (`VARIANT_DYE_MASK`) and the linear dye colour. Only
+    /// figures use dye (`plan_material_dyed`); static objects never do (`walker.md` §4).
     pub dye: Option<(TexRequest, [f32; 3])>,
     /// The inputs of the lit pipeline (M4.5).
     pub lit: LitInputs,

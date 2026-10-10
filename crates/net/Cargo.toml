@@ -13,7 +13,7 @@ default = ["remote", "scenario"]
 # The test-server backend (`tessera_net::remote`, decision 0030): QUIC via quinn, TLS 1.3
 # via rustls on ring, and a tokio current_thread runtime on a dedicated network thread.
 # Consumers that need only the sandbox can turn default features off.
-remote = ["dep:tokio", "dep:quinn", "tessera-protocol/transport"]
+remote = ["dep:tokio", "dep:quinn", "dep:unicode-normalization", "tessera-protocol/transport"]
 # The scenario feed (`tessera_net::scenario`, docs/specs/scenario-feed.md): the scenario
 # parser, selector resolution contract, the run-time feed of the sandbox backend, the
 # canonical event log and the headless driver. tessera-server never links it (LEGAL.md
@@ -26,6 +26,9 @@ thiserror.workspace = true
 tracing.workspace = true
 quinn = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "time", "macros"] }
+# Name comparison after NFC (character-screens.md §7.1.1 step 3 OPEN; tessera-server uses the
+# same crate for its stored NFC names).
+unicode-normalization = { version = "0.1", optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

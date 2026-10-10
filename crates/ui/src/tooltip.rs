@@ -19,6 +19,9 @@ pub(crate) struct TooltipState {
     pub handled: bool,
     /// The tooltip panel showing.
     pub panel: Option<ElementKey>,
+    /// Further panels shown with it (the comparison tooltips of an examination tooltip,
+    /// `item-tooltips.md` §8), hidden and destroyed with it.
+    pub extra: Vec<ElementKey>,
 }
 
 impl Ui {
@@ -26,6 +29,73 @@ impl Ui {
     #[must_use]
     pub fn tooltip_panel(&self) -> Option<ElementKey> {
         self.tooltip.panel
+    }
+
+    /// The panels shown with the tooltip panel (comparison tooltips), in order.
+    #[must_use]
+    pub fn tooltip_extra_panels(&self) -> &[ElementKey] {
+        &self.tooltip.extra
+    }
+
+    /// Makes `main` (and `extra`) the showing tooltip, built by game code (an examination
+    /// tooltip, `item-tooltips.md` §9): any other tooltip is hidden first, and these panels
+    /// are hidden and destroyed by the rules of `ui-behaviour.md` §6.6 from now on. Panels
+    /// that do not exist are ignored.
+    pub fn set_tooltip_panels(&mut self, main: ElementKey, extra: Vec<ElementKey>) {
+        let keep: Vec<ElementKey> = std::iter::once(main).chain(extra.iter().copied()).collect();
+        if let Some(p) = self.tooltip.panel
+            && keep.contains(&p)
+        {
+            self.tooltip.panel = None;
+        }
+        self.tooltip.extra.retain(|x| !keep.contains(x));
+        self.hide_tooltip();
+        if !self.exists(main) {
+            for x in extra {
+                self.destroy(x);
+            }
+            return;
+        }
+        self.tooltip.panel = Some(main);
+        self.tooltip.extra = extra.into_iter().filter(|x| self.exists(*x)).collect();
+        for k in std::iter::once(main).chain(self.tooltip.extra.clone()) {
+            self.mark_dirty(k);
+        }
+        self.painter.structure_changed();
+    }
+
+    /// Marks an element as asking for an examination tooltip on hover (or clears the mark):
+    /// when the hover handler runs for it or a descendant, the UI emits
+    /// [`crate::UiEvent::ExamineHover`] instead of showing a text tooltip
+    /// (`item-tooltips.md` §9 Tessera rule).
+    pub fn set_examine(&mut self, k: ElementKey, on: bool) {
+        if let Some(e) = self.el_mut(k) {
+            e.examine = on;
+        }
+        self.recompute_mouse_visible(k);
+    }
+
+    /// Whether an element asks for an examination tooltip.
+    #[must_use]
+    pub fn examines(&self, k: ElementKey) -> bool {
+        self.el(k).is_some_and(|e| e.examine)
+    }
+
+    /// The nearest element at or above `k` that asks for an examination tooltip.
+    fn examine_target(&self, k: ElementKey) -> Option<ElementKey> {
+        let mut cur = Some(k);
+        let mut n = 0;
+        while let Some(c) = cur {
+            if self.el(c).is_some_and(|e| e.examine) {
+                return Some(c);
+            }
+            n += 1;
+            if n > crate::ui::MAX_TREE_DEPTH * 2 {
+                return None;
+            }
+            cur = self.parent(c);
+        }
+        None
     }
 
     /// Whether the element has tooltip text (§6.3 step 1): a run-time string, or a
@@ -83,22 +153,26 @@ impl Ui {
         self.clear_hover_handled();
     }
 
-    /// Hides and destroys the tooltip panel (§6.6).
+    /// Hides and destroys the tooltip panel and the panels shown with it (§6.6).
     pub fn hide_tooltip(&mut self) {
+        // The panels go in one batch: one pass over the UI however many there are.
+        let mut doomed = std::mem::take(&mut self.tooltip.extra);
         if let Some(p) = self.tooltip.panel.take()
             && self.exists(p)
         {
             if self.prop(p, self.v.pids.broadcast_on_tooltip_stop).bool() {
                 self.post(p, self.v.msgs.tooltip_stopped, MsgArg::default());
             }
-            self.destroy(p);
+            doomed.push(p);
         }
+        self.destroy_many(&doomed);
     }
 
     pub(crate) fn tooltip_forget(&mut self, k: ElementKey) {
         if self.tooltip.panel == Some(k) {
             self.tooltip.panel = None;
         }
+        self.tooltip.extra.retain(|x| *x != k);
     }
 
     /// The hover check of the UI tick (§6.2 step 3; decision 0014 D8 step 7 item 2).
@@ -127,9 +201,22 @@ impl Ui {
         self.tooltip.handled = handled;
     }
 
-    /// The base hover handler (§6.2 step 4).
+    /// The base hover handler (§6.2 step 4), with the examination request of
+    /// `item-tooltips.md` §9: an element that asks for an examination tooltip (itself or
+    /// its nearest asking ancestor) gets one requested instead of a text tooltip, and the
+    /// result is "handled", while `TooltipEnable` is true.
     fn hover_handler(&mut self, h: ElementKey) -> bool {
         let mut result = false;
+        if self.settings.tooltip_enable
+            && let Some(t) = self.examine_target(h)
+        {
+            let pointer = self.input.pointer.unwrap_or((0, 0));
+            self.emit(crate::events::UiEvent::ExamineHover {
+                element: t,
+                pointer,
+            });
+            return true;
+        }
         if self.prop(h, self.v.pids.tooltips_on).bool() && self.settings.tooltip_enable {
             self.show_tooltip(h);
             result = true;

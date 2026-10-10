@@ -476,17 +476,29 @@ impl InputPlayer {
                 recipe: self.rref(recipe)?,
                 quantity: *qty,
             }),
-            InputCmd::CreateCharacter { name, class, body } => {
+            InputCmd::CreateCharacter {
+                name,
+                class,
+                body,
+                nationality,
+                look,
+            } => {
                 let class = class.and_then(|c| self.sc.enum_value(c));
+                let nationality = nationality.and_then(|c| self.sc.enum_value(c));
+                let look = look.and_then(|i| self.sc.look(i)).cloned();
+                // Without a resolved body the look is not sent (§7.7).
                 let appearance = body.and_then(|(s, x)| {
                     let species = self.sc.enum_value(s)?;
                     let sex = self.sc.enum_value(x)?;
-                    Some(Box::new(Appearance::new(Body::Character { species, sex })))
+                    Some(Box::new(
+                        Appearance::new(Body::Character { species, sex }).with_look(look),
+                    ))
                 });
                 Command::Character(CharacterCommand::CreateCharacter {
                     name: name.clone(),
                     appearance,
                     class,
+                    nationality,
                 })
             }
             InputCmd::DeleteCharacter(n) => {

@@ -71,6 +71,7 @@ fn start_server() -> Option<TestServer> {
         instance: 0,
         position: None,
         appearance: StoredAppearance::Valid(Appearance::new(Body::Character { species, sex: 1 })),
+        look: tessera_protocol::types::Look::none(),
     };
     for (account, characters) in [
         ("alice", vec![record("Aldith", 23), record("Bramble", 81)]),

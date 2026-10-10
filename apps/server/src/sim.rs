@@ -19,7 +19,7 @@ use tessera_protocol::codes::{
     AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
     LoginFailedCode, TeleportRefusedCode,
 };
-use tessera_protocol::frame::{encode_datagram, frame_to_vec};
+use tessera_protocol::frame::{encode_datagram, frame_to_vec_minor};
 use tessera_protocol::limits::{
     DEFAULT_TICK_RATE, MAX_CHARACTERS, MAX_MOTION_DATAGRAMS_PER_SNAPSHOT, MAX_MOTION_ENTRIES,
     WORLD_BACKLOG_FATAL, WORLD_BACKLOG_GRACE, WORLD_BACKLOG_PAUSE, WORLD_BACKLOG_RESUME,
@@ -37,7 +37,7 @@ use tessera_protocol::rate::SlidingWindow;
 use tessera_protocol::server::ServerEvent;
 use tessera_protocol::text::sanitise;
 use tessera_protocol::types::{
-    Appearance, Body, CharacterSummary, Destination, Gait, Location, Motion, Pose, Vec3,
+    Appearance, Body, CharacterSummary, Destination, Gait, Location, Look, Motion, Pose, Vec3,
 };
 use tessera_protocol::value::{Emote, Property, Stance, Value, pid};
 
@@ -204,6 +204,9 @@ struct Entity {
     velocity: Vec3,
     motion: Motion,
     appearance: Appearance,
+    /// A character's look as its client created it (protocol 1.1), sent unchanged to
+    /// observers at minor ≥ 1; empty for wanderers with a fixed appearance.
+    look: Look,
     stance: Stance,
     emote: Option<Emote>,
     owner: Option<ConnId>,
@@ -267,6 +270,9 @@ struct PendingTeleport {
 #[derive(Debug)]
 struct Conn {
     shared: Arc<ConnShared>,
+    /// The negotiated minor version (`tessera-protocol.md` §3.1): looks and slots go only to
+    /// connections at minor ≥ 1, which the encoder does by itself.
+    minor: u16,
     queue: VecDeque<ServerEvent>,
     max_entities: usize,
     account: Option<String>,
@@ -445,7 +451,7 @@ impl Sim {
             for (gi, g) in content.wanderers.iter().enumerate() {
                 if let WandererLook::Fixed(a) = &g.look {
                     let a = a.clone();
-                    sim.create_wanderers(n, gi, &a, now);
+                    sim.create_wanderers(n, gi, &a, &Look::none(), now);
                 }
             }
         }
@@ -482,7 +488,7 @@ impl Sim {
         let Some(c) = self.conns.get(&conn) else {
             return 0;
         };
-        match frame_to_vec(msg) {
+        match frame_to_vec_minor(msg, c.minor) {
             Ok(bytes) => {
                 let n = bytes.len();
                 c.shared.world_unsent.fetch_add(n, Ordering::Relaxed);
@@ -514,7 +520,7 @@ impl Sim {
         let Some(c) = self.conns.get(&conn) else {
             return;
         };
-        match frame_to_vec(msg) {
+        match frame_to_vec_minor(msg, c.minor) {
             Ok(bytes) => {
                 let n = bytes.len();
                 c.shared.chat_unsent.fetch_add(n, Ordering::Relaxed);
@@ -613,6 +619,20 @@ impl Sim {
         ws
     }
 
+    /// One look per character of `account`, in the order of [`summaries`](Self::summaries).
+    fn looks(&self, account: &str) -> Vec<Look> {
+        self.characters
+            .get(account)
+            .map(|f| {
+                f.characters
+                    .iter()
+                    .take(MAX_CHARACTERS)
+                    .map(|c| c.look.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn summaries(&self, account: &str) -> Vec<CharacterSummary> {
         self.characters
             .get(account)
@@ -643,6 +663,7 @@ impl Sim {
                 let cfg = &self.config.chat;
                 let conn = Conn {
                     shared,
+                    minor: 0,
                     queue: VecDeque::new(),
                     max_entities: 0,
                     account: None,
@@ -950,11 +971,13 @@ impl Sim {
                     c.last_activity = now;
                 }
                 let characters = self.summaries(&r.account);
+                let looks = self.looks(&r.account);
                 self.cmd(
                     id,
                     SessionCmd::AcceptLogin {
                         account: r.account,
                         characters,
+                        looks,
                     },
                 );
             }
@@ -990,7 +1013,7 @@ impl Sim {
 
     // ------------------------------------------------------------------ characters
 
-    fn on_create(&mut self, id: ConnId, name: String, appearance: Appearance) {
+    fn on_create(&mut self, id: ConnId, name: String, appearance: Appearance, look: Look) {
         let Some(account) = self.conns.get(&id).and_then(|c| c.account.clone()) else {
             return;
         };
@@ -1041,6 +1064,8 @@ impl Sim {
                 anchor: spawn.anchor,
             }),
             appearance: StoredAppearance::Valid(appearance),
+            // Stored as the client created it, never judged (server-content.md §4.1 R2).
+            look,
         };
         let file = self
             .characters
@@ -1050,6 +1075,12 @@ impl Sim {
                 characters: Vec::new(),
             });
         file.characters.push(record);
+        if !crate::characters::fits(file) {
+            // A character file is at most 1 MiB (test-server.md §3.5).
+            file.characters.pop();
+            reject(self, CharacterCreateFailedCode::ServerError);
+            return;
+        }
         self.name_index.insert(key.clone(), account.clone());
         self.stats
             .character_files
@@ -1088,8 +1119,9 @@ impl Sim {
             c.create_pending = None;
         }
         if ok {
-            let list = self.summaries(&p.account);
-            self.cmd(p.conn, SessionCmd::CharacterCreated(list));
+            let characters = self.summaries(&p.account);
+            let looks = self.looks(&p.account);
+            self.cmd(p.conn, SessionCmd::CharacterCreated { characters, looks });
         } else {
             self.undo_create(&p.account, &p.name_key);
             self.cmd(
@@ -1192,6 +1224,7 @@ impl Sim {
             velocity: Vec3::ZERO,
             motion: Motion::STANDING,
             appearance: appearance.clone(),
+            look: record.look.clone(),
             stance: Stance::Relaxed,
             emote: None,
             owner: Some(id),
@@ -1212,6 +1245,7 @@ impl Sim {
             server_time: now,
             pose,
             appearance: appearance.clone(),
+            look: record.look.clone(),
         };
         self.entities.insert(eid, entity);
         self.players_by_key.insert(key.clone(), eid);
@@ -1236,8 +1270,9 @@ impl Sim {
             }
             None => Vec::new(),
         };
+        // `first-player` wanderers copy the look and slots too (test-server.md §5.4).
         for gi in first {
-            self.create_wanderers(instance, gi, &appearance, now);
+            self.create_wanderers(instance, gi, &appearance, &record.look, now);
         }
         self.cmd(id, SessionCmd::EnterWorld(Box::new(enter)));
         let clock = self
@@ -1278,7 +1313,14 @@ impl Sim {
         self.instances.iter().find(|i| i.number == n)
     }
 
-    fn create_wanderers(&mut self, instance: u32, group: usize, appearance: &Appearance, now: u64) {
+    fn create_wanderers(
+        &mut self,
+        instance: u32,
+        group: usize,
+        appearance: &Appearance,
+        look: &Look,
+        now: u64,
+    ) {
         let Some(g) = self.content.wanderers.get(group).cloned() else {
             return;
         };
@@ -1326,6 +1368,7 @@ impl Sim {
                 velocity: v,
                 motion: Motion::new(gait, false),
                 appearance: appearance.clone(),
+                look: look.clone(),
                 stance: Stance::Relaxed,
                 emote: None,
                 owner: None,
@@ -1810,22 +1853,31 @@ impl Sim {
         };
         let refused =
             matches!(a.body, Body::Object { .. }) && !self.config.accounts.allow_object_bodies;
-        let (result, changed) = {
+        let Some(differs) = self.entities.get(&eid).map(|e| e.appearance != a) else {
+            return;
+        };
+        // A change that would make the character file larger than 1 MiB is refused
+        // (test-server.md §3.5). Checked only for a real change: a repeated or no-op set
+        // costs nothing.
+        let too_large = !refused && differs && !self.appearance_fits(id, eid, &a);
+        let (result, look, changed) = {
             let Some(e) = self.entities.get_mut(&eid) else {
                 return;
             };
-            let changed = !refused && e.appearance != a;
+            let changed = !refused && !too_large && differs;
             if changed {
                 e.appearance = a;
                 e.dirty_appearance = true;
             }
-            (e.appearance.clone(), changed)
+            // The stored look is kept and carried by the answer (§6.4).
+            (e.appearance.clone(), e.look.clone(), changed)
         };
         self.send_world(
             id,
             &Message::EntityAppearance(EntityAppearance {
                 id: eid,
                 appearance: result,
+                look,
             }),
         );
         if refused {
@@ -1834,10 +1886,44 @@ impl Sim {
                 "Appearance not changed: this server does not accept object bodies for players.",
                 now,
             );
+        } else if too_large {
+            self.system_line(
+                id,
+                "Appearance not changed: the character file would be too large.",
+                now,
+            );
         } else if changed {
             // Written at once, not at the next periodic round (§12.2).
             self.save_conn(id);
         }
+    }
+
+    /// Whether the character file of `id`'s account stays within 1 MiB with appearance `a`
+    /// for the player entity `eid`.
+    fn appearance_fits(&self, id: ConnId, eid: u64, a: &Appearance) -> bool {
+        let (Some(account), Some(e)) = (
+            self.conns.get(&id).and_then(|c| c.account.as_ref()),
+            self.entities.get(&eid),
+        ) else {
+            return true;
+        };
+        let Some(file) = self.characters.get(account) else {
+            return true;
+        };
+        let Some(rec) = file.characters.iter().find(|c| c.name == e.name) else {
+            return crate::characters::fits(file);
+        };
+        // The file's length with only this record's appearance text replaced, without
+        // copying the file.
+        let old = match &rec.appearance {
+            StoredAppearance::Valid(old) => {
+                crate::appearance::to_toml_with_look(old, &rec.look).len()
+            }
+            StoredAppearance::Invalid(raw) => raw.len(),
+        };
+        let new = crate::appearance::to_toml_with_look(a, &rec.look).len();
+        file.to_toml().len().saturating_sub(old).saturating_add(new)
+            <= crate::characters::MAX_CHARACTER_FILE
     }
 
     // ------------------------------------------------------------------ tick
@@ -1924,6 +2010,9 @@ impl Sim {
                 let cap = usize::try_from(self.config.world.max_entities_cap).unwrap_or(1024);
                 if let Some(c) = self.conns.get_mut(&id) {
                     c.max_entities = usize::from(h.max_entities).min(cap);
+                    // The minor the session negotiated (`ServerParams`), recorded by the
+                    // network task before it forwarded this event.
+                    c.minor = c.shared.minor();
                 }
                 tracing::debug!(conn = id, client = %sanitise(&h.client_name), "hello");
             }
@@ -1931,7 +2020,7 @@ impl Sim {
                 credentials,
                 register,
             } => self.on_login(id, credentials.account, credentials.password, register, now),
-            ServerEvent::CharacterCreate(c) => self.on_create(id, c.name, c.appearance),
+            ServerEvent::CharacterCreate(c) => self.on_create(id, c.name, c.appearance, c.look),
             ServerEvent::EnterWorld { name } => self.on_enter(id, name, now),
             ServerEvent::Teleport(t) => self.on_teleport(id, t, false, now),
             ServerEvent::TeleportInvalid(t) => self.on_teleport(id, t, true, now),
@@ -2273,6 +2362,7 @@ impl Sim {
             let Some(c) = self.conns.get_mut(&oid) else {
                 continue;
             };
+            let minor = c.minor;
             // Leaves (never deferred).
             let mut gone = Vec::new();
             for &kid in c.known.keys() {
@@ -2291,9 +2381,10 @@ impl Sim {
             }
             for (kid, reason) in gone {
                 c.known.remove(&kid);
-                if let Some(b) =
-                    encode_frame(&Message::EntityDestroy(EntityDestroy { id: kid, reason }))
-                {
+                if let Some(b) = encode_frame(
+                    &Message::EntityDestroy(EntityDestroy { id: kid, reason }),
+                    minor,
+                ) {
                     used += b.len();
                     out.push(b);
                 }
@@ -2335,7 +2426,7 @@ impl Sim {
                             .collect();
                         k.pending_props.clear();
                         let m = Message::EntityUpdate(EntityUpdate { id: kid, changes });
-                        if let Some(b) = encode_frame(&m) {
+                        if let Some(b) = encode_frame(&m, minor) {
                             used += b.len();
                             out.push(b);
                         }
@@ -2345,8 +2436,9 @@ impl Sim {
                         let m = Message::EntityAppearance(EntityAppearance {
                             id: kid,
                             appearance: e.appearance.clone(),
+                            look: e.look.clone(),
                         });
-                        if let Some(b) = encode_frame(&m) {
+                        if let Some(b) = encode_frame(&m, minor) {
                             used += b.len();
                             out.push(b);
                         }
@@ -2381,8 +2473,11 @@ impl Sim {
                         motion: e.motion,
                         appearance: e.appearance.clone(),
                         properties: e.properties(),
+                        look: e.look.clone(),
                     });
-                    let Some(b) = encode_frame(&m) else { continue };
+                    let Some(b) = encode_frame(&m, minor) else {
+                        continue;
+                    };
                     used += b.len();
                     out.push(b);
                     c.known.insert(
@@ -2693,9 +2788,10 @@ fn floor(s: &str, max: usize) -> usize {
     end
 }
 
-/// A message as a stream frame; `None` (logged) if it cannot be encoded.
-fn encode_frame(m: &Message) -> Option<Vec<u8>> {
-    match frame_to_vec(m) {
+/// A message as a stream frame at negotiated minor `minor`; `None` (logged) if it cannot be
+/// encoded.
+fn encode_frame(m: &Message, minor: u16) -> Option<Vec<u8>> {
+    match frame_to_vec_minor(m, minor) {
         Ok(b) => Some(b),
         Err(e) => {
             tracing::error!(error = %e, ty = %m.message_type(), "message not encodable");

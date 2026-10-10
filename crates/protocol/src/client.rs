@@ -31,7 +31,7 @@ use crate::session::{
     close_reason, micros,
 };
 use crate::time::{ClockOffsetEstimator, TimeSample};
-use crate::types::{Appearance, CharacterSummary, Destination, Location, Motion, Vec3};
+use crate::types::{Appearance, CharacterSummary, Destination, Location, Look, Motion, Vec3};
 use crate::value::Stance;
 
 /// Client states (§12.1).
@@ -148,11 +148,18 @@ pub enum ClientEvent {
         account: String,
         /// Its characters.
         characters: Vec<CharacterSummary>,
+        /// Minor ≥ 1: one look per character (empty looks: none); empty at minor 0.
+        looks: Vec<Look>,
     },
     /// `LoginFailed`. The client may try again unless a `Disconnect` follows.
     LoginFailed(LoginFailed),
     /// `CharacterList` after a successful `CharacterCreate`.
-    CharacterList(Vec<CharacterSummary>),
+    CharacterList {
+        /// The account's full list.
+        characters: Vec<CharacterSummary>,
+        /// Minor ≥ 1: one look per character; empty at minor 0.
+        looks: Vec<Look>,
+    },
     /// `CharacterCreateFailed`.
     CharacterCreateFailed(Failure<CharacterCreateFailedCode>),
     /// `EnterWorldFailed`; back in CharacterSelect.
@@ -284,6 +291,14 @@ impl ClientSession {
     #[must_use]
     pub fn hello_ack(&self) -> Option<&HelloAck> {
         self.hello_ack.as_ref()
+    }
+
+    /// The negotiated minor version (§3.1): `HelloAck.minor`, 0 before it. Messages of
+    /// [`Transmit::Message`] are encoded under it
+    /// ([`frame_to_vec_minor`](crate::frame::frame_to_vec_minor)).
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.hello_ack.as_ref().map_or(0, |a| a.minor)
     }
 
     /// The account name from `LoginOk`.
@@ -537,7 +552,16 @@ impl ClientSession {
         if slot.is_some() || self.uni_streams >= 2 {
             return self.violation_or_none(Violation::Stream("second stream of the same kind"));
         }
-        *slot = Some(FrameDecoder::new(kind.channel(), Side::Server));
+        let minor = self.hello_ack.as_ref().map_or(0, |a| a.minor);
+        let slot = match kind {
+            StreamKind::World => &mut self.world_stream,
+            StreamKind::Chat => &mut self.chat_stream,
+        };
+        *slot = Some(FrameDecoder::with_minor(
+            kind.channel(),
+            Side::Server,
+            minor,
+        ));
         self.uni_streams += 1;
         Ok(Some(kind))
     }
@@ -695,6 +719,7 @@ impl ClientSession {
                         max: self.config.minor_max,
                     });
                 }
+                self.control.set_minor(ack.minor);
                 self.hello_ack = Some(ack.clone());
                 self.state = ClientState::Authenticating;
                 self.deadline = None;
@@ -711,6 +736,7 @@ impl ClientSession {
                 Ok(Some(ClientEvent::LoggedIn {
                     account: ok.account,
                     characters: ok.characters,
+                    looks: ok.looks,
                 }))
             }
             Message::LoginFailed(f) => {
@@ -729,7 +755,10 @@ impl ClientSession {
                     return Err(self.unexpected(ty));
                 }
                 self.create_outstanding = false;
-                Ok(Some(ClientEvent::CharacterList(l.characters)))
+                Ok(Some(ClientEvent::CharacterList {
+                    characters: l.characters,
+                    looks: l.looks,
+                }))
             }
             Message::CharacterCreateFailed(f) => {
                 if self.state != ClientState::CharacterSelect || !self.create_outstanding {
@@ -1028,7 +1057,7 @@ impl ClientSession {
     }
 
     fn send_checked(&mut self, msg: Message) -> Result<(), UsageError> {
-        check_encodable(&msg)?;
+        check_encodable_minor(&msg, self.minor())?;
         self.outbox.send(msg);
         Ok(())
     }
@@ -1060,11 +1089,23 @@ impl ClientSession {
         Ok(())
     }
 
-    /// Sends `CharacterCreate` (CharacterSelect, `CHARACTER_CREATION`, none outstanding).
+    /// Sends `CharacterCreate` (CharacterSelect, `CHARACTER_CREATION`, none outstanding)
+    /// without a look.
     pub fn create_character(
         &mut self,
         name: String,
         appearance: Appearance,
+    ) -> Result<(), UsageError> {
+        self.create_character_with_look(name, appearance, Look::none())
+    }
+
+    /// Sends `CharacterCreate` with a look (§6.2.7). The look travels only at negotiated
+    /// minor ≥ 1; at minor 0 it is left off (§3.1).
+    pub fn create_character_with_look(
+        &mut self,
+        name: String,
+        appearance: Appearance,
+        look: Look,
     ) -> Result<(), UsageError> {
         self.require(ClientState::CharacterSelect)?;
         if !self.caps().contains(ServerCaps::CHARACTER_CREATION) {
@@ -1076,6 +1117,7 @@ impl ClientSession {
         self.send_checked(Message::CharacterCreate(CharacterCreate {
             name,
             appearance,
+            look,
         }))?;
         self.create_outstanding = true;
         Ok(())
@@ -1267,10 +1309,16 @@ pub(crate) fn floor_boundary(s: &str, max: usize) -> usize {
     end
 }
 
-/// Checks that a message encodes (so a send never fails later in the network layer).
+/// Checks that a message encodes in the v1.0 layout (so a send never fails later in the
+/// network layer).
 pub(crate) fn check_encodable(msg: &Message) -> Result<(), UsageError> {
+    check_encodable_minor(msg, 0)
+}
+
+/// Checks that a message encodes under negotiated minor `minor`.
+pub(crate) fn check_encodable_minor(msg: &Message, minor: u16) -> Result<(), UsageError> {
     let mut scratch = Vec::new();
-    msg.encode_body(&mut scratch)?;
+    msg.encode_body_minor(&mut scratch, minor)?;
     let limit = if msg.channel().is_stream() {
         crate::limits::MAX_FRAME_BODY
     } else {

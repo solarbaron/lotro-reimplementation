@@ -1250,3 +1250,21 @@ path = "fuzz_targets/net_scenario_run.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-net overlay runs (docs/specs/scenario-feed.md §12.5, decision 0025) ---
+
+[[bin]]
+name = "net_scenario_overlay"
+path = "fuzz_targets/net_scenario_overlay.rs"
+test = false
+doc = false
+bench = false
+
+# --- P1: tessera-settings creation choices (character-screens.md §7.1) ---
+
+[[bin]]
+name = "settings_created_characters"
+path = "fuzz_targets/settings_created_characters.rs"
+test = false
+doc = false
+bench = false

@@ -8,13 +8,17 @@
 use std::collections::BTreeMap;
 
 use tessera_protocol::limits::MAX_LOCATION_COORDINATE;
-use tessera_protocol::types::{Anchor, Appearance, Location};
+use tessera_protocol::types::{Anchor, Appearance, Location, Look};
 
 use crate::appearance;
 use crate::datadir::DataDir;
 use crate::error::ServerError;
 use crate::names;
 use crate::tomlx::{self, Reader, Rule, Source, View, float_text, quote};
+
+/// Largest character file, bytes (`test-server.md` §3.5): larger files are refused when
+/// read, and a change that would make one larger is refused.
+pub const MAX_CHARACTER_FILE: usize = 1_048_576;
 
 /// A stored position (§3.5 `position`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,6 +54,9 @@ pub struct CharacterRecord {
     pub position: Option<StoredPosition>,
     /// Appearance.
     pub appearance: StoredAppearance,
+    /// The character's look as its client created it (protocol 1.1; empty: none). Stored
+    /// and sent unchanged, never judged (`server-content.md` §4.1 R2, R3).
+    pub look: Look,
 }
 
 /// One account's character file.
@@ -59,6 +66,12 @@ pub struct CharacterFile {
     pub account: String,
     /// The characters.
     pub characters: Vec<CharacterRecord>,
+}
+
+/// Whether a character file's text fits [`MAX_CHARACTER_FILE`].
+#[must_use]
+pub fn fits(file: &CharacterFile) -> bool {
+    file.to_toml().len() <= MAX_CHARACTER_FILE
 }
 
 fn valid_position(p: &StoredPosition) -> bool {
@@ -206,13 +219,13 @@ impl CharacterFile {
                                 line: aline,
                                 path: "character.appearance",
                             };
-                            match appearance::parse(&mut scratch, view) {
-                                Some(a) => Some(StoredAppearance::Valid(a)),
+                            match appearance::parse_character(&mut scratch, view) {
+                                Some((a, look)) => Some((StoredAppearance::Valid(a), look)),
                                 None => {
                                     warnings.push(format!(
                                         "line {aline}: stored appearance fails the protocol's limits; entering the world is refused"
                                     ));
-                                    Some(StoredAppearance::Invalid(raw))
+                                    Some((StoredAppearance::Invalid(raw), Look::none()))
                                 }
                             }
                         }
@@ -229,7 +242,7 @@ impl CharacterFile {
                 Some((created, _)),
                 Some((instance, _)),
                 Some(position),
-                Some(appearance),
+                Some((appearance, look)),
             ) = (name, created, instance, position, appearance)
             else {
                 continue;
@@ -259,6 +272,7 @@ impl CharacterFile {
                 instance: u32::try_from(instance).unwrap_or(0),
                 position,
                 appearance,
+                look,
             });
         }
         if let Some(f) = r.findings.first() {
@@ -302,7 +316,7 @@ impl CharacterFile {
                 s.push_str("position = { region = 0, x = 0.0, y = 0.0, z = 0.0, heading = 0.0, anchor = [255, 255, 0] }\n");
             }
             let appearance = match &c.appearance {
-                StoredAppearance::Valid(a) => appearance::to_toml(a),
+                StoredAppearance::Valid(a) => appearance::to_toml_with_look(a, &c.look),
                 StoredAppearance::Invalid(raw) => raw.clone(),
             };
             s.push_str(&format!("appearance = {appearance}\n"));
@@ -343,6 +357,12 @@ pub fn load_all(dir: &DataDir) -> Result<BTreeMap<String, CharacterFile>, Server
             }
             Err(e) => return Err(ServerError::io(path, e)),
         };
+        if text.len() > MAX_CHARACTER_FILE {
+            return Err(ServerError::InvalidFile {
+                path,
+                message: format!("character file larger than {MAX_CHARACTER_FILE} bytes"),
+            });
+        }
         let (file, warnings) =
             CharacterFile::parse(&text, &account).map_err(|message| ServerError::InvalidFile {
                 path: path.clone(),
@@ -360,6 +380,10 @@ pub fn load_all(dir: &DataDir) -> Result<BTreeMap<String, CharacterFile>, Server
 pub fn read_file(dir: &DataDir, account: &str) -> Result<CharacterFile, ServerError> {
     let path = dir.character_path(account);
     match tomlx::read_text(&path) {
+        Ok(Ok(text)) if text.len() > MAX_CHARACTER_FILE => Err(ServerError::InvalidFile {
+            path,
+            message: format!("character file larger than {MAX_CHARACTER_FILE} bytes"),
+        }),
         Ok(Ok(text)) => CharacterFile::parse(&text, account)
             .map(|(f, _)| f)
             .map_err(|message| ServerError::InvalidFile { path, message }),
@@ -491,8 +515,10 @@ mod tests {
                             dye: Some(0.25),
                             secondary_dye: None,
                             stowed: true,
+                            slot: None,
                         }],
                     }),
+                    look: tessera_protocol::types::Look::none(),
                 },
                 CharacterRecord {
                     name: "Bram".into(),
@@ -502,6 +528,7 @@ mod tests {
                     appearance: StoredAppearance::Invalid(
                         "{ body = { object = 0 }, scale = 1.0 }".into(),
                     ),
+                    look: tessera_protocol::types::Look::none(),
                 },
             ],
         };
@@ -582,6 +609,139 @@ mod tests {
         )
         .replace("Aldith", &long);
         assert!(CharacterFile::parse(&text, "alice").is_err());
+    }
+
+    #[test]
+    fn looks_and_slots_round_trip() {
+        use tessera_protocol::types::{LookEntry, LookValue};
+        let look = Look {
+            entries: vec![
+                LookEntry {
+                    property: 1,
+                    value: LookValue::Bool(true),
+                },
+                LookEntry {
+                    property: 2,
+                    value: LookValue::Int32(-5),
+                },
+                LookEntry {
+                    property: 3,
+                    value: LookValue::Int64(i64::MIN),
+                },
+                LookEntry {
+                    property: 4,
+                    value: LookValue::Float32(0.1),
+                },
+                LookEntry {
+                    property: 5,
+                    value: LookValue::Enum(u32::MAX),
+                },
+                LookEntry {
+                    property: 6,
+                    value: LookValue::DataId(0x7000_0001),
+                },
+                LookEntry {
+                    property: 7,
+                    value: LookValue::String("8080ff".into()),
+                },
+                LookEntry {
+                    property: 8,
+                    value: LookValue::Bitfield32(5),
+                },
+                LookEntry {
+                    property: 9,
+                    value: LookValue::Bitfield64(u64::MAX),
+                },
+                LookEntry {
+                    property: u32::MAX,
+                    value: LookValue::Colour([1, 2, 3, 255]),
+                },
+            ],
+        };
+        let mut a = Appearance::new(Body::Character { species: 1, sex: 2 });
+        a.equipment.push(Equipped {
+            item: 9,
+            slot: Some(64),
+            ..Equipped::default()
+        });
+        let f = CharacterFile {
+            account: "alice".into(),
+            characters: vec![CharacterRecord {
+                name: "Aldith".into(),
+                created: "2026-10-10T12:00:00Z".into(),
+                instance: 1,
+                position: None,
+                appearance: StoredAppearance::Valid(a),
+                look,
+            }],
+        };
+        let text = f.to_toml();
+        let (back, _) =
+            CharacterFile::parse(&text, "alice").unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert_eq!(back, f, "{text}");
+        assert!(fits(&f));
+        // The header form of test-server.md §3.5 reads too.
+        let header = one_character(
+            POS,
+            "[character.appearance]\nscale = 1.0\n[character.appearance.body]\nspecies = 1\nsex = 1\n[[character.appearance.items]]\ndid = 5\nslot = 17\n[[character.appearance.look]]\nproperty = 7\nkind = \"colour\"\nvalue = [1, 2, 3, 4]\n[[character.appearance.look]]\nproperty = 9\nkind = \"bitfield64\"\nvalue = \"0x00000000000000FF\"\n",
+        );
+        let (h, warnings) = CharacterFile::parse(&header, "alice").unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(h.characters[0].look.entries.len(), 2);
+    }
+
+    #[test]
+    fn invalid_looks_and_slots_refuse_world_entry() {
+        for bad in [
+            // Not ascending.
+            "look = [{ property = 2, kind = \"bool\", value = true }, { property = 1, kind = \"bool\", value = true }]",
+            // A space in a string; an unknown kind; a value of the wrong type.
+            "look = [{ property = 1, kind = \"string\", value = \"a b\" }]",
+            "look = [{ property = 1, kind = \"array\", value = 1 }]",
+            "look = [{ property = 1, kind = \"int32\", value = 3000000000 }]",
+            "look = [{ property = 0, kind = \"bool\", value = true }]",
+            "items = [{ did = 5, slot = 65 }]",
+            "items = [{ did = 5, slot = 0 }]",
+        ] {
+            let text = one_character(
+                POS,
+                &format!(
+                    "appearance = {{ body = {{ species = 1, sex = 1 }}, scale = 1.0, {bad} }}\n"
+                ),
+            );
+            let (f, warnings) = CharacterFile::parse(&text, "alice").expect(bad);
+            assert!(
+                matches!(f.characters[0].appearance, StoredAppearance::Invalid(_)),
+                "{bad}"
+            );
+            assert_eq!(warnings.len(), 1, "{bad}");
+            // Kept as written.
+            let (back, _) = CharacterFile::parse(&f.to_toml(), "alice").unwrap();
+            assert_eq!(back, f);
+        }
+    }
+
+    #[test]
+    fn character_files_are_bounded() {
+        let mut f = CharacterFile {
+            account: "alice".into(),
+            characters: Vec::new(),
+        };
+        let raw = format!(
+            "{{ body = {{ object = 0 }}, scale = 1.0, note = \"{}\" }}",
+            "x".repeat(20_000)
+        );
+        for i in 0..60 {
+            f.characters.push(CharacterRecord {
+                name: format!("C{i}"),
+                created: "2026-10-10T12:00:00Z".into(),
+                instance: 0,
+                position: None,
+                appearance: StoredAppearance::Invalid(raw.clone()),
+                look: Look::none(),
+            });
+        }
+        assert!(!fits(&f), "{} bytes", f.to_toml().len());
     }
 
     #[test]

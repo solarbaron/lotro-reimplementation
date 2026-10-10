@@ -13,10 +13,10 @@ use std::time::Duration;
 use tessera_protocol::codes::{AppErrorCode, LoginFailedCode};
 use tessera_protocol::connect::ExpectedKey;
 use tessera_protocol::fingerprint::Fingerprint;
-use tessera_protocol::frame::{FrameDecoder, frame_to_vec};
+use tessera_protocol::frame::{FrameDecoder, frame_to_vec_minor};
 use tessera_protocol::message::{CharacterCreate, Credentials, Disconnect, Hello};
 use tessera_protocol::transport::{PinnedServerVerifier, client_endpoint, quinn_client_config};
-use tessera_protocol::types::{Appearance, Body};
+use tessera_protocol::types::{Appearance, Body, Equipped, Look, LookEntry, LookValue};
 use tessera_protocol::{Channel, Message, Side};
 
 /// Most undecoded control-stream bytes one raw client keeps (one maximal frame).
@@ -74,6 +74,8 @@ pub struct ControlLink {
     recv: quinn::RecvStream,
     decoder: FrameDecoder,
     pending: Vec<u8>,
+    /// The negotiated minor version, from the server's `HelloAck` (0 before it).
+    minor: u16,
 }
 
 impl ControlLink {
@@ -93,7 +95,14 @@ impl ControlLink {
             recv,
             decoder: FrameDecoder::new(Channel::Control, Side::Server),
             pending: Vec::new(),
+            minor: 0,
         })
+    }
+
+    /// The negotiated minor version (0 before the `HelloAck`).
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.minor
     }
 
     /// Sends one message.
@@ -102,7 +111,7 @@ impl ControlLink {
     ///
     /// Encoding or stream error, in words.
     pub async fn send(&mut self, m: &Message) -> Result<(), String> {
-        let bytes = frame_to_vec(m).map_err(|e| e.to_string())?;
+        let bytes = frame_to_vec_minor(m, self.minor).map_err(|e| e.to_string())?;
         self.send_raw(&bytes).await
     }
 
@@ -140,7 +149,14 @@ impl ControlLink {
                 let used = before - input.len();
                 self.pending.drain(..used);
                 match r {
-                    Ok(Some(m)) => return Ok(Some(m)),
+                    Ok(Some(m)) => {
+                        if let Message::HelloAck(a) = &m {
+                            // Frames after the HelloAck use the negotiated minor (§3.1).
+                            self.minor = a.minor;
+                            self.decoder.set_minor(a.minor);
+                        }
+                        return Ok(Some(m));
+                    }
                     Ok(None) => {}
                     Err(e) => return Err(e.to_string()),
                 }
@@ -200,25 +216,72 @@ impl ControlLink {
     }
 }
 
-/// The `Hello` the load tool sends.
+/// The `Hello` the load tool sends (the highest minor it implements).
 #[must_use]
 pub fn hello() -> Message {
+    hello_minor(tessera_protocol::limits::PROTOCOL_MINOR)
+}
+
+/// A `Hello` offering at most minor `minor_max`.
+#[must_use]
+pub fn hello_minor(minor_max: u16) -> Message {
     Message::Hello(Hello {
-        minor_max: tessera_protocol::limits::PROTOCOL_MINOR,
+        minor_max,
         client_caps: 0,
         max_entities: 1024,
         client_name: format!("tessera-loadtest {}", env!("CARGO_PKG_VERSION")),
     })
 }
 
+/// The minor a bot offers: 1, except every tenth bot, which stays at 0
+/// (`test-server.md` §13.1: 10 % by default).
+#[must_use]
+pub fn bot_minor(index: usize) -> u16 {
+    if index % 10 == 9 {
+        0
+    } else {
+        tessera_protocol::limits::PROTOCOL_MINOR
+    }
+}
+
+/// An invented look for a bot: made-up property IDs and values chosen by the tool, never
+/// resolved (`test-server.md` §13.1).
+#[must_use]
+pub fn bot_look(index: usize) -> Look {
+    let i = u32::try_from(index % 1_000).unwrap_or(0);
+    Look {
+        entries: vec![
+            LookEntry {
+                property: 0x7FF0_0001,
+                value: LookValue::Float32(f32::from(u16::try_from(i % 100).unwrap_or(0)) / 100.0),
+            },
+            LookEntry {
+                property: 0x7FF0_0002,
+                value: LookValue::Colour([(i % 256) as u8, 128, 64, 255]),
+            },
+            LookEntry {
+                property: 0x7FF0_0003,
+                value: LookValue::String(format!("bot{i}")),
+            },
+        ],
+    }
+}
+
 /// An invented appearance for a bot: numbers chosen by the tool, never resolved
 /// (`test-server.md` §13.1).
 #[must_use]
 pub fn bot_appearance(index: usize) -> Appearance {
-    Appearance::new(Body::Character {
+    let mut a = Appearance::new(Body::Character {
         species: 1 + (index % 7) as u32,
         sex: 1 + (index % 2) as u32,
-    })
+    });
+    // An invented held item with its slot key (sent only at minor ≥ 1).
+    a.equipment.push(Equipped {
+        item: 0x7000_0000 + (index % 97) as u32 + 1,
+        slot: Some(17 + (index % 2) as u8),
+        ..Equipped::default()
+    });
+    a
 }
 
 /// What [`provision`] did.
@@ -230,7 +293,8 @@ pub enum Provisioned {
     Created,
 }
 
-/// Logs in (or registers) and creates `character` unless the account already has it.
+/// Logs in (or registers) and creates `character` with the given appearance and look
+/// unless the account already has it.
 ///
 /// # Errors
 ///
@@ -242,7 +306,7 @@ pub async fn provision(
     password: &str,
     character: &str,
     register: bool,
-    appearance: Appearance,
+    (appearance, look): (Appearance, Look),
 ) -> Result<Provisioned, String> {
     let wait = Duration::from_secs(30);
     let mut attempt = 0u32;
@@ -297,6 +361,7 @@ pub async fn provision(
     link.send(&Message::CharacterCreate(CharacterCreate {
         name: character.to_owned(),
         appearance,
+        look,
     }))
     .await?;
     let r = link
@@ -310,5 +375,164 @@ pub async fn provision(
     match r? {
         Ok(()) => Ok(Provisioned::Created),
         Err(code) => Err(format!("character creation failed: {code}")),
+    }
+}
+
+/// One client-to-server negative vector of `tessera-protocol.md` §16.8: the minor the
+/// `Hello` offers, the frame sent right after it, and a name for reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NegativeVector {
+    /// Short name.
+    pub name: &'static str,
+    /// `Hello.minor_max`.
+    pub minor_max: u16,
+    /// The frame (length, type, body).
+    pub frame: Vec<u8>,
+}
+
+fn with_length(mut frame: Vec<u8>) -> Vec<u8> {
+    let len = u32::try_from(frame.len().saturating_sub(4)).unwrap_or(u32::MAX);
+    if let Some(head) = frame.get_mut(..4) {
+        head.copy_from_slice(&len.to_le_bytes());
+    }
+    frame
+}
+
+/// `CharacterCreate` "Aldith", Character 23/1, scale 1, no idle, no items, then `look`.
+fn create_with_look(look: &[u8]) -> Vec<u8> {
+    let mut f = vec![
+        0, 0, 0, 0, 0x07, 0x00, 0x06, 0x00, b'A', b'l', b'd', b'i', b't', b'h', 0x01, 0x17, 0, 0,
+        0, 0x01, 0, 0, 0, 0, 0, 0x80, 0x3f, 0x00, 0x00,
+    ];
+    f.extend_from_slice(look);
+    with_length(f)
+}
+
+/// `AppearanceSet` Character 23/1 with one item 0x70001234 whose flags and slot follow.
+fn appearance_set_item(flags: u8, slot: Option<u8>) -> Vec<u8> {
+    let mut f = vec![
+        0, 0, 0, 0, 0x11, 0x00, 0x01, 0x17, 0, 0, 0, 0x01, 0, 0, 0, 0, 0, 0x80, 0x3f, 0x00, 0x01,
+        0x34, 0x12, 0x00, 0x70, flags,
+    ];
+    f.extend(slot);
+    with_length(f)
+}
+
+/// Every client-to-server negative vector of §16.8 (the `looks` count case travels server
+/// to client and is a test of the client's decoder). Each MUST end the connection with
+/// `PROTOCOL_VIOLATION` (`test-server.md` §13.1 "Hostile 1.1 cases").
+#[must_use]
+pub fn negative_vectors_v11() -> Vec<NegativeVector> {
+    let k: [u8; 32] = [
+        0x03, 0x01, 0x0a, 0x00, 0x10, 0x04, 0x00, 0x00, 0x00, 0x3f, 0x02, 0x0a, 0x00, 0x10, 0x0d,
+        0xc8, 0x96, 0x64, 0xff, 0x03, 0x0a, 0x00, 0x10, 0x07, 0x06, 0x00, 0x38, 0x30, 0x38, 0x30,
+        0x66, 0x66,
+    ];
+    let mut many = vec![49u8];
+    for i in 1..=49u32 {
+        many.extend(i.to_le_bytes());
+        many.extend([0x01, 0x01]);
+    }
+    let mut big = vec![6u8];
+    for i in 1..=6u32 {
+        big.extend(i.to_le_bytes());
+        big.extend([0x07, 0x80, 0x00]);
+        big.extend(std::iter::repeat_n(b'A', 128));
+    }
+    let v = |name, minor_max, frame| NegativeVector {
+        name,
+        minor_max,
+        frame,
+    };
+    vec![
+        v("slot-at-minor-0", 0, appearance_set_item(0x08, Some(17))),
+        v("look-at-minor-0", 0, create_with_look(&k)),
+        v("slot-0", 1, appearance_set_item(0x08, Some(0x00))),
+        v("slot-65", 1, appearance_set_item(0x08, Some(0x41))),
+        v("flag-bit-4", 1, appearance_set_item(0x10, None)),
+        v(
+            "look-unordered",
+            1,
+            create_with_look(&[
+                0x02, 0x02, 0x0a, 0x00, 0x10, 0x01, 0x01, 0x01, 0x0a, 0x00, 0x10, 0x01, 0x00,
+            ]),
+        ),
+        v(
+            "look-pid-0",
+            1,
+            create_with_look(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01]),
+        ),
+        v(
+            "look-array-tag",
+            1,
+            create_with_look(&[0x01, 0x01, 0x0a, 0x00, 0x10, 0x0e, 0x00, 0x00]),
+        ),
+        v(
+            "look-space",
+            1,
+            create_with_look(&[
+                0x01, 0x01, 0x0a, 0x00, 0x10, 0x07, 0x03, 0x00, 0x61, 0x20, 0x62,
+            ]),
+        ),
+        v("look-49-entries", 1, create_with_look(&many)),
+        v("look-811-bytes", 1, create_with_look(&big)),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_protocol::frame::FrameDecoder;
+
+    /// Each vector is refused by the protocol's own decoder at the minor it negotiates,
+    /// and its v1.1-only content decodes at the other minor where §16.8 says so.
+    #[test]
+    fn vectors_are_refused_by_the_decoder() {
+        use tessera_protocol::ProtocolError as E;
+        let want = [
+            E::ReservedBits("equipped.flags"),
+            E::TrailingBytes(32),
+            E::OutOfRange("equipped.slot"),
+            E::OutOfRange("equipped.slot"),
+            E::ReservedBits("equipped.flags"),
+            E::IdOrder("look"),
+            E::IdOrder("look"),
+            E::LookTag(0x0E),
+            E::LookString,
+            E::Count {
+                field: "look",
+                count: 49,
+                min: 0,
+                max: 48,
+            },
+            E::LookTooLarge(811),
+        ];
+        for (v, want) in negative_vectors_v11().into_iter().zip(want) {
+            let mut d = FrameDecoder::with_minor(Channel::Control, Side::Client, v.minor_max);
+            let mut input: &[u8] = &v.frame;
+            assert_eq!(d.push(&mut input), Err(want), "{}", v.name);
+        }
+        // The two minor-0 vectors are valid at minor 1.
+        for v in negative_vectors_v11().iter().take(2) {
+            let mut d = FrameDecoder::with_minor(Channel::Control, Side::Client, 1);
+            let mut input: &[u8] = &v.frame;
+            assert!(d.push(&mut input).unwrap().is_some(), "{}", v.name);
+        }
+    }
+
+    #[test]
+    fn bot_looks_and_appearances_encode() {
+        for i in [0, 9, 10, 999, 1_000_000] {
+            assert!(bot_look(i).check().is_ok());
+            let m = Message::CharacterCreate(CharacterCreate {
+                name: "B".into(),
+                appearance: bot_appearance(i),
+                look: bot_look(i),
+            });
+            assert!(frame_to_vec_minor(&m, 1).is_ok());
+            assert!(frame_to_vec_minor(&m, 0).is_ok());
+        }
+        assert_eq!(bot_minor(9), 0);
+        assert_eq!(bot_minor(0), 1);
     }
 }

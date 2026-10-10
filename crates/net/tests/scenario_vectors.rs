@@ -274,10 +274,10 @@ tick 100
 title "Vector F"
 pre > Connect
 pre Connected characters=["Testa","Bruni"]
-pre CharacterInfo name="Testa" body=none class=none level=5
-pre > CreateCharacter name="Cora" appearance=none class=none
-pre CharacterInfo name="Cora" body=none class=none level=1
-pre > CreateCharacter name="Dora" appearance=none class=none
+pre CharacterInfo name="Testa" body=none class=none level=5 look=none
+pre > CreateCharacter name="Cora" appearance=none class=none nationality=none look=none
+pre CharacterInfo name="Cora" body=none class=none level=1 look=none
+pre > CreateCharacter name="Dora" appearance=none class=none nationality=none look=none
 pre CharacterRefused name="Dora" reason="That name is taken."
 pre > EnterWorld character="Testa"
 0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
@@ -296,9 +296,58 @@ fn vector_f_pre_world_character_triggers_chat_answer() {
     check(VECTOR_F, LOG_F);
 }
 
+const VECTOR_G: &str = r#"tessera-scenario 1
+title "Vector G"
+tick 100ms
+look $face pid:0x7FFF0002:colour=rgba:200,150,100,255 pid:0x7FFF0001:float=0.25 pid:0x7FFF0003:string="80ff"
+player "Testa" look=$face
+character "Ward" level=3
+item $ring "Ring"
+at 0s give $ring
++0s item-property $ring pid:0x7FFF0010:string="Testa"
++0s stat player pid:0x7FFF0020:int=42
++0s stat player @Example_Stat=7
++0.1s stat player pid:0x7FFF0020:int=none
+on delete-character
++0s remove-character "Ward"
++0s remove-character "Nobody"
+end
+input
+at pre delete-character "Ward"
+at pre create-character "Cora" nationality=@Example_Nationality
+end
+"#;
+
+const LOG_G: &str = r#"tessera-scenario-log 1
+install none
+tick 100
+title "Vector G"
+pre > Connect
+pre Connected characters=["Testa","Ward"]
+pre CharacterInfo name="Testa" body=none class=none level=none look=[{property=0x7FFF0001 value=float:0.25},{property=0x7FFF0002 value=colour:200,150,100,255},{property=0x7FFF0003 value=string:"80ff"}]
+pre CharacterInfo name="Ward" body=none class=none level=3 look=none
+pre > DeleteCharacter name="Ward"
+pre CharacterRemoved name="Ward"
+pre > CreateCharacter name="Cora" appearance=none class=none nationality=none look=none
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 ItemAdded item=$ring what="Ring" at=backpack:0 quantity=1
+0.000 ItemProperty item=$ring property=0x7FFF0010 value=string:"Testa"
+0.000 PropertyChanged entity=player property=0x7FFF0020 value=int:42
+0.100 PropertyChanged entity=player property=0x7FFF0020 value=none
+0.100 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0
+"#;
+
+/// Vector G (§14.8, revision 4): looks, character removal, stats, item properties.
+#[test]
+fn vector_g_looks_removal_stats_item_properties() {
+    check(VECTOR_G, LOG_G);
+}
+
 #[test]
 fn every_vector_is_deterministic() {
-    for text in [VECTOR_A, VECTOR_B, VECTOR_D, VECTOR_E, VECTOR_F] {
+    for text in [VECTOR_A, VECTOR_B, VECTOR_D, VECTOR_E, VECTOR_F, VECTOR_G] {
         assert_eq!(run(text), run(text));
     }
 }

@@ -88,12 +88,16 @@ fuzz_target!(|data: &[u8]| {
                     0 => SessionCmd::AcceptLogin {
                         account: "a".into(),
                         characters: Vec::new(),
+                        looks: Vec::new(),
                     },
                     1 => SessionCmd::RejectLogin {
                         code: LoginFailedCode::from_u16(u16::from(b)),
                         retry_after: u16::from(b),
                     },
-                    2 => SessionCmd::CharacterCreated(Vec::new()),
+                    2 => SessionCmd::CharacterCreated {
+                        characters: Vec::new(),
+                        looks: Vec::new(),
+                    },
                     3 => SessionCmd::RejectCharacter(CharacterCreateFailedCode::NameTaken),
                     4 => SessionCmd::EnterWorld(Box::new(WorldEnter {
                         player: 1,
@@ -107,6 +111,7 @@ fuzz_target!(|data: &[u8]| {
                             anchor: None,
                         },
                         appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+                        look: tessera_protocol::types::Look::none(),
                     })),
                     5 => SessionCmd::RejectEnterWorld(EnterWorldFailedCode::UnknownCharacter),
                     6 => SessionCmd::RejectChat(ChatRejectedCode::RateLimited),

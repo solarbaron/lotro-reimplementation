@@ -9,13 +9,14 @@ use crate::codes::{
     LoginFailedCode, TeleportRefusedCode,
 };
 use crate::error::{ProtocolError, Result};
+use crate::limits::MINOR_LOOKS;
 use crate::limits::{
     MAX_ACCOUNT_LEN, MAX_CHARACTERS, MAX_CLOCK_RATE, MAX_DETAIL_TEXT_LEN, MAX_INTEREST_RADIUS,
     MAX_LONG_TEXT_LEN, MAX_MOTION_ENTRIES, MAX_NAME_LEN, MAX_PASSWORD_LEN, MAX_SOFTWARE_NAME_LEN,
     MAX_TEXT_LEN, MAX_TICK_RATE, MIN_MAX_ENTITIES, MIN_TICK_RATE,
 };
 use crate::types::{
-    Appearance, CharacterSummary, Destination, Location, Motion, NAME_S2C, Pose, Vec3,
+    Appearance, CharacterSummary, Destination, Location, Look, Motion, NAME_S2C, Pose, Vec3,
 };
 use crate::value::{PropListRule, Property, Stance, decode_prop_list, encode_prop_list};
 use crate::wire::{Reader, TextRule, Writer};
@@ -320,12 +321,16 @@ impl fmt::Debug for Credentials {
 }
 
 /// `LoginOk` (0x0005, S→C, §6.2.5).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LoginOk {
     /// The account's canonical name.
     pub account: String,
     /// 0–64 characters, names unique.
     pub characters: Vec<CharacterSummary>,
+    /// Minor ≥ 1 only: entry *i* is the look of character *i*. Sent as empty looks when this
+    /// list is empty; otherwise it must have as many entries as `characters`. Not sent at
+    /// minor 0 (and empty after decoding there).
+    pub looks: Vec<Look>,
 }
 
 /// `LoginFailed` (0x0006, S→C, §6.2.6).
@@ -346,13 +351,17 @@ pub struct CharacterCreate {
     pub name: String,
     /// Its appearance.
     pub appearance: Appearance,
+    /// Minor ≥ 1 only: its creation choices (empty: none). Not sent at minor 0.
+    pub look: Look,
 }
 
 /// `CharacterList` (0x0008, S→C, §6.2.8).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CharacterList {
     /// The account's full list, 0–64 entries.
     pub characters: Vec<CharacterSummary>,
+    /// Minor ≥ 1 only: as [`LoginOk::looks`].
+    pub looks: Vec<Look>,
 }
 
 /// A failure answer with a code and a detail text: `CharacterCreateFailed`,
@@ -457,6 +466,8 @@ pub struct WorldEnter {
     pub pose: Pose,
     /// How the player looks.
     pub appearance: Appearance,
+    /// Minor ≥ 1 only: the character's look (empty: none). Not sent at minor 0.
+    pub look: Look,
 }
 
 /// Cause of a `LocationReport` (§6.3.2).
@@ -532,6 +543,9 @@ pub struct EntityCreate {
     pub appearance: Appearance,
     /// Full property state, no removals.
     pub properties: Vec<Property>,
+    /// Minor ≥ 1 only: the entity's look (empty: none; always empty for entities that are
+    /// not characters). Not sent at minor 0.
+    pub look: Look,
 }
 
 /// `EntityUpdate` (0x0105, S→C, §6.3.5).
@@ -550,6 +564,9 @@ pub struct EntityAppearance {
     pub id: u64,
     /// Full replacement.
     pub appearance: Appearance,
+    /// Minor ≥ 1 only: the entity's look, also a full replacement (empty: none). Not sent at
+    /// minor 0.
+    pub look: Look,
 }
 
 /// Why an entity is destroyed (§6.3.7).
@@ -777,20 +794,34 @@ impl Message {
         self.message_type().channel()
     }
 
-    /// Appends the message body (no length, no type) to `out`, checking every wire rule. On
-    /// error `out` is left as it was.
+    /// Appends the message body (no length, no type) to `out` in the v1.0 layout
+    /// (negotiated minor 0), checking every wire rule. On error `out` is left as it was.
     pub fn encode_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_body_minor(out, 0)
+    }
+
+    /// Appends the message body in the layout of negotiated minor `minor` (§3.1): at minor
+    /// 0 looks and slots are left off (the v1.0 bytes exactly, §15 invariant 10); at minor
+    /// ≥ 1 they are appended. On error `out` is left as it was.
+    pub fn encode_body_minor(&self, out: &mut Vec<u8>, minor: u16) -> Result<()> {
         let start = out.len();
-        let r = encode_body(self, &mut Writer::new(out));
+        let r = encode_body(self, &mut Writer::with_minor(out, minor));
         if r.is_err() {
             out.truncate(start);
         }
         r
     }
 
-    /// Decodes a body of type `ty` strictly: every byte must be used (§3).
+    /// Decodes a body of type `ty` strictly in the v1.0 layout (negotiated minor 0): every
+    /// byte must be used (§3).
     pub fn decode_body(ty: MessageType, body: &[u8]) -> Result<Self> {
-        let mut r = Reader::new(body);
+        Self::decode_body_minor(ty, body, 0)
+    }
+
+    /// Decodes a body of type `ty` strictly in the layout of negotiated minor `minor`
+    /// (§3.1). `Hello` and `HelloAck` are frozen and decode the same at every minor.
+    pub fn decode_body_minor(ty: MessageType, body: &[u8], minor: u16) -> Result<Self> {
+        let mut r = Reader::with_minor(body, minor);
         let m = decode_body(ty, &mut r)?;
         r.finish()?;
         Ok(m)
@@ -798,6 +829,62 @@ impl Message {
 }
 
 // --- helpers ---
+
+/// Appends a look at minor ≥ 1; nothing at minor 0 (§3.1).
+fn encode_look(w: &mut Writer<'_>, look: &Look) -> Result<()> {
+    if w.minor() >= MINOR_LOOKS {
+        look.encode(w)?;
+    }
+    Ok(())
+}
+
+/// Reads a look at minor ≥ 1; the empty look at minor 0.
+fn decode_look(r: &mut Reader<'_>) -> Result<Look> {
+    if r.minor() >= MINOR_LOOKS {
+        Look::decode(r)
+    } else {
+        Ok(Look::none())
+    }
+}
+
+/// Appends the `looks` list of `LoginOk` / `CharacterList` at minor ≥ 1: exactly
+/// `characters` entries (all empty when `looks` is empty).
+fn encode_looks(w: &mut Writer<'_>, characters: usize, looks: &[Look]) -> Result<()> {
+    if w.minor() < MINOR_LOOKS {
+        return Ok(());
+    }
+    if !looks.is_empty() && looks.len() != characters {
+        return Err(count_err("looks", looks.len(), characters, characters));
+    }
+    // characters <= 64 (encode_characters checked it).
+    w.u8(u8::try_from(characters).unwrap_or(u8::MAX));
+    if looks.is_empty() {
+        for _ in 0..characters {
+            Look::none().encode(w)?;
+        }
+    } else {
+        for l in looks {
+            l.encode(w)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reads the `looks` list at minor ≥ 1: its count must equal `characters` (§13.1).
+fn decode_looks(r: &mut Reader<'_>, characters: usize) -> Result<Vec<Look>> {
+    if r.minor() < MINOR_LOOKS {
+        return Ok(Vec::new());
+    }
+    let n = usize::from(r.u8()?);
+    if n != characters {
+        return Err(count_err("looks", n, characters, characters));
+    }
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(Look::decode(r)?);
+    }
+    Ok(out)
+}
 
 fn enum_err(field: &'static str, value: impl Into<u64>) -> ProtocolError {
     ProtocolError::InvalidEnum {
@@ -1006,6 +1093,7 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
         Message::LoginOk(ok) => {
             w.str(ACCOUNT_S2C, &ok.account)?;
             encode_characters(w, &ok.characters)?;
+            encode_looks(w, ok.characters.len(), &ok.looks)?;
         }
         Message::LoginFailed(f) => {
             w.u16(f.code.to_u16());
@@ -1015,8 +1103,12 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
         Message::CharacterCreate(c) => {
             w.str(NAME_C2S, &c.name)?;
             c.appearance.encode(w)?;
+            encode_look(w, &c.look)?;
         }
-        Message::CharacterList(l) => encode_characters(w, &l.characters)?,
+        Message::CharacterList(l) => {
+            encode_characters(w, &l.characters)?;
+            encode_looks(w, l.characters.len(), &l.looks)?;
+        }
         Message::CharacterCreateFailed(f) => {
             w.u16(f.code.to_u16());
             w.str(DETAIL, &f.text)?;
@@ -1063,6 +1155,7 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
             w.u64(e.server_time);
             e.pose.encode(w)?;
             e.appearance.encode(w)?;
+            encode_look(w, &e.look)?;
         }
         Message::LocationReport(l) => {
             check_location_report(l)?;
@@ -1094,6 +1187,7 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
             w.u8(c.motion.to_byte());
             c.appearance.encode(w)?;
             encode_prop_list(w, &c.properties, CREATE_PROPS)?;
+            encode_look(w, &c.look)?;
         }
         Message::EntityUpdate(u) => {
             w.u64(u.id);
@@ -1102,6 +1196,7 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
         Message::EntityAppearance(a) => {
             w.u64(a.id);
             a.appearance.encode(w)?;
+            encode_look(w, &a.look)?;
         }
         Message::EntityDestroy(d) => {
             w.u64(d.id);
@@ -1213,10 +1308,16 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
                 Message::Register(c)
             }
         }
-        T::LoginOk => Message::LoginOk(LoginOk {
-            account: r.str(ACCOUNT_S2C)?,
-            characters: decode_characters(r)?,
-        }),
+        T::LoginOk => {
+            let account = r.str(ACCOUNT_S2C)?;
+            let characters = decode_characters(r)?;
+            let looks = decode_looks(r, characters.len())?;
+            Message::LoginOk(LoginOk {
+                account,
+                characters,
+                looks,
+            })
+        }
         T::LoginFailed => Message::LoginFailed(LoginFailed {
             code: LoginFailedCode::from_u16(r.u16()?),
             retry_after: r.u16()?,
@@ -1225,10 +1326,13 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
         T::CharacterCreate => Message::CharacterCreate(CharacterCreate {
             name: r.str(NAME_C2S)?,
             appearance: Appearance::decode(r)?,
+            look: decode_look(r)?,
         }),
-        T::CharacterList => Message::CharacterList(CharacterList {
-            characters: decode_characters(r)?,
-        }),
+        T::CharacterList => {
+            let characters = decode_characters(r)?;
+            let looks = decode_looks(r, characters.len())?;
+            Message::CharacterList(CharacterList { characters, looks })
+        }
         T::CharacterCreateFailed => Message::CharacterCreateFailed(Failure {
             code: CharacterCreateFailedCode::from_u16(r.u16()?),
             text: r.str(DETAIL)?,
@@ -1285,6 +1389,7 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
             server_time: r.u64()?,
             pose: Pose::decode(r)?,
             appearance: Appearance::decode(r)?,
+            look: decode_look(r)?,
         }),
         T::LocationReport => {
             let l = LocationReport {
@@ -1317,6 +1422,7 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
             motion: Motion::from_byte(r.u8()?)?,
             appearance: Appearance::decode(r)?,
             properties: decode_prop_list(r, CREATE_PROPS)?,
+            look: decode_look(r)?,
         }),
         T::EntityUpdate => Message::EntityUpdate(EntityUpdate {
             id: r.u64()?,
@@ -1325,6 +1431,7 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
         T::EntityAppearance => Message::EntityAppearance(EntityAppearance {
             id: r.u64()?,
             appearance: Appearance::decode(r)?,
+            look: decode_look(r)?,
         }),
         T::EntityDestroy => Message::EntityDestroy(EntityDestroy {
             id: r.u64()?,

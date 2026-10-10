@@ -146,7 +146,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass).
+  criteria 1–4 pass). P1 is in its exit phase on branch `p1` (below).
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
@@ -192,9 +192,31 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   windowed input script not played (§12.4), windowed log written on the main thread (ARCH §21
   (d)), no uniqueness test for event/command names, whether in-process server hosts must stay
   feed-free (§3.1), numeric enum keys in committed scenarios (owner, before P1, §16).
+- **P1 (characters, inventory and equipment; branch `p1` in worktree `wt-p1`, exit
+  verification 2026-10-10)** (`docs/ROADMAP.md` P1 status): criteria 2, 3, 4 pass; 1 partly
+  met (lists, creation, entry and look transfer pass on real data; the creation viewport's
+  figure is not drawn, and received looks draw heights, styles and sliders only, no colours
+  or face layers). Built: decision 0025 (Proposed) with `scenario-feed.md` rev 4,
+  `tessera-protocol.md` v1.1 and `test-server.md` (Review) and `server-content.md` (Draft);
+  `tessera-gamedata` `tooltip`, `chargen`, `inventory`; protocol minor 1 (looks,
+  `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay backend, plain-sandbox
+  creation), `tessera-server`, `tessera-loadtest`; `tessera-ui` `game::{examine, items,
+  avatar, creation}`; `tessera-plugins` inventory views; `tessera-settings`
+  `CreatedCharacters`; `tessera-client` `--character-select`, character panel and bags,
+  tooltips, worn look, overlay runs, headless `--load-plugin`; explorer tooltip preview;
+  fuzz `net_scenario_overlay`, `settings_created_characters`. Real data: 151,230 item
+  records categorised (149,695 tooltips laid out, 0 failures); 8 races, 15 bodies, 130
+  (race, gender, class) choices. Checks on the `p1` tree: fmt, clippy `-D warnings`
+  (workspace, `--all-features`, fuzz), release tests with the install 5,716 passed, 1
+  failed (a load-timing flake in `worn_look_real_data`, fixed and re-run 3 / 3); 60 s fuzz
+  smoke clean; content, SPDX, server deps, doc links clean. Open: the decision-0025 specs'
+  independent review, empty stat rows on this install (`character-panels.md` §3.4), bag
+  columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
+  new §15.1 OPENs.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
-  O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73). They do not block the
+  O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
+  O88–O90). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
@@ -228,7 +250,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/entity` — the client's entity store (decision 0008): entities, transforms, network IDs, render/animation handles, landblock membership, per-frame change lists
 - `crates/wstate` — WLib class library and WState object graph; player-character and game-control views
 - `crates/wvm` — script machine of the class library (WLib bytecode): code-block decoder, load-time rules, disassembly, census and cross-references
-- `crates/gamedata` — presentation data layer (P0, decision 0024 §3): record-family index over `formats`/`props`/`wstate`, typed entry points, scenario selector resolution; client and tools only, never linked by `tessera-server`
+- `crates/gamedata` — presentation data layer (P0, decision 0024 §3): record-family index over `formats`/`props`/`wstate`, typed entry points, scenario selector resolution, the item tooltip model (`tooltip`), creation data (`chargen`) and the player's inventory model (`inventory`, P1); client and tools only, never linked by `tessera-server`
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups, placed decals (`decals`), the quest-state phasing manager (`phasing`), day and night lamp lights (`lighting::glow`)
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
 - `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here), the war-steed controller (`controller::warsteed`); depends only on `formats` and `props`, `world` may depend on it (decision 0013)

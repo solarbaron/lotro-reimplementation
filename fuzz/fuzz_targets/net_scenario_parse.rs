@@ -88,6 +88,9 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
     };
+    if let Err(e) = scenario.check_overlay() {
+        assert!(e.line >= 1 && e.column >= 1, "position from 1: {e}");
+    }
     let Ok(resolved) = scenario.resolve(&mut EmptyResolver) else {
         return;
     };

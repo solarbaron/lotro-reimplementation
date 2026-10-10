@@ -437,6 +437,17 @@ impl PlacementRule {
         }
     }
 
+    /// The `ContainerSlot` bits of weapon slot `slot` (0 when the data lacks its label).
+    #[must_use]
+    pub fn bits_of(&self, slot: WeaponSlot) -> u64 {
+        let [p, s, r] = self.slot_bits;
+        match slot {
+            WeaponSlot::Primary => p,
+            WeaponSlot::Secondary => s,
+            WeaponSlot::Ranged => r,
+        }
+    }
+
     /// The weapon slot of the `ContainerSlot` bits `slot` (secondary, then ranged, then
     /// primary when several intersect), or `None` outside the three weapon slots.
     #[must_use]

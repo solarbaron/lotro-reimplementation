@@ -95,6 +95,62 @@ impl Ui {
         }
     }
 
+    /// Removes every entry of a list box and destroys them in one batch
+    /// ([`Ui::destroy_many`]), then lays the list out once.
+    pub fn list_clear(&mut self, list: ElementKey) {
+        let entries = match self.el_mut(list).and_then(|e| e.widget.list.as_mut()) {
+            Some(l) => {
+                l.dirty = true;
+                std::mem::take(&mut l.entries)
+            }
+            None => return,
+        };
+        self.destroy_many(&entries);
+        self.list_layout_if_dirty(list);
+    }
+
+    /// Appends several entries to a list box (not a Tree) as [`Ui::list_add`] does, laying
+    /// the list out once at the end. Stops at the first entry that cannot be added and
+    /// returns how many were added with that error; entries after it are untouched.
+    ///
+    /// # Errors
+    /// `(added, error)`: [`UiError::NotAList`] (a Tree is refused too: its entries need
+    /// [`Ui::list_add`]), [`UiError::Full`] or an attachment error.
+    pub fn list_add_many(
+        &mut self,
+        list: ElementKey,
+        entries: &[ElementKey],
+    ) -> Result<(), (usize, UiError)> {
+        let mut present: HashSet<ElementKey> = match self.el(list) {
+            Some(e) if e.widget.tree.is_none() => match e.widget.list.as_ref() {
+                Some(l) => l.entries.iter().copied().collect(),
+                None => return Err((0, UiError::NotAList)),
+            },
+            _ => return Err((0, UiError::NotAList)),
+        };
+        let mut result = Ok(());
+        for (i, &entry) in entries.iter().enumerate() {
+            if present.len() >= MAX_ENTRIES && !present.contains(&entry) {
+                result = Err((i, UiError::Full));
+                break;
+            }
+            if self.parent(entry) != Some(list)
+                && let Err(e) = self.attach_raw(entry, list)
+            {
+                result = Err((i, e));
+                break;
+            }
+            if present.insert(entry)
+                && let Some(l) = self.el_mut(list).and_then(|e| e.widget.list.as_mut())
+            {
+                l.entries.push(entry);
+                l.dirty = true;
+            }
+        }
+        self.list_layout_if_dirty(list);
+        result
+    }
+
     /// Adds an entry from template *i* of `UICore_ListBox_entry_templates` (§8.2).
     ///
     /// # Errors

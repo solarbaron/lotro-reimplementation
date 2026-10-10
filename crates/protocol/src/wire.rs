@@ -55,11 +55,23 @@ impl TextRule {
 #[derive(Debug)]
 pub(crate) struct Reader<'a> {
     buf: &'a [u8],
+    minor: u16,
 }
 
 impl<'a> Reader<'a> {
+    /// A reader for the v1.0 layouts (negotiated minor 0).
     pub fn new(buf: &'a [u8]) -> Self {
-        Self { buf }
+        Self { buf, minor: 0 }
+    }
+
+    /// A reader for the layouts of negotiated minor `minor` (§3.1).
+    pub fn with_minor(buf: &'a [u8], minor: u16) -> Self {
+        Self { buf, minor }
+    }
+
+    /// The negotiated minor version the bytes are read under.
+    pub fn minor(&self) -> u16 {
+        self.minor
     }
 
     pub fn remaining(&self) -> usize {
@@ -179,11 +191,23 @@ impl<'a> Reader<'a> {
 #[derive(Debug)]
 pub(crate) struct Writer<'a> {
     out: &'a mut Vec<u8>,
+    minor: u16,
 }
 
 impl<'a> Writer<'a> {
+    /// A writer for the v1.0 layouts (negotiated minor 0).
     pub fn new(out: &'a mut Vec<u8>) -> Self {
-        Self { out }
+        Self { out, minor: 0 }
+    }
+
+    /// A writer for the layouts of negotiated minor `minor` (§3.1).
+    pub fn with_minor(out: &'a mut Vec<u8>, minor: u16) -> Self {
+        Self { out, minor }
+    }
+
+    /// The negotiated minor version the bytes are written under.
+    pub fn minor(&self) -> u16 {
+        self.minor
     }
 
     pub fn len(&self) -> usize {
@@ -232,6 +256,10 @@ impl<'a> Writer<'a> {
 
     pub fn bool(&mut self, v: bool) {
         self.out.push(u8::from(v));
+    }
+
+    pub fn raw(&mut self, bytes: &[u8]) {
+        self.out.extend_from_slice(bytes);
     }
 
     pub fn str(&mut self, rule: TextRule, s: &str) -> Result<()> {

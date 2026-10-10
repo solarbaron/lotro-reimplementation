@@ -22,6 +22,7 @@ use crate::error::PluginError;
 use crate::gameplay::{GameplayEvent, LocalPlayerSource};
 use crate::host::HostApi;
 use crate::import::import_package;
+use crate::inventory::InventorySource;
 use crate::object::PluginRow;
 use crate::options::PluginOptions;
 use crate::packages::BuiltinPackages;
@@ -169,6 +170,7 @@ impl PluginManager {
             state: Mutex::new(SharedState::default()),
             index: Mutex::new(IndexState::default()),
             gameplay: Mutex::new(None),
+            inventory: Mutex::new(None),
             next_id: AtomicU64::new(1),
         });
         Self {
@@ -386,6 +388,15 @@ impl PluginManager {
     /// Set (or clear) the source of the `Turbine.Gameplay` local-player views.
     pub fn set_local_player_source(&mut self, source: Option<Arc<dyn LocalPlayerSource>>) {
         *lock(&self.shared.gameplay) = source;
+    }
+
+    /// Set (or clear) the source of the `Turbine.Gameplay` inventory views (`Backpack`,
+    /// `Equipment`, `Item`, `ItemInfo`; `lua-plugin-api.md` §15.1). Without one the
+    /// backpack is empty with size 0 and the equipment slots are empty
+    /// (`plugin-api-usage.md` §7.4). Changes are raised with
+    /// [`Self::raise_gameplay_event`] and [`crate::GameplayEvent::Inventory`].
+    pub fn set_inventory_source(&mut self, source: Option<Arc<dyn InventorySource>>) {
+        *lock(&self.shared.inventory) = source;
     }
 
     fn cell(&self, apartment: &str) -> Option<Arc<ApartmentCell>> {
@@ -955,7 +966,7 @@ impl PluginManager {
                 let cells: Vec<Arc<ApartmentCell>> = lock(&self.shared.state).apartments.clone();
                 for cell in cells {
                     if let Some(ap) = lock(&cell.slot).as_ref() {
-                        crate::gameplay::deliver(ap, ev);
+                        crate::gameplay::deliver(ap, &ev);
                     }
                 }
             }

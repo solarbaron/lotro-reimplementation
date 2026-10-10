@@ -12,6 +12,17 @@ use crate::tree::{Element, ElementKey};
 use crate::ui::{Ui, object_mode};
 use crate::vocab::commands;
 
+/// The drag description a game widget fills as a drag source (`ui-behaviour.md` §7.1
+/// step 4): an opaque item reference of the client and the slot bits the item fits, which
+/// drop targets with an accept mask check (§7.3 step 1, [`Ui::set_drop_mask`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DragPayload {
+    /// The client's item reference.
+    pub item: u64,
+    /// The slot bits the item fits (for an item: its `Inventory_CompatibleSlot`).
+    pub fits: u32,
+}
+
 /// Drag state.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DragState {
@@ -30,6 +41,8 @@ pub(crate) struct DragState {
     pub target: Option<ElementKey>,
     /// States remembered by feedback (§7.3 step 3).
     pub remembered: BTreeMap<ElementKey, u32>,
+    /// The source's drag description (§7.1 step 4).
+    pub payload: Option<DragPayload>,
 }
 
 impl DragState {
@@ -55,6 +68,57 @@ impl Ui {
     #[must_use]
     pub fn drop_target(&self) -> Option<ElementKey> {
         self.drag.target
+    }
+
+    /// The drag description of the drag in progress, if its source gave one.
+    #[must_use]
+    pub fn drag_payload(&self) -> Option<DragPayload> {
+        self.drag.payload
+    }
+
+    /// The drag source of the drag in progress.
+    #[must_use]
+    pub fn drag_source(&self) -> Option<ElementKey> {
+        self.drag.source
+    }
+
+    /// Sets the drag description `k` gives when a drag starts from it (§7.1 step 4; game
+    /// code, for example an item slot).
+    pub fn set_drag_payload(&mut self, k: ElementKey, payload: Option<DragPayload>) {
+        if let Some(e) = self.el_mut(k) {
+            e.drag_payload = payload;
+        }
+    }
+
+    /// Names the element whose visual copy is the drag icon when a drag starts from `k`
+    /// (§7.1 step 4: a game widget provides its own icon, for an item slot its icon);
+    /// `None` leaves the icon to the container (step 5).
+    pub fn set_drag_icon_source(&mut self, k: ElementKey, from: Option<ElementKey>) {
+        if let Some(e) = self.el_mut(k) {
+            e.drag_icon_from = from;
+        }
+    }
+
+    /// Sets the accept check of a drop target (§7.3 step 1, set by game code): with
+    /// `Some(mask)` the element refuses a drag whose description has no bit of `mask` in
+    /// [`DragPayload::fits`] (and a drag without a description); `None` accepts every drag
+    /// (the default).
+    pub fn set_drop_mask(&mut self, k: ElementKey, mask: Option<u32>) {
+        if let Some(e) = self.el_mut(k) {
+            e.drop_mask = mask;
+        }
+    }
+
+    /// The accept check of §7.3 step 1 for `k` and the current drag.
+    fn accepts_drop(&self, k: ElementKey) -> bool {
+        let p = self.v.pids;
+        if !self.prop(k, p.container).bool() || self.prop(k, p.disallow_drag_in).bool() {
+            return false;
+        }
+        match self.el(k).and_then(|e| e.drop_mask) {
+            None => true,
+            Some(mask) => self.drag.payload.is_some_and(|pl| pl.fits & mask != 0),
+        }
     }
 
     pub(crate) fn drag_forget(&mut self, k: ElementKey) {
@@ -147,40 +211,101 @@ impl Ui {
             return;
         };
         self.drag.source = Some(source);
+        self.drag.payload = self.el(source).and_then(|e| e.drag_payload);
         if self.el(source).is_some_and(|e| e.plugin.is_some()) {
             self.emit(UiEvent::Control {
                 control: source,
                 event: crate::events::ControlEvent::DragStart,
             });
         }
-        // Step 4: the base element provides no icon. Step 5: the container.
+        // Step 4: a game widget may provide its own icon (a copy of the element it
+        // names); the base element provides none.
+        if let Some(from) = self
+            .el(source)
+            .and_then(|e| e.drag_icon_from)
+            .filter(|f| self.exists(*f))
+        {
+            if from == source {
+                // Step 6: the icon would be the source itself.
+                return;
+            }
+            let icon = self.icon_copy(from, true);
+            self.drag.by_container = false;
+            self.drag_icon_setup(source, icon, press);
+            return;
+        }
+        // Step 5: the container.
         let Some(container) = self.parent(source) else {
             return;
         };
         if self.prop(container, self.v.pids.disallow_drag_out).bool() {
             return;
         }
-        let Some(desc) = self.el(source).map(|e| e.desc.clone()) else {
+        if !self.exists(source) {
             return;
-        };
-        let class = self
-            .el(source)
-            .map_or(crate::widgets::WidgetClass::Field, |e| e.class);
+        }
+        let icon = self.icon_copy(source, false);
+        self.drag.by_container = true;
+        // Step 6 / §7.2.
+        self.drag_icon_setup(source, icon, press);
+    }
+
+    /// A visual copy of `from` for a drag icon: its resolved descriptor without children,
+    /// with its current base image and overlay (§7.1 step 5 OPEN, Tessera rule); with
+    /// `with_state` (a game widget's own icon, step 4) also its run-time properties and
+    /// text.
+    fn icon_copy(&mut self, from: ElementKey, with_state: bool) -> ElementKey {
+        let (desc, class) = self
+            .el(from)
+            .map(|e| (e.desc.clone(), e.class))
+            .unwrap_or_else(|| {
+                (
+                    Arc::new(tessera_formats::ui_layout::ElementDesc::default()),
+                    crate::widgets::WidgetClass::Field,
+                )
+            });
         let mut icon_el = Element::new(desc.element_id, class, Arc::clone(&desc));
         icon_el.effective = Ui::compute_effective(&icon_el);
-        if let Some(se) = self.el(source) {
+        if let Some(se) = self.el(from) {
             icon_el.base = se.base.clone();
             icon_el.overlay = se.overlay.clone();
             icon_el.bx = se.bx;
+            if with_state {
+                icon_el.runtime = se.runtime.clone();
+                icon_el.effective = se.effective.clone();
+                icon_el.text.runtime = se.text.runtime.clone();
+                icon_el.text.dirty = true;
+            }
         }
         icon_el.created = true;
         icon_el.drag_icon = true;
         icon_el.root_panel = true;
         icon_el.mouse_visible = false;
         let icon = self.insert_element(icon_el);
-        self.drag.by_container = true;
-        // Step 6 / §7.2.
-        self.drag_icon_setup(source, icon, press);
+        if with_state {
+            // The game widget's icon may be drawn by children (the layers of
+            // `crate::game::IconImage::Layers`): copy the ones with an image, one level.
+            for c in self
+                .children(from)
+                .into_iter()
+                .take(crate::game::MAX_ICON_LAYERS)
+            {
+                let Some(ce) = self.el(c).filter(|e| e.base.is_some()) else {
+                    continue;
+                };
+                let mut copy = Element::new(ce.element_id, ce.class, Arc::clone(&ce.desc));
+                copy.effective = ce.effective.clone();
+                copy.base = ce.base.clone();
+                copy.overlay = ce.overlay.clone();
+                copy.bx = ce.bx;
+                copy.created = true;
+                let k = self.insert_element(copy);
+                if self.attach_raw(k, icon).is_err() {
+                    self.destroy(k);
+                }
+            }
+        }
+        icon
     }
 
     fn drag_icon_setup(&mut self, source: ElementKey, icon: ElementKey, press: (i32, i32)) {
@@ -244,12 +369,11 @@ impl Ui {
 
     /// The drop target update of every hover update during a drag (§7.3).
     pub(crate) fn drag_update_target(&mut self) {
-        let p = self.v.pids;
         let mut cur = self.input.hit;
         let mut found = None;
         let mut n = 0;
         while let Some(c) = cur {
-            if self.prop(c, p.container).bool() && !self.prop(c, p.disallow_drag_in).bool() {
+            if self.accepts_drop(c) {
                 found = Some(c);
                 break;
             }

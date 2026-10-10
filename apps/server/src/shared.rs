@@ -15,7 +15,7 @@ use tessera_protocol::codes::{
 };
 use tessera_protocol::message::{MoveInput, WorldEnter};
 use tessera_protocol::server::ServerEvent;
-use tessera_protocol::types::CharacterSummary;
+use tessera_protocol::types::{CharacterSummary, Look};
 
 /// A connection number, unique for the server's lifetime.
 pub type ConnId = u64;
@@ -65,6 +65,8 @@ pub enum SessionCmd {
         account: String,
         /// The account's characters.
         characters: Vec<CharacterSummary>,
+        /// One look per character (sent at minor ≥ 1 only).
+        looks: Vec<Look>,
     },
     /// `LoginFailed`.
     RejectLogin {
@@ -74,7 +76,12 @@ pub enum SessionCmd {
         retry_after: u16,
     },
     /// `CharacterList` after a creation.
-    CharacterCreated(Vec<CharacterSummary>),
+    CharacterCreated {
+        /// The account's characters.
+        characters: Vec<CharacterSummary>,
+        /// One look per character (sent at minor ≥ 1 only).
+        looks: Vec<Look>,
+    },
     /// `CharacterCreateFailed`.
     RejectCharacter(CharacterCreateFailedCode),
     /// Opens the world stream with `WorldEnter`.
@@ -139,6 +146,9 @@ pub struct ConnShared {
     pub close_queued: AtomicBool,
     kill_code: AtomicU16,
     kill_notify: tokio::sync::Notify,
+    /// The minor version the session negotiated (`tessera-protocol.md` §3.1), set by the
+    /// network task before it forwards `Greeted`; 0 until then.
+    minor: AtomicU16,
 }
 
 impl ConnShared {
@@ -161,9 +171,23 @@ impl ConnShared {
                 close_queued: AtomicBool::new(false),
                 kill_code: AtomicU16::new(NO_KILL),
                 kill_notify: tokio::sync::Notify::new(),
+                minor: AtomicU16::new(0),
             },
             rx,
         )
+    }
+
+    /// Records the minor version the session negotiated. The network task calls it before
+    /// it forwards `Greeted`, so the simulation sees it with that event.
+    pub fn set_minor(&self, minor: u16) {
+        self.minor.store(minor, Ordering::Release);
+    }
+
+    /// The minor version the session negotiated (0 before `Greeted`): the simulation encodes
+    /// this connection's world and chat frames under it, never negotiating a second time.
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.minor.load(Ordering::Acquire)
     }
 
     /// Asks the network task to close the connection at once with `code` (used when even a

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tessera_protocol::codes::AppErrorCode;
-use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec};
+use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec_minor};
 use tessera_protocol::limits::{CONTROL_QUEUE_GRACE, HANDSHAKE_TIMEOUT};
 use tessera_protocol::message::Channel;
 use tessera_protocol::server::{ServerEvent, ServerParams};
@@ -385,7 +385,12 @@ impl Task {
     fn forward(&mut self, inbound: Vec<Inbound>) {
         for i in inbound {
             match i {
-                Inbound::Greeted(h) => self.forward_event(ServerEvent::Greeted(h)),
+                Inbound::Greeted(h) => {
+                    // The minor the session negotiated travels with the event (the
+                    // simulation must not negotiate it again).
+                    self.shared.set_minor(self.core.minor());
+                    self.forward_event(ServerEvent::Greeted(h));
+                }
                 Inbound::Event(e) => self.forward_event(e),
                 Inbound::Move(m) => self.shared.put_move(m),
                 Inbound::Ended {
@@ -484,7 +489,9 @@ impl Task {
                             }
                         }
                         ch => {
-                            let Ok(b) = frame_to_vec(&m) else { continue };
+                            let Ok(b) = frame_to_vec_minor(&m, self.core.minor()) else {
+                                continue;
+                            };
                             let n = b.len();
                             let (tx, counter) = match ch {
                                 Channel::Control => {

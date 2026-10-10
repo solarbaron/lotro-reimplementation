@@ -1,0 +1,16 @@
+tessera-scenario-log 1
+install none
+tick 50
+title "Growing pack"
+pre > Connect
+pre Connected characters=["Orrin"]
+pre > EnterWorld character="Orrin"
+0.000 WorldEntered entity=player name="Orrin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 ItemAdded item=$flint what="Flint and steel" at=backpack:2 quantity=1
+0.100 ItemAdded item=$map what="Folded map" at=backpack:50 quantity=1
+0.200 ItemAdded item=$whistle what="Bone whistle" at=backpack:0 quantity=1
+0.300 ContainerSize container=backpack slots=20
+0.400 ItemRemoved item=$map
+0.500 ContainerSize container=backpack slots=60
+0.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

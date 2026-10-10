@@ -27,7 +27,8 @@
 > (4 waits for the owner's confirmation before any public test build), criterion 1 passes
 > on one machine and waits for a run between two machines on a LAN. The parity track
 > (P0–P8, [decision 0024](decisions/0024-parity-track.md)) started on 2026-10-09 with
-> [P0](#p0) (scenario feed and `tessera-gamedata`). Milestones are ordered by
+> [P0](#p0) (scenario feed and `tessera-gamedata`); [P1](#p1) (characters, inventory and
+> equipment) started on 2026-10-10. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -1481,6 +1482,141 @@ character that only the input script creates now applies only without the option
 stop at 256 MiB with `error=LogOverflow`, exit 5 (§11.1 OPEN, the review's recommended
 bound); the content test accepts CC0-1.0 headers (§13 OPEN). The review's rulings on §3.1
 guard item 1 (refuse `tessera-net` in any form) and module naming match the code as it was.
+
+---
+
+<a id="p1"></a>
+### P1: Characters, inventory and equipment
+
+**Goal:** the first gameplay panels of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P1): the character selection and
+creation screens before world entry, the character panel with its paperdoll and the bag
+windows, the worn look that follows equipment, item examination tooltips, and the plugin
+API's inventory views. Everything shown comes from the user's install; inventory, levels and
+stats are scripted by the P0 scenario feed, never derived. On M7's test server a made
+character's look and its equipment reach other clients as opaque references
+([decision 0025](decisions/0025-p1-character-look-on-test-server.md)); the server runs no
+gameplay rule (LEGAL.md §11.1 rule 5). Builds on P0 and M4. Risk tier T1.
+
+<a id="p1-deliverables"></a>
+**Deliverables**
+
+- Specs (new in specs-13, Accepted before the build): `item-tooltips.md`,
+  `character-panels.md`, `character-screens.md`; P1 revisions of `items.md`, `icon-layers.md`,
+  `lua-plugin-api.md` (§15.1 inventory views), `ui-behaviour.md` (tooltips, drag and drop)
+  and `appearance.md`.
+- [Decision 0025](decisions/0025-p1-character-look-on-test-server.md) and the revisions it
+  asks for: `scenario-feed.md` revision 4 (overlay runs §12.5, `look` declarations,
+  `remove-character`, `stat`, `item-property`, plain-sandbox creation), `tessera-protocol.md`
+  v1.1 (minor 1: looks, `Equipped.slot`, creation mapping of Appendix A), `test-server.md`
+  and `server-content.md` (look and slot storage).
+- `tessera-gamedata`: the tooltip model (`tooltip`: layout choice, rows, comparison, the
+  per-record census categories of `item-tooltips.md` §12), the creation data (`chargen`:
+  race, gender, class and nationality lists, appearance controls, names and name checks) and
+  the local player's inventory model (`inventory`: containers, backpack size and bag
+  ranges, paperdoll slots, slot rules, the command of each item interaction, plugin indices
+  and events).
+- `tessera-net`: the look model (`Look`, `LookEntry`, `PropertyValue`), `Equipped.slot`,
+  the events `CharacterRemoved`, `PropertyChanged`, `ItemProperty` and the `nationality` of
+  `CreateCharacter`; the overlay backend (`scenario::OverlayBackend`); creation in the plain
+  sandbox; the `remote` backend at protocol 1.1 with the creation rule of
+  `character-screens.md` §7.1.1. `tessera-protocol` minor 1; `tessera-server` stores and
+  relays looks and slots; `tessera-loadtest` hostile 1.1 cases.
+- `tessera-ui`: item slots and drag and drop, the examination tooltip panel with comparison
+  and pins, viewports as external-content hosts and the paperdoll's turning, the creation
+  screens' fallback controls, the P1 widget vocabulary. `tessera-plugins`: the
+  `Backpack`, `Equipment`, `Item` and `ItemInfo` views. `tessera-settings`: the creation
+  choices kept where the session cannot carry them. `tessera-input`: Tessera actions and
+  default keys for the panel commands.
+- `tessera-client`: `--character-select` (the screens before world entry), the character
+  panel and bag windows (`--open-panel character|bags|bagN`), item tooltips, the player
+  state fed from the session, the paperdoll portrait, received looks and held-item slots on
+  figures, `--scenario` with `--server` (overlay runs, headless and windowed), headless
+  scenario runs with `--load-plugin`; committed synthetic scenarios `chargen`,
+  `inventory-panels` and `backpack-growth` with their logs.
+- `fuzz/`: `net_scenario_overlay`, `settings_created_characters`; the protocol, scenario and
+  server targets cover the 1.1 forms.
+- Documentation: ARCH §3.1, §19, §20, §21, §23; `docs/USER_GUIDE.md` (§3.13 characters,
+  inventory and tooltips; overlay runs in §3.11); at close-out `CLAUDE.md` Current state.
+
+<a id="p1-specs"></a>
+**Specs needed:** [`item-tooltips.md`](specs/item-tooltips.md),
+[`character-panels.md`](specs/character-panels.md),
+[`character-screens.md`](specs/character-screens.md) (new, Accepted);
+[`player-character.md`](specs/player-character.md), [`appearance.md`](specs/appearance.md),
+[`items.md`](specs/items.md), [`icon-layers.md`](specs/icon-layers.md),
+[`game-panels.md`](specs/game-panels.md), [`ui-behaviour.md`](specs/ui-behaviour.md),
+[`lua-plugin-api.md`](specs/lua-plugin-api.md) §15 (Accepted);
+[`scenario-feed.md`](specs/scenario-feed.md) revision 4,
+[`tessera-protocol.md`](specs/tessera-protocol.md) v1.1,
+[`test-server.md`](specs/test-server.md) (Review, decision 0025) and
+[`server-content.md`](specs/server-content.md) (Draft, owner).
+
+**RE tasks:** none. The facts come from the Accepted specs above; decision 0025 is
+Tessera's own design.
+
+<a id="p1-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. The creation screen offers every race, class and body choice of the install; a made
+   character enters the sandbox, and on M7's server other clients see its look
+   (appearance as opaque references, rule 2).
+2. Every item record's tooltip renders (or is categorised) in a real-data test.
+3. Equipping an item from a scenario changes the worn look in the walker; observers on
+   M7's server see it through `AppearanceChanged`.
+4. `GetBackpack()` and `GetEquipment()` pass their conformance rows on a scenario.
+
+Owner observations in the original client: O80–O86 and O88–O90
+([owner-observations.md](checklists/owner-observations.md)); they do not block the criteria.
+
+<a id="p1-status"></a>
+**Status:** in progress (started 2026-10-10, branch `p1`; exit verification 2026-10-10).
+Criteria 2, 3 and 4 pass; criterion 1 is partly met: every list, check, creation and look
+transfer passes on real data, but the creation viewport's figure is not drawn and received
+looks draw heights, styles and body sliders only (no colours or face layers). No criterion
+needs an observation in the original client; the owner rows O80–O86 and O88–O90
+([owner-observations.md](checklists/owner-observations.md)) block nothing until P8.
+Checks on branch `p1` (uncommitted tree, 2026-10-10): `cargo fmt --check` (workspace and
+`fuzz/`); clippy `-D warnings` (workspace `--all-targets`, also `--all-features`; `fuzz/`
+`--bins`); rustdoc `-D warnings` on the twelve crates P1 touched (after two link fixes in
+`tessera-protocol` and `tessera-net`); `cargo test --workspace --release` with the install:
+5,716 passed, 1 failed, 10 ignored (410 test binaries). The failure was
+`worn_look_real_data::a_scenario_equip_changes_the_walker_figure` under load (the virtual
+clock reached the equip before the first figure was built); the verifier moved the equip to
+5 s and lets the observer wait up to 250 ms per poll while that figure builds, and the test
+then passed three runs in a row (2 / 2 each). `tools/fuzz-smoke.sh -t 60` on
+`net_scenario_overlay` (1,715,688 runs), `settings_created_characters` (695,535),
+`protocol_message` (13,941,010), `server_connection` (2,643,374) and `net_scenario_run`
+(1,470,496): no crash. `tools/check-content.sh` (after renaming two test identifiers in
+`crates/gamedata/tests/chargen_load.rs`), `tools/check-spdx.sh`,
+`tools/check-server-deps.sh` and a link and anchor check of the 136 Markdown files outside
+`research/`: 0 errors.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **partly met** | Lists: `character_screens_real_data` step 1 drives the screen model through 8 races, 15 (race, gender) entries and 130 (race, gender, class) choices, every one offered and valid (equal to `offered()`, 0 `problems()`); `chargen_real_data`: 69 (race, class) entries, 12 classes, 29 nationalities, 486 (race, gender, nationality, class) choices accepted, 15 default figures assembled with 0 diagnostics, 51 random names generated and accepted. Body choices: step 2 opens the appearance screen for all 15 bodies (10–20 controls each, 8–17 written properties), randomised looks are valid, and the 15 default figures and 15 race-select entities build through the walker's figure path (0 failed). Entering: step 4 creates and enters one character per body through the scenario feed (15 / 15, 5–13 look entries each); `pre_world_real_data` enters the world from the screens with the selected character. Test server: step 5 creates one character per race on an in-process `tessera-server` at protocol 1.1, refuses a taken name, and a second client receives the look (5 entries); with creation off New is greyed and nothing is sent; `apps/loadtest/tests/v11_looks.rs` (3 / 3): looks stored, relayed to minor-1 peers and kept from minor-0 peers, hostile 1.1 vectors are protocol violations. **Not met:** the figure in the creation viewport is not drawn (`character-screens.md` §6 OPEN), and a received look draws heights, styles and body sliders only; colours and face layers wait for fields in `tessera-mesh`'s `CharacterSpec` (§7.1 implementer OPEN). The screens have no headless picture; `--character-select` is windowed only. |
+| 2 | **pass** | `tessera-client` `item_tooltips_real_data`: all 151,230 item records categorised, 149,695 Rendered, modelled, converted and laid out in the examination tooltip panel (0 not laid out, 0 template failures, largest 314 × 1,101 px), 1,535 NoTooltip, 0 errors escaping the categories; `tessera-gamedata` `tooltip_real_data`: the same counts, 0 LayoutUnreadable, 0 ElementMissing, 0 RowFailure; IV2 31 / 31 elements, IV3 784 / 784 templates, IV4 7 / 7. 61 Rendered tooltips have no name row or an empty name (51 world-event layouts, 10 empty names; `item-tooltips.md` §12 OPEN). Panel picture (`character_panels_real_data` with `TESSERA_SHEET_DIR`, viewed): Journal_Window with 23 paperdoll slots, the equipped chest icon after the drag, bag 1 (15 slots) and the pinned tooltip; the pinned tooltip shows a dictionary name for a stat line (§6.16 OPEN) and the worth without coin images (§11 OPEN). |
+| 3 | **pass** | `worn_look_real_data` (2 / 2, three runs): a headless scenario gives and equips a chest piece and a primary weapon; the avatar's figure request then holds both records with slots 3 and 17, and the figure goes from 7 parts with 0 held to 7 parts with 1 held. Screenshots (verifier, `--scenario … --screenshot` at region 1, block (126, 140), heading 180, viewed): before the equip the figure wears its default clothes, after it a different chest piece and trousers, with the weapon as a held part. Server: client A runs the equips as an overlay run on an in-process `tessera-server`, observer B receives `AppearanceChanged` with the chest record in slot 3; `v11_looks.rs` `o9_observers_see_the_overlay_players_equipment` passes. |
+| 4 | **pass** | `plugin_inventory_checks` (8 / 8) runs `lua-plugin-api.md` §18 checks 66–69 through the client's plugin host on scenarios (`ScenarioPlugins`, the path of `--scenario --headless --load-plugin`): `GetBackpack` size and growth, backpack events, `GetEquipment` with the install's chest records, item details of 64 install items compared with the raw property sets, and the literal Lua string for a quality-4, max-quantity-50 record; `tessera-plugins` `inventory_views` 15 / 15 (identity across prunes, queued delivery, getters agree with `ItemInfo`); `inventory_real_data`: 23 paperdoll slots, CPI1–CPI3, 20 slots visible to plugins. |
+
+Remaining issues: criterion 1's visual parts (above); decision 0025 is Proposed, and
+`scenario-feed.md` revision 4, `tessera-protocol.md` v1.1 and `test-server.md` are in
+Review, `server-content.md` Draft (owner); the stat rows of the character panel stay empty on
+this install (`character-panels.md` §3.4 OPEN); the bag-column settings are written on the
+main thread (ARCH §21 OPEN); `lua-plugin-api.md` §19 does not list the three new §15.1
+implementer OPENs (spec-writer bookkeeping); a plugin apartment with about 8,000 live native
+objects raises "out of Lua stack" (Lua error, no panic); `tessera-loadtest`'s hostile mode
+sends the 1.1 vectors without logging in (`test-server.md` §13.1 OPEN).
+
+Open going in: the specs of decision 0025 (`scenario-feed.md` revision 4,
+`tessera-protocol.md` v1.1, `test-server.md`, and `server-content.md`, still Draft with the
+owner's confirmation pending) await an independent review, and decision 0025
+is Proposed until it passes; the creation viewport's figure is not drawn yet
+(`character-screens.md` §6 OPEN; the screens' layouts, lists and controls are); received
+looks apply heights, styles and sliders only, and colours and face layers wait for fields
+in `tessera-mesh`'s `CharacterSpec` (`character-screens.md` §6 OPEN and the §7.1.1
+implementer note), so criterion 1's look part is partial; the bag windows' column settings are saved
+on the main thread (ARCH §21 OPEN).
 
 ---
 

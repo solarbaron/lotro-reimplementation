@@ -47,7 +47,9 @@ mod forms;
 mod input;
 mod lex;
 mod log;
+mod overlay;
 mod parse;
+mod props;
 mod resolve;
 mod select;
 mod verbs;
@@ -65,10 +67,13 @@ pub use log::{
     ACTOR_ID_BASE, EndCounters, EndReason, LogContext, LogTime, LogWriter, MAX_LOG_BYTES,
     format_command, format_end, format_event, quote,
 };
-pub use resolve::{MAX_CANDIDATES, ResolveNote, ResolvedScenario, ShortfallNote};
+pub use overlay::{APPEARANCE_SET_INTERVAL, APPEARANCE_SET_TIMEOUT, OverlayBackend, OverlayServer};
+pub use props::{MAX_LOOKS, MAX_PROPERTY_FLOAT};
+pub use resolve::{MAX_CANDIDATES, PropertyNote, ResolveNote, ResolvedScenario, ShortfallNote};
 pub use select::{
     Alt, Attribute, Candidate, CandidateOutcome, CandidateStatus, EmptyResolver, Family, Filter,
-    FilterValue, LabelContext, ResolvedRecord, SelectorQuery, SelectorResolver, SplitMix64,
+    FilterValue, LabelContext, PropertyInfo, ResolvedRecord, SelectorQuery, SelectorResolver,
+    SplitMix64,
 };
 
 /// A parsed and statically checked scenario (`scenario-feed.md` §4–§7, §11): selectors
@@ -132,7 +137,7 @@ impl Scenario {
     }
 
     /// The labels written outside selectors (`class=`, `species=`, `sex=`, `slot=`,
-    /// `type=`), as (line, option key, label) in line order. Lets a content check refuse
+    /// `type=`, `nationality=`), as (line, option key, label) in line order. Lets a content check refuse
     /// numeric enum values in committed scenarios (§13 rule 2) together with
     /// [`numeric_enum_values`](Self::numeric_enum_values).
     #[must_use]
@@ -142,6 +147,48 @@ impl Scenario {
             .iter()
             .map(|l| (l.line, l.attribute, l.label.as_str()))
             .collect()
+    }
+
+    /// Whether any property value is written `pid:N:KIND` (forbidden in committed
+    /// scenarios until the owner decides, §13 rules 2 and 5).
+    #[must_use]
+    pub fn uses_pid_forms(&self) -> bool {
+        self.prog
+            .props
+            .iter()
+            .any(|p| matches!(p.key, ast::PropKey::Pid(..)))
+    }
+
+    /// The property values written with a label (`@Name=…`), as (line, label) in line
+    /// order (§13 rule 2 review aid).
+    #[must_use]
+    pub fn property_labels(&self) -> Vec<(u32, &str)> {
+        self.prog
+            .props
+            .iter()
+            .filter_map(|p| match &p.key {
+                ast::PropKey::Label(l) => Some((p.line, l.as_str())),
+                ast::PropKey::Pid(..) => None,
+            })
+            .collect()
+    }
+
+    /// Checks the file against the overlay subset of `scenario-feed.md` §12.5.1, for a run
+    /// with `--scenario` and `--server`.
+    ///
+    /// # Errors
+    ///
+    /// `NotAllowedInOverlay` at the first token of the first statement outside the subset
+    /// (at the entity token for `level` and `stat` with another entity than `player`).
+    pub fn check_overlay(&self) -> Result<(), ScenarioError> {
+        match self.prog.overlay_violation {
+            None => Ok(()),
+            Some((line, col)) => Err(ScenarioError::new(
+                ScenarioErrorKind::NotAllowedInOverlay,
+                line,
+                col,
+            )),
+        }
     }
 
     /// Whether any selector uses the `did` family (forbidden in committed scenarios,
@@ -188,8 +235,14 @@ impl Scenario {
             })
             || p.input.iter().any(|l| match &l.cmd {
                 InputCmd::Equip { slot, .. } => matches!(slot, EnumArg::Value(_)),
-                InputCmd::CreateCharacter { class, body, .. } => {
+                InputCmd::CreateCharacter {
+                    class,
+                    body,
+                    nationality,
+                    ..
+                } => {
                     num(class)
+                        || num(nationality)
                         || body.is_some_and(|(s, x)| {
                             matches!(s, EnumArg::Value(_)) || matches!(x, EnumArg::Value(_))
                         })

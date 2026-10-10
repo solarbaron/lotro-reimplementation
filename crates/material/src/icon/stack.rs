@@ -11,7 +11,9 @@ use crate::error::{MaterialError, Result};
 /// interoperability identifiers; values are looked up by name through the property
 /// dictionary, never by PID.
 pub mod names {
-    /// Item layer: bottom tile and frame, coloured per quality (§2.2, §4).
+    /// Item layer: bottom tile and frame (§2.2). The tiles differ in colour by quality in
+    /// the data; composition draws the named tile as it is and never tints or substitutes
+    /// it by quality (§4).
     pub const BACKGROUND: &str = "Icon_Layer_BackgroundDID";
     /// Item layer: coloured glow behind the picture (§2.2).
     pub const UNDERLAY: &str = "Icon_Layer_UnderlayDID";
@@ -23,14 +25,18 @@ pub mod names {
     pub const OVERLAY: &str = "Icon_Layer_OverlayDID";
     /// Separate 64×64 picture for large displays, never stacked (§5.5).
     pub const LARGE_IMAGE: &str = "Icon_Layer_LargeImageDID";
-    /// Override of the Background layer (§5.6; never set in static data).
+    /// Not read by the client (§5.6; never set in static data).
     pub const BACKGROUND_OVERRIDE: &str = "Icon_Layer_BackgroundOverrideDID";
-    /// Override of the Underlay layer (§5.6; never set in static data).
+    /// Not read by the client (§5.6; never set in static data).
     pub const UNDERLAY_OVERRIDE: &str = "Icon_Layer_UnderlayOverrideDID";
-    /// Override of the Shadow layer (§5.6; never set in static data).
+    /// Not read by the client (§5.6; never set in static data).
     pub const SHADOW_OVERRIDE: &str = "Icon_Layer_ShadowOverrideDID";
-    /// Override of the Image layer (§5.6; occurs alone in a few sets).
+    /// Not read by the client's icon composition (§5.6): the 26 static sets that carry it
+    /// have no Image or Background, so they get no icon.
     pub const IMAGE_OVERRIDE: &str = "Icon_Layer_ImageOverrideDID";
+    /// Replaces the Image layer of an item **instance** whenever present, whatever its
+    /// value (§3.1 step 1, §5.6); never present in static data.
+    pub const IMAGE_OVERRIDE_CHECKPOINTED: &str = "Icon_Layer_ImageOverrideDID_Checkpointed";
     /// Skill icon (§5.1).
     pub const SKILL_ICON: &str = "Skill_Icon";
     /// Skill large icon (§5.1).
@@ -186,6 +192,9 @@ pub struct IconStack {
     entries: Vec<StackEntry>,
 }
 
+/// A layer's DID and the property it came from.
+type Layer = (Did, Option<&'static str>);
+
 /// Looks a property up by name. Missing and null values are both "absent".
 fn present(lookup: &impl Fn(&str) -> Option<Did>, name: &'static str) -> Option<Did> {
     lookup(name).filter(|d| d.0 != 0)
@@ -236,39 +245,72 @@ impl IconStack {
         Ok(Self { entries: kept })
     }
 
-    /// An item icon (`icon-layers.md` §2.2, §3.2, §5.6): Background, Underlay, Shadow,
-    /// Image, Overlay, bottom to top.
+    /// An item icon (`icon-layers.md` §3.1, §3.2, §5.6): Background, Underlay, Shadow,
+    /// Image, Overlay, bottom to top, as the client builds it.
     ///
-    /// For each role with an override property, a present non-zero override replaces the
-    /// base value (Tessera's provisional §5.6 rule; this covers the sets that hold only
-    /// `Icon_Layer_ImageOverrideDID`). The base value is kept as the entry's
-    /// [`StackEntry::fallback`]: an override that is absent (§3.1: not found or not
-    /// decodable) gives way to the base layer, as if the override were not set. `…_Checkpointed` and `…LargeImageGlowDID` are not
-    /// used (their meaning is OPEN). `Icon_Layer_LargeImageDID` is a separate picture,
-    /// see [`IconStack::large_item_image`].
+    /// `lookup` returns `None` for an absent property and `Some(Did(0))` for a property
+    /// that is present with value 0 (or present with a type other than a DID, §3.1 "Read
+    /// *P*"). The rules:
+    ///
+    /// 1. **Image:** `Icon_Layer_ImageOverrideDID_Checkpointed` when present (item
+    ///    instances only), else `Icon_Layer_ImageDID`; absent → no icon (an empty stack).
+    /// 2. **Shadow**, 3. **Underlay**, 5. **Overlay:** a layer only when present and non-zero.
+    /// 4. **Background:** `Icon_Layer_BackgroundDID`; absent → no icon.
+    ///
+    /// A layer whose DID is 0 is left out, except the bottom one: a bottom layer of 0 (for
+    /// example a Background of 0) means no icon. `Icon_Layer_ImageOverrideDID` and the
+    /// other override names are not read (§5.6). `Icon_Layer_LargeImageDID` is a separate
+    /// picture, see [`IconStack::large_item_image`].
     ///
     /// Also works for nested socket entries (§5.4) when `lookup` reads the struct value.
     pub fn item(lookup: impl Fn(&str) -> Option<Did>) -> Self {
-        let mut entries = Vec::with_capacity(LayerRole::ITEM_ORDER.len());
-        for role in LayerRole::ITEM_ORDER {
-            let Some(base) = role.item_property() else {
+        Self::item_in_display(lookup, None)
+    }
+
+    /// [`IconStack::item`] for a UI element that carries `UI_ItemIconDisplay_OverrideBackground`
+    /// (§3.1 step 4, §5.6): with `background_override` `Some`, the item's Background
+    /// property is not read; a non-zero override is the Background layer and an override of
+    /// 0 adds none (the next layer up becomes the bottom). `None` reads the item's own
+    /// Background as [`IconStack::item`] does.
+    pub fn item_in_display(
+        lookup: impl Fn(&str) -> Option<Did>,
+        background_override: Option<Did>,
+    ) -> Self {
+        let Some(image) = lookup(names::IMAGE_OVERRIDE_CHECKPOINTED)
+            .map(|d| (d, names::IMAGE_OVERRIDE_CHECKPOINTED))
+            .or_else(|| lookup(names::IMAGE).map(|d| (d, names::IMAGE)))
+        else {
+            return Self::default();
+        };
+        let background = match background_override {
+            Some(d) if d.0 == 0 => None,
+            Some(d) => Some((d, None)),
+            None => match lookup(names::BACKGROUND) {
+                Some(d) => Some((d, Some(names::BACKGROUND))),
+                None => return Self::default(),
+            },
+        };
+        let optional = |name: &'static str| present(&lookup, name).map(|d| (d, Some(name)));
+        let layers: [(LayerRole, Option<Layer>); 5] = [
+            (LayerRole::Background, background),
+            (LayerRole::Underlay, optional(names::UNDERLAY)),
+            (LayerRole::Shadow, optional(names::SHADOW)),
+            (LayerRole::Image, Some((image.0, Some(image.1)))),
+            (LayerRole::Overlay, optional(names::OVERLAY)),
+        ];
+        let mut entries = Vec::with_capacity(layers.len());
+        for (role, layer) in layers {
+            let Some((did, property)) = layer else {
                 continue;
             };
-            let over = role
-                .override_property()
-                .and_then(|name| present(&lookup, name).map(|d| (name, d)));
-            let base_did = present(&lookup, base);
-            let entry = match (over, base_did) {
-                (Some((name, did)), fallback) => Some(StackEntry {
-                    role,
-                    did,
-                    property: Some(name),
-                    fallback: fallback.filter(|&b| b != did),
-                }),
-                (None, Some(did)) => Some(StackEntry::new(role, did, Some(base))),
-                (None, None) => None,
-            };
-            entries.extend(entry);
+            if did.0 == 0 {
+                if entries.is_empty() {
+                    // The bottom layer is 0: no icon (§3.1).
+                    return Self::default();
+                }
+                continue;
+            }
+            entries.push(StackEntry::new(role, did, property));
         }
         Self { entries }
     }
@@ -377,34 +419,75 @@ mod tests {
     }
 
     #[test]
-    fn overrides_replace_base_layers() {
+    fn client_layer_rules() {
+        // §3.1 step 1: the checkpointed override wins whenever present.
         let s = IconStack::item(lookup(&[
             (names::IMAGE, 0x4100_0004),
-            (names::IMAGE_OVERRIDE, 0x4100_00AA),
+            (names::IMAGE_OVERRIDE_CHECKPOINTED, 0x4100_00AA),
             (names::BACKGROUND, 0x4100_0001),
-            (names::BACKGROUND_OVERRIDE, 0),
         ]));
         assert_eq!(s.did_of(LayerRole::Image), Some(Did(0x4100_00AA)));
-        assert_eq!(s.entries()[1].property, Some(names::IMAGE_OVERRIDE));
-        // The base value is kept as the fallback (§3.1 with §5.6).
-        assert_eq!(s.entries()[1].fallback, Some(Did(0x4100_0004)));
-        let fb = s.entries()[1].fallback_entry().unwrap();
-        assert_eq!(fb.did, Did(0x4100_0004));
-        assert_eq!(fb.property, Some(names::IMAGE));
-        assert_eq!(fb.fallback, None);
-        assert_eq!(s.entries()[0].fallback, None);
-        assert_eq!(s.did_of(LayerRole::Background), Some(Did(0x4100_0001)));
-        // An override alone is the whole icon (§5.6).
-        let only = IconStack::item(lookup(&[(names::IMAGE_OVERRIDE, 0x4100_00AB)]));
-        assert_eq!(only.len(), 1);
-        assert_eq!(only.entries()[0].role, LayerRole::Image);
-        assert_eq!(only.entries()[0].fallback_entry(), None);
-        // An override equal to the base needs no fallback.
-        let same = IconStack::item(lookup(&[
-            (names::IMAGE_OVERRIDE, 0x4100_0004),
+        assert_eq!(
+            s.entries()[1].property,
+            Some(names::IMAGE_OVERRIDE_CHECKPOINTED)
+        );
+        // An override of 0 gives an icon without a picture.
+        let no_pic = IconStack::item(lookup(&[
             (names::IMAGE, 0x4100_0004),
+            (names::IMAGE_OVERRIDE_CHECKPOINTED, 0),
+            (names::BACKGROUND, 0x4100_0001),
         ]));
-        assert_eq!(same.entries()[0].fallback, None);
+        assert_eq!(no_pic.len(), 1);
+        assert_eq!(no_pic.did_of(LayerRole::Image), None);
+        // §8 missing properties: no Image → no icon; no Background → no icon; a
+        // Background of 0 → no icon; an Image of 0 → the other layers only.
+        assert!(IconStack::item(lookup(&[(names::BACKGROUND, 0x4100_0001)])).is_empty());
+        assert!(IconStack::item(lookup(&[(names::IMAGE, 0x4100_0004)])).is_empty());
+        assert!(
+            IconStack::item(lookup(&[
+                (names::IMAGE, 0x4100_0004),
+                (names::BACKGROUND, 0)
+            ]))
+            .is_empty()
+        );
+        let zero_image = IconStack::item(lookup(&[
+            (names::IMAGE, 0),
+            (names::SHADOW, 0x4100_0003),
+            (names::BACKGROUND, 0x4100_0001),
+        ]));
+        assert_eq!(zero_image.len(), 2);
+        // §5.6: `Icon_Layer_ImageOverrideDID` and the other overrides are not read.
+        assert!(IconStack::item(lookup(&[(names::IMAGE_OVERRIDE, 0x4100_00AB)])).is_empty());
+        let ignored = IconStack::item(lookup(&[
+            (names::IMAGE, 0x4100_0004),
+            (names::IMAGE_OVERRIDE, 0x4100_00AB),
+            (names::BACKGROUND, 0x4100_0001),
+            (names::BACKGROUND_OVERRIDE, 0x4100_00AC),
+        ]));
+        assert_eq!(ignored.did_of(LayerRole::Image), Some(Did(0x4100_0004)));
+        assert_eq!(
+            ignored.did_of(LayerRole::Background),
+            Some(Did(0x4100_0001))
+        );
+        assert!(ignored.entries().iter().all(|e| e.fallback.is_none()));
+    }
+
+    #[test]
+    fn display_background_override() {
+        let item = [
+            (names::IMAGE, 0x4100_0004),
+            (names::SHADOW, 0x4100_0003),
+            (names::BACKGROUND, 0x4100_0001),
+        ];
+        // A non-zero override replaces the item's Background, which is not read.
+        let s = IconStack::item_in_display(lookup(&item), Some(Did(0x4100_0099)));
+        assert_eq!(s.did_of(LayerRole::Background), Some(Did(0x4100_0099)));
+        let no_bg = IconStack::item_in_display(lookup(&item[..2]), Some(Did(0x4100_0099)));
+        assert_eq!(no_bg.len(), 3);
+        // An override of 0 adds no Background: the Shadow becomes the bottom.
+        let s = IconStack::item_in_display(lookup(&item), Some(Did(0)));
+        assert_eq!(s.entries()[0].role, LayerRole::Shadow);
+        assert_eq!(s.len(), 2);
     }
 
     #[test]

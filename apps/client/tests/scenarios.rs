@@ -384,7 +384,6 @@ fn scenario_conflicts_with_other_headless_tasks() {
         vec!["--headless", "--scenario", s, "--ui-script"],
         vec!["--scenario", s, "--smoke"],
         vec!["--scenario", s, "--showcase"],
-        vec!["--scenario", s, "--server", "127.0.0.1:9", "--account", "a"],
         // A scenario screenshot needs an install (§12.2).
         vec![
             "--no-data",
@@ -433,6 +432,26 @@ fn scenario_conflicts_with_other_headless_tasks() {
     assert!(!png.exists());
     // `--headless --scenario` is a complete headless task on its own.
     assert!(tessera_client::Args::try_parse_from(["t", "--headless", "--scenario", s]).is_ok());
+}
+
+/// `--scenario` with `--server` is an overlay run (`scenario-feed.md` §12.5): a file
+/// outside the overlay subset fails with `NotAllowedInOverlay` before anything connects
+/// (exit 3, §12.5.1).
+#[test]
+fn an_overlay_run_refuses_statements_outside_its_subset() {
+    let s = scenarios_dir().join("combat.scenario");
+    let (c, err) = code(&[
+        "--headless",
+        "--no-data",
+        "--scenario",
+        s.to_str().unwrap(),
+        "--server",
+        "127.0.0.1:9",
+        "--account",
+        "a",
+    ]);
+    assert_eq!(c, Some(3), "{err}");
+    assert!(err.contains("NotAllowedInOverlay"), "{err}");
 }
 
 #[test]

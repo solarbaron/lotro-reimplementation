@@ -15,7 +15,7 @@ use crate::domain::{
 };
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, Destination, DisconnectReason, EntityId,
-    EntityKind, Location, LocationCause, Vec3, compass_degrees_from_heading,
+    EntityKind, Location, LocationCause, Look, PropertyValue, Vec3, compass_degrees_from_heading,
 };
 use crate::session::{Command, Event};
 
@@ -291,18 +291,65 @@ fn cause(c: LocationCause) -> &'static str {
 }
 
 fn equipment(a: &Appearance) -> String {
-    let items: Vec<String> = a.equipment.iter().map(|e| did(e.item)).collect();
+    let items: Vec<String> = a
+        .equipment
+        .iter()
+        .map(|e| match e.slot {
+            Some(s) => format!("{}@{s}", did(e.item)),
+            None => did(e.item),
+        })
+        .collect();
     format!("[{}]", items.join(","))
 }
 
 fn appearance_fields(a: &Appearance) -> String {
     format!(
-        "body={} scale={} equipment={} idle={}",
+        "body={} scale={} equipment={} idle={} look={}",
         body(&a.body),
         amount(a.scale),
         equipment(a),
-        opt_u(a.idle)
+        opt_u(a.idle),
+        look(a.look.as_deref())
     )
+}
+
+/// A property ID: `0x` and 8 upper-case hexadecimal digits (§10.3).
+pub(crate) fn property_id(p: u32) -> String {
+    format!("0x{p:08X}")
+}
+
+/// A property value (§10.3); `none` when absent.
+fn property_value(v: Option<&PropertyValue>) -> String {
+    let Some(v) = v else {
+        return "none".to_owned();
+    };
+    match v {
+        PropertyValue::Bool(b) => format!("bool:{}", yes(*b)),
+        PropertyValue::Int(n) => format!("int:{n}"),
+        PropertyValue::Int64(n) => format!("int64:{n}"),
+        PropertyValue::Float(f) => format!("float:{}", amount(*f)),
+        PropertyValue::Enum(n) => format!("enum:{n}"),
+        PropertyValue::Bitfield32(m) => format!("bitfield32:0x{m:08X}"),
+        PropertyValue::Bitfield64(m) => format!("bitfield64:0x{m:016X}"),
+        PropertyValue::Did(d) => format!("did:{}", did(*d)),
+        PropertyValue::String(t) => format!("string:{}", quote(t)),
+        PropertyValue::Instance(n) => format!("instance:{n}"),
+        PropertyValue::Colour([r, g, b, a]) => format!("colour:{r},{g},{b},{a}"),
+    }
+}
+
+/// A look (§10.3): `[{property=0x… value=…},…]`, `none` when absent.
+fn look(l: Option<&Look>) -> String {
+    let Some(l) = l else {
+        return "none".to_owned();
+    };
+    list(&l.entries, |e| {
+        format!(
+            "{{property={} value={}}}",
+            property_id(e.property),
+            property_value(Some(&e.value))
+        )
+    })
 }
 
 fn price(p: &Price) -> String {
@@ -513,12 +560,27 @@ fn character_event(c: &CharacterEvent, ctx: &LogContext) -> String {
             body: b,
             class,
             level,
+            look: l,
         } => format!(
-            "CharacterInfo name={} body={} class={} level={}",
+            "CharacterInfo name={} body={} class={} level={} look={}",
             quote(name),
             b.as_ref().map_or_else(|| "none".to_owned(), body),
             opt_u(*class),
-            opt_u(*level)
+            opt_u(*level),
+            look(l.as_deref())
+        ),
+        CharacterEvent::CharacterRemoved { name } => {
+            format!("CharacterRemoved name={}", quote(name))
+        }
+        CharacterEvent::PropertyChanged {
+            entity,
+            property,
+            value,
+        } => format!(
+            "PropertyChanged entity={} property={} value={}",
+            ctx.entity(*entity),
+            property_id(*property),
+            property_value(value.as_ref())
         ),
         CharacterEvent::CharacterRefused { name, reason } => format!(
             "CharacterRefused name={} reason={}",
@@ -570,6 +632,16 @@ fn inventory_event(i: &InventoryEvent, ctx: &LogContext) -> String {
                 Currency::Coin => "coin".to_owned(),
                 Currency::Item(r) => format!("item:{}", reference(r)),
             }
+        ),
+        InventoryEvent::ItemProperty {
+            item,
+            property,
+            value,
+        } => format!(
+            "ItemProperty item={} property={} value={}",
+            ctx.item(*item),
+            property_id(*property),
+            property_value(value.as_ref())
         ),
     }
 }
@@ -993,13 +1065,16 @@ pub fn format_command(command: &Command, ctx: &LogContext) -> String {
                 name,
                 appearance,
                 class,
+                nationality,
             } => format!(
-                "CreateCharacter name={} appearance={} class={}",
+                "CreateCharacter name={} appearance={} class={} nationality={} look={}",
                 quote(name),
                 appearance
                     .as_ref()
                     .map_or_else(|| "none".to_owned(), |a| body(&a.body)),
-                opt_u(*class)
+                opt_u(*class),
+                opt_u(*nationality),
+                look(appearance.as_ref().and_then(|a| a.look.as_deref()))
             ),
             CharacterCommand::DeleteCharacter { name } => {
                 format!("DeleteCharacter name={}", quote(name))

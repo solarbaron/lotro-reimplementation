@@ -237,6 +237,7 @@ impl Harness {
             ServerEvent::CharacterCreate(CharacterCreate {
                 name: name.into(),
                 appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+                look: tessera_protocol::types::Look::none(),
             }),
         );
         self.tick();
@@ -291,7 +292,7 @@ fn players_enter_and_see_each_other() {
     );
     assert!(
         cmds.iter()
-            .any(|c| matches!(c, SessionCmd::CharacterCreated(_)))
+            .any(|c| matches!(c, SessionCmd::CharacterCreated { .. }))
     );
     assert!(cmds.iter().any(|c| matches!(c, SessionCmd::EnterWorld(_))));
     assert!(
@@ -474,6 +475,7 @@ fn nfc_names_beyond_the_name_limit_are_refused() {
         ServerEvent::CharacterCreate(CharacterCreate {
             name,
             appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+            look: tessera_protocol::types::Look::none(),
         }),
     );
     h.tick();
@@ -646,6 +648,93 @@ fn appearance_changes_are_saved_at_once() {
     assert!(saved.contains("species = 4242"), "{saved}");
 }
 
+/// A harness whose `user0` holds Bram (in the world, appearance Character 1/1) and an
+/// invalid raw record padded so that the file text is `MAX_CHARACTER_FILE` + `over` bytes.
+fn padded_file_harness(over: isize) -> (Harness, usize) {
+    use tessera_server::characters::MAX_CHARACTER_FILE;
+    let mut file = stored("user0", "Bram", 1, Location::new(1, 1000.0, 1000.0, 0.0));
+    let mut bulk = file.characters[0].clone();
+    bulk.name = "Bulk".into();
+    bulk.appearance = StoredAppearance::Invalid(String::new());
+    file.characters.push(bulk);
+    let empty = isize::try_from(file.to_toml().len()).unwrap();
+    let pad = usize::try_from(isize::try_from(MAX_CHARACTER_FILE).unwrap() + over - empty).unwrap();
+    file.characters[1].appearance =
+        StoredAppearance::Invalid(format!("\"{}\"", "x".repeat(pad - 2)));
+    assert_eq!(
+        isize::try_from(file.to_toml().len()).unwrap(),
+        isize::try_from(MAX_CHARACTER_FILE).unwrap() + over
+    );
+    let mut chars = BTreeMap::new();
+    chars.insert("user0".to_owned(), file);
+    let mut h = Harness::with(Config::default(), plain(), accounts_file(), chars);
+    let c = h.open();
+    h.login(c, "user0");
+    h.event(
+        c,
+        ServerEvent::EnterWorld {
+            name: "Bram".into(),
+        },
+    );
+    h.tick();
+    let _ = h.drain(c);
+    let _ = h.drain_chat(c);
+    (h, c)
+}
+
+fn too_large_line(chat: &[Message]) -> bool {
+    chat.iter()
+        .any(|m| format!("{m:?}").contains("would be too large"))
+}
+
+/// Finding: the 1 MiB check of an `AppearanceSet` (test-server.md §3.5) ran, cloning and
+/// serialising the whole file, for every set, a repeated or no-op one included. It now runs
+/// only for a real change: a no-op set on a file already over the limit is not refused.
+#[test]
+fn appearance_size_check_runs_only_for_a_change() {
+    let (mut h, c) = padded_file_harness(10);
+    let same = Appearance::new(Body::Character { species: 1, sex: 1 });
+    h.event(c, ServerEvent::Appearance(same));
+    h.tick();
+    let (_, chat) = h.drain_chat(c);
+    assert!(!too_large_line(&chat), "{chat:?}");
+    // A real change that grows the file is refused.
+    let mut grown = Appearance::new(Body::Character { species: 1, sex: 1 });
+    grown.equipment.push(tessera_protocol::types::Equipped {
+        item: 0x7000_1234,
+        ..tessera_protocol::types::Equipped::default()
+    });
+    h.event(c, ServerEvent::Appearance(grown));
+    h.tick();
+    let (_, chat) = h.drain_chat(c);
+    assert!(too_large_line(&chat), "{chat:?}");
+}
+
+/// The size check counts only the changed record's appearance text: a change that fits the
+/// remaining room is accepted and saved, one that does not is refused.
+#[test]
+fn appearance_size_check_counts_the_changed_record() {
+    let (mut h, c) = padded_file_harness(-100);
+    let small = Appearance::new(Body::Character { species: 2, sex: 1 });
+    h.event(c, ServerEvent::Appearance(small));
+    h.tick();
+    let (_, chat) = h.drain_chat(c);
+    assert!(!too_large_line(&chat), "{chat:?}");
+    assert!(h.last_save("user0").unwrap().contains("species = 2"));
+    let mut big = Appearance::new(Body::Character { species: 2, sex: 1 });
+    for i in 0..8 {
+        big.equipment.push(tessera_protocol::types::Equipped {
+            item: 0x7000_1000 + i,
+            dye: Some(0.5),
+            ..tessera_protocol::types::Equipped::default()
+        });
+    }
+    h.event(c, ServerEvent::Appearance(big));
+    h.tick();
+    let (_, chat) = h.drain_chat(c);
+    assert!(too_large_line(&chat), "{chat:?}");
+}
+
 fn two_ground_spawns() -> Content {
     Content::parse(
         "format = 1\n[world]\nid = \"t\"\ntitle = \"t\"\nmotd = \"\"\ndefault_spawn = \"s\"\n\
@@ -671,6 +760,7 @@ fn stored(account: &str, name: &str, instance: u32, location: Location) -> Chara
                 species: 1,
                 sex: 1,
             })),
+            look: tessera_protocol::types::Look::none(),
         }],
     }
 }
@@ -964,5 +1054,95 @@ fn muted_kicked_idle_and_notices() {
             .iter()
             .any(|x| matches!(x, SessionCmd::Disconnect(..))),
         "{cmds_c:?}"
+    );
+}
+
+/// Enters Bram (stored with a look) on a connection whose `Hello` offers `minor_max` and
+/// whose session negotiated `negotiated`, and changes his appearance; returns the world
+/// frames the simulation encoded, decoded at `negotiated` (an `Err` for a frame that does
+/// not decode there).
+fn enter_at_minor(minor_max: u16, negotiated: u16) -> Vec<Result<Message, String>> {
+    use tessera_protocol::types::{Look, LookEntry, LookValue};
+    let mut file = stored("user0", "Bram", 1, Location::new(1, 1000.0, 1000.0, 0.0));
+    file.characters[0].look = Look {
+        entries: vec![LookEntry {
+            property: 0x1000_0A01,
+            value: LookValue::Float32(0.5),
+        }],
+    };
+    let mut chars = BTreeMap::new();
+    chars.insert("user0".to_owned(), file);
+    let mut h = Harness::with(Config::default(), plain(), accounts_file(), chars);
+    let addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+    let (shared, rx) = ConnShared::new(1, addr, 100_000);
+    // What the network task records before it forwards `Greeted`.
+    shared.set_minor(negotiated);
+    let shared = Arc::new(shared);
+    h.sim.handle(SimInput::Opened(Arc::clone(&shared)), h.now);
+    h.conns.push((shared, rx));
+    h.event(
+        0,
+        ServerEvent::Greeted(Hello {
+            minor_max,
+            client_caps: 0,
+            max_entities: 1024,
+            client_name: String::new(),
+        }),
+    );
+    h.login(0, "user0");
+    h.event(
+        0,
+        ServerEvent::EnterWorld {
+            name: "Bram".into(),
+        },
+    );
+    h.tick();
+    // The answer to an AppearanceSet is an EntityAppearance with the stored look (minor 1).
+    h.event(
+        0,
+        ServerEvent::Appearance(Appearance::new(Body::Character { species: 2, sex: 1 })),
+    );
+    h.tick();
+    let mut out = Vec::new();
+    let mut dec = FrameDecoder::with_minor(Channel::World, Side::Server, negotiated);
+    let (shared, rx) = &mut h.conns[0];
+    while let Ok(o) = rx.try_recv() {
+        if let Outbound::World(b) = o {
+            shared.world_unsent.fetch_sub(b.len(), Ordering::Relaxed);
+            let mut input: &[u8] = &b;
+            loop {
+                match dec.push(&mut input) {
+                    Ok(Some(m)) => out.push(Ok(m)),
+                    Ok(None) => break,
+                    Err(e) => {
+                        out.push(Err(e.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Finding: the simulation negotiated each connection's minor a second time from
+/// `Hello.minor_max` with fixed bounds, instead of using the session's. A session that
+/// settled on minor 0 for a client offering 1 then got minor-1 frames (a look appended to
+/// `EntityAppearance`) that its decoder refuses.
+#[test]
+fn world_frames_use_the_session_minor() {
+    let at0 = enter_at_minor(1, 0);
+    assert!(at0.iter().all(Result::is_ok), "{at0:?}");
+    assert!(
+        at0.iter()
+            .any(|m| matches!(m, Ok(Message::EntityAppearance(a)) if a.look.entries.is_empty())),
+        "{at0:?}"
+    );
+    let at1 = enter_at_minor(1, 1);
+    assert!(at1.iter().all(Result::is_ok), "{at1:?}");
+    assert!(
+        at1.iter()
+            .any(|m| matches!(m, Ok(Message::EntityAppearance(a)) if a.look.entries.len() == 1)),
+        "{at1:?}"
     );
 }

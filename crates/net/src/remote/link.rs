@@ -23,7 +23,7 @@ use quinn::{Connection, ConnectionError, ReadError, RecvStream, WriteError};
 use tessera_protocol::codes::{ClientFailure, QUIC_NO_APPLICATION_PROTOCOL};
 use tessera_protocol::connect::{ConnectString, ExpectedKey, Host};
 use tessera_protocol::fingerprint::Fingerprint;
-use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec};
+use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec_minor};
 use tessera_protocol::limits::HANDSHAKE_TIMEOUT;
 use tessera_protocol::message::Channel;
 use tessera_protocol::session::{ConnectionEnd, StreamEnd, StreamRef, Transmit};
@@ -593,7 +593,7 @@ impl Link {
                         }
                         Err(e) => tracing::warn!(error = %e, "datagram not encodable"),
                     },
-                    Channel::Control => match frame_to_vec(&m) {
+                    Channel::Control => match frame_to_vec_minor(&m, self.driver.minor()) {
                         Ok(bytes) => ctl_out.extend_from_slice(&bytes),
                         Err(e) => tracing::warn!(error = %e, "frame not encodable"),
                     },

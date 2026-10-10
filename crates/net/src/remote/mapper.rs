@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use tessera_protocol::codes::CharacterCreateFailedCode;
 use tessera_protocol::limits::{DEFAULT_RUN_SPEED, DEFAULT_WALK_SPEED};
 use tessera_protocol::message::{ChatChannel as WireChannel, EntityCreate, LocationCause as Cause};
 use tessera_protocol::types::{Motion, reduce_heading};
@@ -14,6 +15,7 @@ use tessera_protocol::value::{Emote, Property, Stance, Value, pid, speed_from_pr
 use super::convert;
 use super::driver::Inbound;
 use super::stats::{RemoteFailure, ServerInfo};
+use crate::domain::{CharacterEvent, Text};
 use crate::interp::{InterpConfig, InterpolationSet, Snapshot};
 use crate::model::{
     Anchor, CharacterSummary, ChatChannel, DataId, EntityId, Landblock, Location, LocationCause,
@@ -103,7 +105,45 @@ pub(crate) struct Mapper {
     pub(crate) failure: Option<RemoteFailure>,
     pub(crate) server: Option<ServerInfo>,
     pub(crate) ended: bool,
+    /// The name of the `CharacterCreate` sent and not yet answered
+    /// (`character-screens.md` §7.1.1 step 2).
+    pub(crate) outstanding_create: Option<String>,
     scratch: Vec<Event>,
+}
+
+/// Tessera's own text for a `CharacterCreateFailed` code (`character-screens.md` §7.1.1
+/// step 4); unknown codes read as `SERVER_ERROR`.
+#[must_use]
+/// The index of the list entry for the outstanding creation `name`
+/// (`character-screens.md` §7.1.1 step 3): the entry with exactly that name, else the one
+/// whose NFC form equals the NFC form of `name`. tessera-server stores and lists the NFC form
+/// (`test-server.md` §6.4), so a name sent in another normal form comes back changed (OPEN
+/// in §7.1.1 step 3).
+fn find_created(
+    characters: &[tessera_protocol::types::CharacterSummary],
+    name: &str,
+) -> Option<usize> {
+    use unicode_normalization::UnicodeNormalization;
+    if let Some(i) = characters.iter().position(|c| c.name == name) {
+        return Some(i);
+    }
+    let want: String = name.nfc().collect();
+    characters
+        .iter()
+        .position(|c| c.name.nfc().eq(want.chars()))
+}
+
+pub(crate) fn create_failed_text(code: CharacterCreateFailedCode) -> &'static str {
+    match code {
+        CharacterCreateFailedCode::NameTaken => "A character with this name already exists.",
+        CharacterCreateFailedCode::NameInvalid => "This name is not allowed on this server.",
+        CharacterCreateFailedCode::TooMany => "The character list is full.",
+        CharacterCreateFailedCode::AppearanceRefused => {
+            "This server does not accept this appearance."
+        }
+        CharacterCreateFailedCode::Disabled => "This server does not allow creating characters.",
+        _ => "The server could not create the character.",
+    }
 }
 
 impl Mapper {
@@ -129,6 +169,7 @@ impl Mapper {
             failure: None,
             server: None,
             ended: false,
+            outstanding_create: None,
             scratch: Vec::new(),
         }
     }
@@ -246,12 +287,66 @@ impl Mapper {
                 self.interp.set_config(cfg);
                 self.server = Some(info);
             }
-            Inbound::Connected { characters } => out.push(Event::Connected {
-                characters: characters
-                    .into_iter()
-                    .map(|name| CharacterSummary { name })
-                    .collect(),
-            }),
+            Inbound::Connected { characters, looks } => {
+                out.push(Event::Connected {
+                    characters: characters
+                        .iter()
+                        .map(|(name, _)| CharacterSummary { name: name.clone() })
+                        .collect(),
+                });
+                // One CharacterInfo per entry, in list order (scenario-feed.md §9.7).
+                for (i, (name, body)) in characters.into_iter().enumerate() {
+                    out.push(Event::Character(CharacterEvent::CharacterInfo {
+                        name,
+                        body: Some(convert::body(&body)),
+                        class: None,
+                        level: None,
+                        look: looks.get(i).and_then(convert::look).map(Box::new),
+                    }));
+                }
+            }
+            Inbound::CharacterList { characters, looks } => {
+                let Some(name) = self.outstanding_create.take() else {
+                    tracing::debug!("CharacterList without an outstanding creation dropped");
+                    return;
+                };
+                match find_created(&characters, &name) {
+                    Some(i) => {
+                        if characters.len() > 1 {
+                            tracing::debug!(
+                                entries = characters.len(),
+                                "CharacterList: entries other than the new one emit nothing"
+                            );
+                        }
+                        out.push(Event::Character(CharacterEvent::CharacterInfo {
+                            name,
+                            body: characters.get(i).map(|c| convert::body(&c.body)),
+                            class: None,
+                            level: None,
+                            look: looks.get(i).and_then(convert::look).map(Box::new),
+                        }));
+                    }
+                    None => out.push(Event::Character(CharacterEvent::CharacterRefused {
+                        name,
+                        reason: Text::Literal(
+                            create_failed_text(CharacterCreateFailedCode::ServerError).into(),
+                        ),
+                    })),
+                }
+            }
+            Inbound::CharacterCreateFailed { code, text } => {
+                let Some(name) = self.outstanding_create.take() else {
+                    tracing::debug!(
+                        "CharacterCreateFailed without an outstanding creation dropped"
+                    );
+                    return;
+                };
+                tracing::info!(code = code.name(), text = %text, "character creation refused");
+                out.push(Event::Character(CharacterEvent::CharacterRefused {
+                    name,
+                    reason: Text::Literal(create_failed_text(code).into()),
+                }));
+            }
             Inbound::WorldEntered(w) => {
                 let (location, heading, anchor) = convert::pose(&w.pose);
                 let player = self.map_id(w.player);
@@ -267,7 +362,7 @@ impl Mapper {
                 });
                 out.push(Event::AppearanceChanged {
                     id: player,
-                    appearance: Box::new(convert::appearance(&w.appearance)),
+                    appearance: Box::new(convert::appearance_with_look(&w.appearance, &w.look)),
                 });
                 out.push(Event::LocationReport {
                     id: player,
@@ -329,7 +424,7 @@ impl Mapper {
                 if let Some(id) = self.local_id(a.id) {
                     out.push(Event::AppearanceChanged {
                         id,
-                        appearance: Box::new(convert::appearance(&a.appearance)),
+                        appearance: Box::new(convert::appearance_with_look(&a.appearance, &a.look)),
                     });
                 }
             }
@@ -421,7 +516,7 @@ impl Mapper {
             class: c.class.map(DataId),
             location,
             heading,
-            appearance: Box::new(convert::appearance(&c.appearance)),
+            appearance: Box::new(convert::appearance_with_look(&c.appearance, &c.look)),
             tag: None,
         });
         if velocity != Vec3::ZERO {
@@ -448,6 +543,8 @@ impl Mapper {
         }
         self.ended = true;
         self.failure = failure;
+        // No answer comes after the end.
+        self.outstanding_create = None;
         self.entities.clear();
         self.remapped.clear();
         self.interp.clear();
@@ -502,6 +599,7 @@ mod tests {
                 species: 23,
                 sex: 1,
             }),
+            look: tessera_protocol::types::Look::none(),
         }))
     }
 
@@ -528,7 +626,61 @@ mod tests {
                 sex: 2,
             }),
             properties: vec![Property::new(pid::STANCE, Value::Enum(2))],
+            look: tessera_protocol::types::Look::none(),
         }))
+    }
+
+    /// tessera-server lists the NFC form of a created name (`test-server.md` §6.4): a
+    /// creation sent in another normal form is found, and reported under the requested name.
+    #[test]
+    fn created_name_matches_after_nfc() {
+        use tessera_protocol::types::CharacterSummary as Wire;
+        let entry = |name: &str| Wire {
+            name: name.into(),
+            body: Body::Character {
+                species: 23,
+                sex: 1,
+            },
+        };
+        let mut m = Mapper::new(StaticConfig::default(), InterpConfig::default(), None);
+        let mut out = Vec::new();
+        m.outstanding_create = Some("E\u{301}owyn".into());
+        m.map(
+            Inbound::CharacterList {
+                characters: vec![entry("Aldith"), entry("\u{c9}owyn")],
+                looks: vec![],
+            },
+            &mut out,
+        );
+        assert!(m.outstanding_create.is_none());
+        assert!(matches!(
+            &out[..],
+            [Event::Character(CharacterEvent::CharacterInfo { name, body: Some(_), .. })]
+                if name == "E\u{301}owyn"
+        ));
+        // A list without the name (in any normal form) is still SERVER_ERROR.
+        out.clear();
+        m.outstanding_create = Some("Eowyn".into());
+        m.map(
+            Inbound::CharacterList {
+                characters: vec![entry("\u{c9}owyn")],
+                looks: vec![],
+            },
+            &mut out,
+        );
+        assert!(matches!(
+            &out[..],
+            [Event::Character(CharacterEvent::CharacterRefused { .. })]
+        ));
+    }
+
+    /// The end clears an unanswered creation.
+    #[test]
+    fn end_clears_outstanding_creation() {
+        let mut m = Mapper::new(StaticConfig::default(), InterpConfig::default(), None);
+        m.outstanding_create = Some("Cora".into());
+        m.end(None);
+        assert!(m.outstanding_create.is_none());
     }
 
     #[test]

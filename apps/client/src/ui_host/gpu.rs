@@ -45,6 +45,9 @@ pub struct UiTextures {
     stats: GpuOpStats,
     warned: [bool; 4],
     filter_override: Option<Filter>,
+    /// Textures of external content (portrait viewports, `render.md` §6.10) by the
+    /// content id the UI composes: render targets the client draws each frame.
+    external: BTreeMap<u64, TextureId>,
 }
 
 fn dims(r: &Rect) -> (u32, u32) {
@@ -235,15 +238,31 @@ impl UiTextures {
         }
     }
 
-    /// Releases every texture (UI teardown).
+    /// Releases every texture (UI teardown). External-content textures belong to their
+    /// owners ([`Self::set_external`]) and are only forgotten.
     pub fn release(&mut self, renderer: &mut Renderer<'_>) {
         for (_, t) in std::mem::take(&mut self.map) {
             renderer.destroy_texture(t.id);
         }
+        self.external.clear();
     }
 
-    /// Records the composition list as the frame's UI pass (`render.md` §6.5, §6.9). Entries
-    /// of external content are not drawn (the client registers no portrait targets in M5).
+    /// The texture that external content `id` draws from (a registered render target), or
+    /// none: its entries are then not drawn.
+    pub fn set_external(&mut self, id: u64, texture: Option<TextureId>) {
+        match texture {
+            Some(t) => {
+                self.external.insert(id, t);
+            }
+            None => {
+                self.external.remove(&id);
+            }
+        }
+    }
+
+    /// Records the composition list as the frame's UI pass (`render.md` §6.5, §6.9). An
+    /// entry of external content draws from the texture [`Self::set_external`] gave its id
+    /// (the paperdoll's portrait, decision 0024 P1), and is left out without one.
     /// Returns the number of entries recorded.
     pub fn record(
         &mut self,
@@ -258,17 +277,24 @@ impl UiTextures {
         let mut rotations: Vec<UiRotation> = Vec::new();
         let mut clips: Vec<UiClip> = Vec::new();
         for e in &list.entries {
-            let EntryTexture::Surface { surface, layer } = e.texture else {
-                continue;
-            };
-            let key = TexKey {
-                surface,
-                layer,
-                slot: Slot::Front,
-            };
-            let Some(t) = self.map.get(&key) else {
-                self.stats.missing_textures = self.stats.missing_textures.saturating_add(1);
-                continue;
+            let texture = match e.texture {
+                EntryTexture::Surface { surface, layer } => {
+                    let key = TexKey {
+                        surface,
+                        layer,
+                        slot: Slot::Front,
+                    };
+                    let Some(t) = self.map.get(&key) else {
+                        self.stats.missing_textures = self.stats.missing_textures.saturating_add(1);
+                        continue;
+                    };
+                    t.id
+                }
+                // A portrait the client rendered this frame (`render.md` §6.10).
+                EntryTexture::External(id) => match self.external.get(&id) {
+                    Some(t) => *t,
+                    None => continue,
+                },
             };
             rotations.clear();
             rotations.extend(list.rotations_of(e).iter().map(|r| UiRotation {
@@ -280,7 +306,7 @@ impl UiTextures {
                 rect: c.rect,
                 space: c.space,
             }));
-            let entry = UiEntry::new(t.id, e.canvas, ui_rect(&e.dest))
+            let entry = UiEntry::new(texture, e.canvas, ui_rect(&e.dest))
                 .with_source(match e.source {
                     Source::Straight => UiSource::Straight,
                     Source::Premultiplied => UiSource::Premultiplied,

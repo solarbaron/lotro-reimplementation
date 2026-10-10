@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use crate::client::{check_encodable, floor_boundary};
+use crate::client::{check_encodable, check_encodable_minor, floor_boundary};
 use crate::codes::{
     AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
     LoginFailedCode, TeleportRefusedCode,
@@ -35,7 +35,7 @@ use crate::session::{
 };
 use crate::text;
 use crate::time::time_reply;
-use crate::types::{Appearance, CharacterSummary, Destination};
+use crate::types::{Appearance, CharacterSummary, Destination, Look};
 use crate::value::Stance;
 use crate::version::negotiate_minor;
 
@@ -616,6 +616,8 @@ impl ServerSession {
                     None => Ok(self.disconnect(AppErrorCode::UnsupportedVersion, "", now)),
                     Some(minor) => {
                         self.minor = minor;
+                        // Hello and HelloAck are frozen (§3); later frames use the minor.
+                        self.control.set_minor(minor);
                         let p = &self.params;
                         let mut server_name = text::sanitise(&p.server_name).into_owned();
                         server_name.truncate(floor_boundary(
@@ -830,14 +832,27 @@ impl ServerSession {
         characters: Vec<CharacterSummary>,
         now: u64,
     ) -> Result<(), UsageError> {
+        self.accept_login_with_looks(account, characters, Vec::new(), now)
+    }
+
+    /// [`accept_login`](Self::accept_login) with one look per character (minor ≥ 1; empty
+    /// `looks` sends empty looks). At minor 0 the looks are not sent (§3.1).
+    pub fn accept_login_with_looks(
+        &mut self,
+        account: String,
+        characters: Vec<CharacterSummary>,
+        looks: Vec<Look>,
+        now: u64,
+    ) -> Result<(), UsageError> {
         if self.state != ServerState::AwaitLogin || !self.login_outstanding {
             return Err(UsageError::WrongState(self.state.name()));
         }
         let msg = Message::LoginOk(LoginOk {
             account,
             characters,
+            looks,
         });
-        check_encodable(&msg)?;
+        check_encodable_minor(&msg, self.minor)?;
         self.outbox.send(msg);
         self.outbox.push(Transmit::OpenStream(StreamKind::Chat));
         self.login_outstanding = false;
@@ -889,11 +904,21 @@ impl ServerSession {
         &mut self,
         characters: Vec<CharacterSummary>,
     ) -> Result<(), UsageError> {
+        self.character_created_with_looks(characters, Vec::new())
+    }
+
+    /// [`character_created`](Self::character_created) with one look per character (minor
+    /// ≥ 1; not sent at minor 0).
+    pub fn character_created_with_looks(
+        &mut self,
+        characters: Vec<CharacterSummary>,
+        looks: Vec<Look>,
+    ) -> Result<(), UsageError> {
         if self.state != ServerState::CharacterSelect || !self.create_outstanding {
             return Err(UsageError::WrongState(self.state.name()));
         }
-        let msg = Message::CharacterList(CharacterList { characters });
-        check_encodable(&msg)?;
+        let msg = Message::CharacterList(CharacterList { characters, looks });
+        check_encodable_minor(&msg, self.minor)?;
         self.outbox.send(msg);
         self.create_outstanding = false;
         Ok(())
@@ -925,7 +950,7 @@ impl ServerSession {
             return Err(UsageError::WrongState(self.state.name()));
         }
         let msg = Message::WorldEnter(enter);
-        check_encodable(&msg)?;
+        check_encodable_minor(&msg, self.minor)?;
         self.outbox.push(Transmit::OpenStream(StreamKind::World));
         self.outbox.send(msg);
         self.enter_outstanding = false;
@@ -1000,7 +1025,7 @@ impl ServerSession {
         if !allowed {
             return Err(UsageError::WrongState(self.state.name()));
         }
-        check_encodable(&msg)?;
+        check_encodable_minor(&msg, self.minor)?;
         if let Message::Ping { nonce } = msg {
             if !self.own_ping_rate.try_record(now) {
                 return Err(UsageError::RateLimited);

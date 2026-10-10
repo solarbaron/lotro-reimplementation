@@ -352,6 +352,15 @@ pub enum UiEvent {
         /// Yes (`true`) or no.
         yes: bool,
     },
+    /// The hover handler ran for an element that asks for an examination tooltip
+    /// ([`crate::Ui::set_examine`]; `item-tooltips.md` §9): the client builds the item's
+    /// tooltip and shows it with [`crate::game::examine::ExamTooltips::show`].
+    ExamineHover {
+        /// The element that asked (the hovered element or its nearest ancestor that asks).
+        element: ElementKey,
+        /// The pointer position on the screen.
+        pointer: (i32, i32),
+    },
     /// A UI change request could not be applied.
     Warning {
         /// What happened.

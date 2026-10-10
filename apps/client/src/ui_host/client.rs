@@ -71,6 +71,19 @@ pub struct ClientUi {
     screen_request: Option<(u32, u32)>,
     /// Whether the fallback of a failed start-up ran.
     fell_back: bool,
+    /// P1 panels asked for on the command line, opened once the player is in the world.
+    p1_open: Vec<P1Panel>,
+    /// `--character-select`: the character screens are still to open.
+    want_screens: bool,
+    /// The character screens before world entry, while open.
+    pre_world: Option<crate::pre_world::PreWorld>,
+    /// The player quit from the character screens (or their session ended).
+    quit: bool,
+    /// Where creation choices are kept (`character-screens.md` §7.1): the test server's
+    /// connect string and account.
+    server_key: Option<String>,
+    /// The P1 panels' settings (comparison switch, bag columns), read once.
+    p1_settings: crate::character::settings::P1Settings,
 }
 
 /// Frames the script waits for the walker to settle before it starts anyway (60 s).
@@ -116,9 +129,15 @@ impl ClientUi {
     /// The UI of a run configured by `args` (nothing starts until the archives are open).
     #[must_use]
     pub fn new(args: &Args) -> Self {
+        let p1_open: Vec<P1Panel> = args
+            .open_panel
+            .iter()
+            .filter_map(|n| parse_p1_panel(n))
+            .collect();
         let panels: Vec<PanelId> = args
             .open_panel
             .iter()
+            .filter(|n| parse_p1_panel(n).is_none())
             .filter_map(|n| {
                 let p = super::parse_panel(n);
                 if p.is_none() {
@@ -144,6 +163,129 @@ impl ClientUi {
             drag: None,
             screen_request: None,
             fell_back: false,
+            p1_open,
+            want_screens: args.character_select,
+            pre_world: None,
+            quit: false,
+            server_key: args
+                .server
+                .as_ref()
+                .map(|s| format!("{s}#{}", args.account.as_deref().unwrap_or(""))),
+            p1_settings: crate::character::settings::P1Settings::load_default(),
+        }
+    }
+
+    /// Whether the client should end (the player quit on the character screens).
+    #[must_use]
+    pub fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    /// Whether the character screens are open.
+    #[must_use]
+    pub fn screens_open(&self) -> bool {
+        self.pre_world.is_some()
+    }
+
+    /// Why the character screens can never open, once that is known: the facts failed to
+    /// load, they loaded without the screens' data, or the UI has no creation layout.
+    fn screens_unavailable(&self, rt: &Runtime) -> Option<String> {
+        if let Some(e) = rt.p1.failure() {
+            return Some(format!("install facts: {e}"));
+        }
+        if rt.p1.data().is_some() && rt.p1.screens().is_none() {
+            return Some("the creation data could not be read".into());
+        }
+        match &self.state {
+            State::Ready(host) if host.chargen().is_none() => {
+                Some("the UI has no character-creation layout".into())
+            }
+            State::Failed(e) => Some(format!("game UI: {e}")),
+            _ => None,
+        }
+    }
+
+    /// `--character-select` cannot be served: the session enters on its own
+    /// ([`Runtime::abandon_character_select`]).
+    fn abandon_screens(&mut self, rt: &mut Runtime, reason: &str) {
+        if !self.want_screens {
+            return;
+        }
+        self.want_screens = false;
+        rt.abandon_character_select(reason);
+    }
+
+    /// Opens the character screens once the UI, the world session and their data exist
+    /// (`--character-select`); when one of them can never exist, the session enters the
+    /// first character instead.
+    fn open_screens(&mut self, rt: &mut Runtime) {
+        if !self.want_screens || self.pre_world.is_some() {
+            return;
+        }
+        if let Some(reason) = self.screens_unavailable(rt) {
+            self.abandon_screens(rt, &reason);
+            return;
+        }
+        let State::Ready(host) = &mut self.state else {
+            return;
+        };
+        let (Some(screens), Some(data), Some(refs)) = (
+            rt.p1.screens().cloned(),
+            rt.p1.data().cloned(),
+            host.chargen(),
+        ) else {
+            return;
+        };
+        let Some(world) = rt.world.as_mut() else {
+            return;
+        };
+        self.want_screens = false;
+        let options = crate::screens::ScreenOptions {
+            server_key: self.server_key.clone(),
+            settings: tessera_settings::SettingsStore::open_default().ok(),
+        };
+        host.collect_screen_events(true);
+        let pre = {
+            let mut ui = host.ui_mut();
+            crate::pre_world::PreWorld::open(world, screens, data, options, Some((&mut ui, refs)))
+        };
+        tracing::info!("character screens open");
+        self.pre_world = Some(pre);
+    }
+
+    /// The character screens' frame (after step 7).
+    fn screens_frame(&mut self, rt: &mut Runtime, menu: bool) {
+        let Some(pre) = self.pre_world.as_mut() else {
+            return;
+        };
+        let State::Ready(host) = &mut self.state else {
+            return;
+        };
+        let Some(world) = rt.world.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        if menu {
+            pre.act(crate::screens::Action::Quit, now);
+        }
+        let events = host.take_screen_events();
+        let state = {
+            let mut ui = host.ui_mut();
+            pre.frame(world, Some(&mut ui), &events, now)
+        };
+        match state {
+            crate::pre_world::PreWorldState::Open => {}
+            crate::pre_world::PreWorldState::Entered(name) => {
+                tracing::info!(character = %name, "entered the world from the character screens");
+                host.collect_screen_events(false);
+                self.pre_world = None;
+            }
+            crate::pre_world::PreWorldState::Ended(reason) => {
+                tracing::info!("character screens ended: {reason}");
+                host.collect_screen_events(false);
+                self.pre_world = None;
+                self.quit = true;
+            }
         }
     }
 
@@ -253,14 +395,22 @@ impl ClientUi {
             && let Some(r) = b.try_take()
         {
             self.state = match r {
-                Ok(booted) => State::Ready(Box::new(UiHost::from_boot(booted, &self.options))),
+                Ok(booted) => {
+                    let mut host = UiHost::from_boot(booted, &self.options);
+                    if let Some(c) = host.character_mut() {
+                        c.apply_settings(&self.p1_settings);
+                    }
+                    State::Ready(Box::new(host))
+                }
                 Err(e) => {
                     tracing::error!("game UI unavailable: {e}");
                     State::Failed(e)
                 }
             };
         }
-        if matches!(self.state, State::Failed(_)) {
+        if let State::Failed(e) = &self.state {
+            let reason = format!("game UI: {e}");
+            self.abandon_screens(rt, &reason);
             self.fall_back(rt);
             return;
         }
@@ -472,10 +622,13 @@ impl ClientUi {
         if !self.attached_walker {
             return;
         }
+        self.open_screens(rt);
+        let screens = self.pre_world.is_some();
         let State::Ready(host) = &mut self.state else {
             return;
         };
         if events.menu
+            && !screens
             && let Some(o) = host.escape(&mut rt.plugins, true, false)
         {
             tracing::debug!(?o, "Escape");
@@ -491,9 +644,15 @@ impl ClientUi {
         host.set_character(&mut rt.plugins, name.as_deref());
         host.post_session_lines(rt.take_ui_chat());
         let (mapper, _) = walker.mapper_mut();
+        let shift = mapper.mods().contains(tessera_input::Modifiers::SHIFT);
         host.step7(&mut rt.plugins, Some(mapper));
+        // The character panels (decision 0024 P1): panels asked for on the command line,
+        // the player-state changes of this frame, item interactions as session commands.
+        character_frame(host, rt, &mut self.p1_open, shift);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
+        // The character screens before world entry (`--character-select`).
+        self.screens_frame(rt, events.menu && screens);
     }
 
     /// Step 8.
@@ -505,6 +664,17 @@ impl ClientUi {
             host.step8(Some(renderer), &mut rt.plugins);
             let (mapper, _) = walker.mapper_mut();
             host.apply_band_changes(mapper);
+        }
+    }
+
+    /// The portraits the UI shows (the paperdoll's figure, `render.md` §6.10), rendered
+    /// with the walker into their targets. Call before the frame's `begin_frame`.
+    pub fn render_portraits(&mut self, walker: &mut Walker, renderer: &mut Renderer<'_>) {
+        if !self.attached_walker {
+            return;
+        }
+        if let State::Ready(host) = &mut self.state {
+            host.render_portraits(renderer, &mut |frame, yaw| walker.draw_portrait(frame, yaw));
         }
     }
 
@@ -606,6 +776,71 @@ impl ClientUi {
     }
 }
 
+/// A P1 panel asked for on the command line (`--open-panel character`, `bag1` … `bag6`,
+/// `bags`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum P1Panel {
+    /// The character panel (`Journal_Window`).
+    Character,
+    /// Bag window *n* (1–6).
+    Bag(usize),
+    /// Every offered bag.
+    Bags,
+}
+
+/// Parses a P1 panel name of `--open-panel`: `character`, `journal`, `Journal_Window`,
+/// `bag1` … `bag6`, `PlayerBag1_Template` … `6`, `bags`; ASCII case ignored.
+#[must_use]
+pub fn parse_p1_panel(name: &str) -> Option<P1Panel> {
+    let n = name.trim().to_ascii_lowercase();
+    match n.as_str() {
+        "character" | "journal" | "journal_window" => return Some(P1Panel::Character),
+        "bags" => return Some(P1Panel::Bags),
+        _ => {}
+    }
+    let digits = n.strip_prefix("bag").or_else(|| {
+        n.strip_prefix("playerbag")
+            .and_then(|r| r.strip_suffix("_template"))
+    })?;
+    let b: usize = digits.parse().ok()?;
+    (1..=crate::character::panel::BAG_WINDOWS)
+        .contains(&b)
+        .then_some(P1Panel::Bag(b))
+}
+
+/// The character panels' frame (after step 7): panels still to open once the player is in
+/// the world, the player-state changes, and the item commands sent to the world session.
+fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Panel>, shift: bool) {
+    let changes = rt.p1.take_ui_changes();
+    let data = rt.p1.data().cloned();
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let now = Instant::now();
+    if !pending.is_empty() && world.player().is_some() {
+        for p in std::mem::take(pending) {
+            let name = match p {
+                P1Panel::Character => crate::character::panel::labels::TOGGLE_JOURNAL.to_owned(),
+                P1Panel::Bags => crate::character::panel::labels::TOGGLE_BAGS.to_owned(),
+                P1Panel::Bag(n) => {
+                    format!("{}{n}", crate::character::panel::labels::TOGGLE_BAG_PREFIX)
+                }
+            };
+            host.character_command(&name, world.player_state(), data.as_deref());
+        }
+    }
+    let commands =
+        host.character_frame(world.player_state(), data.as_deref(), &changes, shift, now);
+    if let Some(c) = host.character_mut() {
+        crate::character::settings::save_columns(&c.take_column_changes());
+    }
+    for c in commands {
+        if let Err(e) = world.send_command(now, c) {
+            tracing::info!("item command not sent: {e}");
+        }
+    }
+}
+
 /// Runs the lines submitted in the chat window through the client's command dispatcher
 /// with the world session (decision 0020 items 1 and 3: `--server` or the sandbox).
 fn dispatch_lines(host: &mut UiHost, rt: &mut Runtime) {
@@ -623,6 +858,55 @@ fn dispatch_lines(host: &mut UiHost, rt: &mut Runtime) {
 mod tests {
     use super::*;
     use clap::Parser as _;
+
+    fn select_args(dir: &std::path::Path) -> Args {
+        let s = |p: &std::path::Path| p.to_str().expect("utf-8").to_owned();
+        Args::try_parse_from([
+            "t".to_owned(),
+            "--character-select".into(),
+            "--game-dir".into(),
+            s(&dir.join("no-install")),
+            "--data-dir".into(),
+            s(&dir.join("data")),
+        ])
+        .expect("args")
+    }
+
+    #[test]
+    fn character_select_without_its_data_enters_on_its_own() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = select_args(dir.path());
+        let mut rt = Runtime::start(&ClientUi::runtime_args(&args), Instant::now()).expect("rt");
+        assert!(rt.waits_for_character_screens());
+        let mut ui = ClientUi::new(&args);
+        // The facts failed to load: the screens can never open.
+        rt.p1.set_failed("strings: unreadable");
+        ui.open_screens(&mut rt);
+        assert!(!rt.waits_for_character_screens());
+        assert!(!ui.want_screens);
+        let notices = rt.take_notices();
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("character screens are unavailable")),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn character_select_without_a_ui_enters_on_its_own() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = select_args(dir.path());
+        let mut rt = Runtime::start(&ClientUi::runtime_args(&args), Instant::now()).expect("rt");
+        let mut ui = ClientUi::new(&args);
+        let deadline = Instant::now() + std::time::Duration::from_secs(30);
+        while matches!(rt.status, DataStatus::Loading) && Instant::now() < deadline {
+            let _ = rt.wait_loader(std::time::Duration::from_millis(50));
+        }
+        ui.poll(&mut rt, None);
+        assert!(ui.failed().is_some());
+        assert!(!rt.waits_for_character_screens());
+    }
 
     #[test]
     fn a_failed_start_up_loads_the_plugins_without_the_ui() {

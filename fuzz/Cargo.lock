@@ -2192,6 +2192,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

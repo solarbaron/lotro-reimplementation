@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -76,6 +76,9 @@ marks the item **done** here.
 | [O84](#o84) | Equipping, unequipping, using, splitting and destroying items | `character-panels.md` §6 | Look | open (P1) |
 | [O85](#o85) | Character selection and race/class screens: order of screens, lists, defaults | `character-screens.md` §2–§4, §6 | Look | open (P1) |
 | [O86](#o86) | Appearance and name screen: controls, randomise, nationality colours | `character-screens.md` §5 | Look | open (P1) |
+| [O88](#o88) | Worn look after five equips: chest, head, a weapon in each hand, shield or off-hand item; which hand a held item goes to | `character-panels.md` §7, `appearance.md` §8 | Look, screenshots (private) | open (P1) |
+| [O89](#o89) | Classes and nationalities each race and gender offers in the creation screen; which are locked or hidden | `character-screens.md` §4–§5, §9 | Look | open (P1) |
+| [O90](#o90) | Customised appearance (styles, a colour, height, a slider) compared with the same choices in Tessera; does the selection figure keep them | `character-screens.md` §5.2, §7.1 | Look, screenshots (private) | open (P1) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -1388,3 +1391,59 @@ of drifts up to 22.6 m/s; the spec gives 0.15–0.9 m/s.
 
 **Record:** for each row, same / different, with a few words on what differs. Speeds as
 "slower / about the same / faster". No screenshots of the original in the repository.
+
+<a id="o88"></a>
+## O88. Worn look after equipping (P1)
+
+**Spec:** `character-panels.md` §7 (worn look), `appearance.md` §8 (held items and their
+hands).
+
+**Tessera's side:** `apps/client/tests/worn_look_real_data.rs` equips an item from a scenario
+and checks that the walker's figure changes; a scenario with `equip` steps run with
+`tessera-client --scenario FILE` shows the same equips in the walker (USER_GUIDE §3.11, §3.13).
+
+**What to do:** on one character, equip about five items one after another: a chest piece, a
+head piece, a one-handed weapon in each hand, and a shield or other off-hand item. After each
+equip take a private screenshot of the figure from the front and the side. Then run the same
+equips (same DIDs, read from the explorer) in a Tessera scenario and look at the walker.
+
+**Record:** per equip, the item's DID and its paperdoll slot; same / different for the
+figure's look (in words: missing part, other part, wrong place); for each held item, which
+hand holds it, and where an off-hand weapon or shield sits (hand, back, hip).
+
+<a id="o89"></a>
+## O89. Classes and nationalities per race and gender (P1)
+
+**Spec:** `character-screens.md` §4–§5 (lists and their order), §9 (data checks).
+
+**Tessera's side:** from this install Tessera offers 8 races, 15 (race, gender) entries and 69
+(race, class) entries (`crates/gamedata/tests/chargen_real_data.rs`,
+`apps/client/tests/character_screens_real_data.rs`); `--character-select`, then New, shows
+the lists.
+
+**What to do:** in the original creation screen, go through each race and gender.
+
+**Record:** per race (by species, in your own words) and gender: the classes offered, in their
+order, and which of them are greyed out (locked) or missing; the nationalities offered and
+which are locked; whether a gender is missing for a race. Compare with Tessera's lists and
+note every difference.
+
+<a id="o90"></a>
+## O90. Customised appearance (P1)
+
+**Spec:** `character-screens.md` §5.2 (controls and the look they write), §7.1 (what the
+session keeps).
+
+**Tessera's side:** `--character-select`, New, then the appearance and name screen. Tessera
+draws heights, styles and body sliders of a look; colours and face layers are not drawn yet
+(`character-screens.md` §6 and §7.1 OPENs), and the creation viewport's figure is not drawn
+yet, so compare on the figure in the world after entering.
+
+**What to do:** in the original, make a character and change several style controls (hair,
+beard or ears where offered), one colour, the height and one body slider. Take private
+screenshots of the figure in the creation screen and, after creating it, in the character
+selection screen. Make the same choices in Tessera.
+
+**Record:** per changed control: its kind (style, colour, height, slider), same / different
+on the figure; whether the selection screen's figure keeps every choice (or which it drops).
+

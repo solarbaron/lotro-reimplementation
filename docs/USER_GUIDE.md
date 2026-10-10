@@ -10,8 +10,9 @@ output; run that for the complete, current list.
 Tessera is not playable yet. The client is mainly an offline **world walker**: you walk or
 fly over the world as an animated avatar, among the characters the data places, with no
 combat. It can also join Tessera's own test server (not the game's servers) and attach an
-early game UI with Lua plugins (§3.12). Scenario files (§3.11) script gameplay events for
-testing; they play back what the file says and compute nothing.
+early game UI with Lua plugins (§3.12), with character selection and creation screens, a
+character panel with bag windows, and item tooltips (§3.13). Scenario files (§3.11) script
+gameplay events for testing; they play back what the file says and compute nothing.
 
 ---
 
@@ -261,7 +262,7 @@ nothing is computed from the game's rules.
 
 | Option | Meaning |
 |---|---|
-| `--scenario FILE` | Play FILE with the sandbox. Cannot be combined with `--server` (§3.12), `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase` or `--ui-script`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading`; `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
+| `--scenario FILE` | Play FILE with the sandbox, or with `--server` as an overlay over a test server (below). Cannot be combined with `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase`, `--ui-script` or `--character-select`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading` (not in overlay runs with `--server`, where the server places the player: `--spawn` and `--place` are refused there, `--heading` does not place it); `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
 | `--scenario-log FILE` | Write the run's event log to FILE (`-` for standard output). Needs `--scenario` (refused with exit code 2 otherwise). FILE is created or overwritten without asking; the scenario file's own path is refused (exit code 2). A log can grow very large (below). |
 | `--scenario-input` | Windowed runs: also play the file's `input` block (headless runs always play it). Each line is sent when the scenario's clock reaches it, the `at pre` lines before the world is entered. |
 
@@ -301,6 +302,38 @@ the window; if the writing falls too far behind, the log stops with `error=LogWr
 client exits with status 5. The `input` block is played only with `--scenario-input`; a file
 whose `enter` character only an `accept-character` step adds needs it (or `--headless`), and
 without it such a run is refused with exit status 2.
+
+**Plugins in headless runs.** `--headless --scenario FILE --load-plugin NAME` loads the
+plugin when the player enters the world and feeds it the scenario's inventory changes on the
+scenario's clock, as a windowed run would deliver them frame by frame, so a plugin that
+reads the backpack and the equipment (`GetBackpack()`, `GetEquipment()`) can be tested
+without a window. What the plugin writes to chat goes to the client's log.
+
+**Over a test server (overlay runs).** With `--server` (and `--account`, §3.12) the scenario
+plays as an **overlay**: the test server keeps the login, the character list, world entry,
+movement, other players and chat, and the file scripts only your own character's inventory,
+level and stats. It may use only the settings `title`, `tick`, `end-at`, `defaults` and
+`requires install`; the declarations `select` and `item`; the steps `bag`, `give`,
+`remove`, `quantity`, `equip`, `unequip`, `condition`, `wallet` and `item-property`, and
+`level` and `stat` for `player`; `repeat`; `on` blocks for `equip`, `unequip`, `move-item`,
+`destroy`, `split` and `use-item`; and an `input` block of those commands without `at pre`
+lines. Anything else is refused before the client connects (exit status 3, error
+`NotAllowedInOverlay`). The scenario's clock starts when the server puts you in the world.
+
+When the scenario changes what you wear, the client sends the new equipment to the server
+(at most four times a second, changes in between merged), and the server shows it to every
+other player there; your own figure shows what the server sends back. The server learns
+nothing else: bags, quantities, coins, condition, levels and stats stay in your client. A
+server that does not allow appearance changes leaves the change visible to you only (the
+client logs this once). With `--headless` the run ends with exit status 0 when the scenario
+ends, 5 when it fails or the server goes away, and 5 after an hour without an end. Logs of
+overlay runs depend on the server's timing, so they differ between runs and are never
+committed.
+
+```sh
+cargo run --release -p tessera-client -- --scenario gear.scenario \
+    --server tessera://127.0.0.1:7777 --account wren --ui
+```
 
 **Log size.** A scenario file is at most 1 MiB, and its log at most 256 MiB: a file built
 to make a larger one (a trigger that answers many input lines with long chat lines) ends the
@@ -362,6 +395,12 @@ install and must not carry game content:
   in `slot=` of `equip` and in `type=` of `damage` and `heal`) are written as labels
   (`@Label`) that an Accepted spec names, as Tessera's own keywords, or as `m` / `f`;
   numeric enum values are for local files only, so `equip $x slot=3` cannot be committed.
+  The same holds for property IDs written as numbers (`pid:N:KIND` in `stat`,
+  `item-property` and `look` lines): write the property's label (`@Label`) instead. A
+  property value of kind enum, bitfield32 or bitfield64 is a label too, a value of kind
+  did is an element, never a number, and so is the `nationality=` of `create-character`
+  (a label). Without an install the committed-scenario test cannot check a labelled
+  property's value kind, so reviewers check these by hand.
   Container slot numbers (`give`, `unequip` and `move-item … slot=`), quickslot and trait
   slot numbers, entry and option numbers are plain numbers and are fine.
 - **Original text only.** No names, dialogue, quest, item or place text from the game; every
@@ -387,6 +426,95 @@ These parts are early; `tessera-client --help` lists every option that goes with
 | `--ui-script` | Run the scripted UI measurement (implies `--ui`); with `--headless` it runs offscreen and ends the run. `--ui-report FILE` writes its report as Markdown. |
 
 `--showcase` (§3) shows the early texture showcase instead of the walker.
+
+<a id="characters"></a>
+### 3.13 Characters, inventory and tooltips
+
+These parts are early. Their screens, lists, icons and texts come from your install; what a
+character carries, its level and its stats come from a scenario file (§3.11) or are simply
+not there, because Tessera runs none of the game's rules. Without a scenario the bags and
+equipment slots are empty and moving items does nothing.
+
+**Character selection and creation.** `--character-select` opens the character selection
+screen before the world, instead of entering the account's first character (or the one
+`--character` names). It needs an install and attaches the game UI (`--ui`). It works
+offline and with `--server`; it cannot be combined with `--character`, `--headless`,
+`--scenario`, `--no-data`, `--walk-path`, `--fly-path`, `--smoke` or `--showcase`.
+
+```sh
+cargo run --release -p tessera-client -- --character-select
+cargo run --release -p tessera-client -- --character-select \
+    --server tessera://127.0.0.1:7777 --account wren
+```
+
+- **Selection.** The list shows the characters the session reports. Select one and enter
+  the world with Enter or a double click. Escape on this screen quits the client.
+- **New** opens the race and class screen (every race, gender and class your install
+  offers), then the appearance and name screen: nationality, the appearance controls of the
+  chosen race and gender, randomise, the name field with a random name, and the name checks
+  your install defines. Back goes one screen back. The turn and zoom buttons turn the
+  viewport. **Create** sends the character to the session, and it appears in the list.
+- **Offline** a made character lasts until the client exits; Tessera still keeps its
+  creation choices in its settings file (section `[[CreatedCharacters]]`, under the
+  sandbox's key). **On a test server** it is
+  created there when the server allows creation (otherwise New is greyed out). A server
+  that speaks protocol 1.1 stores the character's look, and other players see its heights,
+  styles and body sliders; its colours and face layers are not drawn yet on any figure
+  (below). With an
+  older server (1.0) only the body is stored; Tessera then keeps your choices in its
+  settings file (section `[[CreatedCharacters]]`) and applies them to your own view of that
+  character only.
+- **Delete** is greyed out offline and on test servers; neither supports deletion yet.
+- If the screens cannot open (the install's creation data or the creation layout cannot be
+  read), the client enters the first character and says why in chat.
+- Not done yet: the figure in the screens' viewport is not drawn; the lists, controls and
+  buttons work. A look, your own or one received from a server, draws its heights, styles
+  and body sliders only: the chosen colours (skin, hair and the like) and face layers are
+  not applied to any figure yet, which shows the race's defaults instead.
+
+**Character panel and bags.** With the game UI attached (`--ui`, `--character-select`, or
+an option that implies `--ui`), these keys work once you are in the world:
+
+| Key | Action (keymap name) | What it does |
+|---|---|---|
+| C | `toggle_character` | Character panel: name, level, race and class, the paperdoll with your figure, the 23 equipment slots and the stat rows |
+| B | `toggle_bags` | Opens every bag window when one is closed, otherwise closes them all |
+| I | `toggle_bag_1` | Bag 1 |
+| (none) | `toggle_bag_2` … `toggle_bag_6` | Bags 2 to 6 |
+| Ctrl+T | `pin_tooltip` | Pins the item tooltip under the mouse |
+
+All are in the `global` context of the keymap file (§4.2). In fly mode C moves down
+(§4.1) and does not open the character panel; unbind `fly_vertical`'s C in the `fly`
+context or bind `toggle_character` to another key to have both. `--open-panel character`,
+`--open-panel bags` and `--open-panel bag1` … `bag6` open them at start, as soon as you are in
+the world (repeatable). A bag window opens only when your backpack has slots for it. The
+paperdoll's buttons turn the figure by 15° per step; dragging in it turns it by 0.5° per
+pixel. Each bag window's number of columns is kept in Tessera's settings file.
+
+Items in the bags and on the paperdoll:
+
+| You do | The client asks for |
+|---|---|
+| Drop a bag item on a paperdoll slot it fits | Equip it there (a slot it does not fit refuses the drop) |
+| Activate (right-click) a bag item that can be worn | Equip it in its default slot |
+| Activate any other bag item | Use it on your current target |
+| Drop an equipped item on a bag slot, or on a bag window | Take it off |
+| Activate an equipped item | Take it off |
+| Drop an item on another bag slot | Move it (swapping with an item already there) |
+| Shift and drop a stack of 2 or more on an empty slot | Split off half the stack (it goes to the first free slot) |
+| Drag an item out of every window, then again within 10 s | Destroy it (the first time only asks) |
+
+The panels never change anything on their own: each action is a request to the session, and
+the slots change when the answer arrives. A scenario's `on` blocks (or its `defaults on`)
+give those answers; on a test server only an overlay scenario does. Equipping changes the
+worn look of your figure in the world.
+
+**Item tooltips.** Hold the mouse over an item slot and, after the usual tooltip delay, the
+item's tooltip opens with the rows, colours, icons and texts your install gives that item.
+Next to it, comparison tooltips show what you have equipped in the slots the item fits;
+`compare_equipped_items = false` in the `[UI]` section of Tessera's settings file turns them
+off. Ctrl+T pins the tooltip under the mouse, so it stays open; a pinned tooltip closes with
+its close button.
 
 ---
 
@@ -442,7 +570,8 @@ screenshot = ["F11"]
 ```
 
 - **Contexts and actions.** `global` (`menu`, `screenshot`, `toggle_fly`, `toggle_debug`,
-  `open_chat`), `camera` (`mouselook`, `look_x`, `look_y`, `zoom`, `reset_camera`),
+  `open_chat`, `toggle_character`, `toggle_bags`, `toggle_bag_1` … `toggle_bag_6`,
+  `pin_tooltip`), `camera` (`mouselook`, `look_x`, `look_y`, `zoom`, `reset_camera`),
   `movement` (`move_forward`, `strafe`, `turn`, `jump`, `walk`, `autorun`, `mouselook`),
   `fly` (`fly_vertical`, `fly_boost`, `fly_slow`, `fly_speed`) and `text_entry`.
 - **Keys** are named by their position on a US layout (`W` is the key that types W on a US
@@ -601,7 +730,7 @@ Nothing goes into the install directory.
 
 | What | Where (Linux) | Change it with |
 |---|---|---|
-| Settings (explorer state, saved game directory) | `~/.config/tessera/settings.toml` (`$XDG_CONFIG_HOME/tessera/`) | `TESSERA_SETTINGS_FILE` |
+| Settings (explorer state, saved game directory, UI options, the creation choices of characters made on the creation screen) | `~/.config/tessera/settings.toml` (`$XDG_CONFIG_HOME/tessera/`) | `TESSERA_SETTINGS_FILE` |
 | Keymap | `keymap.toml` next to the settings file | `TESSERA_KEYMAP_FILE`, `--keymap` |
 | Tessera's data folder | `~/.local/share/tessera` (`$XDG_DATA_HOME/tessera`; `./tessera-data` if neither is known) | client `--data-dir` |
 | Walker screenshots (F12) | `screenshots/walker-<time>.png` in the data folder | client `--data-dir` |

@@ -177,7 +177,30 @@ pub struct UiHost {
     cursor_tex: Option<TextureId>,
     frames: u64,
     command_ids: Vec<(String, u32)>,
+    /// The character panel and bag windows (decision 0024 P1), with the install.
+    character: Option<crate::character::panel::CharacterUi>,
+    /// UI events for [`Self::character`], handled in [`Self::character_frame`] (they need
+    /// the player's state).
+    character_events: Vec<UiEvent>,
+    /// Panel input commands (`ToggleJournalPanel`, `QUICKSLOT_BACKPACK…`,
+    /// `TOOLTIP_DETACH`) taken in step 1, run in [`Self::character_frame`].
+    character_commands: Vec<String>,
+    /// The character screens' layouts (`--character-select`).
+    chargen: Option<crate::screens::ui::ChargenRefs>,
+    /// While the character screens are open: every UI event, for them
+    /// ([`Self::take_screen_events`]).
+    screen_events: Option<Vec<UiEvent>>,
+    /// Render targets of the portraits (the paperdoll) by content id: the target, its
+    /// registered texture and its size.
+    portraits:
+        std::collections::BTreeMap<u64, (tessera_render::OffscreenTarget, TextureId, (u32, u32))>,
+    /// The portrait (content id, size) whose target could not be created: not tried again
+    /// until its size changes (one warning, not one per frame).
+    portrait_failed: Option<(u64, (u32, u32))>,
 }
+
+/// Most UI events and panel commands queued for the character panels in one frame.
+pub const MAX_CHARACTER_QUEUE: usize = 4096;
 
 impl std::fmt::Debug for UiHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -288,6 +311,13 @@ impl UiHost {
             cursor_tex: None,
             frames: 0,
             command_ids: Vec::new(),
+            character: None,
+            character_events: Vec::new(),
+            character_commands: Vec::new(),
+            chargen: None,
+            screen_events: None,
+            portraits: std::collections::BTreeMap::new(),
+            portrait_failed: None,
         }
     }
 
@@ -328,6 +358,12 @@ impl UiHost {
             options,
         );
         boot::register(&mut host.ui.borrow_mut(), &b.game_vocab);
+        b.char_vocab.register_classes(&mut host.ui.borrow_mut());
+        host.character = Some(crate::character::panel::CharacterUi::new(
+            b.char_vocab.clone(),
+            b.char_ids.clone(),
+        ));
+        host.chargen = Some(b.chargen);
         let mut panels = NativePanels::new(b.catalog, b.game_vocab.clone(), b.game_layouts);
         panels.types = b.panel_types;
         panels.set_shortcuts(Box::new(NoShortcuts));
@@ -846,6 +882,23 @@ impl UiHost {
     }
 
     fn handle_client_events(&mut self, plugins: &mut Plugins, events: Vec<UiEvent>) {
+        if let Some(q) = self.screen_events.as_mut() {
+            let room = MAX_CHARACTER_QUEUE.saturating_sub(q.len());
+            q.extend(events.iter().take(room).cloned());
+        }
+        if self.character.is_some() {
+            for ev in &events {
+                if self.character_events.len() >= MAX_CHARACTER_QUEUE {
+                    break;
+                }
+                if matches!(
+                    ev,
+                    UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
+                ) {
+                    self.character_events.push(ev.clone());
+                }
+            }
+        }
         if events.is_empty() || self.panels.is_none() {
             return;
         }
@@ -994,6 +1047,7 @@ impl UiHost {
                 return true;
             }
         }
+        let name = Arc::clone(&command.name);
         let consumed = self.ui.borrow_mut().offer(&UiInput::Command(CommandOffer {
             phase,
             hold,
@@ -1001,6 +1055,18 @@ impl UiHost {
             value: a.value,
             position: a.position,
         }));
+        // The P1 panel commands the UI declined (`character-panels.md` §2, §4.1,
+        // `item-tooltips.md` §10): run with the player's state in step 7.
+        if !consumed
+            && !is_pointer_cmd
+            && self.character.is_some()
+            && crate::character::panel::is_panel_command(&name)
+        {
+            if phase == Phase::Start && self.character_commands.len() < MAX_CHARACTER_QUEUE {
+                self.character_commands.push(name.to_string());
+            }
+            return true;
+        }
         if consumed && wheel_step {
             // A scroll step is a content event (U4 (f), decision 0015 §6).
             self.frame.content_event = true;
@@ -1221,6 +1287,164 @@ impl UiHost {
         self.frame.step7 += e;
     }
 
+    /// The character panels' frame work (after step 7): the panel commands taken in step
+    /// 1, the UI events of this frame (item tooltips, drops, activations, the paperdoll's
+    /// turning), the player-state `changes`, and the drag turn. Returns the commands for
+    /// the session; the panels' messages go to the chat window as notices.
+    pub fn character_frame(
+        &mut self,
+        state: &crate::character::PlayerState,
+        data: Option<&crate::character::CharacterData>,
+        changes: &[crate::character::PlayerChange],
+        shift: bool,
+        now: Instant,
+    ) -> Vec<tessera_net::Command> {
+        let Some(c) = self.character.as_mut() else {
+            self.character_events.clear();
+            self.character_commands.clear();
+            return Vec::new();
+        };
+        let mut ui = self.ui.borrow_mut();
+        c.set_split_modifier(shift);
+        for name in std::mem::take(&mut self.character_commands) {
+            c.command(&mut ui, &name, state, data);
+        }
+        c.refresh(&mut ui, state, data, changes);
+        for ev in std::mem::take(&mut self.character_events) {
+            c.handle_event(&mut ui, &ev, state, data, now);
+        }
+        c.update(&mut ui);
+        c.prune(&mut ui);
+        drop(ui);
+        let notices = c.take_notices();
+        let commands = c.take_commands();
+        if !notices.is_empty() {
+            self.post_notices(notices);
+        }
+        if !commands.is_empty() {
+            self.frame.content_event = true;
+        }
+        commands
+    }
+
+    /// Renders the paperdoll's portrait (`render.md` §6.10) into its target before the
+    /// frame: `draw` draws the figure into an offscreen frame with the turn in degrees and
+    /// returns whether it drew one. The UI composes the target as the viewport's external
+    /// content. A closed or hidden panel renders nothing. Call before the frame's
+    /// `begin_frame`.
+    pub fn render_portraits(
+        &mut self,
+        renderer: &mut Renderer<'_>,
+        draw: &mut dyn FnMut(&mut Frame, f32) -> bool,
+    ) {
+        let portrait = self
+            .character
+            .as_ref()
+            .and_then(|c| c.portrait(&self.ui.borrow()));
+        let Some(p) = portrait else {
+            return;
+        };
+        if self.portrait_failed == Some((p.id, p.size)) {
+            return;
+        }
+        let stale = self
+            .portraits
+            .get(&p.id)
+            .is_some_and(|(_, _, size)| *size != p.size);
+        if stale && let Some((_, tex, _)) = self.portraits.remove(&p.id) {
+            renderer.destroy_texture(tex);
+            self.textures.set_external(p.id, None);
+        }
+        if let std::collections::btree_map::Entry::Vacant(slot) = self.portraits.entry(p.id) {
+            let made = renderer
+                .create_offscreen_target(
+                    p.size.0,
+                    p.size.1,
+                    tessera_render::OffscreenFormat::Rgba8Unorm,
+                )
+                .and_then(|t| {
+                    let tex = renderer.register_target_texture(
+                        &t,
+                        tessera_render::Filter::Linear,
+                        tessera_render::Wrap::Clamp,
+                    )?;
+                    Ok((t, tex))
+                });
+            match made {
+                Ok((t, tex)) => {
+                    slot.insert((t, tex, p.size));
+                    self.textures.set_external(p.id, Some(tex));
+                    self.portrait_failed = None;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        size = ?p.size,
+                        "paperdoll portrait target: {e}; not tried again at this size"
+                    );
+                    self.portrait_failed = Some((p.id, p.size));
+                    return;
+                }
+            }
+        }
+        let Some((target, _, _)) = self.portraits.get(&p.id) else {
+            return;
+        };
+        match renderer.begin_offscreen_frame(target) {
+            Ok(mut frame) => {
+                draw(&mut frame, p.yaw);
+                if let Err(e) = renderer.end_frame(frame) {
+                    tracing::debug!("paperdoll portrait: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("paperdoll portrait: {e}"),
+        }
+    }
+
+    /// The character screens' layouts and IDs, when the install provides them.
+    #[must_use]
+    pub fn chargen(&self) -> Option<crate::screens::ui::ChargenRefs> {
+        self.chargen
+    }
+
+    /// Starts (`true`) or stops collecting every UI event for the character screens.
+    pub fn collect_screen_events(&mut self, on: bool) {
+        self.screen_events = on.then(Vec::new);
+    }
+
+    /// The UI events collected for the character screens since the last call.
+    pub fn take_screen_events(&mut self) -> Vec<UiEvent> {
+        self.screen_events
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// The character panels, when the install provides them.
+    #[must_use]
+    pub fn character(&self) -> Option<&crate::character::panel::CharacterUi> {
+        self.character.as_ref()
+    }
+
+    /// The character panels, mutably (opening panels by name, sheets and tests).
+    pub fn character_mut(&mut self) -> Option<&mut crate::character::panel::CharacterUi> {
+        self.character.as_mut()
+    }
+
+    /// Runs a panel command by name as an input action would (`ToggleJournalPanel`,
+    /// `QUICKSLOT_BACKPACKn`, …) with the player's state; `false` for other names.
+    pub fn character_command(
+        &mut self,
+        name: &str,
+        state: &crate::character::PlayerState,
+        data: Option<&crate::character::CharacterData>,
+    ) -> bool {
+        let Some(c) = self.character.as_mut() else {
+            return false;
+        };
+        let mut ui = self.ui.borrow_mut();
+        c.command(&mut ui, name, state, data)
+    }
+
     /// The chat window takes its command syntax and mode table from the dispatcher's one
     /// read of the install's tables whenever the dispatcher has taken a new one
     /// (`chat-window.md` §10 item 11), so it offers only mode words the registry holds.
@@ -1439,6 +1663,9 @@ impl UiHost {
             self.textures.release(r);
             if let Some(t) = self.cursor_tex.take() {
                 r.destroy_texture(t);
+            }
+            for (_, (_, tex, _)) in std::mem::take(&mut self.portraits) {
+                r.destroy_texture(tex);
             }
         }
         tracing::info!(unloaded = loaded, frames = self.frames, "game UI shut down");

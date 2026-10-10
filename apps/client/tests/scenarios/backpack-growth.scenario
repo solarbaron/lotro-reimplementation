@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The backpack size before the first `bag` step (docs/specs/character-panels.md §4.3 rule 1;
+# lua-plugin-api.md §15.1, check 66): items arriving past the size raise it, a later `bag`
+# step fixes it, and items stay where they are when it shrinks. Synthetic: plays without
+# an install. Every name is invented for Tessera.
+tessera-scenario 1
+title "Growing pack"
+tick 50ms
+player "Orrin"
+item $flint "Flint and steel"
+item $map "Folded map"
+item $whistle "Bone whistle"
+
+at 0s give $flint slot=2
++0.1s give $map slot=50
++0.1s give $whistle
++0.1s bag 20
++0.1s remove $map
++0.1s bag 60

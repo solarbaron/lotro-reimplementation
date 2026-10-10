@@ -63,6 +63,7 @@ fn in_world() -> ConnectionCore {
         SessionCmd::AcceptLogin {
             account: "alice".into(),
             characters: Vec::new(),
+            looks: Vec::new(),
         },
         3,
     );
@@ -89,6 +90,7 @@ fn in_world() -> ConnectionCore {
                 anchor: None,
             },
             appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+            look: tessera_protocol::types::Look::none(),
         })),
         5,
     );

@@ -76,6 +76,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tessera_protocol::message::Credentials;
+pub use tessera_protocol::message::ServerCaps;
 use tessera_protocol::types::Motion;
 use tessera_protocol::value::Stance as WireStance;
 use tokio::sync::{mpsc, watch};
@@ -100,6 +101,7 @@ pub use tessera_protocol::value::{Emote, Stance};
 
 use self::driver::{Driver, Inbound, MoveSlot, NetCommand};
 use self::mapper::Mapper;
+use crate::domain::CharacterCommand;
 use crate::interp::{Sample, render_time};
 use crate::model::{Appearance, EntityId, Vec3};
 use crate::sandbox::world::{StaticStats, WorldSource};
@@ -119,7 +121,53 @@ enum Routed {
 fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
     Ok(match cmd {
         Command::Connect => Routed::Connect,
-        Command::EnterWorld { character } => Routed::Net(NetCommand::EnterWorld(character)),
+        Command::EnterWorld { character } => {
+            if mapper.outstanding_create.is_some() {
+                // A second outstanding request is fatal on the wire (§13.1).
+                return Err(NetError::InvalidCommand(
+                    "a character creation is still outstanding",
+                ));
+            }
+            Routed::Net(NetCommand::EnterWorld(character))
+        }
+        Command::Character(CharacterCommand::CreateCharacter {
+            name, appearance, ..
+        }) => {
+            // character-screens.md §7.1.1 step 2 (Session checked the state and §9.5's
+            // validation); class and nationality are dropped (server-content.md §7).
+            let caps = mapper.server.as_ref().map_or(ServerCaps::NONE, |s| s.caps);
+            if !caps.contains(ServerCaps::CHARACTER_CREATION) {
+                return Err(NetError::InvalidCommand(
+                    "this server does not allow creating characters",
+                ));
+            }
+            let Some(appearance) = appearance else {
+                return Err(NetError::InvalidCommand(
+                    "creating a character on the test server needs an appearance",
+                ));
+            };
+            if mapper.outstanding_create.is_some() {
+                return Err(NetError::InvalidCommand(
+                    "a character creation is still outstanding",
+                ));
+            }
+            let wire = convert::wire_appearance(&appearance)
+                .ok_or(NetError::InvalidCommand("appearance cannot be sent"))?;
+            // The look travels only at minor ≥ 1; the protocol encoder leaves it off at
+            // minor 0 (scenario-feed.md §9.7).
+            let look = convert::wire_look(appearance.look.as_deref());
+            if look.check().is_err() {
+                return Err(NetError::InvalidCommand("look cannot be sent"));
+            }
+            // The name becomes the outstanding creation only once the command is queued
+            // for the network thread ([`NetCommand::creation`]; §7.1.1 step 2: a refused
+            // command records nothing).
+            Routed::Net(NetCommand::CreateCharacter {
+                name,
+                appearance: Box::new(wire),
+                look,
+            })
+        }
         Command::Move {
             location,
             heading,
@@ -149,7 +197,8 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
             Routed::Net(NetCommand::Chat(channel, text))
         }
         Command::Disconnect => Routed::Disconnect,
-        // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5).
+        // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5,
+        // §9.7): DeleteCharacter and every other new command are refused.
         Command::Character(_)
         | Command::Inventory(_)
         | Command::Combat(_)
@@ -224,6 +273,24 @@ impl RemoteHandle {
         let wire = convert::wire_appearance(appearance)
             .ok_or(NetError::InvalidCommand("appearance cannot be sent"))?;
         self.send(NetCommand::Appearance(Box::new(wire)))
+    }
+}
+
+impl Session {
+    /// The test-server backend of this session: the backend itself, or the server half of a
+    /// scenario overlay (`OverlayBackend<RemoteBackend>`, `scenario-feed.md` §12.5). `None`
+    /// for any other backend. Use this rather than `backend::<RemoteBackend>()`, which misses
+    /// the overlay.
+    #[must_use]
+    pub fn remote_backend(&self) -> Option<&RemoteBackend> {
+        if let Some(r) = self.backend::<RemoteBackend>() {
+            return Some(r);
+        }
+        #[cfg(feature = "scenario")]
+        if let Some(o) = self.backend::<crate::scenario::OverlayBackend<RemoteBackend>>() {
+            return Some(o.server());
+        }
+        None
     }
 }
 
@@ -369,6 +436,42 @@ impl RemoteBackend {
         self.mapper.server.as_ref()
     }
 
+    /// The server's capability bits from `HelloAck` (`tessera-protocol.md` §6.2.2), once
+    /// greeted. A creation screen ghosts its New button unless
+    /// [`ServerCaps::CHARACTER_CREATION`] is set (`character-screens.md` §7.1.1 step 1).
+    #[must_use]
+    pub fn server_caps(&self) -> Option<ServerCaps> {
+        self.mapper.server.as_ref().map(|s| s.caps)
+    }
+
+    /// Whether the server advertised `CHARACTER_CREATION`: [`Command::Character`]
+    /// `CreateCharacter` is accepted only then (`character-screens.md` §7.1.1).
+    #[must_use]
+    pub fn can_create_characters(&self) -> bool {
+        self.server_caps()
+            .is_some_and(|c| c.contains(ServerCaps::CHARACTER_CREATION))
+    }
+
+    /// Whether the server advertised `APPEARANCE_CHANGE` (`AppearanceSet` accepted).
+    #[must_use]
+    pub fn can_change_appearance(&self) -> bool {
+        self.server_caps()
+            .is_some_and(|c| c.contains(ServerCaps::APPEARANCE_CHANGE))
+    }
+
+    /// The negotiated minor protocol version, once greeted (1 carries looks and slots,
+    /// `tessera-protocol.md` §3.1).
+    #[must_use]
+    pub fn negotiated_minor(&self) -> Option<u16> {
+        self.mapper.server.as_ref().map(|s| s.minor)
+    }
+
+    /// The name of the character creation sent and not yet answered.
+    #[must_use]
+    pub fn outstanding_creation(&self) -> Option<&str> {
+        self.mapper.outstanding_create.as_deref()
+    }
+
     /// The estimated server time (µs, §11.1) at `now`: the client clock plus the clock
     /// offset (§11.2). Before the first time sample it falls back to the newest server
     /// timestamp received (no latency correction). `None` before anything was received.
@@ -511,10 +614,15 @@ impl Backend for RemoteBackend {
             }
             Routed::Net(cmd) => {
                 let r = self.running.as_ref().ok_or(NetError::Closed)?;
+                let creation = cmd.creation();
                 r.commands.try_send(cmd).map_err(|e| match e {
                     mpsc::error::TrySendError::Full(_) => NetError::SendQueueFull,
                     mpsc::error::TrySendError::Closed(_) => NetError::Closed,
-                })
+                })?;
+                if creation.is_some() {
+                    self.mapper.outstanding_create = creation;
+                }
+                Ok(())
             }
             Routed::Move(slot) => {
                 if let Some(r) = self.running.as_ref() {
@@ -607,6 +715,87 @@ mod tests {
                 &mut m
             ),
             Ok(Routed::Net(_))
+        ));
+    }
+
+    /// A creation whose command never reaches the network thread is not outstanding
+    /// (`character-screens.md` §7.1.1 step 2): a full or closed command queue leaves later
+    /// creations and `EnterWorld` allowed.
+    #[test]
+    fn unsent_creation_is_not_outstanding() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let config =
+            RemoteConfig::new("tessera://127.0.0.1:4000", "alice", Password::new("pw")).unwrap();
+        let mut b = RemoteBackend::new(config).unwrap();
+        b.mapper.server = Some(ServerInfo {
+            minor: 1,
+            caps: ServerCaps::CHARACTER_CREATION,
+            tick_rate: 30,
+            snapshot_rate: 15,
+            interest_radius: 2,
+            name: "t".into(),
+            motd: String::new(),
+        });
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let (_evt_tx, evt_rx) = mpsc::channel(1);
+        let (move_tx, _move_rx) = watch::channel(None);
+        let (stop_tx, _stop_rx) = watch::channel(false);
+        b.running = Some(Running {
+            commands: cmd_tx,
+            events: evt_rx,
+            moves: move_tx,
+            shutdown: stop_tx,
+            _task: rt.spawn(async {}),
+        });
+        let create = |name: &str| {
+            Command::Character(CharacterCommand::CreateCharacter {
+                name: name.into(),
+                appearance: Some(Box::new(crate::Appearance::new(crate::Body::Character {
+                    species: 23,
+                    sex: 1,
+                }))),
+                class: None,
+                nationality: None,
+            })
+        };
+        let now = Instant::now();
+        // Fill the queue, then the creation does not fit.
+        b.submit(
+            now,
+            Command::Chat {
+                channel: crate::ChatChannel::Say,
+                text: "hi".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            b.submit(now, create("Cora")),
+            Err(NetError::SendQueueFull)
+        ));
+        assert_eq!(b.outstanding_creation(), None);
+        // A closed queue: also nothing recorded.
+        drop(cmd_rx.try_recv());
+        drop(cmd_rx);
+        assert!(matches!(
+            b.submit(now, create("Cora")),
+            Err(NetError::Closed)
+        ));
+        assert_eq!(b.outstanding_creation(), None);
+        // A queued one is outstanding.
+        let (cmd_tx, _cmd_rx) = mpsc::channel(4);
+        b.running.as_mut().unwrap().commands = cmd_tx;
+        b.submit(now, create("Cora")).unwrap();
+        assert_eq!(b.outstanding_creation(), Some("Cora"));
+        assert!(matches!(
+            b.submit(
+                now,
+                Command::EnterWorld {
+                    character: "Aldith".into()
+                }
+            ),
+            Err(NetError::InvalidCommand(_))
         ));
     }
 

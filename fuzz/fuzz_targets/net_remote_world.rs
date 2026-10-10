@@ -48,6 +48,7 @@ fuzz_target!(|ops: Vec<Op>| {
                 name: "Aldith".into(),
                 body: Body::Character { species: 1, sex: 1 },
             }],
+            looks: Vec::new(),
         }))),
         HarnessInput::OpenStream(0x43),
         HarnessInput::OpenStream(0x57),
@@ -65,6 +66,7 @@ fuzz_target!(|ops: Vec<Op>| {
                     anchor: None,
                 },
                 appearance: Appearance::new(Body::Character { species: 1, sex: 1 }),
+                look: tessera_protocol::types::Look::none(),
             })),
         },
     ];

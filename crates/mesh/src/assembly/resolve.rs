@@ -631,6 +631,44 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         Ok(())
     }
 
+    /// The slot bits an equipped item takes: its own [`EquippedItem::slot`] when set, else
+    /// its `Inventory_DefaultSlot`, with the hand rule of `character-panels.md` §7 (Tessera
+    /// rule, for items equipped without a slot): when an earlier entry of the list already
+    /// took the primary hand and the item's `Inventory_CompatibleSlot` has
+    /// `Weapon_Secondary`, it goes to the secondary hand. `hands` collects the hands of the
+    /// entries seen so far, in list order.
+    fn hand_slot(
+        &mut self,
+        item: &EquippedItem,
+        default: Option<u64>,
+        hands: &mut Vec<super::WeaponSlot>,
+    ) -> Result<Option<u64>, AssemblyError> {
+        use super::WeaponSlot;
+        let rule = &self.vocab.placement;
+        let explicit = item.slot.filter(|b| *b != 0);
+        let mut slot = item.effective_slot(default);
+        let hand = slot.and_then(|s| rule.weapon_slot(s));
+        if explicit.is_none()
+            && hand == Some(WeaponSlot::Primary)
+            && hands.contains(&WeaponSlot::Primary)
+        {
+            let secondary = rule.bits_of(WeaponSlot::Secondary);
+            let fits = secondary != 0
+                && self
+                    .source
+                    .compatible_slots(item.item)
+                    .map_err(source_error)?
+                    .is_some_and(|c| c & secondary != 0);
+            if fits {
+                slot = Some(secondary);
+            }
+        }
+        if let Some(h) = slot.and_then(|s| rule.weapon_slot(s)) {
+            hands.push(h);
+        }
+        Ok(slot)
+    }
+
     /// Places a held item or prop at `location` of the wearer (`skeleton-anim.md` §8.4)
     /// with `placement`.
     #[allow(clippy::too_many_arguments)]
@@ -907,6 +945,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         let mut held_queue: Vec<(u32, EquippedItem, ItemVisual, Did)> = Vec::new();
         if let Some(spec) = input.spec {
             let mut order: Vec<(u32, u32, EquippedItem, ItemVisual)> = Vec::new();
+            // The hands earlier entries took (`character-panels.md` §7 Tessera rule).
+            let mut hands: Vec<super::WeaponSlot> = Vec::new();
             for (i, item) in spec.items.iter().enumerate() {
                 let source = SourceRef::Item(i as u32);
                 if i >= self.limits.max_items {
@@ -916,8 +956,8 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                 match self.source.item(item.item).map_err(source_error)? {
                     Lookup::Found(mut v) => {
                         // The equipped slot replaces the default slot for the order and the
-                        // placement script.
-                        v.default_slot = item.effective_slot(v.default_slot);
+                        // placement script; without one, the hand rule picks it.
+                        v.default_slot = self.hand_slot(item, v.default_slot, &mut hands)?;
                         order.push((slot_order(v.default_slot), i as u32, *item, v));
                     }
                     Lookup::Missing => cx.diag(Cat::ItemMissing, source, Some(item.item), None),
@@ -1327,5 +1367,152 @@ impl<S: AssemblySource> CharacterAssembler<S> {
             }
         }
         parts
+    }
+}
+
+#[cfg(test)]
+mod hand_rule_tests {
+    //! The held-item hand rule of `character-panels.md` §7 (Tessera rule) on synthetic
+    //! records.
+
+    use std::collections::HashMap;
+    use std::convert::Infallible;
+
+    use super::*;
+    use crate::assembly::source::MapSource;
+    use crate::assembly::vocab::PlacementRule;
+    use crate::summary::MeshSummary;
+    use tessera_formats::avatar::AvatarBody;
+
+    const PRIMARY: u64 = 0x1_0000;
+    const SECONDARY: u64 = 0x2_0000;
+    const RANGED: u64 = 0x4_0000;
+
+    /// A map source whose items also report compatible slots.
+    struct Source {
+        map: MapSource,
+        compatible: HashMap<Did, u64>,
+    }
+
+    impl AssemblySource for Source {
+        type Error = Infallible;
+        fn race_avatar(&mut self, species: u32, sex: u32) -> Result<Option<Did>, Infallible> {
+            self.map.race_avatar(species, sex)
+        }
+        fn body(&mut self, start: Did) -> Result<Lookup<AvatarBody>, Infallible> {
+            self.map.body(start)
+        }
+        fn setup(&mut self, did: Did) -> Result<Lookup<Arc<Setup>>, Infallible> {
+            self.map.setup(did)
+        }
+        fn setup_chain(&mut self, start: Did) -> Result<Lookup<Vec<Did>>, Infallible> {
+            self.map.setup_chain(start)
+        }
+        fn appearance(&mut self, did: Did) -> Result<Lookup<Arc<AppearanceRecord>>, Infallible> {
+            self.map.appearance(did)
+        }
+        fn mesh(&mut self, did: Did) -> Result<Lookup<MeshSummary>, Infallible> {
+            self.map.mesh(did)
+        }
+        fn item(&mut self, did: Did) -> Result<Lookup<ItemVisual>, Infallible> {
+            self.map.item(did)
+        }
+        fn object_properties(&mut self, object: Did) -> Result<Lookup<PropertySet>, Infallible> {
+            self.map.object_properties(object)
+        }
+        fn compatible_slots(&mut self, item: Did) -> Result<Option<u64>, Infallible> {
+            Ok(self.compatible.get(&item).copied())
+        }
+    }
+
+    fn assembler(compatible: &[(u32, u64)]) -> CharacterAssembler<Source> {
+        let vocab = AssemblyVocabulary {
+            placement: PlacementRule::from_labels(
+                |l| match l {
+                    "Weapon_Primary" => Some(PRIMARY),
+                    "Weapon_Secondary" => Some(SECONDARY),
+                    "Weapon_Ranged" => Some(RANGED),
+                    _ => None,
+                },
+                |_| None,
+                |_| None,
+                |_| None,
+            ),
+            ..AssemblyVocabulary::default()
+        };
+        CharacterAssembler::new(
+            Source {
+                map: MapSource::default(),
+                compatible: compatible.iter().map(|&(d, b)| (Did(d), b)).collect(),
+            },
+            vocab,
+        )
+    }
+
+    fn slots(
+        asm: &mut CharacterAssembler<Source>,
+        items: &[(EquippedItem, Option<u64>)],
+    ) -> Vec<Option<u64>> {
+        let mut hands = Vec::new();
+        items
+            .iter()
+            .map(|(i, default)| asm.hand_slot(i, *default, &mut hands).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn second_primary_item_goes_to_the_secondary_hand_when_it_fits() {
+        let mut asm = assembler(&[(2, PRIMARY | SECONDARY)]);
+        let got = slots(
+            &mut asm,
+            &[
+                (EquippedItem::new(Did(1)), Some(PRIMARY)),
+                (EquippedItem::new(Did(2)), Some(PRIMARY)),
+            ],
+        );
+        assert_eq!(got, vec![Some(PRIMARY), Some(SECONDARY)]);
+    }
+
+    #[test]
+    fn second_primary_item_stays_when_it_does_not_fit_the_secondary_hand() {
+        let mut asm = assembler(&[(2, PRIMARY)]);
+        let got = slots(
+            &mut asm,
+            &[
+                (EquippedItem::new(Did(1)), Some(PRIMARY)),
+                (EquippedItem::new(Did(2)), Some(PRIMARY)),
+            ],
+        );
+        assert_eq!(got, vec![Some(PRIMARY), Some(PRIMARY)]);
+    }
+
+    #[test]
+    fn an_explicit_slot_wins_and_takes_its_hand() {
+        let mut asm = assembler(&[(2, PRIMARY | SECONDARY), (3, PRIMARY | SECONDARY)]);
+        let got = slots(
+            &mut asm,
+            &[
+                // Held in the secondary hand by its slot, although its default is primary.
+                (EquippedItem::new(Did(2)).in_slot(SECONDARY), Some(PRIMARY)),
+                // The primary hand is still free.
+                (EquippedItem::new(Did(3)), Some(PRIMARY)),
+            ],
+        );
+        assert_eq!(got, vec![Some(SECONDARY), Some(PRIMARY)]);
+    }
+
+    #[test]
+    fn worn_and_ranged_items_are_not_moved() {
+        let mut asm = assembler(&[(5, RANGED | SECONDARY)]);
+        let got = slots(
+            &mut asm,
+            &[
+                (EquippedItem::new(Did(4)), Some(0x4)),
+                (EquippedItem::new(Did(5)), Some(RANGED)),
+                (EquippedItem::new(Did(6)), Some(RANGED)),
+                (EquippedItem::new(Did(7)), None),
+            ],
+        );
+        assert_eq!(got, vec![Some(0x4), Some(RANGED), Some(RANGED), None]);
     }
 }

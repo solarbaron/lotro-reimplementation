@@ -68,9 +68,16 @@ pub struct DriverView {
     chat: VecDeque<ChatLine>,
     status: Option<ScenarioStatus>,
     closed: bool,
+    /// The creation controls received looks are read with (decision 0025 D2), once loaded.
+    looks: Option<Arc<crate::screens::ScreenData>>,
 }
 
 impl DriverView {
+    /// Gives the walker's figures the creation controls to read received looks with.
+    pub fn set_look_data(&mut self, data: Option<Arc<crate::screens::ScreenData>>) {
+        self.looks = data;
+    }
+
     /// A view with nothing seen yet.
     #[must_use]
     pub fn new() -> Self {
@@ -275,6 +282,10 @@ impl WalkerSession for DriverView {
             .as_ref()
             .map(|s| crate::net::scenario_line_text(s, 0, self.closed))
     }
+
+    fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
+        self.looks.clone()
+    }
 }
 
 /// The sandbox settings of a headless walker run: the walker's (statics, avatar, speed
@@ -307,6 +318,23 @@ pub fn run(
     args: &Args,
     scenario: Arc<ResolvedScenario>,
     log: Option<Box<dyn Write + Send>>,
+) -> anyhow::Result<u8> {
+    run_observed(args, scenario, log, &mut |_, _| {})
+}
+
+/// [`run`] with `observe` called after every walker update: with the walker and the events
+/// of that driver poll (empty while settling for the screenshot), and once more after the
+/// last frame. Tests read the walker's figures through it (decision 0024 P1 exit
+/// criterion 3: a scenario equip changes the walker figure).
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn run_observed(
+    args: &Args,
+    scenario: Arc<ResolvedScenario>,
+    log: Option<Box<dyn Write + Send>>,
+    observe: &mut dyn FnMut(&Walker, &[Event]),
 ) -> anyhow::Result<u8> {
     let png = args.screenshot.clone();
     for path in png.iter().chain(&args.frame_log) {
@@ -401,6 +429,7 @@ pub fn run(
             view.clear_queue();
             render_error = Some(e);
         }
+        observe(walker, frame.events);
     });
     let code = outcome.exit_code();
     let log = driver.into_log();
@@ -433,11 +462,13 @@ pub fn run(
                 true,
             )?;
             settled = if walker.settled() { settled + 1 } else { 0 };
+            observe(walker, &[]);
         }
         if settled < SETTLED_FRAMES {
             tracing::warn!(waiting = ?walker.unsettled(), "area not fully loaded; taking the screenshot anyway");
         }
         refuse_install_path(args, Some(&rt.status), png)?;
+        observe(walker, &[]);
         let image = capture(&mut renderer, walker, args.size)?;
         save_png(png, &image)?;
         tracing::info!(path = %png.display(), settled = settled >= SETTLED_FRAMES, "scenario screenshot saved");
@@ -469,6 +500,9 @@ fn step_walker(
     draw: bool,
 ) -> anyhow::Result<()> {
     let _ = rt.poll_loader();
+    // The P1 data (the walker's look controls) arrives on its own thread.
+    let _ = rt.p1.poll();
+    view.set_look_data(rt.p1.screens().cloned());
     for n in rt.take_notices() {
         walker.notice(n);
     }

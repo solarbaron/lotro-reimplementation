@@ -143,6 +143,18 @@ pub enum ProtocolError {
         /// The property ID.
         pid: u16,
     },
+    /// A look entry with a value tag a look does not allow (minor ≥ 1, §5.3).
+    #[error("look entry: value tag {0:#04x} not allowed")]
+    LookTag(u8),
+    /// A look string with a byte outside 0x21–0x7E (§5.3).
+    #[error("look entry: string byte outside 0x21..=0x7e")]
+    LookString,
+    /// A look whose encoding exceeds 768 bytes (§5.3).
+    #[error("look of {0} bytes exceeds 768")]
+    LookTooLarge(usize),
+    /// A field this negotiated minor version does not carry (§3.1).
+    #[error("{0}: not allowed at the negotiated minor version")]
+    NotInMinor(&'static str),
 }
 
 impl ProtocolError {

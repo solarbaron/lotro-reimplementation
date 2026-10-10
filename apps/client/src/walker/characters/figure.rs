@@ -59,7 +59,7 @@ use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
 use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblyOptions, CharacterAssembler, CharacterSpec, EquippedItem,
-    GameDataSource, MaterialLayer, ScriptAppearance, WieldState,
+    GameDataSource, MaterialLayer, ScriptAppearance, StyleChoice, WieldState,
 };
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh};
 use tessera_net::{Body, Equipped};
@@ -116,8 +116,8 @@ pub struct FigureRequest {
     /// Draw rigid and unanimated even when the body could be animated.
     pub static_only: bool,
     /// `AC_Avatar_Height` of a playable body (`appearance.md` §6.2); `None` keeps the
-    /// avatar entity's (0 for the River-hobbit: the shortest). The session model carries
-    /// no per-character value yet, so the walker leaves it `None`.
+    /// avatar entity's (0 for the River-hobbit: the shortest). The walker takes it from a
+    /// received look (decision 0025 D2).
     pub avatar_height: Option<f32>,
     /// `AC_BoneScale_Test` of a playable body (`appearance.md` §6.2, §6.4); `None` keeps the
     /// avatar entity's.
@@ -127,11 +127,43 @@ pub struct FigureRequest {
     pub seed: Option<u64>,
 }
 
+/// The look choices of a playable figure beyond its heights (decision 0025 D2: a
+/// received look under the receiver rule): chosen styles and the slider string, as
+/// `tessera-mesh`'s [`CharacterSpec`] takes them. Colours and face layers are not in the
+/// assembler's input (`character-screens.md` §6 OPEN), so they are not drawn yet.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FigureLook {
+    /// Chosen styles (`CharacterSpec::styles`).
+    pub styles: Vec<StyleChoice>,
+    /// The slider byte string (`AC_BoneSlider_Value_Array`).
+    pub slider_values: Option<String>,
+}
+
+impl FigureLook {
+    /// Whether it changes nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.styles.is_empty() && self.slider_values.is_none()
+    }
+}
+
 impl FigureRequest {
-    /// The cache key.
+    /// The cache key (no look).
     #[must_use]
     pub fn key(&self) -> FigureKey {
+        self.key_with(&FigureLook::default())
+    }
+
+    /// The cache key with `look`.
+    #[must_use]
+    pub fn key_with(&self, look: &FigureLook) -> FigureKey {
         FigureKey {
+            look: look
+                .styles
+                .iter()
+                .map(|s| (s.key, s.modifier.to_bits()))
+                .collect(),
+            sliders: look.slider_values.clone(),
             body: self.body,
             items: self
                 .equipment
@@ -142,6 +174,7 @@ impl FigureRequest {
                         e.dye.map_or(u32::MAX, f32::to_bits),
                         e.secondary_dye.map_or(u32::MAX, f32::to_bits),
                         e.stowed,
+                        e.slot,
                     )
                 })
                 .collect(),
@@ -159,8 +192,10 @@ impl FigureRequest {
 /// Identifies a figure: equal keys share one asset and one set of GPU resources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FigureKey {
+    look: Vec<(u32, u32)>,
+    sliders: Option<String>,
     body: Body,
-    items: Vec<(u32, u32, u32, bool)>,
+    items: Vec<(u32, u32, u32, bool, Option<u8>)>,
     instance: Option<u64>,
     static_only: bool,
     shape: [u32; 2],
@@ -384,6 +419,13 @@ fn skeleton_of(tagfile: &[u8]) -> Result<Arc<AnimSkeleton>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The `ContainerSlot` bit of equipment slot key `key` (key *k* is bit *k* − 1,
+/// `property-system.md` §7.3); `None` outside 1–64.
+#[must_use]
+pub fn slot_key_bits(key: u8) -> Option<u64> {
+    (1..=64).contains(&key).then(|| 1u64 << (key - 1))
+}
+
 /// Builds the figure of `req` (module docs). `cancelled` is polled between parts.
 ///
 /// # Errors
@@ -392,6 +434,20 @@ fn skeleton_of(tagfile: &[u8]) -> Result<Arc<AnimSkeleton>, String> {
 pub fn build_figure(
     ctx: &FigureContext,
     req: &FigureRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FigureAsset, FigureError> {
+    build_figure_with_look(ctx, req, &FigureLook::default(), cancelled)
+}
+
+/// [`build_figure`] with the look choices of a playable body (styles, slider string).
+///
+/// # Errors
+///
+/// As [`build_figure`].
+pub fn build_figure_with_look(
+    ctx: &FigureContext,
+    req: &FigureRequest,
+    look: &FigureLook,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<FigureAsset, FigureError> {
     let started = Instant::now();
@@ -408,6 +464,8 @@ pub fn build_figure(
             let mut spec = CharacterSpec::new(species, sex);
             spec.avatar_height = req.avatar_height;
             spec.bone_scale = req.bone_scale;
+            spec.styles.clone_from(&look.styles);
+            spec.slider_values.clone_from(&look.slider_values);
             for e in req.equipment.iter().take(super::MAX_EQUIPMENT) {
                 let mut item = EquippedItem::new(Did(e.item.0)).with_state(if e.stowed {
                     WieldState::Sheathed
@@ -416,6 +474,12 @@ pub fn build_figure(
                 });
                 item.dye = e.dye;
                 item.secondary_dye = e.secondary_dye;
+                // The equipment slot key that holds the item (decision 0025 D3) as its
+                // `ContainerSlot` bit (key *k* is bit *k* − 1); without one the assembler
+                // applies the hand rule of `character-panels.md` §7.
+                if let Some(bits) = e.slot.and_then(slot_key_bits) {
+                    item = item.in_slot(bits);
+                }
                 spec.items.push(item);
             }
             Some(spec)

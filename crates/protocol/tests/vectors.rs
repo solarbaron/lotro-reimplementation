@@ -9,7 +9,7 @@ use tessera_protocol::codes::{
 use tessera_protocol::connect::ConnectString;
 use tessera_protocol::fingerprint::{Fingerprint, ed25519_spki};
 use tessera_protocol::frame::{
-    FrameDecoder, StreamKind, decode_datagram, encode_datagram, frame_to_vec,
+    FrameDecoder, StreamKind, decode_datagram, encode_datagram, frame_to_vec, frame_to_vec_minor,
 };
 use tessera_protocol::limits::ALPN_V1;
 use tessera_protocol::message::*;
@@ -44,12 +44,14 @@ fn a() -> Appearance {
                 dye: Some(0.25),
                 secondary_dye: None,
                 stowed: false,
+                slot: None,
             },
             Equipped {
                 item: 0x7000_5678,
                 dye: None,
                 secondary_dye: None,
                 stowed: true,
+                slot: None,
             },
         ],
     }
@@ -168,6 +170,7 @@ fn s16_2_control_stream() {
         Message::LoginOk(LoginOk {
             account: "alice".into(),
             characters: vec![aldith.clone()],
+            looks: Vec::new(),
         }),
         S,
         "1b 00 00 00 05 00 05 00 61 6c 69 63 65 01 06 00 41 6c 64 69 74 68 01 17 00 00 00 01
@@ -191,6 +194,7 @@ fn s16_2_control_stream() {
                 species: 23,
                 sex: 1,
             }),
+            look: tessera_protocol::types::Look::none(),
         }),
         C,
         "19 00 00 00 07 00 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 00 00 80 3f 00
@@ -209,6 +213,7 @@ fn s16_2_control_stream() {
                     },
                 },
             ],
+            looks: Vec::new(),
         }),
         S,
         "23 00 00 00 08 00 02 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 04 00 42 72
@@ -372,6 +377,7 @@ fn s16_3_world_stream() {
                 anchor: None,
             },
             appearance: a(),
+            look: tessera_protocol::types::Look::none(),
         }),
         s,
         "5e 00 00 00 01 01 2a 00 00 00 00 00 00 00 06 00 41 6c 64 69 74 68 01 00 00 00 01 00
@@ -430,6 +436,7 @@ fn s16_3_world_stream() {
                 Property::new(pid::STANCE, Value::Enum(0)),
                 Property::new(pid::RUN_SPEED, Value::Float32(6.0)),
             ],
+            look: tessera_protocol::types::Look::none(),
         }),
         s,
         "65 00 00 00 04 01 2b 00 00 00 00 00 00 00 00 04 00 42 72 61 6d 00 80 8d 5b 00 00 00
@@ -476,6 +483,7 @@ fn s16_3_world_stream() {
                 idle: Some(0x1000_0001),
                 equipment: vec![],
             },
+            look: tessera_protocol::types::Look::none(),
         }),
         s,
         "19 00 00 00 06 01 2b 00 00 00 00 00 00 00 02 01 00 00 79 00 00 20 40 01 01 00 00 10
@@ -738,4 +746,373 @@ fn s16_7_negative_vectors() {
         StreamKind::from_byte(0x58),
         Err(ProtocolError::UnknownStreamKind(0x58))
     );
+}
+
+// --- §16.8: minor 1 (v1.1) ---
+
+/// Look K of §16.8.
+fn look_k() -> Look {
+    Look {
+        entries: vec![
+            LookEntry {
+                property: 0x1000_0A01,
+                value: LookValue::Float32(0.5),
+            },
+            LookEntry {
+                property: 0x1000_0A02,
+                value: LookValue::Colour([200, 150, 100, 255]),
+            },
+            LookEntry {
+                property: 0x1000_0A03,
+                value: LookValue::String("8080ff".into()),
+            },
+        ],
+    }
+}
+
+/// [`frame`] at negotiated minor 1.
+fn frame_v11(msg: Message, sender: Side, expected_hex: &str, len: usize) {
+    let expected = hex(expected_hex);
+    assert_eq!(
+        expected.len(),
+        len,
+        "{:?}: vector length",
+        msg.message_type()
+    );
+    let encoded = frame_to_vec_minor(&msg, 1).unwrap();
+    assert_eq!(encoded, expected, "{:?}: encoding", msg.message_type());
+    let length = u32::from_le_bytes(expected[..4].try_into().unwrap()) as usize;
+    assert_eq!(length + 4, expected.len());
+    let mut d = FrameDecoder::with_minor(msg.channel(), sender, 1);
+    let mut input: &[u8] = &expected;
+    assert_eq!(d.push(&mut input).unwrap(), Some(msg.clone()));
+    assert!(input.is_empty());
+}
+
+fn decode_at(
+    channel: Channel,
+    sender: Side,
+    minor: u16,
+    bytes: &[u8],
+) -> Result<Option<Message>, ProtocolError> {
+    let mut d = FrameDecoder::with_minor(channel, sender, minor);
+    let mut input = bytes;
+    d.push(&mut input)
+}
+
+const CREATE_K: &str =
+    "39 00 00 00 07 00 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 00 00 80 3f 00
+    00 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8 96 64 ff 03 0a 00 10 07 06 00 38
+    30 38 30 66 66";
+
+const APPEARANCE_SET_SLOTS: &str =
+    "21 00 00 00 11 00 01 17 00 00 00 01 00 00 00 00 00 80 3f 00 02 34 12 00 70 09 00 00
+    80 3e 11 78 56 00 70 0c 12";
+
+fn aldith() -> CharacterSummary {
+    CharacterSummary {
+        name: "Aldith".into(),
+        body: Body::Character {
+            species: 23,
+            sex: 1,
+        },
+    }
+}
+
+#[test]
+fn s16_8_minor_1() {
+    frame_v11(
+        Message::Hello(Hello {
+            minor_max: 1,
+            client_caps: 0,
+            max_entities: 1024,
+            client_name: "tessera-client 0.8.0".into(),
+        }),
+        Side::Client,
+        "20 00 00 00 01 00 01 00 00 00 00 00 00 04 14 00 74 65 73 73 65 72 61 2d 63 6c 69 65
+         6e 74 20 30 2e 38 2e 30",
+        36,
+    );
+    frame_v11(
+        Message::HelloAck(HelloAck {
+            minor: 1,
+            server_caps: ServerCaps(
+                ServerCaps::REGISTRATION.0
+                    | ServerCaps::CHARACTER_CREATION.0
+                    | ServerCaps::APPEARANCE_CHANGE.0,
+            ),
+            tick_rate: 30,
+            snapshot_rate: 15,
+            interest_radius: 2,
+            server_name: "Test Shard".into(),
+            motd: String::new(),
+        }),
+        Side::Server,
+        "19 00 00 00 02 00 01 00 07 00 00 00 1e 0f 02 0a 00 54 65 73 74 20 53 68 61 72 64 00
+         00",
+        29,
+    );
+    assert_eq!(look_k().encoded_len(), 32);
+    frame_v11(
+        Message::CharacterCreate(CharacterCreate {
+            name: "Aldith".into(),
+            appearance: Appearance::new(Body::Character {
+                species: 23,
+                sex: 1,
+            }),
+            look: look_k(),
+        }),
+        Side::Client,
+        CREATE_K,
+        61,
+    );
+    frame_v11(
+        Message::LoginOk(LoginOk {
+            account: "alice".into(),
+            characters: vec![aldith()],
+            looks: vec![look_k()],
+        }),
+        Side::Server,
+        "3c 00 00 00 05 00 05 00 61 6c 69 63 65 01 06 00 41 6c 64 69 74 68 01 17 00 00 00 01
+         00 00 00 01 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8 96 64 ff 03 0a 00 10 07
+         06 00 38 30 38 30 66 66",
+        64,
+    );
+    frame_v11(
+        Message::CharacterList(CharacterList {
+            characters: vec![
+                aldith(),
+                CharacterSummary {
+                    name: "Bram".into(),
+                    body: Body::Character {
+                        species: 81,
+                        sex: 2,
+                    },
+                },
+            ],
+            looks: vec![look_k(), Look::none()],
+        }),
+        Side::Server,
+        "45 00 00 00 08 00 02 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 04 00 42 72
+         61 6d 01 51 00 00 00 02 00 00 00 02 03 01 0a 00 10 04 00 00 00 3f 02 0a 00 10 0d c8
+         96 64 ff 03 0a 00 10 07 06 00 38 30 38 30 66 66 00",
+        73,
+    );
+    let mut set = Appearance::new(Body::Character {
+        species: 23,
+        sex: 1,
+    });
+    set.equipment = vec![
+        Equipped {
+            item: 0x7000_1234,
+            dye: Some(0.25),
+            secondary_dye: None,
+            stowed: false,
+            slot: Some(17),
+        },
+        Equipped {
+            item: 0x7000_5678,
+            dye: None,
+            secondary_dye: None,
+            stowed: true,
+            slot: Some(18),
+        },
+    ];
+    frame_v11(
+        Message::AppearanceSet(set.clone()),
+        Side::Client,
+        APPEARANCE_SET_SLOTS,
+        37,
+    );
+    let mut observed = Appearance::new(Body::Character {
+        species: 81,
+        sex: 2,
+    });
+    observed.equipment = vec![Equipped {
+        item: 0x7000_1234,
+        slot: Some(17),
+        ..Equipped::default()
+    }];
+    frame_v11(
+        Message::EntityAppearance(EntityAppearance {
+            id: 43,
+            appearance: observed,
+            look: Look::none(),
+        }),
+        Side::Server,
+        "20 00 00 00 06 01 2b 00 00 00 00 00 00 00 01 51 00 00 00 02 00 00 00 00 00 80 3f 00
+         01 34 12 00 70 08 11 00",
+        36,
+    );
+    // At minor 0 the same messages encode as v1.0: no slot bit, no appended look.
+    let v10 = frame_to_vec_minor(&Message::AppearanceSet(set), 0).unwrap();
+    assert_eq!(v10, frame_to_vec(&Message::AppearanceSet(a())).unwrap());
+}
+
+/// Replaces the look of the `CharacterCreate` vector (and fixes the frame length).
+fn create_with_look(look_hex: &str) -> Vec<u8> {
+    let base = hex(CREATE_K);
+    // The look starts after the 61 − 32 = 29 bytes of length, type, name and appearance.
+    let mut out = base[..29].to_vec();
+    out.extend(hex(look_hex));
+    let len = u32::try_from(out.len() - 4).unwrap();
+    out[..4].copy_from_slice(&len.to_le_bytes());
+    out
+}
+
+fn appearance_set_with_first_flags(flags: u8, slot: Option<u8>) -> Vec<u8> {
+    // AppearanceSet with one item: 0x70001234, `flags`, optional slot byte.
+    let mut out = hex("00 00 00 00 11 00 01 17 00 00 00 01 00 00 00 00 00 80 3f 00 01 34 12 00 70");
+    out.push(flags);
+    out.extend(slot);
+    let len = u32::try_from(out.len() - 4).unwrap();
+    out[..4].copy_from_slice(&len.to_le_bytes());
+    out
+}
+
+#[test]
+fn s16_8_negative_vectors() {
+    let c = Channel::Control;
+    // The AppearanceSet above at minor 0: flag bit 3.
+    assert_eq!(
+        decode_at(c, Side::Client, 0, &hex(APPEARANCE_SET_SLOTS)),
+        Err(ProtocolError::ReservedBits("equipped.flags"))
+    );
+    // The CharacterCreate above at minor 0: 32 bytes left.
+    assert_eq!(
+        decode_at(c, Side::Client, 0, &hex(CREATE_K)),
+        Err(ProtocolError::TrailingBytes(32))
+    );
+    // Slot 00 and 41 (65).
+    for slot in [0x00, 0x41] {
+        assert_eq!(
+            decode_at(
+                c,
+                Side::Client,
+                1,
+                &appearance_set_with_first_flags(0x08, Some(slot))
+            ),
+            Err(ProtocolError::OutOfRange("equipped.slot"))
+        );
+    }
+    // Slots 1 and 64 are fine.
+    for slot in [1, 64] {
+        assert!(
+            decode_at(
+                c,
+                Side::Client,
+                1,
+                &appearance_set_with_first_flags(0x08, Some(slot))
+            )
+            .is_ok()
+        );
+    }
+    // Flag bit 4.
+    assert_eq!(
+        decode_at(
+            c,
+            Side::Client,
+            1,
+            &appearance_set_with_first_flags(0x10, None)
+        ),
+        Err(ProtocolError::ReservedBits("equipped.flags"))
+    );
+    // Property IDs not ascending; property ID 0.
+    assert_eq!(
+        decode_at(
+            c,
+            Side::Client,
+            1,
+            &create_with_look("02 02 0a 00 10 01 01 01 0a 00 10 01 00")
+        ),
+        Err(ProtocolError::IdOrder("look"))
+    );
+    assert_eq!(
+        decode_at(
+            c,
+            Side::Client,
+            1,
+            &create_with_look("01 00 00 00 00 01 01")
+        ),
+        Err(ProtocolError::IdOrder("look"))
+    );
+    // Array tag; space in a string.
+    assert_eq!(
+        decode_at(
+            c,
+            Side::Client,
+            1,
+            &create_with_look("01 01 0a 00 10 0e 00 00")
+        ),
+        Err(ProtocolError::LookTag(0x0E))
+    );
+    assert_eq!(
+        decode_at(
+            c,
+            Side::Client,
+            1,
+            &create_with_look("01 01 0a 00 10 07 03 00 61 20 62")
+        ),
+        Err(ProtocolError::LookString)
+    );
+    // 49 Bool entries.
+    let mut l49 = String::from("31");
+    for i in 1..=49u32 {
+        for b in i.to_le_bytes() {
+            l49.push_str(&format!(" {b:02x}"));
+        }
+        l49.push_str(" 01 01");
+    }
+    assert!(matches!(
+        decode_at(c, Side::Client, 1, &create_with_look(&l49)),
+        Err(ProtocolError::Count {
+            field: "look",
+            count: 49,
+            ..
+        })
+    ));
+    // Six String entries of 128 bytes: 811 bytes.
+    let mut big = String::from("06");
+    for i in 1..=6u32 {
+        for b in i.to_le_bytes() {
+            big.push_str(&format!(" {b:02x}"));
+        }
+        big.push_str(" 07 80 00");
+        for _ in 0..128 {
+            big.push_str(" 41");
+        }
+    }
+    assert_eq!(
+        decode_at(c, Side::Client, 1, &create_with_look(&big)),
+        Err(ProtocolError::LookTooLarge(811))
+    );
+    // LoginOk with 1 character and looks count 0.
+    let mut ok = hex(
+        "00 00 00 00 05 00 05 00 61 6c 69 63 65 01 06 00 41 6c 64 69 74 68 01 17 00 00 00 01 00 00 00 00",
+    );
+    let len = u32::try_from(ok.len() - 4).unwrap();
+    ok[..4].copy_from_slice(&len.to_le_bytes());
+    assert!(matches!(
+        decode_at(c, Side::Server, 1, &ok),
+        Err(ProtocolError::Count { field: "looks", .. })
+    ));
+    // The encoder refuses the same values.
+    let mut bad = look_k();
+    bad.entries.swap(0, 1);
+    assert_eq!(bad.check(), Err(ProtocolError::IdOrder("look")));
+    let mut bad = look_k();
+    bad.entries[2].value = LookValue::String("a b".into());
+    assert_eq!(bad.check(), Err(ProtocolError::LookString));
+    let mut bad = look_k();
+    bad.entries[0].value = LookValue::Float32(f32::NAN);
+    assert_eq!(bad.check(), Err(ProtocolError::NonFinite("look.value")));
+    let mut slot0 = Appearance::new(Body::Character { species: 1, sex: 1 });
+    slot0.equipment.push(Equipped {
+        item: 1,
+        slot: Some(0),
+        ..Equipped::default()
+    });
+    assert!(frame_to_vec_minor(&Message::AppearanceSet(slot0.clone()), 1).is_err());
+    // At minor 0 the slot is simply not sent.
+    assert!(frame_to_vec_minor(&Message::AppearanceSet(slot0), 0).is_ok());
 }

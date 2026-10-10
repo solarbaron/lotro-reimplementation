@@ -74,6 +74,7 @@ pub(crate) enum Binding {
     Item(u32),
     Page(u32),
     Marker(u32),
+    Look(u32),
 }
 
 /// An open block.
@@ -211,6 +212,9 @@ impl Parser {
                 input: Vec::new(),
                 labels: Vec::new(),
                 cuts: Vec::new(),
+                looks: Vec::new(),
+                props: Vec::new(),
+                overlay_violation: None,
             },
             bindings: HashMap::new(),
             line: 0,
@@ -231,6 +235,13 @@ impl Parser {
 
     pub(crate) fn e(&self, kind: K, col: u32) -> ScenarioError {
         err(kind, self.line, col)
+    }
+
+    /// Records the first statement outside the overlay subset (§12.5.1) at `col`.
+    pub(crate) fn not_in_overlay(&mut self, col: u32) {
+        if self.prog.overlay_violation.is_none() {
+            self.prog.overlay_violation = Some((self.line, col));
+        }
     }
 
     fn finish(mut self) -> R<Program> {
@@ -361,6 +372,9 @@ impl Parser {
             return Err(self.e(K::DuplicateSetting, kw.col));
         }
         self.seen_settings.push(name);
+        if name == "enter" {
+            self.not_in_overlay(kw.col);
+        }
         let arg = tokens
             .get(1)
             .ok_or_else(|| self.e(K::MissingArgument, kw.col))?;
@@ -405,8 +419,12 @@ impl Parser {
 
     fn declaration(&mut self, tokens: &[Token]) -> R<()> {
         let word = tokens[0].raw().unwrap_or_default();
+        if !matches!(word, "select" | "item") {
+            self.not_in_overlay(tokens[0].col);
+        }
         match word {
             "player" | "character" => self.decl_character(tokens, word == "player"),
+            "look" => self.decl_look(tokens),
             "select" => self.decl_select(tokens),
             "actor" => self.decl_actor(tokens),
             "item" => self.decl_item(tokens),
@@ -443,7 +461,7 @@ impl Parser {
         if player && self.prog.has_player {
             return Err(self.e(K::DuplicateBinding, col));
         }
-        let mut st = self.split(tokens, 1, &["class", "level", "species", "sex"])?;
+        let mut st = self.split(tokens, 1, &["class", "level", "species", "sex", "look"])?;
         let name_tok = st.arg(0)?;
         let name = self.name_string(name_tok)?;
         if self.char_names.contains(&name) {
@@ -453,7 +471,7 @@ impl Parser {
             return Err(self.e(K::LimitExceeded(Limit::Characters), col));
         }
         st.no_more(1)?;
-        let details = self.char_details(&mut st, name.clone())?;
+        let details = self.char_details(&mut st, name.clone(), false)?;
         st.no_opts()?;
         self.char_names.push(name);
         if player {
@@ -465,8 +483,14 @@ impl Parser {
         Ok(())
     }
 
-    /// The options `class=`, `level=`, `species=`, `sex=` of a character.
-    pub(crate) fn char_details(&mut self, st: &mut Stmt<'_>, name: String) -> R<CharDetails> {
+    /// The options `class=`, `level=`, `species=`, `sex=`, `look=` of a character (`asked`:
+    /// `look=asked` is allowed).
+    pub(crate) fn char_details(
+        &mut self,
+        st: &mut Stmt<'_>,
+        name: String,
+        asked: bool,
+    ) -> R<CharDetails> {
         let class = match st.opt("class") {
             Some((v, c)) => Some(self.enum_arg(&v, c, LabelContext::Class, "class")?),
             None => None,
@@ -483,12 +507,17 @@ impl Parser {
             Some((v, c)) => Some(self.sex_arg(&v, c)?),
             None => None,
         };
+        let look = match st.opt("look") {
+            Some((v, c)) => Some(self.look_arg(&v, c, asked)?),
+            None => None,
+        };
         Ok(CharDetails {
             name,
             class,
             level: level.map(|v| u32::try_from(v).unwrap_or(u32::MAX)),
             species,
             sex,
+            look,
         })
     }
 
@@ -937,6 +966,17 @@ impl Parser {
             return Err(self.e(K::LimitExceeded(Limit::Triggers), kw.col));
         }
         let (pattern, times) = self.pattern(tokens)?;
+        if !matches!(
+            pattern,
+            super::ast::Pattern::Equip(_)
+                | super::ast::Pattern::Unequip(_)
+                | super::ast::Pattern::MoveItem(_)
+                | super::ast::Pattern::Destroy(_)
+                | super::ast::Pattern::Split(_)
+                | super::ast::Pattern::UseItem { .. }
+        ) {
+            self.not_in_overlay(kw.col);
+        }
         self.blocks.push(Block::On {
             line: self.line,
             col: kw.col,
@@ -1083,8 +1123,17 @@ impl Parser {
             })
         );
         let word = verb_tok.raw().unwrap_or_default();
-        let character_verb = matches!(word, "accept-character" | "refuse-character");
-        if (pre_world && !character_verb) || (character_verb && !create_body) {
+        // Character steps (§6.1): only in pre-world bodies; accept and refuse only in
+        // `on create-character` bodies.
+        let character_verb = matches!(
+            word,
+            "accept-character" | "refuse-character" | "remove-character"
+        );
+        let create_only = matches!(word, "accept-character" | "refuse-character");
+        if (pre_world && !character_verb)
+            || (character_verb && !pre_world)
+            || (create_only && !create_body)
+        {
             if is_keyword_shape(word) || !pre_world {
                 return Err(self.e(K::NotAllowedHere, verb_tok.col));
             }
@@ -1122,6 +1171,7 @@ impl Parser {
             self.expanded = total;
         }
         let verb = self.verb(&tokens[used..])?;
+        self.overlay_verb(&verb, &tokens[used..]);
         let step = u32::try_from(self.prog.steps.len()).unwrap_or(u32::MAX);
         self.prog.steps.push(StepLine {
             line: self.line,
@@ -1709,6 +1759,6 @@ fn is_setting(w: &str) -> bool {
 fn is_declaration(w: &str) -> bool {
     matches!(
         w,
-        "player" | "character" | "select" | "actor" | "item" | "page" | "option"
+        "player" | "character" | "select" | "actor" | "item" | "page" | "option" | "look"
     )
 }

@@ -171,6 +171,49 @@ const TABLE: &[Compact] = {
             Button,
         ),
         (MAIN, &["EscapeKey"], &[GLOBAL], &["menu"], Button),
+        // P1 panels (`keymap.md` §12.14.2 OPEN: rows added by the client implementer).
+        (
+            MAIN,
+            &["ToggleJournalPanel"],
+            &[GLOBAL],
+            &["toggle_character"],
+            Button,
+        ),
+        (
+            MAIN,
+            &["QUICKSLOT_BACKPACK"],
+            &[GLOBAL],
+            &["toggle_bags"],
+            Button,
+        ),
+        (
+            MAIN,
+            &[
+                "QUICKSLOT_BACKPACK1",
+                "QUICKSLOT_BACKPACK2",
+                "QUICKSLOT_BACKPACK3",
+                "QUICKSLOT_BACKPACK4",
+                "QUICKSLOT_BACKPACK5",
+                "QUICKSLOT_BACKPACK6",
+            ],
+            &[GLOBAL],
+            &[
+                "toggle_bag_1",
+                "toggle_bag_2",
+                "toggle_bag_3",
+                "toggle_bag_4",
+                "toggle_bag_5",
+                "toggle_bag_6",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &["TOOLTIP_DETACH"],
+            &[GLOBAL],
+            &["pin_tooltip"],
+            Button,
+        ),
         (MAIN, &["AcceptInput"], &[GLOBAL], &["open_chat"], Button),
         (MAIN, &["SelectLeft"], &[POINTER], &["select_left"], Button),
         (
@@ -454,6 +497,32 @@ mod tests {
                 (contexts::TEXT_ENTRY, "text_page_down"),
                 (contexts::UI_CHAT_LOG, "text_page_down")
             ]
+        );
+    }
+
+    #[test]
+    fn p1_panel_commands() {
+        use ActionKind::Button;
+        let d = |t: &str| BindingSpec::digital(Chord::parse(t).unwrap(), 1.0);
+        assert_eq!(
+            command_for_entry("global", "toggle_character", Button, &d("C")),
+            Some("ToggleJournalPanel")
+        );
+        assert_eq!(
+            command_for_entry("global", "toggle_bags", Button, &d("B")),
+            Some("QUICKSLOT_BACKPACK")
+        );
+        for n in 1..=6 {
+            let action = format!("toggle_bag_{n}");
+            let want = format!("QUICKSLOT_BACKPACK{n}");
+            assert_eq!(
+                command_for_entry("global", &action, Button, &d("I")),
+                Some(want.as_str())
+            );
+        }
+        assert_eq!(
+            command_for_entry("global", "pin_tooltip", Button, &d("Ctrl+T")),
+            Some("TOOLTIP_DETACH")
         );
     }
 

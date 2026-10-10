@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use crate::model::{Anchor, DataId, Location};
+use crate::model::{Anchor, DataId, Location, PropertyKind};
 
 /// A selector family (`scenario-feed.md` §8.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -524,6 +524,21 @@ pub enum LabelContext {
     EquipSlot,
     /// A damage type (`Effect_DamageType`).
     DamageType,
+    /// A nationality value (`NationalityTable_Nationality`, `player-character.md` §6.2;
+    /// `scenario-feed.md` §7.7).
+    Nationality,
+    /// A key of the enum mapper the property dictionary names for the data property with
+    /// this ID (type codes 8, 14, 18; `scenario-feed.md` §5.8).
+    PropertyKey(u32),
+}
+
+/// A data property as the resolver reports it (`scenario-feed.md` §8.6 `property`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PropertyInfo {
+    /// The property ID.
+    pub id: u32,
+    /// Its value kind ([`PropertyKind::Unsupported`] for the other type codes).
+    pub kind: PropertyKind,
 }
 
 /// A selector query handed to a [`SelectorResolver`].
@@ -572,6 +587,20 @@ pub trait SelectorResolver {
 
     /// The display name of a record or, with `row`, of a table entry (at most 64 bytes).
     fn display_name(&mut self, did: DataId, row: Option<u32>) -> Option<String>;
+
+    /// The dictionary's property named `label` (`@Name`) and its kind (§8.6); `None`
+    /// without an install or for an unknown name. The default knows no property.
+    fn property(&mut self, label: &str) -> Option<PropertyInfo> {
+        let _ = label;
+        None
+    }
+
+    /// The dictionary's property with ID `id` and its kind (§8.6); `None` without an
+    /// install or for an ID the dictionary does not define. The default knows none.
+    fn property_by_id(&mut self, id: u32) -> Option<PropertyInfo> {
+        let _ = id;
+        None
+    }
 }
 
 /// The resolver for runs without an install: every selector resolves empty (§8.7).

@@ -21,10 +21,17 @@
 //! - [`scenario`]: `--scenario` (P0, `docs/specs/scenario-feed.md`): scripted world events
 //!   played by the sandbox, selectors resolved against the install, the headless driver
 //!   and its canonical log.
+//! - [`screens`]: the character selection and creation screens before world entry (P1,
+//!   `docs/specs/character-screens.md`); [`pre_world`] runs them at start-up
+//!   (`--character-select`).
+//! - [`character`]: characters, inventory and equipment (P1): the player's state from the
+//!   session, the character panel and bag windows, item tooltips, the plugin inventory
+//!   views.
 
 pub mod app;
 pub mod audio;
 pub mod avatar;
+pub mod character;
 pub mod cli;
 pub mod commands;
 pub mod data;
@@ -33,9 +40,11 @@ pub mod input;
 pub mod net;
 pub mod panels;
 pub mod plugins;
+pub mod pre_world;
 pub mod runtime;
 pub mod scenario;
 pub mod scene;
+pub mod screens;
 pub mod smoke;
 pub mod ui_host;
 pub mod wait;

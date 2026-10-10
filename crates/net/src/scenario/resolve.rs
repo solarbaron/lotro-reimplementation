@@ -4,13 +4,15 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::ast::{ActorName, Element, EnumArg, Program};
+use super::ast::{ActorName, CharDetails, Element, EnumArg, LookArg, Program};
 use super::error::ResolveError;
+pub use super::props::PropertyNote;
+use super::props::{self, ResolvedProp};
 use super::select::{
     self, Alt, Candidate, CandidateStatus, Family, FilterValue, ResolvedRecord, SelectorQuery,
     SelectorResolver,
 };
-use crate::model::{MAX_NAME_LEN, sanitize_text};
+use crate::model::{Body, Look, MAX_NAME_LEN, sanitize_text};
 
 /// Most candidates per selector, and most resolved records over all selectors.
 pub const MAX_CANDIDATES: usize = 1_048_576;
@@ -84,6 +86,22 @@ pub enum ResolveNote {
         /// Elements left out.
         cut: usize,
     },
+    /// A property value that was dropped, or a look entry dropped as a duplicate (§5.8).
+    Property {
+        /// Its line.
+        line: u32,
+        /// The property as written: `@Name`, or `pid:0x` and 8 upper-case hex digits.
+        property: String,
+        /// Why.
+        note: PropertyNote,
+    },
+    /// A look cut to fit 768 bytes (§5.8).
+    Look {
+        /// The `look` line.
+        line: u32,
+        /// Entries left out.
+        cut: usize,
+    },
 }
 
 impl fmt::Display for ResolveNote {
@@ -120,6 +138,16 @@ impl fmt::Display for ResolveNote {
             } => write!(f, "label line={line} attribute={attribute} label={label}"),
             Self::Fanout { line, cut } => write!(f, "fanout line={line} cut={cut}"),
             Self::Window { line, cut } => write!(f, "window line={line} cut={cut}"),
+            Self::Property {
+                line,
+                property,
+                note,
+            } => write!(
+                f,
+                "property line={line} property={property} note={}",
+                note.name()
+            ),
+            Self::Look { line, cut } => write!(f, "look line={line} cut={cut}"),
         }
     }
 }
@@ -133,6 +161,10 @@ pub struct ResolvedScenario {
     pub(crate) bindings: Vec<Vec<ResolvedRecord>>,
     pub(crate) labels: Vec<Option<u32>>,
     pub(crate) actor_names: Vec<String>,
+    /// One per property value site (§5.8).
+    pub(crate) props: Vec<ResolvedProp>,
+    /// One per look declaration; `None` when no entry resolved.
+    pub(crate) looks: Vec<Option<Look>>,
     pub(crate) notes: Vec<ResolveNote>,
     pub(crate) install: bool,
     pub(crate) play_input: bool,
@@ -237,6 +269,40 @@ impl ResolvedScenario {
             EnumArg::Value(v) => Some(v),
             EnumArg::Label(i) => self.labels.get(usize::try_from(i).ok()?).copied().flatten(),
         }
+    }
+
+    /// The resolved property value of site `i`: `None` when dropped, else the property ID
+    /// and the value (`None`: clear).
+    pub(crate) fn prop(&self, i: u32) -> Option<(u32, Option<crate::model::PropertyValue>)> {
+        self.props.get(usize::try_from(i).ok()?).cloned().flatten()
+    }
+
+    /// The resolved look of look binding `i`.
+    pub(crate) fn look(&self, i: u32) -> Option<&Look> {
+        self.looks.get(usize::try_from(i).ok()?)?.as_ref()
+    }
+
+    /// A character's resolved details: body (species and sex both resolved), class and
+    /// look (`look=asked` gives `asked`).
+    pub(crate) fn details(
+        &self,
+        d: &CharDetails,
+        asked: Option<&Look>,
+    ) -> (Option<Body>, Option<u32>, Option<Look>) {
+        let class = d.class.and_then(|e| self.enum_value(e));
+        let body = match (d.species, d.sex) {
+            (Some(s), Some(x)) => match (self.enum_value(s), self.enum_value(x)) {
+                (Some(species), Some(sex)) => Some(Body::Character { species, sex }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let look = match d.look {
+            Some(LookArg::Binding(i)) => self.look(i).cloned(),
+            Some(LookArg::Asked) => asked.cloned(),
+            None => None,
+        };
+        (body, class, look)
     }
 
     /// The elements of a binding a step fans out over, cut to `cap`.
@@ -400,6 +466,15 @@ pub(crate) fn resolve(
         }
         labels.push(v);
     }
+    // Property values and looks (item 7).
+    let (props, looks) = props::resolve_props(
+        &prog.props,
+        &prog.looks,
+        &bindings,
+        resolver,
+        install,
+        &mut late,
+    );
     // Cut notes.
     for cut in &prog.cuts {
         let len = bindings
@@ -456,6 +531,8 @@ pub(crate) fn resolve(
         bindings,
         labels,
         actor_names,
+        props,
+        looks,
         notes,
         install,
         play_input: true,

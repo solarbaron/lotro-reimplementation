@@ -39,14 +39,19 @@ use tessera_net::{
 
 const MAX_OPS: usize = 96;
 
+/// An item: DID, dyes, stowed, slot.
+type RawItem = (u32, Option<f32>, Option<f32>, bool, Option<u8>);
+
 #[derive(Debug, Clone, Arbitrary)]
 struct RawAppearance {
     character: bool,
     a: u32,
     b: u32,
     scale: f32,
-    items: Vec<(u32, Option<f32>, Option<f32>, bool)>,
+    items: Vec<RawItem>,
     idle: Option<u32>,
+    /// Look entries (property, kind byte, payload); invalid looks included.
+    look: Option<Vec<(u32, u8, u32)>>,
 }
 
 impl RawAppearance {
@@ -65,14 +70,36 @@ impl RawAppearance {
                 .items
                 .iter()
                 .take(40)
-                .map(|&(item, dye, secondary_dye, stowed)| Equipped {
+                .map(|&(item, dye, secondary_dye, stowed, slot)| Equipped {
                     item: DataId(item),
                     dye,
                     secondary_dye,
                     stowed,
+                    slot,
                 })
                 .collect(),
             idle: self.idle,
+            look: self.look.as_ref().map(|entries| {
+                Box::new(tessera_net::Look {
+                    entries: entries
+                        .iter()
+                        .take(64)
+                        .map(|&(property, kind, v)| tessera_net::LookEntry {
+                            property,
+                            value: match kind % 6 {
+                                0 => tessera_net::PropertyValue::Bool(v & 1 == 1),
+                                1 => tessera_net::PropertyValue::Float(f32::from_bits(v)),
+                                2 => tessera_net::PropertyValue::Instance(u64::from(v)),
+                                3 => tessera_net::PropertyValue::String(
+                                    "x y".repeat(usize::try_from(v % 80).unwrap_or(0)),
+                                ),
+                                4 => tessera_net::PropertyValue::Colour(v.to_le_bytes()),
+                                _ => tessera_net::PropertyValue::Enum(v),
+                            },
+                        })
+                        .collect(),
+                })
+            }),
         }
     }
 }

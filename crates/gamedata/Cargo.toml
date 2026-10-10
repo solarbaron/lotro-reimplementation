@@ -16,5 +16,10 @@ tessera-wstate.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+# The real-data creation test assembles each (race, gender)'s default figure
+# (`character-screens.md` §9 step 2); tests only, the library does not depend on it.
+tessera-mesh.workspace = true
+
 [lints]
 workspace = true

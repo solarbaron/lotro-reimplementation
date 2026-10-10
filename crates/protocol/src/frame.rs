@@ -59,9 +59,14 @@ pub fn check_type(code: u16, channel: Channel, sender: Side) -> Result<MessageTy
     Ok(ty)
 }
 
-/// Appends one frame (`length`, `type`, body) holding `msg` to `out`. `out` is unchanged on
-/// error. Datagram messages are refused.
+/// Appends one frame (`length`, `type`, body) holding `msg` to `out` in the v1.0 layout
+/// (minor 0). `out` is unchanged on error. Datagram messages are refused.
 pub fn encode_frame(msg: &Message, out: &mut Vec<u8>) -> Result<()> {
+    encode_frame_minor(msg, out, 0)
+}
+
+/// [`encode_frame`] in the layout of negotiated minor `minor` (§3.1).
+pub fn encode_frame_minor(msg: &Message, out: &mut Vec<u8>, minor: u16) -> Result<()> {
     let ty = msg.message_type();
     if !ty.channel().is_stream() {
         return Err(ProtocolError::WrongChannel {
@@ -72,7 +77,7 @@ pub fn encode_frame(msg: &Message, out: &mut Vec<u8>) -> Result<()> {
     let start = out.len();
     out.extend_from_slice(&[0; FRAME_LENGTH_FIELD]);
     out.extend_from_slice(&ty.code().to_le_bytes());
-    if let Err(e) = msg.encode_body(out) {
+    if let Err(e) = msg.encode_body_minor(out, minor) {
         out.truncate(start);
         return Err(e);
     }
@@ -89,10 +94,15 @@ pub fn encode_frame(msg: &Message, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// One frame as a `Vec`.
+/// One frame as a `Vec` (v1.0 layout, minor 0).
 pub fn frame_to_vec(msg: &Message) -> Result<Vec<u8>> {
+    frame_to_vec_minor(msg, 0)
+}
+
+/// One frame as a `Vec` in the layout of negotiated minor `minor` (§3.1).
+pub fn frame_to_vec_minor(msg: &Message, minor: u16) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    encode_frame(msg, &mut out)?;
+    encode_frame_minor(msg, &mut out, minor)?;
     Ok(out)
 }
 
@@ -133,18 +143,29 @@ pub fn split_frame(buf: &[u8]) -> Result<Option<(RawFrame<'_>, usize)>> {
 }
 
 /// Decodes a frame's message: the type must be defined, belong to `channel`, and be
-/// sendable by `sender`; the body is decoded strictly.
+/// sendable by `sender`; the body is decoded strictly in the v1.0 layout (minor 0).
 pub fn decode_frame_message(
     channel: Channel,
     sender: Side,
     ty: u16,
     body: &[u8],
 ) -> Result<Message> {
+    decode_frame_message_minor(channel, sender, ty, body, 0)
+}
+
+/// [`decode_frame_message`] in the layout of negotiated minor `minor` (§3.1).
+pub fn decode_frame_message_minor(
+    channel: Channel,
+    sender: Side,
+    ty: u16,
+    body: &[u8],
+    minor: u16,
+) -> Result<Message> {
     if !channel.is_stream() {
         return Err(ProtocolError::WrongChannel { ty, channel });
     }
     let t = check_type(ty, channel, sender)?;
-    Message::decode_body(t, body)
+    Message::decode_body_minor(t, body, minor)
 }
 
 /// Incremental decoder for one stream: feed it the bytes as they arrive and it yields
@@ -154,6 +175,7 @@ pub fn decode_frame_message(
 pub struct FrameDecoder {
     channel: Channel,
     sender: Side,
+    minor: u16,
     buf: Vec<u8>,
     failed: Option<ProtocolError>,
 }
@@ -163,12 +185,31 @@ impl FrameDecoder {
     /// channel; for [`Channel::Datagram`] every frame is rejected.
     #[must_use]
     pub fn new(channel: Channel, sender: Side) -> Self {
+        Self::with_minor(channel, sender, 0)
+    }
+
+    /// A decoder for frames in the layout of negotiated minor `minor` (§3.1).
+    #[must_use]
+    pub fn with_minor(channel: Channel, sender: Side, minor: u16) -> Self {
         Self {
             channel,
             sender,
+            minor,
             buf: Vec::new(),
             failed: None,
         }
+    }
+
+    /// Sets the negotiated minor version for the frames that follow (the control stream
+    /// learns it from `Hello`/`HelloAck`, which decode the same at every minor).
+    pub fn set_minor(&mut self, minor: u16) {
+        self.minor = minor;
+    }
+
+    /// The minor version frames are decoded under.
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.minor
     }
 
     /// Bytes buffered for an incomplete frame.
@@ -238,7 +279,13 @@ impl FrameDecoder {
                     return Ok(None);
                 };
                 debug_assert_eq!(used, frame.len());
-                let msg = decode_frame_message(self.channel, self.sender, raw.ty, raw.body)?;
+                let msg = decode_frame_message_minor(
+                    self.channel,
+                    self.sender,
+                    raw.ty,
+                    raw.body,
+                    self.minor,
+                )?;
                 return Ok(Some(msg));
             }
             if input.is_empty() {

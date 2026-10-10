@@ -107,6 +107,12 @@ pub struct UiBooted {
     pub skins: Option<SkinData>,
     /// InputActions command names → IDs.
     pub command_ids: Vec<(String, u32)>,
+    /// The P1 widgets' vocabulary (item slots, tooltips, paperdoll).
+    pub char_vocab: tessera_ui::game::CharVocab,
+    /// The P1 panels' layouts and element IDs (`character-panels.md` §2, §4.1).
+    pub char_ids: crate::character::panel::PanelIds,
+    /// The character screens' layouts and element IDs (`character-screens.md` §2).
+    pub chargen: crate::screens::ui::ChargenRefs,
     /// Layouts decoded.
     pub layouts: usize,
     /// Time taken.
@@ -292,6 +298,28 @@ fn load(
     }
 
     let (vocab, game_vocab) = vocabs(&dict, &labels);
+    let mut char_vocab = tessera_ui::game::CharVocab::default();
+    char_vocab.resolve_with(
+        &mut |n| labels.key(UiEnum::ElementType, n),
+        &mut |n| labels.key(UiEnum::ElementId, n),
+        &mut |n| labels.key(UiEnum::StateId, n),
+        &mut |n| dict.pid(n),
+    );
+    let chargen = crate::screens::ui::ChargenRefs::resolve(
+        &mut |l| {
+            uilayout
+                .by_label(l)
+                .filter(|d| d.0 >> 24 == 0x22)
+                .map(|d| d.0)
+        },
+        &mut |l| labels.key(UiEnum::ElementId, l),
+    );
+    let char_ids = crate::character::panel::PanelIds::resolve(
+        &|l| uilayout.by_label(l).filter(|d| d.0 >> 24 == 0x22),
+        &|l| labels.key(UiEnum::ElementId, l),
+        &|n| dict.pid(n),
+        &|t| labels.key(UiEnum::ElementType, t),
+    );
     let catalog = PanelCatalog::resolve(&uilayout, &mut |l| labels.key(UiEnum::ElementId, l));
     let mut panel_types = PanelTypes::default();
     panel_types.resolve_with(&mut |n| labels.key(UiEnum::ElementType, n));
@@ -349,6 +377,9 @@ fn load(
         maps,
         skins,
         command_ids,
+        char_vocab,
+        char_ids,
+        chargen,
         layouts: decoded,
         elapsed_ms,
     })

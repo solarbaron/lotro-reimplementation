@@ -67,6 +67,19 @@ On 2026-10-09 (later) the six rows set to re-run were checked again: their expec
 against the install (spec writer) and by the real-data assembly test, which now asserts them
 (2 passed, 0 failed); H15, H17, H24, N3, N5 and N6 read **pass (data)** (note 8). With them,
 H reads 25 of 25 and N 7 of 7, three H rows and three N rows on the data side only.
+**Update 2026-10-10 (spec writer):** none of the six rows still waits for a re-run. Their
+expectations were checked again against `appearance.md` as Accepted later on 2026-10-09 (the
+OBS5/BIN7 revision: the gates of the placement scripts, the cosmetic-locomotion exception of
+the wielded primary script, the `MonsterPlayer` test) and stand unchanged. H15: the item
+placements of the wielded primary script sit under its Label, below a Switch on
+`Entity_Mode` whose single case leads elsewhere; an unset `Entity_Mode` and an unset
+`AvatarVFX_Cosmetic_Locomotion` (no dictionary default, so zero, `script-runtime.md` §6.2)
+reach that Label and the Default port, and in combat (`Combat_Violent` true) the two
+cosmetic-locomotion cases also lead there by a Goto, so the two hand attachments hold
+(`appearance.md` §5.6). H17 and H24: the wielded ranged script has no exception and no Hide
+gate. N3, N5, N6: `appearance.md` §7.4 and the NPC held items of §5.5 did not change; the
+creature cosmetic slots of §5.5 (where the `MonsterPlayer` test sits) reach a figure only
+with a server object, so they take no part in the placed figures of rows N.
 
 Notes:
 

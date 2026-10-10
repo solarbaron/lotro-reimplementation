@@ -937,8 +937,17 @@ fn world() -> HashMap<Did, Vec<u8>> {
         Did(IDLE_SCRIPTLET),
         scriptlet(&[anim(1, CLIP_IDLE, 10, 0.0, &[])], &[CLIP_IDLE]),
     );
-    // The run binding overrides the displacement through the Scriptlet node's parameters.
-    let run_clip = scriptlet(&[anim(1, CLIP_RUN, 20, 9.0, speed)], &[CLIP_RUN]);
+    // The run binding overrides the displacement through the Scriptlet node's parameters,
+    // which reach the clip through its scriptlet-driven pair (`appearance.md` §7.4.1).
+    let run_clip = scriptlet(
+        &[node(
+            36,
+            anim_data(CLIP_RUN, 20, 9.0),
+            base_pairs(1, speed, &[(PID_ANIM_DISP, PID_ANIM_DISP)]),
+            &[],
+        )],
+        &[CLIP_RUN],
+    );
     m.insert(Did(0x0C00_0021), run_clip);
     let disp = B::new().f32(0.0).f32(6.5).f32(0.0);
     let binding_startup = scriptlet_node(
@@ -4111,10 +4120,14 @@ fn dye_chain(id: u32, with_colours: bool) -> Vec<u8> {
             )
         })
         .collect();
+    // The node holds both parameters its pairs write (`appearance.md` §7.4.1 rule 2).
     let invoke = scriptlet_pairs(
         id + 2,
         DYE_INNER,
-        pset(&[(PID_DYE_VALUE, B::new().bytes(&[0xFF; 4]))]),
+        pset(&[
+            (PID_DYE_VALUE, B::new().bytes(&[0xFF; 4])),
+            (PID_PARAM_MESH, B::new().u32(2)),
+        ]),
         &[(PID_DYE_VALUE, PID_DYE_VALUE)],
         &[(PID_PARAM_MESH, PID_PARAM_MESH)],
     );
@@ -4289,4 +4302,242 @@ fn goto_starts_its_label_once() {
         .collect();
     assert_eq!(edits, [2013]);
     assert_eq!(res.look[0].node_id, 6);
+}
+
+// --- Parameters reach fields only through pairs (`appearance.md` §7.4.1) ---
+
+const PAIRS_INNER: u32 = 0x0C00_0901;
+const PAIRS_DEEP: u32 = 0x0C00_0902;
+const PAIRS_DEEP2: u32 = 0x0C00_0903;
+const PAIRS_CHOSEN: u32 = 0x0C00_0904;
+/// A float scriptlet parameter of another name than the field it feeds.
+const PID_P_SPEED: u32 = 0x1000_0190;
+/// `ScriptletScript_File`.
+const PID_SCRIPTLET_FILE: u32 = 0x1000_0191;
+/// An entity property holding a scriptlet DID.
+const PID_FILE_SOURCE: u32 = 0x1000_0192;
+/// A property no Scriptlet node has a field or parameter for.
+const PID_UNHELD: u32 = 0x1000_0193;
+
+fn pairs_schema(pid: u32) -> Option<PropertyType> {
+    match pid {
+        PID_P_SPEED | PID_UNHELD => Some(PropertyType::Float),
+        PID_SCRIPTLET_FILE | PID_FILE_SOURCE => Some(PropertyType::DidRef),
+        PID_FX_SCALE => Some(PropertyType::Vector3),
+        _ => schema(pid),
+    }
+}
+
+fn pairs_vocab() -> ScriptVocabulary {
+    use tessera_formats::script_table::resolve::{MeshFxFieldPids, ScriptletFieldPids};
+    ScriptVocabulary {
+        impulse: ImpulseFieldPids {
+            air_time: Some(PID_AIR_TIME),
+            ..ImpulseFieldPids::default()
+        },
+        mesh_fx: MeshFxFieldPids {
+            scale: Some(PID_FX_SCALE),
+            ..MeshFxFieldPids::default()
+        },
+        scriptlet: ScriptletFieldPids {
+            file: Some(PID_SCRIPTLET_FILE),
+            ..ScriptletFieldPids::default()
+        },
+        ..vocab()
+    }
+}
+
+fn anim_pairs(
+    id: u32,
+    clip: u32,
+    layer: u32,
+    driven: &[(u32, u32)],
+    from_params: &[(u32, u32)],
+) -> Vec<u8> {
+    node(
+        36,
+        anim_data(clip, layer, 9.0),
+        base_pairs(id, driven, from_params),
+        &[],
+    )
+}
+
+fn pairs_world() -> HashMap<Did, Vec<u8>> {
+    let disp = |y: f32| B::new().f32(0.0).f32(y).f32(0.0);
+    let mut m = HashMap::new();
+    let impulse = node(
+        9,
+        B::new()
+            .u8(1)
+            .u32(2)
+            .u8(0)
+            .f32(0.0)
+            .f32(0.0)
+            .f32(9.0)
+            .f32(0.2)
+            .f32(15.0),
+        base_pairs(3, &[], &[(PID_AIR_TIME, PID_AIR_TIME)]),
+        &[],
+    );
+    let fx = node(
+        41,
+        mesh_fx_data(0, 0, [0.0; 3], 1.0, false),
+        base_pairs(4, &[], &[(PID_FX_SCALE, PID_FX_SCALE)]),
+        &[],
+    );
+    m.insert(
+        Did(PAIRS_INNER),
+        scriptlet(
+            &[
+                // Paired: displacement from the parameter; speed driven (2.0), then from a
+                // parameter of another name (3.0), the later write winning.
+                anim_pairs(
+                    1,
+                    CLIP_WALK,
+                    20,
+                    &[(PID_ANIM_SPEED, PID_SPEEDMULT)],
+                    &[
+                        (PID_ANIM_DISP, PID_ANIM_DISP),
+                        (PID_ANIM_SPEED, PID_P_SPEED),
+                    ],
+                ),
+                // Unpaired: keeps its stored displacement although the invocation holds one.
+                anim_pairs(2, CLIP_RUN, 21, &[], &[]),
+                impulse,
+                fx,
+                // An invocation that holds no displacement: the inner pair finds nothing,
+                // whatever this record's invocation holds.
+                scriptlet_pairs(5, PAIRS_DEEP, pset(&[]), &[], &[]),
+                // An invocation that passes the displacement down with a pair of its own; its
+                // driven pair names a PID its set does not hold, so it writes nothing.
+                scriptlet_pairs(
+                    6,
+                    PAIRS_DEEP2,
+                    pset(&[(PID_ANIM_DISP, disp(1.5))]),
+                    &[(PID_P_SPEED, PID_SPEEDMULT), (PID_UNHELD, PID_SPEEDMULT)],
+                    &[(PID_ANIM_DISP, PID_ANIM_DISP)],
+                ),
+            ],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(PAIRS_DEEP),
+        scriptlet(
+            &[anim_pairs(
+                1,
+                CLIP_IDLE,
+                22,
+                &[],
+                &[(PID_ANIM_DISP, PID_ANIM_DISP)],
+            )],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(PAIRS_DEEP2),
+        scriptlet(
+            &[anim_pairs(
+                1,
+                CLIP_EMOTE,
+                23,
+                &[],
+                &[
+                    (PID_ANIM_DISP, PID_ANIM_DISP),
+                    (PID_ANIM_SPEED, PID_P_SPEED),
+                ],
+            )],
+            &[],
+        ),
+    );
+    m.insert(
+        Did(PAIRS_CHOSEN),
+        scriptlet(&[anim_pairs(1, CLIP_BACK, 24, &[], &[])], &[]),
+    );
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![
+                    scriptlet_pairs(
+                        1,
+                        PAIRS_INNER,
+                        pset(&[
+                            (PID_ANIM_DISP, disp(6.5)),
+                            (PID_P_SPEED, B::new().f32(3.0)),
+                            (PID_AIR_TIME, B::new().f32(0.4)),
+                            (PID_FX_SCALE, B::new().f32(2.0).f32(2.0).f32(2.0)),
+                        ]),
+                        &[],
+                        &[],
+                    ),
+                    // A placeholder whose driven `ScriptletScript_File` pair chooses the
+                    // record: its set does not hold that PID, so the pair goes to the field.
+                    scriptlet_pairs(
+                        2,
+                        0,
+                        pset(&[]),
+                        &[(PID_SCRIPTLET_FILE, PID_FILE_SOURCE)],
+                        &[],
+                    ),
+                ],
+            )],
+        ),
+    );
+    m
+}
+
+/// `appearance.md` §7.4.1 rules 1–4: driven pairs, then scriptlet-driven pairs, for
+/// animation, impulse and MeshFX nodes alike; a scriptlet-driven pair reads only the
+/// invoking Scriptlet node's own set; a Scriptlet node's pair writes a parameter only when
+/// its set holds the PID, else its own field; nothing reaches a field without a pair.
+#[test]
+fn parameters_reach_fields_only_through_pairs() {
+    let m = pairs_world();
+    let mut r = ClipResolver::new(&pairs_schema, pairs_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let mut state = PropertyState::new();
+    state.set(PID_SPEEDMULT, PropertyValue::Float(2.0));
+    state.set(PID_FILE_SOURCE, PropertyValue::DidRef(Did(PAIRS_CHOSEN)));
+    let res = r.resolve_with_state(&e, state).unwrap();
+    assert!(res.issues.is_empty(), "{:?}", res.issues);
+    let clip = |layer: u32| {
+        let c = res
+            .primary(layer)
+            .unwrap_or_else(|| panic!("layer {layer}"));
+        (c.clip.0, c.displacement[1], c.speed)
+    };
+    assert_eq!(
+        clip(20),
+        (CLIP_WALK, 6.5, 3.0),
+        "paired; the later pair wins"
+    );
+    assert_eq!(clip(21), (CLIP_RUN, 9.0, 1.0), "no pair: stored values");
+    assert_eq!(
+        clip(22),
+        (CLIP_IDLE, 9.0, 1.0),
+        "the outer invocation is not read"
+    );
+    assert_eq!(
+        clip(23),
+        (CLIP_EMOTE, 6.5, 1.0),
+        "passed down by a pair; a pair of an unheld PID writes no parameter"
+    );
+    assert_eq!(clip(24).0, CLIP_BACK, "the file pair chose the record");
+    assert_eq!(res.impulses.len(), 1);
+    assert_eq!(res.impulses[0].node.air_time, 0.4);
+    assert_eq!(res.mesh_fx.len(), 1);
+    assert_eq!(res.mesh_fx[0].node.scale, [2.0; 3]);
+    assert!(res.mesh_fx[0].driven.scale);
+    // Without the driven source the placeholder invokes nothing, and the paired speed
+    // still takes the parameter.
+    let res = r.resolve_with_state(&e, PropertyState::new()).unwrap();
+    assert!(res.primary(24).is_none());
+    assert_eq!(res.primary(20).unwrap().speed, 3.0);
 }

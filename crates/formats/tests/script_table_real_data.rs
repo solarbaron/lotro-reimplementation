@@ -1087,6 +1087,8 @@ fn random_dye_chains_replace_the_placeholder() {
     let mut placeholders = Vec::new();
     let mut coloured = 0usize;
     let mut bindings: BTreeSet<u32> = BTreeSet::new();
+    // The (slot, binding key) of the coloured edits of the hair chain 0x0C0082ED.
+    let mut hair_chain: BTreeSet<(u32, u32)> = BTreeSet::new();
     // Edits left with the parameter's stored white (no SetProperty of the chain ran).
     let mut white = 0usize;
     for object in 0x4700_7170u32..=0x4700_7178 {
@@ -1119,6 +1121,9 @@ fn random_dye_chains_replace_the_placeholder() {
                     coloured += 1;
                     white += usize::from(e.color_value[..3] == [0xFF; 3]);
                     bindings.insert(e.material_type);
+                    if record == Did(HAIR_CHAIN) {
+                        hair_chain.insert((e.mesh_type, e.material_type));
+                    }
                 }
             }
         }
@@ -1135,12 +1140,52 @@ fn random_dye_chains_replace_the_placeholder() {
     );
     assert!(coloured > 0, "the soldiers' chains run");
     assert_eq!(white, 0, "every chain's SetProperty chose a colour");
-    // The outer scriptlets' binding keys reach the edits (`UpperBody` 0x10000073,
-    // `Accessory1` 0x10000018, `Crest` and the hair chain 0x10000024, every surface 2), so
-    // the Goto chains of types 0xD8 and 0xD6 run too.
+    // The outer scriptlets' binding keys reach the edits that pair them (`UpperBody`
+    // 0x10000073, `Accessory1` 0x10000018, `Crest` 0x10000024, every surface 2), so the
+    // Goto chains of types 0xD8 and 0xD6 run too.
+    eprintln!("hair chain 0x0C0082ED edits reached by the seeded start-ups: {hair_chain:x?}");
+    assert!(
+        [2, 0x1000_0018, 0x1000_0024, 0x1000_0073]
+            .iter()
+            .all(|k| bindings.contains(k)),
+        "binding keys of the coloured edits: {bindings:x?}"
+    );
+    // `appearance.md` §7.4.1 rule 4 (A62): the three edits of the hair chain 0x0C0082ED pair
+    // only their colour, so they keep their stored slot and key although the invocation
+    // holds `MeshType` and `MaterialType`: the beard (0x1000000B), every part (0x10000024)
+    // and `Crest` (0x1000002F). Every branch of the soldiers' start-up (the hair chain
+    // sits behind a Goto) shows them.
+    let mut every_branch: BTreeSet<(u32, u32)> = BTreeSet::new();
+    for object in 0x4700_7170u32..=0x4700_7178 {
+        let chain =
+            collect_entity_scripts(Did(object), dict, &vocab, |d| fetch(set)(d)).expect("scripts");
+        let mut r =
+            ClipResolver::new(dict, vocab.clone(), fetch(set)).with_dictionary_defaults(dict);
+        let all = r.reachable(&chain.scripts).expect("resolution");
+        for l in &all.look {
+            if let LookEffect::EditMaterial(e) = &l.effect
+                && l.scriptlet == Did(HAIR_CHAIN)
+            {
+                every_branch.insert((e.mesh_type, e.material_type));
+            }
+        }
+    }
+    for (slot, key) in &hair_chain {
+        assert!(every_branch.contains(&(*slot, *key)), "{slot:x} {key:x}");
+    }
     assert_eq!(
-        bindings,
-        BTreeSet::from([2, 0x1000_0018, 0x1000_0024, 0x1000_0073]),
-        "binding keys of the coloured edits"
+        every_branch,
+        BTreeSet::from([
+            (HAIR_SLOT_BEARD, 0x1000_000B),
+            (2, 0x1000_0024),
+            (HAIR_SLOT_CREST, 0x1000_002F)
+        ]),
+        "A62: the hair chain's edits keep their stored slots and keys"
     );
 }
+
+/// The hair chain of `appearance.md` §7.4 (A62) and the slots its edits store (`Beard`,
+/// `Crest`).
+const HAIR_CHAIN: u32 = 0x0C00_82ED;
+const HAIR_SLOT_BEARD: u32 = 0x1000_0007;
+const HAIR_SLOT_CREST: u32 = 0x1000_000E;

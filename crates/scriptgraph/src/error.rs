@@ -58,6 +58,15 @@ pub enum RuntimeIssue {
     },
     /// A Goto found no Label of its name in its record (`script-runtime.md` §15 step 1).
     LabelNotFound(String),
+    /// A Goto whose Label is already running through a Goto of the same name on its start
+    /// path started nothing (`appearance.md` §7.4, Tessera Decision on Goto recursion).
+    GotoRecursion(String),
+    /// A Scriptlet node's pair named a PID that is neither in its parameter set nor one of
+    /// its fields; the value was dropped (`appearance.md` §7.4.1 rule 2).
+    ScriptletPairDropped {
+        /// The pair's field PID.
+        pid: u32,
+    },
     /// A GameCallback completed at once: how the original evaluates it offline is open
     /// (`script-runtime.md` §18 OPEN-11), and the runtime does not fire its ports.
     GameCallbackOpaque,

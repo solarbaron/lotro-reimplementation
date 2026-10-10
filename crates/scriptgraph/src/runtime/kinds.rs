@@ -754,10 +754,19 @@ impl Runtime<'_> {
         let Some(NodeData::Goto { name }) = unit.node(nref.node).map(|n| &n.data) else {
             return false;
         };
+        // §15 step 1 and `appearance.md` §7.4 rule 6: the first Label of exactly this name
+        // in the Goto's own unit, in pre-order (Tessera Decision for the walk order).
         let Some(&label) = unit.labels.get(name) else {
             self.issue(crate::RuntimeIssue::LabelNotFound(name.clone()));
             return false;
         };
+        // Tessera Decision (`appearance.md` §7.4, Goto recursion): a Goto whose Label is
+        // already running through a Goto on the current start path starts nothing.
+        if self.goto_on_path(id, nref.unit, label) {
+            tracing::debug!(label = %name, "Goto into its own running Label: nothing started");
+            self.issue(crate::RuntimeIssue::GotoRecursion(name.clone()));
+            return false;
+        }
         self.start_node(
             sink,
             id,
@@ -769,6 +778,30 @@ impl Runtime<'_> {
         );
         self.arm(id);
         true
+    }
+
+    /// Whether an instance above the Goto `id` is a Goto of the same unit that started
+    /// `label` (the Tessera Decision on Goto recursion, `appearance.md` §7.4).
+    fn goto_on_path(&self, id: InstanceId, unit: crate::graph::UnitId, label: u32) -> bool {
+        let mut cur = self.insts.get(id).and_then(|i| i.parent);
+        for _ in 0..=self.limits.max_instance_depth.saturating_add(2) {
+            let Some(c) = cur else {
+                return false;
+            };
+            let Some(i) = self.insts.get(c) else {
+                return false;
+            };
+            if let Some(n) = i.node
+                && n.unit == unit
+                && let Some(u) = self.units.get(n.unit as usize)
+                && let Some(NodeData::Goto { name }) = u.node(n.node).map(|x| &x.data)
+                && u.labels.get(name) == Some(&label)
+            {
+                return true;
+            }
+            cur = i.parent;
+        }
+        false
     }
 
     // ----- Scriptlet and ScriptletParameter (§17) -----
@@ -784,6 +817,32 @@ impl Runtime<'_> {
         else {
             return false;
         };
+        // `appearance.md` §7.4.1 rule 2: the node's pairs (its overrides) replace the
+        // parameters its set holds; a pair of another PID writes the node's own field
+        // (`ScriptletScript_File` chooses the record; the intensity was applied at the
+        // start) or is reported and dropped.
+        let mut file = *file;
+        let mut dropped = Vec::new();
+        if let Some(i) = self.insts.get(id) {
+            for (pid, v) in &i.overrides {
+                if parameters.get(*pid).is_some() {
+                    continue;
+                }
+                if Some(*pid) == self.vocab.scriptlet_file {
+                    if let Some(d) = v.as_did() {
+                        file = d;
+                    }
+                } else if Some(*pid) != self.vocab.intensity_multiplier
+                    && !self.vocab.base_fields.contains(&Some(*pid))
+                {
+                    dropped.push(*pid);
+                }
+            }
+        }
+        for pid in dropped {
+            tracing::debug!(pid, "Scriptlet node pair names no parameter and no field");
+            self.issue(crate::RuntimeIssue::ScriptletPairDropped { pid });
+        }
         if file.is_null() {
             return false;
         }
@@ -792,7 +851,7 @@ impl Runtime<'_> {
             self.limit("max_scriptlet_depth");
             return false;
         }
-        let Some(sid) = self.scriptlet_unit(*file) else {
+        let Some(sid) = self.scriptlet_unit(file) else {
             return false;
         };
         let Some(sunit) = self.units.get(sid as usize).cloned() else {
@@ -801,7 +860,8 @@ impl Runtime<'_> {
         if let Some(i) = self.insts.get_mut(id) {
             let mut merged = (*i.params).clone();
             for e in parameters {
-                merged.insert(e.pid, e.value.clone());
+                let v = i.override_of(Some(e.pid)).unwrap_or(&e.value);
+                merged.insert(e.pid, v.clone());
             }
             i.params = Arc::new(merged);
             i.kind = KindState::Scriptlet { unit: sid };

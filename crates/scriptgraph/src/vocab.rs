@@ -218,6 +218,13 @@ pub struct RuntimeVocabulary {
     /// `Script_IntensityMultiplier`: the node field that a driven pair names to drive the
     /// intensity multiplier (`script-runtime.md` §4.4).
     pub intensity_multiplier: Option<u32>,
+    /// `ScriptletScript_File`: the Scriptlet node's own field that a pair of a PID its
+    /// parameter set does not hold writes (`appearance.md` §7.4.1 rule 2).
+    pub scriptlet_file: Option<u32>,
+    /// The other fields every node has: `Script_IntensityMultiplierVariance`,
+    /// `Script_UseParentIntensity` and `Script_Probability`. The runtime uses their stored
+    /// values; a Scriptlet node's pair of one is not reported as dropped.
+    pub base_fields: [Option<u32>; 3],
     /// `Sound_MuteWhenInternal` (`sound.md` §9.2 step 2).
     pub mute_when_internal: Option<u32>,
     /// `Script_RunInViewport` (`sound.md` §9.2 step 3).
@@ -252,6 +259,12 @@ impl RuntimeVocabulary {
             combination_type: p("Script_CombinationType"),
             combination_overriding: None,
             intensity_multiplier: p("Script_IntensityMultiplier"),
+            scriptlet_file: p("ScriptletScript_File"),
+            base_fields: [
+                p("Script_IntensityMultiplierVariance"),
+                p("Script_UseParentIntensity"),
+                p("Script_Probability"),
+            ],
             mute_when_internal: p("Sound_MuteWhenInternal"),
             run_in_viewport: p("Script_RunInViewport"),
             run_output_source: p("RunScriptOutput_Source"),

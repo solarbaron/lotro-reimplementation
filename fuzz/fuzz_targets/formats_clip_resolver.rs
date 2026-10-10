@@ -46,7 +46,8 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::reader::write_vle;
 use tessera_formats::script_table::resolve::{
     AnimationFieldPids, ClipResolution, ClipResolver, EditMaterialFieldPids, EntityScripts,
-    MeshDeformerFieldPids, MotionState, ResolveLimits, ScriptVocabulary, collect_entity_scripts,
+    MeshDeformerFieldPids, MotionState, ResolveLimits, ScriptVocabulary, ScriptletFieldPids,
+    collect_entity_scripts,
 };
 use tessera_formats::setup::ENTITY_FLAGS_REQUIRED;
 use tessera_formats::{
@@ -1181,6 +1182,13 @@ fuzz_target!(|data: &[u8]| {
             texture_value: Some(EM_TEXTURE),
             bool_value: Some(EM_BOOL),
             ..EditMaterialFieldPids::default()
+        },
+        // A Scriptlet node's pair of a PID its parameter set lacks may name its file
+        // (`appearance.md` §7.4.1 rule 2): reuse the animation asset field, a DID, so that
+        // generated pairs reach that path.
+        scriptlet: ScriptletFieldPids {
+            file: Some(ANIM_ASSET),
+            base: [Some(ANIM_SPEED), None, None, None],
         },
         ..ScriptVocabulary::default()
     };

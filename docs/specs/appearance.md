@@ -3386,6 +3386,46 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > unpaired animation nodes (A61). Whether that changes a chosen clip or only the displacement
 > used to match speed was not checked; the clip specs should state it.
 
+> **OPEN:** (implementation, 2026-10-10, §7.4.1, engineering choices and real-data results)
+> `tessera-formats` (`script_table::resolve`) and the effect runtime (`tessera-scriptgraph`)
+> now apply rules 1–6: driven then scriptlet-driven pairs on every node kind the resolver
+> lists (animation, MeshFX, PhysicsImpulse, EditMaterial, compositor, Appearance and
+> MeshDeformer nodes), no parameter by field PID, a Scriptlet node's pairs written into its
+> own set only when it holds the PID, and a scriptlet-driven pair reading only the invoking
+> Scriptlet node's own set. Choices, please confirm or correct:
+> (1) A Scriptlet node's pair of a PID its set does not hold: `ScriptletScript_File` takes a
+> DID value (any other type leaves the stored file) and the chosen record is invoked with the
+> same cycle and depth guards as a stored one; `Script_IntensityMultiplier`, its variance,
+> `Script_UseParentIntensity` and `Script_Probability` are node fields (the effect runtime
+> applies the intensity one, the resolver models none); any other PID is logged and dropped
+> (`RuntimeIssue::ScriptletPairDropped` in the effect runtime).
+> (2) In the effect runtime an intensity pair on a Scriptlet node whose set holds
+> `Script_IntensityMultiplier` writes the parameter only, not the node's intensity.
+> (3) A scriptlet-driven pair on a MeshDeformer's time sets the value only; the driven
+> source the figure follows afterwards stays the driven pair's. SliderMeshDeformer value
+> strings take no scriptlet-driven pair (none was looked for).
+> (4) The Goto recursion Decision in the effect runtime: a Goto starts nothing when an
+> instance above it is a Goto of the same record whose Label is the same node
+> (`RuntimeIssue::GotoRecursion`).
+>
+> Real data (release, user's install, 2026-10-10): the idle, walk and run resolution of every
+> 0x47 entity descriptor, every 0x70 and 0x76 object, the race table's avatars and the SED
+> weenie objects (206,374 starts with script tables), before and after the change: **no
+> primary clip on layers 10 and 20 changed**; the primary clip's locomotion displacement
+> changed in 429 (state, layer) cells of 389 starts (21 entities, 368 objects; 421 on layer
+> 20, 8 on layer 10; 376 running, 53 walking), so only speed matching changes there; two
+> objects (0x7004DA57, 0x7004DA5A) choose another layer-15 clip at idle and have no layer-15
+> clip walking or running; eight objects (for example 0x7006E1A7) gain a layer-10 idle clip
+> through a Scriptlet node whose `ScriptletScript_File` pair chooses the record (choice 1;
+> none without it). The §8.3 avatar clips are unchanged.
+>
+> Question (§7.4 "Expected", A62): for the fallen soldiers 0x47007170–0x47007175 (types
+> 0xD8 and 0xD6) the resolver reaches, under 64 seeds each, edits of 0x0C008223 with
+> `MeshType` 2 and binding key 0x10000024 and never the three edits of 0x0C0082ED; only the
+> every-branch evaluation reaches them (with the A62 slots and keys). The expectation says the
+> hair chain 0x0C0082EE runs 0x0C0082ED. Which test inside 0x0C0082EE (or on the way to it)
+> decides between the two for these objects, and what value should it see on them?
+
 ---
 
 <a id="s16"></a>

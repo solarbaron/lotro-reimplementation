@@ -2628,6 +2628,51 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > mapper 0x2300000F (default 0 `Undef`), and the Switch case is operator 3 with the value key 1
 > (`MonsterPlayer`). Tessera's choice is right; §5.5 states it.
 
+> **OPEN:** (implementation, 2026-10-10, §3.5, engineering choices recorded for review)
+> Tessera implements §3.5 in `tessera-formats` (typed nodes 33, 44, 53, 60; the resolver lists
+> them with their driven values in start order), `tessera-mesh` (`assembly::look`: compositor
+> instances by name, composition by `misc-records.md` §3.6, colour edits) and
+> `tessera-material` (edits applied after every material, run-time textures), shared by the
+> client and the explorer. Choices the spec leaves open: (1) the composed image replaces the
+> base colour, slot 3000, of the surfaces whose binding key equals `MaterialType` on parts
+> whose slot equals `MeshType` (the §3.5 OPEN; O15); (2) colour edits are applied after the
+> surface's materials and the figure's groups (§8 step 6) as one more material; of several
+> edits of one parameter on one surface the highest `Priority` wins, the later one on ties;
+> `MeshType` 2 matches every part, `MaterialType` is compared with the binding key only; an
+> edit whose `MaterialProperty` is not in the colour group 2000–2999 is not applied (none of
+> the avatar tints); (3) a driven field whose source the figure lacks reads the source's
+> dictionary default, as §5.7 step 3 states for MeshFX; (4) a Run node with
+> `RunScript_Stop` that stops a script removes the look effects started under that script
+> (the older face "is stopped"); (5) a layer or colour change of a name not attached yet is
+> ignored and a second attach under one name is refused (`misc-records.md` §3.7). Please
+> confirm or correct.
+
+> **OPEN:** (implementation, 2026-10-10, §3.5 and `script-table.md` §5.1) The dictionary
+> names of the fields of kinds 33 (`CompositorName`, `ColorName`, `Color`), 44
+> (`CompositorName`, `LayerName`, `ImageNumber`, `Opacity`) and 53 (`CompositorName`,
+> `ImageCompositorFile`, `MeshType`, `MaterialType`) are not given, so a reader cannot match
+> a driven pair's field PID to a field. Tessera applies a driven value by its form (a colour
+> sets `Color`, an integer `ImageNumber`, a float `Opacity`, a DID `ImageCompositorFile`).
+> Which property names do these fields carry? (Our census on the reference install agrees
+> with A21: 39, 199, 218 and 2,873 + 13 nodes; 218 of the 218 node-33 instances and 194 of
+> the 199 node-44 instances have a driven pair from an `AC_Color_*` or `AC_Texture_*`
+> property; `EditMaterialScript_ColorValue` finds the 255 + 42 colour edits.)
+
+> **OPEN:** (implementation, 2026-10-10, §3.5) With the avatar entity's own values and both
+> graphics options on, Tessera's evaluation of `Startup` reaches **no** TextureCompositor
+> node for the Elf and High-elf bodies (P5, P6, P10, P11; class tables 0x0700041B and
+> 0x0700204E), although four are reachable when every Switch, When and blend branch runs.
+> Hair and skin edits do run for them. Which property values (set by the client, the
+> character or the options) select the face-compositor branch for these species?
+
+> **OPEN:** (implementation, 2026-10-10, §3.5) With `GOP_AvatarFaceCompositing` false,
+> Tessera still attaches the newer face compositor for Human M and F and River-hobbit M and
+> F (P3, P4, P13, P14; for the male bodies the newer face comes from 0x07002DAD and
+> 0x07002F08, two of the tables §3.5 lists as defining both scripts directly), while for the bodies reached through scriptlet 0x0C0091D3 (P1,
+> P2, P7, P8, P9) and for DwarfStoutAxe nothing is attached, as §3.5 says. Does the check of
+> scriptlet 0x0C0084DA guard the compositor of the tables that define both scripts
+> directly, and if so through which node?
+
 ---
 
 <a id="s16"></a>

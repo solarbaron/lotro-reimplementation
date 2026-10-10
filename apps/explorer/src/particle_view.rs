@@ -1247,6 +1247,7 @@ mod tests {
                 lit: false,
                 alpha_test: None,
                 opacity_slot: Some(3000),
+                tested_opacity: tessera_material::TestedOpacity::Slot(3000),
                 blend: BlendState {
                     mode,
                     src: MatFactor::SrcAlpha,

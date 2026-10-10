@@ -12,12 +12,13 @@ use std::sync::Arc;
 
 use tessera_formats::Did;
 
+use crate::alpha::{AlphaReference, TestedOpacity};
 use crate::interface::{ShaderInterface, SlotInterface};
 use crate::records::{
     BlendFactor, BlendOp, CurveStates, FloatCurve, MaterialRecord, ParamEntry, ParamValue,
     SamplerState,
 };
-use crate::vocab::{AlphaUse, ChannelPacking, SlotKind, ids};
+use crate::vocab::{ChannelPacking, SlotKind, ids};
 
 /// Where an effective value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -338,10 +339,10 @@ pub struct AlphaTest {
     /// opacity **>** threshold (`material.md` §11.2, `lighting.md` §5.12). The test uses
     /// the texture opacity only, before any vertex-colour alpha.
     pub threshold: f32,
-    /// The texture slot whose alpha is the opacity. With two colour layers
-    /// ([`ResolvedMaterial::second_opacity_slot`]) the opacity is the product of both
-    /// slots' alphas (§11.2).
+    /// The first texture slot of the tested opacity ([`TestedOpacity::first`]).
     pub source_slot: u32,
+    /// The tested opacity (§11.2 table): one slot's alpha, or the product or sum of two.
+    pub opacity: TestedOpacity,
 }
 
 /// Feature flags (§11), derived from the effective set, the texture roles and the
@@ -353,10 +354,13 @@ pub struct FeatureFlags {
     pub lit: bool,
     /// Alpha test, when enabled and an opacity source exists.
     pub alpha_test: Option<AlphaTest>,
-    /// The opacity source slot (§11.2), the alpha-test source. Blending uses
-    /// [`BlendState::opacity_slot`], which is the same slot when there is one. A second
-    /// colour layer may multiply it ([`ResolvedMaterial::second_opacity_slot`]).
+    /// The opacity source slot (§11.2), the alpha-test source: the first slot of
+    /// [`FeatureFlags::tested_opacity`]. Blending uses [`BlendState::opacity_slot`], which
+    /// is the same slot when there is one.
     pub opacity_slot: Option<u32>,
+    /// The tested opacity (§11.2 table "Tested opacity"): which texel alphas the alpha test
+    /// compares and the lit base pass outputs (× the material alpha, §11.3).
+    pub tested_opacity: TestedOpacity,
     /// Blend state.
     pub blend: BlendState,
     /// Two-sided (no back-face culling): effective 4003 DoubleSided = 1, or the record's
@@ -481,10 +485,15 @@ pub(crate) fn fallback_alpha_threshold(shader: &ShaderInterface) -> f32 {
 /// `items` with each repeated DID kept at its last position only, in order.
 pub(crate) fn last_occurrences<T: Copy>(items: &[T], did: impl Fn(&T) -> Did) -> Vec<T> {
     let mut seen = HashSet::with_capacity(items.len().min(1024));
+    // Null DIDs are run-time records (composed images, look edits, `crate::edits`): each
+    // keeps its own position.
     let mut out: Vec<T> = items
         .iter()
         .rev()
-        .filter(|m| seen.insert(did(m)))
+        .filter(|m| {
+            let d = did(m);
+            d.is_null() || seen.insert(d)
+        })
         .copied()
         .collect();
     out.reverse();
@@ -542,20 +551,9 @@ impl ResolvedMaterial {
         }
     }
 
-    /// §11.2: the slot whose alpha is the opacity, first match.
+    /// §11.2: the first slot of the tested opacity ([`TestedOpacity::first`]).
     fn opacity_slot(shader: &ShaderInterface) -> Option<u32> {
-        if role_has(shader, ids::DIFFUSE, "Opacity") {
-            Some(ids::DIFFUSE)
-        } else if shader
-            .slot(ids::OPACITY)
-            .is_some_and(|s| s.packing.alpha == AlphaUse::Opacity)
-        {
-            Some(ids::OPACITY)
-        } else if shader.role(ids::EMISSIVE) == Some("EmissiveAndOpacity") {
-            Some(ids::EMISSIVE)
-        } else {
-            None
-        }
+        TestedOpacity::of(shader).first()
     }
 
     /// The stored sampler `state` of `slot` with the effective wrap flags applied: §8.5,
@@ -605,6 +603,7 @@ impl ResolvedMaterial {
         let slot = |id: u32| slots.iter().find(|s| s.id == id);
         let has_texture = |id: u32| slot(id).is_some_and(|s| s.texture.is_some());
 
+        let tested_opacity = TestedOpacity::of(shader);
         let opacity_slot = Self::opacity_slot(shader);
         let alpha_test = match opacity_slot {
             Some(source_slot) if params.flag(ids::ALPHA_TEST) == Some(true) => {
@@ -615,6 +614,7 @@ impl ResolvedMaterial {
                 Some(AlphaTest {
                     threshold,
                     source_slot,
+                    opacity: tested_opacity,
                 })
             }
             _ => None,
@@ -692,6 +692,7 @@ impl ResolvedMaterial {
             lit: shader.lit,
             alpha_test,
             opacity_slot,
+            tested_opacity,
             blend,
             two_sided,
             normal_mapped,
@@ -788,6 +789,61 @@ impl ResolvedMaterial {
     #[must_use]
     pub fn material_alpha(&self) -> f32 {
         self.tint()[3]
+    }
+
+    /// The inputs of the per-draw alpha reference *R* (§11.2 "What the client does per
+    /// draw") of the material's base permutation, for a draw whose per-object tint alpha
+    /// is `tint_alpha` (1 without a tint): *T₀* the alpha test, *W* the blend's depth
+    /// write, *r* the threshold at time 0, *A* = [`ResolvedMaterial::material_alpha`] ×
+    /// `tint_alpha`, the source factor SRCALPHA, no alpha-to-coverage (Tessera has none).
+    /// §11.2 evaluates *r* at the clock: when 1043 animates
+    /// ([`ResolvedMaterial::alpha_reference_animated`]), use
+    /// [`ResolvedMaterial::alpha_reference_at`].
+    #[must_use]
+    pub fn alpha_reference(&self, tint_alpha: f32) -> AlphaReference {
+        let f = &self.features;
+        AlphaReference {
+            test: f.alpha_test.is_some(),
+            depth_write: f.blend.depth_write,
+            reference: f
+                .alpha_test
+                .map_or(crate::resolve::FALLBACK_ALPHA_THRESHOLD, |a| a.threshold),
+            material_alpha: self.material_alpha() * tint_alpha,
+            src_alpha: f.blend.src == BlendFactor::SrcAlpha,
+            alpha_to_coverage: false,
+        }
+    }
+
+    /// [`ResolvedMaterial::alpha_reference`] with *r* evaluated at the material clock `t`
+    /// seconds (§11.2 "*r* … evaluated at the clock", §5.3.1), with the drawn instance's
+    /// curve states: when the alpha test is on and the effective 1043 is an animated curve,
+    /// *r* is its value at `t` (always finite); otherwise *r* does not depend on the clock
+    /// and is the time-0 threshold.
+    #[must_use]
+    pub fn alpha_reference_at(
+        &self,
+        tint_alpha: f32,
+        t: f64,
+        states: &mut CurveStates,
+    ) -> AlphaReference {
+        let mut reference = self.alpha_reference(tint_alpha);
+        if self.alpha_reference_animated()
+            && let Some(r) = self.params.float_at(ids::ALPHA_THRESHOLD, t, states)
+        {
+            reference.reference = r;
+        }
+        reference
+    }
+
+    /// Whether *r* of [`ResolvedMaterial::alpha_reference_at`] follows the clock: the
+    /// alpha test is on and the effective 1043 is an animated curve (§5.3).
+    #[must_use]
+    pub fn alpha_reference_animated(&self) -> bool {
+        self.features.alpha_test.is_some()
+            && self
+                .params
+                .curve(ids::ALPHA_THRESHOLD)
+                .is_some_and(FloatCurve::is_animated)
     }
 
     /// Depth test: off only when the effective 4001 DepthTest is 0 (§8.5); on when the

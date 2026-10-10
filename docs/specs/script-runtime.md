@@ -1552,6 +1552,21 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     > frame whatever `IsGlobalSpaceImpulse` says; the impulser path of §30.6 step 5 applies
     > when the two entities differ. Completion at once stays correct for an applied impulse
     > (OPEN-20 answered).
+20. Implementation of §6.6 R56 (clean room, 2026-10-10): `tessera-scriptgraph` already
+    followed it (a Switch case change stops the port group with every descendant; only a
+    still-running Run with `Persistent` 1 and `UnbindOnDeath` 0 stops its runs; a refused or
+    failed request leaves the earlier run alone); synthetic tests in
+    `crates/scriptgraph/tests/case_change.rs`. The static clip and look resolver of
+    `tessera-formats` (`ClipResolver::with_after_startup`, `appearance.md` §3.5) now keeps
+    the look candidates of scripts started below the left branch through any Run with
+    `Persistent` 0 or `UnbindOnDeath` 1, at any depth, and stops the rest of the branch.
+    > **OPEN:** (§6.6 R56, §12.3; engineering choice, not a fact) The static resolver does
+    > not model `Script_MaxNumInstances`: a `Persistent` 1 Run below the left branch whose
+    > script was already running is resolved as a fresh start, so its look candidates stop
+    > with the branch, where the client refuses that start and stops nothing. **Decision
+    > (Tessera):** leave it so; per `appearance.md` A54 every Run that starts a script below
+    > a `Physics_InWorld` Switch an avatar's start-up reaches has `Persistent` 0, so no
+    > figure in this install reaches the case. The runtime (`tessera-scriptgraph`) follows the rule exactly.
 
 ---
 

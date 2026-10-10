@@ -78,6 +78,22 @@ pub struct HeadlessReport {
     /// liquid-distortion records through the generic path, and the draws without their
     /// texture animation or second layer (`crate::walker::fallback`).
     pub fallback: crate::walker::fallback::FallbackStats,
+    /// The landscape-water drawings of the last frame with their parameters at the frame's
+    /// material clock (`water.md` §8.7; checklist rows W15-R and W16-R).
+    pub water: Vec<crate::walker::water::DrawnWater>,
+    /// The material clock against real time over the frames drawn (`None` before the
+    /// first frame): whether the clock runs in real seconds (`material.md` §5.3.1).
+    pub clock: Option<ClockSpan>,
+}
+
+/// The material clock read at the first and the last frame drawn, with the real time of
+/// those readings (seconds since the run started).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClockSpan {
+    /// Material clock at the first and the last frame, seconds.
+    pub material: [f64; 2],
+    /// Real time at the same readings, seconds since the run started.
+    pub wall: [f64; 2],
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -242,6 +258,17 @@ pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport>
             break Err(e);
         }
         report.frames += 1;
+        let reading = (walker.material_clock(), started.elapsed().as_secs_f64());
+        report.clock = Some(match report.clock {
+            Some(c) => ClockSpan {
+                material: [c.material[0], reading.0],
+                wall: [c.wall[0], reading.1],
+            },
+            None => ClockSpan {
+                material: [reading.0; 2],
+                wall: [reading.1; 2],
+            },
+        });
 
         if args.fly_path.is_some() {
             if ev.flight_done {
@@ -341,6 +368,7 @@ fn finish(
     }
     report.particles = walker.effects().stats();
     report.fallback = walker.fallback_stats();
+    report.water = walker.water_drawings().to_vec();
     tracing::info!("{}", report.fallback.hud_line());
     for (reason, surface, kind, n) in &report.fallback.top {
         tracing::info!(

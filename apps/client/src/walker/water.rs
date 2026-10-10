@@ -177,12 +177,25 @@ pub struct WaterStats {
     pub pending: usize,
 }
 
+/// One landscape-water drawing of the last frame: the surface and its parameters at the
+/// frame's material clock (what the water program receives, `water.md` §8.7).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrawnWater {
+    /// The water surface record.
+    pub surface: Did,
+    /// Its parameters at [`DrawnWater::clock`].
+    pub params: WaterParams,
+    /// The material clock of the frame, seconds (`material.md` §5.3.1).
+    pub clock: f64,
+}
+
 /// The water layer (module docs).
 #[derive(Debug, Default)]
 pub struct WaterLayer {
     surfaces: WaterSurfaces,
     groups: HashMap<Did, Vec<WaterQuad>>,
     stats: WaterStats,
+    drawn: Vec<DrawnWater>,
 }
 
 impl WaterLayer {
@@ -190,6 +203,12 @@ impl WaterLayer {
     #[must_use]
     pub fn stats(&self) -> WaterStats {
         self.stats
+    }
+
+    /// The drawings of the last frame, one per surface.
+    #[must_use]
+    pub fn drawn(&self) -> &[DrawnWater] {
+        &self.drawn
     }
 
     /// Whether every surface drawn has its material and textures.
@@ -214,6 +233,7 @@ impl WaterLayer {
         objects: &mut ObjectLayer,
     ) {
         self.surfaces.begin(time);
+        self.drawn.clear();
         for v in self.groups.values_mut() {
             v.clear();
         }
@@ -279,6 +299,11 @@ impl WaterLayer {
                 d.subdivisions = WAVE_SUBDIVISIONS;
             }
             pass.water(d);
+            self.drawn.push(DrawnWater {
+                surface,
+                params,
+                clock: time,
+            });
             draws += 1;
         }
         self.groups.retain(|_, v| !v.is_empty());
@@ -295,6 +320,7 @@ impl WaterLayer {
     pub fn release(&mut self, store: &mut dyn TextureStore) {
         self.surfaces.release(store);
         self.stats.pending = 0;
+        self.drawn.clear();
     }
 }
 

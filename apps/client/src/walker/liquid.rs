@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tessera_material::{
-    CurveStates, DistortionMaterial, LavaMaterial, LiquidSurface, MirrorMaterial, ResolvedMaterial,
-    TextureMatrixLayout, WaterFamily as MaterialFamily, WaterMaterial,
+    AlphaReference, CurveStates, DistortionMaterial, LavaMaterial, LiquidSurface, MirrorMaterial,
+    ResolvedMaterial, TextureMatrixLayout, WaterFamily as MaterialFamily, WaterMaterial,
 };
 use tessera_render::{
     DistortionParams, LiquidShading, MirrorParams, TextureId, UvTransform, WaterFamily,
@@ -53,6 +53,13 @@ impl SurfaceAnim {
     #[must_use]
     pub fn uv(&self, t: f64, states: &mut CurveStates) -> [UvTransform; 2] {
         texture_matrices_at(&self.material, &self.layout, t, states)
+    }
+
+    /// The inputs of the reference *R* at clock `t` (`material.md` §11.2: *r* evaluated at
+    /// the clock), at the material's own alpha.
+    #[must_use]
+    pub fn alpha_reference(&self, t: f64, states: &mut CurveStates) -> AlphaReference {
+        self.material.alpha_reference_at(1.0, t, states)
     }
 
     fn key(&self) -> usize {
@@ -130,6 +137,12 @@ impl AnimClock {
         let uv = self.with_states(key, |s| anim.uv(t, s));
         self.uv.insert(key, uv);
         uv
+    }
+
+    /// The inputs of the reference *R* of `anim` this frame (`material.md` §11.2).
+    pub fn alpha_reference(&mut self, anim: &SurfaceAnim) -> AlphaReference {
+        let t = self.t;
+        self.with_states(anim.key(), |s| anim.alpha_reference(t, s))
     }
 
     /// The own-program drawing of `anim` this frame (`None`: not an own-program record).
@@ -699,12 +712,7 @@ mod tests {
         let plan = plan_material_with(&anim.material, Some(&anim.layout));
         let own = plan.own.expect("routed");
         assert_eq!(own.kind, tessera_material::MaterialKind::Water);
-        let req = |did| {
-            Some(TexRequest {
-                did,
-                variant: VARIANT_OWN_ALPHA,
-            })
-        };
+        let req = |did| Some(TexRequest::new(did, VARIANT_OWN_ALPHA));
         assert_eq!(own.textures[0], req(0x4100_0001));
         assert_eq!(own.textures[1], req(0x4100_0002));
         assert_eq!(own.textures[3], req(0x4100_0003));

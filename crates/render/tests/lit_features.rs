@@ -16,7 +16,7 @@ use tessera_render::{
     AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Camera, ColorSpace, Dye, DyeMask, Filter,
     FixedBlend, FrameLighting, Light, LightKind, LightSelection, LitSurface, Material, MeshData,
     MeshDraw, MeshId, OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage,
-    SunLight, SunShadow, TextureId, TextureUpload, Wrap,
+    SecondOpacity, SunLight, SunShadow, TextureId, TextureUpload, Wrap,
 };
 
 const SIZE: u32 = 64;
@@ -126,8 +126,8 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
         emissive,
         ..LitSurface::default()
     };
-    // lighting.md §5.12: the opacity of slot 3020 or 3018 drives only the alpha test; the
-    // kept texels are opaque (output alpha = M.alpha = 1).
+    // material.md §11.3 (revised 2026-10-10, MA60): the tested opacity reaches the output
+    // alpha whatever its source, so a kept texel of opacity 0.6 blends 0.6 over black.
     let px = centre(
         &mut r,
         &l,
@@ -137,7 +137,7 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
             lit(Opacity::Texture(alpha_06), None),
         )],
     )?;
-    assert_pixel(px, [1.0; 3], "opacity texture, kept");
+    assert_pixel(px, [0.6; 3], "opacity texture, kept, blends");
     let px = centre(
         &mut r,
         &l,
@@ -147,7 +147,7 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
             lit(Opacity::EmissiveAlpha, Some(alpha_06)),
         )],
     )?;
-    assert_pixel(px, [1.0; 3], "emissive alpha, kept");
+    assert_pixel(px, [0.6; 3], "emissive alpha, kept, blends");
     let px = centre(
         &mut r,
         &l,
@@ -158,6 +158,34 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
         )],
     )?;
     assert_eq!(px, [0, 0, 0, 255], "opacity texture 0.4 at threshold 0.5");
+    // material.md §11.2 table: two opacity alphas, multiplied (0.6 × 0.6 = 0.36 ≤ 0.5:
+    // discarded) or, for the sum records, added (1.2: kept, the output clamped to 1).
+    let with = |second, sum| LitSurface {
+        opacity: Opacity::BaseWith { second, sum },
+        emissive: Some(alpha_06),
+        ..LitSurface::default()
+    };
+    for (second, what) in [
+        (SecondOpacity::Texture(alpha_06), "texture"),
+        (SecondOpacity::EmissiveAlpha, "emissive"),
+    ] {
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, test_blend(base_06), with(second, false))],
+        )?;
+        assert_eq!(
+            px,
+            [0, 0, 0, 255],
+            "product with the {what} alpha discarded"
+        );
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, test_blend(base_06), with(second, true))],
+        )?;
+        assert_pixel(px, [1.0; 3], &format!("sum with the {what} alpha, clamped"));
+    }
     // The base opacity blends by its alpha: 0.6 over black.
     let px = centre(
         &mut r,
@@ -169,7 +197,7 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
         )],
     )?;
     assert_pixel(px, [0.6; 3], "base opacity blends");
-    // M.alpha still blends with any source.
+    // M.alpha multiplies the tested opacity of any source.
     let px = centre(
         &mut r,
         &l,
@@ -183,7 +211,8 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
             lit(Opacity::Texture(alpha_06), None),
         )],
     )?;
-    assert_pixel(px, [0.5; 3], "M.alpha with an opacity texture");
+    // Output alpha = tested opacity × M.alpha = 0.6 × 0.5 (material.md §11.3).
+    assert_pixel(px, [0.3; 3], "M.alpha with an opacity texture");
     Ok(())
 }
 
@@ -1061,7 +1090,22 @@ fn lit_only_alpha_modes_fall_back_outside_lit_passes() -> Result<(), RenderError
                 )],
             )],
         )?;
-        assert_eq!(mask, test_blend, "TestBlend draws as Mask (alpha {a})");
+        if a == 102 {
+            // 0.4 at or below the reference: discarded by both.
+            assert_eq!(mask, test_blend, "both discard (alpha {a})");
+        } else {
+            // material.md §11.3: kept texels blend by their opacity (0.6 over black) and
+            // write depth, where Mask draws them opaque.
+            let m = mask.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+            let b = test_blend.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+            for c in 0..3 {
+                let want = (f32::from(m[c]) * 0.6).round() as u8;
+                assert!(
+                    b[c].abs_diff(want) <= 2,
+                    "TestBlend blends: {b:?} vs {m:?} × 0.6"
+                );
+            }
+        }
     }
     let t = texel(&mut r, [200, 150, 100, 255])?;
     let m = |alpha| Material {
@@ -1145,6 +1189,37 @@ fn casters_beyond_the_fitted_sphere_still_cast() -> Result<(), RenderError> {
             ],
         )?;
         assert_pixel(px, [0.5; 3], &format!("caster at height {h}"));
+    }
+    Ok(())
+}
+
+/// `material.md` §11.2: a texel is kept only when its opacity is greater than the reference.
+/// At *R* = ⌊0.65 × 255⌋ / 255 = 165 / 255, a texel of 166 / 255 is kept and one of 164 / 255
+/// discarded, in the lit pass and the M2 pass alike (the exact 165 / 255 case depends on the
+/// GPU's 8-bit conversion and is tested on the CPU in `tessera-material`).
+#[test]
+fn alpha_test_boundary_at_165_of_255() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    let cutoff = (0.65_f32 * 255.0).floor() / 255.0;
+    let l = ambient_only(0.5);
+    for (a, kept) in [(166u8, true), (164, false)] {
+        let t = texel(&mut r, [255, 255, 255, a])?;
+        let m = Material {
+            alpha: AlphaMode::Mask { cutoff },
+            ..Material::textured(t)
+        };
+        let lit = centre(&mut r, &l, vec![draw(plane, m, LitSurface::default())])?;
+        let m2 = render(
+            &mut r,
+            &[(None, vec![MeshDraw::new(plane, Mat4::IDENTITY, m)])],
+        )?;
+        let m2 = m2.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+        for (px, pass) in [(lit, "lit"), (m2, "M2")] {
+            assert_eq!(px[0] > 0, kept, "{pass} pass, texel alpha {a}: {px:?}");
+        }
     }
     Ok(())
 }

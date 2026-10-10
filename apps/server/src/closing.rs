@@ -18,11 +18,13 @@
 //! 3. else the idle timeout (no end);
 //! 4. else the transport's description of the end (no end).
 //!
-//! The fields are written as §11.1 "Fields of the cause" says: `code` (a §14.1 name,
-//! `code N`, or `-`), `reason`, `end` (`server`, `peer`, `none`) and, only when the cause
-//! is a `Disconnect`, `close`. The connection task hands `reason` and `close` to `tracing`
-//! as string values, which the `text` format writes quoted with `"`, `\` and every
-//! control character escaped and the `json` format as JSON strings.
+//! The fields are written as §11.1 "Fields of the cause" says: `code` (a §14.1 name, the
+//! decimal number alone for a code §14.1 does not define (seventh revision), or `-`),
+//! `reason`, `end` (`server`, `peer`, `none`) and, only when the cause is a `Disconnect`,
+//! `close` (`<code> from <end>`, the code written as in `code`). The connection task hands
+//! `reason` and `close` to `tracing` as string values, which the `text` format writes in
+//! Rust's string debug form, a permitted case of the §11.1 "Quoted form" (§14 invariant 12),
+//! and the `json` format as JSON strings.
 
 use std::fmt;
 
@@ -96,13 +98,24 @@ impl fmt::Display for QuicEnd {
     }
 }
 
-/// The name of an application code: the protocol's name for a defined value, else
-/// `"code N"`.
+/// The name of an application code as received (a QUIC varint): the protocol's name for a
+/// value §14.1 defines, else its decimal number alone (`"65536"`; §11.1 seventh revision:
+/// no prefix and no space, so the plain `code` field stays one token).
 #[must_use]
 pub fn code_name(code: u64) -> String {
     match u16::try_from(code) {
-        Ok(v) => AppErrorCode::from_u16(v).to_string(),
-        Err(_) => format!("code {code}"),
+        Ok(v) => app_code_name(AppErrorCode::from_u16(v)),
+        Err(_) => code.to_string(),
+    }
+}
+
+/// The name of a decoded application code (a `Disconnect` code or one the server chose):
+/// its §14.1 name, or its decimal number alone when §14.1 does not define it (§11.1).
+#[must_use]
+pub fn app_code_name(code: AppErrorCode) -> String {
+    match code {
+        AppErrorCode::Other(v) => v.to_string(),
+        named => named.name().to_owned(),
     }
 }
 
@@ -192,11 +205,11 @@ impl CauseTracker {
     pub fn finish(&self, end: &QuicEnd) -> Cause {
         if let Some((code, text, from)) = &self.disconnect {
             let close = match (end, &self.local_close) {
-                (QuicEnd::Local, Some((c, _))) => format!("{c} from server"),
+                (QuicEnd::Local, Some((c, _))) => format!("{} from server", app_code_name(*c)),
                 (other, _) => other.to_string(),
             };
             return Cause {
-                code: Some(code.to_string()),
+                code: Some(app_code_name(*code)),
                 reason: text.clone(),
                 end: Some(*from),
                 close: Some(close),
@@ -211,7 +224,7 @@ impl CauseTracker {
             },
             QuicEnd::Local => match &self.local_close {
                 Some((code, reason)) => Cause {
-                    code: Some(code.to_string()),
+                    code: Some(app_code_name(*code)),
                     reason: reason.clone(),
                     end: Some(End::Server),
                     close: None,
@@ -335,14 +348,82 @@ mod tests {
         assert_eq!(c.code.as_deref(), Some("KICKED"));
         assert_eq!(c.reason, "gone");
         assert_eq!(c.end, Some(End::Peer));
+        // §11.1 (seventh revision): an undefined code is its decimal number alone.
         assert_eq!(
             t.finish(&peer_close(0x1_0000_0000, "")).code.as_deref(),
-            Some("code 4294967296")
+            Some("4294967296")
         );
+        assert_eq!(t.finish(&peer_close(0x40, "")).code.as_deref(), Some("64"));
         assert_eq!(
-            t.finish(&peer_close(0x40, "")).code.as_deref(),
-            Some("code 64")
+            t.finish(&peer_close(0x1_0000, "")).code.as_deref(),
+            Some("65536")
         );
+    }
+
+    /// §11.1 (seventh revision): an undefined code inside `close` and as a `Disconnect`
+    /// code is the decimal number alone too; every §14.1 name begins with a letter, so the
+    /// two forms cannot be confused, and neither holds a space.
+    #[test]
+    fn undefined_codes_are_bare_decimal_numbers() {
+        let mut t = CauseTracker::new();
+        t.disconnect_sent(AppErrorCode::Kicked, "");
+        let c = t.finish(&peer_close(0x1_0000, ""));
+        assert_eq!(c.close.as_deref(), Some("65536 from peer"));
+        assert_eq!(
+            t.finish(&peer_close(0x1_0000_0000, "")).close.as_deref(),
+            Some("4294967296 from peer")
+        );
+
+        let mut t = CauseTracker::new();
+        t.disconnect_received(AppErrorCode::Other(0x40), "odd");
+        let c = t.finish(&peer_close(0, ""));
+        assert_eq!(c.code_text(), "64");
+        assert_eq!(c.close.as_deref(), Some("NO_ERROR from peer"));
+
+        let mut t = CauseTracker::new();
+        t.disconnect_received(AppErrorCode::NoError, "");
+        t.closed_by_server(AppErrorCode::Other(0x41), "");
+        let c = t.finish(&QuicEnd::Local);
+        assert_eq!(c.close.as_deref(), Some("65 from server"));
+
+        for v in 0..=u16::MAX {
+            let name = code_name(u64::from(v));
+            assert!(!name.contains(' '), "{v}: {name}");
+            let defined = !matches!(AppErrorCode::from_u16(v), AppErrorCode::Other(_));
+            assert_eq!(
+                name.starts_with(|c: char| c.is_ascii_alphabetic()),
+                defined,
+                "{v}: {name}"
+            );
+            if !defined {
+                assert_eq!(name, v.to_string());
+            }
+        }
+    }
+
+    /// §14 invariant 12 and the §11.1 "Quoted form": the string debug form the `text`
+    /// format writes `reason` and `close` in escapes exactly what the table requires,
+    /// leaves printable ASCII alone, and writes any other character either as itself or as
+    /// `\u{h}` (lowercase, no leading zeros). Checked for every Unicode scalar value, so a
+    /// toolchain whose debug form changed would fail here.
+    #[test]
+    fn debug_form_meets_the_quoted_form() {
+        for c in (0u32..=0x10_FFFF).filter_map(char::from_u32) {
+            let got = format!("{:?}", c.to_string());
+            let inner = &got[1..got.len() - 1];
+            let hex = format!("\\u{{{:x}}}", u32::from(c));
+            match c {
+                '"' => assert_eq!(inner, "\\\""),
+                '\\' => assert_eq!(inner, "\\\\"),
+                '\n' => assert_eq!(inner, "\\n"),
+                '\r' => assert_eq!(inner, "\\r"),
+                '\t' => assert_eq!(inner, "\\t"),
+                '\0' => assert_eq!(inner, "\\0"),
+                '\u{1}'..='\u{1f}' | '\u{7f}'..='\u{9f}' => assert_eq!(inner, hex, "{c:?}"),
+                ' '..='~' => assert_eq!(inner, c.to_string(), "{c:?}"),
+                _ => assert!(inner == c.to_string() || inner == hex, "{c:?}: {inner}"),
+            }
+        }
     }
 
     /// The idle timeout and the transport's description carry no code and no end.

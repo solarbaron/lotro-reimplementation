@@ -26,10 +26,14 @@ pub enum AlphaMode {
     /// Alpha is ignored; depth is written.
     #[default]
     Opaque,
-    /// Alpha test: fragments with alpha below `cutoff` are discarded, the
-    /// rest are drawn opaque with depth writes.
+    /// Alpha test: fragments whose tested opacity (the base texel's alpha, before the
+    /// material and vertex alphas) is **at or below** `cutoff` are discarded, so a fragment
+    /// is kept only when its opacity is greater (`material.md` §11.2); the rest are drawn
+    /// opaque with depth writes.
     Mask {
-        /// Threshold in `0..=1` (non-finite values act as 0.5).
+        /// The reference *R* the caller computed (`material.md` §11.2 steps 1–3,
+        /// `tessera_material::alpha::AlphaReference`), normally in `0..=1` (non-finite
+        /// values act as 0.5).
         cutoff: f32,
     },
     /// Alpha blending (`src * a + dst * (1 - a)`), no depth writes. Blended
@@ -42,13 +46,15 @@ pub enum AlphaMode {
     /// [`AlphaMode::TestBlend`] (or [`AlphaMode::BLEND_DEPTH_WRITE`] when the alpha test is
     /// off).
     Blend,
-    /// Alpha test **and** blend (lit passes, `material.md` §11.3): fragments with
-    /// opacity ≤ `cutoff` are discarded, the rest blend by their alpha
-    /// (`src * a + dst * (1 - a)`) **with** depth writes, sorted with the blended
-    /// draws. Outside lit passes it draws as [`AlphaMode::Mask`].
+    /// Alpha test **and** blend (`material.md` §11.3): fragments with opacity ≤ `cutoff`
+    /// are discarded, the rest blend by their output alpha (opacity × *M*.alpha, clamped
+    /// to [0, 1]; `src * a + dst * (1 - a)`) **with** depth writes, sorted with the blended
+    /// draws. The M2 passes draw it the same way in [`MeshShading::Lit`] and as
+    /// [`AlphaMode::Mask`] in the debug shadings.
     TestBlend {
-        /// Threshold, normally in `0..=1` (non-finite values act as 0.5). A negative
-        /// cutoff keeps every texel: blend with depth write and no test
+        /// The reference *R* (`material.md` §11.2), normally in `0..=1` (non-finite values
+        /// act as 0.5). *R* = 0 discards only opacity 0 (the test switched off on a
+        /// SRCALPHA permutation); a negative cutoff keeps every texel
         /// ([`AlphaMode::BLEND_DEPTH_WRITE`]).
         cutoff: f32,
     },
@@ -585,14 +591,15 @@ pub enum Gloss {
     Texture(TextureId),
 }
 
-/// Where the opacity *α* of a lit surface comes from (`material.md` §11.2). It drives the
-/// alpha test (also in the shadow pass). Only [`Opacity::BaseAlpha`] also reaches the output
-/// alpha (*α* × *M*.alpha); with the other sources the output alpha is *M*.alpha
-/// (`lighting.md` §5.12, `material.md` §11.3).
+/// Where the opacity *α* of a lit surface comes from: the tested opacity of `material.md`
+/// §11.2 (its table "Tested opacity"). It drives the alpha test (also in the shadow pass)
+/// and the output alpha (*α* × *M*.alpha, clamped to [0, 1]; `material.md` §11.3, revised
+/// 2026-10-10: every source, not only the base alpha).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Opacity {
-    /// The base texture's alpha (`ColorAndOpacity`). Acts as [`Opacity::One`] when the
-    /// draw's dye is masked by the base alpha ([`DyeMask::BaseAlpha`]).
+    /// The base texture's alpha (`ColorAndOpacity`; with a second colour layer the alpha
+    /// after [`SecondLayer::alpha`]). Acts as [`Opacity::One`] when the draw's dye is masked
+    /// by the base alpha ([`DyeMask::BaseAlpha`]).
     #[default]
     BaseAlpha,
     /// *α* = 1 (the base alpha is gloss, a dye mask or unused).
@@ -600,6 +607,24 @@ pub enum Opacity {
     /// The emissive texture's alpha (`EmissiveAndOpacity`).
     EmissiveAlpha,
     /// The alpha of a separate texture (`OpacityAlpha`).
+    Texture(TextureId),
+    /// The base alpha combined with a second opacity alpha (`ColorAndOpacity` with
+    /// `EmissiveAndOpacity` or `OpacityAlpha`, `material.md` §11.2 table): their product,
+    /// or with `sum` their sum (which may exceed 1).
+    BaseWith {
+        /// The second alpha.
+        second: SecondOpacity,
+        /// Add the two alphas (else multiply).
+        sum: bool,
+    },
+}
+
+/// The second alpha of [`Opacity::BaseWith`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SecondOpacity {
+    /// The emissive texture's alpha ([`LitSurface::emissive`] must be set).
+    EmissiveAlpha,
+    /// The alpha of a separate texture.
     Texture(TextureId),
 }
 
@@ -716,6 +741,9 @@ pub enum LayerAlpha {
     /// The `ColorTexture` record (`material.md` §20.1, MA46): the RGB is the first layer's
     /// alone and the alpha is 2 × both layers' alphas, clamped to 1.
     OpacityOnly,
+    /// The two alphas are added (role `ColorAndOpacity2` of the sum records, `material.md`
+    /// §11.2 table); the output alpha is clamped (§11.3).
+    Summed,
 }
 
 /// The inputs of a mesh draw that only lit passes use (`lighting.md` §4.1, §5). Plain

@@ -78,19 +78,86 @@ impl Default for LibraryConfig {
     }
 }
 
-/// An appearance layer on top of a surface record (§9.3): an optional shader override
-/// and materials applied after the surface record's own (the group's material, then a
-/// dye material, §12.1).
+/// An appearance layer on top of a surface record (§9.3): the shader record that replaces
+/// the surface's (the override of the last matched group that has one) and the materials
+/// appended after the surface record's own (each matched group's material, in group-list
+/// order, then a dye material, §12.1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Layering {
     /// Replaces the surface record's shader when set.
     pub shader_override: Option<Did>,
+    /// The overrides of earlier matched groups that `shader_override` replaced, in
+    /// group-list order (earliest first). They are the fallbacks of §9.3 rule 5: when an
+    /// override fails to load it counts as 0, so the shader is the one the surface had
+    /// before it (the latest earlier override that loads, else the surface's own).
+    pub earlier_overrides: Vec<Did>,
     /// Materials applied after the surface record's materials, in order.
     pub materials: Vec<Did>,
 }
 
+impl Layering {
+    /// The layering of the groups that match a surface, given as (shader override,
+    /// material) in group-list order (`material.md` §9.3 rules 1–2, `appearance.md` §4.10):
+    ///
+    /// - the two fields act independently: a non-zero override replaces the shader record
+    ///   the surface has at that moment, a non-zero material is appended; a group whose
+    ///   material is 0 and whose override is not still replaces the shader and appends
+    ///   nothing (it is never skipped); a group with both 0 does nothing;
+    /// - overrides apply in list order, so the **last** one applied wins.
+    ///
+    /// At most `max` groups are taken (a hostile list stays bounded). `None` when no group
+    /// changes anything (the surface's own look).
+    #[must_use]
+    pub fn from_groups(
+        groups: impl IntoIterator<Item = (Option<Did>, Did)>,
+        max: usize,
+    ) -> Option<Self> {
+        let mut out = Self::default();
+        let mut any = false;
+        for (shader, material) in groups.into_iter().take(max) {
+            if let Some(sh) = shader.filter(|d| !d.is_null()) {
+                if let Some(prev) = out.shader_override.replace(sh) {
+                    out.earlier_overrides.push(prev);
+                }
+                any = true;
+            }
+            if !material.is_null() {
+                out.materials.push(material);
+                any = true;
+            }
+        }
+        any.then_some(out)
+    }
+}
+
+/// The binding key of a group that matches every surface record of a part (`material.md`
+/// §9.3 binding rule).
+pub const BINDING_KEY_ALL: u32 = 2;
+
+/// Whether a group with `group_key` applies to a surface record with `surface_key`
+/// (`material.md` §9.3): equal keys, or a group key of [`BINDING_KEY_ALL`].
+#[must_use]
+pub fn group_binding_matches(group_key: u32, surface_key: u32) -> bool {
+    group_key == BINDING_KEY_ALL || group_key == surface_key
+}
+
+/// What a figure's look adds to one surface record (`material.md` §9.3 rule 4,
+/// `appearance.md` §3.5): after the surface's own materials, in this order, the composed
+/// images of the attached compositors, then the matched groups' materials (with the
+/// groups' shader override), then the look edits.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SurfaceLook<'a> {
+    /// The composed images' one-entry materials (parameter 3000), in visiting order
+    /// (the last one wins, `appearance.md` §3.5).
+    pub composed: &'a [ParameterEdit],
+    /// The matched groups ([`Layering::from_groups`]).
+    pub layer: Option<&'a Layering>,
+    /// The look edits, sorted by descending priority (`appearance.md` §3.5).
+    pub edits: &'a [ParameterEdit],
+}
+
 /// An appearance material group (§9.3): it applies to every submesh whose surface record
-/// has the same binding key.
+/// has the same binding key (or every one, [`BINDING_KEY_ALL`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AppearanceGroup {
     /// Shader override, 0 for none.
@@ -102,19 +169,24 @@ pub struct AppearanceGroup {
 }
 
 impl AppearanceGroup {
-    /// Whether the group applies to `surface` (equal binding keys).
+    /// Whether the group applies to `surface` ([`group_binding_matches`]).
     #[must_use]
     pub fn applies_to(&self, surface: &SurfaceRecord) -> bool {
-        self.binding_key == surface.binding_key
+        group_binding_matches(self.binding_key, surface.binding_key)
     }
 
-    /// The layering this group gives, with an optional dye material after it.
+    /// The layering this group gives, with an optional dye material after it. A
+    /// shader-only group (material 0) appends nothing (§9.3 rule 1).
     #[must_use]
     pub fn layering(&self, dye_material: Option<Did>) -> Layering {
-        let mut materials = vec![self.material];
+        let mut materials: Vec<Did> = Some(self.material)
+            .filter(|d| !d.is_null())
+            .into_iter()
+            .collect();
         materials.extend(dye_material.filter(|d| !d.is_null()));
         Layering {
             shader_override: (!self.shader_override.is_null()).then_some(self.shader_override),
+            earlier_overrides: Vec::new(),
             materials,
         }
     }
@@ -494,35 +566,125 @@ impl<S: RecordSource> MaterialLibrary<S> {
     /// shader if set, the surface record's materials, then the layer's materials. Not
     /// cached.
     pub fn resolve_layered(&self, did: Did, layer: &Layering) -> Result<ResolvedMaterial> {
-        let surface = self.surface_record(did)?;
-        let shader = layer.shader_override.unwrap_or(surface.shader);
-        let mut materials = surface.materials.clone();
-        materials.extend_from_slice(&layer.materials);
-        Ok(self
-            .resolve(shader, &materials)?
-            .with_surface(did, surface.binding_key))
+        self.resolve_look(
+            did,
+            &SurfaceLook {
+                layer: Some(layer),
+                ..SurfaceLook::default()
+            },
+        )
     }
 
     /// Resolves surface record `did` under an optional appearance layer, then applies
-    /// `edits` after every material (`appearance.md` §3.5, §8 step 6: the colour edits of a
-    /// figure's species table and its composed face texture). Not cached.
+    /// `edits` after every material (`appearance.md` §3.5, §8 step 6). Not cached.
     pub fn resolve_edited(
         &self,
         did: Did,
         layer: Option<&Layering>,
         edits: &[ParameterEdit],
     ) -> Result<ResolvedMaterial> {
+        self.resolve_look(
+            did,
+            &SurfaceLook {
+                composed: &[],
+                layer,
+                edits,
+            },
+        )
+    }
+
+    /// Resolves surface record `did` with a figure's look (`material.md` §9.3 rules 3–5,
+    /// `appearance.md` §3.5): *H* is the layer's shader override when set, else the
+    /// surface's shader record; an override that fails to load counts as 0 (rule 5), so
+    /// *H* falls back to the latest earlier override that loads, else the surface's own
+    /// shader record (only that one failing fails the resolution); *L* is the surface record's own materials, then the
+    /// composed images, then the layer's materials, then the look edits. The effective set
+    /// is built once over the whole list (§9.2), so a material appended before an override
+    /// applies to the override's declarations. Not cached.
+    pub fn resolve_look(&self, did: Did, look: &SurfaceLook<'_>) -> Result<ResolvedMaterial> {
         let surface = self.surface_record(did)?;
-        let shader = layer
-            .and_then(|l| l.shader_override)
-            .unwrap_or(surface.shader);
-        let mut materials = surface.materials.clone();
-        if let Some(l) = layer {
-            materials.extend_from_slice(&l.materials);
+        let layer_materials: &[Did] = look.layer.map_or(&[], |l| l.materials.as_slice());
+        let own = last_occurrences(&surface.materials, |d| *d);
+        let iface = self.look_shader(did, surface.shader, look.layer)?;
+        let mut skipped = Vec::new();
+        let mut load = |dids: &[Did]| -> Vec<Arc<MaterialRecord>> {
+            let mut out = Vec::with_capacity(dids.len());
+            for &d in dids {
+                match self.material(d) {
+                    Ok(m) => out.push(m),
+                    Err(e) => {
+                        tracing::debug!(%d, error = %e, "material left out");
+                        skipped.push(SkippedMaterial {
+                            did: d,
+                            reason: e.to_string(),
+                        });
+                    }
+                }
+            }
+            out
+        };
+        let own = load(&own);
+        let groups = load(layer_materials);
+        let composed = crate::edits::edit_record(&iface, look.composed);
+        let edits = crate::edits::edit_record(&iface, look.edits);
+        let mut refs: Vec<&MaterialRecord> = own.iter().map(AsRef::as_ref).collect();
+        refs.extend(composed.as_ref());
+        refs.extend(groups.iter().map(AsRef::as_ref));
+        refs.extend(edits.as_ref());
+        let stored = last_occurrences(
+            &refs
+                .iter()
+                .map(|m| m.did)
+                .filter(|d| !d.is_null())
+                .collect::<Vec<_>>(),
+            |d| *d,
+        );
+        if stored.len() > MAX_RESOLVE_MATERIALS {
+            return Err(MaterialError::TooManyMaterials {
+                count: stored.len(),
+                limit: MAX_RESOLVE_MATERIALS,
+            });
         }
-        Ok(self
-            .resolve_with_edits(shader, &materials, edits)?
-            .with_surface(did, surface.binding_key))
+        let mut resolved = ResolvedMaterial::resolve(iface, &refs);
+        // The run-time records are not stored materials: list the stored ones.
+        resolved.materials = stored;
+        resolved.skipped = skipped;
+        Ok(resolved.with_surface(did, surface.binding_key))
+    }
+
+    /// The shader record of a look (§9.3 rules 2 and 5): the layer's overrides from the
+    /// last applied back to the first, skipping (and reporting) those that fail to load,
+    /// then the surface's own shader record, whose failure is the result's.
+    fn look_shader(
+        &self,
+        surface: Did,
+        own: Did,
+        layer: Option<&Layering>,
+    ) -> Result<Arc<ShaderInterface>> {
+        let overrides = layer
+            .into_iter()
+            .flat_map(|l| {
+                l.shader_override
+                    .into_iter()
+                    .chain(l.earlier_overrides.iter().rev().copied())
+            })
+            .filter(|d| !d.is_null());
+        let mut failed: Vec<Did> = Vec::new();
+        for o in overrides {
+            if failed.contains(&o) {
+                continue;
+            }
+            match self.shader(o) {
+                Ok(iface) => return Ok(iface),
+                // The surface's own record failing is the resolution's failure.
+                Err(e) if o == own => return Err(e),
+                Err(e) => {
+                    tracing::debug!(%surface, shader = %o, error = %e, "shader override left out");
+                    failed.push(o);
+                }
+            }
+        }
+        self.shader(own)
     }
 
     /// Resolves a mesh's surface list: submesh *i* uses surface record *i* (§9.1).

@@ -56,14 +56,54 @@ pub enum Filter {
     Linear,
 }
 
-/// Texture coordinate addressing outside `0..1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Texture coordinate addressing outside `0..1`, per axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Wrap {
-    /// Tile.
+    /// Tile along U and V.
     #[default]
     Repeat,
-    /// Clamp to the edge texel.
+    /// Clamp to the edge texel along U and V.
     Clamp,
+    /// Clamp along U, tile along V.
+    ClampU,
+    /// Tile along U, clamp along V.
+    ClampV,
+}
+
+impl Wrap {
+    /// The mode that clamps U when `clamp_u` and V when `clamp_v`, tiling the other axes.
+    #[must_use]
+    pub const fn from_axes(clamp_u: bool, clamp_v: bool) -> Self {
+        match (clamp_u, clamp_v) {
+            (false, false) => Self::Repeat,
+            (true, true) => Self::Clamp,
+            (true, false) => Self::ClampU,
+            (false, true) => Self::ClampV,
+        }
+    }
+
+    /// Whether U and V clamp (else they tile).
+    #[must_use]
+    pub const fn clamps(self) -> (bool, bool) {
+        match self {
+            Self::Repeat => (false, false),
+            Self::Clamp => (true, true),
+            Self::ClampU => (true, false),
+            Self::ClampV => (false, true),
+        }
+    }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Repeat => 0,
+            Self::Clamp => 1,
+            Self::ClampU => 2,
+            Self::ClampV => 3,
+        }
+    }
+
+    /// Every mode.
+    pub const ALL: [Self; 4] = [Self::Repeat, Self::Clamp, Self::ClampU, Self::ClampV];
 }
 
 /// Description of an RGBA8 upload (4 bytes per texel, rows tightly packed,
@@ -267,7 +307,7 @@ struct Slot<T> {
 /// Samplers indexed by (filter, wrap).
 #[derive(Debug)]
 pub(crate) struct Samplers {
-    all: [wgpu::Sampler; 4],
+    all: [wgpu::Sampler; 8],
 }
 
 impl Samplers {
@@ -277,10 +317,14 @@ impl Samplers {
                 Filter::Nearest => wgpu::FilterMode::Nearest,
                 Filter::Linear => wgpu::FilterMode::Linear,
             };
-            let a = match wrap {
-                Wrap::Repeat => wgpu::AddressMode::Repeat,
-                Wrap::Clamp => wgpu::AddressMode::ClampToEdge,
+            let mode = |clamp: bool| {
+                if clamp {
+                    wgpu::AddressMode::ClampToEdge
+                } else {
+                    wgpu::AddressMode::Repeat
+                }
             };
+            let (cu, cv) = wrap.clamps();
             // The mip filter matters only for mip chains (single-level textures
             // sample level 0 either way): `Linear` is trilinear.
             let m = match filter {
@@ -289,33 +333,28 @@ impl Samplers {
             };
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("tessera-sampler"),
-                address_mode_u: a,
-                address_mode_v: a,
-                address_mode_w: a,
+                address_mode_u: mode(cu),
+                address_mode_v: mode(cv),
+                address_mode_w: wgpu::AddressMode::Repeat,
                 mag_filter: f,
                 min_filter: f,
                 mipmap_filter: m,
                 ..Default::default()
             })
         };
+        let [n0, n1, n2, n3] = Wrap::ALL.map(|w| make(Filter::Nearest, w));
+        let [l0, l1, l2, l3] = Wrap::ALL.map(|w| make(Filter::Linear, w));
         Self {
-            all: [
-                make(Filter::Nearest, Wrap::Repeat),
-                make(Filter::Nearest, Wrap::Clamp),
-                make(Filter::Linear, Wrap::Repeat),
-                make(Filter::Linear, Wrap::Clamp),
-            ],
+            all: [n0, n1, n2, n3, l0, l1, l2, l3],
         }
     }
 
     pub(crate) fn get(&self, filter: Filter, wrap: Wrap) -> &wgpu::Sampler {
-        let i = match (filter, wrap) {
-            (Filter::Nearest, Wrap::Repeat) => 0,
-            (Filter::Nearest, Wrap::Clamp) => 1,
-            (Filter::Linear, Wrap::Repeat) => 2,
-            (Filter::Linear, Wrap::Clamp) => 3,
+        let f = match filter {
+            Filter::Nearest => 0,
+            Filter::Linear => 1,
         };
-        &self.all[i]
+        &self.all[f * Wrap::ALL.len() + wrap.index()]
     }
 }
 
@@ -734,6 +773,16 @@ mod tests {
         assert_eq!(s.get(first), None, "stale handle does not alias");
         assert_eq!(s.get(second), Some(&2));
         assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn wrap_axes_round_trip() {
+        for w in Wrap::ALL {
+            let (u, v) = w.clamps();
+            assert_eq!(Wrap::from_axes(u, v), w);
+        }
+        assert_eq!(Wrap::from_axes(true, false), Wrap::ClampU);
+        assert_eq!(Wrap::default(), Wrap::Repeat);
     }
 
     #[test]

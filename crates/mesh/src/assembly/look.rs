@@ -27,9 +27,14 @@
 //! `ScriptSystem_ServerScriptlet` value, so it reads true until a start-up script sets it.
 //! [`figure_after_startup`] is what a figure placed in the world gets after its start-up:
 //! `Physics_InWorld` true (§3.5 Decision; the explorer's viewer counts as placed), given to
-//! the resolver with `ClipResolver::with_after_startup`. Nothing is dropped after the
-//! resolution: whether `GOP_AvatarFaceCompositing` off removes a face is the data's choice
-//! (§3.5 table).
+//! the resolver with `ClipResolver::with_after_startup`. When that changes the case of a
+//! persistent Switch the start-up reached, the resolver marks the left branch's look nodes
+//! stopped, together with those of the scripts its `Persistent` 1, `UnbindOnDeath` 0 Run
+//! nodes started, but not those of scripts started by `Persistent` 0 or `UnbindOnDeath` 1
+//! Runs (`script-runtime.md` §6.6 R56): a face that a `Persistent` 0 Run of the left branch
+//! attached stays attached, as in the client (`appearance.md` §3.5). [`figure_look`]
+//! replays those stops like any other. Nothing is dropped after the resolution: whether
+//! `GOP_AvatarFaceCompositing` off removes a face is the data's choice (§3.5 table).
 //!
 //! Figures on a character screen would carry their `CharGen_Stage` instead of the
 //! placement (§3.5); Tessera has no character screen on this path yet, so every figure
@@ -37,10 +42,11 @@
 //!
 //! The look's surfaces (§3.5 "How material edits combine"): a part whose slot equals a
 //! node's `MeshType` (2: every part; 0: none) and a surface whose binding key equals its
-//! `MaterialType` (2: every surface) get the composed image of each matching compositor as
-//! the base colour (3000), then the matching edits sorted by descending `Priority` (start
-//! order among equals), each a material of its own, so the lowest `Priority` takes effect
-//! (`tessera_material::figure_edits`).
+//! `MaterialType` (2: every surface) get the composed image of the last attached matching
+//! compositor as the base colour (3000), then the figure's material groups, then the
+//! matching edits sorted by descending `Priority` (start order among equals), each a
+//! material of its own, so the lowest `Priority` takes effect (`material.md` §9.3 rule 4,
+//! `tessera_material::MaterialLibrary::resolve_look`).
 //!
 //! Composition is cached ([`LookCache`], shared by every figure of a client or explorer):
 //! parsed compositor records and decoded source images by DID, composed images by

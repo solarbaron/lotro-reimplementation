@@ -529,3 +529,56 @@ fn placed_figures_are_in_the_world_after_start_up() {
     );
     assert!(figure_after_startup(&AssemblyVocabulary::default()).is_empty());
 }
+
+/// `appearance.md` §3.5 Decision: where two attached compositors match one surface, the
+/// one attached last sets parameter 3000; a compositor without a composed image adds
+/// nothing, so the one attached before it takes effect.
+#[test]
+fn last_attached_compositor_wins_for_a_surface() {
+    use std::sync::Arc;
+    use tessera_formats::RgbaImage;
+    use tessera_mesh::assembly::look::FaceCompositor;
+    let compositor = |name: u32, identity: u64, image: bool| FaceCompositor {
+        name,
+        record: Did(RECORD),
+        mesh_type: HEAD,
+        material_type: FACE_SKIN,
+        selection: Vec::new(),
+        colours: Vec::new(),
+        image: image.then(|| {
+            Arc::new(RgbaImage {
+                width: 1,
+                height: 1,
+                pixels: vec![1, 2, 3, 255],
+            })
+        }),
+        identity,
+        source_bytes: 0,
+    };
+    let look = FigureLook {
+        compositors: vec![compositor(FACE, 1, true), compositor(OTHER, 2, true)],
+        ..FigureLook::default()
+    };
+    assert_eq!(
+        look.compositor_for(HEAD, FACE_SKIN).map(|c| c.identity),
+        Some(2)
+    );
+    let look = FigureLook {
+        compositors: vec![compositor(OTHER, 2, true), compositor(FACE, 1, true)],
+        ..FigureLook::default()
+    };
+    assert_eq!(
+        look.compositor_for(HEAD, FACE_SKIN).map(|c| c.identity),
+        Some(1)
+    );
+    // The later one failed to compose: the earlier one's image stays.
+    let look = FigureLook {
+        compositors: vec![compositor(FACE, 1, true), compositor(OTHER, 2, false)],
+        ..FigureLook::default()
+    };
+    assert_eq!(
+        look.compositor_for(HEAD, FACE_SKIN).map(|c| c.identity),
+        Some(1)
+    );
+    assert!(look.compositor_for(CREST, FACE_SKIN).is_none());
+}

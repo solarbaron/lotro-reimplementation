@@ -253,10 +253,20 @@ fn fs_opaque(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(
     return vec4<f32>(c.rgb, 1.0);
 }
 
+// The tested opacity (material.md §11.2): the base texel's alpha, before the material and
+// vertex alphas; 1 when that alpha is the dye mask.
+fn texel_opacity(in: VsOut) -> f32 {
+    let a = textureSample(t_base, s_base, in.uv).a;
+    let dye_alpha = (draw.flags.x & F_DYE) != 0u && draw.flags.z == DYE_BASE_ALPHA;
+    return select(a, 1.0, dye_alpha);
+}
+
+// Kept only when the tested opacity is greater than the reference (material.md §11.2):
+// discarded when opacity <= reference.
 @fragment
 fn fs_mask(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let c = shade(in, front_facing);
-    if (c.a < draw.params.x) {
+    if (texel_opacity(in) <= draw.params.x) {
         discard;
     }
     return vec4<f32>(c.rgb, 1.0);
@@ -265,6 +275,17 @@ fn fs_mask(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0)
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     return shade(in, front_facing);
+}
+
+// Alpha test, then blend by the output alpha (opacity x material alpha, clamped to [0, 1];
+// material.md §11.3) with depth write.
+@fragment
+fn fs_test_blend(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    let c = shade(in, front_facing);
+    if (texel_opacity(in) <= draw.params.x) {
+        discard;
+    }
+    return vec4<f32>(c.rgb, clamp(c.a, 0.0, 1.0));
 }
 
 // ---- overlays ----------------------------------------------------------------------

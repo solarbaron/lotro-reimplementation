@@ -1909,7 +1909,11 @@ impl<'w> Renderer<'w> {
                     _ => None,
                 };
                 let opacity = match l.opacity {
-                    Opacity::Texture(id) => self.resolve_texture(Some(id), view, warnings),
+                    Opacity::Texture(id)
+                    | Opacity::BaseWith {
+                        second: crate::material::SecondOpacity::Texture(id),
+                        ..
+                    } => self.resolve_texture(Some(id), view, warnings),
                     _ => None,
                 };
                 let emissive = self.resolve_texture(l.emissive, view, warnings);
@@ -2051,7 +2055,11 @@ impl<'w> Renderer<'w> {
                     let lit_shading = shading == MeshShading::Lit;
                     let kind = match m.alpha {
                         AlphaMode::Opaque => Kind::Opaque,
-                        AlphaMode::Mask { .. } | AlphaMode::TestBlend { .. } => Kind::Mask,
+                        AlphaMode::Mask { .. } => Kind::Mask,
+                        // material.md §11.3: the kept texels blend by their opacity and
+                        // write depth; the debug shadings keep the cut-out only.
+                        AlphaMode::TestBlend { .. } if lit_shading => Kind::TestBlend,
+                        AlphaMode::TestBlend { .. } => Kind::Mask,
                         AlphaMode::Blend | AlphaMode::Additive | AlphaMode::Fixed(_)
                             if lit_shading =>
                         {
@@ -2068,7 +2076,10 @@ impl<'w> Renderer<'w> {
                         skinned,
                         bias,
                     };
-                    (PipeKey::Mesh(key), kind == Kind::Blend)
+                    (
+                        PipeKey::Mesh(key),
+                        matches!(kind, Kind::Blend | Kind::TestBlend),
+                    )
                 };
                 // Two-sided blending draws back faces first, then front faces.
                 let culls: &[Cull] = match (m.two_sided, blended) {

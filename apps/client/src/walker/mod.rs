@@ -1883,6 +1883,20 @@ impl Walker {
         self.objects.fallback_stats().clone()
     }
 
+    /// The landscape-water drawings of the last frame, with their parameters at the frame's
+    /// material clock (`water.md` §8.7).
+    #[must_use]
+    pub fn water_drawings(&self) -> &[water::DrawnWater] {
+        self.water.drawn()
+    }
+
+    /// The material and light clock now, seconds since the walker started
+    /// (`material.md` §5.3.1).
+    #[must_use]
+    pub fn material_clock(&self) -> f64 {
+        self.material_time()
+    }
+
     /// The far view's counters of the last frame (`None` with the far view off).
     #[must_use]
     pub fn far_view_stats(&self) -> Option<farview::FarViewStats> {

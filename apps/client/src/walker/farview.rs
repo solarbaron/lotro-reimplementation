@@ -597,10 +597,7 @@ impl FarViewLayer {
         if let (Some(r), None) = (&self.records, &self.detail)
             && let Some(d) = r.detail_texture
         {
-            let t = TexRequest {
-                did: d.0,
-                variant: VARIANT_OPAQUE,
-            };
+            let t = TexRequest::new(d.0, VARIANT_OPAQUE);
             store.acquire(&[t]);
             self.detail = Some(t);
         }
@@ -696,16 +693,10 @@ impl FarViewLayer {
                 g.textured = true;
                 let mut reqs = Vec::with_capacity(2);
                 if rec.colour_list.0 != 0 {
-                    reqs.push(TexRequest {
-                        did: rec.colour_list.0,
-                        variant: VARIANT_OPAQUE,
-                    });
+                    reqs.push(TexRequest::new(rec.colour_list.0, VARIANT_OPAQUE));
                 }
                 if rec.ceiling_colour_list.0 != 0 {
-                    reqs.push(TexRequest {
-                        did: rec.ceiling_colour_list.0,
-                        variant: VARIANT_OPAQUE,
-                    });
+                    reqs.push(TexRequest::new(rec.ceiling_colour_list.0, VARIANT_OPAQUE));
                 }
                 store.acquire(&reqs);
                 g.textures.extend(reqs);
@@ -717,10 +708,7 @@ impl FarViewLayer {
                 let reqs: Vec<TexRequest> = [t.colour_atlas, t.second_atlas]
                     .iter()
                     .filter(|d| d.0 != 0)
-                    .map(|d| TexRequest {
-                        did: d.0,
-                        variant: VARIANT_OWN_ALPHA,
-                    })
+                    .map(|d| TexRequest::new(d.0, VARIANT_OWN_ALPHA))
                     .collect();
                 store.acquire(&reqs);
                 g.textures.extend(reqs);
@@ -775,10 +763,7 @@ impl FarViewLayer {
     fn colour_settled(store: &ObjectLayer, rec: &SectorRecord) -> bool {
         rec.colour_list.0 == 0
             || !matches!(
-                store.lookup(TexRequest {
-                    did: rec.colour_list.0,
-                    variant: VARIANT_OPAQUE,
-                }),
+                store.lookup(TexRequest::new(rec.colour_list.0, VARIANT_OPAQUE)),
                 TexLookup::Pending
             )
     }
@@ -860,10 +845,7 @@ impl FarViewLayer {
             let tf = Mat4::from_translation(origin);
             let colour = lookup(
                 store,
-                Some(TexRequest {
-                    did: rec.colour_list.0,
-                    variant: VARIANT_OPAQUE,
-                }),
+                Some(TexRequest::new(rec.colour_list.0, VARIANT_OPAQUE)),
             );
             let near_view = viewer
                 .and_then(|v| anchor.offset_of(v.landblock))
@@ -885,10 +867,7 @@ impl FarViewLayer {
                 let mut d = FarTerrainDraw::new(m.clone(), tf);
                 d.colour = lookup(
                     store,
-                    Some(TexRequest {
-                        did: rec.ceiling_colour_list.0,
-                        variant: VARIANT_OPAQUE,
-                    }),
+                    Some(TexRequest::new(rec.ceiling_colour_list.0, VARIANT_OPAQUE)),
                 );
                 d.detail = detail;
                 d.detail_repeats = repeats;
@@ -900,19 +879,13 @@ impl FarViewLayer {
             {
                 let atlas = lookup(
                     store,
-                    Some(TexRequest {
-                        did: t.colour_atlas.0,
-                        variant: VARIANT_OWN_ALPHA,
-                    }),
+                    Some(TexRequest::new(t.colour_atlas.0, VARIANT_OWN_ALPHA)),
                 );
                 let normals = (t.second_atlas.0 != 0)
                     .then(|| {
                         lookup(
                             store,
-                            Some(TexRequest {
-                                did: t.second_atlas.0,
-                                variant: VARIANT_OWN_ALPHA,
-                            }),
+                            Some(TexRequest::new(t.second_atlas.0, VARIANT_OWN_ALPHA)),
                         )
                     })
                     .flatten();

@@ -2108,6 +2108,27 @@ Added by the clean-room implementation of M4.5 (`crates/material` modules `trans
 > is 0 for a negative or non-finite clock.
 > Answer: the client uses the block's `specular_color` (bytes 19–22, §7.6; white in every block of this install) × the per-object tint, then black below power 0.5 (§8.3). The implementation's white × tint equals it on this install; reading the block value is exact.
 
+> **OPEN (implementer, clean room, 2026-10-10, conformance to the §9.3, §11.2 and §11.3
+> revision; engineering choices where the spec is silent, please confirm or correct):**
+> (1) Tested opacity of role combinations the §11.2 table does not list (two roles other than
+> the tabled pairs, three or more roles, `ColorAndOpacity2` without `ColorAndOpacity`):
+> Tessera orders the roles by slot 3000, 3020, 3018, 3001, takes a lone role's alpha, and
+> combines the first two as the table's rule says (the product; the sum only for the seven
+> listed DIDs). The table says no record in scope has such a combination. (2) In "What the
+> client does per draw", a non-finite *r* is taken as 0.5 and a non-finite *A* as 1, and *A*
+> is clamped to [0, 1]; Tessera has no alpha-to-coverage option, so steps 1 and 4 never
+> apply. (3) *A* in the walker is the 2000 alpha × Tessera's own draw-distance fade of the
+> object (no per-object tint is applied yet); *R* is recomputed for every fading draw. The
+> explorer uses the 2000 alpha alone. (4) The explorer bakes the product or sum of two
+> opacity alphas into the 8-bit alpha of the base texture: a sum saturates at 1, so where
+> *R* = 1 a texel whose sum exceeds 1 is discarded (the programs keep it; the lit pipeline
+> of the walker adds the two alphas unclamped and matches the programs). (5) The walker binds
+> the emissive texture of a `ColorAndOpacity` + `EmissiveAndOpacity` record for its alpha
+> even when the record's glow colour is black (the emissive RGB then adds nothing). (6) A
+> group whose slot `a` is 0 is dropped before matching, and binding key 2 matches every
+> surface record, in all figure and cell paths (§9.3 binding rule), with at most 16 matched
+> groups per surface.
+
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)
 
@@ -2237,6 +2258,20 @@ open:
 >   is itself part of the opacity (`ColorAndOpacity`, `ColorTexture`), so the case "second
 >   layer alpha alone" does not arise in this install.
 > - **(e)** **Tessera Decision (kept);** the original's loading behaviour is not traced.
+
+> **OPEN** (implementer, 2026-10-10, walker and `tessera-render`; engineering choices, no
+> format fact): the walker now samples object textures with each slot's effective address
+> modes (§7.5 bytes 8 and 9 with 4005 / 4006 applied, §8.5) instead of wrap everywhere. (a)
+> Border (code 4) is drawn as clamp to the edge texel: the 40-byte sampler state of §7.5
+> stores no border colour, and the colour the original uses (the device default, or a
+> render state) is not known. (b) A base texture whose alpha is taken from another slot's
+> texture (an opacity map composed into one image, §19 Decision of 2026-10-07) is sampled
+> with the address modes of the diffuse slot 3000; an opacity map drawn without a base
+> texture with those of its own slot. Whether the original's opacity sampler ever differs
+> from the diffuse sampler on a surface record is not checked. (c) Dye masks (§12.2) are
+> sampled with wrap; normal, emissive, glow and second-layer textures with their own slot's
+> modes; the samplers of the water and lava programs (`water.md` §8) keep their own fixed
+> modes. (d) Address modes other than 1, 3 and 4 (none occur, §7.5) are drawn as wrap.
 
 
 ---

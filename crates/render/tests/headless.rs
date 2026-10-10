@@ -349,8 +349,8 @@ fn colour_spaces_uv_rects_wrap_and_blending() -> Result<(), RenderError> {
         }
     }
 
-    // Repeat tiles, Clamp smears the edge texel.
-    for wrap in [Wrap::Repeat, Wrap::Clamp] {
+    // Repeat tiles, Clamp smears the edge texel; ClampU and ClampV clamp one axis only.
+    for wrap in [Wrap::Repeat, Wrap::Clamp, Wrap::ClampU, Wrap::ClampV] {
         let tex = r.upload_texture(&TextureUpload {
             filter: Filter::Nearest,
             wrap,
@@ -362,11 +362,19 @@ fn colour_spaces_uv_rects_wrap_and_blending() -> Result<(), RenderError> {
         let img = draw_full(&mut r, &target, q)?;
         assert_eq!(img.pixel(8, 8), Some([255, 0, 0, 255]), "{wrap:?}");
         assert_eq!(img.pixel(24, 8), Some([0, 255, 0, 255]), "{wrap:?}");
-        let third_column = match wrap {
-            Wrap::Repeat => [255, 0, 0, 255],
-            Wrap::Clamp => [0, 255, 0, 255],
+        let (clamp_u, clamp_v) = wrap.clamps();
+        let third_column = if clamp_u {
+            [0, 255, 0, 255]
+        } else {
+            [255, 0, 0, 255]
         };
         assert_eq!(img.pixel(40, 8), Some(third_column), "{wrap:?}");
+        let third_row = if clamp_v {
+            [0, 0, 255, 255]
+        } else {
+            [255, 0, 0, 255]
+        };
+        assert_eq!(img.pixel(8, 40), Some(third_row), "{wrap:?}");
     }
 
     // 50 % white over opaque black.

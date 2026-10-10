@@ -17,14 +17,16 @@ use tessera_material::diagnose::{base_reason, opacity_slot};
 use tessera_material::layers::{
     LayerAlpha as MaterialLayerAlpha, LayerCombine, SECOND_LAYER_ROLES, second_layer_plan,
 };
+use tessera_material::records::AddressMode;
 use tessera_material::vocab::ids;
 use tessera_material::{
-    BlendMode, CurveStates, FallbackReason, LiquidSurface, MaterialKind, ResolvedMaterial,
-    TextureMatrixLayout,
+    AlphaReference, BlendMode, CurveStates, FallbackReason, LiquidSurface, MaterialKind,
+    ResolvedMaterial, TestedOpacity, TextureMatrixLayout,
 };
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
 use tessera_render::{
     AlphaMode, Indices, LayerAlpha, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh, UvTransform,
+    Wrap,
 };
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
@@ -52,13 +54,48 @@ pub enum AlphaKind {
 
 /// The texture a plan samples: `did` is a texture list (or surface) DID; `variant` is
 /// [`VARIANT_OPAQUE`], [`VARIANT_OWN_ALPHA`], [`VARIANT_ALPHA_ONLY`] or, for any other
-/// value, the DID of a separate opacity texture whose alpha replaces `did`'s.
+/// value, the DID of a separate opacity texture whose alpha replaces `did`'s; `wrap` the
+/// address modes it is sampled with (the GPU texture is uploaded once per mode in use).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TexRequest {
     /// Base texture (or the opacity texture for [`VARIANT_ALPHA_ONLY`]).
     pub did: u32,
     /// Alpha source (see the type docs).
     pub variant: u32,
+    /// Address modes U and V of the sampler (`material.md` §7.5, §8.5).
+    pub wrap: Wrap,
+}
+
+impl TexRequest {
+    /// A request sampled with wrap (repeat) on both axes.
+    #[must_use]
+    pub const fn new(did: u32, variant: u32) -> Self {
+        Self {
+            did,
+            variant,
+            wrap: Wrap::Repeat,
+        }
+    }
+
+    /// The same request with the address modes `wrap`.
+    #[must_use]
+    pub const fn with_wrap(self, wrap: Wrap) -> Self {
+        Self { wrap, ..self }
+    }
+}
+
+/// The address modes of texture slot `id` of `m`: its effective sampler state
+/// (`material.md` §7.5 with the 4005 / 4006 flags applied, §8.5). Clamp (3) and border (4)
+/// clamp to the edge texel (Tessera Decision: the sampler state stores no border colour,
+/// `material.md` §19); wrap (1), any other code and a slot without a sampler tile.
+#[must_use]
+pub fn slot_wrap(m: &ResolvedMaterial, id: u32) -> Wrap {
+    let clamps = |a: AddressMode| matches!(a, AddressMode::Clamp | AddressMode::Border);
+    m.slot(id)
+        .and_then(|s| s.sampler.as_ref())
+        .map_or(Wrap::Repeat, |st| {
+            Wrap::from_axes(clamps(st.address_u()), clamps(st.address_v()))
+        })
 }
 
 /// Where the gloss *g* of a lit surface comes from (`lighting.md` §5.2 item 5,
@@ -96,9 +133,73 @@ pub struct LitInputs {
     pub specular: Option<([f32; 3], f32)>,
     /// Gloss source.
     pub gloss: GlossFrom,
+    /// A second opacity alpha combined with the base alpha (`material.md` §11.2 table:
+    /// `ColorAndOpacity` with `EmissiveAndOpacity` or `OpacityAlpha`).
+    pub opacity2: Option<SecondOpacityPlan>,
+    /// The inputs of the per-draw alpha reference *R* (`material.md` §11.2), at the
+    /// material's own alpha; a draw that fades recomputes *R* with its fade
+    /// ([`LitInputs::reference_at`]).
+    pub reference: AlphaReference,
+}
+
+/// The second alpha of the tested opacity (`material.md` §11.2 table) in a lit plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecondOpacityPlan {
+    /// The emissive texture's alpha ([`LitInputs::emissive`] is set): `sum` adds it to the
+    /// base alpha (the sum records), else it multiplies it.
+    Emissive {
+        /// Add the alphas.
+        sum: bool,
+    },
+    /// The alpha of slot 3020's texture, multiplied (or with `sum` added).
+    Texture {
+        /// The texture, with its own alpha.
+        texture: TexRequest,
+        /// Add the alphas.
+        sum: bool,
+    },
 }
 
 impl LitInputs {
+    /// *R* for a draw whose opacity is the material alpha × `fade` (`material.md` §11.2
+    /// steps 1–3: in depth-writing permutations *r* × *A*, the test off below *A* 0.9 in
+    /// the others; floor quantisation in single precision; 0 / −1 with the test off).
+    #[must_use]
+    pub fn reference_at(&self, fade: f32) -> f32 {
+        AlphaReference {
+            material_alpha: self.reference.material_alpha * fade,
+            ..self.reference
+        }
+        .reference()
+    }
+
+    /// The lit inputs with the reference inputs `reference` (`material.md` §11.2): *r*
+    /// evaluated at this frame's clock for an animated 1043. The cutoffs that carry *R*
+    /// (an alpha mask, a tested blend, a fixed blend's test) take the new *R*; surfaces
+    /// whose opacity is not drawn keep their mode.
+    #[must_use]
+    pub fn with_reference(self, reference: AlphaReference) -> Self {
+        let r = reference.reference();
+        let alpha = if self.opacity_from_base {
+            match self.alpha {
+                AlphaMode::Mask { .. } => AlphaMode::Mask { cutoff: r },
+                AlphaMode::TestBlend { .. } => AlphaMode::TestBlend { cutoff: r },
+                AlphaMode::Fixed(b) => AlphaMode::Fixed(tessera_render::FixedBlend {
+                    alpha_test: (r >= 0.0).then_some(tessera_render::AlphaThreshold(r)),
+                    ..b
+                }),
+                other => other,
+            }
+        } else {
+            self.alpha
+        };
+        Self {
+            alpha,
+            reference,
+            ..self
+        }
+    }
+
     /// The lit inputs of a submesh whose material could not be resolved.
     pub const FALLBACK: Self = Self {
         color: [0.8, 0.8, 0.8, 1.0],
@@ -110,6 +211,15 @@ impl LitInputs {
         glow: [0.0; 3],
         specular: None,
         gloss: GlossFrom::One,
+        opacity2: None,
+        reference: AlphaReference {
+            test: false,
+            depth_write: true,
+            reference: 0.5,
+            material_alpha: 1.0,
+            src_alpha: false,
+            alpha_to_coverage: false,
+        },
     };
 }
 
@@ -198,10 +308,8 @@ pub fn own_textures(surface: &LiquidSurface) -> [Option<TexRequest>; OWN_TEXTURE
     };
     // DIDs 0–3 would collide with the variant codes; they are never real.
     list.map(|d| {
-        d.filter(|d| d.0 > VARIANT_DYE_MASK).map(|d| TexRequest {
-            did: d.0,
-            variant: VARIANT_OWN_ALPHA,
-        })
+        d.filter(|d| d.0 > VARIANT_DYE_MASK)
+            .map(|d| TexRequest::new(d.0, VARIANT_OWN_ALPHA))
     })
 }
 
@@ -276,6 +384,10 @@ pub struct MaterialPlan {
     pub uv: [UvTransform; 2],
     /// A curve of texture matrix 0 or 1 changes with time.
     pub animated_uv: bool,
+    /// The alpha reference *r* (1043) is an animated curve (`material.md` §11.2: *r* is
+    /// evaluated at the clock); the walker sets *R* every frame
+    /// ([`MaterialPlan::with_reference`]). Such a plan is not drawn instanced.
+    pub animated_reference: bool,
     /// The emissive texture reads texture matrix 1 (`material.md` §8.4).
     pub emissive_uv1: bool,
     /// The surface is drawn by its own program (`material.md` §11.6).
@@ -296,6 +408,7 @@ impl MaterialPlan {
         layer2: None,
         uv: [UvTransform::IDENTITY; 2],
         animated_uv: false,
+        animated_reference: false,
         emissive_uv1: false,
         own: None,
     };
@@ -322,6 +435,10 @@ impl MaterialPlan {
             .chain(self.lit.normal)
             .chain(self.lit.emissive)
             .chain(self.lit.glow_mask)
+            .chain(match self.lit.opacity2 {
+                Some(SecondOpacityPlan::Texture { texture, .. }) => Some(texture),
+                _ => None,
+            })
             .chain(self.layer2.map(|l| l.0))
             .chain(
                 self.own
@@ -336,8 +453,33 @@ impl MaterialPlan {
     pub fn instanceable(&self) -> bool {
         self.dye.is_none()
             && self.lit.emissive.is_none()
+            && self.lit.opacity2.is_none()
             && self.lit.glow_mask.is_none()
             && self.own.is_none()
+            && !self.animated_reference
+    }
+
+    /// The plan with the reference inputs `reference` (*r* at this frame's clock,
+    /// `material.md` §11.2): the alpha mask of the M2 plan and the lit inputs
+    /// ([`LitInputs::with_reference`]) take the new *R*.
+    #[must_use]
+    pub fn with_reference(self, reference: AlphaReference) -> Self {
+        let alpha = match self.alpha {
+            AlphaKind::Mask(_) => {
+                let r = reference.reference();
+                AlphaKind::Mask(if r.is_finite() {
+                    r.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                })
+            }
+            other => other,
+        };
+        Self {
+            alpha,
+            lit: self.lit.with_reference(reference),
+            ..self
+        }
     }
 }
 
@@ -382,37 +524,28 @@ pub fn plan_material_with(
     let diffuse = slot_tex(ids::DIFFUSE);
     let texture = match (diffuse, opacity) {
         (None, None) => None,
-        (Some(d), None) => Some(TexRequest {
-            did: d,
-            variant: VARIANT_OPAQUE,
-        }),
-        (Some(d), Some(ids::DIFFUSE)) => Some(TexRequest {
-            did: d,
-            variant: VARIANT_OWN_ALPHA,
-        }),
+        (Some(d), None) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+        (Some(d), Some(ids::DIFFUSE)) => Some(TexRequest::new(d, VARIANT_OWN_ALPHA)),
         (d, Some(slot)) => match (d, slot_tex(slot)) {
             // An opacity slot without a texture: opacity 1 (material.md §18 OPEN).
-            (Some(d), None) => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OPAQUE,
-            }),
-            (Some(d), Some(a)) if a == d => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OWN_ALPHA,
-            }),
+            (Some(d), None) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+            (Some(d), Some(a)) if a == d => Some(TexRequest::new(d, VARIANT_OWN_ALPHA)),
             // DIDs 0–3 would collide with the variant codes; they are never real.
-            (Some(d), Some(a)) if a > VARIANT_DYE_MASK => Some(TexRequest { did: d, variant: a }),
-            (Some(d), Some(_)) => Some(TexRequest {
-                did: d,
-                variant: VARIANT_OPAQUE,
-            }),
-            (None, Some(a)) => Some(TexRequest {
-                did: a,
-                variant: VARIANT_ALPHA_ONLY,
-            }),
+            (Some(d), Some(a)) if a > VARIANT_DYE_MASK => Some(TexRequest::new(d, a)),
+            (Some(d), Some(_)) => Some(TexRequest::new(d, VARIANT_OPAQUE)),
+            (None, Some(a)) => Some(TexRequest::new(a, VARIANT_ALPHA_ONLY)),
             (None, None) => None,
         },
     };
+    // The sampler of the slot the texture comes from (`material.md` §8.5): the diffuse
+    // slot, or the opacity slot for an opacity map without a base colour texture.
+    let texture = texture.map(|t| {
+        let slot = match (diffuse, opacity) {
+            (None, Some(a)) => a,
+            _ => ids::DIFFUSE,
+        };
+        t.with_wrap(slot_wrap(m, slot))
+    });
     let kind = MaterialKind::of(m);
     let empty = TextureMatrixLayout::default();
     let mut states = CurveStates::new();
@@ -445,15 +578,14 @@ pub fn plan_material_with(
             .filter(|l| l.texture.0 > VARIANT_DYE_MASK)
             .map(|l| {
                 (
-                    TexRequest {
-                        did: l.texture.0,
-                        variant: VARIANT_OWN_ALPHA,
-                    },
+                    TexRequest::new(l.texture.0, VARIANT_OWN_ALPHA)
+                        .with_wrap(slot_wrap(m, ids::SECOND_LAYER)),
                     l.combine == LayerCombine::Add,
                     match l.alpha {
                         MaterialLayerAlpha::Ignored => LayerAlpha::Ignored,
                         MaterialLayerAlpha::Multiplied => LayerAlpha::Multiplied,
                         MaterialLayerAlpha::OpacityOnly => LayerAlpha::OpacityOnly,
+                        MaterialLayerAlpha::Summed => LayerAlpha::Summed,
                     },
                 )
             })
@@ -475,10 +607,12 @@ pub fn plan_material_with(
             fallback
         }
     };
+    // The reference R of `material.md` §11.2 at the material's own alpha.
+    let reference = m.alpha_reference(1.0);
     let alpha = match f.blend.mode {
         BlendMode::Opaque => AlphaKind::Opaque,
-        BlendMode::Cutout => f.alpha_test.map_or(AlphaKind::Opaque, |a| {
-            AlphaKind::Mask(finite01(a.threshold, 0.5))
+        BlendMode::Cutout => f.alpha_test.map_or(AlphaKind::Opaque, |_| {
+            AlphaKind::Mask(finite01(reference.reference(), 0.5))
         }),
         BlendMode::AlphaBlend | BlendMode::Additive | BlendMode::Custom => AlphaKind::Blend,
     };
@@ -495,7 +629,7 @@ pub fn plan_material_with(
         (a, _) => a,
     };
     let tint = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
-    let lit = lit_inputs(m, texture, layer2_alpha, alpha, tint);
+    let lit = lit_inputs(m, texture, layer2_alpha, alpha, tint, reference);
     let scrolls = own.is_none()
         && match layout {
             Some(_) => false,
@@ -505,8 +639,8 @@ pub fn plan_material_with(
     // §10.2): the texture keeps its own alpha; the opacity stays 1.
     let texture = match (texture, lit.gloss) {
         (Some(t), GlossFrom::BaseAlpha) if t.variant == VARIANT_OPAQUE => Some(TexRequest {
-            did: t.did,
             variant: VARIANT_OWN_ALPHA,
+            ..t
         }),
         (t, _) => t,
     };
@@ -534,6 +668,7 @@ pub fn plan_material_with(
         layer2,
         uv,
         animated_uv,
+        animated_reference: own.is_none() && m.alpha_reference_animated(),
         emissive_uv1,
         own,
     }
@@ -559,20 +694,20 @@ fn lit_inputs(
     layered: bool,
     alpha: AlphaKind,
     tint: [f32; 4],
+    reference: AlphaReference,
 ) -> LitInputs {
     let f = &m.features;
     let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture).map(|d| d.0);
     let role = |id: u32| m.slot(id).and_then(|s| s.role.as_deref());
-    let own = |did: u32| TexRequest {
-        did,
-        variant: VARIANT_OWN_ALPHA,
+    let own = |id: u32| {
+        move |did: u32| TexRequest::new(did, VARIANT_OWN_ALPHA).with_wrap(slot_wrap(m, id))
     };
     let opacity_from_base = texture.is_some_and(|t| layered || t.variant != VARIANT_OPAQUE)
         && !matches!(alpha, AlphaKind::Opaque);
     let normal = if f.normal_mapped {
         slot_tex(ids::NORMAL)
             .filter(|&d| d > VARIANT_DYE_MASK)
-            .map(own)
+            .map(own(ids::NORMAL))
     } else {
         None
     };
@@ -601,23 +736,46 @@ fn lit_inputs(
         [0.0; 3]
     };
     let lit_glow = glow != [0.0; 3];
-    let emissive = (f.emissive && lit_glow)
-        .then(|| slot_tex(ids::EMISSIVE))
-        .flatten()
-        .filter(|&d| d > VARIANT_DYE_MASK)
-        .map(own);
+    // `material.md` §11.2 table: the base alpha with a second opacity alpha (the
+    // `ColorAndOpacity2` layer goes through the second colour layer instead).
+    let opacity2 = match f.tested_opacity {
+        TestedOpacity::Product(ids::DIFFUSE, b) | TestedOpacity::Sum(ids::DIFFUSE, b)
+            if opacity_from_base && b != ids::SECOND_LAYER =>
+        {
+            let sum = matches!(f.tested_opacity, TestedOpacity::Sum(..));
+            let tex = slot_tex(b).filter(|&d| d > VARIANT_DYE_MASK).map(own(b));
+            match (b, tex) {
+                (ids::EMISSIVE, Some(_)) => Some(SecondOpacityPlan::Emissive { sum }),
+                (_, Some(texture)) => Some(SecondOpacityPlan::Texture { texture, sum }),
+                // No texture: that alpha is 1 (`material.md` §18 OPEN); a product is the
+                // base alpha alone, a sum at least 1.
+                (_, None) => None,
+            }
+        }
+        _ => None,
+    };
+    let emissive = (f.emissive && lit_glow
+        || matches!(opacity2, Some(SecondOpacityPlan::Emissive { .. })))
+    .then(|| slot_tex(ids::EMISSIVE))
+    .flatten()
+    .filter(|&d| d > VARIANT_DYE_MASK)
+    .map(own(ids::EMISSIVE));
     let glow_mask = lit_glow
         .then(|| slot_tex(ids::GLOW))
         .flatten()
         .filter(|&d| d > VARIANT_DYE_MASK)
-        .map(own);
+        .map(own(ids::GLOW));
     let color = [
         unit(tint[0], 1.0),
         unit(tint[1], 1.0),
         unit(tint[2], 1.0),
         unit(tint[3], 1.0),
     ];
-    let threshold = f.alpha_test.map(|a| unit(a.threshold, 0.5));
+    // The reference R of `material.md` §11.2 (steps 1–3) at the material's own alpha: the
+    // quantised threshold (× A in depth-writing permutations) when the test is on, else 0
+    // under a SRCALPHA source factor (only opacity 0 is discarded) or −1.
+    let r = reference.reference();
+    let threshold = f.alpha_test.map(|_| r);
     let translucent = opacity_from_base || color[3] < 1.0;
     let lit_alpha = match f.blend.mode {
         BlendMode::Opaque => AlphaMode::Opaque,
@@ -626,23 +784,22 @@ fn lit_inputs(
             _ => AlphaMode::Opaque,
         },
         // Unlit records: the record's own blend triple and depth write as a fixed-function
-        // blend, with its alpha test (`material.md` §11.3 rule for unlit records, §11.2;
-        // `walker.md` §14.5 "Unlit blend pairs"); a triple with a code the renderer cannot
-        // express keeps the source-alpha blend below.
+        // blend, with the reference R when the opacity source is drawn (`material.md` §11.3
+        // rule for unlit records, §11.2; `walker.md` §14.5 "Unlit blend pairs"); a triple
+        // with a code the renderer cannot express keeps the source-alpha blend below.
         BlendMode::Additive | BlendMode::Custom
             if !f.lit
-                && let Some(b) = fixed_blend(f, threshold.filter(|_| opacity_from_base)) =>
+                && let Some(b) =
+                    fixed_blend(f, Some(r).filter(|r| *r >= 0.0 && opacity_from_base)) =>
         {
             AlphaMode::Fixed(b)
         }
         BlendMode::Additive => AlphaMode::Additive,
         BlendMode::AlphaBlend | BlendMode::Custom if !translucent => AlphaMode::Opaque,
         BlendMode::AlphaBlend | BlendMode::Custom => {
-            let cutoff = if opacity_from_base {
-                threshold.unwrap_or(-1.0)
-            } else {
-                -1.0
-            };
+            // §11.2 step 3: with the test off, a SRCALPHA permutation still discards
+            // opacity 0 (R = 0): the lit `ColorAndOpacity` surface without a test.
+            let cutoff = if opacity_from_base { r } else { -1.0 };
             if f.blend.depth_write {
                 AlphaMode::TestBlend { cutoff }
             } else {
@@ -654,6 +811,8 @@ fn lit_inputs(
         color,
         alpha: lit_alpha,
         opacity_from_base,
+        opacity2,
+        reference,
         normal,
         emissive,
         glow_mask,
@@ -715,10 +874,7 @@ pub fn plan_material_dyed(m: &ResolvedMaterial) -> MaterialPlan {
     let channel = |mask: Option<tessera_formats::Did>, color: [f32; 4]| {
         let list = mask?;
         (list.0 > VARIANT_DYE_MASK).then_some((
-            TexRequest {
-                did: list.0,
-                variant: VARIANT_DYE_MASK,
-            },
+            TexRequest::new(list.0, VARIANT_DYE_MASK),
             [
                 srgb_unit_to_linear(color[0]),
                 srgb_unit_to_linear(color[1]),
@@ -1121,6 +1277,7 @@ mod tests {
             lit: false,
             alpha_test: None,
             opacity_slot: None,
+            tested_opacity: TestedOpacity::One,
             blend: BlendState {
                 mode: BlendMode::Custom,
                 src,
@@ -1158,6 +1315,170 @@ mod tests {
         assert_eq!(r.alpha_test, None);
         assert!(fixed_blend(&flags(M::Other(8), M::One, O::Add, false), None).is_none());
         assert!(fixed_blend(&flags(M::One, M::One, O::Other(2), false), None).is_none());
+    }
+
+    /// A lit two-pass-like resolved material whose slots are `slots` (id, texture, role),
+    /// with alpha test at `test` and the tested opacity `tested` (`material.md` §11.2).
+    fn lit_material(
+        slots: &[(u32, u32, &str)],
+        test: Option<f32>,
+        tested: TestedOpacity,
+    ) -> ResolvedMaterial {
+        use tessera_material::records::{BlendFactor as M, BlendOp as O};
+        use tessera_material::resolve::{
+            AlphaTest, BlendState, FeatureFlags, ParamOrigin, TextureSlot,
+        };
+        use tessera_material::vocab::{ChannelPacking, SlotKind};
+        use tessera_material::{ParameterSet, ShaderInterface};
+        let shader = std::sync::Arc::new(ShaderInterface {
+            did: Did(0x2B00_0001),
+            declarations: Vec::new(),
+            slots: Vec::new(),
+            permutation_count: 2,
+            lit: true,
+            common_blend: None,
+            cull_none: false,
+            default_alpha_ref: None,
+            family: tessera_material::interface::ProgramFamily::Generic,
+            unbound_defaults: Vec::new(),
+        });
+        let params = ParameterSet::build(&shader, &[]);
+        let features = FeatureFlags {
+            lit: true,
+            alpha_test: test.map(|threshold| AlphaTest {
+                threshold,
+                source_slot: ids::DIFFUSE,
+                opacity: tested,
+            }),
+            opacity_slot: tested.first(),
+            tested_opacity: tested,
+            blend: BlendState {
+                mode: BlendMode::AlphaBlend,
+                src: M::SrcAlpha,
+                dst: M::InvSrcAlpha,
+                op: O::Add,
+                depth_write: true,
+                opacity_slot: tested.first(),
+            },
+            two_sided: false,
+            normal_mapped: false,
+            specular: false,
+            dyeable: false,
+            dyeable_2: false,
+            emissive: slots.iter().any(|s| s.0 == ids::EMISSIVE),
+            glow: false,
+            environment: false,
+            second_layer: false,
+            baked_lighting: false,
+            uv_transform: false,
+            animated: false,
+        };
+        ResolvedMaterial {
+            surface: Some(Did(0x3100_0001)),
+            binding_key: Some(1),
+            shader,
+            materials: Vec::new(),
+            skipped: Vec::new(),
+            params,
+            slots: slots
+                .iter()
+                .map(|&(id, tex, role)| TextureSlot {
+                    id,
+                    kind: SlotKind::of(id),
+                    texture: Some(Did(tex)),
+                    role: Some(role.into()),
+                    packing: ChannelPacking::from_role(Some(role)),
+                    sampler: None,
+                    origin: ParamOrigin::Default,
+                })
+                .collect(),
+            features,
+            dye: None,
+        }
+    }
+
+    /// `material.md` §11.2 in the walker's lit plans: R quantised in single precision (the
+    /// 165 / 255 boundary), R = 0 for the lit `ColorAndOpacity` surface without a test
+    /// (SRCALPHA, depth write), and the second opacity alpha of the two-role records.
+    #[test]
+    fn lit_plans_take_the_reference_and_the_tested_opacity() {
+        let co = (ids::DIFFUSE, 0x4100_0001, "ColorAndOpacity");
+        let m = lit_material(&[co], Some(0.65), TestedOpacity::Slot(ids::DIFFUSE));
+        let plan = plan_material(&m);
+        assert_eq!(
+            plan.lit.alpha,
+            AlphaMode::TestBlend {
+                cutoff: 165.0 / 255.0
+            }
+        );
+        assert!(plan.lit.opacity2.is_none());
+        let m = lit_material(&[co], None, TestedOpacity::Slot(ids::DIFFUSE));
+        assert_eq!(
+            plan_material(&m).lit.alpha,
+            AlphaMode::TestBlend { cutoff: 0.0 }
+        );
+        // ColorAndOpacity with OpacityAlpha: the product with slot 3020's alpha.
+        let oa = (ids::OPACITY, 0x4100_0002, "OpacityAlpha");
+        let tested = TestedOpacity::Product(ids::DIFFUSE, ids::OPACITY);
+        let plan = plan_material(&lit_material(&[co, oa], Some(0.5), tested));
+        assert!(matches!(
+            plan.lit.opacity2,
+            Some(SecondOpacityPlan::Texture { texture, sum: false }) if texture.did == 0x4100_0002
+        ));
+        assert!(plan.textures().any(|t| t.did == 0x4100_0002));
+        assert!(!plan.instanceable());
+        // ColorAndOpacity with EmissiveAndOpacity of a sum record: the emissive alpha added,
+        // the emissive texture bound even without a glow colour.
+        let eo = (ids::EMISSIVE, 0x4100_0003, "EmissiveAndOpacity");
+        let tested = TestedOpacity::Sum(ids::DIFFUSE, ids::EMISSIVE);
+        let plan = plan_material(&lit_material(&[co, eo], Some(0.5), tested));
+        assert_eq!(
+            plan.lit.opacity2,
+            Some(SecondOpacityPlan::Emissive { sum: true })
+        );
+        assert_eq!(plan.lit.emissive.map(|t| t.did), Some(0x4100_0003));
+    }
+
+    /// `material.md` §11.2: *r* is evaluated at the clock, so a frame's *R* replaces the
+    /// plan's in the cutoffs that carry it; a constant 1043 does not animate the plan.
+    #[test]
+    fn plans_take_the_reference_of_the_frame() {
+        let co = (ids::DIFFUSE, 0x4100_0001, "ColorAndOpacity");
+        let m = lit_material(&[co], Some(0.65), TestedOpacity::Slot(ids::DIFFUSE));
+        let plan = plan_material(&m);
+        assert!(!plan.animated_reference, "a constant 1043 does not animate");
+        assert!(plan.instanceable());
+        let at = |r: f32| AlphaReference {
+            reference: r,
+            ..plan.lit.reference
+        };
+        let p = plan.with_reference(at(0.8));
+        assert_eq!(p.lit.alpha, AlphaMode::TestBlend { cutoff: 0.8 });
+        assert_eq!(p.lit.reference.reference, 0.8);
+        assert_eq!(p.lit.reference_at(0.5), 0.4);
+        // An alpha mask (M2 plan and lit cutoff) takes the new R too.
+        let mut mask = plan;
+        mask.alpha = AlphaKind::Mask(165.0 / 255.0);
+        mask.lit.alpha = AlphaMode::Mask {
+            cutoff: 165.0 / 255.0,
+        };
+        let p = mask.with_reference(at(0.5));
+        assert_eq!(p.alpha, AlphaKind::Mask(127.0 / 255.0));
+        assert_eq!(
+            p.lit.alpha,
+            AlphaMode::Mask {
+                cutoff: 127.0 / 255.0
+            }
+        );
+        // A surface whose opacity is not drawn keeps its mode.
+        let mut opaque = plan;
+        opaque.lit.opacity_from_base = false;
+        opaque.lit.alpha = AlphaMode::Opaque;
+        assert_eq!(opaque.with_reference(at(0.1)).lit.alpha, AlphaMode::Opaque);
+        // A plan with an animated reference is drawn per object, not instanced.
+        let mut animated = plan;
+        animated.animated_reference = true;
+        assert!(!animated.instanceable());
     }
 
     #[test]

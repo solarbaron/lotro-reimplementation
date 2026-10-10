@@ -695,6 +695,8 @@ pub(crate) mod sf {
     pub const LAYER_ALPHA: u32 = 2048;
     /// RGB of the base alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
     pub const LAYER_OPACITY_ONLY: u32 = 4096;
+    /// Its alpha is added to the base alpha ([`crate::LayerAlpha::Summed`]).
+    pub const LAYER_SUM: u32 = 8192;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
     pub const SRGB_LAYER2: u32 = 4;
@@ -770,6 +772,7 @@ impl SurfaceUniform {
                 crate::LayerAlpha::Ignored => 0,
                 crate::LayerAlpha::Multiplied => sf::LAYER_ALPHA,
                 crate::LayerAlpha::OpacityOnly => sf::LAYER_OPACITY_ONLY,
+                crate::LayerAlpha::Summed => sf::LAYER_SUM,
             };
         }
         let mut srgb_bits = 0;

@@ -69,9 +69,9 @@ use std::sync::Arc;
 
 use super::node::{
     AnimationNode, CompositorColourNode, CompositorLayerNode, EditMaterialNode, MeshFxNode, Node,
-    NodeData, NodeKind, PhysicsImpulseNode, Port, PortPayload, PortType, SWITCH_ALL_BITS_SET,
-    SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, TextureCompositorNode, WhenTest, WhileNode,
-    when_op,
+    NodeData, NodeKind, PhysicsImpulseNode, Port, PortPayload, PortType, RunNode,
+    SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, SWITCH_EQUAL, SwitchCase, TextureCompositorNode,
+    WhenTest, WhileNode, when_op,
 };
 use super::record::{ScriptTable, Scriptlet};
 use super::{SCRIPT_TABLE_PREFIX, SCRIPTLET_PREFIX};
@@ -1525,8 +1525,11 @@ pub struct LookCandidate {
     pub chance: f32,
     /// Whether the node was stopped after it started: a Run node with `RunScript_Stop`
     /// stopped one of [`LookCandidate::scripts`], or a persistent Switch above it changed
-    /// its case after the start-up ([`ClipResolver::with_after_startup`]). A stopped node
-    /// no longer contributes to the look (`appearance.md` §3.5 rule 3).
+    /// its case after the start-up ([`ClipResolver::with_after_startup`]). A case change
+    /// stops the nodes of the left branch and the runs its `Persistent` 1, `UnbindOnDeath`
+    /// 0 Run nodes started, not the runs of its `Persistent` 0 or `UnbindOnDeath` 1 Run
+    /// nodes (`script-runtime.md` §6.6 R56). A stopped node no longer contributes to the
+    /// look (`appearance.md` §3.5 rule 3).
     pub stopped: bool,
     /// When it was stopped: the number of look candidates listed before the stop (so the
     /// stop happened after the start of candidate `stopped_at − 1` and before the start of
@@ -1715,8 +1718,12 @@ where
     /// `script-runtime.md` §6.6) that the start-up reached on one of these properties
     /// re-evaluates then: in the state, running scripts and generator at the end of the
     /// start-up with these values set, it runs its new case when the case changed, and the
-    /// branch it chose at the start-up stops (its look candidates are marked stopped). What
-    /// the new case starts is listed after the start-up's candidates, in start order.
+    /// branch it chose at the start-up stops (its look candidates are marked stopped). As
+    /// in the client (`script-runtime.md` §6.6 R56), the stop reaches the scripts that Run
+    /// nodes of that branch started only through Runs with `Persistent` 1 and
+    /// `UnbindOnDeath` 0; the look candidates of scripts started by `Persistent` 0 or
+    /// `UnbindOnDeath` 1 Runs (at any depth below the branch) stay active. What the new case
+    /// starts is listed after the start-up's candidates, in start order.
     ///
     /// Tessera sets `Physics_InWorld` true this way for a figure placed in the world
     /// (`appearance.md` §3.5 Decision on `Physics_InWorld`). Only [`ClipResolver::resolve`]
@@ -2103,6 +2110,7 @@ where
             all_branches,
             mesh_fx: Vec::new(),
             look: Vec::new(),
+            look_unbound: Vec::new(),
             after,
             in_deferred: false,
             deferred_stops: Vec::new(),
@@ -2113,7 +2121,7 @@ where
             if !defs.is_empty() {
                 ev.running.insert(key);
                 ev.calls.push(Call::Script(key));
-                let res = ev.start(key, &defs, Ctx::ONE);
+                let res = ev.start(key, &defs, Ctx::ONE, true);
                 ev.calls.pop();
                 res?;
             }
@@ -2128,7 +2136,7 @@ where
         };
         if !defs.is_empty() {
             ev.running.insert(startup);
-            ev.start(startup, &defs, Ctx::ONE)?;
+            ev.start(startup, &defs, Ctx::ONE, true)?;
         }
         // Then the start-up scripts named by the table structs (§8.1, §11.3 step 3).
         let startup_scripts: &[u32] = if entry == Entry::Startup {
@@ -2153,7 +2161,7 @@ where
             }
             ev.running.insert(key);
             ev.calls.push(Call::Script(key));
-            let res = ev.start(key, &defs, Ctx::ONE);
+            let res = ev.start(key, &defs, Ctx::ONE, true);
             ev.calls.pop();
             res?;
         }
@@ -2164,6 +2172,7 @@ where
             mut appearances,
             mut mesh_fx,
             mut look,
+            look_unbound,
             mut issues,
             visits,
             after,
@@ -2186,9 +2195,19 @@ where
                         mark_stopped(l, base.saturating_add(at));
                     }
                 }
-                for (from, to, at) in branch_stops {
-                    for l in look.iter_mut().take(to).skip(from) {
-                        mark_stopped(l, base.saturating_add(at));
+                // A left branch stops everything it still runs (§6.6 R56), but not the
+                // runs that a `Persistent` 0 or `UnbindOnDeath` 1 Run of the branch
+                // started: their candidates stay active.
+                for b in branch_stops {
+                    for (i, l) in look.iter_mut().enumerate().take(b.end).skip(b.first) {
+                        let kept = look_unbound
+                            .get(i)
+                            .copied()
+                            .flatten()
+                            .is_some_and(|m| m >= b.depth);
+                        if !kept {
+                            mark_stopped(l, base.saturating_add(b.at));
+                        }
                     }
                 }
                 let d = *d;
@@ -2272,6 +2291,7 @@ struct Deferred {
     appearances: Vec<AppearanceCandidate>,
     mesh_fx: Vec<MeshFxCandidate>,
     look: Vec<LookCandidate>,
+    look_unbound: Vec<Option<usize>>,
     runs: Vec<RunFrame>,
     whiles: Vec<WhileFrame>,
 }
@@ -2288,6 +2308,7 @@ impl Deferred {
             appearances: Vec::new(),
             mesh_fx: Vec::new(),
             look: Vec::new(),
+            look_unbound: Vec::new(),
             runs: Vec::new(),
             whiles: Vec::new(),
         }
@@ -2411,6 +2432,12 @@ type Definition = (usize, usize);
 struct RunFrame {
     key: u32,
     stops: u64,
+    /// Whether stopping the branch that started this run stops the run too
+    /// (`script-runtime.md` §6.6 R56, §12.4 step 5): a Run node with `Persistent` 1 and
+    /// `UnbindOnDeath` 0. A `Persistent` 0 Run completed when it made its request, and
+    /// `UnbindOnDeath` 1 keeps the run alive, so their runs outlive the branch. The
+    /// start-up's own runs bind (nothing above them stops).
+    binds: bool,
 }
 
 /// A While node whose branch is being started (`script-runtime.md` §30.3–§30.4): its test
@@ -2474,6 +2501,10 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     all_branches: bool,
     mesh_fx: Vec<MeshFxCandidate>,
     look: Vec<LookCandidate>,
+    /// For each entry of `look`: the innermost run frame (index into `runs`) that a stop of
+    /// an enclosing branch does not reach ([`RunFrame::binds`] false), `None` when every
+    /// frame binds (§6.6 R56).
+    look_unbound: Vec<Option<usize>>,
     /// Properties set after the start-up ([`ClipResolver::with_after_startup`]).
     after: After,
     /// Whether a persistent Switch is re-evaluating after the start-up (its context is
@@ -2483,9 +2514,19 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// re-evaluated Switches had listed), applied to the start-up's candidates at the end.
     deferred_stops: Vec<(u32, usize)>,
     /// Start-up branches that a re-evaluated Switch left: (first, end) of their look
-    /// candidates in the start-up's list, and the number of look candidates the
-    /// re-evaluated Switches had listed when it happened.
-    branch_stops: Vec<(usize, usize, usize)>,
+    /// candidates in the start-up's list, the number of look candidates the re-evaluated
+    /// Switches had listed when it happened, and the number of run frames open at the
+    /// Switch (frames from that index on were started inside the branch).
+    branch_stops: Vec<BranchStop>,
+}
+
+/// A start-up branch that a re-evaluated Switch left (see `Eval::branch_stops`).
+#[derive(Debug, Clone, Copy)]
+struct BranchStop {
+    first: usize,
+    end: usize,
+    at: usize,
+    depth: usize,
 }
 
 impl<S, F, B, E> Eval<'_, '_, S, F, B, E>
@@ -2579,8 +2620,18 @@ where
     /// order, each definition's roots in stored order, each root with its immediate starts
     /// before the next (§8.2 step 3, T41), with the weights `ctx` of the starting node. The
     /// caller manages `running` and `calls`.
-    fn start(&mut self, key: u32, defs: &[Definition], ctx: Ctx) -> Result<(), ResolveError<E>> {
-        self.runs.push(RunFrame { key, stops: 0 });
+    fn start(
+        &mut self,
+        key: u32,
+        defs: &[Definition],
+        ctx: Ctx,
+        binds: bool,
+    ) -> Result<(), ResolveError<E>> {
+        self.runs.push(RunFrame {
+            key,
+            stops: 0,
+            binds,
+        });
         let saved = self.table;
         let root = Scope::root();
         let mut res = Ok(());
@@ -2750,7 +2801,7 @@ where
                 self.invoke(n, *file, parameters, scope, ctx)
             }
             NodeData::ScriptletParameter { name } => self.parameter(n, name, scope, ctx),
-            NodeData::Run(run) => self.run(run.script, run.stop, ctx),
+            NodeData::Run(run) => self.run(run, ctx),
             NodeData::WhenRunning { scripts, .. } => self.when_running(n, scripts, scope, ctx),
             NodeData::SetProperty {
                 property, value, ..
@@ -2944,6 +2995,9 @@ where
         ctx: Ctx,
     ) -> Result<(), ResolveError<E>> {
         let end = self.look.len();
+        // The run frames open at the Switch: runs started inside its branch have frames
+        // from this index on (§6.6 R56).
+        let depth = self.runs.len();
         self.swap_deferred();
         self.in_deferred = true;
         let mut res = Ok(());
@@ -2955,7 +3009,12 @@ where
             };
             if !same {
                 if end > first {
-                    self.branch_stops.push((first, end, self.look.len()));
+                    self.branch_stops.push(BranchStop {
+                        first,
+                        end,
+                        at: self.look.len(),
+                        depth,
+                    });
                 }
                 res = match after {
                     Some(p) => self.nodes(&p.children, scope, ctx),
@@ -2983,6 +3042,7 @@ where
         std::mem::swap(&mut self.appearances, &mut d.appearances);
         std::mem::swap(&mut self.mesh_fx, &mut d.mesh_fx);
         std::mem::swap(&mut self.look, &mut d.look);
+        std::mem::swap(&mut self.look_unbound, &mut d.look_unbound);
         std::mem::swap(&mut self.runs, &mut d.runs);
         std::mem::swap(&mut self.whiles, &mut d.whiles);
     }
@@ -3251,8 +3311,9 @@ where
     /// (§7.5 step 4); in the every-branch mode of [`ClipResolver::reachable`] stops cut
     /// nothing.
     #[inline(never)]
-    fn run(&mut self, script: u32, stop: bool, ctx: Ctx) -> Result<(), ResolveError<E>> {
-        if stop {
+    fn run(&mut self, node: &RunNode, ctx: Ctx) -> Result<(), ResolveError<E>> {
+        let script = node.script;
+        if node.stop {
             self.running.remove(&script);
             // A stopped run takes its look effects with it (`appearance.md` §3.5).
             if !self.stop_look(script) {
@@ -3287,7 +3348,8 @@ where
         }
         self.running.insert(script);
         self.calls.push(Call::Script(script));
-        let res = self.start(script, &defs, ctx);
+        let binds = node.persistent && !node.unbind_on_death;
+        let res = self.start(script, &defs, ctx, binds);
         self.calls.pop();
         res
     }
@@ -3627,6 +3689,8 @@ where
         if !self.charge(copy_cost) {
             return;
         }
+        self.look_unbound
+            .push(self.runs.iter().rposition(|f| !f.binds));
         self.look.push(LookCandidate {
             effect,
             driven,

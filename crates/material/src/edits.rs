@@ -193,12 +193,31 @@ pub fn apply_edits(
     out
 }
 
-/// The edits of a figure's look on one surface (`appearance.md` §3.5 "How material edits
-/// combine", §8 step 6): when `composed` gives an image with its identity, the image as the
-/// base colour ([`COMPOSED_TEXTURE_SLOT`]), registered in `textures`, then the parameter
-/// edits `edits` in the order given (the figure's edits sorted by descending priority, so
-/// the lowest priority comes last and takes effect; an edit of the base colour overrides
-/// the composed image). An image the registry refuses is left out.
+/// The one-entry material of a composed image (`appearance.md` §3.5 "Where the composed
+/// image goes"): parameter 3000 ([`COMPOSED_TEXTURE_SLOT`]) set to the image, registered in
+/// `textures` under `identity`. `None` when the registry refuses it (the surface then gets
+/// no composed material). It goes after the surface's own materials and before the
+/// figure's group materials and look edits ([`crate::library::SurfaceLook`]).
+#[must_use]
+pub fn composed_edit(
+    textures: &RuntimeTextures,
+    identity: u64,
+    image: &Arc<RgbaImage>,
+) -> Option<ParameterEdit> {
+    textures
+        .register(identity, Arc::clone(image))
+        .map(|list| ParameterEdit::Texture {
+            id: COMPOSED_TEXTURE_SLOT,
+            list,
+        })
+}
+
+/// The edits of a figure's look on one surface when it has no material groups
+/// (`appearance.md` §3.5): the composed image ([`composed_edit`]) then the parameter edits
+/// `edits` in the order given (sorted by descending priority, so the lowest priority comes
+/// last and takes effect; an edit of the base colour overrides the composed image). With
+/// material groups, use [`crate::MaterialLibrary::resolve_look`], which puts the group
+/// materials between the two (`material.md` §9.3 rule 4).
 #[must_use]
 pub fn figure_edits(
     textures: &RuntimeTextures,
@@ -206,14 +225,7 @@ pub fn figure_edits(
     composed: Option<(u64, &Arc<RgbaImage>)>,
 ) -> Vec<ParameterEdit> {
     let mut out = Vec::with_capacity(edits.len().saturating_add(1));
-    if let Some((identity, image)) = composed
-        && let Some(list) = textures.register(identity, Arc::clone(image))
-    {
-        out.push(ParameterEdit::Texture {
-            id: COMPOSED_TEXTURE_SLOT,
-            list,
-        });
-    }
+    out.extend(composed.and_then(|(identity, image)| composed_edit(textures, identity, image)));
     out.extend_from_slice(edits);
     out
 }

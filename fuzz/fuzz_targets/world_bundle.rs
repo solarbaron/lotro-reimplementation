@@ -154,23 +154,25 @@ fuzz_target!(|input: &[u8]| {
     assert!(b.figures.len() <= BundleOptions::default().max_figures_per_block);
     for (i, f) in b.figures.iter().enumerate() {
         let e = b
-            .entities
-            .get(f.entity as usize)
-            .expect("a figure names an entity of the bundle");
+            .entity(f.entity)
+            .expect("a figure names an entity or generated object of the bundle");
+        assert!(std::ptr::eq(b.figure_entity(f).expect("same entity"), e));
         assert_eq!(e.figure, u32::try_from(i).ok());
         if matches!(f.kind, FigureKind::Npc | FigureKind::Rig) {
             assert!(e.draw, "{:?} figure without the draw rule", f.kind);
         }
     }
-    for e in &b.entities {
+    for (r, e) in b.entity_refs() {
+        assert_eq!(b.entity_ref(e), Some(r));
         if let Some(i) = e.figure {
-            assert!((i as usize) < b.figures.len());
+            let f = b.figures.get(i as usize).expect("figure index in range");
+            assert_eq!(f.entity, r, "the figure names its entity back");
         }
     }
     // Figures of one IID share one instance set (no copy per figure).
     let mut by_iid = std::collections::HashMap::new();
     for f in &b.figures {
-        let (Some(set), Some(iid)) = (&f.instance, b.entities[f.entity as usize].iid) else {
+        let (Some(set), Some(iid)) = (&f.instance, b.entity(f.entity).and_then(|e| e.iid)) else {
             continue;
         };
         let first = by_iid

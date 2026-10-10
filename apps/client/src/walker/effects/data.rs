@@ -788,10 +788,7 @@ impl EffectData {
                 } else {
                     desc.surface
                 };
-                let own_alpha = |d: Did| TexRequest {
-                    did: d.0,
-                    variant: VARIANT_OWN_ALPHA,
-                };
+                let own_alpha = |d: Did| TexRequest::new(d.0, VARIANT_OWN_ALPHA);
                 let resolved = if surface.is_null() {
                     None
                 } else {
@@ -1065,6 +1062,7 @@ mod tests {
                 lit: false,
                 alpha_test: None,
                 opacity_slot: Some(3000),
+                tested_opacity: tessera_material::TestedOpacity::Slot(3000),
                 blend: BlendState {
                     mode,
                     src: MatFactor::SrcAlpha,

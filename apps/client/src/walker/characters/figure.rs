@@ -56,8 +56,8 @@ use tessera_formats::script_table::resolve::{
 use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, PropertySet};
 use tessera_havok::Clip;
-use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
-use tessera_material::{ParameterEdit, figure_edits};
+use tessera_material::{Layering, LibraryConfig, MaterialLibrary, SurfaceLook};
+use tessera_material::{ParameterEdit, composed_edit};
 use tessera_mesh::assembly::look::{
     FigureLook, LookCache, LookLimits, apply_figure_properties, figure_after_startup,
     figure_look_from_data,
@@ -756,9 +756,15 @@ fn build_part(
     })
 }
 
-/// The plan of `surface` with the part's appearance layers whose binding key matches the
-/// surface's (`material.md` §9.3, `appearance.md` §4.10), then the figure look's composed
-/// texture and material edits for the part's slot (`appearance.md` §3.5, §8 step 6).
+/// Most material groups layered onto one surface (a hostile group list stays bounded).
+pub const MAX_SURFACE_GROUPS: usize = 16;
+
+/// The plan of `surface` with the figure's look (`material.md` §9.3 rules 1–4,
+/// `appearance.md` §3.5, §4.10): the part's groups whose binding key matches the surface's
+/// ([`tessera_material::group_binding_matches`]) in list order, a shader-only group
+/// included and the last override winning ([`Layering::from_groups`]); after the surface's
+/// own materials, the composed image of the part's slot, then the group materials, then the
+/// look edits ([`MaterialLibrary::resolve_look`]).
 fn plan_for(
     ctx: &FigureContext,
     surface: Did,
@@ -767,27 +773,31 @@ fn plan_for(
 ) -> MaterialPlan {
     let lib = &ctx.materials;
     let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
-    let matching: Vec<&MaterialLayer> = layers
-        .iter()
-        .filter(|l| Some(l.binding_key) == key && !l.material.is_null())
-        .take(16)
-        .collect();
-    let edits = match (look, key) {
-        (Some((slot, look)), Some(key)) => look_edits(lib, look, slot, key),
-        _ => Vec::new(),
-    };
-    let layering = (!matching.is_empty()).then(|| Layering {
-        shader_override: matching.iter().find_map(|l| l.shader),
-        materials: matching.iter().map(|l| l.material).collect(),
+    let layering = key.and_then(|k| {
+        Layering::from_groups(
+            layers
+                .iter()
+                .filter(|l| tessera_material::group_binding_matches(l.binding_key, k))
+                .map(|l| (l.shader, l.material)),
+            MAX_SURFACE_GROUPS,
+        )
     });
-    let resolved = match (&layering, edits.is_empty()) {
-        (None, true) => lib.resolve_surface(surface).map(|m| plan_material_dyed(&m)),
-        (Some(l), true) => lib
-            .resolve_layered(surface, l)
-            .map(|m| plan_material_dyed(&m)),
-        (l, false) => lib
-            .resolve_edited(surface, l.as_ref(), &edits)
-            .map(|m| plan_material_dyed(&m)),
+    let (composed, edits) = match (look, key) {
+        (Some((slot, look)), Some(key)) => look_inputs(lib, look, slot, key),
+        _ => (None, Vec::new()),
+    };
+    let resolved = if layering.is_none() && composed.is_none() && edits.is_empty() {
+        lib.resolve_surface(surface).map(|m| plan_material_dyed(&m))
+    } else {
+        lib.resolve_look(
+            surface,
+            &SurfaceLook {
+                composed: composed.as_slice(),
+                layer: layering.as_ref(),
+                edits: &edits,
+            },
+        )
+        .map(|m| plan_material_dyed(&m))
     };
     resolved.unwrap_or_else(|e| {
         tracing::debug!(%surface, "figure material unresolved: {e}");
@@ -798,25 +808,27 @@ fn plan_for(
     })
 }
 
-/// The parameter edits the figure's look makes on a surface with `key` of a part in `slot`
-/// (`appearance.md` §3.5): the composed face texture as the base colour (a run-time
-/// texture of the shared library, so the object layer's texture loader finds it), then its
-/// material edits by descending priority.
-fn look_edits<S: tessera_material::RecordSource>(
+/// What the figure's look adds to a surface with `key` of a part in `slot`
+/// (`appearance.md` §3.5): the composed image of the last attached compositor that matches
+/// (a run-time texture of the shared library, so the object layer's texture loader finds
+/// it), and the material edits by descending priority.
+fn look_inputs<S: tessera_material::RecordSource>(
     lib: &MaterialLibrary<S>,
     look: &FigureLook,
     slot: u32,
     key: u32,
-) -> Vec<ParameterEdit> {
-    let composed = look
-        .compositor_for(slot, key)
-        .and_then(|f| f.image.as_ref().map(|i| (f.identity, i)));
-    let edits: Vec<ParameterEdit> = look
+) -> (Option<ParameterEdit>, Vec<ParameterEdit>) {
+    let composed = look.compositor_for(slot, key).and_then(|f| {
+        f.image
+            .as_ref()
+            .and_then(|i| composed_edit(lib.runtime_textures(), f.identity, i))
+    });
+    let edits = look
         .edits_for(slot, key)
         .into_iter()
         .filter_map(ParameterEdit::from_material_edit)
         .collect();
-    figure_edits(lib.runtime_textures(), &edits, composed)
+    (composed, edits)
 }
 
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,

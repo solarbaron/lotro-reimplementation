@@ -217,10 +217,12 @@ impl Ctx {
     }
 
     /// The groups of the figure-wide list that apply to a part in `slot` (`All` or that
-    /// slot; every group when `slot` is `None`), in list order, at most `max_layers`.
+    /// slot; every group when `slot` is `None`), in list order, at most `max_layers`. A
+    /// group whose slot is 0 matches no part (`material.md` §9.3 binding rule).
     fn layers_for(&self, slot: Option<u32>) -> Vec<MaterialLayer> {
         self.groups
             .iter()
+            .filter(|l| l.group_slot != 0)
             .filter(|l| slot.is_none_or(|s| l.group_slot == SLOT_ALL || l.group_slot == s))
             .take(self.limits.max_layers)
             .copied()

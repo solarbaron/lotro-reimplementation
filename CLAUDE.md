@@ -80,21 +80,17 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria 4, 5, 6, 9
-  re-verified 2026-10-07** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
+- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria re-verified
+  2026-10-07 to 2026-10-10** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
   decoders, `tessera-physics` with the 1/60 s controller, decision 0013; scenery, frills,
   water, sky/clock, lighting, draw distances in `tessera-world`; lit, terrain-layer, water,
   sky and instanced pipelines; walker `--walk-path`, switches, clock; explorer/dattool
-  views). Criteria 1, 2, 3, 7, 8 pass. Not met: 4 (25 / 32 walks; generated objects 1 of 3
-  (GN1, GN2, GN4 fail), caves 1 of 2 (CV1, CV2 fail), WL2 and FR1 near misses; soak 0
-  fall-throughs), 6 (45 / 54 rows pass on the image; L5 fails, T4, T5, T12, T15, T16, Y2,
-  L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
-  reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
-  Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
-  owner re-measures on a quiet machine. Frame-time assertions in real-data tests run only
-  with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`), so loaded machines no longer fail them.
-  Checks on main after the M6 merge (2026-10-08): fmt, clippy `-D warnings` (workspace,
-  `--all-features`, fuzz) clean; release tests with the install 3,715 passed, 0 failed.
+  views). Criteria 1, 2, 3, 4 (32 / 32 walks, soak 0 fall-throughs), 6 (62 / 62 rows on
+  d287e50), 7, 8, 9 pass. Only 5 is open: one M3-b run under load passed (0 over 50 ms, 0
+  holes), indicative; the owner re-measures on a quiet machine. Frame-time assertions in
+  real-data tests run only with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`). Checks on main
+  after the conform-b21 merge (2026-10-10): fmt, clippy (workspace, fuzz), release tests with
+  the install 5,857 passed, 0 failed; content, SPDX, server deps clean.
 - **Incident 0018 (2026-10-07):** dirty-room reports reached clean implementer prompts in a
   hand-written close-out workflow. The owner released the held work (A) and kept the
   River-hobbit code after a clean audit (B); see `docs/decisions/0018-incident-review-notes-in-clean-prompts.md`. Rule: clean

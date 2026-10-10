@@ -756,6 +756,10 @@ pub struct ObjectInfo {
     /// [`UNATTACHED`](super::interiors::UNATTACHED) for an interior entity no cell
     /// contains (`walker.md` §14.12 (h)).
     pub cell: u16,
+    /// The slope-scale value of its `Render_DepthBias_Type` entry (`decals.md` §6.5; 0:
+    /// none), applied to its placed liquid surfaces (`water.md` §8.5.4 rule, the Tessera
+    /// default of `decals.md` §6.5 OPEN (c)).
+    pub depth_bias: f32,
 }
 
 /// Per-object state of the layer.
@@ -1043,8 +1047,12 @@ pub fn surface_draw(
     // when it failed.
     let layer2 = match plan.layer2 {
         None => None,
-        Some((t, add)) => match texture(t) {
-            TexLookup::Ready(id) => Some(SecondLayer { texture: id, add }),
+        Some((t, add, alpha)) => match texture(t) {
+            TexLookup::Ready(id) => Some(SecondLayer {
+                texture: id,
+                add,
+                alpha,
+            }),
             TexLookup::Failed => None,
             TexLookup::Pending if lit => return None,
             TexLookup::Pending => None,
@@ -1196,7 +1204,11 @@ fn world_surface(plan: &MaterialPlan, texture: &impl Fn(TexRequest) -> TexLookup
         unlit: plan.unlit,
         second_layer: layer2
             .zip(plan.layer2)
-            .map(|(texture, (_, add))| SecondLayer { texture, add }),
+            .map(|(texture, (_, add, alpha))| SecondLayer {
+                texture,
+                add,
+                alpha,
+            }),
         uv: plan.uv,
     })
 }
@@ -2633,6 +2645,7 @@ impl ObjectLayer {
                                 normal_map,
                                 textures,
                                 light_object: None,
+                                depth_bias: obj.depth_bias,
                             });
                             self.fallback.count(&plan.diag, None, 1);
                             draws += 1;
@@ -2932,6 +2945,7 @@ mod tests {
             first: 0,
             count: 1,
             cell,
+            depth_bias: 0.0,
         };
         let with = |figure, object| Instance {
             figure: Some(figure),
@@ -3174,6 +3188,7 @@ mod tests {
             first,
             count,
             cell: OUTDOORS,
+            depth_bias: 0.0,
         };
         assert_eq!(
             object_parts(&instances, &o(0, 2)).collect::<Vec<_>>(),
@@ -3200,6 +3215,7 @@ mod tests {
             first,
             count: 1,
             cell: OUTDOORS,
+            depth_bias: 0.0,
         };
         let objects: Arc<[ObjectInfo]> = vec![o(0, false), o(1, true)].into();
         let key = LandblockKey::new(1, 10, 10).unwrap();
@@ -3448,6 +3464,7 @@ mod tests {
             first,
             count: 1,
             cell,
+            depth_bias: 0.0,
         };
         // An outdoor static and a cell mesh 300 m west of the block, 200 m down.
         let objects: Arc<[ObjectInfo]> = vec![

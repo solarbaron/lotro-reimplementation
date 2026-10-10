@@ -1879,6 +1879,22 @@ about π + 0.1 s and π − 0.1 s.
 >   the stored value at each texel and differs only in filtering between texels. Sampling
 >   these lists through a non-sRGB view would match exactly (`render.md` §4.8 last OPEN).
 
+> **OPEN (implementer, 2026-10-10, `tessera-world`, `tessera-render` and the walker;
+> engineering choices made while conforming to the revision of 2026-10-10, no format fact):**
+> (a) For the §8.5.4 puddle rule, Tessera reads `Render_DepthBias_Type` in the lookup order of
+> the LOD class (`walker.md` §11.4.3: the instance set of the weenie list, the row's own set,
+> then the 0x47 chain); `decals.md` §6.5 says only "from the entity's properties". (b) The
+> entry's slope-scale value is applied to every own-program draw (water, mirror, liquid
+> distortion, lava) of an entity that sets it, not only to the mirror record; the table's
+> absolute and maximum values are not applied (none is set in this install; `decals.md` §6.5
+> OPEN (b)); the magnitude is capped at 64. Generic-path draws of entities still apply no
+> depth bias (`decals.md` §6.5 OPEN (c) is not implemented for them). (c) 0x2B000442 is still
+> recognised by DID: the W46 interface rule needs the texture-transform items per permutation
+> with programs, which Tessera's decoded interface does not keep (`material.md` §7.7 merged
+> table). (d) The unlit liquids test their output alpha (W45); the lit record 0x2B0007D0 keeps
+> the test on the texel alpha before any vertex multiply (`lighting.md` §5.12, §5.13), which
+> W45 does not cover. Spec writer: confirm (a) and (d), or state the original's rule.
+
 ---
 
 <a id="s15"></a>

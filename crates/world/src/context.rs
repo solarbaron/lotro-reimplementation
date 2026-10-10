@@ -87,6 +87,10 @@ pub struct SystemPids {
     pub water: WaterPids,
     /// `Render_LODClass` (`walker.md` §11.4.3).
     pub lod_class: Option<u32>,
+    /// `Render_DepthBias_Type` of placed entities (`decals.md` §6.5 "Objects").
+    pub depth_bias_type: Option<u32>,
+    /// The labels of the depth-bias definition sets (`decals.md` §6.5 "The table").
+    pub depth_bias_defs: Option<crate::decals::shading::DepthBiasPids>,
 }
 
 impl SystemPids {
@@ -101,6 +105,8 @@ impl SystemPids {
             frills: FrillPids::from_names(pid_of),
             water: WaterPids::from_names(pid_of),
             lod_class: pid_of("Render_LODClass"),
+            depth_bias_type: pid_of("Render_DepthBias_Type"),
+            depth_bias_defs: Some(crate::decals::shading::DepthBiasPids::resolve(&pid_of)),
         }
     }
 }
@@ -128,6 +134,9 @@ pub struct WorldSystems {
     pub sky: Option<Arc<SkyLibrary>>,
     /// The LOD-class table (0x32, `walker.md` §11.4).
     pub lod_classes: Option<Arc<LodClasses>>,
+    /// The depth-bias table (`decals.md` §6.5), which placed liquid surfaces apply by their
+    /// `Render_DepthBias_Type` (`water.md` §8.5.4 rule).
+    pub depth_bias: Option<Arc<crate::decals::shading::DepthBiasTable>>,
 }
 
 /// Shared, immutable world context used by the bundle decoder on every worker.
@@ -289,6 +298,16 @@ impl WorldContext {
                     None
                 }
             };
+            systems.depth_bias =
+                pids.depth_bias_defs.and_then(
+                    |p| match crate::decals::shading::DepthBiasTable::load(self, &p) {
+                        Ok(t) => Some(Arc::new(t)),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "no depth-bias table: no entity depth bias");
+                            None
+                        }
+                    },
+                );
         }
         tracing::debug!(
             scenery_regions = self
@@ -301,6 +320,7 @@ impl WorldContext {
             collision = systems.collision.is_some(),
             sky = systems.sky.is_some(),
             lod_classes = systems.lod_classes.is_some(),
+            depth_bias = systems.depth_bias.is_some(),
             "world systems loaded"
         );
         self.systems = systems;

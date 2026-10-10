@@ -69,6 +69,7 @@ use tessera_terrain::{
     LodSelector, Neighbours, OpacityRule, ResolveOptions, Side, TerrainBlock, TerrainMesh,
     TerrainTiles, VertexNormals, fixed_block_offset, resolve_chunk, resolve_landblock, triangulate,
 };
+use tessera_world::decals::shading::DepthBiasTable;
 use tessera_world::{
     LANDBLOCK_SIZE, LandblockBundle, LandblockKey, LodClasses, LodValues, WorldContext, WorldSource,
 };
@@ -204,6 +205,9 @@ pub struct BlockInputs {
     pub tables: HashMap<u8, Arc<TerrainTypeTable>>,
     /// The LOD-class table (`walker.md` §11.4).
     pub lod_classes: Option<Arc<LodClasses>>,
+    /// The depth-bias table (`decals.md` §6.5) for the `Render_DepthBias_Type` of placed
+    /// objects (`None`: no object gets a depth bias).
+    pub depth_bias: Option<Arc<DepthBiasTable>>,
     /// The looks of interior cells (`landblock.md` §4.14; `None`: cells keep their default
     /// look).
     pub looks: Option<Arc<super::looks::CellLooks>>,
@@ -253,6 +257,7 @@ impl BlockInputs {
             source: Some(Arc::clone(ctx.source())),
             tables,
             lod_classes,
+            depth_bias: ctx.systems().depth_bias.clone(),
             looks: None,
         }
     }
@@ -3139,6 +3144,7 @@ pub fn build_block(
     let (instances, objects) = block_objects(
         bundle,
         inputs.lod_classes.as_deref(),
+        inputs.depth_bias.as_deref(),
         inputs.looks.as_deref(),
     );
     let (layers, images, bake_masks) = build_layers(bundle, inputs);
@@ -3175,13 +3181,16 @@ pub fn build_block(
 /// drawn through (`walker.md` §14.12 (e)–(h)): outdoor objects cell 0; interior entities the cell
 /// of the block's collision set whose volume contains their origin, or
 /// [`interiors::UNATTACHED`]; a cell mesh its own cell. Which interior objects are loaded
-/// and drawn is the object layer's decision ([`ObjectFrame::interior`]).
+/// and drawn is the object layer's decision ([`ObjectFrame::interior`]). Each object
+/// carries the slope-scale value of its `Render_DepthBias_Type` entry of `depth_bias`
+/// (`decals.md` §6.5), which its placed liquid surfaces apply (`water.md` §8.5.4 rule).
 ///
 /// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
 #[must_use]
 pub fn block_objects(
     bundle: &LandblockBundle,
     classes: Option<&LodClasses>,
+    depth_bias: Option<&DepthBiasTable>,
     looks: Option<&super::looks::CellLooks>,
 ) -> (Vec<Instance>, Vec<ObjectInfo>) {
     let mut instances = Vec::new();
@@ -3243,6 +3252,9 @@ pub fn block_objects(
         } else {
             interiors::OUTDOORS
         };
+        let depth_bias = depth_bias
+            .zip(bundle.depth_bias_type_of(e))
+            .map_or(0.0, |(t, i)| t.get(i).slope_scale);
         objects.push(ObjectInfo {
             position: pos,
             lod: classes.values(class, false),
@@ -3250,6 +3262,7 @@ pub fn block_objects(
             first,
             count: u32::try_from(visual.parts.len()).unwrap_or(u32::MAX),
             cell,
+            depth_bias,
         });
     }
     cell_objects(bundle, looks, &mut instances, &mut objects);
@@ -3345,6 +3358,7 @@ fn cell_objects(
             first,
             count: 1,
             cell: c.index,
+            depth_bias: 0.0,
         });
     }
 }
@@ -3861,6 +3875,7 @@ mod tests {
             source: None,
             tables: HashMap::new(),
             lod_classes: None,
+            depth_bias: None,
             looks: None,
         })
     }
@@ -3956,6 +3971,7 @@ mod tests {
             source: None,
             tables: HashMap::from([(region, Arc::clone(table))]),
             lod_classes: None,
+            depth_bias: None,
             looks: None,
         }
     }

@@ -1982,6 +1982,48 @@ fn second_colour_layer_multiplies_the_opacity() {
     assert_eq!(r.second_opacity_slot(), None);
 }
 
+/// `material.md` §10.3 MA54 and §19 answers (b), (d): only a `ColorAndOpacity2` layer's
+/// alpha joins the opacity; a `Color2` layer after `ColorAndOpacity` (as in 0x2B0007E6)
+/// leaves the first layer's alpha alone; the `ColorTexture` record takes the second layer
+/// for its alpha only.
+#[test]
+fn second_layer_plan_by_role() {
+    use tessera_material::{LayerAlpha, LayerCombine, second_layer_plan};
+    let decls = vec![
+        entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+        entry(3001, V::Word(0x4000_0008), &[(10, 0, 1)], 0),
+    ];
+    let did = 0x2B00_0C00;
+    let plan = |roles: &[&str]| {
+        let r = resolve_one(lit_two_pass(did, &decls, roles), did, &[]);
+        (second_layer_plan(&r), r.second_opacity_slot())
+    };
+    let (p, slot) = plan(&["ColorAndOpacity", "ColorAndOpacity2"]);
+    let p = p.expect("second layer");
+    assert_eq!(
+        (p.texture.0, p.combine, p.alpha),
+        (0x4000_0008, LayerCombine::Multiply, LayerAlpha::Multiplied)
+    );
+    assert_eq!(slot, Some(3001));
+    for second in ["Color2", "ColorAndGloss2", "ColorAndDye2"] {
+        let (p, slot) = plan(&["ColorAndOpacity", second]);
+        assert_eq!(p.map(|p| p.alpha), Some(LayerAlpha::Ignored), "{second}");
+        assert_eq!(slot, None, "{second}");
+    }
+    let unlit = one_pass_shader(
+        did,
+        &decls,
+        &["ColorTexture", "ColorTexture2"],
+        (5, 6, 1, 0, 2, 0.9),
+    );
+    let r = resolve_one(unlit, did, &[]);
+    let p = second_layer_plan(&r).expect("ColorTexture layer");
+    assert_eq!(
+        (p.texture.0, p.alpha),
+        (0x4000_0008, LayerAlpha::OpacityOnly)
+    );
+}
+
 // ---------------------------------------------------------------------------------------
 // Program families (§11.6) and the fallback diagnosis
 // ---------------------------------------------------------------------------------------

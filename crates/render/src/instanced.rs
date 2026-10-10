@@ -683,6 +683,10 @@ pub(crate) mod sf {
     pub const SECOND_LAYER: u32 = 512;
     /// Its RGB is added (else multiplied).
     pub const LAYER_ADD: u32 = 1024;
+    /// Its alpha multiplies the base alpha ([`crate::LayerAlpha::Multiplied`]).
+    pub const LAYER_ALPHA: u32 = 2048;
+    /// RGB of the base alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
+    pub const LAYER_OPACITY_ONLY: u32 = 4096;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
     pub const SRGB_LAYER2: u32 = 4;
@@ -754,6 +758,11 @@ impl SurfaceUniform {
             if l.add {
                 flags |= sf::LAYER_ADD;
             }
+            flags |= match l.alpha {
+                crate::LayerAlpha::Ignored => 0,
+                crate::LayerAlpha::Multiplied => sf::LAYER_ALPHA,
+                crate::LayerAlpha::OpacityOnly => sf::LAYER_OPACITY_ONLY,
+            };
         }
         let mut srgb_bits = 0;
         if srgb[0] {
@@ -1975,6 +1984,7 @@ mod tests {
             second_layer: Some(SecondLayer {
                 texture: tex,
                 add: true,
+                alpha: crate::LayerAlpha::Multiplied,
             }),
             uv: [
                 UvTransform {
@@ -1994,6 +2004,27 @@ mod tests {
         );
         assert_ne!(u.flags[0] & sf::SECOND_LAYER, 0);
         assert_ne!(u.flags[0] & sf::LAYER_ADD, 0);
+        assert_ne!(u.flags[0] & sf::LAYER_ALPHA, 0);
+        assert_eq!(u.flags[0] & sf::LAYER_OPACITY_ONLY, 0);
+        // material.md §10.3 MA54: a Color2 layer's alpha does not join the opacity.
+        let ignored = WorldSurface {
+            second_layer: s.second_layer.map(|l| SecondLayer {
+                alpha: crate::LayerAlpha::Ignored,
+                ..l
+            }),
+            ..s
+        };
+        let f = SurfaceUniform::new(
+            &ignored,
+            WorldSurfaceOptions::default(),
+            true,
+            [false; 3],
+            false,
+            true,
+        )
+        .flags[0];
+        assert_ne!(f & sf::SECOND_LAYER, 0);
+        assert_eq!(f & (sf::LAYER_ALPHA | sf::LAYER_OPACITY_ONLY), 0);
         assert_eq!(u.uv[0], [2.0, 0.0, 0.5, 0.0]);
         assert_eq!(u.uv[1], [3.0, -0.25, 1.0, 0.0]);
         let missing = SurfaceUniform::new(

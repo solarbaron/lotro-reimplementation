@@ -215,7 +215,7 @@ pub use lighting::{
     SunShadow,
 };
 pub use material::{
-    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss,
+    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LayerAlpha,
     LightSelection, Lighting, LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
     Opacity, SecondLayer, Specular, UvTransform,
 };
@@ -249,9 +249,10 @@ pub use ui::{
 };
 pub use water::{
     DistortionParams, FresnelForm as WaterFresnelForm, LiquidMeshDraw, LiquidShading,
-    MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES,
-    MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily, WaterFlowParams, WaterParams, WaterQuad,
-    WaterTextures, fresnel as water_fresnel, water_fade, wave_height as water_wave_height,
+    MAX_DEPTH_BIAS as MAX_LIQUID_DEPTH_BIAS, MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS,
+    MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, MirrorParams, WATER_BLOCK, WaterDraw, WaterFamily,
+    WaterFlowParams, WaterParams, WaterQuad, WaterTextures, fresnel as water_fresnel, water_fade,
+    wave_height as water_wave_height,
 };
 
 /// Re-export of the math library used in the public API.

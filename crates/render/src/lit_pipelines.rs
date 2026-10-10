@@ -58,6 +58,10 @@ pub(crate) mod lit_flag {
     pub const EMISSIVE_UV1: u32 = 1 << 19;
     /// sRGB re-encode bit of the second colour layer (the shift above covers textures 0–6).
     pub const SRGB_LAYER2: u32 = 1 << 20;
+    /// The second layer's alpha multiplies the base alpha ([`crate::LayerAlpha::Multiplied`]).
+    pub const LAYER_ALPHA: u32 = 1 << 21;
+    /// Base RGB alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
+    pub const LAYER_OPACITY_ONLY: u32 = 1 << 22;
 }
 
 /// The lit shader source.
@@ -179,6 +183,11 @@ pub(crate) fn lit_fields(
         if l.add {
             flags |= lit_flag::LAYER_ADD;
         }
+        flags |= match l.alpha {
+            crate::LayerAlpha::Ignored => 0,
+            crate::LayerAlpha::Multiplied => lit_flag::LAYER_ALPHA,
+            crate::LayerAlpha::OpacityOnly => lit_flag::LAYER_OPACITY_ONLY,
+        };
     }
     if lit.emissive_uv1 {
         flags |= lit_flag::EMISSIVE_UV1;

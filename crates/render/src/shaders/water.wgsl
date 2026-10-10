@@ -74,9 +74,11 @@ const T_EMISSIVE: u32 = 64u;
 const FL_WORLD_UV: u32 = 1u;
 // The liquid's alpha test is on.
 const FL_ALPHA_TEST: u32 = 2u;
-// Flow-map water with the 0x2B0007FD Fresnel of §8.6.4 step 4 (else §8.4 step 5, the form of
-// 0x2B0005EC's own programs).
-const FL_FRESNEL_SCALED: u32 = 4u;
+// Flow-map water with the colour list of 0x2B0007FD (water.md §8.6.4 steps 1-6: Fresnel
+// bias x (...)^(1 / exponent), tint toward Lc^2 x WaterFogColor, specular x Lc); else the
+// list of 0x2B0005EC (steps 1-5 of its own list: Fresnel of §8.4 step 5, tint toward
+// WaterFogColor itself, no Lc anywhere; W42).
+const FL_FLOW_FAKE_LIGHT: u32 = 4u;
 // The liquid's output is multiplied by the vertex colour (0x2B00063E, §8.5.5 step 5).
 const FL_VERTEX_COLOR: u32 = 8u;
 
@@ -439,9 +441,10 @@ fn flow_phases(in: WaterOut, flow_texel: vec4<f32>, noise_texel: vec4<f32>) -> P
 }
 
 // Flow-map water: the normal of §8.6.2 (layers 1 and 2 when the record has them) and the
-// colour of the §8.6.4 OpenGL list with the reflection replaced by the refraction sample,
-// alpha 1 (Tessera rule of §8.6.4), with each record's own Fresnel form (implementer OPEN
-// in §8.6.4: 0x2B0007FD step 4, 0x2B0005EC §8.4 step 5).
+// colour of the record's own OpenGL reflection-permutation list with the reflection R
+// replaced by the untinted refraction sample, alpha 1 (Tessera rule of §8.6.4, revised
+// 2026-10-10): 0x2B0007FD steps 1-6 of the first list (FL_FLOW_FAKE_LIGHT), 0x2B0005EC
+// steps 1-5 of its own list.
 fn shade_flow(in: WaterOut) -> vec3<f32> {
     let t = frame.eye.w;
     let flow_texel = stored(textureSample(t_flow, s_clamp, in.uv), T_FLOW);
@@ -475,26 +478,34 @@ fn shade_flow(in: WaterOut) -> vec3<f32> {
     // 8. Normalise.
     n = frame_normalize(n, vec3<f32>(0.0, 0.0, 1.0));
 
-    // Colour (§8.6.4, OpenGL list).
+    // Colour (§8.6.4, the record's own OpenGL list).
+    let layered = (water.kind.w & FL_FLOW_FAKE_LIGHT) != 0u;
     let s = in.clip.xy * water.screen.xy;
-    // 1. Refraction offset by the normal; reflection replaced by the refraction sample.
+    // 1. Refraction offset by the normal x 1048; the reflection (0x2B0007FD undistorted,
+    // 0x2B0005EC at N.xy x 1047 + (0, 0.003)) is replaced by the untinted refraction sample
+    // (Tessera rule), so its offset has no effect.
     let fr = refraction_at(s, n.xy * water.misc0.z);
     let r = fr;
-    // 2. Lc = clamp(Dl + (1066 - 1)(1 - Dl), 0, 1).
+    // 2. 0x2B0007FD: Lc = clamp(Dl + (1066 - 1)(1 - Dl), 0, 1). 0x2B0005EC never reads the
+    // fake light's diffuse colour: no Lc (W42), i.e. Lc = 1 below.
     let light = fake_light();
-    let lc = clamp(light.color + (water.misc1.z - 1.0) * (1.0 - light.color), vec3<f32>(0.0),
-        vec3<f32>(1.0));
-    // 3. Tint toward Lc^2 x WaterFogColor.
+    var lc = vec3<f32>(1.0);
+    if (layered) {
+        lc = clamp(light.color + (water.misc1.z - 1.0) * (1.0 - light.color), vec3<f32>(0.0),
+            vec3<f32>(1.0));
+    }
+    // 3. Tint by w = clamp(0.1 x eye distance - 0.5, 0, 1) x 1068 toward Lc^2 x WaterFogColor
+    // (0x2B0007FD) or toward WaterFogColor itself (0x2B0005EC).
     let to_eye = frame.eye.xyz - in.world_pos;
     let dist = length(to_eye);
     let wt = clamp(0.1 * dist - 0.5, 0.0, 1.0) * water.misc2.x;
     let tinted = fr + wt * (lc * lc * water.fog_color.rgb - fr);
     // 4. Fresnel: 0x2B0007FD f = 1050 x max(1 - |v . N|, 0)^(1 / 1051); 0x2B0005EC
-    // f = 1050 + (1 - 1050)(1 - |v . N|)^1051 (§8.4 step 5).
+    // f = 1050 + (1 - 1050) max(1 - |v . N|, 0)^1051 (§8.4 step 5; W42, W43).
     let v = frame_normalize(to_eye, vec3<f32>(0.0, 0.0, 1.0));
     let x = max(1.0 - abs(dot(v, n)), 0.0);
     var f = 0.0;
-    if ((water.kind.w & FL_FRESNEL_SCALED) != 0u) {
+    if (layered) {
         var inv = 0.0;
         if (water.misc1.x > 0.0) {
             inv = 1.0 / water.misc1.x;
@@ -503,7 +514,7 @@ fn shade_flow(in: WaterOut) -> vec3<f32> {
     } else {
         f = water.misc0.w + (1.0 - water.misc0.w) * water_pow(x, water.misc1.x);
     }
-    // 5. Colour and specular.
+    // 5. Colour and specular (x Lc only for 0x2B0007FD; no sparkle term).
     let h = frame_normalize(v - light.travel, n);
     var color = mix(tinted, r, f) * water.water_color.rgb * water.misc1.z
         + lc * water_pow(dot(n, h), water.misc1.y) * light.specular * water.specular_color.rgb;
@@ -513,6 +524,11 @@ fn shade_flow(in: WaterOut) -> vec3<f32> {
         fog = clamp((dist - frame.fog.x - 100.0) * frame.fog.y, 0.0, 1.0);
     }
     color = frame_apply_fog(color, fog);
+    // 0x2B0005EC step 5: each channel clamped to 0-1 after the fog, before the far-draw
+    // fade of fs_water.
+    if (!layered) {
+        color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
     return color;
 }
 
@@ -642,11 +658,13 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         texel = ts;
     }
     let m = water.material;
-    let alpha = texel.a * m.a;
-    if ((water.kind.w & FL_ALPHA_TEST) != 0u && texel.a <= water.extra1.x) {
-        discard;
-    }
     if (water.kind.x == FAM_LIQUID_LIT) {
+        // The lit record tests its opacity texel before any vertex multiply (lighting.md
+        // §5.12, §5.13).
+        if ((water.kind.w & FL_ALPHA_TEST) != 0u && texel.a <= water.extra1.x) {
+            discard;
+        }
+        let alpha = texel.a * m.a;
         // Lit like a lit ColorAndOpacity surface (lighting.md §5): ambient, the sun with its
         // shadow, the listed lights; no specular.
         let n = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
@@ -663,14 +681,19 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         }
         return vec4<f32>(frame_apply_fog(2.0 * texel.rgb * sum, in.fog.x), alpha);
     }
-    // 5. Unlit: colour x material colour x 1066 (x the vertex colour, RGBA, in 0x2B00063E),
-    // fogged.
+    // 5. Unlit: the texel (RGBA) first multiplied by the vertex colour (0x2B00063E), its
+    // alpha then by the material alpha; the alpha test reads that output alpha (discard at
+    // or below the reference, W45); colour x material colour x 1066, fogged.
     var vc = vec4<f32>(1.0);
     if ((water.kind.w & FL_VERTEX_COLOR) != 0u) {
         vc = in.color;
     }
-    return vec4<f32>(frame_apply_fog(texel.rgb * m.rgb * water.misc1.z * vc.rgb, in.fog.x),
-        alpha * vc.a);
+    let c = texel * vc;
+    let alpha = c.a * m.a;
+    if ((water.kind.w & FL_ALPHA_TEST) != 0u && alpha <= water.extra1.x) {
+        discard;
+    }
+    return vec4<f32>(frame_apply_fog(c.rgb * m.rgb * water.misc1.z, in.fog.x), alpha);
 }
 
 // Opaque families (plain, plain on UV, older bump, flow map, lava): alpha 1, written with

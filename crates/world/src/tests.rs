@@ -1377,6 +1377,10 @@ fn context_loads_region_tables_and_systems() {
     // No sky description or LOD-class table in the synthetic install.
     assert!(sys.sky.is_none() && sys.lod_classes.is_none());
     assert_eq!(sys.pids.lod_class, Some(testkit::pid::RENDER_LOD_CLASS));
+    assert_eq!(
+        sys.pids.depth_bias_type,
+        Some(testkit::pid::RENDER_DEPTH_BIAS_TYPE)
+    );
     // Turned off: nothing loads.
     let off = scenery_context(BundleOptions::default().without_world_systems());
     assert!(off.region(1).unwrap().scenery.is_none());
@@ -1424,6 +1428,10 @@ fn bundles_carry_scenery_water_and_collision() {
     assert_eq!(wet.lod_class_of(&wet.generated[0]), Some(5));
     assert_eq!(wet.lod_class_of(&wet.generated[1]), None);
     assert_eq!(wet.entity_lod_classes.len(), wet.entities.len());
+    // `Render_DepthBias_Type` in the same lookup order (`decals.md` §6.5 "Objects").
+    assert_eq!(wet.depth_bias_type_of(&wet.generated[0]), Some(3));
+    assert_eq!(wet.depth_bias_type_of(&wet.generated[1]), None);
+    assert_eq!(wet.entity_depth_bias_types.len(), wet.entities.len());
 
     // Collision: terrain, the SCENERY box as a generated body, nothing for ON_WATER.
     let col = wet.collision.as_ref().expect("collision");
@@ -1440,6 +1448,7 @@ fn bundles_carry_scenery_water_and_collision() {
     assert!(plain.generated.is_empty() && plain.scenery.is_none());
     assert!(plain.water.is_none() && plain.collision.is_none());
     assert!(plain.entity_lod_classes.is_empty());
+    assert!(plain.entity_depth_bias_types.is_empty());
 }
 
 #[test]

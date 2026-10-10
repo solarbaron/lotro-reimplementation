@@ -227,14 +227,28 @@ fn statistics_line_reports_interval_figures() {
             .find(|l| l.contains("stats"))
             .unwrap_or_else(|| panic!("no statistics line: {lines:?}")),
     );
+    // Every §11.1 field (resident memory where the platform reports it).
     for field in [
+        "connections=",
+        "logged_in=",
+        "in_world=",
+        "per_instance=",
+        "entities=",
+        "interest_pairs=",
         "tick_last_us=",
         "tick_max_us=",
+        "overruns=",
         "bytes_in_per_s=",
         "bytes_out_per_s=",
+        "accounted_bytes=",
     ] {
         assert!(line.contains(field), "{field} missing: {line}");
     }
+    #[cfg(target_os = "linux")]
+    assert!(
+        line.contains("resident_bytes="),
+        "resident_bytes missing: {line}"
+    );
     for field in ["bytes_in=", "bytes_out="] {
         assert!(!line.contains(field), "cumulative {field} logged: {line}");
     }

@@ -262,14 +262,18 @@ pub enum WaterFamily {
     Flow {
         /// The record declares normal layers 1 and 2 (1059–1062, 1064, 1065), which the
         /// Tessera rule of §8.6.4 adds (0x2B0007FD); without them only steps 1–6 of §8.6.2
-        /// apply (0x2B0005EC).
+        /// apply (0x2B0005EC). It also picks the record's own colour list of the §8.6.4
+        /// Tessera rule (revised 2026-10-10): this tells the install's two flow-map records
+        /// apart (an observation of this install, not a format rule, §8.6.4 answer).
         normal_layers: bool,
     },
 }
 
-/// The shader records of plain water on mesh UV (`water.md` §8.2 table, §8.5.6). The spec
-/// gives no interface rule that sets them apart from plain water; Tessera recognises them by
-/// these DIDs (implementer OPEN in `water.md` §14).
+/// The shader records of plain water on mesh UV (`water.md` §8.2 table, §8.5.6). No rule in
+/// the decoded record sets them apart from plain water (their difference lies inside the
+/// programs); Tessera recognises them by these DIDs (Tessera Decision kept by the `water.md`
+/// §14 answer (a) of 2026-10-10: an observation of this install, re-checked when the data
+/// changes).
 pub const PLAIN_UV_RECORDS: [u32; 3] = [0x2B00_084B, 0x2B00_089A, 0x2B00_0A8D];
 
 /// The water family of `shader`, `None` unless it is a water record (`material.md` §11.6):
@@ -357,7 +361,9 @@ pub struct WaterMaterial {
     /// Older bump water parameters (§8.5.6).
     pub bump: BumpParams,
     /// The noise texture of the flow-map programs: the default texture of a sampler no
-    /// binding names (§8.6.1, [`ShaderInterface::unbound_defaults`]); the first one.
+    /// binding names (§8.6.1, [`ShaderInterface::unbound_defaults`]); the first one. In this
+    /// install it is the one of the `NoiseTexture` sampler in every water permutation
+    /// (`water.md` W47, §14 answer (b): equivalent).
     pub noise_map: Option<Did>,
     /// Some normal-layer scale (1063–1065) is a curve that changes with time
     /// (`water.md` §8.7.1 Tessera Decision: *B* from the camera's landblock).

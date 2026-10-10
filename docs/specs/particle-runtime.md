@@ -730,6 +730,14 @@ input the output alpha is further multiplied by the soft-particle factor of para
 > without frame lighting has none, which matches the client with fog off (it uploads distances
 > so large that *f* stays 0, `lighting.md` §10).
 
+> **OPEN:** (implementer, 2026-10-10; engineering choice, the spec is silent) Whose curve
+> states (`material.md` §5.3.1: the random source of mode 3, the key search of mode 10) the
+> per-draw evaluation of 1043 and of texture matrices 0 and 1 uses. The walker keeps one set
+> per 0x39 record, shared by all its instances and kept while the record is cached (bounded),
+> and evaluates at the material clock; the explorer preview evaluates at its own simulated
+> time with fresh states per frame. Only surfaces with a curve that is not constant are
+> re-evaluated (none for 1043 in this install, RT28).
+
 <a id="s9-1-2"></a>
 #### 9.1.2 Permutation feature bit 1: soft particles and heat distortion (BIN, BIN-S, OBS3; RT25, RT26, RT29)
 

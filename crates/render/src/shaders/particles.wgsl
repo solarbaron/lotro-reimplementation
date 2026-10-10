@@ -25,6 +25,12 @@ struct ParticleDraw {
     flags: vec4<u32>,
     // x: second-layer texture is sRGB, y: layers (0 one, 1 product, 2 sum).
     layers: vec4<u32>,
+    // Texture matrices 0 and 1 (`material.md` §8.4) packed as (a0, b0, c0, d0),
+    // (e0, f0, a1, b1), (c1, d1, e1, f1) for rows ((a, b, c), (d, e, f)); the identity for
+    // one-layer programs.
+    uv0: vec4<f32>,
+    uv1: vec4<f32>,
+    uv2: vec4<f32>,
 };
 
 const PROGRAM_TEXTURE_ALPHA: u32 = 1u;
@@ -82,15 +88,26 @@ fn vs_particle(v: VsIn) -> VsOut {
     return out;
 }
 
+fn particle_uv_matrix0(uv: vec2<f32>) -> vec2<f32> {
+    let m = draw.uv0;
+    return vec2<f32>(m.x * uv.x + m.y * uv.y + m.z, m.w * uv.x + draw.uv1.x * uv.y + draw.uv1.y);
+}
+
+fn particle_uv_matrix1(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(draw.uv1.z * uv.x + draw.uv1.w * uv.y + draw.uv2.x,
+        draw.uv2.y * uv.x + draw.uv2.z * uv.y + draw.uv2.w);
+}
+
 @fragment
 fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
-    var tex = textureSample(t_particle, s_particle, in.uv);
+    // Two-layer programs read layer 1 at texture matrix 0 and layer 2 at texture matrix 1,
+    // both applied to the vertex UV pair (`particle-runtime.md` §9.1.1, RT27); one-layer
+    // programs get identity matrices.
+    var tex = textureSample(t_particle, s_particle, particle_uv_matrix0(in.uv));
     if (draw.flags.x != 0u) {
         tex = vec4<f32>(particle_linear_to_srgb(tex.rgb), tex.a);
     }
-    // The second layer is sampled at the same coordinates (`material.md` §8.4: both layers
-    // read the vertex UV pair; Tessera applies no texture matrices to particles).
-    var l2 = textureSample(t_layer2, s_layer2, in.uv);
+    var l2 = textureSample(t_layer2, s_layer2, particle_uv_matrix1(in.uv));
     if (draw.layers.x != 0u) {
         l2 = vec4<f32>(particle_linear_to_srgb(l2.rgb), l2.a);
     }

@@ -111,17 +111,23 @@ pub struct WaterFlowParams {
     pub rotation: f32,
 }
 
-/// The Fresnel form of a flow-map draw (`water.md` §8.6.4).
+/// The Fresnel form of a flow-map draw, and with it the record's own colour list
+/// (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: each flow-map record follows its own
+/// OpenGL reflection-permutation list with the reflection replaced by the untinted
+/// refraction sample; W42, W43).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FresnelForm {
     /// `water.md` §8.4 step 5: *f* = bias + (1 − bias) × (1 − |*v* · *n*|)^exponent. The
-    /// plain families, and the flow-map record without layers 1 and 2 (0x2B0005EC, whose
-    /// own programs use this form, §8.6.4).
+    /// plain families, and the flow-map record without layers 1 and 2 (0x2B0005EC), whose
+    /// list (§8.6.4 steps 1–5 of its own list) tints toward `WaterFogColor` itself and has no
+    /// fake-light diffuse term *L*꜀ anywhere (W42).
     #[default]
     Biased,
     /// `water.md` §8.6.4 step 4 (0x2B0007FD): *f* = bias × (1 − |*v* · *n*|)^(1 / exponent),
-    /// the bias multiplies and the exponent is inverted. Read only by
-    /// [`WaterFamily::Flow`]; the other families always use [`FresnelForm::Biased`].
+    /// the bias multiplies and the exponent is inverted; its list tints toward *L*꜀² ×
+    /// `WaterFogColor` and multiplies the specular by *L*꜀ (steps 1–6 of the first list).
+    /// Read only by [`WaterFamily::Flow`]; the other families always use
+    /// [`FresnelForm::Biased`].
     Scaled,
 }
 
@@ -377,14 +383,18 @@ pub struct DistortionParams {
     pub matrix: UvTransform,
     /// The material colour 2000 (stored-value RGBA).
     pub color: [f32; 4],
-    /// The alpha-test threshold (texel alpha at or below it is discarded), when on.
+    /// The alpha-test threshold, when on. The unlit records test their output alpha (texel
+    /// alpha × the vertex alpha where [`DistortionParams::vertex_color`] × material alpha,
+    /// `water.md` §8.5.5 step 5, W45); the lit record tests the texel alpha before any
+    /// vertex multiply (`lighting.md` §5.12). A pixel at or below the threshold is
+    /// discarded.
     pub alpha_test: Option<f32>,
     /// Both faces drawn.
     pub two_sided: bool,
     /// Depth write.
     pub depth_write: bool,
-    /// The output (colour and alpha) is multiplied by the vertex colour (`water.md` §8.5.5
-    /// step 5: 0x2B00063E).
+    /// The texel (colour and alpha) is multiplied by the vertex colour before the alpha
+    /// test (`water.md` §8.5.5 step 5: 0x2B00063E; unlit records only).
     pub vertex_color: bool,
 }
 
@@ -449,6 +459,29 @@ pub struct LiquidMeshDraw {
     pub textures: WaterTextures,
     /// The caller's object handle for the light selection of lit liquids.
     pub light_object: Option<u64>,
+    /// Slope-scale depth bias of the placed entity's `Render_DepthBias_Type` entry, as the
+    /// depth-bias table stores it (`decals.md` §6.5: negative pulls toward the camera with a
+    /// depth buffer that grows with distance; 0: no bias). Applied as the Tessera default of
+    /// `decals.md` §6.5 OPEN (c) (`water.md` §8.5.4 rule for puddles); the renderer negates
+    /// it for its reversed depth (§6.5 Tessera Decision). Clamped to ±[`MAX_DEPTH_BIAS`];
+    /// a non-finite value is 0. The table's absolute and maximum values are not applied
+    /// (none is set in the reference install; `decals.md` §6.5 OPEN (b)).
+    pub depth_bias: f32,
+}
+
+/// Largest magnitude of [`LiquidMeshDraw::depth_bias`] (the table's values lie within ±10,
+/// `decals.md` §6.5).
+pub const MAX_DEPTH_BIAS: f32 = 64.0;
+
+/// The slope-scale bias of a draw for the reversed-depth world passes, as the bits of the
+/// pipeline key: 0 for none, non-finite or −0.
+fn reversed_slope_bits(stored: f32) -> u32 {
+    let v = if stored.is_finite() {
+        -stored.clamp(-MAX_DEPTH_BIAS, MAX_DEPTH_BIAS)
+    } else {
+        0.0
+    };
+    if v == 0.0 { 0 } else { v.to_bits() }
 }
 
 impl Pass {
@@ -531,10 +564,11 @@ const TEXTURE_BITS: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 mod fl {
     pub const WORLD_UV: u32 = 1;
     pub const ALPHA_TEST: u32 = 2;
-    /// Flow-map water with the 0x2B0007FD Fresnel ([`super::FresnelForm::Scaled`]).
-    pub const FRESNEL_SCALED: u32 = 4;
-    /// The liquid's output is multiplied by the vertex colour (0x2B00063E, `water.md`
-    /// §8.5.5 step 5).
+    /// Flow-map water with the colour list of 0x2B0007FD ([`super::FresnelForm::Scaled`]):
+    /// its Fresnel form, the tint toward *L*꜀² × `WaterFogColor` and the specular × *L*꜀.
+    pub const FLOW_FAKE_LIGHT: u32 = 4;
+    /// The liquid's texel is multiplied by the vertex colour before the alpha test
+    /// (0x2B00063E, `water.md` §8.5.5 step 5).
     pub const VERTEX_COLOR: u32 = 8;
 }
 
@@ -603,7 +637,7 @@ impl WaterUniform {
             WaterFamily::Lava => fam::LAVA,
         };
         let flags = if p.family == WaterFamily::Flow && p.fresnel_form == FresnelForm::Scaled {
-            self::fl::FRESNEL_SCALED
+            self::fl::FLOW_FAKE_LIGHT
         } else {
             0
         };
@@ -744,6 +778,8 @@ struct WaterPipeKey {
     /// `None`: both faces; `Some(false)`: back faces culled; `Some(true)`: front faces
     /// (mirrored transforms).
     cull: Option<bool>,
+    /// Slope-scale depth bias for the reversed depth ([`reversed_slope_bits`]; 0: none).
+    slope_bias: u32,
 }
 
 /// Pipelines of the water, built lazily.
@@ -867,7 +903,14 @@ impl WaterState {
                 },
                 ..Default::default()
             },
-            depth_stencil: Some(world_depth(key.depth_write)),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                bias: wgpu::DepthBiasState {
+                    constant: 0,
+                    slope_scale: f32::from_bits(key.slope_bias),
+                    clamp: 0.0,
+                },
+                ..world_depth(key.depth_write)
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: shader,
@@ -1064,6 +1107,7 @@ pub(crate) fn build_hook(
             blend: false,
             depth_write: true,
             cull: None,
+            slope_bias: 0,
         },
     );
     for ((draw, range), n) in draws.iter().zip(ranges).zip(cells) {
@@ -1196,6 +1240,7 @@ pub(crate) fn build_hook(
                 blend: blended,
                 depth_write,
                 cull: cull.map(|_| mirrored),
+                slope_bias: reversed_slope_bits(d.depth_bias),
             },
         ) else {
             continue;
@@ -1476,6 +1521,19 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+    }
+
+    /// `decals.md` §6.5 Tessera Decision (sign): the stored slope-scale value is negated for
+    /// the reversed depth; hostile values are bounded or dropped.
+    #[test]
+    fn depth_bias_for_reversed_depth() {
+        assert_eq!(reversed_slope_bits(0.0), 0);
+        assert_eq!(reversed_slope_bits(-0.0), 0);
+        assert_eq!(f32::from_bits(reversed_slope_bits(-0.8)), 0.8);
+        assert_eq!(f32::from_bits(reversed_slope_bits(2.0)), -2.0);
+        assert_eq!(f32::from_bits(reversed_slope_bits(1e9)), -MAX_DEPTH_BIAS);
+        assert_eq!(reversed_slope_bits(f32::NAN), 0);
+        assert_eq!(reversed_slope_bits(f32::INFINITY), 0);
     }
 
     #[test]

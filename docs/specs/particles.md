@@ -1077,6 +1077,18 @@ derives from its keyframes which per-particle state its particles carry:
 > simulation (`crates/particles`, `sim.rs`) uses the particle's index as it stands (0 when no
 > controller-3 key has run) and does not advance the key's counter for it.
 
+> **OPEN:** (implementer, 2026-10-10) The base-fix row for a leaving controller 1 leaves two
+> points open (not reached by the data; the review of 2026-10-10 notes (b) and (d)): (1) the
+> span of "run once to the new key's time": a particle age or a clock time, and measured from
+> which time; (2) whether that walk fills an empty point-index slot (controller 1 never ran an
+> update before the switch), and from which index. The run-time simulation (`crates/particles`,
+> `sim.rs`) reads the span as the clock time of the new key (spawn time + its `time`) minus the
+> emitter's previous particle-update time, at least 0; walks from the current position with
+> the filled slot; and with an empty slot leaves the base and the slot unchanged. It also
+> raises the starting value of both `rotation` and `world_rotation` at every base fix (review
+> note (c); only one of them is drawn, §8.12 item 3, so the choice is not visible). The note of
+> 2026-10-09 just above is answered by the base-fix table; the simulation now follows it.
+
 > **Answered (2026-10-09, BIN third pass; was OPEN, implementer, 2026-10-07):** (1) a key
 > becomes current when the age equals its `time` (step 2: "at least"; the age is raised to 0
 > first); (2) a channel that no visited key has set has no defined value in the client; the

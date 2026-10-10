@@ -541,6 +541,12 @@ impl StatsInterval {
         }
     }
 
+    /// Server time (µs) at which the interval started.
+    #[must_use]
+    pub fn start(&self) -> u64 {
+        self.start
+    }
+
     /// Ends the interval at server time `now` (µs), returns its figures and starts the next
     /// one: resets the interval's longest tick and remembers the byte counters.
     pub fn close(&mut self, stats: &Stats, now: u64) -> IntervalFigures {
@@ -562,6 +568,90 @@ impl StatsInterval {
         *self = next;
         figures
     }
+}
+
+/// One statistics line (`test-server.md` §11.1): the counts at the time of the line and the
+/// figures of the interval it closes (§14 invariant 9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatsLine {
+    /// Server time (µs) at which the interval started.
+    pub interval_start_us: u64,
+    /// Server time (µs) of the line: the start of the tick that wrote it, and the start of
+    /// the next interval.
+    pub at_us: u64,
+    /// Connections the simulation knows.
+    pub connections: usize,
+    /// Of them, those past login (`LoginOk` sent).
+    pub logged_in: usize,
+    /// Of those, the ones in the world.
+    pub in_world: usize,
+    /// Characters in the world per instance, in instance order.
+    pub per_instance: Vec<u32>,
+    /// Entities in all instances (characters and wanderers).
+    pub entities: usize,
+    /// (observer, entity) pairs in interest.
+    pub interest_pairs: usize,
+    /// Duration of the most recently completed tick, µs.
+    pub tick_last_us: u64,
+    /// The interval's figures: its longest tick and byte rates.
+    pub interval: IntervalFigures,
+    /// Ticks that overran, since the server started.
+    pub overruns: u64,
+    /// The §10.2 accounted total, bytes.
+    pub accounted_bytes: usize,
+    /// Resident memory, bytes, where the platform reports it.
+    pub resident_bytes: Option<u64>,
+}
+
+impl StatsLine {
+    /// Writes the line at info level.
+    pub fn log(&self) {
+        tracing::info!(
+            connections = self.connections,
+            logged_in = self.logged_in,
+            in_world = self.in_world,
+            per_instance = ?self.per_instance,
+            entities = self.entities,
+            interest_pairs = self.interest_pairs,
+            tick_last_us = self.tick_last_us,
+            tick_max_us = self.interval.tick_max_us,
+            overruns = self.overruns,
+            bytes_in_per_s = self.interval.bytes_in_per_s,
+            bytes_out_per_s = self.interval.bytes_out_per_s,
+            accounted_bytes = self.accounted_bytes,
+            resident_bytes = self.resident_bytes,
+            "stats"
+        );
+    }
+}
+
+/// This process's resident memory in bytes, where the platform reports it (`VmRSS` of
+/// Linux's `/proc/self/status`); `None` elsewhere or when it cannot be read.
+#[must_use]
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/self/status").ok()?;
+        status_kib(&text, "VmRSS")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// A `/proc/*/status` field given in kB, as bytes.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn status_kib(text: &str, field: &str) -> Option<u64> {
+    let rest = text
+        .lines()
+        .find_map(|l| l.strip_prefix(field)?.strip_prefix(':'))?;
+    let mut parts = rest.split_whitespace();
+    let n: u64 = parts.next()?.parse().ok()?;
+    if parts.next() != Some("kB") {
+        return None;
+    }
+    n.checked_mul(1024)
 }
 
 #[cfg(test)]
@@ -608,5 +698,28 @@ mod tests {
         assert_eq!(stats.snapshot().ticks, 3);
         // No tick and no time in between: zeros, no division by zero.
         assert_eq!(iv.close(&stats, 13_000_000), IntervalFigures::default());
+    }
+
+    /// §11.1: byte rates are rounded down.
+    #[test]
+    fn byte_rates_round_down() {
+        let stats = Stats::default();
+        let mut iv = StatsInterval::new(&stats, 0);
+        stats.bytes_in.store(10, Ordering::Relaxed);
+        stats.bytes_out.store(1, Ordering::Relaxed);
+        // 10 bytes over 3 s: 3.33 → 3; 1 byte over 3 s: 0.33 → 0.
+        let f = iv.close(&stats, 3_000_000);
+        assert_eq!((f.bytes_in_per_s, f.bytes_out_per_s), (3, 0));
+    }
+
+    #[test]
+    fn status_field_in_kib() {
+        let t = "Name:\tx\nVmHWM:\t  2048 kB\nVmRSS:\t  1024 kB\n";
+        assert_eq!(status_kib(t, "VmRSS"), Some(1024 * 1024));
+        assert_eq!(status_kib(t, "VmSwap"), None);
+        assert_eq!(status_kib("VmRSS:\t12 MB\n", "VmRSS"), None);
+        assert_eq!(status_kib("VmRSS:\tx kB\n", "VmRSS"), None);
+        #[cfg(target_os = "linux")]
+        assert!(resident_bytes().is_some_and(|b| b > 0));
     }
 }

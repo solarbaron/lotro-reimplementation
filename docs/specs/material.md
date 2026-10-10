@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-10, review of the revision of commit d96e087 (a fresh session that wrote no part of this spec and did no earlier review of it) passed CLEAN_ROOM.md §5.3, every item; blocking items B1 and B2 and note N1 of the previous review resolved; see the review record). Before: **Revised** (2026-10-10, spec writer: answers to review items B1 and B2 and note N1 of the review of commit 3e0f078: §11.2 tested opacity per record (product or sum; table), scope and counts of the alpha-test comparisons, boundary-test note; §10.3 five records that add the two alphas; §11.3 output alpha and a clamp Decision; new tag SH-H2, rows MA58 (restated), MA60, MA50 and MA54 corrected; §14 MT16; awaiting review). Before: **Revised** (2026-10-10, review of the revision of commit 3e0f078 (a fresh session that wrote no part of this spec and did no earlier review of it): **changes requested**, two blocking items (B1, B2) on §11.2 and row MA58, see the review record; §9.3, rows MA56, MA57, MA59 and MT14, MT15 hold; awaiting the writer's answer). Before: **Revised** (2026-10-10, spec writer: §9.3 shader-only groups, which override wins and where group materials go (MA56, MA57); §11.2 per-draw alpha-test steps reworded and the Direct3D 9 shader-class condition added (MA58, MA59); §14 MT14–MT15; answering the implementer OPENs filed with commit 82f0fc7; awaiting review). Before: **Accepted** (2026-10-10, review of the revision of commit 9e9a29a passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §10.3 second-layer alpha by role (MA54), §19 implementer OPEN (a)–(e) answered (MA55), the two non-blocking notes of the last review (row order MA52/MA53, the §11.6 lava wording); awaiting review). Before: **Accepted** (2026-10-09, review of the revision answering `water.md` item B1 passed, see the review record). Before: Revised (2026-10-09, spec writer: §11.6 lava row and recognition rule, answering `water.md` review item B1; row MA53; change-log row for the §19 implementer callout). Before: **Accepted** (2026-10-09, review of the water-feature revision passed, see the review record). Before: Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; review 2026-10-09: **passed**, Accepted). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
+| **Status** | **Revised** (2026-10-10, spec writer: the §18 implementer note of commit b949a54 answered item by item (items 1, 3, 4 kept as Tessera Decisions, 5 confirmed, 2 and 6 partly corrected: non-finite *r* falls back to the block's `alpha_ref`, a NaN *A* counts as 0, a group overflow keeps the last 16 groups); §11.3 output alpha stated for every pass and every opacity source (MA61); notes N1 and N2 of the review of commit d96e087: §19 composition Decision revised for two-opacity records, the former first-match census line labelled in §11.2; tag SH-H3, rows MA61, MA62; awaiting review). Before: **Accepted** (2026-10-10, review of the revision of commit d96e087 (a fresh session that wrote no part of this spec and did no earlier review of it) passed CLEAN_ROOM.md §5.3, every item; blocking items B1 and B2 and note N1 of the previous review resolved; see the review record). Before: **Revised** (2026-10-10, spec writer: answers to review items B1 and B2 and note N1 of the review of commit 3e0f078: §11.2 tested opacity per record (product or sum; table), scope and counts of the alpha-test comparisons, boundary-test note; §10.3 five records that add the two alphas; §11.3 output alpha and a clamp Decision; new tag SH-H2, rows MA58 (restated), MA60, MA50 and MA54 corrected; §14 MT16; awaiting review). Before: **Revised** (2026-10-10, review of the revision of commit 3e0f078 (a fresh session that wrote no part of this spec and did no earlier review of it): **changes requested**, two blocking items (B1, B2) on §11.2 and row MA58, see the review record; §9.3, rows MA56, MA57, MA59 and MT14, MT15 hold; awaiting the writer's answer). Before: **Revised** (2026-10-10, spec writer: §9.3 shader-only groups, which override wins and where group materials go (MA56, MA57); §11.2 per-draw alpha-test steps reworded and the Direct3D 9 shader-class condition added (MA58, MA59); §14 MT14–MT15; answering the implementer OPENs filed with commit 82f0fc7; awaiting review). Before: **Accepted** (2026-10-10, review of the revision of commit 9e9a29a passed CLEAN_ROOM.md §5.3, every item; see the review record). Before: **Revised** (2026-10-10, spec writer: §10.3 second-layer alpha by role (MA54), §19 implementer OPEN (a)–(e) answered (MA55), the two non-blocking notes of the last review (row order MA52/MA53, the §11.6 lava wording); awaiting review). Before: **Accepted** (2026-10-09, review of the revision answering `water.md` item B1 passed, see the review record). Before: Revised (2026-10-09, spec writer: §11.6 lava row and recognition rule, answering `water.md` review item B1; row MA53; change-log row for the §19 implementer callout). Before: **Accepted** (2026-10-09, review of the water-feature revision passed, see the review record). Before: Revised (2026-10-09, spec writer: §8.7, new §10.3 and §11.6, rows MA50–MA52; second revision the same day: §11.6 mirror row, §18 OPEN note; review 2026-10-09: **passed**, Accepted). Before: Accepted (2026-10-08; fifth revision of 2026-10-07, see §20.2) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -90,6 +90,7 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | BIN-H | **M4 (decision 0011), pass of 2026-10-10.** Same build (`x64/lotroclient64.exe` 4906.0071.1794.4035), decompiled with a headless disassembler on a private read-only copy of the analysis project (deleted afterwards). **Questions** (the implementer OPENs of 2026-10-10 filed with commit 82f0fc7): (o) what a matched appearance group whose `material` is 0 does with a non-zero `shader_override`; (p) which override wins when several matched groups carry one, and where the groups' materials go relative to composed face images and look edits; (q) the exact alpha-test comparison, the quantisation of the reference and when the reference is multiplied by the material alpha. **Code read:** the block merge that inserts groups into a figure's group list; the figure's model component (group list to per-figure override list, surface rebuild order: parts, compositors, groups, edits); the per-part group application (slot and binding-key test, shader replacement, material append); the cell and the portrait paths that apply groups; the surface record loader; the per-draw alpha-test setup and the device-capability routine that sets its shader class. **Why M1–M3 were not enough:** the data shows only that the 277 groups with `material` 0 all carry a shader override, not what the client does with them; no frame capture (M3) is available; nothing is published (M2). **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 | SH-H | Spec writer's own probes of 2026-10-10 (dirty room, method M1; install data unchanged since 2026-10-04): the OpenGL text of **every** program of all 510 shader records searched for the alpha-test comparison; every 0x20 record re-parsed for groups with `material` 0 and for groups that reach binding key 0x10000036; the surface records, materials and base textures of mesh 0x0600C2E7 decoded. Its alpha-test count (2,135 comparisons in 194 records) searched one text pattern only and is superseded by SH-H2. |
 | SH-H2 | Spec writer's own probes of 2026-10-10, second pass (dirty room; install data unchanged since 2026-10-04), answering review items B1 and B2 of that day. (a) Method M1: the OpenGL pixel program (kind 3, `program_b`) of **every** permutation of all 510 shader records (7,041 programs), each read statement by statement into expressions of its texture reads (named by the program's sampler table) and its named constants. A comparison is a discard whose tested value depends on the constant that the program's name table labels as the alpha-test threshold (3,723 programs in 365 records declare it). Records in scope: those named by a surface record's `shader` (185 with a comparison) or by an appearance group's `shader_override` (24 more). Also: the declared parameter ids of every two-opacity record compared; the sampler names that the texture bindings of every 3000-group declaration reach, in all 510 records; and the effective 4004 and 1043 of every surface record (§9.2). (b) Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), as BIN-S (same build): every Direct3D 10/11 pixel program (kind 4) of every shader record named by a surface record or a group override, disassembled with the public shader disassembler library of SH-W and searched for the same constant. **Question:** which value each alpha-test comparison tests, and in which form. **Why M1 was not enough for (b):** the Direct3D 10/11 programs are bytecode and the OpenGL text covers one back end only; no frame capture (M3); nothing published (M2). |
+| SH-H3 | Spec writer's own probes of 2026-10-10, third pass (dirty room; install data unchanged since 2026-10-04), answering the implementer note of §18 filed with commit b949a54 and the non-blocking notes N1 and N2 of the review of commit d96e087. (a) Method M1, with the repository decoders as tools: the output alpha of the OpenGL pixel program (kind 3) of every permutation of the 266 shader records that a surface record or an appearance group's `shader_override` names, read into expressions as in SH-H2 (5,432 programs of the 156 lit records among them); the sampler names of every permutation of all 510 records, grouped into the set of opacity-bearing roles per record; the alpha of every 2000 entry of all 0x30 materials and of every 2000 declaration; every material group of every 0x20 record (slot `a`, and per block the number of groups that the §9.3 binding rule lets match one surface). (b) Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), as SH-H2 (b): the 13,536 Direct3D 10/11 pixel programs of the 156 lit records in scope, the texture reads reaching the output alpha traced through each program. **Question:** which texel alphas reach the output alpha of each pass of a lit record (not only the alpha-testing programs that SH-H2 checked), and which role combinations, material alphas and group counts occur. **Why M1 was not enough for (b):** as SH-H2 (b). Recorded for `lighting.md` as its tag OPA. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -153,6 +154,8 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | MA58 | Alpha-test comparisons in the OpenGL pixel programs (revised 2026-10-10 after review item B2; the former row claimed 2,135 comparisons in 194 records, all of one form): 3,717 comparisons in 3,717 programs of 359 of the 510 records, none with two. In the 209 records named by a surface record or an appearance group's `shader_override` (2,772 comparisons; 185 records and 2,462 comparisons for surface records alone), every comparison discards when threshold − tested value ≥ 0, that is when the tested value is at or below the reference. Outside that scope (150 records, 945 comparisons, named by nothing in this install) other tested values occur, and six records (0x2B000000–0x2B000003, 0x2B0003B9, 0x2B0006E5) keep a fragment when tested value − threshold − 0.001 ≥ 0. The window family (0x2B0009E1–0x2B0009E5, 0x2B0009E8) declares the threshold in six programs and uses it in its output alpha, not in a comparison (§11.2) | SH-H2 (a) | Confirmed 2026-10-10 (OpenGL programs, every program) |
 | MA60 | Tested opacity by the record's opacity-bearing roles (§11.2 table): one role, its alpha; `ColorAndOpacity` with `ColorAndOpacity2`, `EmissiveAndOpacity` or `OpacityAlpha`, the product of the two alphas, except the **sum** in 0x2B0007B4, 0x2B0007CC, 0x2B0008A5, 0x2B0008A6, 0x2B0009E9 (with `ColorAndOpacity2`, 17 surface records) and 0x2B000812, 0x2B000813 (with `EmissiveAndOpacity`, 6); no role, the constant 1 in pass 0x42 only. Each of the 209 records in scope has one form in all its programs; no declared parameter id or sampler name separates sum from product records; every program's output alpha is its tested opacity times the record's alpha factor (the sum included; the sum records multiply RGB, §10.3). The Direct3D 10/11 programs of the same records test the same value with the same form (6,815 comparisons, one per program, each a greater-or-equal of threshold and value followed by a discard); 0x2B0000B1, 0x2B000806, 0x2B000810 and the liquid-distortion records 0x2B000442, 0x2B0004B5, 0x2B00063E compare only there (6 more programs; §11.2) | SH-H2 (a) (OpenGL, every program of the 209 records); SH-H2 (b) (Direct3D 10/11) | Confirmed 2026-10-10 (OpenGL); BIN (Direct3D 10/11) |
 | MA59 | Per-draw reference: multiplied by the alpha *A* only in permutations whose own depth-write state is on (switched off for *A* < 0.9 in the others), never when alpha-to-coverage is on or on a Direct3D 9 device whose shader class is model 2.0 or above drawing with a pixel program; then ⌊reference × 255⌋ / 255 in single precision; the value handed to the programs is that, 0 or −1 by the permutation's alpha-test switch before these steps (§11.2) | BIN-H (q) | BIN |
+| MA61 | Output alpha of every lit record (§11.3 classification) named by a surface record or a group override = its tested opacity (§11.2 table; 1 without an opacity-bearing role) × one factor (the 2000 alpha, or the interpolated colour alpha in records that read vertex colours), in **every** pass that writes colour: base passes, the additive light passes 0x01–0x03, the glow pass 0x08, passes 0x00 and 0x09; this includes the programs without an alpha test, the `OpacityAlpha`-only and `EmissiveAndOpacity`-only records and the sum records. No gloss, dye-mask or normal-texture alpha reaches it (§11.3; `lighting.md` L41) | SH-H3 (a) (5,432 OpenGL programs of the 156 records); SH-H3 (b) (Direct3D 10/11: in all 13,240 programs that write colour, the opacity textures reaching the output alpha are exactly the record's opacity-bearing roles) | Confirmed 2026-10-10 (OpenGL programs); BIN (Direct3D 10/11) |
+| MA62 | Censuses for the §18 implementer note: over all 510 shader records the opacity-bearing role sets are none (230), `ColorAndOpacity` (124), `ColorAndOpacity` + `ColorAndOpacity2` (44), `ColorAndOpacity` + `OpacityAlpha` (38), `OpacityAlpha` (68), `ColorAndOpacity` + `EmissiveAndOpacity` (5), `EmissiveAndOpacity` (1); no record has three or more, and none has `ColorAndOpacity2` without `ColorAndOpacity` or any other pair. The alphas of all 1,055 2000 entries of the 0x30 materials lie in [0, 1] (791 at 1, 11 at 0, 253 between), none non-finite; the 477 2000 declarations have alphas 0.75 to 1. No material group has slot `a` = 0; within one block at most 5 groups can match one surface (one block has 5, one 4, two 3, 436 have 2, 13,821 one) | SH-H3 (a) | Confirmed 2026-10-10 |
 
 ---
 
@@ -1385,7 +1388,9 @@ were not searched.
 Census over surface records (their own materials only): the shader declares 4004 for
 5,213; alpha test is on for 3,386 and off for 1,827. Thresholds of enabled surfaces: 0.8
 (2,446), 0.65 (187), 0.5 (177), 0.7 (111), 0.6 (106), 0.4 (67), 0.3 (59), 0.9 (42), others.
-Opacity source: slot 3000 (3,091), slot 3020 (130), slot 3018 only (2), none (163). By the
+By the **former** first-match rule (slot 3000, else 3020, else 3018; replaced 2026-10-10 by the
+table, kept only for comparison with earlier revisions and implementations) the opacity source
+was: slot 3000 (3,091), slot 3020 (130), slot 3018 only (2), none (163). By the
 table above (added 2026-10-10, SH-H2), the 3,386 enabled surfaces are: slot-3000 alpha 3,026,
 slot-3020 alpha 130, slot-3018 alpha 2, the product with `ColorAndOpacity2` 40, the sum with
 `ColorAndOpacity2` 3, the product with `EmissiveAndOpacity` 15, the sum with
@@ -1519,7 +1524,12 @@ appearances), which is why some rows have few surface records.
 Lit base passes (BIN, MA22): the programs output alpha = (the tested opacity of §11.2 when the
 record has an opacity-bearing role: one texel alpha, or the product or sum of two as tabled
 there; revised 2026-10-10, MA60) × the alpha of material colour 2000; a gloss or dye-mask alpha
-never reaches the output. A sum can exceed 1. **Tessera rule (Decision):** clamp the output
+never reaches the output. A sum can exceed 1. This holds in every program of these records,
+with or without alpha test, whatever the opacity-bearing role (`OpacityAlpha` or
+`EmissiveAndOpacity` alone included), and the additive light passes output the **same** alpha,
+so each light's contribution is scaled by it (Confirmed 2026-10-10 in the OpenGL programs, BIN
+in the Direct3D 10/11 programs, MA61; `lighting.md` §5.12). In records that read vertex colours
+the factor is the 2000 alpha × the vertex alpha (`lighting.md` §5.13). **Tessera rule (Decision):** clamp the output
 alpha to [0, 1] before it is used as a blend factor, as a fixed-point colour target would
 (the original's target format was not checked). With the SRCALPHA / INVSRCALPHA factors the base pass therefore blends:
 - opaque roles (`Color`, `ColorAndGloss`, `ColorAndDye`) with 2000 alpha 1 are opaque;
@@ -2108,7 +2118,8 @@ Added by the clean-room implementation of M4.5 (`crates/material` modules `trans
 > is 0 for a negative or non-finite clock.
 > Answer: the client uses the block's `specular_color` (bytes 19–22, §7.6; white in every block of this install) × the per-object tint, then black below power 0.5 (§8.3). The implementation's white × tint equals it on this install; reading the block value is exact.
 
-> **OPEN (implementer, clean room, 2026-10-10, conformance to the §9.3, §11.2 and §11.3
+> **Answered 2026-10-10 (spec writer; SH-H3, MA60–MA62; was OPEN, implementer, clean room,
+> 2026-10-10, filed with commit b949a54, conformance to the §9.3, §11.2 and §11.3
 > revision; engineering choices where the spec is silent, please confirm or correct):**
 > (1) Tested opacity of role combinations the §11.2 table does not list (two roles other than
 > the tabled pairs, three or more roles, `ColorAndOpacity2` without `ColorAndOpacity`):
@@ -2128,6 +2139,67 @@ Added by the clean-room implementation of M4.5 (`crates/material` modules `trans
 > group whose slot `a` is 0 is dropped before matching, and binding key 2 matches every
 > surface record, in all figure and cell paths (§9.3 binding rule), with at most 16 matched
 > groups per surface.
+>
+> Answer, item by item ("Decision" marks a Tessera rule, not the original's behaviour):
+>
+> 1. **Kept, as a Tessera Decision.** No shader record of this install has any role
+>    combination outside the table: over all 510 records the opacity-bearing role sets are
+>    none, one role, or `ColorAndOpacity` with exactly one of `ColorAndOpacity2`,
+>    `EmissiveAndOpacity` or `OpacityAlpha`; no record has three or more roles, and
+>    `ColorAndOpacity2` never occurs without `ColorAndOpacity` (MA62). The one pair the table
+>    does not cover in scope, `ColorAndOpacity` with `OpacityAlpha` in records that nothing
+>    names, tests other forms there (§11.2 "Scope and counts"). The slot order 3000, 3020,
+>    3018, 3001 and "the first two, product unless a listed sum record" only decide data that
+>    does not exist; tests must not treat that order as the original's.
+> 2. **Partly corrected.** (a) A non-finite *r*: follow the §18 Decision of 2026-10-07
+>    (alpha-test threshold): a non-finite 1043, constant or animated, falls back to the
+>    `alpha_ref` of the drawn permutation's render-state block (§7.6; 0.8 or 0.9 in every
+>    block of this install), and only when that is unusable too to 0.5. Taking 0.5 directly
+>    skips the block value, which is the original's value for permutations that 1043 does
+>    not bind. (b) A non-finite *A*: colours handed to a renderer are already finite under the
+>    §18 Decision "Values handed to a renderer are finite" (NaN → 0, ±∞ → the largest finite
+>    f32 of its sign), so the clamp to [0, 1] gives 0 for NaN and −∞ and 1 for +∞. Treat a
+>    NaN *A* as 0, not 1, so that one rule holds for the colour everywhere (the §18 answer on
+>    the lit blend classification also counts a non-finite alpha as below 1). (c) The clamp of *A* to [0, 1]
+>    is a Decision; this install never needs it (all 2000 alphas lie in [0, 1], MA62; the
+>    per-object tint alpha is in [0, 1] by construction). (d) No alpha-to-coverage option:
+>    conforms to the §11.2 Tessera rule; the condition of step 1 and step 4 ("the client's
+>    alpha-to-coverage option is on") is then never met. Edge softening remains the 4007
+>    second draw (§8.5).
+> 3. **Kept, as a Tessera Decision.** *A* is the 2000 alpha × the per-object tint alpha
+>    (§11.2 inputs). Tessera's draw-distance fade is not a fact of the original (how the
+>    original fades objects is unknown; the caller-supplied mode of the §11.2 OPEN item (1)
+>    may be that path), so folding the fade into *A* is a Decision: it lowers *R* in
+>    depth-writing permutations and switches the test off below 0.9 in the others, by steps
+>    2–3. When the per-object tint is applied, its alpha multiplies *A* too. Recomputing *R*
+>    for every draw whose *A* changes is required by steps 2–3 (confirmed). The explorer's
+>    *A* = the 2000 alpha alone is correct for a preview without a per-object tint (white).
+> 4. **Kept for the explorer only, as a Tessera Decision with known differences;** the
+>    walker's lit pipeline (two alphas sampled and combined per fragment, unclamped until
+>    the output) is the reference. Baking the product or sum into the base texture's 8-bit
+>    alpha differs from the programs in four ways: (a) a sum above 1 is stored as 1, so at
+>    *R* = 1 such texels are discarded (the programs keep them); (b) the stored value is
+>    rounded to 1/255, so comparisons at the boundary (MT16) can differ; (c) the output alpha
+>    becomes min(1, sum) × *A* instead of min(1, sum × *A*), which differs when the sum
+>    exceeds 1 and *A* < 1; (d) the second alpha is resampled at the base texture's size and
+>    coordinates, so a second layer read through texture matrix 1 or UV set 1 (§8.4,
+>    `lighting.md` §4.3) is not reproduced. The §19 Decision of 2026-10-07 is revised to say
+>    so.
+> 5. **Confirmed.** The emissive texture's alpha is part of the tested opacity and of the
+>    output alpha of the `ColorAndOpacity` + `EmissiveAndOpacity` records (product in three,
+>    sum in two, §11.2 table) in every program of those records, whatever the glow colour
+>    (MA60, MA61); a black glow colour only removes the emissive RGB term (`lighting.md`
+>    §5.9). The texture must be bound for its alpha.
+> 6. **Confirmed for the rule, Decision for the bound, with a correction.** A group with slot
+>    `a` = 0 matches no part and binding key 2 matches every surface record of a matched part
+>    (§9.3 binding rule); no group of this install has `a` = 0 (MA62). The limit of 16
+>    matched groups per surface is a Tessera Decision against hostile input; the client's
+>    limit was not traced, and within one block at most 5 groups can match one surface
+>    (MA62; a whole figure's count was not taken). Correction: when more than 16 groups match
+>    one surface, keep the **last** 16 in group-list order and drop the earlier ones (and
+>    report it). By §9.3 rule 2 and §9.2 step 2 later groups win (the last override applied,
+>    and later materials replace earlier values), so dropping the earliest changes the
+>    result least; keeping the first 16 would drop the winning override.
 
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)
@@ -2180,6 +2252,19 @@ open:
 > renderer's linear multiply, which equals §12.3's multiply of stored values for a pure
 > power curve.
 > Adopted for the viewer: an engineering mapping onto the renderer's texture convention; it reproduces §11.2 and §12.3 on stored values except for the sRGB note of §12.3.
+>
+> **Revised 2026-10-10 (spec writer; §11.2 table, MA60; note N1 of the review of commit
+> d96e087, §18 implementer note item 4):** the alpha of the composed base texture is the
+> **tested opacity** of the §11.2 table, not a single "opacity source": one alpha (slot 3000's
+> own, or the 3020 or 3018 alpha resampled nearest to 3000's size); for a record with two
+> opacity-bearing roles the **product** of the slot-3000 alpha and the second alpha
+> (3001, 3018 or 3020, resampled the same way), or the **sum** in the seven records the §11.2
+> table lists, stored saturated at 1; opaque when the record has no opacity-bearing role. The
+> viewer's *A* is the 2000 alpha. This remains a Decision for the viewer only and differs from
+> the programs where §18's answer to the implementer note of commit b949a54, item 4, says
+> (sums above 1, 8-bit rounding at the boundary, the clamp after *A*, a second layer read
+> through texture matrix 1 or UV set 1). Renderers that draw the game (the walker) combine
+> the two alphas per fragment as §11.2 and §11.3 state.
 
 > **Decision (viewer); the original's rule answered 2026-10-05 (§20.1, last row):** Two dye channels. The renderer takes one dye per draw, so the viewer
 > draws one channel at a time: the first, unless only the second has a colour other than
@@ -2333,3 +2418,4 @@ Answers of 2026-10-07 (BIN-R, BIN-S4):
 | 2026-10-10 | header, §1, §10.3, §11.6, §19 | Spec writer (dirty room), new tag SH-W3 (own probes: second-layer alpha in every OpenGL program of the two-layer records; transform-binding census by pass), rows MA54 and MA55. §10.3: which second layers carry opacity (`ColorAndOpacity2` and `ColorTexture2` only; never `Color2`, `ColorAndGloss2`, `ColorAndDye2`). §19: the implementer OPEN of 2026-10-09 answered ((a) equivalent for colour passes, (b) lava and 0x2B0000B7 corrected, (c) confirmed, (d) corrected, (e) kept as a Tessera Decision). Non-blocking notes of the last review: rows MA52 and MA53 in numeric order; §11.6 lava row says the emissive layer is read at the mesh UV plus 1063 × *B*. Status Accepted → Revised, awaiting review. |
 | 2026-10-10 | header, §1, §9.3, §11.2, §14 | Spec writer (dirty room), answering the implementer OPENs filed with commit 82f0fc7 (branch `hairfix`; on merge, its two OPEN callouts on §9.3 and `appearance.md` §3.5 are superseded by the Answered callouts). New tags BIN-H (M4 pass under decision 0011) and SH-H (own probes), rows MA56–MA59. §9.3: a matched group with `material` 0 and a non-zero `shader_override` replaces the shader and appends nothing; overrides apply in group-list order, the last applied wins; replacing the shader keeps the material list; on a figure the group materials come after the composed images and before the look edits; cells apply groups the same way; load failures and a Tessera Decision. §11.2: the comparison stated as "keep only when opacity > *R*" (Confirmed over all OpenGL programs); the per-draw steps restated with named inputs (*T₀*, *W*, *r*, *A*), the multiply tied to the permutation's own depth-write switch (pass 0x09 does not write depth), single-precision quantisation with worked examples, the rule for *R* = 0 or −1 corrected (it follows the switch before step 2, not after), the Direct3D 9 shader-class condition, a Tessera Decision; the OPEN extended with (3) and (4). §14: MT14, MT15. Status Accepted → Revised, awaiting review. |
 | 2026-10-10 | header, §1, §10.3, §11.2, §11.3, §14 | Spec writer (dirty room), answering review items B1 and B2 and note N1 of the review of commit 3e0f078. New tag SH-H2 (own probes: every OpenGL pixel program of all 510 records read into expressions; Direct3D 10/11 programs of the records in scope under decision 0011). §11.2: the opacity-source rule replaced by a table of the tested opacity per combination of opacity-bearing roles, with the seven records that test the **sum** of two alphas (B1; the bullet "with two colour layers, the product" was wrong for them); the comparison form stated with reproducible counts and its scope (records named by surface records or group overrides), the offset form of six unnamed records and the window family's non-test use listed (B2); records that compare only in Direct3D 10/11 named; the census split by the table; boundary note on the 165 / 255 example (N1). §10.3: the five `ColorAndOpacity2` records that add the alphas (RGB multiplied). §11.3: the lit output alpha follows the §11.2 tested opacity; Tessera Decision to clamp it to [0, 1]. §1: MA58 restated, MA60 new, MA50 and MA54 corrected, SH-H marked superseded for its count. §14: MT16. Status stays Revised, awaiting review. |
+| 2026-10-10 | header, §1, §11.2, §11.3, §18, §19 | Spec writer (dirty room), answering the implementer note added to §18 with commit b949a54 and the non-blocking notes N1 and N2 of the review of commit d96e087. New tag SH-H3 (own probes: output alpha of every OpenGL program of the 266 records in scope, M1; Direct3D 10/11 programs of the 156 lit ones under decision 0011; censuses of role sets, 2000 alphas and group matches), rows MA61 (output alpha = tested opacity × the 2000-alpha factor in every pass of a lit record, light passes included) and MA62 (censuses). §11.2: the census line by the former first-match rule labelled as such (N2). §11.3: the lit output alpha holds in every program and in the additive light passes. §18: the note marked Answered; (1) a Tessera Decision for role combinations that do not occur in any of the 510 records; (2) non-finite *r* falls back to the drawn block's `alpha_ref` before 0.5, a NaN *A* counts as 0, the clamp of *A* and the absence of alpha-to-coverage are Decisions that conform; (3) the draw-distance fade folded into *A* is a Decision; (4) the explorer's baked alpha is a viewer Decision with four listed differences; (5) confirmed; (6) the binding rule confirmed, the 16-group bound a Decision that keeps the **last** 16 groups. §19: the 2026-10-07 composition Decision revised for two-opacity records (product, or saturated sum) (N1). Pointer revisions with the same change in `lighting.md` §5.12 (L8, L41), `render.md` §4.3 and `particle-runtime.md` §9.1.3. Implementers re-check `tessera_material::alpha` (non-finite *r* and *A*), the figure path's group bound, and the explorer's composed alpha. No section number or anchor changed. |

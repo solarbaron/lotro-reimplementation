@@ -1410,6 +1410,46 @@ pub fn wave_height(params: &WaterParams, x: f32, y: f32, t: f32) -> (f32, f32, f
     (h, dx, dy)
 }
 
+/// CPU twin of the normal-layer offsets the water program adds to its layer coordinates at
+/// time `t` (seconds of the material clock, `water.md` §8.7), with the parameters as the
+/// pipeline uploads them (non-finite values replaced by the defaults): plain water (§8.3,
+/// on mesh UV §8.5) offsets layer *k* by speed *k* × `t`; older bump water (§8.5.6) by
+/// (*b*, *b*), (4*b*, 4*b*), (8*b*, 8*b*) with *b* = `bump[1]` × `t`; flow-map water (§8.6.2)
+/// only layers 1 and 2 when the record has them, by *g* × speed × `t` with *g* =
+/// clamp(0.0004 × `view_depth`, 1, 10) (layer 0 follows the flow phases and has no offset);
+/// lava none (§8.6.5). In texture repeats; `None` for a layer the family does not scroll.
+#[must_use]
+pub fn normal_layer_offsets(
+    params: &WaterParams,
+    t: f32,
+    view_depth: f32,
+) -> [Option<[f32; 2]>; 3] {
+    let d = WaterParams::default();
+    let sp = |k: usize| {
+        [
+            fin(params.normal_speed[k][0], d.normal_speed[k][0]) * t,
+            fin(params.normal_speed[k][1], d.normal_speed[k][1]) * t,
+        ]
+    };
+    match params.family {
+        WaterFamily::Plain | WaterFamily::PlainUv => [Some(sp(0)), Some(sp(1)), Some(sp(2))],
+        WaterFamily::OlderBump => {
+            let b = fin(params.bump[1], 0.0) * t;
+            [
+                Some([b, b]),
+                Some([4.0 * b, 4.0 * b]),
+                Some([8.0 * b, 8.0 * b]),
+            ]
+        }
+        WaterFamily::Flow if params.normal_layers >= 3 => {
+            let g = fin(0.0004 * view_depth, 1.0).clamp(1.0, 10.0);
+            let scaled = |k: usize| sp(k).map(|v| g * v);
+            [None, Some(scaled(1)), Some(scaled(2))]
+        }
+        WaterFamily::Flow | WaterFamily::Lava => [None; 3],
+    }
+}
+
 /// CPU twin of the far-draw fade of a water fragment at distance `d` from the eye (module
 /// docs): *a* = 1 − sat((*d* − *s*) × *r*) with the values as the pipeline uploads them
 /// (a non-finite start means no fade, a non-finite or negative inverse range 0).
@@ -1487,6 +1527,52 @@ mod tests {
         }
         assert_eq!(fresnel(&p(2.0), 1.0), 0.1);
         assert!(fresnel(&p(f32::NAN), f32::NAN).is_finite());
+    }
+
+    /// The layer offsets per family (`water.md` §8.3, §8.5.6, §8.6.2), hostile values
+    /// replaced by the defaults.
+    #[test]
+    fn layer_offsets_by_family() {
+        let speeds = [[0.005, 0.0075], [0.015, 0.02], [-0.01, -0.0125]];
+        let plain = WaterParams {
+            normal_speed: speeds,
+            ..WaterParams::default()
+        };
+        let o = normal_layer_offsets(&plain, 2.0, 0.0);
+        for (k, s) in speeds.iter().enumerate() {
+            assert_eq!(o[k], Some([2.0 * s[0], 2.0 * s[1]]), "layer {k}");
+        }
+        let flow = WaterParams {
+            family: WaterFamily::Flow,
+            ..plain
+        };
+        let o = normal_layer_offsets(&flow, 1.0, 0.0);
+        assert_eq!(o, [None, Some(speeds[1]), Some(speeds[2])]);
+        // g = 0.0004 x 10,000 = 4.
+        let far = normal_layer_offsets(&flow, 1.0, 10_000.0);
+        assert_eq!(far[1], Some([4.0 * speeds[1][0], 4.0 * speeds[1][1]]));
+        let one = WaterParams {
+            normal_layers: 1,
+            ..flow
+        };
+        assert_eq!(normal_layer_offsets(&one, 5.0, 0.0), [None; 3]);
+        let bump = WaterParams {
+            family: WaterFamily::OlderBump,
+            bump: [1.0, 0.5],
+            ..plain
+        };
+        assert_eq!(normal_layer_offsets(&bump, 2.0, 0.0)[2], Some([8.0, 8.0]));
+        let lava = WaterParams {
+            family: WaterFamily::Lava,
+            ..plain
+        };
+        assert_eq!(normal_layer_offsets(&lava, 2.0, 0.0), [None; 3]);
+        let nan = WaterParams {
+            normal_speed: [[f32::NAN; 2]; 3],
+            ..plain
+        };
+        let d = WaterParams::default().normal_speed;
+        assert_eq!(normal_layer_offsets(&nan, 1.0, 0.0)[0], Some(d[0]));
     }
 
     #[test]

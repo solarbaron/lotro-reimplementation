@@ -14,9 +14,9 @@
 //! | Y1–Y4 | sky key A by the walker's lookup (`camera_sky_key`: landblock-info set, block map, else 2) → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
 //! | Y5 | the indoor record's inputs at the IN1 start (cell 9 of 0x802191A6) by the walker's lookup (cell, landblock info, block map): key B 1, ambient *X* = *Y*, linear fog 0.059–90 in R 11, G 14, B 2 (`landblock.md` §4.13 worked example) |
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
-//! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7; L5 and L7 as corrected and redefined in §4.6 on 2026-10-09; [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle; L5 must show a faint white sheen round the sun's mirror point against the mirrored camera, L7 a warm light-map pool on the terrain that `--disable lights` leaves unchanged ([`check_row_images`]) |
+//! | T4, T5, T12, T15, T16, Y2, L2, L5, L7; T1, Y3, W2, S5, S7, L3 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7; L5 and L7 as corrected and redefined in §4.6 on 2026-10-09; T1, Y3, W2, S5, S7 and L3's corrected eye from §4.7.1, 2026-10-10; [`CAMERAS`]): every camera with a target frames it and the §4.7.1 image positions are reproduced (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle; L5 must show a faint white sheen round the sun's mirror point against the mirrored camera, L7 a warm light-map pool on the terrain that `--disable lights` leaves unchanged, and S5, S7 and W2 the tree, object or sea that their comparison image removes ([`check_row_images`]) |
 //!
-//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: the record's own colour list; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
+//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: the record's own colour list; `TESSERA_WATER_ROWS=W12,W13` limits the rows); W15 and W16 are measured (checks W15-R and W16-R, [`check_layer_rates`]): the row's surface is drawn, its normal-layer offsets 1 s of material clock apart differ by the `water.md` §8.7 rates within 1 %, and the material clock runs in real seconds |
 //! | W13 (depth state) | the row's puddle has no `Render_DepthBias_Type` (`water.md` W44), so it is drawn with the depth test and no bias; the depth-bias table's type 3 is a slope-scale value only |
 //!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
@@ -31,10 +31,13 @@ use tessera_client::walker::env::{
     IndoorPids, camera_sky_key, compose, fog_distances, indoor_inputs_of,
 };
 use tessera_client::walker::fxparse::{Systems, clock_seconds};
+use tessera_client::walker::liquid::water_params;
 use tessera_client::walker::{block_open, layerless_key, resolve_block_surface};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::landblock::{GridSurface, LightMaps};
 use tessera_formats::{Did, PropertyDictionary, Record};
+use tessera_material::{CurveStates, LiquidSurface, MaterialLibrary};
+use tessera_render::water_layer_offsets;
 use tessera_terrain::ResolveOptions;
 use tessera_world::frills::DensityThinner;
 use tessera_world::{
@@ -638,7 +641,11 @@ struct RowCamera {
 /// block-local.
 const L5_MIRROR: [f64; 3] = [36.67, 21.68, 165.80];
 
-/// The cameras of `m4-5-visual.md` §4.7 (2026-10-08) and the corrected L5 and L7 of §4.6.
+/// The cameras of `m4-5-visual.md` §4.7 (2026-10-08), the corrected L5 and L7 of §4.6, and
+/// the cameras re-derived on 2026-10-10 (§4.7.1): T1 turned round past a placed roof, Y3
+/// facing south, W2 out over the sea past the frill reeds (and without water), S5 above the
+/// placed bushes and S7 above the placed rock (each also without generated scenery), and
+/// L3's corrected eye above the bonfire's platform.
 /// T4, T5 and T12 look at their target from a side with no object in between; T15 and T16 keep the row's camera and
 /// add an image without the sky's lighting (`lighting.md` §8.1 defaults) to show the
 /// ceiling layers; L2 looks down on the ground under light #460, with and without the
@@ -648,7 +655,7 @@ const L5_MIRROR: [f64; 3] = [36.67, 21.68, 165.80];
 /// the camp of 0x7873 at night, with `--disable lights` and noon for comparison. Their
 /// expected looks are measured by [`check_row_images`].
 #[rustfmt::skip]
-const CAMERAS: [RowCamera; 15] = [
+const CAMERAS: [RowCamera; 24] = [
     RowCamera { id: "T4", region: 2, block: 0x4F32, eye: [151.42, 64.30, 416.83], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([139.42, 64.30, 410.83]) },
     RowCamera { id: "T5", region: 3, block: 0x9FE8, eye: [44.36, 37.70, 193.97], heading: 180.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([44.36, 27.70, 188.97]) },
     RowCamera { id: "T12", region: 5, block: 0x4F62, eye: [132.98, 105.99, 323.65], heading: 270.0, pitch: -26.6, t: 0.5, extra: &[], target: Some([124.98, 105.99, 319.65]) },
@@ -664,7 +671,39 @@ const CAMERAS: [RowCamera; 15] = [
     RowCamera { id: "L7", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &[], target: Some([78.12, 18.12, 389.00]) },
     RowCamera { id: "L7-nolights", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.0, extra: &["--disable", "lights"], target: Some([78.12, 18.12, 389.00]) },
     RowCamera { id: "L7-noon", region: 1, block: 0x7873, eye: [78.12, 21.00, 409.00], heading: 0.0, pitch: -89.0, t: 0.5, extra: &[], target: Some([78.12, 18.12, 389.00]) },
+    RowCamera { id: "T1", region: 1, block: 0x7574, eye: [128.90, 102.91, 390.15], heading: 180.0, pitch: -35.0, t: 0.5, extra: &[], target: Some([128.90, 98.63, 387.15]) },
+    RowCamera { id: "Y3", region: 3, block: 0x693E, eye: [19.47, 44.71, 227.17], heading: 180.0, pitch: 10.0, t: 0.78, extra: &[], target: None },
+    RowCamera { id: "W2", region: 3, block: 0x7E2C, eye: [129.78, 96.29, 151.70], heading: 172.0, pitch: -10.0, t: 0.5, extra: &[], target: None },
+    RowCamera { id: "W2-nowater", region: 3, block: 0x7E2C, eye: [129.78, 96.29, 151.70], heading: 172.0, pitch: -10.0, t: 0.5, extra: &["--disable", "water"], target: None },
+    RowCamera { id: "S5", region: 3, block: 0x79AD, eye: [74.88, 82.09, 316.99], heading: 240.0, pitch: 0.0, t: 0.5, extra: &[], target: Some(S5_TREE) },
+    RowCamera { id: "S5-noscenery", region: 3, block: 0x79AD, eye: [74.88, 82.09, 316.99], heading: 240.0, pitch: 0.0, t: 0.5, extra: &["--disable", "scenery"], target: Some(S5_TREE) },
+    RowCamera { id: "S7", region: 4, block: 0x1A23, eye: [85.68, 93.43, 194.55], heading: 140.0, pitch: -45.0, t: 0.5, extra: &[], target: Some(S7_SECOND) },
+    RowCamera { id: "S7-noscenery", region: 4, block: 0x1A23, eye: [85.68, 93.43, 194.55], heading: 140.0, pitch: -45.0, t: 0.5, extra: &["--disable", "scenery"], target: Some(S7_SECOND) },
+    RowCamera { id: "L3", region: 1, block: 0x4883, eye: [92.78, 41.64, 394.95], heading: 0.0, pitch: -10.0, t: 0.0, extra: &[], target: None },
 ];
+
+/// S5's nearest generated object, tree 0x47007213 (foot), block-local (`m4-5-visual.md`
+/// §4.2).
+const S5_TREE: [f64; 3] = [61.890, 74.593, 311.986];
+/// S5's second nearest object, 0x47005FEC, hidden inside placed bushes (§4.7.1).
+const S5_SECOND: [f64; 3] = [55.744, 77.442, 311.986];
+/// S7's second nearest generated object, 0x47007F5A, on open ground (§4.2, §4.7.1).
+const S7_SECOND: [f64; 3] = [92.493, 91.001, 187.369];
+/// S7's nearest generated object, 0x47008203, inside the placed rock (§4.7.1).
+const S7_FIRST: [f64; 3] = [85.939, 86.901, 187.329];
+
+/// Image positions (x right, y down, 1600 × 900) that `m4-5-visual.md` §4.7.1 gives for
+/// points of the cameras re-derived on 2026-10-10, projected with the 45° vertical field of
+/// view of §4.0: (camera, point, pixel).
+const PROJECTED: [(&str, [f64; 3], [f64; 2]); 4] = [
+    ("S5", S5_TREE, [800.0, 812.0]),
+    ("S5", S5_SECOND, [1119.0, 737.0]),
+    ("S7", S7_SECOND, [381.0, 526.0]),
+    ("S7", S7_FIRST, [1296.0, 630.0]),
+];
+/// Largest distance (pixels) between [`pixel_of`] and a position of [`PROJECTED`] (the
+/// checklist rounds to whole pixels).
+const PROJECTED_SLACK: f64 = 2.0;
 
 /// Vertical field of view of the walker, degrees (`walker.md` §11.8).
 const FOV_Y: f64 = 45.0;
@@ -736,6 +775,14 @@ fn row_cameras_frame_their_targets() {
             "{id}: point {p:?} at pixel {px:?}"
         );
     }
+    // The image positions of §4.7.1.
+    for (id, p, want) in PROJECTED {
+        let px = pixel_of(camera(id), p).unwrap_or_else(|| panic!("{id}: point behind the eye"));
+        assert!(
+            (px[0] - want[0]).hypot(px[1] - want[1]) <= PROJECTED_SLACK,
+            "{id}: {p:?} at pixel {px:?}, the checklist gives {want:?}"
+        );
+    }
     // The pixel mapping: the view centre, and P of L5 near it (5° below, `m4-5-visual.md`
     // §4.6).
     let l5 = camera("L5");
@@ -778,9 +825,8 @@ const L7_POOL_SOUTH: [f64; 3] = [82.0, 16.5, 389.0];
 /// Terrain east of L7's pool (dirt, outside x 71–84).
 const L7_OUTSIDE: [f64; 3] = [90.0, 18.12, 389.0];
 
-/// Mean colour (0–255 per channel, as stored) of the `w` × `h` pixel box of `png` centred
-/// on `centre`.
-fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64; 3] {
+/// An 8-bit screenshot: RGB(A) bytes, width, height and channels per pixel.
+fn load_png(png_path: &std::path::Path) -> (Vec<u8>, usize, usize, usize) {
     let file = std::fs::File::open(png_path).expect("open the screenshot");
     let mut reader = png::Decoder::new(std::io::BufReader::new(file))
         .read_info()
@@ -788,14 +834,38 @@ fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64
     let mut buf = vec![0u8; reader.output_buffer_size().expect("png size")];
     let info = reader.next_frame(&mut buf).expect("png frame");
     assert_eq!(info.bit_depth, png::BitDepth::Eight, "8-bit screenshot");
-    let (iw, ih) = (info.width as usize, info.height as usize);
-    let channels = info.color_type.samples();
+    (
+        buf,
+        info.width as usize,
+        info.height as usize,
+        info.color_type.samples(),
+    )
+}
+
+/// The pixel rows and columns of the `w` × `h` box centred on `centre`, clipped to an
+/// image of `iw` × `ih`.
+fn box_span(
+    centre: [f64; 2],
+    w: f64,
+    h: f64,
+    iw: usize,
+    ih: usize,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     let span = |a: f64, n: usize| (a.max(0.0) as usize).min(n);
-    let (x0, x1) = (span(centre[0] - w / 2.0, iw), span(centre[0] + w / 2.0, iw));
-    let (y0, y1) = (span(centre[1] - h / 2.0, ih), span(centre[1] + h / 2.0, ih));
+    (
+        span(centre[1] - h / 2.0, ih)..span(centre[1] + h / 2.0, ih),
+        span(centre[0] - w / 2.0, iw)..span(centre[0] + w / 2.0, iw),
+    )
+}
+
+/// Mean colour (0–255 per channel, as stored) of the `w` × `h` pixel box of `png` centred
+/// on `centre`.
+fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64; 3] {
+    let (buf, iw, ih, channels) = load_png(png_path);
+    let (rows, cols) = box_span(centre, w, h, iw, ih);
     let (mut sum, mut count) = ([0.0f64; 3], 0usize);
-    for row in y0..y1 {
-        for col in x0..x1 {
+    for row in rows {
+        for col in cols.clone() {
             let i = (row * iw + col) * channels;
             if let Some(px) = buf.get(i..i + 3) {
                 for (s, v) in sum.iter_mut().zip(px) {
@@ -806,6 +876,31 @@ fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64
         }
     }
     sum.map(|s| s / count.max(1) as f64)
+}
+
+/// Mean absolute difference (0–255, over the three channels) of images `a` and `b` in the
+/// `w` × `h` pixel box centred on `centre`.
+fn box_abs_diff(a: &std::path::Path, b: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> f64 {
+    let (pa, iw, ih, ca) = load_png(a);
+    let (pb, bw, bh, cb) = load_png(b);
+    assert_eq!((iw, ih), (bw, bh), "images of one size");
+    let (rows, cols) = box_span(centre, w, h, iw, ih);
+    let (mut sum, mut count) = (0.0f64, 0usize);
+    for row in rows {
+        for col in cols.clone() {
+            let (i, j) = ((row * iw + col) * ca, (row * iw + col) * cb);
+            if let (Some(x), Some(y)) = (pa.get(i..i + 3), pb.get(j..j + 3)) {
+                sum += x
+                    .iter()
+                    .zip(y)
+                    .map(|(x, y)| f64::from(x.abs_diff(*y)))
+                    .sum::<f64>()
+                    / 3.0;
+                count += 1;
+            }
+        }
+    }
+    sum / count.max(1) as f64
 }
 
 /// The measurable expectations of the corrected rows L5 and L7 (`m4-5-visual.md` §4.6) on
@@ -820,6 +915,12 @@ fn box_rgb(png_path: &std::path::Path, centre: [f64; 2], w: f64, h: f64) -> [f64
 ///   least [`L7_WARM`] times blue and red/blue at least [`L7_WARMER`] times that of the dirt
 ///   outside the pool; point lights carry `Light_BakedLandscapeLight`, so the terrain is
 ///   the same with `--disable lights` (each channel within [`L7_SAME`]).
+/// - **S5, S7, W2** (cameras of §4.7.1): what the comparison image takes away is drawn in
+///   the row's image. S5: the nearest tree, 0x47007213, on the centre column from its foot
+///   up (gone without generated scenery); S7: the second nearest object, 0x47007F5A, at its
+///   projected position (gone without generated scenery); W2: the near sea in the lower
+///   middle of the image (gone without water). Each by a mean absolute difference of at
+///   least [`CHANGED_MIN`] between the two images there.
 fn check_row_images(out: &std::path::Path) -> Vec<String> {
     let mut fails = Vec::new();
     let image = |id: &str| out.join(format!("{id}.png"));
@@ -863,8 +964,41 @@ fn check_row_images(out: &std::path::Path) -> Vec<String> {
             ));
         }
     }
+    // S5, S7, W2: what the comparison removes is drawn.
+    let tree = pixel_of(camera("S5"), S5_TREE).expect("S5 tree ahead");
+    let s7 = pixel_of(camera("S7"), S7_SECOND).expect("S7 object ahead");
+    let changes = [
+        (
+            "S5",
+            "S5-noscenery",
+            [tree[0], tree[1] - 300.0],
+            40.0,
+            600.0,
+        ),
+        ("S7", "S7-noscenery", s7, 2.0 * BOX_HALF, 2.0 * BOX_HALF),
+        (
+            "W2",
+            "W2-nowater",
+            [IMAGE_W / 2.0, 0.75 * IMAGE_H],
+            0.4 * IMAGE_W,
+            0.2 * IMAGE_H,
+        ),
+    ];
+    for (id, without, centre, w, h) in changes {
+        let d = box_abs_diff(&image(id), &image(without), centre, w, h);
+        eprintln!("{id}: mean difference {d:.1} against {without} round {centre:.0?}");
+        if d < CHANGED_MIN {
+            fails.push(format!(
+                "{id}: {d:.1} < {CHANGED_MIN} against {without}: nothing drawn there"
+            ));
+        }
+    }
     fails
 }
+
+/// Smallest mean absolute difference (0–255) between a row's image and its comparison
+/// where the comparison removes what the row judges.
+const CHANGED_MIN: f64 = 6.0;
 
 /// Smallest per-channel brightening of L5's sheen (0–255).
 const L5_SHEEN_MIN: f64 = 6.0;
@@ -1111,6 +1245,7 @@ fn water_rows_render() {
         .ok()
         .map(|v| v.split(',').map(|s| s.trim().to_owned()).collect());
     let mut failed = Vec::new();
+    let mut rates_lib: Option<ArchiveSet> = None;
     for (c, expect) in &WATER_CAMERAS {
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == c.id)) {
             continue;
@@ -1216,9 +1351,165 @@ fn water_rows_render() {
                 ));
             }
         }
+        if let Some(x) = LAYER_RATES.iter().find(|x| x.row == c.id) {
+            let lib = rates_lib.get_or_insert_with(|| {
+                ArchiveSet::open(&dir, SetOptions::default()).expect("open archive set")
+            });
+            fails.extend(check_layer_rates(x, &r, &MaterialLibrary::new(&*lib)));
+        }
         report(c.id, &fails, &mut failed, "settled, no water fallback");
     }
     assert!(failed.is_empty(), "rows failing: {failed:?}");
+}
+
+/// A water row judged by measurement (`m4-5-visual.md` §4.8, checks W15-R and W16-R,
+/// revised 2026-10-10; `water.md` §8.3, §8.6.2, §8.7).
+struct LayerRates {
+    row: &'static str,
+    /// The water surface drawn at the row's camera.
+    surface: u32,
+    /// How far each normal layer's offset moves in 1 s of material clock, repeats (`None`:
+    /// the layer has no scroll rate of its own).
+    per_second: [Option<[f32; 2]>; 3],
+    /// The same as a ground speed, m/s (`water.md` §8.7: |speed| × 160 / scale).
+    ground: [Option<f32>; 3],
+    /// Pairs of layers that move in opposite directions.
+    opposed: &'static [(usize, usize)],
+}
+
+/// W15: flow-map water 0x31004359 of record 0x2B0007FD (layers 1 and 2 scroll, layer 0
+/// follows the flow phases). W16: plain water 0x3100068B of record 0x2B0000A8 (three
+/// layers, the third against the first two).
+const LAYER_RATES: [LayerRates; 2] = [
+    LayerRates {
+        row: "W15",
+        surface: 0x3100_4359,
+        per_second: [None, Some([0.0015, 0.002]), Some([-0.01, -0.0125])],
+        ground: [None, Some(0.20), Some(0.32)],
+        opposed: &[(1, 2)],
+    },
+    LayerRates {
+        row: "W16",
+        surface: 0x3100_068B,
+        per_second: [
+            Some([0.005, 0.0075]),
+            Some([0.015, 0.02]),
+            Some([-0.01, -0.0125]),
+        ],
+        ground: [Some(0.36), Some(0.50), Some(0.16)],
+        opposed: &[(0, 2), (1, 2)],
+    },
+];
+
+/// Relative tolerance of W15-R and W16-R (1 %).
+const RATE_TOLERANCE: f32 = 0.01;
+
+/// Checks W15-R or W16-R on a headless run at the row's camera: the row's surface is among
+/// the water drawn in the last frame; the normal-layer offsets of the water program
+/// ([`tessera_render::water_layer_offsets`], near field) for the drawn parameters at the
+/// frame's material clock *T* and for the walker's own evaluation of the material at
+/// *T* + 1 s differ by the row's rates within [`RATE_TOLERANCE`], as offsets and as ground
+/// speeds, with the named layers opposed; and the material clock advanced in real seconds
+/// over the frames drawn (within 1 % and 0.05 s). The run's still-scroll count is checked by
+/// the caller.
+fn check_layer_rates(
+    x: &LayerRates,
+    r: &tessera_client::headless::HeadlessReport,
+    lib: &MaterialLibrary<&ArchiveSet>,
+) -> Vec<String> {
+    let mut fails = Vec::new();
+    let Some(d) = r.water.iter().find(|d| d.surface.0 == x.surface) else {
+        let drawn: Vec<String> = r
+            .water
+            .iter()
+            .map(|d| format!("{:#010x}", d.surface.0))
+            .collect();
+        fails.push(format!(
+            "surface {:#010x} not drawn (drawn: {drawn:?})",
+            x.surface
+        ));
+        return fails;
+    };
+    let Ok(m) = lib.resolve_surface(Did(x.surface)) else {
+        fails.push(format!("surface {:#010x} does not resolve", x.surface));
+        return fails;
+    };
+    let layout = lib.texture_matrices(m.shader.did).unwrap_or_default();
+    let mut states = CurveStates::new();
+    let mut at = |t: f64| match LiquidSurface::evaluate(&m, &layout, t, &mut states) {
+        Some(LiquidSurface::Water(w)) => Some(water_params(&w)),
+        _ => None,
+    };
+    let (Some(p0), Some(p1)) = (at(d.clock), at(d.clock + 1.0)) else {
+        fails.push("not a water material".to_owned());
+        return fails;
+    };
+    if (
+        p0.family,
+        p0.normal_layers,
+        p0.normal_speed,
+        p0.normal_scale,
+    ) != (
+        d.params.family,
+        d.params.normal_layers,
+        d.params.normal_speed,
+        d.params.normal_scale,
+    ) {
+        fails.push("drawn layer parameters differ from the material at the clock".to_owned());
+    }
+    let t = d.clock as f32;
+    let o0 = water_layer_offsets(&d.params, t, 0.0);
+    let o1 = water_layer_offsets(&p1, (d.clock + 1.0) as f32, 0.0);
+    let mut deltas = [None; 3];
+    for k in 0..3 {
+        let delta = o0[k].zip(o1[k]).map(|(a, b)| [b[0] - a[0], b[1] - a[1]]);
+        deltas[k] = delta;
+        let scale = d.params.normal_scale[k].abs();
+        let speed = delta.map(|v| v[0].hypot(v[1]) * 160.0 / scale.max(f32::MIN_POSITIVE));
+        eprintln!(
+            "{}: layer {k} offset per second {delta:?} (expected {:?}), ground {speed:?} m/s \
+             (expected {:?})",
+            x.row, x.per_second[k], x.ground[k]
+        );
+        match (delta, x.per_second[k]) {
+            (None, None) => {}
+            (Some(v), Some(e)) => {
+                let err = (v[0] - e[0]).hypot(v[1] - e[1]);
+                if err > RATE_TOLERANCE * e[0].hypot(e[1]) {
+                    fails.push(format!("layer {k}: {v:?} per second, expected {e:?}"));
+                }
+            }
+            (v, e) => fails.push(format!("layer {k}: {v:?} per second, expected {e:?}")),
+        }
+        if let (Some(g), Some(e)) = (speed, x.ground[k])
+            && (g - e).abs() > RATE_TOLERANCE * e
+        {
+            fails.push(format!("layer {k}: {g:.4} m/s, expected {e}"));
+        }
+    }
+    for &(a, b) in x.opposed {
+        if let (Some(u), Some(v)) = (deltas[a], deltas[b])
+            && u[0] * v[0] + u[1] * v[1] >= 0.0
+        {
+            fails.push(format!("layers {a} and {b} not opposed"));
+        }
+    }
+    match r.clock {
+        Some(c) => {
+            let (dm, dw) = (c.material[1] - c.material[0], c.wall[1] - c.wall[0]);
+            eprintln!(
+                "{}: material clock {:.3} s over {:.3} s of real time",
+                x.row, dm, dw
+            );
+            if dw < 0.5 || (dm - dw).abs() > 0.01 * dw + 0.05 {
+                fails.push(format!(
+                    "material clock {dm:.3} s over {dw:.3} s of real time"
+                ));
+            }
+        }
+        None => fails.push("no frame drawn".to_owned()),
+    }
+    fails
 }
 
 fn report(id: &str, fails: &[String], failed: &mut Vec<String>, ok: &str) {

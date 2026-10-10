@@ -5,6 +5,8 @@
 //! Spec: `docs/specs/script-table.md` §4 (frame, base block, ports, targets), §5 (kind
 //! layouts), §6 (the animation node), §11.2 (algorithm).
 
+use std::sync::Arc;
+
 use crate::did::Did;
 use crate::error::{FormatError, Result};
 use crate::property::{
@@ -728,8 +730,8 @@ pub struct EditMaterialNode {
     pub material_type: u32,
     /// `Priority`.
     pub priority: i32,
-    /// `WaveformValue`.
-    pub waveform_value: Waveform,
+    /// `WaveformValue` (shared, so that listing the node's edit copies no curve data).
+    pub waveform_value: Arc<Waveform>,
     /// `ColorValue`: the four stored bytes (B, G, R, A).
     pub color_value: [u8; 4],
     /// `TextureValue`: a DID, or 0.
@@ -745,7 +747,7 @@ impl EditMaterialNode {
             mesh_type: r.u32()?,
             material_type: r.u32()?,
             priority: r.i32()?,
-            waveform_value: read_waveform(r)?,
+            waveform_value: Arc::new(read_waveform(r)?),
             color_value: r.array()?,
             texture_value: r.did()?,
             bool_value: r.bool8()?,

@@ -35,7 +35,8 @@ use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, EnumMapper};
 use tessera_havok::{AnimationData, Clip, Envelope, Tagfile, Transform};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_after_startup,
+    figure_look_from_data,
 };
 use tessera_mesh::assembly::shape::{FigureShape, FigureSliders, ShapeDriver, figure_shape};
 use tessera_mesh::assembly::{
@@ -1064,9 +1065,9 @@ pub fn build_character(
     }
     if !clips.look.edits.is_empty() {
         facts.push((
-            "colour edits".into(),
+            "material edits".into(),
             format!(
-                "{} (hair, beard and skin tints, §3.5)",
+                "{} (hair, beard and skin tints and other parameters, §3.5)",
                 clips.look.edits.len()
             ),
         ));
@@ -1563,9 +1564,12 @@ fn select_clips<S: tessera_props::RecordSource>(
     apply_figure_properties(&mut scripts, c, asm_vocab, options);
     let moving_mount = mount.is_some_and(|m| crate::mount_view::is_moving_gait(m.gait));
     out.tables = scripts.tables();
+    // The viewer's figure counts as placed in the world: `Physics_InWorld` turns true after
+    // its start-up (`appearance.md` §3.5 Decision), so that every body has its face.
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
-        .with_random_seed(Some(0));
+        .with_random_seed(Some(0))
+        .with_after_startup(figure_after_startup(asm_vocab));
     let mut layer_labels = Labels::of_property(data, "AnimationScript_Layer");
     let mut idle_clips: Vec<Did> = Vec::new();
     for state in StateArg::ALL {
@@ -1612,8 +1616,7 @@ fn select_clips<S: tessera_props::RecordSource>(
         if state == StateArg::Idle {
             idle_clips = r.clips();
             shape = figure_shape(data, asm_vocab, c, &r);
-            out.look =
-                figure_look_from_data(data, &r, options, &LookLimits::default(), Some(looks));
+            out.look = figure_look_from_data(data, &r, &LookLimits::default(), Some(looks));
             out.appearances = r
                 .appearances
                 .iter()

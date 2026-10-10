@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Synthetic tests of the figure look (`appearance.md` §3.5): compositor instances played
-//! from look candidates, composition through hand-built records, colour edits. Every
-//! record is built here; values are invented.
+//! Synthetic tests of the figure look (`appearance.md` §3.5): compositor instances replayed
+//! from look candidates (starts and stops), composition through hand-built records,
+//! material edits. Every record is built here; values are invented.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 
 use tessera_formats::Did;
+use tessera_formats::PropertyValue;
 use tessera_formats::gameplay::misc::{
     ColourEntry, CompositorLayer, CompositorOption, ImageCompositor,
 };
@@ -16,10 +17,10 @@ use tessera_formats::script_table::resolve::{
 use tessera_formats::script_table::{
     CompositorColourNode, CompositorLayerNode, TextureCompositorNode,
 };
-use tessera_mesh::assembly::AssemblyOptions;
+use tessera_mesh::assembly::AssemblyVocabulary;
 use tessera_mesh::assembly::look::{
-    COMPOSITOR_COLOUR_SCALE, FigureLook, LookCache, LookLimits, compositor_colour, figure_look,
-    material_colour,
+    COMPOSITOR_COLOUR_SCALE, FigureLook, LookCache, LookLimits, compositor_colour,
+    figure_after_startup, figure_look, look_matches, material_colour,
 };
 
 const FACE: u32 = 0x1000_0001;
@@ -100,6 +101,7 @@ fn cand(effect: LookEffect) -> LookCandidate {
         picked: true,
         chance: 1.0,
         stopped: false,
+        stopped_at: None,
         table: Did(0x0700_0001),
         scriptlet: Did(0),
         node_id: 1,
@@ -122,21 +124,43 @@ fn edit(parameter: u32, mesh: u32, priority: i32, bgra: [u8; 4]) -> LookEffect {
         mesh_type: mesh,
         material_type: HAIR_MATERIAL,
         priority,
+        waveform_value: std::sync::Arc::new(tessera_formats::Waveform {
+            subtype: 1,
+            values: vec![0.0],
+            extra: None,
+        }),
         color_value: bgra,
         texture_value: Did(0),
         bool_value: false,
     })
 }
 
-/// [`figure_look`] with both options on, the default limits and no cache.
+/// [`figure_look`] with the default limits and no cache.
 fn plain(resolution: &ClipResolution, m: &HashMap<Did, Vec<u8>>) -> FigureLook {
-    figure_look(
-        resolution,
-        fetch(m),
-        AssemblyOptions::default(),
-        &LookLimits::default(),
-        None,
-    )
+    figure_look(resolution, fetch(m), &LookLimits::default(), None)
+}
+
+fn eyes(option: i32) -> LookEffect {
+    LookEffect::CompositorLayer(CompositorLayerNode {
+        compositor: FACE,
+        layer: L_EYES,
+        image_number: option,
+        opacity: 1.0,
+    })
+}
+
+fn stopped_at(effect: LookEffect, at: usize) -> LookCandidate {
+    let mut c = cand(effect);
+    c.stopped = true;
+    c.stopped_at = Some(at);
+    c
+}
+
+fn priorities(look: &FigureLook, slot: u32, key: u32) -> Vec<(u32, i32)> {
+    look.edits_for(slot, key)
+        .iter()
+        .map(|e| (e.material_property, e.priority))
+        .collect()
 }
 
 fn fetch(m: &HashMap<Did, Vec<u8>>) -> impl FnMut(Did) -> Result<Option<Vec<u8>>, Infallible> + '_ {
@@ -152,21 +176,12 @@ fn compositor_instances_compose_and_edits_rank() {
     unpicked.picked = false;
     let resolution = ClipResolution {
         look: vec![
-            // A layer change before the attach names an unknown instance: ignored.
-            cand(LookEffect::CompositorLayer(CompositorLayerNode {
-                compositor: FACE,
-                layer: L_EYES,
-                image_number: 2,
-                opacity: 1.0,
-            })),
+            // A layer change before the attach is registered and applies when the
+            // compositor is composed; the later change of the same layer wins.
+            cand(eyes(2)),
             cand(attach(FACE, RECORD)),
             stopped,
-            cand(LookEffect::CompositorLayer(CompositorLayerNode {
-                compositor: FACE,
-                layer: L_EYES,
-                image_number: 1,
-                opacity: 1.0,
-            })),
+            cand(eyes(1)),
             cand(LookEffect::CompositorColour(CompositorColourNode {
                 compositor: FACE,
                 colour: C_SKIN,
@@ -178,6 +193,8 @@ fn compositor_instances_compose_and_edits_rank() {
             cand(edit(2003, CREST, 3, [255, 0, 0, 255])),
             cand(edit(2003, 2, 5, [0, 255, 0, 255])),
             cand(edit(3000, CREST, 5, [0; 4])),
+            // Below 1000: skipped.
+            cand(edit(999, CREST, 5, [0; 4])),
             unpicked,
         ],
         ..ClipResolution::default()
@@ -195,25 +212,33 @@ fn compositor_instances_compose_and_edits_rank() {
     assert_eq!(look.notes.len(), 2, "{:?}", look.notes);
     assert!(look.compositor_for(HEAD, FACE_SKIN).is_some());
     assert!(look.compositor_for(CREST, FACE_SKIN).is_none());
-    // Edits: three colour edits on 2003 and one on a texture id (counted only).
-    assert_eq!(look.edits.len(), 3);
-    assert_eq!(look.other_edits, 1);
-    // On the crest the priority-5 edits tie; the later one (slot All) wins.
+    // Edits of every group from 1000 apply; the one below 1000 is skipped.
+    assert_eq!(look.edits.len(), 4);
+    assert_eq!(look.skipped_edits, 1);
+    // Appended by descending priority, start order among equals: the priority-3 edit
+    // comes last and takes effect (appearance.md §3.5).
     assert_eq!(
-        look.colour_edits_for(CREST, HAIR_MATERIAL),
-        vec![(2003, [0.0, 1.0, 0.0, 1.0])]
+        priorities(&look, CREST, HAIR_MATERIAL),
+        vec![(2003, 5), (2003, 5), (3000, 5), (2003, 3)]
+    );
+    assert_eq!(
+        look.edits_for(CREST, HAIR_MATERIAL)
+            .last()
+            .unwrap()
+            .color_value,
+        [255, 0, 0, 255]
     );
     // On the head only the All edit applies; other binding keys get nothing.
-    assert_eq!(
-        look.colour_edits_for(HEAD, HAIR_MATERIAL),
-        vec![(2003, [0.0, 1.0, 0.0, 1.0])]
-    );
-    assert!(look.colour_edits_for(CREST, FACE_SKIN).is_empty());
+    assert_eq!(priorities(&look, HEAD, HAIR_MATERIAL), vec![(2003, 5)]);
+    assert!(look.edits_for(CREST, FACE_SKIN).is_empty());
 
     // The identity follows the inputs: another eye option composes another image.
     let mut r2 = resolution.clone();
     if let LookEffect::CompositorLayer(l) = &mut r2.look[3].effect {
         l.image_number = 2;
+    }
+    if let LookEffect::CompositorLayer(l) = &mut r2.look[0].effect {
+        l.image_number = 1;
     }
     let look2 = plain(&r2, &m);
     let face2 = &look2.compositors[0];
@@ -292,15 +317,14 @@ fn the_cache_composes_a_face_once() {
         reads.set(reads.get() + 1);
         Ok(m.get(&d).cloned())
     };
-    let on = AssemblyOptions::default();
     let limits = LookLimits::default();
-    let first = figure_look(&face([0, 0, 128, 255]), counting, on, &limits, Some(&cache));
+    let first = figure_look(&face([0, 0, 128, 255]), counting, &limits, Some(&cache));
     let first_reads = reads.get();
     // The record and its two images (the base and eye option 1).
     assert_eq!(first_reads, 3, "{:?}", first.notes);
     assert!(first.compositors[0].source_bytes > 0);
     // The same face again: nothing is read, the same image is shared.
-    let again = figure_look(&face([0, 0, 128, 255]), counting, on, &limits, Some(&cache));
+    let again = figure_look(&face([0, 0, 128, 255]), counting, &limits, Some(&cache));
     assert_eq!(reads.get(), first_reads);
     let (a, b) = (
         first.compositors[0].image.as_ref().unwrap(),
@@ -310,7 +334,7 @@ fn the_cache_composes_a_face_once() {
     assert_eq!(again.compositors[0].source_bytes, 0);
     assert_eq!(again.edits, first.edits);
     // Another skin colour composes again from the cached record and images: no reads.
-    let other = figure_look(&face([0, 128, 0, 255]), counting, on, &limits, Some(&cache));
+    let other = figure_look(&face([0, 128, 0, 255]), counting, &limits, Some(&cache));
     assert_eq!(reads.get(), first_reads);
     assert_ne!(other.compositors[0].identity, first.compositors[0].identity);
     assert_eq!(
@@ -332,8 +356,7 @@ fn decoded_bytes_are_budgeted() {
         ..LookLimits::default()
     };
     let cache = LookCache::default();
-    let on = AssemblyOptions::default();
-    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), on, &tight, Some(&cache));
+    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), &tight, Some(&cache));
     assert!(
         look.notes.iter().any(|n| n.contains("budget")),
         "{:?}",
@@ -346,14 +369,14 @@ fn decoded_bytes_are_budgeted() {
         max_figure_bytes: 16,
         ..LookLimits::default()
     };
-    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), on, &figure, None);
+    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), &figure, None);
     assert!(look.compositors[0].image.is_none(), "{:?}", look.notes);
     // An image over the texel cap is refused before it is decoded.
     let small = LookLimits {
         max_texels: 1,
         ..LookLimits::default()
     };
-    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), on, &small, None);
+    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), &small, None);
     assert!(
         look.notes.iter().any(|n| n.contains("too large")),
         "{:?}",
@@ -384,7 +407,6 @@ fn jpeg_header_only(did: u32, w: u16, h: u16) -> Vec<u8> {
 
 #[test]
 fn jpeg_sources_are_checked_before_decoding() {
-    let on = AssemblyOptions::default();
     // A frame header claiming a huge image is refused by its declared size: the note is
     // the texel check's, not a decode error, so nothing was decoded.
     let mut m = records();
@@ -407,7 +429,7 @@ fn jpeg_sources_are_checked_before_decoding() {
         max_compositor_bytes: 4,
         ..LookLimits::default()
     };
-    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), on, &tight, None);
+    let look = figure_look(&face([0, 0, 128, 255]), fetch(&m), &tight, None);
     assert!(look.compositors[0].image.is_none());
     assert!(
         look.notes.iter().any(|n| n.contains("budget")),
@@ -431,22 +453,79 @@ fn jpeg_sources_are_checked_before_decoding() {
     );
 }
 
+/// `appearance.md` §3.5 rules 1–2: starts and stops replay in order.
 #[test]
-fn face_compositing_off_attaches_no_compositor() {
+fn starts_and_stops_replay_in_order() {
     let m = records();
-    let off = AssemblyOptions {
-        avatar_face_compositing: false,
-        ..AssemblyOptions::default()
+    let composed = |look: Vec<LookCandidate>| {
+        plain(
+            &ClipResolution {
+                look,
+                ..ClipResolution::default()
+            },
+            &m,
+        )
     };
-    let look = figure_look(
-        &face([0, 0, 128, 255]),
-        fetch(&m),
-        off,
-        &LookLimits::default(),
-        None,
-    );
-    // appearance.md §3.5: neither compositor is attached; the colour edits stay.
-    assert!(look.compositors.is_empty());
-    assert_eq!(look.edits.len(), 1);
+    // A refused attach's stop removes the compositor of its name, whichever node
+    // attached it.
+    let look = composed(vec![
+        cand(attach(FACE, RECORD)),
+        stopped_at(attach(FACE, 0x3300_0002), 3),
+        cand(eyes(2)),
+    ]);
+    assert!(look.compositors.is_empty(), "{:?}", look.compositors);
+    // An attach stopped before a later attach under the same name: the later one holds.
+    let look = composed(vec![
+        stopped_at(attach(FACE, 0x3300_0002), 1),
+        cand(attach(FACE, RECORD)),
+    ]);
+    assert_eq!(look.compositors.len(), 1);
+    assert_eq!(look.compositors[0].record, Did(RECORD));
+    // A withdrawn change no longer applies; the earlier one does.
+    let look = composed(vec![
+        cand(eyes(2)),
+        stopped_at(eyes(1), 3),
+        cand(edit(2003, CREST, 5, [0; 4])),
+        cand(attach(FACE, RECORD)),
+    ]);
+    assert_eq!(look.compositors[0].selection[1].option, 2);
+    // A stopped edit is withdrawn.
+    let look = composed(vec![stopped_at(edit(2003, CREST, 5, [0; 4]), 1)]);
+    assert!(look.edits.is_empty());
+    // A layer change of a layer the record lacks is reported and skipped.
+    let look = composed(vec![
+        cand(attach(FACE, RECORD)),
+        cand(LookEffect::CompositorLayer(CompositorLayerNode {
+            compositor: FACE,
+            layer: 0x1000_0777,
+            image_number: 1,
+            opacity: 1.0,
+        })),
+    ]);
+    assert!(look.compositors[0].image.is_some());
     assert_eq!(look.notes.len(), 1, "{:?}", look.notes);
+}
+
+#[test]
+fn slots_and_binding_keys_match_by_the_rules() {
+    // MeshType 2 every part, 0 none; MaterialType 2 every surface.
+    assert!(look_matches(2, 2, HEAD, FACE_SKIN));
+    assert!(look_matches(HEAD, 2, HEAD, HAIR_MATERIAL));
+    assert!(!look_matches(0, 2, HEAD, FACE_SKIN));
+    assert!(!look_matches(0, FACE_SKIN, 0, FACE_SKIN));
+    assert!(look_matches(HEAD, FACE_SKIN, HEAD, FACE_SKIN));
+    assert!(!look_matches(HEAD, FACE_SKIN, CREST, FACE_SKIN));
+}
+
+#[test]
+fn placed_figures_are_in_the_world_after_start_up() {
+    let vocab = AssemblyVocabulary {
+        physics_in_world: Some(77),
+        ..AssemblyVocabulary::default()
+    };
+    assert_eq!(
+        figure_after_startup(&vocab),
+        vec![(77, PropertyValue::Bool(true))]
+    );
+    assert!(figure_after_startup(&AssemblyVocabulary::default()).is_empty());
 }

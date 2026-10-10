@@ -91,8 +91,9 @@ pub struct AssemblyOptions {
     /// list elements use their toggle files (§3.3) and the species tables run the newer
     /// face compositor (§3.5).
     pub avatar_update_visible: bool,
-    /// `GOP_AvatarFaceCompositing`, the face-compositing graphics option (default on): with
-    /// it off the species tables attach no face compositor (§3.5).
+    /// `GOP_AvatarFaceCompositing`, the face-compositing graphics option (default on): the
+    /// species tables test it before attaching a face compositor; whether "off" removes the
+    /// face, and for which bodies, is the data's choice (§3.5 table).
     pub avatar_face_compositing: bool,
 }
 

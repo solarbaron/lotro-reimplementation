@@ -2308,6 +2308,76 @@ fn runtime_textures_keep_registrations_until_requested() {
     assert!(reg.get(first).is_none());
 }
 
+/// `appearance.md` §3.5 "How material edits combine": the composed image comes before the
+/// edits, so an edit of the base colour overrides it; float and flag edits apply too.
+#[test]
+fn figure_edits_put_the_composed_image_first() {
+    use tessera_material::{ParameterEdit, figure_edits};
+    let lib = library(base_store());
+    let image = std::sync::Arc::new(tessera_formats::RgbaImage {
+        width: 1,
+        height: 1,
+        pixels: vec![1, 2, 3, 255],
+    });
+    let composed = figure_edits(lib.runtime_textures(), &[], Some((7, &image)));
+    assert_eq!(composed.len(), 1);
+    let face = composed[0].clone();
+    let other = Did(0x0500_0042);
+    let edits = figure_edits(
+        lib.runtime_textures(),
+        &[
+            ParameterEdit::Texture {
+                id: 3000,
+                list: other,
+            },
+            ParameterEdit::Flag {
+                id: 4001,
+                value: true,
+            },
+            ParameterEdit::Float {
+                id: 1001,
+                curve: tessera_material::FloatCurve::constant(0.5),
+            },
+        ],
+        Some((7, &image)),
+    );
+    assert_eq!(edits.len(), 4);
+    assert_eq!(edits[0], face);
+    let r = lib.resolve_edited(Did(0x3100_0004), None, &edits).unwrap();
+    assert_eq!(r.diffuse(), Some(other));
+}
+
+#[test]
+fn waveforms_become_float_curves() {
+    use tessera_formats::{Waveform, WaveformExtra};
+    use tessera_material::FloatCurve;
+    let w = |subtype: u32, values: Vec<f32>, extra: Option<WaveformExtra>| Waveform {
+        subtype,
+        values,
+        extra,
+    };
+    let c = FloatCurve::from_waveform(&w(1, vec![0.25], None));
+    assert_eq!((c.mode, c.evaluate()), (1, 0.25));
+    let ten: Vec<f32> = (0..10u8).map(f32::from).collect();
+    let c = FloatCurve::from_waveform(&w(4, ten.clone(), None));
+    assert_eq!((c.mode, c.stored_params()), (4, ten.as_slice()));
+    // Subtype 0: the base term v0 + v1 t only.
+    let c = FloatCurve::from_waveform(&w(0, ten.clone(), None));
+    assert_eq!(c.mode, 2);
+    assert_eq!(c.stored_params()[..3], [0.0, 1.0, 0.0]);
+    let c = FloatCurve::from_waveform(&w(
+        10,
+        ten,
+        Some(WaveformExtra {
+            scalar: 2.0,
+            flag: true,
+            pairs: vec![(1.0, 0.0), (3.0, 100.0)],
+        }),
+    ));
+    assert_eq!((c.mode, c.period(), c.loop_flag), (10, 2.0, 1));
+    assert_eq!(c.keys, [(1.0, 0.0), (3.0, 100.0)]);
+}
+
 #[test]
 fn runtime_textures_are_bounded() {
     use tessera_material::RuntimeTextures;

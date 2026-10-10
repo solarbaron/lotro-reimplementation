@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Real-data checks of the figure look (`appearance.md` §3.5) on a user's own install
-//! (read-only): for every playable body of §2.2, the species table's `Startup` attaches a
-//! face compositor that composes, and colour edits tint the hair and skin surfaces; the
-//! two graphics options switch the compositor as §3.5 states.
+//! (read-only): for every playable body of §2.2, placed in the world (`Physics_InWorld`
+//! true after the start-up, §3.5 Decision), the species table's `Startup` attaches a face
+//! compositor that composes, and colour edits tint the hair and skin surfaces; the two
+//! graphics options switch the compositor as the §3.5 table states.
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Archives are opened read-only;
 //! nothing is written. Output is DIDs, keys and counts only. Run with
@@ -21,7 +22,8 @@ use tessera_formats::script_table::resolve::{
 };
 use tessera_formats::{Did, EnumMapper};
 use tessera_mesh::assembly::look::{
-    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_look_from_data,
+    FigureLook, LookCache, LookLimits, apply_figure_properties, figure_after_startup,
+    figure_look_from_data,
 };
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblyOptions, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
@@ -87,10 +89,10 @@ const NEWER_FACE: u32 = 0x1000_0001;
 const OLDER_FACE: u32 = 0x1000_000A;
 /// The face-skin binding key the compositors attach to (§3.5).
 const FACE_SKIN: u32 = 0x1000_006C;
-/// Bodies whose `Startup` evaluation reaches no compositor node although the closure holds
-/// some: their species tables run the compositor only when `Physics_InWorld` is true,
-/// which nothing sets for a figure (`appearance.md` §15 OPEN of 2026-10-10).
-const NO_FACE_OPEN: [&str; 4] = ["P5", "P6", "P10", "P11"];
+/// The kind-1 species tables whose check of the face-compositing option runs before the
+/// start-up clears `ScriptSystem_ServerScriptlet`, so that the option off is not honoured
+/// at start-up (`appearance.md` §3.5 table, A48, A51).
+const OPTION_NOT_HONOURED: [u32; 4] = [0x0700_2DAD, 0x0700_2DB0, 0x0700_2F08, 0x0700_2F09];
 
 /// `TESSERA_PERF=1`: also assert the look's time per figure.
 fn perf() -> bool {
@@ -118,14 +120,18 @@ impl Probe {
         apply_figure_properties(&mut chain.scripts, c, &self.asm_vocab, options);
         let mut r = ClipResolver::new(dict, self.script_vocab.clone(), |d: Did| self.data.read(d))
             .with_dictionary_defaults(dict)
-            .with_random_seed(Some(0));
+            .with_random_seed(Some(0))
+            .with_after_startup(figure_after_startup(&self.asm_vocab));
         r.resolve(&chain.scripts, MotionState::Idle)
             .expect("resolution")
     }
 
     fn look(&self, c: &AssembledCharacter, options: AssemblyOptions) -> FigureLook {
-        let r = self.resolve(c, options);
-        figure_look_from_data(self.data, &r, options, &LookLimits::default(), None)
+        self.look_of(&self.resolve(c, options))
+    }
+
+    fn look_of(&self, r: &ClipResolution) -> FigureLook {
+        figure_look_from_data(self.data, r, &LookLimits::default(), None)
     }
 }
 
@@ -148,7 +154,6 @@ fn playable_bodies_get_composited_faces_and_tints() {
     let (head, crest) = (mesh_type(data, "Head"), mesh_type(data, "Crest"));
     let on = AssemblyOptions::default();
     let mut failures = Vec::new();
-    let mut gaps = Vec::new();
     let mut composed = 0;
     for (row, label, sex) in BODIES {
         let species = enum_key(data, "RaceTable_Race", label).unwrap_or_else(|| panic!("{label}"));
@@ -176,24 +181,23 @@ fn playable_bodies_get_composited_faces_and_tints() {
         let hair_edits = look
             .edits
             .iter()
-            .filter(|e| e.parameter == 2003 && (e.mesh_type == crest || e.mesh_type == 2))
+            .filter(|e| e.material_property == 2003 && (e.mesh_type == crest || e.mesh_type == 2))
             .count();
         let skin_edits = look
             .edits
             .iter()
-            .filter(|e| e.parameter == 2003 && e.material_type == FACE_SKIN)
+            .filter(|e| e.material_property == 2003 && e.material_type == FACE_SKIN)
             .count();
         eprintln!(
-            "{row} {label}: compositors [{}]; {} colour edits ({hair_edits} hair, {skin_edits} \
-             face skin), {} other; notes {:?}",
+            "{row} {label}: compositors [{}]; {} edits ({hair_edits} hair, {skin_edits} face \
+             skin), {} skipped; notes {:?}",
             faces.join("; "),
             look.edits.len(),
-            look.other_edits,
+            look.skipped_edits,
             look.notes
         );
         // §3.5: with both options on, the newer face is attached to the head's face skin
-        // and composes. Elf and High-elf bodies reach no compositor node (appearance.md §15
-        // OPEN of 2026-10-10): reported, not failed.
+        // and composes, for every body (the elf tables through `Physics_InWorld`).
         if look
             .notes
             .iter()
@@ -206,9 +210,6 @@ fn playable_bodies_get_composited_faces_and_tints() {
                 composed += 1;
             }
             Some(f) => failures.push(format!("{row}: newer face {f:?} does not compose")),
-            None if NO_FACE_OPEN.contains(&row) => {
-                gaps.push(format!("{row}: no face compositor reached (OPEN)"));
-            }
             None => failures.push(format!("{row}: no newer face compositor")),
         }
         if look.compositors.iter().any(|f| f.name == OLDER_FACE) {
@@ -219,18 +220,32 @@ fn playable_bodies_get_composited_faces_and_tints() {
         if hair_edits == 0 {
             failures.push(format!("{row}: no hair colour edit"));
         }
-        // §3.5: with face compositing off, no compositor is attached.
-        let off = probe.look(
+        // §3.5 table: with face compositing off at start-up, the bodies whose species
+        // table checks the option after the start-up cleared `ScriptSystem_ServerScriptlet`
+        // attach no compositor; the four kind-1 tables that check it earlier keep the
+        // newer face.
+        let off_resolution = probe.resolve(
             &c,
             AssemblyOptions {
                 avatar_face_compositing: false,
                 ..on
             },
         );
-        if !off.compositors.is_empty() {
+        let keeps = off_resolution
+            .closure
+            .order
+            .iter()
+            .any(|d| OPTION_NOT_HONOURED.contains(&d.0));
+        let off = probe.look_of(&off_resolution);
+        let off_names: Vec<u32> = off.compositors.iter().map(|f| f.name).collect();
+        eprintln!(
+            "{row}: face compositing off: compositor names {off_names:x?} (honoured: {})",
+            !keeps
+        );
+        let expected: &[u32] = if keeps { &[NEWER_FACE] } else { &[] };
+        if off_names != expected {
             failures.push(format!(
-                "{row}: {} compositors with face compositing off",
-                off.compositors.len()
+                "{row}: face compositing off gives {off_names:x?}, expected {expected:x?}"
             ));
         }
         // §3.5: with the updated-avatar option off, one face is chosen by the head (the
@@ -251,13 +266,7 @@ fn playable_bodies_get_composited_faces_and_tints() {
         }
     }
     eprintln!("{composed} of {} bodies composed a face", BODIES.len());
-    for g in &gaps {
-        eprintln!("  open: {g}");
-    }
-    assert!(
-        composed >= BODIES.len() - NO_FACE_OPEN.len(),
-        "faces composed"
-    );
+    assert_eq!(composed, BODIES.len(), "faces composed");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -299,9 +308,9 @@ fn appearance_values_drive_the_look() {
     let hair_edit = look
         .edits
         .iter()
-        .find(|e| e.parameter == 2003 && e.mesh_type == crest)
+        .find(|e| e.material_property == 2003 && e.mesh_type == crest)
         .expect("a hair edit");
-    assert_eq!(hair_edit.colour, [1.0, 0.0, 0.0, 1.0]);
+    assert_eq!(hair_edit.color_value, [0, 0, 255, 255]);
     let face = look
         .compositors
         .iter()
@@ -355,22 +364,19 @@ fn the_look_cache_reuses_composed_faces() {
     let (mut cold, mut uncached, mut warm) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
     let mut figures = 0u32;
     for (row, label, sex) in BODIES {
-        if NO_FACE_OPEN.contains(&row) {
-            continue;
-        }
         let species = enum_key(data, "RaceTable_Race", label).unwrap_or_else(|| panic!("{label}"));
         let c = asm
             .assemble_character(&CharacterSpec::new(species, sex))
             .expect("body assembles");
         let r = probe.resolve(&c, on);
         let t = Instant::now();
-        let plain = figure_look_from_data(data, &r, on, &limits, None);
+        let plain = figure_look_from_data(data, &r, &limits, None);
         uncached += t.elapsed();
         let t = Instant::now();
-        let first = figure_look_from_data(data, &r, on, &limits, Some(&cache));
+        let first = figure_look_from_data(data, &r, &limits, Some(&cache));
         cold += t.elapsed();
         let t = Instant::now();
-        let second = figure_look_from_data(data, &r, on, &limits, Some(&cache));
+        let second = figure_look_from_data(data, &r, &limits, Some(&cache));
         warm += t.elapsed();
         figures += 1;
         // The cache changes nothing but the time: equal images, shared on a hit.

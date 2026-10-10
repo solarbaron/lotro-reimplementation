@@ -16,7 +16,8 @@
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
 //! | T4, T5, T12, T15, T16, Y2, L2, L5, L7 | the cameras these rows are judged from on the image (`m4-5-visual.md` §4.7, [`CAMERAS`]): every camera with a target frames it (no install needed); with `TESSERA_VISUAL_SHOTS` set to a private directory outside the install, each camera is rendered there by the walker's headless screenshot path (1600 × 900, free-fly, no HUD, clock stopped) and must settle |
 //!
-//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 implementer OPEN; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
+//! | W7, W8, W10–W17 | the water rows (`m4-5-visual.md` §4.4, §4.8; [`WATER_CAMERAS`]): with `TESSERA_VISUAL_SHOTS` set, each is rendered like the cameras above and must settle with no own-program record on the generic path, no animated texture matrix drawn still and no covered second layer left out; W8 and W12–W14 must draw placed surfaces with their own programs; W17's river must stay see-through past the near field (`water.md` §8.6.4 Tessera rule, revised 2026-10-10: the record's own colour list; `TESSERA_WATER_ROWS=W12,W13` limits the rows) |
+//! | W13 (depth state) | the row's puddle has no `Render_DepthBias_Type` (`water.md` W44), so it is drawn with the depth test and no bias; the depth-bias table's type 3 is a slope-scale value only |
 //!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
 //! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed. The images of
@@ -403,6 +404,44 @@ fn water_rows_have_their_water() {
         );
     }
     assert!(failed.is_empty(), "rows failing: {failed:?}");
+}
+
+/// Checklist row W13 (`water.md` §8.5.4 answer of 2026-10-10, W44): the puddle of the row
+/// (object 0x470015E4 at (105.77, 30.01, 381.46)) has no `Render_DepthBias_Type` in any of
+/// its sets, so the walker draws it with the depth test and no bias, cut where the ground
+/// rises above it; the depth-bias table's type 3, which other puddles set, is a slope-scale
+/// pull toward the camera only (`decals.md` §6.5: no absolute or maximum value).
+#[test]
+fn puddle_row_has_no_depth_bias() {
+    let Some((ctx, mut w)) = world() else { return };
+    let table = ctx
+        .systems()
+        .depth_bias
+        .clone()
+        .expect("depth-bias table");
+    let b3 = table.get(3);
+    eprintln!("depth-bias type 3: {b3:?}");
+    assert!(b3.slope_scale < 0.0, "type 3 pulls toward the camera");
+    assert_eq!((b3.absolute, b3.max), (0.0, 0.0), "slope-scale values only");
+    settle(&mut w, 1, 0x7574, 105.0, 30.0);
+    let bundle = w.bundle(key(1, 0x7574)).expect("resident");
+    let target = [105.77, 30.01, 381.46];
+    let puddle = bundle
+        .entities
+        .iter()
+        .find(|e| {
+            e.object == Some(Did(0x4700_15E4))
+                && (0..3).all(|i| (e.placement.position[i] - target[i]).abs() <= 0.05)
+        })
+        .expect("the W13 puddle");
+    eprintln!(
+        "W13 puddle: entity {} scale {:?} depth-bias type {:?}",
+        puddle.index,
+        puddle.scale,
+        bundle.depth_bias_type_of(puddle)
+    );
+    assert!(puddle.draw, "W13 puddle drawn");
+    assert_eq!(bundle.depth_bias_type_of(puddle), None, "W13: no depth bias");
 }
 
 #[test]

@@ -272,6 +272,58 @@ impl DepthBiasTable {
         (t, skipped)
     }
 
+    /// The table of the install behind `ctx` (§6.5): the engine and game definition sets
+    /// found through the `UNIQUEDB` DID map (keys 0x163, 0x164), read with `pids`. A set
+    /// that is missing or does not decode is left out (logged); an error only when the
+    /// `UNIQUEDB` map itself cannot be read. Slope-scale values are kept as stored
+    /// (`negate_slope` false; the sign for a depth convention is [`slope_for_depth`]).
+    pub fn load(
+        ctx: &crate::context::WorldContext,
+        pids: &DepthBiasPids,
+    ) -> Result<Self, crate::error::WorldError> {
+        use crate::context::ROOT_DID_MAP;
+        use crate::error::WorldError;
+        use tessera_formats::{DataIdMap, Did, PropertySetRecord, Record};
+        let source = ctx.source();
+        let read = |did: Did, what: &'static str| -> Result<Vec<u8>, WorldError> {
+            source
+                .read(did)?
+                .ok_or(WorldError::Missing { did: did.0, what })
+        };
+        let root =
+            DataIdMap::parse_expecting(&read(Did(ROOT_DID_MAP), "root DID map")?, ROOT_DID_MAP)
+                .map_err(|e| WorldError::format(ROOT_DID_MAP, "root DID map", e))?;
+        let unique =
+            root.by_label(crate::draw_distance::UNIQUEDB_LABEL)
+                .ok_or(WorldError::Missing {
+                    did: ROOT_DID_MAP,
+                    what: "UNIQUEDB sub-map",
+                })?;
+        let unique_map = DataIdMap::parse_expecting(&read(unique, "UNIQUEDB map")?, unique.0)
+            .map_err(|e| WorldError::format(unique.0, "UNIQUEDB map", e))?;
+        let mut sets = Vec::with_capacity(2);
+        for key in [ENGINE_DEPTH_BIAS_KEY, GAME_DEPTH_BIAS_KEY] {
+            let Some(did) = unique_map.get(key).map(|e| e.value) else {
+                tracing::debug!(key, "no depth-bias definition set");
+                continue;
+            };
+            let set = read(did, "depth-bias definitions").and_then(|b| {
+                PropertySetRecord::parse_expecting(&b, did, ctx.schema())
+                    .map_err(|e| WorldError::format(did.0, "depth-bias definitions", e))
+            });
+            match set {
+                Ok(r) => sets.push(r.set),
+                Err(e) => tracing::warn!(key, error = %e, "depth-bias definitions left out"),
+            }
+        }
+        let refs: Vec<&PropertySet> = sets.iter().collect();
+        let (table, skipped) = Self::build(pids, &refs, false);
+        if skipped > 0 {
+            tracing::debug!(skipped, "depth-bias definitions skipped");
+        }
+        Ok(table)
+    }
+
     /// The entry `index` selects (`DecalVolume_DepthBias`, `Render_DepthBias_Type`); entry 0
     /// for an index out of range.
     #[must_use]

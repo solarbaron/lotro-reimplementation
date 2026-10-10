@@ -36,10 +36,14 @@ const SF_NO_FOG: u32 = 128u;
 // A fixed-function blend (AlphaMode::Fixed): the opacity a blend factor reads is the opacity
 // texel alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const SF_FACTOR_OPACITY: u32 = 256u;
-// A second colour layer (material.md §10.3): RGB added (SF_LAYER_ADD) or multiplied, the
-// alphas multiplied.
+// A second colour layer (material.md §10.3): RGB added (SF_LAYER_ADD) or multiplied; its
+// alpha multiplies the base alpha only with SF_LAYER_ALPHA (role ColorAndOpacity2, MA54);
+// SF_LAYER_OPACITY_ONLY: the ColorTexture record (§20.1), base RGB alone and alpha
+// 2 x both alphas.
 const SF_SECOND_LAYER: u32 = 512u;
 const SF_LAYER_ADD: u32 = 1024u;
+const SF_LAYER_ALPHA: u32 = 2048u;
+const SF_LAYER_OPACITY_ONLY: u32 = 4096u;
 const SF_SRGB_BASE: u32 = 1u;
 const SF_SRGB_NORMAL: u32 = 2u;
 const SF_SRGB_LAYER2: u32 = 4u;
@@ -91,11 +95,18 @@ fn surface_base_at(uv0: vec2<f32>, uv1: vec2<f32>) -> vec4<f32> {
     if (!surface_flag(SF_SECOND_LAYER)) {
         return base;
     }
+    if (surface_flag(SF_LAYER_OPACITY_ONLY)) {
+        return vec4<f32>(base.rgb, min(2.0 * base.a * layer2.a, 1.0));
+    }
     var rgb = base.rgb * layer2.rgb;
     if (surface_flag(SF_LAYER_ADD)) {
         rgb = base.rgb + layer2.rgb;
     }
-    return vec4<f32>(rgb, base.a * layer2.a);
+    var a = base.a;
+    if (surface_flag(SF_LAYER_ALPHA)) {
+        a = a * layer2.a;
+    }
+    return vec4<f32>(rgb, a);
 }
 
 // The base colour through the surface's own texture matrices.

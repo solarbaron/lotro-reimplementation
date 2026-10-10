@@ -100,7 +100,7 @@ pub use inputs::{
     UNLIT_FOG_WHEN_UNKNOWN,
 };
 pub use interface::ShaderInterface;
-pub use layers::{LayerCombine, second_layer};
+pub use layers::{LayerAlpha, LayerCombine, SecondLayerPlan, second_layer, second_layer_plan};
 pub use library::{
     AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,
 };

@@ -802,6 +802,8 @@ impl ResolvedMaterial {
     ///
     /// - two colour layers `ColorAndOpacity` (3000) and `ColorAndOpacity2` (3001): the
     ///   opacity is the product of both alphas (§11.2; `lighting.md` §5.2 step 2, §5.12);
+    ///   the alpha of a `Color2`, `ColorAndGloss2` or `ColorAndDye2` layer never joins it
+    ///   (§10.3 MA54);
     /// - an unlit `ColorTexture` diffuse: its source alpha uses the product of the two
     ///   layers' alphas (§20.1).
     ///
@@ -822,10 +824,7 @@ impl ResolvedMaterial {
             .filter(|s| s.texture.is_some())?;
         let diffuse_role = self.slot(ids::DIFFUSE).and_then(|s| s.role.as_deref());
         let two_opacity_layers = diffuse_role.is_some_and(|r| r.contains("Opacity"))
-            && second
-                .role
-                .as_deref()
-                .is_some_and(|r| r.contains("Opacity"));
+            && second.role.as_deref() == Some(crate::layers::OPACITY_LAYER_ROLE);
         let color_texture = diffuse_role == Some("ColorTexture");
         (two_opacity_layers || color_texture).then_some(ids::SECOND_LAYER)
     }

@@ -38,13 +38,17 @@ pub mod mirror_ids {
 }
 
 /// The liquid-distortion records whose layers read the world position instead of the mesh
-/// UV (`water.md` §8.5.5 step 1: 0x2B000442). The spec gives no interface rule for it;
-/// Tessera recognises it by DID (implementer OPEN in `water.md` §14).
+/// UV (`water.md` §8.5.5 step 1: 0x2B000442). `water.md` W46 gives an interface rule (the
+/// one whose permutations with programs carry no texture-transform item), which a renderer
+/// may use in place of the DID; Tessera keeps the DID, since its decoded interface does not
+/// keep per-permutation transform items (`water.md` §14 answer (a)).
 pub const LIQUID_WORLD_RECORDS: [u32; 1] = [0x2B00_0442];
 
-/// The liquid-distortion records whose output is multiplied by the vertex colour, RGBA
-/// (`water.md` §8.5.5 step 5: 0x2B00063E). The spec gives no interface rule for it; Tessera
-/// recognises it by DID like [`LIQUID_WORLD_RECORDS`].
+/// The liquid-distortion records whose texel is multiplied by the vertex colour, RGBA,
+/// before the alpha test (`water.md` §8.5.5 step 5, W45: 0x2B00063E). The interface
+/// property (a vertex program with a colour input, W46) needs the program's input signature,
+/// which Tessera does not read; Tessera recognises it by DID (Tessera Decision of the
+/// §8.5.5 answer of 2026-10-10).
 pub const LIQUID_VERTEX_COLOR_RECORDS: [u32; 1] = [0x2B00_063E];
 
 const WHITE: [f32; 4] = [1.0; 4];
@@ -177,8 +181,8 @@ pub struct DistortionMaterial {
     pub two_sided: bool,
     /// Depth write (`material.md` §11.3).
     pub depth_write: bool,
-    /// The output (colour and alpha) is multiplied by the vertex colour
-    /// ([`LIQUID_VERTEX_COLOR_RECORDS`]).
+    /// The texel (colour and alpha) is multiplied by the vertex colour before the alpha
+    /// test reads the output alpha ([`LIQUID_VERTEX_COLOR_RECORDS`], `water.md` W45).
     pub vertex_color: bool,
 }
 

@@ -564,6 +564,8 @@ pub mod pid {
     pub const NPC_COSMETIC_ITEM1: u32 = 0x1000_011A;
     /// `Render_LODClass` (enum).
     pub const RENDER_LOD_CLASS: u32 = 0x1000_011B;
+    /// `Render_DepthBias_Type` (enum).
+    pub const RENDER_DEPTH_BIAS_TYPE: u32 = 0x1000_011C;
 }
 
 /// The synthetic dictionary's definitions: (pid, name, type code).
@@ -602,6 +604,7 @@ pub fn definitions() -> Vec<(u32, &'static str, u32)> {
         (RANDOM_APPEARANCE, "Appearance_RandomAppearanceType", 8),
         (NPC_COSMETIC_ITEM1, "NPC_Cosmetic_Inventory_Item1", 20),
         (RENDER_LOD_CLASS, "Render_LODClass", 8),
+        (RENDER_DEPTH_BIAS_TYPE, "Render_DepthBias_Type", 8),
     ]
 }
 
@@ -653,7 +656,8 @@ pub mod obj {
     pub const AREA_A: u32 = 0x7000_0100;
     /// Another area object.
     pub const AREA_B: u32 = 0x7000_0101;
-    /// A generated scenery object with a solid collision box (`Render_LODClass` 5).
+    /// A generated scenery object with a solid collision box (`Render_LODClass` 5,
+    /// `Render_DepthBias_Type` 3).
     pub const SCENERY: u32 = 0x4700_0300;
     /// Its template.
     pub const SCENERY_TEMPLATE: u32 = 0x1F00_0300;
@@ -845,7 +849,10 @@ pub fn insert_scenery(m: &mut MemoryWorldSource) {
         entity_descriptor(
             obj::SCENERY,
             obj::SCENERY_TEMPLATE,
-            &[(pid::RENDER_LOD_CLASS, TestValue::Enum(5))],
+            &[
+                (pid::RENDER_LOD_CLASS, TestValue::Enum(5)),
+                (pid::RENDER_DEPTH_BIAS_TYPE, TestValue::Enum(3)),
+            ],
             &schema,
         ),
         None,

@@ -690,14 +690,31 @@ impl Default for UvTransform {
 }
 
 /// The second colour layer of a surface (`material.md` §10.3): slot 3001, sampled at texture
-/// matrix 1, combined with the base colour by multiplying or adding the RGB; the two alphas
-/// are multiplied into the opacity.
+/// matrix 1, combined with the base colour by multiplying or adding the RGB; its alpha joins
+/// the base alpha as [`SecondLayer::alpha`] says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecondLayer {
     /// The layer's texture.
     pub texture: TextureId,
-    /// Add the RGB (else multiply).
+    /// Add the RGB (else multiply). Ignored with [`LayerAlpha::OpacityOnly`].
     pub add: bool,
+    /// What the layer's alpha does (`material.md` §10.3 MA54, §20.1).
+    pub alpha: LayerAlpha,
+}
+
+/// How a second colour layer's alpha reaches the base alpha (`material.md` §10.3, MA54).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LayerAlpha {
+    /// The alpha never reaches the output (second layers of role `Color2`,
+    /// `ColorAndGloss2`, `ColorAndDye2`): the base alpha is the first layer's.
+    #[default]
+    Ignored,
+    /// The two alphas are multiplied (role `ColorAndOpacity2`, after a `ColorAndOpacity`
+    /// first layer).
+    Multiplied,
+    /// The `ColorTexture` record (`material.md` §20.1, MA46): the RGB is the first layer's
+    /// alone and the alpha is 2 × both layers' alphas, clamped to 1.
+    OpacityOnly,
 }
 
 /// The inputs of a mesh draw that only lit passes use (`lighting.md` §4.1, §5). Plain

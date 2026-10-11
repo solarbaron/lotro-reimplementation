@@ -6,7 +6,9 @@
 answered "yes"). The Lua 5.1.5 hardening patch (owner question 1) lives in a pinned fork of the
 Lua source crate outside this repository, so `REUSE.toml` stays unchanged. The open security
 and design items below are M5.5 threat-model requirements and escape tests. The "Required
-follow-ups" (Consequences) are carried out in separate commits.
+follow-ups" (Consequences) are carried out in separate commits. **Amended 2026-10-11** by
+[decision 0034](0034-official-server-compatibility.md) §4 (extended scripts on official
+servers by the user's opt-in; automation offline only): see "Amendment" below the open items.
 
 This is the architecture that [0016](0016-plugin-class-helper.md) item 2 promises. The owner
 asked for "much more extended scripting support that would allow much more stuff", with the
@@ -264,6 +266,34 @@ threat model and an escape test in `scripttool test` before the first slice ship
 - `keymap-ext.toml` sits 'next to the keymap file', but KM §6.5 follows symbolic links when saving. State whether the directory is the link's or the resolved target's, and that the settings crate's install guard applies to the ext document as it does to the keymap file.
 - §5.4 wording: 'A throttled script's half-rate tick at 8 frames per second comes every 250 ms' means a client running at 8 fps (half rate gives one tick every 2 frames, which is 250 ms). Reword it, because 8 ticks per second would be every 125 ms.
 - Partially loaded apartments at a backend switch: say what happens to 6a items of a load that is still in progress (snapshot or compile items not yet run) when a switch is queued. Are they dropped, or are their states counted among the 17 apartments and closed? The gate says no apartment is created until the new session closes.
+
+## Amendment: extended scripts on official servers (2026-10-11, decision 0034)
+[Decision 0034](0034-official-server-compatibility.md) §4 replaces the rule "extended
+scripts never run against an official server" wherever this record states it (owner summary
+item 4, owner question 3, Context, §6.2, §6.4, §6.5, §6.7, §12, and the scheduling decision
+below). The owner's words: "extended scripts will be able to run on official server its
+just up to the user if they want to bear the risk to do that". In short:
+
+- Extended scripts may run on an official-server session only after the user's explicit
+  opt-in, which shows the risks (account bans, the terms) and is off by default; it is
+  stored per user, can be withdrawn, and no flag, variable, plugin, script or server can set
+  it. The opt-in grants nothing by itself: the user's per-script grants (§5) still apply.
+- Official-server sessions get a backend class of their own (named by the M8 and M9 specs);
+  `Other` stays fail-closed with no override (§6.2).
+- **Automation stays offline only** (project policy kept by the maintainer): `input.drive`
+  and every module that issues movement, input or game commands on the user's behalf are
+  never enabled on any official server, with or without the opt-in, because their effect
+  falls on other players and the service. §6.5's rule for every server is unchanged.
+- Unchanged: the local-only rules (§5.2), `data.read` offline only, the never-offered list,
+  `Sandbox` sandbox-only, `Server` only on Tessera's own protocol.
+- §6.3's build-level exclusion (the `links` guard and the CI check that keep `tessera-ext`
+  and a `gated-compat` crate apart) is withdrawn; the compatibility backend stays its own
+  crate, and the M9 slice plan replaces the check with tests of the runtime gate and the
+  opt-in.
+- "The M8 gate" and "if the M8 gate fails" in this record now read "M8 (decision 0034)" and
+  "if M8 stops (LEGAL §9.4)".
+
+Plugins are unaffected (§6.7): on an official server they run as in the original client.
 
 ## Owner scheduling decision (2026-10-08)
 Extended scripting is not a priority. The milestone planned here as **M5.5** moves to the end

@@ -28,7 +28,7 @@ every implemented behaviour to a written spec with stated sources.
 
 | Zone | Paths and material | Who may read it |
 |---|---|---|
-| **Dirty room** (research) | `research/`; any `clones/` directory of third-party code; game binaries and data files examined byte by byte; disassembly or decompiler output (if ever authorised, [§4](#4-research-methods)); private packet or frame captures | **Spec writers only** |
+| **Dirty room** (research) | `research/`; any `clones/` directory of third-party code; game binaries and data files examined byte by byte; disassembly or decompiler output ([§4](#4-research-methods)); state and output of decompiler tools (Ghidra project copies, REA snapshots and Evidence bundles, `~/.rea`, REA temporary projects and `/tmp/rea-*`); private packet or frame captures | **Spec writers only** |
 | **Interface** | `docs/specs/*.md` | Everyone |
 | **Clean room** (implementation) | `crates/`, `apps/`, `fuzz/`, `tools/` | Implementers, working **only** from `docs/specs/` |
 | **Neutral** | `docs/` other than `docs/specs/` (this file, LEGAL.md, roadmap, tooling notes), root files such as `CLAUDE.md`, `Cargo.toml` | Everyone; must contain no format or protocol facts that are not also in a spec |
@@ -86,8 +86,8 @@ question.
 |---|---|---|---|
 | M1 | **Observe the data files** of your own legal install: hex dumps, small throwaway probes, statistics, validating a hypothesis across many records. Read-only, in place. | EU Art 5(3) / UK s.50BA; §102(b) | **Default. Allowed.** |
 | M2 | **Read published research and third-party tools** for facts (layouts, enums, behaviour). Record each source. Never copy code, comments or identifier names beyond those needed for interoperability. | Facts are not protected | **Allowed.** Licence does not matter for facts; it matters for code, which is never copied. |
-| M3 | **Black-box observation of the running official client** (your own account): its logs, files it writes, frame captures (e.g. RenderDoc), your own network traffic. | EU Art 5(3) / UK s.50BA | **Allowed** for rendering, file I/O and UI behaviour. Traffic observation is limited by the T4 gate ([LEGAL.md §9.3](LEGAL.md#93-the-gate)). Captures stay private in the dirty room and are reduced to field-level facts. |
-| M4 | **Disassembly or decompilation** of the official client. | EU Art 6 / UK s.50B, narrowly; contract and US exposure elsewhere | **Authorised for the offline client by [decision 0011](decisions/0011-standing-m4-authorisation.md)** (standing, from 2026-10-05). Use it after M1–M3, and log each use as a `BIN` provenance row in the spec: build, question, and why M1–M3 were not enough. The network protocol, login, keys, launcher and anti-tamper stay excluded (decision 0004). Analyst must be a lawful licensee acting under EU/UK law, confined to interoperability. Output is prose facts only. |
+| M3 | **Black-box observation of the running official client** (your own account): its logs, files it writes, frame captures (e.g. RenderDoc), your own network traffic. | EU Art 5(3) / UK s.50BA | **Allowed** for rendering, file I/O and UI behaviour, and, by [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11), for passive capture of the owner's own sessions of the **unmodified** client with official servers, on the owner's own machine and account, to learn the official game protocol and login flow for interoperability ([LEGAL.md §9.3](LEGAL.md#93-the-gate)). No injection, debugger or memory reading on a client connected to official servers. Captures stay private in the dirty room, are never committed, and are reduced to field-level facts (no other player's names, chat or account data). |
+| M4 | **Disassembly or decompilation** of the official client. | EU Art 6 / UK s.50B, narrowly; contract and US exposure elsewhere | **Authorised for the offline client by [decision 0011](decisions/0011-standing-m4-authorisation.md)** (standing, from 2026-10-05). Use it after M1–M3, and log each use as a `BIN` provenance row in the spec: build, question, and why M1–M3 were not enough. Since [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11) it also covers the official game protocol and the login flow (the launcher's part included) as far as interoperability needs them, and where key material lies in the install, never its values. Targets are set by subject: read-only copies of the client binary and of the official launcher binary (the launcher only for its part of the login flow), and of a library either loads where in-scope code lies in it. Anti-cheat, anti-tamper, code-signing checks, any circumvention of an access control and the patcher with its update function stay excluded. Analyst must be a lawful licensee acting under EU/UK law, confined to interoperability. Output is prose facts only. Tools: Ghidra headless on a private copy of the shared project (default); REA only under [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md). |
 | — | Leaked or NDA source; official server software; modifying or injecting into the official client; bypassing any access control | — | **Forbidden.** |
 
 Spec writers never write to the install directory and never commit any data observed there
@@ -150,7 +150,10 @@ The review record (reviewer, date, result) goes in the spec header and the pull 
 - [ ] Byte layouts are complete (offset, size, type, meaning) and units are stated.
 - [ ] Invariants are concrete enough to test.
 - [ ] Unknowns are marked `> **OPEN:**`, not guessed.
-- [ ] Nothing in it falls under a closed gate ([LEGAL.md §9.3](LEGAL.md#93-the-gate)).
+- [ ] Nothing in it falls outside the research scope of [LEGAL.md §9.3](LEGAL.md#93-the-gate)
+      (decision 0034): no anti-cheat, anti-tamper or code-signing facts, no key values,
+      certificates, hostnames, endpoints or account data, and no other player's data from a
+      capture.
 
 ### 5.4 OPEN questions
 
@@ -191,8 +194,13 @@ accept that risk and reduce it with session separation, scanning and human revie
    LOTRO/DDO/AC code, decompiler output, or Daybreak files.
 3. **Never paste** decompiled or disassembled client code, extracted game files, or
    third-party LOTRO tool code into a session that writes project code.
-4. **Dirty-room sessions** output prose specs only. If M4 is ever authorised, any
-   disassembler-assisted analysis (Ghidra, IDA, MCP bridges) runs only in such a session.
+4. **Dirty-room sessions** output prose specs only. M4 is authorised for the offline client
+   ([decision 0011](decisions/0011-standing-m4-authorisation.md)). Disassembler-assisted
+   analysis (Ghidra, IDA, REA, other MCP bridges) runs only in such a session. An MCP server
+   for such a tool is never registered at user, project or local scope; it is attached per
+   session with `--strict-mcp-config`
+   ([decision 0033](decisions/0033-rea-for-dirty-room-analysis.md)), and no workflow that
+   starts clean agents is ever run from such a session.
 5. **Disclose** AI use on every assisted commit with an `Assisted-by:` trailer.
 6. **The human who commits is responsible** for the contribution: its licence, provenance
    and correctness. AI tools are not authors and cannot sign off.

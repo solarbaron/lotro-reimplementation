@@ -32,7 +32,10 @@ while standard plugins keep working.
      coexistence with standard plugins, and which milestone it lands in.
    - That architecture is a separate decision, proposed for the owner.
    - Extended scripts must never work against official servers. They run offline and on
-     Tessera's own server, and the M8 gate of decision 0004 still applies.
+     Tessera's own server, and the M8 gate of decision 0004 still applies. (Amended
+     2026-10-11 by [decision 0034](0034-official-server-compatibility.md) §4: extended
+     scripts may run on an official server after the user's explicit opt-in, off by
+     default; automation stays offline only; the M8 gate no longer exists.)
 
 ## Consequences
 - M5 gains the clean-room class helper as a deliverable. Its spec is part of the M5 spec set.

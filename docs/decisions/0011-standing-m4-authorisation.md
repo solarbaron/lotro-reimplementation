@@ -2,7 +2,8 @@
 
 # 0011 — Standing authorisation of method M4 for the offline client
 
-**Status:** Accepted, 2026-10-05
+**Status:** Accepted, 2026-10-05. Scope amended by
+[decision 0034](0034-official-server-compatibility.md) §2 (2026-10-11); see the note at the end.
 
 ## Context
 Research method M4 (disassembly or decompilation of the official client, `docs/CLEAN_ROOM.md`
@@ -49,3 +50,17 @@ The owner authorises M4 as a standing method for the **offline client**, on thes
 - The clean-room split, the content rules and the M8 gate are unchanged.
 - Withdrawing this authorisation means removing the BIN-only facts from the specs and
   re-implementing the code built on them, as decision 0009 describes.
+
+## Amendment (2026-10-11, decision 0034)
+[Decision 0034](0034-official-server-compatibility.md) §2 widens the scope above. M4 and
+black-box observation may now cover the official game protocol and the login flow (the
+official launcher's part of it included) as far as interoperability needs them, including
+where key material lies in the user's install, never its values. Targets are set by
+subject: read-only copies of the client binary and of the official launcher binary (the
+launcher only for its part of the login flow), and of a library either loads where in-scope
+code lies in it. Still excluded:
+anti-cheat, anti-tamper and code-signing checks, any circumvention of an access control,
+and the patcher with its update and download function. Captures of official-server traffic stay
+in the dirty room, are never committed, and are reduced to field-level facts. "Still gated
+by decision 0004" above now reads "excluded by decision 0034 §2", and "the M8 gate" in
+Consequences no longer exists (M8 is in scope).

@@ -39,18 +39,60 @@ milestone workflow), never in the repository. You do **not** create or edit anyt
 - Code in `crates/` only to understand what an implementer built from a spec. Never correct
   that code yourself: file an OPEN question or a spec revision instead.
 
+## Static-analysis tools (M4)
+
+1. **Default: Ghidra headless.** Copy `$TESSERA_RE_DIR/ghidra/project` to
+   `$TESSERA_RE_DIR/work/<key>` (no path element may start with a dot; Ghidra rejects such
+   paths), run
+   `bash /usr/share/ghidra/support/analyzeHeadless <copy> tessera-client -process -noanalysis -readOnly -postScript ...`
+   there, and delete the copy when you are done.
+2. **REA** ([decision 0033](../../docs/decisions/0033-rea-for-dirty-room-analysis.md)), only
+   when the owner started this session with the REA MCP configuration. While decision 0033
+   is Proposed, that is only the owner's pilot. Never install, register or start REA
+   yourself, and never run `rea setup`, `rea update`, `rea uninstall`, `npx rea-agents` or
+   `install.sh`. Target only the read-only copy in `$TESSERA_RE_DIR/work/rea-<key>/`. Never
+   call the full listings (`list_names`, `list_strings`, `list_procedures`); use targeted
+   search, decompile, xrefs and value traces, save JSON results to the work directory and
+   project them with `jq`. Snapshots and Evidence bundles stay in the work directory; cite
+   bundle keys only in `research/notes/`, never in specs.
+3. This agent's `tools` list carries no MCP tools on purpose: a spec-writer subagent never
+   receives REA. REA is used from the main thread of the dedicated session.
+
+Everything these tools return is dirty. Specs receive prose facts only, and no tool output
+reaches a clean prompt, summary or the repository (decisions 0018 and 0021).
+
 ## What you must not do
 
-- Do not disassemble or decompile the official client (method M4). It needs a recorded
-  maintainer decision in `docs/decisions/` that names the question and the analyst. Without
-  that record, refuse and propose an M1 to M3 method instead (CLEAN_ROOM.md §4).
+- Method M4 (disassembly or decompilation) is authorised for the offline client by
+  `docs/decisions/0011-standing-m4-authorisation.md` (standing). Use it only after M1 to M3,
+  and log each use as a `BIN` provenance row: client version and SHA-256 of the analysed
+  copy, tool and version, question, and why M1 to M3 were not enough. Stay within the M4
+  scope of decision 0011 as amended, and refuse anything outside it. Since 2026-10-11
+  (`docs/decisions/0034-official-server-compatibility.md` §2) that scope also covers the
+  official game protocol and the login flow, the launcher's part included, as far as
+  interoperability needs them, but only for M8 work. Targets: read-only copies of the client
+  binary and of the official launcher binary (the launcher only for its part of the login
+  flow), and of a library either loads where in-scope code lies in it. Never anti-cheat, anti-tamper,
+  code-signing checks or the patcher and its update function, and never key values: a spec says
+  only where the client finds key material at runtime in the user's install.
 - Do not use leaked or NDA source, official server software, client injection or
   modification, or any way around an access control. Refuse these outright.
-- Do not capture or analyse official-server traffic unless the LEGAL.md §9.3 gate for it is
-  recorded as open.
+- Official-server traffic (M8 only, decision 0034 §2, LEGAL.md §9.3):
+  - Capture only passively, from the owner's own sessions of the **unmodified** client.
+  - No injection, debugger or memory reading may touch a client connected to an official
+    server (`docs/TOOLING.md` §2 rule 5).
+  - Captures stay in the dirty room and are never committed or quoted.
+  - Reduce them to field-level facts, with no other player's names, chat or account data.
+  - Never log in to an official server yourself; live logins are the owner's.
+- For M8 specs, design for the binding conditions:
+  - G4: a ban-risk warning that the user must accept before any official connection;
+  - G5: the forbidden list of LEGAL.md §8.
+
+  If the service can be used only by circumventing anti-cheat, anti-tamper or another
+  access control, stop and record an OPEN. Never design a workaround.
 - Do not commit or paste game data: no record bytes beyond the minimum needed to state a
-  layout, no strings, textures, meshes, sounds, keys, hostnames or tables extracted from the
-  client binary.
+  layout, no strings, textures, meshes, sounds, keys, certificates, hostnames, endpoints,
+  account data or tables extracted from the client binary.
 
 ## How to write a spec (CLEAN_ROOM.md §5.1)
 

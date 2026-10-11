@@ -136,8 +136,44 @@ pub struct DefeatPanel {
     look: DefeatLook,
     open: Option<ElementKey>,
     ok: Option<ElementKey>,
+    revive: Option<ElementKey>,
     ok_id: u32,
     regs: Vec<(u32, u32)>,
+}
+
+/// TR38: the defeat panel shows its statement, the OK button and the ghosted revive button
+/// and nothing else of its box. Every element below the panel that carries
+/// `UI_PaperItem_PaperItemService` (the paper-item balance, §10.2) is hidden. Of the
+/// children of `DialogMessageBoxField`, those before the one that holds the statement are
+/// the box's own art and keep the layout's visibility; from the statement's holder on, a
+/// child is shown only when it holds the statement or is the OK or revive button, and
+/// every other one (the paid-revive and store buttons, the divider, the paper-item parts)
+/// is hidden. The spec names no label for the divider (`combat-ui.md` §10.2 OPEN, Tessera
+/// rule of this implementation).
+fn hide_unlisted(ui: &mut Ui, cv: &CombatVocab, panel: ElementKey) {
+    let ids = cv.ids;
+    let paper = cv.pids.paper_item_service;
+    for e in crate::game::subtree(ui, panel) {
+        if ui.property(e, paper).is_some() {
+            ui.set_shown(e, false);
+        }
+    }
+    let Some(boxed) = find_below(ui, panel, ids.dialog_box) else {
+        return;
+    };
+    let keep: Vec<ElementKey> = [ids.dialog_statement, ids.dialog_ok, ids.dialog_revive]
+        .into_iter()
+        .filter_map(|id| find_below(ui, boxed, id))
+        .collect();
+    let mut listed_seen = false;
+    for c in ui.children(boxed) {
+        let listed = keep.iter().any(|k| ui.is_ancestor_or_self(c, *k));
+        listed_seen |= listed;
+        if !listed_seen {
+            continue;
+        }
+        ui.set_shown(c, listed);
+    }
 }
 
 impl DefeatPanel {
@@ -160,6 +196,7 @@ impl DefeatPanel {
             look,
             open: None,
             ok: None,
+            revive: None,
             ok_id: 0,
             regs: Vec::new(),
         }
@@ -175,6 +212,13 @@ impl DefeatPanel {
     #[must_use]
     pub fn panel(&self) -> Option<ElementKey> {
         self.open
+    }
+
+    /// The open panel's OK and revive buttons (install look; `None` in the fallback look,
+    /// whose buttons are drawn boxes, and while closed).
+    #[must_use]
+    pub fn buttons(&self) -> (Option<ElementKey>, Option<ElementKey>) {
+        (self.ok.filter(|_| !self.is_fallback()), self.revive)
     }
 
     /// `Defeated { entity: player }`: opens the panel (TR38). Without the install element
@@ -202,7 +246,8 @@ impl DefeatPanel {
         if let Some(t) = find_below(ui, k, ids.dialog_statement) {
             ui.set_text(t, Some(DEFEAT_STATEMENT.to_string()));
         }
-        if let Some(r) = find_below(ui, k, ids.dialog_revive) {
+        let revive = find_below(ui, k, ids.dialog_revive);
+        if let Some(r) = revive {
             let g = ui.vocab().pids.button_ghosted;
             ui.set_property(r, g, PropertyValue::Bool(true));
         }
@@ -210,6 +255,8 @@ impl DefeatPanel {
             crate::game::show(ui, find_below(ui, k, id), false);
         }
         self.ok = find_below(ui, k, ids.dialog_ok);
+        self.revive = revive;
+        hide_unlisted(ui, &self.cv, k);
         self.ok_id = ids.dialog_ok;
         let click = ui.vocab().msgs.button_click;
         self.listen(ui, ids.dialog_ok, click);
@@ -283,6 +330,7 @@ impl DefeatPanel {
             ui.destroy(k);
         }
         self.ok = None;
+        self.revive = None;
     }
 
     /// The OK button closes the panel and gives [`CombatAction::DefeatAcknowledged`].

@@ -323,6 +323,17 @@ location; `game-panels.md` §4). Children of `VitalsParent` (0, 20), 300 × 300,
 | `PlayerScaledLevel_HWField` | `HideWhenField` | same box | scaled level (not used in P2) |
 | `PlayerPVP_Info` | Field | (−4, −3) 34 × 98 | PvP rank (not used) |
 
+> **OPEN:** (implementer, `crates/ui` and `apps/client`, 2026-10-11) how a `PropertyDisplay`
+> (`PlayerName`, `PlayerLevel`, and `OpponentLevel` of §5.1) draws its property, and what it
+> shows before the property has a value, are not given. Tessera creates the game type
+> `PropertyDisplay` as a Text element (registered before the HUD panels are built,
+> `CombatVocab::register_classes`), so the layout's font, colour, outline and alignment apply,
+> and the frames set the text themselves: the name of the frame's view, the level of TR16. Until
+> a frame has a view, and while a level is unknown, the text is empty (never the layout's
+> design-time text). The voice-chat and PvP rows above marked "not used" (`PlayerVoiceChat`,
+> `…Squelched`, `PlayerSendingData`, `PlayerPVP_Info`) keep the layout's own visibility; whether
+> the original's code hides the voice-chat icons when voice chat is off is not given.
+
 <a id="s4-2"></a>
 ### 4.2 Frame state
 
@@ -1140,6 +1151,18 @@ of table 0x25033EC5) and a `Timer` element (`UIComponent_Timer_*` settings).
 > buttons, the divider's paper-item parts and E19 stay hidden. The buttons send nothing (the feed
 > has no release or revive command; OPEN for `scenario-feed.md`); OK closes the panel. On
 > `Revived { entity: player }` the panel closes.
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-11) TR38 hides "the divider's paper-item
+> parts", but §10.2 gives no element label for the divider or for the paper-item balance (only
+> the property `UI_PaperItem_PaperItemService` of the balance), so an implementation cannot find
+> them by label. `tessera-ui` (`game::combat::state`) shows exactly the parts TR38 lists: every
+> element below the panel that carries `UI_PaperItem_PaperItemService` is hidden; of the children
+> of `DialogMessageBoxField`, those before the child that holds `DialogMessageStatementText`
+> are taken as the box's own art and keep the layout's visibility, and from that child on only
+> the statement's holder, `DialogMessageOkButton` and `DialogMessageReviveButton` are shown
+> (the paid-revive and store buttons, the divider and the balance are hidden). The labels of
+> the divider and the balance, and whether the box's art is exactly the children inherited from
+> `Box_Silver_BlueGradient`, would let the rule name them instead.
 
 <a id="s10-3"></a>
 ### 10.3 Defeated entities

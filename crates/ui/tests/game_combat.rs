@@ -771,6 +771,178 @@ fn combat_state_and_defeat_panel_fallbacks() {
     assert!(c.defeat.as_ref().unwrap().panel().is_none());
 }
 
+const DIALOG: u32 = 0x22FF_7100;
+
+/// A synthetic `Dialog` layout with the defeat panel of §10.2: the box's art first, then
+/// the statement, the two listed buttons, the paid-revive and store buttons, a divider and
+/// a paper-item balance (invented IDs for the parts the spec gives no label).
+fn dialog_layout() -> tessera_formats::ui_layout::UiLayout {
+    let i = cv().ids;
+    let vv = v();
+    let mut bx = field(i.dialog_box, 0, 0, 512, 220);
+    bx = child(bx, field(0x1000_7101, 0, 0, 36, 36));
+    bx = child(bx, field(0x1000_7102, 7, 6, 499, 207));
+    bx = child(
+        bx,
+        child(
+            field(0x1000_7103, 10, 8, 493, 122),
+            typed(i.dialog_statement, vv.types.text, 0, 0, 493, 122),
+        ),
+    );
+    bx = child(bx, typed(i.dialog_ok, vv.types.button, 321, 163, 170, 36));
+    bx = child(
+        bx,
+        state(
+            typed(i.dialog_revive, vv.types.button, 137, 163, 170, 36),
+            vv.states.ghosted,
+            0,
+            vec![],
+            vec![],
+        ),
+    );
+    bx = child(bx, typed(i.dialog_pay, vv.types.button, 137, 163, 170, 36));
+    bx = child(bx, field(i.dialog_buy, 137, 163, 170, 36));
+    bx = child(bx, field(0x1000_7104, 57, 132, 400, 26));
+    bx = child(
+        bx,
+        prop(
+            child(
+                field(0x1000_7105, 28, 168, 87, 33),
+                typed(0x1000_7106, vv.types.button, 0, 0, 87, 33),
+            ),
+            cv().pids.paper_item_service,
+            int(1),
+        ),
+    );
+    let root = child(field(i.awaken_dialog, 256, 274, 512, 220), bx);
+    layout(DIALOG, 1024, 768, vec![root])
+}
+
+#[test]
+fn install_defeat_panel_shows_only_tr38_parts() {
+    let mut ui = ui_with(env_with(vec![dialog_layout()]), 1024, 768);
+    let c = cv();
+    let mut d = DefeatPanel::install(&c, Did(DIALOG));
+    assert!(d.open(&mut ui));
+    let panel = d.panel().unwrap();
+    let f = |id: u32, ui: &Ui| find_below(ui, panel, id).unwrap();
+    // Shown: the box's art, the statement (Tessera's own text), OK and the ghosted revive.
+    for id in [0x1000_7101, 0x1000_7102, c.ids.dialog_statement] {
+        assert!(ui.is_displayed(f(id, &ui)), "{id:#x} shown");
+    }
+    assert_eq!(
+        ui.text_of(f(c.ids.dialog_statement, &ui)),
+        tessera_ui::game::combat::state::DEFEAT_STATEMENT
+    );
+    let (ok, revive) = d.buttons();
+    assert_eq!(ok, Some(f(c.ids.dialog_ok, &ui)));
+    assert_eq!(revive, Some(f(c.ids.dialog_revive, &ui)));
+    let revive = revive.unwrap();
+    assert!(ui.is_displayed(ok.unwrap()) && ui.is_displayed(revive));
+    let ghosted = ui.vocab().pids.button_ghosted;
+    assert!(ui.prop(revive, ghosted).bool(), "TR38: revive ghosted");
+    assert_eq!(ui.state(revive), Some(ui.vocab().states.ghosted));
+    // Hidden: paid revive, store, divider, paper-item balance; no other button shows.
+    for id in [
+        c.ids.dialog_pay,
+        c.ids.dialog_buy,
+        0x1000_7104,
+        0x1000_7105,
+        0x1000_7106,
+    ] {
+        assert!(!ui.is_displayed(f(id, &ui)), "{id:#x} hidden");
+    }
+    let buttons = tessera_ui::game::subtree(&ui, panel)
+        .into_iter()
+        .filter(|k| ui.class(*k) == Some(WidgetClass::Button) && ui.is_displayed(*k))
+        .count();
+    assert_eq!(buttons, 2);
+    d.close(&mut ui);
+    assert!(d.panel().is_none() && d.buttons() == (None, None));
+}
+
+#[test]
+fn property_display_frames_draw_name_and_level_as_text() {
+    let c = cv();
+    let i = c.ids;
+    let ty = c.types.property_display;
+    let mut root = field(i.avatar_panel, 0, 0, 280, 300);
+    root = child(root, typed(i.player_name, ty, 87, 3, 191, 36));
+    root = child(
+        root,
+        child(
+            field(0x1000_7201, 32, 82, 38, 17),
+            typed(i.player_level, ty, 0, 0, 38, 17),
+        ),
+    );
+    let mut opp = field(i.opponent_panel, 300, 0, 305, 300);
+    let mut disp = field(i.opponent_display, 0, 20, 302, 300);
+    disp = child(disp, typed(i.opponent_name, v().types.text, 2, 3, 216, 36));
+    disp = child(disp, typed(i.opponent_level, ty, 232, 82, 38, 17));
+    opp = child(opp, disp);
+    let mut ui = ui_with(
+        env_with(vec![layout(L, 1024, 768, vec![root, opp])]),
+        1024,
+        768,
+    );
+    // Registered before the panels are built (the UI host does it at start).
+    c.register_classes(&mut ui);
+    let avatar = ui.open_panel(Did(L), i.avatar_panel).unwrap();
+    let target = ui.open_panel(Did(L), i.opponent_panel).unwrap();
+    let mut combat = CombatUi::new(
+        &mut ui,
+        c,
+        CombatLayouts::default(),
+        CombatRoots {
+            avatar_panel: Some(avatar),
+            opponent_panel: Some(target),
+            ..CombatRoots::default()
+        },
+        FloatySettings::default(),
+    );
+    let f = |id: u32, ui: &Ui, root| find_below(ui, root, id).unwrap();
+    let (name, level) = (
+        f(i.player_name, &ui, avatar),
+        f(i.player_level, &ui, avatar),
+    );
+    assert!(ui.class(name).is_some_and(WidgetClass::is_text));
+    assert!(ui.class(level).is_some_and(WidgetClass::is_text));
+    assert_eq!(ui.text_of(level), "", "no level before the frame has one");
+    combat.set_player(
+        &mut ui,
+        &FrameView {
+            entity: 1,
+            name: "Tamsin".into(),
+            level: LevelShown::Level(20),
+            has_vitals: true,
+            ..FrameView::default()
+        },
+    );
+    assert_eq!(ui.text_of(name), "Tamsin");
+    assert_eq!(ui.text_of(level), "20");
+    assert!(ui.is_displayed(name) && ui.is_displayed(level));
+    assert_eq!(
+        combat.player.as_ref().unwrap().name_and_level(),
+        (Some(name), Some(level))
+    );
+    let ol = f(i.opponent_level, &ui, target);
+    let mut t = FrameView {
+        entity: 2,
+        name: "Boar".into(),
+        level: LevelShown::Level(7),
+        has_vitals: true,
+        ..FrameView::default()
+    };
+    combat.set_target(&mut ui, Some(&t), None);
+    assert!(ui.class(ol).is_some_and(WidgetClass::is_text));
+    assert_eq!(ui.text_of(ol), "7");
+    assert!(ui.is_displayed(ol));
+    // TR16: without a reported level the element shows nothing.
+    t.level = LevelShown::Nothing;
+    combat.set_target(&mut ui, Some(&t), None);
+    assert_eq!(ui.text_of(ol), "");
+}
+
 // ----- selection display (§3.5, §13.7) ----------------------------------------------------
 
 #[test]

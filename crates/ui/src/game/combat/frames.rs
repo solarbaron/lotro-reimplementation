@@ -161,7 +161,12 @@ impl UnitFrame {
     /// `GamePlay_SelectionTarget`). `None` when the root lacks the frame's name element
     /// (the caller then uses [`UnitFrame::fallback`]).
     #[must_use]
-    pub fn install(ui: &Ui, cv: &CombatVocab, kind: FrameKind, root: ElementKey) -> Option<Self> {
+    pub fn install(
+        ui: &mut Ui,
+        cv: &CombatVocab,
+        kind: FrameKind,
+        root: ElementKey,
+    ) -> Option<Self> {
         let i = &cv.ids;
         let f = |id: u32| find_below(ui, root, id);
         let mut p = InstallParts {
@@ -260,6 +265,11 @@ impl UnitFrame {
                     .collect();
                 p.nonvital_field = f(i.selection_target_nonvital);
             }
+        }
+        // Until the frame has something to show, its texts are empty rather than the
+        // layout's design-time samples (TR16; the name and level are set by `show`).
+        for k in [p.name, p.alt_name, p.level].into_iter().flatten() {
+            ui.set_text(k, Some(String::new()));
         }
         Some(Self {
             kind,
@@ -470,6 +480,33 @@ impl UnitFrame {
         }
     }
 
+    /// The text elements that show the frame's name and level now (`combat-ui.md` §4.1,
+    /// §5.1, §13.1): the name of the vital or the non-vital field, by the shown view; the
+    /// level element (E5, E6; `None` for E7 and in the non-vital field).
+    #[must_use]
+    pub fn name_and_level(&self) -> (Option<ElementKey>, Option<ElementKey>) {
+        let vitals = self
+            .shown
+            .as_ref()
+            .is_none_or(|v| v.has_vitals || self.kind == FrameKind::Player);
+        match &self.look {
+            FrameLook::Install(p) => {
+                if vitals {
+                    (p.name, p.level)
+                } else {
+                    (p.alt_name.or(p.name), None)
+                }
+            }
+            FrameLook::Fallback(p) => {
+                if vitals {
+                    (p.name, p.level)
+                } else {
+                    (p.nonvital_name, None)
+                }
+            }
+        }
+    }
+
     /// What the frame shows (`None` while hidden).
     #[must_use]
     pub fn view(&self) -> Option<&FrameView> {
@@ -519,7 +556,9 @@ impl UnitFrame {
             LevelShown::Hidden => (false, false),
         };
         if let Some(l) = p.level {
-            ui.set_text(l, level_text(v.level));
+            // Without a level the element shows nothing (TR16), not the layout's
+            // design-time text.
+            ui.set_text(l, Some(level_text(v.level).unwrap_or_default()));
             ui.set_shown(l, level_on);
         }
         crate::game::show(ui, p.skull, skull_on);
@@ -568,7 +607,7 @@ impl UnitFrame {
         }
         for (t, health) in &p.texts {
             let val = if *health { v.health } else { v.power };
-            ui.set_text(*t, val.map(|x| x.text()));
+            ui.set_text(*t, Some(val.map(|x| x.text()).unwrap_or_default()));
         }
     }
 
@@ -591,7 +630,7 @@ impl UnitFrame {
             );
         }
         if let Some(l) = p.level {
-            ui.set_text(l, level_text(v.level));
+            ui.set_text(l, Some(level_text(v.level).unwrap_or_default()));
         }
         if let Some(h) = &p.health {
             h.set(ui, v.health.map_or(0.0, |x| x.fraction()));

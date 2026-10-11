@@ -258,6 +258,44 @@ impl CombatScreens {
         b.w() > 0 && b.h() > 0 && b.r >= 0 && b.b >= 0 && b.l < sw && b.t < sh && !transparent
     }
 
+    /// Whether a frame's name (and, when it reports one, its level) is shown as text
+    /// (`combat-ui.md` §14: "with name, level"): the element is shown, draws text and
+    /// the view has the value.
+    fn frame_texts(&self, ui: &Ui, f: &tessera_ui::game::combat::UnitFrame) -> bool {
+        let Some(v) = f.view() else {
+            return false;
+        };
+        let text = |k: Option<ElementKey>| {
+            k.is_some_and(|k| self.shown(ui, k) && ui.class(k).is_some_and(|c| c.is_text()))
+        };
+        let (name, level) = f.name_and_level();
+        let level_ok = match v.level {
+            tessera_ui::game::combat::LevelShown::Level(_) if level.is_some() => text(level),
+            _ => true,
+        };
+        !v.name.is_empty() && text(name) && level_ok
+    }
+
+    /// TR38: in the install look, the OK button and the ghosted revive button are shown
+    /// and no other button of the panel is (the fallback look draws its own two).
+    fn defeat_buttons(&self, ui: &Ui, d: &tessera_ui::game::combat::DefeatPanel) -> bool {
+        if d.is_fallback() {
+            return true;
+        }
+        let (Some(panel), (Some(ok), Some(revive))) = (d.panel(), d.buttons()) else {
+            return false;
+        };
+        let ghosted = ui.vocab().pids.button_ghosted;
+        let revive_ghosted = ui.prop(revive, ghosted).bool();
+        let others = tessera_ui::game::subtree(ui, panel).into_iter().any(|k| {
+            k != ok
+                && k != revive
+                && ui.class(k) == Some(tessera_ui::WidgetClass::Button)
+                && self.shown(ui, k)
+        });
+        self.shown(ui, ok) && self.shown(ui, revive) && revive_ghosted && !others
+    }
+
     /// Whether element `e` of §14 is shown now (visible, opacity above 0, a non-empty box
     /// on screen), read from the UI tree.
     #[must_use]
@@ -269,13 +307,14 @@ impl CombatScreens {
         let w = hud.widgets();
         let now = self.now;
         match e {
-            Element::E5 => w
-                .player
-                .as_ref()
-                .is_some_and(|f| f.view().is_some() && self.shown(&ui, f.root())),
+            Element::E5 => w.player.as_ref().is_some_and(|f| {
+                f.view().is_some() && self.shown(&ui, f.root()) && self.frame_texts(&ui, f)
+            }),
             Element::E6Vital | Element::E6NonVital => w.target.as_ref().is_some_and(|f| {
                 let want = e == Element::E6Vital;
-                f.view().is_some_and(|v| v.has_vitals == want) && self.shown(&ui, f.root())
+                f.view().is_some_and(|v| v.has_vitals == want)
+                    && self.shown(&ui, f.root())
+                    && self.frame_texts(&ui, f)
             }),
             Element::E7 => w
                 .selection_target
@@ -336,11 +375,9 @@ impl CombatScreens {
             Element::E17 => w.combat_state.as_ref().is_some_and(|c| {
                 c.in_combat() && c.indicator().is_some_and(|k| self.shown(&ui, k))
             }),
-            Element::E18 => w
-                .defeat
-                .as_ref()
-                .and_then(|d| d.panel())
-                .is_some_and(|k| self.shown(&ui, k)),
+            Element::E18 => w.defeat.as_ref().is_some_and(|d| {
+                d.panel().is_some_and(|k| self.shown(&ui, k)) && self.defeat_buttons(&ui, d)
+            }),
             // The resource bar when one shows it (both looks, TR11 with TR41); a pip
             // display or the wrath meter is checked by the data only.
             Element::E20 => {

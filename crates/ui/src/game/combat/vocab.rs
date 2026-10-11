@@ -185,6 +185,8 @@ combat_table! {
         violent_indicator = ("ViolentModeIndicator", 0xFFFB_2081),
         /// `Awaken_DialogMessageField` (E18).
         awaken_dialog = ("Awaken_DialogMessageField", 0xFFFB_2090),
+        /// `DialogMessageBoxField` (the defeat panel's box, §10.2).
+        dialog_box = ("DialogMessageBoxField", 0xFFFB_2096),
         /// `DialogMessageStatementText`.
         dialog_statement = ("DialogMessageStatementText", 0xFFFB_2091),
         /// `DialogMessageOkButton`.
@@ -325,6 +327,9 @@ combat_table! {
         pip_list = ("UIComponent_PipDisplay_List", 0xFFFD_200D),
         /// `UI_ClassDisplay_Type` (§5.2 step 5).
         class_display = ("UI_ClassDisplay_Type", 0xFFFD_200E),
+        /// `UI_PaperItem_PaperItemService` (the defeat panel's paper-item balance, §10.2;
+        /// hidden by TR38).
+        paper_item_service = ("UI_PaperItem_PaperItemService", 0xFFFD_200F),
     }
 }
 
@@ -333,6 +338,9 @@ combat_table! {
     CombatTypes {
         /// `PipDisplay` (§4.4, E20; the same label as [`crate::game::GameVocab`]'s).
         pip_display = ("PipDisplay", 0xFFFC_0004),
+        /// `PropertyDisplay` (`PlayerName`, `PlayerLevel` and `OpponentLevel`, §4.1, §5.1;
+        /// drawn as text, [`CombatVocab::register_classes`]).
+        property_display = ("PropertyDisplay", 0xFFFC_2001),
     }
 }
 
@@ -455,6 +463,15 @@ impl CombatVocab {
     ) {
         self.resolve_types(element_type);
         self.resolve_with(ids, states, pids);
+    }
+
+    /// Registers the engine class of the combat game types that show text (Tessera rule,
+    /// `combat-ui.md` §4.1, §5.1, §5.5): `PropertyDisplay` is created as a Text element, so
+    /// the frames' name and level (`PlayerName`, `PlayerLevel`, `OpponentLevel`) draw the
+    /// text the frames set with the layout's font, colour and alignment (the fallback Field
+    /// of an unregistered game type draws no text). Call before the HUD panels are built.
+    pub fn register_classes(&self, ui: &mut crate::Ui) {
+        ui.register_game_type(self.types.property_display, crate::WidgetClass::Text);
     }
 
     /// The name colour states in [`super::data::ConRank`] order.

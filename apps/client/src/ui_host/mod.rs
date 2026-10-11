@@ -372,6 +372,8 @@ impl UiHost {
         );
         boot::register(&mut host.ui.borrow_mut(), &b.game_vocab);
         b.char_vocab.register_classes(&mut host.ui.borrow_mut());
+        // The frames' name and level displays (P4, P5) draw text (`combat-ui.md` §4.1, §5.1).
+        b.combat.vocab.register_classes(&mut host.ui.borrow_mut());
         host.character = Some(crate::character::panel::CharacterUi::new(
             b.char_vocab.clone(),
             b.char_ids.clone(),

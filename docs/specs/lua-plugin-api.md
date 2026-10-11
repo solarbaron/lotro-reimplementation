@@ -175,6 +175,10 @@ mark **Tessera rule** and need no observation.
 | P81 | `Backpack:GetSize()` returns the backpack's size; `Backpack:GetItem(index)` takes 1 … `GetSize()` and returns the item there or nil; `Equipment:GetItem(index)` takes a slot of the `Equipment` enumeration and returns nil for an empty slot; `Equipment:GetSize()` is the number of items that can be equipped; `LocalPlayer:GetBackpack()`, `GetEquipment()` return those objects; `ItemInfo` getters as listed in §16 | S2 (class and member pages of `Backpack`, `Equipment`, `LocalPlayer`, `ItemInfo`) | **Reported** |
 | P82 | The `Equipment` enumeration's values 1 … 21 equal the data's `ContainerSlot` keys 2 … 22 minus one, name for name (`Head` … `Class`, `Bridle` ↔ `Mounted`); the keys 23 … 25 (weapon FX slots) have no API value; `ItemDurability` 1–7 and `ItemWearState` 1–4 equal the keys and names of mappers 0x230000FA and 0x230000FB (§15.1) | S2/S3 (Appendix A values); O4-type observation 2026-10-09 of the `ContainerSlot` mapper 0x230000EE (`character-panels.md` OBS) | **Reported** (API values) + **Confirmed** (data keys and names) |
 | P83 | Inventory views in Tessera (§15.1): the getter-to-property mapping of `Item` and `ItemInfo`; one `Backpack` and one `Equipment` object per apartment, one `ItemInfo` per record DID per apartment; nil from `GetItem` for a non-integer or out-of-range index; `Equipment:GetSize()` = 21; `Backpack` and `Equipment` events derived from the feed's `ItemAdded`, `ItemMoved`, `ItemRemoved` and `ContainerSize`, moves between containers included; `SizeChanged` whenever *N* changes, also through an arriving item before the first `ContainerSize`; `GetMaxQuantity` = `GetMaxStackSize`; `IsMagic` false; `GetQualityImageID` 0; the `GetNameWithQuantity` form; the values for absent properties and for literal items | DEC ([0024](../decisions/0024-parity-track.md) P1); `character-panels.md` §4.3, §8, §9 | **Tessera rule** (no observation; the original's values are OPEN, §15.1) |
+| P90 | `Party.MemberAdded` and `MemberRemoved` are fired through the same argument routine as `AssistTargetAdded` and `AssistTargetRemoved`: it puts the member object under the field `Player` when the member object is available and leaves the table empty otherwise; `Party.LeaderChanged` and `Player.PartyChanged` are fired with an empty table (§9.3, §15.4). Corrects the reading of P31/§9.3 that no field name is wired to the member events | BIN (2026-10-11, same build; question: which argument table each party event gets; the initialisers of the four event names and the routine that fills the table were read by address range; why M1–M3 were not enough: S3 has no capture of the member events), S3 (captures: `AssistTargetAdded` with `Player`; `AssistTargetRemoved`, `LeaderChanged` and `PartyChanged` empty) | **Confirmed** 2026-10-11 (BIN) |
+| P91 | `Party` getters: `GetMemberCount` and `GetAssistTargetCount` return the length of the member and assist-target lists; `GetMember(i)` and `GetAssistTarget(i)` take 1 … count and return nil for any other index; `IsMember(p)` and `IsAssistTarget(p)` test whether `p`'s character is in the list; the member list holds the local player as an entry, and `GetMember` and `GetLeader` return the `LocalPlayer` instance for it (§15.4) | BIN (2026-10-11, same build; question: index base, range behaviour and the player's entry; the `Party` registration and the bound getters were read; M1–M3: S2 documents only the signatures) | **Confirmed** 2026-10-11 (BIN only) |
+| P92 | The party is the player's fellowship, or, for a monster player, its group (§15.4) | S2 (`Party` class page) | Reported |
+| P93 | Party views in Tessera (§15.4): the party model from the feed's `FellowshipChanged` (`social-panels.md` §9 TR2), object identity, getter values without data, the derivation and order of `PartyChanged`, `MemberAdded`, `MemberRemoved` and `LeaderChanged` | DEC (decision 0024 P4; `social-panels.md`) | **Tessera rule** |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -1005,14 +1009,22 @@ Field names and the events that carry them (BIN; values observed in S3):
 | `SkillList.SkillAdded` | `Index`, `Skill` |
 | `SkillList.SkillRemoved` | `Index` |
 | `Party.AssistTargetAdded` | `Player` (S3) |
+| `Party.MemberAdded`, `MemberRemoved`, `AssistTargetRemoved` | `Player` (the member) when the member object is available, else no field (P90, BIN 2026-10-11) |
 | `Window.UIScaleChanged` | `Index` (the `UIScalingGroupType` that changed), `Value` (the new scale, number) |
 | all other events (`Click`, `Load`, `Unload`, `Update`, every `…Changed` without a row above, `EffectsCleared`, `ItemsRefreshed`, …) | empty table |
 
 `Party.AssistTargetRemoved` was captured in game with an empty table (S3, P62), which
 agrees with the binary (no field name wired to it).
 
-> **OPEN:** whether `Party.MemberAdded`/`MemberRemoved` carry a field (no field name is
-> wired to them in the binary and no capture exists; Tessera: empty table).
+> **Correction (2026-10-11, P90):** the sentence above and the P31 reading behind it are
+> corrected by a BIN reading of the party events: the member and assist-target events share
+> one argument routine that sets `Player` when it has the member object, so the empty
+> `AssistTargetRemoved` capture is the case without an object, not the absence of a field.
+> `LeaderChanged` and `Player.PartyChanged` carry no field.
+
+> **Answered (2026-10-11, P90; was OPEN):** `Party.MemberAdded` and `MemberRemoved` carry
+> `Player` (the member) when the member object is available, else an empty table. Tessera
+> always provides it (§15.4).
 
 <a id="9-4"></a>
 ### 9.4 Per-frame update
@@ -3445,6 +3457,104 @@ therefore return the data keys unchanged.
 > `Equipment:GetItem` with an argument that is not a number (nil, a string): as implemented,
 > nil, like a non-integer.
 
+
+<a id="s15-4"></a>
+### 15.4 Party views in Tessera (decision 0024 P4)
+
+The views read the client half's fellowship model of `social-panels.md` §9 TR2, which the
+scenario feed fills through `FellowshipChanged` (`scenario-feed.md` §6.4, §9.2) and a server
+backend would fill the same way. Every event follows the delivery rule of the first paragraph
+of §15 (queued, delivered in frame-loop step 7). The numbers 15.2 and 15.3 belong to the P2
+and P3 revisions; this subsection is 15.4 so that the three merge without renumbering.
+
+**API facts** (P90–P92). A `Party` is the player's fellowship (a monster player's group).
+`GetMemberCount()` is the length of the member list, which includes the local player;
+`GetMember(i)` takes 1 … `GetMemberCount()` and returns nil otherwise; the local player's
+entry, and the leader when the player leads, are returned as the `LocalPlayer` instance; the
+assist-target getters have the same shape over the assist-target list. `MemberAdded`,
+`MemberRemoved`, `AssistTargetAdded` and `AssistTargetRemoved` carry `Player` (the member)
+when the member object is available; `LeaderChanged` and `Player.PartyChanged` carry nothing.
+
+Everything else below is a **Tessera rule** (P93).
+
+**Model.** The members are the list of the last `FellowshipChanged` read by
+`social-panels.md` §9 TR2 (the player identified by entity, else by name; a list without the
+player read with the player appended). A **party episode** runs from a list that becomes
+non-empty to the next empty list.
+
+| View | Rule |
+|---|---|
+| `LocalPlayer:GetParty()` (from `Player`) | nil outside an episode; inside, the episode's `Party` object, one per apartment per episode (a new episode gives a new object) |
+| `Party:GetMemberCount()` | the number of members, the player included |
+| `Party:GetMember(i)` | for integer *i* in 1 … count, the *i*-th member in list order: the `LocalPlayer` instance for the player, a `PartyMember` otherwise; nil for any other argument (a non-number included) |
+| `Party:GetLeader()` | the leader of TR2 (the `LocalPlayer` instance when the player leads); nil when no member has `leader` |
+| `Party:IsMember(p)` | true when `p` is the `LocalPlayer` instance, or a `PartyMember` of this party whose name is in the current list; false otherwise (nil and non-objects included) |
+| `Party:GetAssistTargetCount()`, `GetAssistTarget(i)`, `IsAssistTarget(p)` | 0, nil, false: the feed carries no assist targets; `AssistTargetAdded` and `AssistTargetRemoved` never fire |
+| `PartyMember` objects | one per apartment per member name per episode; a member who leaves and returns in the same episode gets the same object; an object outlives its membership and then answers with the last values seen |
+| `PartyMember:GetName()` | the member's name |
+| `PartyMember:IsLocalPlayer()` | false |
+| `PartyMember:GetParty()` | the episode's `Party` while the name is in the list, else nil; `GetRaid()` and `GetPet()` nil |
+| `PartyMember:GetLevel()`, the morale and power getters, `GetTarget()`, `GetEffects()` | as the `Actor` getters of the P2 revision (§15.2) for the member's entity, from the events the feed sent for that entity; a member without an entity answers 0, nil and an empty `EffectList` |
+| `PartyMember:GetClass()`, `GetRace()`, `GetAlignment()`, `GetReadyState()` | 0 |
+| `PartyMember:IsLinkDead()`, `IsVoiceEnabled()`, `IsVoiceActive()` | false |
+
+**Events** from two consecutive member lists, members compared by name:
+
+1. Empty → non-empty: `LocalPlayer.PartyChanged` (empty table). No member events.
+2. Non-empty → empty: `LocalPlayer.PartyChanged`. The old `Party` gets no events.
+3. Otherwise, on the episode's `Party`: `MemberRemoved { Player }` for each removed member in
+   old-list order; then `MemberAdded { Player }` for each added member in new-list order; then
+   `LeaderChanged` (empty table) when the leader's name changed (to or from none included).
+   `Player` is the member's `PartyMember` object (Tessera always has it).
+4. Identical lists (names, order, leader): no event. A change of order alone gives no event;
+   `GetMember` follows the new order at once.
+
+`PartyMember` objects fire no events of their own in P4; `Actor` events of the member's
+entity, if any, are those of §15.2.
+
+> **OPEN:** (1) the original's member order in `GetMember` (`social-panels.md` Q3); (2)
+> whether the original fires `MemberAdded` for the members present when a party forms, and
+> `PartyChanged` on membership changes; (3) whether a `PartyMember` is the same object as an
+> `Actor` object of the same entity obtained elsewhere (for example through `GetTarget`); (4)
+> what the original's `PartyMember` getters return for a member out of view. **Tessera
+> rules** as in the tables above (P93).
+
+> **OPEN:** (implementer note, `crates/plugins/src/party.rs`, 2026-10-11) Cases the tables
+> above leave open. (1) A `Party` object whose episode has ended: as implemented it answers
+> as an empty party (`GetMemberCount()` 0, `GetMember`, `GetLeader` nil, `IsMember` false
+> for every argument, the `LocalPlayer` instance included); a member event of that episode
+> still queued when the episode ended (two `FellowshipChanged` in one frame) is not
+> delivered (read with rule 2: the old `Party` gets no events). (2) The `PartyMember`
+> `Actor` getters: §15.2 is not on this branch; as implemented, the level and the ten
+> morale and power getters read a host source by entity (the client's TR3 member data; 0
+> for a member without an entity), `GetTarget()` is nil and `GetEffects()` the empty
+> `EffectList`, until the P2 revision's rules are merged. When the source has no values
+> for a member's entity (while a member, or when its removal is delivered) the object keeps
+> the last values seen. These getters, `GetName`, `IsLocalPlayer`, `GetParty`, `GetPet` and
+> the `Player` getters are the base classes' methods (`Entity`, `Actor`, `Player`), which
+> answer a `PartyMember` object; `PartyMember` itself holds only `GetRaid` (see (5)). (3) Names
+> that occur twice in one list (or a member with the player's name besides the player's
+> own entry): as implemented the player's entry takes no part in the name comparison; each
+> other name gives at most one `MemberAdded`/`MemberRemoved`; `GetMember` returns the one
+> `PartyMember` of that name for every entry with it. (4) A list longer than the feed's 64
+> entries (a server backend): as implemented only the first 64 are read, the player
+> appended after them when not among them. (5) `GetRaid()`: the table above asks for it
+> on `PartyMember`, but §16 lists no `GetRaid` on `Player` or `PartyMember` for this build
+> (only S2 names it), so the original may have none (calling it would then raise an error).
+> As implemented, `PartyMember` holds `GetRaid` as its one own field (nil) until it is known
+> whether the build has it, and whether Tessera should keep it as a Tessera rule. (6) A
+> `self` without a native object: `Party`'s own methods and `PartyMember.GetRaid` raise a
+> Lua error (§8.2); the inherited `Entity`, `Actor` and `Player` getters, shared with the
+> P1 views, answer such a `self` with their defaults (0, nil, false), as the §15.1 views
+> do; whether §8.2 should apply to them too is open.
+
+Worked example (`social-panels.md` §12.1, player Tam, actors Brin and Cael): the first list
+gives `PartyChanged`, `GetMemberCount() == 2`, `GetMember(1) == LocalPlayer.GetInstance()`,
+`GetMember(2):GetName() == "Brin"`, `GetLeader() == LocalPlayer.GetInstance()`; adding Cael
+gives `MemberAdded` with `Player:GetName() == "Cael"`; the leader change gives one
+`LeaderChanged`; dropping Cael gives `MemberRemoved` (Cael); `fellowship none` gives
+`PartyChanged`, and `GetParty()` is nil.
+
 ---
 
 ## 16. API inventory (client build 4906.0071.1794.4035)
@@ -3977,6 +4087,34 @@ original: the API facts P81 and P82 (1-based backpack indices, `Equipment` value
     `GetMaxStackSize()` is 1, and `GetItemInfo():GetNameWithQuantity(3)` is "3", a space and
     the literal text.
 
+
+Checks 90–96 test §15.4 against a scenario feed: the API facts P90–P91 and the Tessera rules
+P93 (numbers 70–89 are left to the P2 and P3 revisions).
+
+90. **Party presence (§15.4):** without a `fellowship` step `GetParty()` is nil. After
+    `fellowship "Tam" $a leader="Tam"` (player Tam, actor `$a` named Brin) one `PartyChanged`
+    with an empty table was delivered; `GetMemberCount() == 2`, `GetMember(1) ==
+    LocalPlayer.GetInstance()`, `GetMember(2):GetName() == "Brin"`; `GetMember(0)`,
+    `GetMember(3)`, `GetMember(1.5)` and `GetMember("1")` are nil; `GetLeader() ==
+    LocalPlayer.GetInstance()`; `IsMember(LocalPlayer.GetInstance())` is true and
+    `IsMember(nil)` false.
+91. **Member added:** a following `fellowship "Tam" $a $b leader="Tam"` (`$b` named Cael)
+    delivers one `MemberAdded` whose `Player:GetName() == "Cael"` and `Player ==
+    GetMember(3)`, and no `PartyChanged`; `GetMemberCount() == 3`.
+92. **Leader changed:** `fellowship "Tam" $a $b leader=$a` delivers one `LeaderChanged` whose
+    table is empty (`next(args) == nil`); `GetLeader():GetName() == "Brin"`.
+93. **Member removed:** `fellowship "Tam" $a leader=$a` delivers one `MemberRemoved` with
+    `Player:GetName() == "Cael"`; `IsMember` of that object is false and its `GetParty()` nil;
+    `GetMemberCount() == 2`.
+94. **Disbanded:** `fellowship none` delivers one `PartyChanged` and no `MemberRemoved`;
+    `GetParty()` is nil; a later `fellowship "Tam" $b leader="Tam"` gives a `Party` object
+    different from the first.
+95. **Player appended:** `fellowship $a $b leader=$a` (the player not listed) gives
+    `GetMemberCount() == 3` and `GetMember(3) == LocalPlayer.GetInstance()`.
+96. **Assist targets and no-ops:** in any party `GetAssistTargetCount() == 0`,
+    `GetAssistTarget(1)` is nil and `IsAssistTarget(GetMember(2))` false; repeating the last
+    `fellowship` step unchanged delivers no event.
+
 ---
 
 ## 19. Open questions (summary)
@@ -3992,7 +4130,7 @@ All `> **OPEN:**` callouts above:
 - Lifecycle: autoload order (§6.2); blocking `PluginData` writes and flushes when an unload
   closes a state inside a frame (§6.3, ARCHITECTURE §21); localized aliases of `/plugins` (§6.4); whether error
   lines reach `Chat.Received` (§6.6).
-- Events: fields of `Party.MemberAdded/MemberRemoved` (§9.3); when an `Update` subscriber
+- Events: when an `Update` subscriber
   that turned updates off is dropped (§9.4); whether `SetText`, `SetChecked`,
   `SetSelectedIndex`/`SetSelectedItem` and `SetSelectedNode` fire their change events
   (§9.6).
@@ -4032,7 +4170,12 @@ All `> **OPEN:**` callouts above:
   `…Changed` events (§15); what the original's `ItemInfo:IsMagic()`, `GetMaxQuantity()`,
   `GetQualityImageID()` and `GetNameWithQuantity()` return, what its item getters return
   when the data lacks the property, and whether `ItemAdded`/`ItemRemoved` fire for moves
-  between containers (§15.1).
+  between containers (§15.1); the original's party member order, member events at
+  formation and `PartyChanged` on membership changes, `PartyMember` object identity against
+  `Actor` objects, and `PartyMember` values for members out of view (§15.4); the implementer
+  cases of §15.4 (an ended `Party`, `PartyMember` actor values before §15.2 merges, repeated
+  names, lists over 64 entries, `PartyMember:GetRaid()` against §16, gameplay getters
+  called with a `self` without a native object).
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -4068,6 +4211,11 @@ callout on enums (`Equipment`, `ItemDurability` and `ItemWearState` answered by 
 added one callout (§15.1: the original's values of four `ItemInfo` getters, of getters on
 absent properties, and events for moves between containers).
 
+The P4 revision of 2026-10-11 (§15.4, provenance P90–P93, §18 checks 90–96) answered the §9.3
+callout on the fields of `Party.MemberAdded`/`MemberRemoved` (P90, which also corrects the
+P31 reading of `AssistTargetRemoved`) and added one callout (§15.4); the clean-room
+implementation of the same day added a second (§15.4: the cases the tables leave open).
+
 ---
 
 ## 20. Corrections to other specs
@@ -4093,6 +4241,7 @@ recorded here, not applied, because this session owns only this file.
 | `ui-behaviour.md` §9.2 OPEN ("the plugin-side combination of `Window:SetScale` with the group scale") | OPEN | Answered in §13.21 here: `SetScale(f)` sets the window's own scale, which replaces its group's value; the effective scale is `f` × `UIScale_Global` for windows that take part in the global scale, else `f`, and it is applied by the §9.2 rule. | BIN (fourth pass) |
 | `character-panels.md` §8.1 (Tessera mapping) | `ItemAdded` per `ItemAdded` into `Backpack`; `SizeChanged` per `ContainerSize` of `Backpack` | Align with §15.1 here (P83): `ItemAdded` also per `ItemMoved` from another container into the backpack; `SizeChanged` whenever *N* changes, including growth through an arriving item before the first `ContainerSize` (queued before that item's `ItemAdded`), and not for a `ContainerSize` that leaves *N* unchanged. Added 2026-10-09. | DEC (0024 P1) |
 | `plugin-api-usage.md` §6.3 (OPEN, O2) and §6.9 (OPEN, O9) | Whether class-table replacements reach instances; whether `WriteLine` renders markup | Both answered yes: §8.6 and §11.1 here (P76, P75). | BIN (fourth pass), O7 |
+| `scenario-feed.md` §6.4 (`fellowship` step) | A `fellowship` list need not name the player | Note, not a correction: the plugin API needs the player as a member (P91), so §15.4 reads a list without the player as if the player were appended, as `social-panels.md` §9 TR2 does; scenario authors should list the player | P91, DEC |
 
 ---
 
@@ -4233,3 +4382,4 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-06 | Second repair of the decision-alignment revision (spec writer, dirty room), answering the second review round; no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **§3.3 deferred work made consistent:** the at-least-one-item rule of 0014 D8 now carries its one exception, from 0015 §4.4: while the first `Plugins/` file index is not ready and the head of the queue is a load, that frame's deferred work stops at the load, no item runs and the items behind it wait, so queue order is kept; refreshed indexes never hold back a load; this is the rule of `plugin-runtime.md` §8.4 "Wait for the first file index", which §3.3 now cites. (2) **§18:** the lead-in to the Tessera-rule invariants reads 59–65 (invariant 65 is the §11.3 interim rule). (3) **§13.18 mode-1 row** (non-blocking): the reason why the children of a resized Stretch control are not laid out again is now `ui-behaviour.md` §9.2.1 (a Stretch element resize keeps the layout box), not `ui-layout.md` §8.4 step 1, which Tessera applies only under root-panel parents (`ui-layout.md` §8.4 scope OPEN); the behaviour is unchanged. **OPEN callouts:** count unchanged (no new or closed callout). **Implementers re-check:** deferred-work slicing while the first index is pending (§3.3). **Left for other owners:** decision 0014 D8 (locked) does not name the first-index exception to its at-least-one-item rule; it should, when 0014 is next revised, together with the skip set already listed. |
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting review): new §15.1 (inventory views: `GetBackpack`, `GetEquipment`, `Item`, `ItemInfo` over the session's inventory model and the scenario feed), provenance P81–P82 (API facts S2, the `Equipment` ↔ `ContainerSlot` key relation from the data), §18 checks 66–69 for decision 0024 P1 exit criterion 4. No other text changed; section numbers and anchors unchanged. Implementers re-check: the `Turbine.Gameplay` inventory views in `crates/plugins`. |
 | 2026-10-09 | Review fixes for the P1 revision (spec writer, dirty room; no new research; status stays **Revised**, awaiting re-review by a session other than the writer and the first reviewer). Blocking (1): §15 enum paragraph and P41 now point to P82 (`Equipment` value = `ContainerSlot` key − 1; `ItemDurability`, `ItemWearState` follow their data enums); the §15 enum OPEN and its §19 line narrowed to `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the stance enums. (2): the §15.1 OPEN is listed in §19, with a closing note. (3): new provenance row P83 (**Tessera rule**, DEC 0024 P1, `character-panels.md` §4.3, §8, §9) covering every Tessera rule of §15.1; §15.1 says which facts are P81/P82 and which P83; §18 has a lead-in for checks 66–69. (4): §15.1 rewritten with a containers table and two getter tables covering every `Item` and `ItemInfo` getter of §16, each with its value for a present property, an absent property and a literal item; `GetItemInfo()` identity (one object per record DID per apartment) stated; the §15.1 OPEN widened to the original's values for absent properties. Non-blocking: (a) the delivery rule points to §15's first paragraph; (b) note that `scenario-feed.md` links resolve after `p0` is merged; (c) and (e) a `SizeChanged` rule for growth before the first `ContainerSize`, and a §20 row asking `character-panels.md` §8.1 to align; (d) check 67 names the `MoveItem` and `DestroyItem` input lines with `defaults on`; (f) blank lines fixed. Checks 66, 67, 69 extended. OPEN count: 57 callout markers in §1–§18 before and after (one narrowed, one widened; none closed, none added). Section numbers and anchors unchanged. Implementers re-check: `Turbine.Gameplay` `Backpack`, `Equipment`, `Item`, `ItemInfo` in `crates/plugins`. |
+| 2026-10-11 | P4 revision (spec writer, dirty room; BIN on the same build, S3 re-read; this part awaits review by a session that wrote no part of it): new §15.4 (`Party` and `PartyMember` views over the fellowship model of `social-panels.md` §9 TR2, event derivation from `FellowshipChanged`, worked example), provenance P90 (party event argument tables; corrects the P31 reading of `AssistTargetRemoved`), P91 (getter semantics), P92 (S2), P93 (Tessera rules); a §9.3 table row, a correction note and the member-event OPEN answered; §18 checks 90–96; §19 summary line and closing paragraph; one §20 row. Numbers chosen to merge with the P2 and P3 revisions (§15.2, §15.3, P84–P89, checks 70–89). |

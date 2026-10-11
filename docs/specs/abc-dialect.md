@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Revised (revision 2026-10-11, P4, awaiting an independent review): additive answers in §8.5 (the 0.5 s stepper constant) and §11 (part omitted, command words, the synced start time, new §11.1 on the synchronised start), §10.4 pointer, provenance OBS-S, BIN-S and PV28–PV32, §16 row, §17 items 4 and 9. Every section and anchor of the Accepted text is unchanged. Before: Accepted (re-review 2026-10-05) |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Re-review 2026-10-05: **accepted**. Full record moved to the review log (decision 0018). |
@@ -63,6 +63,8 @@ factors, tables in §6–§9) come from the client executable and may be used as
 | WEB | Published usage guides for the command syntax (`/play <file> <n> sync`, `/playstart`, `Music` folder, sub-folders), read 2026-10-05: the Maestro project wiki page "Playback"; search-engine summaries of community guides. |
 | ER | `research/notes/engine-client-re.md` §7 (earlier summary of the dialect from MA). |
 | MODEL | The expected results in §12 and §13 were computed from the rules of this spec by a throwaway model in the dirty-room scratchpad; the model is not a source of facts. |
+| BIN-S | Third M4 pass on the same build, 2026-10-11, for P4: the player-music module's synced branch, synchronised-start entry, stepper and withdraw paths. Questions, reasons and limits are recorded as the BIN-S row of [`instruments.md`](instruments.md) §1, which owns the facts (§8.7–§8.9 there). |
+| OBS-S | User install, 2026-10-11: the game script of the class library (record 0x56000000, [`wlib-bytecode.md`](wlib-bytecode.md)) for the `/play` and `/playstart` command bodies and every call site of the package-0x07DE natives; the command-word table 0x250001AB (named key 0x10000007, label `Commands`; tokens only) and the command-help table 0x250001AA (tokens only, meaning summarised); table 0x2500808A (all 46 entries, tokens and argument IDs). |
 
 Marks: **Confirmed (BIN)** = read from the executable; **Confirmed (BIN + OBS)** = read from
 the executable and agreeing with the user's data; **Confirmed (BIN + MA)** = read from the
@@ -101,6 +103,11 @@ material only; **Probable** = BIN evidence that was not traced to the end.
 | PV25b | Every pitch slot is the key of the note label `Note_<name><octave>` in enum mapper 0x2300015E, with pitch 48 ↔ `Note_C2` … pitch 84 ↔ `Note_C5`; the 37 live-play note actions of enum mapper 0x230000AF carry the same 37 name suffixes (§9.5) | BIN (fixed table); OBS (all 37 keys of 0x2300015E; all 37 `MUSIC_` names of 0x230000AF) | Confirmed (BIN + OBS) |
 | PV26 | Error kinds and message entries: named-table key 0x10000069, token values, argument IDs (§10) | BIN; OBS (all 25 error tokens of §10.2 and the 3 notice tokens of §10.4 present in table 0x2500808A with the listed argument IDs; key 0x10000069 resolves to it) | Confirmed (BIN + OBS) |
 | PV27 | Command syntax `/play <file> [part] [sync]`, `/playstart` (§11) | WEB; ER; BIN (reader entry receives name, part, sync flag) | Reported (syntax); Confirmed (BIN) (reader inputs) |
+| PV28 | `/play`: one file name, then at most two words in any order, each the sync word (entry 0x09657667 of the `Commands` table) or a whole number > 0; part omitted → −1 ("none", §5.3); anything else shows the command's usage entry. `/playstart` takes no arguments (§11) | OBS-S | Confirmed (OBS) |
+| PV29 | The synced start time and lead come with the server's start notification; the game script hands them unchanged to native 0x07DE0002, which `/playstart` does not call (§11.1; `instruments.md` §8.8.3) | BIN-S; OBS-S | Confirmed (BIN + OBS) |
+| PV30 | The 0.5 s constant of the performance stepper is its catch-up threshold (§8.5; `instruments.md` §8.7) | BIN-S | Confirmed (BIN) |
+| PV31 | Ready, start and stop notices of §11.1 with their argument IDs | OBS-S; BIN-S | Confirmed (OBS) (script notices); Confirmed (BIN) (client notices) |
+| PV32 | Native 0x07DE0001 receives the part as given (−1 when omitted) and the sync flag; 0x07DE0003 lists the folder; 0x07DE0002 is the synchronised start, called only from the game script's handler of the start notification (§11, §16) | BIN-S (registration); OBS-S (callers) | Confirmed (BIN + OBS) |
 
 ---
 
@@ -942,6 +949,15 @@ the start command supplies the start time (§11).
 > 0.5 s late-note rule of [`instruments.md`](instruments.md) §8.2–§8.3. It does not affect what
 > the reader accepts or the event list; it belongs to the playback specs, not to this one.
 
+> **Answered (revision 2026-10-11, BIN-S, PV30):** the stepper is specified in
+> [`instruments.md`](instruments.md) §8.7. It hands the events on in steps, each with the time
+> *start* + its offset on the time line of §8.4. The 0.5 s constant is its **catch-up**
+> threshold: when the performance position is less than 0.5 s ahead of the clock, it ends the
+> held notes and skips forward, without sounding, to at least 0.5 s ahead. It is a separate
+> rule from the queue's late drop (same value). For a solo start the start time is the
+> command time + 0.7 s and the stepper's lead is 0.7 s; a synced start gets both from the
+> start notification (§11.1).
+
 ---
 
 <a id="s9"></a>
@@ -1157,6 +1173,9 @@ unfinished tie report the note's letter (or rest letter).
 > client shows it through a different message path than §10.3, and its text source was not
 > traced. Tessera may use its own text.
 
+The notices around a synced performance (ready, start, stop; revision 2026-10-11) are listed
+in §11.1 and in [`instruments.md`](instruments.md) §8.8.6.
+
 ---
 
 <a id="s11"></a>
@@ -1180,6 +1199,17 @@ the command syntax below is Reported (WEB, ER):
 > number is in the game-script data and was not read. (2) The `/playlist` filter syntax and
 > whether sub-folders are listed. (3) Where the synced start time comes from and the meaning
 > of the second start value (0.7 s for a solo start).
+
+> **Answered (revision 2026-10-11, OBS-S, BIN-S):** (1) The command layer passes **−1**
+> ("none") when the part is omitted (PV28). After the file name it accepts at most two more
+> words, in either order: the sync word (entry 0x09657667 of the command-word table, named
+> key 0x10000007) sets the sync flag, and a whole number greater than 0 sets the part (a later
+> number replaces an earlier one); any other word, a part of 0 or less, or more than two words
+> show the command's usage entry and nothing is read. `/playstart` takes no words; with any it
+> shows its usage entry. (3) The start time and the second value (the stepper's **lead**)
+> come with the server's start notification and reach native 0x07DE0002 unchanged; a solo
+> start uses the command time + 0.7 s and a lead of 0.7 s (PV29; §11.1). What values the
+> server chooses stays open ([`instruments.md`](instruments.md) Q10). (2) stays open.
 
 > **OPEN (implementation, 2026-10-07):** how the listing reads the X: values (decimal as for
 > the first X: of §5.3, or with base detection as for later ones) and which T: it shows (the
@@ -1218,6 +1248,43 @@ the command syntax below is Reported (WEB, ER):
 > chat layer can reorder or drop commands typed in quick succession was not traced.
 > The music folders are tested on every command, so a `Music` folder created while the
 > client runs is used at once.
+
+> **Answers and updates (revision 2026-10-11, BIN-S, OBS-S):** (a) The original has no stop
+> chat command in the music natives; its stop is the key action `MusicEndSong`, which finishes
+> a running performance at the stepper's horizon with notice 0x0B87AC37 and does **not**
+> withdraw a waiting synced part ([`instruments.md`](instruments.md) §8.8.7). `/playstop`
+> stays Tessera's own command (it also withdraws the waiting part; `instruments.md` §12 P4
+> Decision 6). (d) Original: a part of 0 or less, a word that is neither the sync word nor a
+> number, or more than two words after the name shows the command's usage entry (PV28);
+> Tessera's choice agrees except that the original reads the sync word from the localised
+> command-word table. (f) Once fellowships exist (P4) the group is the local player plus the
+> members of the fellowship the scenario feed reports, with the group of one kept when there
+> is no fellowship; one start gives every waiting part of the group the same start time
+> (`instruments.md` §12 P4 Decision 2–3). The notice 0x012DD4A4 on every processed start is
+> the original's behaviour (§11.1). (b), (c), (e), (g) unchanged.
+
+<a id="s11-1"></a>
+### 11.1 Synchronised start, as far as it concerns the reader (revision 2026-10-11)
+
+[`instruments.md`](instruments.md) §8.7–§8.9 specifies the playback side; this is the summary
+for the command layer (Confirmed (BIN) or (OBS) unless marked):
+
+1. `/play <name> [<part>] sync` reads and checks the part at once (§3–§10; errors are shown at
+   once). An accepted part becomes the player's single **waiting part**, replacing an earlier
+   one; nothing starts and no begin notice of §10.4 is shown. A refused part leaves an
+   earlier waiting part in place.
+2. The game script then shows the own ready notice and tells the server: 0x0871DF57 with the
+   title (argument ID **0x00058427**, not the 0x0058E905 of the begin notice) or 0x02D8DC54
+   when the title is empty. Other members see 0x03A91887 (member name 0x05506DA2, title
+   0x00058427) or 0x0B630494 (name only) (trigger Probable).
+3. `/playstart` (no arguments) sends one start request to the server, from any member, leader
+   or not; it starts nothing itself. If the script's group check fails it shows the notice of
+   key 0x100003B0 instead (Probable meaning: not in a group).
+4. Each client that receives the server's start notification shows 0x012DD4A4 (also without a
+   waiting part) and starts its waiting part with the notification's **start time** and
+   **lead**; every member gets the same start time, so the parts share their time-0. A part
+   whose client handles the start late loses its head instead of starting late.
+5. The **start tolerance** for Tessera is defined in [`instruments.md` §8.9](instruments.md#s8-9).
 
 ---
 
@@ -1614,6 +1681,8 @@ here, not applied by editing the other files, because this session owns only thi
 | ER §7 | Refused or ignored: "a length or tie after a chord, broken rhythm next to a chord, an empty K: or text after the key, … text in Q:, an L: after notes, T/H/L/M/O/P/S/u/v" | Broken rhythm **before** a chord is accepted (§7.8); text after the key is accepted unless it begins with three letters that are not a mode (§6.4); text in Q: is refused only before the tempo (§6.3); an L: after notes is accepted and applies to the whole part (§8.1); `u` and `v` are accepted (§7.10); `!…!`, `$` and `` ` `` truncate rather than refuse (§7.1). | BIN |
 | `instruments.md` §5.1 and §5.2 (packed note: "bits 0–23" vs "low byte" as the note key) | Two descriptions of the note key | Both hold for the same word: the slot is packed into bits 0–23 (§9.4), the re-attack pass compares the low 8 bits, and slots are 1–37, so the two are always equal. The tie bookkeeping uses the slot value itself. An addition for the `instruments.md` writer to adopt, not an edit. | BIN |
 | `docs/ARCHITECTURE.md` §14 (neutral doc) | Dialect "Reported in engine-client-re.md §7" | Now specified here from the executable. | — |
+| This spec §11 (revision 2026-10-11) | "native IDs 0x07DE0001 play, 0x07DE0002 synced start", read as what `/playstart` calls | `/playstart` calls none of the music natives; it sends a request. 0x07DE0002 is called only by the game script's handler of the server's start notification (PV32, §11.1). | BIN + OBS |
+| `research/notes/engine-client-re.md` §7 (ER) | "`.` to stop" | The client's stop is the key action `MusicEndSong` (default binding not checked); it ends only a running performance (§11 answers (a)). | BIN |
 
 ---
 
@@ -1623,8 +1692,9 @@ here, not applied by editing the other files, because this session owns only thi
 1. Name with an extension: kept or replaced (§3.1).
 2. Characters for bytes 0x80–0xFF in files without a BOM; whether 0x1A ends input (§3.3).
 3. Classification of stray UTF-8 continuation bytes (§3.3).
-4. Part number passed when the command omits it; `/playlist` filter syntax and sub-folders;
-   source of the synced start time (§11).
+4. `/playlist` filter syntax and sub-folders (§11). Answered on 2026-10-11: the part passed
+   when omitted (−1) and the source of the synced start time (the start notification; the
+   values the server chooses are `instruments.md` Q10).
 5. Source of the event-limit notice (§10.4).
 6. Volume-to-loudness curve; release; instrument octaves (§7.11; `instruments.md`,
    `sound.md`). The meaning of the pitch slots is now settled (§9.5: keys of the note mapper);
@@ -1635,8 +1705,8 @@ here, not applied by editing the other files, because this session owns only thi
 8. Which non-ASCII characters the original's digit test accepts, and therefore how runs with
    superscript, full-width or other-script digits read (§4.1). Tessera accepts only `0`–`9`
    meanwhile.
-9. The 0.5 s constant of the original's performance stepper (§8.5): catch-up for late
-   playback, to be specified with `sound.md` / `instruments.md`.
+9. Answered on 2026-10-11: the 0.5 s constant is the stepper's catch-up threshold
+   (`instruments.md` §8.7).
 
 **Proposed owner checks** (method M3, own account; to be added to
 `docs/checklists/owner-observations.md` by its maintainer). Each needs a small file in the
@@ -1667,3 +1737,4 @@ original: its behaviour is undefined and may crash the client (§4.1).
 |---|---|
 | 2026-10-05 | First version: file lookup and decoding, tokens, fields and part selection, field values, music elements, timing rule and limits, note events and pitch slots, errors and message entries, commands, conformance table, worked examples, invariants, differences and corrections. |
 | 2026-10-05 | Revision after review (changes requested). §9.5: the OPEN about the slots is answered — each slot is the key of a `Note_` label in enum mapper 0x2300015E (all 37 checked); the live-play action names are cited from enum mapper 0x230000AF (37 names), the owner's key-mapping file is cited only for its 21 bound actions, and the link from ABC `C,` to `MUSIC_C2` is marked as an inference (new PV25b; OBS row extended). §13.2 and PV23: the in-game trials confirm the formula and rule out most operation orders, not the order itself; table of eight orders added; the order rests on BIN (new PV23b). New §4.1 (number tokens): 128-byte buffer without a length check, undefined behaviour for runs of 128 or more characters, Tessera's choice (convert the whole run, saturate), low byte kept, digit classification OPEN (new PV4b); §4 table row, §14.2 and §17 adjusted; rows F6–F8 and owner checks OC9–OC10 added. §9.4: packed word layout completed (slot bits 0–23, volume bits 24–31, which part is compared). §8.5: OPEN pointer to the 0.5 s constant of the performance stepper. MA trial labels prefixed (MA B6 …) so they no longer clash with §12 row IDs. §16: note on the packed-word wording of `instruments.md` §5.1/§5.2. |
+| 2026-10-11 | Revision for P4, additive (status Revised). BIN-S (third M4 pass, facts owned by `instruments.md` §8.7–§8.9) and OBS-S (game script of the class library, command and message tables). §8.5 OPEN answered (stepper catch-up, PV30). §11 OPEN (1) and (3) answered (part −1 when omitted, command words, start time and lead from the start notification; PV28, PV29, PV32); answers to the client-commands OPEN (a), (d), (f); new §11.1 (synchronised start summary, ready and start notices, pointer to the start tolerance). §10.4 pointer, §16 rows, §17 items 4 and 9. No earlier section or anchor changed. |

@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-10 |
+| **Status** | **Review** ("P4 social" revision, 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.4: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3) |
 | **Review record** | 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
@@ -78,6 +78,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | Partial Fisher–Yates shuffle; unbiased bounded integers by rejection | R. Durstenfeld, CACM 7(7), 1964; the rejection threshold (2^64 − *b*) mod *b* is the textbook construction | Standard |
 | UTF-8 | RFC 3629 | Standard |
 | Revision 4 (§18.3): overlay runs, looks and property values, the held-item slot, creation on the test-server backend, plain-sandbox creation, `remove-character`, `stat`, `item-property`, Vector G, the new hostile rows | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (spec writer, design, 2026-10-10); `character-screens.md` §5.2, §7.1, §7.1.1, §7.2, §8, `character-panels.md` §3.4, §7, §9, `item-tooltips.md` §6.5, §11 (Accepted, read 2026-10-10); `tessera-protocol.md` v1.1 §5.3, §6.2, §7.4 (revised the same day); `property-system.md` §3 (type codes), MP4 (the two PID families), §7.3 (bit ↔ key); `player-character.md` §6.2 (`NationalityTable_Nationality`). No game client, server or third-party tool was consulted | Design |
+| "P4 social" revision (§18.4): waiting parts and one synchronised start with its time and lead, the player's `/play … sync` and `/playstart` as commands, fellow vitals, the disband command, the remote backend at minor 2, the plain sandbox's start answer, Vector H, the P4 hostile and backend cases (2026-10-11) | [Decision 0035](../decisions/0035-p4-social-on-test-server.md) (spec writer, design); `tessera-protocol.md` v1.2 §10.6 and Appendix A (revised the same day); `instruments.md` §8.8, §8.9 and §12 P4 Decision (start tolerance, waiting parts, the 0.7 s lead; revised 2026-10-11, referred to, not restated); `social-panels.md` §4.4, §8, §9 (draft, 2026-10-11). No game client, server or third-party tool was consulted for this revision | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -104,6 +105,8 @@ on the date given), **Standard** (a published algorithm or standard).
 | **Look** | A character's creation choices: 1–48 (property, value) entries carried in `Appearance` (§5.8, §9.1). |
 | **Property value** | A scripted value of a data property, written `PROPERTY=VALUE` (§5.8). |
 | **Synthetic scenario** | A scenario whose output does not depend on an install: run with no install, it produces its full intended log. |
+| **Waiting part** | (P4 social) A fellowship member's performance that is ready and waits for a synchronised start (§6.7); at most one per member. |
+| **Synchronised start** | (P4 social) One start that starts every waiting part at one common time, *S* (§6.7). |
 
 ---
 
@@ -573,7 +576,9 @@ For the player and each actor: active flag, last scripted maximum per vital (for
 expiry), target, combat flag. For the player in addition: quickslots (slot → content),
 learned skills and recipes (for logs only), quest states, open windows. The feed never
 computes a value from this state; it uses it only to address events (which instance to end,
-which max to repeat). Each piece of state follows the events the feed itself emits, from steps
+which max to repeat). (P4 social, §6.7) The feed also keeps the **waiting parts**: member name
+→ tune, at most 64 entries, set by `perform … sync` and `ReadyPerformance`, removed by
+`perform-withdraw` and emptied by every synchronised start. Each piece of state follows the events the feed itself emits, from steps
 and generic answers alike (for example a quickslot's content is the one of the last
 `QuickslotChanged` the feed emitted for that slot); a command the feed does not answer changes
 nothing.
@@ -784,6 +789,8 @@ key otherwise), and a binding longer than 32 is cut to its first 32 with a `wind
 
 `named:NAME` is one token, NAME a string (1–64 bytes): `channel=named:"Lore"`.
 
+P4 social additions (synchronised performances, fellow vitals): §6.7.
+
 <a id="s6-5"></a>
 ### 6.5 Map, travel, mounts and instances
 
@@ -819,6 +826,56 @@ spawn location, so a scenario that teleports far should use `place(…)` positio
 | `title` | `REF` | `TitleGranted` |
 
 A crafting bar is `cast player REF DURATION kind=craft` followed by `craft-result`.
+
+<a id="s6-7"></a>
+### 6.7 P4 social: synchronised performances and fellow vitals (decision 0035 D4)
+
+| Step | Arguments and options | Emits |
+|---|---|---|
+| `perform` … `sync` | `(ENTITY\|STRING) STRING sync` | `PerformanceReady { member, entity, tune }`: the member's part waits for a synchronised start. `member` is the STRING, the player's character name for `player`, or the actor's name; `entity` is the player or the actor, none for a STRING. Replaces the member's earlier waiting part. A member with an empty name, or a 65th distinct waiting member → skip |
+| `perform-start` | `[by=(ENTITY\|STRING)] [lead=DURATION]` (lead 0 … 10 s, default 700 ms) | `PerformanceSyncStart { by, at_ms, lead_ms }`, then the feed's waiting parts are emptied. `by` is the starter's name as for `member` (none without `by=`); `at_ms` = the virtual time of the tick that executes the step + `lead_ms`. Emitted also when nothing waits |
+| `perform-withdraw` | `ENTITY\|STRING` | `PerformanceWithdrawn { member }`; removes the member's waiting part. None waiting → skip |
+| `fellow-vital` | `STRING (health\|power\|resource=REF) CUR/MAX` (name 1–64 bytes; values as `vital`, §6.2) | `FellowVitalChanged { member, vital, current, max }` |
+
+**Forms.** `sync` is a keyword that stands after the tune; with it the first argument may be
+a STRING, and `delay=` is not allowed (`UnexpectedToken` at the `delay=` key). Without `sync`,
+`perform` keeps its §6.4 form (an ENTITY first; a STRING there is `UnexpectedToken`).
+`fellow-vital` takes a STRING only (an ENTITY there is `UnexpectedToken`): a member with an
+entity reports its vitals through `vital` of that entity (§6.2).
+
+**Meaning for the client half** (normative for the feed's events; the playing is
+`instruments.md` §8.8–§8.9 and §12 P4 Decision, which the client follows):
+
+- `PerformanceReady` makes the named member's part wait (the tune is read from the user's
+  own music folder, like a `PerformanceStarted` tune). A `PerformanceReady` for the player
+  is handled like an accepted `/play … sync` of that tune by the player.
+- `PerformanceSyncStart` is **one** synchronised start. Every part waiting in the client at
+  that moment, the player's and every member's, starts with the same start time *S*: on the
+  client's audio clock, the time at which it processes the event plus `lead_ms`; in a
+  headless run on the virtual clock, `at_ms` itself. The **start tolerance** is the one of
+  `instruments.md` §8.9; the feed defines none. The default lead of 700 ms equals the lead
+  `instruments.md` §12 P4 Decision 3 gives a local start.
+- `PerformanceWithdrawn` removes that member's waiting part, if any.
+- `FellowVitalChanged` is a vital of the fellowship member named `member` as the group
+  reports it, whether or not the member has an entity (`social-panels.md` §4.4: a row keeps
+  its vitals out of view). The client half shows, for each member row, the latest of the
+  member's `FellowVitalChanged` and (for a member with an entity) its entity's
+  `VitalChanged`.
+- `PerformanceStarted` with `delay` keeps its meaning (a solo-like start, *S* = processing time
+  + delay) and never starts a waiting part.
+
+**The player's commands** (§9.4): the client sends `ReadyPerformance { tune }` once it has
+accepted the player's `/play … sync` locally, and `StartPerformance` for `/playstart`. The feed
+records the player's part as waiting on `ReadyPerformance` (no event) and answers
+`StartPerformance`, under `defaults on`, with one `PerformanceSyncStart` by the player's
+character name with the default lead (§7.6). With a backend that accepts `StartPerformance`
+(the feed and the plain sandbox, §9.8) the client starts waiting parts **only** on the
+`PerformanceSyncStart` that comes back, never also locally, so a `/playstart` gives exactly
+one start; with a backend that refuses it (the test-server backend) the client keeps its
+local start of `instruments.md` §12 P4 Decision 3.
+
+Values stay scripted: the feed computes nothing but `at_ms` = tick time + lead, a sum of two
+values of the run (§15 invariant 11).
 
 ---
 
@@ -976,6 +1033,7 @@ matches anything explicitly; `none` matches an absent value.
 | `invite [STRING]`, `answer-invite [accept\|decline]`, `leave-fellowship`, `kick [STRING]`, `set-leader [STRING]` | fellowship commands | |
 | `open-trade [ENTITY]`, `offer-trade`, `trade-ready` | trade commands | |
 | `friend [STRING]`, `unfriend`, `ignore-player`, `unignore` | list commands | |
+| `play-sync [tune=STRING]`, `play-start`, `disband` | (P4 social) `ReadyPerformance`, `StartPerformance`, `DisbandFellowship` | `tune=`: exact tune |
 | `choose-travel [entry=N]`, `join-instance [entry=N]`, `leave-instance`, `dismount` | world commands | |
 | `train [entry=N]`, `slot-trait [N]`, `craft [REF]` | progression commands | |
 | `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | The body may hold only character steps (§6.1) |
@@ -1015,6 +1073,8 @@ compatibility, binding, stack limits, prices, levels or requirements.
 | `DestroyItem` | `ItemRemoved` |
 | `TakeLoot` | per taken entry, in entry order: `LootTaken`, then `ItemAdded` (new item, quantity of the entry) at the first free backpack slot; from the first entry for which no backpack slot is free, nothing more (neither `LootTaken` nor `ItemAdded`) |
 | `CancelCast` | `CastEnded` (`cancelled`) for the player's active cast, removing its scheduled end |
+| `StartPerformance` | (P4 social) `PerformanceSyncStart { by: Some(the player's character name), at_ms: the tick's time + 700, lead_ms: 700 }`, then the waiting parts are emptied (§6.7) |
+| `ReadyPerformance` | (P4 social) no event; the player's part is recorded as waiting with the command's tune (§5.7, §6.7) |
 | `Chat` | as the sandbox's own chat path does without a scenario, which does not run while the feed runs (§3.2): a `ChatMessage` on the same channel and text with the player's name as sender; a tell to *PEER* instead gets `ChatMessage` on `System`, sender none, text *PEER* followed by ` is not in the sandbox.` (Vector F) |
 
 Every other command gets no generic answer. A command that refers to an unknown item, window
@@ -1059,6 +1119,7 @@ both see the state before that frame's poll.
 | `equip $item slot=VALUE`, `unequip $item`, `move-item $item to=CONTAINER slot=N`, `destroy $item`, `split $item Q` | inventory commands |
 | `quickslot N (REF\|$item\|empty)` | `SetQuickslot` |
 | `chat STRING [channel=…]` | `Chat` (channel values §7.5; default `say`) |
+| `play-sync STRING`, `play-start`, `disband` | (P4 social) `ReadyPerformance { tune }` (tune 1–256 bytes), `StartPerformance`, `DisbandFellowship` |
 | `join-channel STRING`, `leave-channel STRING`, `invite STRING`, `answer-invite accept\|decline`, `leave-fellowship`, `kick STRING`, `set-leader STRING`, `open-trade ENTITY`, `offer-trade ($item [qty=Q]\|coin=N)`, `trade-ready on\|off`, `friend STRING`, `unfriend STRING`, `ignore-player STRING`, `unignore STRING` | social commands |
 | `choose-travel N`, `join-instance N`, `leave-instance`, `dismount` | world commands |
 | `train N`, `slot-trait N (REF\|none)`, `craft REF [qty=Q]` | progression commands |
@@ -1396,6 +1457,10 @@ Fields are listed in log order (§10.3).
 | | `IgnoreList` | `names: Vec<String>` |
 | | `PerformanceStarted` | `entity: EntityId`, `tune: String`, `delay_ms: u32` |
 | | `PerformanceStopped` | `entity: EntityId` |
+| | `PerformanceReady` (P4 social) | `member: String`, `entity: Option<EntityId>`, `tune: String` |
+| | `PerformanceSyncStart` (P4 social) | `by: Option<String>`, `at_ms: u64`, `lead_ms: u32` |
+| | `PerformanceWithdrawn` (P4 social) | `member: String` |
+| | `FellowVitalChanged` (P4 social) | `member: String`, `vital: Vital`, `current: f32`, `max: f32` |
 | World | `MarkerAdded` | `marker: MarkerId`, `location: Location`, `label: Text`, `icon: Option<DataId>`, `quest: Option<Ref>` |
 | | `MarkerRemoved` | `marker: MarkerId` |
 | | `TravelShown` | `window: WindowId`, `source: Option<EntityId>`, `entries: Vec<{ entry: u16, destination: Ref, coin: u64 }>` |
@@ -1463,6 +1528,8 @@ Fields are listed in log order (§10.3).
 | | `OfferTrade` | `window: WindowId`, `item: Option<ItemId>`, `quantity: u32`, `coin: u64` |
 | | `SetTradeReady` | `window: WindowId`, `ready: bool` |
 | | `AddFriend` / `RemoveFriend` / `Ignore` / `Unignore` | `name: String` |
+| | `ReadyPerformance` (P4 social) | `tune: String` (1–256 bytes, no control characters) |
+| | `StartPerformance` / `DisbandFellowship` (P4 social) | — |
 | World | `ChooseTravel` / `JoinInstance` | `window: WindowId`, `entry: u16` |
 | | `LeaveInstance` / `Dismount` | — |
 | Progression | `TrainSkill` | `window: WindowId`, `entry: u16` |
@@ -1505,6 +1572,14 @@ skill.
   commands (debug log), so client panels can be opened offline. The overlay backend of
   §12.5 routes the Inventory group to the feed and everything else to the test-server
   backend.
+- **P4 social** (decision 0035). The events of §6.7 follow the entity rule (surfaced
+  `InWorld`); `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` are allowed
+  `InWorld`. Validation: `ReadyPerformance.tune` 1–256 bytes without control characters;
+  inbound `member` and `by` are names (cut and cleaned to `MAX_NAME_LEN`), `tune` 256 bytes;
+  a non-finite `FellowVitalChanged` value makes the event invalid. On the test-server backend
+  at protocol minor 2, `JoinChannel`, `LeaveChannel` and `Chat` on `Named` are accepted
+  (§9.8); the sentence above about `Named` applies below minor 2. The plain sandbox answers
+  `StartPerformance` (§9.8).
 
 <a id="s9-6"></a>
 ### 9.6 Plain sandbox: creating a character (revision 4, decision 0025 D5)
@@ -1551,6 +1626,34 @@ addition:
   entry's look }` per entry, in the list's order, so the selection screen can show each
   character's figure.
 - `DeleteCharacter` and every other new command: refused as in §9.5.
+
+<a id="s9-8"></a>
+### 9.8 P4 social: the test-server backend at minor 2 and the plain sandbox (decision 0035 D1, D4)
+
+**Test-server backend.** At negotiated minor 2 or higher with `CHAT_CHANNELS` advertised
+(`tessera-protocol.md` §3.1, §6.2.2, §10.6, Appendix A):
+
+- `JoinChannel { name }` sends `ChannelJoin`, `LeaveChannel { name }` sends `ChannelLeave`,
+  and `Chat { channel: Named { name } }` sends `ChatSend` with channel 6.
+- `ChannelJoined` and `ChannelLeft` from the server surface as `ChannelJoined { channel }` and
+  `ChannelLeft { channel }` (§9.2) with the server's spelling of the name; a `ChatMessage` on
+  channel 6 surfaces as `ChatMessage` on `ChatChannel::Named { name }`; `ChannelRefused`
+  surfaces as a System `ChatMessage` in Tessera's own words (Appendix A there).
+- Below minor 2, or without `CHAT_CHANNELS`: the three commands are refused with
+  `NetError::InvalidCommand` and nothing is sent.
+- At every minor: `Chat` on `Fellowship` is refused (no wire value; a fellowship exists only
+  in the feed), and so is every other Social command, `ReadyPerformance`, `StartPerformance`
+  and `DisbandFellowship` included (decision 0035 D2: synchronised-music relay is the
+  owner's open question). The client then keeps its local start for `/playstart` (§6.7).
+- The overlay backend (§12.5) keeps its P1 subset (decision 0035 D3): Social-group
+  statements stay `NotAllowedInOverlay`, and Social commands of an overlay run, chat and
+  channel commands included, go to the test-server backend under these rules.
+
+**Plain sandbox** (no scenario): `StartPerformance` is answered in `submit` with
+`PerformanceSyncStart { by: Some(the entered character's name), at_ms, lead_ms: 700 }`,
+where `at_ms` is the milliseconds since world entry by the `now` of that `submit`, rounded
+down, plus 700. It keeps no waiting parts; `ReadyPerformance`, `DisbandFellowship`,
+`JoinChannel` and `LeaveChannel` stay accepted and ignored (§9.5). Conformance: §14.12.
 
 ---
 
@@ -1672,6 +1775,11 @@ text` with `channel` one of `say`, `yell`, `emote`, `system`, `fellowship`, `tel
 without an appearance or a look). A variant added to
 `Event`, `Command` or one of their groups later MUST be given a log form in this table by the
 revision that adds it; until then the log writer writes its name followed by `unlogged`.
+(P4 social) The variants of §6.7 and §9.8 use the general rule of this section with the
+value forms above: `PerformanceReady member entity tune`, `PerformanceSyncStart by at_ms
+lead_ms`, `PerformanceWithdrawn member`, `FellowVitalChanged member vital current max`,
+`ReadyPerformance tune`, `StartPerformance` and `DisbandFellowship` (no fields); `at_ms` and
+`lead_ms` decimal (Vector H, §14.11).
 
 <a id="s10-4"></a>
 ### 10.4 Counters
@@ -1749,6 +1857,9 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | Property value numbers | per kind (§5.8): float finite with \|v\| ≤ 10^9, integers within the kind | `OutOfRange` (`pid:` form) or a `mismatch` note (`@Label` form) |
 | Properties kept by the client half | 1,024 per entity and 1,024 per item (§9.5) | further properties ignored with a warning |
 | Overlay `AppearanceSet` | one in flight, at least 250 ms apart, answer within 10 s (§12.5) | coalesced; a missing answer clears the in-flight mark with a warning |
+| (P4 social) Waiting parts | 64 members (§5.7, §6.7) | a `perform … sync` for a 65th member is skipped (counted); `ReadyPerformance` beyond it records nothing |
+| (P4 social) `perform-start` lead | 0 … 10 s | `OutOfRange` |
+| (P4 social) `ReadyPerformance.tune` (input form `play-sync`) | 1–256 bytes | `TooLong` (static); an empty tune `OutOfRange`; a longer one from the client half: `NetError::InvalidCommand` |
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the documentation review of P0 and
 > recorded by the P0 exit verifier, 2026-10-09) No row bounds the size of the canonical log
@@ -1765,6 +1876,16 @@ any input, every allocation bounded by the limits below, and each violation a ty
 > the next poll (windowed), the end line is `reason=error … error=LogOverflow line=0` and the
 > client exits 5. `LogOverflow` is not a `RuntimeErrorKind` of the feed (the feed does not
 > fail; only the log does), and §10.2 item 7 and the §12.2 exit table do not name it yet.
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the P4 review of `tessera_net` and
+> recorded by its implementer, 2026-10-11) A string may hold a raw TAB (§4.1), but
+> `ReadyPerformance.tune` has no control characters (§9.4), and the row above names only
+> `TooLong` and `OutOfRange` for the length. Implemented pending this decision: a TAB in the
+> tune of the input form `play-sync` or of the pattern `play-sync tune=` is the static error
+> `OutOfRange` at the tune's column (before, the line was only counted as input-skipped when
+> `Session` refused it). Decide the error kind, and whether `perform … sync` with such a tune
+> should be skipped too: today its `PerformanceReady` is emitted (the client half cleans the
+> tune to a space, §9.5) while the feed's waiting record keeps the raw tune.
 
 <a id="s11-2"></a>
 ### 11.2 Static errors
@@ -2005,6 +2126,9 @@ way.
   output. The per-tick delivery caps of §7.4 apply to the feed's output only.
 - **Diagnostics.** `scenario_status()` and `scenario_counters()` as in §3.4, and
   `appearance_shared()`: whether the server advertised `APPEARANCE_CHANGE`.
+- **P4 social** (decision 0035 D3). The subset of §12.5.1 is unchanged: no Social-group step
+  (§6.4, §6.7), pattern or input form is allowed in an overlay file, and every Social command
+  goes to the test-server backend (§9.8).
 
 <a id="s12-5-3"></a>
 #### 12.5.3 Clock and end
@@ -2635,6 +2759,105 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 
 ---
 
+<a id="s14-11"></a>
+### 14.11 Vector H: fellow out of view, synchronised start, player's commands (P4 social)
+
+```text
+tessera-scenario 1
+title "Vector H"
+tick 100ms
+player "Tam"
+actor $brin kind=player name="Brin" pos=3,0,0 facing=270
+at 0s spawn $brin
++0s fellowship player $brin "Cael" leader=player
++0s fellow-vital "Cael" health 300/500
++0s vital $brin health 800/800
++0.2s perform $brin "Reel" sync
++0s perform "Cael" "Reel" sync
+at 1s perform-withdraw "Cael"
++0s perform "Cael" "Jig" sync
+at 1.5s perform-start by="Cael" lead=1s
+on play-sync
++0s say $brin "Ready when you are."
+end
+on play-start
++0s fellow-vital "Cael" power 50/100
+end
+input
+at 0.5s play-sync "Reel"
+at 2s play-start
+end
+```
+
+Expected log. "Cael" has no entity, so its vitals come as `FellowVitalChanged` (§6.7). At
+0.500 the player's `ReadyPerformance` fires the first trigger; it has no generic event. At
+1.500 three parts wait (Brin "Reel", Cael "Jig", the player's "Reel"); the start is
+attributed to "Cael", and *S* = 1.500 + 1.000 = 2.500 on the virtual clock. At 2.000 the
+player's `StartPerformance` gets the generic answer (lead 700 ms, *S* = 2.700) before the
+trigger body (§7.4 step 1), although nothing waits any more. The last input is processed at
+2.000 and the agenda is then empty (§7.3).
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector H"
+pre > Connect
+pre Connected characters=["Tam"]
+pre > EnterWorld character="Tam"
+0.000 WorldEntered entity=player name="Tam" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$brin kind=player name="Brin" at=3.000,0.000,0.000 facing=270.00
+0.000 FellowshipChanged members=[{name="Tam" entity=player leader=yes},{name="Brin" entity=$brin leader=no},{name="Cael" entity=none leader=no}]
+0.000 FellowVitalChanged member="Cael" vital=health current=300 max=500
+0.000 VitalChanged entity=$brin vital=health current=800 max=800
+0.200 PerformanceReady member="Brin" entity=$brin tune="Reel"
+0.200 PerformanceReady member="Cael" entity=none tune="Reel"
+0.500 > ReadyPerformance tune="Reel"
+0.500 ChatMessage channel=say sender="Brin" text="Ready when you are."
+1.000 PerformanceWithdrawn member="Cael"
+1.000 PerformanceReady member="Cael" entity=none tune="Jig"
+1.500 PerformanceSyncStart by="Cael" at_ms=2500 lead_ms=1000
+2.000 > StartPerformance
+2.000 PerformanceSyncStart by="Tam" at_ms=2700 lead_ms=700
+2.000 FellowVitalChanged member="Cael" vital=power current=50 max=100
+2.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+For P4 exit criterion 3 a client test plays this vector (or a scenario like it with tunes
+from a test music folder) and checks the parts started at 1.500 against `instruments.md` §8.9
+with *S* = 2.500.
+
+<a id="s14-12"></a>
+### 14.12 P4 social: hostile rows and backend cases
+
+Hostile rows (as §14.5: line 1 is `tessera-scenario 1`):
+
+| Input | Expected error |
+|---|---|
+| line 2 `at 0s perform-start lead=11s` | `OutOfRange` 2:21 |
+| line 2 `at 0s perform-start by=$ghost` | `UndefinedBinding` 2:21 |
+| line 2 `at 0s perform "Ann" "Tune"` | `UnexpectedToken` 2:15 (a STRING member only with `sync`) |
+| line 2 `at 0s perform "Ann" "Tune" sync delay=1s` | `UnexpectedToken` 2:33 (`delay=` with `sync`) |
+| line 2 `at 0s fellow-vital "Ann" health 5/4` | `OutOfRange` 2:33 (CUR above MAX) |
+| line 2 `at 0s fellow-vital player health 1/1` | `UnexpectedToken` 2:20 (an entity reports through `vital`) |
+| overlay run (§12.5.1), line 2 `at 0s perform-start` | `NotAllowedInOverlay` 2:1 |
+| overlay run, lines 2–3 `on play-start`, `end` | `NotAllowedInOverlay` 2:1 |
+
+Backend cases (test doubles as in §14.9; no scenario file unless stated):
+
+| # | Backend | Commands | Expected |
+|---|---|---|---|
+| S1 | test-server double, minor 2, `CHAT_CHANNELS` | `JoinChannel "Lore"`; the double answers `ChannelJoined "Lore"` | one `ChannelJoin "Lore"` sent; event `ChannelJoined { channel: "Lore" }` |
+| S2 | as S1, joined | `Chat { Named "Lore", "hi" }`; the double echoes | one `ChatSend` channel 6 sent; event `ChatMessage` on `Named { name: "Lore" }`, sender the player's name |
+| S3 | as S1 | `JoinChannel "lore"`; the double answers `ChannelJoined "Lore"` (its spelling) | event `ChannelJoined { channel: "Lore" }` |
+| S4 | as S1 | `JoinChannel "Lore"` twice; the double answers `ChannelJoined`, then `ChannelRefused(ALREADY_JOINED)` | one `ChannelJoined` event, then one System `ChatMessage`; nothing else |
+| S5 | test-server double, minor 1 (or minor 2 without `CHAT_CHANNELS`) | `JoinChannel "Lore"`, `LeaveChannel "Lore"`, `Chat { Named "Lore", … }` | each refused with `NetError::InvalidCommand`; nothing sent |
+| S6 | test-server double, minor 2, `CHAT_CHANNELS` | `Chat { Fellowship, … }`, `ReadyPerformance { "Reel" }`, `StartPerformance`, `DisbandFellowship`, `InviteToFellowship { "Brin" }` | each refused with `NetError::InvalidCommand`; nothing sent |
+| S7 | plain sandbox, character "Testa" entered at `now` = *t*₀ | `StartPerformance` at *t*₀ + 1,234.5 ms | `PerformanceSyncStart { by: Some("Testa"), at_ms: 1,934, lead_ms: 700 }` |
+| S8 | plain sandbox | `ReadyPerformance { "Reel" }`, `DisbandFellowship`, `JoinChannel "Lore"` | no event |
+| S9 | `tessera-server` in process, two clients at minor 2 | A joins "Lore", B joins "lore", A sends "hi" on it, B leaves, A sends "again" | A: `ChannelJoined "Lore"`, then its echo of "hi", then its echo of "again"; B: `ChannelJoined "Lore"`, "hi" from A, `ChannelLeft "Lore"`, and not "again" (P4 exit criterion 2) |
+
 <a id="s15"></a>
 ## 15. Invariants
 
@@ -2658,6 +2881,13 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 10. Every value of a `PropertyChanged`, `ItemProperty` or look entry the feed emits is the
     value written in the file (or a `DataId` of a resolved element); the install supplies
     only property IDs, kinds and label keys (§5.8).
+11. (P4 social) A `PerformanceSyncStart`'s `at_ms` is the virtual time of the tick that emits
+    it plus its `lead_ms`, and `lead_ms` is the value written (700 for the generic answer);
+    every `FellowVitalChanged` value is the value written. After a `PerformanceSyncStart` the
+    feed holds no waiting part.
+12. (P4 social) The test-server backend sends nothing for a Social command except
+    `ChannelJoin`, `ChannelLeave` and `ChatSend` channel 6, and those only at minor ≥ 2 with
+    `CHAT_CHANNELS`; an overlay run sends the server nothing new (§12.5.5).
 
 ---
 
@@ -2673,6 +2903,23 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 > **OPEN:** (non-blocking, P4) The synchronised start tolerance of `PerformanceStarted` is
 > taken from `instruments.md` when P4 specifies the synchronised `/play`; v1 carries only the
 > scripted delay.
+>
+> **Answered ("P4 social", 2026-10-11, decision 0035 D4):** a synchronised `/play` is the
+> waiting parts and the one start of §6.7 (`PerformanceReady`, `PerformanceSyncStart` with
+> `at_ms` and `lead_ms`, `PerformanceWithdrawn`); the tolerance is `instruments.md` §8.9,
+> referred to and not restated. `PerformanceStarted` keeps its meaning (a scripted delay, no
+> tolerance).
+
+> **OPEN:** (non-blocking, "P4 social", for the owners of `instruments.md` and
+> `social-panels.md`) Two readings this revision asks of them: (1) `instruments.md` §12 P4
+> Decision 3 starts on the local `/playstart`; with a backend that accepts
+> `StartPerformance` the client starts only on the backend's `PerformanceSyncStart` (§6.7),
+> using its `lead_ms` as the lead, so one `/playstart` gives one start; and a
+> `PerformanceReady` for the player acts as an accepted `/play … sync`. (2) `social-panels.md`
+> TR3 shows member rows' vitals from `FellowVitalChanged` too (§6.7), and Q12's disband action
+> sends `DisbandFellowship`. Level, defeat and effects of a member **without** an entity have
+> no event yet; their row fields stay empty in the sandbox. If the owner's comparison (O130)
+> shows they matter, a later revision adds events like `FellowVitalChanged` for them.
 
 > **OPEN:** (non-blocking, P2) Golden images may need captures at several times within one
 > run (for example mid-cast). v1 captures only the frame after the last tick; a later
@@ -2777,6 +3024,28 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 > `CraftRecipe_TierArray` (`economy.md` §5.1 rule 1; §8.2 "for a list, one of its
 > elements").
 
+> **OPEN:** (implementer note, "P4 social", `tessera-net`, 2026-10-11; non-blocking)
+> Readings the implementation of the "P4 social" revision had to choose; a reviewer should
+> confirm or correct them. (1) **`ReadyPerformance` under `defaults off`.** §6.7 says the feed
+> records the player's part on `ReadyPerformance` and puts "under `defaults on`" only on the
+> `StartPerformance` answer, but §7.6 lists the recording among the generic answers and §5.7
+> says a command the feed does not answer changes nothing. The code follows §5.7 and §7.6: with
+> `defaults off` a `ReadyPerformance` records nothing (a later `perform-withdraw player` then
+> skips). (2) **`perform-start by=ENTITY` and `perform-withdraw ENTITY`** take the player's or
+> actor's name and never skip for an actor that is not spawned (they carry no entity), while
+> `perform ENTITY … sync` skips like `fellowship` when the entity has no ID. (3) **Plain
+> sandbox with a finished scenario.** Once a scenario's feed has ended, the sandbox answers
+> `StartPerformance` as the plain sandbox of §9.8 does (as its chat path already answers chat
+> after the feed's end); §9.8 speaks only of "no scenario". (4) **Test-server backend, channel
+> answers** (`tessera-protocol.md` Appendix A): a `ChannelRefused` System line names the
+> channel as the client sent it (the request it answers), not the refusal's sanitised `name`
+> field; a channel request the protocol layer cannot send (the connection already closing, or
+> its 64 outstanding channel requests, `tessera-protocol.md` §17.4) gives one System line in
+> Tessera's words instead of an answer; `ChannelLeft(REMOVED)` gives `ChannelLeft`, then a
+> System line. (5) **Inbound `PerformanceStarted.tune`** is still cut to the chat length (1,024
+> bytes) as before this revision; the new events cut `tune` to 256 bytes (§9.5). §9.5 could
+> state the 256-byte cut for `PerformanceStarted` too.
+
 ---
 
 <a id="s17"></a>
@@ -2789,6 +3058,7 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 | 2026-10-09 | Revision 3 (spec owner, design role): 31 implementation-phase findings verified (§18.2: S1–S31). Fixed: no welcome line and the feed owns chat (§3.2, §7.6); exact headless spawn and the resolve timeout in force (§3.2, §10.1, §12.2); pre-world output in `submit` (§3.3, §5.1, §7.5); *L* from the processing tick and input lines within `end-at` (§7.3, §7.7); queue weight, per-push checks, run total, effect cap, pre-world bounds, 8 ticks per poll (§7.1, §7.4, §7.5, §11); start = executing tick (§6.2); inventory edge cases (§5.5, §6.1, §7.6); block error kinds (§4.4); numeric components (§4.2); trade side 32 (§6.3, §8.6); input ranges (§7.7); optional create-character class and appearance (§7.7, §9.4); (DID, row) identity (§8.4); `CandidateOutcome` replaces `label_notes` (§8.6); remote chat channels (§9.5); heading `360.00` (§10.3); headless modes and `--screenshot` (§12); invented example name (§4.2). Vector F and eleven hostile rows added. Status back to Review. |
 | 2026-10-10 | Revision 4 (spec writer, design; decision 0025): property values and looks (§4.2, §4.5, §5.8), looks on characters and in the base appearance (§5.1), held-item slots in the player's appearance (§5.5), steps `remove-character`, `stat`, `item-property` and `accept-character … look=` (§6.1), `create-character … nationality= look=` (§7.7), resolver methods `property`, `property_by_id` and contexts `Nationality`, `PropertyKey` (§8.6), new types, events and command field (§9.1–§9.4), session rules and the client-side property bound (§9.5), plain-sandbox creation (§9.6), the test-server backend's creation, looks, slots and character list (§9.7), log forms (§10.2–§10.3), limits and error kinds (§11), overlay runs with `--server` (§12.1, §12.5), content rules (§13), Vector F's new fields, Vector G, overlay and plain-sandbox cases, 15 hostile rows (§14), invariants 9–10 (§15), §16 OPEN 1 answered. Status Accepted → Review (§18.3). |
 | 2026-10-10 | Independent review of revision 4 (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Non-blocking notes (a)–(f) in §18.3 |
+| 2026-10-11 | "P4 social" revision (spec writer, design; [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4), additive, no section renumbered: terms (§2), waiting parts in the feed state (§5.7), new §6.7 (`perform … sync`, `perform-start`, `perform-withdraw`, `fellow-vital`), patterns `play-sync`, `play-start`, `disband` (§7.5), generic answers to `StartPerformance` and `ReadyPerformance` (§7.6), input forms (§7.7), events `PerformanceReady`, `PerformanceSyncStart`, `PerformanceWithdrawn`, `FellowVitalChanged` (§9.2), commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship` (§9.4), session rules (§9.5), new §9.8 (test-server backend at protocol minor 2: channel join and leave and `Named` chat; plain-sandbox start answer), log forms (§10.3), limits (§11.1), overlay subset unchanged (§12.5.2), Vector H (§14.11), hostile rows and backend cases S1–S9 (§14.12), invariants 11–12 (§15), §16 P4 OPEN answered and a new OPEN for the `instruments.md` and `social-panels.md` owners, §18.4. Status Accepted → Review |
 
 ---
 
@@ -2978,3 +3248,30 @@ Non-blocking, for the spec owner at the next revision:
 - (d) §12.5.4 item 4 clears the in-flight mark on any server `AppearanceChanged` for the player, not only the answer to the overlay's own `AppearanceSet`; that is safe (the server answers in order) but could be stated.
 - (e) §12.5.4 says nothing about re-sending after the 10 s time-out; the implementation sends again only when *E* changes. State it.
 - (f) §9.5's client-side bound (1,024 properties per entity and per item) bounds each object; the total is bounded only through the run's event limits (§11.1). Acceptable for a scripted local run; note it if a later backend can report properties.
+
+<a id="s18-4"></a>
+### 18.4 "P4 social" revision: decision 0035
+
+**2026-10-11** (spec writer, design role). Tessera-own design for decision 0024 P4, recorded
+in [decision 0035](../decisions/0035-p4-social-on-test-server.md). Inputs: `docs/` only
+(decisions 0024, 0025, LEGAL.md §11.1, `tessera-protocol.md` v1.2, `test-server.md`,
+`instruments.md` §8.8–§8.9 and §12, `social-panels.md` §4, §8, §9); no research note, clone,
+client or decompiler output was used for this revision.
+
+| # | Change | Sections | Answers |
+|---|---|---|---|
+| H1 | Waiting parts, one synchronised start with `at_ms` and `lead_ms`, withdrawal | §2, §5.7, §6.7, §9.2, §11.1, §15 | §16 OPEN (P4); P4 exit criterion 3 |
+| H2 | The player's `/play … sync` and `/playstart` as `ReadyPerformance` and `StartPerformance`; generic answer; one start per `/playstart` | §6.7, §7.5–§7.7, §9.4 | `instruments.md` §12 P4 Decision (start path) |
+| H3 | `FellowVitalChanged` for members without an entity | §6.7, §9.2 | `social-panels.md` §4.4 vs TR3 |
+| H4 | `DisbandFellowship` | §7.5, §7.7, §9.4 | `social-panels.md` Q12 |
+| H5 | Test-server backend at minor 2 (channels, `Named` chat); other Social commands refused; plain-sandbox start answer; overlay unchanged | §9.5, §9.8, §12.5.2 | decision 0035 D1–D3; P4 exit criterion 2 |
+| H6 | Vector H, 8 hostile rows, backend cases S1–S9 | §14.11, §14.12 | — |
+
+Rule-5 check (LEGAL.md §11.1): fellowship, trade, lists, vitals and performances stay in the
+client's feed; the server gains only the chat channels of `tessera-protocol.md` v1.2; an
+overlay run sends nothing new (§15 invariant 12).
+
+**Status.** Review. An independent session that wrote no part of this revision or of decision
+0035 must check H1–H6 against decision 0035 and the cited specs, re-derive Vector H line by
+line, check the 8 hostile rows against the grammar and the position rules of §11.2, and
+check §9.8 against `tessera-protocol.md` v1.2 §10.6 and Appendix A.

@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision 3, 2026-10-09; accepted after review of the dispatcher answers in §6.5 and §10 items 2, 3, 11–13 and the new row CW42). Before: Revised (revision 3, awaiting review); Accepted (revision 2, 2026-10-06) |
-| **Last updated** | 2026-10-09 |
+| **Status** | Revised (revision 4, 2026-10-11, awaiting an independent review): additive P4 social chat (new §15, rows CW43–CW57, §11.9–§11.14, CW-I17–CW-I30, Q20–Q28, §14 rows) and one correction of revision 3 (the reply and retell rows of the §6.5 mode table, CW43). Sections and anchors of revision 3 are unchanged. Before: Accepted (revision 3, 2026-10-09; accepted after review of the dispatcher answers in §6.5 and §10 items 2, 3, 11–13 and the new row CW42); Revised (revision 3, awaiting review); Accepted (revision 2, 2026-10-06) |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Review of revision 3, 2026-10-09 (independent review session, CLEAN_ROOM.md §5.3; reviewed the diff against main: §1 tags OBS2 and D20, row CW42, the two §6.5 callouts, §10 items 2, 3, 11–13, the two answered §10 callouts, change log): **passed**, Accepted. Spot check: CW42 reproduced read-only in the owner's install on 2026-10-09 (the token-0x04DA4989 entries of 0x25000200 and 0x250001AB compared without printing their text: equal, one piece, no `;`, `:` or `,`, so one name under §7.1). Cross-references checked: D20 items 1–7, `tessera-protocol.md` §5.2 (`TEXT` 1–1,024), CW20, CW27a, §6.2 submit steps, §6.3, §7.2–§7.4. Non-blocking notes: (1) §10 item 11, submit order: the condition says it holds for every Tessera handler; say explicitly that plugin handlers are covered too (LPA gives a plugin no access to the entry text or the channel mode). (2) §10 item 12, positions: the equivalence argument for §7.2 step 4 rests on this install's one-character BMP prefix (CW27a); since the prefix is read at run time, state what Tessera does if an install's prefix has several characters or one outside the BMP. (3) The first §6.5 answered callout still names implementation modules (`tessera-ui`, `game::chat`); harmless, could say "Tessera". Earlier: review of revision 2, 2026-10-06: passed, Accepted (full record in the review log, decision 0018). |
-| **Implements into** | `apps/client` (native chat panel P2 of `ui-layout.md` §17, entry line, command dispatch), `crates/ui` (`tessera-ui`: chat-log list, tab list, entry line widgets), `crates/plugins` (`Shell.IsCommand`, `Shell.AddCommand`, `ShellCommand:Execute` arguments, `Shell.WriteLine` lines), `crates/settings` (Tessera's own store of the chat-window configuration), `crates/net` sandbox backend (local echo of channel lines) |
-| **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, panel P2, resolution of base elements; **UL**), [`ui-behaviour.md`](ui-behaviour.md) (focus, key routing, text-entry keys, list scrolling; **UB**), [`fonts.md`](fonts.md) §9.3 (chat line font and colour; **FO**), [`lua-plugin-api.md`](lua-plugin-api.md) §6.6, §9.3, §11 (shell and chat API; **LPA**), [`keymap.md`](keymap.md) §8, §12 (Tessera actions, original input commands; **KM**), [`string-table.md`](string-table.md) (StringInfo, templates, markup; **ST**), [`property-system.md`](property-system.md) (property sets, bitfields, game-object property sets; **PS**), [`records.md`](records.md) §7–§8 (enum mappers, DID maps; **REC**), [`sound.md`](sound.md) (sound records), [`install-layout.md`](install-layout.md) §8 (per-user settings folder; **IL**), [`ui-widgets.md`](ui-widgets.md) §5, §6, §8 (Scrollable, Scrollbar, ListBox; **UW**). Tessera decision records (Accepted 2026-10-06): [`0014-ui-input-bridge.md`](../decisions/0014-ui-input-bridge.md) (UI commands as key-map actions, the UI band, frame loop; **IB**) and [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (UI paint and composition; **UR**) |
+| **Review record** | Revision 4 (2026-10-11): not yet reviewed; a session that wrote no part of revision 4 must check §15, CW43–CW57 and the §6.5 correction. Review of revision 3, 2026-10-09 (independent review session, CLEAN_ROOM.md §5.3; reviewed the diff against main: §1 tags OBS2 and D20, row CW42, the two §6.5 callouts, §10 items 2, 3, 11–13, the two answered §10 callouts, change log): **passed**, Accepted. Spot check: CW42 reproduced read-only in the owner's install on 2026-10-09 (the token-0x04DA4989 entries of 0x25000200 and 0x250001AB compared without printing their text: equal, one piece, no `;`, `:` or `,`, so one name under §7.1). Cross-references checked: D20 items 1–7, `tessera-protocol.md` §5.2 (`TEXT` 1–1,024), CW20, CW27a, §6.2 submit steps, §6.3, §7.2–§7.4. Non-blocking notes: (1) §10 item 11, submit order: the condition says it holds for every Tessera handler; say explicitly that plugin handlers are covered too (LPA gives a plugin no access to the entry text or the channel mode). (2) §10 item 12, positions: the equivalence argument for §7.2 step 4 rests on this install's one-character BMP prefix (CW27a); since the prefix is read at run time, state what Tessera does if an install's prefix has several characters or one outside the BMP. (3) The first §6.5 answered callout still names implementation modules (`tessera-ui`, `game::chat`); harmless, could say "Tessera". Earlier: review of revision 2, 2026-10-06: passed, Accepted (full record in the review log, decision 0018). |
+| **Implements into** | `apps/client` (native chat panel P2 of `ui-layout.md` §17, entry line, command dispatch), `crates/ui` (`tessera-ui`: chat-log list, tab list, entry line widgets), `crates/plugins` (`Shell.IsCommand`, `Shell.AddCommand`, `ShellCommand:Execute` arguments, `Shell.WriteLine` lines), `crates/settings` (Tessera's own store of the chat-window configuration), `crates/net` sandbox backend (local echo of channel lines). Revision 4 (P4, §15): `apps/client` (the dispatcher's tell, reply, retell, fellowship and user-channel built-ins, the line forms of session chat, user-channel slots, the ignore filter, friend notices), `crates/ui` (the instant-message tab and its sessions) |
+| **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, panel P2, resolution of base elements; **UL**), [`ui-behaviour.md`](ui-behaviour.md) (focus, key routing, text-entry keys, list scrolling; **UB**), [`fonts.md`](fonts.md) §9.3 (chat line font and colour; **FO**), [`lua-plugin-api.md`](lua-plugin-api.md) §6.6, §9.3, §11 (shell and chat API; **LPA**), [`keymap.md`](keymap.md) §8, §12 (Tessera actions, original input commands; **KM**), [`string-table.md`](string-table.md) (StringInfo, templates, markup; **ST**), [`property-system.md`](property-system.md) (property sets, bitfields, game-object property sets; **PS**), [`records.md`](records.md) §7–§8 (enum mappers, DID maps; **REC**), [`sound.md`](sound.md) (sound records), [`install-layout.md`](install-layout.md) §8 (per-user settings folder; **IL**), [`ui-widgets.md`](ui-widgets.md) §5, §6, §8 (Scrollable, Scrollbar, ListBox; **UW**). Tessera decision records (Accepted 2026-10-06): [`0014-ui-input-bridge.md`](../decisions/0014-ui-input-bridge.md) (UI commands as key-map actions, the UI band, frame loop; **IB**) and [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (UI paint and composition; **UR**). Revision 4: [`scenario-feed.md`](scenario-feed.md) §6.4, §7.6, §9 (Social steps, generic chat answer, domain events and commands; **SF**), [`tessera-protocol.md`](tessera-protocol.md) §6.4, §10 (chat on the test server; **TP**), [`social-panels.md`](social-panels.md) §3.7, §9 (friends and ignore lists, fellowship model; **SP**), [`wlib-bytecode.md`](wlib-bytecode.md) and [`wlib.md`](wlib.md) (the script library read as data, §1 OBS-S), decision [0024](../decisions/0024-parity-track.md) (parity track, client half only; **D24**) |
 
 > **Naming note (interoperability).** Property names (`UI_ChatWindow_…`, `UI_ChatTab_…`,
 > `UI_ChatLog_…`, `UI_ChatOpacity_…`, `UI_Chat_…`, `GOP_ChatWindow…`, `GOP_Chat…`,
@@ -55,7 +55,11 @@ implementer the rest:
 - built-in command names and how `Shell.IsCommand` answers (§8), and what plugins receive
   (§9);
 - Tessera's decisions for the M5 sandbox (§10), worked examples (§11), invariants (§12) and
-  open questions (§13).
+  open questions (§13);
+- (revision 4, P4) social chat as the original client presents it: tells and their lines,
+  the instant-message tab and its sessions, user chat channels and their slots, the
+  fellowship channel, ignore filtering and friend notices, and how each maps to the session
+  layer and the command dispatcher (§15).
 
 Everything a server would do (delivering other players' lines, tells, channel membership,
 the profanity word list) is out of scope; this spec stops where the original hands a line to
@@ -79,6 +83,10 @@ counts.
 | IB, UR | The accepted Tessera decision records 0014 and 0015 (header). They decide Tessera's behaviour only and are the source of no fact about the original; they are cited by §6.2–§6.4 and §10 (revision 2). |
 | OBS2 | The owner's Steam install, read in place and read-only on 2026-10-09 (revision 3) with the repository's `tessera-dattool strings` as a tool and a throwaway comparison in the dirty-room scratch area: the entries with token 0x04DA4989 of the string tables 0x25000200 (`CommandSetup`) and 0x250001AB (`Commands`) compared piece by piece (the text was compared, not reproduced). |
 | D20 | The accepted Tessera decision record [0020](../decisions/0020-chat-command-routing.md) (one client-side command dispatcher). Source of no fact about the original; cited by §10 items 2, 3 and 11–13 (revision 3). |
+| OBS3 | The owner's Steam install (data files dated 2026-10-04), read in place and read-only on 2026-10-11 (revision 4) with `tessera-dattool strings` and throwaway probes in the dirty-room scratch area: every entry of `Chat` (0x250001A7, 181 entries), `Commands` (0x250001AB, 261), `CommandHelp` (0x250001AA, 179), `ChatChannel` (0x250001A8, 4), `ChatChannelType` (0x250001D7, 31), `SecondaryChatChannelType` (0x250001D8, 3), `Fellowship` (STRINGTABLE key 0x10000017, 0x25000021) and `WeenieClientMsgs` (key 0x10000039, 0x250001C0) as token, pieces and argument IDs (text read to classify, not reproduced); the property dictionary 0x34000000 (names of the properties of §15); `GameplayOptionDefaults` 0x78000006 (the chat options); the enum mapper 0x230002A8 with base 0x230002A9 (chat-type labels); the instant-message elements of layout 0x22000034. |
+| OBS-S | Method M1 on the script library: the record 0x56000000 of `client_gamelogic.dat` (the game scripts are data in the user's install). All 181 `Chat` tokens were searched as little-endian u32 values in its code block (94 occur in it, 113 occurrences in 49 function bodies); every body named in §15 was decoded with the repository's `tessera-dattool bytecode --body` under `wlib-bytecode.md`, and the message chunk (`wlib.md` §4.2) was read for the four messages the bodies use. The instruction listings were read in the dirty room; no listing, pseudo-code or message text is reproduced here, only what the bodies do. Read 2026-10-11. |
+| BIN2 | Method M4 under decision 0011, revision 4: the same client build as BIN (4906.0071.1794.4035), the shared auto-analysed Ghidra project (a private copy, headless, read-only), 2026-10-11, function by function. **Questions:** (13) which tell-target callback belongs to which of the two `Tell` rows with a callback (§6.5); (14) what the mode switch does with the target for a `Tell` word without a callback; (15) how the normal tabs and the instant-message tab receive incoming tells, the player's own tells and failed tells: which `Chat` templates, which arguments, which masks; (16) the instant-message session model: creation, lookup, order, renaming, limits, selection, the session menu; (17) whether any receive path of the logs consults the ignore list; (18) where the client uses `GOP_AutoCreateIMSessions`, `GOP_FullIRCMode` and `GOP_AcceptFriendsAndGuildMemberTellsOnly`. **Read:** the channel-mode table construction and the space-key switch again; the four tell-target callers; the `ChatModeReply` branch; the per-log receive slots for tells (incoming and own) and for general lines; the instant-message log's initialisation, session creation, lookup by identifier and by name, removal, session-line and failure slots, its menu and its name prompt answer; the routine that hands a name to the primary window's tell mode; an immediate-value search of the whole executable for the `Chat` tokens and the chat property IDs of §15. **Why M1–M3 were not enough:** the data holds the templates, the options and the layout, and the scripts (OBS-S) hold the channel and fellowship lines, but the tell lines are referenced only by client code (none of their tokens occurs in the script library), and the instant-message tab is client code only; no published source describes either; the original client cannot be observed in this session (M3). **Not read:** the chat subsystem below the receive slots (where the client hands an outgoing line or a join request to it, only that fact is recorded), the network protocol, login, keys, launcher, patcher and anti-tamper (decision 0004). No address, listing or symbol appears in this spec. |
+| SF, TP, SP, D24 | The companion specs and the decision record named in the header (revision 4). Tessera's session layer and its panels; the source of no fact about the original. |
 
 Marks: **Confirmed** = observed in the install's data (or, for CW38, in the census) for every
 record of the kind; **BIN** = rests on the disassembly, even where the data holds the values the
@@ -144,6 +152,21 @@ Confirmed) and *N*b (what the client does with it, BIN).
 | CW40 | The instant-message tab, sessions and their lists use `IMTabTemplate`, `IMLogElement`, `IMSessionsListboxItemTemplate` (§4.6) | OBS | Confirmed (layout); behaviour OPEN |
 | CW41 | Lines whose mask has more than one type bit (the `ChatModeReply` line, mask 0x21): style from the highest set bit that has a style entry (FO §9.3 step 1), appended once to every log whose mask shares any bit with it, a feedback sound only on an exact whole-mask match; the reply line and the unknown-command line are handed with their 64-bit mask to the same game-script entry point, which delivers them back to the chat (§2, §4.3, §5.1, §5.6, §6.2, §7.6) | BIN (post routine to the script hand-over, the log's receive handler, the style and sound lookups); FO §9.3 | BIN; the script's hand-back Probable (Q17) |
 | CW42 | The `CommandSetup` entry and the `Commands` entry with token 0x04DA4989 hold the same text, a single name, in this install (English); so the default channel word of §7.2 is the only name of the `Say` row of the mode table (§6.5, §10 item 3) | OBS2 | Confirmed (this install, 2026-10-09) |
+| CW43 | **Correction of revision 3 (§6.5).** Of the two `Tell` rows with a callback, `Commands` token 0x0A48C3E9 is the **reply** entry (its `CommandHelp` entries 0x048C3E61/0x048C3E62 describe sending to the last player who sent a tell) and takes its target from callback 0x01D60032, the callback `ChatModeReply` uses; token 0x048CE78C is the **retell** entry (help 0x08CE78B1/0x08CE78B2: to the last player told) and takes its target from callback 0x01D60030. Revision 3 printed the two parentheticals against the wrong tokens (§6.5) | OBS3 (`Commands`, `CommandHelp`); BIN2 (the mode table stores the names of 0x048CE78C and 0x0A48C3E9 in two separate word sets; the switch asks callback 0x01D60030 for a word of the first set and 0x01D60032 for one of the second) | Confirmed (data) + BIN |
+| CW44 | The space-key switch with a `Tell` word that is neither a reply nor a retell word sets the mode to `Tell` with an **empty** target; a reply or retell word whose callback returns no name does the same; the switch never keeps an earlier target (§6.5, §15.2) | BIN2 (switch routine: the stored target is overwritten with the word's resolved name, empty unless a callback returned one) | BIN |
+| CW45 | The game script's `tell` handler (`Commands` 0x0DA4AC6C): fewer than two tokens → the command's usage as a type 4 line; recipient = the first token; text = the remaining tokens joined with one U+0020; empty text → `Chat` 0x01A17E05 (argument 0x05866BA4 = recipient) with mask 0x21, then the usage; a text over the length limits of §15.2 → the script's generic error routine with code 38; otherwise the recipient and text go to the client's tell send, and the recipient becomes the retell target (§15.2) | OBS-S (the handler body; message 9 of the library is one space) | Confirmed (script data); the error-38 line OPEN (Q24) |
+| CW46 | The reply and retell handlers (`Commands` 0x0A48C3E9, 0x048CE78C): no token → usage (type 4); target = the last sender (reply) or the retell target (retell); no target → `Chat` 0x00CC89CC (reply) or 0x0811EFD4 (retell) with mask 0x21; text = the §7.4 arguments as typed (not re-joined); same length check; neither changes the retell target (§15.2) | OBS-S | Confirmed (script data); where the last sender is kept OPEN (Q26) |
+| CW47 | Every normal tab's log builds the line of an **incoming** tell itself from `Chat` 0x0BCA09CC (0x4DD4 = the sender's instance ID inside the `Select` link, 0x52615 = the sender's name, 0x5277 = the text) and appends it with mask 0x20 when the log's mask has bit 5, and also, without bit 5, when an identifier flag of the sender is set and the same flag of the player is clear; the player's **own** tell comes back to every log whose mask has bit 5 as `Chat` 0x0AD74A23 (0x4DD4 = recipient's instance ID, 0x5866BA4 = recipient's name, 0x5277 = text), mask 0x20 (§15.3) | BIN2 (the two tell slots of the log's receive interface); OBS3 (argument IDs) | BIN; the flag's meaning OPEN (Q20) |
+| CW48 | The instant-message tab keeps **sessions**: a first "generic" row (label `Chat` 0x0D93B0C5) created at start, then one row per conversation partner. A tell line (incoming or own) is put in the partner's session, found by the partner's instance ID or else by name (case-insensitive); with no session, `GOP_AutoCreateIMSessions` (boolean, default true) creates one (row label = the partner's name, inserted after the generic row in name order), else the generic row takes it; the line is `Chat` 0x0F2CF919 (0x58E15 = current time text, 0x4DD4, 0x52615 = the speaker's name: the partner for incoming lines, the player for own lines, 0x5277 = text), mask 0x20; a row whose stored name differs from the line's partner name only by case is renamed; showing a session hands its name (empty for the generic row) to the primary window's `Tell` mode (§15.4) | BIN2; OBS3 (option default, labels, argument IDs); OBS (layout) | BIN; the mode hand-over Probable |
+| CW49 | Session limits: the session list `IMSessionsListbox` (0x10000328) has `UICore_ListBox_max_rows` 128; the per-session log list (in `IMChatLogElement`, 0x10000316) has 128; the session menu's "start session" item (`Chat` 0x0780711E) is enabled only while the row count is below the session list's `max_rows`; when auto-creation fails, the line is not shown in the tab (§15.4) | OBS (layout 0x22000034); BIN2 (menu builder, session line routine) | Confirmed (layout) + BIN; the insertion failure at a full list Probable |
+| CW50 | A failed tell reaches the instant-message tab only: the partner's session (by instance ID, else name), else the generic row, gets `Chat` 0x04E6F672 (0x58E15 = time) for one failure kind and `Chat` 0x0F2C3BE2 (0x58E15, 0x52615 = name) for the others, mask 0x20; a third kind closes that partner's session when one exists and shows nothing. `Chat` 0x0B891524 and 0x018E5F35 (argument 0x5506DA2 = name) occur neither in client code nor in the script library (§15.5) | BIN2 (the failure slot of the instant-message log; immediate search); OBS-S (token search) | BIN; normal tabs' failure display and the server-side lines OPEN (Q21) |
+| CW51 | Incoming channel lines go through one script dispatcher: fellowship → `Chat` 0x05D20D84 (0x4DD4, 0x8495FF2 = sender, 0x5277 = text) with mask 0x400 (variant 0x00D8DF00 under the game-state test of §6.5); a user channel → `Chat` 0x063C924C (0x7C632DC = the channel's name, 0x4DD4, 0x8495FF2, 0x5277) with the mask of that channel's slot; a channel ID matching no joined channel takes a fallback that only runs under a script condition (§15.6, §15.7) | OBS-S | Confirmed (script data); the fallback's condition OPEN (Q22) |
+| CW52 | The fellowship send handler: no fellowship → `Fellowship` table (STRINGTABLE key 0x10000017) token 0x06358717 with mask 0x1 (variant 0x0871B170), nothing sent; fellowship chat unavailable → `WeenieClientMsgs` (key 0x10000039) 0x064C4F95, mask 0x1; the length check of §15.2; after a send that the chat subsystem accepts, the script posts the local echo `Chat` 0x04A3E744 (0x5277 = text) with mask 0x400 (variant 0x0E74EA10) (§15.7) | OBS-S | Confirmed (script data) |
+| CW53 | User chat channels: the scripts register the `Commands` entries 0x03A7284C (join), 0x0DCD958C (leave), 0x0A55AF03 (list), 0x098B3A44 (send by name) and 0x08B3A4E1–0x08B3A4E8 (send by slot 1–8); a player has **8** slots (the library returns 8), slot *k* (1–8) has chat type 27 + *k* for *k* ≤ 4 and 34 + *k* for *k* ≥ 5 (masks 0x08000000, 0x10000000, 0x20000000, 0x40000000, 0x4000000000, 0x8000000000, 0x10000000000, 0x20000000000); channel names at most **50**, passwords at most **20** (constants of the library); the join and leave checks, their order and their lines, the joined and left lines, the list lines and the send refusals of §15.6, all with mask 0x8 except the list rows (slot mask) | OBS-S (registration body, join, leave, list, send and notice bodies, the slot-mask function, the three constant functions) | Confirmed (script data) |
+| CW54 | A user-channel send by slot or by name, after the subsystem accepts it, posts the local echo `Chat` 0x009D15CC (0xAD99BC5 = the channel's name, 0x5277 = text) with the slot's mask (§15.6) | OBS-S | Confirmed (script data) |
+| CW55 | Friend notices: when the status of a friend in the friends list changes, the script posts `Chat` 0x0A29AFC5 (0x52615 = name) when the online bit goes from clear to set, `Chat` 0x010538E5 when it goes from set to clear, both with mask 0x8 (type 4), and nothing otherwise (§15.9) | OBS-S (status-update body) | Confirmed (script data) |
+| CW56 | No receive path that was read consults the ignore list: the logs' tell and general-line slots, the instant-message session line routine (BIN2) and the script's channel-line dispatcher (OBS-S) append lines without an ignore test (§15.8) | BIN2; OBS-S | BIN (absence in the paths read); server filtering Probable |
+| CW57 | `GOP_AcceptFriendsAndGuildMemberTellsOnly` is a boolean option with default false; client code reads it only where options are loaded and shown, and none of the receive paths read in BIN2 uses it; `GOP_AutoCreateIMSessions` is read by the session line routine and the options code; `GOP_FullIRCMode` by the tab loading of §4.6, the tab menu's instant-message item and the options code (§15.4, §15.8) | OBS3 (0x78000006, 0x34000000); BIN2 (immediate search and the reading functions) | Confirmed (data) + BIN; the first option's effect Probable server-side (Q27) |
 
 ---
 
@@ -419,6 +442,12 @@ logging markers) beside a per-session log (`IMChatLogElement`).
 
 > **OPEN (Q5):** the instant-message session model (when a session row is created, which lines
 > go to which session, closing). Not needed in the M5 sandbox (no other players).
+
+> **Answered in part (revision 4, 2026-10-11):** the session model (creation, lookup, order,
+> renaming, the lines a session gets, failures, limits, closing by a failure, the effect of
+> showing a session) is §15.4 and §15.5 (CW48–CW50, BIN2). Still open: the row's close
+> button and unread marker, and what the "close session" menu item does beyond removing the
+> row (Q25).
 
 <a id="s4-7"></a>
 ### 4.7 Chat types added after release (Confirmed data, CW13)
@@ -704,6 +733,11 @@ tell-target holder (Probable: it becomes the `Tell` target of the entry line). `
 > who sent the last tells, Ctrl through the players the player last told). They are game
 > scripts; the M5 sandbox has no tells and Tessera makes these keys do nothing.
 
+> **Narrowed (revision 4, CW43):** callback 0x01D60032 serves the reply word and
+> `ChatModeReply` (the last sender), 0x01D60030 the retell word (the last player told); so
+> Shift goes with senders and Ctrl with recipients. Whether a repeated press steps through
+> several names is still open (Q11, Q26). Tessera rule for P4: §15.10 CT3.
+
 In Tessera the line actions match with extra modifiers held (IB D2, "Modifier policies":
 Subset), so Shift+Up and Ctrl+Up give `text_line_up` with the modifier in the delivery, and the
 window can tell this case from plain line up as the table requires.
@@ -730,8 +764,8 @@ enum labels where they are unambiguous):
 |---|---|
 | 0x04DA4989 | 5 `Say` |
 | 0x0DA4AC6C | 6 `Tell` |
-| 0x048CE78C | 6 `Tell` (reply word: target from callback 0x01D60032) |
-| 0x0A48C3E9 | 6 `Tell` (tell-again word: target from callback 0x01D60030) |
+| 0x048CE78C | 6 `Tell` (retell or tell-again word: target from callback 0x01D60030; corrected in revision 4, CW43) |
+| 0x0A48C3E9 | 6 `Tell` (reply word: target from callback 0x01D60032; corrected in revision 4, CW43) |
 | 0x038453D4 | 11 `Fellowship` |
 | 0x07B53A04 | 23 `Raid` |
 | 0x06F047CE | 15 |
@@ -783,6 +817,18 @@ remembers its own channel (Probable: the restore reads a value the tab holds; th
 > (§6.2 step 2; filled by game code, Probable: from the same `Commands` entries); how a plain
 > `Tell` word gets its target (the next word cannot be part of the switch because step 1 stops
 > at a space); and what the channel button's menu does (Q3).
+
+> **Narrowed (revision 4, 2026-10-11):** (a) a plain `Tell` word gives the `Tell` mode with
+> an **empty** target (CW44); a line typed in that mode is built as *C*, two spaces, the
+> text (§7.2 step 5), so the `tell` handler takes the first word of the text as the
+> recipient (CW45). Step 3 of the switch, corrected: the reply word asks callback 0x01D60032,
+> the retell word 0x01D60030 (CW43), and when the callback has no name the mode still
+> becomes `Tell`, with an empty target. (b) The variant test: the scripts register the
+> fixed fellowship word (`Commands` 0x038453D4) always and the first variant's word
+> 0x053DBC60, with the same handler, only when a script test holds; the same test chooses
+> the "group" forms of the fellowship lines and refusals (CW51, CW52) and the other variant
+> registrations; Probable: the monster-play test. Still open: the map
+> chat type → command word, and the channel button's menu.
 
 > **Answered (2026-10-09, revision 3, Tessera rule; was OPEN, implementation, M5 clean room):**
 > confirmed as the Tessera rule while Q12 is open. Until Q12 is settled, `tessera-ui`
@@ -1004,6 +1050,11 @@ own wording and layout for help (§10).
 > may depend on the character's state). Suggested method: M4 on the script natives that
 > register commands, or M3 (the help command's output in the original client, counted, not copied).
 
+> **Narrowed (revision 4, OBS-S):** one script body registers 79 `Commands` entries by token
+> (three pairs of them under the variant test of §6.5), among them the help, say, yell,
+> tell, reply, retell, friend, ignore, fellowship, join, leave, list and user-channel entries
+> of §15. Whether other bodies register more was not checked.
+
 <a id="s8-2"></a>
 ### 8.2 How `IsCommand` answers (BIN, CW26, CW37)
 
@@ -1069,6 +1120,7 @@ These are Tessera's rules, not facts about the original.
    (there are no tells in the sandbox); `GOP_FullIRCMode` is ignored until tells exist. Tab
    context menus offer only: rename, filter toggles by chat type (type 25 `Unfiltered` is not
    offered, because bit 24 would admit every unfiltered line, §4.3), new tab, close tab.
+   *Revision 4 (P4):* the instant-message tab is now created by the §4.6 rule; §15.10 CT6.
 2. **Lines in the sandbox and on a test server** (revised 2026-10-09 for D20). Tessera's own
    informational lines (help, player-music messages, notices) are type 8 `Log` lines; its
    refusals and the unknown-command line are type 1 `Error` lines. Plain text submitted for a
@@ -1080,6 +1132,9 @@ These are Tessera's rules, not facts about the original.
    (§4.3) and `Turbine.Chat.Received` like every session line, at the time item 9 states. The
    window keeps no local echo of its own. Without a session the line is refused with a type 1
    line and nothing is sent.
+   *Revision 4 (P4):* session lines on `Tell`, `Fellowship` and `Named` channels take the
+   original's line forms and chat types (§15.10 CT1); the lines of the P4 built-ins take the
+   original's chat types (§15.10 CT2), which override the types of this item for them.
 3. **Registry** (revised 2026-10-09 for D20). Tessera keeps one registry, owned by the
    client's command dispatcher (D20 items 1 and 6), with the rules of §7.1. Its own built-in
    commands (help, the plugin-manager command of LPA §6.4, the channel commands of D20 item 2,
@@ -1093,7 +1148,8 @@ These are Tessera's rules, not facts about the original.
    registration is then a no-op. Neither variant group of §6.5 is registered while Q12 (the
    game-state test that picks one) is open, so `IsCommand` answers false for their words. No
    other original command name is registered; `IsCommand` answers false for them (difference
-   recorded in §13 Q15).
+   recorded in §13 Q15). *Revision 4 (P4):* the user-channel entries of §15.6 are registered
+   too (§15.10 CT2); the friend and ignore entries are `social-panels.md` §9 TR11.
    **When the names arrive.** The Tessera names are registered at start-up. The install's
    names are registered as soon as the dispatcher has read the `Commands` and `CommandSetup`
    tables, after the archives open. Plugins are loaded only after that read has finished or
@@ -1126,7 +1182,8 @@ These are Tessera's rules, not facts about the original.
    entry) and §5.6 (exact whole-mask match) to it. Tessera has no game scripts: it appends the
    lines of §6.2 and §7.6 itself, with the masks the original hands over (0x21 and 0x1). In the
    M5 sandbox there is never a reply target, so `ChatModeReply` always posts the `Chat`-table
-   token 0x00CC89CC text with mask 0x21 (§11.8). For plugins, see Q18.
+   token 0x00CC89CC text with mask 0x21 (§11.8). For plugins, see Q18. *Revision 4 (P4):*
+   with tells there is a reply target once a tell has arrived; §15.10 CT3.
 9. **When plugins receive chat lines** (IB D8, "Game-raised plugin events"; Known difference
    21). The window's own log takes a line at once. The `Turbine.Chat.Received` event for that
    line is not raised synchronously: the line intake appends it, with its argument values
@@ -1326,6 +1383,88 @@ Default tabs (§3.3): tab 1 mask 0x00007FF9F8FEFFFD (bits 0 and 5 set, bit 24 cl
 A tab whose mask were 0x01000000 (bit 24 only) would take the third line and no other line of
 this table.
 
+### 11.9 A tell, a reply in the `Tell` mode, and the instant-message tab (revision 4)
+
+Synthetic: player P = `Ana`; default tabs (§3.3) plus the instant-message tab (§4.6);
+`GOP_AutoCreateIMSessions` true. The tell word is written `T` and the reply word `R` (the real
+words are game text; prefix `/`).
+
+1. Event `ChatMessage { Tell { peer: "Bram" }, sender: "Bram", text: "hi" }`. *S* = `Bram`, not
+   P: incoming (CT1). Tab 1 appends *Chat*(0x0BCA09CC; 0x52615 = `Bram`, 0x5277 = `hi`), mask
+   0x20: type 6 style, sound 0x2A001004. Tab 2 does not (no bit 5). R = `Bram`. The
+   instant-message tab has no `Bram` session: it creates row 1 `Bram` after the generic row
+   (not shown; unread marker on) and appends *Chat*(0x0F2CF919; 0x58E15 = `14:02:07`, 0x52615 =
+   `Bram`, 0x5277 = `hi`) to its log.
+2. The player types `/R` and a space: the switch finds a reply word, the mode becomes `Tell`
+   with target R = `Bram`, the entry is cleared. The player types `thanks` and Enter: the
+   dispatcher runs `T␠Bram␠thanks` (§7.2 step 5); tokens `T`, `Bram`, `thanks`; recipient
+   `Bram`, text `thanks`; `Chat { Tell { peer: "Bram" }, "thanks" }`; T (retell) = `Bram`.
+   (Through the `reply` command instead, `/R thanks`, the same command is sent and T is not
+   changed.)
+3. Echo `ChatMessage { Tell { peer: "Bram" }, sender: "Ana", text: "thanks" }`: own (CT1).
+   Tab 1 appends *Chat*(0x0AD74A23; 0x5866BA4 = `Bram`, 0x5277 = `thanks`), mask 0x20; session
+   `Bram` appends *Chat*(0x0F2CF919; …, 0x52615 = `Ana`, 0x5277 = `thanks`). R stays `Bram`.
+4. Plain `Tell` mode: `/T` and a space gives `Tell` with an empty target; typing `Cara hello`
+   runs `T␠␠Cara hello`: tokens `T`, `Cara`, `hello`; recipient `Cara`.
+5. In the sandbox, the tell to `Cara` is answered by the feed's `System` notice (SF §7.6),
+   shown as a type 8 line in tab 1; no line goes to the instant-message tab (CT6).
+
+### 11.10 Tell refusals (revision 4)
+
+| Typed (P = `Ana`, no tell received yet, none sent) | Result |
+|---|---|
+| `/T␠Bram` | the usage, mask 0x8 (one token after the word) |
+| `/R␠ok` | *Chat*(0x00CC89CC), mask 0x21: tab 1 appends it once (bits 0 and 5), styled type 6, no sound (§11.8) |
+| retell word with `ok` | *Chat*(0x0811EFD4), mask 0x21 |
+| `ChatModeReply` | *Chat*(0x00CC89CC), mask 0x21; the entry stays closed |
+
+### 11.11 User channels (revision 4)
+
+Scenario steps `channel join "Lore"` arrive after the player's `/join Lore` (`JoinChannel {
+"Lore" }` sent). The words `/1` … `/8` stand for the slot rows' words.
+
+1. `ChannelJoined { "Lore" }`: slot 1 ← `Lore`; *Chat*(0x09A99A08; 0x4E28A8 = 1), mask 0x8
+   (type 4).
+2. `/1 hello` → `Chat { Named { "Lore" }, "hello" }`. Echo `ChatMessage { Named { "Lore" },
+   sender: "Ana", "hello" }` → *Chat*(0x009D15CC; 0xAD99BC5 = `Lore`, 0x5277 = `hello`), mask
+   0x08000000 (type 28). A line from `Bram` → *Chat*(0x063C924C; 0x7C632DC = `Lore`, 0x8495FF2
+   = `Bram`, 0x5277 = …), same mask.
+3. `/join lore` → *Chat*(0x07548D0C; 0x2E8E425 = `lore`): name-equal to slot 1.
+4. `/join Lore pw` → *Chat*(0x08DC4764) (no passwords).
+5. `/3 x` → *Chat*(0x0E2A7CE8; 0x539D = 3), mask 0x8.
+6. `/channels` → *Chat*(0x09AAEAC2) (mask 0x8); slot 1: *Chat*(0x000EE4F4; 1, `Lore`, empty)
+   with mask 0x08000000; slots 2–8: *Chat*(0x0EBE4334; *k*) with their masks (slot 5:
+   0x4000000000, type 39).
+7. With slots 1–8 filled, `/join Nine` → *Chat*(0x002AAA94; 0x539D = 8); nothing sent.
+8. `/part Lore` → `LeaveChannel { "Lore" }`; `ChannelLeft { "Lore" }` → slot 1 freed,
+   *Chat*(0x03B095F8; 0x4E28A8 = 1), mask 0x8. `/part Lore` again → *Chat*(0x0DF4808C;
+   0x2E8E425 = `Lore`).
+9. On `--server`: `/join Lore` → *Chat*(0x04068445), mask 0x8; nothing sent.
+
+### 11.12 Fellowship (revision 4)
+
+The fellowship word is written `F`. No `FellowshipChanged` yet: `/F hi` →
+*Fellowship*(0x06358717), mask 0x1 (type 1); nothing sent. After `FellowshipChanged` with
+`Ana` and `Bram`: `/F hi` → `Chat { Fellowship, "hi" }`; the echo (sender `Ana`) →
+*Chat*(0x04A3E744; 0x5277 = `hi`), mask 0x400, type 11, sound 0x2A001003; `Bram`'s line →
+*Chat*(0x05D20D84; 0x8495FF2 = `Bram`, …), mask 0x400. The mode `F` can be chosen before
+joining a fellowship; a line typed in it gets the refusal.
+
+### 11.13 Ignore filter (revision 4)
+
+`IgnoreList { ["Cara"] }`. Dropped without a trace: `ChatMessage { Say, "cara", … }` (name-equal),
+`ChatMessage { Tell { peer: "Cara" }, "Cara", … }` (R unchanged, no session row),
+`ChatMessage { Named { "Lore" }, "CARA", … }`. Kept: `ChatMessage { System, none, … }`; the
+player's own tell to `Cara` (sent, and its echo shown, since *S* = P).
+
+### 11.14 Friend notices (revision 4)
+
+| `FriendList` event (in order after world entry) | Lines (mask 0x8) |
+|---|---|
+| `Bram:off, Cara:on` | none (first list) |
+| `Bram:on, Cara:on, Dain:on` | *Chat*(0x0A29AFC5; 0x52615 = `Bram`) (`Dain` is new: none) |
+| `Cara:off` | *Chat*(0x010538E5; 0x52615 = `Cara`) (`Bram`, `Dain` removed: none) |
+
 ---
 
 <a id="s12"></a>
@@ -1357,6 +1496,30 @@ Behaviour invariants (synthetic tests):
 | CW-I15 | For any line mask *L* and tab mask *M* (with the step-1 condition of §4.3 met), the line is appended to that tab's log exactly once when *M* AND *L* ≠ 0, and not at all when *M* AND *L* = 0; the number of bits *L* and *M* have in common does not matter. |
 | CW-I16 | A feedback sound is played for an appended line only when some entry's mask equals the line's mask with bit 24 cleared; a line whose mask has two or more type bits plays no sound unless an entry has exactly that mask. The style of a line is the style of the highest set bit of that mask that has a style entry (FO §9.3). |
 
+Revision 4 data invariants (check against the install):
+
+| # | Invariant |
+|---|---|
+| CW-I17 | These `Chat` tokens exist with exactly these argument IDs in this order: 0x0BCA09CC (0x4DD4, 0x52615, 0x5277); 0x0AD74A23 (0x4DD4, 0x5866BA4, 0x5277); 0x0F2CF919 (0x58E15, 0x4DD4, 0x52615, 0x5277); 0x0F2C3BE2 (0x58E15, 0x52615); 0x04E6F672 (0x58E15); 0x01A17E05 (0x5866BA4); 0x05D20D84 (0x4DD4, 0x8495FF2, 0x5277); 0x04A3E744 (0x5277); 0x063C924C (0x7C632DC, 0x4DD4, 0x8495FF2, 0x5277); 0x009D15CC (0xAD99BC5, 0x5277); 0x09A99A08, 0x03B095F8, 0x0EBE4334 (0x4E28A8); 0x000EE4F4 (0x4E28A8, 0x2E8E425, 0x12E6A6F); 0x066B746F (0x688C124); 0x002AAA94, 0x0E2A7CE8 (0x539D); 0x02832AE7 (0x7C632DC, 0x50A2C88, 0xD0A7DE8); 0x01919744, 0x03C043D4 (0x7C632DC); 0x07548D0C, 0x0DF4808C, 0x02E32555 (0x2E8E425); 0x0A29AFC5, 0x010538E5 (0x52615); and without arguments 0x00CC89CC, 0x0811EFD4, 0x0D93B0C5, 0x0EA68129, 0x0AC8421C, 0x08DC4764, 0x04068445, 0x09AAEAC2, 0x01513613, 0x02E819D4. |
+| CW-I18 | The `Commands` entries 0x0DA4AC6C, 0x0A48C3E9, 0x048CE78C, 0x038453D4, 0x03A7284C, 0x0DCD958C, 0x0A55AF03, 0x098B3A44 and 0x08B3A4E1–0x08B3A4E8 exist and each splits (§7.1) into at least one name; the `Fellowship` table (STRINGTABLE key 0x10000017) has token 0x06358717 without arguments. |
+| CW-I19 | `GameplayOptionDefaults` holds the booleans `GOP_FullIRCMode` and `GOP_AutoCreateIMSessions`. |
+| CW-I20 | The element named by `IMTabTemplate`'s `UI_ChatTab_IMLogElement` names, by `UI_ChatLog_IMListboxElement`, a list box with `UICore_ListBox_max_rows` > 0 whose `UI_ChatLog_IMTextElement` row template names, by `UI_ChatTab_LogElement`, a log whose list box has `UICore_ListBox_max_rows` > 0. |
+
+Revision 4 behaviour invariants (synthetic tests, Tessera rules of §15.10):
+
+| # | Invariant |
+|---|---|
+| CW-I21 | At most 8 slots hold a channel; no two held names are name-equal; every line of a channel in slot *k* carries slot *k*'s mask (§15.6 table); slots change only on `ChannelJoined`, `ChannelLeft`, `Disconnected` or a world entry. |
+| CW-I22 | `JoinChannel` is sent only when fewer than 8 slots are held and no held name is name-equal to it; `Chat { Named { n } }` only for a held *n*; `LeaveChannel` only for a held name. |
+| CW-I23 | A `ChatMessage` on `Say`, `Yell`, `Emote`, `Tell`, `Fellowship` or `Named` whose speaker is name-equal to an ignored name and not to P reaches no log, no instant-message session, no sound and no plugin event, and changes neither R nor the recent names; a `System` line is never dropped. |
+| CW-I24 | A `Tell` line is own exactly when its speaker is name-equal to P and its `peer` is not; an own line never changes R. |
+| CW-I25 | R is the speaker of the most recent incoming `Tell` line that passed CT8 (or none); T changes only when `tell` hands a tell to the session. |
+| CW-I26 | Instant-message rows: the generic row is row 0; rows 1, 2, … are in strictly ascending ordinal order of their names, no two name-equal; the row count never exceeds the session list's `max_rows`. |
+| CW-I27 | Every CT1 `Tell` line goes to exactly one instant-message session, except when the list is full and auto-creation is on (then to none). |
+| CW-I28 | A `FriendList` event posts at most one notice per name, only for a name in both it and the previous list whose `online` differs; the first after a world entry posts none. |
+| CW-I29 | `fellowship` never sends `Chat { Fellowship, … }` while the last `FellowshipChanged` list is empty (or none arrived). |
+| CW-I30 | Every line Tessera posts for §15 has the mask the §15 tables give, whether its text comes from the install or from Tessera's fallback wording. |
+
 ---
 
 <a id="s13"></a>
@@ -1383,6 +1546,15 @@ Behaviour invariants (synthetic tests):
 | Q17 | Whether the game script that receives the reply line (0x21) and the unknown-command line (0x1) passes the mask and text back unchanged | §6.2, §7.6 | M4 on the script entry point; M3 |
 | Q18 | `ChatType` reported to `Turbine.Chat.Received` for a line whose mask has several type bits | §9 | M4 on the plugin chat event's conversion; M3 with a logging plugin |
 | Q19 | Which input map supplies the log-paging commands while the entry does not have focus (Tessera rule: §10 item 10, IB Known difference 17) | §6.2 | M4 on the window's activation; M3 (Page Up with the window active and the entry closed) |
+| Q20 | The identifier flag that lets an incoming tell into a log without bit 5 (sender flag set, player's flag clear) (Tessera: not applied, CT1) | §15.3 | M4 on the instance-ID flag byte's users |
+| Q21 | How tell failures show without the instant-message tab or in the normal tabs; which failure kind gives which line and which closes the session; which chat types the server filters for ignored players; whether *Chat*(0x0B891524) and 0x018E5F35 are server-composed (Tessera: no failure lines, CT6; client-side filter, CT8) | §15.5, §15.8 | M3 (a tell to an offline name with the instant-message tab off; ignore a speaker) |
+| Q22 | Whether the server also sends the speaker's own fellowship and user-channel lines back besides the scripts' local echo; the condition of the dispatcher's fallback for a channel in no slot (Tessera: the session's echo shown in the echo form, CT1) | §15.6, §15.7 | M3 (speak on the fellowship channel and count the lines) |
+| Q23 | Whether the library's string-length native counts a terminator (the "minus one" of the join checks); the case rule of the name comparison of channel names; which slot a joined channel takes (Tessera: code units, name-equal, lowest free slot, CT5) | §15.6 | M4 on the script natives (packages 225 and 176) |
+| Q24 | The text transformation before the 385-unit check and the line of the generic error code 38 (Tessera: §10 item 12's bound, CT4) | §15.2 | M4 on native 3295.9 and the error routine's table |
+| Q25 | The session row's 14 × 14 child, unread and logging markers; the "close session" item beyond removing the row; whether an auto-created row shows its unread marker (Tessera rule CT6) | §15.4 | M4 on the row class; M3 |
+| Q26 | Where the scripts keep the last sender and the retell target, when they change, and whether Shift or Ctrl with line up and down step through several names (extends Q11; Tessera rule CT3) | §15.2, §6.4 | M4 on callbacks 0x01D6002F–0x01D60032 |
+| Q27 | The effect of `GOP_AcceptFriendsAndGuildMemberTellsOnly` (Probable: a server filter; Tessera: not applied) | §15.8 | M3 |
+| Q28 | The session restriction of the join check, the source of `World_UserDefinedChatEnabled`, the rate guard's fixed parameters (Tessera: none of them applied, CT5) | §15.6 | M4 on the script natives |
 
 ---
 
@@ -1403,6 +1575,484 @@ apply them.
 | `lua-plugin-api.md` §11.3 | When `Received` fires | Tessera queues the event and delivers it in frame-loop step 7 (IB D8, Known difference 21; §10 item 9 here), skipping the apartments named by the skip rule that LPA §11.3 states. IB's owners list asks that spec's owner whether anything is known about the original's timing. |
 | `lua-plugin-api.md` §11.3 | `ChatType` of `Received` | A line's mask can have several type bits (the reply line, 0x21, §6.2); the conversion to one `ChatType` is OPEN here (Q18) with a Tessera rule (highest set bit other than bit 24). LPA may want the same OPEN. |
 | `fonts.md` §9.3 | Step 1 (chat-type map lookup) | Agrees and is used for multi-bit masks: the original does post a line of mask 0x21 (§6.2), which step 1 styles as type 6 (§11.8). |
+| `social-panels.md` §9 TR5 | "Friends notices of §3.7 are not derived" | **Superseded for the online and offline notices** (revision 4): the client half derives them from consecutive `FriendList` events (§15.10 CT9), as the original's script posts them on a change of a friend's online bit (CW55). The other §3.7 notices (added, removed, already, full, empty) stay as TR5 says. |
+| `social-panels.md` §3.7 | Chat types of the friend notices | The online and offline notices are posted with mask 0x8, type 4 `Standard` (CW55). |
+| `social-panels.md` §9 TR11 | Tessera command names | No overlap: §15.10 CT2 adds `join`, `part`, `channels`, `chsay`, `ch1`–`ch8`, `reply`, `retell`, `fellowship`; TR11's `leave` stays the fellowship command. |
+| `scenario-feed.md` §6.4, §9.2, §9.4 | Social chat | `ChatMessage` has no own-line flag, so the client classifies a line as its own by the sender's name (§15.10 CT1); `JoinChannel` has no password (CT5 refuses one locally); the plain sandbox ignores `JoinChannel` (§9.5), so user channels show only with a scenario's `channel` steps (CT11). No change is asked for; a later revision may add `ChannelJoined` answers to the plain sandbox. |
+| `lua-plugin-api.md` §11.3 | `ChatType` of the P4 lines | Tells 6, fellowship 11, user channels 28–31 and 39–42 by slot, channel and friend notices 4, refusals 1 (or 6 for the 0x21 lines, Q18); §15.10 CT10. |
+
+---
+
+<a id="s15"></a>
+## 15. Social chat (revision 4, P4)
+
+Decision 0024 P4 asks for social chat as the original presents it, fed by the scenario feed
+and protocol v1.1, client half only. §15.1–§15.9 state what the original does (marks per
+row of §1); §15.10 states Tessera's rules (CT1–CT12), all in terms of the decision-0020
+dispatcher (§10 items 11–13).
+
+**Notation.** *Chat*(*t*; *a* = *v*, …) is the entry with token *t* of the `Chat` table
+(STRINGTABLE key 0x1000004D, 0x250001A7 here) rendered by ST §7 with argument ID *a* set to
+*v*; *Fellowship*(*t*) and *Weenie*(*t*) are entries of the tables with STRINGTABLE keys
+0x10000017 and 0x10000039. "Mask *m*" is the line's 64-bit chat-type mask (§2): 0x1 type 1
+`Error`, 0x8 type 4 `Standard`, 0x20 type 6 `Tell`, 0x21 types 1 and 6, 0x400 type 11
+`Fellowship`. A line "posted with mask *m*" goes to every log by §4.3 and is appended by
+§5.1 (style, timestamp, sound, unread marker). No template text is reproduced; roles are
+described in words.
+
+<a id="s15-1"></a>
+### 15.1 Overview and the session layer
+
+| Feature | Original | Tessera command or event (SF §9) | Tessera rule |
+|---|---|---|---|
+| Sending a tell: tell, reply and retell commands, `Tell` mode, `ChatModeReply` | §15.2 | `Chat { channel: Tell { peer }, text }` | CT3, CT4 |
+| A tell received, the player's own tell coming back | §15.3, §15.4 | `ChatMessage { channel: Tell { peer }, sender, text }` | CT1, CT6 |
+| Fellowship line sent / received | §15.7 | `Chat { Fellowship, text }` / `ChatMessage { Fellowship, … }` | CT1, CT7 |
+| Joining, leaving, listing user channels | §15.6 | `Social::JoinChannel { name }`, `Social::LeaveChannel { name }`; list: none (local) | CT5 |
+| Joined, left | §15.6 | `Social::ChannelJoined { channel }`, `Social::ChannelLeft { channel }` | CT5 |
+| User-channel line sent / received | §15.6 | `Chat { Named { name }, text }` / `ChatMessage { Named { name }, … }` | CT1, CT5 |
+| Ignore filtering | §15.8 | `Social::IgnoreList { names }` | CT8 |
+| Friend online and offline notices | §15.9 | `Social::FriendList { entries }` | CT9 |
+| Fellowship membership (for the fellowship refusal) | §15.7 | `Social::FellowshipChanged { members }` (SP §9 TR2) | CT7 |
+
+<a id="s15-2"></a>
+### 15.2 Sending tells (BIN2: CW43, CW44; OBS-S: CW45, CW46)
+
+**Command entries.** Three `Commands` entries send tells, all registered by the scripts
+(§8.1) and all rows of the mode table (§6.5), so their names are both commands and mode
+words: 0x0DA4AC6C (tell; several names), 0x0A48C3E9 (reply) and 0x048CE78C (retell). A fourth
+entry with one name, 0x06D8CE2C, is not registered as a command (OBS-S).
+
+**Tell** (CW45). The handler receives the token list of §7.3 and drops the command word.
+
+1. With fewer than two tokens left, it posts the command's usage (mask 0x8) and stops.
+2. The recipient is the first token. The text is the remaining tokens joined with one U+0020
+   each (so runs of whitespace collapse and quotes of quoted tokens are gone).
+3. An empty text posts *Chat*(0x01A17E05; 0x05866BA4 = recipient) with mask 0x21, then the
+   usage, and stops. (With two or more tokens the text is never empty, because tokens are
+   never empty, §7.3.)
+4. **Length check** (the same in reply, retell, fellowship and user-channel sends): a text
+   longer than 1,925 units by the library's string-length native, or longer than 385 units
+   after a further library transformation of the text, goes to the scripts' generic error
+   routine with code 38 and stops (the transformation and the line: Q24). The entry line
+   holds at most 384 characters (CW20), so typed text passes.
+5. The recipient and the text go to the client's tell send (the chat subsystem; not
+   traced), and the recipient becomes the **retell target**.
+
+**Reply and retell** (CW46). With no token after the command word, the usage (mask 0x8). The
+target is the **last sender** (reply) or the retell target (retell). Without one:
+*Chat*(0x00CC89CC) (reply) or *Chat*(0x0811EFD4) (retell), mask 0x21. Otherwise the length
+check, then the tell send with the §7.4 arguments as typed (not re-joined). Neither command
+changes the retell target. Where the scripts keep the last sender, and when it changes, was not
+traced (Q26; Probable: the sender of the most recent incoming tell).
+
+**The `Tell` mode** (CW44; §6.5). A space typed after a mode word of a `Tell` row switches
+the entry to `Tell`. The target is the reply callback's name for a reply word, the retell
+callback's for a retell word, and **empty** otherwise or when the callback has none. In the
+`Tell` mode a submitted text runs as *C*, a space, the target, a space, the text (§7.2
+step 5): with a target the handler gets the target as the first token; with an empty target
+the line has two spaces after *C*, so the first word the player typed is the recipient.
+
+**`ChatModeReply`** (§6.2): with a last sender, the entry opens and the name goes to the
+`Tell` mode as its target (Probable); without, *Chat*(0x00CC89CC) with mask 0x21.
+**Shift and Ctrl with line up and down** (§6.4): Shift asks the sender callbacks (0x01D60032
+up, 0x01D60031 down), Ctrl the recipient callbacks (0x01D60030 up, 0x01D6002F down), CW43.
+
+<a id="s15-3"></a>
+### 15.3 Tell lines in the normal tabs (BIN2: CW47)
+
+The tell lines are built by the client, not by the scripts: none of their tokens occurs in
+the script library (OBS-S). Each log of a normal tab builds the line itself when the chat
+subsystem reports the tell to the logs:
+
+| Tell | Line | Mask | Which logs append it |
+|---|---|---|---|
+| Incoming | *Chat*(0x0BCA09CC; 0x4DD4 = the sender's instance ID, the target of the `Select` link (ST §4.8) around the name; 0x52615 = sender's name; 0x5277 = text) | 0x20 | every log whose mask has bit 5; also a log without bit 5 when an identifier flag of the sender is set and the same flag of the player is clear (Q20) |
+| The player's own | *Chat*(0x0AD74A23; 0x4DD4 = recipient's instance ID; 0x5866BA4 = recipient's name; 0x5277 = text) | 0x20 | every log whose mask has bit 5 |
+
+So by default only tab 1 shows them among the normal tabs (§3.3), each line is styled as
+type 6 and plays the `Tell` sound 0x2A001004 (§5.6, an exact whole-mask match). The
+instant-message tab gets its own form (§15.4). A third tell template,
+*Chat*(0x045DBD34; 0x58A10A2, 0x58A1095, 0x5277), names both parties; a script posts it with
+mask 0x4 (type 3 `Admin`) under a script condition (Probable: an administrator's view); it is
+not part of P4.
+
+<a id="s15-4"></a>
+### 15.4 The instant-message tab and its sessions (BIN2: CW48, CW49; OBS)
+
+**Elements** (layout 0x22000034, OBS). `IMTabTemplate` (§4.6) names its log with
+`UI_ChatTab_IMLogElement` = `IMLogElement` (0x10000325, 512 × 440). That element names the
+session list with `UI_ChatLog_IMListboxElement` = `IMSessionsListbox` (0x10000328: ListBox at
+(400, 23), 101 × 417, one column, `max_rows` 128, click select, selected state 7, normal state
+11, `selected_item_state_change`; `UI_ChatLog_IMTextElement` = the row template 0x1000032B)
+and the parent of the shown session's log with `UI_ChatLog_IMLogParentField` (0x10000327,
+392 × 440). The row template `IMSessionsListboxItemTemplate` (0x1000032B) names its log with
+`UI_ChatTab_LogElement` = `IMChatLogElement` (0x1000032E: list box 0x10000316 with
+`max_rows` 128, line template `UI_ChatLog_TextElement` 0x10000309, scroll bar 0x10000317), its
+unread marker 0x10000319 and its logging marker 0x100012DD; its children are a label
+(0x1000032C, 100 × 19) and a 14 × 14 element at (457, 2) (Probable: the close button, Q25).
+
+**Start.** The tab's log reads its list and parent elements, creates the **generic** row
+(label *Chat*(0x0D93B0C5), a reserved partner) and shows it, then counts as initialised.
+
+**A tell line arrives** (incoming or the player's own; the partner is the sender or the
+recipient):
+
+1. Find the partner's session: by the partner's instance ID among the sessions recorded by
+   ID; else by name among the rows, compared case-insensitively. A session found by name is
+   recorded under the partner's ID.
+2. None found: if `GOP_AutoCreateIMSessions` (default true, CW57) is true, create a row
+   labelled with the partner's name and record it under the ID; if the creation fails (a
+   full list, CW49, Probable) the line is **not** shown in this tab. If the option is false,
+   the generic row takes the line.
+3. A new row is inserted after the generic row, before the first row whose name compares
+   greater (UTF-16 code units, ordinal, case-sensitive), so rows 1, 2, … stay in name order.
+   It is shown only when no session is shown (never after start, since the generic row is)
+   or when the player's own "start session" made it.
+4. If the line's partner name differs from the row's name by case only, the row is renamed
+   (and, when it is the shown one, the new name goes to the `Tell` mode, step 6).
+5. The session's log gets *Chat*(0x0F2CF919; 0x58E15 = the current time as text, 0x4DD4 =
+   the speaker's instance ID, 0x52615 = the speaker's name, 0x5277 = text), mask 0x20. The
+   speaker is the partner for an incoming tell and the **player** for the player's own.
+6. Showing a session (a click on its row, or step 3) hides the shown session's log, places
+   the new one in the parent field, and hands the session's name, empty for the generic row,
+   to the primary window's `Tell` mode (Probable: the mode becomes `Tell` with that target).
+
+**Menu** (the session list's context menu): "start session" (*Chat*(0x0780711E)), enabled
+only while the row count is below the session list's `max_rows`; "close session"
+(*Chat*(0x0E6C6E0D)); the tab menu's "enable instant messages" item (*Chat*(0x093D1E8D))
+goes with `GOP_FullIRCMode`. "Start session" opens a text prompt (*Chat*(0x0D3D2E04)). An
+empty answer posts *Chat*(0x0EA68129) with mask 0x1; an answer that the client's name
+normalisation changes (compared case-insensitively) posts a refusal with mask 0x1 (Probable:
+*Chat*(0x0C47E765)); otherwise the session is created as in steps 2–3 and shown.
+
+**Limits.** At most `max_rows` of the session list rows, the generic row included (128 here);
+each session's log holds at most its list box's `max_rows` lines (128 here, §5.2). No other
+limit (time-out, count of lines per partner) was found.
+
+This answers Q5 (§4.6) except the row's close button, unread and logging markers (Q25).
+
+> **OPEN (implementation, P4 clean room, 2026-10-11):** (a) the session log's list box
+> (0x10000316) and the row's label (0x1000032C) are given by ID only, without a label;
+> `tessera-ui` (`game::chat::im`) takes the session log's `ChatLogListbox` (else its first
+> `ListBox`) and the row's first `Text` element (else the row). (b) Step 4 renames a row in
+> place, which can break the name order of step 3 (a case-only rename changes the ordinal
+> comparison) and so CW-I26; Tessera moves the renamed row to its place in name order.
+> Please confirm or correct both.
+
+<a id="s15-5"></a>
+### 15.5 Tell refusals and failures (OBS-S: CW45, CW46; BIN2: CW50)
+
+| Situation | Line | Mask | Shown in |
+|---|---|---|---|
+| tell with fewer than two tokens | the command's usage | 0x8 | logs (§4.3) |
+| tell with an empty text (§15.2 step 3) | *Chat*(0x01A17E05; 0x05866BA4 = recipient), then the usage | 0x21 | logs |
+| reply without a last sender; `ChatModeReply` without one | *Chat*(0x00CC89CC) | 0x21 | logs |
+| retell before any tell | *Chat*(0x0811EFD4) | 0x21 | logs |
+| text over the length limits | the generic error routine, code 38 (Q24) | — | — |
+| the subsystem reports an invalid recipient name (one failure kind) | *Chat*(0x04E6F672; 0x58E15 = time) | 0x20 | the partner's session, else the generic row, of the instant-message tab |
+| the subsystem reports another failure (Probable: offline or no such character) | *Chat*(0x0F2C3BE2; 0x58E15 = time, 0x52615 = name) | 0x20 | same |
+| a third failure kind | the partner's session, if any, is closed; no line | — | — |
+| the recipient ignores the player; the recipient is unavailable | *Chat*(0x0B891524) and *Chat*(0x018E5F35), argument 0x5506DA2 = name, exist but are referenced neither by client code nor by the scripts | — | Probable: lines composed by the server (Q21) |
+
+The failure lines were found only in the instant-message log's receive interface; how a
+failure shows with `GOP_FullIRCMode` off, or in the normal tabs, is Q21.
+
+<a id="s15-6"></a>
+### 15.6 User chat channels (OBS-S: CW51, CW53, CW54)
+
+**Commands** (`Commands` entries, all registered by the scripts):
+
+| Entry | Role | Arguments (tokens after the command word) |
+|---|---|---|
+| 0x03A7284C | join | a channel name and an optional password (1 or 2 tokens) |
+| 0x0DCD958C | leave | a channel name (exactly 1 token) |
+| 0x0A55AF03 | list | none |
+| 0x098B3A44 | send by name | a channel name, then the text |
+| 0x08B3A4E1 … 0x08B3A4E8 | send on slot 1 … 8 (also the mode words of §6.5) | the text |
+
+**Slots.** A player has **8** slots (CW53). Slot *k* has one chat type and mask:
+
+| Slot *k* | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| Chat type | 28 | 29 | 30 | 31 | 39 | 40 | 41 | 42 |
+| Mask | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000 | 0x4000000000 | 0x8000000000 | 0x10000000000 | 0x20000000000 |
+
+These are the types of the mode-table rows 0x08B3A4E1–0x08B3A4E8 (§6.5) and of the enum labels
+`UserChat1`–`UserChat8`; tab 1 shows all eight by default (§3.3). The scripts keep the slots
+as an array of 8 entries (free or a channel) and find "a free slot" as the first free entry;
+where a joined channel is stored, and so which slot it takes, was not traced (Probable: the
+first free one, Q23). They look a channel up by name with a string comparison whose case rule
+was not identified (Q23).
+
+**Join** (lines with mask 0x8 unless stated). With not 1 or 2 tokens, the usage. Otherwise, in
+this order:
+
+1. The world property `World_UserDefinedChatEnabled` false → *Chat*(0x04068445).
+2. A session restriction (two player states and a further test, Q28) → *Chat*(0x056A564E).
+3. Name and password: an empty name → *Chat*(0x0AC8421C); a name whose length by the
+   string-length native, minus one, exceeds **50** → *Chat*(0x02832AE7; 0x7C632DC = name,
+   0x50A2C88 = that length minus one, 0xD0A7DE8 = 50); a name that is a channel command
+   (a name of the channel table the switch uses) → *Chat*(0x01919744; 0x7C632DC = name); a
+   non-empty password whose length minus one exceeds **20** → *Chat*(0x046A54E7; 0x7C632DC =
+   name, 0x688C124 = password, 0x50A2C88 = length minus one, 0xD0A7DE8 = 20); a password for
+   one reserved channel name held by the library → *Chat*(0x08DC4764). (Whether the native
+   counts a terminator, so that "minus one" gives the true length, is Q23.)
+4. Already joined → *Chat*(0x07548D0C; 0x2E8E425 = name).
+5. No free slot → *Chat*(0x002AAA94; 0x539D = 8).
+6. A rate guard (`Antispam_UserChatChannelMod` with fixed parameters, Q28) → *Chat*(0x078F3ACE).
+7. Otherwise the request goes to the chat subsystem. Refusals it reports later use the same
+   lines, plus *Chat*(0x0360EAE4; 0x2E8E425 = name) and *Chat*(0x0DF4808C; 0x2E8E425 = name).
+
+**Joined.** When the subsystem reports a channel entered: a user channel in slot *k* →
+*Chat*(0x09A99A08; 0x4E28A8 = *k*); any other (area) channel → *Chat*(0x0C077CFC; 0x2E8E425 =
+its name); mask 0x8.
+
+**Leave.** With not exactly 1 token, the usage. An empty name → *Chat*(0x0AC8421C); a name
+not joined that is a channel command → *Chat*(0x03C043D4; 0x7C632DC = name); any other name not
+joined → *Chat*(0x0DF4808C; 0x2E8E425 = name); the rate guard; else the request goes to the
+subsystem. **Left:** *Chat*(0x03B095F8; 0x4E28A8 = *k*) for slot *k*, or *Chat*(0x03A70DEC;
+0x2E8E425 = name) for another channel; mask 0x8.
+
+**List.** No channel joined → *Chat*(0x01513613), mask 0x8. Otherwise *Chat*(0x09AAEAC2)
+(mask 0x8), then for *k* = 1 … 8 one line with **slot *k*'s mask**: joined →
+*Chat*(0x000EE4F4; 0x4E28A8 = *k*, 0x2E8E425 = name, 0x12E6A6F = *Chat*(0x02E819D4), an empty
+text, when the slot has no password, else *Chat*(0x066B746F; 0x688C124 = password)); free →
+*Chat*(0x0EBE4334; 0x4E28A8 = *k*).
+
+**Sending.** By slot (`/`*k* words and the mode `UserChat`*k*): slot *k* free →
+*Chat*(0x0E2A7CE8; 0x539D = *k*), mask 0x8. By name: with no token the usage; the first token
+is the name; not joined → *Chat*(0x02E32555; 0x2E8E425 = name), mask 0x8; the text is the
+remaining tokens joined with one U+0020. Then, for both: the length check (§15.2), user chat
+unavailable → *Chat*(0x04068445) with mask 0x1, a character too new for this channel →
+*Weenie*(0x040CF227) with mask 0x8; otherwise the line goes to the subsystem, and when it
+accepts it the script posts the local echo *Chat*(0x009D15CC; 0xAD99BC5 = the channel's name,
+0x5277 = text) with slot *k*'s mask (CW54).
+
+**Received** (CW51): *Chat*(0x063C924C; 0x7C632DC = the channel's name, 0x4DD4 = sender's
+instance ID, 0x8495FF2 = sender's name, 0x5277 = text) with the slot's mask. A line for a
+channel in no slot takes a fallback built from library messages that runs only under a script
+condition (Q22).
+
+<a id="s15-7"></a>
+### 15.7 The fellowship channel (OBS-S: CW51, CW52; BIN: CW24b)
+
+**When it is offered.** The fellowship word (`Commands` 0x038453D4) is a fixed row of the mode
+table (type 11) and a command the scripts always register; the space-key switch tests no
+membership (§6.5), so the fellowship mode can be chosen at any time, in or out of a
+fellowship. (Which modes the channel button's menu lists is Q3.)
+
+**Sending** (CW52): the length check; not in a fellowship → *Fellowship*(0x06358717) with mask
+0x1 (type 1 `Error`), nothing sent (variant *Fellowship*(0x0871B170) under the §6.5 variant
+test); fellowship chat unavailable → *Weenie*(0x064C4F95), mask 0x1; otherwise the line goes
+to the subsystem, and when it accepts it the script posts the local echo
+*Chat*(0x04A3E744; 0x5277 = text) with mask 0x400 (variant *Chat*(0x0E74EA10)).
+
+**Received** (CW51): *Chat*(0x05D20D84; 0x4DD4 = sender's instance ID, 0x8495FF2 = sender's
+name, 0x5277 = text), mask 0x400 (variant *Chat*(0x00D8DF00)). Mask 0x400 has the feedback
+sound 0x2A001003 (CW19a). Whether the speaker also receives its own line from the server, in
+addition to the local echo, is Q22.
+
+<a id="s15-8"></a>
+### 15.8 The ignore list and incoming chat (BIN2, OBS-S: CW56, CW57)
+
+The client does not filter incoming chat by the ignore list in any path that was read: the
+logs' receive slots for tells and for general lines, the instant-message session routine and
+the scripts' channel-line dispatcher append without an ignore test (CW56). So an ignored
+player's lines are kept from the player before they reach the client (Probable: by the
+server), for every chat type the server filters (which types: Q21), and the player sees **no
+notice**. The ignored player may get *Chat*(0x0B891524; 0x5506DA2 = name) on a tell, a line no
+client code or script posts (Probable: composed by the server). The ignore list's own lines
+(added, removed, list) are `social-panels.md` §3.7. `GOP_AcceptFriendsAndGuildMemberTellsOnly`
+(default false) has no client-side effect that was found (Q27).
+
+<a id="s15-9"></a>
+### 15.9 Friend online and offline notices (OBS-S: CW55)
+
+When the subsystem reports a new status for a friend in the friends list, the script compares
+the friend's online bit (bit 0 of the status) before and after: clear → set posts
+*Chat*(0x0A29AFC5; 0x52615 = the friend's name from the list), set → clear posts
+*Chat*(0x010538E5; 0x52615 = name), both with mask 0x8 (type 4 `Standard`); no change posts
+nothing. Status reports for names not in the list post nothing.
+
+<a id="s15-10"></a>
+### 15.10 Tessera rules for P4 (D24, D20)
+
+These are Tessera's rules, not facts about the original. **Name-equal** means equal after
+Unicode default lower-casing (§10 item 12). **P** is the player's character name, as the
+session entered the world with it. A session line's **speaker** *S* is its `sender`, or for a
+`Tell` line without a sender its `peer`. All built-ins below run in the dispatcher (§10 items
+11–13): in frame-loop step 1, their lines appended in step 7, with history as item 13.
+
+**CT1 Session lines.** After CT8, a `ChatMessage` becomes a line as follows (timestamps by
+§5.4; templates by CT12):
+
+| Channel | Condition | Line | Mask |
+|---|---|---|---|
+| `Tell { peer }` | own: *S* name-equal P and `peer` not name-equal P | *Chat*(0x0AD74A23; 0x5866BA4 = `peer`, 0x5277 = text) | 0x20 |
+| `Tell { peer }` | otherwise (incoming) | *Chat*(0x0BCA09CC; 0x52615 = *S*, 0x5277 = text); *S* becomes the reply target (CT3) | 0x20 |
+| `Fellowship` | *S* name-equal P | *Chat*(0x04A3E744; 0x5277 = text) | 0x400 |
+| `Fellowship` | otherwise | *Chat*(0x05D20D84; 0x8495FF2 = *S*, 0x5277 = text) | 0x400 |
+| `Named { name }` | *name* in slot *k* (CT5), *S* name-equal P | *Chat*(0x009D15CC; 0xAD99BC5 = the slot's name, 0x5277 = text) | slot *k*'s |
+| `Named { name }` | in slot *k*, otherwise | *Chat*(0x063C924C; 0x7C632DC = the slot's name, 0x8495FF2 = *S*, 0x5277 = text) | slot *k*'s |
+| `Named { name }` | in no slot | dropped (debug log, rate-limited); not given to plugins | — |
+| `Fellowship`, `Named` | no sender | the text as a type 8 line (§10 item 2) | 0x80 |
+| `Say`, `Yell`, `Emote`, `System` | — | unchanged (§10 item 2) | — |
+
+The original posts the fellowship and user-channel echo forms locally when the subsystem accepts a line
+(§15.6, §15.7) and builds the own-tell line from the subsystem's report (§15.3); Tessera keeps
+no local echo (§10 item 2) and shows the same forms for the session's echo, so the result is
+the same when the session echoes a line once. Known difference: a tell to oneself on the test
+server arrives twice with *S* = `peer` = P and is shown twice as incoming.
+
+**CT2 Built-ins and registration.** In addition to §10 item 3 the dispatcher registers, owner
+`Client`: the Tessera names `reply`, `retell`, `fellowship`, `join`, `part`, `channels`,
+`chsay` and `ch1` … `ch8`; and every name of the install's `Commands` entries 0x03A7284C
+(→ `join`), 0x0DCD958C (→ `part`), 0x0A55AF03 (→ `channels`) and 0x098B3A44 (→ `chsay`). The
+fixed mode-table rows already registered by §10 item 3 get these handlers: 0x0DA4AC6C →
+`tell` (CT4), 0x0A48C3E9 → `reply`, 0x048CE78C → `retell`, 0x038453D4 → `fellowship` (CT7),
+0x08B3A4E1 … 0x08B3A4E8 → `ch1` … `ch8` (CT5); the other fixed rows keep D20 item 2's
+"not available" refusal. **Line types.** Every line of §15.2–§15.9 that Tessera posts uses
+the original's template (CT12) and the original's **mask** as stated there, overriding §10 item
+2 for these lines; usage lines are Tessera's own usage text (D20 item 5) with mask 0x8; a
+session refusal (`NetError::InvalidCommand`) stays a type 1 line in Tessera's words (§10 item
+12). The window's mode words stay those of §10 item 11; plain text in the mode `Tell`,
+`Fellowship` or `UserChat`*k* runs that row's command.
+
+**CT3 Targets.**
+- The **reply target** R is *S* of the most recent incoming `Tell` line that passed CT8; none
+  at world entry; cleared on `Disconnected`.
+- The **retell target** T is the recipient of the most recent `tell` (CT4) handed to the
+  session; `reply` and `retell` do not change it.
+- **Recent names.** Tessera keeps the last 10 distinct incoming tell speakers and the last 10
+  distinct `tell` recipients, newest first (a name-equal repeat moves to the front), each with
+  a browse index reset to −1 whenever its list changes. Shift + line up / down (§6.4) moves
+  the sender index up / down by one within the list (clamped), Ctrl + line up / down the
+  recipient index, and the chosen name becomes the entry's `Tell` target (nothing happens with
+  an empty list). This replaces "Shift and Ctrl … do nothing" of §10 item 5 (Q11, Q26 open).
+- **`ChatModeReply`**: with R, the entry opens in the `Tell` mode with target R; without,
+  *Chat*(0x00CC89CC) with mask 0x21 (§10 item 8).
+- **Mode words** (§6.5 switch): a reply word gives `Tell` with target R (empty if none), a
+  retell word `Tell` with T, the plain tell word `Tell` with an empty target (CW44).
+
+**CT4 Sending tells.**
+- `tell` (and the names of 0x0DA4AC6C): as §15.2 steps 1–3 (usage below two tokens; text = the
+  remaining tokens joined with one U+0020; this replaces the `tell` argument rule of §10 item
+  12). A recipient that fails `is_valid_name` is refused with a type 1 line. Then
+  `Chat { Tell { peer: recipient }, text }`, and T ← recipient. The length bounds are §10 item
+  12's (1,024 bytes); the original's 385-unit check is not applied (the entry holds 384
+  characters, CW20; longer text can only come from aliases or plugins: a known difference).
+- `reply` / `retell`: usage without arguments; without R (T): *Chat*(0x00CC89CC)
+  (*Chat*(0x0811EFD4)) with mask 0x21; else `Chat { Tell { peer: R (T) }, text: the §7.4
+  arguments }`.
+- The `Tell` mode with a target G submits `C␠G␠text`; with an empty target `C␠␠text` (§7.2
+  step 5), which the `tell` handler reads as above.
+
+**CT5 User channels.** Tessera keeps 8 slots (§15.6 table), each free or holding a channel
+name as `ChannelJoined` spelt it; names in slots are never name-equal.
+- `join` (1 or 2 tokens, else usage; lines mask 0x8): a backend without user chat (CT11) →
+  *Chat*(0x04068445); a name longer than 50 UTF-16 code units or 64 bytes of UTF-8 →
+  *Chat*(0x02832AE7; 0x7C632DC = name, 0x50A2C88 = its length in code units, 0xD0A7DE8 = 50);
+  a name that fails `is_valid_name` otherwise → *Chat*(0x0AC8421C); a name name-equal to a
+  registered channel-command name (the names of the 26 fixed rows and the Tessera names `say`,
+  `yell`, `emote`, `tell`, `reply`, `retell`, `fellowship`, `ch1`–`ch8`) →
+  *Chat*(0x01919744; 0x7C632DC = name); a second token (a password; `JoinChannel` has none) →
+  *Chat*(0x08DC4764); already in a slot → *Chat*(0x07548D0C; 0x2E8E425 = name); 8 slots used →
+  *Chat*(0x002AAA94; 0x539D = 8); else `JoinChannel { name }`. No rate guard; nothing is shown
+  until `ChannelJoined`.
+- `ChannelJoined { channel }`: name-equal to a slot's name → nothing (debug log); else the
+  lowest free slot *k* takes it and *Chat*(0x09A99A08; 0x4E28A8 = *k*) is posted with mask 0x8;
+  no free slot → dropped with a warning.
+- `part` (exactly 1 token, else usage; mask 0x8): in a slot → `LeaveChannel { the slot's
+  name }` (the slot stays until `ChannelLeft`); not in a slot and name-equal to a
+  channel-command name → *Chat*(0x03C043D4; 0x7C632DC = name); otherwise *Chat*(0x0DF4808C;
+  0x2E8E425 = name).
+- `ChannelLeft { channel }`: in slot *k* → the slot is freed and *Chat*(0x03B095F8; 0x4E28A8 =
+  *k*) is posted with mask 0x8; otherwise nothing (debug log).
+- `channels`: the §15.6 list, argument 0x12E6A6F always *Chat*(0x02E819D4) (no passwords).
+- `ch`*k* and the slot rows (text = the §7.4 arguments): an empty text → usage; a backend
+  without user chat → *Chat*(0x04068445) with mask 0x1; slot *k* free → *Chat*(0x0E2A7CE8;
+  0x539D = *k*) with mask 0x8; else `Chat { Named { slot k's name }, text }`.
+- `chsay`: no token → usage; the first token is the name; not in a slot → *Chat*(0x02E32555;
+  0x2E8E425 = name), mask 0x8; the text is the remaining tokens joined with one U+0020; an
+  empty text → usage; else as `ch`*k* for that slot.
+- `Disconnected` and every new world entry free all slots without lines.
+
+**CT6 The instant-message tab.** Created by §4.6 when `GOP_FullIRCMode` is true (default from
+`GameplayOptionDefaults`; Tessera's settings may override it, as they may
+`GOP_AutoCreateIMSessions`). Its sessions follow §15.4 with these changes: sessions are keyed
+by the partner's name (name-equal; the session layer has no instance IDs), so step 1 looks up
+by name only; the partner of a CT1 `Tell` line is `peer`; the speaker of step 5 is *S* for an
+incoming line and P for an own line; 0x58E15 is the local time as §5.4's Tessera rule formats
+it; the line is appended only to the session's log (the normal tabs got CT1's line); a row
+that gets a line while not shown shows its unread marker until it is shown (Q25). Clicking a
+row shows it and sets the entry's mode to `Tell` with the row's name as target (an empty target
+for the generic row). "Start session" validates the answer with `is_valid_name`
+(*Chat*(0x0EA68129) for an empty answer, else Tessera's words, mask 0x1) and creates and shows
+the row; "close session" removes a row and its log (not the generic row) and shows the generic
+row if it was shown. Tessera posts no failure lines (the session layer reports no failure
+kinds: the sandbox's notice of SF §7.6 and the test server's refusals arrive as `System`
+lines, shown by §10 item 2).
+
+**CT7 The fellowship channel.** The mode is always offered (§15.7). `fellowship` (and the
+fixed row): an empty text → usage; the current fellowship (SP §9 TR2: the member list of the
+last `FellowshipChanged`, empty at world entry) empty → *Fellowship*(0x06358717) with mask
+0x1, nothing sent; else `Chat { Fellowship, text }`. The "group" variants are never used (no
+monster play).
+
+**CT8 Ignore filter.** The ignore list is the names of the last `IgnoreList` (empty at world
+entry, cleared on `Disconnected`). A `ChatMessage` on `Say`, `Yell`, `Emote`, `Tell`,
+`Fellowship` or `Named` whose *S* is name-equal to an ignored name, and that is not the
+player's own (*S* not name-equal P), is dropped before every log, the instant-message tab,
+sounds, plugin events, the reply target and the recent names; nothing is shown. `System`
+lines are never dropped, and tells **to** an ignored name are not blocked. Tessera filters on
+the client because its sessions do not (D24: the test server runs no gameplay rules, the feed
+is scripted); the visible result is the original's (§15.8). Tessera never posts
+*Chat*(0x0B891524). `GOP_AcceptFriendsAndGuildMemberTellsOnly` is not applied (Q27).
+
+**CT9 Friend notices.** Tessera keeps the entries of the last `FriendList` (reset on
+`Disconnected`). The first `FriendList` after a world entry posts nothing. For every later
+one, each entry of the new list, in list order, that is name-equal to an entry of the previous
+list with a different `online` posts *Chat*(0x0A29AFC5; 0x52615 = the name as the new list
+spells it) when it became online and *Chat*(0x010538E5; 0x52615 = name) when it went offline,
+mask 0x8. Added and removed names post no online or offline notice.
+
+**CT10 Plugins.** Each line that CT1–CT9 append to the logs is delivered once to
+`Turbine.Chat.Received` by §10 item 9, with the rendered text and the chat type of its mask by
+the Q18 rule (6 for tells and 0x21 lines, 11, 28–31 and 39–42, 4, 1); the instant-message
+tab's copy is not delivered again; dropped lines are not delivered.
+
+**CT11 Backends.**
+- Scenario feed: the `say … channel=tell|fellowship|named:NAME`, `system`, `channel join|leave`,
+  `fellowship`, `friends` and `ignore` steps (SF §6.4) feed CT1, CT5, CT7–CT9; the generic chat
+  answer (SF §7.6) is the session echo of CT1.
+- Plain sandbox without a scenario: SF §9.5 accepts and ignores `JoinChannel` and
+  `LeaveChannel`, so no slot is ever filled; a `Named` or `Fellowship` send is echoed (SF §7.6)
+  and shown by CT1 only for a name in a slot.
+- Test server (`--server`) and the overlay backend: `Tell` works (TP §10); user chat is
+  unavailable: `join` and the user-channel sends post *Chat*(0x04068445) (mask 0x8 for
+  `join`, 0x1 for sends) and send nothing; the fellowship refusal of CT7 applies since no
+  `FellowshipChanged` arrives (SF §9.5). `part` and `channels` work on the (empty) slots.
+
+> **OPEN (implementation, P4 client, 2026-10-11):** (a) CT11's test-server row predates
+> decision 0035: with protocol 1.2 (`tessera-protocol.md` §10.6, `scenario-feed.md` §9.8) the
+> test server offers user chat channels. `tessera-client` treats a test-server session as a
+> backend with user chat when the negotiated minor is 2 or more and the server advertised
+> `CHAT_CHANNELS` (`join`, the slot rows and `chsay` then send), and as one without it
+> otherwise (CT11's lines). Please revise CT11. (b) CT6's argument 0x58E15 is "the local time
+> as §5.4's Tessera rule formats it"; the client has no time-zone database and writes the UTC
+> time of day as `HH:MM:SS`. (c) A line CT1 drops for a channel in no slot is not shown in the
+> walker's overlay either; the derived lines of CT5, CT9 and `social-panels.md` TR4 are chat
+> lines only, never HUD notices.
+
+**CT12 Templates.** Lines are rendered from the install's string tables at run time (ST §7)
+with the argument IDs given. The argument 0x4DD4 (an instance ID) cannot be filled from the
+session layer, so the `Select` link markup (ST §4.8) around the name is removed and its label,
+the name, kept. Values from the session (names, channel names, text) are inserted as literal
+text: neither the message grammar nor markup inside them is interpreted (TP §10.5; ST §4.6
+escapes and the `<<>` literal of ST §4.8). The trailing line break of a template is removed by
+the line element (§5.1). When a template is missing (no install, another language without the
+token), Tessera's own wording with the same mask is used.
 
 ---
 
@@ -1410,6 +2060,7 @@ apply them.
 
 | Date | Change |
 |---|---|
+| 2026-10-11 | Revision 4 (status Accepted → Revised, awaiting review; spec writer, dirty room; P4 social chat, decision 0024). **New section §15** (anchors s15, s15-1 … s15-10): sending tells, the `Tell` mode, reply and retell (§15.2); tell lines in the normal tabs (§15.3); the instant-message tab and its sessions, answering Q5 in part (§15.4); tell refusals and failures (§15.5); user chat channels: commands, 8 slots and their chat types, join, leave and list checks and lines, limits 8, 50, 20, sending and the local echo (§15.6); the fellowship channel (§15.7); the ignore list and incoming chat (§15.8); friend notices (§15.9); Tessera rules CT1–CT12 on the decision-0020 dispatcher and the scenario-feed events and commands (§15.10). **New sources:** OBS3, OBS-S (the script library read as data with the repository's decoder) and BIN2 (M4, same build) in §1; rows CW43–CW57. **Correction:** the §6.5 mode table had the reply and retell parentheticals against the wrong tokens; 0x0A48C3E9 is the reply entry (callback 0x01D60032), 0x048CE78C the retell entry (callback 0x01D60030) (CW43). **Narrowed:** Q5 (§4.6), Q11 (§6.4), Q12 (§6.5: a plain `Tell` word empties the target; the variant test also picks the "group" lines), Q15 (§8.1: one script body registers 79 entries). **Pointers** added to §10 items 1, 2, 3 and 8 (no rule of them deleted; CT1–CT4 and CT6 override them for the P4 lines as stated). **Added:** §11.9–§11.14, CW-I17–CW-I30, Q20–Q28, six §14 rows (`social-panels.md` TR5 superseded for online and offline notices). No other fact of revision 3 changed; section numbers and anchors kept. |
 | 2026-10-06 | Revision 2, corrections after review (status stays Revised, awaiting review; no fact about the original changed; section numbers kept). **§10 item 9:** queued `Received` delivery now skips the apartments named by the skip rule of `lua-plugin-api.md` §11.3 (so a `WriteLine` in a `Received` handler never reaches its own apartment and an echoing plugin cannot feed itself); LPA §11.3 is the single statement of that rule and governs; the earlier "this spec does not settle it" is withdrawn; `WriteLine` lines named among the queued lines. **§6.2:** a declined command going on to game code cites IB D7 instead of IB Options 4. **§14:** the LPA §11.3 timing row mentions the skip rule. |
 | 2026-10-09 | Revision 3 (status Accepted → Revised, awaiting review; spec writer, dirty room). Answers the implementer OPENs of 2026-10-08 (client command dispatcher, items (a)–(g)) and 2026-10-09 (chat window on the dispatcher, items (a)–(e)) in §10 and the two implementation OPENs of §6.5 (the `tessera-ui` command-word rule, confirmed as a Tessera rule while Q12 is open, and the 2026-10-08 mode-table note); the four callouts are marked Answered. **New data fact:** CW42 (OBS2): the `CommandSetup` and `Commands` entries with token 0x04DA4989 hold the same single name in this install. **Revised Tessera rules:** §10 item 2 (plain text goes through the dispatcher to the session, whose echo is the line shown; no local echo; refusal without a session; line types of Tessera's own lines), §10 item 3 (only the 26 fixed mode-table rows; the default word registered as a `Say` word; the install's names registered after the tables are read and before any plugin loads; no plugin-host command table). **New Tessera rules:** §10 item 11 (submit order and its condition, timing in the frame loop, quickslot aliases, where replies go, one shared read of the mode table), item 12 (case folding, code-unit positions and why whole-character removal is equivalent, bounds, `tell` arguments, wording), item 13 (history sources). New provenance tags OBS2 and D20. No fact about the original changed; section numbers kept. |
 | 2026-10-06 | Revision 2 (status Accepted → Revised, awaiting review; applies the accepted decision records [0014](../decisions/0014-ui-input-bridge.md) (**IB**) and [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers kept). **Reworded Tessera rule:** §10 item 5, the mapping of the entry's Tessera actions: `open_chat` = `AcceptInput`, `menu` = `EscapeKey`, `text_line_up/down` = `CursorPreviousLine/NextLine` replace the retired `text_submit`, `text_cancel` and `text_history_prev/next` (IB D2). **Cross-references added:** §6.2 (the commands come from `text_entry` with focus and from Tessera's `ui.chat_log` without it; a declined command goes on to game code unchanged), §6.3 (history reads the line actions), §6.4 (Subset modifier policy lets Shift or Ctrl reach the window), §9 and §10 item 2 (plugin delivery time). **New Tessera items:** §10 item 9 (`Turbine.Chat.Received` is queued and delivered in frame-loop step 7, IB D8, Known difference 21; the interaction with LPA §9.6 is left to IB open review item 1) and §10 item 10 (paging without entry focus through `ui.chat_log`, IB D5, Known difference 17). **New OPEN:** Q19 (which input map supplies the paging commands without entry focus), §6.2 and §13. **§1:** provenance tag IB, UR; header companion entry. **§14:** the `keymap.md` §8 row now records the change; new row for `lua-plugin-api.md` §11.3. UR requires no change here (the chat log's repaint is its content event). |

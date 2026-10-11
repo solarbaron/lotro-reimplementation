@@ -28,6 +28,7 @@ use crate::apartment::Apartment;
 use crate::gameplay::PLACEHOLDER_SKILL_NAME;
 use crate::inventory::{new_object, weak_table, with_payload};
 use crate::object::{Payload, native_class_of};
+use crate::party::{self, MemberLink};
 use crate::shared::{ApartmentCtx, lock};
 
 // ---------------------------------------------------------------------------------------
@@ -1169,12 +1170,17 @@ enum Owner {
     /// The player, whatever its entity is at the call.
     LocalPlayer,
     Entity(u64),
+    /// A `PartyMember`: its member's entity at the call (`ListObj::member`), none for a
+    /// member without one (§15.4).
+    Member,
 }
 
 /// Payload of an `EffectList`.
 struct ListObj {
     owner: Owner,
     created: u64,
+    /// The `PartyMember` link of an [`Owner::Member`] list.
+    member: Option<Arc<MemberLink>>,
 }
 
 /// Payload of an `Effect`.
@@ -1319,7 +1325,8 @@ fn entity_object(lua: &Lua, ctx: &ApartmentCtx, id: u64) -> mlua::Result<Value> 
 }
 
 /// `Actor:GetTarget()` (§15.2): for the `LocalPlayer` (`is_player`) the selection, for an
-/// entity object its target; nil for other objects.
+/// entity object its target, for a `PartyMember` the target of its member's entity (§15.4;
+/// nil for a member without one); nil for other objects.
 pub(crate) fn target(
     lua: &Lua,
     ctx: &ApartmentCtx,
@@ -1329,7 +1336,13 @@ pub(crate) fn target(
     let values = if is_player {
         player_values(ctx)
     } else {
-        entity_values(lua, ctx, this)?
+        match entity_values(lua, ctx, this)? {
+            Some(v) => Some(v),
+            None => party::member_link(lua, this)?
+                .and_then(|m| m.entity(ctx))
+                .zip(source(ctx))
+                .and_then(|(id, s)| s.actor(id).or_else(|| s.last_actor(id))),
+        }
     };
     match values.and_then(|v| v.target) {
         Some(id) => entity_object(lua, ctx, id),
@@ -1338,7 +1351,7 @@ pub(crate) fn target(
 }
 
 /// `Actor:GetEffects()` (§15.2): one `EffectList` per actor object. `None` for an object
-/// that is neither the `LocalPlayer` nor an entity object.
+/// that is neither the `LocalPlayer`, an entity object nor a `PartyMember`.
 pub(crate) fn effects(
     lua: &Lua,
     ctx: &ApartmentCtx,
@@ -1356,13 +1369,20 @@ pub(crate) fn effects(
             Payload(Arc::new(ListObj {
                 owner: Owner::LocalPlayer,
                 created: current_seq(ctx),
+                member: None,
             })),
         )?;
         lua.set_named_registry_value(PLAYER_LIST_KEY, t.clone())?;
         return Ok(Some(t));
     }
-    let Some(id) = with_payload(lua, this, |p: &EntityObj| p.id)? else {
-        return Ok(None);
+    // An entity object's list, or a `PartyMember`'s (§15.4: the `Actor` getters of the
+    // member's entity; one list per member object, read live, with no events of its own).
+    let (owner, member) = match with_payload(lua, this, |p: &EntityObj| p.id)? {
+        Some(id) => (Owner::Entity(id), None),
+        None => match party::member_link(lua, this)? {
+            Some(link) => (Owner::Member, Some(link)),
+            None => return Ok(None),
+        },
     };
     let lists: Table = lua.named_registry_value(LISTS_KEY)?;
     if let Value::Table(t) = lists.raw_get::<Value>(this.clone())? {
@@ -1372,8 +1392,9 @@ pub(crate) fn effects(
         lua,
         &cls,
         Payload(Arc::new(ListObj {
-            owner: Owner::Entity(id),
+            owner,
             created: current_seq(ctx),
+            member,
         })),
     )?;
     lists.raw_set(this.clone(), t.clone())?;
@@ -1382,12 +1403,12 @@ pub(crate) fn effects(
 
 /// The entity an `EffectList` shows now (`None`: an empty list).
 fn list_entity(lua: &Lua, ctx: &ApartmentCtx, this: &Table) -> mlua::Result<Option<u64>> {
-    Ok(
-        with_payload(lua, this, |p: &ListObj| p.owner)?.and_then(|o| match o {
-            Owner::LocalPlayer => source(ctx).and_then(|s| s.player()),
-            Owner::Entity(id) => Some(id),
-        }),
-    )
+    Ok(with_payload(lua, this, |p: &ListObj| match p.owner {
+        Owner::LocalPlayer => source(ctx).and_then(|s| s.player()),
+        Owner::Entity(id) => Some(id),
+        Owner::Member => p.member.as_ref().and_then(|m| m.entity(ctx)),
+    })?
+    .flatten())
 }
 
 fn effect_key(entity: u64, id: u32) -> String {

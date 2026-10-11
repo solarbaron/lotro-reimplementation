@@ -14,9 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tessera_plugins::{
-    CoreHost, DataScope, FellowshipMember, GameplayEvent, HostApi, LocalPlayerEvent,
-    LocalPlayerInfo, LocalPlayerSource, ManagerConfig, MemberActorInfo, PartyActorSource,
-    PartyPlayer, PartyViewEvent, PluginDataLocation, PluginManager, ScriptErrorReport, mlua,
+    ActorKind, CombatModel, CombatSource, CoreHost, DataScope, EffectData, FellowshipMember,
+    GameplayEvent, HostApi, LocalPlayerEvent, LocalPlayerInfo, LocalPlayerSource, ManagerConfig,
+    MemberActorInfo, PartyActorSource, PartyPlayer, PartyViewEvent, PluginDataLocation,
+    PluginManager, ScriptErrorReport, mlua,
 };
 
 // ---------------------------------------------------------------------------------------
@@ -552,6 +553,92 @@ fn member_identity_and_values() {
             tostring(T.P:GetParty():IsMember(T.Brin)), tostring(T.Brin:GetParty()) }, ' ')",
     );
     assert_eq!(s, "true nil false nil");
+    fx.assert_no_errors();
+}
+
+/// §15.4 (`PartyMember:GetTarget()`, `GetEffects()`): the §15.2 `Actor` getters of the
+/// member's entity, live from the client's combat state; a member without an entity
+/// answers nil and an empty list; a member who left keeps its last entity.
+#[test]
+fn member_target_and_effects_follow_the_entity() {
+    let fx = Fx::new();
+    fx.plugin("Party", None, LOGGER);
+    let mut m = fx.manager();
+    let model = Arc::new(Mutex::new(CombatModel::new()));
+    let src: Arc<dyn CombatSource> = model.clone();
+    m.set_combat_source(Some(src));
+    m.load_plugin("Party").unwrap();
+    let ev = {
+        let mut c = model.lock().unwrap();
+        let mut ev = c.world_entered(TAM, "Tam", Some(20));
+        c.entity_spawned(BRIN, ActorKind::Player, "Brin");
+        c.entity_spawned(CAEL, ActorKind::Player, "Cael");
+        ev.extend(c.target_changed(BRIN, Some(CAEL)));
+        ev.extend(c.effect_applied(
+            BRIN,
+            EffectData {
+                id: 7,
+                name: "Ward".into(),
+                ..EffectData::default()
+            },
+        ));
+        ev
+    };
+    m.raise_combat_events(ev);
+    let mut members = list(&[TAM, BRIN, CAEL], Some(TAM));
+    members.push(FellowshipMember {
+        name: "Dorn".into(),
+        entity: None,
+        leader: false,
+    });
+    let _ = m.set_fellowship(&members, &tam());
+    m.pump();
+    let s: String = eval(
+        &m,
+        "Default",
+        "local p = T.P:GetParty() local b = p:GetMember(2) local d = p:GetMember(4)
+        T.Brin = b
+        T.BE = b:GetEffects()
+        local t = b:GetTarget()
+        return table.concat({ t:GetName(), tostring(t:IsA(Turbine.Gameplay.Player)),
+            T.BE:GetCount(), T.BE:Get(1):GetName(), tostring(T.BE == b:GetEffects()),
+            tostring(T.BE:Contains(T.BE:Get(1))), tostring(d:GetTarget()),
+            d:GetEffects():GetCount(), tostring(d:GetEffects() == d:GetEffects()),
+            tostring(d:GetEffects() ~= T.BE) }, ' ')",
+    );
+    assert_eq!(s, "Cael true 1 Ward true true nil 0 true true");
+
+    // Live: a later effect and target change are read at the call.
+    let ev = {
+        let mut c = model.lock().unwrap();
+        let mut ev = c.effect_applied(
+            BRIN,
+            EffectData {
+                id: 8,
+                name: "Haste".into(),
+                ..EffectData::default()
+            },
+        );
+        ev.extend(c.target_changed(BRIN, None));
+        ev
+    };
+    m.raise_combat_events(ev);
+    m.pump();
+    let s: String = eval(
+        &m,
+        "Default",
+        "return table.concat({ T.BE:GetCount(), tostring(T.Brin:GetTarget()) }, ' ')",
+    );
+    assert_eq!(s, "2 nil");
+
+    // Brin leaves: the object keeps its entity, so its list still shows Brin's effects.
+    step(&mut m, &[TAM, CAEL], Some(TAM));
+    let s: String = eval(
+        &m,
+        "Default",
+        "return table.concat({ T.BE:GetCount(), T.Brin:GetEffects():GetCount() }, ' ')",
+    );
+    assert_eq!(s, "2 2");
     fx.assert_no_errors();
 }
 

@@ -357,6 +357,39 @@ struct MemberPayload {
     episode: u64,
     name: String,
     last: Mutex<MemberActorInfo>,
+    link: Arc<MemberLink>,
+}
+
+/// Which entity a `PartyMember` object stands for (§15.4: its `GetTarget()` and
+/// `GetEffects()` are the §15.2 `Actor` getters of the member's entity). Shared with the
+/// object's `EffectList`; holds no Lua value.
+#[derive(Debug)]
+pub(crate) struct MemberLink {
+    episode: u64,
+    name: String,
+    /// The last entity seen while the name was in its episode's list.
+    entity: Mutex<Option<u64>>,
+}
+
+impl MemberLink {
+    /// The member's entity: while the name is in the current list of its episode, the
+    /// list's entity (`None` for a member without one), else the last one seen (an object
+    /// outlives its membership and answers with the last values seen, §15.4).
+    pub(crate) fn entity(&self, ctx: &ApartmentCtx) -> Option<u64> {
+        let mut last = lock(&self.entity);
+        let now = with_model(ctx, |m| {
+            if m.episode() == Some(self.episode) {
+                m.entity_of(&self.name)
+            } else {
+                None
+            }
+        })
+        .flatten();
+        if let Some(now) = now {
+            *last = now;
+        }
+        *last
+    }
 }
 
 /// Recognises the apartment's `LocalPlayer` instance.
@@ -493,6 +526,11 @@ fn member_object(
                 episode,
                 name: name.to_owned(),
                 last: Mutex::new(initial),
+                link: Arc::new(MemberLink {
+                    episode,
+                    name: name.to_owned(),
+                    entity: Mutex::new(None),
+                }),
             })),
         )?
     };
@@ -647,6 +685,12 @@ pub(crate) fn member_actor(
         }
         *last
     })
+}
+
+/// The entity link of the `PartyMember` object `this`, or `None` when `this` is not one
+/// (for `Actor:GetTarget()` and `Actor:GetEffects()`, §15.4).
+pub(crate) fn member_link(lua: &Lua, this: &Table) -> mlua::Result<Option<Arc<MemberLink>>> {
+    with_payload(lua, this, |m: &MemberPayload| Arc::clone(&m.link))
 }
 
 /// `Player:GetParty()` of the `PartyMember` object `this`: `None` when `this` is not

@@ -1070,9 +1070,15 @@ built):
 > be created gets the fallback coin element of `npc-windows.md`'s implementation; (5) the
 > P4 portrait's elements are hidden again whenever the client binds a newly built P4.
 > Not yet built on `p4` although `combat-ui.md` has reached the branch with the merge of
-> `main`: TR16's effect icons on member rows (the interim, no icons, still applies) and the
-> `PartyMember` getters `GetTarget` and `GetEffects` by §15.2 (`lua-plugin-api.md` §15.4
-> "Further rules" item 2's interim still applies).
+> `main`: TR16's effect icons on member rows (the interim, no icons, still applies).
+> Built since (2026-10-11): the `PartyMember` getters `GetTarget` and `GetEffects` follow
+> §15.2 for the member's entity (`lua-plugin-api.md` §15.4 table row). Engineering choices
+> for the next revision to confirm: (6) the member's `EffectList` is its own object (one per
+> `PartyMember`, §15.2 "one per actor object"), reads the member's entity at each call and
+> receives no `EffectAdded`/`EffectRemoved`/`EffectsCleared` of its own (§15.4: "`PartyMember`
+> objects fire no events of their own"; the entity object's list gets them); (7) a member who
+> left keeps the last entity seen, so its `GetTarget()` and list still follow that entity
+> while the client knows it.
 
 ---
 

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Revised (revision 1 answers review 1; awaiting re-review by an independent session) |
+| **Status** | Accepted (review 2, 2026-10-11, of revision 1) |
 | **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Review 1 (2026-10-11): a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of `npc-windows.md`, of the P3 notes in other specs or of the P3 code. Re-review pending (an independent session). |
-| **Review record** | **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). **2026-10-11, revision 1** (spec writer, own read-only probes): B1–B3 answered (§9 census restated under §5.2 step 2.2 and its implementer OPEN answered; §7.2 billboard count scoped; new OBS row QJ25 for the §4.7 and §4.9 layout facts); review notes 3 and 4 applied. Status Revised. First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
+| **Reviewer** | Review 1 (2026-10-11): a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of `npc-windows.md`, of the P3 notes in other specs or of the P3 code. Review 2 (2026-10-11): a separate Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of revision 1, of review 1, of the companion notes or of the P3 code. |
+| **Review record** | **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). **2026-10-11, revision 1** (spec writer, own read-only probes): B1–B3 answered (§9 census restated under §5.2 step 2.2 and its implementer OPEN answered; §7.2 billboard count scoped; new OBS row QJ25 for the §4.7 and §4.9 layout facts); review notes 3 and 4 applied. Status Revised. **2026-10-11, review 2** of revision 1 (e752dc2): **passed**, status Accepted. Record: [Review record, review 2](#review-2026-10-11-2). First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
 | **Implements into** | `crates/gamedata` (`quest` module: log entries, categories and order, title and level, display texts, objective text and counter values, reward rows shown, tracker entries, ring and marker choices, the per-record census of §9), `crates/ui` (game widgets and fallback widgets of the types named here: quest tree, quest display, quest objectives list, quest tracker, history window, map and radar quest notes), `apps/client` (the quest log and tracker panels, their commands to the session, `--open-panel` names, quest lines in chat, rings over NPCs in the walker, quest markers on the minimap and the world map) |
 | **Companion specs** | [`quests.md`](quests.md) (§2–§7 records, objectives, roles; §4.3 effective level; §9 rewards; §10 deeds; §11 arcs), [`npc-windows.md`](npc-windows.md) (§5.5 player variables, §6.2–§6.3 objective and reward blocks), [`scenario-feed.md`](scenario-feed.md) (revision 4 Accepted, revision 5 by the P3 NPC-window writer: §5.2, §6.3, §6.5, §7.6, §9.2, §9.4), [`string-table.md`](string-table.md) (§3.2 argument IDs, §7 rendering, §8.3 substitution, §9 StringInfo), [`ui-layout.md`](ui-layout.md) (§17 panels P9 and P11), [`game-panels.md`](game-panels.md) (§4 drag boxes, §6 `HideWhenField`, §8 radar, §9 world map), [`map-data.md`](map-data.md) (§4.8 note icon tables), [`chat-window.md`](chat-window.md) (§4.3, §5.1 chat types and lines), [`game-controls.md`](game-controls.md) (§7.5 consideration tables), [`script-table.md`](script-table.md) (§8.2 script-key lookup), [`particle-runtime.md`](particle-runtime.md) (effects started by script keys), [`property-system.md`](property-system.md) (§7 enum display texts) |
 
@@ -1119,6 +1119,7 @@ The rows are O118–O124 of `docs/checklists/owner-observations.md` (numbered af
 | 2026-10-10 | First version (Review), for decision 0024 P3. |
 | 2026-10-11 | Review 1 (spec reviewer, separate session): changes requested; record below. No normative text changed; status stays Review. |
 | 2026-10-11 | Revision 1 (spec writer), status Revised. **B1:** §9 `ObjectiveWithoutLines` row, event figures and lines-per-objective distribution recounted under §5.2 step 2.2 (1,493 objectives in 1,238 quests; 98 without description; 49,969 events and 3,143 compound overrides, 47,715 lines; 1,636 shown events without override); the §9 implementer OPEN answered (§5.2 step 2.2 stands); §5.3 and §14 Q1 use 1,636; QJ22 extended. No rule changed. **B2:** §7.2 census restated with its scopes (25,868 over quests and deeds, 23,207 quests, 2,661 deeds; 23,092 / 2,656 without an objective billboard override; 21,645 = quest objectives without an objective progress override); QJ18 extended. No rule changed. **B3:** new OBS row QJ25 for the layout facts of §4.7 and §4.9 (re-observed 2026-10-11, including the `UILAYOUT` keys); §4.7 and §4.9 headings cite it; QJ7 points to it. Review notes 3 (§4.7 OPEN cites O119, not O113) and 4 (§13's stale OPEN replaced by the row reference) applied. Notes 1, 2, 5, 6 and 7 remain for a later revision. Behaviour already implemented on branch `p3`: none of these changes alters it (`tessera-gamedata` already counts by §5.2; the other changes are census scope and provenance). |
+| 2026-10-11 | Review 2 (spec reviewer, separate session) of revision 1: passed; status Revised → Accepted. Record below. No normative text changed. |
 
 <a id="review-2026-10-11"></a>
 ## Review record (2026-10-11, review 1)
@@ -1197,3 +1198,55 @@ text (worked examples are synthetic and marked so; tokens and argument IDs only)
 not applicable beyond the layout tables, which give rects and units (pixels); invariants QI1–QI7
 are testable; unknowns are OPEN; nothing touches a closed gate (no network, login or launcher
 code was read, decision 0004).
+
+<a id="review-2026-10-11-2"></a>
+## Review record (2026-10-11, review 2)
+
+**Reviewer:** a separate Claude session in the spec-reviewer role (Clean-Room-Role: review)
+that wrote no part of this spec, of revision 1, of review 1, of the companion notes or of the
+P3 code. **Scope:** revision 1 (e752dc2) of this file, read whole, with the companion notes in
+`quests.md` §18, `game-panels.md` §8.8 and §9.3 and `chat-window.md` §4.7 as committed in
+b62d0ae (unchanged since), against CLEAN_ROOM.md §5.3. **Result: passed; status Accepted.**
+
+**Blocking findings of review 1.**
+
+- **B1 answered.** Own read-only probe (M1) over all 20,807 quest records, counting under §5.2
+  step 2.2 (a compound with `QuestEvent_CompoundProgressOverride` gives one line, its members
+  none; an objective-level progress override gives one line): 15,400 quests and 5,407 deeds;
+  43,319 objectives, 2,054 with an objective progress override; in the other 41,265, 5,375
+  compounds, 3,143 with an override (7,099 members, every override found, none failing to
+  look up); 49,969 other events giving 44,572 lines, 165 / 3,596 / 1,636 by override and show
+  flag; 47,715 lines; lines per objective 0 for 1,493, 1 for 37,226, 2 for 3,041, 3 for 885,
+  more for 674 (60 with 10 or more); 1,493 objectives without a line in 1,238 quests, 98 of
+  them without a description. All as stated in §9, §5.3 and §14 Q1.
+- **B2 answered.** Same probe: shown billboard overrides 25,868 over every record, 23,207 in
+  quests, 2,661 in deeds; 23,092 and 2,656 in objectives without an objective billboard
+  override; 651 quest and 8 deed objectives with one; 21,645 in quest objectives without an
+  objective progress override. All as stated in §7.2.
+- **B3 answered.** QJ25 added. Own read-only layout probe: `UILAYOUT` keys 0x10000054 →
+  0x22000067 (`questdisplay`), 0x100000CF → 0x22000842 (`questobjectives`), 0x1000006C →
+  0x22000044 (`questhistory`); the `questdisplay` header field (base, 410 × 92, the eight
+  header-icon states), the grey markup texts, the title format token 0x0108CAB5;
+  `QuestObjectives_Objective` (bullet 0x41007E02, markup on, not one line),
+  `QuestObjectives_TokenDisplay` with a medium item display; `QuestHistoryField` 448 × 475,
+  `QuestHistory_ListBox` (display type 2, bestowal true, rewards false) and the title token
+  0x06C3490C: as stated in §4.7, §4.9 and QJ25.
+
+No new BIN fact was added by revision 1, so no new M4 check was needed; review 1's M4 spot
+checks (QJ3, QJ4) stand.
+
+**Non-blocking (for a later revision; none changes implemented behaviour on `p3`).**
+
+1. Review 1's notes 1, 2, 5, 6 and 7 remain open, as revision 1 says; the implementer OPENs
+   of §3, §4.6, §4.7, §4.8, §6.6, §8.2 and §8.3 remain for the writer.
+2. QJ25 lists the `questobjectives` key and DID, but §4.7 names only the layout label; an
+   implementation finds it by label, so nothing is missing.
+3. Process: the status went Review → Revised for a spec that was never Accepted
+   (CLEAN_ROOM.md §5.2 reserves Revised for a changed Accepted spec); harmless, now Accepted.
+
+**Checklist (§5.3):** functional facts only; no code or pseudo-code (class and slot numbers
+are references, the algorithms are prose); no copied prose or non-interoperability names (the
+naming note covers the install's labels); no game text (tokens, argument IDs, synthetic
+examples); every fact has a provenance row with a mark (QJ1–QJ25); layout tables give rects in
+pixels; invariants QI1–QI7 are testable; unknowns are OPEN (§14 Q1–Q11 and the implementer
+OPENs); nothing falls under a closed gate (decision 0004, no network or login code read).

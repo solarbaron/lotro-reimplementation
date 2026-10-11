@@ -962,15 +962,19 @@ impl Chat {
         let Some(row) = self.modes.switch_word(&text).cloned() else {
             return;
         };
-        // Step 3 (revision 4, CW44, CT3): a reply word takes the reply target, a retell
-        // word the retell target, a plain `Tell` word an empty target; other words leave
-        // the target unchanged.
+        // Step 3 (revision 4 fixes, CW44, CT3, CW-I31): a reply word takes the reply
+        // target, a retell word the retell target (empty when there is none); a plain
+        // `Tell` word switches nothing (mode, target and entry text, with its typed space,
+        // stay, so the line is submitted as a command line); every other word empties the
+        // target.
         if row.chat_type == TELL {
             self.target = match row.kind {
                 ModeKind::Reply => self.tells.reply.clone().unwrap_or_default(),
                 ModeKind::TellAgain => self.tells.retell.clone().unwrap_or_default(),
-                ModeKind::Plain => String::new(),
+                ModeKind::Plain => return,
             };
+        } else {
+            self.target.clear();
         }
         self.previous_mode = self.mode;
         self.mode = row.chat_type;

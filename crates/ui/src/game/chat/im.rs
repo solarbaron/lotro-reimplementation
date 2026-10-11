@@ -246,24 +246,24 @@ impl ImSessions {
     }
 
     /// A CT1 `Tell` line's instant-message line (§15.4 steps 1–5 with CT6). `time` is the
-    /// local time text (§5.4's Tessera rule). Returns where it went and, when the shown
-    /// row was renamed, its new name for the `Tell` mode (step 4).
-    pub fn deliver(&mut self, line: &ImLine, time: &str) -> (ImDelivery, Option<String>) {
+    /// time-of-day text (§5.4's Tessera rule, CT6). Returns where it went.
+    ///
+    /// A row found by name whose stored spelling differs (by case only, since the lookup
+    /// is name-equal) takes the line's spelling and moves to its place in name order (CT6,
+    /// revision 4 fixes B3). Nothing goes to the `Tell` mode: delivering a line never
+    /// changes the entry's mode or target (CW-I32). The generic row keeps its label.
+    pub fn deliver(&mut self, line: &ImLine, time: &str) -> ImDelivery {
         let (index, created) = match self.find(&line.partner) {
             Some(i) => (i, false),
             None if self.auto_create => match self.create(&line.partner) {
                 Some(i) => (i, true),
-                None => return (ImDelivery::NotShown, None),
+                None => return ImDelivery::NotShown,
             },
             None => (0, false),
         };
         let mut index = index;
-        let mut renamed = None;
         if index != 0 && self.rows[index].name.as_deref() != Some(line.partner.as_str()) {
             index = self.rename(index, &line.partner);
-            if self.shown == index {
-                renamed = Some(line.partner.clone());
-            }
         }
         let max = self.max_lines;
         let row = &mut self.rows[index];
@@ -279,7 +279,7 @@ impl ImSessions {
         if self.shown != index {
             row.unread = true;
         }
-        (ImDelivery::Row { index, created }, renamed)
+        ImDelivery::Row { index, created }
     }
 
     /// Shows row `i` (a click on its row): clears its unread mark and returns the `Tell`
@@ -343,7 +343,8 @@ impl ImSessions {
 pub struct ImRowElements {
     /// The row (in the session list).
     pub row: ElementKey,
-    /// The row's label (its first text element, else the row).
+    /// The row's label (`IMSessionText`, else its first element that shows text, else the
+    /// row).
     pub label: ElementKey,
     /// The row's unread marker (`UnreadIndicator`).
     pub unread: Option<ElementKey>,
@@ -408,6 +409,21 @@ fn set_list_order(ui: &mut Ui, list: ElementKey, order: Vec<ElementKey>) {
 /// The widget class of an element.
 fn class(ui: &Ui, k: ElementKey) -> Option<WidgetClass> {
     ui.el(k).map(|e| e.class)
+}
+
+/// The element of a session row that shows the partner's name (§15.4 answered callout (a),
+/// CW58, CT6): the element `IMSessionText` (its class comes from its base, a `Button`,
+/// through the layout's base resolution), else the first element below the row that shows
+/// text (a `Text` or a plain `Button`), else the row itself.
+fn row_label(ui: &Ui, row: ElementKey, session_text_id: u32) -> ElementKey {
+    find_below(ui, row, session_text_id)
+        .or_else(|| {
+            subtree(ui, row)
+                .into_iter()
+                .skip(1)
+                .find(|k| matches!(class(ui, *k), Some(WidgetClass::Text | WidgetClass::Button)))
+        })
+        .unwrap_or(row)
 }
 
 /// A positive integer property, else `fallback`.
@@ -574,11 +590,7 @@ impl Chat {
                 .find(|k| class(ui, *k) == Some(WidgetClass::ListBox))
         });
         let line_template = ui.prop(log, self.vocab.pids.chat_log_text_element).key();
-        let label_el = subtree(ui, row)
-            .into_iter()
-            .skip(1)
-            .find(|k| class(ui, *k) == Some(WidgetClass::Text))
-            .unwrap_or(row);
+        let label_el = row_label(ui, row, ids.im_session_text);
         ui.set_text(label_el, Some(label.to_string()));
         let unread = find_below(ui, row, ids.unread_indicator);
         if let Some(u) = unread {
@@ -732,7 +744,7 @@ impl Chat {
     ) -> Option<ImDelivery> {
         let im = self.im.as_mut()?;
         let old: Vec<Option<String>> = im.model.rows().iter().map(|r| r.name.clone()).collect();
-        let (d, renamed) = im.model.deliver(line, time);
+        let d = im.model.deliver(line, time);
         let ImDelivery::Row { index, .. } = d else {
             return Some(d);
         };
@@ -756,9 +768,6 @@ impl Chat {
         }
         if !tab_selected && let Some(u) = tab_unread {
             ui.set_shown(u, true);
-        }
-        if let Some(t) = renamed {
-            self.set_tell_mode(ui, &t);
         }
         Some(d)
     }

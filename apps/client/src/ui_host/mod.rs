@@ -1954,8 +1954,10 @@ pub fn mask_type(mask: u64) -> u32 {
     (64 - mask.leading_zeros()).max(1)
 }
 
-/// The local time text of an instant-message line (`chat-window.md` §5.4 Tessera rule:
-/// 24-hour `HH:MM:SS`). Without a time-zone database the client shows the UTC time of day.
+/// The time-of-day text of an instant-message line (`chat-window.md` §15.10 CT6, §5.4
+/// Tessera rule: 24-hour `HH:MM:SS`). The platform gives the client no local offset (no
+/// time-zone database), so this is the UTC time of day, the known difference accepted in
+/// the §15.10 answered callout (b); §5.4 timestamps, when built, must use this clock too.
 #[must_use]
 pub fn clock_text(now: std::time::SystemTime) -> String {
     let secs = now

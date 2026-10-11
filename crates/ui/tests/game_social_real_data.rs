@@ -372,4 +372,13 @@ fn social_panels_on_the_install() {
     assert!(im_tab.model.max_rows > 1, "CW-I20: max_rows > 0");
     let slog = im_tab.rows[1].list.expect("the session log's list box");
     assert_eq!(ui.list_entries(slog).len(), 1);
+    // The row's name is on its `IMSessionText` element (§15.4 answered callout (a), CW58).
+    assert!(
+        gv.ids.im_session_text < 0xFFFA_0000,
+        "IMSessionText does not resolve"
+    );
+    for (r, want) in im_tab.rows.iter().zip(["G", "Bram"]) {
+        assert_eq!(ui.element_id(r.label), Some(gv.ids.im_session_text));
+        assert_eq!(ui.text_of(r.label), want);
+    }
 }

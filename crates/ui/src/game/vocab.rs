@@ -159,6 +159,9 @@ game_table! {
         log_field_background = ("LogFieldBackground", 0xFFFB_0045),
         /// `ChatEntryBackGround`.
         entry_background = ("ChatEntryBackGround", 0xFFFB_0046),
+        /// `IMSessionText` (the instant-message session row's name, `chat-window.md`
+        /// §15.4, CW58).
+        im_session_text = ("IMSessionText", 0xFFFB_0047),
     }
 }
 

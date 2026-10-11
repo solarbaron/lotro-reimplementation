@@ -102,7 +102,9 @@ fn example_11_9_tell_reply_and_own_echo() {
     let im = im.unwrap();
     assert_eq!((im.partner.as_str(), im.speaker.as_str()), ("Bram", "Ana"));
     assert_eq!(sc.targets().reply.as_deref(), Some("Bram"));
-    // 4. The plain `Tell` mode: `T␠␠Cara hello` tokenizes to `Cara`, `hello`.
+    // 4. The plain tell word switches nothing (CW44); `/T␠Cara hello` is submitted as a
+    //    command line whose arguments are `Cara`, `hello` (the same as `T␠␠Cara hello`
+    //    from the `Tell` mode with an empty target).
     let o = sc.tell(&s(&["Cara", "hello"]));
     assert_eq!(
         o.send,
@@ -254,6 +256,28 @@ fn join_checks_and_chsay() {
     assert_eq!(tok(one(&o)), chat_ref(0x0283_2AE7));
     assert_eq!(arg(one(&o), A::LENGTH), "51");
     assert_eq!(arg(one(&o), A::LIMIT), "50");
+    // Within 50 code units but over the 64-byte name bound: the byte length and the
+    // limit 64 (CT5, revision 4 fixes note (d)).
+    let wide = "\u{8A9E}".repeat(22);
+    let o = sc.join(&[wide]);
+    assert_eq!(tok(one(&o)), chat_ref(0x0283_2AE7));
+    assert_eq!(
+        (arg(one(&o), A::LENGTH), arg(one(&o), A::LIMIT)),
+        ("66".into(), "64".into())
+    );
+    // 50 code units in 25 surrogate pairs (100 bytes): the byte rule.
+    let pairs = "\u{1F600}".repeat(25);
+    let o = sc.join(&[pairs]);
+    assert_eq!(
+        (arg(one(&o), A::LENGTH), arg(one(&o), A::LIMIT)),
+        ("100".into(), "64".into())
+    );
+    // 51 code units: the code-unit rule wins.
+    let o = sc.join(&["\u{8A9E}".repeat(51)]);
+    assert_eq!(
+        (arg(one(&o), A::LENGTH), arg(one(&o), A::LIMIT)),
+        ("51".into(), "50".into())
+    );
     assert_eq!(tok(one(&sc.join(&s(&["a\u{1}b"])))), chat_ref(0x0AC8_421C));
     assert_eq!(tok(one(&sc.join(&s(&["SAYWORD"])))), chat_ref(0x0191_9744));
     assert_eq!(tok(one(&sc.join(&s(&["Ch3"])))), chat_ref(0x0191_9744));
@@ -466,7 +490,7 @@ fn names(m: &ImSessions) -> Vec<Option<String>> {
 fn im_sessions_order_rename_limits_cw_i26_i27() {
     let mut m = ImSessions::new(4, 2, true);
     assert_eq!(
-        m.deliver(&im("Bram", "Bram"), "1").0,
+        m.deliver(&im("Bram", "Bram"), "1"),
         ImDelivery::Row {
             index: 1,
             created: true
@@ -486,9 +510,9 @@ fn im_sessions_order_rename_limits_cw_i26_i27() {
     assert_eq!(m.shown(), 0, "auto-created rows are not shown");
     assert!(m.rows()[1].unread);
     // Full (generic included): the line is not shown in this tab.
-    assert_eq!(m.deliver(&im("Dain", "Dain"), "4").0, ImDelivery::NotShown);
-    // A case-only difference renames the row and keeps the order (CW-I26).
-    let (d, renamed) = m.deliver(&im("bram", "bram"), "5");
+    assert_eq!(m.deliver(&im("Dain", "Dain"), "4"), ImDelivery::NotShown);
+    // A case-only difference takes the line's spelling and keeps the order (CT6, CW-I26).
+    let d = m.deliver(&im("bram", "bram"), "5");
     assert_eq!(
         d,
         ImDelivery::Row {
@@ -496,7 +520,6 @@ fn im_sessions_order_rename_limits_cw_i26_i27() {
             created: false
         }
     );
-    assert!(renamed.is_none(), "not the shown row");
     assert_eq!(
         names(&m),
         vec![
@@ -530,7 +553,7 @@ fn im_sessions_order_rename_limits_cw_i26_i27() {
     // Auto-creation off: the generic row takes the line.
     let mut g = ImSessions::new(4, 8, false);
     assert_eq!(
-        g.deliver(&im("Bram", "Bram"), "1").0,
+        g.deliver(&im("Bram", "Bram"), "1"),
         ImDelivery::Row {
             index: 0,
             created: false
@@ -555,14 +578,17 @@ const IM_PARENT: u32 = 0x1000_4923;
 const IM_ROW: u32 = 0x1000_4924;
 const IM_ROW_LABEL: u32 = 0x1000_4925;
 const IM_SLOG: u32 = 0x1000_4926;
+const IM_ROW_DECOY: u32 = 0x1000_4927;
 
 fn chat_ui() -> (Ui, Chat) {
-    chat_ui_with(IM_SLOG)
+    chat_ui_with(IM_SLOG, false)
 }
 
 /// The synthetic chat window; `row_log` is the element ID the session row names for its
-/// log (an absent ID makes every session row fail).
-fn chat_ui_with(row_log: u32) -> (Ui, Chat) {
+/// log (an absent ID makes every session row fail). With `session_text` the session row
+/// has a decoy `Text` first and then the `IMSessionText` element, a `Button` (CW58);
+/// without it, one `Text` label.
+fn chat_ui_with(row_log: u32, session_text: bool) -> (Ui, Chat) {
     let g = GameVocab::default();
     let ip = ImPids::default();
     let (p, pp, vv, st) = (g.pids, v().pids, v().types, v().states);
@@ -637,14 +663,18 @@ fn chat_ui_with(row_log: u32) -> (Ui, Chat) {
         ),
     );
     im_log = child(im_log, field(IM_PARENT, 0, 0, 200, 150));
+    let mut row_el = field(IM_ROW, 0, 0, 100, 19);
+    if session_text {
+        row_el = child(row_el, typed(IM_ROW_DECOY, vv.text, 0, 0, 10, 19));
+        row_el = child(
+            row_el,
+            typed(g.ids.im_session_text, vv.button, 10, 0, 90, 19),
+        );
+    } else {
+        row_el = child(row_el, typed(IM_ROW_LABEL, vv.text, 0, 0, 100, 19));
+    }
     let im_row = prop(
-        child(
-            child(
-                field(IM_ROW, 0, 0, 100, 19),
-                typed(IM_ROW_LABEL, vv.text, 0, 0, 100, 19),
-            ),
-            field(g.ids.unread_indicator, 0, 0, 8, 8),
-        ),
+        child(row_el, field(g.ids.unread_indicator, 0, 0, 8, 8)),
         ip.tab_log,
         en(row_log),
     );
@@ -728,11 +758,61 @@ fn mode_words_take_reply_and_retell_targets() {
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
     type_text(&mut ui, &mut chat, "/RT ");
     assert_eq!(chat.target, "Cara");
-    // The plain tell word: an empty target (CW44).
+    // A word of another row empties the target (CW44, CW-I31).
     chat.command(&mut ui, "EscapeKey", false, false, &mut h);
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+    type_text(&mut ui, &mut chat, "/F ");
+    assert_eq!((chat.mode, chat.target.as_str()), (11, ""));
+    assert_eq!(ui.text_of(entry), "");
+    // The plain tell word switches nothing: mode, target and entry text (with the typed
+    // space) stay (revision 4 fixes B1, CW44, CW-I31).
+    chat.command(&mut ui, "EscapeKey", false, false, &mut h);
+    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+    type_text(&mut ui, &mut chat, "/R ");
+    assert_eq!((chat.mode, chat.target.as_str()), (6, "Bram"));
+    chat.command(&mut ui, "EscapeKey", false, false, &mut h);
+    chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+    let before = (chat.mode, chat.target.clone());
     type_text(&mut ui, &mut chat, "/T ");
-    assert_eq!((chat.mode, chat.target.as_str()), (6, ""));
+    assert_eq!((chat.mode, chat.target.clone()), before);
+    assert_eq!(ui.text_of(entry), "/T ");
+    // The player completes a command line, which runs `tell` (§11.9 step 4).
+    type_text(&mut ui, &mut chat, "Cara hello");
+    let CommandOutcome::Submitted(l) = chat.command(&mut ui, "AcceptInput", false, false, &mut h)
+    else {
+        panic!("no submit")
+    };
+    assert_eq!(l.text, "/T Cara hello");
+}
+
+/// CW-I31 on any sequence of typed words: a plain tell word never changes the mode, the
+/// target or the entry text; any other mode word clears the entry and sets the target to
+/// the reply or retell name, or empty.
+#[test]
+fn plain_tell_word_switches_nothing_cw_i31() {
+    let (mut ui, mut chat) = chat_ui();
+    let mut sc = SocialChat::new("Ana", true);
+    sc.session_line(Channel::Tell { peer: "Bram" }, Some("Bram"), "hi");
+    chat.set_tell_targets(sc.targets());
+    let mut h = NoHistory;
+    let entry = chat.windows[0].entry.unwrap();
+    for (word, mode, target) in [
+        ("/S ", 5, ""),
+        ("/T ", 5, ""),
+        ("/R ", 6, "Bram"),
+        ("/T ", 6, "Bram"),
+        ("/RT ", 6, ""),
+        ("/T ", 6, ""),
+        ("/F ", 11, ""),
+        ("/T ", 11, ""),
+    ] {
+        chat.command(&mut ui, "EscapeKey", false, false, &mut h);
+        chat.command(&mut ui, "AcceptInput", false, false, &mut h);
+        type_text(&mut ui, &mut chat, word);
+        assert_eq!((chat.mode, chat.target.as_str()), (mode, target), "{word}");
+        let left = if word == "/T " { word } else { "" };
+        assert_eq!(ui.text_of(entry), left, "{word}");
+    }
 }
 
 #[test]
@@ -962,7 +1042,7 @@ proptest! {
 
 #[test]
 fn im_tab_without_its_generic_row_is_not_opened() {
-    let (mut ui, mut chat) = chat_ui_with(0x1000_49FF);
+    let (mut ui, mut chat) = chat_ui_with(0x1000_49FF, false);
     let tabs = chat.windows[0].tab_list.unwrap();
     let before = ui.list_entries(tabs).len();
     assert!(
@@ -994,4 +1074,87 @@ fn im_rows_stay_aligned_with_the_model() {
     assert_eq!(im.rows.len(), im.model.rows().len());
     assert_eq!(im.generic_label, "Everyone");
     assert_eq!(ui.text_of(im.rows[0].label), "Everyone");
+}
+
+/// CW-I32 (revision 4 fixes B3): delivering a `Tell` line never changes the entry's mode or
+/// target, also when the shown row takes a new spelling (CT6: no hand-over); the row moves
+/// to its place in name order and the generic row keeps its label.
+#[test]
+fn im_delivery_never_hands_a_name_over_cw_i32() {
+    let (mut ui, mut chat) = chat_ui();
+    chat.open_im_tab(&mut ui, "Tells", "Everyone", true)
+        .unwrap();
+    for p in ["Bram", "Cara"] {
+        chat.deliver_im(&mut ui, &im_line(p), "t", &mut NoTables)
+            .unwrap();
+    }
+    // Show Bram's row: the `Tell` mode with Bram (CT6).
+    assert_eq!(chat.im_show(&mut ui, 1).as_deref(), Some("Bram"));
+    // Another word moves the mode away; the shown row then takes a new spelling.
+    chat.mode = 5;
+    chat.target.clear();
+    let d = chat
+        .deliver_im(&mut ui, &im_line("bram"), "t", &mut NoTables)
+        .unwrap();
+    assert_eq!(
+        d,
+        ImDelivery::Row {
+            index: 2,
+            created: false
+        }
+    );
+    assert_eq!((chat.mode, chat.target.as_str()), (5, ""), "no hand-over");
+    let im = chat.im.clone().unwrap();
+    assert_eq!(
+        im.model.shown(),
+        2,
+        "the shown row moved with its new spelling"
+    );
+    let labels: Vec<String> = ui
+        .list_entries(im.sessions_list)
+        .iter()
+        .map(|k| {
+            let r = im.rows.iter().find(|r| r.row == *k).unwrap();
+            ui.text_of(r.label)
+        })
+        .collect();
+    assert_eq!(labels, s(&["Everyone", "Cara", "bram"]));
+    // A line for a new partner with auto-creation off goes to the generic row, which keeps
+    // its label and hands nothing over.
+    let (mut ui, mut chat) = chat_ui();
+    chat.open_im_tab(&mut ui, "Tells", "Everyone", false)
+        .unwrap();
+    chat.mode = 5;
+    let d = chat
+        .deliver_im(&mut ui, &im_line("Dain"), "t", &mut NoTables)
+        .unwrap();
+    assert_eq!(
+        d,
+        ImDelivery::Row {
+            index: 0,
+            created: false
+        }
+    );
+    assert_eq!((chat.mode, chat.target.as_str()), (5, ""));
+    let im = chat.im.as_ref().unwrap();
+    assert_eq!(ui.text_of(im.rows[0].label), "Everyone");
+}
+
+/// §15.4 answered callout (a), CW58, CT6: the session row's name goes on its
+/// `IMSessionText` element (a `Button`), not on the first `Text` below the row.
+#[test]
+fn im_row_name_goes_on_the_session_text_element() {
+    let (mut ui, mut chat) = chat_ui_with(IM_SLOG, true);
+    chat.open_im_tab(&mut ui, "Tells", "Everyone", true)
+        .unwrap();
+    chat.deliver_im(&mut ui, &im_line("Bram"), "t", &mut NoTables)
+        .unwrap();
+    let g = GameVocab::default();
+    let im = chat.im.as_ref().unwrap();
+    for (r, want) in im.rows.iter().zip(["Everyone", "Bram"]) {
+        assert_eq!(ui.element_id(r.label), Some(g.ids.im_session_text));
+        assert_eq!(ui.text_of(r.label), want);
+        let decoy = tessera_ui::game::find_below(&ui, r.row, IM_ROW_DECOY).unwrap();
+        assert_eq!(ui.text_of(decoy), "", "the decoy text is untouched");
+    }
 }

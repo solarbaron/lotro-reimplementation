@@ -553,13 +553,24 @@ impl SocialChat {
             return line(TextRef::new(T::CHAT, 0x0406_8445));
         }
         let name = &tokens[0];
+        // CT5 (revision 4 fixes, note (d)): over 50 code units the line gives the length in
+        // code units and the limit 50; within 50 code units but over the protocol's 64-byte
+        // name bound, the length in UTF-8 bytes and the limit 64, so the line never shows a
+        // length within its limit.
         let units = name.encode_utf16().count();
-        if units > MAX_CHANNEL_NAME_UNITS || name.len() > n::MAX_NAME_BYTES {
+        let over = if units > MAX_CHANNEL_NAME_UNITS {
+            Some((units, MAX_CHANNEL_NAME_UNITS))
+        } else if name.len() > n::MAX_NAME_BYTES {
+            Some((name.len(), n::MAX_NAME_BYTES))
+        } else {
+            None
+        };
+        if let Some((length, limit)) = over {
             return line(
                 TextRef::new(T::CHAT, 0x0283_2AE7)
                     .text(A::CHANNEL, name.clone())
-                    .int(A::LENGTH, i64::try_from(units).unwrap_or(i64::MAX))
-                    .int(A::LIMIT, MAX_CHANNEL_NAME_UNITS as i64),
+                    .int(A::LENGTH, i64::try_from(length).unwrap_or(i64::MAX))
+                    .int(A::LIMIT, i64::try_from(limit).unwrap_or(i64::MAX)),
             );
         }
         if !is_valid_name(name) {

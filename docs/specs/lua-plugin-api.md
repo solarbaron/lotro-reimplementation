@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
-| Last updated | 2026-10-09 |
+| Status | **Revised for P2, awaiting independent review** (2026-10-10, decision 0024 §2.6: new §15.2 combat views (anchor `s15-2`), source key BIN-P2 and provenance rows P84–P87, §15 entry table, enum paragraph and OPEN, one sentence of the §14.6 implementer OPEN, §18 lead-in and checks 70–77, §19; implementers must not build §15.2 before it is Accepted). Everything else is unchanged from the text Accepted on 2026-10-09 (P1 revision: §15.1, P81–P83, checks 66–69, after an independent re-review), which in turn left every other section as Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and existing anchors are unchanged |
+| Last updated | 2026-10-10 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent), a different session from the writer |
-| Review record | **Re-review of the P1 revision and its review fixes (diff against `main`: header, P41, P81–P83, §15 enum paragraph and OPEN, §15.1, §18 lead-in and checks 66–69, §19, §20), 2026-10-09, independent review session that wrote no part of the revision or its fixes and did not do the first review: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping or behaviour; no code or pseudo-code (the argument lists in braces name event-table fields, as §9.3 does); API, mapper and property labels are interoperability identifiers; no game text (the literal item text is scenario input), assets, keys, hostnames or traffic; no closed gate touched (no M4 method used for this revision, no official-server traffic). Every Tessera rule of §15.1 is under P83 (**Tessera rule**, DEC); the API facts are P81 (Reported) and P82 (Reported + Confirmed). The four blocking items of the first review are answered: (1) §15 enum paragraph, P41, the §15 OPEN and its §19 line point to or follow P82; (2) the §15.1 OPEN is in §19; OPEN markers before §19 counted 56 on `main`, 57 after the P1 revision and 57 now, as the change log says; (3) P83 and the §18 lead-in for 66–69; (4) the two getter tables cover all 13 `Item` and 15 `ItemInfo` getters of §16 with present, absent and literal-item values. Spot-checks (read-only, 2026-10-09): mappers 0x230000EE (base 0x23000101), 0x230000FA, 0x230000FB and 0x23000067 decoded from the install: `ContainerSlot` keys 2–22 match API `Equipment` 1–21 (key 3 ↔ `Chest` 2, as check 68 uses), keys 23–25 are the FX slots, `ItemDurability` 1–7 and `ItemWearState` 1–4 match their keys and names, `ItemQuality` key 4 is `Uncommon` = 4 (check 69); Appendix A `ItemCategory`, `ItemDurability`, `ItemWearState` have `Undefined = 0` (the Absent columns); `scenario-feed.md` on branch `p0` has the `MoveItem` and `DestroyItem` answers of §7.6 and the `ItemQuantity`, `ItemCondition` events of §9.2 that checks 67 and the getter table cite; `character-panels.md` §4.3 rule 1 gives the *N* = *B* + 6 of check 66 and its rule 5 now agrees with the `SizeChanged` row; `icon-layers.md` §3.1 step 1 and `item-tooltips.md` §11 agree with the `GetIconImageID` and `GetWearState` rows. All agree. **Non-blocking notes:** (a) the §20 row on `character-panels.md` §8.1 is stale: that spec (9bced79) already reduced §8 to a pointer to §15.1 and states the `SizeChanged` rule in §4.3 rule 5, so its "Current text" no longer exists; mark it applied or drop it; (b) the new §20 lead-in parenthetical "on O4 (the `character-panels.md` row on Tessera rules, DEC)" reads as if O4 were its basis; reword; (c) P82 "name for name" is loose: the data names differ in form (`Pocket1`, `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`, `Mounted`) and the API has aliases (`Shield`, `Instrument`); say "slot for slot" or point to `character-panels.md` §8.2; (d) state the order of the two plugin events when one feed `ItemMoved` crosses containers (backpack `ItemRemoved` versus `ItemEquipped`, check 68 asserts none), and whether a move within `Equipment` between keys 2–22 gives `ItemUnequipped` then `ItemEquipped` or nothing; (e) `GetNameWithQuantity(q)` for infinite or very large *q* ("decimal integer part" is undefined for infinity); (f) check 67 continues the scenario of check 66 ("the slot-4 item", size 30); say so. Earlier: first review of the P1 revision, 2026-10-09: changes requested, four blocking items (§15 not reconciled with P82; §15.1 OPEN missing from §19; no Tessera-rule provenance row; incomplete getter coverage, absent-property and literal-item values) and notes (a)–(f), all answered by the review fixes of 2026-10-09. Before that: review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| Review record | **P2 revision (2026-10-10): not yet reviewed.** It needs an independent review by a session that wrote no part of it (CLEAN_ROOM.md §5.3; the new BIN-P2 reading included). Before it: **Re-review of the P1 revision and its review fixes (diff against `main`: header, P41, P81–P83, §15 enum paragraph and OPEN, §15.1, §18 lead-in and checks 66–69, §19, §20), 2026-10-09, independent review session that wrote no part of the revision or its fixes and did not do the first review: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping or behaviour; no code or pseudo-code (the argument lists in braces name event-table fields, as §9.3 does); API, mapper and property labels are interoperability identifiers; no game text (the literal item text is scenario input), assets, keys, hostnames or traffic; no closed gate touched (no M4 method used for this revision, no official-server traffic). Every Tessera rule of §15.1 is under P83 (**Tessera rule**, DEC); the API facts are P81 (Reported) and P82 (Reported + Confirmed). The four blocking items of the first review are answered: (1) §15 enum paragraph, P41, the §15 OPEN and its §19 line point to or follow P82; (2) the §15.1 OPEN is in §19; OPEN markers before §19 counted 56 on `main`, 57 after the P1 revision and 57 now, as the change log says; (3) P83 and the §18 lead-in for 66–69; (4) the two getter tables cover all 13 `Item` and 15 `ItemInfo` getters of §16 with present, absent and literal-item values. Spot-checks (read-only, 2026-10-09): mappers 0x230000EE (base 0x23000101), 0x230000FA, 0x230000FB and 0x23000067 decoded from the install: `ContainerSlot` keys 2–22 match API `Equipment` 1–21 (key 3 ↔ `Chest` 2, as check 68 uses), keys 23–25 are the FX slots, `ItemDurability` 1–7 and `ItemWearState` 1–4 match their keys and names, `ItemQuality` key 4 is `Uncommon` = 4 (check 69); Appendix A `ItemCategory`, `ItemDurability`, `ItemWearState` have `Undefined = 0` (the Absent columns); `scenario-feed.md` on branch `p0` has the `MoveItem` and `DestroyItem` answers of §7.6 and the `ItemQuantity`, `ItemCondition` events of §9.2 that checks 67 and the getter table cite; `character-panels.md` §4.3 rule 1 gives the *N* = *B* + 6 of check 66 and its rule 5 now agrees with the `SizeChanged` row; `icon-layers.md` §3.1 step 1 and `item-tooltips.md` §11 agree with the `GetIconImageID` and `GetWearState` rows. All agree. **Non-blocking notes:** (a) the §20 row on `character-panels.md` §8.1 is stale: that spec (9bced79) already reduced §8 to a pointer to §15.1 and states the `SizeChanged` rule in §4.3 rule 5, so its "Current text" no longer exists; mark it applied or drop it; (b) the new §20 lead-in parenthetical "on O4 (the `character-panels.md` row on Tessera rules, DEC)" reads as if O4 were its basis; reword; (c) P82 "name for name" is loose: the data names differ in form (`Pocket1`, `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`, `Mounted`) and the API has aliases (`Shield`, `Instrument`); say "slot for slot" or point to `character-panels.md` §8.2; (d) state the order of the two plugin events when one feed `ItemMoved` crosses containers (backpack `ItemRemoved` versus `ItemEquipped`, check 68 asserts none), and whether a move within `Equipment` between keys 2–22 gives `ItemUnequipped` then `ItemEquipped` or nothing; (e) `GetNameWithQuantity(q)` for infinite or very large *q* ("decimal integer part" is undefined for infinity); (f) check 67 continues the scenario of check 66 ("the slot-4 item", size 30); say so. Earlier: first review of the P1 revision, 2026-10-09: changes requested, four blocking items (§15 not reconciled with P82; §15.1 OPEN missing from §19; no Tessera-rule provenance row; incomplete getter coverage, absent-property and literal-item values) and notes (a)–(f), all answered by the review fixes of 2026-10-09. Before that: review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
 | Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface), [`plugin-runtime.md`](plugin-runtime.md) (interpreter, limits, collector step). Tessera decisions that place this API in the client: [0014](../decisions/0014-ui-input-bridge.md) (input reaches the UI and plugins; frame-loop placement of all plugin code, D8) and [0015](../decisions/0015-ui-rendering.md) (how surfaces, nested surfaces, opacity, clipping and rotation are drawn) |
 
@@ -81,6 +81,7 @@ Source keys:
 | **O6** | Observed 2026-10-06 in user install data (read-only, M1): action-map record 0x51000000, table A (`keymap.md` §12.10), read afresh: toggle type 1 (Momentary) for the six select and double-select actions 0x56, 0x4C, 0xA4, 0x33, 0x2E, 0x93 and for the wheel actions 0x82, 0x10; toggle type 2 (Impulse) for the three tap actions 0x32, 0x73, 0x6E; 364 entries in all (91 Momentary, 250 Impulse, 16 AutoRepeat, 4 Analog, 3 Toggle, as in `keymap.md`). Re-read 2026-10-06 by the second revision: the same counts; action 0xAB is a key of the input-action chain (O4) and has toggle type 2; none of the nine mouse-button actions has toggle type 3, 4 or 5 |
 | **O7** | Observed 2026-10-06 in user install data (read-only, M1, own decoder written from `ui-layout.md` §4–§7): the `UILAYOUT` DID map (root key 4) entry with key 0x100000C8 is labelled `luaplugins` and names layout 0x22000826 (design size 1024 × 768, 13 top-level elements: their labels, types, rectangles, edge modes, properties and the trees of the window containers as summarised in §14.2); the `chatwindow` layout (0x22000034) element `ChatLogElement` names the top-level element `ChatLogListboxItemTemplate` in its `UI_ChatLog_TextElement` property, and that template has `UICore_Text_parse_markup_tags` = true; 203 elements of all layouts set that property, all to true. Property dictionary 0x34000000 (read-only): `UICore_Element_ObjectOpacity` has default 1.0, minimum 0, maximum 1; `UICore_Element_ObjectMode`, `UICore_Text_font_color` and the four size-limit properties have no default; `UICore_Text_parse_markup_tags` has default false. Values are observations of this install, read at run time |
 | **DEC** | Tessera decision records, not sources of facts about the original: [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge; Accepted by the owner 2026-10-06) and [0015](../decisions/0015-ui-rendering.md) (UI rendering; Accepted by the owner 2026-10-06). Text that cites them states Tessera behaviour, which may differ from the original where the decision records a known difference |
+| **BIN-P2** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), same client build as **BIN** (`x64/lotroclient64.exe`, 4906.0071.1794.4035), read on 2026-10-10 in the dirty room with a headless decompiler and disassembler on a private copy of the project's auto-analysed database (deleted after use), by address only. **Questions:** (i) which fields of the native object behind a plugin `Effect` back its nine registered getters, and in which order its change events fire; (ii) how a plugin `EffectList` is updated (adds, in-place updates, removals, the `Index` of `EffectAdded` and `EffectRemoved`, the order of the remaining effects); (iii) where the effect values come from. **Code read:** the `Effect` class registration (to pair member names with getters), the nine getters, the effect update routine, the effect-list synchronisation and append routines, their four callers and the routine that fills the list. **Why M1–M3 were not enough:** the data files hold effect records but not how the plugin layer turns them into API values or orders a list (M1); the official reference (S2) gives one line per member and the captured events (S3) only two `Index` values (M2); no running original client was available to this session and no owner observation exists (M3). **Not read:** the class-library function that produces the list (it was identified by its function ID only, not decoded); nothing from network, login, keys, launcher or anti-tamper code (decision 0004). |
 
 Marks: **Confirmed** = observed in the owner's install (data, settings folder or the client
 binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 (P1–P46) or
@@ -88,7 +89,8 @@ binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 (P1–P
 fourth-pass rows P65–P76 and the repair rows P77–P78) and are marked
 "BIN"; facts that rest only on BIN are flagged as such in the row. **Reported** = from
 published sources only. Rows that cite only **DEC** state Tessera rules, not facts; they carry the
-mark **Tessera rule** and need no observation.
+mark **Tessera rule** and need no observation. P85 is Confirmed by the BIN-P2 reading of
+2026-10-10 (BIN only).
 
 | # | Fact or group of facts | Sources | Mark |
 |---|---|---|---|
@@ -175,6 +177,10 @@ mark **Tessera rule** and need no observation.
 | P81 | `Backpack:GetSize()` returns the backpack's size; `Backpack:GetItem(index)` takes 1 … `GetSize()` and returns the item there or nil; `Equipment:GetItem(index)` takes a slot of the `Equipment` enumeration and returns nil for an empty slot; `Equipment:GetSize()` is the number of items that can be equipped; `LocalPlayer:GetBackpack()`, `GetEquipment()` return those objects; `ItemInfo` getters as listed in §16 | S2 (class and member pages of `Backpack`, `Equipment`, `LocalPlayer`, `ItemInfo`) | **Reported** |
 | P82 | The `Equipment` enumeration's values 1 … 21 equal the data's `ContainerSlot` keys 2 … 22 minus one, name for name (`Head` … `Class`, `Bridle` ↔ `Mounted`); the keys 23 … 25 (weapon FX slots) have no API value; `ItemDurability` 1–7 and `ItemWearState` 1–4 equal the keys and names of mappers 0x230000FA and 0x230000FB (§15.1) | S2/S3 (Appendix A values); O4-type observation 2026-10-09 of the `ContainerSlot` mapper 0x230000EE (`character-panels.md` OBS) | **Reported** (API values) + **Confirmed** (data keys and names) |
 | P83 | Inventory views in Tessera (§15.1): the getter-to-property mapping of `Item` and `ItemInfo`; one `Backpack` and one `Equipment` object per apartment, one `ItemInfo` per record DID per apartment; nil from `GetItem` for a non-integer or out-of-range index; `Equipment:GetSize()` = 21; `Backpack` and `Equipment` events derived from the feed's `ItemAdded`, `ItemMoved`, `ItemRemoved` and `ContainerSize`, moves between containers included; `SizeChanged` whenever *N* changes, also through an arriving item before the first `ContainerSize`; `GetMaxQuantity` = `GetMaxStackSize`; `IsMagic` false; `GetQualityImageID` 0; the `GetNameWithQuantity` form; the values for absent properties and for literal items | DEC ([0024](../decisions/0024-parity-track.md) P1); `character-panels.md` §4.3, §8, §9 | **Tessera rule** (no observation; the original's values are OPEN, §15.1) |
+| P84 | Combat members per the official reference: `Actor` getters return the actor's current, maximum, base maximum, temporary and maximum temporary morale and power and its level as numbers, `GetTarget()` an `Entity`, `GetEffects()` an `EffectList`; `Effect:GetCategory()` returns one of the `EffectCategory` values, `GetIcon()` an icon ID, `GetID()` an ID unique for the effect, `GetStartTime()` the time the effect started, `GetDuration()` its duration; `EffectList:Get(i)` raises an error for an index outside the list and `IndexOf` returns −1 for an effect not in it; `SkillList:GetItem(i)` returns a `Skill`, `Skill:GetSkillInfo()` its `SkillInfo` (name, description, icon image ID, `SkillType`); `ActiveSkill:GetResetTime()` is negative when the skill is off cooldown, otherwise a time from which `Turbine.Engine.GetGameTime()` is subtracted to get the remaining cooldown; `GetCooldown`/`GetBaseCooldown` are in seconds; `IsInCombat()` tells whether the player is in combat. Captured argument tables: `Actor.TargetChanged`, `MoraleChanged`, `MaxMoraleChanged`, `BaseMaxMoraleChanged`, `PowerChanged` and `LocalPlayer.InCombatChanged` empty; `EffectList.EffectAdded` `{Index}`, `EffectRemoved` `{Index}`; `SkillList.SkillAdded` `{Index, Skill}`, `SkillRemoved` `{Index}` | S2 (member pages of `Actor`, `Effect`, `EffectList`, `EffectCategory`, `SkillList`, `Skill`, `SkillInfo`, `ActiveSkill`, `LocalPlayer`); S3 (`TurbineEventsDump.json`); usage counts S6 (`plugin-api-usage.md` §5.3) | **Reported** |
+| P85 | The native object behind a plugin `Effect` holds, in this order, a 32-bit ID, the name and description strings, a 32-bit icon value, the curable and debuff flags, the start time and the duration as 64-bit floats, a 32-bit category and a further flag; the nine getters return these fields (Lua numbers for the floats); no field holds a stack count. The ID is set once; an update carrying another ID is ignored. An update compares each field and fires, for each changed one, in this order: `NameChanged`, `DescriptionChanged`, `IconChanged`, `IsCurableChanged`, `IsDebuffChanged`, `StartTimeChanged`, `DurationChanged`, `CategoryChanged`; `IsDispellableChanged` belongs to the further flag, which no getter reads, and the code read fires it when that flag is **unchanged** (an inverted test as read). An `EffectList` is synchronised from a list of effect entries that the class-library function 0x010B0002 produces for the actor: an entry marked for display whose ID is in the list updates that `Effect` in place; one whose ID is not is appended and `EffectAdded` fires with `Index` = the new count; effects whose IDs are no longer among the displayed entries are removed one by one, highest position first, each by firing `EffectRemoved` with its 1-based position and then moving the last effect into that position | BIN-P2 | **Confirmed** 2026-10-10 (BIN only); which effect properties the class-library function reads, not traced |
+| P86 | Mapper 0x23000064 (the mapper of `Effect_Resist_Category`) has 16 keys, 0–12 and 14–16; the nine `EffectCategory` names other than `Undefined` and `Dispellable` equal mapper labels, and each value is 2^(key − 1) of the key with that label (`Disease` 2 ↔ key 2 … `Corruption` 1024 ↔ key 11); `Dispellable` = 1226 is the union of the `Disease`, `Wound`, `Fear`, `Poison` and `Corruption` values; keys 1, 9, 12, 14, 15, 16 have no API name. Over every property set of prefixes 0x47, 0x78 and 0x79, `Effect_Resist_Category` is stored 27,131 times: 24,119 times 0 and 3,012 times with exactly one bit set (never two); the bit values stored are 2, 4, 8, 16, 32, 64, 128, 256, 512, 1,024, 8,192, 16,384 and 32,768. Of the 32,952 effect records (prefix 0x79) that store both `Effect_Harmful` and `Effect_Debuff`, 914 differ (564 harmful and not debuff, 350 the reverse); `Effect_IsCurable` is stored on 17,573 effect records (10,261 true) | O4-type observation 2026-10-10 (read-only, M1: the mapper and a census of stored values with a throwaway probe; the `combat-data.md` §6.2 census agrees on the record counts) | **Confirmed** 2026-10-10 |
+| P87 | Combat views in Tessera (§15.2): one entity object per entity per apartment and its class by entity kind; the getter-to-session-event mapping of `Actor`, `LocalPlayer:IsInCombat()`, `Effect`, `ActiveSkill` and `SkillInfo`; base maximum = maximum, temporary values 0; the event order within one `VitalChanged`; the per-entity effect order (append, removal by moving the last effect, as P85), in-place updates, `EffectsCleared` when kept effects are dropped; `GetStartTime` from the game-time clock at arrival, `GetDuration` 0 without a duration; `IsDebuff` from `Effect_Debuff` and the literal-ref rule; the trained-skill list order, its placeholder while empty and its events; `GetResetTime` from the cooldown events; the icon and type of `SkillInfo`; quickslot activation, drag and `GetItem` rules; what leaving the world does | DEC ([0024](../decisions/0024-parity-track.md) P2); `combat-ui.md` §3, §8, §10, §11 (TR30, TR33, TR37, TR39); `skill-tooltips.md` §7, §11, §12; `plugin-api-usage.md` §7.4 | **Tessera rule** (no observation; the original's values are OPEN, §15.2) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -3261,7 +3267,8 @@ P46) unless marked.
 > that is not a `Shortcut` object raises; `Shortcut(item)` stores type `Item` with empty
 > data; `IsUseOnRightClick()` is false for a new quickslot; a left click activates, a right
 > click only with `SetUseOnRightClick(true)`; `Lotro.DragDropInfo:GetShortcut()` returns
-> the drag source's shortcut when the source is a plugin quickslot, otherwise nil.
+> the drag source's shortcut when the source is a plugin quickslot, a new shortcut when it is
+> a slot of the game's quickslot bar (§15.2, P2 revision), otherwise nil.
 
 ---
 
@@ -3289,7 +3296,7 @@ The main entry points:
 |---|---|
 | `LocalPlayer.GetInstance()` | The local character (singleton per apartment, §9.5). Extends `Player` → `Actor` → `Entity`. Real plugins call it at load time, so it must exist as soon as a character is in the world. |
 | `Entity` | `GetName()`, `IsLocalPlayer()`, event `NameChanged`. |
-| `Actor` | Morale and power (current, max, base max, temporary, max temporary), `GetLevel()`, `GetTarget()` (an `Entity` or nil), `GetEffects()` (`EffectList`); one `…Changed` event per value. |
+| `Actor` | Morale and power (current, max, base max, temporary, max temporary), `GetLevel()`, `GetTarget()` (an `Entity` or nil), `GetEffects()` (`EffectList`); one `…Changed` event per value. Tessera's values: §15.2. |
 | `Player` | `GetClass()`, `GetRace()`, `GetAlignment()` (enum numbers), `GetParty()`, `GetPet()`, `GetReadyState()`, `IsLinkDead()`, `IsVoiceEnabled()`, `IsVoiceActive()`; events `PartyChanged`, `RaidChanged`, `PetChanged`, `ReadyStateChanged`, … |
 | `LocalPlayer` | `GetAttributes()` (`FreePeopleAttributes` or `MonsterPlayerAttributes`), `GetClassAttributes()`, `GetRaceAttributes()`, `GetBackpack()`, `GetEquipment()`, `GetVault()`, `GetSharedStorage()`, `GetWallet()`, `GetMount()`, `GetTrainedSkills()`, `GetUntrainedSkills()`, `IsInCombat()`; events `InCombatChanged`, `MountChanged`. |
 | `Item` / `ItemInfo` | Names, description, category (`ItemCategory`), quality, durability, wear state, quantity and stack limits, and image DIDs (icon, background, underlay, shadow, quality overlay) that plugins pass to `SetBackground`. |
@@ -3322,12 +3329,14 @@ left out of the count; it is also a key of every mapper listed (O4).
 
 `Equipment` slot values are not keys of a data enum mapper, but they follow one at a fixed
 offset: value = `ContainerSlot` key − 1 for the keys 2 … 22 (P82, §15.1). `ItemDurability`
-and `ItemWearState` equal the keys of their data enums (P82, §15.1). `EffectCategory`
-matches only partly.
+and `ItemWearState` equal the keys of their data enums (P82, §15.1). `EffectCategory` values
+are not keys but **bit values** of the resist-category mapper: value = 2^(key − 1) for the key
+with the same label (P86, §15.2).
 
-> **OPEN:** whether `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`,
-> `EffectCategory` and the stance enums follow a data enum (narrowed 2026-10-09: `Equipment`,
-> `ItemDurability` and `ItemWearState` are answered by P82).
+> **OPEN:** whether `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType` and the
+> stance enums follow a data enum (narrowed 2026-10-09: `Equipment`, `ItemDurability` and
+> `ItemWearState` are answered by P82; narrowed 2026-10-10: `EffectCategory` is answered by
+> P86).
 
 Differences of this build from S2 and from the S3 dump: see §16.
 
@@ -3444,6 +3453,209 @@ therefore return the data keys unchanged.
 > answers its getters with the last values seen. (3) `Backpack:GetItem` and
 > `Equipment:GetItem` with an argument that is not a number (nil, a string): as implemented,
 > nil, like a non-integer.
+
+<a id="s15-2"></a>
+### 15.2 Combat views in Tessera (decision 0024 P2)
+
+The views read the client's combat state: the values the client keeps per entity from the
+Combat group of session events and from `LevelChanged` (`combat-ui.md` §11, "kept"), which
+the scenario feed fills in the sandbox (`scenario-feed.md` §6.2, §6.6, §9.2, §9.3) and a
+server backend would fill the same way. Every event of this section follows the delivery
+rule of the first paragraph of §15: queued with its argument values (§9.3) taken at the
+change, delivered in frame-loop step 7, one event being one item. An event is queued only
+for view objects that exist in the apartment at the change; an object created later reads
+the current state and receives no events for earlier changes.
+
+The facts about the original are P84 (S2, S3), P85 (BIN-P2) and P86 (data). Everything else
+in this section is a **Tessera rule** (P87): it says how Tessera derives the API values from
+its own combat state, not how the original does. Members of these classes that this section
+does not name keep the defaults of §17 and `plugin-api-usage.md` §7.4. (`combat-ui.md` and
+`skill-tooltips.md` are drafts of the same milestone; this section follows their text of
+2026-10-10 and must be re-checked when they change.)
+
+**Objects.**
+
+| View | Rule |
+|---|---|
+| Entity objects | One object per entity per apartment (§8.2 identity, keyed by `EntityId`). The player's entity is the `LocalPlayer.GetInstance()` object; another entity of kind `Player` is a `Player`; of kind `NonPlayer` or `Creature` an `Actor`; of kind `Object` an `Entity` (it has no combat getters). `GetName()` is the name its `EntitySpawned` or `EntityCreated` carried (empty when none). An object stays usable after its entity despawns: its getters return their last values, and its effect list is empty (effect rule 3). |
+| `Actor:GetEffects()` | One `EffectList` object per actor object; every call returns it. |
+| `Effect` | One object per (entity, `EffectId`) per apartment, while the instance is in the entity's list or a plugin holds the object; a held object that left the list answers with its last values. |
+| `LocalPlayer:GetTrainedSkills()` | One `SkillList` per apartment. |
+| `Skill`, `SkillInfo` | One `Skill` object, of class `ActiveSkill`, and one `SkillInfo` per skill ref per apartment; `GetSkillInfo()` returns that `SkillInfo`. |
+
+**Actor values.** Health and power are the feed's `Vital::Health` and `Vital::Power`
+(`scenario-feed.md` §9.1). A vital number is the event's `f32`, converted exactly to a Lua
+number.
+
+| Getter | Value | Before any report | Event, queued when the value changes |
+|---|---|---|---|
+| `GetMorale()` | `current` of the entity's last `VitalChanged` for health | 0 | `MoraleChanged` |
+| `GetMaxMorale()` | `max` of that event | 0 | `MaxMoraleChanged` |
+| `GetBaseMaxMorale()` | the value of `GetMaxMorale()` (the feed carries no base maximum) | 0 | `BaseMaxMoraleChanged`, after each `MaxMoraleChanged` |
+| `GetTemporaryMorale()`, `GetMaxTemporaryMorale()` | 0 (the feed carries no temporary vitals, `combat-ui.md` §11 OPEN item 1) | 0 | never |
+| `GetPower()`, `GetMaxPower()`, `GetBaseMaxPower()` | as the three morale rows, from `VitalChanged` for power | 0 | `PowerChanged`, `MaxPowerChanged`, `BaseMaxPowerChanged` |
+| `GetTemporaryPower()`, `GetMaxTemporaryPower()` | 0 | 0 | never |
+| `GetLevel()` | `level` of the entity's last `LevelChanged` | the player: the `CharacterInfo.level` of the character entered, when it carried one; otherwise 0 | `LevelChanged` |
+| `GetTarget()` | `LocalPlayer`: the client's current selection (`combat-ui.md` §3 and §11: the last `TargetChanged` for the player, cleared locally when the selected entity despawns). Another actor: the target of its last `TargetChanged`. Returned as the entity object of the target (the `LocalPlayer` object when the target is the player); nil for no target and for an entity the client has not seen spawned | nil | `TargetChanged`, whenever the target entity changes (to or from nil included) |
+
+One `VitalChanged` that changes both numbers queues the maximum's events first
+(`MaxMoraleChanged`, then `BaseMaxMoraleChanged`), then `MoraleChanged`; power likewise. A
+`VitalChanged` for a `Resource` vital, `VitalDelta`, `Defeated` and `Revived` change no getter
+of this section: vitals change only through `VitalChanged` (`scenario-feed.md` §6.2).
+
+**Combat state.** `LocalPlayer:IsInCombat()` is `in_combat` of the last `CombatState` for the
+player (`combat-ui.md` TR37), false before one; `InCombatChanged` is queued when it changes.
+`CombatState` for other entities reaches no view.
+
+**Effect lists.** The client keeps, per entity, one ordered list of the entity's active effect
+instances, so every `EffectList` object of that entity, in every apartment, shows the same
+order:
+
+1. `EffectApplied { entity, effect, … }` whose `EffectId` is not in the entity's list appends
+   it and queues `EffectAdded { Index }` with `Index` = the new count. An `EffectApplied` whose
+   `EffectId` is already there (a server may repeat an instance; the feed never does,
+   `scenario-feed.md` §5.3) updates that effect's values in place and queues its change
+   events (below), and no `EffectAdded`.
+2. `EffectRemoved { entity, effect }` of the instance at position *i* queues
+   `EffectRemoved { Index = i }`; then the last instance moves to position *i* (unless *i* is
+   the last position) and the count drops by one, as in the original (P85).
+3. When the client drops an entity's kept effects (`EntityDespawned`; leaving the world,
+   below), a non-empty list is emptied and one `EffectsCleared` is queued, with no
+   `EffectRemoved`.
+4. `Defeated` leaves the list unchanged (`combat-ui.md` TR39).
+
+`GetCount()` is the count. `Get(i)` returns the `Effect` at 1-based position *i* and raises a
+Lua error for any other value (P84, P36). `Contains(e)` is true when `e` is an `Effect` object
+now in the list; `IndexOf(e)` returns its 1-based position, or −1 when it is not in the list
+or not an `Effect` object.
+
+**Effect values.** "The record" is the effect record named by the instance's `what`
+(`combat-data.md` §6.2), read through its property set with inheritance; a literal ref has no
+record. "Absent" means the record does not carry the property.
+
+| Getter | Value (record present) | Absent | Literal ref |
+|---|---|---|---|
+| `GetID()` | the `EffectId` | — | the same |
+| `GetName()` | rendered `Effect_Name` | empty string | the literal text |
+| `GetDescription()` | rendered `Effect_Applied_Description` (the instance is applied; `skill-tooltips.md` description line, applied mode) | empty string | empty string |
+| `GetIcon()` | `Effect_Icon` | 0 | 0 |
+| `GetCategory()` | the stored `Effect_Resist_Category` value, unchanged (P86: 0 or a single bit; an `EffectCategory` value when that bit has an API name) | 0 (`Undefined`) | 0 |
+| `IsDebuff()` | `Effect_Debuff` | false | true when the event's `source` is an entity other than `entity`, else false (the harmful rule of `combat-ui.md` TR30) |
+| `IsCurable()` | `Effect_IsCurable` | false | false |
+| `GetStartTime()` | the `Turbine.Engine.GetGameTime()` value (§12) of the frame in which the client received the `EffectApplied` | — | the same |
+| `GetDuration()` | `duration_ms` ÷ 1000, in seconds; 0 when the event has no duration | — | the same |
+
+A plugin's remaining time, `GetStartTime() + GetDuration() − Turbine.Engine.GetGameTime()`, counts down
+like the effect bar's timeout (`combat-ui.md` TR30, which also takes the arrival as the
+start). There is no stack member: this build registers none (§16) and the native object has no
+stack field (P85); the feed's `stacks` reaches no getter. On an in-place update (rule 1),
+Tessera queues one event for each value that changed, in the original's order (P85):
+`NameChanged`, `DescriptionChanged`, `IconChanged`, `IsCurableChanged`, `IsDebuffChanged`,
+`StartTimeChanged`, `DurationChanged`, `CategoryChanged`. Tessera never queues
+`IsDispellableChanged` (a stated deviation from the code read, P85; no getter exists for its
+flag).
+
+**Effect categories (answers the `EffectCategory` part of the §15 OPEN on enums,
+2026-10-10).** `EffectCategory` values are bit values of the resist-category bitfield, not
+mapper keys: each value is 2^(key − 1) for the key of mapper 0x23000064 with the same label
+(`Effect_Resist_Category`, also the border states of `combat-ui.md` §8.1): `Disease` 2 (key 2),
+`Physical` 4 (3), `Wound` 8 (4), `Cry` 16 (5), `Song` 32 (6), `Fear` 64 (7), `Poison` 128 (8),
+`Elemental` 512 (10), `Corruption` 1024 (11). `Dispellable` (1226) is the union of `Disease`,
+`Wound`, `Fear`, `Poison` and `Corruption`, not a key. The keys 1, 9, 12, 14, 15 and 16 (bit
+values 1, 256, 2048, 8192, 16384, 32768) have no API name; `GetCategory()` returns such a
+value unchanged (P86). Tessera reads the mapper by its EMAPPER label at run time, as for the
+other enums of §15.
+
+**Skills.**
+
+| View | Rule |
+|---|---|
+| `SkillList` content | The skills the session reported learned (`SkillLearned`) since world entry, in the order of their first report; a `SkillLearned` of a ref already listed changes nothing; `SkillForgotten` removes the skill and the later ones move up by one. |
+| `SkillList` events | `SkillAdded { Index, Skill }` with `Index` = the new count, and `SkillRemoved { Index }` with the position before the removal. |
+| Empty list | While no learned skill is listed, the list holds only the placeholder skill of `plugin-api-usage.md` §7.4.1 rule 1 (count 1), so load-time language checks keep working. The first `SkillLearned` replaces it: `SkillRemoved { Index = 1 }`, then `SkillAdded { Index = 1, Skill }`. Forgetting the last learned skill brings the placeholder back the same way: `SkillRemoved { Index = 1 }`, then `SkillAdded { Index = 1, Skill }` with the placeholder. |
+| `GetCount()`, `GetItem(i)` | The count; the `Skill` at 1-based *i*; any other value raises a Lua error, as the lists of P36. |
+| `ActiveSkill:GetResetTime()` | While a cooldown of the skill's ref runs (a `CooldownStarted { what }` and no `CooldownEnded { what }` since), the game time (§12) at which it ends: the `GetGameTime()` of the frame that received `CooldownStarted`, plus `duration_ms` ÷ 1000; otherwise −1. `ResetTimeChanged` is queued on each `CooldownStarted` and `CooldownEnded` of the ref. The feed always sends `CooldownEnded` at the end (`scenario-feed.md` §6.2). |
+| `ActiveSkill:GetCooldown()`, `GetBaseCooldown()` | `Skill_SkillRecoveryTime` of the skill record, in seconds (the *T* of the recovery-time row's Tessera rule in `skill-tooltips.md`); 0 when absent and for a literal ref or the placeholder. |
+| `ActiveSkill:IsUsable()` | true. |
+| `SkillInfo:GetName()` | rendered `Skill_Name`; empty string when absent; the literal text for a literal ref; the placeholder text for the placeholder. |
+| `SkillInfo:GetDescription()` | rendered `Skill_Desc`; empty string when absent, for a literal ref and for the placeholder. |
+| `SkillInfo:GetIconImageID()` | `Skill_SmallIcon` (32 × 32 in every skill, `skill-tooltips.md` SV4), else `Skill_Icon`, else 0; 0 for a literal ref and the placeholder. |
+| `SkillInfo:GetType()` | 0 (`SkillType.Normal`). |
+
+**Quickslot shortcuts (§14.6).** P2 feeds the plugin quickslot from the game's quickslot bar
+(`combat-ui.md` §9):
+
+- A user activation of a plugin `Quickslot` (the §14.6 implementer rule: left click, or right
+  click after `SetUseOnRightClick(true)`) sends the command the game's bar would send for the
+  same content (`combat-ui.md` TR33), with the current selection as target: a `Skill` (6)
+  shortcut whose data is `0x` and 8 hex digits (either case) sends
+  `UseSkill { what: Ref::Record(that DID), target }`; an `Item` (2) shortcut whose data is `0x`,
+  16 hex digits, `,0x` and 8 hex digits sends `UseItem { item: ItemId(the 16-digit value),
+  target }`. Any other type or data sends nothing.
+- A drag that starts on a slot of the game's quickslot bar gives, through
+  `Lotro.DragDropInfo:GetShortcut()`, a new `Shortcut`: content `Skill(Ref::Record(did))` → type
+  `Skill` with data `0x` and the DID as 8 upper-case hex digits; content `Item(id)` → type `Item`
+  with data `0x`, the ID as 16 upper-case hex digits, then `,0x00000000` (Tessera writes 0 for
+  the companion value of the §14.6 OPEN). A literal skill ref or an empty slot gives nil.
+- A `Skill` or `Item` shortcut dropped from a plugin quickslot onto a slot of the game's bar
+  sends `SetQuickslot { slot, content }` with the content parsed as above; the slot changes only
+  on the answering `QuickslotChanged` (`combat-ui.md` §11).
+- `Shortcut:GetItem()` on an `Item` shortcut returns the §15.1 `Item` object of the item with
+  that ID while the player's containers hold it; otherwise the rule 3 of
+  `plugin-api-usage.md` §7.4.1 applies.
+
+**Leaving the world.** On `Disconnected`, or a second `WorldEntered`, before the logout unload
+(§6.3): every non-empty effect list is emptied with `EffectsCleared`; the `LocalPlayer`'s
+`GetTarget()` becomes nil (`TargetChanged` when it was not nil) and `IsInCombat()` false
+(`InCombatChanged` when it was true); the trained-skill list returns to the placeholder (events
+as in the skills table); vitals and levels keep their last values, with no event.
+
+> **OPEN:** what the original returns for the values the feed does not carry or that this
+> section fixes by rule: base maximum and temporary morale and power (are base maxima
+> without equipment and buffs? do `GetMorale` and `GetMaxMorale` include temporary
+> morale?); the clock and epoch of `Effect:GetStartTime()` and the `GetDuration()` of an
+> effect without a duration; which effect properties the class-library function 0x010B0002
+> reads (P85) for the name, the description (applied or definition text), the icon, the
+> category, and the debuff flag (`Effect_Debuff` and `Effect_Harmful` differ in 914 records,
+> P86); which effects it marks for display; when the original fires `EffectsCleared`; the
+> level the original reports before the first level update; `GetTarget()` for an entity not
+> in view; the order of `GetTrainedSkills()`, whether `GetItem` out of range raises, which
+> icon `GetIconImageID()` returns and when `GetType()` is `Mount` or `Gambit`; what
+> `IsUsable()` and `GetCooldown()` return. **Tessera rules** as stated above (P87).
+
+> **OPEN:** (implementer note, `crates/plugins/src/combat.rs`, 2026-10-10) Choices the
+> section leaves open, as implemented in `tessera-plugins` (`CombatModel`): (1) leaving
+> the world with *k* learned skills queues `SkillRemoved` with `Index` *k*, *k* − 1, …, 1,
+> then `SkillAdded { 1 }` with the placeholder (one queue item, delivered as those *k* + 1
+> events, so the queue bound of (8) never cuts the sequence); (2) `VitalChanged`,
+> `LevelChanged`, `TargetChanged` and `EffectApplied` of an entity the client has not seen
+> spawned change nothing; a `TargetChanged` naming such an entity is kept as reported
+> (`TargetChanged` queued when the stored entity changes), and `GetTarget()` resolves it at
+> the call: nil until it spawns, then its object, with no further event at the spawn;
+> (3) on `WorldEntered` the player's values start afresh
+> (vitals 0, level per the `GetLevel()` row) with no events, and leaving the world forgets
+> every other entity; (4) one `EntityDespawned` queues `EffectsCleared` before the
+> `LocalPlayer`'s `TargetChanged`; (5) `GetTarget()` of another actor whose target has
+> despawned returns the apartment's existing object of that entity (last values), else
+> nil; a held entity object answers with the entity's values at its despawn (or at
+> leaving the world), and a held `Effect` with the instance's values when it left the list,
+> also for changes the plugin never read (at most 4,096 of each are kept, oldest dropped
+> first; past that, the values the object last read); an entity whose spawn gives another
+> kind than its existing object's class gets a new object of its class; (6) "`0x` and 8
+> hex digits (either case)" is read as a lower-case `0x` with hex
+> digits of either case; (7) `ResetTimeChanged` is queued on every `CooldownEnded`, also
+> when no cooldown of the ref ran, and an item's cooldown reaches a `Skill` object with
+> the same record ref; leaving the world ends every running cooldown with
+> `ResetTimeChanged` (the section does not say whether running cooldowns end; a server
+> need not send `CooldownEnded` after `Disconnected`); (8) bounds: at most 65,536
+> entities, 1,024 effects per entity and 65,536 in all, 4,096 learned skills and 4,096
+> running cooldowns are kept (further inputs are ignored), and the host's queue of 1,024
+> gameplay events drops (and counts) further events; an event of another entity, an
+> effect or a skill is queued only while some apartment has a view object of it, so
+> changes no plugin watches never fill the queue;
+> (9) without combat data the `LocalPlayer`'s actor getters keep the sandbox values of
+> `plugin-api-usage.md` §8 and `EffectList:Get(i)` raises on the empty list (rule of this
+> section, previously nil).
 
 ---
 
@@ -3977,6 +4189,72 @@ original: the API facts P81 and P82 (1-based backpack indices, `Equipment` value
     `GetMaxStackSize()` is 1, and `GetItemInfo():GetNameWithQuantity(3)` is "3", a space and
     the literal text.
 
+Invariants 70–76 check §15.2 against a scenario feed (`scenario-feed.md`), not against the
+original: the API facts P84 and P85 (1-based `EffectAdded` and `EffectRemoved` indices,
+removal by moving the last effect, `Get` raising outside the list, `IndexOf` −1, the order of
+the effect change events) and the Tessera rules P87 (getter sources, base maximum, temporary
+values, event order within one `VitalChanged`, the literal-ref and duration rules, the
+trained-skill placeholder, quickslot commands). Each is a headless run of `tessera-client
+--scenario` with a synthetic plugin that records its handler calls; records are chosen by
+selectors at run time. Invariant 77 checks P86 against the user install.
+
+70. **Vitals and level (§15.2):** `vital player health 500/1000` gives, in this order,
+    `MaxMoraleChanged`, `BaseMaxMoraleChanged`, `MoraleChanged`; then `GetMorale() == 500`,
+    `GetMaxMorale() == 1000`, `GetBaseMaxMorale() == 1000`, `GetTemporaryMorale() == 0`,
+    `GetMaxTemporaryMorale() == 0`. A second `vital player health 400/1000` gives only
+    `MoraleChanged`; `vital player power 50/100` gives `MaxPowerChanged`,
+    `BaseMaxPowerChanged`, `PowerChanged` and `GetPower() == 50`. A `damage` step with `left=`
+    changes `GetMorale()` only through its `VitalChanged`; one without `left=` changes nothing.
+    A player declared with `level=20` reports `GetLevel() == 20` before any `LevelChanged`.
+71. **Target (§15.2):** with actor `$a` (kind `creature`, a literal name, `level=12`) spawned,
+    `target player $a` gives one `TargetChanged` on the `LocalPlayer`; `GetTarget()` returns an
+    object for which `IsA(Turbine.Gameplay.Actor)` is true, `GetName()` is the literal name,
+    `GetLevel() == 12`, and a second `GetTarget()` returns the same object. `target $a player`
+    gives that object one `TargetChanged` and its `GetTarget()` is
+    `Turbine.Gameplay.LocalPlayer.GetInstance()`. `target player $a` again gives no event;
+    `despawn $a` gives the `LocalPlayer` a `TargetChanged`, after which `GetTarget()` is nil.
+72. **Effect list order (§15.2 effect rules 1–2):** three `effect player` steps with effect
+    records E1, E2, E3 (in that order, E1 with `for=30s`) give `EffectAdded` with `Index` 1, 2,
+    3 and `GetCount() == 3`; then `effect-end player` of E1 gives `EffectRemoved` with
+    `Index` 1, after which `GetCount() == 2`, `Get(1)` is the E3 effect, `Get(2)` the E2
+    effect, `IndexOf` of the held E1 object is −1, `Contains` of it is false, and `Get(3)` and
+    `Get(0)` raise. The held E1 object still answers `GetDuration() == 30`.
+73. **Effect values (§15.2):** for an effect record with `Effect_Resist_Category` 8,
+    `Effect_Debuff` true and `Effect_IsCurable` true, the `Effect` reports `GetCategory() ==
+    Turbine.Gameplay.EffectCategory.Wound` (8), `IsDebuff()` and `IsCurable()` true,
+    `GetIcon()` equal to the record's `Effect_Icon`, `GetName()` its rendered `Effect_Name`,
+    and `GetStartTime()` at most `Turbine.Engine.GetGameTime()` in the `EffectAdded` handler.
+    For a record without those three properties: 0, false, false. An effect without `for=`
+    reports `GetDuration() == 0`. A literal effect applied with `from=$a` reports its literal
+    text from `GetName()`, `GetIcon() == 0`, `GetCategory() == 0` and `IsDebuff()` true; the
+    same literal without `from=` reports `IsDebuff()` false. No `IsDispellableChanged` is
+    delivered in the run.
+74. **Effects cleared (§15.2 effect rule 3):** a plugin holding `$a`'s `EffectList` (through
+    `GetTarget():GetEffects()`) while `$a` has two effects sees, on `despawn $a`, exactly one
+    `EffectsCleared` and no `EffectRemoved`, and then `GetCount() == 0`. `defeat $a` before it
+    leaves the count at 2.
+75. **Combat state:** `combat player on` gives one `InCombatChanged` and `IsInCombat()` true; a
+    second `combat player on` gives none; `combat $a on` gives none; `combat player off` gives
+    one and `IsInCombat()` false.
+76. **Skills and quickslots (§15.2):** without a `learn` step, `GetTrainedSkills():GetCount()
+    == 1` and `GetItem(1):GetSkillInfo():GetName()` is non-empty and meets the conditions of
+    `plugin-api-usage.md` §7.4.1 rule 1. `learn $s` (one skill record) gives `SkillRemoved`
+    with `Index` 1, then `SkillAdded` with `Index` 1; the new skill's `GetSkillInfo():GetName()`
+    is the record's rendered `Skill_Name`, `GetIconImageID()` its `Skill_SmallIcon`,
+    `GetType() == 0`, and `GetItem(2)` raises. `cooldown $s 10s` gives `ResetTimeChanged`,
+    after which `GetResetTime() − Turbine.Engine.GetGameTime()` is within one frame of 10;
+    after the scheduled end, another `ResetTimeChanged` and `GetResetTime() == −1`. A plugin
+    `Quickslot` holding `Shortcut(Turbine.UI.Lotro.ShortcutType.Skill, d)`, with `d` = `0x` and
+    the skill DID as 8 hex digits, sends `UseSkill { what: Record(DID), target }` with the
+    current selection on a left click injected by the test harness; with data `0xZZ` it sends
+    nothing. `forget $s` gives `SkillRemoved` with `Index` 1 and `SkillAdded` with `Index` 1
+    (the placeholder again).
+77. **Effect categories against the install (P86):** for each `EffectCategory` name other
+    than `Undefined` and `Dispellable`, the resist-category mapper (read by its EMAPPER label)
+    has a key with that label and the API value is 2^(key − 1); `Dispellable` equals the
+    bitwise union of the `Disease`, `Wound`, `Fear`, `Poison` and `Corruption` values; every
+    stored `Effect_Resist_Category` of the effect records has at most one bit set.
+
 ---
 
 ## 19. Open questions (summary)
@@ -4026,13 +4304,27 @@ All `> **OPEN:**` callouts above:
   (§13.21); the scaling-service flag that picks the `GoldWindow` variant (§14.2.1); read
   order of plugin-created elements against the drag bar (§14.2.3); interaction details of
   the game-object controls (§14.5).
-- Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which of
-  `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the
+- Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which
+  shortcuts `SetShortcut` calls invalid, what `Shortcut(item)` stores, the default of
+  `IsUseOnRightClick()`, the mouse buttons that activate a quickslot (§14.6, implementer
+  note); which of `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType` and the
   stance enums follow a data enum (§15); when the original delivers the gameplay views'
   `…Changed` events (§15); what the original's `ItemInfo:IsMagic()`, `GetMaxQuantity()`,
   `GetQualityImageID()` and `GetNameWithQuantity()` return, what its item getters return
   when the data lacks the property, and whether `ItemAdded`/`ItemRemoved` fire for moves
-  between containers (§15.1).
+  between containers (§15.1); the order of the plugin events of one cross-container move
+  and of a move within `Equipment` (§15.1, implementer note); events for items left at
+  backpack slots at or above *N* after a shrink (§15.1, implementer note); what the views
+  do when the player leaves the world (§15.1, implementer note); `GetNameWithQuantity(q)`
+  for a *q* that is not a finite number, one `Item` object per item per apartment, and
+  `GetItem` with a non-number (§15.1, implementer note); the original's values for the
+  combat views that the feed does not carry or that §15.2 fixes by rule (base and
+  temporary vitals, effect start time and duration, the effect properties read by the
+  class-library function and which effects it displays, `EffectsCleared`, level before the
+  first update, the target outside view, the trained-skill order and `GetItem` range, skill
+  icon, type, usability and cooldown) (§15.2).
+- Object model: when the original destroys a control that plugin code no longer references
+  (§8.2, implementer note).
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -4066,7 +4358,16 @@ control in stretch mode 1 after `SetSize` (§13.18).
 The P1 revision of 2026-10-09 (§15.1) and its review fixes of the same day narrowed the §15
 callout on enums (`Equipment`, `ItemDurability` and `ItemWearState` answered by P82) and
 added one callout (§15.1: the original's values of four `ItemInfo` getters, of getters on
-absent properties, and events for moves between containers).
+absent properties, and events for moves between containers). Implementer notes added
+callouts that this summary did not list until the P2 revision: §8.2 (control lifetime) and
+§14.6 (quickslot and shortcut details) on 2026-10-08, and four in §15.1 on 2026-10-10 (event
+order of moves, slots above a shrunk backpack, leaving the world, three open values).
+
+The P2 revision of 2026-10-10 (§15.2) narrowed the §15 callout on enums (`EffectCategory`
+answered by P86: values are bit values 2^(key − 1) of the resist-category mapper) and added
+one callout (§15.2: the original's values for the combat views). `> **OPEN:**` markers
+before this section: 61 before the revision (57 after the P1 revision plus the four §15.1
+implementer notes), 62 after it.
 
 ---
 
@@ -4233,3 +4534,4 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-06 | Second repair of the decision-alignment revision (spec writer, dirty room), answering the second review round; no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **§3.3 deferred work made consistent:** the at-least-one-item rule of 0014 D8 now carries its one exception, from 0015 §4.4: while the first `Plugins/` file index is not ready and the head of the queue is a load, that frame's deferred work stops at the load, no item runs and the items behind it wait, so queue order is kept; refreshed indexes never hold back a load; this is the rule of `plugin-runtime.md` §8.4 "Wait for the first file index", which §3.3 now cites. (2) **§18:** the lead-in to the Tessera-rule invariants reads 59–65 (invariant 65 is the §11.3 interim rule). (3) **§13.18 mode-1 row** (non-blocking): the reason why the children of a resized Stretch control are not laid out again is now `ui-behaviour.md` §9.2.1 (a Stretch element resize keeps the layout box), not `ui-layout.md` §8.4 step 1, which Tessera applies only under root-panel parents (`ui-layout.md` §8.4 scope OPEN); the behaviour is unchanged. **OPEN callouts:** count unchanged (no new or closed callout). **Implementers re-check:** deferred-work slicing while the first index is pending (§3.3). **Left for other owners:** decision 0014 D8 (locked) does not name the first-index exception to its at-least-one-item rule; it should, when 0014 is next revised, together with the skip set already listed. |
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting review): new §15.1 (inventory views: `GetBackpack`, `GetEquipment`, `Item`, `ItemInfo` over the session's inventory model and the scenario feed), provenance P81–P82 (API facts S2, the `Equipment` ↔ `ContainerSlot` key relation from the data), §18 checks 66–69 for decision 0024 P1 exit criterion 4. No other text changed; section numbers and anchors unchanged. Implementers re-check: the `Turbine.Gameplay` inventory views in `crates/plugins`. |
 | 2026-10-09 | Review fixes for the P1 revision (spec writer, dirty room; no new research; status stays **Revised**, awaiting re-review by a session other than the writer and the first reviewer). Blocking (1): §15 enum paragraph and P41 now point to P82 (`Equipment` value = `ContainerSlot` key − 1; `ItemDurability`, `ItemWearState` follow their data enums); the §15 enum OPEN and its §19 line narrowed to `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the stance enums. (2): the §15.1 OPEN is listed in §19, with a closing note. (3): new provenance row P83 (**Tessera rule**, DEC 0024 P1, `character-panels.md` §4.3, §8, §9) covering every Tessera rule of §15.1; §15.1 says which facts are P81/P82 and which P83; §18 has a lead-in for checks 66–69. (4): §15.1 rewritten with a containers table and two getter tables covering every `Item` and `ItemInfo` getter of §16, each with its value for a present property, an absent property and a literal item; `GetItemInfo()` identity (one object per record DID per apartment) stated; the §15.1 OPEN widened to the original's values for absent properties. Non-blocking: (a) the delivery rule points to §15's first paragraph; (b) note that `scenario-feed.md` links resolve after `p0` is merged; (c) and (e) a `SizeChanged` rule for growth before the first `ContainerSize`, and a §20 row asking `character-panels.md` §8.1 to align; (d) check 67 names the `MoveItem` and `DestroyItem` input lines with `defaults on`; (f) blank lines fixed. Checks 66, 67, 69 extended. OPEN count: 57 callout markers in §1–§18 before and after (one narrowed, one widened; none closed, none added). Section numbers and anchors unchanged. Implementers re-check: `Turbine.Gameplay` `Backpack`, `Equipment`, `Item`, `ItemInfo` in `crates/plugins`. |
+| 2026-10-10 | P2 revision (spec writer, dirty room; status Accepted → **Revised for P2**, awaiting independent review), for decision 0024 §2.6 (the `Turbine.Gameplay` views of P2). New §15.2 (combat views: entity objects and their classes, `Actor` morale, power, level and target with their events, `LocalPlayer:IsInCombat()` and `InCombatChanged`, `EffectList` and `Effect` with values, order and events, effect categories, `GetTrainedSkills`, `ActiveSkill` and `SkillInfo`, quickslot shortcuts, leaving the world; one OPEN). New source key BIN-P2 (M4 under decision 0011, same build: the plugin `Effect` and `EffectList` code, questions and limits in the key's row) and rows P84 (S2, S3), P85 (BIN-P2), P86 (data: `EffectCategory` = 2^(key − 1) of mapper 0x23000064; census of stored categories and flags), P87 (**Tessera rule**). §15: `Actor` row points to §15.2; enum paragraph and OPEN narrowed (`EffectCategory` answered). §14.6 implementer OPEN: the Tessera `GetShortcut` sentence names drags from the game's quickslot bar (§15.2). §18: lead-in and checks 70–77. §19: the §15.2 OPEN, the four §15.1 implementer OPENs and the §8.2 and §14.6 implementer OPENs listed; the enum line narrowed. No other text changed; section numbers and existing anchors unchanged; new anchor `s15-2`. Implementers: build §15.2 in `crates/plugins` only after the revision is Accepted. |

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09, re-review passed; first version 2026-10-09, first review changes requested, review fixes the same day; see the review record) |
+| **Status** | Revised (P2 revision 2026-10-10 of §6.16, §6.20 and §8.3, with rows IT23–IT24, Q10 and Q21; awaiting independent review; the rest was Accepted 2026-10-09 after re-review, see the review record) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
@@ -79,6 +79,8 @@ supplies, §11 says what Tessera shows.
 | IT20 | The item-level text and the pending-bonus marker are joined by the `Utils` pair format with variable 0x5425 = the level text and 0x59BF = the marker; when either is empty the other is used alone (§6.7) | BC (class 3796 and the helper it calls); OBS (the format has exactly these two variables, 0x5425 placed first) | Confirmed (bytecode) 2026-10-09 |
 | IT21 | Generic rows: bitfield values are listed as the display texts of the set bits' keys in ascending bit order (key = bit index + 1), joined pairwise by the `Utils` list format 0x06756762 (variables 0x5425 = text so far, 0x59BF = next text); a set bit without a display text, or no set bit, leaves the variable unset. Value types without a rule of §6.4 leave the variable unset, so the format does not render and the row is empty (§6.4) | BIN (d), second pass; `string-table.md` G25 | BIN |
 | IT22 | Class-library parts of §6.3 and §6.12–§6.18: the provider class of each row type and the properties its code reads and writes (icon 1067; DPS 1058, damage 1059; equipment category 1065; allowed slots 1055; requirements 1092; effect lists 1062; cooldown 1091; item decay 2808; quest ID 1074) | BC (each class's own method bodies, property IDs as literal operands) | Confirmed (bytecode) 2026-10-09 |
+| IT23 | Effect and stat lines of the item effect lists: their composition, texts and states are the effect lines of `skill-tooltips.md` §9 (definition mode, at the item's level), and the lists' sources are `skill-tooltips.md` §9.7 (§6.16) | `skill-tooltips.md` ST10, ST13 (BC + BIN) | as cited |
+| IT24 | Compare kinds 7 (`SkillGrantingItem`) and 5 (`TraitItem`): the item record's `Item_GrantedSkill` or `Item_GrantedTrait` names the record whose **hover** tooltip is attached; no option gates them; 1,262 of 1,262 kind-7 items name a skill with a hover pair (§8.3). Skill-item rows show the skill of `Usage_SkillToExecute` (§6.20) | `skill-tooltips.md` ST17, ST18 (BIN, OBS) | BIN + Confirmed data |
 
 ---
 
@@ -707,10 +709,18 @@ into an `Examination_EffectInfo_Array` of `Examination_EffectInfo_Struct` entrie
 `EffectListElement` per effect, each with the effect's own examination text
 (`combat-data.md`). This is the same machinery as effect tooltips (decision 0024 P2).
 
-> **OPEN (P2):** the effect-line texts. **Tessera rule (P1):** one line per `Mod_Array` entry
-> with the modified property's display name and its constant value (or the progression value
-> at the item's level, `combat-data.md` §4), and one line per effect of the item's equipper
-> effect list with the effect's `Effect_Name`.
+> **Answered (2026-10-10, P2 revision, IT23; was OPEN (P2)):** the lines of these lists are
+> the effect lines of `skill-tooltips.md` §9: for each effect of the list, in definition mode
+> at the item's level (`skill-tooltips.md` §9.7, §9.8), its definition description, one
+> modifier line per `Mod_Array` entry (§9.4 there: the operator's template with the
+> property's `PropertyMetaData_Name` and the value text, or the entry's
+> `Mod_DescriptionOverride`), the chance line and the combat-only and duration lines; each line
+> in state `buffed` or `debuffed` (`duration` for the last two) of the `EffectListElement`
+> colours. The item's own `Mod_Array` is shown through the template effect
+> `PropertyModEffect` (§9.7 there), so its entries are the item's stat lines. The rows filter
+> the item's effects by their `UI_Examination_Tooltip_EffectCategory` (0x10 wearer, 0x20
+> target, 0x08 usage). The P1 Tessera rule (`Effect_Name` per effect, dictionary names for
+> stats) is superseded.
 
 > **OPEN:** (implementer, 2026-10-10) engineering choices where the Tessera rule is silent,
 > for review: (1) no source of a property's *display name* is given; the implementation shows
@@ -719,6 +729,13 @@ into an `Examination_EffectInfo_Array` of `Examination_EffectInfo_Struct` entrie
 > (`Effect_Name`); the usage list's header is the row's format, shown when the list has lines.
 > (3) The weapon slayer and property-mod rows (`WeaponSlayerMod_*`, `WeaponPropertyMod_*`,
 > §4.2) have no content rule here; they are built empty like the rows of §6.20.
+>
+> *Answer (2026-10-10, P2 revision):* (1) the display name is the modified property's
+> `PropertyMetaData_Name` (`misc-records.md` §13.1); a property without a metadata object gets
+> no line; values are formatted by `skill-tooltips.md` §9.4 step 8. (2) Target and usage lists
+> follow `skill-tooltips.md` §9.7 (categories 0x20 and 0x08); the header rule is
+> `skill-tooltips.md` §9.6 (its OPEN keeps the implementation's rule). (3) Still open: the
+> slayer and property-mod rows stay empty in P2.
 
 <a id="s6-17"></a>
 ### 6.17 Item sets (Tessera rule IT18)
@@ -787,9 +804,16 @@ A generic row (§6.4) on `Description`: empty when the item has no description t
 
 Legendary rows (`IA_*`, `ItemAdvancement_*`, `NeedsReforge_Base`, `Item_UpgradeTier_Base`),
 socket rows (`ItemSocketList_Base`, `ExaminationItemSocketType_Base`), runic rows, lockbox,
-summoning, decoration-house, world-event, quest-guide, disenchantment, recipe one-shot and
-cooldown rows, and the skill-item rows (P2). They are built as empty rows, so §5 removes them;
-the real-data test counts them (§12).
+summoning, decoration-house, world-event, quest-guide, disenchantment and recipe one-shot and
+cooldown rows. They are built as empty rows, so §5 removes them; the real-data test counts
+them (§12).
+
+**Skill-item rows (P2 revision 2026-10-10, IT24).** The 13 rows with
+`UI_Examination_Tooltip_For_SkillItem` (14 in the instrument layouts) are no longer left empty:
+they show the rows of the skill named by the item's `Usage_SkillToExecute`, by the rules of
+`skill-tooltips.md` §6.1 and §7 (with that spec's Tessera rules: damage and class-mechanics
+rows empty in P2), and are empty when the item names no skill (`skill-tooltips.md` §12.3:
+1,194 items name one).
 
 > **OPEN:** (implementer, 2026-10-10) how the rows of this list are recognised, and one
 > conflict. The implementation recognises them by widget type: every examination widget type
@@ -863,8 +887,8 @@ weapon with both hands. Example: §14.5.
 |---|---|---|
 | 2 `Equipment` | 101,400 | §8.1 |
 | 4 `Recipe` | 6,055 | The recipe item's result: from `RecipeItem_Recipe` → `CraftRecipe_ResultItem` (and its quantity), a tooltip of the result item is attached |
-| 5 `TraitItem` | 1,557 | A trait comparison (P6) |
-| 7 `SkillGrantingItem` | 1,262 | The granted skill's tooltip (P2) |
+| 5 `TraitItem` | 1,557 | The hover tooltip of the trait named by `Item_GrantedTrait` is attached (`skill-tooltips.md` §12.4; trait tooltips are P6) (IT24) |
+| 7 `SkillGrantingItem` | 1,262 | The **hover** tooltip of the skill named by the item record's `Item_GrantedSkill` is attached (`skill-tooltips.md` §12.4; all 1,262 name a skill with a hover pair; no option gate) (IT24) |
 | 8 `MountGrantingItem` | 378 | The granted mount skill's tooltip (P5) |
 | 0 | 20 | none |
 | absent | 40,558 | none |
@@ -1106,7 +1130,7 @@ Screen 1920 × 1080, cursor 32 × 32, tooltip 240 × 300, pointer (1500, 200): *
 | Q7 | `cantuse` test of the category row | §6.13 | BC |
 | Q8 | Allowed-slot list | §6.14 | owner (O80) |
 | Q9 | Requirement lines | §6.15 | BC (permission classes) |
-| Q10 | Effect and stat lines | §6.16 | P2 spec |
+| Q10 | Effect and stat lines | §6.16 | Answered 2026-10-10 by `skill-tooltips.md` §9 (IT23) |
 | Q11 | Set lines | §6.17 | owner (O80) |
 | Q12 | Duration format | §6.18 | BIN or owner |
 | Q13 | Comparison placement; option default | §8.3 | owner (O81) |
@@ -1117,6 +1141,7 @@ Screen 1920 × 1080, cursor 32 × 32, tooltip 240 × 300, pointer (1500, 200): *
 | Q18 | Bit order of any-width bitfields in generic rows | §6.4 | BIN |
 | Q19 | Quest-ID format choice | §6.18 | BC |
 | Q20 | How item slots request the examination tooltip | §9 | BIN |
+| Q21 | Weapon slayer and property-mod rows | §6.16 | BC (classes 1096, 2490) |
 
 Owner checks: `docs/checklists/owner-observations.md` O80 (tooltip rows of ten items) and
 O81 (comparison and pinning).
@@ -1133,3 +1158,4 @@ O81 (comparison and pinning).
 | 2026-10-10 | Pointers only (no fact changed): the §11 OPEN on instance properties in scenarios and row Q16 point to their answer in decision 0025 (`scenario-feed.md` revision 4, `item-property`). |
 | 2026-10-10 | Implementer OPENs (no fact changed): §6.12 damage variables, §6.15 line-element link of list rows, §6.16 stat names and other effect lists, §6.17 cumulative tiers and set-level readings, §6.18 cooldown variable, §6.20 recognition and `IA_Label_Base`, §12 unnamed tooltips and which lookup misses are row failures. |
 | 2026-10-10 | Implementer OPENs from `crates/ui` (no fact changed): §5 text-row width, §6.11 parts of the worth template, §10 pin offset origin, close button and window size. |
+| 2026-10-10 | P2 revision (spec writer, dirty room; status Revised, awaiting independent review): §6.16 effect and stat lines answered by `skill-tooltips.md` §9 (IT23; the P1 Tessera rule superseded; implementer notes (1) and (2) answered, (3) stays open as Q21); §6.20 skill-item rows filled from `Usage_SkillToExecute` (IT24); §8.3 compare kinds 7 and 5 (IT24); §15 Q10 answered, Q21 added. No other fact changed. |

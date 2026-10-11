@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08, narrow review of the BIN7 revision passed) |
+| **Status** | Revised (2026-10-10, P2 spec writer: new §9.1 (StoryHook and Execute nodes at run time, for `combat-visuals.md`), §9 hook bullet, §4.3 Execute payload row, new BIN8 and OBS5 rows, T44–T45; awaiting independent review). Before: Accepted (2026-10-08, narrow review of the BIN7 revision passed) |
 | **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
@@ -80,6 +80,8 @@ Legend:
 | BIN6 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-08 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh read-only copy of the analysis project (deleted afterwards), to answer two clean-room implementation OPENs. Questions: (15) in which order the client starts the nodes of one script, so that "the most recently started" slider node of `appearance.md` §6.4 can be found (§7.5, §8.2, §11.3); (16) what a held one-shot clip does when its clip is not longer than the 1/30 s end crop (§6.7). Why M1–M3 were not enough: no avatar closure has two slider nodes and no held one-shot node names so short a clip, so the data cannot show either result; the start order is code, not data; no published source covers them; observing the running client (M3) cannot separate start orders that give the same picture. Code read: the script run routine and its three start passes, the per-table gathering of definitions and the table record's kind field, the routine that starts the children of one port, the Collection and Scriptlet node start routines, the port class of Collection ports and its ordering method, the held-time setter, the animation control's creation and the middleware's time step. Nothing of the network, login, launcher or anti-tamper code. |
 | OBS4 | Observed 2026-10-08 with the repository's decoders used as a tool: every port of every Collection node in all 7,524 decodable tables and all 28,992 scriptlets (46,656 Collection nodes, 72,798 ports; ordinal order, repeated ordinals, port and child counts, Appearance nodes below the ports). |
 | BIN7 | The same executable (file version 4906.0071.1794.4035), read again on 2026-10-08 under [decision 0011](../decisions/0011-standing-m4-authorisation.md) with Ghidra (headless, read-only fresh copy of the shared project, deleted afterwards), to answer two non-blocking items of the 2026-10-08 review. Questions: how a table's kind is compared with a list's kind while gathering definitions (§8.2 step 3); whether the Collection port sort keeps the container order of equal ordinals (§7.5 step 2). Why M1–M3 were not enough: every table kind of the install is a single bit and no Collection exceeds 26 ports, so the data cannot separate the alternatives; the sort is code, not data. Code read: the per-table gathering routine and the general sort routine used for Collection ports. Nothing of the network, login, launcher or anti-tamper code. |
+| BIN8 | The same executable (file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-10 under [decision 0011](../decisions/0011-standing-m4-authorisation.md) in the dirty room (Ghidra 12.1.3 headless on a temporary project copy, deleted afterwards), for `combat-visuals.md`: the combat-presentation component that receives StoryHook events, counts them per story and hook type and releases strikes. **Question:** what a StoryHook node does at run time. **Why M1–M3 were not enough:** code only; the data stores the hook type. The client's network decoding was not read (decision 0004). |
+| OBS5 | Observed 2026-10-10 with the repository's decoders used as a tool: every Execute node (kind 4) of all tables and scriptlets, its callback (DID map 0x28000007), its call properties and its result ports. |
 | EM | Enum mappers in the data: node kinds 0x2300019A (base of 0x2300009E), port types 0x230000A1, target types 0x2300019B (base of 0x2300009F), switch-port operator 0x230000A2, when operator 0x230000A3, math operator 0x230000A4, animation layer 0x230000D5, script IDs 0x23000097 (base 0x230000F8), `Movement_MovementStyle` 0x2300017F, `Entity_Element` 0x23000069 (base 0x230001B9), story-hook type 0x230000BB (base 0x2300013D). |
 | DS | `research/notes/data-semantics.md` §10 (0x07 outline from LC, node-type names). |
 | HD, SA, AP, ED, PS | `havok-data.md`, `skeleton-anim.md`, `appearance.md`, `entity-descriptor.md`, `property-system.md` as companion specs. |
@@ -129,6 +131,8 @@ Legend:
 | T41 | Start order of one script run: the gathered definitions of kind-1 tables first, then those of kind-2 tables, then kind-4 (which hold no scripts); within a kind, definitions in gathering order and each definition's root nodes in stored order; a Scriptlet node starts its record's roots in stored order; a port's children start in stored order; every node completes its own immediate starts before its next sibling starts. Gathering into the three lists: a table's kind is tested against the list's kind as a bit mask (a common set bit), a table that does not match is still descended into for its includes (a null include or one naming the table itself is skipped), and a root node already in a list is not added again (§8.2 step 3, §11.3) | BIN6; BIN7 (bit mask, include skips) | Confirmed 2026-10-08 (BIN only; gathering re-read 2026-10-08, BIN7); resolves the §8.2 step 3 OPEN. Stored order = the order of the loaded lists; the loader itself was not traced |
 | T42 | A Collection starts its Default ports in **ascending ordinal** (unsigned 32-bit comparison), whatever their stored order; ports with equal ordinals keep the order of the client's port container, which was not traced (they keep it because the client sorts 32 ports or fewer by a stable insertion sort and no Collection has more than 26 ports, SI17; above 32 ports its sort is not stable); a Collection stopped during its own start starts no further ports (§7.5) | BIN6; BIN7 (sort stability); OBS4 | Confirmed 2026-10-08 (rule BIN only; census OBS4) |
 | T43 | A held clip whose played length is 0 or less (a one-shot held node whose clip lasts at most 1/30 s) is held at local time 0: the setter limits the time to [0, played length] with the lower limit applied last, and the middleware's time step raises a negative local time to 0 and advances nothing when the played length is 0 (§6.7) | BIN6 | Confirmed 2026-10-08 (BIN only) |
+| T44 | A StoryHook node hands its type and the run's `StorySystem_StoryID` to the performing entity's combat-presentation component and completes at once; the component counts the events per story and type and releases the strikes of that number (§9.1) | BIN8 | Confirmed (BIN) |
+| T45 | Execute nodes: callbacks census; the payload of an Execute result port (type 5) is the PID of the callback's result property and the value that selects the port (§4.3, §9.1) | OBS5 | Confirmed (2026-10-10) |
 
 ---
 
@@ -290,7 +294,7 @@ echo — confirmed for (4,6), (10,6), (12,22), (14,10), (14,11), (20,6), (22,6),
 | Node kind | Port type | Payload | Ports | Meaning |
 |---|---|---|---|---|
 | 2 Collection | 6 | u32 | 72,798 | Ordinal label 1, 2, 3 … (all children start together) |
-| 4 Execute | 5 | u32, u8 | 629 | Callback result value and flag (OPEN) |
+| 4 Execute | 5 | u32, u8 | 629 | The PID of the callback's result property and the value that selects the port (T45, §9.1) |
 | 5 Run | 9, 14 | u8, u32 | 9 | Result filter (OPEN) |
 | 6 Sequence | 6 | u32 | 32,149 | Step number; steps run in ascending order (§7.6) |
 | 11 WaveformBlend | 6 | u32 | 1 | (OPEN) |
@@ -1472,12 +1476,38 @@ diagonals 2.224 m along x and y).
   1.82 s walk 0x05008D08; mounted and holding variants wrap them in WhenRunning nodes.
 - **Gameplay hooks** are StoryHook nodes (kind 28) under event ports: `StoryHookScript_Type`
   = 2 `Attack` (4,130 nodes) or 1 `Defend` (2,480) (enum 0x2300013D). They tell the game
-  when a swing lands or a block happens; in an offline client they are no-ops, and in M7 they
-  become messages to Tessera's server.
+  when a swing lands or a block happens: on the client they release the strikes of the
+  performer's current story (§9.1). Tessera does the same with scripted strikes
+  (`combat-visuals.md` §9.3); nothing is sent to a server.
 - Event time is in clip seconds, before playback-rate scaling: at rate *r* the event fires
   *t*/*r* seconds of wall time after the cycle starts. A looping clip fires its events on
   every cycle. Events whose time exceeds the duration (329) never fire. (BIN3: the animation
   node schedules its ports with the Timer machinery, §6.4; was Reported and Decision.)
+
+<a id="s9-1"></a>
+### 9.1 StoryHook and Execute nodes at run time (BIN8, OBS5; 2026-10-10)
+
+- **StoryHook (T44).** When a StoryHook node runs, it hands its `StoryHookScript_Type` and the
+  run's `StorySystem_StoryID` (PID 0x48E) to the combat-presentation component of the entity
+  the script runs on, and completes at once. The component counts the events per story and per
+  type; the *n*-th event of a type releases the story's strikes of hook number *n* (an Attack
+  event every strike, a Defend event only strikes of the defensive kind). A StoryHook in a
+  script that does not belong to a story releases nothing. Rules and what a released strike
+  shows: `combat-visuals.md` §4.2–§4.4.
+- **Execute (T45).** Callbacks by node count over all tables and scriptlets (DID map
+  0x28000007 labels): `GetUpcomingTargets` 625, `ExecuteScript_AssertMsg` 125, none 88,
+  `ExecuteScript_DistantGroup` 64, `ExecuteScript_UpdateBallisticTargetReticle` 10,
+  `GetUpcomingHitResult` 4, `CommonGeneratorScriptCallback` 2, `ExecuteScript_ArrayContains` 2,
+  `ExecuteScript_DistantBattleDamageReport`, `ExecuteScript_TurnOffRunLock` and
+  `SetupPlayerPhysics` 1 each. Result ports (type 5, 629): (`SCP_GetUpcomingTargets_Result`, 1)
+  in 623, (`SCP_GetUpcomingTargets_Result`, 0) in 4, (`ExecuteScript_ArrayContains_Param_Result`,
+  0) in 2. A `GetUpcomingTargets` node's call properties hold the array
+  `SCP_GetUpcomingTargets_CombatResultType_Filter` (attack results, mapper 0x2300002A); its
+  output array `SCP_Output_GetUpcomingTargets_TargetArray` is read by Property targets (§4.4) of
+  the nodes below it. Their meaning and the Tessera rule: `combat-visuals.md` §4.6 and its
+  rule 8.
+- **Beam (kind 54).** Its Default port fires once, when the beam's head arrives
+  (`particle-runtime.md` §11.1 step 7).
 
 ---
 
@@ -2089,3 +2119,4 @@ table). Points for the spec owner:
 | 2026-10-07 (BIN5) | header; §1 (new BIN5, T19 note, new T36–T40); §6.2; §6.7 (steps 1 and 2, example table, implementation OPEN answered); §6.8; §6.9 (new edge cases, implementation OPEN answered); §15 item 5; §16 (one correction, two answers) | Edge cases from a clean-room audit of the River-hobbit height code, settled from the client (BIN5, decision 0011). §6.7: the integer part is a truncating 32-bit conversion, so non-looping values that are not finite or of magnitude 2³¹ or more give 0; looping infinities give 0; a looping fraction that rounds up to 1 stays 1 (corrects the Tessera rule "gives 0"); NaN on a looping node is undefined in the client and becomes a Tessera Decision (0); the held time is *f* × the played length, which is the duration minus the 1/30 s end crop for `LoopForever` 0 with `LoopCount` 1, and `StartTime`/`EndTime` do not enter (resolves the step 2 OPEN; the `LoopCount` 1 column of the example corrected, rows added). §6.8: the DwarfStoutAxe clips use that cropped length. §6.9: a deformer whose clip is missing or does not fit contributes nothing; any number of deformers; deformer time limited to [0, duration], NaN Decision; a slider node parses whatever string its field holds; one slider set per entity. §6.2: no clip limit per layer (warning at 1,000). The facts the audit found contradicted by code stand: several held clips share their layer (§6.2; re-checked in the layer's play routine, which changes no other clip, BIN5) and driven pairs bind by field PID (§4.2, SI13). | Spec writer (dirty room) |
 | 2026-10-08 (BIN6) | header; §1 (new BIN6, OBS4, T41–T43); §6.7 step 2; §7.5 (new start-order paragraph and census); §8.2 step 3 (run order; OPEN resolved); §11.3 step 3; §12 (new SI17); §15 items 1 and 3; §16 (implementation OPEN on short held clips answered) | Two clean-room implementation OPENs answered from the client (BIN6, decision 0011). Start order of one script run: kind-1 definitions, then kind-2, then kind-4, roots in stored order, each node completing its immediate starts first; a Collection starts its ports by ascending ordinal (the reverse of the stored order in most Collections), equal ordinals in an untraced order (Tessera Decision: stored order); this fixes what "most recently started" means for `appearance.md` §6.4 and the order of equal-priority script appearance pieces. A held one-shot clip not longer than the 1/30 s end crop is held at time 0 (the Tessera guard is the client's result). | Spec writer (dirty room) |
 | 2026-10-08 (BIN7) | header; §1 (new BIN7; T41, T42); §7.5 step 2; §8.2 step 3 | Non-blocking notes of the review of 2026-10-08. T41 now covers the gathering sentences of §8.2 step 3 (kind match, descent into includes, a root not added twice), and the kind is stated to be tested as a bit mask (a common set bit), with null and self-naming includes skipped (BIN7). §7.5 step 2 and T42 state why equal ordinals keep the container order: the client sorts 32 ports or fewer by a stable insertion sort, and no Collection has more than 26 ports (SI17); above 32 its sort is not stable. The Tessera Decision is unchanged. Status Revised. | Spec writer (dirty room) |
+| 2026-10-10 (BIN8) | header; §1 (new BIN8, OBS5, T44, T45); §4.3 (Execute payload row); §9 (gameplay-hook bullet); new §9.1 | P2 revision for `combat-visuals.md`: StoryHook nodes at run time (they release strikes of the performer's story, BIN8), the Execute callback census and the meaning of the Execute result-port payload (OBS5), the Beam port. Status Accepted → Revised, awaiting review. The former sentence "in an offline client they are no-ops, and in M7 they become messages to Tessera's server" is replaced. | Spec writer (dirty room) |

@@ -1158,6 +1158,11 @@ colour state through `RankToUIState`. Worked example in §11.1.
 > clamped, which consider type applies to which target, and where quest tables are used.
 > Not read by native code with constant IDs (§2.4). This is visible behaviour (name
 > colours); M3 observation could test the reading.
+>
+> *Implementer note (2026-10-10, `crates/gamedata`):* until Q16 is settled the implementation
+> clamps the list element to the list (levels above the list's length use its last element,
+> levels below 1 its first) and the table element to 0–30; a rank without a
+> `RankToUIState` entry gives no state (`combat-ui.md` TR15 then uses `ConEven_ColorName`).
 
 <a id="s7-6"></a>
 ### 7.6 Formations (Confirmed, GC27)
@@ -1643,3 +1648,4 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 | 2026-10-07 | Second revision, for the second review (changes requested), status stays Review. §5.2, GC13: the earlier statement that the 767 class-3509 traits carry no `Trait_Group` was wrong (a top-level-only check); each carries exactly one, nested as the single element of `Trait_Groups`, keys 8–14 with per-slot counts, equal to the keys of the appearance-group hash; the appearance fields, dye flags and the shared material mapper added; Q23 narrowed to how the appearance is applied; new Q29 (dye rule) and GCI16. §2.3: each labelled record's own DID at payload offset 0 named as the expected raw match. §6.2: the completion rule marked as a reading, Q30. §7.16: "no client use" replaced by the BIN facts (not resolved by key; byte scan, q4, finds unexamined code-section matches of 9 of 28 property IDs) and Q1. BIN row: q4. |
 | 2026-10-07 | Third review passed; status Review → Accepted (reviewer). No content change. |
 | 2026-10-08 | Revision answering the six implementer OPEN notes of 2026-10-08; status Accepted → Revised. No section renumbered. §2.1: role classes need not be defined in the class table; the entity base is undefined here and the cross-checks use the parent map only (GC1, OBS2). §3.1: the typed-view choices split into client behaviour (wrong type = absent for the native reads of §5.3.2, §5.7, §8.1) and Tessera Decisions (list cap, error on wrong type elsewhere, null DIDs dropped except in the consideration lists); no DID list in scope holds a null DID (new GC33). §3.4: the name property is `Name` (GC8, GCI4, new GCI19). §5.3.1: the flank fields are floats; both trait-tree struct kinds carry `Mount_Control_Trait_Tree` (GC14, new GCI18). §6.6: the tier-field labels spelled in full (GC22). §7.1: each unlock is the single element of the item's top-level `Usage_SetPropertyUsageData_Array` (GC23, new GCI17; reading added to Q13/Q25 context). §8.1: the client uses 48 also for a value that is not an int (BIN q5, GC29). §5.1: the per-species tall flag `RaceTable_IsTallRace` of the race table (GC12); Q6 narrowed to the link between flag and skill group. New provenance key OBS2; BIN row: q5. §13: an `items.md` proposal. |
+| 2026-10-10 | Implementer note under §7.5 Q16 (no fact changed): the clamps `crates/gamedata` uses until Q16 is settled. |

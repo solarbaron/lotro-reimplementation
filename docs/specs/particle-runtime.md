@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-10; review of the fifth 2026-10-10 revision (commit e67cc51) passed CLEAN_ROOM.md §5.3, every item; pointers only, RT35 reproduced; see the review record). Before: Revised (2026-10-10, fifth revision, spec writer: §9.1.3 item 1, §9.1.1 rule 3, §16 and RT30 point to the tested opacity of `material.md` §11.2 as revised 2026-10-10 instead of the former "opacity source"; new RT35 (no particle record tests a sum of two alphas); no rule for particle draws changed; awaiting review). Before: Accepted (2026-10-10; review of the fourth 2026-10-10 revision (commit 0cd700e) passed: §3.4 real-range precision steps and RT34 confirmed by an own reading of the client, RT33 citation confirmed; wording only, no rule changed). Before: Revised (2026-10-10, fourth revision: wording fixes from non-blocking notes (a) and (b) of the review of the third revision; §3.4 states the precision of each step of a real-range draw (new RT34), RT33 cites the BIN reading that the mode-3 mapping is the client's; no rule changed; awaiting review). Before: Accepted (2026-10-10; review of the third 2026-10-10 revision (commit 6aba648) passed: the implementer OPEN of §9.1.1 on how rule 12 is applied answered; (a) corrected, (b) and (c) confirmed; rule 12 completed, new RT32–RT33, RT-I15–RT-I16, Q-RT10 widened). Before: Revised (2026-10-10, third revision), Accepted (2026-10-10; review of the second 2026-10-10 revision (commit ba847ee) passed: the implementer OPEN of §9.1.1 on curve states answered from BIN pass (i) and OBS3 (one state per loaded surface record, not per 0x39 record); new RT31, rule 12, RT-I13–RT-I14, Q-RT10), Revised (2026-10-10, second revision), Accepted (2026-10-10, review of the first 2026-10-10 revision passed), Revised (2026-10-10), Accepted (2026-10-09), Revised (2026-10-09), Accepted (2026-10-08) |
+| **Status** | Revised (2026-10-10, sixth revision, P2 spec writer: new §11.1 answers Q-RT4 (beams) from BIN pass (k) and OBS4, new RT36–RT44, §5.1 beam row, new rule 13 (lights of lit systems, a Decision for `particles.md` Q8 (b)) and rule 14 (beam limits), RT-I17–RT-I19, §15 Q-RT4 answered, new Q-RT11; for `combat-visuals.md`; awaiting independent review). Before: Accepted (2026-10-10; review of the fifth 2026-10-10 revision (commit e67cc51) passed CLEAN_ROOM.md §5.3, every item; pointers only, RT35 reproduced; see the review record). Before: Revised (2026-10-10, fifth revision, spec writer: §9.1.3 item 1, §9.1.1 rule 3, §16 and RT30 point to the tested opacity of `material.md` §11.2 as revised 2026-10-10 instead of the former "opacity source"; new RT35 (no particle record tests a sum of two alphas); no rule for particle draws changed; awaiting review). Before: Accepted (2026-10-10; review of the fourth 2026-10-10 revision (commit 0cd700e) passed: §3.4 real-range precision steps and RT34 confirmed by an own reading of the client, RT33 citation confirmed; wording only, no rule changed). Before: Revised (2026-10-10, fourth revision: wording fixes from non-blocking notes (a) and (b) of the review of the third revision; §3.4 states the precision of each step of a real-range draw (new RT34), RT33 cites the BIN reading that the mode-3 mapping is the client's; no rule changed; awaiting review). Before: Accepted (2026-10-10; review of the third 2026-10-10 revision (commit 6aba648) passed: the implementer OPEN of §9.1.1 on how rule 12 is applied answered; (a) corrected, (b) and (c) confirmed; rule 12 completed, new RT32–RT33, RT-I15–RT-I16, Q-RT10 widened). Before: Revised (2026-10-10, third revision), Accepted (2026-10-10; review of the second 2026-10-10 revision (commit ba847ee) passed: the implementer OPEN of §9.1.1 on curve states answered from BIN pass (i) and OBS3 (one state per loaded surface record, not per 0x39 record); new RT31, rule 12, RT-I13–RT-I14, Q-RT10), Revised (2026-10-10, second revision), Accepted (2026-10-10, review of the first 2026-10-10 revision passed), Revised (2026-10-10), Accepted (2026-10-09), Revised (2026-10-09), Accepted (2026-10-08) |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, not the author), 2026-10-08; independent reviewer of the 2026-10-09 revision (separate dirty-room session, AI-assisted, not the author), 2026-10-09; independent reviewer of the 2026-10-10 revision (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10; independent reviewer of the second 2026-10-10 revision, commit ba847ee (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10; independent reviewer of the third 2026-10-10 revision, commit 6aba648 (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10; independent reviewer of the fourth 2026-10-10 revision, commit 0cd700e (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10; independent reviewer of the fifth 2026-10-10 revision, commit e67cc51 (separate dirty-room session, AI-assisted, neither the author nor an earlier reviewer), 2026-10-10 |
@@ -60,11 +60,12 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 
 | Tag | Source |
 |---|---|
-| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. **Pass of 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): (h) what decides whether a draw uses a shader record's permutations that read the scene depth or the frame-buffer image (the variants of §9.1.2): the routine that builds the frame's permutation feature mask, its inputs and the user options behind them, found from the option description that names heat distortion. Same reasons: a code path; the data holds only the permutations and their keys. **Pass (i), 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): whose curve objects a particle draw evaluates, and where a mode-10 curve keeps its state: the particle draw routine and the arguments of its draw calls, the routine that builds a surface record's effect, the parameter-copy routine, the curve evaluator, the surface object's constructor and the writers of its rebuild flag, and the fetch that fills the 0x39 record's surface slot. Same reasons: a code path; the data holds only the curves. **Pass (j), 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): the instructions of the real-range draw routine and the mode-3 call site of the shared curve evaluator. **Question:** the precision of each arithmetic step of a real-range draw, and which bounds mode 3 passes to it. Same reasons: a code path; floating-point precision cannot be observed in the data. |
+| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (re-checked 2026-10-08), analysed with Ghidra 12.1.3 in headless mode on a temporary copy of the analysis project (deleted afterwards), 2026-10-08, in the dirty room. **Questions:** (a) what the client does with each Particle-node field at run time, the start gates, the meaning of the extra byte after the node's base block, the dropped-effect path, the water probe and the redirect property; (b) how an attached effect's frame is computed each frame and which owner values feed the two scale vectors of `particles.md` §8.6.3; (c) how an effect is stopped, when it lingers and when it is removed; (d) the random generator particle code draws from and how it is seeded; (e) the draw calls of one system instance, the material they use and the order of particles inside a system; (f) every code path that creates a particle or fork system; (g) how fork draw batches select their shader. **Why M1–M3 were not enough:** all of these are code paths; the data holds parameters only; no published source describes them (M2); no running client and no frame capture are available to this session (M3). Only offline-client code for effects, scripts, scene placement and drawing was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts that rest on BIN alone are marked so. **Pass of 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): (h) what decides whether a draw uses a shader record's permutations that read the scene depth or the frame-buffer image (the variants of §9.1.2): the routine that builds the frame's permutation feature mask, its inputs and the user options behind them, found from the option description that names heat distortion. Same reasons: a code path; the data holds only the permutations and their keys. **Pass (i), 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): whose curve objects a particle draw evaluates, and where a mode-10 curve keeps its state: the particle draw routine and the arguments of its draw calls, the routine that builds a surface record's effect, the parameter-copy routine, the curve evaluator, the surface object's constructor and the writers of its rebuild flag, and the fetch that fills the 0x39 record's surface slot. Same reasons: a code path; the data holds only the curves. **Pass (j), 2026-10-10** (same build, Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards): the instructions of the real-range draw routine and the mode-3 call site of the shared curve evaluator. **Question:** the precision of each arithmetic step of a real-range draw, and which bounds mode 3 passes to it. Same reasons: a code path; floating-point precision cannot be observed in the data. **Pass (k), 2026-10-10** (same build, SHA-256 prefix re-checked; Ghidra 12.1.3 headless on a temporary copy of the analysis project, deleted afterwards; for `combat-visuals.md`): the Beam node's start routine, the beam renderer of the client's `BeamEffect` module (creation, the per-frame update of the effect list, the ramp envelope shared with other timed effects, the endpoint and attachment routine, the ribbon builder, the head-entity placement) and the particle spawn routine it calls. **Question:** how a beam places and drives its particle systems and head entity, when its node's port fires, and when it ends (Q-RT4). Same reasons: code paths; the data stores only the Beam node's parameters. |
 | OBS | User install (Steam), read in place and read-only on 2026-10-08: all 7,526 script tables (7,524 decodable, as in `script-table.md`) and 28,992 scriptlets of `client_gamelogic.dat`, every Particle node (41,354); all 11,155 records with prefix 0x39 and all 254 with prefix 0x44 of `client_general.dat`; the master property dictionary 0x34000000. |
 | BIN-S | **M4 (decision 0011), shader programs.** The compiled programs stored in the 19 shader records that particle surfaces use (same build as BIN; the records are game data), disassembled with a public shader disassembler in the dirty room on 2026-10-09: every Direct3D 10/11 (kind 4) vertex and pixel program of the 19 records, and the OpenGL (kind 3) pixel programs of 0x2B00070F and 0x2B0007F2 as a cross-check (they agree). **Question:** how the alpha test and the blend's source alpha of a particle draw use the texture, the vertex colour and the material colour with the draw's tint (the implementer question of §9.1.1). **Why M1–M3 were not enough:** the data gives the parameters and render states but not what the programs compute; no frame capture is available (M3); no published source describes these programs (M2). **Second pass, 2026-10-10** (same tools): the Direct3D 10/11 vertex and pixel programs of 0x2B000084 (both variants), of the depth-reading variants of the nine records that have one, and the vertex programs of the eight two-layer records and of the one-layer records. **Questions:** what the heat-distortion and soft-particle variants compute (§9.1.2) and which texture coordinates each layer reads (§9.1.1, implementer item (d)). Same reasons. |
 | OBS2 | User install (Steam), read in place and read-only on 2026-10-09 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoders used as a tool for the script tables; the record layouts of `material.md` §4–§7 for surfaces and shader records): the `surface` field of all 11,155 records with prefix 0x39, the 1,179 distinct surface records they name, their materials and shader records (effective 4002, 4004, 1043 and 2000 by `material.md` §9.2); the driven pairs of all 41,354 Particle nodes of all script tables and scriptlets. |
 | OBS3 | User install (Steam), read in place and read-only on 2026-10-10 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoder used as a tool for the 0x39 records; the record layouts of `material.md` §4–§7): `uses_video_post` and `surface` of all 11,155 records with prefix 0x39; the permutation keys and samplers of the 19 shader records of §9.1.1; the effective values (`material.md` §9.2) of 1043, 1160, 1174, 4004 and the texture-matrix parameters 1001–1004, 1017–1020, 1033–1034 and 1070–1073 of every particle surface; later the same day, with the repository's `tessera-material` resolver as a tool, the mode of every curve among 1043 and those texture-matrix values that is not constant, and the number of 0x39 records naming each surface (RT31); in a third probe the same day, with the same tools, the `loop` flag, `period` and key count of every mode-10 curve among those values (RT32). |
+| OBS4 | User install (Steam), read in place and read-only on 2026-10-10 with throwaway probes in the dirty-room scratch area (the repository's `tessera-formats` decoder used as a tool): the data of all 2,740 Beam nodes of all script tables and scriptlets, decoded by the field list of `script-table.md` §5.3 (the fields after `BeamScript_TargetPosition` read from the end of each node's data), their ports, port children and targets. |
 | PS | [`particles.md`](particles.md) (Accepted 2026-10-08): layouts, censuses, the simulation of one 0x39 system (§8), start gating (§7.1.2), fork effects (§6.5). |
 | SR | [`script-runtime.md`](script-runtime.md) §2.1, §3 (contexts, node start, completion, stop). |
 | SE | [`setup.md`](setup.md) §5.2 (render scale; `Model_ParticleScale`, PID 0x5A0). |
@@ -107,6 +108,15 @@ Tessera rule (§12); **Reported** = published sources only (none used).
 | RT33 | How rule 12 is applied: mode 3 takes its *r* directly from the shared stream (one real-range draw over [−1, 1] per mode-3 curve and evaluation, a new value at every draw), with no per-curve state and no generator seeded from the stream; states keyed by surface DID may be kept for the session; at most 4,096 surfaces keep states; a preview keeps them for its run (§9.1.1 answer of 2026-10-10, third revision; rule 12). The mode-3 mapping is the client's behaviour, not a Tessera choice: the client's shared curve evaluator handles a mode-3 curve by one call of the real-range draw of §3.4 with bounds −1 and 1 at each evaluation and keeps nothing in the curve (fourth revision) | RT31, RT32; §3.3, §3.4; `material.md` §5.3.1, §8.4; BIN pass (i) and pass (j) (the mode-3 call site and its two bounds); review of the third 2026-10-10 revision (same reading, own decompilation) | Mode-3 mapping Confirmed (BIN); keying, cap and preview lifetime Decision |
 | RT34 | Precision of a real-range draw: the bounds and the result are single-precision values; the width hi − lo is formed in single precision, widened to double and multiplied by the draw *u* in double precision, the product is rounded to single precision, and lo is then added in single precision; the equality test that skips the draw compares the two single-precision bounds (§3.4) | BIN pass (j); review of the third 2026-10-10 revision (same reading, own decompilation) | Confirmed (BIN) |
 | RT35 | None of the 19 particle shader records is one of the seven records whose tested opacity is the sum of two alphas (`material.md` §11.2 table, MA60); in the OpenGL programs of the eight two-layer particle records (0x2B000703, 0x2B00071B, 0x2B000742, 0x2B000776, 0x2B00077A, 0x2B0007AD, 0x2B000717, 0x2B00072D) the alpha test compares the product of the slot-3000 and slot-3001 alphas, in the one-layer records the slot-3000 alpha, and 0x2B0007F2, 0x2B000726 and 0x2B000084 have no comparison (§9.1.3) | `material.md` SH-H2 (a), SH-H3 (every OpenGL pixel program of these records, re-read 2026-10-10) | Confirmed 2026-10-10 |
+| RT36 | A Beam node start resolves its target to the first entity its target returns; with no entity and `BeamScript_UseTargetPosition` = 0 no beam is made (the node instance exists without one). Otherwise the node's fields become a beam of the beam renderer, its two particle systems (when named) are created at once from their DIDs, and its head entity (when named) is created as a world object (§11.1) | BIN (pass (k)) | Confirmed (BIN) |
+| RT37 | The beam's ramp envelope: states ramp-in, sustain, ramp-out, done, from `RampInTime`, `SustainTime`, `RampOutTime` and `Persistent`; a stop during ramp-in ramps out from the current level (§11.1 step 2) | BIN (pass (k)) | Confirmed (BIN) |
+| RT38 | Endpoints: source and target attachment points (holding location or bone type, offset, bounding-box centre), fixed random offsets inside `RandomStartRadius` and `RandomImpactRadius`, detachment by `SourceDetachTime`, `TargetDetachTime` and `DetachBeforeRampingOut`; the target point of `BeamScript_TargetPosition` when `UseTargetPosition` = 1 (§11.1 step 3) | BIN (pass (k)) | Confirmed (BIN) |
+| RT39 | Head and tail fractions move at `HeadAnimSpeed` and `TailAnimSpeed` metres per second from `HeadStartPos` and `TailStartPos` after `HeadAnimStartTime` and `TailAnimStartTime`, clamped to [0, 1]; the head has arrived when its speed is above 0.0002 and its fraction above 0.9998; on arrival the node fires its Default ports once (§11.1 steps 4–5, 7) | BIN (pass (k)) | Confirmed (BIN) |
+| RT40 | The ribbon from the tail point to the head point: tail segments, body segments of `SegmentSize`, head segments, each with its material; not drawn below 0.1 m (§11.1 step 6) | BIN (pass (k)) | Confirmed (BIN) |
+| RT41 | Beam particles: at random points along the drawn segment, floor(length / `SegmentSize` × `BeamSegmentParticlesPerSecond` × elapsed) per update, spread evenly in time; head particles: one at the head point per update in which `HeadParticlesPerSecond` × elapsed reaches 1, while the head is short of the target; elapsed above 1 s counts as 0.1 s (§11.1 step 8) | BIN (pass (k)) | Confirmed (BIN) |
+| RT42 | The head entity is shown at the head point, turned along the beam, while the drawn segment is longer than 0.1 m and the envelope is above 0.0002 and not stopped; otherwise hidden (§11.1 step 9) | BIN (pass (k)) | Confirmed (BIN) |
+| RT43 | A beam is removed when its envelope has finished and each of its particle systems is absent, has a zero rate or holds no live particle (§11.1 step 10) | BIN (pass (k)) | Confirmed (BIN) |
+| RT44 | Census of the Beam node fields (§11.1, table) | OBS4 | Confirmed (2026-10-10) |
 
 ---
 
@@ -281,7 +291,7 @@ attachments and a 2-s housekeeping timer (§7.4).
 | Particle node, `ParticleScript_DropEffect` = 1 | §5.6 | no (placed once in the world) | **no** |
 | Change of the redirect property of a running never-ending node | §5.8 | yes | yes |
 | Weather code (the ten UNIQUEDB systems, `particles.md` §7.1.3, §8.8.1) | created synchronously at weather start-up | no | no |
-| Beam renderer (Beam node's `BeamScript_BeamParticleSystem` and `BeamScript_HeadParticleSystem`) | created synchronously by the beam renderer (§11) | by the beam | not traced |
+| Beam renderer (Beam node's `BeamScript_BeamParticleSystem` and `BeamScript_HeadParticleSystem`) | created synchronously when the beam is made; its particles are spawned by the beam (§11.1) | placed in the beam's frame each frame | no (§11.1 step 1) |
 | One gameplay event handler | places an effect named by a property of a game object at the local player's position | no | no |
 
 No other code creates a particle or fork system: setups, animations and items start effects
@@ -424,6 +434,16 @@ spec gives no fact for the offline walker (`tessera-scriptgraph` runs the node,
    or bone is not found on the owner's model this time, the client logs a warning and discards
    the system (the effect never appears). Otherwise it stores an **attachment** (§4), gives the
    system the owner's frame and render scale, and registers it with the owner's scene.
+
+> **OPEN:** (implementer, 2026-10-11) step 1 does not say whether a Particle node's own
+> targets (`script-table.md` §4.4) change the target. Combat scripts aim Particle nodes at
+> the upcoming targets of a story through Property targets (type 3) or Random targets over
+> them (type 6, `combat-visuals.md` §4.6). Until this is settled the walker
+> (`tessera-scriptgraph`) applies step 1 unchanged to nodes without such targets (This,
+> ThePlayer and the rest keep the script's entity); a node with a Property or Random target
+> and no redirect property attaches to the first entity its targets resolve to, and when
+> they resolve to none (an empty target array) nothing starts: a finite node completes, a
+> never-ending node keeps an instance without an effect as in step 5.
 
 <a id="s5-6"></a>
 ### 5.6 Dropped path (BIN)
@@ -1054,17 +1074,133 @@ nothing; revisit them when `particles.md` Q1 is answered.
   a pending request) when the weather code starts, kept for its life and driven by it
   (`particles.md` §7.1.3, §8.8.1; schedule OPEN there, Q13).
 - **Beams:** a Beam node copies its fields into a beam object of the client's beam renderer,
-  which creates its particle systems synchronously.
+  which creates its particle systems synchronously and drives them (§11.1).
 
-> **OPEN (Q-RT4):** How the beam renderer places and drives `BeamScript_BeamParticleSystem`
-> (with `BeamScript_BeamSegmentParticlesPerSecond`) and `BeamScript_HeadParticleSystem` (with
-> `BeamScript_HeadParticlesPerSecond`), and whether the start gating applies. **Decision
-> (Tessera):** until specified, beams draw no particle systems.
+> **Answered (2026-10-10; was OPEN Q-RT4):** how the beam renderer places and drives
+> `BeamScript_BeamParticleSystem` and `BeamScript_HeadParticleSystem` and whether the start
+> gating applies: §11.1 (RT36–RT43). The former Decision "beams draw no particle systems" is
+> withdrawn; rule 14 replaces it.
 
 > **OPEN (Q-RT5):** The gameplay event handler of §5.1 (which event, which property names the
 > effect). **Decision (Tessera):** not implemented; it belongs to a gameplay spec.
 
 ---
+
+<a id="s11-1"></a>
+### 11.1 Beams (BIN pass (k); census OBS4)
+
+Field names are those of `script-table.md` §5.3 without the `BeamScript_` prefix. Times are
+seconds of the global clock (§3.1); lengths metres.
+
+1. **Start (RT36).** The Beam node resolves its target (`script-table.md` §4.4) and takes the
+   first entity. If there is none and `UseTargetPosition` = 0, no beam is made: the node
+   instance exists, its ports never fire. Otherwise the client makes a beam with the node's
+   fields, the performing entity as source and that entity (or none) as target. At that moment
+   it creates the beam's particle systems from `BeamParticleSystem` and `HeadParticleSystem`
+   (each when not 0) synchronously, not through the Particle node's start gating of
+   `particles.md` §7.1.2, and loads the three materials; when `HeadEntity` is not 0 it creates
+   that 0x47 entity as a world object, scaled by its own `Render_AdjustableScale` (1, 1, 1 when
+   absent) times a vector that `HeadEntityScaleSource` selects from the source entity (1: a
+   per-axis scale of the source; 3 and 4: two scalar scales of the source; other values:
+   (1, 1, 1); which scales 1, 3 and 4 read is Q-RT11). The beam records its start time.
+2. **Envelope (RT37).** With *r*ᵢ = `RampInTime`, *s* = `SustainTime`, *r*ₒ = `RampOutTime`,
+   the beam keeps an elapsed time and an intensity *e*:
+   - at the first update: done if already stopped; ramping in when *r*ᵢ > 0.0002, else
+     sustaining;
+   - ramping in: *e* = elapsed / *r*ᵢ; at *e* ≥ 1 sustaining; a stop now goes to ramping out
+     with the ramp-out clock preset to (1 − *e*) × *r*ₒ (or to done, *e* = 0, when *r*ₒ ≤
+     0.0002), so the fade continues from the current level;
+   - sustaining: *e* = 1; a stop goes to ramping out (or done when *r*ₒ ≤ 0.0002); when
+     `Persistent` = 0 and elapsed exceeds *r*ᵢ + *s*, likewise;
+   - ramping out: *e* = 1 − (ramp-out clock) / *r*ₒ; done (*e* = 0) when the ramp-out clock
+     exceeds *r*ₒ;
+   - elapsed and, while ramping out, the ramp-out clock advance by the frame's time.
+   The envelope is **finished** when done, or when `Persistent` = 0 and *r*ᵢ + *s* + *r*ₒ have
+   passed since the start, or when `Persistent` = 1, the beam is stopped and *r*ₒ has passed
+   since the stop. A Beam node instance that stops stops its beam (the instance's stop
+   routine calls the beam's stop).
+3. **Endpoints (RT38).** At creation, when `RandomStartRadius` > 0.0002, a fixed start offset
+   is chosen: a direction from three uniform draws in [−1, 1] (normalised; a zero vector stays
+   zero) times a uniform length in [0, `RandomStartRadius`]; the impact offset likewise from
+   `RandomImpactRadius`. Each frame, with *t* = now − start (nothing happens while *t* < 0):
+   - the **source point** is the source entity's attachment point for `SourceHoldingLocation`
+     or `SourceBoneType` with `SourceBoneOffset` (as `particle-runtime.md` §6.1 attaches an
+     effect; `SourceUseBoundingBoxCenter` selects the model's bounding-box centre) plus the
+     start offset;
+   - the **target point** likewise from the target entity with the `Target…` fields plus the
+     impact offset; for a target without a skeleton, the bounding-box centre when either the
+     holding location or the bone type is set; with no target entity, source point + the
+     source frame's forward axis × `UntargetedBeamLength` (unreachable by step 1 except with
+     `UseTargetPosition`); with `UseTargetPosition` = 1, the position `TargetPosition` plus
+     the impact offset;
+   - an end stays attached (recomputed every frame) until its detach time: the source detaches
+     when `SourceDetachTime` > 0.0002 and *t* ≥ it, the target when `TargetDetachTime` > 0.0002
+     and *t* ≥ it; with `DetachBeforeRampingOut` = 1 both detach once the envelope ramps out or
+     is done. A detached end keeps its last point.
+4. **Length.** *L* = |target point − source point|; when *L* ≤ 0.0002 the fractions below
+   use *L* = 0.01. A beam longer than 1,000 m is neither moved nor drawn that frame.
+5. **Head and tail (RT39).** Head fraction *h* = `HeadStartPos`; when *t* > `HeadAnimStartTime`,
+   *h* = `HeadStartPos` + `HeadAnimSpeed` × (*t* − `HeadAnimStartTime`) / *L*; clamped to
+   [0, 1]. The head **has arrived** once `HeadAnimSpeed` > 0.0002 and *h* > 0.9998 (a beam
+   whose head speed is 0 never arrives). Tail fraction τ the same with `TailStartPos`,
+   `TailAnimStartTime` and `TailAnimSpeed`. Head point = source point + (target − source) × *h*,
+   tail point = source point + (target − source) × τ.
+6. **Ribbon (RT40).** When τ ≤ *h* and the drawn segment (tail point to head point, length ℓ)
+   is at least 0.1 m, the beam is drawn as a camera-facing ribbon of width `BeamWidth`, colour
+   `ColorAndOpacity` with its alpha multiplied by *e* (each channel clamped to [0, 1]), texture
+   repeated by `TextureUScale`: from the tail end, `NumTailSegments` segments with
+   `TailMaterial`, then body segments with `BodyMaterial`, then `NumHeadSegments` segments
+   with `HeadMaterial` (a count of 0 or a missing material leaves that part out). Each segment
+   is *g* = min(`SegmentSize`, ℓ) long; when the head and tail segments together (*n* × *g*)
+   are longer than ℓ, they shrink to ℓ / *n* each and there is no body; otherwise the body
+   fills ℓ − *n* × *g* with whole segments and one shorter last one (none when the rest is at
+   most 0.0002).
+7. **Port (RT39).** In the first update after the head has arrived, the node instance fires
+   the children of its Default ports (port type 6), once. Steps 3–6 run in the beam's draw
+   step, which the client runs each frame for the beams of the active scene once both ends
+   have been resolved; whether a beam outside the view still moves its head was not traced
+   (Q-RT11). 947 Beam nodes have an Attack StoryHook there (`combat-visuals.md` §4.7).
+8. **Particles (RT41).** Only while ℓ > 0.1 m, the envelope is not stopped and *e* > 0.0002:
+   - **beam system** (when present, loaded, and `BeamSegmentParticlesPerSecond` *b* ≠ 0): let
+     Δ = now − the last beam spawn time (first time: the creation time); if Δ > 1 s, the last
+     spawn time becomes now − 0.1 s and Δ = 0.1 s. *n* = ⌊ℓ / `SegmentSize` × *b* × Δ⌋. For
+     *k* = 1 … *n* the spawn time advances by Δ / *n* and one particle of the system's first
+     emitter is spawned at that time at tail point + (head point − tail point) × *u*, *u* a
+     uniform draw in [0, 1) of the shared stream (§3.3); the last spawn time keeps the last
+     spawn's time. A spawn whose particle would already be dead at its time is skipped
+     (`particles.md` §8.5);
+   - **head system** (when present and `HeadParticlesPerSecond` *p* ≠ 0, and only when the beam
+     system is present too, RT41): while the squared distance from the head point to the target
+     point exceeds 0.1, let Δ = now − the last head spawn time (the same 1 s / 0.1 s catch-up);
+     when ⌊*p* × Δ⌋ ≥ 1, one particle is spawned at the head point and the last head spawn time
+     becomes now. At most one head particle per update;
+   - both systems are placed each frame in the beam's frame with opacity
+     `ColorAndOpacity` alpha × *e* (clamped), and simulate and draw as any system (§8, §9).
+9. **Head entity (RT42).** When present: shown (`Render_Draw` true) while ℓ > 0.1 m, the
+   envelope is not stopped and *e* > 0.0002, placed at the head point with its forward axis
+   along the beam (source to target) and its up axis from world up (fallbacks when parallel);
+   hidden otherwise.
+10. **End (RT43).** A beam is removed when its envelope has finished and each of its two
+    particle systems is absent, has a zero rate, or holds no live particle. The head entity
+    goes with it.
+
+> **OPEN:** (implementer, 2026-10-11) whether a beam system's own emitters keep emitting
+> after the envelope has finished is not stated; if they do, step 10 is never reached for a
+> system with a continuous emitter. The walker places both systems every frame until the
+> beam is removed (also when the envelope is done or the beam has no span, at its last
+> frame, so that particles keep ageing), reads "a zero rate" as
+> `BeamSegmentParticlesPerSecond` / `HeadParticlesPerSecond` = 0, and stops the systems'
+> emission (as §7.2 step 3) once the envelope has finished.
+
+Census of the 2,740 Beam nodes (OBS4, RT44): `Persistent` 1 in 769; `HeadEntity` in 1,050;
+`BeamParticleSystem` in 571, `HeadParticleSystem` in 45 (2 of them without a beam system, so
+their head particles never spawn); `BeamSegmentParticlesPerSecond` 10 in 2,092, 30 in 292, 0 in
+118; `HeadParticlesPerSecond` 10 in 2,556, 60 in 130; (ramp in, sustain, ramp out) (0, 1, 0.25)
+in 947, (0, 1, 0) in 426, (0, 0.35, 0.25) in 234, (0, 10, 0) in 123; (`HeadStartPos`,
+`HeadAnimStartTime`, `HeadAnimSpeed`) (1, 0, 10) in 410, (0, 0, 40) in 328, (0, 0, 50) in 296,
+(0, 0.01, 45) in 228, (1, 0, 0) in 220; `DetachBeforeRampingOut` 1 in 2,413;
+`HeadEntityScaleSource` 2 in 2,557, 3 in 156, 1 in 27; `UseTargetPosition` 1 in 1; non-zero
+`RandomImpactRadius` in 168, `RandomStartRadius` in 54. Port children: none 1,726, one 835, two 179.
 
 <a id="s12"></a>
 ## 12. Tessera rules (Decision)
@@ -1134,6 +1270,21 @@ nothing; revisit them when `particles.md` Q1 is answered.
     live system draws it is allowed. At most 4,096 surfaces keep states (an engineering limit,
     as rule 9); a draw of a further surface uses fresh states.
 
+13. **Lights of lit systems** (`use_lighting` = 1, `particles.md` §8.14; a Decision for
+    `particles.md` Q8 (b), answered only in part by the client reading of §8.14): the ambient
+    colour is the frame's ambient term of `lighting.md` §5.3 at the owner; the light list is
+    the owner's light list of `lighting.md` §8.5 (the global light first, then the others in
+    that list's order), cut to 5; each light contributes its record colour (`lighting.md` §8.3)
+    × the attenuation of `lighting.md` §8.3 steps 1–2 (per-vertex form, no smooth fade) at the
+    distance from the particle to the light. Applies to the 1,061 lit 0x39 records, 526 of them
+    reached by combat (`combat-visuals.md` §10).
+14. **Beams** follow §11.1, with these engineering limits for hostile records: at most 4,096
+    beam particles spawned per beam and update, at most 1,024 ribbon segments per beam (further
+    body segments are merged into the last), and a beam whose envelope never finishes because
+    `Persistent` = 1 and its node is never stopped is removed with its node's run. A Beam node
+    instance completes when its beam is removed (no beam: at once); `combat-visuals.md` relies
+    on the port of step 7, not on completion.
+
 ---
 
 <a id="s13"></a>
@@ -1185,6 +1336,17 @@ Against the install (all hold in this install, OBS) or synthetic fixtures:
   exactly six draws; each value is *B* + *A* · *r* with *r* = −1 + 2*u* for the stream's next
   draw *u*, formed by the four steps of §3.4, so the three draws generally get different values; a surface without mode-3
   curves advances the stream by none.
+
+- **RT-I17** (synthetic; §11.1): a beam from (0, 0, 0) to (12, 0, 0) with `HeadStartPos` 0,
+  `HeadAnimStartTime` 0 and `HeadAnimSpeed` 40 has *h* = 0.5 at *t* = 0.15 s and arrives at the
+  first update with *t* > 0.29994 s; its Default port fires in that update and never again.
+- **RT-I18** (synthetic; §11.1 step 8): with `SegmentSize` 1, `BeamSegmentParticlesPerSecond`
+  10, a drawn length of 6 m and updates every 0.05 s, each update spawns ⌊6 × 10 × 0.05⌋ = 3
+  particles, at times 1/60 s apart, all on the drawn segment; after a 2 s pause the next update
+  spawns ⌊6 × 10 × 0.1⌋ = 6.
+- **RT-I19** (synthetic; §11.1 step 2): `RampInTime` 0.5, `SustainTime` 1, `RampOutTime` 0.25,
+  `Persistent` 0, stopped at elapsed 0.2: *e* = 0.4 at the stop, the ramp-out clock starts at
+  0.15, so *e* falls linearly from 0.4 to 0 over the next 0.1 s.
 
 ---
 
@@ -1285,7 +1447,15 @@ lacks 0x8). The quads face the camera (`particles.md` §8.12, default corners).
 
 > **OPEN (Q-RT3):** Frustum culling by the record's bounds (§9.3). Decision there.
 
-> **OPEN (Q-RT4):** Beam-driven particle systems (§11). Decision there.
+Q-RT4 — answered 2026-10-10: §11.1.
+
+> **OPEN (Q-RT11):** Which scales of the source entity `HeadEntityScaleSource` values 1, 3 and 4
+> select for a beam's head entity (§11.1 step 1), and what the flag the beam sets on its
+> particle systems at creation changes (not traced); and whether the draw step of §11.1 (which
+> moves the head and detects the arrival) runs for a beam outside the view. **Decision
+> (Tessera):** steps 3–7 run every frame for every beam, drawn or not; 1 → the source's
+> render scale (`setup.md` §5.2), 3 and 4 → the mean of the source's render scale, other values
+> → (1, 1, 1); the systems run as any system (their own timed emission included).
 
 > **OPEN (Q-RT5):** The gameplay event handler that places an effect at the local player
 > (§5.1, §11). Decision there.
@@ -1373,6 +1543,7 @@ These are suggestions for the owners of those specs; this spec edits none of the
 
 | Date | Sections | Change |
 |---|---|---|
+| 2026-10-10 | Header, §1 (BIN pass (k), OBS4, RT36–RT44), §5.1, §11, new §11.1, §12 (rules 13, 14), §13 (RT-I17–RT-I19), §15 (Q-RT4 answered, new Q-RT11) | Spec writer (dirty room, P2); sixth revision for `combat-visuals.md`, status Accepted → Revised, awaiting review. **Q-RT4 answered** from BIN pass (k): Beam node start and target, the beam envelope, endpoints and detachment, random offsets, head and tail motion, arrival and the Default port, the ribbon, beam and head particle emission, the head entity, removal; census of all 2,740 Beam nodes (OBS4). The former Decision "beams draw no particle systems" is withdrawn. New rule 13: the lights of lit systems (a Decision for `particles.md` Q8 (b)); rule 14: beam limits and node completion. Implementers add beams to `crates/particles` and the walker's effects runtime. |
 | 2026-10-10 | Header, §1 (RT30 reworded, new RT35), §9.1.1 rule 3, §9.1.3 item 1, §16 | Spec writer (dirty room); fifth revision, pointers only, status Accepted → Revised, awaiting review. Note N1 of the `material.md` review of commit d96e087: `material.md` §11.2–§11.3 replaced the "opacity source" by the tested opacity of a table (one alpha, the product of two, or the sum in seven records); §9.1.3 item 1, rule 3 of §9.1.1, §16 and RT30 now quote the revised rule; the `Fixed` row of `render.md` §4.3 now has an alpha test with the caller's *R* (its "no alpha test" is no longer quoted). New RT35: none of the 19 particle shader records is a sum record, the eight two-layer records test the product, so "both layers' product" in §9.1.1 and §9.1.3 stands. No rule for particle draws changed. |
 | 2026-10-10 | Header, §1 (BIN pass (j), RT33 widened, new RT34), §3.4, §13 RT-I16 | Spec writer (dirty room); fourth revision, wording only, status Accepted → Revised, awaiting review. Non-blocking notes of the review of the third revision: (b) §3.4 now states each step of a real-range draw: width in single precision, product with *u* in double precision rounded to single, lo added in single precision (it said the whole sum was formed in double and rounded once, which can differ in the last bit); new RT34 from BIN pass (j); RT-I16 points to those steps. (a) RT33 cites the BIN reading (passes (i) and (j)) that mode 3 is one real-range draw over [−1, 1] per evaluation in the client's curve evaluator, so the mapping is client behaviour; its keying, cap and preview lifetime stay Decisions. No rule changed; implementers re-check only the order of rounding in the real-range draw. |
 | 2026-10-10 | Header, §1 (OBS3 widened, RT20 widened, new RT32, RT33), §9.1.1 (notation rewrapped, per-draw mode-3 note, implementer OPEN answered), §12 rule 12, §13 (new RT-I15, RT-I16), §15 Q-RT10 | Spec writer (dirty room); third revision, status Accepted → Revised, awaiting review. **Implementer OPEN of §9.1.1 (how rule 12 is applied) answered:** (a) corrected: mode 3 takes *r* directly as one real-range draw of the shared stream per curve and evaluation (§3.4, rule 9), not from a generator seeded per evaluation; a new value at every draw; (b) confirmed: states per surface DID for the life of the effects layer satisfy rule 12, no drop at effect stop or landblock unload is required, dropping when no live system draws the surface is allowed, the 4,096-surface cap is an engineering limit; (c) confirmed: preview states kept per run, each sheet column a run. **New fact** (OBS3 third probe, RT32): all five mode-10 curves of particle surfaces loop (periods 1.2 s and 4 s), so the drop point changes only a loop's phase. Q-RT10 widened by the release lifetime of a loaded surface (reviewer note (a) of the second 2026-10-10 review). Implementers re-check the mode-3 source in the walker's and the explorer's particle surface evaluation. |

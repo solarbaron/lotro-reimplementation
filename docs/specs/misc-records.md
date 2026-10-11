@@ -36,8 +36,9 @@ object-state ranges. With it an implementer can:
   follow the references between all of these records (§15).
 
 The compression dictionaries (0x0E010000–0x0E010002) are described in **stored form only**
-(§11). Their use belongs to the network protocol and stays behind the M8 legal gate
-(`docs/LEGAL.md` §9.3, decision 0004). The locale record 0x58000000 is fully specified in
+(§11). Their use belongs to the network protocol, which was behind the M8 legal gate when this
+spec was written (decision 0004) and since 2026-10-11 belongs to M8's own specs
+(`docs/LEGAL.md` §9.3, decision 0034). The locale record 0x58000000 is fully specified in
 `string-table.md` §10.3 and is only cross-referenced here (§8).
 
 Game text is never reproduced: records are named by DID, fields by property label or by
@@ -103,7 +104,7 @@ How sources are marked:
 | TB2 | Header `category` [`a`] = result category (1–5), `contexts` [`b`] = bit mask of contexts (§10) | BIN (fourth use: list matcher) | BIN |
 | TB3 | String hash of the list table (§10) | BIN (matcher's lookup); OBS (the 8 keys lie in non-decreasing bucket order for hint 1, bucket count 23) | Confirmed (BIN + OBS) |
 | TB4 | Pattern dialect and matching procedure (§10.1) | BIN (fourth use: match wrapper; library identified by its error strings) | BIN |
-| CD1 | Compression-dictionary stored envelope (§11) | OBS (3 of 3) | Confirmed (envelope only; body and use gated) |
+| CD1 | Compression-dictionary stored envelope (§11) | OBS (3 of 3) | Confirmed (envelope only; body and use not researched, M8) |
 | PS1 | 0x78 census by family and by DID-map label (§12) | OBS (1,618 of 1,618 decode with the generic reader) | Confirmed |
 | PS2 | Typed referrers of the 0x78 families, including struct members (§12.2) | OBS (2026-10-08: all 0x47, 0x78 and 0x79 property sets walked into structs and arrays; raw scan of the non-asset archives) | Confirmed |
 | M1 | PropertyMetaData family: properties, census, uniqueness by PID, control list (§13.1) | OBS (5,211 of 5,211 objects; control list 5,211 of 5,211) | Confirmed |
@@ -993,10 +994,11 @@ character filter, which was not traced in detail.
 <a id="s11"></a>
 ## 11. Compression dictionaries (0x0E010000–0x0E010002, DB type 0x01) — stored form only
 
-**Gate.** The three labels of these records (COMPRESSIONDICTIONARY DID map 0x28000010,
+**Gate (until 2026-10-11).** The three labels of these records (COMPRESSIONDICTIONARY DID map 0x28000010,
 keys 0x10000001–0x10000003) name directions of client–server traffic. Their use belongs to
-the official network protocol, which is behind the M8 legal gate (`docs/LEGAL.md` §9.3,
-decision 0004). This section gives only what a container tool needs to list and validate
+the official network protocol, which was behind the M8 legal gate when this section was
+written (decision 0004) and since 2026-10-11 belongs to M8's own specs (`docs/LEGAL.md` §9.3,
+decision 0034 §2). This section gives only what a container tool needs to list and validate
 the records; nothing here describes how the dictionaries are applied, and no BIN reading
 was done for them. The entries' directory timestamps date from 2007.
 
@@ -1014,8 +1016,8 @@ Stored envelope (Confirmed, CD1; 3 of 3):
 The records have no DID prologue (`records.md` §1.6). A validator checks that the record
 is exactly 44 + *m* bytes long.
 
-> **OPEN (gated):** the body layout and the meaning of every field above. Not to be
-> researched before the M8 gate is passed.
+> **OPEN (M8):** the body layout and the meaning of every field above. Not researched
+> before decision 0034 (2026-10-11); now research for M8 within its §2 scope.
 
 ---
 
@@ -1498,7 +1500,8 @@ These are proposals for the owners of those specs; this session edits only this 
 > **OPEN:** taboo list walking order, the tokenizer and the variant without rule set, and
 > the context bits used for chat and names (§10.1).
 
-> **OPEN (gated, M8):** compression-dictionary body and field meanings (§11).
+> **OPEN (M8):** compression-dictionary body and field meanings (§11); research for M8
+> within decision 0034 §2.
 
 > **OPEN:** whether the raw 0x78 DID matches in 0x07, 0x01 and 0x80 records are
 > references (§12.2; the 0x70 matches are not, X5).
@@ -1567,3 +1570,4 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-08 | Review of the 2026-10-08 revision (separate review session): passed; status Revised → Accepted. No content change. Record in the review log. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows X1–X3; row U2 corrected. Accepted the implementation's census corrections: §4.2 bit 0x010 is in 3,026 descriptors; §13.5 states the member rule and the 32 callback-only objects (X1); §13.7 and the §13 introduction: the Version family has the `VersionSystem` control, 123 members plus the control (X2). §19 implementer notes (1)–(9) confirmed, with the value types of (5) (X3). Still OPEN: script-channel queue modes, name-entry context and order, taboo walking and tokenizer, compression dictionaries (gated), raw 0x78 DID matches in other records, operator semantics of property metadata. §13.1 percentage display read from the class library (new key BC, row X4); the operator part of that callout stays open. §12.2: the raw 0x78 matches in object records are not references (X5); those in 0x07, 0x01 and 0x80 records stay open. |
 | 2026-10-09 | Repair after the review of the OPEN sweep (spec writer, dirty room; status stays Revised, waiting for re-review). Each blocking figure re-measured (OBS3 dump, class-library bytecode) before the change. (1) Row X2, §13.7 and its answer: the 93 number-list structs (92 `Version_SingletonList`, 1 `AccountVersion_SingletonList`), 155 distinct DIDs in the singleton lists covering 121 members, the 2 others in `Version_AlwaysRunOnPlayers`, 158 distinct DIDs in all (123 members, 35 others); the earlier "names all 123 members" was wrong. (2) §13.1 step 1 and row X4: for `Multiply`, *d* stays *v* when *v* = 1 or NaN (a `Multiply` by 1 shows 100, increase template); int and int64 values are unscaled whatever the flag. (3) §13 introduction: table of members, root classes and controls per family; property responses and game callbacks have no control (new row X6). Not blocking: provenance rows ordered X1–X6; "Implements into" says one fuzz target per spec is enough. |
+| 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md); no fact changed, nothing re-measured, status unchanged. "Purpose", provenance row CD1, §11 and the OPEN callouts of §11 and §19 on the compression dictionaries no longer say they are behind the M8 gate: the owner set that gate aside on 2026-10-11, and the dictionaries' body and field meanings are now M8 research within decision 0034 §2. The statement that no BIN reading was done for them stays true. |

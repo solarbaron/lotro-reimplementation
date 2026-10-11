@@ -45,8 +45,9 @@ With it an implementer can:
 Most of these records are **server tuning tables**: the data says what the numbers are, not
 how a server combines them. Those formulas are not in the data and are listed as OPEN
 (§12); Tessera's own server (M7) defines its own rules from them. No network behaviour is
-covered: the network protocol, login, keys and the launcher stay behind the M8 gate
-(`docs/LEGAL.md` §9.3, decision 0004).
+covered: the network protocol, login, keys and the launcher were behind the M8 gate when
+this spec was written (decision 0004); since 2026-10-11 they belong to M8's own specs
+(`docs/LEGAL.md` §9.3, decision 0034).
 
 Game text is never reproduced: records are named by DID, fields by property label and
 enum-mapper label. Those labels are interoperability identifiers (they are how a client
@@ -351,7 +352,8 @@ is the only information.
 > **OPEN:** (Q2) What the marker classes are used for. Their names suggest
 > confirmation-dialog callbacks and per-mode level directories whose behaviour is in code.
 > No native resolver for any of them was found (§2.4); whatever uses them is either the
-> client's script library or the server (whose traffic is gated). A Tessera client shows
+> client's script library or the server (whose traffic was gated when this spec was written;
+> since 2026-10-11 it is M8 research, decision 0034 §2). A Tessera client shows
 > them as named markers and gives them no behaviour.
 
 <a id="s3-3"></a>
@@ -1579,7 +1581,7 @@ no meaning.
 | # | Question | Section | What would settle it |
 |---|---|---|---|
 | Q1 | Which code reads the controls that native code does not read (consideration, vital-display overrides, combat music, aggro ping, alerts, discovery distance, tracking states, perks, pets, GRS): the client's script library or only the server; for GRSControl also whether the code-section matches of its property IDs (§7.16) are reads | §2.4, §7.16 | reading the client script library's bytecode (`wlib.md`) for these keys or property IDs; M3 observation |
-| Q2 | What the empty marker classes are used for | §3.2 | script-library reading; server traffic is gated |
+| Q2 | What the empty marker classes are used for | §3.2 | script-library reading; server traffic (M8 research since 2026-10-11, decision 0034 §2) |
 | Q3 | Purpose of the DID sets beyond membership | §3.3 | the store and big-battle specs |
 | Q4 | The three lists of a trait slot schedule (class 1490) | §4.2 | `combat-data.md` §8 work |
 | Q5 | Index base of class-849 lists; key meaning of class-852 maps | §4.10 | comparison with displayed rank thresholds (M3) |
@@ -1643,3 +1645,4 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 | 2026-10-07 | Second revision, for the second review (changes requested), status stays Review. §5.2, GC13: the earlier statement that the 767 class-3509 traits carry no `Trait_Group` was wrong (a top-level-only check); each carries exactly one, nested as the single element of `Trait_Groups`, keys 8–14 with per-slot counts, equal to the keys of the appearance-group hash; the appearance fields, dye flags and the shared material mapper added; Q23 narrowed to how the appearance is applied; new Q29 (dye rule) and GCI16. §2.3: each labelled record's own DID at payload offset 0 named as the expected raw match. §6.2: the completion rule marked as a reading, Q30. §7.16: "no client use" replaced by the BIN facts (not resolved by key; byte scan, q4, finds unexamined code-section matches of 9 of 28 property IDs) and Q1. BIN row: q4. |
 | 2026-10-07 | Third review passed; status Review → Accepted (reviewer). No content change. |
 | 2026-10-08 | Revision answering the six implementer OPEN notes of 2026-10-08; status Accepted → Revised. No section renumbered. §2.1: role classes need not be defined in the class table; the entity base is undefined here and the cross-checks use the parent map only (GC1, OBS2). §3.1: the typed-view choices split into client behaviour (wrong type = absent for the native reads of §5.3.2, §5.7, §8.1) and Tessera Decisions (list cap, error on wrong type elsewhere, null DIDs dropped except in the consideration lists); no DID list in scope holds a null DID (new GC33). §3.4: the name property is `Name` (GC8, GCI4, new GCI19). §5.3.1: the flank fields are floats; both trait-tree struct kinds carry `Mount_Control_Trait_Tree` (GC14, new GCI18). §6.6: the tier-field labels spelled in full (GC22). §7.1: each unlock is the single element of the item's top-level `Usage_SetPropertyUsageData_Array` (GC23, new GCI17; reading added to Q13/Q25 context). §8.1: the client uses 48 also for a value that is not an int (BIN q5, GC29). §5.1: the per-species tall flag `RaceTable_IsTallRace` of the race table (GC12); Q6 narrowed to the link between flag and skill group. New provenance key OBS2; BIN row: q5. §13: an `items.md` proposal. |
+| 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md); no fact changed, status unchanged. "Purpose", the §3.2 callout and row Q2 of §12 no longer say network traffic is gated: the owner set the M8 gate aside on 2026-10-11, and server traffic is M8 research within decision 0034 §2. |

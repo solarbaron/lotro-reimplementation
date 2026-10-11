@@ -13,10 +13,13 @@
 //!   bytes are buffered ([`ConnectionCore::push_control`]) and fed to the session one frame
 //!   at a time ([`ConnectionCore::decode_control`]), so the network task can stop after any
 //!   number of forwarded events, not only after a whole read.
-//! - **`ChatRejected` answers `ChatSend`s in order** (`tessera-protocol.md` §6.4.3): a
-//!   rejection the session makes itself (rate limit, invalid text or peer name) is held
-//!   until every earlier `ChatSend` forwarded to the simulation has been answered, by
-//!   [`SessionCmd::RejectChat`] or [`SessionCmd::ChatDelivered`].
+//! - **`ChatRejected` answers `ChatSend`s in order** (`tessera-protocol.md` §6.4.3, §10.6):
+//!   a rejection the session makes itself (rate limit, invalid text or peer name) is held
+//!   until every earlier `ChatSend`, `ChannelJoin` and `ChannelLeave` forwarded to the
+//!   simulation has been answered, by [`SessionCmd::RejectChat`],
+//!   [`SessionCmd::ChatDelivered`], [`SessionCmd::ChannelJoined`],
+//!   [`SessionCmd::ChannelLeft`] or [`SessionCmd::RefuseChannel`]. The simulation answers
+//!   the forwarded requests in the order it receives them.
 
 use std::collections::VecDeque;
 
@@ -24,7 +27,7 @@ use tessera_protocol::Message;
 use tessera_protocol::codes::AppErrorCode;
 use tessera_protocol::frame::parse_frame_length;
 use tessera_protocol::limits::FRAME_LENGTH_FIELD;
-use tessera_protocol::message::{Disconnect, Hello, MoveInput};
+use tessera_protocol::message::{ChannelLeftReason, Disconnect, Hello, MoveInput};
 use tessera_protocol::server::{ServerEvent, ServerParams, ServerSession, ServerState};
 use tessera_protocol::session::{ConnectionEnd, PeerDatagrams, StreamEnd, StreamRef, Transmit};
 
@@ -106,7 +109,8 @@ impl FrameSplitter {
 /// An entry of the chat answer order.
 #[derive(Debug)]
 enum ChatSlot {
-    /// A `ChatSend` forwarded to the simulation and not answered yet.
+    /// A `ChatSend`, `ChannelJoin` or `ChannelLeave` forwarded to the simulation and not
+    /// answered yet.
     Forwarded,
     /// A session-made `ChatRejected` waiting for the forwarded ones before it.
     Held(Box<Transmit>),
@@ -302,7 +306,12 @@ impl ConnectionCore {
             }
             other => {
                 if !self.ended {
-                    if matches!(other, ServerEvent::Chat(_)) {
+                    if matches!(
+                        other,
+                        ServerEvent::Chat(_)
+                            | ServerEvent::ChannelJoin { .. }
+                            | ServerEvent::ChannelLeave { .. }
+                    ) {
                         self.chat_order.push_back(ChatSlot::Forwarded);
                     }
                     out.push(Inbound::Event(other));
@@ -486,6 +495,27 @@ impl ConnectionCore {
             SessionCmd::ChatDelivered => {
                 self.chat_answered();
                 Ok(None)
+            }
+            SessionCmd::ChannelJoined(name) => {
+                let r = self.session.channel_joined(name).map(|()| None);
+                self.drain(false);
+                self.chat_answered();
+                r
+            }
+            SessionCmd::ChannelLeft(name) => {
+                let r = self
+                    .session
+                    .channel_left(name, ChannelLeftReason::Left)
+                    .map(|()| None);
+                self.drain(false);
+                self.chat_answered();
+                r
+            }
+            SessionCmd::RefuseChannel { code, name } => {
+                let r = self.session.refuse_channel(code, &name, "", now);
+                self.drain(false);
+                self.chat_answered();
+                r
             }
             SessionCmd::Disconnect(code, text) => Ok(self.session.disconnect(code, &text, now)),
         };

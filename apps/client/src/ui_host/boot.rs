@@ -113,6 +113,8 @@ pub struct UiBooted {
     pub char_ids: crate::character::panel::PanelIds,
     /// The character screens' layouts and element IDs (`character-screens.md` §2).
     pub chargen: crate::screens::ui::ChargenRefs,
+    /// The social panels' vocabulary and layout keys (`social-panels.md` §2).
+    pub social_vocab: tessera_ui::game::social::SocialVocab,
     /// Layouts decoded.
     pub layouts: usize,
     /// Time taken.
@@ -320,6 +322,7 @@ fn load(
         &|n| dict.pid(n),
         &|t| labels.key(UiEnum::ElementType, t),
     );
+    let social_vocab = social_vocab(&dict, &labels, &uilayout);
     let catalog = PanelCatalog::resolve(&uilayout, &mut |l| labels.key(UiEnum::ElementId, l));
     let mut panel_types = PanelTypes::default();
     panel_types.resolve_with(&mut |n| labels.key(UiEnum::ElementType, n));
@@ -329,6 +332,10 @@ fn load(
         let schema: &(dyn tessera_formats::PropertySchema + Send + Sync) = &*dict;
         if let Err(e) = chat.load_defaults(&*set, schema, &unique, &game_vocab.pids) {
             tracing::info!("chat defaults not read ({e}); sandbox chat setup");
+        }
+        // The instant-message tab's options (revision 4, `chat-window.md` §4.6, CT6).
+        if let Err(e) = chat.load_im_options(&*set, schema, &unique, &mut |n| dict.pid(n)) {
+            tracing::info!("instant-message options not read ({e}); no instant-message tab");
         }
     }
     if let Some(m) = &strings_map {
@@ -380,6 +387,7 @@ fn load(
         char_vocab,
         char_ids,
         chargen,
+        social_vocab,
         layouts: decoded,
         elapsed_ms,
     })
@@ -427,6 +435,39 @@ fn load_skins(
             wine_prefix: install.and_then(|i| i.prefix),
         },
     })
+}
+
+/// The social panels' vocabulary (`social-panels.md` §2): element types, IDs, states and
+/// properties by label, and the `UILAYOUT` keys of their layouts by label (a label the map
+/// lacks keeps this install's key).
+#[must_use]
+pub fn social_vocab(
+    dict: &PropertyDictionary,
+    labels: &UiLabels,
+    uilayout: &DataIdMap,
+) -> tessera_ui::game::social::SocialVocab {
+    let mut v = tessera_ui::game::social::SocialVocab::default();
+    v.resolve_with(
+        &mut |n| labels.key(UiEnum::ElementType, n),
+        &mut |n| labels.key(UiEnum::ElementId, n),
+        &mut |n| labels.key(UiEnum::StateId, n),
+        &mut |n| dict.pid(n),
+    );
+    let key = |label: &str, default: u32| {
+        uilayout
+            .iter()
+            .find(|e| &*e.label == label)
+            .map_or(default, |e| e.key)
+    };
+    let l = &mut v.layouts;
+    l.social = key("social", l.social);
+    l.friends = key("friends", l.friends);
+    l.ignore = key("ignore", l.ignore);
+    l.minifellow = key("minifellow", l.minifellow);
+    l.fellowinvite = key("fellowinvite", l.fellowinvite);
+    l.securetrade = key("securetrade", l.securetrade);
+    l.itemdisplay = key("itemdisplay", l.itemdisplay);
+    v
 }
 
 /// Registers the game widget classes on a new UI.

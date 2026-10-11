@@ -909,6 +909,35 @@ fn social_event(s: &SocialEvent, ctx: &LogContext) -> String {
         SocialEvent::PerformanceStopped { entity } => {
             format!("PerformanceStopped entity={}", ctx.entity(*entity))
         }
+        SocialEvent::PerformanceReady {
+            member,
+            entity,
+            tune,
+        } => format!(
+            "PerformanceReady member={} entity={} tune={}",
+            quote(member),
+            ctx.opt_entity(*entity),
+            quote(tune)
+        ),
+        SocialEvent::PerformanceSyncStart { by, at_ms, lead_ms } => format!(
+            "PerformanceSyncStart by={} at_ms={at_ms} lead_ms={lead_ms}",
+            by.as_deref().map_or_else(|| "none".to_owned(), quote)
+        ),
+        SocialEvent::PerformanceWithdrawn { member } => {
+            format!("PerformanceWithdrawn member={}", quote(member))
+        }
+        SocialEvent::FellowVitalChanged {
+            member,
+            vital: v,
+            current,
+            max,
+        } => format!(
+            "FellowVitalChanged member={} vital={} current={} max={}",
+            quote(member),
+            vital(v),
+            amount(*current),
+            amount(*max)
+        ),
     }
 }
 
@@ -1188,6 +1217,11 @@ pub fn format_command(command: &Command, ctx: &LogContext) -> String {
             SocialCommand::RemoveFriend { name } => format!("RemoveFriend name={}", quote(name)),
             SocialCommand::Ignore { name } => format!("Ignore name={}", quote(name)),
             SocialCommand::Unignore { name } => format!("Unignore name={}", quote(name)),
+            SocialCommand::ReadyPerformance { tune } => {
+                format!("ReadyPerformance tune={}", quote(tune))
+            }
+            SocialCommand::StartPerformance => "StartPerformance".to_owned(),
+            SocialCommand::DisbandFellowship => "DisbandFellowship".to_owned(),
         },
         Command::World(c) => match c {
             WorldCommand::ChooseTravel { window, entry } => {

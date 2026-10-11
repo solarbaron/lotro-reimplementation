@@ -16,8 +16,8 @@ use std::sync::mpsc::SyncSender;
 use std::time::Duration;
 
 use tessera_protocol::codes::{
-    AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
-    LoginFailedCode, TeleportRefusedCode,
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ChatRejectedCode,
+    EnterWorldFailedCode, LoginFailedCode, TeleportRefusedCode,
 };
 use tessera_protocol::frame::{encode_datagram, frame_to_vec_minor};
 use tessera_protocol::limits::{
@@ -33,7 +33,7 @@ use tessera_protocol::message::{
 use tessera_protocol::movement::{
     MoveVerdict, MovementLimits, MovementValidator, block_distance, in_interest, interest_block,
 };
-use tessera_protocol::rate::SlidingWindow;
+use tessera_protocol::rate::{SlidingWindow, TokenBucket};
 use tessera_protocol::server::ServerEvent;
 use tessera_protocol::text::sanitise;
 use tessera_protocol::types::{
@@ -80,6 +80,10 @@ const MOTION_REFRESH: u64 = SECOND;
 const REST_SNAPSHOTS: u32 = 3;
 /// Spawn names within this distance are named in location descriptions (§8.5).
 const NEARBY_SPAWN: f64 = 160.0;
+/// Accounted size of one existing named channel (§10.2).
+const CHANNEL_BYTES: usize = 1024;
+/// Accounted size of one channel membership (§10.2).
+const MEMBERSHIP_BYTES: usize = 64;
 /// Most account-lockout entries kept (failures are counted for every canonical name, known
 /// or not, so the table must not grow with invented names).
 const MAX_LOCKOUTS: usize = 65_536;
@@ -285,6 +289,11 @@ struct Conn {
     chat_bucket: Bucket,
     chat_rejections: SlidingWindow,
     flood_limit: usize,
+    /// The protocol's channel-request bucket (`tessera-protocol.md` §10.6).
+    channel_bucket: TokenBucket,
+    /// Keys of the named channels this connection's character is a member of, in joining
+    /// order (§9.1).
+    channel_keys: Vec<String>,
     last_activity: u64,
     active_pos: Location,
     teleport: Option<PendingTeleport>,
@@ -314,6 +323,18 @@ impl Instance {
         let dt = now.saturating_sub(self.clock_t0) as f64 / SECOND as f64;
         (self.clock_base + f64::from(self.rate) * dt).max(0.0)
     }
+}
+
+/// A named chat channel (§9.1): connections that asked to share chat lines under a name.
+/// No game state.
+#[derive(Debug, Clone)]
+struct NamedChannel {
+    /// Number given at creation, counting from 1 since start (for logs).
+    number: u64,
+    /// The NFC name of the join that created it: the name the server sends.
+    display: String,
+    /// Members in order of joining.
+    members: Vec<ConnId>,
 }
 
 #[derive(Debug, Clone)]
@@ -358,6 +379,10 @@ pub struct Sim {
     limits: MovementLimits,
     stopped: bool,
     rr_start: usize,
+    /// Named chat channels by key (§9.1); every one has at least one member.
+    channels: HashMap<String, NamedChannel>,
+    next_channel: u64,
+    memberships: usize,
 }
 
 impl Sim {
@@ -429,6 +454,9 @@ impl Sim {
             limits,
             stopped: false,
             rr_start: 0,
+            channels: HashMap::new(),
+            next_channel: 1,
+            memberships: 0,
         };
         for n in 1..=config.world.instances {
             let (base, t0) = match world_state.clocks.get(&n) {
@@ -687,6 +715,8 @@ impl Sim {
                         Duration::from_secs(u64::from(cfg.flood_window_s)),
                     ),
                     flood_limit: usize::try_from(cfg.flood_rejections).unwrap_or(20),
+                    channel_bucket: TokenBucket::channel_requests(),
+                    channel_keys: Vec::new(),
                     last_activity: now,
                     active_pos: Location::default(),
                     teleport: None,
@@ -740,8 +770,12 @@ impl Sim {
     /// yet: queued events are handled for the next tick (§8.1 step 1), so a `ChatSend`,
     /// `EmoteSet`, `StanceSet` or `AppearanceSet` sent just before `Disconnect` still takes
     /// effect, and the newest `MoveInput` is validated before the character is saved (§12.2
-    /// "last accepted" position). Requests whose answer can no longer arrive (login, creation,
-    /// world entry, teleports, location queries) are dropped.
+    /// "last accepted" position). `ChannelJoin` and `ChannelLeave` are applied too, so a
+    /// connection's chat and channel requests keep their arrival order (`tessera-protocol.md`
+    /// §10.6 "Order"): a line queued after a leave is refused, one queued after a join is
+    /// relayed; the memberships end when the connection leaves the world. Requests whose
+    /// answer can no longer arrive (login, creation, world entry, teleports, location
+    /// queries) are dropped.
     fn finish_queued(&mut self, id: ConnId, now: u64) {
         let Some(c) = self.conns.get_mut(&id) else {
             return;
@@ -763,7 +797,9 @@ impl Sim {
                 | ServerEvent::Emote(_)
                 | ServerEvent::Stance(_)
                 | ServerEvent::Appearance(_)
-                | ServerEvent::Move(_) => self.on_event(id, ev, now),
+                | ServerEvent::Move(_)
+                | ServerEvent::ChannelJoin { .. }
+                | ServerEvent::ChannelLeave { .. } => self.on_event(id, ev, now),
                 _ => {}
             }
         }
@@ -1401,6 +1437,8 @@ impl Sim {
     /// the writer queue (§12.2: never skipped). Returns whether the save was queued, or
     /// `None` when no character was in the world.
     fn leave_world(&mut self, id: ConnId) -> Option<bool> {
+        // Memberships end silently with the world (§9.1).
+        self.leave_channels(id);
         let c = self.conns.get_mut(&id)?;
         let eid = c.entity.take()?;
         let key = c.character_key.take();
@@ -1777,6 +1815,10 @@ impl Sim {
                     }
                 }
             }
+            ChatChannel::Named { name } => {
+                self.deliver_named(id, eid, &speaker_name, name, &c.text, now);
+                return;
+            }
             ChatChannel::System => {
                 self.cmd(id, SessionCmd::ChatDelivered);
                 return;
@@ -1827,6 +1869,299 @@ impl Sim {
         self.send_chat_frame(id, &line(echo_channel, true, eid));
         // Answered: session-made rejections of later ChatSends may follow (§6.4.3).
         self.cmd(id, SessionCmd::ChatDelivered);
+    }
+
+    // ------------------------------------------------------------------ named channels
+
+    /// Takes a token of the connection's channel-request bucket (§9.1, first check).
+    fn channel_token(&mut self, id: ConnId, now: u64) -> bool {
+        self.conns
+            .get_mut(&id)
+            .is_some_and(|c| c.channel_bucket.try_take(now))
+    }
+
+    /// Answers a channel request with `ChannelRefused(code)`. `RATE_LIMITED` counts towards
+    /// the flood rule (`flood_rejections` within `flood_window_s`, §10.1).
+    fn refuse_channel(&mut self, id: ConnId, code: ChannelRefusedCode, name: &str, now: u64) {
+        let channel = self
+            .channels
+            .get(&names::channel_key(name))
+            .map_or(0, |ch| ch.number);
+        if self.config.chat.log_chat {
+            tracing::debug!(conn = id, channel, code = %code, name = %sanitise(name), "channel request refused");
+        } else {
+            tracing::debug!(conn = id, channel, code = %code, "channel request refused");
+        }
+        self.cmd(
+            id,
+            SessionCmd::RefuseChannel {
+                code,
+                name: name.to_owned(),
+            },
+        );
+        if code == ChannelRefusedCode::RateLimited {
+            let flood = self
+                .conns
+                .get_mut(&id)
+                .is_some_and(|c| c.chat_rejections.record(now) >= c.flood_limit);
+            if flood {
+                self.disconnect(id, AppErrorCode::Flooding, "");
+            }
+        }
+    }
+
+    /// `ChannelJoin` (§9.1): bucket, placed in the world, name rule, already a member,
+    /// channels per character, then for a new key `max_channels`, else `max_channel_members`.
+    fn on_channel_join(&mut self, id: ConnId, name: &str, now: u64) {
+        if !self.channel_token(id, now) {
+            self.refuse_channel(id, ChannelRefusedCode::RateLimited, name, now);
+            return;
+        }
+        if self.player(id).is_none() {
+            self.refuse_channel(id, ChannelRefusedCode::NotInWorld, name, now);
+            return;
+        }
+        let Some(spelling) = names::channel_name(name) else {
+            self.refuse_channel(id, ChannelRefusedCode::InvalidName, name, now);
+            return;
+        };
+        let key = names::channel_key(&spelling);
+        let cfg = &self.config.chat;
+        let (max_mine, max_channels, max_members) = (
+            usize::try_from(cfg.max_channels_per_character).unwrap_or(usize::MAX),
+            usize::try_from(cfg.max_channels).unwrap_or(usize::MAX),
+            usize::try_from(cfg.max_channel_members).unwrap_or(usize::MAX),
+        );
+        let mine = self.conns.get(&id).map_or(0, |c| c.channel_keys.len());
+        let joined = self
+            .conns
+            .get(&id)
+            .is_some_and(|c| c.channel_keys.contains(&key));
+        let code = if joined {
+            Some(ChannelRefusedCode::AlreadyJoined)
+        } else if mine >= max_mine {
+            Some(ChannelRefusedCode::TooManyChannels)
+        } else {
+            match self.channels.get(&key) {
+                None if self.channels.len() >= max_channels => {
+                    Some(ChannelRefusedCode::ServerLimit)
+                }
+                Some(ch) if ch.members.len() >= max_members => {
+                    Some(ChannelRefusedCode::ChannelFull)
+                }
+                _ => None,
+            }
+        };
+        if let Some(code) = code {
+            self.refuse_channel(id, code, name, now);
+            return;
+        }
+        if !self.channels.contains_key(&key) {
+            let number = self.next_channel;
+            self.next_channel += 1;
+            if self.config.chat.log_chat {
+                tracing::debug!(
+                    channel = number,
+                    name = spelling.as_str(),
+                    "channel created"
+                );
+            } else {
+                tracing::debug!(channel = number, "channel created");
+            }
+            self.channels.insert(
+                key.clone(),
+                NamedChannel {
+                    number,
+                    display: spelling,
+                    members: Vec::new(),
+                },
+            );
+        }
+        let Some(ch) = self.channels.get_mut(&key) else {
+            return;
+        };
+        ch.members.push(id);
+        let (number, members, spelling) = (ch.number, ch.members.len(), ch.display.clone());
+        self.memberships += 1;
+        if let Some(c) = self.conns.get_mut(&id) {
+            c.channel_keys.push(key);
+        }
+        if self.config.chat.log_chat {
+            tracing::debug!(
+                conn = id,
+                channel = number,
+                members,
+                name = spelling.as_str(),
+                "channel joined"
+            );
+        } else {
+            tracing::debug!(conn = id, channel = number, members, "channel joined");
+        }
+        // The counts are stored before the answer is queued, so a peer that has read the
+        // answer reads the new counts too (the queue gives the happens-before edge).
+        self.publish_channel_stats();
+        self.cmd(id, SessionCmd::ChannelJoined(spelling));
+    }
+
+    /// `ChannelLeave` (§9.1): bucket, placed in the world, name rule, member of a channel
+    /// with that key.
+    fn on_channel_leave(&mut self, id: ConnId, name: &str, now: u64) {
+        if !self.channel_token(id, now) {
+            self.refuse_channel(id, ChannelRefusedCode::RateLimited, name, now);
+            return;
+        }
+        if self.player(id).is_none() {
+            self.refuse_channel(id, ChannelRefusedCode::NotInWorld, name, now);
+            return;
+        }
+        let Some(spelling) = names::channel_name(name) else {
+            self.refuse_channel(id, ChannelRefusedCode::InvalidName, name, now);
+            return;
+        };
+        let key = names::channel_key(&spelling);
+        let member = self
+            .conns
+            .get(&id)
+            .is_some_and(|c| c.channel_keys.contains(&key));
+        if !member {
+            self.refuse_channel(id, ChannelRefusedCode::NotJoined, name, now);
+            return;
+        }
+        let spelling = self
+            .channels
+            .get(&key)
+            .map_or(spelling, |ch| ch.display.clone());
+        self.remove_membership(id, &key);
+        self.publish_channel_stats();
+        self.cmd(id, SessionCmd::ChannelLeft(spelling));
+    }
+
+    /// Removes `id` from the channel `key`; drops the channel when it is left empty.
+    fn remove_membership(&mut self, id: ConnId, key: &str) {
+        if let Some(c) = self.conns.get_mut(&id) {
+            c.channel_keys.retain(|k| k != key);
+        }
+        let Some(ch) = self.channels.get_mut(key) else {
+            return;
+        };
+        let before = ch.members.len();
+        ch.members.retain(|m| *m != id);
+        self.memberships = self.memberships.saturating_sub(before - ch.members.len());
+        let (number, members) = (ch.number, ch.members.len());
+        // §11.2: the channel's name appears with the channel events only under `log_chat`.
+        let name = self.config.chat.log_chat.then(|| ch.display.clone());
+        if let Some(name) = &name {
+            tracing::debug!(
+                conn = id,
+                channel = number,
+                members,
+                name = name.as_str(),
+                "channel left"
+            );
+        } else {
+            tracing::debug!(conn = id, channel = number, members, "channel left");
+        }
+        if members == 0 {
+            self.channels.remove(key);
+            if let Some(name) = &name {
+                tracing::debug!(
+                    channel = number,
+                    members = 0,
+                    name = name.as_str(),
+                    "channel dropped"
+                );
+            } else {
+                tracing::debug!(channel = number, members = 0, "channel dropped");
+            }
+        }
+    }
+
+    /// Ends every membership of `id`, silently (leaving the world, §9.1).
+    fn leave_channels(&mut self, id: ConnId) {
+        let keys = self
+            .conns
+            .get_mut(&id)
+            .map(|c| std::mem::take(&mut c.channel_keys))
+            .unwrap_or_default();
+        if keys.is_empty() {
+            return;
+        }
+        for key in &keys {
+            self.remove_membership(id, key);
+        }
+        self.publish_channel_stats();
+    }
+
+    /// A line on a named channel (§9.1): membership of the channel with that key (a name
+    /// that breaks the rule is never a member), then every member in member order, the
+    /// speaker with `ECHO`. The chat bucket and mute rule were checked before.
+    fn deliver_named(
+        &mut self,
+        id: ConnId,
+        eid: u64,
+        speaker_name: &str,
+        name: &str,
+        text: &str,
+        now: u64,
+    ) {
+        let key = names::channel_name(name).map(|n| names::channel_key(&n));
+        let member = key.as_ref().is_some_and(|k| {
+            self.conns
+                .get(&id)
+                .is_some_and(|c| c.channel_keys.contains(k))
+        });
+        let Some(ch) = key.filter(|_| member).and_then(|k| self.channels.get(&k)) else {
+            self.reject_chat(id, ChatRejectedCode::NotJoined, now);
+            return;
+        };
+        let (number, spelling, members) = (ch.number, ch.display.clone(), ch.members.clone());
+        if self.config.chat.log_chat {
+            tracing::info!(
+                target: "tessera_server::chat",
+                channel = number,
+                name = spelling.as_str(),
+                sender = %speaker_name,
+                text = %text,
+                "chat"
+            );
+        }
+        for m in members {
+            let echo = m == id;
+            let sender_entity = if echo
+                || self
+                    .conns
+                    .get(&m)
+                    .is_some_and(|rc| rc.known.contains_key(&eid))
+            {
+                eid
+            } else {
+                0
+            };
+            let line = Message::ChatMessage(ChatMessage {
+                server_time: now,
+                channel: ChatChannel::Named {
+                    name: spelling.clone(),
+                },
+                echo,
+                sender_entity,
+                sender: speaker_name.to_owned(),
+                text: text.to_owned(),
+            });
+            self.send_chat_frame(m, &line);
+            if !echo {
+                self.stats.chat_delivered.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.cmd(id, SessionCmd::ChatDelivered);
+    }
+
+    fn publish_channel_stats(&self) {
+        self.stats
+            .channels
+            .store(self.channels.len(), Ordering::Relaxed);
+        self.stats
+            .channel_memberships
+            .store(self.memberships, Ordering::Relaxed);
     }
 
     fn on_emote(&mut self, id: ConnId, anim: u32, looping: bool, now: u64) {
@@ -2036,6 +2371,8 @@ impl Sim {
                 self.on_query_location(id, request_id, now)
             }
             ServerEvent::Chat(c) => self.on_chat(id, c, now),
+            ServerEvent::ChannelJoin { name } => self.on_channel_join(id, &name, now),
+            ServerEvent::ChannelLeave { name } => self.on_channel_leave(id, &name, now),
             ServerEvent::Emote(e) => self.on_emote(id, e.anim, e.looping, now),
             ServerEvent::Stance(s) => self.on_stance(id, s),
             ServerEvent::Appearance(a) => self.on_appearance(id, a, now),
@@ -2231,6 +2568,8 @@ impl Sim {
                 interval,
                 overruns: s.overruns,
                 accounted_bytes: s.accounted_bytes,
+                channels: self.channels.len(),
+                channel_memberships: self.memberships,
                 resident_bytes: crate::shared::resident_bytes(),
             };
             line.log();
@@ -2660,6 +2999,7 @@ impl Sim {
             .load(Ordering::Relaxed)
             .saturating_sub(self.conns.len());
         accounted += outside * CONNECTION_STATE_BYTES;
+        accounted += self.channels.len() * CHANNEL_BYTES + self.memberships * MEMBERSHIP_BYTES;
         let a = &self.config.accounts;
         accounted +=
             usize::try_from(u64::from(a.argon2_memory_kib) * 1024 * u64::from(a.hash_workers))
@@ -2708,6 +3048,7 @@ impl Sim {
         );
         s.character_files
             .store(self.characters.len(), Ordering::Relaxed);
+        self.publish_channel_stats();
         let mut queued = 0;
         let mut bytes = 0;
         for c in self.conns.values() {

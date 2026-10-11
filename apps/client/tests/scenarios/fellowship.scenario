@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fellowship (docs/specs/scenario-feed.md §6.4, §6.7; social-panels.md §4, §9 TR2–TR4,
+# §12.1): an invitation answered, a fellowship formed, member vitals with and without an
+# entity, fellowship chat, a leader change, a dismissed member and the disbanding. Synthetic:
+# needs no install. Every name and text is invented for Tessera.
+tessera-scenario 1
+title "Company of the lantern"
+tick 100ms
+player "Tamsin"
+actor $brin kind=player name="Brin" pos=3,0,0 facing=270 level=31
+actor $cael kind=player name="Cael" pos=-3,1,0 facing=90 level=29
+
+at 0s spawn $brin
++0s spawn $cael
++0.5s invite "Brin"
+
+on answer-invite accept
++0.2s fellowship player $brin leader=player
++0s vital $brin health 640/800
++0s vital $brin power 210/400
+end
+
+at 2s fellowship player $brin $cael "Eda" leader=player
++0s vital $cael health 350/700
++0s vital $cael power 300/300
++0s fellow-vital "Eda" health 450/900
++0s fellow-vital "Eda" power 90/300
++0.3s say $brin "Lanterns lit." channel=fellowship
+at 4s fellowship player $brin $cael "Eda" leader=$brin
++0s say "Eda" "Brin leads from here." channel=fellowship
++0.5s vital $brin health 800/800
+
+on kick "Cael"
++0.2s fellowship player $brin "Eda" leader=$brin
+end
+
+on disband
++0.2s fellowship none
+end
+
+input
+at 1s answer-invite accept
+at 3s chat "Glad to have you." channel=fellowship
+at 6s kick "Cael"
+at 8s disband
+end

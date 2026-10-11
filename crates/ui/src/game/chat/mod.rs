@@ -7,15 +7,28 @@
 //!
 //! The pure rules ([`command`], [`entry`], [`mask`], [`config`]) are independent of the
 //! element tree; [`window::Chat`] binds them to the `chatwindow` layout.
+//!
+//! Revision 4 (P4 social chat, `chat-window.md` §15): [`social`] holds the line forms of
+//! session chat, the tell targets, the tell, reply, retell, fellowship and user-channel
+//! built-ins (run by the client's dispatcher), the slots, the ignore filter and the friend
+//! notices; [`im`] the instant-message tab and its sessions; [`notice`] the string-table
+//! references every P4 line and label uses (rendered by the client, Tessera's wording as
+//! the fallback).
 
 pub mod command;
 pub mod config;
 pub mod entry;
+pub mod im;
 pub mod mask;
+pub mod notice;
+pub mod social;
 pub mod window;
 
 pub use command::{CommandSetup, EntryHistory, EntryLine, NoHistory};
 pub use config::{ChatConfig, TabConfig, WindowConfig};
 pub use entry::{ChannelModes, KeyRepeatGuard, ModeKind};
+pub use im::{ImDelivery, ImSessions, ImTab};
 pub use mask::{FeedbackSounds, LineStyle, OpacityTable, StyleMap};
+pub use notice::{Notice, NoticeText, TextRef, TextSource};
+pub use social::{ChatOutcome, ChatSend, SessionLine, SocialChat, TellTargets};
 pub use window::{Chat, ChatTexts, CommandOutcome, TextInputOutcome};

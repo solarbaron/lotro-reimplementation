@@ -752,6 +752,7 @@ impl Session {
                 Verdict::Invalid("invalid look or property value")
             }
             Event::Inventory(e) if !e.is_valid() => Verdict::Invalid("non-finite property value"),
+            Event::Social(e) if !e.is_valid() => Verdict::Invalid("non-finite fellow vital"),
             Event::Character(e) if e.is_entity_event() => self.world_verdict(),
             Event::Inventory(_)
             | Event::Combat(_)

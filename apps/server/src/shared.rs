@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering}
 use std::time::Instant;
 
 use tessera_protocol::codes::{
-    AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
-    LoginFailedCode,
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ChatRejectedCode,
+    EnterWorldFailedCode, LoginFailedCode,
 };
 use tessera_protocol::message::{MoveInput, WorldEnter};
 use tessera_protocol::server::ServerEvent;
@@ -94,6 +94,20 @@ pub enum SessionCmd {
     /// nothing; it releases session-made rejections of later `ChatSend`s, which must not
     /// overtake it (`tessera-protocol.md` §6.4.3).
     ChatDelivered,
+    /// `ChannelJoined` with the channel's display name: the answer to the oldest unanswered
+    /// chat or channel request, a `ChannelJoin` (minor ≥ 2, `test-server.md` §9.1).
+    ChannelJoined(String),
+    /// `ChannelLeft(LEFT)` with the channel's display name: the answer to a `ChannelLeave`.
+    ChannelLeft(String),
+    /// `ChannelRefused(code)` naming the requested name (sanitised by the session): the
+    /// answer to a `ChannelJoin` or `ChannelLeave`. `RATE_LIMITED` counts towards
+    /// `FLOODING`.
+    RefuseChannel {
+        /// Why.
+        code: ChannelRefusedCode,
+        /// The name the request carried, as received.
+        name: String,
+    },
     /// `Disconnect(code, text)` and the closing procedure.
     Disconnect(AppErrorCode, String),
 }
@@ -468,6 +482,10 @@ pub struct Stats {
     pub server_full: AtomicU64,
     /// Chat lines delivered (per recipient).
     pub chat_delivered: AtomicU64,
+    /// Named chat channels that exist (`test-server.md` §9.1, §13.3).
+    pub channels: AtomicUsize,
+    /// Channel memberships over all channels.
+    pub channel_memberships: AtomicUsize,
     /// Login verifications waiting or running.
     pub hash_jobs: AtomicUsize,
     /// Writer jobs queued.
@@ -509,6 +527,8 @@ pub struct StatsSnapshot {
     pub slow_consumers: u64,
     pub server_full: u64,
     pub chat_delivered: u64,
+    pub channels: usize,
+    pub channel_memberships: usize,
     pub hash_jobs: usize,
     pub writer_jobs: usize,
     pub throttle_entries: usize,
@@ -559,6 +579,8 @@ impl Stats {
             slow_consumers: q(&self.slow_consumers),
             server_full: q(&self.server_full),
             chat_delivered: q(&self.chat_delivered),
+            channels: u(&self.channels),
+            channel_memberships: u(&self.channel_memberships),
             hash_jobs: u(&self.hash_jobs),
             writer_jobs: u(&self.writer_jobs),
             throttle_entries: u(&self.throttle_entries),
@@ -656,6 +678,10 @@ pub struct StatsLine {
     pub overruns: u64,
     /// The §10.2 accounted total, bytes.
     pub accounted_bytes: usize,
+    /// Named chat channels that exist (§9.1).
+    pub channels: usize,
+    /// Channel memberships over all channels.
+    pub channel_memberships: usize,
     /// Resident memory, bytes, where the platform reports it.
     pub resident_bytes: Option<u64>,
 }
@@ -676,6 +702,8 @@ impl StatsLine {
             bytes_in_per_s = self.interval.bytes_in_per_s,
             bytes_out_per_s = self.interval.bytes_out_per_s,
             accounted_bytes = self.accounted_bytes,
+            channels = self.channels,
+            channel_memberships = self.channel_memberships,
             resident_bytes = self.resident_bytes,
             "stats"
         );

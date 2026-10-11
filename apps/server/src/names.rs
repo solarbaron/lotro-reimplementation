@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Account and character names (`test-server.md` §6.1, §6.4) and content identifiers (§5.2,
-//! §5.3).
+//! Account and character names (`test-server.md` §6.1, §6.4), chat-channel names (§9.1) and
+//! content identifiers (§5.2, §5.3).
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
@@ -11,6 +11,23 @@ pub const MIN_CHARACTER_NAME: usize = 2;
 pub const MAX_CHARACTER_NAME: usize = 24;
 /// Names reserved by the server (§6.4), compared by name key.
 pub const RESERVED_NAMES: &[&str] = &["System", "Server"];
+
+/// Longest chat-channel name, in Unicode scalar values (§9.1).
+pub const MAX_CHANNEL_NAME: usize = 50;
+/// Channel-name keys reserved by the server (§9.1), so that a channel never reads like a
+/// built-in one.
+pub const RESERVED_CHANNEL_KEYS: &[&str] = &[
+    "say",
+    "yell",
+    "emote",
+    "tell",
+    "system",
+    "server",
+    "fellowship",
+    "raid",
+    "kinship",
+    "world",
+];
 
 /// The canonical form of an account name: its ASCII lowercase (§6.1). `None` when `name` is
 /// not an `ACCOUNT` string (`tessera-protocol.md` §5.2).
@@ -85,6 +102,61 @@ pub fn name_key(name: &str) -> String {
     nfc.to_lowercase()
 }
 
+fn is_channel_inner(c: char) -> bool {
+    matches!(c, ' ' | '\'' | '\u{2019}' | '-' | '_')
+}
+
+fn is_letter_or_digit(c: char) -> bool {
+    is_letter(c) || get_general_category(c) == GeneralCategory::DecimalNumber
+}
+
+/// Applies the chat-channel name rule (§9.1): returns the NFC form (the display name a new
+/// channel gets), or `None` when the name breaks the rule (`INVALID_NAME`). 1–50 scalar
+/// values of letters (general category L), decimal digits (Nd), single spaces, apostrophes
+/// (U+0027, U+2019), hyphens and underscores; starts and ends with a letter or digit; the
+/// NFC form is a protocol `NAME` (at most 64 bytes); its key is not reserved.
+#[must_use]
+pub fn channel_name(name: &str) -> Option<String> {
+    let nfc: String = name.nfc().collect();
+    if !tessera_protocol::text::is_valid_name(&nfc) {
+        return None;
+    }
+    let chars: Vec<char> = nfc.chars().collect();
+    if chars.is_empty() || chars.len() > MAX_CHANNEL_NAME {
+        return None;
+    }
+    if !chars.first().copied().is_some_and(is_letter_or_digit)
+        || !chars.last().copied().is_some_and(is_letter_or_digit)
+    {
+        return None;
+    }
+    let mut prev_space = false;
+    for &c in &chars {
+        if c == ' ' {
+            if prev_space {
+                return None;
+            }
+            prev_space = true;
+        } else if is_letter_or_digit(c) || is_channel_inner(c) {
+            prev_space = false;
+        } else {
+            return None;
+        }
+    }
+    let key = channel_key(&nfc);
+    if RESERVED_CHANNEL_KEYS.contains(&key.as_str()) {
+        return None;
+    }
+    Some(nfc)
+}
+
+/// The channel key (§9.1): the full Unicode lowercase mapping of the NFC name, as for
+/// character names. Requests and lines are matched to a channel by key.
+#[must_use]
+pub fn channel_key(name: &str) -> String {
+    name_key(name)
+}
+
 /// A content identifier (`[world] id`): 1–32 characters of `a–z`, `0–9`, `-`.
 #[must_use]
 pub fn is_content_id(s: &str) -> bool {
@@ -142,6 +214,42 @@ mod tests {
         let name: String = std::iter::repeat_n('\u{FA6C}', 16).collect();
         let nfc = character_name(&name).expect("64 bytes after NFC");
         assert_eq!(nfc.len(), 64);
+    }
+
+    #[test]
+    fn channel_names() {
+        assert_eq!(channel_name("Lore").as_deref(), Some("Lore"));
+        assert_eq!(channel_name("7").as_deref(), Some("7"));
+        assert_eq!(
+            channel_name("Bree-land Trade_2 O'Hare").as_deref(),
+            Some("Bree-land Trade_2 O'Hare")
+        );
+        assert_eq!(channel_name("Zoe\u{308}s").as_deref(), Some("Zo\u{eb}s"));
+        for bad in [
+            "",
+            " Lore",
+            "Lore ",
+            "Lo  re",
+            "-Lore",
+            "Lore_",
+            "Lo.re",
+            "Lo\u{7}re",
+            "Lore!",
+            "say",
+            "FELLOWSHIP",
+            "World",
+            "Kinship",
+        ] {
+            assert!(channel_name(bad).is_none(), "{bad:?}");
+        }
+        assert!(channel_name(&"a".repeat(50)).is_some());
+        assert!(channel_name(&"a".repeat(51)).is_none());
+        // 50 scalar values, but more than 64 bytes.
+        assert!(channel_name(&"é".repeat(33)).is_none());
+        // Reserved words only as whole keys.
+        assert!(channel_name("Say Hello").is_some());
+        assert_eq!(channel_key("LORE"), channel_key("lore"));
+        assert_eq!(channel_key("Zoë"), channel_key("ZOE\u{308}"));
     }
 
     #[test]

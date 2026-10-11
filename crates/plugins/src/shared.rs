@@ -184,8 +184,8 @@ impl SharedState {
         self.queue.push_back(Item::Chat { line, skip });
     }
 
-    /// Queue a gameplay event.
-    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent) {
+    /// Queue a gameplay event; `false` when the queue was full and the event was dropped.
+    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent) -> bool {
         let queued = self
             .queue
             .iter()
@@ -193,8 +193,10 @@ impl SharedState {
             .count();
         if queued < MAX_QUEUED_GAMEPLAY {
             self.queue.push_back(Item::Gameplay(ev));
+            true
         } else {
             self.dropped_gameplay += 1;
+            false
         }
     }
 
@@ -320,6 +322,10 @@ pub(crate) struct Shared {
     pub gameplay: Mutex<Option<Arc<dyn LocalPlayerSource>>>,
     /// The source of the inventory views (`lua-plugin-api.md` §15.1).
     pub inventory: Mutex<Option<Arc<dyn crate::inventory::InventorySource>>>,
+    /// The fellowship model of the party views (`lua-plugin-api.md` §15.4).
+    pub party: Mutex<crate::party::PartyModel>,
+    /// The source of party members' actor values (§15.4).
+    pub party_actors: Mutex<Option<Arc<dyn crate::party::PartyActorSource>>>,
     pub next_id: AtomicU64,
 }
 

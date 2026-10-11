@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Trade (docs/specs/scenario-feed.md §6.4; social-panels.md §6, §9 TR9, TR10, §12.2): a trade
+# window opened by the peer, the peer's offer (literal items without an install, two items
+# chosen by a selector with one), the player's offer of a bag item and coin, both sides ready,
+# the trade completed. Synthetic: needs no install. Every name and text is invented for
+# Tessera.
+tessera-scenario 1
+title "A fair exchange"
+tick 100ms
+player "Tamsin"
+select $wares = item kind=weapon n=2 seed=7
+actor $dara kind=player name="Dara" pos=2,1,0 facing=200
+item $ring "Copper ring"
+item $bread "Travel loaf" qty=3
+
+at 0s spawn $dara
++0s give $ring
++0s give $bread
++0s wallet coin 1234567
++0.5s trade $dara
++0.5s trade-offer peer items="Silver whistle","Lamp oil" qty=2 coin=40000
++0.5s trade-offer peer items="Silver whistle",$wares[0],$wares[1] coin=40000
+
+on offer-trade
++0.2s trade-offer own items=$ring,$bread coin=2500
+end
+
+on trade-ready
++0.2s trade-ready own on
++0.5s trade-ready peer on
++0.5s close trade
++0s remove $ring
++0s system "Trade complete."
+end
+
+input
+at 2.5s offer-trade $ring
+at 3.5s trade-ready on
+end

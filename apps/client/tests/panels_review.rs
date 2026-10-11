@@ -439,13 +439,13 @@ fn chat_window_lines_reach_the_dispatcher_and_their_sinks() {
     assert_eq!(
         local,
         vec![(
-            CHAT_ERROR,
+            1u64 << (CHAT_ERROR - 1),
             "Unknown command. Type /help for a list.".to_owned()
         )]
     );
     let before = log_len(&ui, chat);
-    for (t, text) in &local {
-        chat.show(&mut ui, *t, text);
+    for (mask, text) in &local {
+        chat.show_mask(&mut ui, *mask, text);
     }
     assert_eq!(log_len(&ui, chat), before + 1);
     assert!(chat.take_outgoing().is_empty(), "shown, not queued twice");
@@ -454,7 +454,10 @@ fn chat_window_lines_reach_the_dispatcher_and_their_sinks() {
     let line = type_and_submit(&mut ui, chat, &mut plugins, "/help");
     assert_eq!(plugins.submit_entry(&line, None, now), Outcome::Ran);
     let local = plugins.take_local_chat();
-    assert!(local.iter().all(|(t, _)| *t == CHAT_LOG), "{local:?}");
+    assert!(
+        local.iter().all(|(m, _)| *m == 1u64 << (CHAT_LOG - 1)),
+        "{local:?}"
+    );
     assert!(local.iter().any(|(_, l)| l.contains("/play")), "{local:?}");
     assert!(local.iter().any(|(_, l)| l.contains("/greet")), "{local:?}");
 
@@ -463,7 +466,10 @@ fn chat_window_lines_reach_the_dispatcher_and_their_sinks() {
     assert_eq!(plugins.submit_entry(&line, None, now), Outcome::Ran);
     assert_eq!(
         plugins.take_local_chat(),
-        vec![(CHAT_ERROR, "Not connected: chat not sent".to_owned())]
+        vec![(
+            1u64 << (CHAT_ERROR - 1),
+            "Not connected: chat not sent".to_owned()
+        )]
     );
 
     // Line up browses the dispatcher's one history (§6.3), newest first.

@@ -104,6 +104,51 @@ pub struct Runtime {
     load_p1: bool,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
+    /// The plugins' party views fed from the session's fellowship (decision 0024 P4).
+    party: crate::social::party::PartyBridge,
+    /// The generation of the dispatcher's command words the social state last took.
+    social_words: u64,
+}
+
+/// The P4 social work of a frame (decision 0024 P4): the dispatcher's channel-command
+/// names for the chat model (`chat-window.md` §15.10 CT5), the plugins' party views, and
+/// the synchronised `/play` (the session's performance events to the player music, its
+/// requests to the session; `instruments.md` §12 P4 Decision, `scenario-feed.md` §6.7).
+fn social_tick(
+    world: &mut World,
+    plugins: &mut Plugins,
+    party: &mut crate::social::party::PartyBridge,
+    words: &mut u64,
+    now: Instant,
+) {
+    let generation = plugins.command_text_generation();
+    if *words != generation {
+        *words = generation;
+        let names: Vec<String> = plugins
+            .command_text()
+            .modes
+            .iter()
+            .flat_map(|m| {
+                crate::commands::registry::split_names(&m.names)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        world.social_mut().set_channel_command_names(names);
+    }
+    party.update(world.social_mut(), plugins.manager_mut());
+    let events = world.social_mut().take_music_events();
+    let session_starts = world.remote_backend().is_none();
+    let player = world.social().player().to_owned();
+    let entity = world.social().player_entity();
+    let Some(music) = plugins.music_mut() else {
+        return;
+    };
+    music.set_session_starts(session_starts);
+    for ev in &events {
+        music.social_event(ev, &player, entity);
+    }
+    crate::social::send_music_requests(world, music, now);
 }
 
 /// Most session chat lines held for the game UI until it takes them.
@@ -319,6 +364,8 @@ impl Runtime {
             p1,
             load_p1: walker,
             character_select: args.character_select,
+            party: crate::social::party::PartyBridge::new(),
+            social_words: u64::MAX,
         })
     }
 
@@ -379,6 +426,7 @@ impl Runtime {
             Some(Ok(mut w)) => {
                 if let Some(d) = self.p1.data() {
                     w.set_bag_layout(d.bags());
+                    crate::social::attach_data(w.social_mut(), d);
                 }
                 w.set_look_data(self.p1.screens().cloned());
                 if self.character_select {
@@ -520,6 +568,7 @@ impl Runtime {
             && let Some(w) = &mut self.world
         {
             w.set_bag_layout(d.bags());
+            crate::social::attach_data(w.social_mut(), &d);
             w.set_look_data(self.p1.screens().cloned());
             // Items that arrived before the facts: the plugin views and the panels
             // re-read them now.
@@ -531,7 +580,9 @@ impl Runtime {
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
             for line in world.take_chat() {
-                if line.sender.is_empty() && self.notices.len() < 64 {
+                // The session's own system lines go to the HUD too; the P4 lines the client
+                // derives (channel slots, friend and fellowship notices) only to the chat.
+                if line.sender.is_empty() && line.shown.is_none() && self.notices.len() < 64 {
                     self.notices.push(line.text.clone());
                 }
                 match &mut self.ui_chat {
@@ -545,9 +596,16 @@ impl Runtime {
                             self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1);
                         }
                     }
-                    None => self.plugins.chat(&line.sender, &line.text),
+                    None => self.plugins.chat_line(&line),
                 }
             }
+            social_tick(
+                world,
+                &mut self.plugins,
+                &mut self.party,
+                &mut self.social_words,
+                now,
+            );
             let name = world
                 .player()
                 .and_then(|id| world.entities().get(&id))
@@ -578,7 +636,7 @@ impl Runtime {
         }
         if let Some(q) = self.ui_chat.take() {
             for line in q {
-                self.plugins.chat(&line.sender, &line.text);
+                self.plugins.chat_line(&line);
             }
         }
     }
@@ -609,7 +667,7 @@ impl Runtime {
         match &mut self.ui_chat {
             Some(q) if q.len() < MAX_HELD_CHAT => q.push_back(line),
             Some(_) => self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1),
-            None => self.plugins.chat(&line.sender, &line.text),
+            None => self.plugins.chat_line(&line),
         }
     }
 

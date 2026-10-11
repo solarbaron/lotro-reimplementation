@@ -203,18 +203,20 @@ pub(crate) fn chat_channel(c: &wire::ChatChannel) -> ChatChannel {
         wire::ChatChannel::Emote => ChatChannel::Emote,
         wire::ChatChannel::Tell { peer } => ChatChannel::Tell { peer: peer.clone() },
         wire::ChatChannel::System => ChatChannel::System,
+        wire::ChatChannel::Named { name } => ChatChannel::Named { name: name.clone() },
     }
 }
 
-/// The wire channel for an outgoing line; `None` for System (server only).
-pub(crate) fn wire_chat_channel(c: &ChatChannel) -> Option<wire::ChatChannel> {
+/// The wire channel for an outgoing line; `None` for System (server only), for Fellowship
+/// (no wire value at any minor, decision 0035 D1) and for a named channel unless
+/// `channels` (negotiated minor ≥ 2 with `CHAT_CHANNELS`, `scenario-feed.md` §9.8).
+pub(crate) fn wire_chat_channel(c: &ChatChannel, channels: bool) -> Option<wire::ChatChannel> {
     Some(match c {
         ChatChannel::Say => wire::ChatChannel::Say,
         ChatChannel::Yell => wire::ChatChannel::Yell,
         ChatChannel::Emote => wire::ChatChannel::Emote,
         ChatChannel::Tell { peer } => wire::ChatChannel::Tell { peer: peer.clone() },
-        // Fellowship and named channels have no wire form until a minor version of
-        // `tessera-protocol.md` adds them (scenario-feed.md §9.5).
+        ChatChannel::Named { name } if channels => wire::ChatChannel::Named { name: name.clone() },
         ChatChannel::System | ChatChannel::Fellowship | ChatChannel::Named { .. } => return None,
     })
 }
@@ -301,7 +303,24 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(wire_chat_channel(&ChatChannel::System).is_none());
+        assert!(wire_chat_channel(&ChatChannel::System, true).is_none());
+        assert!(wire_chat_channel(&ChatChannel::Fellowship, true).is_none());
+        let lore = ChatChannel::Named {
+            name: "Lore".into(),
+        };
+        assert!(wire_chat_channel(&lore, false).is_none());
+        assert_eq!(
+            wire_chat_channel(&lore, true),
+            Some(wire::ChatChannel::Named {
+                name: "Lore".into()
+            })
+        );
+        assert_eq!(
+            chat_channel(&wire::ChatChannel::Named {
+                name: "Lore".into()
+            }),
+            lore
+        );
         assert_eq!(
             chat_channel(&wire::ChatChannel::Tell {
                 peer: "Bram".into()

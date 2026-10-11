@@ -13,8 +13,8 @@ use std::time::Duration;
 use tessera_protocol::codes::{AppErrorCode, LoginFailedCode};
 use tessera_protocol::connect::ExpectedKey;
 use tessera_protocol::fingerprint::Fingerprint;
-use tessera_protocol::frame::{FrameDecoder, frame_to_vec_minor};
-use tessera_protocol::message::{CharacterCreate, Credentials, Disconnect, Hello};
+use tessera_protocol::frame::{FrameDecoder, StreamKind, frame_to_vec_minor};
+use tessera_protocol::message::{CharacterCreate, Credentials, Disconnect, EnterWorld, Hello};
 use tessera_protocol::transport::{PinnedServerVerifier, client_endpoint, quinn_client_config};
 use tessera_protocol::types::{Appearance, Body, Equipped, Look, LookEntry, LookValue};
 use tessera_protocol::{Channel, Message, Side};
@@ -233,14 +233,15 @@ pub fn hello_minor(minor_max: u16) -> Message {
     })
 }
 
-/// The minor a bot offers: 1, except every tenth bot, which stays at 0
-/// (`test-server.md` §13.1: 10 % by default).
+/// The minor a bot offers: the highest this tool implements, except every tenth bot, which
+/// stays at 0 (`test-server.md` §13.1: 10 % by default), and every tenth other bot, which
+/// offers 1, so that observers at minors 0, 1 and 2 meet in every run.
 #[must_use]
 pub fn bot_minor(index: usize) -> u16 {
-    if index % 10 == 9 {
-        0
-    } else {
-        tessera_protocol::limits::PROTOCOL_MINOR
+    match index % 10 {
+        9 => 0,
+        8 => 1,
+        _ => tessera_protocol::limits::PROTOCOL_MINOR,
     }
 }
 
@@ -479,6 +480,244 @@ pub fn negative_vectors_v11() -> Vec<NegativeVector> {
     ]
 }
 
+/// Whether a client-to-server vector needs a server that advertises `CHAT_CHANNELS`
+/// (protocol minor 2, `tessera-protocol.md` §16.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelsNeeded {
+    /// The server advertises named channels (the default).
+    On,
+    /// The server runs with `[chat] channels = false`.
+    Off,
+}
+
+/// `ChannelJoin` "Lore" (`tessera-protocol.md` §16.9).
+const CHANNEL_JOIN_LORE: [u8; 12] = [
+    0x08, 0, 0, 0, 0x15, 0x00, 0x04, 0x00, b'L', b'o', b'r', b'e',
+];
+/// `ChatSend` Named "Lore", "hi" (§16.9).
+const CHAT_SEND_LORE: [u8; 17] = [
+    0x0d, 0, 0, 0, 0x0e, 0x00, 0x06, 0x04, 0x00, b'L', b'o', b'r', b'e', 0x02, 0x00, b'h', b'i',
+];
+
+/// `ChannelJoin` or `ChannelLeave` (`ty`) carrying exactly `name` (any bytes, even ones that
+/// are not UTF-8 or longer than a `NAME`).
+#[must_use]
+pub fn channel_request(ty: u16, name: &[u8]) -> Vec<u8> {
+    let mut f = vec![0, 0, 0, 0];
+    f.extend(ty.to_le_bytes());
+    f.extend(u16::try_from(name.len()).unwrap_or(u16::MAX).to_le_bytes());
+    f.extend_from_slice(name);
+    with_length(f)
+}
+
+/// The client-to-server negative vectors of `tessera-protocol.md` §16.9 (protocol 1.2:
+/// named channels), with the server setting each needs. Each MUST end the connection with
+/// `PROTOCOL_VIOLATION` when sent in the world (`test-server.md` §13.1 "Hostile 1.2
+/// cases").
+#[must_use]
+pub fn negative_vectors_v12() -> Vec<(NegativeVector, ChannelsNeeded)> {
+    let v = |name, minor_max, frame| NegativeVector {
+        name,
+        minor_max,
+        frame,
+    };
+    let mut seven = CHAT_SEND_LORE.to_vec();
+    seven[6] = 7;
+    let mut trailing = CHANNEL_JOIN_LORE.to_vec();
+    trailing.push(0);
+    vec![
+        (
+            v("join-at-minor-1", 1, CHANNEL_JOIN_LORE.to_vec()),
+            ChannelsNeeded::On,
+        ),
+        (
+            v("named-line-at-minor-1", 1, CHAT_SEND_LORE.to_vec()),
+            ChannelsNeeded::On,
+        ),
+        (
+            v("join-without-capability", 2, CHANNEL_JOIN_LORE.to_vec()),
+            ChannelsNeeded::Off,
+        ),
+        (
+            v("named-line-without-capability", 2, CHAT_SEND_LORE.to_vec()),
+            ChannelsNeeded::Off,
+        ),
+        (v("chat-channel-7", 2, seven), ChannelsNeeded::On),
+        (
+            v(
+                "channel-name-65-bytes",
+                2,
+                channel_request(0x0015, &[b'A'; 65]),
+            ),
+            ChannelsNeeded::On,
+        ),
+        (
+            v("join-trailing-byte", 2, with_length(trailing)),
+            ChannelsNeeded::On,
+        ),
+    ]
+}
+
+/// A client in the world on one connection, reading its chat stream (protocol minor ≥ 0).
+/// Its world stream is read and discarded by a task of the current runtime, so the server's
+/// world backlog never grows; the task ends with the connection.
+#[derive(Debug)]
+pub struct WorldClient {
+    /// The control stream.
+    pub link: ControlLink,
+    chat: quinn::RecvStream,
+    decoder: FrameDecoder,
+    pending: Vec<u8>,
+    world: tokio::task::JoinHandle<()>,
+}
+
+async fn accept_kind(
+    conn: &quinn::Connection,
+    want: StreamKind,
+    timeout: Duration,
+) -> Result<quinn::RecvStream, String> {
+    let mut s = match tokio::time::timeout(timeout, conn.accept_uni()).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => return Err("the server opened no stream in time".into()),
+    };
+    let mut kind = [0u8; 1];
+    tokio::time::timeout(timeout, s.read_exact(&mut kind))
+        .await
+        .map_err(|_| "no kind byte in time".to_owned())?
+        .map_err(|e| e.to_string())?;
+    match StreamKind::from_byte(kind[0]) {
+        Ok(k) if k == want => Ok(s),
+        other => Err(format!("expected the {want:?} stream, got {other:?}")),
+    }
+}
+
+impl WorldClient {
+    /// Connects, offers minor `minor_max`, logs in and enters the world with `character`.
+    ///
+    /// # Errors
+    ///
+    /// What failed, in words.
+    pub async fn enter(
+        endpoint: &quinn::Endpoint,
+        target: &Target,
+        (account, password): (&str, &str),
+        character: &str,
+        minor_max: u16,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let conn = connect(endpoint, target, timeout).await?;
+        let mut link = ControlLink::open(conn).await?;
+        link.send(&hello_minor(minor_max)).await?;
+        link.expect(timeout, |m| matches!(m, Message::HelloAck(_)).then_some(()))
+            .await?;
+        link.send(&Message::Login(Credentials {
+            account: account.to_owned(),
+            password: password.to_owned(),
+        }))
+        .await?;
+        link.expect(timeout, |m| match m {
+            Message::LoginOk(_) => Some(Ok(())),
+            Message::LoginFailed(f) => Some(Err(f.code.name())),
+            _ => None,
+        })
+        .await?
+        .map_err(|code| format!("login failed: {code}"))?;
+        // The chat stream follows LoginOk; the world stream follows EnterWorld.
+        let chat = accept_kind(&link.conn, StreamKind::Chat, timeout).await?;
+        link.send(&Message::EnterWorld(EnterWorld {
+            name: character.to_owned(),
+        }))
+        .await?;
+        let mut world = accept_kind(&link.conn, StreamKind::World, timeout).await?;
+        let world = tokio::spawn(async move {
+            let mut buf = vec![0u8; 16 * 1024];
+            while let Ok(Some(_)) = world.read(&mut buf).await {}
+        });
+        let minor = link.minor();
+        Ok(Self {
+            link,
+            chat,
+            decoder: FrameDecoder::with_minor(Channel::Chat, Side::Server, minor),
+            pending: Vec::new(),
+            world,
+        })
+    }
+
+    /// The negotiated minor version.
+    #[must_use]
+    pub fn minor(&self) -> u16 {
+        self.link.minor()
+    }
+
+    /// The next chat-stream message within `timeout`: `Ok(None)` on timeout or end of
+    /// stream.
+    ///
+    /// # Errors
+    ///
+    /// A decoding error (the server broke the protocol at the negotiated minor) or a stream
+    /// error, in words.
+    pub async fn next_chat(&mut self, timeout: Duration) -> Result<Option<Message>, String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut buf = vec![0u8; 8 * 1024];
+        loop {
+            if !self.pending.is_empty() {
+                let mut input: &[u8] = &self.pending;
+                let before = input.len();
+                let r = self.decoder.push(&mut input);
+                let used = before - input.len();
+                self.pending.drain(..used);
+                match r {
+                    Ok(Some(m)) => return Ok(Some(m)),
+                    Ok(None) => {}
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+            match tokio::time::timeout_at(deadline, self.chat.read(&mut buf)).await {
+                Err(_) | Ok(Ok(None)) => return Ok(None),
+                Ok(Ok(Some(n))) => {
+                    if self.pending.len() + n > MAX_PENDING {
+                        return Err("chat backlog too large".into());
+                    }
+                    self.pending.extend_from_slice(&buf[..n]);
+                }
+                Ok(Err(e)) => return Err(e.to_string()),
+            }
+        }
+    }
+
+    /// Waits for a chat-stream message `pick` accepts within `timeout`; every message seen
+    /// before it is appended to `skipped`.
+    ///
+    /// # Errors
+    ///
+    /// As [`next_chat`](Self::next_chat), or none in time.
+    pub async fn expect_chat<T>(
+        &mut self,
+        timeout: Duration,
+        skipped: &mut Vec<Message>,
+        mut pick: impl FnMut(&Message) -> Option<T>,
+    ) -> Result<T, String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match self.next_chat(left).await? {
+                Some(m) => match pick(&m) {
+                    Some(t) => return Ok(t),
+                    None => skipped.push(m),
+                },
+                None => return Err("no chat message in time".into()),
+            }
+        }
+    }
+
+    /// Stops the world reader, sends `Disconnect(NO_ERROR)` and closes the connection.
+    pub async fn close(self) {
+        self.world.abort();
+        self.link.close().await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,6 +759,50 @@ mod tests {
         }
     }
 
+    /// The §16.9 vectors: the decoding ones are refused by the protocol's own decoder at
+    /// their minor; the capability ones decode and are refused by the session (no
+    /// `CHAT_CHANNELS`), which the end-to-end test checks.
+    #[test]
+    fn v12_vectors_are_refused() {
+        use tessera_protocol::ProtocolError as E;
+        let vectors = negative_vectors_v12();
+        assert_eq!(vectors.len(), 7);
+        for (v, needs) in &vectors {
+            let mut d = FrameDecoder::with_minor(Channel::Control, Side::Client, v.minor_max);
+            let mut input: &[u8] = &v.frame;
+            let r = d.push(&mut input);
+            match v.name {
+                "join-at-minor-1" => assert_eq!(r, Err(E::UnknownMessageType(0x0015))),
+                "named-line-at-minor-1" => assert_eq!(
+                    r,
+                    Err(E::InvalidEnum {
+                        field: "channel",
+                        value: 6
+                    })
+                ),
+                "chat-channel-7" => assert_eq!(
+                    r,
+                    Err(E::InvalidEnum {
+                        field: "channel",
+                        value: 7
+                    })
+                ),
+                "channel-name-65-bytes" => {
+                    assert!(matches!(r, Err(E::StringLength { len: 65, .. })), "{r:?}");
+                }
+                "join-trailing-byte" => assert_eq!(r, Err(E::TrailingBytes(1))),
+                _ => {
+                    assert_eq!(*needs, ChannelsNeeded::Off, "{}", v.name);
+                    assert!(matches!(r, Ok(Some(_))), "{}: {r:?}", v.name);
+                }
+            }
+        }
+        assert_eq!(
+            channel_request(0x0016, b"Lore"),
+            [0x08, 0, 0, 0, 0x16, 0, 4, 0, b'L', b'o', b'r', b'e']
+        );
+    }
+
     #[test]
     fn bot_looks_and_appearances_encode() {
         for i in [0, 9, 10, 999, 1_000_000] {
@@ -533,6 +816,13 @@ mod tests {
             assert!(frame_to_vec_minor(&m, 0).is_ok());
         }
         assert_eq!(bot_minor(9), 0);
-        assert_eq!(bot_minor(0), 1);
+        assert_eq!(bot_minor(8), 1);
+        assert_eq!(bot_minor(0), tessera_protocol::limits::PROTOCOL_MINOR);
+        // Every minor up to the tool's own meets among ten consecutive bots.
+        let minors: std::collections::BTreeSet<u16> = (0..10).map(bot_minor).collect();
+        assert_eq!(
+            minors,
+            (0..=tessera_protocol::limits::PROTOCOL_MINOR).collect()
+        );
     }
 }

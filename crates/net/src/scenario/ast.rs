@@ -488,6 +488,26 @@ pub(crate) enum Verb {
         delay: u64,
     },
     PerformStop(EntityArg),
+    /// (P4 social, §6.7) `perform (ENTITY|STRING) STRING sync`: a waiting part.
+    PerformSync {
+        member: MemberArg,
+        tune: String,
+    },
+    /// (P4 social, §6.7) `perform-start [by=…] [lead=DURATION]`: one synchronised start.
+    PerformStart {
+        by: Option<MemberArg>,
+        /// Milliseconds, 0 … 10,000.
+        lead: u64,
+    },
+    /// (P4 social, §6.7) `perform-withdraw ENTITY|STRING`.
+    PerformWithdraw(MemberArg),
+    /// (P4 social, §6.7) `fellow-vital STRING VITAL CUR/MAX`.
+    FellowVital {
+        member: String,
+        vital: VitalArg,
+        current: f32,
+        max: f32,
+    },
     Marker {
         marker: u32,
         pos: PosArg,
@@ -650,6 +670,12 @@ pub(crate) enum Pattern {
     Unfriend,
     IgnorePlayer,
     Unignore,
+    /// (P4 social) `play-sync [tune=STRING]`: `ReadyPerformance`, with an exact tune.
+    PlaySync(Option<String>),
+    /// (P4 social) `play-start`: `StartPerformance`.
+    PlayStart,
+    /// (P4 social) `disband`: `DisbandFellowship`.
+    Disband,
     ChooseTravel(Option<u16>),
     JoinInstance(Option<u16>),
     LeaveInstance,
@@ -766,6 +792,12 @@ pub(crate) enum InputCmd {
     Unfriend(String),
     IgnorePlayer(String),
     Unignore(String),
+    /// (P4 social) `play-sync STRING`: `ReadyPerformance { tune }`.
+    PlaySync(String),
+    /// (P4 social) `play-start`: `StartPerformance`.
+    PlayStart,
+    /// (P4 social) `disband`: `DisbandFellowship`.
+    Disband,
     ChooseTravel(u16),
     JoinInstance(u16),
     LeaveInstance,

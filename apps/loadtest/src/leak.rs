@@ -308,6 +308,13 @@ pub fn baseline_differences(base: &StatsSnapshot, now: &StatsSnapshot) -> Vec<St
         base.character_files,
         now.character_files,
     );
+    // Named chat channels (test-server.md §13.3, minor 2).
+    eq("channels", base.channels, now.channels);
+    eq(
+        "channel memberships",
+        base.channel_memberships,
+        now.channel_memberships,
+    );
     out
 }
 

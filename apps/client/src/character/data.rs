@@ -20,10 +20,10 @@ use tessera_gamedata::inventory::{
     BagLayout, PaperdollTable, SlotRules, equipment_flag_key, load_inventory_control,
     load_paperdoll,
 };
-use tessera_gamedata::tooltip::{InstallTooltipData, TooltipEngine};
+use tessera_gamedata::tooltip::{InstallTooltipData, TooltipData, TooltipEngine};
 use tessera_material::icon::IconStack;
 use tessera_plugins::ItemInfoData;
-use tessera_text::{RenderOptions, Strings, Values};
+use tessera_text::{NamedTables, RenderOptions, STRING_TABLE_MAP_LABEL, Strings, Values};
 use tessera_ui::ImageRef;
 use tessera_ui::game::IconImage;
 
@@ -86,6 +86,37 @@ pub struct CharacterData {
     icon_pids: Vec<(&'static str, u32)>,
     /// Facts by record; `None` remembers a record that is absent or does not decode.
     facts: Mutex<HashMap<Did, Option<Arc<ItemFacts>>>>,
+    /// The coin denominations' `Currency_Value`s, largest first (`economy.md` §7: the
+    /// currency directory's three coins), when the install has exactly three.
+    coin_values: Option<[u64; 3]>,
+}
+
+/// The `Currency_Value`s of the currency directory's entries (`economy.md` §7), largest
+/// first, when there are exactly three positive ones (gold, silver, copper).
+fn coin_values(data: &dyn TooltipData) -> Option<[u64; 3]> {
+    let dir = data.weenie("CurrencyDirectory")?;
+    let dir = data.record(dir).ok()??;
+    let list_pid = data.pid("Currency_CurrencyList")?;
+    let value_pid = data.pid("Currency_Value")?;
+    let PropertyValue::Array(list) = dir.get(list_pid)? else {
+        return None;
+    };
+    let mut values: Vec<u64> = list
+        .elements
+        .iter()
+        .take(16)
+        .filter_map(|e| match e.value {
+            PropertyValue::DidRef(d) => data.record(d).ok().flatten(),
+            _ => None,
+        })
+        .filter_map(|c| match c.get(value_pid) {
+            Some(PropertyValue::Int(v)) if *v > 0 => u64::try_from(*v).ok(),
+            _ => None,
+        })
+        .collect();
+    values.sort_unstable_by(|a, b| b.cmp(a));
+    values.dedup();
+    <[u64; 3]>::try_from(values).ok()
 }
 
 impl std::fmt::Debug for CharacterData {
@@ -137,6 +168,21 @@ impl CharacterData {
         let store = GameDataStore::open(dir)?;
         let strings = Strings::open_install(dir, None)
             .map_err(|e| CharacterDataError::Strings(e.to_string()))?;
+        // The named-table map (`string-table.md` §9.1) finds tables by STRINGTABLE key: the
+        // P4 lines and labels (`chat-window.md` §15.10 CT12) need it.
+        let strings = if strings.named_tables().tables().is_empty() {
+            let named = store
+                .object_store()
+                .game_data()
+                .did_map_by_label(STRING_TABLE_MAP_LABEL)
+                .ok()
+                .flatten()
+                .map(|m| NamedTables::from_did_map(&m))
+                .unwrap_or_default();
+            strings.with_named_tables(named)
+        } else {
+            strings
+        };
         Self::from_store(store, Arc::new(strings))
     }
 
@@ -190,6 +236,10 @@ impl CharacterData {
         .filter_map(|n| Some((n, tessera_formats::PropertyNames::pid_of(dict, n)?)))
         .collect();
         let data = InstallTooltipData::new(store, Arc::clone(&strings))?;
+        let coin_values = coin_values(&data);
+        if coin_values.is_none() {
+            tracing::info!("coin denominations unavailable; trade coin is shown unsplit");
+        }
         Ok(Self {
             store,
             strings,
@@ -201,7 +251,15 @@ impl CharacterData {
             rules,
             icon_pids,
             facts: Mutex::new(HashMap::new()),
+            coin_values,
         })
+    }
+
+    /// The coin denominations' values, largest first (gold, silver, copper; `economy.md`
+    /// §7), when the install has them.
+    #[must_use]
+    pub fn coin_values(&self) -> Option<[u64; 3]> {
+        self.coin_values
     }
 
     /// The install's record store.

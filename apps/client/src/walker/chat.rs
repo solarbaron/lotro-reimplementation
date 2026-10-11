@@ -109,6 +109,17 @@ pub struct ChatOverlay {
 #[must_use]
 pub fn format_line(line: &ChatLine) -> (String, [u8; 3]) {
     let s = &line.sender;
+    // P4 line forms (`chat-window.md` §15.10 CT1): the line as the chat window shows it.
+    if let Some((mask, text)) = &line.shown {
+        let colour = if mask & 0x21 == 0x20 {
+            TELL
+        } else if mask & 1 != 0 {
+            ERROR
+        } else {
+            WHITE
+        };
+        return (text.clone(), colour);
+    }
     match &line.channel {
         ChatChannel::System => (line.text.clone(), GOLD),
         _ if s.is_empty() => (line.text.clone(), GOLD),
@@ -211,7 +222,9 @@ impl ChatOverlay {
         let mut repeated = false;
         for line in lines {
             let system = line.sender.is_empty() || line.channel == ChatChannel::System;
-            if system && !show_system {
+            // The P4 lines the client derives (channel slots, friend and fellowship notices,
+            // `chat-window.md` §15.10) are chat lines, never HUD notices: always shown.
+            if system && !show_system && line.shown.is_none() {
                 continue;
             }
             repeated |= system && notice == Some(line.text.as_str());

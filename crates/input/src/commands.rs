@@ -214,6 +214,69 @@ const TABLE: &[Compact] = {
             &["pin_tooltip"],
             Button,
         ),
+        // P4 social panels (`social-panels.md` §7.2, TR12; `keymap.md` §12.14.2 OPEN:
+        // rows added by the client implementer).
+        (
+            MAIN,
+            &[
+                "ToggleSocialPanel",
+                "ToggleSocialFellowingPanel",
+                "ToggleSocialFriendsPanel",
+                "ToggleSocialKinshipPanel",
+                "ToggleSocialRaidPanel",
+                "ToggleSocialGroupStagePanel",
+            ],
+            &[GLOBAL],
+            &[
+                "toggle_social",
+                "toggle_social_grouping",
+                "toggle_social_friends",
+                "toggle_social_kinship",
+                "toggle_social_raid",
+                "toggle_social_raid_lock",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &[
+                "SelectFellowOne",
+                "SelectFellowTwo",
+                "SelectFellowThree",
+                "SelectFellowFour",
+                "SelectFellowFive",
+                "SelectFellowSix",
+            ],
+            &[GLOBAL],
+            &[
+                "select_fellow_1",
+                "select_fellow_2",
+                "select_fellow_3",
+                "select_fellow_4",
+                "select_fellow_5",
+                "select_fellow_6",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &[
+                "AssistFellowTwo",
+                "AssistFellowThree",
+                "AssistFellowFour",
+                "AssistFellowFive",
+                "AssistFellowSix",
+            ],
+            &[GLOBAL],
+            &[
+                "assist_fellow_2",
+                "assist_fellow_3",
+                "assist_fellow_4",
+                "assist_fellow_5",
+                "assist_fellow_6",
+            ],
+            Button,
+        ),
         (MAIN, &["AcceptInput"], &[GLOBAL], &["open_chat"], Button),
         (MAIN, &["SelectLeft"], &[POINTER], &["select_left"], Button),
         (
@@ -524,6 +587,33 @@ mod tests {
             command_for_entry("global", "pin_tooltip", Button, &d("Ctrl+T")),
             Some("TOOLTIP_DETACH")
         );
+    }
+
+    #[test]
+    fn p4_social_commands() {
+        use ActionKind::Button;
+        let d = |t: &str| BindingSpec::digital(Chord::parse(t).unwrap(), 1.0);
+        assert_eq!(
+            command_for_entry("global", "toggle_social", Button, &d("O")),
+            Some("ToggleSocialPanel")
+        );
+        for (action, command) in [
+            ("toggle_social_grouping", "ToggleSocialFellowingPanel"),
+            ("toggle_social_friends", "ToggleSocialFriendsPanel"),
+            ("toggle_social_kinship", "ToggleSocialKinshipPanel"),
+            ("toggle_social_raid", "ToggleSocialRaidPanel"),
+            ("toggle_social_raid_lock", "ToggleSocialGroupStagePanel"),
+            ("select_fellow_1", "SelectFellowOne"),
+            ("select_fellow_6", "SelectFellowSix"),
+            ("assist_fellow_2", "AssistFellowTwo"),
+            ("assist_fellow_6", "AssistFellowSix"),
+        ] {
+            assert_eq!(
+                command_for_entry("global", action, Button, &d("F9")),
+                Some(command),
+                "{action}"
+            );
+        }
     }
 
     #[test]

@@ -73,6 +73,9 @@ pub struct ClientUi {
     fell_back: bool,
     /// P1 panels asked for on the command line, opened once the player is in the world.
     p1_open: Vec<P1Panel>,
+    /// P4 social panels asked for on the command line (`--open-panel social|friends|
+    /// fellowship|trade`), handed to the social panels once the UI is attached.
+    social_open: Vec<crate::social::ui::SocialOpen>,
     /// `--character-select`: the character screens are still to open.
     want_screens: bool,
     /// The character screens before world entry, while open.
@@ -134,10 +137,15 @@ impl ClientUi {
             .iter()
             .filter_map(|n| parse_p1_panel(n))
             .collect();
+        let social_open: Vec<crate::social::ui::SocialOpen> = args
+            .open_panel
+            .iter()
+            .filter_map(|n| crate::social::ui::parse_open(n))
+            .collect();
         let panels: Vec<PanelId> = args
             .open_panel
             .iter()
-            .filter(|n| parse_p1_panel(n).is_none())
+            .filter(|n| parse_p1_panel(n).is_none() && crate::social::ui::parse_open(n).is_none())
             .filter_map(|n| {
                 let p = super::parse_panel(n);
                 if p.is_none() {
@@ -164,6 +172,7 @@ impl ClientUi {
             screen_request: None,
             fell_back: false,
             p1_open,
+            social_open,
             want_screens: args.character_select,
             pre_world: None,
             quit: false,
@@ -450,6 +459,12 @@ impl ClientUi {
                 host.set_target(&mut rt.plugins, true);
             }
         }
+        // The P4 social panels asked for by name.
+        if let Some(s) = host.social_mut() {
+            for o in std::mem::take(&mut self.social_open) {
+                s.request_open(o);
+            }
+        }
         // `[UI] ui_scale_global` reaches every native panel through the panels' scalers as
         // it opens (UiHost::native_scale; `tessera-ui` has no `UIScale_Global` setter).
         self.attached_walker = true;
@@ -660,6 +675,8 @@ impl ClientUi {
         // The character panels (decision 0024 P1): panels asked for on the command line,
         // the player-state changes of this frame, item interactions as session commands.
         character_frame(host, rt, &mut self.p1_open, shift);
+        // The social panels (decision 0024 P4): their actions as session commands.
+        social_frame(host, rt);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
         // The character screens before world entry (`--character-select`).
@@ -878,6 +895,19 @@ fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Pane
             tracing::info!("item command not sent: {e}");
         }
     }
+}
+
+/// The social panels' frame (after step 7): the world session's social state drawn, the
+/// panels' actions sent to the session (`social-panels.md` §8.1).
+fn social_frame(host: &mut UiHost, rt: &mut Runtime) {
+    let data = rt.p1.data().cloned();
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let (social, player) = world.social_and_player();
+    let commands = host.social_frame(social, data.as_deref(), Some(player));
+    let refused = world.send_panel_commands(Instant::now(), commands);
+    host.post_session_lines(refused);
 }
 
 /// Runs the lines submitted in the chat window through the client's command dispatcher

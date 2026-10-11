@@ -16,7 +16,9 @@
 //!   `PluginManager`, …) and `Turbine.Gameplay`'s read-only local-player views fed by a
 //!   [`LocalPlayerSource`] the client implements ([`gameplay`]); the inventory views
 //!   (`Backpack`, `Equipment`, `Item`, `ItemInfo`) fed by an [`InventorySource`] and
-//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1).
+//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the
+//!   party views (`Party`, `PartyMember`, `Player:GetParty()`) over the fellowship model
+//!   the client sets with [`PluginManager::set_fellowship`] ([`party`], §15.4).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -52,6 +54,7 @@ mod manager;
 mod object;
 pub mod options;
 pub mod packages;
+pub mod party;
 pub mod paths;
 pub mod plugindata;
 mod root_ns;
@@ -74,6 +77,9 @@ pub use manager::{
     DEFAULT_APARTMENT, DEFAULT_DEFERRED_SLICE, LoadedPluginInfo, ManagerConfig, PluginManager,
 };
 pub use mlua;
+pub use party::{
+    FellowshipMember, MemberActorInfo, PartyActorSource, PartyPlayer, PartyUpdate, PartyViewEvent,
+};
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
 pub use root_ns::split_command_line;
 pub use tessera_script::{ErrorKind, Limits};

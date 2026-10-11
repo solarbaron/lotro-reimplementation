@@ -26,6 +26,7 @@ use crate::inventory::InventorySource;
 use crate::object::PluginRow;
 use crate::options::PluginOptions;
 use crate::packages::BuiltinPackages;
+use crate::party::{FellowshipMember, PartyActorSource, PartyPlayer, PartyUpdate};
 use crate::root_ns::{execute_shell_command, split_command_line, unload_cell, unload_now};
 use crate::shared::{
     ApartmentCell, ChatEvent, Delivery, Item, LoadOrigin, RunGuard, Shared, SharedState, lock,
@@ -171,6 +172,8 @@ impl PluginManager {
             index: Mutex::new(IndexState::default()),
             gameplay: Mutex::new(None),
             inventory: Mutex::new(None),
+            party: Mutex::new(crate::party::PartyModel::default()),
+            party_actors: Mutex::new(None),
             next_id: AtomicU64::new(1),
         });
         Self {
@@ -397,6 +400,55 @@ impl PluginManager {
     /// [`Self::raise_gameplay_event`] and [`crate::GameplayEvent::Inventory`].
     pub fn set_inventory_source(&mut self, source: Option<Arc<dyn InventorySource>>) {
         *lock(&self.shared.inventory) = source;
+    }
+
+    /// Set (or clear) the source of the `Actor` values of party members
+    /// (`lua-plugin-api.md` §15.4). Without one every `PartyMember` answers 0.
+    pub fn set_party_actor_source(&mut self, source: Option<Arc<dyn PartyActorSource>>) {
+        *lock(&self.shared.party_actors) = source;
+    }
+
+    /// Give the party views the member list of a `FellowshipChanged` (empty: no
+    /// fellowship) and who the player is (`lua-plugin-api.md` §15.4, `social-panels.md`
+    /// §9 TR2). The host keeps the list, derives `LocalPlayer.PartyChanged`,
+    /// `Party.MemberRemoved`, `MemberAdded` and `LeaderChanged` from the previous list
+    /// (members compared by name) and queues them for step 7; getters read the new list
+    /// at once. At most [`crate::party::MAX_PARTY_MEMBERS`] entries are read.
+    ///
+    /// The returned [`PartyUpdate`] says whether the player was appended (the client warns
+    /// once per run, TR2), whether the list was truncated, and how many events were queued
+    /// or dropped because the gameplay queue was full.
+    pub fn set_fellowship(
+        &mut self,
+        members: &[FellowshipMember],
+        player: &PartyPlayer,
+    ) -> PartyUpdate {
+        let (events, mut update) = lock(&self.shared.party).apply(members, player);
+        if update.truncated {
+            tracing::debug!(
+                entries = members.len(),
+                read = crate::party::MAX_PARTY_MEMBERS,
+                "fellowship list truncated"
+            );
+        }
+        if update.player_appended {
+            tracing::debug!("fellowship list without the player; the player was appended");
+        }
+        let mut st = lock(&self.shared.state);
+        for ev in events {
+            if st.queue_gameplay(ev) {
+                update.events += 1;
+            } else {
+                update.dropped += 1;
+            }
+        }
+        if update.dropped > 0 {
+            tracing::warn!(
+                dropped = update.dropped,
+                "plugin gameplay queue full; party events dropped"
+            );
+        }
+        update
     }
 
     fn cell(&self, apartment: &str) -> Option<Arc<ApartmentCell>> {
@@ -804,8 +856,20 @@ impl PluginManager {
     }
 
     /// Queue a gameplay `…Changed` event for step 7 (`lua-plugin-api.md` §15).
+    ///
+    /// The party events ([`GameplayEvent::Party`] and
+    /// [`crate::LocalPlayerEvent::PartyChanged`]) are derived by [`Self::set_fellowship`]
+    /// only; passed here they are ignored (logged at debug level).
     pub fn raise_gameplay_event(&mut self, event: GameplayEvent) {
-        lock(&self.shared.state).queue_gameplay(event);
+        if matches!(
+            event,
+            GameplayEvent::Party(_)
+                | GameplayEvent::LocalPlayer(crate::LocalPlayerEvent::PartyChanged)
+        ) {
+            tracing::debug!(?event, "party events come from set_fellowship; ignored");
+            return;
+        }
+        let _ = lock(&self.shared.state).queue_gameplay(event);
     }
 
     /// Frame-loop step 7 after the UI tick: the deferred work (sliced) and the collector

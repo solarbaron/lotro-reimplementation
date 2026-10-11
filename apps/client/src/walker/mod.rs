@@ -176,6 +176,24 @@ pub trait WalkerSession {
     fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
         None
     }
+    /// The player's social state (decision 0024 P4: the chat model of `chat-window.md`
+    /// §15.10, the fellowship, lists, invitation and trade), which the command dispatcher's
+    /// P4 built-ins act on. The default has none (the built-ins then say they are not
+    /// connected).
+    fn social_mut(&mut self) -> Option<&mut crate::social::SocialState> {
+        None
+    }
+    /// Sends a command for the player (the P4 built-ins' channel and list commands, the
+    /// panels' actions); `Err` with the reason when it was not sent. The default sends
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Why the command was not sent (not in the world, refused by the backend).
+    fn send_command(&mut self, now: Instant, command: tessera_net::Command) -> Result<(), String> {
+        let _ = (now, command);
+        Err("no world session".to_owned())
+    }
 }
 
 /// Most session entity events applied in one frame (decision 0008: the store's change

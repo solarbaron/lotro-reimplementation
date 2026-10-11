@@ -817,10 +817,11 @@ fn a_refused_play_keeps_the_running_performance() {
     assert_eq!(p.queued(), n);
 }
 
-/// `/playstart` is all or nothing: when the performances do not fit together nobody
-/// starts and everyone keeps waiting.
+/// `/playstart` takes the parts in order, each with the room the earlier ones left: a part
+/// that does not fit is refused alone and the start still empties every waiting slot
+/// (§8.8.3 step 2, §12 P4 Decision 3; it was all or nothing before P4).
 #[test]
-fn a_synced_start_is_all_or_nothing() {
+fn a_synced_start_refuses_only_the_parts_that_do_not_fit() {
     let n = tune().events.len();
     let mut p = player(
         vec![bell_tree()],
@@ -832,16 +833,20 @@ fn a_synced_start_is_all_or_nothing() {
     let mut group = SyncGroup::new();
     group.register(A, tune(), BELL).unwrap();
     group.register(B, tune(), BELL).unwrap();
-    assert!(matches!(
-        group.start(&mut p, 1.0),
-        Err(InstrumentError::QueueFull {
-            queued: 0,
-            adding
-        }) if adding == 2 * n
-    ));
-    assert_eq!(group.len(), 2);
-    assert_eq!(p.queued(), 0);
-    assert!(!p.is_performing(A) && !p.is_performing(B));
+    let s = group.start(&mut p, 1.0).unwrap();
+    assert_eq!(s.characters, vec![A]);
+    assert_eq!(s.refused.len(), 1);
+    assert_eq!(
+        (
+            s.refused[0].character,
+            s.refused[0].queued,
+            s.refused[0].adding
+        ),
+        (B, n, n)
+    );
+    assert!(group.is_empty());
+    assert_eq!(p.queued(), n);
+    assert!(p.is_performing(A) && !p.is_performing(B));
 
     let mut p = player(
         vec![bell_tree()],
@@ -850,9 +855,11 @@ fn a_synced_start_is_all_or_nothing() {
             ..PlayerConfig::default()
         },
     );
+    group.register(A, tune(), BELL).unwrap();
+    group.register(B, tune(), BELL).unwrap();
     let s = group.start(&mut p, 1.0).unwrap();
     assert_eq!(s.characters, vec![A, B]);
-    assert!(group.is_empty());
+    assert!(s.refused.is_empty() && group.is_empty());
     assert_eq!(p.queued(), 2 * n);
 }
 

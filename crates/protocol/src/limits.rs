@@ -11,10 +11,13 @@ use std::time::Duration;
 /// Protocol major version of this crate (negotiated by ALPN, §3).
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Highest protocol minor version this crate implements (negotiated in `Hello`, §3, §3.1):
-/// 1 = v1.1 (looks and held-item slots).
-pub const PROTOCOL_MINOR: u16 = 1;
+/// 2 = v1.2 (named chat channels; v1.1 added looks and held-item slots).
+pub const PROTOCOL_MINOR: u16 = 2;
 /// The minor version that adds `Equipped` flag bit 3 (`slot`) and the `Look` fields (§3.1).
 pub const MINOR_LOOKS: u16 = 1;
+/// The minor version that adds named chat channels (§3.1, §10.6): `server_caps` bit 3, chat
+/// channel value 6, the messages 0x0015, 0x0016 and 0x0204–0x0206, `ChatRejected` code 6.
+pub const MINOR_CHANNELS: u16 = 2;
 /// ALPN protocol ID of major version 1: the ASCII bytes `tessera/1` (§2.1).
 pub const ALPN_V1: &[u8] = b"tessera/1";
 /// Smallest `max_datagram_frame_size` transport parameter a peer must send (§2.1).
@@ -229,6 +232,12 @@ pub const CHAT_REFILL: Duration = Duration::from_secs(2);
 pub const CHAT_FLOOD_REJECTIONS: u32 = 20;
 /// Window of the chat flooding rule (§10.2).
 pub const CHAT_FLOOD_WINDOW: Duration = Duration::from_secs(60);
+/// Capacity of the token bucket shared by `ChannelJoin` and `ChannelLeave` (minor ≥ 2,
+/// §10.6).
+pub const CHANNEL_BUCKET_CAPACITY: u32 = 5;
+/// Time to refill one channel-request token (minor ≥ 2, §10.6): sustained 10 requests per
+/// minute.
+pub const CHANNEL_REFILL: Duration = Duration::from_secs(6);
 
 // --- Time (§11) ---
 

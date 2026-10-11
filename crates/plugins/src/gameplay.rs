@@ -18,6 +18,7 @@ use tessera_script::{api_fn, host_error};
 use crate::gameplay_enums as en;
 use crate::inventory::{self, InventoryViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
+use crate::party::{self, PartyViewEvent};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
 
@@ -124,6 +125,7 @@ pub enum LocalPlayerEvent {
     TargetChanged,
     ReadyStateChanged,
     IsLinkDeadChanged,
+    /// Derived by [`crate::PluginManager::set_fellowship`]; hosts do not raise it.
     PartyChanged,
     PetChanged,
     InCombatChanged,
@@ -165,6 +167,10 @@ pub enum GameplayEvent {
     LocalPlayer(LocalPlayerEvent),
     /// A change of the backpack, the equipment or an item (`lua-plugin-api.md` §15.1).
     Inventory(InventoryViewEvent),
+    /// A member or leader change of the party (`lua-plugin-api.md` §15.4); the host derives
+    /// these in [`crate::PluginManager::set_fellowship`], and
+    /// [`crate::PluginManager::raise_gameplay_event`] ignores them.
+    Party(PartyViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -278,6 +284,20 @@ fn source(ctx: &ApartmentCtx) -> Option<LocalPlayerInfo> {
     src.local_player()
 }
 
+/// `LocalPlayer.GetInstance()`: the apartment's one `LocalPlayer` object, or nil while
+/// no character is in the world.
+fn local_player_instance(lua: &Lua, ctx: &ApartmentCtx, class: &Table) -> mlua::Result<Value> {
+    if source(ctx).is_none() {
+        return Ok(Value::Nil);
+    }
+    if let Value::Table(t) = lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
+        return Ok(Value::Table(t));
+    }
+    let t = instance(lua, class, View::LocalPlayer)?;
+    lua.set_named_registry_value(LOCAL_PLAYER_KEY, t.clone())?;
+    Ok(Value::Table(t))
+}
+
 /// Reads a number of the local player.
 type NumberGetter = fn(&LocalPlayerInfo) -> f64;
 
@@ -323,7 +343,10 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         api_fn(lua, "GetName", move |lua, this: Table| {
             Ok(match view_of(lua, &this)? {
                 Some(View::LocalPlayer) => source(&c).map(|i| i.name),
-                _ => inventory::item_name(&c, lua, &this)?,
+                _ => match party::member_name(lua, &this)? {
+                    Some(name) => Some(name),
+                    None => inventory::item_name(&c, lua, &this)?,
+                },
             })
         })?,
     )?;
@@ -333,27 +356,52 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             Ok(view_of(lua, &this)? == Some(View::LocalPlayer))
         })?,
     )?;
-    let numeric: [(&'static str, NumberGetter); 11] = [
-        ("GetLevel", |i| f64::from(i.level)),
-        ("GetMorale", |i| i.morale),
-        ("GetMaxMorale", |i| i.max_morale),
-        ("GetBaseMaxMorale", |i| i.base_max_morale),
-        ("GetTemporaryMorale", |i| i.temporary_morale),
-        ("GetMaxTemporaryMorale", |i| i.max_temporary_morale),
-        ("GetPower", |i| i.power),
-        ("GetMaxPower", |i| i.max_power),
-        ("GetBaseMaxPower", |i| i.base_max_power),
-        ("GetTemporaryPower", |i| i.temporary_power),
-        ("GetMaxTemporaryPower", |i| i.max_temporary_power),
+    // Each getter reads the local player, or a party member's values (§15.4).
+    let numeric: [(&'static str, NumberGetter, party::ActorNumber); 11] = [
+        ("GetLevel", |i| f64::from(i.level), |i| f64::from(i.level)),
+        ("GetMorale", |i| i.morale, |i| i.morale),
+        ("GetMaxMorale", |i| i.max_morale, |i| i.max_morale),
+        (
+            "GetBaseMaxMorale",
+            |i| i.base_max_morale,
+            |i| i.base_max_morale,
+        ),
+        (
+            "GetTemporaryMorale",
+            |i| i.temporary_morale,
+            |i| i.temporary_morale,
+        ),
+        (
+            "GetMaxTemporaryMorale",
+            |i| i.max_temporary_morale,
+            |i| i.max_temporary_morale,
+        ),
+        ("GetPower", |i| i.power, |i| i.power),
+        ("GetMaxPower", |i| i.max_power, |i| i.max_power),
+        (
+            "GetBaseMaxPower",
+            |i| i.base_max_power,
+            |i| i.base_max_power,
+        ),
+        (
+            "GetTemporaryPower",
+            |i| i.temporary_power,
+            |i| i.temporary_power,
+        ),
+        (
+            "GetMaxTemporaryPower",
+            |i| i.max_temporary_power,
+            |i| i.max_temporary_power,
+        ),
     ];
-    for (m, get) in numeric {
+    for (m, get, get_member) in numeric {
         let c = Arc::clone(ctx);
         actor.raw_set(
             m,
             api_fn(lua, m, move |lua, this: Table| {
                 Ok(match view_of(lua, &this)? {
                     Some(View::LocalPlayer) => source(&c).map_or(0.0, |i| get(&i)),
-                    _ => 0.0,
+                    _ => party::member_actor(&c, lua, &this)?.map_or(0.0, |i| get_member(&i)),
                 })
             })?,
         )?;
@@ -385,7 +433,6 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         &player,
         "Player",
         &[
-            ("GetParty", Default_::Nil),
             ("GetPet", Default_::Nil),
             ("IsLinkDead", Default_::False),
             ("IsVoiceActive", Default_::False),
@@ -600,22 +647,28 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Backpack))),
         Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Equipment))),
     )?;
-    let party = b.class(&gp, "Party", Some(&object), None)?;
-    stubs(
+    // Party views (§15.4, `party`).
+    let party_class = b.class(&gp, "Party", Some(&object), None)?;
+    let party_member = b.class(&gp, "PartyMember", Some(&player), None)?;
+    let (c, lp_class) = (Arc::clone(ctx), local_player.clone());
+    party::install(
         lua,
-        &party,
-        "Party",
-        &[
-            ("GetAssistTarget", Default_::Nil),
-            ("GetAssistTargetCount", Default_::Zero),
-            ("GetLeader", Default_::Nil),
-            ("GetMember", Default_::Nil),
-            ("GetMemberCount", Default_::Zero),
-            ("IsAssistTarget", Default_::False),
-            ("IsMember", Default_::False),
-        ],
+        ctx,
+        &party::Classes {
+            player: &player,
+            party: &party_class,
+            party_member: &party_member,
+        },
+        Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::LocalPlayer))),
+        // The instance the plugin already holds, even while the source is cleared, so a
+        // party the plugin still reads stays consistent (§15.4).
+        Arc::new(
+            move |lua| match lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
+                Value::Table(t) => Ok(Value::Table(t)),
+                _ => local_player_instance(lua, &c, &lp_class),
+            },
+        ),
     )?;
-    b.class(&gp, "PartyMember", Some(&player), None)?;
     b.class(&gp, "Pet", Some(&actor), None)?;
     b.class(&gp, "Raid", Some(&object), None)?;
     let mount = b.class(&gp, "Mount", Some(&entity), None)?;
@@ -655,15 +708,7 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     local_player.raw_set(
         "GetInstance",
         api_fn(lua, "GetInstance", move |lua, _: MultiValue| {
-            if source(&c).is_none() {
-                return Ok(Value::Nil);
-            }
-            if let Value::Table(t) = lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
-                return Ok(Value::Table(t));
-            }
-            let t = instance(lua, &lp_class, View::LocalPlayer)?;
-            lua.set_named_registry_value(LOCAL_PLAYER_KEY, t.clone())?;
-            Ok(Value::Table(t))
+            local_player_instance(lua, &c, &lp_class)
         })?,
     )?;
     let c = Arc::clone(ctx);
@@ -948,7 +993,8 @@ fn install_attribute_classes(
 }
 
 /// Deliver a queued gameplay event to the apartment: to its `LocalPlayer` instance, its
-/// backpack or equipment view, or an item's object, if a plugin asked for one.
+/// backpack or equipment view, an item's object or its `Party` object of the event's
+/// episode, if a plugin asked for one.
 pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
     let e = match ev {
         GameplayEvent::LocalPlayer(e) => *e,
@@ -960,6 +1006,10 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
                     _ => None,
                 }
             });
+            return;
+        }
+        GameplayEvent::Party(ev) => {
+            party::deliver(ap, ev);
             return;
         }
     };

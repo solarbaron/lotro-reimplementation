@@ -43,6 +43,7 @@ use crate::commands::{
     lock_registry,
 };
 use crate::panels::chat::{CHAT_ERROR, CHAT_LOG};
+
 use crate::walker::WalkerSession;
 
 /// Account name used for plugin-data folders until real accounts exist.
@@ -355,10 +356,10 @@ pub struct Plugins {
     startup: Startup,
     /// Lines the client posted, for [`CommandSink::take_lines`].
     outbox: VecDeque<LocalLine>,
-    /// With a game UI attached ([`Self::set_ui_driven`]): the client's own lines (chat
-    /// type, text) for the chat window, which also hands them to the plugins' `Received`
+    /// With a game UI attached ([`Self::set_ui_driven`]): the client's own lines (chat-type
+    /// mask, text) for the chat window, which also hands them to the plugins' `Received`
     /// ([`Self::take_local_chat`]).
-    local_chat: VecDeque<(u32, String)>,
+    local_chat: VecDeque<(u64, String)>,
 }
 
 impl Plugins {
@@ -551,23 +552,23 @@ impl Plugins {
     }
 
     /// Posts one line of the client's own: the log, the walker's chat display and, with a
-    /// game UI attached, the chat window's queue (type 1 `Error` or 8 `Log`).
+    /// game UI attached, the chat window's queue (type 1 `Error`, 8 `Log`, or the mask of a
+    /// P4 built-in's line, `chat-window.md` §15.10 CT2).
     fn post(&mut self, line: LocalLine) {
-        let chat_type = match line.kind {
+        match line.kind {
             LineKind::Error => {
                 tracing::info!(target: "tessera_client::chat", kind = "error", "{}", line.text);
-                CHAT_ERROR
             }
             LineKind::Log => {
                 tracing::info!(target: "tessera_client::chat", "{}", line.text);
-                CHAT_LOG
             }
-        };
+        }
         if self.ui_driven {
             if self.local_chat.len() >= MAX_QUEUED_CHAT {
                 self.local_chat.pop_front();
             }
-            self.local_chat.push_back((chat_type, line.text.clone()));
+            self.local_chat
+                .push_back((line.chat_mask(), line.text.clone()));
         }
         self.push_outbox(line);
     }
@@ -650,9 +651,19 @@ impl Plugins {
         self.host.set_character(name);
     }
 
-    /// Deliver a chat line to plugin chat handlers.
+    /// Deliver a chat line to plugin chat handlers as a `Standard` line.
     pub fn chat(&mut self, sender: &str, text: &str) {
         self.manager.dispatch_chat(sender, text, CHAT_TYPE_STANDARD);
+    }
+
+    /// Delivers a session chat line to plugin chat handlers without a game UI: its shown
+    /// text (P4: the line in the original's form) with its chat type (`chat-window.md`
+    /// §15.10 CT10: the type of its mask; 5 `Say`, 6 `Tell`, 8 `Log`, else `Standard`), as
+    /// the chat window does with a UI.
+    pub fn chat_line(&mut self, line: &crate::net::ChatLine) {
+        let text = line.shown.as_ref().map_or(&line.text, |(_, t)| t);
+        self.manager
+            .dispatch_chat(&line.sender, text, line.chat_type.max(1));
     }
 
     /// Runs a typed line through the dispatcher without a session (decision 0020
@@ -738,11 +749,11 @@ impl Plugins {
             .collect()
     }
 
-    /// The client's own chat lines (type, text) posted since the last call while a game UI
-    /// is attached: command replies (the unknown-command line, help, refusals) and player
-    /// music. The chat window shows them and hands them to the plugins' `Received`
-    /// (`chat-window.md` §10 items 2 and 9).
-    pub fn take_local_chat(&mut self) -> Vec<(u32, String)> {
+    /// The client's own chat lines (chat-type mask, text) posted since the last call while a
+    /// game UI is attached: command replies (the unknown-command line, help, refusals, the
+    /// P4 built-ins' lines with their masks) and player music. The chat window shows them
+    /// and hands them to the plugins' `Received` (`chat-window.md` §10 items 2 and 9).
+    pub fn take_local_chat(&mut self) -> Vec<(u64, String)> {
         self.local_chat.drain(..).collect()
     }
 

@@ -7,11 +7,15 @@
 //! the table. Mode 1 builds a script tree from the input (node kinds, switch properties,
 //! operators, hostile multipliers, variances, probabilities, driven fields, deep nesting,
 //! sound infos that are missing, undecodable or looping), builds the table, then plays
-//! arbitrary note events, performances, live notes, cancels, character removals and synced
-//! starts through the offline engine.
+//! arbitrary note events, performances, live notes, cancels, character removals, synced
+//! parts (local and member, withdrawn and cancelled) and synchronised starts at arbitrary
+//! start and scheduling times through the offline engine. The schedule log is on from the
+//! start, and the last start's time-0s are measured from it after every rendered block.
 //!
 //! Nothing may panic, the table must agree with a live walk on sampled combinations, every
-//! volume is in [0, 1], and every rendered sample is finite.
+//! volume is in [0, 1], and every rendered sample is finite. A start scheduled no earlier
+//! than the audio clock places every logged note within half a sample of *S* + offset (the
+//! player is updated every 20 ms, inside its 0.1 s look-ahead).
 
 #![no_main]
 
@@ -23,7 +27,8 @@ use tessera_audio::abc::{self, PartRequest};
 use tessera_audio::engine::{AudioEngine, EngineConfig, LivePosition};
 use tessera_audio::instruments::{
     CharacterId, InstrumentTable, MusicEvent, MusicEventKind, MusicPlayer, MusicScript,
-    MusicScripts, MusicVocabulary, PlayerConfig, SampleBank, ScriptDef, SyncGroup, TableLimits,
+    MusicScripts, MusicVocabulary, PlayerConfig, SampleBank, ScheduledEvent, ScriptDef, SyncGroup,
+    SyncStart, TableLimits,
 };
 use tessera_audio::pcm::Pcm;
 use tessera_formats::script_table::{
@@ -334,7 +339,10 @@ fn play(t: InstrumentTable, b: &mut Bytes<'_>) {
             ..PlayerConfig::default()
         },
     );
+    player.set_schedule_log(1024);
     let mut group = SyncGroup::new();
+    // The last start, and whether it was scheduled no earlier than the clock.
+    let mut last: Option<(SyncStart, bool)> = None;
     let perf = abc::parse(
         b"X:1\nL:1/16\nQ:1/4=240\nK:C\nCD[EG]c+ff+C,c'|\n",
         PartRequest::Unspecified,
@@ -368,13 +376,38 @@ fn play(t: InstrumentTable, b: &mut Bytes<'_>) {
                     now,
                 );
             }
-            5 => {
-                if let Some(p) = &perf {
-                    let _ = group.register(who, p.clone(), u32::from(b.u8() % 45));
+            5 => match b.u8() % 5 {
+                0 => {
+                    if let Some(p) = &perf {
+                        let _ = group.register(who, p.clone(), u32::from(b.u8() % 45));
+                    }
                 }
-            }
+                1 => {
+                    if let Some(p) = &perf {
+                        let _ = group.register_member(who, p.clone(), u32::from(b.u8() % 45));
+                    }
+                }
+                2 => {
+                    let keep = CharacterId(u64::from(b.u8() % 5));
+                    let _ = group.withdraw_absent_members(&[keep]);
+                }
+                3 => {
+                    let _ = group.cancel(&mut player, who);
+                }
+                _ => {
+                    let _ = group.withdraw(who);
+                }
+            },
             6 => {
-                let _ = group.start(&mut player, SyncGroup::start_time(now));
+                // A synchronised start at a caller's time, scheduled early, on time or late
+                // (the catch-up of instruments.md §8.7 step 4), measured from the log.
+                let _ = player.take_schedule_log();
+                let start = SyncGroup::start_time_after(now, f64::from(b.f32()));
+                let at = now + f64::from(b.f32()) - 0.6;
+                if let Ok(s) = group.start_at(&mut player, start, at) {
+                    let _ = s.check_tolerance(player.schedule_log());
+                    last = Some((s, at >= now));
+                }
             }
             _ => {
                 let kind = match b.u8() % 3 {
@@ -401,6 +434,28 @@ fn play(t: InstrumentTable, b: &mut Bytes<'_>) {
             assert!(out.iter().all(|s| s.is_finite()));
         }
         engine.drain_events().for_each(drop);
+        if let Some((s, on_time)) = &last {
+            check_start(s, *on_time, player.schedule_log(), RATE);
+        }
+    }
+    if let Some((s, on_time)) = &last {
+        check_start(s, *on_time, player.schedule_log(), RATE);
+    }
+}
+
+/// Measures a start from the log; a start scheduled no earlier than the clock keeps every
+/// logged note within half a sample of *S* + offset (§8.9 at the fuzzer's 8 kHz).
+fn check_start(s: &SyncStart, on_time: bool, log: &[ScheduledEvent], rate: u32) {
+    let timings = s.measure(log);
+    let check = s.check_tolerance(log);
+    let measured: usize = timings.iter().map(|t| t.measured).sum();
+    assert_eq!(check.measured, measured);
+    assert!(check.passes() <= check.within());
+    if on_time && s.start_secs.is_finite() {
+        let half = 0.5 / f64::from(rate) + 1e-9;
+        assert_eq!(check.non_finite, 0, "{check:?}");
+        assert!(check.worst_from_start <= half, "{check:?}");
+        assert!(check.spread <= 2.0 * half, "{check:?}");
     }
 }
 

@@ -7,7 +7,7 @@ use super::ast::{
 };
 use super::error::{Limit, ScenarioErrorKind as K};
 use super::lex::Token;
-use super::parse::{HORIZON_MS, MAX_INPUT, MAX_TIMES, Parser, R, Stmt};
+use super::parse::{HORIZON_MS, MAX_INPUT, MAX_TIMES, MAX_TUNE_BYTES, Parser, R, Stmt};
 use super::select::LabelContext;
 
 impl Parser {
@@ -28,6 +28,7 @@ impl Parser {
             }
             "chat" => &["channel", "text", "times"],
             "create-character" => &["name", "times"],
+            "play-sync" => &["tune", "times"],
             _ => &["times"],
         };
         let mut st = self.split(tokens, 2, keys)?;
@@ -187,6 +188,24 @@ impl Parser {
             "unfriend" => (Pattern::Unfriend, 0),
             "ignore-player" => (Pattern::IgnorePlayer, 0),
             "unignore" => (Pattern::Unignore, 0),
+            "play-sync" => {
+                let tune = match st.opt("tune") {
+                    Some((v, c)) => {
+                        let t = self.string_max_at(&v, c, MAX_TUNE_BYTES, false)?;
+                        // A tune with a control character (only TAB survives the lexer)
+                        // never matches a valid `ReadyPerformance` (§9.4); refused
+                        // statically like the input form (§11.1 OPEN).
+                        if t.chars().any(char::is_control) {
+                            return Err(self.e(K::OutOfRange, c));
+                        }
+                        Some(t)
+                    }
+                    None => None,
+                };
+                (Pattern::PlaySync(tune), 0)
+            }
+            "play-start" => (Pattern::PlayStart, 0),
+            "disband" => (Pattern::Disband, 0),
             "choose-travel" => (Pattern::ChooseTravel(entry(self, st)?), 0),
             "join-instance" => (Pattern::JoinInstance(entry(self, st)?), 0),
             "leave-instance" => (Pattern::LeaveInstance, 0),
@@ -482,6 +501,24 @@ impl Parser {
             "unfriend" => (InputCmd::Unfriend(name0(self, &st)?), 1),
             "ignore-player" => (InputCmd::IgnorePlayer(name0(self, &st)?), 1),
             "unignore" => (InputCmd::Unignore(name0(self, &st)?), 1),
+            "play-sync" => {
+                // §7.7, §11.1: 1–256 bytes; longer is `TooLong`, empty `OutOfRange`. A
+                // control character (only TAB survives the lexer) is refused by `Session`
+                // (§9.4), so it is refused here too, as `OutOfRange` (§11.1 OPEN).
+                let t = st.arg(0)?;
+                let tune = t
+                    .string()
+                    .ok_or_else(|| self.e(K::UnexpectedToken, t.col))?;
+                if tune.len() > MAX_TUNE_BYTES {
+                    return Err(self.e(K::TooLong, t.col));
+                }
+                if tune.is_empty() || tune.chars().any(char::is_control) {
+                    return Err(self.e(K::OutOfRange, t.col));
+                }
+                (InputCmd::PlaySync(tune.to_owned()), 1)
+            }
+            "play-start" => (InputCmd::PlayStart, 0),
+            "disband" => (InputCmd::Disband, 0),
             "choose-travel" | "join-instance" | "train" => {
                 let t = st.arg(0)?;
                 let e = self.u16_in(t, t.col, 1, 1024)?;

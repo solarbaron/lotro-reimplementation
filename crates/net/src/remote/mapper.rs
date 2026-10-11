@@ -15,7 +15,7 @@ use tessera_protocol::value::{Emote, Property, Stance, Value, pid, speed_from_pr
 use super::convert;
 use super::driver::Inbound;
 use super::stats::{RemoteFailure, ServerInfo};
-use crate::domain::{CharacterEvent, Text};
+use crate::domain::{CharacterEvent, SocialEvent, Text};
 use crate::interp::{InterpConfig, InterpolationSet, Snapshot};
 use crate::model::{
     Anchor, CharacterSummary, ChatChannel, DataId, EntityId, Landblock, Location, LocationCause,
@@ -169,6 +169,19 @@ impl Mapper {
             outstanding_create: None,
             scratch: Vec::new(),
         }
+    }
+
+    /// Whether the server takes named chat channels: negotiated minor ≥ 2 and
+    /// `CHAT_CHANNELS` advertised (`scenario-feed.md` §9.8). False before `HelloAck`.
+    pub(crate) fn chat_channels(&self) -> bool {
+        use tessera_protocol::limits::MINOR_CHANNELS;
+        use tessera_protocol::message::ServerCaps;
+        self.server.as_ref().is_some_and(|s| {
+            s.minor >= MINOR_CHANNELS
+                && s.caps
+                    .effective(s.minor)
+                    .contains(ServerCaps::CHAT_CHANNELS)
+        })
     }
 
     #[cfg(test)]
@@ -446,6 +459,20 @@ impl Mapper {
                     sender: (!system).then_some(m.sender),
                     text: m.text,
                 });
+            }
+            Inbound::ChannelJoined(channel) => {
+                out.push(Event::Social(SocialEvent::ChannelJoined { channel }));
+            }
+            Inbound::ChannelLeft { name, removed } => {
+                let text = removed.then(|| format!("You were removed from the channel {name}."));
+                out.push(Event::Social(SocialEvent::ChannelLeft { channel: name }));
+                if let Some(text) = text {
+                    out.push(Event::ChatMessage {
+                        channel: ChatChannel::System,
+                        sender: None,
+                        text,
+                    });
+                }
             }
             Inbound::Motion {
                 server_time,

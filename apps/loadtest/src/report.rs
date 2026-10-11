@@ -854,7 +854,7 @@ impl Report {
     #[must_use]
     pub fn csv(&self) -> String {
         let mut s = String::from(
-            "t_s,rss_bytes,server_rss_bytes,load1,cpu_s,bots_in_world,bot_entities,bot_pending,connections,handshakes,net_tasks,sim_connections,logged_in,in_world,entities,interest_pairs,accounted_bytes,queue_bytes,inbound_queued,hash_jobs,writer_jobs,throttle_entries,character_files,ticks,overruns,tick_max_us,messages_in,messages_out,bytes_in,bytes_out\n",
+            "t_s,rss_bytes,server_rss_bytes,load1,cpu_s,bots_in_world,bot_entities,bot_pending,connections,handshakes,net_tasks,sim_connections,logged_in,in_world,entities,interest_pairs,accounted_bytes,queue_bytes,inbound_queued,hash_jobs,writer_jobs,throttle_entries,character_files,ticks,overruns,tick_max_us,messages_in,messages_out,bytes_in,bytes_out,channels,channel_memberships\n",
         );
         let opt = |v: Option<String>| v.unwrap_or_default();
         for x in &self.inputs.leak.samples {
@@ -874,7 +874,7 @@ impl Report {
                 Some(v) => {
                     let _ = writeln!(
                         s,
-                        ",{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                        ",{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                         v.connections,
                         v.handshakes,
                         v.net_tasks,
@@ -896,10 +896,12 @@ impl Report {
                         v.messages_in,
                         v.messages_out,
                         v.bytes_in,
-                        v.bytes_out
+                        v.bytes_out,
+                        v.channels,
+                        v.channel_memberships
                     );
                 }
-                None => s.push_str(",,,,,,,,,,,,,,,,,,,,,,\n"),
+                None => s.push_str(",,,,,,,,,,,,,,,,,,,,,,,,\n"),
             }
         }
         s

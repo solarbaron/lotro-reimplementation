@@ -1275,3 +1275,31 @@ path = "fuzz_targets/mesh_figure_look.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "protocol_v12_message"
+path = "fuzz_targets/protocol_v12_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_v12_connection"
+path = "fuzz_targets/server_v12_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_v12_world"
+path = "fuzz_targets/server_v12_world.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_social_channels"
+path = "fuzz_targets/net_social_channels.rs"
+test = false
+doc = false
+bench = false

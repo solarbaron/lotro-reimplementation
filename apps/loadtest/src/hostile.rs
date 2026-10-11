@@ -60,11 +60,16 @@ pub enum Attack {
     /// the `hostile_v11_vectors_are_protocol_violations` test (`tests/v11_looks.rs`), which
     /// logs in first.
     MinorOneVectors,
+    /// The client-to-server negative vectors of `tessera-protocol.md` §16.9 (protocol 1.2:
+    /// named channels), one per attack in turn, right after `Hello` as for
+    /// [`Attack::MinorOneVectors`]. Each is sent in the world, so that only the 1.2 rules
+    /// close the connection, by the `hostile_v12_cases` test (`tests/v12_channels.rs`).
+    MinorTwoVectors,
 }
 
 impl Attack {
     /// Every attack.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::UdpGarbage,
         Self::StreamGarbage,
         Self::TruncatedFrame,
@@ -76,6 +81,7 @@ impl Attack {
         Self::BadLogin,
         Self::UniStream,
         Self::MinorOneVectors,
+        Self::MinorTwoVectors,
     ];
 
     /// Short name for the report.
@@ -93,6 +99,7 @@ impl Attack {
             Self::BadLogin => "bad-login",
             Self::UniStream => "uni-stream",
             Self::MinorOneVectors => "v11-vectors",
+            Self::MinorTwoVectors => "v12-vectors",
         }
     }
 }
@@ -273,7 +280,8 @@ struct Attacker {
     counters: Arc<Counters>,
     rng: Rng,
     pace: Duration,
-    /// The next §16.8 vector of [`Attack::MinorOneVectors`].
+    /// The next vector of [`Attack::MinorOneVectors`] (§16.8) or
+    /// [`Attack::MinorTwoVectors`] (§16.9).
     next_vector: usize,
 }
 
@@ -515,6 +523,19 @@ impl Attacker {
             Attack::MinorOneVectors => {
                 let vectors = raw::negative_vectors_v11();
                 let Some(v) = vectors.get(self.next_vector % vectors.len().max(1)) else {
+                    return;
+                };
+                self.next_vector = self.next_vector.wrapping_add(1);
+                let Some(mut l) = self.link(endpoint).await else {
+                    return;
+                };
+                let _ = l.send(&raw::hello_minor(v.minor_max)).await;
+                let _ = l.send_raw(&v.frame).await;
+                self.settle(&l.conn, CLOSE_WAIT).await;
+            }
+            Attack::MinorTwoVectors => {
+                let vectors = raw::negative_vectors_v12();
+                let Some((v, _)) = vectors.get(self.next_vector % vectors.len().max(1)) else {
                     return;
                 };
                 self.next_vector = self.next_vector.wrapping_add(1);

@@ -190,6 +190,12 @@ pub struct UiHost {
     /// While the character screens are open: every UI event, for them
     /// ([`Self::take_screen_events`]).
     screen_events: Option<Vec<UiEvent>>,
+    /// The social panels (decision 0024 P4), with the install.
+    social: Option<crate::social::SocialUi>,
+    /// Instant-message lines of session tells waiting for [`Self::social_frame`] (CT6).
+    pending_im: Vec<tessera_ui::game::chat::social::ImLine>,
+    /// The tell-target generation the chat window last copied (CT3).
+    tells_generation: Option<u64>,
     /// Render targets of the portraits (the paperdoll) by content id: the target, its
     /// registered texture and its size.
     portraits:
@@ -318,6 +324,9 @@ impl UiHost {
             screen_events: None,
             portraits: std::collections::BTreeMap::new(),
             portrait_failed: None,
+            social: None,
+            pending_im: Vec::new(),
+            tells_generation: None,
         }
     }
 
@@ -364,6 +373,10 @@ impl UiHost {
             b.char_ids.clone(),
         ));
         host.chargen = Some(b.chargen);
+        host.social = Some(crate::social::SocialUi::new(
+            b.social_vocab.clone(),
+            b.char_vocab.clone(),
+        ));
         let mut panels = NativePanels::new(b.catalog, b.game_vocab.clone(), b.game_layouts);
         panels.types = b.panel_types;
         panels.set_shortcuts(Box::new(NoShortcuts));
@@ -631,6 +644,19 @@ impl UiHost {
         id: PanelId,
     ) -> Result<ElementKey, PanelsError> {
         self.frame.event = true;
+        if id == PanelId::Social
+            && let Some(s) = self.social.as_mut()
+        {
+            // P8 is the social panel of P4 (`social-panels.md` §3): built and driven by
+            // the social panels, so it is never opened twice.
+            s.request_open(crate::social::ui::SocialOpen::Social);
+            let mut ui = self.ui.borrow_mut();
+            s.ensure_open(&mut ui);
+            return s
+                .panel()
+                .map(|p| p.root)
+                .ok_or(PanelsError::NotInCatalogue(id));
+        }
         let r = self
             .services_run(plugins, |p, ui, sv| {
                 if id == PanelId::PluginManager {
@@ -662,6 +688,13 @@ impl UiHost {
         repeat: bool,
     ) -> Option<EscapeOutcome> {
         self.frame.event = true;
+        if press
+            && !repeat
+            && let Some(s) = self.social.as_mut()
+            && let Some(root) = s.escape(&mut self.ui.borrow_mut())
+        {
+            return Some(EscapeOutcome::HidActive(root));
+        }
         let r = self.services_run(plugins, |p, ui, sv| p.escape(ui, press, repeat, sv));
         self.after_panel_call(plugins);
         r
@@ -886,6 +919,16 @@ impl UiHost {
             let room = MAX_CHARACTER_QUEUE.saturating_sub(q.len());
             q.extend(events.iter().take(room).cloned());
         }
+        if let Some(s) = self.social.as_mut() {
+            for ev in &events {
+                if matches!(
+                    ev,
+                    UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
+                ) {
+                    s.queue_event(ev);
+                }
+            }
+        }
         if self.character.is_some() {
             for ev in &events {
                 if self.character_events.len() >= MAX_CHARACTER_QUEUE {
@@ -1055,6 +1098,18 @@ impl UiHost {
             value: a.value,
             position: a.position,
         }));
+        // The P4 social commands the UI declined (`social-panels.md` §7.2, TR12): run with
+        // the social state after step 7.
+        if !consumed
+            && !is_pointer_cmd
+            && let Some(s) = self.social.as_mut()
+            && crate::social::ui::is_social_command(&name)
+        {
+            if phase == Phase::Start {
+                s.queue_command(&name);
+            }
+            return true;
+        }
         // The P1 panel commands the UI declined (`character-panels.md` §2, §4.1,
         // `item-tooltips.md` §10): run with the player's state in step 7.
         if !consumed
@@ -1440,6 +1495,76 @@ impl UiHost {
             .unwrap_or_default()
     }
 
+    /// The social panels' frame (after step 7; decision 0024 P4): the panel commands and
+    /// UI events of this frame with the world session's social state, the panels refreshed
+    /// from it, the chat window's tell targets (CT3) and instant-message lines (CT6), and the
+    /// instant-message tab created once the chat window is open (CT6). Returns the commands
+    /// for the session; the panels' lines go to the chat window, a tell the panels started
+    /// opens the chat entry in the `Tell` mode.
+    pub fn social_frame(
+        &mut self,
+        state: &mut crate::social::SocialState,
+        data: Option<&crate::character::CharacterData>,
+        player: Option<&crate::character::PlayerState>,
+    ) -> Vec<tessera_net::Command> {
+        let Some(s) = self.social.as_mut() else {
+            self.pending_im.clear();
+            return Vec::new();
+        };
+        let mut ui = self.ui.borrow_mut();
+        if let Some(root) = self
+            .panels
+            .as_ref()
+            .and_then(|p| p.root(PanelId::PlayerVitals))
+        {
+            s.attach_player_vitals(&mut ui, root, state);
+        }
+        let out = s.frame(&mut ui, state, data, player);
+        if let Some(chat) = self.panels.as_mut().and_then(|p| p.chat.as_mut()) {
+            chat.ensure_im_tab(&mut ui);
+            if self.tells_generation != Some(state.targets_generation()) {
+                chat.chat.set_tell_targets(state.chat().targets());
+                self.tells_generation = Some(state.targets_generation());
+            }
+            let time = clock_text(std::time::SystemTime::now());
+            for im in std::mem::take(&mut self.pending_im) {
+                let _ = chat
+                    .chat
+                    .deliver_im(&mut ui, &im, &time, state.text_source());
+            }
+            for (mask, text) in &out.lines {
+                chat.post_mask_line(&mut ui, *mask, text);
+            }
+            if let Some(name) = &out.tell {
+                chat.start_tell(&mut ui, name);
+            }
+        } else {
+            self.pending_im.clear();
+        }
+        drop(ui);
+        if !out.commands.is_empty() || !out.lines.is_empty() {
+            self.frame.content_event = true;
+        }
+        out.commands
+    }
+
+    /// The social panels, when the install provides them.
+    #[must_use]
+    pub fn social(&self) -> Option<&crate::social::SocialUi> {
+        self.social.as_ref()
+    }
+
+    /// The social panels, mutably (opening panels by name, tests).
+    pub fn social_mut(&mut self) -> Option<&mut crate::social::SocialUi> {
+        self.social.as_mut()
+    }
+
+    /// Queues a line for the command dispatcher as the chat window's entry would
+    /// (decision 0020 item 1): it runs in [`Self::dispatch_entry_lines`].
+    pub fn submit_entry_line(&mut self, line: EntryLine) {
+        self.queue_entry_line(line);
+    }
+
     /// The character panels, when the install provides them.
     #[must_use]
     pub fn character(&self) -> Option<&crate::character::panel::CharacterUi> {
@@ -1515,15 +1640,32 @@ impl UiHost {
                     let chat_type = (64 - mask.leading_zeros()).max(1);
                     received.push((None, text, chat_type));
                 }
-                for (t, text) in local {
-                    chat.show(&mut ui, t, &text);
-                    received.push((None, text, t));
+                for (mask, text) in local {
+                    chat.show_mask(&mut ui, mask, &text);
+                    received.push((None, text, mask_type(mask)));
                 }
                 for n in notices {
                     chat.show(&mut ui, crate::panels::chat::CHAT_LOG, &n);
                     received.push((None, n, crate::panels::chat::CHAT_LOG));
                 }
                 for l in session {
+                    // P4 line forms (`chat-window.md` §15.10 CT1, CT10): shown and delivered
+                    // with their masks and rendered text; the tell's instant-message line
+                    // goes to its session in the social frame (CT6).
+                    if let Some((mask, shown)) = &l.shown {
+                        chat.show_mask(&mut ui, *mask, shown);
+                        if let Some(im) = l.im.clone()
+                            && self.pending_im.len() < 256
+                        {
+                            self.pending_im.push(im);
+                        }
+                        received.push((
+                            (!l.sender.is_empty()).then_some(l.sender),
+                            shown.clone(),
+                            mask_type(*mask),
+                        ));
+                        continue;
+                    }
                     let shown = session_text(&l);
                     chat.show(&mut ui, l.chat_type, &shown);
                     received.push((
@@ -1537,16 +1679,20 @@ impl UiHost {
                 }
             }
             None => {
-                for (t, text) in local {
-                    received.push((None, text, t));
+                for (mask, text) in local {
+                    received.push((None, text, mask_type(mask)));
                 }
                 for n in notices {
                     received.push((None, n, crate::panels::chat::CHAT_LOG));
                 }
                 for l in session {
+                    let text = match &l.shown {
+                        Some((_, t)) => t.clone(),
+                        None => l.text,
+                    };
                     received.push((
                         (!l.sender.is_empty()).then_some(l.sender),
-                        l.text,
+                        text,
                         l.chat_type,
                     ));
                 }
@@ -1726,15 +1872,30 @@ pub fn rescaled_cursor(cursor: Option<(f64, f64)>, ratio: f64) -> Option<(f64, f
     cursor.map(|(x, y)| (x * r, y * r))
 }
 
-/// How a session line shows in the chat window: the text alone for a system line,
-/// `Sender: text` otherwise (Tessera's own wording, `chat-window.md` §10 item 2).
+/// How a session line shows in the chat window: the P4 line form when it has one
+/// (`chat-window.md` §15.10 CT1), else the text alone for a system line and `Sender: text`
+/// otherwise (Tessera's own wording, `chat-window.md` §10 item 2).
 #[must_use]
 pub fn session_text(line: &crate::net::ChatLine) -> String {
-    if line.sender.is_empty() {
-        line.text.clone()
-    } else {
-        format!("{}: {}", line.sender, line.text)
-    }
+    line.display_text()
+}
+
+/// The chat type of a line's mask for the plugins' `Received` (`chat-window.md` §9 Q18
+/// rule, §15.10 CT10): its highest set type, 1 for an empty mask.
+#[must_use]
+pub fn mask_type(mask: u64) -> u32 {
+    (64 - mask.leading_zeros()).max(1)
+}
+
+/// The local time text of an instant-message line (`chat-window.md` §5.4 Tessera rule:
+/// 24-hour `HH:MM:SS`). Without a time-zone database the client shows the UTC time of day.
+#[must_use]
+pub fn clock_text(now: std::time::SystemTime) -> String {
+    let secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+        % 86_400;
+    format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
 }
 
 /// Parses a panel name for the command line: `P1`–`P15`, the panel's layout label or its

@@ -151,7 +151,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 and P3 are next.
+  criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 passes its criteria on
+  branch `p2` (below, specs not yet Accepted); P3 runs in `wt-p3`, P4 in `wt-p4`.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
@@ -225,10 +226,34 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
   bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
   new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
+- **P2 (targeting, skills and combat presentation; branch `p2` in worktree `wt-p2`, off main
+  4ec1f4a, uncommitted; exit verification 2026-10-11)** (`docs/ROADMAP.md` P2 status):
+  criteria 1–4 pass on Tessera's side. Not Accepted yet: `combat-ui.md`,
+  `skill-tooltips.md`, `combat-visuals.md` (Draft), the P2 revisions of `item-tooltips.md`,
+  `keymap.md`, `lua-plugin-api.md` §15.2, `script-table.md`, `particles.md`,
+  `particle-runtime.md`, `scenario-feed.md` rev 5 (Review) and decision 0032 (Proposed;
+  planned as 0031, taken by P3): an independent review must accept them, then the code is
+  re-checked against them before merge. Built: `tessera-gamedata` skill/effect tooltips,
+  census and `combat` (records, panel and visual data); `tessera-ui` `game::combat` (frames,
+  cast bars, effect rows, floating text, selection marker, combat state, defeat panel,
+  quickslot cooldowns, live tooltip timers); `tessera-input` targeting and 72 quickslot
+  actions; `tessera-plugins` §15.2 combat views; `tessera-net` local `SelectTarget` on the
+  test-server backend; walker `CombatLayer` (stories, hooks, effects, stance, death) with
+  scriptgraph combat runs, particle beams, anim layer insertion; client `combat` module,
+  headless combat screens, synthetic goldens; fuzz `ui_combat_feed`, `plugins_combat_views`,
+  `particles_beam`. Evidence: 20 / 20 elements shown at 11 checkpoints with and without the
+  install, 5 committed goldens; 13,247 skills and 32,971 effects categorised (33,601 tooltips
+  laid out, 0 failures); 11,155 particle descriptors categorised, 0 missing Particle-node
+  records, walker scenario draws combat particles; test-server selection in `combat_server`.
+  Checks: fmt, clippy (workspace `--all-features`, fuzz), content, SPDX, server deps, links
+  clean; release tests with the install 6,074 passed, 1 failed (fixed, then `tessera-ui` and
+  `tessera-client` 1,148 passed, 0 failed). Open: `keymap.md` §8.2 defaults take five walker
+  keys (owner); install-look defects (frame name and level text not drawn, defeat panel's
+  extra button); beam ribbons not drawn; main-thread record reads in combat cues (ARCH §21).
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90). They do not block the
+  O88–O90, P2 items O93–O109 and O126–O129). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

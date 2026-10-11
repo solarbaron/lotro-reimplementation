@@ -2,9 +2,9 @@
 
 # 0032 — P2 on M7's server: local selection, target frames of test actors, no combat in overlay runs, no protocol minor
 
-**Status:** Proposed (spec writer, design, 2026-10-10). An independent review by a session
-that wrote no part of this decision or of `scenario-feed.md` revision 6 must check it before
-it is Accepted (see [Review](#review)).
+**Status:** Accepted (independent review 2026-10-11, see [Review](#review)). Before:
+Proposed (spec writer, design, 2026-10-10). An independent review by a session that wrote no
+part of this decision or of `scenario-feed.md` revision 6 must check it before it is Accepted.
 
 **Number.** Out of sequence, like 0030: 0031 is taken on the parallel branch `p3`
 (`0031-parity-panel-goldens.md`), so this record takes the next free number of the
@@ -205,6 +205,30 @@ and §14.11 (test-server selection cases R1–R10).
 
 ## Review
 
-Pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
+**2026-10-11, passed** (spec reviewer, Clean-Room-Role: review; a Claude session that wrote no
+part of this decision, of `scenario-feed.md` revision 6, of the other P2 specs or of the P2
+code; text at commit 7b14f27).
+
+- **D1** agrees with LEGAL.md §11.1 rule 5 (the server receives, keeps and runs nothing new;
+  a selection never leaves the client) and with decision 0024 §2.1–§2.3 (client half only;
+  M7's server drives only what it carries; the server's dependency graph is unchanged: no
+  change under `apps/server`, `apps/loadtest`, `crates/protocol` or
+  `tools/check-server-deps.sh` in the P2 diff). It keeps `scenario-feed.md` §0 item 3: one
+  selection path through `SelectTarget` and `TargetChanged` on every backend.
+- **D2** derives nothing for a test actor (decision 0024 §2.4): the frame shows only reported
+  values; the despawn rule is client-local and sends no command.
+- **D3** only states the existing overlay subset; it is a P2 choice, correctly not presented
+  as a rule-5 limit.
+- **D4** adds no protocol minor, as decision 0024 §2.6 requires for anything rule 5 does not
+  allow; relaying selections stays an owner question.
+- `scenario-feed.md` revision 6 carries D1–D4 faithfully; §14.9 O8, O10–O12 and §14.11 R1–R10
+  were re-derived and invariant 11 checked (record: `scenario-feed.md` §18.4.1). No client
+  fact, install probe or disassembly is involved.
+
+Non-blocking: the "Number" paragraph's remark that ROADMAP calls this decision 0031 is stale
+(ROADMAP now names 0032); `docs/decisions/README.md` and ROADMAP P2 still say Proposed and are
+updated by their owners. The two owner questions above stay open.
+
+Before this review: pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
 `scenario-feed.md` §0 item 3 and revision 6 (§18.4), and re-derives the cases of
 `scenario-feed.md` §14.9 (O8, O10–O12) and §14.11.

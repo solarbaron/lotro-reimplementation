@@ -254,7 +254,40 @@ impl ParticleSurface {
     /// (`particle-runtime.md` §12 rule 12, RT33), and uses no other random source.
     #[must_use]
     pub fn of(m: &ResolvedMaterial, layout: &TextureMatrixLayout) -> Self {
-        let program = SurfaceProgram::of_material(m);
+        Self::with_program(m, layout, SurfaceProgram::of_material(m))
+    }
+
+    /// The surface of a beam ribbon's material (`particle-runtime.md` §11.1 step 6), drawn
+    /// with the particle programs (Tessera reading; §11.1 names no program for ribbons,
+    /// implementer OPEN there): as [`ParticleSurface::of`], except that a shader record the
+    /// §9.1.1 table does not list keeps a second colour layer whose alpha reaches the output
+    /// (role `ColorAndOpacity2`, `material.md` §10.3 MA54): its RGB multiplies or adds as
+    /// §10.3 states for the record, and its alpha multiplies the first layer's (the five
+    /// records that add the two alphas are drawn with the product too).
+    #[must_use]
+    pub fn of_ribbon(m: &ResolvedMaterial, layout: &TextureMatrixLayout) -> Self {
+        let mut program = SurfaceProgram::of_material(m);
+        if program.shader.is_none()
+            && program.layers.is_none()
+            && let Some(plan) = tessera_material::second_layer_plan(m)
+            && matches!(
+                plan.alpha,
+                tessera_material::LayerAlpha::Multiplied | tessera_material::LayerAlpha::Summed
+            )
+        {
+            program.layers = Some(match plan.combine {
+                tessera_material::LayerCombine::Multiply => LayerCombine::Product,
+                tessera_material::LayerCombine::Add => LayerCombine::Sum,
+            });
+        }
+        Self::with_program(m, layout, program)
+    }
+
+    fn with_program(
+        m: &ResolvedMaterial,
+        layout: &TextureMatrixLayout,
+        program: SurfaceProgram,
+    ) -> Self {
         let slot = |id: u32| m.slot(id).and_then(|s| s.texture);
         let tested = program.tests_texture && m.params.flag(ALPHA_TEST) == Some(true);
         let two_layers = program.layers.is_some();

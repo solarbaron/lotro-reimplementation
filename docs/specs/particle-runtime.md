@@ -1192,6 +1192,39 @@ seconds of the global clock (§3.1); lengths metres.
 > `BeamSegmentParticlesPerSecond` / `HeadParticlesPerSecond` = 0, and stops the systems'
 > emission (as §7.2 step 3) once the envelope has finished.
 
+> **OPEN:** (implementer, 2026-10-11) how the ribbon and the head entity are drawn is not
+> fully stated; the walker's readings, each a Tessera choice until answered:
+> (a) **Ribbon geometry (step 6).** `BeamWidth` is the full width (half on each side of the
+> beam's line), the quad of each segment turned towards the eye (square to the beam and to the
+> direction from the segment's middle to the eye; when the eye is on the beam's line, any
+> direction across it). Texture *v* runs 0 to 1 across the ribbon; *u* starts at 0 at each
+> segment's start and grows by `TextureUScale` per `SegmentSize` (a whole segment shows the
+> texture `TextureUScale` times, a shorter last body segment and shrunk head and tail
+> segments a part of that). Whether *u* restarts per segment or runs along the whole beam,
+> and the axis the client maps *u* to, are not stated.
+> (b) **Ribbon program.** Which program draws a ribbon material's surface record (0x31) is not
+> stated. The walker draws it through the particle pipeline as a particle surface (§9.1.1:
+> the table's row, otherwise the rule-10 fallback of its blend class), colour
+> `ColorAndOpacity` as the vertex colour, the draw's tint white; for a shader record the
+> §9.1.1 table does not list it keeps a second colour layer whose alpha reaches the output
+> (`ColorAndOpacity2`, `material.md` §10.3 MA54), RGB combined as §10.3 states for the
+> record, alphas multiplied (also for the five records that add them). On this install every
+> one of the 86 ribbon materials is a 0x31 record the material library resolves, and the
+> ones seen drawn use shader records outside the §9.1.1 table with two colour layers.
+> (c) **Order.** Ribbons are drawn in the particle stage before the systems, beams in
+> creation order.
+> (d) **Frames.** "The beam's frame" of steps 8 and 9 is one frame: forward (+Y) from the
+> source point to the target point, up (+Z) from world up, and when the beam is vertical +X
+> along world +X; it is fixed at the tail point for the systems and at the head point for the
+> head entity.
+> (e) **Head entity (steps 1, 9).** Drawn as a static object of its 0x47 descriptor (its setup
+> parts at the frame of (d), not animated), scaled by its `Render_AdjustableScale` along its
+> chain (usable range of `entity-descriptor.md` §7, otherwise (1, 1, 1)) times the vector of
+> Q-RT11, tinted by its chain's `Render_Color` and `Render_Opacity` (`material.md` §8.3),
+> left out when its draw flags suppress it (`entity-descriptor.md` §9).
+> (f) **Spawn times (step 8).** Spawn *i* of *n* is at the last spawn time + Δ × *i* / *n*
+> (the stated advance by Δ / *n* per spawn, formed without accumulated rounding).
+
 Census of the 2,740 Beam nodes (OBS4, RT44): `Persistent` 1 in 769; `HeadEntity` in 1,050;
 `BeamParticleSystem` in 571, `HeadParticleSystem` in 45 (2 of them without a beam system, so
 their head particles never spawn); `BeamSegmentParticlesPerSecond` 10 in 2,092, 30 in 292, 0 in

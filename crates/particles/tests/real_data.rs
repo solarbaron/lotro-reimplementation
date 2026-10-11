@@ -472,12 +472,24 @@ fn every_descriptor_is_categorised_and_every_beam_decodes() {
         with_head_system: usize,
         missing_systems: Vec<u32>,
         execute: usize,
+        /// Distinct ribbon material DIDs (`particle-runtime.md` §11.1 step 6).
+        materials: std::collections::BTreeSet<u32>,
+        /// Distinct head entity DIDs (step 9).
+        head_entities: std::collections::BTreeSet<u32>,
     }
     let mut b = Beams::default();
     let mut visit = |n: &Node| match &n.data {
         NodeData::Beam(beam) => {
             b.nodes += 1;
             b.head_entity += usize::from(!beam.head_entity.is_null());
+            for m in [beam.head_material, beam.body_material, beam.tail_material] {
+                if !m.is_null() {
+                    b.materials.insert(m.0);
+                }
+            }
+            if !beam.head_entity.is_null() {
+                b.head_entities.insert(beam.head_entity.0);
+            }
             for (did, count) in [
                 (beam.beam_particle_system, &mut b.with_beam_system),
                 (beam.head_particle_system, &mut b.with_head_system),
@@ -523,8 +535,50 @@ fn every_descriptor_is_categorised_and_every_beam_decodes() {
         b.missing_systems.len(),
         b.execute
     );
+    // Ribbon materials are surface records (prefix 0x31, `material.md` §4) that the material
+    // library resolves; head entities are entity descriptors (prefix 0x47, §11.1 step 1).
+    let library = MaterialLibrary::new(&set);
+    let prefixes = |dids: &std::collections::BTreeSet<u32>| {
+        let mut m: std::collections::BTreeMap<u8, usize> = Default::default();
+        for d in dids {
+            *m.entry((d >> 24) as u8).or_default() += 1;
+        }
+        m
+    };
+    let unresolved: Vec<u32> = b
+        .materials
+        .iter()
+        .copied()
+        .filter(|d| (d >> 24) != 0x31 || library.resolve_surface(Did(*d)).is_err())
+        .collect();
+    let missing_entities: Vec<u32> = b
+        .head_entities
+        .iter()
+        .copied()
+        .filter(|d| set.locate(*d).ok().flatten().is_none())
+        .collect();
+    eprintln!(
+        "Beam ribbon materials: {} distinct, by prefix {:x?}, {} unresolved; head entities: {} \
+         distinct, by prefix {:x?}, {} missing",
+        b.materials.len(),
+        prefixes(&b.materials),
+        unresolved.len(),
+        b.head_entities.len(),
+        prefixes(&b.head_entities),
+        missing_entities.len()
+    );
     assert!(b.nodes > 0, "no Beam nodes found");
     assert_eq!(b.opaque, 0, "every Beam node decodes to its fields");
+    assert!(
+        unresolved.is_empty(),
+        "ribbon materials that are not resolvable surface records: {:x?}",
+        &unresolved[..unresolved.len().min(16)]
+    );
+    assert!(
+        missing_entities.is_empty(),
+        "head entities that do not exist: {:x?}",
+        &missing_entities[..missing_entities.len().min(16)]
+    );
     assert!(
         b.missing_systems.is_empty(),
         "beam systems that do not exist or decode: {:?}",

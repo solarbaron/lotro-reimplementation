@@ -1018,6 +1018,7 @@ impl Walker {
             .map(|r| resolver::TintPids {
                 colour: r.pid("Render_Color"),
                 opacity: r.pid("Render_Opacity"),
+                scale: r.pid("Render_AdjustableScale"),
             })
             .unwrap_or_default();
         let resolver = Resolver::new(Arc::clone(&ctx), objects.materials(), tint)?;
@@ -1782,6 +1783,9 @@ impl Walker {
             },
             &mut self.objects,
         );
+        // Beam head entities (`particle-runtime.md` §11.1 step 9) resolve and load.
+        self.effects
+            .update_heads(&mut self.resolver, &mut self.objects);
 
         // Combat visuals (`combat-visuals.md` §9): the session's combat events, then the
         // stories, strikes, effects, stances and deaths on the figures.
@@ -3053,6 +3057,7 @@ impl Walker {
             }
             // Particle effects after the other translucent surfaces of the scene
             // (`particle-runtime.md` §9; their order is `particles.md` §8.15).
+            self.effects.draw_heads(pass, &anchor, &mut self.objects);
             self.effects.draw(pass, &anchor, eye, dir, &self.objects);
             let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
             self.phase_ms[3] = ms(t0, t1);

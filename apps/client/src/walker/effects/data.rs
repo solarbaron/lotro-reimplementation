@@ -26,7 +26,9 @@ use tessera_formats::setup::{
     Anchor as SetupAnchor, ENTITY_PREFIX, Setup, TEMPLATE_PREFIX, VisualTemplate,
 };
 use tessera_formats::{Did, NodeData, PropertyDictionary, Record as _, ScriptTable, Scriptlet};
-use tessera_material::records::{BlendFactor as MatFactor, BlendOp as MatOp};
+use tessera_material::records::{
+    BlendFactor as MatFactor, BlendOp as MatOp, SURFACE_RECORD_PREFIX,
+};
 use tessera_material::{
     BlendMode, CurveStates, MaterialLibrary, ResolvedMaterial, TextureMatrix, TextureMatrixLayout,
 };
@@ -285,37 +287,100 @@ pub fn uv_transforms(m: [TextureMatrix; 2]) -> [UvTransform; 2] {
     m.map(|m| UvTransform { rows: m.rows }.sanitized())
 }
 
-/// A loaded effect record (`particles.md` §4, §6).
+/// How a surface record draws through the particle pipeline (`particle-runtime.md` §9.1–
+/// §9.1.3): the surface of a 0x39 system, or a beam ribbon's material (§11.1 step 6, drawn
+/// with the same programs; Tessera reading, §11.1 implementer OPEN).
+#[derive(Debug)]
+pub struct SurfaceLook {
+    /// The surface's colour texture (slot 3000) with its own alpha.
+    pub texture: Option<TexRequest>,
+    /// The second colour layer (slot 3001) of a two-layer program.
+    pub second_texture: Option<TexRequest>,
+    /// The surface's blend, depth write and alpha test (§9.1.3) at time 0.
+    pub alpha: AlphaMode,
+    /// What the surface's program computes (§9.1.1).
+    pub shading: ParticleShading,
+    /// Material colour 2000.
+    pub material: [f32; 4],
+    /// Texture matrices 0 and 1 of a two-layer program at time 0 (identity otherwise).
+    pub uv: [UvTransform; 2],
+    /// For a surface whose reference or matrices follow the clock: what re-evaluates
+    /// `alpha` and `uv` per draw.
+    pub clock: Option<Box<SurfaceClock>>,
+    /// Whether the surface is drawn.
+    pub drawable: bool,
+}
+
+impl SurfaceLook {
+    /// The look of a system without a surface: not drawn (`particles.md` §8.11).
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            texture: None,
+            second_texture: None,
+            alpha: AlphaMode::Blend,
+            shading: ParticleShading::STANDARD,
+            material: [1.0; 4],
+            uv: [UvTransform::IDENTITY; 2],
+            clock: None,
+            drawable: false,
+        }
+    }
+
+    /// The look of a resolved surface material `m` with its shader's texture-matrix
+    /// bindings `layout`: a particle surface, or with `ribbon` a beam ribbon's material
+    /// ([`ParticleSurface::of_ribbon`]).
+    #[must_use]
+    pub fn of(m: &Arc<ResolvedMaterial>, layout: Arc<TextureMatrixLayout>, ribbon: bool) -> Self {
+        let own_alpha = |d: Did| TexRequest::new(d.0, VARIANT_OWN_ALPHA);
+        let look = if ribbon {
+            ParticleSurface::of_ribbon(m, &layout)
+        } else {
+            ParticleSurface::of(m, &layout)
+        };
+        Self {
+            texture: look.texture.map(own_alpha),
+            second_texture: look.second_layer.map(own_alpha),
+            alpha: surface_alpha(m, look.alpha_test),
+            shading: particle_shading(&look),
+            material: look.material_colour,
+            uv: uv_transforms(look.matrices),
+            drawable: look.is_drawn(),
+            clock: look.is_animated().then(|| {
+                Box::new(SurfaceClock {
+                    look,
+                    material: Arc::clone(m),
+                    layout,
+                })
+            }),
+        }
+    }
+
+    /// The textures the look draws with.
+    pub fn textures(&self) -> impl Iterator<Item = TexRequest> + '_ {
+        self.texture.iter().chain(&self.second_texture).copied()
+    }
+}
+
+/// A loaded effect record (`particles.md` §4, §6), or a beam ribbon's surface record.
 #[derive(Debug)]
 pub enum EffectRecord {
     /// A 0x39 system with the textures, blend state and program of its surface
-    /// (`particle-runtime.md` §9.1–§9.1.3); `texture` is `None` without a surface texture,
-    /// `drawable` false without a surface (the client draws nothing, `particles.md` §8.11)
-    /// and for the heat-distortion program, which Tessera draws as its variant without
-    /// feature bit 1 (it leaves the target unchanged, §9.1.2, rule 11).
+    /// (`particle-runtime.md` §9.1–§9.1.3); the look's `texture` is `None` without a surface
+    /// texture, `drawable` false without a surface (the client draws nothing, `particles.md`
+    /// §8.11) and for the heat-distortion program, which Tessera draws as its variant
+    /// without feature bit 1 (it leaves the target unchanged, §9.1.2, rule 11).
     Particles {
         /// The record.
         desc: Arc<ParticleSystem>,
-        /// The surface's colour texture (slot 3000) with its own alpha.
-        texture: Option<TexRequest>,
-        /// The second colour layer (slot 3001) of a two-layer program.
-        second_texture: Option<TexRequest>,
-        /// The surface's blend, depth write and alpha test (§9.1.3) at time 0.
-        alpha: AlphaMode,
-        /// What the surface's program computes (§9.1.1).
-        shading: ParticleShading,
-        /// Material colour 2000.
-        material: [f32; 4],
-        /// Texture matrices 0 and 1 of a two-layer program at time 0 (identity otherwise).
-        uv: [UvTransform; 2],
-        /// For a surface whose reference or matrices follow the clock: what re-evaluates
-        /// `alpha` and `uv` per draw.
-        clock: Option<Box<SurfaceClock>>,
-        /// Whether the system is drawn.
-        drawable: bool,
+        /// Its surface's look.
+        look: SurfaceLook,
     },
     /// A 0x44 fork effect (not simulated, `particles.md` rule §10.2).
     Fork(Arc<ForkSystem>),
+    /// A 0x31 surface record named as a beam's head, body or tail material
+    /// (`particle-runtime.md` §11.1 step 6); not an effect.
+    Surface(SurfaceLook),
 }
 
 fn factor(f: MatFactor) -> Option<BlendFactor> {
@@ -625,7 +690,7 @@ impl EffectData {
                     }
                 }
                 Some(EffectRecord::Fork(_)) => *extra,
-                _ => continue,
+                Some(EffectRecord::Surface(_)) | None => continue,
             };
             reach = Some(reach.map_or(r, |x: f32| x.max(r)));
         }
@@ -725,6 +790,22 @@ impl EffectData {
         lock(&self.records).get(&did).cloned()
     }
 
+    /// The look of surface record `surface` through the material library (with `ribbon`, as
+    /// a beam ribbon's material); `None` when it does not resolve (logged).
+    fn surface_look(&self, surface: Did, ribbon: bool) -> Option<SurfaceLook> {
+        let m = self
+            .materials
+            .resolve_surface(surface)
+            .map_err(|e| tracing::debug!(%surface, "particle surface: {e}"))
+            .ok()?;
+        let layout = self
+            .materials
+            .texture_matrices(m.shader.did)
+            .map_err(|e| tracing::debug!(%surface, "particle matrices: {e}"))
+            .unwrap_or_default();
+        Some(SurfaceLook::of(&m, layout, ribbon))
+    }
+
     fn read_record(&self, did: u32) -> Option<EffectRecord> {
         let bytes = fetch(&self.set, did).ok().flatten()?;
         match (did >> 24) as u8 {
@@ -741,54 +822,18 @@ impl EffectData {
                 } else {
                     desc.surface
                 };
-                let own_alpha = |d: Did| TexRequest::new(d.0, VARIANT_OWN_ALPHA);
-                let resolved = if surface.is_null() {
-                    None
+                let look = if surface.is_null() {
+                    SurfaceLook::none()
                 } else {
-                    self.materials
-                        .resolve_surface(surface)
-                        .map_err(|e| tracing::debug!(%surface, "particle surface: {e}"))
-                        .ok()
+                    self.surface_look(surface, false)
+                        .unwrap_or_else(SurfaceLook::none)
                 };
-                Some(match resolved {
-                    Some(m) => {
-                        let layout = self
-                            .materials
-                            .texture_matrices(m.shader.did)
-                            .map_err(|e| tracing::debug!(%surface, "particle matrices: {e}"))
-                            .unwrap_or_default();
-                        let look = ParticleSurface::of(&m, &layout);
-                        EffectRecord::Particles {
-                            desc: Arc::new(desc),
-                            texture: look.texture.map(own_alpha),
-                            second_texture: look.second_layer.map(own_alpha),
-                            alpha: surface_alpha(&m, look.alpha_test),
-                            shading: particle_shading(&look),
-                            material: look.material_colour,
-                            uv: uv_transforms(look.matrices),
-                            clock: look.is_animated().then(|| {
-                                Box::new(SurfaceClock {
-                                    look,
-                                    material: Arc::clone(&m),
-                                    layout,
-                                })
-                            }),
-                            drawable: look.is_drawn(),
-                        }
-                    }
-                    None => EffectRecord::Particles {
-                        desc: Arc::new(desc),
-                        texture: None,
-                        second_texture: None,
-                        alpha: AlphaMode::Blend,
-                        shading: ParticleShading::STANDARD,
-                        material: [1.0; 4],
-                        uv: [UvTransform::IDENTITY; 2],
-                        clock: None,
-                        drawable: false,
-                    },
+                Some(EffectRecord::Particles {
+                    desc: Arc::new(desc),
+                    look,
                 })
             }
+            SURFACE_RECORD_PREFIX => self.surface_look(Did(did), true).map(EffectRecord::Surface),
             FORK_SYSTEM_PREFIX => ForkSystem::decode(&bytes, &tessera_formats::NoSchema)
                 .map_err(|e| tracing::debug!(did = format!("{did:#010x}"), "fork record: {e}"))
                 .ok()
@@ -1431,6 +1476,38 @@ mod tests {
             },
             dye: None,
         }
+    }
+
+    /// A beam ribbon's material (`particle-runtime.md` §11.1 step 6) on a shader record the
+    /// §9.1.1 table does not list keeps its `ColorAndOpacity2` layer (`material.md` §10.3);
+    /// the same record as a particle surface draws one layer (rule 10).
+    #[test]
+    fn ribbon_materials_keep_an_opacity_second_layer() {
+        use tessera_material::resolve::{ParamOrigin, TextureSlot};
+        use tessera_material::vocab::{ChannelPacking, SlotKind};
+        let mut m = particle_material(BlendMode::AlphaBlend, MatFactor::InvSrcAlpha, false);
+        m.slots = [
+            (3000, 0x4100_0001, "ColorAndOpacity"),
+            (3001, 0x4100_0002, "ColorAndOpacity2"),
+        ]
+        .iter()
+        .map(|&(id, tex, role)| TextureSlot {
+            id,
+            kind: SlotKind::of(id),
+            texture: Some(Did(tex)),
+            role: Some(role.into()),
+            packing: ChannelPacking::from_role(Some(role)),
+            sampler: None,
+            origin: ParamOrigin::Default,
+        })
+        .collect();
+        let m = Arc::new(m);
+        let ribbon = SurfaceLook::of(&m, Arc::default(), true);
+        assert_eq!(ribbon.shading.layers, Some(ParticleLayers::Product));
+        assert!(ribbon.second_texture.is_some() && ribbon.texture.is_some());
+        let particle = SurfaceLook::of(&m, Arc::default(), false);
+        assert_eq!(particle.shading.layers, None);
+        assert!(particle.second_texture.is_none());
     }
 
     /// The alpha-test reference the renderer applies to a draw of `mode` at *A* = `a`

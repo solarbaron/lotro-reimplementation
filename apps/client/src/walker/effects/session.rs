@@ -15,15 +15,18 @@
 //! animates them by the walker's own rule, `walker.md` §10), with their figure's tables and
 //! stored values, and seeded from their network ID.
 //!
-//! Not drawn yet (no renderer path in the walker): a beam's ribbon (§11.1 step 6) and its
-//! head entity (step 9). Their timing, arrival and particle systems run.
+//! A beam's ribbon (§11.1 step 6) is drawn by [`super::EffectLayer::draw`] with the surfaces
+//! of its three materials, its head entity (step 9) by [`super::EffectLayer::draw_heads`]
+//! through the object layer's instanced models.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tessera_formats::script_table::{AnimationNode, BeamNode};
-use tessera_formats::{PropertyArray, PropertyEntry, PropertyValue};
-use tessera_particles::beam::{BEAM_EPSILON, Beam, BeamEnds};
+use tessera_formats::{Did, PropertyArray, PropertyEntry, PropertyValue};
+use tessera_particles::beam::{
+    BEAM_EPSILON, Beam, BeamEnds, BeamSpan, beam_rotation, head_scale_vector,
+};
 use tessera_particles::glam::{Mat4, Quat, Vec3};
 use tessera_particles::runtime::AttachSpec;
 use tessera_particles::{EffectManager, Environment, NoAttachments, Ran2, SystemKey};
@@ -88,6 +91,20 @@ pub(super) struct BeamRun {
     /// The beam's frame at its last span (rotation, tail point): the systems stay placed
     /// there while the beam has no span, so their particles keep ageing (§11.1 steps 8, 10).
     frame: Option<(Quat, Vec3)>,
+    /// The span whose ribbon is drawn this frame (§11.1 step 6; `None`: not drawn).
+    pub ribbon: Option<BeamSpan>,
+    /// Where the head entity stands this frame (§11.1 step 9; `None`: hidden): the head point
+    /// and the beam's frame.
+    pub head: Option<(Vec3, Quat)>,
+    /// The vector `HeadEntityScaleSource` selected from the source at creation (step 1).
+    pub head_scale: Vec3,
+}
+
+impl BeamRun {
+    /// The Beam node's fields.
+    pub fn node(&self) -> &BeamNode {
+        self.beam.node()
+    }
 }
 
 /// The session part of the effects state.
@@ -122,9 +139,13 @@ impl SessionState {
     }
 }
 
-/// The world point of an attachment on an owner (`particle-runtime.md` §11.1 step 3): a
-/// bone type, else a holding location, else the owner's origin; with `box_centre` (or a
-/// point the owner lacks) the box centre. In sim coordinates.
+/// The world point of an attachment on an owner (`particle-runtime.md` §11.1 step 3, built
+/// as §6.1–§6.2 attach an effect): a bone type (the offset in the bone's space), else a
+/// holding location (its frame with the offset added to its translation, on its bone), else
+/// the owner's model origin (the offset in the model's space); followed by the owner's world
+/// frame with its render scale. With `box_centre`, or a point the owner lacks, the model's
+/// box centre (the Tessera stand-in [`BOX_CENTRE_HEIGHT`] above its origin) with the offset
+/// in the model's space. In sim coordinates.
 fn attach_point(
     f: &OwnerFrame<'_>,
     holding: u32,
@@ -138,33 +159,36 @@ fn attach_point(
     } else {
         Vec3::ZERO
     };
-    let centre = f
-        .world
-        .transform_point3(Vec3::new(0.0, 0.0, BOX_CENTRE_HEIGHT));
-    if box_centre {
-        return centre + offset;
-    }
-    let local = if bone != 0 {
+    let centre = Vec3::new(0.0, 0.0, BOX_CENTRE_HEIGHT) + offset;
+    let local = if box_centre {
+        None
+    } else if bone != 0 {
+        // §6.1: *M*ₐ = the offset; *L* = *M*ₐ on the bone's model-space matrix.
         f.points
             .and_then(|p| p.bone(bone))
             .and_then(|b| f.model.get(b))
-            .map(|m| m.w_axis.truncate())
+            .filter(|m| m.is_finite())
+            .map(|m| m.transform_point3(offset))
     } else if holding != 0 {
-        f.points
-            .and_then(|p| p.holding(holding))
-            .map(|(b, m)| match b {
-                Some(b) => f
-                    .model
-                    .get(b)
-                    .map_or(m.w_axis.truncate(), |bm| (*bm * m).w_axis.truncate()),
-                None => m.w_axis.truncate(),
-            })
+        // §6.1: *M*ₐ = the holding location's frame with the offset added to its
+        // translation (not rotated by the location's rotation), on its bone.
+        f.points.and_then(|p| p.holding(holding)).map(|(b, m)| {
+            let mut ma = m;
+            ma.w_axis += offset.extend(0.0);
+            let l = match b.and_then(|b| f.model.get(b)).filter(|bm| bm.is_finite()) {
+                Some(bm) => *bm * ma,
+                None => ma,
+            };
+            l.w_axis.truncate()
+        })
     } else {
-        Some(Vec3::ZERO)
+        Some(offset)
     };
-    match local {
-        Some(p) => f.world.transform_point3(p) + offset,
-        None => centre + offset,
+    let p = f.world.transform_point3(local.unwrap_or(centre));
+    if p.is_finite() {
+        p
+    } else {
+        f.world.w_axis.truncate()
     }
 }
 
@@ -207,16 +231,25 @@ fn step_beam(
     // also once the envelope is done (e = 0) or the beam has no span this frame (its last
     // frame), so that their particles keep ageing and dying (step 10). Only spawning is
     // gated by the envelope.
+    // The beam's frame: forward along the beam, up from world up (§11.1 step 9; the same
+    // frame places the systems, step 8).
     if let Some(span) = u.span {
-        let dir = span.target - span.source;
-        let rot = if dir.length_squared() > 1e-8 && dir.is_finite() {
-            Quat::from_rotation_arc(Vec3::Y, dir.normalize())
-        } else {
-            Quat::IDENTITY
-        };
+        let rot = beam_rotation(span.source, span.target).unwrap_or(Quat::IDENTITY);
         b.frame = Some((rot, span.tail));
     }
     let intensity = u.span.map_or(0.0, |s| s.intensity);
+    // Step 6: the ribbon while the tail is before the head and the drawn segment is at least
+    // 0.1 m long, its alpha × e (nothing to draw at e = 0 or once the envelope finished).
+    b.ribbon = u
+        .span
+        .filter(|_| u.ribbon && !finished_env && intensity > 0.0);
+    // Step 9: the head entity at the head point, turned along the beam, while shown.
+    b.head = match (u.span, b.frame) {
+        (Some(span), Some((rot, _))) if u.head_entity_shown && !finished_env => {
+            Some((span.head, rot))
+        }
+        _ => None,
+    };
     if let Some((rot, tail)) = b.frame {
         let e = if finished_env { 0.0 } else { intensity };
         let alpha = f32::from(n.color[3]) / 255.0 * e;
@@ -282,6 +315,8 @@ fn step_beam(
         if empty {
             manager.remove_owner(b.owner, now);
             b.finished = true;
+            b.ribbon = None;
+            b.head = None;
             out.removed = true;
         }
     }
@@ -472,6 +507,19 @@ impl FxState {
             self.wait(did, super::Waiting::Beam { beam: handle, slot });
             self.load(did);
         }
+        // The three materials are loaded now (step 1), read on a worker like the systems.
+        self.load_ribbon_materials([
+            req.node.tail_material,
+            req.node.body_material,
+            req.node.head_material,
+        ]);
+        // Step 1: the head entity's scale vector, from the source's render scale.
+        let source_scale = self
+            .owners
+            .get(&req.entity)
+            .and_then(|o| self.owner_frame(o))
+            .map_or(Vec3::ONE, |f| f.scale);
+        let head_scale = head_scale_vector(req.node.head_entity_scale_source, source_scale);
         self.session.beams.insert(
             handle,
             BeamRun {
@@ -483,6 +531,9 @@ impl FxState {
                 last: self.now,
                 finished: false,
                 frame: None,
+                ribbon: None,
+                head: None,
+                head_scale,
             },
         );
         self.session.beams_started += 1;
@@ -508,13 +559,28 @@ impl FxState {
                 owner,
                 did,
                 now,
-                || Some(make_effect(record, now, &node)),
+                || make_effect(record, now, &node),
                 AttachSpec::default(),
             )
             .map(|(_, key)| key)
     }
 
-    /// A beam system's record landed: the system is created when its beam still runs.
+    /// Asks for the surface records of a beam's three materials (§11.1 steps 1, 6); once
+    /// loaded, their textures are acquired.
+    fn load_ribbon_materials(&mut self, materials: [Did; 3]) {
+        for did in materials {
+            if did.is_null() {
+                continue;
+            }
+            match self.data.cached_record(did.0) {
+                None => self.load(did.0),
+                Some(Some(record)) => self.note_texture(&record),
+                Some(None) => {}
+            }
+        }
+    }
+
+    /// A beam's system's record landed: the system is created when its beam still runs.
     pub(super) fn beam_system_loaded(
         &mut self,
         beam: u64,
@@ -559,6 +625,7 @@ impl FxState {
                 continue;
             }
             let n: &BeamNode = b.beam.node();
+            let materials = [n.tail_material, n.body_material, n.head_material];
             let src = self.owner_point(
                 b.source,
                 n.source_holding_location,
@@ -590,12 +657,18 @@ impl FxState {
                 continue;
             };
             let step = step_beam(manager, rng, b, ends, now, frame, env);
+            let drawn = b.ribbon.is_some();
             if step.arrived_now {
                 session.arrived.push(BeamHandle(h));
                 session.beam_arrivals += 1;
             }
             if step.removed {
                 session.finished.push(BeamHandle(h));
+            }
+            // Materials still loading (a load beyond the in-flight cap is asked again) or
+            // landed since the last frame: their textures are acquired before the draw.
+            if drawn {
+                self.load_ribbon_materials(materials);
             }
         }
     }
@@ -722,6 +795,9 @@ mod tests {
             last: 0.0,
             finished: false,
             frame: None,
+            ribbon: None,
+            head: None,
+            head_scale: Vec3::ONE,
         };
         let ends = BeamEnds {
             source: Some(Vec3::ZERO),
@@ -760,5 +836,118 @@ mod tests {
                 .component(owner)
                 .is_none_or(|c| c.attachments().is_empty())
         );
+    }
+
+    /// `particle-runtime.md` §11.1 step 3 with §6.1: a bone type's offset is in the bone's
+    /// space, a holding location's is added to its frame's translation (not rotated by it),
+    /// no point's is in the model's space; all then go through the owner's world frame.
+    #[test]
+    fn beam_end_offsets_follow_the_attachment_rules() {
+        use super::super::data::AttachPoints;
+        let turn = Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let points = AttachPoints {
+            holding: vec![(
+                7,
+                Some(0),
+                Mat4::from_rotation_translation(
+                    Quat::from_rotation_z(std::f32::consts::PI),
+                    Vec3::new(0.0, 0.0, 1.0),
+                ),
+            )],
+            bones: vec![(3, 0)],
+            reference: Vec::new(),
+        };
+        // Bone 0 one metre up, turned by a quarter turn about Z.
+        let model = [Mat4::from_translation(Vec3::Z) * turn];
+        let f = OwnerFrame {
+            world: Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)),
+            scale: Vec3::ONE,
+            model: &model,
+            points: Some(&points),
+            drawn: true,
+        };
+        let off = [1.0, 0.0, 0.0];
+        // Bone type: the offset turns with the bone.
+        let p = attach_point(&f, 0, 3, off, false);
+        assert!((p - Vec3::new(10.0, 1.0, 1.0)).length() < 1e-5, "{p:?}");
+        // Holding location: frame translation + offset, then the bone.
+        let p = attach_point(&f, 7, 0, off, false);
+        assert!((p - Vec3::new(10.0, 1.0, 2.0)).length() < 1e-5, "{p:?}");
+        // Neither: the offset in the model's space, through the owner's turn.
+        let turned = OwnerFrame {
+            world: Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)) * turn,
+            ..f
+        };
+        let p = attach_point(&turned, 0, 0, off, false);
+        assert!((p - Vec3::new(10.0, 1.0, 0.0)).length() < 1e-5, "{p:?}");
+        // A point the owner lacks, or the box centre, is the box centre with the offset.
+        let p = attach_point(&f, 0, 99, off, false);
+        assert!(
+            (p - Vec3::new(11.0, 0.0, BOX_CENTRE_HEIGHT)).length() < 1e-5,
+            "{p:?}"
+        );
+        let p = attach_point(&f, 7, 0, [f32::NAN; 3], true);
+        assert!(
+            (p - Vec3::new(10.0, 0.0, BOX_CENTRE_HEIGHT)).length() < 1e-5,
+            "{p:?}"
+        );
+    }
+
+    /// §11.1 steps 6 and 9: while the beam runs, its ribbon span and the head entity's
+    /// place are kept for the draw; once removed, neither.
+    #[test]
+    fn a_running_beam_keeps_its_ribbon_and_head_for_the_draw() {
+        let node = BeamNode {
+            color: [255; 4],
+            width: 0.2,
+            sustain: 0.5,
+            segment_size: 1.0,
+            head_speed: 20.0,
+            body_material: tessera_formats::Did(0x3100_0001),
+            head_entity: tessera_formats::Did(0x4700_0001),
+            ..BeamNode::default()
+        };
+        let mut rng = Ran2::new(5);
+        let mut manager = EffectManager::new();
+        let mut b = BeamRun {
+            beam: Beam::new(&node, 0.0, &mut rng),
+            source: EntityId(1),
+            target: Some(EntityId(2)),
+            owner: BEAM_OWNER_BASE | 2,
+            systems: [None, None],
+            last: 0.0,
+            finished: false,
+            frame: None,
+            ribbon: None,
+            head: None,
+            head_scale: Vec3::ONE,
+        };
+        let ends = BeamEnds {
+            source: Some(Vec3::ZERO),
+            source_forward: Vec3::Y,
+            target: Some(Vec3::new(10.0, 0.0, 0.0)),
+        };
+        let env = Environment::default();
+        let step = step_beam(&mut manager, &mut rng, &mut b, ends, 0.25, 1, &env);
+        assert!(!step.removed);
+        let span = b.ribbon.expect("the ribbon is drawn");
+        assert!((span.head.x - 5.0).abs() < 1e-3, "{span:?}");
+        let (at, rot) = b.head.expect("the head entity is shown");
+        assert!((at - span.head).length() < 1e-5);
+        assert!(
+            (rot * Vec3::Y - Vec3::X).length() < 1e-5,
+            "it looks along the beam"
+        );
+        let mut removed = false;
+        for f in 2..200u64 {
+            #[allow(clippy::cast_precision_loss)]
+            let now = 0.25 + f as f64 / 50.0;
+            if step_beam(&mut manager, &mut rng, &mut b, ends, now, f, &env).removed {
+                removed = true;
+                break;
+            }
+        }
+        assert!(removed, "the beam ends");
+        assert!(b.ribbon.is_none() && b.head.is_none());
     }
 }

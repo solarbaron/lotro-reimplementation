@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Beams (`particle-runtime.md` §11.1, rule 14): the envelope, the two ends with their random
 //! offsets and detach times, the head and tail fractions, the head's arrival (which fires the
-//! Beam node's port), the ribbon's segment layout and the spawn schedule of the beam and head
-//! particle systems.
+//! Beam node's port), the ribbon's segment layout and its camera-facing quads, the beam's frame
+//! (where the head entity stands and the systems are placed), the head entity's scale vector,
+//! and the spawn schedule of the beam and head particle systems.
 //!
 //! [`Beam`] is plain state over one Beam node's fields ([`BeamNode`]). The caller resolves the
 //! attachment points of the source and target entities each frame (as `particle-runtime.md`
 //! §6.1 attaches an effect) and hands them to [`Beam::update`]; the update returns what to do
-//! this frame: report the arrival, draw the ribbon, spawn particles. Simulating and drawing the
-//! two particle systems is [`crate::SystemSim`]'s work ([`crate::SystemSim::spawn_at`]).
+//! this frame: report the arrival, draw the ribbon, show the head entity, spawn particles. The
+//! ribbon's quads for a camera are [`ribbon_mesh`] with [`ribbon_colour`], drawn with the
+//! surfaces of the three materials; the head entity stands at the head point in
+//! [`beam_rotation`]. Simulating and drawing the two particle systems is
+//! [`crate::SystemSim`]'s work ([`crate::SystemSim::spawn_at`]).
 //!
 //! Times are seconds of the global clock (§3.1), lengths metres. Everything is bounded: at most
 //! [`MAX_BEAM_SPAWNS`] beam particles per update and [`MAX_RIBBON_SEGMENTS`] ribbon segments
 //! (rule 14); non-finite inputs never produce non-finite outputs.
 
-use glam::Vec3;
+use glam::{Mat3, Quat, Vec3};
 use tessera_formats::script_table::BeamNode;
 
 use crate::rng::Ran2;
@@ -549,11 +553,14 @@ impl Beam {
             if count >= 1.0 && count.is_finite() {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let k = (count as usize).min(MAX_BEAM_SPAWNS);
-                #[allow(clippy::cast_precision_loss)]
-                let step = delta / k as f64;
-                let mut time = self.last_beam_spawn;
-                for _ in 0..k {
-                    time += step;
+                // Spawn i of k at last + Δ × i / k (the time advances by Δ / k per spawn,
+                // formed without accumulating rounding); the last one is at last + Δ.
+                let base = self.last_beam_spawn;
+                let mut time = base;
+                for i in 1..=k {
+                    #[allow(clippy::cast_precision_loss)]
+                    let f = i as f64 / k as f64;
+                    time = base + delta * f;
                     let u = rng.range(0.0, 1.0);
                     out.beam_spawns.push((time, tail + (head - tail) * u));
                 }
@@ -577,6 +584,201 @@ impl Beam {
             }
         }
         out
+    }
+}
+
+/// A unit direction across the beam's `axis`, square to the direction `view` towards the eye
+/// (a camera-facing ribbon, §11.1 step 6); when the eye lies on the beam's line, any
+/// direction across the beam.
+fn across(axis: Vec3, view: Vec3) -> Vec3 {
+    let side = axis.cross(view);
+    if side.length_squared() > 1e-12 && side.is_finite() {
+        return side.normalize();
+    }
+    let side = axis.cross(Vec3::Z);
+    if side.length_squared() > 1e-12 && side.is_finite() {
+        return side.normalize();
+    }
+    let side = axis.cross(Vec3::X);
+    if side.length_squared() > 1e-12 && side.is_finite() {
+        side.normalize()
+    } else {
+        Vec3::X
+    }
+}
+
+/// The ribbon's colour (§11.1 step 6): `ColorAndOpacity` (stored bytes B, G, R, A,
+/// `property-system.md` §4.7) as red, green, blue, alpha in 0–1, the alpha multiplied by the
+/// envelope intensity `e`, each channel clamped to [0, 1].
+#[must_use]
+pub fn ribbon_colour(node: &BeamNode, e: f32) -> [f32; 4] {
+    let [b, g, r, a] = node.color.map(|c| f32::from(c) / 255.0);
+    let a = a * finite(e);
+    [r, g, b, a].map(|c| {
+        if c.is_finite() {
+            c.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    })
+}
+
+/// One corner of a ribbon quad.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RibbonVertex {
+    /// Position, in the frame of the span's points.
+    pub position: Vec3,
+    /// Texture coordinates: *u* along the beam, *v* across it.
+    pub uv: [f32; 2],
+}
+
+/// The quads of one ribbon part, four corners each in the order (start −side, start +side,
+/// end +side, end −side), so that (0, 1, 2) and (0, 2, 3) cover a quad.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RibbonQuads {
+    /// The corners.
+    pub vertices: Vec<RibbonVertex>,
+}
+
+/// The ribbon of one frame, by material part (§11.1 step 6).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RibbonMesh {
+    /// Segments with `TailMaterial`.
+    pub tail: RibbonQuads,
+    /// Segments with `BodyMaterial`.
+    pub body: RibbonQuads,
+    /// Segments with `HeadMaterial`.
+    pub head: RibbonQuads,
+}
+
+impl RibbonMesh {
+    /// The part of `part`.
+    #[must_use]
+    pub fn part(&self, part: RibbonPart) -> &RibbonQuads {
+        match part {
+            RibbonPart::Tail => &self.tail,
+            RibbonPart::Body => &self.body,
+            RibbonPart::Head => &self.head,
+        }
+    }
+
+    /// Whether no part has a quad.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tail.vertices.is_empty()
+            && self.body.vertices.is_empty()
+            && self.head.vertices.is_empty()
+    }
+}
+
+/// The camera-facing ribbon of a span (§11.1 step 6) seen from `eye`: the segments of
+/// [`ribbon_segments`] from the tail point to the head point, each a quad of width
+/// `BeamWidth` (half on each side of the beam's line) turned towards the eye. Texture
+/// coordinates: *v* runs 0 to 1 across the ribbon; *u* runs from 0 at each segment's start
+/// and grows by `TextureUScale` per `SegmentSize` along it, so a whole segment shows the
+/// texture `TextureUScale` times and a shorter last one a part of that (Tessera reading of
+/// "texture repeated by `TextureUScale`", `particle-runtime.md` §11.1 implementer OPEN).
+/// Empty when the span is not drawn (head before tail, shorter than [`MIN_DRAWN_LENGTH`]),
+/// the width is not positive or a value is not finite.
+#[must_use]
+pub fn ribbon_mesh(node: &BeamNode, span: &BeamSpan, eye: Vec3) -> RibbonMesh {
+    let mut out = RibbonMesh::default();
+    let ell = span.length();
+    let width = finite(node.width);
+    if !(width > 0.0) || !eye.is_finite() || !span.tail.is_finite() || !span.head.is_finite() {
+        return out;
+    }
+    let segments = ribbon_segments(node, ell);
+    if segments.is_empty() {
+        return out;
+    }
+    let axis = (span.head - span.tail) / ell;
+    if !axis.is_finite() {
+        return out;
+    }
+    let u_scale = finite(node.texture_u_scale);
+    let size = finite(node.segment_size);
+    let unit = if size > BEAM_EPSILON {
+        size.min(ell)
+    } else {
+        ell
+    };
+    let half = width * 0.5;
+    for seg in segments {
+        let a = span.tail + axis * seg.start;
+        let b = a + axis * seg.length;
+        let mid = (a + b) * 0.5;
+        let side = across(axis, eye - mid) * half;
+        let u1 = u_scale * seg.length / unit;
+        let u1 = if u1.is_finite() { u1 } else { 0.0 };
+        let quad = [
+            RibbonVertex {
+                position: a - side,
+                uv: [0.0, 0.0],
+            },
+            RibbonVertex {
+                position: a + side,
+                uv: [0.0, 1.0],
+            },
+            RibbonVertex {
+                position: b + side,
+                uv: [u1, 1.0],
+            },
+            RibbonVertex {
+                position: b - side,
+                uv: [u1, 0.0],
+            },
+        ];
+        if quad.iter().any(|v| !v.position.is_finite()) {
+            continue;
+        }
+        let part = match seg.part {
+            RibbonPart::Tail => &mut out.tail,
+            RibbonPart::Body => &mut out.body,
+            RibbonPart::Head => &mut out.head,
+        };
+        part.vertices.extend_from_slice(&quad);
+    }
+    out
+}
+
+/// The beam's frame (§11.1 step 9, also the frame its particle systems are placed in, step
+/// 8): forward (local +Y) along the beam from source to target, up (local +Z) from world up;
+/// when the beam is vertical, local +X is world +X. `None` for a beam without a direction.
+#[must_use]
+pub fn beam_rotation(source: Vec3, target: Vec3) -> Option<Quat> {
+    let d = target - source;
+    if !d.is_finite() || d.length_squared() <= 1e-12 {
+        return None;
+    }
+    let forward = d.normalize();
+    let mut right = forward.cross(Vec3::Z);
+    if right.length_squared() <= 1e-10 {
+        right = Vec3::X;
+    } else {
+        right = right.normalize();
+    }
+    let up = right.cross(forward).normalize();
+    let m = Mat3::from_cols(right, forward, up);
+    let q = Quat::from_mat3(&m);
+    q.is_finite().then(|| q.normalize())
+}
+
+/// The vector `HeadEntityScaleSource` selects from the source entity's render scale
+/// `source` (`setup.md` §5.2) for the head entity (§11.1 step 1, the Decision of Q-RT11):
+/// 1 the per-axis render scale, 3 and 4 the mean of its axes on every axis, other values
+/// (1, 1, 1). A scale that is not finite and positive counts as (1, 1, 1).
+#[must_use]
+pub fn head_scale_vector(scale_source: u32, source: Vec3) -> Vec3 {
+    let s = if source.is_finite() && source.min_element() > 0.0 {
+        source
+    } else {
+        Vec3::ONE
+    };
+    match scale_source {
+        1 => s,
+        3 | 4 => Vec3::splat(s.x / 3.0 + s.y / 3.0 + s.z / 3.0),
+        _ => Vec3::ONE,
     }
 }
 
@@ -790,5 +992,202 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert!((s[0].length - 1.5).abs() < 1e-6);
         assert!(ribbon_segments(&n, 0.05).is_empty());
+    }
+
+    /// `particle-runtime.md` §13 RT-I17.
+    #[test]
+    fn rt_i17_head_fraction_and_arrival() {
+        let n = BeamNode {
+            head_start: 0.0,
+            head_start_time: 0.0,
+            head_speed: 40.0,
+            ..node()
+        };
+        let mut rng = Ran2::new(2);
+        let mut b = Beam::new(&n, 0.0, &mut rng);
+        let target = Vec3::new(12.0, 0.0, 0.0);
+        let u = b.update(0.15, 0.15, ends(target), false, false, &mut rng);
+        let span = u.span.expect("span");
+        assert!((span.head.x - 6.0).abs() < 1e-4, "h = 0.5: {:?}", span.head);
+        assert!(!u.arrived_now);
+        let u = b.update(0.2999, 0.1499, ends(target), false, false, &mut rng);
+        assert!(!u.arrived_now, "0.2999 s is before 0.29994 s");
+        let u = b.update(
+            0.2995 + 0.0005,
+            0.0001,
+            ends(target),
+            false,
+            false,
+            &mut rng,
+        );
+        assert!(u.arrived_now, "arrives at the first update past 0.29994 s");
+        let u = b.update(0.4, 0.1, ends(target), false, false, &mut rng);
+        assert!(!u.arrived_now, "the port fires once");
+    }
+
+    /// `particle-runtime.md` §13 RT-I18.
+    #[test]
+    fn rt_i18_beam_particles_per_update_and_catch_up() {
+        let n = BeamNode {
+            head_start: 1.0,
+            head_speed: 0.0,
+            sustain: 100.0,
+            segment_size: 1.0,
+            beam_particles_per_second: 10,
+            ..node()
+        };
+        let mut rng = Ran2::new(4);
+        let mut b = Beam::new(&n, 0.0, &mut rng);
+        let target = Vec3::new(6.0, 0.0, 0.0);
+        // Updates 0.05 s apart (plus 1 ns: an interval of exactly 0.05 s in binary floating
+        // point lands on either side of the floor's step, 3 or 2 particles).
+        let mut last = 0.0f64;
+        for k in 1..=8u32 {
+            let now = f64::from(k) * 0.050_000_001;
+            #[allow(clippy::cast_possible_truncation)]
+            let u = b.update(
+                now,
+                (now - last) as f32,
+                ends(target),
+                true,
+                false,
+                &mut rng,
+            );
+            last = now;
+            assert_eq!(u.beam_spawns.len(), 3, "update {k}");
+            for w in u.beam_spawns.windows(2) {
+                assert!((w[1].0 - w[0].0 - 1.0 / 60.0).abs() < 1e-9);
+            }
+            for (_, p) in &u.beam_spawns {
+                assert!(p.x >= 0.0 && p.x <= 6.0 && p.y == 0.0 && p.z == 0.0);
+            }
+        }
+        // After a 2 s pause the interval counts as 0.1 s: ⌊6 × 10 × 0.1⌋ = 6.
+        let u = b.update(last + 2.0, 2.0, ends(target), true, false, &mut rng);
+        assert_eq!(u.beam_spawns.len(), 6);
+    }
+
+    /// `particle-runtime.md` §13 RT-I19.
+    #[test]
+    fn rt_i19_stop_during_ramp_in_fades_from_the_current_level() {
+        let n = BeamNode {
+            ramp_in: 0.5,
+            sustain: 1.0,
+            ramp_out: 0.25,
+            persistent: false,
+            ..node()
+        };
+        let mut e = Envelope::new(&n);
+        for _ in 0..4 {
+            e.update(0.05);
+        }
+        assert!((e.elapsed - 0.2).abs() < 1e-6);
+        e.stop();
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            e.update(0.05);
+            seen.push(e.intensity);
+        }
+        assert!((seen[0] - 0.4).abs() < 1e-5, "{seen:?}");
+        assert!((seen[1] - 0.2).abs() < 1e-5, "{seen:?}");
+        assert!(seen[2].abs() < 1e-5, "{seen:?}");
+        assert_eq!(e.phase, EnvelopePhase::Done);
+    }
+
+    #[test]
+    fn the_ribbon_faces_the_eye_and_keeps_its_parts() {
+        let n = BeamNode {
+            width: 0.5,
+            segment_size: 2.0,
+            tail_segments: 1,
+            head_segments: 1,
+            texture_u_scale: 2.0,
+            ..node()
+        };
+        let span = BeamSpan {
+            tail: Vec3::ZERO,
+            head: Vec3::new(7.0, 0.0, 0.0),
+            source: Vec3::ZERO,
+            target: Vec3::new(7.0, 0.0, 0.0),
+            intensity: 1.0,
+        };
+        let eye = Vec3::new(3.5, -10.0, 0.0);
+        let mesh = ribbon_mesh(&n, &span, eye);
+        assert_eq!(mesh.tail.vertices.len(), 4);
+        assert_eq!(mesh.body.vertices.len(), 8);
+        assert_eq!(mesh.head.vertices.len(), 4);
+        for part in [&mesh.tail, &mesh.body, &mesh.head] {
+            for q in part.vertices.chunks(4) {
+                // Seen from −Y the ribbon spreads along ±Z, 0.5 m wide.
+                assert!(
+                    (q[1].position - q[0].position - Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5
+                        || (q[0].position - q[1].position - Vec3::new(0.0, 0.0, 0.5)).length()
+                            < 1e-5
+                );
+                assert!(q.iter().all(|v| v.position.y.abs() < 1e-6));
+            }
+        }
+        // A whole segment repeats the texture `TextureUScale` times, the short last body
+        // segment (1 m of 2) half of that.
+        assert!((mesh.tail.vertices[2].uv[0] - 2.0).abs() < 1e-6);
+        assert!((mesh.body.vertices[6].uv[0] - 1.0).abs() < 1e-6);
+        // Head ends at the head point.
+        assert!((mesh.head.vertices[2].position.x - 7.0).abs() < 1e-5);
+        // Not drawn: head before tail is the caller's test; too short, no width.
+        let short = BeamSpan {
+            head: Vec3::new(0.05, 0.0, 0.0),
+            ..span
+        };
+        assert!(ribbon_mesh(&n, &short, eye).is_empty());
+        assert!(
+            ribbon_mesh(
+                &BeamNode {
+                    width: 0.0,
+                    ..n.clone()
+                },
+                &span,
+                eye
+            )
+            .is_empty()
+        );
+        // The eye on the beam's line still gives a ribbon.
+        assert!(!ribbon_mesh(&n, &span, Vec3::new(-5.0, 0.0, 0.0)).is_empty());
+    }
+
+    #[test]
+    fn ribbon_colour_reads_blue_green_red_alpha_and_scales_alpha() {
+        let n = BeamNode {
+            color: [10, 20, 255, 200],
+            ..node()
+        };
+        let c = ribbon_colour(&n, 0.5);
+        assert!((c[0] - 1.0).abs() < 1e-6);
+        assert!((c[2] - 10.0 / 255.0).abs() < 1e-6);
+        assert!((c[3] - 100.0 / 255.0).abs() < 1e-6);
+        assert_eq!(ribbon_colour(&n, f32::NAN)[3], 0.0);
+        assert_eq!(ribbon_colour(&n, 9.0)[3], 1.0);
+    }
+
+    #[test]
+    fn the_beam_frame_looks_along_the_beam_with_world_up() {
+        let q = beam_rotation(Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0)).expect("frame");
+        assert!((q * Vec3::Y - Vec3::X).length() < 1e-5);
+        assert!((q * Vec3::Z - Vec3::Z).length() < 1e-5);
+        let q = beam_rotation(Vec3::ZERO, Vec3::new(0.0, 0.0, -3.0)).expect("vertical");
+        assert!((q * Vec3::Y + Vec3::Z).length() < 1e-5);
+        assert!(q.is_finite());
+        assert!(beam_rotation(Vec3::ONE, Vec3::ONE).is_none());
+        assert!(beam_rotation(Vec3::ZERO, Vec3::splat(f32::NAN)).is_none());
+    }
+
+    #[test]
+    fn head_scale_follows_the_scale_source() {
+        let s = Vec3::new(1.0, 2.0, 3.0);
+        assert_eq!(head_scale_vector(1, s), s);
+        assert!((head_scale_vector(3, s) - Vec3::splat(2.0)).length() < 1e-6);
+        assert!((head_scale_vector(4, s) - Vec3::splat(2.0)).length() < 1e-6);
+        assert!(head_scale_vector(3, Vec3::splat(f32::MAX)).is_finite());
+        assert_eq!(head_scale_vector(2, s), Vec3::ONE);
+        assert_eq!(head_scale_vector(1, Vec3::new(0.0, 1.0, 1.0)), Vec3::ONE);
     }
 }

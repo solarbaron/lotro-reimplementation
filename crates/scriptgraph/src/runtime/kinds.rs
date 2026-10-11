@@ -1782,6 +1782,11 @@ impl Runtime<'_> {
                 .copied()
         };
         if target.is_none() && !b.use_target_position {
+            tracing::debug!(
+                node = n.base.node_id,
+                targets = n.targets.len(),
+                "beam: no target entity; no beam"
+            );
             return false;
         }
         let request = BeamStart {

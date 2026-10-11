@@ -40,8 +40,10 @@
 //! Session figures (scenario and test-server actors, the player) are owners too, spawned by
 //! the combat layer ([`session`]): the combat scripts run on them, their animation nodes
 //! play clips on the figure, their StoryHook and Execute nodes reach the combat layer, and
-//! Beam nodes make beams (`particle-runtime.md` §11.1: envelope, ends, head arrival and the
-//! beam and head particle systems; the ribbon and the head entity are not drawn yet).
+//! Beam nodes make beams (`particle-runtime.md` §11.1: envelope, ends, head arrival, the
+//! beam and head particle systems, the ribbon drawn with its materials' surfaces before the
+//! systems ([`EffectLayer::draw`]), and the head entity drawn through the object layer's
+//! instanced models ([`EffectLayer::update_heads`], [`EffectLayer::draw_heads`])).
 //!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
 //! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are drawn after the
@@ -66,6 +68,7 @@ use tessera_formats::Did;
 use tessera_formats::gameplay::particles::ParticleSystem;
 use tessera_formats::script_table::ParticleScriptNode;
 use tessera_material::MaterialLibrary;
+use tessera_particles::beam::{RibbonPart, ribbon_colour, ribbon_mesh};
 use tessera_particles::glam::{Mat4, Vec3};
 use tessera_particles::runtime::{
     AttachSpec, EffectHandle, GateOptions, OwnerRole, attachment_matrix, dropped_frame,
@@ -76,17 +79,22 @@ use tessera_particles::{
     AttachmentSource, CameraView, Classification, Effect, EffectManager, Environment, ForkEffect,
     ParticleNode, Placement, Ran2, SystemSim, classify_fork, classify_system, draw_order,
 };
-use tessera_render::{ParticleDraw, ParticleVertex, Pass, TextureId};
+use tessera_render::{
+    Instance as GpuInstance, InstanceBatch, ParticleDraw, ParticleVertex, Pass, TextureId,
+};
 use tessera_scriptgraph::{
     EffectSink, EntityId, EnvironmentHandle, EnvironmentRequest, ParticleHandle, ParticleStart,
     Runtime as GraphRuntime, RuntimeVocabulary, SoundHandle, SoundStart, SoundStartOutcome,
 };
 use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
 
-use self::data::{BlockScan, EffectData, EffectOwner, EffectRecord, EffectSource, OwnerKind};
+use self::data::{
+    BlockScan, EffectData, EffectOwner, EffectRecord, EffectSource, OwnerKind, SurfaceLook,
+};
 use super::characters::{CharacterLayer, FigureEffectView};
 use super::geometry::TexRequest;
 use super::objects::{ObjectLayer, TexLookup};
+use super::resolver::{ObjectAnswer, Resolver};
 use super::view::Anchor;
 
 /// Landblocks scanned around the viewer (Chebyshev radius).
@@ -197,6 +205,16 @@ pub struct EffectStats {
     pub beams_started: u64,
     /// Beam heads that arrived (their node's port fired).
     pub beam_arrivals: u64,
+    /// Beam ribbons drawn in the last frame (`particle-runtime.md` §11.1 step 6).
+    pub beam_ribbons_drawn: usize,
+    /// The most beam ribbons drawn in one frame so far.
+    pub max_beam_ribbons_drawn: usize,
+    /// Ribbon vertices drawn in the last frame.
+    pub beam_ribbon_vertices: usize,
+    /// Beam head entities drawn in the last frame (step 9).
+    pub beam_heads_drawn: usize,
+    /// The most beam head entities drawn in one frame so far.
+    pub max_beam_heads_drawn: usize,
     /// StoryHook nodes that ran on any owner, and those of them whose run had a story.
     pub story_hooks: [u64; 2],
 }
@@ -317,24 +335,202 @@ fn attach_spec(p: &ParticleScriptNode, points: Option<&data::AttachPoints>) -> O
     })
 }
 
-/// The effect of a loaded record, created at `now`.
-fn make_effect(record: &EffectRecord, now: f64, node: &ParticleScriptNode) -> Effect {
+/// The effect of a loaded record, created at `now` (`None` for a surface record, which is
+/// no effect).
+fn make_effect(record: &EffectRecord, now: f64, node: &ParticleScriptNode) -> Option<Effect> {
     match record {
         EffectRecord::Particles { desc, .. } => {
-            Effect::Particles(SystemSim::new(Arc::clone(desc), now))
+            Some(Effect::Particles(SystemSim::new(Arc::clone(desc), now)))
         }
-        EffectRecord::Fork(f) => {
-            Effect::Fork(ForkEffect::new(f, now, node_of(node, None).fork_fade()))
+        EffectRecord::Fork(f) => Some(Effect::Fork(ForkEffect::new(
+            f,
+            now,
+            node_of(node, None).fork_fade(),
+        ))),
+        EffectRecord::Surface(_) => None,
+    }
+}
+
+/// The classification of a record (§5.3; `None` for a surface record).
+fn classify(record: &EffectRecord) -> Option<Classification> {
+    match record {
+        EffectRecord::Particles { desc, .. } => Some(classify_system(desc).0),
+        EffectRecord::Fork(f) => Some(classify_fork(f)),
+        EffectRecord::Surface(_) => None,
+    }
+}
+
+/// Most distinct beam head entities the layer keeps models of.
+pub const MAX_HEAD_MODELS: usize = 256;
+
+/// A beam head entity as the layer draws it (`particle-runtime.md` §11.1 steps 1, 9).
+#[derive(Debug, Clone)]
+struct HeadModel {
+    /// Its part meshes.
+    parts: Arc<[Did]>,
+    /// `Render_Color` and `Render_Opacity` along its chain (white and 1 when absent).
+    tint: [f32; 4],
+    /// Its own `Render_AdjustableScale` ((1, 1, 1) when absent).
+    scale: Vec3,
+    /// It has parts and is not suppressed (`entity-descriptor.md` §9).
+    drawn: bool,
+}
+
+impl HeadModel {
+    fn of(a: &ObjectAnswer) -> Self {
+        let [r, g, b] = a.colour.map_or([1.0; 3], |[b, g, r, _]| {
+            [r, g, b].map(|c| f32::from(c) / 255.0)
+        });
+        let alpha = a
+            .opacity
+            .filter(|v| v.is_finite())
+            .map_or(1.0, |v| v.clamp(0.0, 1.0));
+        let scale = a.scale.map_or(Vec3::ONE, Vec3::from_array);
+        Self {
+            parts: Arc::clone(&a.parts),
+            tint: [r, g, b, alpha],
+            scale: if scale.is_finite() && scale.min_element() > 0.0 {
+                scale
+            } else {
+                Vec3::ONE
+            },
+            drawn: !a.parts.is_empty() && !a.draw.suppressed(),
         }
     }
 }
 
-/// The classification of a record (§5.3).
-fn classify(record: &EffectRecord) -> Classification {
-    match record {
-        EffectRecord::Particles { desc, .. } => classify_system(desc).0,
-        EffectRecord::Fork(f) => classify_fork(f),
+/// The alpha mode and texture matrices of a draw of `look` (surface record `surface`) at
+/// `now`: the alpha-test reference and the texture matrices at the material clock when
+/// their curves are not constant (`particle-runtime.md` §9.1.1 (d), (e)), with the states
+/// of the surface record (rule 12) and mode 3 from the shared stream.
+fn look_at(
+    look: &SurfaceLook,
+    surface: u32,
+    now: f64,
+    states: &mut HashMap<u32, tessera_material::CurveStates>,
+    rng: &mut Ran2,
+) -> (tessera_render::AlphaMode, [tessera_render::UvTransform; 2]) {
+    match &look.clock {
+        None => (look.alpha, look.uv),
+        Some(c) => {
+            if states.len() >= MAX_SURFACE_STATES && !states.contains_key(&surface) {
+                c.at(now, &mut tessera_material::CurveStates::new(), rng)
+            } else {
+                c.at(now, states.entry(surface).or_default(), rng)
+            }
+        }
     }
+}
+
+/// The GPU textures of `look`; `None` (and `pending` counted) while one is still loading.
+fn look_textures(
+    look: &SurfaceLook,
+    objects: &ObjectLayer,
+    pending: &mut usize,
+) -> Option<(Option<TextureId>, Option<TextureId>)> {
+    let mut waiting = false;
+    let mut lookup = |t: &Option<_>| match t.map(|t| objects.texture(t)) {
+        None | Some(TexLookup::Failed) => None,
+        Some(TexLookup::Ready(id)) => Some(id),
+        Some(TexLookup::Pending) => {
+            waiting = true;
+            None
+        }
+    };
+    let tex = lookup(&look.texture);
+    let tex2 = lookup(&look.second_texture);
+    if waiting {
+        *pending += 1;
+        return None;
+    }
+    Some((tex, tex2))
+}
+
+/// Queues the ribbons of the beams drawn this frame (`particle-runtime.md` §11.1 step 6):
+/// camera-facing quads seen from `eye` (sim frame), coloured by `ColorAndOpacity` with its
+/// alpha × the envelope, each part with the look of its material's surface record through
+/// the particle pipeline (Tessera reading, §11.1 implementer OPEN), a part whose material
+/// is 0, missing or not loaded yet left out. Returns (ribbons with a part drawn, vertices).
+fn draw_ribbons(
+    st: &mut FxState,
+    pass: &mut Pass,
+    objects: &ObjectLayer,
+    eye: Vec3,
+    shift: Vec3,
+    pending: &mut usize,
+) -> (usize, usize) {
+    let FxState {
+        data,
+        session,
+        surface_states,
+        rng,
+        now,
+        ..
+    } = st;
+    let mut beams: Vec<(&u64, &session::BeamRun)> = session
+        .beams
+        .iter()
+        .filter(|(_, b)| b.ribbon.is_some())
+        .collect();
+    // Creation order (handles grow), so that equal draws keep one order frame to frame.
+    beams.sort_by_key(|(h, _)| **h);
+    let (mut ribbons, mut vertices) = (0usize, 0usize);
+    for (_, b) in beams {
+        let Some(span) = b.ribbon else { continue };
+        let node = b.node();
+        let mesh = ribbon_mesh(node, &span, eye);
+        if mesh.is_empty() {
+            continue;
+        }
+        let colour = ribbon_colour(node, span.intensity);
+        let mut any = false;
+        for (part, material) in [
+            (RibbonPart::Tail, node.tail_material),
+            (RibbonPart::Body, node.body_material),
+            (RibbonPart::Head, node.head_material),
+        ] {
+            let quads = mesh.part(part);
+            if quads.vertices.is_empty() || material.is_null() {
+                continue;
+            }
+            let Some(Some(record)) = data.cached_record(material.0) else {
+                continue;
+            };
+            let EffectRecord::Surface(look) = &*record else {
+                continue;
+            };
+            if !look.drawable {
+                continue;
+            }
+            let (alpha, uv) = look_at(look, material.0, *now, surface_states, rng);
+            let Some((tex, tex2)) = look_textures(look, objects, pending) else {
+                continue;
+            };
+            vertices += quads.vertices.len();
+            any = true;
+            pass.particles(ParticleDraw {
+                vertices: quads
+                    .vertices
+                    .iter()
+                    .map(|v| ParticleVertex {
+                        position: (v.position + shift).to_array(),
+                        color: colour,
+                        uv: v.uv,
+                    })
+                    .collect(),
+                quad_vertices: quads.vertices.len(),
+                texture: tex,
+                alpha,
+                tint: [1.0; 4],
+                material: look.material,
+                shading: look.shading,
+                second_texture: tex2,
+                uv,
+            });
+        }
+        ribbons += usize::from(any);
+    }
+    (ribbons, vertices)
 }
 
 /// Why a session figure is not spawned in the runtime ([`EffectLayer::session_entity`]).
@@ -512,16 +708,13 @@ impl FxState {
     }
 
     fn note_texture(&mut self, record: &EffectRecord) {
-        if let EffectRecord::Particles {
-            texture,
-            second_texture,
-            ..
-        } = record
-        {
-            for t in texture.iter().chain(second_texture) {
-                if self.textures.insert(*t) {
-                    self.new_textures.push(*t);
-                }
+        let look = match record {
+            EffectRecord::Particles { look, .. } | EffectRecord::Surface(look) => look,
+            EffectRecord::Fork(_) => return,
+        };
+        for t in look.textures() {
+            if self.textures.insert(t) {
+                self.new_textures.push(t);
             }
         }
     }
@@ -556,12 +749,7 @@ impl FxState {
         self.note_texture(record);
         if self
             .manager
-            .serve(
-                owner.0,
-                handle,
-                || Some(make_effect(record, now, &node)),
-                spec,
-            )
+            .serve(owner.0, handle, || make_effect(record, now, &node), spec)
             .is_none()
         {
             tracing::trace!(
@@ -670,7 +858,10 @@ impl FxState {
         class: Classification,
     ) {
         self.note_texture(record);
-        let effect = make_effect(record, self.now, &ParticleScriptNode::default());
+        let Some(effect) = make_effect(record, self.now, &ParticleScriptNode::default()) else {
+            self.refused += 1;
+            return;
+        };
         self.manager
             .drop_effect(did, effect, placement, class, self.now);
     }
@@ -735,7 +926,7 @@ impl EffectSink for Sink<'_> {
 
     fn classify_particle(&mut self, effect: Did) -> Option<bool> {
         let r = self.st.data.cached_record(effect.0).flatten()?;
-        Some(classify(&r).stored_byte())
+        Some(classify(&r)?.stored_byte())
     }
 
     fn start_particle(&mut self, request: &ParticleStart) -> Option<ParticleHandle> {
@@ -891,6 +1082,10 @@ pub struct EffectLayer {
     time: f64,
     problem: Option<String>,
     stats: EffectStats,
+    /// Beam head entities by DID ([`EffectLayer::update_heads`]).
+    heads: HashMap<Did, HeadModel>,
+    /// Parts referenced in the object layer for head entities.
+    head_parts: HashSet<u32>,
 }
 
 impl std::fmt::Debug for EffectLayer {
@@ -956,6 +1151,8 @@ impl EffectLayer {
             time: 0.0,
             problem,
             stats: EffectStats::default(),
+            heads: HashMap::new(),
+            head_parts: HashSet::new(),
         }
     }
 
@@ -1512,7 +1709,8 @@ impl EffectLayer {
     }
 
     /// Queues the particle draws of the systems placed this frame into `pass` (module docs,
-    /// step 3), for a camera at `eye` (render frame) looking along `dir`.
+    /// step 3), for a camera at `eye` (render frame) looking along `dir`; the ribbons of the
+    /// beams drawn this frame (`particle-runtime.md` §11.1 step 6) come first.
     pub fn draw(
         &mut self,
         pass: &mut Pass,
@@ -1540,6 +1738,8 @@ impl EffectLayer {
         let now = st.now;
         let frame = st.frame;
         let session_systems = st.session_systems();
+        let mut pending = 0usize;
+        let ribbons = draw_ribbons(st, pass, objects, cam_eye, shift, &mut pending);
         let FxState {
             manager,
             rng,
@@ -1549,7 +1749,6 @@ impl EffectLayer {
         } = st;
         let mut drawn = Vec::new();
         let mut live = 0usize;
-        let mut pending = 0usize;
         for (key, effect) in manager.effects_mut() {
             let Some(sim) = effect.particles_mut() else {
                 continue;
@@ -1590,53 +1789,16 @@ impl EffectLayer {
             let Some(Some(record)) = data.cached_record(did) else {
                 continue;
             };
-            let EffectRecord::Particles {
-                texture,
-                second_texture,
-                alpha,
-                shading,
-                material,
-                uv,
-                clock,
-                drawable,
-                ..
-            } = &*record
-            else {
+            let EffectRecord::Particles { look, .. } = &*record else {
                 continue;
             };
-            if !drawable {
+            if !look.drawable {
                 continue;
             }
-            // The alpha-test reference and the texture matrices at the material clock when
-            // their curves are not constant (`particle-runtime.md` §9.1.1 (d), (e)), with
-            // the states of the surface record (rule 12) and mode 3 from the shared stream.
-            let (alpha, uv) = match clock {
-                None => (*alpha, *uv),
-                Some(c) => {
-                    if surface_states.len() >= MAX_SURFACE_STATES
-                        && !surface_states.contains_key(surface)
-                    {
-                        c.at(now, &mut tessera_material::CurveStates::new(), rng)
-                    } else {
-                        c.at(now, surface_states.entry(*surface).or_default(), rng)
-                    }
-                }
-            };
-            let mut waiting = false;
-            let mut lookup = |t: &Option<_>| match t.map(|t| objects.texture(t)) {
-                None | Some(TexLookup::Failed) => None,
-                Some(TexLookup::Ready(id)) => Some(id),
-                Some(TexLookup::Pending) => {
-                    waiting = true;
-                    None
-                }
-            };
-            let tex: Option<TextureId> = lookup(texture);
-            let tex2: Option<TextureId> = lookup(second_texture);
-            if waiting {
-                pending += 1;
+            let (alpha, uv) = look_at(look, *surface, now, surface_states, rng);
+            let Some((tex, tex2)) = look_textures(look, objects, &mut pending) else {
                 continue;
-            }
+            };
             systems += 1;
             session_drawn += usize::from(from_session);
             for inst in &d.instances {
@@ -1661,8 +1823,8 @@ impl EffectLayer {
                     texture: tex,
                     alpha,
                     tint: [1.0, 1.0, 1.0, inst.opacity],
-                    material: *material,
-                    shading: *shading,
+                    material: look.material,
+                    shading: look.shading,
                     second_texture: tex2,
                     uv,
                 });
@@ -1670,9 +1832,9 @@ impl EffectLayer {
         }
         self.stats.live_particles = live;
         self.stats.drawn_systems = systems;
-        self.stats.drawn_vertices = vertices;
-        self.stats.max_drawn_vertices = self.stats.max_drawn_vertices.max(vertices);
-        if vertices > 0 {
+        self.stats.drawn_vertices = vertices + ribbons.1;
+        self.stats.max_drawn_vertices = self.stats.max_drawn_vertices.max(vertices + ribbons.1);
+        if vertices + ribbons.1 > 0 {
             self.stats.frames_with_particles += 1;
         }
         self.stats.textures_pending = pending;
@@ -1680,7 +1842,113 @@ impl EffectLayer {
         self.stats.session_drawn_vertices = session_vertices;
         self.stats.max_session_drawn_vertices =
             self.stats.max_session_drawn_vertices.max(session_vertices);
+        self.stats.beam_ribbons_drawn = ribbons.0;
+        self.stats.max_beam_ribbons_drawn = self.stats.max_beam_ribbons_drawn.max(ribbons.0);
+        self.stats.beam_ribbon_vertices = ribbons.1;
         self.stats.update_ms += t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    /// Resolves the head entities of the live beams (`particle-runtime.md` §11.1 step 1)
+    /// through the walker's resolver and references their parts in the object layer, where
+    /// they load like sky objects. At most [`MAX_HEAD_MODELS`] distinct head entities are
+    /// kept (the data names 109); their parts stay referenced for the layer's life.
+    pub(crate) fn update_heads(&mut self, resolver: &mut Resolver, objects: &mut ObjectLayer) {
+        let Some(st) = self.st.as_ref() else {
+            return;
+        };
+        let wanted: HashSet<Did> = st
+            .session
+            .beams
+            .values()
+            .map(|b| b.node().head_entity)
+            .filter(|d| !d.is_null())
+            .collect();
+        let mut new_parts = Vec::new();
+        for did in wanted {
+            if self.heads.contains_key(&did) || self.heads.len() >= MAX_HEAD_MODELS {
+                continue;
+            }
+            let Some(answer) = resolver.object(did) else {
+                continue;
+            };
+            let model = HeadModel::of(&answer);
+            if model.drawn {
+                for p in model.parts.iter() {
+                    if self.head_parts.insert(p.0) {
+                        new_parts.push(p.0);
+                    }
+                }
+            } else {
+                tracing::debug!(%did, "beam head entity has no drawn geometry");
+            }
+            self.heads.insert(did, model);
+        }
+        if !new_parts.is_empty() {
+            objects.acquire_model_parts(&new_parts);
+        }
+    }
+
+    /// Queues the head entities of the beams that show one this frame (`particle-runtime.md`
+    /// §11.1 step 9) on `pass`: at the head point, turned along the beam, scaled by the
+    /// entity's `Render_AdjustableScale` times the vector its `HeadEntityScaleSource`
+    /// selected, tinted by its `Render_Color` and `Render_Opacity` (`material.md` §8.3),
+    /// through the object layer's instanced models (one batch per part). Returns the heads
+    /// drawn.
+    pub(crate) fn draw_heads(
+        &mut self,
+        pass: &mut Pass,
+        anchor: &Anchor,
+        objects: &mut ObjectLayer,
+    ) -> usize {
+        let Some(st) = self.st.as_ref() else {
+            return 0;
+        };
+        if anchor.region != st.region {
+            return 0;
+        }
+        let origin = anchor.origin();
+        let shift = Vec3::new(
+            (st.base[0] - origin[0]) as f32,
+            (st.base[1] - origin[1]) as f32,
+            0.0,
+        );
+        let mut batches: HashMap<u32, Vec<GpuInstance>> = HashMap::new();
+        let mut heads = 0usize;
+        for b in st.session.beams.values() {
+            let Some((point, rot)) = b.head else {
+                continue;
+            };
+            let Some(model) = self.heads.get(&b.node().head_entity).filter(|m| m.drawn) else {
+                continue;
+            };
+            let scale = model.scale * b.head_scale;
+            let m = Mat4::from_scale_rotation_translation(scale, rot, point + shift);
+            if !m.is_finite() {
+                continue;
+            }
+            let mut any = false;
+            for p in model.parts.iter() {
+                if objects.model(p.0, 0).is_none() {
+                    continue;
+                }
+                let mut i = GpuInstance::new(m);
+                i.tint = model.tint;
+                batches.entry(p.0).or_default().push(i);
+                any = true;
+            }
+            heads += usize::from(any);
+        }
+        for (part, list) in batches {
+            let Some(model) = objects.model(part, 0).cloned() else {
+                continue;
+            };
+            let mut batch = InstanceBatch::new(model, list);
+            batch.uv = objects.animated_uv(part, 0);
+            pass.instanced(batch);
+        }
+        self.stats.beam_heads_drawn = heads;
+        self.stats.max_beam_heads_drawn = self.stats.max_beam_heads_drawn.max(heads);
+        heads
     }
 
     // ----- session figures and their scripts (`session`) -----
@@ -1914,6 +2182,27 @@ impl EffectLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `particle-runtime.md` §11.1 steps 1 and 9: the head entity's own scale, tint and
+    /// suppression.
+    #[test]
+    fn head_models_take_scale_tint_and_suppression() {
+        let mut a = ObjectAnswer::failed();
+        a.parts = Arc::from(vec![Did(0x0100_0001)]);
+        a.colour = Some([0, 128, 255, 255]);
+        a.opacity = Some(2.0);
+        a.scale = Some([2.0, 2.0, 3.0]);
+        let m = HeadModel::of(&a);
+        assert!(m.drawn);
+        assert_eq!(m.scale, Vec3::new(2.0, 2.0, 3.0));
+        assert!((m.tint[0] - 1.0).abs() < 1e-6 && m.tint[2] == 0.0 && m.tint[3] == 1.0);
+        a.scale = Some([f32::NAN, 1.0, 1.0]);
+        a.draw.render_draw = Some(false);
+        let m = HeadModel::of(&a);
+        assert_eq!(m.scale, Vec3::ONE);
+        assert!(!m.drawn, "a suppressed head entity is not drawn");
+        assert!(!HeadModel::of(&ObjectAnswer::failed()).drawn);
+    }
 
     fn points() -> data::AttachPoints {
         data::AttachPoints {

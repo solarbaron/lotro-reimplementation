@@ -118,6 +118,9 @@ impl<S: RecordSource> SelectorResolver for GameDataResolver<S> {
     }
 
     fn enum_value(&mut self, context: LabelContext, label: &str) -> Option<u32> {
+        if context == LabelContext::NpcAction {
+            return npc_action_key(&self.store, label);
+        }
         self.store.enum_value(convert_context(context)?, label)
     }
 
@@ -392,6 +395,25 @@ pub fn convert_outcome(o: gd::CandidateOutcome) -> CandidateOutcome {
             .filter_map(|(a, label)| Some((attribute_from_data(a)?, label)))
             .collect(),
     }
+}
+
+/// The key of NPC action label `label` (`@Name` or `Name`): the label's key in the enum
+/// mapper the property dictionary names for `ActionPickerUI_Action`, or in its base chain
+/// (`scenario-feed.md` §8.6 P3 revision, context `NpcAction`; `npc-windows.md` §5.3).
+/// `None` for an unknown label or when the dictionary or mapper cannot be read.
+pub fn npc_action_key<S: RecordSource>(store: &gd::GameDataStore<S>, label: &str) -> Option<u32> {
+    let data = store.object_store().game_data();
+    let registry = data.registry().ok()?;
+    let pid = registry.pid("ActionPickerUI_Action")?;
+    let tessera_props::EnumSource::Mapper(start) = registry.enum_source(pid)? else {
+        return None;
+    };
+    let name = label.strip_prefix('@').unwrap_or(label);
+    tessera_formats::EnumMapper::key_in_chain_from(
+        start,
+        |d| data.enum_mapper(d).ok().flatten(),
+        name,
+    )
 }
 
 /// The data layer's label context for a scenario label context.

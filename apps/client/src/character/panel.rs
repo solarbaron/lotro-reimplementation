@@ -22,8 +22,8 @@
 //!   original's format is not given; `character-panels.md` §3.2 OPEN added by this
 //!   implementer); an unknown value shows an empty text. The `PropertyDisplay` elements are
 //!   created as text elements (the UI's fallback widget for that game type draws no text;
-//!   the type is registered as text when the character panel first opens, after the HUD
-//!   panels P4 and P5 were built, which keep their fallback).
+//!   the UI host registers the type as text at start for the HUD frames P4 and P5,
+//!   `combat-ui.md` §4.1, and the panel registers it again when it first opens).
 //! - Stat rows (§3.4 rule): a vital row shows "current / max" of the reported vital; a
 //!   rating row the player's last reported value of the property its
 //!   `UIComponent_CombatPointsDisplay_StatProperty` (or `…_CombatPercentDisplay_…`) names,

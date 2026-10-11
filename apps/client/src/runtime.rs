@@ -102,9 +102,20 @@ pub struct Runtime {
     pub p1: crate::character::CharacterHub,
     /// Whether the P1 facts are loaded once the archives open (walker runs).
     load_p1: bool,
+    /// Targeting, skills and combat (decision 0024 P2): the install's combat data and the
+    /// plugin combat views.
+    pub p2: crate::combat::CombatHub,
+    /// NPC windows (decision 0024 P3): their install names and facts, the plugin wallet
+    /// views' model, the windows on the game UI.
+    pub npc: crate::npc::NpcHub,
+    /// The quest journal (decision 0024 P3): the quest log, tracker, quest chat lines and
+    /// markers on the game UI.
+    pub quests: crate::quests::QuestHub,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
-    /// The plugins' party views fed from the session's fellowship (decision 0024 P4).
+    /// The plugins' party views fed from the session's fellowship (decision 0024 P4); the
+    /// game UI attaches its actor source with the plugins' other sources
+    /// ([`crate::ui_host::UiHost::attach_plugins`]).
     party: crate::social::party::PartyBridge,
     /// The generation of the dispatcher's command words the social state last took.
     social_words: u64,
@@ -339,6 +350,8 @@ impl Runtime {
         let mut p1 = crate::character::CharacterHub::new();
         p1.want_screens(args.character_select);
         p1.attach_plugins(plugins.manager_mut());
+        let p2 = crate::combat::CombatHub::new();
+        p2.attach_plugins(plugins.manager_mut());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -363,6 +376,20 @@ impl Runtime {
             texture_settled: false,
             p1,
             load_p1: walker,
+            p2,
+            npc: crate::npc::NpcHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::npc::parse_npc_panel(n))
+                    .collect(),
+            ),
+            quests: crate::quests::QuestHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::quests::parse_journal_panel(n))
+                    .collect(),
+            )
+            .with_icons(args.quest_icons),
             character_select: args.character_select,
             party: crate::social::party::PartyBridge::new(),
             social_words: u64::MAX,
@@ -526,6 +553,7 @@ impl Runtime {
                 self.plugins.attach_data(Arc::clone(&set));
                 if self.load_p1 {
                     self.p1.start_loading(root.clone());
+                    self.npc.start_refs(Arc::clone(&set));
                 }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
@@ -564,21 +592,38 @@ impl Runtime {
 
     /// Per-frame update of the world session and the plugin host.
     pub fn tick(&mut self, now: Instant) {
-        if let Some(d) = self.p1.poll()
-            && let Some(w) = &mut self.world
-        {
-            w.set_bag_layout(d.bags());
-            crate::social::attach_data(w.social_mut(), &d);
-            w.set_look_data(self.p1.screens().cloned());
-            // Items that arrived before the facts: the plugin views and the panels
-            // re-read them now.
-            self.p1.resync(w.player_state());
+        if let Some(d) = self.p1.poll() {
+            self.p2.set_data(&d);
+            if let Some(w) = &mut self.world {
+                w.set_bag_layout(d.bags());
+                crate::social::attach_data(w.social_mut(), &d);
+                w.set_look_data(self.p1.screens().cloned());
+                // Items that arrived before the facts: the plugin views and the panels
+                // re-read them now.
+                self.p1.resync(w.player_state());
+            }
         }
+        if self.p2.install().is_none()
+            && let Some(d) = self.p1.data().cloned()
+        {
+            self.p2.set_data(&d);
+        }
+        self.npc.poll(self.p1.data());
         if let Some(world) = &mut self.world {
             world.update(now);
             let changes = world.take_player_changes();
+            self.npc.after_events(
+                &changes,
+                world.player_state().wallet(),
+                self.plugins.manager_mut(),
+            );
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
+            // The plugin combat views (`lua-plugin-api.md` §15.2), at the plugins' clock.
+            let combat_events = world.take_combat_events();
+            let game_time = tessera_plugins::HostApi::game_time(self.plugins.host());
+            self.p2
+                .after_events(&combat_events, game_time, self.plugins.manager_mut());
             for line in world.take_chat() {
                 // The session's own system lines go to the HUD too; the P4 lines the client
                 // derives (channel slots, friend and fellowship notices) only to the chat.
@@ -616,6 +661,13 @@ impl Runtime {
             }
         }
         self.plugins.pump();
+    }
+
+    /// The source of the party members' `Actor` values for the plugins' party views (P4),
+    /// for [`crate::ui_host::UiHost::set_plugin_party`].
+    #[must_use]
+    pub fn party_actor_source(&self) -> std::sync::Arc<dyn tessera_plugins::PartyActorSource> {
+        self.party.actor_source()
     }
 
     /// System messages from the world session since the last call (the walker's HUD).

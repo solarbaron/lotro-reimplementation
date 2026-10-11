@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The "P4 social" revision of `docs/specs/scenario-feed.md` (decision 0035): Vector H
-//! (§14.11), the P4 hostile rows and the plain-sandbox cases S7–S8 (§14.12), the limits of
-//! §11.1, the overlay subset (§12.5.2) and the session rules of §9.5 for the new variants.
+//! The "P4 social" revision (revision 7) of `docs/specs/scenario-feed.md` (decision 0035):
+//! Vector H (§14.12), the P4 hostile rows and the plain-sandbox cases S7–S8 (§14.13), the
+//! limits of §11.1, the overlay subset (§12.5.2) and the session rules of §9.5 for the new
+//! variants.
 #![cfg(feature = "scenario")]
 
 use std::sync::Arc;
@@ -40,7 +41,7 @@ fn check(text: &str, expected: &str) {
     }
 }
 
-// --- §14.11 Vector H ---------------------------------------------------------------------
+// --- §14.12 Vector H ---------------------------------------------------------------------
 
 const VECTOR_H: &str = r#"tessera-scenario 1
 title "Vector H"
@@ -104,7 +105,7 @@ fn vector_h_is_deterministic() {
     assert_eq!(run(VECTOR_H), run(VECTOR_H));
 }
 
-// --- §14.12 hostile rows -------------------------------------------------------------------
+// --- §14.13 hostile rows -------------------------------------------------------------------
 
 const H: &str = "tessera-scenario 1\n";
 
@@ -122,7 +123,7 @@ fn overlay_err(rest: &str) -> (K, u32, u32) {
 }
 
 #[test]
-fn hostile_rows_of_section_14_12() {
+fn hostile_rows_of_section_14_13() {
     assert_eq!(
         err("at 0s perform-start lead=11s\n"),
         (K::OutOfRange, 2, 21)
@@ -308,7 +309,7 @@ fn fellow_vital_resource_and_start_by_entity() {
     assert!(log.contains("0.300 PerformanceSyncStart by=\"Tam\" at_ms=300 lead_ms=0"));
 }
 
-// --- §9.8 and §14.12 S7–S8: the plain sandbox ------------------------------------------------
+// --- §9.8 and §14.13 S7–S8: the plain sandbox ------------------------------------------------
 
 fn plain_entered() -> (Session, Instant) {
     let config = SandboxConfig {

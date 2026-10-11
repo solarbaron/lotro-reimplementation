@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Test-server backend, protocol 1.2 (decision 0035): named chat channels at negotiated
-//! minor 2 (`scenario-feed.md` §9.8, §14.12 S1–S6; `tessera-protocol.md` Appendix A),
+//! minor 2 (`scenario-feed.md` §9.8, §14.13 S1–S6; `tessera-protocol.md` Appendix A),
 //! against a scripted peer.
 
 #![cfg(feature = "remote")]

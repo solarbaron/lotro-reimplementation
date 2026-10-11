@@ -7,6 +7,7 @@
 use tessera_protocol::message as wire;
 use tessera_protocol::types as wt;
 
+use crate::NetError;
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, Destination, EntityKind, Equipped, Landblock,
     Location, Look, LookEntry, PropertyValue, RegionId, Transform, Vec3,
@@ -187,6 +188,20 @@ pub(crate) fn wire_appearance(a: &Appearance) -> Option<wt::Appearance> {
     Some(out)
 }
 
+/// The wire form of an appearance the client asks for (`AppearanceSet`), with the checks
+/// both the real backend and the harness apply before anything is queued.
+///
+/// # Errors
+///
+/// [`NetError::InvalidCommand`] when the appearance is out of range or cannot travel (an
+/// object body with DID 0).
+pub(crate) fn checked_wire_appearance(a: &Appearance) -> Result<wt::Appearance, NetError> {
+    if !a.is_valid() {
+        return Err(NetError::InvalidCommand("appearance out of range"));
+    }
+    wire_appearance(a).ok_or(NetError::InvalidCommand("appearance cannot be sent"))
+}
+
 pub(crate) fn kind(k: wire::EntityKind) -> EntityKind {
     match k {
         wire::EntityKind::Player => EntityKind::Player,
@@ -248,6 +263,31 @@ pub(crate) fn wire_destination(d: &Destination) -> wt::Destination {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shared `AppearanceSet` checks: an object body with DID 0 cannot travel; a
+    /// character body can.
+    #[test]
+    fn checked_wire_appearance_refuses_what_cannot_travel() {
+        assert!(matches!(
+            checked_wire_appearance(&Appearance::new(Body::Object(DataId(0)))),
+            Err(NetError::InvalidCommand(_))
+        ));
+        let bad = Appearance::new(Body::Character { species: 1, sex: 1 }).wearing(Equipped {
+            item: DataId(1),
+            dye: Some(f32::NAN),
+            secondary_dye: None,
+            stowed: false,
+            slot: None,
+        });
+        assert!(matches!(
+            checked_wire_appearance(&bad),
+            Err(NetError::InvalidCommand("appearance out of range"))
+        ));
+        assert!(
+            checked_wire_appearance(&Appearance::new(Body::Character { species: 1, sex: 1 }))
+                .is_ok()
+        );
+    }
 
     #[test]
     fn appearance_round_trip() {

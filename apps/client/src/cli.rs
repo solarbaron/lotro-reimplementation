@@ -443,9 +443,25 @@ pub struct Args {
 
     /// Open a panel at start, by number (`P1`–`P15`) or layout label, or a P1 panel once
     /// the player is in the world: `character` (the character panel), `bag1` … `bag6`,
-    /// `bags` (repeatable; implies `--ui`).
+    /// `bags`, or an NPC window, opened empty (P3, `npc-windows.md` §4): `conversation`,
+    /// `choice`, `npc-comment`, `vendor`, `vendor-quantity`, `barter`, `loot`, `wallet`
+    /// (the wallet shows the player's wallet), or a quest journal window (P3,
+    /// `quest-journal.md` §4.1): `quest-log`, `tracker` (repeatable; implies `--ui`).
     #[arg(long = "open-panel", value_name = "NAME")]
     pub open_panel: Vec<String>,
+
+    /// Overhead quest icons (P3, `quest-journal.md` §8.2): the indicators over NPCs with a
+    /// quest ring (default on).
+    #[arg(
+        long,
+        value_name = "on|off",
+        default_value = "on",
+        num_args = 0..=1,
+        default_missing_value = "on",
+        action = clap::ArgAction::Set,
+        value_parser = parse_strict_on_off
+    )]
+    pub quest_icons: bool,
 
     /// Do not open the HUD panels (P1–P5, P11, P14) at start.
     #[arg(long)]

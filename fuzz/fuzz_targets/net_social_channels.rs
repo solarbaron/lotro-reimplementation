@@ -257,7 +257,7 @@ fuzz_target!(|input: Input| {
     if ends == 1 {
         assert!(matches!(events.last(), Some(Event::Disconnected { .. })));
     }
-    // Invariant 12 of scenario-feed.md §15: channel messages leave the client only at
+    // Invariant 13 of scenario-feed.md §15: channel messages leave the client only at
     // minor ≥ 2 with CHAT_CHANNELS; no Social command sends anything else.
     let harness = session.backend::<InboundHarness>().expect("harness");
     let channels = minor >= 2 && caps.contains(ServerCaps::CHAT_CHANNELS);

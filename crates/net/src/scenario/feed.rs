@@ -36,6 +36,9 @@ use crate::model::{
     heading_from_compass_degrees,
 };
 use crate::session::{Command, Event};
+// P3 revision (NPC windows): kept apart so parallel revisions merge cleanly.
+use super::ast::EnumArg;
+use crate::domain::{BuybackEntry, RewardEntry};
 
 /// Most events in the output queue.
 pub const MAX_QUEUE_EVENTS: usize = 1_048_576;
@@ -320,6 +323,9 @@ pub(crate) struct Feed {
     /// (P4 social, §5.7) The waiting parts: member name → tune, at most
     /// [`MAX_WAITING_PARTS`] entries.
     waiting: BTreeMap<String, String>,
+    /// The vendor window that last got a `BuybackShown`, with its buy-back entry count
+    /// (P3 revision): what a `buy-back` pattern checks `BuyBack` against.
+    buyback: Option<(WindowId, usize)>,
 }
 
 fn container_index(c: Container) -> usize {
@@ -350,6 +356,15 @@ fn nth_or_last<T: Copy + Default>(list: &[T], i: usize) -> T {
         .or_else(|| list.last())
         .copied()
         .unwrap_or_default()
+}
+
+/// The price of entry `i` of a `vendor` or `buyback` window (§6.3: buy-back prices are
+/// written as for `vendor`): the i-th coin price (or the last one), plus the barter cost.
+fn entry_price(prices: &[u64], barter: Option<&(Ref, u32)>, i: usize) -> Price {
+    Price {
+        coin: nth_or_last(prices, i),
+        items: barter.into_iter().cloned().collect(),
+    }
 }
 
 fn sw(s: &str) -> u64 {
@@ -471,6 +486,15 @@ pub(crate) fn weight(e: &Event) -> u64 {
                 })
                 .sum(),
             NpcEvent::LootShown { entries, .. } => entries.iter().map(|l| 1 + rw(&l.what)).sum(),
+            NpcEvent::QuestRewards { entries, .. } => {
+                entries.iter().map(|r| 1 + orw(r.what.as_ref())).sum()
+            }
+            NpcEvent::BuybackShown { entries, .. } => entries
+                .iter()
+                .map(|b| {
+                    1 + rw(&b.what) + b.price.items.iter().map(|(r, _)| 1 + rw(r)).sum::<u64>()
+                })
+                .sum(),
             _ => 0,
         },
         Event::Social(s) => match s {
@@ -562,6 +586,7 @@ fn text_ok(sc: &ResolvedScenario, t: &TextArg) -> bool {
         | TextArg::Comment(el)
         | TextArg::Role { el, .. }
         | TextArg::Objective { el, .. } => sc.element(*el).is_some(),
+        TextArg::Action(_) => true,
     }
 }
 
@@ -588,7 +613,24 @@ fn resolve_text(sc: &ResolvedScenario, t: &TextArg) -> Option<Text> {
             quest: did(el)?,
             objective: *n,
         },
+        TextArg::Action(e) => action_text(sc, *e),
     })
+}
+
+/// An `action(…)` text (P3 revision, §5.2): the resolved key, else the label as written
+/// without its `@`.
+fn action_text(sc: &ResolvedScenario, e: EnumArg) -> Text {
+    if let Some(v) = sc.enum_value(e) {
+        return Text::Action(v);
+    }
+    let label = match e {
+        EnumArg::Label(i) => usize::try_from(i)
+            .ok()
+            .and_then(|i| sc.prog.labels.get(i))
+            .map(|l| l.label.trim_start_matches('@').to_owned()),
+        EnumArg::Value(_) => None,
+    };
+    Text::Literal(label.unwrap_or_default())
 }
 
 /// The heading (module convention) from `from` toward `to`, `None` when they coincide.
@@ -685,6 +727,7 @@ impl Feed {
             emitted_this_tick: false,
             static_skip: vec![false; sc.prog.steps.len()],
             waiting: BTreeMap::new(),
+            buyback: None,
             sc,
         }
     }
@@ -1728,6 +1771,13 @@ impl Feed {
             (Pattern::Close(kind), C::Npc(NpcCommand::CloseWindow { window })) => {
                 self.window_is(*kind, *window).is_some()
             }
+            (Pattern::BuyBack(f), C::Npc(NpcCommand::BuyBack { window, entry })) => {
+                self.window_is(WindowKind::Vendor, *window).is_some()
+                    && self.buyback.is_some_and(|(w, n)| {
+                        w == *window && (1..=n).contains(&usize::from(*entry))
+                    })
+                    && f.is_none_or(|e| e == *entry)
+            }
             _ => false,
         }
     }
@@ -2714,10 +2764,7 @@ impl Feed {
                     .map(|(i, what)| VendorEntry {
                         entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
                         what,
-                        price: Price {
-                            coin: nth_or_last(prices, i),
-                            items: barter.iter().cloned().collect(),
-                        },
+                        price: entry_price(prices, barter.as_ref(), i),
                         stock: *stock,
                     })
                     .collect();
@@ -2754,6 +2801,56 @@ impl Feed {
                     entries,
                     coin: *coin,
                 }))?;
+            }
+            Verb::Rewards(list) => {
+                let Some(Window {
+                    id: window,
+                    content: WinContent::QuestOffer(_),
+                }) = self.window(WindowKind::QuestOffer)
+                else {
+                    return self.skip();
+                };
+                let window = *window;
+                let mut entries = Vec::with_capacity(list.len());
+                for r in list {
+                    let what = match &r.what {
+                        Some(w) => Some(need!(self.rref(w))),
+                        None => None,
+                    };
+                    entries.push(RewardEntry {
+                        kind: r.kind,
+                        amount: r.amount,
+                        what,
+                    });
+                }
+                self.push(Event::Npc(NpcEvent::QuestRewards { window, entries }))?;
+            }
+            Verb::Buyback {
+                items,
+                qty,
+                prices,
+                barter,
+            } => {
+                let Some(window) = self.window(WindowKind::Vendor).map(|w| w.id) else {
+                    return self.skip();
+                };
+                let refs = need!(self.entry_refs(idx, items, super::parse::MAX_WINDOW_ENTRIES));
+                let barter = match barter {
+                    Some((r, n)) => Some((need!(self.rref(r)), *n)),
+                    None => None,
+                };
+                let entries: Vec<BuybackEntry> = refs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, what)| BuybackEntry {
+                        entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
+                        what,
+                        quantity: *qty,
+                        price: entry_price(prices, barter.as_ref(), i),
+                    })
+                    .collect();
+                self.buyback = Some((window, entries.len()));
+                self.push(Event::Npc(NpcEvent::BuybackShown { window, entries }))?;
             }
             Verb::LootTaken(n) => {
                 let i = usize::from(*n).wrapping_sub(1);

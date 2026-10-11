@@ -7,6 +7,8 @@ use crate::domain::{
     CastKind, CastOutcome, Container, CraftOutcome, DeltaKind, HitResult, QuestStatus, Side,
 };
 use crate::model::{DataId, EntityKind, PropertyKind};
+// P3 revision (NPC windows).
+use crate::domain::RewardKind;
 
 /// An element `$sel[i]` of a selector binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,9 @@ pub(crate) enum RefArg {
 }
 
 /// A window text.
+///
+/// `Action` is `action(@Label)` / `action(N)` (P3 revision), resolved with `enum_value`
+/// context `NpcAction`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextArg {
     Literal(String),
@@ -38,6 +43,7 @@ pub(crate) enum TextArg {
     Comment(Element),
     Role { el: Element, n: u16, failure: bool },
     Objective { el: Element, n: u16 },
+    Action(EnumArg),
 }
 
 /// A position: an offset from the spawn, or a place element's own location.
@@ -64,6 +70,7 @@ pub(crate) struct LabelSite {
     pub line: u32,
     pub col: u32,
     /// The option key: `class`, `species`, `sex`, `slot`, `type` or `nationality`.
+    /// `action` for an `action(…)` text (P3 revision).
     pub attribute: &'static str,
 }
 
@@ -454,6 +461,15 @@ pub(crate) enum Verb {
     },
     LootTaken(u16),
     Close(WindowKind),
+    /// `rewards` (P3 revision): entries in written order.
+    Rewards(Vec<RewardArg>),
+    /// `buyback` (P3 revision).
+    Buyback {
+        items: Entries,
+        qty: u32,
+        prices: Vec<u64>,
+        barter: Option<(RefArg, u32)>,
+    },
     Say {
         sender: Sender,
         text: String,
@@ -576,6 +592,15 @@ pub(crate) enum Verb {
     Title(RefArg),
 }
 
+/// One reward token of a `rewards` step (P3 revision).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RewardArg {
+    pub kind: RewardKind,
+    pub amount: i64,
+    /// The faction (`rep:`) or wallet item (`wallet:`).
+    pub what: Option<RefArg>,
+}
+
 /// One step line.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StepLine {
@@ -686,6 +711,8 @@ pub(crate) enum Pattern {
     CreateCharacter(Option<String>),
     DeleteCharacter(Option<String>),
     Close(WindowKind),
+    /// `buy-back [entry=N]` (P3 revision).
+    BuyBack(Option<u16>),
 }
 
 impl Pattern {
@@ -820,6 +847,8 @@ pub(crate) enum InputCmd {
     },
     DeleteCharacter(String),
     Close(WindowKind),
+    /// `buy-back N` (P3 revision).
+    BuyBack(u16),
 }
 
 /// One input line: time (`None` for `pre`) and command.
@@ -930,4 +959,7 @@ pub(crate) struct Program {
     pub props: Vec<PropSite>,
     /// The first statement outside the overlay subset (§12.5.1): line and column.
     pub overlay_violation: Option<(u32, u32)>,
+    /// Whether any text is written `action(N)`: a numeric NPC-action enum key (P3
+    /// revision, §13 rule 2).
+    pub numeric_action: bool,
 }

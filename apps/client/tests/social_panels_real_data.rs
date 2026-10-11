@@ -142,12 +142,17 @@ impl Picture {
     }
 }
 
-/// One frame of the rig with the social panels (as `ClientUi::after_update` runs them).
+/// One frame of the rig with the social panels (as the windowed client runs them after
+/// step 7, with the frame's one list of UI events).
 fn frame(rig: &mut Rig, client: &mut Client, data: &CharacterData) {
     rig.frame();
-    let _ = rig
-        .host
-        .social_frame(&mut client.social, Some(data), Some(&client.player));
+    let events = rig.host.take_game_events();
+    let _ = rig.host.social_frame(
+        &mut client.social,
+        Some(data),
+        Some(&client.player),
+        &events,
+    );
 }
 
 /// The share of `b`'s pixels that differ from the background `bg`.

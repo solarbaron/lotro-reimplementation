@@ -278,6 +278,80 @@ const TABLE: &[Compact] = {
             Button,
         ),
         (MAIN, &["AcceptInput"], &[GLOBAL], &["open_chat"], Button),
+        // P2 targeting and quickslot rows (`keymap.md` §8.2, §12.14.2).
+        (
+            MAIN,
+            &[
+                "SELECTION_NEAREST_FOE",
+                "SELECTION_NEXT_FOE",
+                "SELECTION_PREVIOUS_FOE",
+            ],
+            &[GLOBAL],
+            &[
+                "target_nearest_enemy",
+                "target_next_enemy",
+                "target_previous_enemy",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &["SELECTION_SELF", "SELECTION_ASSIST"],
+            &[GLOBAL],
+            &["target_self", "target_assist"],
+            Button,
+        ),
+        (
+            MAIN,
+            &[
+                "SELECTION_NEAREST_PC",
+                "SELECTION_NEXT_PC",
+                "SELECTION_PREVIOUS_PC",
+            ],
+            &[GLOBAL],
+            &[
+                "target_nearest_player",
+                "target_next_player",
+                "target_previous_player",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &[
+                "SELECTION_NEAREST_CREATURE",
+                "SELECTION_NEXT_CREATURE",
+                "SELECTION_PREVIOUS_CREATURE",
+            ],
+            &[GLOBAL],
+            &[
+                "target_nearest_creature",
+                "target_next_creature",
+                "target_previous_creature",
+            ],
+            Button,
+        ),
+        (
+            MAIN,
+            &["SELECTION_NEAREST_ITEM"],
+            &[GLOBAL],
+            &["target_nearest_object"],
+            Button,
+        ),
+        (
+            MAIN,
+            &["SELECTION_LAST", "SELECTION_LAST_ATTACKER", "SELECTION_OFF"],
+            &[GLOBAL],
+            &["target_last", "target_last_attacker", "target_clear"],
+            Button,
+        ),
+        (
+            MAIN,
+            &crate::combat::QUICKSLOT_COMMANDS,
+            &[GLOBAL],
+            &crate::combat::QUICKSLOT_ACTIONS,
+            Button,
+        ),
         (MAIN, &["SelectLeft"], &[POINTER], &["select_left"], Button),
         (
             MAIN,
@@ -614,6 +688,34 @@ mod tests {
                 "{action}"
             );
         }
+    }
+
+    #[test]
+    fn p2_targeting_and_quickslot_commands() {
+        use ActionKind::Button;
+        let d = |t: &str| BindingSpec::digital(Chord::parse(t).unwrap(), 1.0);
+        for (_, action, command, _) in crate::combat::TARGET_ACTIONS {
+            assert_eq!(
+                command_for_entry("global", action, Button, &d("F")),
+                Some(command),
+                "{action}"
+            );
+        }
+        for n in 1..=crate::combat::QUICKSLOTS {
+            let action = format!("quickslot_{n}");
+            let want = format!("QUICKSLOT_{n}");
+            assert_eq!(
+                command_for_entry("global", &action, Button, &d("1")),
+                Some(want.as_str())
+            );
+        }
+        let rows = command_rows();
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.command.starts_with("QUICKSLOT_") && !r.command.contains("BACKPACK"))
+                .count(),
+            72
+        );
     }
 
     #[test]

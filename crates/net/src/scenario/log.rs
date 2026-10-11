@@ -18,6 +18,8 @@ use crate::model::{
     EntityKind, Location, LocationCause, Look, PropertyValue, Vec3, compass_degrees_from_heading,
 };
 use crate::session::{Command, Event};
+// P3 revision (NPC windows).
+use crate::domain::RewardKind;
 
 /// The first actor's entity id is `ACTOR_ID_BASE + 1` (§5.3).
 pub const ACTOR_ID_BASE: u64 = 1 << 48;
@@ -229,6 +231,22 @@ fn text(t: &Text) -> String {
         ),
         Text::Comment(d) => format!("comment({})", did(*d)),
         Text::Objective { quest, objective } => format!("objective({},{objective})", did(*quest)),
+        Text::Action(n) => format!("action({n})"),
+    }
+}
+
+/// A reward kind, lower case with words joined by `-` (P3 revision, §10.3).
+fn reward_kind(k: RewardKind) -> &'static str {
+    match k {
+        RewardKind::Coin => "coin",
+        RewardKind::Glory => "glory",
+        RewardKind::ItemXp => "item-xp",
+        RewardKind::CraftXp => "craft-xp",
+        RewardKind::MountXp => "mount-xp",
+        RewardKind::VirtueXp => "virtue-xp",
+        RewardKind::TraitPoints => "trait-points",
+        RewardKind::Reputation => "reputation",
+        RewardKind::Wallet => "wallet",
     }
 }
 
@@ -838,6 +856,27 @@ fn npc_event(n: &NpcEvent, ctx: &LogContext) -> String {
             format!("LootTaken window={} entry={entry}", window.0)
         }
         NpcEvent::WindowClosed { window } => format!("WindowClosed window={}", window.0),
+        NpcEvent::QuestRewards { window, entries } => format!(
+            "QuestRewards window={} entries={}",
+            window.0,
+            list(entries, |r| format!(
+                "{{kind={} amount={} what={}}}",
+                reward_kind(r.kind),
+                r.amount,
+                opt_ref(r.what.as_ref())
+            ))
+        ),
+        NpcEvent::BuybackShown { window, entries } => format!(
+            "BuybackShown window={} entries={}",
+            window.0,
+            list(entries, |b| format!(
+                "{{entry={} what={} quantity={} price={}}}",
+                b.entry,
+                reference(&b.what),
+                b.quantity,
+                price(&b.price)
+            ))
+        ),
     }
 }
 
@@ -1179,6 +1218,9 @@ pub fn format_command(command: &Command, ctx: &LogContext) -> String {
             ),
             NpcCommand::TakeLoot { window, entry } => {
                 format!("TakeLoot window={} entry={}", window.0, opt_u(*entry))
+            }
+            NpcCommand::BuyBack { window, entry } => {
+                format!("BuyBack window={} entry={entry}", window.0)
             }
         },
         Command::Social(c) => match c {

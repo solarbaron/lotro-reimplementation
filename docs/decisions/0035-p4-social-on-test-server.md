@@ -110,7 +110,7 @@ would look like the relay that open item 2 has not allowed; (4) the rule-5 readi
 decision 0025 D1 stays unchanged (the server receives nothing new from an overlay run).
 This can be revisited when the owner answers open item 2.
 
-### D4. Feed additions (scenario-feed.md "P4 social"; values scripted, never derived)
+### D4. Feed additions (scenario-feed.md revision 7, "P4 social"; values scripted, never derived)
 
 - **Synchronised performances.** A `sync` word on the `perform` step makes a member's part
   **wait** (event `PerformanceReady`); a new step `perform-start` makes **one** start that
@@ -150,14 +150,16 @@ This can be revisited when the owner answers open item 2.
 ### Conformance vectors
 
 `tessera-protocol.md` §16.9 (1.2 frames and negative vectors), `test-server.md` §13.1
-(hostile 1.2 cases), `scenario-feed.md` §14.11 (Vector H: fellowship with a member out of
-view, synchronised start, player commands) and §14.12 (P4 hostile rows and remote cases).
+(hostile 1.2 cases), `scenario-feed.md` §14.12 (Vector H: fellowship with a member out of
+view, synchronised start, player commands) and §14.13 (P4 hostile rows and remote cases).
 
 ## Consequences
 
 - **Specs revised (status Review; independent review required):** `tessera-protocol.md`
   v1.2, `test-server.md` (channel registry, `[chat]` keys, limits, logs, invariants),
-  `scenario-feed.md` ("P4 social", additive: no section renumbered).
+  `scenario-feed.md` revision 7 ("P4 social", additive: no earlier section renumbered; at the merge
+  with the P2 and P3 revisions its Vector H became §14.12, its hostile rows and remote cases
+  §14.13, its review record §18.5 and its invariants 12 and 13).
 - **Implementers:** `crates/protocol` (minor 2: the five messages, channel value 6, bit 3,
   code 6, vectors), `apps/server` (registry, limits, relay, logs), `apps/loadtest` (1.2
   cases), `crates/net` (remote backend at minor 2; the new events, commands and steps; the
@@ -203,5 +205,5 @@ decision 0024 §2 and CLEAN_ROOM.md §5.3: **passed**.
   `tessera-protocol.md` v1.2 §3.1, §10.6, §13.1 and §14.8, `test-server.md` §4.6 and §9.1,
   and `scenario-feed.md` §6.7, §9.8, §11.1 and §12.5.1, each Accepted in the same review
   (records in those specs). The non-blocking notes there (the §10.6 Leave codes, the bot
-  minors of `test-server.md` §13.1, the wording of `scenario-feed.md` invariant 12) do not
+  minors of `test-server.md` §13.1, the wording of `scenario-feed.md` invariant 13) do not
   touch this decision.

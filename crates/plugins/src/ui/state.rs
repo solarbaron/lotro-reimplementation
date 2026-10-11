@@ -105,6 +105,11 @@ pub(crate) struct State {
     pub delivering: bool,
     pub client: Vec<UiEvent>,
     pub commands: Vec<String>,
+    /// Game actions of activated `Skill` and `Item` quickslots (§15.2), for the client.
+    pub game_actions: Vec<super::shortcut::GameShortcut>,
+    /// The content of the game's quickslot-bar slot a drag started on, as the client set
+    /// it after the drag began (`PluginUi::set_game_drag`).
+    pub game_drag: Option<super::shortcut::ShortcutData>,
     pub modifiers: super::Modifiers,
     pub text_pids: super::TextPids,
     /// The native-panel switches of §14.3, by `LotroUIElement` value (known values only).
@@ -614,6 +619,7 @@ impl Shared {
                 }
                 UiEvent::DragBegan { source } => {
                     st.drag_source = st.by_key.get(&source).copied();
+                    st.game_drag = None;
                     st.client.push(e);
                 }
                 other => st.client.push(other),

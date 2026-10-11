@@ -1,0 +1,44 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Errands at the mill"
+resolve $errands line=13 family=quest requested=3 candidates=0 got=0 note=no-install
+resolve $giver line=14 family=creature requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$miller kind=non-player name="Miller" at=3.000,1.000,0.000 facing=251.57
+0.000 QuestState quest="Mill wheel" state=active
+0.000 QuestObjective quest="Mill wheel" objective=1 count=0 total=4 done=no
+0.000 QuestTracked quest="Mill wheel" tracked=yes
+0.000 MarkerAdded marker=1 location=0:12.000,8.000,0.000 label="Broken paddles" icon=none quest="Mill wheel"
+0.000 MarkerAdded marker=2 location=0:-6.000,14.000,0.000 label="Duck pond" icon=none quest=none
+0.500 QuestObjective quest="Mill wheel" objective=1 count=1 total=4 done=no
+1.000 > UseEntity entity=$miller
+1.000 QuestObjective quest="Mill wheel" objective=1 count=2 total=4 done=no
+1.000 QuestOffered window=1 quest="Flour delivery" giver=$miller
+1.500 > AnswerQuest window=1 accept=yes
+1.500 QuestState quest="Flour delivery" state=active
+1.500 WindowClosed window=1
+1.500 QuestObjective quest="Mill wheel" objective=1 count=4 total=4 done=yes
+1.500 QuestObjective quest="Mill wheel" objective=2 count=0 total=1 done=no
+1.500 MarkerAdded marker=1 location=0:14.000,9.000,0.000 label="Paddles mended" icon=none quest="Mill wheel"
+1.700 QuestObjective quest="Flour delivery" objective=1 count=0 total=3 done=no
+2.000 > TrackQuest quest="Flour delivery" tracked=yes
+2.000 QuestTracked quest="Flour delivery" tracked=yes
+2.500 QuestObjective quest="Flour delivery" objective=1 count=2 total=3 done=no
+3.000 QuestState quest="Lost lamb" state=active
+3.000 QuestObjective quest="Lost lamb" objective=1 count=0 total=1 done=no
+3.500 > AbandonQuest quest="Lost lamb"
+3.500 QuestState quest="Lost lamb" state=removed
+4.000 QuestObjective quest="Mill wheel" objective=2 count=1 total=1 done=yes
+4.000 QuestState quest="Mill wheel" state=completed
+4.000 MarkerRemoved marker=1
+4.500 QuestState quest="Night watch" state=active
+4.500 QuestTracked quest="Night watch" tracked=yes
+5.000 QuestState quest="Night watch" state=failed
+6.500 > TrackQuest quest="Mill wheel" tracked=no
+6.500 QuestTracked quest="Mill wheel" tracked=no
+6.500 end reason=complete skipped=5 input-skipped=0 dropped=0 spilled=0

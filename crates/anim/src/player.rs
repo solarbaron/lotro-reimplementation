@@ -189,6 +189,12 @@ impl Playback {
 /// on one layer of an avatar at a time.
 pub const MAX_LAYER_CLIPS: usize = 4;
 
+/// Seconds over which a playing clip's track-opacity mixing factor moves when its
+/// `UseBoneOpacity` flag changes (`skeleton-anim.md` §6.6, K22, a client constant).
+pub const BONE_OPACITY_BLEND: f32 = 0.2;
+/// A mixing factor at or above this ignores the track opacities (`skeleton-anim.md` §6.6).
+pub const OPACITY_MIX_IGNORED: f32 = 0.9998;
+
 /// A weight limited to `0 ..= 1` (NaN reads 0).
 fn unit(x: f32) -> f32 {
     if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) }
@@ -652,6 +658,9 @@ pub struct Layer {
     pub use_track_weights: bool,
     target: f32,
     ramp_rate: f32,
+    /// The mixing factor *m* of §6.6 (0: track opacities used, 1: ignored).
+    opacity_mix: f32,
+    mix_target: f32,
 }
 
 impl Layer {
@@ -664,7 +673,31 @@ impl Layer {
             use_track_weights: false,
             target: 1.0,
             ramp_rate: 0.0,
+            opacity_mix: 0.0,
+            mix_target: 0.0,
         }
+    }
+
+    /// The `UseBoneOpacity` flag of the layer's clips changed while they play
+    /// (`skeleton-anim.md` §6.6, K22): the mixing factor *m* moves linearly to 0 (`on`) or 1
+    /// over [`BONE_OPACITY_BLEND`] seconds, from 0 when the clips used their track opacities
+    /// until now and from 1 otherwise. Clips without a weight array ignore it.
+    pub fn blend_bone_opacity(&mut self, on: bool) {
+        if !self.use_track_weights {
+            let mut own = false;
+            if let Some(s) = &self.source {
+                s.visit(&mut |_, _, o| own |= o);
+            }
+            self.use_track_weights = true;
+            self.opacity_mix = if own { 0.0 } else { 1.0 };
+        }
+        self.mix_target = if on { 0.0 } else { 1.0 };
+    }
+
+    /// The mixing factor *m* of §6.6 (0 while no change of `UseBoneOpacity` happened).
+    #[must_use]
+    pub fn opacity_mix(&self) -> f32 {
+        self.opacity_mix
     }
 
     /// Ramps the weight linearly to `target` over `seconds` (ramp-in / ramp-out times,
@@ -683,6 +716,14 @@ impl Layer {
 
     fn advance(&mut self, dt: f32) -> MotionDelta {
         let dt = finite_or_zero(dt).max(0.0);
+        if self.opacity_mix != self.mix_target {
+            let step = dt / BONE_OPACITY_BLEND;
+            self.opacity_mix = if self.opacity_mix < self.mix_target {
+                (self.opacity_mix + step).min(self.mix_target)
+            } else {
+                (self.opacity_mix - step).max(self.mix_target)
+            };
+        }
         if self.weight != self.target {
             let step = self.ramp_rate * dt;
             self.weight = if self.weight < self.target {
@@ -720,6 +761,9 @@ pub struct LayerClip {
     pub weight: f32,
     /// Whether its track weights are its track opacities.
     pub use_track_weights: bool,
+    /// The mixing factor *m* of §6.6: the opacity used is *o* + *m* × (1 − *o*), and 1
+    /// from [`OPACITY_MIX_IGNORED`] on (0 for a clip whose flag never changed).
+    pub opacity_mix: f32,
 }
 
 /// One layer flattened to plain data: up to [`MAX_LAYER_CLIPS`] clips, each with its own
@@ -794,6 +838,38 @@ impl Animator {
             self.layers.push(Layer::new(None));
         }
         Ok(&mut self.layers[i])
+    }
+
+    /// Inserts an empty layer at index `i` (`i` ≤ the layer count), moving the layers from
+    /// `i` up by one, so that a layer of a priority between two existing ones can be added
+    /// later (a combat clip's data layer between the idle and the held proportion layers,
+    /// `skeleton-anim.md` §6.6). Callers that keep layer indices shift those ≥ `i`.
+    ///
+    /// # Errors
+    ///
+    /// [`AnimError::TooManyEntries`] when the animator holds [`Animator::MAX_LAYERS`] layers
+    /// already or `i` is beyond the layer count (the animator is then unchanged).
+    pub fn insert_layer(&mut self, i: usize) -> Result<&mut Layer> {
+        if self.layers.len() >= Self::MAX_LAYERS || i > self.layers.len() {
+            return Err(AnimError::TooManyEntries {
+                table: "animator layers",
+                count: self.layers.len().max(i) + 1,
+                max: Self::MAX_LAYERS,
+            });
+        }
+        self.layers.insert(i, Layer::new(None));
+        Ok(&mut self.layers[i])
+    }
+
+    /// Removes layer `i` (moving the layers above it down by one); `false` when there is
+    /// no such layer.
+    pub fn remove_layer(&mut self, i: usize) -> bool {
+        if i < self.layers.len() {
+            self.layers.remove(i);
+            true
+        } else {
+            false
+        }
     }
 
     fn check_source(&self, source: &Source) -> Result<()> {
@@ -921,6 +997,11 @@ impl Animator {
                         sample,
                         weight,
                         use_track_weights: own || l.use_track_weights,
+                        opacity_mix: if l.use_track_weights {
+                            l.opacity_mix
+                        } else {
+                            0.0
+                        },
                     });
                     n += 1;
                 }
@@ -1090,10 +1171,14 @@ pub fn evaluate(
             }
             let clip = &c.sample.clip;
             report.replaced += clip.sample(c.sample.time, &mut scratch.a)?.replaced;
-            let opacity = c.use_track_weights && clip.track_weights().is_some();
+            let opacity = c.use_track_weights
+                && clip.track_weights().is_some()
+                && unit(c.opacity_mix) < OPACITY_MIX_IGNORED;
+            let m = unit(c.opacity_mix);
             for j in 0..n {
                 let o = if opacity {
-                    unit(clip.track_weight(j))
+                    let o = unit(clip.track_weight(j));
+                    o + m * (1.0 - o)
                 } else {
                     1.0
                 };

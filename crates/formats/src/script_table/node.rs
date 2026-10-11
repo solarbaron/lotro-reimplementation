@@ -1102,6 +1102,10 @@ pub enum NodeData {
     While(Box<WhileNode>),
     /// GameCallback (27): calls a game package (§5.2).
     GameCallback(Box<GameCallbackNode>),
+    /// Execute (4): calls a native callback (§5.2, §9.1).
+    Execute(Box<ExecuteNode>),
+    /// Beam (54): a beam between two entities (§5.3; `particle-runtime.md` §11.1).
+    Beam(Box<BeamNode>),
     /// TextureCompositor (53): attaches an image compositor (`appearance.md` §3.5).
     TextureCompositor(TextureCompositorNode),
     /// ModifyCompositorLayer (44): selects a compositor layer option.
@@ -1129,6 +1133,156 @@ pub enum NodeData {
     /// §3.3) whose kind has no typed form here: its field values by the PIDs bound to the
     /// fields, as stored in `ScriptTable_NodeProperties`.
     Fields(Box<PropertySet>),
+}
+
+/// The fields of an Execute node (kind 4, §5.2): a native callback with its call values.
+/// Its result ports (type 5) carry [`PortPayload::ExecuteResult`]: the PID of the callback's
+/// result property and the value that selects the port (§9.1).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ExecuteNode {
+    /// `ExecuteScript_Callback`: a key of the callback DID map (0x28000007); 0 for none.
+    pub callback: u32,
+    /// `DefaultValue` (`None` for the null entry).
+    pub default_value: Option<PropertyEntry>,
+    /// `CallProperties`: the values handed to the callback (for example a result filter).
+    pub call_properties: PropertySet,
+}
+
+/// The fields of a Beam node (kind 54, §5.3; run-time rules `particle-runtime.md` §11.1).
+/// Names are the stored ones without the `BeamScript_` prefix.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BeamNode {
+    /// `Persistent`: the beam lasts until its node stops.
+    pub persistent: bool,
+    /// `ColorAndOpacity`: four colour bytes in stored order (alpha last).
+    pub color: [u8; 4],
+    /// `TargetPosition`.
+    pub target_position: Position,
+    /// `UseTargetPosition`.
+    pub use_target_position: bool,
+    /// `HeadMaterial`.
+    pub head_material: Did,
+    /// `BodyMaterial`.
+    pub body_material: Did,
+    /// `TailMaterial`.
+    pub tail_material: Did,
+    /// `BeamWidth`, metres.
+    pub width: f32,
+    /// `UntargetedBeamLength`, metres.
+    pub untargeted_length: f32,
+    /// `SegmentSize`, metres.
+    pub segment_size: f32,
+    /// `NumHeadSegments`.
+    pub head_segments: i32,
+    /// `NumTailSegments`.
+    pub tail_segments: i32,
+    /// `TextureUScale`.
+    pub texture_u_scale: f32,
+    /// `HeadStartPos`, a fraction of the beam.
+    pub head_start: f32,
+    /// `HeadAnimStartTime`, seconds.
+    pub head_start_time: f32,
+    /// `HeadAnimSpeed`, metres per second.
+    pub head_speed: f32,
+    /// `TailStartPos`.
+    pub tail_start: f32,
+    /// `TailAnimStartTime`.
+    pub tail_start_time: f32,
+    /// `TailAnimSpeed`.
+    pub tail_speed: f32,
+    /// `RampInTime`, seconds.
+    pub ramp_in: f32,
+    /// `SustainTime`, seconds.
+    pub sustain: f32,
+    /// `RampOutTime`, seconds.
+    pub ramp_out: f32,
+    /// `SourceHoldingLocation`.
+    pub source_holding_location: u32,
+    /// `SourceBoneType`.
+    pub source_bone_type: u32,
+    /// `SourceBoneOffset`.
+    pub source_bone_offset: [f32; 3],
+    /// `SourceUseBoundingBoxCenter`.
+    pub source_use_box_center: bool,
+    /// `TargetHoldingLocation`.
+    pub target_holding_location: u32,
+    /// `TargetBoneType`.
+    pub target_bone_type: u32,
+    /// `TargetBoneOffset`.
+    pub target_bone_offset: [f32; 3],
+    /// `TargetUseBoundingBoxCenter`.
+    pub target_use_box_center: bool,
+    /// `DetachBeforeRampingOut`.
+    pub detach_before_ramping_out: bool,
+    /// `SourceDetachTime`, seconds.
+    pub source_detach_time: f32,
+    /// `TargetDetachTime`, seconds.
+    pub target_detach_time: f32,
+    /// `RandomStartRadius`, metres.
+    pub random_start_radius: f32,
+    /// `RandomImpactRadius`, metres.
+    pub random_impact_radius: f32,
+    /// `BeamParticleSystem`: a 0x39 record, or 0.
+    pub beam_particle_system: Did,
+    /// `HeadParticleSystem`: a 0x39 record, or 0.
+    pub head_particle_system: Did,
+    /// `BeamSegmentParticlesPerSecond`.
+    pub beam_particles_per_second: i32,
+    /// `HeadParticlesPerSecond`.
+    pub head_particles_per_second: i32,
+    /// `HeadEntity`: a 0x47 entity, or 0.
+    pub head_entity: Did,
+    /// `HeadEntityScaleSource`.
+    pub head_entity_scale_source: u32,
+}
+
+impl BeamNode {
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let v3 = |r: &mut Reader<'_>| -> Result<[f32; 3]> { Ok([r.f32()?, r.f32()?, r.f32()?]) };
+        Ok(Self {
+            persistent: r.bool8()?,
+            color: r.array()?,
+            target_position: Position::read(r)?,
+            use_target_position: r.bool8()?,
+            head_material: r.did()?,
+            body_material: r.did()?,
+            tail_material: r.did()?,
+            width: r.f32()?,
+            untargeted_length: r.f32()?,
+            segment_size: r.f32()?,
+            head_segments: r.i32()?,
+            tail_segments: r.i32()?,
+            texture_u_scale: r.f32()?,
+            head_start: r.f32()?,
+            head_start_time: r.f32()?,
+            head_speed: r.f32()?,
+            tail_start: r.f32()?,
+            tail_start_time: r.f32()?,
+            tail_speed: r.f32()?,
+            ramp_in: r.f32()?,
+            sustain: r.f32()?,
+            ramp_out: r.f32()?,
+            source_holding_location: r.u32()?,
+            source_bone_type: r.u32()?,
+            source_bone_offset: v3(r)?,
+            source_use_box_center: r.bool8()?,
+            target_holding_location: r.u32()?,
+            target_bone_type: r.u32()?,
+            target_bone_offset: v3(r)?,
+            target_use_box_center: r.bool8()?,
+            detach_before_ramping_out: r.bool8()?,
+            source_detach_time: r.f32()?,
+            target_detach_time: r.f32()?,
+            random_start_radius: r.f32()?,
+            random_impact_radius: r.f32()?,
+            beam_particle_system: r.did()?,
+            head_particle_system: r.did()?,
+            beam_particles_per_second: r.i32()?,
+            head_particles_per_second: r.i32()?,
+            head_entity: r.did()?,
+            head_entity_scale_source: r.u32()?,
+        })
+    }
 }
 
 /// The fields of a GameCallback node (kind 27, §5.2).
@@ -1841,6 +1995,22 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 let _controller = self.property_set(r)?;
                 r.skip(16)?;
                 opaque(start, r)
+            }
+            4 => {
+                let callback = r.u32()?;
+                let default_value = self.pv(r)?;
+                let call_properties = self.property_set(r)?;
+                r.charge(std::mem::size_of::<ExecuteNode>())?;
+                NodeData::Execute(Box::new(ExecuteNode {
+                    callback,
+                    default_value,
+                    call_properties,
+                }))
+            }
+            54 => {
+                let b = BeamNode::read(r)?;
+                r.charge(std::mem::size_of::<BeamNode>())?;
+                NodeData::Beam(Box::new(b))
             }
             27 => {
                 let package = r.did()?;

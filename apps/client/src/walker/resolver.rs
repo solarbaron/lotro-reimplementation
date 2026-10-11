@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
 use tessera_dat::ArchiveSet;
+use tessera_formats::landblock::{MAX_SCALE, MIN_SCALE};
 use tessera_formats::{Did, PropertyValue};
 use tessera_material::{LiquidSurface, MaterialLibrary, WaterMaterial};
 
@@ -49,6 +50,10 @@ pub struct ObjectAnswer {
     pub colour: Option<[u8; 4]>,
     /// Its `Render_Opacity` along the chain, when a level has one.
     pub opacity: Option<f32>,
+    /// Its `Render_AdjustableScale` along the chain, when a level has a vector whose
+    /// components lie in the usable range of `entity-descriptor.md` §7 (a beam's head entity,
+    /// `particle-runtime.md` §11.1 step 1).
+    pub scale: Option<[f32; 3]>,
 }
 
 /// The PIDs of the per-object tint properties `Render_Color` and `Render_Opacity`
@@ -59,6 +64,8 @@ pub struct TintPids {
     pub colour: Option<u32>,
     /// `Render_Opacity`.
     pub opacity: Option<u32>,
+    /// `Render_AdjustableScale`.
+    pub scale: Option<u32>,
 }
 
 impl ObjectAnswer {
@@ -71,6 +78,7 @@ impl ObjectAnswer {
             draw: DrawFlags::default(),
             colour: None,
             opacity: None,
+            scale: None,
         }
     }
 }
@@ -121,12 +129,25 @@ impl Lookups for InstallLookups {
             .and_then(|(p, pid)| p.get(pid)?.as_f64())
             .map(|v| v as f32)
             .filter(|v| v.is_finite());
+        let scale =
+            props
+                .as_deref()
+                .zip(self.tint.scale)
+                .and_then(|(p, pid)| match p.get(pid)? {
+                    PropertyValue::Vector3(v)
+                        if v.iter().all(|c| (MIN_SCALE..=MAX_SCALE).contains(c)) =>
+                    {
+                        Some(*v)
+                    }
+                    _ => None,
+                });
         ObjectAnswer {
             parts: Arc::clone(&r.parts),
             frill,
             draw: r.draw,
             colour,
             opacity,
+            scale,
         }
     }
 
@@ -404,6 +425,7 @@ mod tests {
                 draw: DrawFlags::default(),
                 colour: None,
                 opacity: None,
+                scale: None,
             }
         }
 

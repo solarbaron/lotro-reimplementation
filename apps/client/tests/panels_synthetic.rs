@@ -233,6 +233,33 @@ fn escape_rule_gp15_gp16() {
     assert!(ui.is_visible(toolbar));
 }
 
+/// `combat-ui.md` TR5 asks step 1 of the Escape rule: is the *active* panel a visible
+/// on-demand panel (the main menu P6 included)?
+#[test]
+fn step_one_finds_only_an_active_on_demand_panel() {
+    let (mut ui, mut panels) = fixture();
+    let (mut maps, mut plugins) = (NoMaps, FakePlugins::default());
+    let mut sv = services!(maps, plugins);
+    let toolbar = panels.open(&mut ui, PanelId::Toolbar, &mut sv).unwrap();
+    ui.activate(toolbar);
+    assert!(!panels.active_on_demand(&ui), "a HUD panel is active");
+    // P6 open and active: step 1 hides it, so the combat step must not run.
+    let EscapeOutcome::ShowedMainMenu(menu) = panels.escape(&mut ui, true, false, &mut sv) else {
+        panic!("P6 not shown");
+    };
+    assert_eq!(ui.active_panel(), Some(menu));
+    assert!(panels.active_on_demand(&ui), "P6 counts as on-demand");
+    // P6 shown but not active: step 1 finds nothing.
+    ui.activate(toolbar);
+    assert!(!panels.active_on_demand(&ui));
+    // P9 shown but not active: still nothing; active: found.
+    let quest = panels.open(&mut ui, PanelId::QuestLog, &mut sv).unwrap();
+    ui.activate(toolbar);
+    assert!(!panels.active_on_demand(&ui), "shown is not active");
+    ui.activate(quest);
+    assert!(panels.active_on_demand(&ui));
+}
+
 #[test]
 fn plugin_manager_layout_view_fills_the_tree() {
     let (mut ui, mut panels) = fixture();

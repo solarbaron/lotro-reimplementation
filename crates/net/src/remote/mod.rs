@@ -49,6 +49,12 @@
 //!   [`crate::sandbox::WorldSource`] the backend streams the statics of the
 //!   player's neighbourhood from the client's own data ([`Event::StaticSpawned`],
 //!   [`Event::StaticsCleared`]), with the sandbox's streaming code.
+//! - **Selection is local** (`scenario-feed.md` §9.7, decision 0032 D1):
+//!   [`CombatCommand::SelectTarget`](crate::CombatCommand) with a known target is answered
+//!   by an [`Event::Combat`] `TargetChanged` for the player first in the next poll; nothing
+//!   is sent to the server. `CreateCharacter` is sent when the server allows creation
+//!   (`character-screens.md` §7.1.1); every other new gameplay command is refused with
+//!   [`NetError::InvalidCommand`].
 //! - **Interpolation** (§8.6): every remote entity has a snapshot buffer;
 //!   [`RemoteBackend::sample`] gives its state at the current render time, using the
 //!   clock-offset estimate (§11.2). [`RemoteBackend::stats`] has the transport and
@@ -109,7 +115,7 @@ pub use tessera_protocol::value::{Emote, Stance};
 
 use self::driver::{Driver, Inbound, MoveSlot, NetCommand};
 use self::mapper::Mapper;
-use crate::domain::{CharacterCommand, SocialCommand};
+use crate::domain::{CharacterCommand, CombatCommand, SocialCommand};
 use crate::interp::{Sample, render_time};
 use crate::model::{Appearance, EntityId, Vec3};
 use crate::sandbox::world::{StaticStats, WorldSource};
@@ -125,6 +131,9 @@ enum Routed {
     Net(NetCommand),
     Move(MoveSlot),
     Disconnect,
+    /// Answered on the main thread; nothing goes to the network thread
+    /// (`SelectTarget`, `scenario-feed.md` §9.7, decision 0032 D1).
+    Local,
 }
 
 /// Turns a command into network work, validating what `Session` cannot (the protocol's own
@@ -223,6 +232,12 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
             Routed::Net(NetCommand::LeaveChannel(name))
         }
         Command::Disconnect => Routed::Disconnect,
+        // Selection is local: the backend answers with `TargetChanged` for the player in
+        // the next poll and sends nothing (scenario-feed.md §9.7, decision 0032 D1).
+        Command::Combat(CombatCommand::SelectTarget { target }) => {
+            mapper.select_target(target)?;
+            Routed::Local
+        }
         // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5,
         // §9.7, §9.8): DeleteCharacter, every other Social command (fellowship, trade, lists,
         // performances) and every other new command are refused.
@@ -294,11 +309,7 @@ impl RemoteHandle {
     /// [`NetError::InvalidCommand`] when the appearance cannot travel (invalid, or an
     /// object body with DID 0), [`NetError::SendQueueFull`] or [`NetError::Closed`].
     pub fn set_appearance(&self, appearance: &Appearance) -> Result<(), NetError> {
-        if !appearance.is_valid() {
-            return Err(NetError::InvalidCommand("appearance out of range"));
-        }
-        let wire = convert::wire_appearance(appearance)
-            .ok_or(NetError::InvalidCommand("appearance cannot be sent"))?;
+        let wire = convert::checked_wire_appearance(appearance)?;
         self.send(NetCommand::Appearance(Box::new(wire)))
     }
 }
@@ -672,6 +683,7 @@ impl Backend for RemoteBackend {
                 }
                 Ok(())
             }
+            Routed::Local => Ok(()),
         }
     }
 
@@ -680,6 +692,8 @@ impl Backend for RemoteBackend {
             self.stats.clone_from(&s);
         }
         let mut events = std::mem::take(&mut self.scratch);
+        // A local selection answer goes first, before anything mapped in this poll (§9.7).
+        self.mapper.deliver_local(&mut events);
         self.drain(&mut events);
         self.delay = self.mapper.interp.config().delay;
         self.mapper.update_statics(&mut events);
@@ -754,6 +768,38 @@ mod tests {
         ));
     }
 
+    /// `SelectTarget` never becomes network work (`scenario-feed.md` §9.7): without a player
+    /// it is refused, and `UseSkill`/`CancelCast`/`SetQuickslot` stay refused.
+    #[test]
+    fn selection_is_local_and_needs_a_player() {
+        use crate::domain::CombatCommand;
+        let mut m = Mapper::new(
+            crate::sandbox::world::StaticConfig::default(),
+            crate::interp::InterpConfig::default(),
+            None,
+        );
+        let select = Command::Combat(CombatCommand::SelectTarget { target: None });
+        assert!(matches!(
+            route(select.clone(), &mut m),
+            Err(NetError::InvalidCommand(_))
+        ));
+        let mut out = Vec::new();
+        m.deliver_local(&mut out);
+        assert!(out.is_empty());
+        for c in [
+            CombatCommand::CancelCast,
+            CombatCommand::SetQuickslot {
+                slot: 1,
+                content: None,
+            },
+        ] {
+            assert!(matches!(
+                route(Command::Combat(c), &mut m),
+                Err(NetError::InvalidCommand(_))
+            ));
+        }
+    }
+
     fn greeted(minor: u16, caps: ServerCaps) -> Mapper {
         let mut m = Mapper::new(
             crate::sandbox::world::StaticConfig::default(),
@@ -772,7 +818,7 @@ mod tests {
         m
     }
 
-    /// `scenario-feed.md` §9.8 and §14.12 S5–S6: the channel commands go out only at
+    /// `scenario-feed.md` §9.8 and §14.13 S5–S6: the channel commands go out only at
     /// minor ≥ 2 with `CHAT_CHANNELS`; every other Social command is refused at every minor.
     #[test]
     fn channel_commands_need_minor_2_and_the_capability() {

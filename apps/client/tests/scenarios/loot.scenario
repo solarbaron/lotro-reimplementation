@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# NPC loot windows (decision 0024 P3; docs/specs/npc-windows.md §8, §9.2;
+# docs/specs/scenario-feed.md §6.3, §7.6): a creature's loot with coin and stacked
+# entries, taking one entry, taking everything with the generic answers and closing, then
+# a chest's loot from which the feed takes one entry and that stays open. Literal refs
+# fill the windows without an install; with one, the chest's second loot step shows
+# install items with their names and icons (its ref list names selector elements, so
+# without an install it is skipped and the literal list stays).
+tessera-scenario 1
+title "After the skirmish"
+tick 100ms
+player "Tamsin"
+select $beast = creature kind=mob has-appearance=yes n=1 seed=8
+select $spoils = item has-icon=yes n=5 seed=17
+actor $raider kind=creature name="Hill raider" pos=2,1,0 body=$beast[0]
+actor $chest kind=object name="Iron-bound chest" pos=-2,1,0
+
+at 0s spawn $raider
++0s spawn $chest
++0s wallet coin 300
++0.2s loot items="Satchel strap","Brass buckle","Old map" from=$raider qty=2 coin=75
+
+on take-loot entry=all
++0s wallet coin 375
+end
+
+at 2s loot items="Cracked lantern","Tin cup","Waxed cord" from=$chest qty=1 coin=0
++0s loot items=$spoils[0],$spoils[1],$spoils[2],$spoils[3],$spoils[4] from=$chest qty=3 coin=1250
++0.5s loot-taken 1
+
+input
+at 0.5s take-loot 2
+at 1s take-loot all
+at 1.5s close loot
+end

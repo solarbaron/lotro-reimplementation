@@ -2136,6 +2136,17 @@ code in the class library, which ships in the data. Read for this spec:
 | Medal for a score, next medal | §9.6 |
 | Journal list of quests with flag 0x16D4503 | §6.1 |
 
+> **Note (P3, 2026-10-10, [`quest-journal.md`](quest-journal.md) §4.2, §5, §7, §8.1, BC and
+> BIN there; no fact of this spec changed):** the quest log's tree widget skips every record
+> with `Quest_IsAccomplishment` true, so deeds are never in the quest log; the journal (class
+> 1753 here) builds an objective's progress text from `Quest_ObjectiveProgressOverride` with two
+> objective counters, else from the event lines of each completion condition
+> (`QuestEvent_ProgressOverride` with three event counters, or a per-type default text of the
+> event class), conditions joined as alternatives; it posts state lines and billboard lines on
+> chat type 21; and it picks one quest per NPC from the NPC-side role list of §7.4 to run a ring
+> script key on the NPC and store that quest in `Quest_CurrentBestowRingDID`. The counter
+> argument IDs and the ring keys are listed in `quest-journal.md` §5.4 and §8.1.
+
 The class library names **none** of the reward-amount properties (`QuestReward_*` lists and
 amounts other than the session-point lists, `Quest_RewardLevelDID`,
 `QuestControl_RewardLevelDIDArray`), `Quest_TotalWordCount`, the volume strings of §5.3, the
@@ -2370,3 +2381,4 @@ override map) has `Quest_ChallengeLevel` 20 and a struct with `Usage_MinLevel` 3
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows S1–S4. Answered: §2.1 quest-item directories identified by root class (S1); §3.2 and §7.4 the class-763 holder is a pet-summoning effect, added to the sources (S2); §19 implementer choices (1), (2), (3), (5), (6) confirmed as decisions or by the data (S3). §18 event-class callout: per-type test functions found in the client library (S4), whether they drive progress still OPEN. Still OPEN: word count, volume strings, action-5 roles, completed-quest ranking, deed reward lists, money unit, override and high levels, ranges and intervals, monster-selector index, version list, epsilons, note roles without a name, notes with only a role key, client event matching. |
 | 2026-10-09 | Repair after the review of the OPEN sweep (spec writer, dirty room; status Revised, waiting for a separate review). (1) §7.4: holder census re-run over every property set (new row S5): 10,845 holders (the 10,829 of the four main kinds, 12 quest records, the class-763 effect, 3 records of root classes 798, 2651, 2814), 986 with an empty list, 43,413 entries (43,412 in the arrays and one top-level struct on an NPC record), 43,402 matching; the six quest-held entries match no role; paragraph replaced by a table, the 2026-10-09 answer corrected; §3.2 notes the quest entries do not match; row R2 extended. (2) §9.2 step 2 states the Tessera decisions for a level below 0 and a null element (and the interim reading for levels above the array); §19 answer (3) points there; row S3 extended. The header's list of sections changed by the OPEN sweep corrected (§18, not §9.2). Non-blocking: §7.4 and row S2 cite `combat-data.md` §6.1. |
 | 2026-10-09 | Second repair after the re-review (spec writer, dirty room; status Revised, waiting for a separate review). (1) §7.4: the holder census is scoped to the property sets of the object records (row S5 reworded); new provenance key OBS4 and row S6 for the property sets outside them: map-note lists (§17.1) are per-note copies of the target's own list and are not added to NPC-side lists; 71 landblock weenie sets carry the property (40 empty, 39 entries, 11 quests, all but one entry without a role name, one with an empty name), to which the holder-matching rule does not apply (new OPEN on their meaning); the landblock's own, cell, static-entity and link sets and the 0x47 entity descriptors have none. §3.2 lists the two outside sources; §17.1 states the copy relation and narrows its OPEN; new invariant V23; rows R2 and M1 extended. (2) §21 gains rows for §17.1 (note roles without a name) and §7.4 (weenie lists). |
+| 2026-10-10 | Note only (no fact changed), for P3: §18 points to `quest-journal.md` for the journal's deed exclusion, objective text and counters, quest chat lines and NPC rings. Status unchanged. |

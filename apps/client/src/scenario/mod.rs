@@ -468,7 +468,7 @@ pub fn run_headless(args: &Args, scenario: Arc<ResolvedScenario>, install: Optio
         &args.load_plugins,
         data,
     );
-    let outcome = driver.run_with(|events| sp.observe(events));
+    let outcome = driver.run_frames(|f| sp.observe_at(f.now, f.events));
     if !sp.all_loaded() {
         tracing::warn!("not every plugin named with --load-plugin loaded");
     }

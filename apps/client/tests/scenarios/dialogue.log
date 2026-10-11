@@ -1,0 +1,28 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Orchard talk"
+resolve $keeper line=13 family=creature requested=1 candidates=0 got=0 note=no-install
+resolve $errand line=14 family=quest requested=1 candidates=0 got=0 note=no-install
+resolve $remark line=15 family=npc-comment requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$grocer kind=non-player name="Grocer" at=2.000,2.000,0.000 facing=225.00
+0.000 WalletChanged currency=coin amount=1250
+0.500 > UseEntity entity=$grocer
+0.500 DialogueShown window=1 speaker=$grocer text="Fresh from the orchard. Care to look around?" options=[{option=1 text="Vendor"},{option=2 text="Any news from the road?"},{option=3 text="Goodbye."}]
+1.000 > ChooseOption window=1 option=2
+1.000 DialogueShown window=1 speaker=$grocer text="The bell rings at noon, and the ferry runs late." options=[]
+1.500 > CloseWindow window=1
+1.500 WindowClosed window=1
+2.000 > UseEntity entity=$grocer
+2.500 > UseEntity entity=$grocer
+2.500 QuestOffered window=2 quest="Lost satchel" giver=$grocer
+2.500 QuestRewards window=2 entries=[{kind=coin amount=1250 what=none},{kind=item-xp amount=500 what=none}]
+3.000 > AnswerQuest window=2 accept=no
+3.000 WindowClosed window=2
+3.500 > UseEntity entity=$grocer
+3.500 end reason=complete skipped=3 input-skipped=0 dropped=0 spilled=0

@@ -159,6 +159,13 @@ impl InboundHarness {
         self.closed_sent
     }
 
+    /// The negotiated minor protocol version, once greeted (as
+    /// [`RemoteBackend::negotiated_minor`](super::RemoteBackend::negotiated_minor)).
+    #[must_use]
+    pub fn negotiated_minor(&self) -> Option<u16> {
+        self.mapper.server.as_ref().map(|s| s.minor)
+    }
+
     /// The virtual client clock, µs.
     #[must_use]
     pub fn now(&self) -> u64 {
@@ -268,12 +275,15 @@ impl Backend for InboundHarness {
             }
             Routed::Move(slot) => self.latest_move = Some(slot),
             Routed::Disconnect => self.driver.disconnect(self.now),
+            Routed::Local => {}
         }
         self.collect_transmits();
         Ok(())
     }
 
     fn poll(&mut self, _now: Instant, out: &mut Vec<Event>) {
+        // As the real backend: the local selection answer first (scenario-feed.md §9.7).
+        self.mapper.deliver_local(out);
         if self.started
             && let Some(input) = self.inputs.pop_front()
         {
@@ -283,5 +293,64 @@ impl Backend for InboundHarness {
             self.mapper.map(item, out);
         }
         self.mapper.update_statics(out);
+    }
+}
+
+/// The harness as the server half of a scenario overlay (`scenario-feed.md` §12.5), so the
+/// overlay's routing runs against the same route and mapper as [`RemoteBackend`](super::RemoteBackend).
+#[cfg(feature = "scenario")]
+impl crate::scenario::OverlayServer for InboundHarness {
+    fn appearance_change(&self) -> bool {
+        self.mapper.server.as_ref().is_some_and(|s| {
+            s.caps
+                .contains(tessera_protocol::message::ServerCaps::APPEARANCE_CHANGE)
+        })
+    }
+
+    fn send_appearance(&mut self, appearance: &crate::model::Appearance) -> Result<(), NetError> {
+        // As the real backend: no handle before `Connect`, then the shared checks, then a
+        // closed command queue once the session ended.
+        if !self.started {
+            return Err(NetError::Closed);
+        }
+        let wire = super::convert::checked_wire_appearance(appearance)?;
+        if self.mapper.ended {
+            return Err(NetError::Closed);
+        }
+        self.driver.command(
+            super::driver::NetCommand::Appearance(Box::new(wire)),
+            self.now,
+        );
+        self.collect_transmits();
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "scenario"))]
+mod tests {
+    use super::*;
+    use crate::model::{Appearance, Body};
+    use crate::scenario::OverlayServer;
+
+    /// `send_appearance` behaves as `RemoteBackend`'s: `Closed` before `Connect` and after
+    /// the session ended, the shared checks first.
+    #[test]
+    fn send_appearance_needs_a_running_session() {
+        let look = Appearance::new(Body::Character { species: 1, sex: 1 });
+        let mut h = InboundHarness::new([HarnessInput::IdleTimeout]);
+        assert!(matches!(h.send_appearance(&look), Err(NetError::Closed)));
+        h.submit(Instant::now(), Command::Connect).unwrap();
+        assert!(h.send_appearance(&look).is_ok());
+        assert!(matches!(
+            h.send_appearance(&Appearance::new(Body::Object(crate::model::DataId(0)))),
+            Err(NetError::InvalidCommand(_))
+        ));
+        let mut out = Vec::new();
+        h.poll(Instant::now(), &mut out);
+        assert!(
+            matches!(out.last(), Some(Event::Disconnected { .. })),
+            "{out:?}"
+        );
+        assert!(matches!(h.send_appearance(&look), Err(NetError::Closed)));
     }
 }

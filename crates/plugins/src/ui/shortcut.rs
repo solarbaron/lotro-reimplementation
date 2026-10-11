@@ -16,8 +16,67 @@ use crate::api::{NativeApi, script_error};
 /// `ShortcutType.Alias` (Appendix A.1).
 pub(crate) const ALIAS: u32 = 4;
 
+/// `ShortcutType.Item` (Appendix A.1).
+pub(crate) const ITEM: u32 = 2;
+
+/// `ShortcutType.Skill` (Appendix A.1).
+pub(crate) const SKILL: u32 = 6;
+
 /// Most bytes of shortcut data kept (Tessera bound).
 const MAX_DATA: usize = 4096;
+
+/// Most game actions of activated quickslots waiting for the client.
+const MAX_GAME_ACTIONS: usize = 256;
+
+/// The content of a `Skill` or `Item` shortcut as the game uses it (`lua-plugin-api.md`
+/// §15.2 "Quickslot shortcuts"): what a plugin quickslot's activation uses, what a drag
+/// from the game's quickslot bar carries, and what a plugin shortcut dropped on that bar
+/// sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GameShortcut {
+    /// A skill record (`UseSkill { what: Ref::Record(did), target }`).
+    Skill(u32),
+    /// An item instance (`UseItem { item, target }`).
+    Item(u64),
+}
+
+/// `0x` followed by exactly `n` hex digits (either case), as a number.
+fn hex_field(s: &str, n: usize) -> Option<u64> {
+    let digits = s.strip_prefix("0x")?;
+    if digits.len() != n || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(digits, 16).ok()
+}
+
+impl GameShortcut {
+    /// Parse a shortcut of type `kind` with data `data`: a `Skill` (6) whose data is `0x`
+    /// and 8 hex digits; an `Item` (2) whose data is `0x`, 16 hex digits, `,0x` and 8 hex
+    /// digits. Any other type or data gives `None`.
+    #[must_use]
+    pub fn parse(kind: u32, data: &str) -> Option<Self> {
+        match kind {
+            SKILL => hex_field(data, 8).map(|d| Self::Skill(d as u32)),
+            ITEM => {
+                let (id, companion) = data.split_once(',')?;
+                hex_field(companion, 8)?;
+                hex_field(id, 16).map(Self::Item)
+            }
+            _ => None,
+        }
+    }
+
+    /// The shortcut type and data string a plugin sees (`Lotro.DragDropInfo:GetShortcut()`
+    /// of a drag from the game's bar): upper-case hex digits; an item's companion value
+    /// is written as 0 (§14.6 OPEN).
+    #[must_use]
+    pub fn to_type_and_data(self) -> (u32, String) {
+        match self {
+            Self::Skill(did) => (SKILL, format!("0x{did:08X}")),
+            Self::Item(id) => (ITEM, format!("0x{id:016X},0x00000000")),
+        }
+    }
+}
 
 /// A shortcut's type and data string (§14.6).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -85,7 +144,9 @@ pub(crate) fn shortcut_arg(lua: &Lua, sh: &Shared, v: Option<&Value>) -> Option<
 }
 
 /// A user click on quickslot `id` with mouse button `button` (§14.6): activates its
-/// shortcut. An `Alias` queues its text as a chat command; other types need game state.
+/// shortcut. An `Alias` queues its text as a chat command; a `Skill` or `Item` shortcut
+/// with well-formed data queues a game action for the client (§15.2); other types and
+/// data do nothing.
 pub(crate) fn activate(st: &mut State, id: u64, button: u32) {
     let Some(ObjData::Ctl(c)) = st.objs.get(&id).map(|o| &o.data) else {
         return;
@@ -99,20 +160,37 @@ pub(crate) fn activate(st: &mut State, id: u64, button: u32) {
     if !(button == 1 || (button == 2 && q.use_on_right_click)) {
         return;
     }
-    if let Some(s) = &q.shortcut
-        && s.kind == ALIAS
-        && !s.data.trim().is_empty()
-        && st.commands.len() < 256
-    {
+    let Some(s) = &q.shortcut else {
+        return;
+    };
+    if s.kind == ALIAS && !s.data.trim().is_empty() && st.commands.len() < 256 {
         let line = s.data.clone();
         st.commands.push(line);
+    } else if let Some(action) = GameShortcut::parse(s.kind, &s.data)
+        && st.game_actions.len() < MAX_GAME_ACTIONS
+    {
+        st.game_actions.push(action);
     }
 }
 
-/// The shortcut of the drag source `id`, when it is a quickslot.
+/// The shortcut of the drag source `id`, when it is a plugin quickslot; otherwise the
+/// content of the game's quickslot-bar slot the drag started on, when the client set one.
 pub(crate) fn drag_shortcut(st: &State, id: Option<u64>) -> Option<ShortcutData> {
-    match st.objs.get(&id?).map(|o| &o.data) {
+    match id.and_then(|id| st.objs.get(&id)).map(|o| &o.data) {
         Some(ObjData::Ctl(c)) => c.quickslot.as_deref().and_then(|q| q.shortcut.clone()),
+        Some(_) => None,
+        None => st.game_drag.clone(),
+    }
+}
+
+/// The game content of the current drag source's shortcut, when the source is a plugin
+/// quickslot holding a well-formed `Skill` or `Item` shortcut.
+pub(crate) fn drag_source_game_shortcut(st: &State) -> Option<GameShortcut> {
+    match st.objs.get(&st.drag_source?).map(|o| &o.data) {
+        Some(ObjData::Ctl(c)) => {
+            let s = c.quickslot.as_deref()?.shortcut.as_ref()?;
+            GameShortcut::parse(s.kind, &s.data)
+        }
         _ => None,
     }
 }
@@ -167,7 +245,21 @@ pub(crate) fn install(
         });
         Ok(())
     })?;
-    def(api, sh, &s, "GetItem", shortcut, |_, _| Ok(Value::Nil))?;
+    // An `Item` shortcut gives the item's `Item` object while the player's containers
+    // hold it, else an empty `Item` view (§15.2; `plugin-api-usage.md` §7.4.1 rule 3).
+    def(api, sh, &s, "GetItem", shortcut, |cx, _| {
+        let Some(s) = sc(cx.sh, cx.id, |s| s.clone()) else {
+            return Ok(Value::Nil);
+        };
+        if s.kind != ITEM {
+            return Ok(Value::Nil);
+        }
+        let id = match GameShortcut::parse(s.kind, &s.data) {
+            Some(GameShortcut::Item(id)) => Some(id),
+            _ => None,
+        };
+        Ok(Value::Table(crate::inventory::shortcut_item(cx.lua, id)?))
+    })?;
 
     let control = class_table(api.lua(), "Control")?;
     let q = class(
@@ -310,6 +402,54 @@ fn set_shortcut(cx: &Cx<'_>, s: ShortcutData) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn game_shortcut_data() {
+        assert_eq!(
+            GameShortcut::parse(SKILL, "0x7000aBcD"),
+            Some(GameShortcut::Skill(0x7000_ABCD))
+        );
+        assert_eq!(
+            GameShortcut::parse(ITEM, "0x00000000000000FF,0x00000000"),
+            Some(GameShortcut::Item(255))
+        );
+        for (kind, bad) in [
+            (SKILL, "0xZZ"),
+            (SKILL, "0x7000ABC"),
+            (SKILL, "0X7000ABCD"),
+            (SKILL, "0x+000ABCD"),
+            (ITEM, "0x00000000000000FF"),
+            (ITEM, "0x00000000000000FF,0x0"),
+            (ALIAS, "0x7000ABCD"),
+        ] {
+            assert_eq!(GameShortcut::parse(kind, bad), None, "{bad}");
+        }
+        for g in [
+            GameShortcut::Skill(0x7000_00AB),
+            GameShortcut::Item(u64::MAX),
+        ] {
+            let (kind, data) = g.to_type_and_data();
+            assert_eq!(GameShortcut::parse(kind, &data), Some(g));
+        }
+        assert_eq!(GameShortcut::Skill(0xAB).to_type_and_data().1, "0x000000AB");
+    }
+
+    #[test]
+    fn a_drag_from_the_game_bar_carries_its_content() {
+        let mut st = State::default();
+        assert_eq!(drag_shortcut(&st, None), None);
+        st.game_drag = Some(ShortcutData {
+            kind: SKILL,
+            data: "0x000000AB".into(),
+        });
+        assert_eq!(
+            drag_shortcut(&st, None).map(|s| (s.kind, s.data)),
+            Some((SKILL, "0x000000AB".to_owned()))
+        );
+        // A source the layer does not know (a game element) is no plugin quickslot.
+        assert!(drag_shortcut(&st, Some(42)).is_some());
+        assert_eq!(drag_source_game_shortcut(&st), None);
+    }
 
     #[test]
     fn type_three_reads_back_as_zero() {

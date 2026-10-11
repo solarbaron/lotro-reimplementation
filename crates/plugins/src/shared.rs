@@ -106,7 +106,9 @@ pub(crate) enum Item {
         line: ChatEvent,
         skip: Vec<u64>,
     },
-    Gameplay(GameplayEvent),
+    /// A game-raised gameplay event with its sequence number (1, 2, …; the value of
+    /// [`Shared::gameplay_seq`] after it was raised).
+    Gameplay(GameplayEvent, u64),
     /// The logout unload (`plugin-runtime.md` §8.4): when it runs it becomes one
     /// [`Item::Unload`] per apartment existing at that moment, in creation order.
     Logout,
@@ -151,6 +153,8 @@ pub(crate) struct SharedState {
     pub dropped_chat: usize,
     pub dropped_requests: usize,
     pub dropped_gameplay: usize,
+    /// Gameplay events waiting in [`Self::queue`] (kept so that queueing is O(1)).
+    pub gameplay_queued: usize,
     /// `/plugins refresh` waits for its worker scan to report the count.
     pub refresh_notify: bool,
     /// Tessera's own scaling choice per plugin name (`Plugin:GetUsesGlobalScaling`).
@@ -184,15 +188,12 @@ impl SharedState {
         self.queue.push_back(Item::Chat { line, skip });
     }
 
-    /// Queue a gameplay event; `false` when the queue was full and the event was dropped.
-    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent) -> bool {
-        let queued = self
-            .queue
-            .iter()
-            .filter(|i| matches!(i, Item::Gameplay(_)))
-            .count();
-        if queued < MAX_QUEUED_GAMEPLAY {
-            self.queue.push_back(Item::Gameplay(ev));
+    /// Queue a gameplay event with its sequence number (see [`Shared::raise_gameplay`]);
+    /// `false` when the queue was full and the event was dropped.
+    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent, seq: u64) -> bool {
+        if self.gameplay_queued < MAX_QUEUED_GAMEPLAY {
+            self.gameplay_queued += 1;
+            self.queue.push_back(Item::Gameplay(ev, seq));
             true
         } else {
             self.dropped_gameplay += 1;
@@ -326,7 +327,36 @@ pub(crate) struct Shared {
     pub party: Mutex<crate::party::PartyModel>,
     /// The source of party members' actor values (§15.4).
     pub party_actors: Mutex<Option<Arc<dyn crate::party::PartyActorSource>>>,
+    /// The source of the combat views (`lua-plugin-api.md` §15.2).
+    pub combat: Mutex<Option<Arc<dyn crate::combat::CombatSource>>>,
+    /// The subjects with a combat view object in some apartment (events of others are
+    /// not queued).
+    pub combat_watch: Arc<crate::combat::Watch>,
     pub next_id: AtomicU64,
+    /// Sequence number of the last gameplay event raised (`lua-plugin-api.md` §15.2: an
+    /// event reaches only the view objects that existed when it was raised; a combat view
+    /// object records this value when it is created).
+    pub gameplay_seq: AtomicU64,
+}
+
+impl Shared {
+    /// Queue a gameplay event for step 7 with the next sequence number. Raised events are
+    /// numbered even when the full queue drops them.
+    /// A combat event whose subject has no view object in any apartment is not queued
+    /// (`lua-plugin-api.md` §15.2). Returns `false` only when the full queue dropped the
+    /// event (the party views count those, §15.4).
+    pub(crate) fn raise_gameplay(&self, state: &mut SharedState, ev: GameplayEvent) -> bool {
+        if let GameplayEvent::Combat(c) = &ev
+            && !self.combat_watch.may_reach(c, || {
+                let src = lock(&self.combat).clone();
+                src.and_then(|s| s.player())
+            })
+        {
+            return true;
+        }
+        let seq = self.gameplay_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        state.queue_gameplay(ev, seq)
+    }
 }
 
 impl std::fmt::Debug for Shared {

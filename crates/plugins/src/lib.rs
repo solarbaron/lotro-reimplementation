@@ -17,8 +17,13 @@
 //!   [`LocalPlayerSource`] the client implements ([`gameplay`]); the inventory views
 //!   (`Backpack`, `Equipment`, `Item`, `ItemInfo`) fed by an [`InventorySource`] and
 //!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the
-//!   party views (`Party`, `PartyMember`, `Player:GetParty()`) over the fellowship model
-//!   the client sets with [`PluginManager::set_fellowship`] ([`party`], §15.4).
+//!   combat views (actor vitals, level and target, `EffectList`, `Effect`, `IsInCombat`,
+//!   the trained `SkillList`) fed by a [`CombatSource`] and queued [`CombatViewEvent`]s,
+//!   with [`CombatModel`] as a ready-made source ([`combat`], §15.2); the wallet and money
+//!   views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and queued
+//!   [`WalletViewEvent`]s ([`wallet`], §15.3); the party views (`Party`, `PartyMember`,
+//!   `Player:GetParty()`) over the fellowship model the client sets with
+//!   [`PluginManager::set_fellowship`] ([`party`], §15.4).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -40,6 +45,7 @@
 mod apartment;
 pub mod api;
 pub mod class_helper;
+pub mod combat;
 pub mod commands;
 mod data_io;
 pub mod descriptor;
@@ -61,7 +67,12 @@ mod root_ns;
 mod shared;
 pub mod ui;
 pub mod vfs;
+pub mod wallet;
 
+pub use combat::{
+    ActorEvent, ActorKind, ActorValues, CombatModel, CombatSource, CombatViewEvent, CombatVital,
+    EffectData, EffectEvent, SkillData, SkillKey, ViewEntity,
+};
 pub use commands::{CommandOwner, CommandTable};
 pub use descriptor::{DescriptorError, PluginDescriptor, parse_descriptor};
 pub use discovery::{AvailablePlugin, RefreshReport};
@@ -83,6 +94,7 @@ pub use party::{
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
 pub use root_ns::split_command_line;
 pub use tessera_script::{ErrorKind, Limits};
+pub use wallet::{WalletEntry, WalletItemData, WalletSource, WalletViewEvent};
 
 #[cfg(test)]
 mod send_check {

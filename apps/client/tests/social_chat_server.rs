@@ -12,7 +12,7 @@
 //! - both join a named channel (`/join Lore`, `/join lore`: one channel, the server's
 //!   spelling), Aldith speaks on it (`/ch1 …`), Bram hears it in slot 1's line form; Bram
 //!   leaves (`/part Lore`), Aldith speaks again and Bram no longer hears it (scenario-feed.md
-//!   §14.12 S9).
+//!   §14.13 S9).
 //!
 //! Needs no game install and no GPU. Skips itself (reporting "passed", and printing
 //! `SKIPPED`) only where loopback UDP is unavailable.
@@ -275,7 +275,7 @@ fn tells_and_named_channels_through_the_chat_windows_dispatcher() {
     assert_eq!(
         c[1].world.social().chat().slots()[0].as_deref(),
         Some("Lore"),
-        "the server's spelling (scenario-feed.md §14.12 S3)"
+        "the server's spelling (scenario-feed.md §14.13 S3)"
     );
     c[0].type_line("/ch1 Who has the old maps?");
     run_until(&mut c, "Bram hears the channel line", |c| {

@@ -212,22 +212,22 @@ Rules:
 | `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4), and the war-steed (ramp-up) controller of mounted movement (`mounts.md` §5.3–§5.7, `controller::warsteed`). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. Planned in M4.5: the M7 test server would reuse the controller and the collision-set types, with building the sets from install data left to `world` (§10.3, §10.5). Not built: the M7 server as built links no physics, and the P0 rules (§3, §23.5) refuse it (see the OPEN below this table). |
 | `tessera-terrain` (`crates/terrain`) | L3 | M3 | Heightmap meshing, terrain LOD bands, far-terrain imposters; from M4.5 the texture layers of the region's terrain type table, alpha masks, per-layer texture coordinates and tangent frames, ceiling chunks and light-map coordinates (§10). |
 | `tessera-mesh` (`crates/mesh`) | L3 | M2 | Static and skinned mesh (GfxObj) decoding into engine vertex streams; setup/part assemblies (§11). |
-| `tessera-anim` (`crates/anim`) | L3 | M4 | Skeleton hierarchy, pose sampling, blending, skinning palettes, attach points (§11). |
+| `tessera-anim` (`crates/anim`) | L3 | M4 | Skeleton hierarchy, pose sampling, blending, skinning palettes, attach points (§11). From P2, for clips that combat scripts start on figures (`skeleton-anim.md` §6.6): `Animator::insert_layer` adds a layer between existing ones, so a clip sits by its data-layer key between the idle and locomotion layers and the held proportion layer, and `Layer::blend_bone_opacity` moves a playing clip's track-opacity mixing factor over 0.2 s when its `UseBoneOpacity` flag changes, so an upper-body attack plays over the legs' locomotion. |
 | `tessera-material` (`crates/material`) | L3 | M2 | Surface → material → texture-list → texture chains, shader-feature classification, dye rules (§12). |
-| `tessera-particles` (`crates/particles`) | L3 | 2026-10-08 | Particle runtime (`particles.md` §8, `particle-runtime.md`): the shared random generator (§3.3) and its range draws, deterministic CPU simulation of 0x39 systems (start, restart, update cadence, timed and distance emission with the clamped caps, spawn shapes and spread, keyframe channels, motion controllers, forces, fade envelope, atlas frames, distance fade and the not-drawn state), billboard vertex generation in storage order with the 32,768-vertex draw limit, fork-effect lifetimes (not simulated, rule §10.2), and the run-time rules: never-ending classification, node start gates, start gating, attachment frames, owner scale vectors, sharing, stop, lingering and housekeeping. Depends on `formats` (records) and `material` (curve evaluation); no GPU. `render` draws its vertices; the explorer previews records; the walker (`apps/client/src/walker/effects`) starts effects from the Particle nodes of the start-up scripts of static entities and placed figures (run by `tessera-scriptgraph`), attaches, places, lingers and draws them. Not end to end: fork effects are not drawn, nor systems of the post-processing pass; weather, beams, lit systems' lights, `inherit_opacity` and bounds culling wait for their specs (`particle-runtime.md` OPENs). |
-| `tessera-gamedata` (`crates/gamedata`) | L3 | P0 | The presentation data layer of the parity track ([0024](decisions/0024-parity-track.md) §3), the "future gameplay-data crate" the gameplay specs name: typed stores over `props`/`wstate` for items, skills, effects, creatures, quests, economy, map and progression records; tooltip and description evaluation; scenario selector resolution (`scenario-feed.md` §8, with query types of its own that mirror the feed's, since it cannot depend on `tessera-net`), from P1 (decision 0025) also property labels and kinds, enum labels through a property's mapper and nationality labels for the feed's `stat`, `item-property` and `look` values. From P1 three models, each a module: **`tooltip`**, the item examination tooltip model (`item-tooltips.md` §3–§8, §11–§14: the tooltip layout an item names and its row templates, row content, Tessera's wording for requirement, effect, set, slot and duration rows, comparison with equipped items, attached tooltips one level deep, and the per-record census categories of §12; `TooltipEngine` over `InstallTooltipData`, bounded caches); **`chargen`**, the data of the screens before world entry (`character-screens.md` §3–§5, §9; `player-character.md` §5, §8: race, gender, class and nationality lists in screen order, the creation check and request, appearance controls per race and gender, random names and name checks; one unreadable record is skipped and reported, never a failed load); **`inventory`**, the local player's inventory model (`character-panels.md` §3.3, §4, §6, §9; `lua-plugin-api.md` §15.1: backpack and equipment containers fed by events that the client adapts from `tessera-net`'s, the change list of each event, the backpack size and the slots each bag window shows, the paperdoll slot table, slot keys and bits and slot compatibility, the command of each item interaction, plugin indices and events). None of the three parses bytes or knows `tessera-net` or `tessera-ui`. Depends on `formats`, `props`, `text` and `wstate` (`wvm` is allowed, §3, and not yet used; `mesh` only as a dev-dependency of the creation real-data test). Client and tools only: `tessera-server` never links it (LEGAL.md §11.1 rule 5; `tools/check-server-deps.sh`, §23.5). |
+| `tessera-particles` (`crates/particles`) | L3 | 2026-10-08 | Particle runtime (`particles.md` §8, `particle-runtime.md`): the shared random generator (§3.3) and its range draws, deterministic CPU simulation of 0x39 systems (start, restart, update cadence, timed and distance emission with the clamped caps, spawn shapes and spread, keyframe channels, motion controllers, forces, fade envelope, atlas frames, distance fade and the not-drawn state), billboard vertex generation in storage order with the 32,768-vertex draw limit, fork-effect lifetimes (not simulated, rule §10.2), and the run-time rules: never-ending classification, node start gates, start gating, attachment frames, owner scale vectors, sharing, stop, lingering and housekeeping. Depends on `formats` (records) and `material` (curve evaluation); no GPU. `render` draws its vertices; the explorer previews records; the walker (`apps/client/src/walker/effects`) starts effects from the Particle nodes of the start-up scripts of static entities and placed figures (run by `tessera-scriptgraph`), attaches, places, lingers and draws them. Not end to end: fork effects are not drawn, nor systems of the post-processing pass; weather, beams, lit systems' lights, `inherit_opacity` and bounds culling wait for their specs (`particle-runtime.md` OPENs). From P2: beams (`particle-runtime.md` §11.1, rule 14; module `beam`): envelope, the two ends with their offsets and detach times, head and tail, the head's arrival (which fires the Beam node's port), ribbon segment layout and the beam and head particle spawns (`SystemSim::spawn_at`); the walker's combat layer starts the Particle nodes of combat scripts (behaviours, hit and projectile scripts, effect, induction, channel, combat-state and death scripts) on the figures of session entities, attached and looping as above (`combat-visuals.md` §4.5, §5, §9). The walker draws a beam's ribbon (`beam::ribbon_mesh`, camera-facing quads with the surfaces of its three materials through the particle pipeline, before the systems) and its head entity (the 0x47 entity's parts through the object layer's instanced models, at the head point in `beam::beam_rotation`); the readings the spec leaves open are the implementer OPEN of `particle-runtime.md` §11.1. |
+| `tessera-gamedata` (`crates/gamedata`) | L3 | P0 | The presentation data layer of the parity track ([0024](decisions/0024-parity-track.md) §3), the "future gameplay-data crate" the gameplay specs name: typed stores over `props`/`wstate` for items, skills, effects, creatures, quests, economy, map and progression records; tooltip and description evaluation; scenario selector resolution (`scenario-feed.md` §8, with query types of its own that mirror the feed's, since it cannot depend on `tessera-net`), from P1 (decision 0025) also property labels and kinds, enum labels through a property's mapper and nationality labels for the feed's `stat`, `item-property` and `look` values. From P1 three models, each a module: **`tooltip`**, the item examination tooltip model (`item-tooltips.md` §3–§8, §11–§14: the tooltip layout an item names and its row templates, row content, Tessera's wording for requirement, effect, set, slot and duration rows, comparison with equipped items, attached tooltips one level deep, and the per-record census categories of §12; `TooltipEngine` over `InstallTooltipData`, bounded caches); **`chargen`**, the data of the screens before world entry (`character-screens.md` §3–§5, §9; `player-character.md` §5, §8: race, gender, class and nationality lists in screen order, the creation check and request, appearance controls per race and gender, random names and name checks; one unreadable record is skipped and reported, never a failed load); **`inventory`**, the local player's inventory model (`character-panels.md` §3.3, §4, §6, §9; `lua-plugin-api.md` §15.1: backpack and equipment containers fed by events that the client adapts from `tessera-net`'s, the change list of each event, the backpack size and the slots each bag window shows, the paperdoll slot table, slot keys and bits and slot compatibility, the command of each item interaction, plugin indices and events). From P3 two more models: **`quest`**, the quest journal's presentation model (`quest-journal.md` §3–§9: the journal kept from the session's quest reports (`QuestJournal`, at most 65,536 quests and 262,144 objective reports), the log's rows with grouping, order, filters and header counts, the details pane, objective progress texts with their counters and player variables, tracker entries and the tracker's height budget, the quest chat lines, the NPC ring key chosen from a quest and its reported state, quest marker images, and the per-record census categories of exit criterion 1); **`npc`**, the NPC windows' presentation model (`npc-windows.md` §5–§11: dialogue page texts and the choice of conversation, choice or comment window, quest-offer content with the objective block and the reward rows of the feed's `QuestRewards`, vendor, barter, buy-back and loot entries with item names, icon layers and prices as coins, splitting an amount into coins and which coins show, the wallet catalog and the wallet window's categories, and the census categories of what the windows show). Both present only what the session reports: they never compute a quest state, an objective count, a price, a loot result or a reward amount (decision 0024 §2 principle 4). None of the five parses bytes or knows `tessera-net` or `tessera-ui`. Depends on `formats`, `props`, `text` and `wstate` (`wvm` is allowed, §3, and not yet used; `mesh` only as a dev-dependency of the creation real-data test). Client and tools only: `tessera-server` never links it (LEGAL.md §11.1 rule 5; `tools/check-server-deps.sh`, §23.5). From P2: **`tooltip`** also models skill and effect examination tooltips (`skill-tooltips.md` §3–§13: `TooltipEngine::build_combat` for a skill or effect record or a live effect, effect lines of effects, skills and items, duration and live timer texts, numbers as message values, examination and skill icons) and puts every skill and effect record into one tooltip and one icon category (`classify_combat`, §14); the item model gains effect lines, skill-item rows and the `SkillGrantingItem` comparison (`item-tooltips.md` §6.16, §6.20, §8.3). A fourth module, **`combat`**, holds the typed skill and effect records (`SkillRecord`, `EffectRecord`; `combat-data.md` §6, §7) and `CombatData`, the install's combat data read on demand with bounded caches: the panels' data (consideration and name colours, health-meter states, vital display overrides, target-frame decoration and level display, effect icons and rows, cast-bar labels and styles, defeat records, floating-text settings and avoidance words; `combat-ui.md`, `game-controls.md` §5.8, §7.1, §7.5, `interaction.md` §3.8, §8) and the script references of combat visuals (skill behaviours, attack hooks, inductions, channels, effect, interval and combat-state scripts, the death and revive labels, the stance of a figure's worn items; `combat-visuals.md` §2–§7, §11). Neutral types: nothing in it decides a gameplay outcome (decision 0024 §2.4). |
 | `tessera-entity` (`crates/entity`) | L4 | M4 | Main-thread entity store: generational entity IDs, sparse-set component columns, the client's component sets (transform, network ID, render and animation handles as type parameters, landblock membership of streamed statics), per-frame change and despawn lists, deferred removal ([0008](decisions/0008-entity-storage.md)). Depends on no other Tessera crate; L4 because it holds the client's game state, which lower layers never see. |
 | `tessera-render` (`crates/render`) | L4 | M0 | wgpu renderer: device and surface, frame graph, pipelines and WGSL shaders, texture/mesh uploads, headless mode (§13). |
 | `tessera-audio` (`crates/audio`) | L4 | M6 | Output backend (cpal behind the `device` feature; null and offline backends otherwise) and the project-owned mixer: channels and volumes, positional voices, gain chain, distance law, voice limit, request gates, reverb environments, sample-accurate scheduling; Vorbis/WAV decoding; player music (ABC dialect, instruments) (§14, [0019](decisions/0019-audio-backend.md)). |
-| `tessera-scriptgraph` (`crates/scriptgraph`) | L3 | M6 | Continuous script-graph runtime: keeps script-table and scriptlet node instances alive over time (Switches, Sequences, Timers, Randoms, driven properties, intensities) and hands sound and sound-environment effects to sinks that the client wires to `tessera-audio`, and Particle-node effects (`particle-runtime.md` §5.4–§5.8: start gates, never-ending instances, stop hook, redirect listener) to sinks that the walker wires to `tessera-particles`. Depends on `formats` only, not on `audio` or `particles`. |
-| `tessera-ui` (`crates/ui`) | L4 | M5 | Retained element tree built from UI layout records, user skins and plugin controls; layout, behaviour and focus; text; art tiled at native size into sparse 32-bit CPU canvases (one per surface-owning element), damage and paint jobs, the composition list that `render` draws (§15). From P1 the widgets of the character, inventory and examination panels (`game::items`, `game::examine`, `game::avatar`, `game::creation`, vocabulary `game::charvocab`): item slots with composed icons, quantities and overlays, bag item lists, paperdoll slots and item drag and drop (`character-panels.md` §3–§6, `ui-behaviour.md` §7); the examination tooltip panel with row assembly, text wrap, placement, comparison tooltips and pins (`item-tooltips.md` §4–§10); viewports as hosts of external content that the client renders offscreen (`render.md` §6.10) and the paperdoll's turning; the creation screens' fallback controls. It knows neither items nor commands: the client fills neutral slot and row descriptions and turns the slots' neutral interactions into commands. No GPU and no Lua dependency; depends on neither `script` nor `plugins`. |
-| `tessera-input` (`crates/input`) | L4 | M3 | Raw input → actions via a keymap; input contexts; gamepad (§16). From P1 the Tessera actions and default keys of the P1 panel commands (`toggle_character`, `toggle_bags`, `toggle_bag_1` … `6`, `pin_tooltip`; `keymap.md` §12.14.2 OPEN). |
+| `tessera-scriptgraph` (`crates/scriptgraph`) | L3 | M6 | Continuous script-graph runtime: keeps script-table and scriptlet node instances alive over time (Switches, Sequences, Timers, Randoms, driven properties, intensities) and hands sound and sound-environment effects to sinks that the client wires to `tessera-audio`, and Particle-node effects (`particle-runtime.md` §5.4–§5.8: start gates, never-ending instances, stop hook, redirect listener) to sinks that the walker wires to `tessera-particles`. Depends on `formats` only, not on `audio` or `particles`. From P2 combat runs (`combat-visuals.md`, `script-table.md` §9.1): `Runtime::start_script_with` starts a script with a run-parameter set (`StorySystem_StoryID`, `Combat_AnimationSpeedMultiplier`, the strike parameters) and returns a `RunId`; a StoryHook node hands its type and its run's story to the sink, an Execute node asks the sink (`GetUpcomingTargets`, `GetUpcomingHitResult`) and fires the ports that match the answer, a Beam node asks the sink to start a beam and fires its ports on the arrival, and animation nodes reach the sink with their driven speed and `UseBoneOpacity`. Still no dependency on `anim` or `particles`. |
+| `tessera-ui` (`crates/ui`) | L4 | M5 | Retained element tree built from UI layout records, user skins and plugin controls; layout, behaviour and focus; text; art tiled at native size into sparse 32-bit CPU canvases (one per surface-owning element), damage and paint jobs, the composition list that `render` draws (§15). From P1 the widgets of the character, inventory and examination panels (`game::items`, `game::examine`, `game::avatar`, `game::creation`, vocabulary `game::charvocab`): item slots with composed icons, quantities and overlays, bag item lists, paperdoll slots and item drag and drop (`character-panels.md` §3–§6, `ui-behaviour.md` §7); the examination tooltip panel with row assembly, text wrap, placement, comparison tooltips and pins (`item-tooltips.md` §4–§10); viewports as hosts of external content that the client renders offscreen (`render.md` §6.10) and the paperdoll's turning; the creation screens' fallback controls. It knows neither items nor commands: the client fills neutral slot and row descriptions and turns the slots' neutral interactions into commands. From P3 the NPC windows and the quest journal (`game::npc`, `game::quest`, vocabulary `game::npcvocab`): the conversation, choice and comment windows, the quest offer with its objective and reward rows, the vendor window with its buy, sell and buy-back pages, buy modes and quantity dialog, the barter window, the loot window with Loot All, the money display with its coin split and the wallet window (`npc-windows.md` §5–§9); the quest log with its grouped list, filters, counts, buttons and details pane, the quest tracker with its height budget and entry button, and quest markers drawn on the minimap and the world map (`quest-journal.md` §4, §6, §8.3), each with a Tessera fallback window built from code-made elements, with committed synthetic goldens of the windows (decision 0031 tier 1, `tests/golden/p3_*.png`; the vendor's buy-back page, quest markers and the history view have none yet). They take plain view structs (texts rendered, icons as image references, prices as coin counts), plus a text hook (`NpcTexts`, `QuestTexts`) through which the client supplies the install's fixed labels and number formats (its defaults are Tessera's own), and return neutral actions (`NpcAction`, `QuestAction`) that the client turns into session commands (§15). No GPU and no Lua dependency; depends on neither `script` nor `plugins`. From P2 the combat widgets (`game::combat`, `combat-ui.md`, §15.1): player and target frames, the selection's target, cast bars, effect rows, the floating-text layer, the selection indicator and name block, the combat-state display and the defeat panel, each in its install look or its fallback look; `game::quickslot` gains skill displays, the cooldown sweep, slot states and activation (`combat-ui.md` §9), and `game::examine` shows skill and effect tooltips with live timer rows (`skill-tooltips.md` §10.2, §12). The widgets know neither the session nor the world: the client feeds neutral data, screen anchors and the clock, and turns their neutral actions into commands. |
+| `tessera-input` (`crates/input`) | L4 | M3 | Raw input → actions via a keymap; input contexts; gamepad (§16). From P1 the Tessera actions and default keys of the P1 panel commands (`toggle_character`, `toggle_bags`, `toggle_bag_1` … `6`, `pin_tooltip`; `keymap.md` §12.14.2 OPEN). From P2 (`keymap.md` §8.2, K47–K49; module `combat`): the 15 targeting actions (`target_nearest_enemy`, `target_next_enemy`, …, `target_self`, `target_assist`, `target_last`, `target_last_attacker`, `target_clear`) and `quickslot_1` … `quickslot_72`, buttons of the `global` context with exact modifiers and no repeat, with their original command names and the original's default keys (quickslots 1–48 on `1` … `0`, `Minus`, `Equal`, plain and with Ctrl, Alt, Shift); what they do is the client's (`combat-ui.md` §3.3, §9.2). The defaults take Backslash, Minus, Equal, F9 and F10 from the walker's own keys (`keymap.md` §8.2 OPEN). |
 | `tessera-settings` (`crates/settings`) | L4 | M1 | Tessera's own settings file (INI-shaped), with a read-only importer for the original client's preferences file (§17). From P1 the creation choices of characters made on Tessera's creation screen where the session cannot carry their look (`CreatedCharacters`, section `[[CreatedCharacters]]`, keyed by server and name, bounded; `character-screens.md` §7.1 Tessera rule, decision 0025 D2). |
 | `tessera-script` (`crates/script`) | L4 | M0 | Plugin-free sandboxed Lua 5.1 core: state creation from an apartment profile, library allow-list, limits and instruction budget, protected calls, text-only compilation, bounded pattern matcher, collector stepping, neutral Lua-table data reader. No plugin API names or plugin state ([0023](decisions/0023-plugin-host-split.md), §18.1). |
-| `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin host on the `script` core: discovery (`.plugin` XML), apartments, lifecycle, `import` and the `Plugins/` file index, the compatible Lua API surface (its UI classes drive `tessera-ui` elements), command table, request and chat queues, `.plugindata` persistence, the class helper ([0023](decisions/0023-plugin-host-split.md), §18.2). From P1 the `Turbine.Gameplay` inventory views `Backpack`, `Equipment`, `Item` and `ItemInfo` (`lua-plugin-api.md` §15.1, module `inventory`) over an `InventorySource` the client implements, with their events queued for step 7; the host never reads the install for them. |
-| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend, test-server backend (`remote`, decision 0030; M7), snapshot interpolation (§19). From P0 the scenario feed (feature `scenario`, default on; `scenario-feed.md`): scenario parser, resolution contract, the sandbox's run-time feed, the headless driver and the canonical event log. From P1 ([0025](decisions/0025-p1-character-look-on-test-server.md)): character looks (`Look`, `LookEntry`, `PropertyValue`), held-item slots (`Equipped::slot`), creation in the plain sandbox, the `remote` backend at protocol 1.1, and the overlay backend that runs the feed's Character and Inventory groups over the `remote` backend (§19.2). Decodes no game data. |
+| `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin host on the `script` core: discovery (`.plugin` XML), apartments, lifecycle, `import` and the `Plugins/` file index, the compatible Lua API surface (its UI classes drive `tessera-ui` elements), command table, request and chat queues, `.plugindata` persistence, the class helper ([0023](decisions/0023-plugin-host-split.md), §18.2). From P1 the `Turbine.Gameplay` inventory views `Backpack`, `Equipment`, `Item` and `ItemInfo` (`lua-plugin-api.md` §15.1, module `inventory`) over an `InventorySource` the client implements, with their events queued for step 7; the host never reads the install for them. From P2 the `Turbine.Gameplay` combat views (`lua-plugin-api.md` §15.2, module `combat`): actors' morale, power, level and target, `EffectList` and `Effect`, `LocalPlayer:IsInCombat()` and the trained `SkillList` with its skills, over a `CombatSource` the client implements (`CombatModel` is a ready-made source that derives the §15.2 events from session-level inputs), with `CombatViewEvent`s queued for step 7 and delivered only to view objects that existed when they were raised; a plugin `Quickslot` holding a skill or an item hands its use to the client as a game action (`PluginUi::take_game_actions`). From P3 the wallet and money views `LocalPlayer:GetWallet()`, `Wallet`, `WalletItem`, `GetMoney()`, `GetMoneyComponents()` and their events `ItemAdded`, `ItemRemoved`, `QuantityChanged` and `MoneyChanged` (`lua-plugin-api.md` §15.3, module `wallet`) over a `WalletSource` the client implements (`LocalPlayerSource::wallet`); the client precomputes each `WalletItem`'s values from the install, and the host applies the API's rules (index range, money split, one object per entry per apartment, which apartments receive an event). |
+| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend, test-server backend (`remote`, decision 0030; M7), snapshot interpolation (§19). From P0 the scenario feed (feature `scenario`, default on; `scenario-feed.md`): scenario parser, resolution contract, the sandbox's run-time feed, the headless driver and the canonical event log. From P1 ([0025](decisions/0025-p1-character-look-on-test-server.md)): character looks (`Look`, `LookEntry`, `PropertyValue`), held-item slots (`Equipped::slot`), creation in the plain sandbox, the `remote` backend at protocol 1.1, and the overlay backend that runs the feed's Character and Inventory groups over the `remote` backend (§19.2). Decodes no game data. From P2 ([0032](decisions/0032-p2-targeting-on-test-server.md), `scenario-feed.md` revision 6): selection is local on the `remote` backend: a `SelectTarget` of a known target is answered with `TargetChanged` for the player, first in the next poll, and nothing goes on the wire; overlay runs route it there too. No protocol minor; overlay files may not script the Combat group (§19.2). |
 | `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol (`docs/specs/tessera-protocol.md`): message schema, framing, versioning, the sans-IO client and server connection state machines, property values, movement and time-sync helpers, key fingerprints and connect strings. Version 1.1 from P1 (minor 1, [0025](decisions/0025-p1-character-look-on-test-server.md)): looks appended to the character and entity messages, `Equipped.slot`. No I/O and no async code; feature `transport` adds the server key files and the rustls/quinn configurations of decision 0030. Shared by the `tessera-net` test-server backend, the test server and the load tools. |
-| `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). From P1: the character selection and creation screens (`screens`, run before world entry by `pre_world`, `--character-select`), the local player's state, the character panel and bag windows, item tooltips and the plugin inventory views (`character`), received looks and held-item slots on the walker's figures, overlay runs (`--scenario` with `--server`, `scenario::overlay`) and plugins in headless scenario runs (`scenario::plugins`). |
+| `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). From P1: the character selection and creation screens (`screens`, run before world entry by `pre_world`, `--character-select`), the local player's state, the character panel and bag windows, item tooltips and the plugin inventory views (`character`), received looks and held-item slots on the walker's figures, overlay runs (`--scenario` with `--server`, `scenario::overlay`) and plugins in headless scenario runs (`scenario::plugins`). From P2 (`combat`): the local player's combat state from the session (`CombatState`: selection, kept vitals and levels, combat state, effects, casts, quickslots, cooldowns, learned skills; local clearing of a despawned selection, decision 0032 D2), selection by mouse pick and targeting keys, quickslot use, the combat widgets filled from `tessera-gamedata` (`CombatHud` over `CombatInstall`), skill and effect tooltips, the plugin combat views' source (`PluginCombat`) and the headless combat screens of the P2 exit criteria (`combat::headless`); in the walker, `walker::combat`: the combat-visual state machine of `combat-visuals.md` §9 (stories, strikes and hooks, inductions and channels, effects, stance, defeat and revive) behind the neutral per-entity API `CombatLayer` (casts, strikes, effects, combat state, defeat, revive, vitals and the selection, by network ID, or a whole `CombatEvent`), figure picking and screen anchors (`walker::combat::pick`), the clips scripts start on figures (`walker::characters::combat_anim`) and session figures as script owners with beams (`walker::effects::session`). From P3 the NPC windows (`npc`: using an NPC through one entry point with the use range of `interaction.md` §3.4.1, the input action "use nearest NPC in range" on U, the windows' session state mirrored from the feed's events, the windows on the game UI from the install's layouts or as fallback widgets, the wallet window, and the session's wallet model behind the plugin wallet views, also in headless scenario runs) and the quest journal (`quests`: the reported quest state and quest markers, the quest log with its details pane on L, the quest tracker, quest chat lines of chat type 21, quest markers on the minimap and the world map, and world-anchored indicators over NPCs with a quest ring, `--quest-icons`); `--open-panel` takes the windows' names (§15). |
 | `tessera-dattool` (`apps/dattool`) | app | M0 | CLI: `detect`, `info`, `ls`, `stat`, `cat`, `extract`, `strings`, `validate`, later `diff` (§24). |
 | `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). From census 3 also: the landblock logic card with its interactive parts (day and night lights for a chosen day fraction, a simulated journal for the phasing boxes, per-instance script views with the table set and switches), decal previews in the 3D view (box, axes, preview mesh with the decal's material; `decal_preview`), the mount viewer (rider and mount at `Mount_Connection`, gait selector; `mount_view`) and the drama player (Decisions T1/T2/T5; `drama_play`) in the character view, and the node display of 0x07/0x0C records (`script_view`). From P1 the item card previews the item's examination tooltip with `tessera-gamedata`'s tooltip model. |
 | `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19); from P1 protocol 1.1: it stores each character's look and held-item slots as its client sent them (character files at most 1 MiB) and relays them, never judging them (`server-content.md` §4.1). A library plus a binary, so tests and the load tools run it in-process. Movement design planned in M4.5 (not built): server-side movement on `tessera-physics` with the same fixed step as the client (§20.3), identical to the client's only over the same collision sets (on install data generated scenery, statics and water, which `world` builds, §10.3, §10.5). The server as built links no physics and validates movement by speed and extent only; `tessera-physics` decodes game data, so the P0 rules (§3, §23.5) refuse it in the server's graph (see the OPEN below this table). |
@@ -1051,6 +1051,102 @@ The layout record grammar and the per-element UIData variants are in `specs/ui-l
 the font record type is in `specs/fonts.md`. Behaviour, widgets, game panels and the chat
 window are in `ui-behaviour.md`, `ui-widgets.md`, `game-panels.md` and `chat-window.md`.
 
+**P3 controllers: NPC windows and the quest journal** ([0024](decisions/0024-parity-track.md)
+P3; [`npc-windows.md`](specs/npc-windows.md), [`quest-journal.md`](specs/quest-journal.md)):
+
+- **Split.** `tessera-ui` (`game::npc`, `game::quest`) holds the windows' controllers and
+  links neither `tessera-net` nor `tessera-gamedata`. The client (`apps/client/src/npc`,
+  `apps/client/src/quests`) keeps the session state, builds plain view structs from it with
+  `tessera-gamedata`'s `npc` and `quest` models (install texts rendered, icons as image
+  references, prices as coin counts) or, without an install, from the feed's literal refs
+  alone, and hands them to each window's `show` together with a text hook (`npc::NpcTexts`,
+  `quest::QuestTexts`: fixed labels, coin-count and amount formats, coin tooltips) through
+  which the client supplies the install's own; the hook's defaults are Tessera's own. Every UI event goes to the controllers'
+  `handle_event`, which return neutral actions (`NpcAction`, `QuestAction`); the client
+  maps them to the session commands of `npc-windows.md` §10.1 and `quest-journal.md` §3.
+- **Two trees, one vocabulary.** Each controller works on the install's layout, opened by
+  `UILAYOUT` label with its root by `UIElementID` label (`npc-windows.md` §4,
+  `quest-journal.md` §4.1, §6.1), or on Tessera's fallback window built from code-made
+  elements with the same element IDs. The IDs, widget types, states and properties are
+  looked up by label at run time (`game::npcvocab::NpcVocab`); their defaults are
+  placeholders in ranges no data uses, so the fallback windows and synthetic trees use them
+  directly and an unresolved label never matches real data. A window whose layout or root
+  does not resolve falls back and is counted as `LayoutMissing`.
+- **State mirrors events.** The NPC windows' state (`npc::state`) and the journal's
+  (`quests::session`) are fed by `PlayerState::apply`, which every world session reaches
+  (windowed walker, headless driver, tests). A feed window opens on `DialogueShown`,
+  `QuestOffered`, `VendorShown` or `LootShown` and is hidden only on `WindowClosed`; a close
+  button or Escape only sends `CloseWindow`. Each feed window has its own native-window
+  instance. The client sends one `CloseWindow` for a window whose entity despawned or moved
+  out of use range (`npc-windows.md` §5.7 Tessera rules).
+- **Frame order** (windowed client, after the UI's own update): the NPC hub
+  (`npc::NpcHub::frame`) takes the frame's UI events from the UI host's event collector,
+  syncs the windows with the player state, sends their commands and the use action's
+  `UseEntity`, and posts system lines; then the quest hub (`quests::QuestHub::frame`) reads
+  the same events, turns quest notes into chat lines (chat type 21) and marker changes,
+  refreshes the open journal windows incrementally and sends `TrackQuest` and
+  `AbandonQuest`. Escape and Enter go to an active NPC window before the walker sees them.
+  The install's names (`NpcRefs`) and facts (`NpcData`) load on two background threads, off
+  the frame, once the install is open; no window opens before the names arrive, and facts
+  that arrive later refill the open windows. The windowed client therefore shows the P3
+  windows only with an install; the fallback windows serve the tests and golden images.
+- **Markers and indicators.** Quest markers (`MarkerAdded` with a quest) are drawn as
+  children of the radar's `MinimapViewport` and of the world map's `MapBackground`, above
+  the map and below the player marker, through hooks the radar and the world map expose for
+  notes that game code places. The quest ring over an NPC is, until the walker starts
+  script keys on entities, a world-anchored glyph (the walker HUD's bitmap font) projected
+  with the walker's camera and drawn after the scene and before the game UI
+  (`quests::indicators`, `quest-journal.md` §8.2 OPEN).
+- **Stand-ins.** `tessera-ui` has no dialog box or popup menu widget yet: the abandon
+  confirmation is a second click with a notice line, and the tracker's menu posts its items
+  as a notice line (`quest-journal.md` §4.8, §6.6 OPENs). The plugin wallet views read the
+  client's `npc::SessionWallet` (§18.2).
+
+<a id="ui-combat"></a>
+### 15.1 Combat widgets (P2, `game::combat`)
+
+[`combat-ui.md`](specs/combat-ui.md) is normative; this section says where the parts sit.
+The combat widgets are controllers over the same element tree as the panels, built like the
+P1 widgets: no GPU, no Lua, no session and no world.
+
+- **Elements.** `CombatUi` holds the player frame (E5) and target frame (E6) with their vital
+  fields, class-resource pips and frame decoration, the selection's target (E7), the player
+  and target cast bars (E11, E12, for casts, inductions, channels and crafts), the player and
+  target effect rows (E8, E9, with timed and pulsing icons E10), the floating-text layer (E13:
+  damage, critical, avoidance and heal texts; the gain texts E14 and stack counts are not
+  shown yet), the selection indicator and name block (E1, E3), the combat-state display (E17)
+  and the defeat panel (E18). The quickslot bar's skill displays, cooldown sweep, slot states
+  and activation (E15, E16, `combat-ui.md` §9) live in `game::quickslot`; skill and effect
+  tooltips go through `game::examine` (the same panel as item tooltips), whose live timer
+  rows count down a skill's recovery and an effect's remaining time without rebuilding the
+  tooltip (`skill-tooltips.md` §10.2, §12).
+- **Two looks.** With an install, each element is created from the opened panels (P3 `toolbar`,
+  P4 `AvatarPanel`, P5 `OpponentPanel`, the `gameplayactivatables` panels) or from templates of
+  the `floatytext`, `effects` and `Dialog` layouts, found by label at UI start
+  (`apps/client/src/combat/boot.rs`). An element whose layout, root or parts are missing (always
+  with `--no-data`) takes its fallback look of `combat-ui.md` §13: Tessera's own boxes, meters
+  and text in the bundled font on a 1024 × 768 reference, scaled to the screen (TR41). Both
+  looks paint through the canvases of §15 like any other surface.
+- **Input.** The client fills neutral data (`game::combat::data`: frame, cast, effect and
+  floating-text views by entity number) from its combat state and `tessera-gamedata`. The
+  widgets turn clicks into neutral `CombatAction`s, which the client maps to commands, so no
+  display update sends a command (CUI8). Screen anchors of entities come from the client
+  through `AnchorSource` (the walker's figures, or the synthetic camera of `combat-ui.md` §13.6 without a
+  world), and elapsed times from the `now` the client passes: the scenario's virtual clock in
+  headless runs, so the same scenario gives the same element states (CUI9).
+- **Order.** Floating elements are screen-space layers drawn after the 3D scene and before
+  the panels: name blocks, floating texts (oldest first), then the selection indicator
+  (TR40). Panels keep the UI's own order.
+- **Lifetime.** `CombatUi::new` attaches the widgets after the panels open; `CombatUi::detach`
+  removes their layers, the fallback root, the code-made effect rows and the handler
+  registrations before a rebuild (world entry again, reconnect, skin switch). When the
+  install's combat data arrives after the widgets attached, the client rebuilds them from its
+  state.
+- **Tests.** Element states are read from the UI tree, not from pixels (`combat-ui.md` §16):
+  `crates/ui/tests/game_combat.rs`, and in the client the synthetic goldens of
+  `apps/client/tests/combat_ui_golden.rs` (committed, `--no-data` looks) and the local
+  real-data goldens of `combat_ui_real_data.rs` (§23.3).
+
 ---
 
 <a id="input"></a>
@@ -1185,7 +1281,7 @@ The client never talks to sockets directly. It talks to a `Session` that wraps a
   object data, and so on, added as milestones need them.
 
 <a id="net-gameplay"></a>
-**Gameplay events and commands (P0, grown in P1).** [`scenario-feed.md` §9](specs/scenario-feed.md#s9) is
+**Gameplay events and commands (P0, grown in P1 and P3).** [`scenario-feed.md` §9](specs/scenario-feed.md#s9) is
 normative for these variants, their fields and their session rules; this list only names them.
 They extend `Event` and `Command` by **group**, each group an enum of its own and
 `#[non_exhaustive]` like `Event` and `Command`, so later milestones add variants without a
@@ -1240,10 +1336,12 @@ sends: the scenario feed's are scripted, never derived (decision 0024 §2.4).
 | | `SetQuickslot` | command | Put a skill or item into a quickslot, or clear it |
 | Npc | `DialogueShown` | event | A dialogue page in a window: speaker, text, numbered options |
 | | `QuestOffered` | event | A quest offer window |
+| | `QuestRewards` | event | The reward amounts of the open quest offer (P3) |
 | | `QuestState` | event | A quest is active, completed, failed or removed |
 | | `QuestObjective` | event | An objective's counter (count, total, done) |
 | | `QuestTracked` | event | A quest is tracked or untracked |
 | | `VendorShown` | event | A vendor window: entries with price and stock |
+| | `BuybackShown` | event | The vendor window's buy-back list (P3) |
 | | `LootShown` / `LootTaken` | event | A loot window: entries and coin / one entry was taken |
 | | `WindowClosed` | event | A window of any kind closed |
 | | `UseEntity` | command | Use (interact with) an entity |
@@ -1253,6 +1351,7 @@ sends: the scenario feed's are scripted, never derived (decision 0024 §2.4).
 | | `AbandonQuest` / `TrackQuest` | command | Abandon a quest / track or untrack it |
 | | `Buy` / `Sell` | command | Buy a vendor entry / sell an item, with a quantity |
 | | `TakeLoot` | command | Take one loot entry, or all |
+| | `BuyBack` | command | Buy back a buy-back entry (P3) |
 | Social | `ChannelJoined` / `ChannelLeft` | event | The player joined / left a named chat channel |
 | | `FellowshipChanged` | event | The full fellowship member list with the leader (empty: none) |
 | | `FellowshipInvite` | event | An invitation to a fellowship |
@@ -1318,6 +1417,20 @@ strings as text, and logs ignored entries at a bounded rate; without a slot the 
 back to the hand rule of `character-panels.md` §7. The client keeps at most 1,024 scripted
 properties per entity and per item.
 
+**Selection and the Combat group (P2, [decision 0032](decisions/0032-p2-targeting-on-test-server.md),
+`scenario-feed.md` revision 6).** The Combat group's variants are unchanged; P2 gives them
+their consumers in the client (§20.3). One rule changes for the test-server backend and
+amends the refusal rule above: `SelectTarget` is no longer refused there but answered
+locally (§19.2). On every backend the client half shows a new selection only when the session
+reports it as `TargetChanged` for the player, so selection has one path whichever backend
+answers it (`scenario-feed.md` §0 item 3), and it clears a selection locally, without sending
+a command, when the selected entity is removed (`EntityDespawned`, or the despawns of an
+`InterestReset`; decision 0032 D2). `UseSkill`, `CancelCast` and `SetQuickslot` stay refused
+on the test-server backend, so the quickslot bar cannot be used in a `--server` run (owner
+question 1 of decision 0032). Revision 6 adds no step, trigger, input form or event field to
+the feed; a scenario that wants a strike at a given hook orders its `damage` and `heal` lines
+(`combat-visuals.md` §15).
+
 <a id="net-social"></a>
 **The Social group in the client (P4, decision 0024 §5 P4, [decision 0035](decisions/0035-p4-social-on-test-server.md)).**
 `tessera-client` hands every polled event, in arrival order, to the world session's
@@ -1354,7 +1467,7 @@ them with one.
 
 | Backend | Status | Description |
 |---|---|---|
-| **Sandbox** | M0 skeleton, grows each milestone; scenario feed from P0 | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. From P0 it can also play a **scenario feed** ([`scenario-feed.md`](specs/scenario-feed.md), feature `scenario`, [0024](decisions/0024-parity-track.md) §4): a scenario file scripts actors, items, vitals, casts, effects, windows, quest states, markers, chat and the like as timed steps and as answers to client commands, and the sandbox emits them as the gameplay events of §19.1, the same events a server backend would send. The client parses the file and resolves its selectors against its own install through `tessera-gamedata` before the session starts, then hands the sandbox the resolved scenario (`SandboxConfig::scenario`) the way it hands over its `WorldSource`; `tessera-net` decodes no game data. It receives record IDs and table rows, optional locations and anchors, enum values resolved from labels, scripted values, literal text, and the display names of actors declared with `name(…)` (install text held in memory only, at most 64 bytes, sanitised), and it treats everything the resolver returns as untrusted (`scenario-feed.md` §3.3, §8.6). Values are scripted, never derived: the feed has no formula, table or behaviour taken from the game. A headless driver (`tessera_net::scenario::HeadlessDriver`) runs it on a virtual clock and writes a canonical event log that is the same on every run (§23). From P1 (decision 0025 D5) the plain sandbox (no scenario) also creates characters: a `CreateCharacter` with a valid, new name (fewer than 64 characters in the list) adds it and answers `CharacterInfo` with the command's body, class and look, and `EnterWorld` with that name uses the command's appearance as the player's; a taken name or a full list gives `CharacterRefused`. In memory only, for the sandbox's lifetime; `DeleteCharacter` stays accepted and ignored. Its "P4 social" revision adds waiting parts and one synchronised start (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`) and the commands `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` (`scenario-feed.md` §6.7); the plain sandbox answers `StartPerformance` with one `PerformanceSyncStart` by the player, 700 ms ahead (§9.8). Revision 4 of the feed adds `look` declarations (`look=` on `player`, `character` and `accept-character`), `remove-character`, `stat` and `item-property`, with values that are literal and bounded (`scenario-feed.md` §5.8, §9.5). |
+| **Sandbox** | M0 skeleton, grows each milestone; scenario feed from P0 | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. From P0 it can also play a **scenario feed** ([`scenario-feed.md`](specs/scenario-feed.md), feature `scenario`, [0024](decisions/0024-parity-track.md) §4): a scenario file scripts actors, items, vitals, casts, effects, windows, quest states, markers, chat and the like as timed steps and as answers to client commands, and the sandbox emits them as the gameplay events of §19.1, the same events a server backend would send. The client parses the file and resolves its selectors against its own install through `tessera-gamedata` before the session starts, then hands the sandbox the resolved scenario (`SandboxConfig::scenario`) the way it hands over its `WorldSource`; `tessera-net` decodes no game data. It receives record IDs and table rows, optional locations and anchors, enum values resolved from labels, scripted values, literal text, and the display names of actors declared with `name(…)` (install text held in memory only, at most 64 bytes, sanitised), and it treats everything the resolver returns as untrusted (`scenario-feed.md` §3.3, §8.6). Values are scripted, never derived: the feed has no formula, table or behaviour taken from the game. A headless driver (`tessera_net::scenario::HeadlessDriver`) runs it on a virtual clock and writes a canonical event log that is the same on every run (§23). From P1 (decision 0025 D5) the plain sandbox (no scenario) also creates characters: a `CreateCharacter` with a valid, new name (fewer than 64 characters in the list) adds it and answers `CharacterInfo` with the command's body, class and look, and `EnterWorld` with that name uses the command's appearance as the player's; a taken name or a full list gives `CharacterRefused`. In memory only, for the sandbox's lifetime; `DeleteCharacter` stays accepted and ignored. Revision 4 of the feed adds `look` declarations (`look=` on `player`, `character` and `accept-character`), `remove-character`, `stat` and `item-property`, with values that are literal and bounded (`scenario-feed.md` §5.8, §9.5). Revision 5 (P3, for the NPC windows) adds the text function `action(…)` (`Text::Action`), the steps `rewards` and `buyback` with the events `QuestRewards` and `BuybackShown`, and the command `BuyBack` with its `buy-back` pattern and input form (`scenario-feed.md` §18.P3). Revision 7 (P4 social) adds waiting parts and one synchronised start (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`) and the commands `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` (`scenario-feed.md` §6.7); the plain sandbox answers `StartPerformance` with one `PerformanceSyncStart` by the player, 700 ms ahead (§9.8). |
 | **Overlay** | P1 (`tessera_net::scenario::OverlayBackend`, [0025](decisions/0025-p1-character-look-on-test-server.md) D1, `scenario-feed.md` §12.5) | Wraps a test-server backend (`OverlayServer`: `RemoteBackend`, or a test double) and runs the scenario feed's Character and Inventory groups for the local player beside it; `tessera-client --scenario FILE --server CONNECT`. The file is checked against the overlay subset before anything connects. Inventory-group commands go to the feed, every other command to the server backend; each poll returns the server's events first, then the feed's. The feed's clock starts at the poll that delivers the server's `WorldEntered`. The player's worn look stays the server's: when the feed's equipment list changes and the server advertised `APPEARANCE_CHANGE`, the overlay sends `AppearanceSet` with the server's last appearance and the feed's equipment (at most one in flight, at least 250 ms apart, changes in between coalesced, 10 s answer timeout), and the server's `EntityAppearance` answer reaches the player and every observer as `AppearanceChanged`; without the capability it emits `AppearanceChanged` locally only. Nothing else of the feed leaves the client: bags, quantities, wallet, levels and stats are never sent. `Backend::as_any` exposes the overlay; `Session::remote_backend` finds the wrapped `RemoteBackend` either way. Lives in the client's process: `tessera-server` links neither it nor the feed (§23.5 unchanged). |
 | **Test server** | M7 (`tessera_net::remote::RemoteBackend`, feature `remote`, on by default) | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`, transport per [0030](decisions/0030-tessera-protocol-transport.md)), with its own handshake (QUIC v1 + TLS 1.3, the server's own Ed25519 key pinned by SHA-256 fingerprint or recorded in the client's `known_servers` file), its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. See below. |
 | **Compatibility** | M8, **gated** | See §19.3. |
@@ -1415,6 +1528,30 @@ above it work unchanged:
   appearance) go through `RemoteBackend::handle`.
 - A network-free `InboundHarness` runs the same driver and mapper from a script of server
   bytes; it backs the `net_remote_*` fuzz targets.
+
+**P2 on the test-server and overlay backends** ([decision 0032](decisions/0032-p2-targeting-on-test-server.md),
+`scenario-feed.md` §9.7, §12.5, revision 6):
+
+- **Local selection (test server).** `submit` answers `SelectTarget` in `InWorld` itself; it
+  becomes no network work (`Routed::Local`), so the server receives nothing and keeps nothing
+  (LEGAL.md §11.1 rule 5). A target is known when it is none, the player, a remote entity
+  created and not removed, or a static the backend streamed and has not cleared, judged by
+  the events already handed to the session. For a known target the mapper keeps one pending
+  `TargetChanged { entity: player, target }`, which a later selection before the next poll
+  replaces, and `poll_into` delivers it first, before the events mapped in that poll; an
+  unknown target gives `Ok`, no event and a rate-limited debug line. The backend keeps no
+  selection and never emits `TargetChanged` on its own. What a test actor's target frame shows
+  follows from the events the server sends: the name and kind from `EntityCreated`, the figure
+  from its appearance, and no level, vitals, effects or casts, because none ever arrive
+  (decision 0032 D2).
+- **Overlay.** `SelectTarget` is not an Inventory-group command, so the overlay routes it to
+  the wrapped test-server backend, which answers it as above; the feed never sees it. The
+  overlay subset admits no Combat-group step, trigger or input form (`target`, `vital`,
+  `combat`, `cast`, `effect`, `damage`, `defeat`, … ; `scenario-feed.md` §12.5.1): such a file
+  is refused with `NotAllowedInOverlay` (exit 3) before anything connects.
+- **Unchanged:** `tessera-protocol` stays at 1.1 (no new message), `tessera-server` and the
+  server dependency check (§23.5) do not change, and the sandbox's feed answers
+  `SelectTarget` as before (`scenario-feed.md` §7.6).
 
 <a id="net-compat"></a>
 ### 19.3 The gated compatibility tier
@@ -1605,8 +1742,64 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
     cursor; §13), submit, present. From P1, before the frame, the paperdoll's portrait
     (the player's figure at the paperdoll's turn) is rendered into an offscreen target of
     its viewport's size, which the UI pass composes as external content
-    (`render.md` §6.10). The character screens' viewport has no figure yet
-    (`character-screens.md` §6 OPEN).
+    (`render.md` §6.10). The character screens' creation viewport is drawn the same way
+    with the creation figure (P1 re-check; the UI scene's objects and lights are not
+    drawn, `character-screens.md` §2.1 OPEN).
+
+<a id="frame-combat"></a>
+**Combat in the frame** (P2, decision 0024; client half only). The combat state lives on the
+main thread in the world session (`net::World`); only data loads run elsewhere. Every value
+shown comes from session events; nothing is computed from game rules (decision 0024 §2.4).
+
+- **Start-up.** When the P1 character facts arrive (§20.1 step 6), `Runtime::tick` builds the
+  combat panels' data over them (`combat::CombatHub`, `CombatInstall`: `tessera-gamedata`'s
+  `CombatData` and the tooltip engine, which read records on demand). The UI boot resolves the
+  combat layouts and element labels with the other UI data (`combat::boot`). The walker's
+  combat layer opens the combat-visual data on an asset worker at walker start-up; until it is
+  ready its session events wait in a bounded queue (4,096, oldest dropped), and without an
+  install nothing plays.
+- **Step 2.** `World::update` polls the session. Each event goes first to the combat state
+  (`CombatState::apply`, at the combat clock: seconds since the session was created), then to
+  the P1 player state. The combat state's changes queue for the HUD (bounded; on overflow the
+  HUD rebuilds from the state). The events that matter to the plugin combat views queue too;
+  right after `World::update` the runtime hands them to `CombatHub::after_events` at the
+  plugins' game time, which queues `CombatViewEvent`s for step 7. While the walker captures
+  entity events, Combat-group events also queue for the walker's combat visuals (at most
+  65,536; further ones are dropped and counted).
+- **Steps 3–6 (walker update).** After the characters (figures, animation) and the particle
+  effects, the walker drains at most 1,024 combat events per frame into its combat layer
+  (`walker::combat::CombatLayer::handle`) and runs `CombatLayer::update`: clips the combat
+  scripts started or stopped go to the character layer, session figures on the GPU become
+  script owners in the effects runtime (their lasting combat state, stance and the selection
+  effect then shown on them), queued events are handled in order (`combat-visuals.md` §9.6),
+  then the story hooks the script runtime reported, then stories that ended or timed out.
+- **Step 7.** After the character panels' frame, the combat frame
+  (`ui_host::client::combat_frame`): widgets are rebuilt when the install's combat data has
+  just arrived; the step-2 changes reach the widgets; world clicks the UI declined in step 1
+  (a select tap, a right click, a double click) are picked through the walker's figure boxes
+  (`Walker::pick_entity`, `combat-ui.md` TR1, TR3); the targeting and quickslot actions the UI
+  declined, the widgets' actions and the picks become session commands (`SelectTarget`,
+  `UseEntity`, `UseSkill`, `UseItem`, `CancelCast`, `SetQuickslot`) sent here, and nothing on screen changes
+  until their answering events arrive in a later step 2 (CUI8). A refused quickslot use flashes
+  its slot. A selection the client cleared locally (decision 0032 D2) also stops the walker's
+  selection effect. Floating texts, the name block and the selection indicator are anchored
+  above the walker's figures as drawn this frame (`Walker::entity_anchor`, `combat-ui.md` §6.4). Before the
+  plugin host's step-7 work, a `menu` press the UI declined goes to the combat widgets first:
+  when no on-demand panel is open (`game-panels.md` §16 step 1), it cancels a
+  cancellable cast or clears the selection, and only otherwise opens the main menu
+  (`combat-ui.md` TR5). The plugin combat view events of step 2 are delivered in the host's step-7
+  work.
+- **Steps 8 and 10.** The widgets paint and compose like any panel (§15.1). The target
+  frame's portraits stay empty (`combat-ui.md` §16.1 OPEN).
+- **Headless runs.** A driver-only `--headless --scenario` run has no walker and no UI; with
+  `--load-plugin` each driver poll's events also feed the plugin combat views
+  (`scenario::plugins`). The headless combat screens of the P2 tests
+  (`combat::headless::CombatScreens`) drive a UI host without plugins on the scenario's
+  virtual clock, with the synthetic camera of `combat-ui.md` §13.6. A headless walker run
+  with `--scenario … --screenshot` hands the walker the entity events and the combat events
+  of each driver poll (`scenario::screenshot::DriverView`, bounded queue), so combat visuals
+  play there as in a windowed run; `apps/client/tests/combat_visuals_real_data.rs` uses
+  that path.
 
 At client exit, after the last frame, the plugin host unloads every apartment
 (`lua-plugin-api.md` §6.3); this is the only plugin code outside steps 1 and 7. The frame
@@ -1883,6 +2076,20 @@ tiers:
   Goldens in the repo come from synthetic scenes only.
 - Real-data visual regression (a landblock, a character) is a **local-only** tier: the
   goldens are written to the user's own cache directory and never committed.
+
+**Panels with install content** (parity track, P2, P3 and P6): see
+[decision 0031](decisions/0031-parity-panel-goldens.md) (Proposed). Panels should also have
+committed goldens from synthetic input only, painted in-process; a criterion that asks for
+golden images requires them (decision 0031 §3 step 1). Panels with install layouts, text and
+icons can also have local-only goldens under
+`${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}/<package>/<test binary>/<function>/<install version>/`,
+which are refused inside any git work tree and written atomically. A missing golden is
+written and reported as "blessed", not "passed"; local goldens are re-blessed with
+`TESSERA_GOLDEN_BLESS_LOCAL=1`, never with `TESSERA_BLESS`. Capture is deterministic (virtual
+clock, fixed fonts, no running animation, never after a settle timeout). For an exit
+verifier, "golden images pass" means: bless once into a fresh golden directory, judge the
+blessed images against the spec, then run again on the same directory with
+`TESSERA_GOLDEN_REQUIRE=1` and match.
 
 <a id="testing-fuzz"></a>
 ### 23.4 Fuzzing

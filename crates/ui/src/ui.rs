@@ -130,6 +130,9 @@ pub struct Ui {
     pub(crate) creating: Vec<(u32, u32)>,
     /// Elements the current outermost creation may still build.
     pub(crate) build_budget: usize,
+    /// Procedural images of the fallback looks (`game::combat::look`), by path; bounded.
+    pub(crate) procedural:
+        std::collections::HashMap<String, Arc<tessera_material::ui_image::UiImage>>,
 }
 
 impl std::fmt::Debug for Ui {
@@ -203,6 +206,7 @@ impl Ui {
             suppress_size: false,
             creating: Vec::new(),
             build_budget: MAX_BUILD_ELEMENTS,
+            procedural: std::collections::HashMap::new(),
         }
     }
 

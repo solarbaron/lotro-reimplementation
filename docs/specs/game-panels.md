@@ -782,6 +782,14 @@ server data, bounded by `UI_Radar_RadarRadius` and filtered by `UI_Map_MapNoteDi
 
 > **OPEN:** note placement and the blip art (not traced). Tessera shows no notes.
 
+> **Note (P3, 2026-10-10, [`quest-journal.md`](quest-journal.md) §8.3; no fact of this spec
+> changed):** quest markers of the scenario feed (`MarkerAdded` with a quest) are drawn on the
+> radar inside `UI_Radar_RadarRadius` with the given icon or the radar icon table's image for
+> note type `Quest` (`map-data.md` §4.8.5), placed by §8.6.1 (Tessera rule there). The radar's
+> table and the map's give type `Quest` (bit value 2) the same images. `RadarQuestObjective`
+> (image 0x410F8A54 here) stays hidden in P3; the rest of this OPEN (table notes, blips, filters)
+> is unchanged.
+
 <a id="s8-9"></a>
 ### 8.9 Summary for the sandbox
 
@@ -853,6 +861,12 @@ element (this also covers the one element without an Image item).
 
 The node's offsets and scale map world points to pixels of the 1024 × 768 map by §8.6.1. The player
 marker is placed at the player's pixel; notes likewise (§8.8, OPEN).
+
+> **Note (P3, 2026-10-10, [`quest-journal.md`](quest-journal.md) §8.3; no fact changed):** feed
+> quest markers are drawn on the shown map when their location maps into its 1024 × 768 frame
+> (Tessera rule there). The `MapWindow` element also carries the quest-objective indicator
+> properties `UI_Map_QuestObjectiveIndicator_*` (corner and tile images, alpha 0.65 here) for
+> shading objective areas; P3 does not draw them.
 
 <a id="s9-4"></a>
 ### 9.4 Which map is shown
@@ -1263,5 +1277,6 @@ line must not label Escape "quit" then (IB, Cost).
 | 2026-10-06 | **Revision 3: applies the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed. New provenance tag DEC. **New §16** (Tessera rule from decision 0014, Consequences "Escape with a UI attached"): game code's reaction to a declined `EscapeKey` with a UI attached (hide the active on-demand panel, else toggle the main menu P6; never quit), with an OPEN on the original's behaviour and an owner observation; §0 table, invariants GP15 and GP16, example §13.7, §14 row for `walker.md` §5, §15 item 24. **§8.6.3:** Tessera rule from decision 0015 §2.3 and Decision 1.7 next to the OPEN (the marker is a separate entry rotated about its centre to the stated screen result, resampled with the surface filter, a fixed 40 × 40 coverage square, own opacity only). **§8.7.1:** the composition uses the surface alpha by the UL §9.6.1 Tessera rule (decision 0015), replacing the reference to an earlier Tessera choice. **§8.7.2:** OPEN extended with the data fact G39 (`Minimap_Frame` has object mode 1, so it owns a surface) and the agreement of decision 0015's nested-surface clip with the rim rule. **§8.2 step 3:** the layout already gives the marker mode 1 (new row G39, OBS 2026-10-06 via UL U46). §15 items 7 and 8 updated. Section numbers unchanged; §16 and §13.7 are new. |
 | 2026-10-06 | **Fixes after the review of Revision 3** (status stays Revised, review pending). **§16 rule 1:** the active panel is defined in UB §5.1 (activation), not UB §4.6; citation corrected. **§8.7.2:** new paragraph "How P1 splits into surfaces" (DEC: UR Decision 1.1, 1.7): `GamePlay_Radar` and 17 other non-root P1 elements own surfaces, so the disc and map are painted into the radar's canvas and the rim into its own; from the data (new row G40, OBS 2026-10-06, Confirmed) the disc and every map element come before every surface-owning element in drawing order, so none of their pixels goes to a canvas above and draw mode 5 keeps finding the disc's alpha; the rim's box extends 7 and 6 pixels past the root, which the root clip cuts; a replacement for decision 0015's P1 check 2. New invariant GP17; §14 row on decision 0015's "only nested entry" sentence and P1 check 2 (for the decision's next revision). No fact about the original is changed. |
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.7.2 "How P1 splits into surfaces":** the Test bullet now also corrects decision 0015's P1 check 4 (the marker's canvas above is empty at every heading and holds no rim pixels; the 40 × 40 coverage region and no damage while turning still hold); the Clip bullet states `GamePlay_Radar`'s offset (0, 33) in the root, the rim's root rows, and that the root's bottom cut removes no pixel. New provenance row G41 (Confirmed 2026-10-06, read-only probe of the resolved P1 tree). GP17 states that the rim's and the marker's canvases above are empty. §14 decision-0015 row extended to check 4. |
+| 2026-10-10 | Notes only (no fact changed), for P3: §8.8 and §9.3 point to `quest-journal.md` §8.3 for quest markers from the scenario feed and the quest-objective indicator properties. Status unchanged. |
 | 2026-10-11 | Note only (no fact changed), for P4: §14 points to `social-panels.md` for the fellowship panels (drag-box frames, §4 applies), `PlayerLeaderIcon` and the fallback of the social windows' game types. Status unchanged. |
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md` (review 1 item B1): the §14 P4 note names the P4 voice elements and the member rows' status and voice elements that game code shows or hides, with the Tessera rule that hides the voice elements, and the coin-element lists of the two money-display types. Status unchanged. |

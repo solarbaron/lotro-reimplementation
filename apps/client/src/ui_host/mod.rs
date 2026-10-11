@@ -22,6 +22,7 @@
 
 pub mod boot;
 pub mod client;
+pub mod combat;
 pub mod cursor;
 pub mod env;
 pub mod gpu;
@@ -151,6 +152,11 @@ pub struct UiHost {
     deferred: RefCell<Deferred>,
     chat_holds: BTreeSet<u64>,
     player: Arc<WalkerPlayer>,
+    /// The wallet views the plugins' local player carries (P3, [`Self::set_plugin_wallet`]).
+    plugin_wallet: Option<Arc<crate::npc::SessionWallet>>,
+    /// The party members' actor values for the plugins' party views (P4,
+    /// [`Self::set_plugin_party`]).
+    plugin_party: Option<Arc<dyn tessera_plugins::PartyActorSource>>,
     pending_position: Option<(RadarInput, Option<u32>)>,
     pending_notices: Vec<String>,
     pending_session: Vec<crate::net::ChatLine>,
@@ -196,6 +202,12 @@ pub struct UiHost {
     pending_im: Vec<tessera_ui::game::chat::social::ImLine>,
     /// The tell-target generation the chat window last copied (CT3).
     tells_generation: Option<u64>,
+    /// Every UI event since the last [`Self::take_game_events`] (at most
+    /// [`MAX_CHARACTER_QUEUE`]; the windowed client takes them every frame), for the
+    /// in-world windows the runtime drives after step 7: the NPC windows, the quest journal
+    /// and the social panels read the same list, so none takes events from another. The
+    /// character screens' collector and the combat widgets' queue are filled beside it.
+    game_events: Vec<UiEvent>,
     /// Render targets of the portraits (the paperdoll) by content id: the target, its
     /// registered texture and its size.
     portraits:
@@ -203,6 +215,8 @@ pub struct UiHost {
     /// The portrait (content id, size) whose target could not be created: not tried again
     /// until its size changes (one warning, not one per frame).
     portrait_failed: Option<(u64, (u32, u32))>,
+    /// The combat widgets and their queues (decision 0024 P2, [`combat`]).
+    combat: combat::HostCombat,
 }
 
 /// Most UI events and panel commands queued for the character panels in one frame.
@@ -293,6 +307,8 @@ impl UiHost {
             deferred: RefCell::new(Deferred::default()),
             chat_holds: BTreeSet::new(),
             player: WalkerPlayer::new(),
+            plugin_wallet: None,
+            plugin_party: None,
             pending_position: None,
             pending_notices: Vec::new(),
             pending_session: Vec::new(),
@@ -322,11 +338,13 @@ impl UiHost {
             character_commands: Vec::new(),
             chargen: None,
             screen_events: None,
+            game_events: Vec::new(),
             portraits: std::collections::BTreeMap::new(),
             portrait_failed: None,
             social: None,
             pending_im: Vec::new(),
             tells_generation: None,
+            combat: combat::HostCombat::default(),
         }
     }
 
@@ -368,6 +386,8 @@ impl UiHost {
         );
         boot::register(&mut host.ui.borrow_mut(), &b.game_vocab);
         b.char_vocab.register_classes(&mut host.ui.borrow_mut());
+        // The frames' name and level displays (P4, P5) draw text (`combat-ui.md` §4.1, §5.1).
+        b.combat.vocab.register_classes(&mut host.ui.borrow_mut());
         host.character = Some(crate::character::panel::CharacterUi::new(
             b.char_vocab.clone(),
             b.char_ids.clone(),
@@ -377,6 +397,8 @@ impl UiHost {
             b.social_vocab.clone(),
             b.char_vocab.clone(),
         ));
+        host.combat.refs = Some(b.combat);
+        host.combat.char_vocab = Some(b.char_vocab.clone());
         let mut panels = NativePanels::new(b.catalog, b.game_vocab.clone(), b.game_layouts);
         panels.types = b.panel_types;
         panels.set_shortcuts(Box::new(NoShortcuts));
@@ -546,7 +568,11 @@ impl UiHost {
 
     /// Attaches the plugin host (ARCHITECTURE §20.1 step 9: plugins load after the UI is
     /// ready): the `Turbine.UI` classes go into new apartments, step 7 runs the plugin
-    /// host's per-frame work, the local player is the walker's avatar, and `load` is queued.
+    /// host's per-frame work, the local player is the walker's avatar (with the wallet views
+    /// of [`Self::set_plugin_wallet`], when given), the party views read their members'
+    /// values from [`Self::set_plugin_party`]'s source, and `load` is queued. This and
+    /// [`Self::shutdown`] are the only writers of the plugins' local player source (and of
+    /// the party views' actor source) in the windowed client.
     pub fn attach_plugins(&mut self, plugins: &mut Plugins, load: &[String]) {
         plugins.set_ui_binding(Some(self.plugin_ui.binding()));
         plugins.set_ui_driven(true);
@@ -554,8 +580,16 @@ impl UiHost {
             h.borrow_mut()
                 .set_plugins_dir(Some(plugins.manager().plugins_dir().to_path_buf()));
         }
-        let src: Arc<dyn tessera_plugins::LocalPlayerSource> = self.player.clone();
+        let src: Arc<dyn tessera_plugins::LocalPlayerSource> = match &self.plugin_wallet {
+            Some(w) => crate::npc::wallet::WalletPlayer::new(self.player.clone(), Arc::clone(w)),
+            None => self.player.clone(),
+        };
         plugins.manager_mut().set_local_player_source(Some(src));
+        if let Some(p) = &self.plugin_party {
+            plugins
+                .manager_mut()
+                .set_party_actor_source(Some(Arc::clone(p)));
+        }
         for name in load {
             if plugins.manager_mut().queue_load(name) {
                 tracing::info!(plugin = %name, "plugin load queued");
@@ -740,6 +774,19 @@ impl UiHost {
         self.pending_position = Some((input, area));
     }
 
+    /// The wallet views (`lua-plugin-api.md` §15.3) the plugins' local player carries from
+    /// the next [`Self::attach_plugins`] on: the NPC windows' session wallet (P3).
+    pub fn set_plugin_wallet(&mut self, wallet: Arc<crate::npc::SessionWallet>) {
+        self.plugin_wallet = Some(wallet);
+    }
+
+    /// The source of the party members' `Actor` values (`lua-plugin-api.md` §15.4) the
+    /// plugins' party views read from the next [`Self::attach_plugins`] on: the runtime's
+    /// party bridge (P4, [`crate::social::party::PartyBridge::actor_source`]).
+    pub fn set_plugin_party(&mut self, source: Arc<dyn tessera_plugins::PartyActorSource>) {
+        self.plugin_party = Some(source);
+    }
+
     /// The character the plugins see (the walker's avatar). A change raises `NameChanged`
     /// for step 7.
     pub fn set_character(&mut self, plugins: &mut Plugins, name: Option<&str>) {
@@ -919,16 +966,8 @@ impl UiHost {
             let room = MAX_CHARACTER_QUEUE.saturating_sub(q.len());
             q.extend(events.iter().take(room).cloned());
         }
-        if let Some(s) = self.social.as_mut() {
-            for ev in &events {
-                if matches!(
-                    ev,
-                    UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
-                ) {
-                    s.queue_event(ev);
-                }
-            }
-        }
+        let room = MAX_CHARACTER_QUEUE.saturating_sub(self.game_events.len());
+        self.game_events.extend(events.iter().take(room).cloned());
         if self.character.is_some() {
             for ev in &events {
                 if self.character_events.len() >= MAX_CHARACTER_QUEUE {
@@ -941,6 +980,9 @@ impl UiHost {
                     self.character_events.push(ev.clone());
                 }
             }
+        }
+        for ev in &events {
+            self.queue_combat_event(ev);
         }
         if events.is_empty() || self.panels.is_none() {
             return;
@@ -1120,6 +1162,13 @@ impl UiHost {
             if phase == Phase::Start && self.character_commands.len() < MAX_CHARACTER_QUEUE {
                 self.character_commands.push(name.to_string());
             }
+            return true;
+        }
+        // The P2 targeting and quickslot commands and world clicks the UI declined
+        // (`keymap.md` §8.2, `combat-ui.md` TR3, TR33): for the combat frame.
+        if consumed {
+            self.combat_taken_left(&name);
+        } else if self.combat_declined(a, self.lock.is_on()) {
             return true;
         }
         if consumed && wheel_step {
@@ -1496,8 +1545,9 @@ impl UiHost {
     }
 
     /// The social panels' frame (after step 7; decision 0024 P4): the panel commands and
-    /// UI events of this frame with the world session's social state, the panels refreshed
-    /// from it, the chat window's tell targets (CT3) and instant-message lines (CT6), and the
+    /// the frame's UI events (`events`: the one list of [`Self::take_game_events`] the NPC
+    /// windows and the quest journal read too) with the world session's social state, the
+    /// panels refreshed from it, the chat window's tell targets (CT3) and instant-message lines (CT6), and the
     /// instant-message tab created once the chat window is open (CT6). Returns the commands
     /// for the session; the panels' lines go to the chat window, a tell the panels started
     /// opens the chat entry in the `Tell` mode.
@@ -1506,11 +1556,20 @@ impl UiHost {
         state: &mut crate::social::SocialState,
         data: Option<&crate::character::CharacterData>,
         player: Option<&crate::character::PlayerState>,
+        events: &[UiEvent],
     ) -> Vec<tessera_net::Command> {
         let Some(s) = self.social.as_mut() else {
             self.pending_im.clear();
             return Vec::new();
         };
+        for ev in events {
+            if matches!(
+                ev,
+                UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
+            ) {
+                s.queue_event(ev);
+            }
+        }
         let mut ui = self.ui.borrow_mut();
         if let Some(root) = self
             .panels
@@ -1563,6 +1622,13 @@ impl UiHost {
     /// (decision 0020 item 1): it runs in [`Self::dispatch_entry_lines`].
     pub fn submit_entry_line(&mut self, line: EntryLine) {
         self.queue_entry_line(line);
+    }
+
+    /// The UI events since the last call (step 1 and step 7), for the in-world windows (the
+    /// NPC windows, the quest journal and the social panels read the one list). Take them once per frame; at
+    /// most [`MAX_CHARACTER_QUEUE`] wait (later ones are dropped).
+    pub fn take_game_events(&mut self) -> Vec<UiEvent> {
+        std::mem::take(&mut self.game_events)
     }
 
     /// The character panels, when the install provides them.
@@ -1819,6 +1885,7 @@ impl UiHost {
         plugins.set_ui_binding(None);
         plugins.set_ui_driven(false);
         plugins.manager_mut().set_local_player_source(None);
+        plugins.manager_mut().set_party_actor_source(None);
         if let Some(sel) = self.skins.as_mut() {
             let sw = sel.deactivate();
             if let Some(h) = &self.env {

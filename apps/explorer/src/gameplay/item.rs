@@ -216,12 +216,12 @@ pub(super) fn card(cx: &Cx<'_>, obj: &Object<'_>) -> Option<Built> {
 }
 
 /// The tooltip engine of the item cards over the explorer's install.
-type PreviewEngine = TooltipEngine<InstallTooltipData<'static, Arc<ArchiveSet>>>;
+pub(super) type PreviewEngine = TooltipEngine<InstallTooltipData<'static, Arc<ArchiveSet>>>;
 
 /// The tooltip engine for the install of `cx`, built on the worker that first needs it
 /// and kept for the process (one per install directory; the engine caches layouts and
 /// records). Its own record store and strings share the explorer's archive set.
-fn preview_engine(cx: &Cx<'_>) -> Result<&'static PreviewEngine, String> {
+pub(super) fn preview_engine(cx: &Cx<'_>) -> Result<&'static PreviewEngine, String> {
     static ENGINES: Mutex<Vec<(PathBuf, &'static PreviewEngine)>> = Mutex::new(Vec::new());
     let mut engines = ENGINES.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((_, e)) = engines.iter().find(|(d, _)| *d == cx.ctx.dir) {
@@ -303,7 +303,7 @@ fn preview_rows(s: &mut Section, row: &Row, depth: usize) {
     }
 }
 
-fn preview_model(s: &mut Section, m: &TooltipModel) {
+pub(super) fn preview_model(s: &mut Section, m: &TooltipModel) {
     for r in m.shown_rows() {
         preview_rows(s, r, 0);
     }

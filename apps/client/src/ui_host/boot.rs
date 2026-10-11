@@ -115,6 +115,8 @@ pub struct UiBooted {
     pub chargen: crate::screens::ui::ChargenRefs,
     /// The social panels' vocabulary and layout keys (`social-panels.md` §2).
     pub social_vocab: tessera_ui::game::social::SocialVocab,
+    /// The combat widgets' layouts and vocabulary (decision 0024 P2, `combat-ui.md` §2).
+    pub combat: crate::combat::boot::CombatRefs,
     /// Layouts decoded.
     pub layouts: usize,
     /// Time taken.
@@ -323,6 +325,13 @@ fn load(
         &|t| labels.key(UiEnum::ElementType, t),
     );
     let social_vocab = social_vocab(&dict, &labels, &uilayout);
+    let combat = crate::combat::boot::CombatRefs::resolve(
+        &mut |l| uilayout.by_label(l).filter(|d| d.0 >> 24 == 0x22),
+        &mut |n| labels.key(UiEnum::ElementType, n),
+        &mut |n| labels.key(UiEnum::ElementId, n),
+        &mut |n| labels.key(UiEnum::StateId, n),
+        &mut |n| dict.pid(n),
+    );
     let catalog = PanelCatalog::resolve(&uilayout, &mut |l| labels.key(UiEnum::ElementId, l));
     let mut panel_types = PanelTypes::default();
     panel_types.resolve_with(&mut |n| labels.key(UiEnum::ElementType, n));
@@ -388,6 +397,7 @@ fn load(
         char_ids,
         chargen,
         social_vocab,
+        combat,
         layouts: decoded,
         elapsed_ms,
     })

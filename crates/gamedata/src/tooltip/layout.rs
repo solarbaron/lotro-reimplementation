@@ -28,10 +28,13 @@ pub const MAX_TEMPLATE_NODES: usize = 256;
 
 /// Line elements `item-tooltips.md` §4.2 names for list widgets ("entries …"), looked up by
 /// label in the row's layout when the row has no entry templates (§6.15 OPEN).
-const LINE_ELEMENTS: [(&str, &str); 3] = [
+const LINE_ELEMENTS: [(&str, &str); 5] = [
     ("ExaminationUsageReqs", "UsageReqsListElement"),
     ("ExaminationEffectList", "EffectListElement"),
+    ("ExaminationSkillEffectList", "EffectListElement"),
     ("ExaminationAllowedSlots", "AllowedSlotsElement"),
+    // `skill-tooltips.md` §4.3: the effect description's entries.
+    ("ExaminationEffectDescription", "EffectListElement"),
 ];
 
 /// Most entry templates looked at when choosing a list widget's line element.
@@ -120,6 +123,17 @@ ui_pids! {
         separator = "UI_Examination_Tooltip_Separator",
         unique_text = "UI_Examination_Tooltip_ItemUniqueText",
         indestructible_text = "UI_Examination_Tooltip_ItemIndestructibleText",
+        for_skill_item = "UI_Examination_Tooltip_For_SkillItem",
+        skill_effect_target = "UI_Examination_Tooltip_SkillEffectTarget",
+        skill_effect_level = "UI_Examination_SkillEffectLevel",
+        skill_min_level = "UI_SkillDisplay_SkillMinLevel",
+        effect_category = "UI_Examination_Tooltip_EffectCategory",
+        timer_clock = "UIComponent_Timer_ShowClockFormat",
+        timer_format = "UIComponent_Timer_FormatString",
+        timer_full = "UIComponent_Timer_ShowFullFormat",
+        timer_two_place = "UIComponent_Timer_ShowTwoPlaceFormat",
+        timer_pad = "UIComponent_Timer_AlwaysShowDoubleDigitMinSec",
+        timer_zeros = "UIComponent_Timer_AlwaysShowLowerZeros",
     }
 }
 
@@ -504,7 +518,7 @@ pub enum Widget {
     Requirements,
     /// `UIExaminationLevelRangeRestriction` (§6.15).
     LevelRange,
-    /// `ExaminationEffectList` (§6.16).
+    /// `ExaminationEffectList` (§6.16), `ExaminationSkillEffectList`.
     EffectList,
     /// `ExaminationGameSetMemberList` (§6.17).
     SetMembers,
@@ -524,7 +538,30 @@ pub enum Widget {
     Separator,
     /// A plain `Text` element (`CurrentlyEquipped_Label`, §8.1).
     StaticText,
-    /// Any other widget type: left empty in P1 (§6.20). Holds the type label.
+    /// `ExaminationSkillQualifier` (`skill-tooltips.md` §7.2).
+    SkillQualifier,
+    /// `ExaminationSkillMaxRange` (§7.3).
+    SkillMaxRange,
+    /// `ExaminationSkillMaxTargets` (§7.4).
+    SkillMaxTargets,
+    /// `ExaminationSkillCastingTime` (§7.6).
+    SkillCastingTime,
+    /// `ExaminationSkillVitalCost` (§7.10).
+    SkillVitalCost,
+    /// `ExaminationSkillSpecialClass` (§7.11).
+    SkillSpecialClass,
+    /// `ExaminationSkillTrait` (§7.13).
+    SkillTrait,
+    /// `ExaminationSkillRecoveryTime`, a timer (§7.15).
+    SkillRecoveryTime,
+    /// `ExaminationEffectResistance` (§8.2).
+    EffectResistance,
+    /// `ExaminationEffectDescription` (§8.3).
+    EffectDescription,
+    /// `ExaminationEffectTimeDisplay`, a timer (§8.4).
+    EffectTime,
+    /// Any other widget type: left empty (`item-tooltips.md` §6.20; the skill damage and
+    /// class-mechanics rows of `skill-tooltips.md` §7.9 and §7.12 in P2). Holds the type label.
     Deferred(String),
 }
 
@@ -547,7 +584,10 @@ impl Widget {
             "ExaminationAllowedSlots" => Self::AllowedSlots,
             "ExaminationUsageReqs" => Self::Requirements,
             "UIExaminationLevelRangeRestriction" => Self::LevelRange,
-            "ExaminationEffectList" => Self::EffectList,
+            // The skill-item effect rows of item layouts (`skill-tooltips.md` §12.3) use their
+            // own widget type, filled by a child of the skill examination base (§6.1): effect
+            // lists of the item's skill ([`RowTemplate::skill_provider`] tells them apart).
+            "ExaminationEffectList" | "ExaminationSkillEffectList" => Self::EffectList,
             "ExaminationGameSetMemberList" => Self::SetMembers,
             "ExaminationGameSetBonusList" => Self::SetBonuses,
             "ExaminationUsageCooldown" => Self::Cooldown,
@@ -555,6 +595,17 @@ impl Widget {
             "ExaminationQuestID" => Self::QuestId,
             "ExaminationRow" => Self::Pair,
             "Text" => Self::StaticText,
+            "ExaminationSkillQualifier" => Self::SkillQualifier,
+            "ExaminationSkillMaxRange" => Self::SkillMaxRange,
+            "ExaminationSkillMaxTargets" => Self::SkillMaxTargets,
+            "ExaminationSkillCastingTime" => Self::SkillCastingTime,
+            "ExaminationSkillVitalCost" => Self::SkillVitalCost,
+            "ExaminationSkillSpecialClass" => Self::SkillSpecialClass,
+            "ExaminationSkillTrait" => Self::SkillTrait,
+            "ExaminationSkillRecoveryTime" => Self::SkillRecoveryTime,
+            "ExaminationEffectResistance" => Self::EffectResistance,
+            "ExaminationEffectDescription" => Self::EffectDescription,
+            "ExaminationEffectTimeDisplay" => Self::EffectTime,
             _ => return None,
         })
     }
@@ -603,6 +654,22 @@ pub struct RowTemplate {
     pub comparison_value: Option<PropertyValue>,
     /// `UICore_ListBox_horizontal`: a list laid out sideways (the name-and-icon row, §4.3).
     pub horizontal: bool,
+    /// `UI_Examination_Tooltip_For_SkillItem`: a row of an item tooltip that shows the item's
+    /// skill (`skill-tooltips.md` §6.1, §12.3).
+    pub for_skill_item: bool,
+    /// `UI_Examination_Tooltip_SkillEffectTarget`: which list of a skill an effect-list row
+    /// shows (`skill-tooltips.md` §9.6).
+    pub effect_target: Option<u32>,
+    /// `UI_Examination_SkillEffectLevel` of the row set: the list level of a skill effect
+    /// list when stored (`skill-tooltips.md` §9.8 step 1; no element of the install sets it).
+    pub skill_effect_level: Option<i32>,
+    /// `UI_SkillDisplay_SkillMinLevel` of the row set: raises the list level (§9.8 step 3).
+    pub skill_min_level: Option<i32>,
+    /// `UI_Examination_Tooltip_EffectCategory`: the effect categories an effect-list row shows
+    /// (a bit mask, `skill-tooltips.md` §9.6, §9.7).
+    pub effect_category: Option<u32>,
+    /// The timer properties of a timer row (`skill-tooltips.md` §10.2).
+    pub timer: super::duration::TimerOptions,
     /// `UICore_Text_parse_markup_tags`.
     pub parse_markup: bool,
     /// The base text colour (ARGB).
@@ -621,7 +688,45 @@ pub struct RowTemplate {
     pub problems: Vec<String>,
 }
 
+/// Widget types whose provider is a child of the skill examination base (`skill-tooltips.md`
+/// §6.1 first group, ST4, ST23): only these rows examine the item's skill when marked
+/// `UI_Examination_Tooltip_For_SkillItem`. The gambit and pip-cost composites (classes
+/// 2290–2293) have no widget type of their own in §4.3 and are not listed.
+pub const SKILL_PROVIDER_TYPES: [&str; 13] = [
+    "ExaminationSkillDamage",
+    "ExaminationSkillEffectList",
+    "ExaminationSkillGeneroProperty",
+    "ExaminationSkillMaterials",
+    "ExaminationSkillMaxTargets",
+    "ExaminationSkillPip",
+    "ExaminationSkillTrait",
+    "ExaminationSkillVitalCost",
+    "ExaminationSkillQualifier",
+    "ExaminationSkillRemovedGambits",
+    "ExaminationSkillSpellcraftMod",
+    "ExaminationSkillMaxRange",
+    "ExaminationSkillCastingTime",
+];
+
 impl RowTemplate {
+    /// Whether the row's provider is a child of the skill examination base
+    /// (`skill-tooltips.md` §6.1, [`SKILL_PROVIDER_TYPES`]): such a row finds the skill *K*
+    /// (the item's `Usage_SkillToExecute` under `UI_Examination_Tooltip_For_SkillItem`);
+    /// every other row examines the examined object itself.
+    #[must_use]
+    pub fn skill_provider(&self) -> bool {
+        self.type_label
+            .as_deref()
+            .is_some_and(|l| SKILL_PROVIDER_TYPES.contains(&l))
+    }
+
+    /// Whether the row is a skill-item effect list (`ExaminationSkillEffectList`, class 1080,
+    /// `skill-tooltips.md` §12.3).
+    #[must_use]
+    pub fn skill_effect_list(&self) -> bool {
+        self.type_label.as_deref() == Some("ExaminationSkillEffectList")
+    }
+
     /// The colour of state `label`, if the template has that state with a colour.
     #[must_use]
     pub fn state_colour(&self, label: &str) -> Option<u32> {
@@ -732,6 +837,33 @@ fn line_element(
     (first_base, Vec::new())
 }
 
+/// A timer element's properties (`skill-tooltips.md` §10.2); `ShowTwoPlaceFormat` takes its
+/// dictionary default (true when the dictionary has none) when the element does not store it.
+fn timer_options(
+    data: &dyn TooltipData,
+    p: &UiPids,
+    props: &PropertySet,
+) -> super::duration::TimerOptions {
+    let two_place = match get(props, p.timer_two_place) {
+        Some(PropertyValue::Bool(b)) => *b,
+        _ => match p.timer_two_place.and_then(|pid| data.default_value(pid)) {
+            Some(PropertyValue::Bool(b)) => b,
+            _ => true,
+        },
+    };
+    super::duration::TimerOptions {
+        clock: as_bool(get(props, p.timer_clock)),
+        format: match get(props, p.timer_format) {
+            Some(PropertyValue::StringInfo(s)) => Some((**s).clone()),
+            _ => None,
+        },
+        full: as_bool(get(props, p.timer_full)),
+        two_place,
+        pad: as_bool(get(props, p.timer_pad)),
+        zeros: as_bool(get(props, p.timer_zeros)),
+    }
+}
+
 fn state_colours(data: &dyn TooltipData, p: &UiPids, desc: &ElementDesc) -> Vec<StateColour> {
     desc.states
         .iter()
@@ -790,6 +922,7 @@ fn template_of(
         widget,
         Widget::Requirements
             | Widget::EffectList
+            | Widget::EffectDescription
             | Widget::AllowedSlots
             | Widget::SetMembers
             | Widget::SetBonuses
@@ -826,6 +959,12 @@ fn template_of(
         comparison,
         comparison_value: comparison.and_then(|q| props.get(q)).cloned(),
         horizontal: as_bool(get(props, p.horizontal)),
+        for_skill_item: as_bool(get(props, p.for_skill_item)),
+        effect_target: get(props, p.skill_effect_target).and_then(as_key),
+        skill_effect_level: as_int(get(props, p.skill_effect_level)),
+        skill_min_level: as_int(get(props, p.skill_min_level)),
+        effect_category: get(props, p.effect_category).and_then(as_key),
+        timer: timer_options(data, p, props),
         parse_markup: as_bool(get(props, p.parse_markup)),
         colour: first_colour(props, p),
         state_colours,

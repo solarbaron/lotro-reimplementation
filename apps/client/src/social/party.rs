@@ -37,26 +37,28 @@ impl PartyActorSource for PartyActors {
 #[derive(Debug, Default)]
 pub struct PartyBridge {
     actors: Arc<PartyActors>,
-    attached: bool,
     warned_appended: bool,
     seen: Option<u64>,
 }
 
 impl PartyBridge {
-    /// A bridge not yet attached to a plugin host.
+    /// A bridge whose actor source is not yet given to a plugin host.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Per frame: the actor source attached once, the member list handed over when it
-    /// changed, the members' values refreshed when the state changed.
+    /// The members' actor values as the plugin host's party actor source; the game UI
+    /// attaches it with the plugins' other sources
+    /// ([`crate::ui_host::UiHost::attach_plugins`]).
+    #[must_use]
+    pub fn actor_source(&self) -> Arc<dyn PartyActorSource> {
+        Arc::clone(&self.actors) as _
+    }
+
+    /// Per frame: the member list handed over when it changed, the members' values
+    /// refreshed when the state changed.
     pub fn update(&mut self, state: &mut SocialState, manager: &mut PluginManager) {
-        if !self.attached {
-            let source: Arc<dyn PartyActorSource> = Arc::clone(&self.actors) as _;
-            manager.set_party_actor_source(Some(source));
-            self.attached = true;
-        }
         if let Some(list) = state.take_roster_change() {
             let members: Vec<FellowshipMember> = list
                 .iter()
@@ -230,12 +232,7 @@ mod tests {
             }),
             &|_| None,
         );
-        let actors = PartyActors::default();
-        let mut b = PartyBridge {
-            actors: Arc::new(actors),
-            attached: true,
-            ..PartyBridge::default()
-        };
+        let mut b = PartyBridge::default();
         // Only the values step (no plugin host): the same code path as `update`.
         b.refresh_values(&s);
         let v = b

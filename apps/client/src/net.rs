@@ -50,6 +50,11 @@ pub const DISCONNECT_GRACE: Duration = Duration::from_millis(500);
 /// and then QUIC flow control) instead of growing this queue: it holds at most this many
 /// events plus what one poll delivers.
 pub const MAX_QUEUED_ENTITY_EVENTS: usize = 1 << 18;
+/// Bound on the combat events queued for the walker's combat visuals between two
+/// [`World::drain_combat_events`] (P2, `combat-visuals.md` §9). Further events are dropped
+/// on arrival and counted; a walker drains every frame, so the bound is reached only when
+/// none does.
+pub const MAX_QUEUED_COMBAT_EVENTS: usize = 1 << 16;
 /// Most chat lines one message of the day shows (`tessera-protocol.md` §6.2.2).
 pub const MAX_MOTD_LINES: usize = 8;
 /// Chat lines kept for the walker's chat overlay ([`World::drain_hud_chat`]); older lines
@@ -304,6 +309,10 @@ impl crate::walker::WalkerSession for World {
         World::drain_entity_events(self, out, max);
     }
 
+    fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        World::drain_combat_events(self, out, max);
+    }
+
     fn sample_entity(&self, id: EntityId, now: Instant) -> Option<Sample> {
         World::sample_entity(self, id, now)
     }
@@ -363,6 +372,11 @@ pub struct World {
     entity_events: Option<VecDeque<Event>>,
     /// Moves in `entity_events`.
     queued_moves: usize,
+    /// Combat events for the walker's combat visuals; captured exactly while
+    /// `entity_events` is (`None`: not captured).
+    combat_events: Option<VecDeque<tessera_net::CombatEvent>>,
+    /// Combat events dropped because their queue was full.
+    dropped_combat: u64,
     /// [`MAX_QUEUED_ENTITY_EVENTS`] (smaller in tests).
     queue_cap: usize,
     /// Moves dropped because the queue was full.
@@ -416,6 +430,19 @@ pub struct World {
     /// The player's social state (decision 0024 P4): chat lines in the original's forms,
     /// fellowship, lists, invitation, trade, performance events for the player music.
     social: crate::social::SocialState,
+    /// The local player's combat state (decision 0024 P2, [`crate::combat`]).
+    p2: crate::combat::CombatState,
+    /// Its changes not yet taken ([`World::take_combat_changes`]), at most
+    /// [`MAX_PLAYER_CHANGES`].
+    p2_changes: std::collections::VecDeque<crate::combat::CombatChange>,
+    /// The events of the combat state and plugin combat views not yet taken
+    /// ([`World::take_combat_events`]), at most [`MAX_PLAYER_CHANGES`].
+    p2_events: std::collections::VecDeque<Event>,
+    /// The origin of the combat clock ([`World::combat_clock`]).
+    p2_base: Instant,
+    /// Combat changes were dropped from a full queue since the last
+    /// [`World::take_combat_overflow`]: the consumer resynchronises from the state.
+    p2_overflowed: bool,
 }
 
 /// Most player-state changes kept for [`World::take_player_changes`] between two takes;
@@ -572,6 +599,8 @@ impl World {
             placed: std::collections::BTreeSet::new(),
             entity_events: None,
             queued_moves: 0,
+            combat_events: None,
+            dropped_combat: 0,
             queue_cap: MAX_QUEUED_ENTITY_EVENTS,
             dropped_moves: 0,
             hud_chat: VecDeque::new(),
@@ -594,6 +623,11 @@ impl World {
             manual_enter: false,
             external_poll: false,
             social: crate::social::SocialState::new(true),
+            p2: crate::combat::CombatState::new(),
+            p2_changes: std::collections::VecDeque::new(),
+            p2_overflowed: false,
+            p2_events: std::collections::VecDeque::new(),
+            p2_base: now,
         })
     }
 
@@ -635,6 +669,80 @@ impl World {
     #[must_use]
     pub fn player_state(&self) -> &crate::character::PlayerState {
         &self.p1
+    }
+
+    /// The local player's combat state (decision 0024 P2): selection, kept vitals, effects,
+    /// casts, quickslots, cooldowns.
+    #[must_use]
+    pub fn combat_state(&self) -> &crate::combat::CombatState {
+        &self.p2
+    }
+
+    /// Takes the combat-state changes since the last call, in order (the oldest are
+    /// dropped beyond [`MAX_PLAYER_CHANGES`]; [`World::take_combat_overflow`] then says
+    /// so, and consumers resynchronise from [`World::combat_state`]).
+    pub fn take_combat_changes(&mut self) -> Vec<crate::combat::CombatChange> {
+        Vec::from(std::mem::take(&mut self.p2_changes))
+    }
+
+    /// Whether combat changes were dropped from the full queue since the last call (the
+    /// flag is cleared): the consumer rebuilds its displays from the state.
+    pub fn take_combat_overflow(&mut self) -> bool {
+        std::mem::take(&mut self.p2_overflowed)
+    }
+
+    /// Drops every queued combat change and the overflow flag (a consumer that has just
+    /// rebuilt its displays from the state, such as a newly attached HUD). Returns whether
+    /// a local selection clear (decision 0032 D2) was among them, for the walker's marker.
+    pub fn discard_combat_changes(&mut self) -> bool {
+        self.p2_overflowed = false;
+        std::mem::take(&mut self.p2_changes).iter().any(|c| {
+            matches!(
+                c,
+                crate::combat::CombatChange::Selection { local: true, .. }
+            )
+        })
+    }
+
+    /// Takes the events the plugin combat views need since the last call, in order.
+    pub fn take_combat_events(&mut self) -> Vec<Event> {
+        Vec::from(std::mem::take(&mut self.p2_events))
+    }
+
+    /// The combat clock at `now`: seconds since the session was created (the times the
+    /// combat state keeps).
+    #[must_use]
+    pub fn combat_clock(&self, now: Instant) -> f64 {
+        crate::combat::seconds_since(self.p2_base, now)
+    }
+
+    fn apply_combat(&mut self, now: Instant, ev: &Event) {
+        let mut changes = Vec::new();
+        let t = self.combat_clock(now);
+        self.p2.apply(ev, t, &mut changes);
+        for c in changes {
+            if self.p2_changes.len() >= MAX_PLAYER_CHANGES {
+                self.p2_changes.pop_front();
+                if !self.p2_overflowed {
+                    tracing::debug!("combat changes dropped; the HUD resynchronises");
+                }
+                self.p2_overflowed = true;
+            }
+            self.p2_changes.push_back(c);
+        }
+        if crate::combat::is_combat_relevant(ev) {
+            if self.p2_events.len() >= MAX_PLAYER_CHANGES {
+                self.p2_events.pop_front();
+            }
+            self.p2_events.push_back(ev.clone());
+        }
+    }
+
+    /// Applies a session event to the combat state as if the session had delivered it
+    /// (tests of the combat consumers).
+    #[cfg(test)]
+    pub(crate) fn inject_combat_event(&mut self, now: Instant, ev: &Event) {
+        self.apply_combat(now, ev);
     }
 
     /// Takes the player-state changes since the last call, in order.
@@ -951,6 +1059,7 @@ impl World {
     /// Stopping drops what is queued.
     pub fn capture_entity_events(&mut self, on: bool) {
         self.entity_events = on.then(VecDeque::new);
+        self.combat_events = on.then(VecDeque::new);
         self.queued_moves = 0;
         self.head_seq = 0;
         self.queued_appearance.clear();
@@ -1008,6 +1117,47 @@ impl World {
                 _ => {}
             }
         }
+    }
+
+    /// Moves at most `max` of the queued combat events into `out` (appended, oldest
+    /// first); the rest stay queued, in order. Combat events are queued while
+    /// [`World::capture_entity_events`] is on, for the walker's combat visuals
+    /// (`combat-visuals.md` §9).
+    pub fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        let Some(q) = &mut self.combat_events else {
+            return;
+        };
+        let n = q.len().min(max);
+        out.extend(q.drain(..n));
+    }
+
+    /// Combat events waiting for [`World::drain_combat_events`].
+    #[must_use]
+    pub fn queued_combat_events(&self) -> usize {
+        self.combat_events.as_ref().map_or(0, VecDeque::len)
+    }
+
+    /// Combat events dropped because their queue was full.
+    #[must_use]
+    pub fn dropped_combat_events(&self) -> u64 {
+        self.dropped_combat
+    }
+
+    fn queue_combat_event(&mut self, ev: &tessera_net::CombatEvent) {
+        let Some(q) = &mut self.combat_events else {
+            return;
+        };
+        if q.len() >= MAX_QUEUED_COMBAT_EVENTS {
+            self.dropped_combat += 1;
+            if self.dropped_combat.is_power_of_two() {
+                tracing::warn!(
+                    dropped = self.dropped_combat,
+                    "net: combat events dropped (nobody drains them)"
+                );
+            }
+            return;
+        }
+        q.push_back(ev.clone());
     }
 
     /// Entity events waiting for [`World::drain_entity_events`].
@@ -1088,6 +1238,12 @@ impl World {
     pub fn send_move(&mut self, now: Instant, location: Location, heading: f32, velocity: Vec3) {
         if self.player.is_none() || self.state() != SessionState::InWorld {
             return;
+        }
+        // The session never echoes the player's own walking: the combat state keeps it
+        // from here, so the targeting keys measure from where the player is (TR4).
+        if location.is_valid() {
+            let p = location.position();
+            self.p2.set_player_position([p.x, p.y, p.z]);
         }
         if let Err(e) = self.send(
             now,
@@ -1261,6 +1417,7 @@ impl World {
 
     fn apply(&mut self, now: Instant, ev: &Event) {
         self.events_seen += 1;
+        self.apply_combat(now, ev);
         let mut changes = Vec::new();
         self.p1.apply(ev, &mut changes);
         if !changes.is_empty() {
@@ -1291,6 +1448,9 @@ impl World {
                 | Event::Disconnected { .. }
         ) {
             self.queue_entity_event(ev);
+        }
+        if let Event::Combat(c) = ev {
+            self.queue_combat_event(c);
         }
         match ev {
             Event::Connected { characters } => {
@@ -2049,6 +2209,48 @@ mod tests {
     }
 
     #[test]
+    fn combat_state_follows_the_players_walk_and_reports_overflow() {
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        for _ in 0..30 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        let at = world.player_location().expect("entered").location;
+        // A plausible step 3 m north: the combat state keeps it (TR4 measures from it).
+        let step = Location::new(at.region, at.x, at.y + 3.0, at.z);
+        world.send_move(now, step, 0.0, Vec3::ZERO);
+        let kept = world
+            .combat_state()
+            .player_entity()
+            .and_then(|e| e.position);
+        let p = step.position();
+        assert_eq!(kept, Some([p.x, p.y, p.z]));
+        // A full queue drops the oldest change and says so once.
+        let _ = world.take_combat_changes();
+        assert!(!world.take_combat_overflow());
+        let player = world.player().expect("player");
+        let ev = Event::Combat(tessera_net::CombatEvent::CombatState {
+            entity: player,
+            in_combat: true,
+        });
+        let off = Event::Combat(tessera_net::CombatEvent::CombatState {
+            entity: player,
+            in_combat: false,
+        });
+        for i in 0..=MAX_PLAYER_CHANGES {
+            world.apply_combat(now, if i % 2 == 0 { &ev } else { &off });
+        }
+        assert!(world.take_combat_overflow());
+        assert!(!world.take_combat_overflow(), "the flag is cleared");
+        assert_eq!(world.take_combat_changes().len(), MAX_PLAYER_CHANGES);
+        // Discarding drops the queue (an attached HUD resynchronised from the state).
+        world.apply_combat(now, &ev);
+        assert!(!world.discard_combat_changes(), "no local selection clear");
+        assert!(world.take_combat_changes().is_empty());
+    }
+
+    #[test]
     fn implausible_move_is_corrected() {
         let mut now = Instant::now();
         let mut world = World::sandbox(now).expect("sandbox");
@@ -2072,5 +2274,83 @@ mod tests {
         assert!(after.seq > before.seq);
         assert_eq!(after.cause, LocationCause::Corrected);
         assert!((after.location.x - before.location.x).abs() < 1.0);
+    }
+}
+
+#[cfg(test)]
+mod combat_queue_tests {
+    use super::*;
+    use tessera_net::CombatEvent;
+    use tessera_net::scenario::{EmptyResolver, Scenario};
+
+    const SCENARIO: &str = "tessera-scenario 1
+tick 50ms
+player \"Tamsin\"
+actor $dummy kind=creature name=\"Dummy\" pos=0,4,0
+at 0s spawn $dummy
++0.1s cast player \"Jab\" 200ms target=$dummy
++0.2s damage player $dummy 10 result=normal with=\"Jab\" left=90
++0s effect $dummy \"Bleeding\" for=1s from=player
++0.1s defeat $dummy by=player
+";
+
+    fn world(text: &str) -> World {
+        let sc = Scenario::parse(text.as_bytes()).expect("parses");
+        let mut resolved = sc.resolve(&mut EmptyResolver).expect("resolves");
+        resolved.set_plays_input(false);
+        let config = SandboxConfig {
+            scenario: Some(Arc::new(resolved)),
+            ..SandboxConfig::default()
+        };
+        World::sandbox_with(Instant::now(), config).expect("session")
+    }
+
+    fn run(w: &mut World, ms: u64) {
+        let start = Instant::now();
+        for k in 0..ms / 10 {
+            w.update(start + Duration::from_millis(10 * k));
+        }
+    }
+
+    #[test]
+    fn combat_events_reach_the_walker_queue_in_feed_order() {
+        let mut w = world(SCENARIO);
+        w.capture_entity_events(true);
+        run(&mut w, 2_000);
+        let mut out = Vec::new();
+        crate::walker::WalkerSession::drain_combat_events(&mut w, &mut out, usize::MAX);
+        let names: Vec<&str> = out.iter().map(CombatEvent::name).collect();
+        let pos = |n: &str| names.iter().position(|x| *x == n);
+        let (Some(c), Some(d), Some(e), Some(f)) = (
+            pos("CastStarted"),
+            pos("VitalDelta"),
+            pos("EffectApplied"),
+            pos("Defeated"),
+        ) else {
+            panic!("missing combat events: {names:?}");
+        };
+        assert!(c < d && d < e && e < f, "feed order: {names:?}");
+        let mut again = Vec::new();
+        w.drain_combat_events(&mut again, usize::MAX);
+        assert!(again.is_empty(), "drained");
+        assert_eq!(w.dropped_combat_events(), 0);
+    }
+
+    #[test]
+    fn combat_events_are_not_queued_without_capture_and_drain_in_parts() {
+        let mut w = world(SCENARIO);
+        run(&mut w, 2_000);
+        assert_eq!(w.queued_combat_events(), 0, "not captured");
+        let mut w = world(SCENARIO);
+        w.capture_entity_events(true);
+        run(&mut w, 2_000);
+        let total = w.queued_combat_events();
+        assert!(total >= 4, "{total}");
+        let mut out = Vec::new();
+        w.drain_combat_events(&mut out, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(w.queued_combat_events(), total - 2);
+        w.capture_entity_events(false);
+        assert_eq!(w.queued_combat_events(), 0, "stopping drops the queue");
     }
 }

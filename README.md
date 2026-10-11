@@ -79,6 +79,13 @@ character panel with its paperdoll and the bag windows show scripted inventory, 
 151,230 item records gets its examination tooltip or a category, equipping changes the worn
 look, and plugins read `GetBackpack()` and `GetEquipment()`. Still open: the creation
 viewport's figure is not drawn, and colours and face layers of a look are not applied.
+**P3 (NPC windows: dialogue, quests, vendors and loot) passes its exit criteria on Tessera's
+side** ([P3 status](docs/ROADMAP.md#p3-status)): scripted NPCs open the install's dialogue,
+quest-offer, vendor (buy, sell, buy-back, quantity), barter and loot windows with install text
+and icons; the quest log and tracker show all 20,807 quest records of the install from a
+scenario without a failure; the wallet window and the plugin wallet views show scripted
+currencies; local golden images of 19 windows match (decision 0031). Still open: the new
+specs' independent review and some text-fitting defects of the windows.
 
 | Area | State |
 |---|---|
@@ -104,6 +111,7 @@ viewport's figure is not drawn, and colours and face layers of a look are not ap
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
 | Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
+| NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs in review |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -28,7 +28,10 @@
 > on one machine and waits for a run between two machines on a LAN. The parity track
 > (P0–P8, [decision 0024](decisions/0024-parity-track.md)) started on 2026-10-09 with
 > [P0](#p0) (scenario feed and `tessera-gamedata`); [P1](#p1) (characters, inventory and
-> equipment) started on 2026-10-10. Milestones are ordered by
+> equipment) started on 2026-10-10, and [P3](#p3) (NPC windows) on the same day, beside P2;
+> P3's exit criteria pass on Tessera's side (exit verification 2026-10-11, [P3
+> status](#p3-status)), its new specs still wait for an independent review.
+> Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -1642,6 +1645,128 @@ looks apply heights, styles and sliders only, and colours and face layers wait f
 in `tessera-mesh`'s `CharacterSpec` (`character-screens.md` §6 OPEN and the §7.1.1
 implementer note), so criterion 1's look part is partial; the bag windows' column settings are saved
 on the main thread (ARCH §21 OPEN).
+
+---
+
+<a id="p3"></a>
+### P3: NPC windows: dialogue, quests, vendors and loot
+
+**Goal:** the NPC windows of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P3): using an NPC, the dialogue and
+quest-offer windows, the quest log and the quest tracker with objective counters, quest
+markers (on NPCs and on the maps), vendor and loot windows, and the wallet display with the
+plugin API's wallet views. Text, icons and window layouts come from the user's install;
+which window opens, its entries, prices, quantities and quest states are scripted by the
+scenario feed (`scenario-feed.md` §5.6, §6.3, §9.2), never derived: the client runs no quest,
+loot, vendor or price rule (decision 0024 §2 principle 4, `economy.md` §11.6). The test
+server carries none of it (LEGAL.md §11.1 rule 5, unchanged; no protocol minor). Builds on
+P1. Risk tier T1. Started 2026-10-10 on branch `p3` (worktree `wt-p3`), in parallel with
+P2 (branch `p2`): shared files (the `tessera-ui` game module index, the `tessera-net` domain
+groups, the client's screens and start-up) take additive changes only.
+
+<a id="p3-deliverables"></a>
+**Deliverables**
+
+- Specs (new, dirty room, Accepted before the build is verified): `npc-windows.md` (NPC
+  use from the client's side, the dialogue and quest-offer windows, vendor and loot windows,
+  the wallet display and coin rendering) and `quest-journal.md` (quest log, tracker,
+  objective counters, quest messages in chat, quest markers on NPCs and on the minimap and
+  world map); P3 revisions of `scenario-feed.md` (revision 5: additive forms the windows
+  need, if any), `lua-plugin-api.md` (§15.2 wallet views, conformance checks), and, where
+  the writers find gaps, `quests.md`, `economy.md`, `game-panels.md`, `chat-window.md`,
+  `item-tooltips.md` (§11 coin images).
+- [Decision 0031](decisions/0031-parity-panel-goldens.md): golden images of panels that show
+  install content (committed synthetic goldens; local-only real-data goldens, ARCH §23.3).
+- `tessera-gamedata`: the quest journal model (`quest`: log entries, categories and order,
+  display text, objectives and counters, rewards shown, tracker entries, marker and indicator
+  choices, the per-record census categories) and the NPC window model (`npc`: dialogue page
+  text, quest-offer content, vendor and loot entries with price display, wallet currencies).
+- `tessera-net` (only if revision 5 adds forms): the feed's P3 additions, their vectors and
+  hostile rows.
+- `tessera-ui`: the P3 game widget types and fallback widgets (dialogue options, vendor and
+  loot lists, quantity entry, coin display, quest log tree, tracker, objective counters)
+  with committed synthetic goldens.
+- `tessera-plugins`: `Wallet`, `WalletItem`, `GetWallet()`, `GetMoney()` and their events
+  over a source the client implements.
+- `tessera-client`: NPC use and the windows (`--open-panel` names for each), the quest log
+  and tracker, quest markers in the walker and on the maps, the wallet display; committed
+  synthetic scenarios `dialogue`, `vendor`, `loot` and `quest-log` with their logs;
+  real-data tests for both criteria.
+- Documentation: ARCH §3.1, §15, §23.3; `docs/USER_GUIDE.md` (NPC windows, quest log);
+  owner rows from O110 in [owner-observations.md](checklists/owner-observations.md); at
+  close-out `CLAUDE.md` Current state.
+
+<a id="p3-specs"></a>
+**Specs needed:** `npc-windows.md`, `quest-journal.md` (new);
+[`interaction.md`](specs/interaction.md), [`quests.md`](specs/quests.md),
+[`economy.md`](specs/economy.md), [`game-panels.md`](specs/game-panels.md),
+[`chat-window.md`](specs/chat-window.md), [`string-table.md`](specs/string-table.md),
+[`item-tooltips.md`](specs/item-tooltips.md), [`ui-behaviour.md`](specs/ui-behaviour.md),
+[`lua-plugin-api.md`](specs/lua-plugin-api.md) §15 (Accepted);
+[`scenario-feed.md`](specs/scenario-feed.md) revision 4 (5 if the windows need new forms).
+
+**RE tasks:** the windows' layouts, element roles and fill rules, and the quest marker and
+tracker behaviour, from the install's UI layouts (M1) and, where the data stop, the offline
+client (M4, decision 0011). No protocol or server work.
+
+<a id="p3-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. Log and tracker show every quest record from a scenario without failure.
+2. Dialogue, vendor and loot scenarios render with install text and icons; golden images
+   pass.
+
+Owner observations in the original client: rows from O110
+([owner-observations.md](checklists/owner-observations.md)); they block nothing until P8.
+
+<a id="p3-status"></a>
+**Status:** exit criteria 1 and 2 pass on Tessera's side (started 2026-10-10, branch `p3`;
+exit verification 2026-10-11 on the uncommitted `p3` tree); to be committed and merged.
+Deliverables not yet met: `npc-windows.md` and `quest-journal.md` are in **Review**, the
+revision-5 parts of `scenario-feed.md` (§18.P3) are in Review and `lua-plugin-api.md` §15.3
+is Revised; each needs an independent review before it is Accepted. Decision 0031 is
+Proposed (the owner accepts it). No criterion needs an observation in the original client;
+owner rows O110–O125 ([owner-observations.md](checklists/owner-observations.md#p3-items))
+block nothing until P8.
+
+Checks (2026-10-11, install present, machine loaded by parallel P2/P4 builds,
+`TESSERA_PERF` unset): `cargo fmt --check` (workspace and `fuzz/`); clippy `-D warnings`
+(workspace `--all-targets`, also `--all-features`; `fuzz/` `--bins`): clean.
+`cargo test --workspace --release --no-fail-fast` with `TESSERA_GAME_DIR`: **6,057 passed, 0
+failed, 10 ignored** (437 test binaries). A first run had stopped at
+`tessera-terrain` `layers::tests::warnings_once_per_chunk` (passes alone; a tracing callsite
+cached as disabled by another test thread); the verifier made its warning counter rebuild the
+interest cache. `tools/fuzz-smoke.sh -t 60`: `net_scenario_parse` 1,477,557 runs,
+`net_scenario_run` 218,264 runs (after the verifier gave its driver a zero world-entry wait: a
+scenario that never enters the world had slept 10 s of wall-clock time per input, 110 runs/s),
+`net_scenario_overlay` 3,711,681 runs: no crash. `tools/check-content.sh` (1,896 files),
+`tools/check-spdx.sh` (1,778 files), `tools/check-server-deps.sh` and a relative-link and
+anchor check of the 139 Markdown files outside `research/` (1,743 links): 0 errors. P3 test
+binaries: `tessera-net` `scenario_p3_vectors` 13, `scenario_p3_hostile` 6,
+`scenario_p3_session` 4; `tessera-gamedata` `quest_real_data` 1, `npc_real_data` 1;
+`tessera-ui` `p3_goldens` 12, `p3_npc_windows` 33, `p3_quest_journal` 19, `p3_real_data` 1;
+`tessera-plugins` `wallet_views` 13; `tessera-client` `npc_windows` 13,
+`npc_windows_plugins` 5 (lua-plugin-api checks 80–85, 83 with the install),
+`npc_windows_real_data` 5, `quest_journal` 3, `quest_hub` 1, `quest_ui_rules` 8,
+`quest_journal_real_data` 2, `quest_rules_real_data` 2, `scenarios` 13 (the four P3
+scenarios replay against their committed logs), `scenarios_real_data` 4; all passed.
+
+Fixes made by the verifier (code and tests; spec facts unchanged, five `> **OPEN:**` notes
+with the Tessera rules taken, `npc-windows.md` §4, §6.3, §7.7, §9.4 and `quest-journal.md`
+§4.7): the install's quantity dialog laid out to 294 × −87 (now its minimum, 294 × 164, by
+the element resize's limit pass); quest-offer and quest-log reward rows and barter entries
+showed the layout's sample text of the unused `QuestReward_Base` parts and of
+`BarterDisplay_ReputationRewardField` (now hidden); a barter coin cost was not drawn on the
+install (now the install's money display); wallet totals were invisible (`PaperItemEntry_Total`
+is a `QuantityDisplay`, now created as a Text) and the destiny-perks button was shown (now
+hidden); text measuring for fitted rows uses an unbounded height; details-pane rows are fitted
+again after a font change. New real-data assertions: quantity dialog at least 256 × 164,
+item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
+| 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). |
 
 ---
 

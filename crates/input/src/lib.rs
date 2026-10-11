@@ -38,6 +38,7 @@ pub use glam;
 
 mod action;
 mod chord;
+pub mod combat;
 pub mod commands;
 pub mod controller;
 mod defaults;
@@ -56,6 +57,7 @@ pub use action::{
     MAX_NAME_LEN, ModifierPolicy, Registry, is_valid_name,
 };
 pub use chord::{Activation, Chord, MAX_CHORD_STROKES, MAX_CHORD_TEXT, MAX_STROKE_BUTTONS, Stroke};
+pub use combat::{QUICKSLOT_ACTIONS, QUICKSLOT_COMMANDS, QUICKSLOTS, TARGET_ACTIONS, TargetAction};
 pub use controller::{
     FlyConfig, FlyController, GroundState, HeightQuery, IntentLatch, MoveIntent, WalkConfig,
     WalkController, WalkEvent,

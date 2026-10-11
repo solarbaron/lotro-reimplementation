@@ -520,3 +520,84 @@ fn when_compares_with_a_property_on_the_right() {
     assert!(playing(&sink, S1).is_empty());
     assert_eq!(playing(&sink, S2).len(), 1);
 }
+
+/// A sink that keeps the animation nodes it is given.
+#[derive(Debug, Default)]
+struct AnimationProbe {
+    inner: RecordingSink,
+    started: Vec<AnimationNode>,
+    updated: Vec<(AnimationHandle, AnimationNode)>,
+}
+
+impl EffectSink for AnimationProbe {
+    fn start_sound(&mut self, request: &SoundStart) -> SoundStartOutcome {
+        self.inner.start_sound(request)
+    }
+    fn stop_sound(&mut self, handle: SoundHandle) {
+        self.inner.stop_sound(handle);
+    }
+    fn set_sound_volume(&mut self, handle: SoundHandle, volume: f32) {
+        self.inner.set_sound_volume(handle, volume);
+    }
+    fn register_environment(&mut self, request: &EnvironmentRequest) -> EnvironmentHandle {
+        self.inner.register_environment(request)
+    }
+    fn unregister_environment(&mut self, handle: EnvironmentHandle) {
+        self.inner.unregister_environment(handle);
+    }
+    fn start_animation(
+        &mut self,
+        _entity: EntityId,
+        node: &AnimationNode,
+        _intensity: f32,
+    ) -> AnimationOutcome {
+        self.started.push(*node);
+        AnimationOutcome::RunUntilStopped(AnimationHandle(3))
+    }
+    fn update_animation(&mut self, handle: AnimationHandle, node: &AnimationNode) {
+        self.updated.push((handle, *node));
+    }
+}
+
+/// `script-table.md` §6.10: driven fields are substituted before the start (the layer here),
+/// and a change of a driven rate or `UseBoneOpacity` field reaches the playing clip (step 7).
+#[test]
+fn driven_animation_fields_reach_the_start_and_the_playing_clip() {
+    const LAYER_FIELD: u32 = 0x3001;
+    const OPACITY_FIELD: u32 = 0x3002;
+    const MOVING: u32 = pid::FLAG;
+    let n = driven(
+        driven(animation(), LAYER_FIELD, pid::VALUE),
+        OPACITY_FIELD,
+        MOVING,
+    );
+    let mut src = MemorySource::new();
+    src.insert_table(Did(TABLE), table(2, Vec::new(), vec![(KEY, vec![n])]));
+    let mut v = vocab();
+    v.animation.layer = Some(LAYER_FIELD);
+    v.use_bone_opacity = Some(OPACITY_FIELD);
+    let mut rt = Runtime::new(src, catalog(), v).with_seed(7);
+    let mut sink = AnimationProbe::default();
+    rt.spawn_entity(
+        &mut sink,
+        E,
+        init(vec![
+            (pid::VALUE, PropertyValue::Int(40)),
+            (MOVING, PropertyValue::Bool(false)),
+        ]),
+    )
+    .unwrap();
+    rt.start_script(&mut sink, E, KEY).unwrap();
+    assert_eq!(sink.started.len(), 1);
+    assert_eq!(sink.started[0].layer, 40);
+    assert!(!sink.started[0].use_bone_opacity);
+    rt.set_property(&mut sink, E, MOVING, PropertyValue::Bool(true))
+        .unwrap();
+    assert_eq!(sink.updated.len(), 1);
+    assert_eq!(sink.updated[0].0, AnimationHandle(3));
+    assert!(sink.updated[0].1.use_bone_opacity);
+    // A change of a field the playing clip does not take sends nothing.
+    rt.set_property(&mut sink, E, pid::VALUE, PropertyValue::Int(50))
+        .unwrap();
+    assert_eq!(sink.updated.len(), 1);
+}

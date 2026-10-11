@@ -29,6 +29,19 @@
 //!   stop hook and redirect listener) and leave the effect to the sink; While runs its
 //!   branch while its property test holds and PhysicsImpulse sends its impulse to the sink
 //!   (§30); other effect kinds complete at once (§18).
+//! - Combat (`combat-visuals.md`, `script-table.md` §9.1): [`Runtime::start_script_with`]
+//!   starts a run with a run-parameter set (`StorySystem_StoryID`,
+//!   `Combat_AnimationSpeedMultiplier`, the strike parameters) and returns a [`RunId`]
+//!   ([`Runtime::run_live`], [`Runtime::stop_run`]); a StoryHook node hands its type and its
+//!   run's story to [`EffectSink::story_hook`]; an Execute node asks
+//!   [`EffectSink::execute`], writes the answer into its run's parameters and fires the result
+//!   ports whose payload matches (else its Default ports; without an answer the port matching
+//!   its `DefaultValue`, §18); a Beam node asks [`EffectSink::start_beam`] and fires its
+//!   Default ports at [`Runtime::beam_arrived`] (`particle-runtime.md` §11.1 step 7);
+//!   Property (3) and Random (6) targets resolve from the run's parameters and the entity
+//!   (`combat-visuals.md` §4.6); animation nodes reach the sink with their driven speed and
+//!   `UseBoneOpacity`. [`Runtime::switch_cases`] lists the case values a definition switches
+//!   on (the death scripts' `Death_DeadScript`, §9.5).
 //! - [`Runtime::set_property`] re-evaluates Switch and When nodes and updates driven
 //!   fields and intensities synchronously (§20.3); [`Runtime::advance`] moves the one
 //!   scheduler (Timers, Sequence pacing, Switch delays and cross-fades, deferred Runs,
@@ -62,13 +75,17 @@ pub mod vocab;
 
 pub use error::{RuntimeError, RuntimeIssue};
 pub use runtime::{
-    EntityInit, INTENSITY_EPSILON, LAG_CATCH_UP, MAX_ADVANCE, MIN_LOOP_INTERVAL, Runtime,
-    RuntimeLimits, RuntimeStats, ScriptStart,
+    EntityInit, INTENSITY_EPSILON, LAG_CATCH_UP, MAX_ADVANCE, MAX_RUN_PARAMETERS, MAX_SWITCH_CASES,
+    MIN_LOOP_INTERVAL, RunId, Runtime, RuntimeLimits, RuntimeStats, ScriptRun, ScriptStart,
 };
 pub use sink::{
-    AnimationHandle, AnimationOutcome, EffectSink, EntityId, EnvironmentHandle, EnvironmentRequest,
-    ImpulseRequest, JUMP_AIR_TIME_OFFSET, NullSink, ParticleHandle, ParticleStart, RecordingSink,
-    SinkEvent, SoundHandle, SoundPositioner, SoundStart, SoundStartOutcome,
+    AnimationHandle, AnimationOutcome, BeamHandle, BeamStart, EffectSink, EntityId,
+    EnvironmentHandle, EnvironmentRequest, ExecuteReply, ExecuteRequest, ImpulseRequest,
+    JUMP_AIR_TIME_OFFSET, MAX_EXECUTE_OUTPUTS, NullSink, ParticleHandle, ParticleStart,
+    RecordingSink, SinkEvent, SoundHandle, SoundPositioner, SoundStart, SoundStartOutcome,
+    StoryHookEvent,
 };
 pub use source::{FetchSource, MemorySource, ScriptSource};
-pub use vocab::{ParticleFieldPids, PropertyCatalog, RuntimeVocabulary, SyntheticCatalog};
+pub use vocab::{
+    AnimationFieldPids, ParticleFieldPids, PropertyCatalog, RuntimeVocabulary, SyntheticCatalog,
+};

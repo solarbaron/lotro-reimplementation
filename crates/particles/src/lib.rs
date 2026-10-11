@@ -7,6 +7,7 @@
 //!
 //! | Module | Purpose | Spec |
 //! |---|---|---|
+//! | [`beam`] | [`beam::Beam`]: envelope, ends, head and tail, arrival, ribbon layout, beam and head particle spawns | runtime §11.1, rule 14 |
 //! | [`rng`] | [`Ran2`], the shared random generator, and its range draws | runtime §3.3, §3.4 |
 //! | [`curve`] | curves evaluated over time; mode 3 draws from [`Ran2`] | `material.md` §5.3.1, runtime §3.3 |
 //! | [`sim`] | [`SystemSim`]: start, restart, update cadence, emission, caps, spawning, channels, controllers, forces | particles §8.1–§8.9, §8.16, §8.17; runtime §9.2 |
@@ -47,6 +48,7 @@
 // spec states (`!(a > b)` is true for NaN); `partial_cmp` chains would hide that.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod beam;
 pub mod curve;
 pub mod draw;
 mod error;

@@ -1275,3 +1275,24 @@ path = "fuzz_targets/mesh_figure_look.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ui_combat_feed"
+path = "fuzz_targets/ui_combat_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_combat_views"
+path = "fuzz_targets/plugins_combat_views.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "particles_beam"
+path = "fuzz_targets/particles_beam.rs"
+test = false
+doc = false
+bench = false

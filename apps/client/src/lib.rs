@@ -27,12 +27,16 @@
 //! - [`character`]: characters, inventory and equipment (P1): the player's state from the
 //!   session, the character panel and bag windows, item tooltips, the plugin inventory
 //!   views.
+//! - [`combat`]: targeting, skills and combat presentation (P2): the player's combat state
+//!   from the session, selection, the combat widgets, skill and effect tooltips, the
+//!   plugin combat views, the headless combat screens.
 
 pub mod app;
 pub mod audio;
 pub mod avatar;
 pub mod character;
 pub mod cli;
+pub mod combat;
 pub mod commands;
 pub mod data;
 pub mod headless;

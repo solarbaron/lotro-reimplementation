@@ -1173,6 +1173,10 @@ fn p1_rows(m: &mut Mem) {
     let mod_array = m.p("Mod_Array", T::Array);
     let mod_entry = m.p("Mod_Entry", T::Struct);
     let modified = m.p("Mod_Modified", T::PropertyId);
+    let mod_op = m.p("Mod_Op", T::Enum);
+    let meta_list = m.p("PropertyMetaData_PropertyMetaDataList", T::Array);
+    let meta_property = m.p("PropertyMetaData_Property", T::PropertyId);
+    let meta_name = m.p("PropertyMetaData_Name", T::StringInfo);
     let mod_progression = m.p("Mod_Progression", T::DidRef);
     let set_name = m.p("Set_Name", T::StringInfo);
     let set_level = m.p("Set_Level", T::Int);
@@ -1398,12 +1402,43 @@ fn p1_rows(m: &mut Mem) {
                 mod_entry,
                 vec![vec![
                     (modified, PropertyValue::PropertyId(might)),
+                    (mod_op, PropertyValue::Enum(7)),
                     (might, PropertyValue::Int(7)),
                 ]],
             ),
         ),
     ]);
     m.records.insert(RING, Arc::new(set(ring)));
+    // `skill-tooltips.md` §9.4: a modifier line needs the property's metadata object.
+    let control = Did(0x7000_0050);
+    let might_meta = Did(0x7000_0051);
+    m.weenies.insert("PropertyMetaDataControl".into(), control);
+    m.records.insert(
+        control,
+        Arc::new(set(vec![(
+            meta_list,
+            PropertyValue::Array(PropertyArray {
+                count: 1,
+                elements: vec![PropertyEntry {
+                    pid: 0x7778,
+                    value: PropertyValue::DidRef(might_meta),
+                }],
+            }),
+        )])),
+    );
+    m.records.insert(
+        might_meta,
+        Arc::new(set(vec![
+            (meta_property, PropertyValue::PropertyId(might)),
+            (meta_name, info(literal("Might"))),
+        ])),
+    );
+    for (token, text) in [
+        (0x0E44_7774, "+{0x5a6195} {0x744a2c9}"),
+        (0x0F5F_0564, "{0x5a6195}"),
+    ] {
+        m.texts.insert((exam, token), text.to_owned());
+    }
     for (d, n) in [(SET_B, "Copper Band"), (SET_C, "Copper Torc")] {
         let mut v = hover(L_EXAM, E_TOOLTIP);
         v.extend([
@@ -1638,9 +1673,16 @@ fn effect_lines_use_the_line_element_6_16() {
     let m = e
         .build(&TooltipRequest::hover(RING), &ring_viewer())
         .expect("tooltip");
+    // P2 revision (`item-tooltips.md` §6.16, `skill-tooltips.md` §9.4): the operator's
+    // template with the metadata name, state `buffed` (no such state on the line element, so
+    // its base colour).
     assert_eq!(
         lines_of(row(&m, "EffectDisplay_Base")),
-        [("Stat_Might: 7".to_owned(), None, Some(EFFECT_COLOUR))]
+        [(
+            "+7 Might".to_owned(),
+            Some("buffed".to_owned()),
+            Some(EFFECT_COLOUR)
+        )]
     );
 }
 

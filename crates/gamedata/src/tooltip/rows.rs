@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 
 use tessera_formats::gameplay::combat::{ModEntryKind, Progression, ProgressionValue};
 use tessera_formats::gameplay::items::{
-    DpsTable, DurationMap, EffectListKind, ItemSchema, ItemSetView, ItemView, control_labels,
-    damage_range, equipment_category_keys, weapon_damage,
+    DpsTable, DurationMap, ItemSchema, ItemSetView, ItemView, control_labels, damage_range,
+    equipment_category_keys, weapon_damage,
 };
 use tessera_formats::{Did, PropertySet, PropertyValue, StringInfo};
 use tessera_text::{RichText, Style, Value, Values};
@@ -15,20 +15,20 @@ use super::data::{TextRef, TooltipData};
 use super::layout::{RowTemplate, Widget};
 use super::rules::{self, BindingInputs, SaleFlags, tokens};
 use super::{
-    Coin, CurrencyUnit, Equipped, Examined, Line, MAX_LINES, MAX_SET_MEMBERS, Row, RowContent,
-    RowFailure, TooltipEngine, Viewer,
+    Coin, CurrencyUnit, Equipped, Examined, Kind, Line, MAX_LINES, MAX_SET_MEMBERS, Row,
+    RowContent, RowFailure, TooltipEngine, Viewer,
 };
 
 /// Context of one fill: the template, the examined object and the failure list.
-struct Fill<'a, 'b> {
-    t: &'a RowTemplate,
-    ex: &'a Examined<'b>,
-    viewer: &'a Viewer,
-    failures: &'a mut Vec<RowFailure>,
+pub(crate) struct Fill<'a, 'b> {
+    pub(crate) t: &'a RowTemplate,
+    pub(crate) ex: &'a Examined<'b>,
+    pub(crate) viewer: &'a Viewer,
+    pub(crate) failures: &'a mut Vec<RowFailure>,
 }
 
 impl Fill<'_, '_> {
-    fn fail(&mut self, reason: impl Into<String>) {
+    pub(crate) fn fail(&mut self, reason: impl Into<String>) {
         self.failures.push(RowFailure {
             template: self
                 .t
@@ -170,15 +170,23 @@ impl<D: TooltipData> TooltipEngine<D> {
         viewer: &Viewer,
         failures: &mut Vec<RowFailure>,
     ) -> Row {
+        // `skill-tooltips.md` §6.1 step 1: an item tooltip's skill-item rows show the item's
+        // skill.
+        if t.for_skill_item && ex.kind == Kind::Item {
+            return self.fill_skill_item(t, ex, viewer, failures);
+        }
         let mut f = Fill {
             t,
             ex,
             viewer,
             failures,
         };
+        let item = ex.kind == Kind::Item;
         match &t.widget {
             Widget::Separator => self.row(t, RowContent::Separator, None),
+            Widget::Name if !item => self.combat_name(&mut f),
             Widget::Name => self.name(&mut f),
+            Widget::Icon if !item => self.combat_icon(&mut f),
             Widget::Icon => match ex.did {
                 Some(item) => self.row(
                     t,
@@ -215,7 +223,33 @@ impl<D: TooltipData> TooltipEngine<D> {
             Widget::AllowedSlots => self.allowed_slots(&mut f),
             Widget::Requirements => self.requirements(&mut f),
             Widget::LevelRange => self.level_range(&mut f),
-            Widget::EffectList => self.effect_list(&mut f),
+            Widget::EffectList => match ex.kind {
+                Kind::Item => self.effect_list(&mut f),
+                Kind::Skill => self.skill_effect_list(&mut f),
+                Kind::Effect => self.empty_row(t),
+            },
+            Widget::SkillQualifier if ex.kind == Kind::Skill => self.qualifier(&mut f),
+            Widget::SkillMaxRange if ex.kind == Kind::Skill => self.max_range(&mut f),
+            Widget::SkillMaxTargets if ex.kind == Kind::Skill => self.max_targets(&mut f),
+            Widget::SkillCastingTime if ex.kind == Kind::Skill => self.casting_time(&mut f),
+            Widget::SkillVitalCost if ex.kind == Kind::Skill => self.vital_cost(&mut f),
+            Widget::SkillSpecialClass if ex.kind == Kind::Skill => self.special_class(&mut f),
+            Widget::SkillTrait if ex.kind == Kind::Skill => self.required_trait(&mut f),
+            Widget::SkillRecoveryTime if ex.kind == Kind::Skill => self.recovery(&mut f),
+            Widget::EffectResistance if ex.kind == Kind::Effect => self.effect_resistance(&mut f),
+            Widget::EffectDescription if ex.kind == Kind::Effect => self.effect_description(&mut f),
+            Widget::EffectTime if ex.kind == Kind::Effect => self.effect_time(&mut f),
+            Widget::SkillQualifier
+            | Widget::SkillMaxRange
+            | Widget::SkillMaxTargets
+            | Widget::SkillCastingTime
+            | Widget::SkillVitalCost
+            | Widget::SkillSpecialClass
+            | Widget::SkillTrait
+            | Widget::SkillRecoveryTime
+            | Widget::EffectResistance
+            | Widget::EffectDescription
+            | Widget::EffectTime => self.empty_row(t),
             Widget::SetMembers | Widget::SetBonuses => self.set_lines(&mut f),
             Widget::Cooldown | Widget::Decay => self.duration_row(&mut f),
             Widget::QuestId => self.quest(&mut f),
@@ -905,45 +939,24 @@ impl<D: TooltipData> TooltipEngine<D> {
             .collect()
     }
 
+    /// The item effect-list rows (`item-tooltips.md` §6.16, P2 revision: the effect lines of
+    /// `skill-tooltips.md` §9 over the item's lists of §9.7, filtered by the row's
+    /// `UI_Examination_Tooltip_EffectCategory`; a row without one is matched by its label as in
+    /// P1).
     fn effect_list(&self, f: &mut Fill<'_, '_>) -> Row {
         let t = f.t;
-        let view = ItemView::new(&f.ex.set, &self.schema);
-        let label = t.label.as_deref().unwrap_or("");
-        let kind = if label.contains("TargetEffect") {
-            EffectListKind::Target
-        } else if label.contains("UsageEffect") {
-            EffectListKind::Usage
-        } else {
-            EffectListKind::Equipper
-        };
-        let level = view.level().unwrap_or(0);
-        let colour = t.line_colour(None);
-        let mut lines = if kind == EffectListKind::Equipper {
-            self.mod_lines(&view.mods(), level, colour)
-        } else {
-            Vec::new()
-        };
-        for e in view.effects(kind) {
-            if lines.len() >= MAX_LINES {
-                break;
+        let mask = t.effect_category.unwrap_or_else(|| {
+            let label = t.label.as_deref().unwrap_or("");
+            if label.contains("TargetEffect") {
+                0x20
+            } else if label.contains("UsageEffect") {
+                0x08
+            } else {
+                0x10
             }
-            if let Some(name) = e.effect.and_then(|d| self.effect_name(f, d)) {
-                lines.push(Line {
-                    text: RichText::plain(&name),
-                    state: None,
-                    colour,
-                });
-            }
-        }
-        let header = if kind == EffectListKind::Usage && !lines.is_empty() {
-            t.format
-                .as_ref()
-                .and_then(|h| self.render(f, TextRef::Info(h), &Values::new()))
-                .map(Line::plain)
-        } else {
-            None
-        };
-        self.row(t, RowContent::Lines { header, lines }, None)
+        });
+        let lines = self.item_effect_lines(f, mask);
+        self.lines_row(f, lines)
     }
 
     // -----------------------------------------------------------------------------------------

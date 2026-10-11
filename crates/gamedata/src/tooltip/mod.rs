@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Item examination tooltips (decision 0024 P1): the tooltip model of an item record or
-//! scenario item, from the choice of tooltip layout to the content of each row, comparison
-//! and the per-record categories of the real-data census.
+//! Examination tooltips: the tooltip model of an item record or scenario item (decision 0024
+//! P1) and of a skill or effect record (P2), from the choice of tooltip layout to the content
+//! of each row, comparison and the per-record categories of the real-data censuses.
 //!
-//! Spec: `docs/specs/item-tooltips.md` §3–§8, §11–§14 (placement, pinning and the pixel
-//! layout of the rows belong to `tessera-ui`).
+//! Specs: `docs/specs/item-tooltips.md` §3–§8, §11–§14 with its P2 revision of §6.16, §6.20
+//! and §8.3; `docs/specs/skill-tooltips.md` §3–§14 (placement, pinning and the pixel layout of
+//! the rows belong to `tessera-ui`).
 //!
 //! | Item | Purpose | Spec |
 //! |---|---|---|
@@ -17,6 +18,12 @@
 //! | [`Comparison`], [`CompareKind`] | Comparison tooltips and the slot query | §8 |
 //! | [`Category`], [`RecordOutcome`], [`Census`] | Census categories | §12 |
 //! | [`rules`] | The data-free rules (binding, worth, coins, slots, durations, …) | §6, §8.2, §11 |
+//! | [`TooltipEngine::build_combat`], [`CombatRequest`], [`CombatSubject`], [`SkillViewer`], [`LiveEffect`] | Skill and effect tooltips | `skill-tooltips.md` §3–§8, §13 |
+//! | [`TooltipEngine::effect_lines`], [`EffectLines`], [`EffectLine`], [`EffectMode`], [`LineState`], [`line_tokens`] | Effect lines of effects, skills and items | `skill-tooltips.md` §9 |
+//! | [`duration`], [`TooltipEngine::duration_text`], [`TimerRow`], [`TooltipEngine::timer_text`] | Durations and timer rows | `skill-tooltips.md` §7.15, §8.4, §10 |
+//! | [`numbers`] | Numbers as message values | `string-table.md` §9.4 |
+//! | [`TooltipEngine::examination_icon`], [`TooltipEngine::skill_icon`], [`SkillIconSize`] | Skill and effect icons | `skill-tooltips.md` §11 |
+//! | [`TooltipEngine::classify_combat`], [`CombatCategory`], [`NameState`], [`IconCategory`], [`CombatOutcome`], [`CombatCensus`] | Census of skills and effects | `skill-tooltips.md` §14 |
 //!
 //! # Tessera rules applied
 //!
@@ -25,8 +32,10 @@
 //! §6.13); the viewer-effective item level equals the item level (§6.7); one-click requests
 //! use the hover pair (§3.3); zero coins are hidden (§6.11); list boxes without
 //! `max_width` use their designed width (§4.1); requirement, effect, set, allowed-slot and
-//! duration texts use Tessera's own wording (§6.14–§6.18); the comparison option is on by
-//! default (§8.3). Rows of §6.20 are built empty and counted.
+//! duration texts use Tessera's own wording (§6.14–§6.17 except the effect lines, §6.18); the
+//! comparison option is on by default (§8.3). Rows of §6.20 are built empty and counted, except
+//! the skill-item rows, which show the item's skill (P2). The skill and effect rules are listed
+//! in the `skill` module's documentation (`skill-tooltips.md` ST21).
 //!
 //! # Hostile input
 //!
@@ -40,24 +49,41 @@
 
 mod assemble;
 mod data;
+pub mod duration;
+mod effects;
 mod error;
 pub mod layout;
+pub mod numbers;
 mod rows;
 pub mod rules;
+mod skill;
 
 use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use tessera_formats::gameplay::combat::EffectRefPids;
 use tessera_formats::gameplay::items::{DurationMap, ItemSchema};
+use tessera_formats::gameplay::misc::MetadataPids;
 use tessera_formats::property::PropertyEntry;
 use tessera_formats::{Did, PropertySet, PropertyValue};
 use tessera_text::RichText;
 
 pub use assemble::{Assembled, AssemblyRow, MAX_LIST_DEPTH, assemble, satisfies_iv6};
-pub use data::{InstallTooltipData, MAX_CACHED, TextRef, TextResult, TooltipData};
+pub use data::{
+    InstallTooltipData, MAX_CACHED, MAX_PREFIX_MATCHES, TextRef, TextResult, TooltipData,
+};
+pub use effects::{
+    COMBAT_ONLY_BASE_DELAY, EffectLine, EffectLines, EffectMode, LineState, MAX_LIST_EFFECTS,
+    PROPERTY_MOD_EFFECT_LABEL, line_tokens,
+};
 pub use error::TooltipError;
 pub use layout::{ListBoxInfo, RowTemplate, TemplateRef, TooltipFrame, Widget};
+pub use skill::{
+    CombatCategory, CombatCensus, CombatOutcome, CombatRequest, CombatSubject, IconCategory,
+    LiveEffect, NameState, SkillIconSize, SkillViewer, TimerKind, TimerRow, skill_tokens,
+};
 
 use layout::Budget;
 pub use rules::{CoinCount, CurrencyUnit};
@@ -70,6 +96,8 @@ pub const MAX_LINES: usize = 64;
 pub const MAX_SET_MEMBERS: usize = 64;
 /// Most attached tooltips of one comparison (the slot query yields at most 25 slots).
 pub const MAX_COMPARED: usize = 25;
+/// Most property-metadata objects read (`misc-records.md` §13.1; the data has 5,211).
+pub const MAX_METADATA: usize = 65_536;
 
 // ---------------------------------------------------------------------------------------------
 // Inputs (§11)
@@ -434,7 +462,13 @@ pub enum CompareKind {
     Equipment,
     /// `Recipe`: the result item's tooltip is attached.
     Recipe,
-    /// Any other kind (trait, skill and mount comparisons are P2, P5, P6): its key.
+    /// `SkillGrantingItem`: the hover tooltip of the item record's `Item_GrantedSkill` is
+    /// attached (`skill-tooltips.md` §12.4).
+    SkillGrantingItem,
+    /// `TraitItem`: the trait's hover tooltip would be attached (`skill-tooltips.md` §12.4);
+    /// trait tooltips are P6, so nothing is attached yet.
+    TraitItem,
+    /// Any other kind (the mount comparison is P5): its key.
     Other(u32),
 }
 
@@ -465,6 +499,11 @@ pub struct TooltipModel {
     pub comparison: Comparison,
     /// Row rules that failed.
     pub failures: Vec<RowFailure>,
+    /// Timer rows (`skill-tooltips.md` §7.15, §8.4): their text changes while shown.
+    pub timers: Vec<TimerRow>,
+    /// Texts the record names that could not be found (lookup misses; reported, not
+    /// failures, `skill-tooltips.md` §14.1). Counted by the skill and effect rows.
+    pub lookup_misses: u32,
 }
 
 impl TooltipModel {
@@ -680,6 +719,63 @@ pids! {
     }
 }
 
+pids! {
+    /// Skill, effect and related properties the skill and effect rows read
+    /// (`skill-tooltips.md` §6–§9).
+    CombatTipPids {
+        skill_name = "Skill_Name",
+        skill_icon = "Skill_Icon",
+        skill_large_icon = "Skill_LargeIcon",
+        skill_small_icon = "Skill_SmallIcon",
+        skill_max_range = "Skill_MaxRange",
+        skill_max_targets = "Skill_AreaEffectMaxTargets",
+        skill_induction = "Skill_InductionAction",
+        skill_channelling = "Skill_Toggle_ChannelingState",
+        skill_channelling_override = "Skill_Toggle_ChannelingDurationOverride",
+        skill_toggle_hook = "Skill_Toggle_Hook_Number",
+        skill_ignores_reset = "Skill_IgnoresResetTime",
+        skill_immediate = "Skill_Immediate",
+        skill_vital_costs = "Skill_VitalCostList",
+        skill_toggle_costs = "Skill_Toggle_VitalCostPerSecondList",
+        vital_type = "Skill_Vital_Type",
+        vital_points = "Skill_Vital_Points",
+        vital_points_progression = "Skill_Vital_Points_Progression",
+        vital_percent = "Skill_Vital_Percent",
+        vital_consumes_all = "Skill_Vital_Consumes_All",
+        skill_required_trait = "Skill_RequiredTrait",
+        trait_name = "Trait_Name",
+        skill_recovery = "Skill_SkillRecoveryTime",
+        skill_user_effects = "Skill_UserEffectList",
+        skill_critical_effects = "Skill_CriticalEffectList",
+        hook_list = "Skill_AttackHookList",
+        hook_qualifier = "Skill_AttackHook_DamageQualifier",
+        hook_target_effects = "Skill_AttackHook_TargetEffectList",
+        hook_positional_effects = "Skill_AttackHook_PositionalTargetEffectList",
+        hook_critical_effects = "Skill_AttackHook_CriticalTargetEffectList",
+        hook_super_critical_effects = "Skill_AttackHook_SuperCriticalTargetEffectList",
+        usage_skill = "Usage_SkillToExecute",
+        granted_skill = "Item_GrantedSkill",
+        induction_duration = "Induction_Duration",
+        induction_tooltip_override = "Induction_SkillTooltipOverride",
+        channelling_duration = "Channeling_Duration",
+        effect_name = "Effect_Name",
+        effect_icon = "Effect_Icon",
+        effect_harmful = "Effect_Harmful",
+        effect_definition_description = "Effect_Definition_Description",
+        effect_applied_description = "Effect_Applied_Description",
+        effect_procedural = "Effect_Display_Procedurally_Generated_Examination_Information",
+        effect_suppress_probability = "Effect_SuppressApplicationProbabilityExamination",
+        effect_probability = "Effect_ConstantApplicationProbability",
+        effect_combat_only = "Effect_Duration_CombatOnly",
+        effect_interval = "Effect_Duration_ConstantInterval",
+        effect_pulse_count = "Effect_Duration_ConstantPulseCount",
+        effect_permanent = "Effect_Duration_Permanent",
+        effect_interval_progression = "Effect_Duration_ProgressionInterval",
+        effect_pulse_progression = "Effect_Duration_ProgressionPulseCount",
+        effect_resist_category = "Effect_Resist_Category",
+    }
+}
+
 type FrameSlot = Result<Arc<TooltipFrame>, FrameError>;
 type TemplateSlot = Result<Arc<RowTemplate>, String>;
 
@@ -694,6 +790,10 @@ pub struct TooltipEngine<D: TooltipData> {
     data: D,
     ui: UiPids,
     p: Pids,
+    c: CombatTipPids,
+    meta_pids: MetadataPids,
+    effect_ref_pids: EffectRefPids,
+    metadata: OnceLock<HashMap<u32, effects::Meta>>,
     schema: ItemSchema,
     frames: Mutex<HashMap<TemplateRef, FrameSlot>>,
     templates: Mutex<HashMap<TemplateRef, TemplateSlot>>,
@@ -722,11 +822,37 @@ impl tessera_formats::PropertyNames for Names<'_> {
     }
 }
 
+/// What kind of record a build examines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Item,
+    Skill,
+    Effect,
+}
+
+/// The skill and effect context of one build (`skill-tooltips.md` §13): the viewer's combat
+/// state, a live effect, and what the rows report back (timers, lookup misses).
+#[derive(Debug, Default)]
+pub(crate) struct Ctx {
+    pub(crate) viewer: SkillViewer,
+    pub(crate) live: Option<LiveEffect>,
+    pub(crate) misses: Cell<u32>,
+    pub(crate) timer: RefCell<Option<TimerRow>>,
+}
+
+impl Ctx {
+    pub(crate) fn miss(&self, n: u32) {
+        self.misses.set(self.misses.get().saturating_add(n));
+    }
+}
+
 /// The examined object of one build: the record's properties overlaid by the instance's.
 pub(crate) struct Examined<'a> {
     pub(crate) did: Option<Did>,
     pub(crate) set: Cow<'a, PropertySet>,
     pub(crate) instance: &'a Instance,
+    pub(crate) kind: Kind,
+    pub(crate) ctx: &'a Ctx,
 }
 
 impl<D: TooltipData> TooltipEngine<D> {
@@ -734,11 +860,18 @@ impl<D: TooltipData> TooltipEngine<D> {
     pub fn new(data: D) -> Self {
         let ui = UiPids::resolve(&data);
         let p = Pids::resolve(&data);
+        let c = CombatTipPids::resolve(&data);
         let schema = ItemSchema::resolve(&Names(&data));
+        let meta_pids = MetadataPids::resolve(&Names(&data));
+        let effect_ref_pids = EffectRefPids::resolve(&Names(&data));
         Self {
             data,
             ui,
             p,
+            c,
+            meta_pids,
+            effect_ref_pids,
+            metadata: OnceLock::new(),
             schema,
             frames: Mutex::new(HashMap::new()),
             templates: Mutex::new(HashMap::new()),
@@ -828,13 +961,31 @@ impl<D: TooltipData> TooltipEngine<D> {
         request: &TooltipRequest,
         viewer: &Viewer,
     ) -> Result<TooltipModel, TooltipError> {
-        self.build_at(request, viewer, 0)
+        self.build_at(request, viewer, &SkillViewer::default(), 0)
+    }
+
+    /// [`Self::build`] with the viewer's combat state (`skill-tooltips.md` §13): the maximum
+    /// vitals and running cooldowns the skill-item rows (§6.16) and an attached
+    /// `SkillGrantingItem` skill tooltip (§12.4) read. Its `level` is used when set, else
+    /// `viewer.level`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build`].
+    pub fn build_with_combat(
+        &self,
+        request: &TooltipRequest,
+        viewer: &Viewer,
+        combat: &SkillViewer,
+    ) -> Result<TooltipModel, TooltipError> {
+        self.build_at(request, viewer, combat, 0)
     }
 
     fn build_at(
         &self,
         request: &TooltipRequest,
         viewer: &Viewer,
+        combat: &SkillViewer,
         depth: usize,
     ) -> Result<TooltipModel, TooltipError> {
         let did = match &request.subject {
@@ -854,38 +1005,21 @@ impl<D: TooltipData> TooltipEngine<D> {
                 .ok_or(TooltipError::NoTooltip)?,
         };
         let frame = self.frame(at)?;
+        let ctx = Ctx {
+            viewer: SkillViewer {
+                level: combat.level.or(viewer.level),
+                ..combat.clone()
+            },
+            ..Ctx::default()
+        };
         let ex = Examined {
             did: Some(did),
             set,
             instance: &request.instance,
+            kind: Kind::Item,
+            ctx: &ctx,
         };
-        let mut failures = Vec::new();
-        let mut rows = Vec::with_capacity(frame.list.templates.len());
-        for (i, t) in frame.list.templates.iter().enumerate() {
-            let Some(t) = t else {
-                failures.push(RowFailure {
-                    template: format!("#{i}"),
-                    reason: "entry template without layout or element".into(),
-                });
-                continue;
-            };
-            match self.template(*t) {
-                Ok(t) => {
-                    // Parts of the template that could not be read (§12 RowFailure).
-                    for (label, reason) in t.all_problems() {
-                        failures.push(RowFailure {
-                            template: label.unwrap_or_else(|| format!("{:#010x}", t.at.element)),
-                            reason,
-                        });
-                    }
-                    rows.push(self.fill(&t, &ex, viewer, &mut failures));
-                }
-                Err(reason) => failures.push(RowFailure {
-                    template: format!("{:#010x}", t.element),
-                    reason,
-                }),
-            }
-        }
+        let (rows, failures, timers) = self.fill_rows(&frame, &ex, viewer);
         let assembly = assemble(
             &rows.iter().map(Row::assembly_row).collect::<Vec<_>>(),
             frame.list.design_width,
@@ -904,7 +1038,51 @@ impl<D: TooltipData> TooltipEngine<D> {
             assembly,
             comparison,
             failures,
+            timers,
+            lookup_misses: ctx.misses.get(),
         })
+    }
+
+    /// Fills every row template of `frame` (§4.2) for `ex`.
+    pub(crate) fn fill_rows(
+        &self,
+        frame: &TooltipFrame,
+        ex: &Examined<'_>,
+        viewer: &Viewer,
+    ) -> (Vec<Row>, Vec<RowFailure>, Vec<TimerRow>) {
+        let mut failures = Vec::new();
+        let mut timers = Vec::new();
+        let mut rows = Vec::with_capacity(frame.list.templates.len());
+        for (i, t) in frame.list.templates.iter().enumerate() {
+            let Some(t) = t else {
+                failures.push(RowFailure {
+                    template: format!("#{i}"),
+                    reason: "entry template without layout or element".into(),
+                });
+                continue;
+            };
+            match self.template(*t) {
+                Ok(t) => {
+                    // Parts of the template that could not be read (§12 RowFailure).
+                    for (label, reason) in t.all_problems() {
+                        failures.push(RowFailure {
+                            template: label.unwrap_or_else(|| format!("{:#010x}", t.at.element)),
+                            reason,
+                        });
+                    }
+                    rows.push(self.fill(&t, ex, viewer, &mut failures));
+                    if let Some(mut timer) = ex.ctx.timer.borrow_mut().take() {
+                        timer.row = rows.len() - 1;
+                        timers.push(timer);
+                    }
+                }
+                Err(reason) => failures.push(RowFailure {
+                    template: format!("{:#010x}", t.element),
+                    reason,
+                }),
+            }
+        }
+        (rows, failures, timers)
     }
 
     /// The minimal tooltip of a literal item (§11, Tessera rule).
@@ -933,6 +1111,8 @@ impl<D: TooltipData> TooltipEngine<D> {
             assembly,
             comparison: Comparison::default(),
             failures: Vec::new(),
+            timers: Vec::new(),
+            lookup_misses: 0,
         }
     }
 
@@ -962,6 +1142,10 @@ impl<D: TooltipData> TooltipEngine<D> {
                     CompareKind::Equipment
                 } else if named("Recipe") {
                     CompareKind::Recipe
+                } else if named("SkillGrantingItem") {
+                    CompareKind::SkillGrantingItem
+                } else if named("TraitItem") {
+                    CompareKind::TraitItem
                 } else {
                     CompareKind::Other(k)
                 }
@@ -1003,7 +1187,7 @@ impl<D: TooltipData> TooltipEngine<D> {
                         override_pair: None,
                         override_compare_kind: None,
                     };
-                    if let Ok(m) = self.build_at(&req, viewer, depth + 1) {
+                    if let Ok(m) = self.build_at(&req, viewer, &ex.ctx.viewer, depth + 1) {
                         out.tooltips.push((slot, m));
                     }
                     if out.tooltips.len() >= MAX_COMPARED {
@@ -1031,12 +1215,27 @@ impl<D: TooltipData> TooltipEngine<D> {
                         },
                         ..TooltipRequest::hover(result)
                     };
-                    if let Ok(m) = self.build_at(&req, viewer, depth + 1) {
+                    if let Ok(m) = self.build_at(&req, viewer, &ex.ctx.viewer, depth + 1) {
                         out.tooltips.push((0, m));
                     }
                 }
             }
-            CompareKind::None | CompareKind::Other(_) => {}
+            CompareKind::SkillGrantingItem => {
+                // `skill-tooltips.md` §12.4: the record's `Item_GrantedSkill` (an instance:
+                // its record), the skill's hover tooltip, no option gate.
+                let skill = ex.did.and_then(|d| {
+                    let r = self.data.record(d).ok()??;
+                    did_value(r.get(self.c.granted_skill?)?)
+                });
+                if let Some(skill) = skill {
+                    let req = CombatRequest::hover(CombatSubject::Skill(skill));
+                    if let Ok(m) = self.build_combat(&req, &ex.ctx.viewer) {
+                        out.tooltips.push((0, m));
+                    }
+                }
+            }
+            // Trait tooltips are P6 (`skill-tooltips.md` §12.4): nothing attached yet.
+            CompareKind::TraitItem | CompareKind::None | CompareKind::Other(_) => {}
         }
         out
     }

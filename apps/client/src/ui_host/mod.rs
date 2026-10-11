@@ -22,6 +22,7 @@
 
 pub mod boot;
 pub mod client;
+pub mod combat;
 pub mod cursor;
 pub mod env;
 pub mod gpu;
@@ -197,6 +198,8 @@ pub struct UiHost {
     /// The portrait (content id, size) whose target could not be created: not tried again
     /// until its size changes (one warning, not one per frame).
     portrait_failed: Option<(u64, (u32, u32))>,
+    /// The combat widgets and their queues (decision 0024 P2, [`combat`]).
+    combat: combat::HostCombat,
 }
 
 /// Most UI events and panel commands queued for the character panels in one frame.
@@ -318,6 +321,7 @@ impl UiHost {
             screen_events: None,
             portraits: std::collections::BTreeMap::new(),
             portrait_failed: None,
+            combat: combat::HostCombat::default(),
         }
     }
 
@@ -364,6 +368,8 @@ impl UiHost {
             b.char_ids.clone(),
         ));
         host.chargen = Some(b.chargen);
+        host.combat.refs = Some(b.combat);
+        host.combat.char_vocab = Some(b.char_vocab.clone());
         let mut panels = NativePanels::new(b.catalog, b.game_vocab.clone(), b.game_layouts);
         panels.types = b.panel_types;
         panels.set_shortcuts(Box::new(NoShortcuts));
@@ -899,6 +905,9 @@ impl UiHost {
                 }
             }
         }
+        for ev in &events {
+            self.queue_combat_event(ev);
+        }
         if events.is_empty() || self.panels.is_none() {
             return;
         }
@@ -1065,6 +1074,13 @@ impl UiHost {
             if phase == Phase::Start && self.character_commands.len() < MAX_CHARACTER_QUEUE {
                 self.character_commands.push(name.to_string());
             }
+            return true;
+        }
+        // The P2 targeting and quickslot commands and world clicks the UI declined
+        // (`keymap.md` §8.2, `combat-ui.md` TR3, TR33): for the combat frame.
+        if consumed {
+            self.combat_taken_left(&name);
+        } else if self.combat_declined(a, self.lock.is_on()) {
             return true;
         }
         if consumed && wheel_step {

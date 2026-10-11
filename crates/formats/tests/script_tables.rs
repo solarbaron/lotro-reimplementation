@@ -4000,3 +4000,142 @@ fn face_nodes_follow_driven_values_and_stops() {
         other => panic!("{other:?}"),
     }
 }
+
+/// The data of a Beam node (`script-table.md` §5.3): every field, a position with an
+/// offset, distinct values so that a field read out of order shows.
+fn beam_data() -> B {
+    B::new()
+        .u8(1) // Persistent
+        .u8(10)
+        .u8(20)
+        .u8(30)
+        .u8(255) // ColorAndOpacity
+        .u8(0x10)
+        .f32(1.0)
+        .f32(2.0)
+        .f32(3.0) // TargetPosition: offset only
+        .u8(0) // UseTargetPosition
+        .u32(0x0700_0001)
+        .u32(0x0700_0002)
+        .u32(0x0700_0003) // materials
+        .f32(0.5) // width
+        .f32(12.0) // untargeted length
+        .f32(1.5) // segment size
+        .u32(2)
+        .u32(3) // head, tail segments
+        .f32(4.0) // u scale
+        .f32(0.0)
+        .f32(0.01)
+        .f32(45.0) // head start, start time, speed
+        .f32(0.0)
+        .f32(0.2)
+        .f32(30.0) // tail
+        .f32(0.1)
+        .f32(1.0)
+        .f32(0.25) // envelope
+        .u32(7)
+        .u32(0)
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.1)
+        .u8(0) // source
+        .u32(0)
+        .u32(9)
+        .f32(0.0)
+        .f32(0.2)
+        .f32(0.0)
+        .u8(1) // target
+        .u8(1) // DetachBeforeRampingOut
+        .f32(0.3)
+        .f32(0.4) // detach times
+        .f32(0.05)
+        .f32(0.06) // radii
+        .u32(0x3900_0001)
+        .u32(0x3900_0002)
+        .u32(10)
+        .u32(60)
+        .u32(0x4700_0003)
+        .u32(2)
+}
+
+#[test]
+fn beam_and_execute_nodes_decode_every_field() {
+    let beam = node(54, beam_data(), base(1), &[port(6, None, &[])]);
+    // Execute: callback key, a null DefaultValue, empty call properties, one result port.
+    let exec = node(
+        4,
+        B::new().u32(3).u32(0).bytes(&pset(&[]).build()),
+        base(2),
+        &[port(5, Some(B::new().u32(0x1000_11AB).u8(1)), &[])],
+    );
+    let data = table(1, &[], &[(STARTUP, vec![beam, exec])]);
+    let t = ScriptTable::parse_expecting(&data, 0x0700_0001u32, &schema).unwrap();
+    let roots = &t.script(STARTUP).unwrap().roots;
+    let NodeData::Beam(b) = &roots[0].data else {
+        panic!("{:?}", roots[0].data)
+    };
+    assert!(b.persistent && !b.use_target_position);
+    assert_eq!(b.color, [10, 20, 30, 255]);
+    assert_eq!(b.target_position.offset(), Some([1.0, 2.0, 3.0]));
+    assert_eq!(
+        (b.head_material, b.body_material, b.tail_material),
+        (Did(0x0700_0001), Did(0x0700_0002), Did(0x0700_0003))
+    );
+    assert_eq!(
+        (b.width, b.untargeted_length, b.segment_size),
+        (0.5, 12.0, 1.5)
+    );
+    assert_eq!(
+        (b.head_segments, b.tail_segments, b.texture_u_scale),
+        (2, 3, 4.0)
+    );
+    assert_eq!(
+        (b.head_start, b.head_start_time, b.head_speed),
+        (0.0, 0.01, 45.0)
+    );
+    assert_eq!(
+        (b.tail_start, b.tail_start_time, b.tail_speed),
+        (0.0, 0.2, 30.0)
+    );
+    assert_eq!((b.ramp_in, b.sustain, b.ramp_out), (0.1, 1.0, 0.25));
+    assert_eq!((b.source_holding_location, b.source_bone_type), (7, 0));
+    assert_eq!(b.source_bone_offset, [0.0, 0.0, 0.1]);
+    assert!(!b.source_use_box_center && b.target_use_box_center);
+    assert_eq!((b.target_holding_location, b.target_bone_type), (0, 9));
+    assert_eq!(b.target_bone_offset, [0.0, 0.2, 0.0]);
+    assert!(b.detach_before_ramping_out);
+    assert_eq!((b.source_detach_time, b.target_detach_time), (0.3, 0.4));
+    assert_eq!(
+        (b.random_start_radius, b.random_impact_radius),
+        (0.05, 0.06)
+    );
+    assert_eq!(
+        (b.beam_particle_system, b.head_particle_system),
+        (Did(0x3900_0001), Did(0x3900_0002))
+    );
+    assert_eq!(
+        (b.beam_particles_per_second, b.head_particles_per_second),
+        (10, 60)
+    );
+    assert_eq!(
+        (b.head_entity, b.head_entity_scale_source),
+        (Did(0x4700_0003), 2)
+    );
+    assert_eq!(roots[0].base.node_id, 1, "the base block follows the data");
+
+    let NodeData::Execute(e) = &roots[1].data else {
+        panic!("{:?}", roots[1].data)
+    };
+    assert_eq!(e.callback, 3);
+    assert!(e.default_value.is_none());
+    assert_eq!(
+        roots[1].ports[0].payload,
+        PortPayload::ExecuteResult(0x1000_11AB, 1)
+    );
+
+    // Truncated data fails instead of panicking.
+    for cut in [1, 20, 60, 120] {
+        let short = &data[..data.len().saturating_sub(cut)];
+        assert!(ScriptTable::parse_expecting(short, 0x0700_0001u32, &schema).is_err());
+    }
+}

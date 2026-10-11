@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Combat presentation (docs/specs/combat-ui.md §17.1, decision 0024 P2 exit criterion 1):
+# player and target frames, the selection's target, selection display, cast bars, effect
+# bars with a pulsing icon, floating damage, critical, avoidance and heal texts, a skill
+# slot with a cooldown, the combat state and the defeat panel. Synthetic: literal refs play
+# without an install; with one, the skill and effect selectors add record icons.
+tessera-scenario 1
+title "Combat UI"
+tick 100ms
+player "Tamsin" level=20
+select $drills = skill harmful=yes n=1 seed=11
+select $wards = effect role=vital-over-time n=1 seed=5
+actor $boar kind=creature name="Grey boar" pos=0,8,0 level=7
+actor $post kind=object name="Signpost" pos=3,4,0
+
+at 0s spawn $boar
++0s spawn $post
++0s vital player health 900/900
++0s vital player power 400/400
++0s vital player resource="Focus" 2/5
++0s vital $boar health 1200/1200
++0s quickslot 1 "Jab"
++0s quickslot 2 "Mend"
++0s quickslot 3 $drills[0]
+at 1s target player $post
+at 2s target player $boar
++0s combat player on
++0s target $boar player
++0.2s cast player "Jab" 800ms target=$boar
++0.8s damage player $boar 210 result=critical with="Jab" left=990
++0s cooldown "Jab" 3s
++0.2s effect player "Second wind" for=20s
++0s effect $boar "Bleeding" for=4s from=player
++0s effect player $wards[0] for=30s
++0.3s damage $boar player 75 left=825
++0.3s damage player $boar 0 result=parry
++0.3s cast $boar "Gore" 1.5s target=player
++0.5s heal player player 60 with="Mend" left=885
+at 8s damage $boar player 885 left=0
++0s defeat player by=$boar
+at 10s revive player
++0s vital player health 900/900
++0s combat player off

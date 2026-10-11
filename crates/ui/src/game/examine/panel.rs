@@ -55,6 +55,9 @@ pub struct BuiltTooltip {
     pub rows: Vec<ElementKey>,
     /// Row templates that could not be created: (template index, reason).
     pub failures: Vec<(usize, String)>,
+    /// The kept row element of each row template (by template index, as
+    /// [`ExamTooltip::rows`]); `None` for a row §5 removed or that could not be created.
+    pub by_template: Vec<Option<ElementKey>>,
 }
 
 /// What [`ExamTooltips::show`] showed.
@@ -521,6 +524,7 @@ impl ExamTooltips {
         let limit = Self::width_limit(ui, list);
         let mut failures = Vec::new();
         let mut rows: Vec<(ElementKey, Filled)> = Vec::new();
+        let mut row_template: Vec<usize> = Vec::new();
         let empty = ExamRow::default();
         for (i, t) in templates.iter().enumerate() {
             let Some(t) = t else {
@@ -537,6 +541,7 @@ impl ExamTooltips {
             let row = input.rows.get(i).unwrap_or(&empty);
             let filled = self.fill_row(ui, k, row, limit, 0);
             rows.push((k, filled));
+            row_template.push(i);
         }
         let lb = ui.layout_box(list).unwrap_or_default();
         let min_w = {
@@ -562,12 +567,21 @@ impl ExamTooltips {
         // §5 step 1's removals go to the caller, destroyed in one batch (one pass over the
         // UI, not one per row).
         let kept = self.apply_assembly(ui, &rows, &a, 0, removed);
+        let mut by_template = vec![None; templates.len()];
+        for ((k, _), t) in rows.iter().zip(&row_template) {
+            if kept.contains(k)
+                && let Some(slot) = by_template.get_mut(*t)
+            {
+                *slot = Some(*k);
+            }
+        }
         BuiltTooltip {
             frame,
             list,
             size: (fw, fh),
             rows: kept,
             failures,
+            by_template,
         }
     }
 
@@ -711,7 +725,7 @@ impl ExamTooltips {
 
     /// The text element of a row: the row itself when it is a Text, else its first Text
     /// descendant.
-    fn text_target(ui: &Ui, k: ElementKey) -> Option<ElementKey> {
+    pub(crate) fn text_target(ui: &Ui, k: ElementKey) -> Option<ElementKey> {
         subtree(ui, k)
             .into_iter()
             .find(|c| ui.class(*c).is_some_and(WidgetClass::is_text))

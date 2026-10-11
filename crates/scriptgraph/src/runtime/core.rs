@@ -18,6 +18,11 @@ use crate::graph::{CNode, NodeRef, Unit, UnitId};
 use crate::sink::{EffectSink, EntityId};
 use crate::values::{as_bool, as_f32};
 
+/// Most entities one node's targets resolve to (hostile-input bound).
+pub(crate) const MAX_TARGETS: usize = 256;
+/// Deepest sub-target nesting followed (formats bounds it too).
+const MAX_TARGET_NESTING: usize = 16;
+
 /// Stop reason of ordinary stops and completion (§3.5).
 pub(crate) const REASON_STOP: u8 = 0;
 
@@ -735,6 +740,24 @@ impl Runtime<'_> {
             {
                 self.driven_multiplier_changed(sink, id);
             }
+            // A running animation node takes its new rate and `UseBoneOpacity`
+            // (`script-table.md` §6.10 step 7).
+            let t = self.vocab.timer;
+            if let tessera_formats::script_table::NodeData::Animation(a) = &n.data
+                && changed_fields.iter().any(|f| {
+                    [
+                        t.speed,
+                        t.speed_multiplier,
+                        self.vocab.use_bone_opacity,
+                        self.vocab.animation.manual_time,
+                    ]
+                    .contains(&Some(*f))
+                })
+                && self.alive(id)
+            {
+                let stored = **a;
+                self.animation_fields_changed(sink, id, &stored);
+            }
         }
         // A never-ending Particle node follows its redirect property (`particle-runtime.md`
         // §5.8).
@@ -928,26 +951,98 @@ impl Runtime<'_> {
     /// `script-table.md`). `ThePlayer` (4) and `This` (13) resolve; other target types are
     /// reported and skipped. Empty when nothing resolves.
     pub(crate) fn resolve_targets(&mut self, n: &CNode, running: EntityId) -> Vec<EntityId> {
+        self.resolve_targets_with(n, running, &ParamSet::new())
+    }
+
+    /// [`Runtime::resolve_targets`] with the run's parameters, which Property targets read
+    /// (`script-table.md` §4.4): `This` (13), `ThePlayer` (4), `Property` (3: the instance
+    /// IDs the property holds, a single ID or an array of them, read from the run parameters
+    /// for script-parameter properties, else from the running entity) and `Random` (6: up to
+    /// `cap` (at least 1) entities drawn without repeats from what its sub-targets resolve
+    /// to). Other target types are reported and skipped. At most [`MAX_TARGETS`] entities.
+    pub(crate) fn resolve_targets_with(
+        &mut self,
+        n: &CNode,
+        running: EntityId,
+        params: &ParamSet,
+    ) -> Vec<EntityId> {
         if n.targets.is_empty() {
             return vec![running];
         }
         let mut out = Vec::new();
         for t in &n.targets {
-            match t.target_type {
-                13 => out.push(running),
-                4 => {
-                    if let Some(p) = self.player {
-                        out.push(p);
-                    }
-                }
-                other => self.issue(RuntimeIssue::UnsupportedTarget {
-                    kind: n.kind,
-                    target_type: other,
-                }),
-            }
+            self.resolve_target(n, t, running, params, 0, &mut out);
         }
-        out.dedup();
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|e| seen.insert(*e));
         out
+    }
+
+    fn resolve_target(
+        &mut self,
+        n: &CNode,
+        t: &tessera_formats::script_table::Target,
+        running: EntityId,
+        params: &ParamSet,
+        depth: usize,
+        out: &mut Vec<EntityId>,
+    ) {
+        use tessera_formats::script_table::TargetData;
+        if depth > MAX_TARGET_NESTING || out.len() >= MAX_TARGETS {
+            return;
+        }
+        match t.target_type {
+            13 => out.push(running),
+            4 => {
+                if let Some(p) = self.player {
+                    out.push(p);
+                }
+            }
+            3 => {
+                let TargetData::U32(pid) = t.data else {
+                    return;
+                };
+                let Some(v) = self.read_value(running, params, pid) else {
+                    return;
+                };
+                let mut push = |v: &PropertyValue| {
+                    if let PropertyValue::InstanceId(x) = v
+                        && *x != 0
+                        && out.len() < MAX_TARGETS
+                    {
+                        out.push(EntityId(*x));
+                    }
+                };
+                match &v {
+                    PropertyValue::Array(a) => {
+                        for e in &a.elements {
+                            push(&e.value);
+                        }
+                    }
+                    other => push(other),
+                }
+            }
+            6 => {
+                let cap = match t.data {
+                    TargetData::Cap(c) => usize::try_from(c.max(1)).unwrap_or(1),
+                    _ => 1,
+                };
+                let mut pool = Vec::new();
+                for s in &t.sub_targets {
+                    self.resolve_target(n, s, running, params, depth + 1, &mut pool);
+                }
+                let mut seen = std::collections::HashSet::new();
+                pool.retain(|e| seen.insert(*e));
+                for _ in 0..cap.min(pool.len()) {
+                    let i = self.rng.random_range(0..pool.len());
+                    out.push(pool.swap_remove(i));
+                }
+            }
+            other => self.issue(RuntimeIssue::UnsupportedTarget {
+                kind: n.kind,
+                target_type: other,
+            }),
+        }
     }
 
     /// Entity bookkeeping for a kind that needs the entity (used by sound starts).

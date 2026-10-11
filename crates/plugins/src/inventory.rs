@@ -235,7 +235,7 @@ fn inventory_source(ctx: &ApartmentCtx) -> Option<Arc<dyn InventorySource>> {
 }
 
 /// Run `f` on the native payload of `this` if it is a `T`.
-fn with_payload<T: 'static, R>(
+pub(crate) fn with_payload<T: 'static, R>(
     lua: &Lua,
     this: &Table,
     f: impl FnOnce(&T) -> R,
@@ -283,7 +283,8 @@ pub(crate) fn item_name(
     Ok(Some(info_values(lua, &info)?.name.clone()))
 }
 
-fn new_object(lua: &Lua, class: &Table, payload: Payload) -> mlua::Result<Table> {
+/// A new instance of `class` bound to `payload`.
+pub(crate) fn new_object(lua: &Lua, class: &Table, payload: Payload) -> mlua::Result<Table> {
     let obj = lua.create_table()?;
     let mt = lua.create_table()?;
     mt.raw_set("__index", class.clone())?;
@@ -328,6 +329,36 @@ fn item_object(lua: &Lua, ctx: &ApartmentCtx, item: &Arc<InventoryItem>) -> mlua
         prune_items(lua, ctx)?;
     }
     Ok(obj)
+}
+
+/// `Shortcut:GetItem()` of an `Item` shortcut naming item `id` (`lua-plugin-api.md`
+/// §15.2 "Quickslot shortcuts"): the apartment's `Item` object of that item while the
+/// player's containers hold it; otherwise, and for data that names no item, a new empty
+/// `Item` view whose `GetItemInfo():GetName()` is the empty string
+/// (`plugin-api-usage.md` §7.4.1 rule 3).
+pub(crate) fn shortcut_item(lua: &Lua, id: Option<u64>) -> mlua::Result<Table> {
+    let ctx = lua
+        .app_data_ref::<Arc<ApartmentCtx>>()
+        .map(|c| Arc::clone(&c))
+        .ok_or_else(|| tessera_script::host_error("no apartment"))?;
+    if let Some(id) = id
+        && let Some(src) = inventory_source(&ctx)
+        && let Some(item) = src.item(id)
+    {
+        return item_object(lua, &ctx, &item);
+    }
+    let class: Table = lua.named_registry_value(ITEM_CLASS_KEY)?;
+    new_object(
+        lua,
+        &class,
+        Payload(Arc::new(ItemPayload {
+            id: None,
+            last: Mutex::new(Arc::new(InventoryItem {
+                info: Arc::new(ItemInfoData::default()),
+                ..InventoryItem::default()
+            })),
+        })),
+    )
 }
 
 /// The apartment's existing `Item` object for item `id` (strong or detached), if any; a
@@ -419,7 +450,8 @@ fn whole_index(v: &Value, lo: u32, hi: u32) -> Option<u32> {
     Some(x as u32)
 }
 
-fn weak_table(lua: &Lua, mode: &str) -> mlua::Result<Table> {
+/// A new table with weak keys (`"k"`) or values (`"v"`).
+pub(crate) fn weak_table(lua: &Lua, mode: &str) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     let mt = lua.create_table()?;
     mt.raw_set("__mode", mode)?;

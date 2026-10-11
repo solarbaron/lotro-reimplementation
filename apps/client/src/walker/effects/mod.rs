@@ -37,16 +37,23 @@
 //! instance that draws the surface (§9.1.1, §12 rule 12); the walker's record cache keeps
 //! a surface's resolved material for the session, so its states last as long.
 //!
+//! Session figures (scenario and test-server actors, the player) are owners too, spawned by
+//! the combat layer ([`session`]): the combat scripts run on them, their animation nodes
+//! play clips on the figure, their StoryHook and Execute nodes reach the combat layer, and
+//! Beam nodes make beams (`particle-runtime.md` §11.1: envelope, ends, head arrival and the
+//! beam and head particle systems; the ribbon and the head entity are not drawn yet).
+//!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
-//! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are not drawn (the
-//! walker has no post-processing pass, `particles.md` §8.15); `inherit_opacity` (owners
-//! are drawn at opacity 1, walker rule (d) of runtime §5.4 and the Q-RT7 Decision); the
-//! frame-buffer distortion program and the soft-particle factor of runtime §9.1.1; point
-//! lights and the ambient colour of lit systems (Q8 (b));
-//! weather systems and the global wind (Q13); beams (Q-RT4); the gameplay event handler
-//! (Q-RT5); frustum culling by record bounds (Q-RT3, optional).
+//! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are drawn after the
+//! others in the same pass (the walker has no post-processing pass, `combat-visuals.md` §11
+//! rule 9); `inherit_opacity` (owners are drawn at opacity 1, walker rule (d) of runtime
+//! §5.4 and the Q-RT7 Decision); the frame-buffer distortion program and the soft-particle
+//! factor of runtime §9.1.1; point lights and the ambient colour of lit systems (rule 13);
+//! weather systems and the global wind (Q13); the gameplay event handler (Q-RT5); frustum
+//! culling by record bounds (Q-RT3, optional).
 
 pub mod data;
+pub mod session;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -172,6 +179,26 @@ pub struct EffectStats {
     pub issues: usize,
     /// Main-thread time of the last update and draw, ms.
     pub update_ms: f64,
+    /// Session figures spawned in the runtime (combat scripts run on them).
+    pub session_owners: usize,
+    /// Effects the scripts of session figures asked for.
+    pub session_requests: u64,
+    /// Systems of session figures and beams drawn in the last frame.
+    pub session_drawn_systems: usize,
+    /// Their vertices in the last frame.
+    pub session_drawn_vertices: usize,
+    /// The largest vertex count of session systems in one frame so far.
+    pub max_session_drawn_vertices: usize,
+    /// Clips the scripts started on session figures.
+    pub session_clips: u64,
+    /// Beams alive.
+    pub beams: usize,
+    /// Beams started.
+    pub beams_started: u64,
+    /// Beam heads that arrived (their node's port fired).
+    pub beam_arrivals: u64,
+    /// StoryHook nodes that ran on any owner, and those of them whose run had a story.
+    pub story_hooks: [u64; 2],
 }
 
 /// What start-up delivers.
@@ -203,6 +230,10 @@ enum Waiting {
         placement: Placement,
         class: Classification,
     },
+    /// A beam's particle system (slot 0 the beam system, 1 the head system), created when
+    /// its record has loaded (`particle-runtime.md` §11.1 step 1; the record is read on a
+    /// worker, ARCHITECTURE §21).
+    Beam { beam: u64, slot: usize },
 }
 
 /// The per-frame view of an owner for attachment frames.
@@ -306,6 +337,30 @@ fn classify(record: &EffectRecord) -> Classification {
     }
 }
 
+/// Why a session figure is not spawned in the runtime ([`EffectLayer::session_entity`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionRefusal {
+    /// Not yet: the runtime or the figure (on the GPU, with its view) is not ready.
+    NotReady,
+    /// The figure has no script tables.
+    NoScripts,
+    /// [`session::MAX_SESSION_OWNERS`] figures run already.
+    Full,
+    /// The figure is in another region than the runtime's.
+    OtherRegion,
+    /// The runtime refused the entity.
+    SpawnFailed,
+}
+
+impl SessionRefusal {
+    /// Whether the refusal resolves without a change of region, cap or spawn data (the
+    /// figure is still loading).
+    #[must_use]
+    pub fn transient(self) -> bool {
+        matches!(self, Self::NotReady)
+    }
+}
+
 /// Everything the sink works on (separate from the runtime it is called from).
 struct FxState {
     data: Arc<EffectData>,
@@ -336,6 +391,8 @@ struct FxState {
     /// alpha-test reference and texture matrices evaluated per draw, `particle-runtime.md`
     /// §9.1.1, §12 rule 12: shared by every 0x39 record naming the surface).
     surface_states: HashMap<u32, tessera_material::CurveStates>,
+    /// Session figures, their clips, hooks, Execute answers and beams ([`session`]).
+    session: session::SessionState,
 }
 
 impl FxState {
@@ -373,8 +430,12 @@ impl FxState {
                     drawn: true,
                 })
             }
-            OwnerKind::Figure { tag } => {
-                let v = self.figures.get(&tag)?;
+            OwnerKind::Figure { .. } | OwnerKind::Session { .. } => {
+                let v = match owner.kind {
+                    OwnerKind::Figure { tag } => self.figures.get(&tag)?,
+                    OwnerKind::Session { net } => self.session.views.get(&net)?,
+                    OwnerKind::Static { .. } => return None,
+                };
                 if v.region != self.region {
                     return None;
                 }
@@ -476,6 +537,9 @@ impl FxState {
         let points = self.owners.get(&owner).and_then(|o| match o.kind {
             OwnerKind::Static { .. } => o.points.clone(),
             OwnerKind::Figure { tag } => self.figures.get(&tag).and_then(|v| v.points.clone()),
+            OwnerKind::Session { net } => {
+                self.session.views.get(&net).and_then(|v| v.points.clone())
+            }
         });
         let Some(spec) = attach_spec(&node, points.as_deref()) else {
             tracing::debug!(
@@ -642,6 +706,11 @@ impl FxState {
                     self.drop_now(did, &r, placement, class);
                 }
                 (Waiting::Drop { .. }, None) => self.refused += 1,
+                (Waiting::Beam { beam, slot }, Some(r)) => {
+                    let r = Arc::clone(r);
+                    self.beam_system_loaded(beam, slot, did, &r);
+                }
+                (Waiting::Beam { .. }, None) => self.refused += 1,
             }
         }
     }
@@ -671,6 +740,10 @@ impl EffectSink for Sink<'_> {
 
     fn start_particle(&mut self, request: &ParticleStart) -> Option<ParticleHandle> {
         self.st.requests += 1;
+        if self.st.session.is_session(request.target) || self.st.session.is_session(request.entity)
+        {
+            self.st.session.requests += 1;
+        }
         if request.node.drop_effect {
             self.st.start_dropped(request);
             return None;
@@ -692,6 +765,49 @@ impl EffectSink for Sink<'_> {
 
     fn object_exists(&mut self, id: u64) -> bool {
         self.st.owners.contains_key(&EntityId(id))
+    }
+
+    fn start_animation(
+        &mut self,
+        entity: EntityId,
+        node: &tessera_formats::script_table::AnimationNode,
+        intensity: f32,
+    ) -> tessera_scriptgraph::AnimationOutcome {
+        self.st.session_animation(entity, node, intensity)
+    }
+
+    fn stop_animation(&mut self, handle: tessera_scriptgraph::AnimationHandle) {
+        self.st.session_animation_stop(handle);
+    }
+
+    fn update_animation(
+        &mut self,
+        handle: tessera_scriptgraph::AnimationHandle,
+        node: &tessera_formats::script_table::AnimationNode,
+    ) {
+        self.st.session_animation_update(handle, node);
+    }
+
+    fn story_hook(&mut self, event: &tessera_scriptgraph::StoryHookEvent) {
+        self.st.session_hook(event);
+    }
+
+    fn execute(
+        &mut self,
+        request: &tessera_scriptgraph::ExecuteRequest<'_>,
+    ) -> Option<tessera_scriptgraph::ExecuteReply> {
+        self.st.session_execute(request)
+    }
+
+    fn start_beam(
+        &mut self,
+        request: &tessera_scriptgraph::BeamStart,
+    ) -> Option<tessera_scriptgraph::BeamHandle> {
+        self.st.session_beam(request)
+    }
+
+    fn stop_beam(&mut self, handle: tessera_scriptgraph::BeamHandle) {
+        self.st.session_beam_stop(handle);
     }
 }
 
@@ -931,6 +1047,7 @@ impl EffectLayer {
                     requests: 0,
                     refused: 0,
                     surface_states: HashMap::new(),
+                    session: session::SessionState::default(),
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1079,10 +1196,18 @@ impl EffectLayer {
         for id in ids {
             self.despawn(id);
         }
+        for net in self.session_entities() {
+            self.remove_session_entity(net);
+        }
         if let Some(st) = self.st.as_mut() {
             st.manager = EffectManager::new();
             st.waiting.clear();
             st.handles.clear();
+            // Beams' system keys belong to the discarded manager (a new one hands out the
+            // same keys again), and their nodes were stopped with their owners.
+            st.session.beams.clear();
+            st.session.arrived.clear();
+            st.session.finished.clear();
         }
     }
 
@@ -1101,7 +1226,7 @@ impl EffectLayer {
                     OwnerKind::Figure { tag } => characters
                         .figure_effect_view(tag)
                         .map_or(o.position, |v| v.position),
-                    OwnerKind::Static { .. } => o.position,
+                    OwnerKind::Static { .. } | OwnerKind::Session { .. } => o.position,
                 };
                 let d = dist(pos);
                 let reach = o.scripts.reach;
@@ -1233,13 +1358,26 @@ impl EffectLayer {
                 .values()
                 .filter_map(|o| match o.kind {
                     OwnerKind::Figure { tag } => Some(tag),
-                    OwnerKind::Static { .. } => None,
+                    OwnerKind::Static { .. } | OwnerKind::Session { .. } => None,
                 })
                 .collect();
             for tag in tags {
                 if let Some(v) = input.characters.figure_effect_view(tag) {
                     st.figures.insert(tag, v);
                 }
+            }
+            // Views of the session figures.
+            let nets: Vec<u64> = st.session.by_net.keys().copied().collect();
+            for net in nets {
+                if let Some(v) = input
+                    .characters
+                    .entity_effect_view(tessera_net::EntityId(net))
+                {
+                    st.session.views.insert(net, v);
+                }
+            }
+            if st.session.clip_ctx.is_none() {
+                st.session.clip_ctx = input.characters.figure_context();
             }
         }
         // Records that loaded.
@@ -1309,14 +1447,37 @@ impl EffectLayer {
             for id in &ids {
                 st.manager.housekeep(id.0, now);
             }
+            // Beams (`particle-runtime.md` §11.1): ends, head, systems.
+            st.update_beams(frame, &env);
             // Textures of new systems.
             let new = std::mem::take(&mut st.new_textures);
             if !new.is_empty() {
                 objects.acquire_textures(new);
             }
         }
+        // Beam heads that arrived fire their node's port; removed beams end their node.
+        self.finish_beams();
         self.refresh_stats();
         self.stats.update_ms = t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    fn finish_beams(&mut self) {
+        let Some(st) = self.st.as_mut() else { return };
+        let arrived = std::mem::take(&mut st.session.arrived);
+        let finished = std::mem::take(&mut st.session.finished);
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            for h in arrived {
+                g.beam_arrived(sink, h);
+            }
+            for h in &finished {
+                g.beam_finished(sink, *h);
+            }
+        });
+        if let Some(st) = self.st.as_mut() {
+            for h in finished {
+                st.session.beams.remove(&h.0);
+            }
+        }
     }
 
     fn refresh_stats(&mut self) {
@@ -1332,6 +1493,13 @@ impl EffectLayer {
         self.stats.systems = st.manager.running_count();
         self.stats.lingering = st.manager.lingering().len();
         self.stats.requests = st.requests;
+        self.stats.session_owners = st.session.by_net.len();
+        self.stats.session_requests = st.session.requests;
+        self.stats.session_clips = st.session.clips_started;
+        self.stats.beams = st.session.beams.len();
+        self.stats.beams_started = st.session.beams_started;
+        self.stats.beam_arrivals = st.session.beam_arrivals;
+        self.stats.story_hooks = [st.session.story_hooks, st.session.story_hooks_with_story];
         self.stats.refused = st.refused;
         self.stats.loading = st.waiting.len().max(st.loads.len());
         self.stats.sync_script_reads = st.data.main_thread_reads();
@@ -1371,6 +1539,7 @@ impl EffectLayer {
         let camera = CameraView::look_at(cam_eye, cam_eye + dir);
         let now = st.now;
         let frame = st.frame;
+        let session_systems = st.session_systems();
         let FxState {
             manager,
             rng,
@@ -1390,26 +1559,31 @@ impl EffectLayer {
                 continue;
             }
             let desc: &Arc<ParticleSystem> = sim.desc();
-            // §8.15: no post-processing pass in the walker, so these are never drawn.
-            if desc.uses_video_post {
-                continue;
-            }
+            // `combat-visuals.md` §11 rule 9: the walker has no pass after post-processing,
+            // so these systems are drawn after the others in the same pass (§8.15).
+            let post = desc.uses_video_post;
             let Some(d) = sim.draw(now, &camera, rng) else {
                 continue;
             };
             let surface = d.surface.0;
-            drawn.push((key, d, surface));
+            drawn.push((key, d, surface, post));
         }
         let ranks: Vec<(i32, u64)> = drawn
             .iter()
-            .map(|(k, d, _)| (d.sorting_priority, manager.age_rank(*k).unwrap_or(u64::MAX)))
+            .map(|(k, d, _, _)| (d.sorting_priority, manager.age_rank(*k).unwrap_or(u64::MAX)))
             .collect();
+        let mut order = draw_order(&ranks);
+        // Stable: the post-pass systems keep their order after the others.
+        order.sort_by_key(|&i| drawn.get(i).is_some_and(|d| d.3));
         let mut systems = 0usize;
         let mut vertices = 0usize;
-        for i in draw_order(&ranks) {
-            let Some((key, d, surface)) = drawn.get(i) else {
+        let mut session_drawn = 0usize;
+        let mut session_vertices = 0usize;
+        for i in order {
+            let Some((key, d, surface, _)) = drawn.get(i) else {
                 continue;
             };
+            let from_session = session_systems.contains(key);
             let Some(did) = manager.did_of(*key) else {
                 continue;
             };
@@ -1464,11 +1638,15 @@ impl EffectLayer {
                 continue;
             }
             systems += 1;
+            session_drawn += usize::from(from_session);
             for inst in &d.instances {
                 if inst.vertices.is_empty() {
                     continue;
                 }
                 vertices += inst.vertices.len();
+                if from_session {
+                    session_vertices += inst.vertices.len();
+                }
                 pass.particles(ParticleDraw {
                     vertices: inst
                         .vertices
@@ -1498,7 +1676,229 @@ impl EffectLayer {
             self.stats.frames_with_particles += 1;
         }
         self.stats.textures_pending = pending;
+        self.stats.session_drawn_systems = session_drawn;
+        self.stats.session_drawn_vertices = session_vertices;
+        self.stats.max_session_drawn_vertices =
+            self.stats.max_session_drawn_vertices.max(session_vertices);
         self.stats.update_ms += t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    // ----- session figures and their scripts (`session`) -----
+
+    /// Whether the runtime runs (start-up finished).
+    #[must_use]
+    pub fn runtime_ready(&self) -> bool {
+        self.graph.is_some() && self.st.is_some()
+    }
+
+    /// The runtime ID of the session entity `net`'s figure, spawning it in the runtime once
+    /// its figure is on the GPU with its scripts: its figure's tables and `extra_tables`
+    /// (for example the shared UI selection table, `combat-ui.md` TR6), its stored values,
+    /// no start-up scripts. The error says why it is not (yet) spawned.
+    pub fn session_entity(
+        &mut self,
+        net: tessera_net::EntityId,
+        characters: &CharacterLayer,
+        extra_tables: &[Did],
+    ) -> Result<EntityId, SessionRefusal> {
+        let st = self.st.as_mut().ok_or(SessionRefusal::NotReady)?;
+        if let Some(&id) = st.session.by_net.get(&net.0) {
+            return Ok(id);
+        }
+        let view = characters
+            .entity_effect_view(net)
+            .ok_or(SessionRefusal::NotReady)?;
+        let scripts = view.scripts.clone().ok_or(SessionRefusal::NoScripts)?;
+        if st.session.by_net.len() >= session::MAX_SESSION_OWNERS {
+            return Err(SessionRefusal::Full);
+        }
+        if view.region != st.region {
+            return Err(SessionRefusal::OtherRegion);
+        }
+        let id = EntityId(session::SESSION_OWNER_BASE + st.session.next);
+        st.session.next += 1;
+        st.add_session_owner(id, net.0, &view);
+        let mut tables = scripts.tables.clone();
+        for t in extra_tables {
+            if !tables.contains(t) {
+                tables.push(*t);
+            }
+        }
+        let init = tessera_scriptgraph::EntityInit {
+            tables,
+            startup_scripts: Vec::new(),
+            properties: scripts.properties.clone(),
+            parent: None,
+            run_startup: false,
+            random_seed: Some(net.0),
+        };
+        match Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            g.spawn_entity(sink, id, init)
+        }) {
+            Some(Ok(())) => Ok(id),
+            _ => {
+                if let Some(st) = self.st.as_mut() {
+                    st.remove_session_owner(net.0);
+                }
+                Err(SessionRefusal::SpawnFailed)
+            }
+        }
+    }
+
+    /// The runtime ID of a session entity already spawned.
+    #[must_use]
+    pub fn session_id(&self, net: tessera_net::EntityId) -> Option<EntityId> {
+        self.st.as_ref()?.session.by_net.get(&net.0).copied()
+    }
+
+    /// The network ID of a session figure's runtime ID.
+    #[must_use]
+    pub fn session_net(&self, id: EntityId) -> Option<tessera_net::EntityId> {
+        self.st
+            .as_ref()?
+            .session
+            .by_runtime
+            .get(&id)
+            .map(|n| tessera_net::EntityId(*n))
+    }
+
+    /// The session entities spawned in the runtime, by network ID.
+    #[must_use]
+    pub fn session_entities(&self) -> Vec<tessera_net::EntityId> {
+        self.st.as_ref().map_or_else(Vec::new, |st| {
+            st.session
+                .by_net
+                .keys()
+                .map(|n| tessera_net::EntityId(*n))
+                .collect()
+        })
+    }
+
+    /// Despawns a session figure from the runtime (its runs stop, its effects linger).
+    pub fn remove_session_entity(&mut self, net: tessera_net::EntityId) {
+        let Some(id) = self
+            .st
+            .as_ref()
+            .and_then(|s| s.session.by_net.get(&net.0).copied())
+        else {
+            return;
+        };
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.despawn(sink, id));
+        if let Some(st) = self.st.as_mut() {
+            st.remove_session_owner(net.0);
+        }
+    }
+
+    /// The local player in the runtime (`ThePlayer` targets).
+    pub fn set_runtime_player(&mut self, player: Option<EntityId>) {
+        if let Some(g) = self.graph.as_mut() {
+            g.set_player(player);
+        }
+    }
+
+    /// The Execute callbacks' vocabulary.
+    pub fn set_execute_vocab(&mut self, v: session::ExecuteVocab) {
+        if let Some(st) = self.st.as_mut() {
+            st.session.exec = v;
+        }
+    }
+
+    /// Starts `key` on `id` with run parameters (`combat-visuals.md` §3.2); the run when it
+    /// stays live.
+    pub fn run_script(
+        &mut self,
+        id: EntityId,
+        key: u32,
+        params: &[(u32, tessera_formats::PropertyValue)],
+    ) -> Option<tessera_scriptgraph::RunId> {
+        Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            let r = g.start_script_with(sink, id, key, params).ok()?;
+            tracing::debug!(entity = id.0, key, start = ?r.start, "effects: script run");
+            r.run
+        })
+        .flatten()
+    }
+
+    /// Stops a run.
+    pub fn stop_run(&mut self, run: tessera_scriptgraph::RunId) {
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            g.stop_run(sink, run)
+        });
+    }
+
+    /// Whether a run is live.
+    #[must_use]
+    pub fn run_live(&self, run: tessera_scriptgraph::RunId) -> bool {
+        self.graph.as_ref().is_some_and(|g| g.run_live(run))
+    }
+
+    /// Sets an entity property in the runtime.
+    pub fn set_entity_property(
+        &mut self,
+        id: EntityId,
+        pid: u32,
+        value: tessera_formats::PropertyValue,
+    ) {
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            g.set_property(sink, id, pid, value)
+        });
+    }
+
+    /// Clears an entity property in the runtime.
+    pub fn clear_entity_property(&mut self, id: EntityId, pid: u32) {
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
+            g.clear_property(sink, id, pid)
+        });
+    }
+
+    /// An entity property's value in the runtime.
+    #[must_use]
+    pub fn entity_property(
+        &self,
+        id: EntityId,
+        pid: u32,
+    ) -> Option<tessera_formats::PropertyValue> {
+        let g = self.graph.as_ref()?;
+        g.has_entity(id).then(|| g.property(id, pid)).flatten()
+    }
+
+    /// The case values of the Switch on `pid` in the definition of `key` on `id`.
+    pub fn switch_cases(
+        &mut self,
+        id: EntityId,
+        key: u32,
+        pid: u32,
+    ) -> Vec<tessera_formats::PropertyValue> {
+        self.graph
+            .as_mut()
+            .map(|g| g.switch_cases(id, key, pid))
+            .unwrap_or_default()
+    }
+
+    /// The story hooks the runtime produced since the last call.
+    pub fn take_story_hooks(&mut self) -> Vec<tessera_scriptgraph::StoryHookEvent> {
+        self.st
+            .as_mut()
+            .map(|s| std::mem::take(&mut s.session.hooks))
+            .unwrap_or_default()
+    }
+
+    /// The open stories' strikes, for the Execute callbacks.
+    pub fn set_upcoming(&mut self, view: crate::walker::combat::state::UpcomingView) {
+        if let Some(st) = self.st.as_mut() {
+            st.session.upcoming = view;
+        }
+    }
+
+    /// The clips the scripts started or stopped since the last call, for the character
+    /// layer.
+    pub fn take_clip_commands(
+        &mut self,
+    ) -> Vec<crate::walker::characters::combat_anim::ClipCommand> {
+        self.st
+            .as_mut()
+            .map(|s| std::mem::take(&mut s.session.clips))
+            .unwrap_or_default()
     }
 
     /// Stops everything: every owner is despawned.

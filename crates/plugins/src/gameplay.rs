@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use mlua::{Lua, MultiValue, Table, Value};
 use tessera_script::{api_fn, host_error};
 
+use crate::combat::{self, ActorValues, CombatViewEvent};
 use crate::gameplay_enums as en;
 use crate::inventory::{self, InventoryViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
@@ -23,6 +24,10 @@ use crate::shared::{ApartmentCtx, lock};
 
 /// Registry name of the apartment's `LocalPlayer` instance.
 const LOCAL_PLAYER_KEY: &str = "tessera.plugins.localplayer";
+
+/// Registry name of the gameplay sequence number at the `LocalPlayer` instance's creation
+/// (combat events raised before it do not reach it, `lua-plugin-api.md` §15.2).
+const LOCAL_PLAYER_SEQ_KEY: &str = "tessera.plugins.localplayer.seq";
 
 /// Registry name of the apartment's cache of gameplay views.
 const VIEWS_KEY: &str = "tessera.plugins.views";
@@ -159,12 +164,15 @@ impl LocalPlayerEvent {
 }
 
 /// A game-raised gameplay event queued for step 7 (`plugin-runtime.md` §8.4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GameplayEvent {
     /// A change of the local player.
     LocalPlayer(LocalPlayerEvent),
     /// A change of the backpack, the equipment or an item (`lua-plugin-api.md` §15.1).
     Inventory(InventoryViewEvent),
+    /// A change of an actor, an effect list or effect, the combat state or the trained
+    /// skills (`lua-plugin-api.md` §15.2).
+    Combat(CombatViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -281,6 +289,41 @@ fn source(ctx: &ApartmentCtx) -> Option<LocalPlayerInfo> {
 /// Reads a number of the local player.
 type NumberGetter = fn(&LocalPlayerInfo) -> f64;
 
+/// Reads a number of an actor's combat values.
+type CombatGetter = fn(&ActorValues) -> f64;
+
+/// The apartment's `LocalPlayer` instance, created on first use; `None` while no
+/// character is in the world (neither source knows one).
+pub(crate) fn local_player_object(lua: &Lua, ctx: &ApartmentCtx) -> mlua::Result<Option<Table>> {
+    if source(ctx).is_none() && !combat::has_player(ctx) {
+        return Ok(None);
+    }
+    if let Value::Table(t) = lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
+        return Ok(Some(t));
+    }
+    let class: Table = lua.named_registry_value(LOCAL_PLAYER_CLASS_KEY)?;
+    let t = instance(lua, &class, View::LocalPlayer)?;
+    lua.set_named_registry_value(LOCAL_PLAYER_KEY, t.clone())?;
+    lua.set_named_registry_value(LOCAL_PLAYER_SEQ_KEY, combat::current_seq(ctx))?;
+    Ok(Some(t))
+}
+
+/// The apartment's existing `LocalPlayer` instance with the gameplay sequence number at
+/// its creation.
+pub(crate) fn existing_local_player(lua: &Lua) -> mlua::Result<Option<(Table, u64)>> {
+    match lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
+        Value::Table(t) => Ok(Some((
+            t,
+            lua.named_registry_value::<Option<u64>>(LOCAL_PLAYER_SEQ_KEY)?
+                .unwrap_or(0),
+        ))),
+        _ => Ok(None),
+    }
+}
+
+/// Registry name of the `LocalPlayer` class table.
+const LOCAL_PLAYER_CLASS_KEY: &str = "tessera.plugins.class.localplayer";
+
 /// Reads an enumeration value of the local player.
 type EnumGetter = fn(&LocalPlayerInfo) -> u32;
 
@@ -298,6 +341,7 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     let actor = b.class(&gp, "Actor", Some(&entity), None)?;
     let player = b.class(&gp, "Player", Some(&actor), None)?;
     let local_player = b.class(&gp, "LocalPlayer", Some(&player), None)?;
+    lua.set_named_registry_value(LOCAL_PLAYER_CLASS_KEY, local_player.clone())?;
 
     // `Turbine.Gameplay.Attributes` is both the namespace of the attribute classes and the
     // `Attributes` class (base `PropertyHandler`).
@@ -322,8 +366,13 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         "GetName",
         api_fn(lua, "GetName", move |lua, this: Table| {
             Ok(match view_of(lua, &this)? {
-                Some(View::LocalPlayer) => source(&c).map(|i| i.name),
-                _ => inventory::item_name(&c, lua, &this)?,
+                Some(View::LocalPlayer) => source(&c)
+                    .map(|i| i.name)
+                    .or_else(|| combat::player_values(&c).map(|v| v.name)),
+                _ => match combat::entity_values(lua, &c, &this)? {
+                    Some(v) => Some(v.name),
+                    None => inventory::item_name(&c, lua, &this)?,
+                },
             })
         })?,
     )?;
@@ -333,34 +382,43 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             Ok(view_of(lua, &this)? == Some(View::LocalPlayer))
         })?,
     )?;
-    let numeric: [(&'static str, NumberGetter); 11] = [
-        ("GetLevel", |i| f64::from(i.level)),
-        ("GetMorale", |i| i.morale),
-        ("GetMaxMorale", |i| i.max_morale),
-        ("GetBaseMaxMorale", |i| i.base_max_morale),
-        ("GetTemporaryMorale", |i| i.temporary_morale),
-        ("GetMaxTemporaryMorale", |i| i.max_temporary_morale),
-        ("GetPower", |i| i.power),
-        ("GetMaxPower", |i| i.max_power),
-        ("GetBaseMaxPower", |i| i.base_max_power),
-        ("GetTemporaryPower", |i| i.temporary_power),
-        ("GetMaxTemporaryPower", |i| i.max_temporary_power),
+    // The combat source's values when it knows the player (§15.2: base maxima equal the
+    // maxima, temporary values 0), else the local-player source's.
+    let numeric: [(&'static str, NumberGetter, CombatGetter); 11] = [
+        ("GetLevel", |i| f64::from(i.level), |v| f64::from(v.level)),
+        ("GetMorale", |i| i.morale, |v| v.morale),
+        ("GetMaxMorale", |i| i.max_morale, |v| v.max_morale),
+        ("GetBaseMaxMorale", |i| i.base_max_morale, |v| v.max_morale),
+        ("GetTemporaryMorale", |i| i.temporary_morale, |_| 0.0),
+        ("GetMaxTemporaryMorale", |i| i.max_temporary_morale, |_| 0.0),
+        ("GetPower", |i| i.power, |v| v.power),
+        ("GetMaxPower", |i| i.max_power, |v| v.max_power),
+        ("GetBaseMaxPower", |i| i.base_max_power, |v| v.max_power),
+        ("GetTemporaryPower", |i| i.temporary_power, |_| 0.0),
+        ("GetMaxTemporaryPower", |i| i.max_temporary_power, |_| 0.0),
     ];
-    for (m, get) in numeric {
+    for (m, get, get_combat) in numeric {
         let c = Arc::clone(ctx);
         actor.raw_set(
             m,
             api_fn(lua, m, move |lua, this: Table| {
                 Ok(match view_of(lua, &this)? {
-                    Some(View::LocalPlayer) => source(&c).map_or(0.0, |i| get(&i)),
-                    _ => 0.0,
+                    Some(View::LocalPlayer) => match combat::player_values(&c) {
+                        Some(v) => get_combat(&v),
+                        None => source(&c).map_or(0.0, |i| get(&i)),
+                    },
+                    _ => combat::entity_values(lua, &c, &this)?.map_or(0.0, |v| get_combat(&v)),
                 })
             })?,
         )?;
     }
+    let c = Arc::clone(ctx);
     actor.raw_set(
         "GetTarget",
-        api_fn(lua, "GetTarget", |_, _: MultiValue| Ok(Value::Nil))?,
+        api_fn(lua, "GetTarget", move |lua, this: Table| {
+            let is_player = view_of(lua, &this)? == Some(View::LocalPlayer);
+            combat::target(lua, &c, &this, is_player)
+        })?,
     )?;
     let player_enums: [(&'static str, EnumGetter); 4] = [
         ("GetClass", |i| i.class),
@@ -442,10 +500,15 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         ],
     )?;
     let effects_class = effect_list.clone();
+    let c = Arc::clone(ctx);
     actor.raw_set(
         "GetEffects",
-        api_fn(lua, "GetEffects", move |lua, _: MultiValue| {
-            cached_view(lua, "Effects", &effects_class, View::Empty)
+        api_fn(lua, "GetEffects", move |lua, this: Table| {
+            let is_player = view_of(lua, &this)? == Some(View::LocalPlayer);
+            match combat::effects(lua, &c, &this, is_player)? {
+                Some(list) => Ok(list),
+                None => cached_view(lua, "Effects", &effects_class, View::Empty),
+            }
         })?,
     )?;
     let skill = b.class(&gp, "Skill", Some(&object), None)?;
@@ -474,18 +537,31 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         })?,
     )?;
     let skill_list = b.class(&gp, "SkillList", Some(&object), None)?;
+    let c = Arc::clone(ctx);
     skill_list.raw_set(
         "GetCount",
-        api_fn(lua, "GetCount", |lua, this: Table| {
+        api_fn(lua, "GetCount", move |lua, this: Table| {
+            if let Some(n) = combat::trained_list_count(lua, &c, &this)? {
+                return Ok(f64::from(n));
+            }
             Ok(f64::from(skill_count(lua, &this)?))
         })?,
     )?;
     let sk = skill.clone();
+    let c = Arc::clone(ctx);
     skill_list.raw_set(
         "GetItem",
-        api_fn(lua, "GetItem", move |lua, (this, i): (Table, f64)| {
+        api_fn(lua, "GetItem", move |lua, (this, i): (Table, Value)| {
+            if let Some(t) = combat::trained_list_item(lua, &c, &this, &i)? {
+                return Ok(t);
+            }
             let count = f64::from(skill_count(lua, &this)?);
-            if i < 1.0 || i > count || i.fract() != 0.0 {
+            let i = match i {
+                Value::Integer(i) => i as f64,
+                Value::Number(n) => n,
+                _ => f64::NAN,
+            };
+            if !(i >= 1.0 && i <= count && i.fract() == 0.0) {
                 return Err(host_error("SkillList.GetItem: index out of range"));
             }
             cached_view(lua, "Skill", &sk, View::Empty)
@@ -600,6 +676,21 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Backpack))),
         Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Equipment))),
     )?;
+    combat::install(
+        lua,
+        ctx,
+        &combat::Classes {
+            entity: &entity,
+            actor: &actor,
+            player: &player,
+            effect_list: &effect_list,
+            effect: &effect,
+            skill_list: &skill_list,
+            skill: &skill,
+            active_skill: &ab,
+            skill_info: &skill_info,
+        },
+    )?;
     let party = b.class(&gp, "Party", Some(&object), None)?;
     stubs(
         lua,
@@ -651,19 +742,10 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
 
     // `LocalPlayer` (static `GetInstance`; its own getters).
     let c = Arc::clone(ctx);
-    let lp_class = local_player.clone();
     local_player.raw_set(
         "GetInstance",
         api_fn(lua, "GetInstance", move |lua, _: MultiValue| {
-            if source(&c).is_none() {
-                return Ok(Value::Nil);
-            }
-            if let Value::Table(t) = lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
-                return Ok(Value::Table(t));
-            }
-            let t = instance(lua, &lp_class, View::LocalPlayer)?;
-            lua.set_named_registry_value(LOCAL_PLAYER_KEY, t.clone())?;
-            Ok(Value::Table(t))
+            Ok(local_player_object(lua, &c)?.map_or(Value::Nil, Value::Table))
         })?,
     )?;
     let c = Arc::clone(ctx);
@@ -671,7 +753,7 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         "IsInCombat",
         api_fn(lua, "IsInCombat", move |lua, this: Table| {
             Ok(view_of(lua, &this)? == Some(View::LocalPlayer)
-                && source(&c).is_some_and(|i| i.in_combat))
+                && combat::in_combat(&c).unwrap_or_else(|| source(&c).is_some_and(|i| i.in_combat)))
         })?,
     )?;
     let c = Arc::clone(ctx);
@@ -733,12 +815,12 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         "GetMount",
         api_fn(lua, "GetMount", |_, _: MultiValue| Ok(Value::Nil))?,
     )?;
-    let sl = skill_list.clone();
+    let c = Arc::clone(ctx);
     local_player.raw_set(
         "GetTrainedSkills",
         api_fn(lua, "GetTrainedSkills", move |lua, _: MultiValue| {
-            // At least one trained skill (plugin-api-usage.md §7.4.2 rule 1).
-            cached_view(lua, "TrainedSkills", &sl, View::SkillList(1))
+            // At least one trained skill (plugin-api-usage.md §7.4.1 rule 1, §15.2).
+            combat::trained_skills(lua, &c)
         })?,
     )?;
     let sl = skill_list.clone();
@@ -949,9 +1031,13 @@ fn install_attribute_classes(
 
 /// Deliver a queued gameplay event to the apartment: to its `LocalPlayer` instance, its
 /// backpack or equipment view, or an item's object, if a plugin asked for one.
-pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
+pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent, seq: u64) {
     let e = match ev {
         GameplayEvent::LocalPlayer(e) => *e,
+        GameplayEvent::Combat(c) => {
+            combat::deliver(ap, c, seq);
+            return;
+        }
         GameplayEvent::Inventory(inv) => {
             inventory::deliver(ap, inv, |lua, name| {
                 let cache: Table = lua.named_registry_value(VIEWS_KEY).ok()?;

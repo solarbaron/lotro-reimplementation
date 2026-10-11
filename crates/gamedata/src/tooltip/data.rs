@@ -75,7 +75,129 @@ pub trait TooltipData: Send + Sync {
     fn render(&self, text: TextRef<'_>, values: &Values) -> TextResult;
     /// The item set whose member list names `item` (`items.md` §9.9 steps 1–2).
     fn set_of(&self, item: Did) -> Option<Did>;
+
+    /// The root class of an object record (`combat-data.md` §2.1); `None` when unknown. The
+    /// default knows none: effect lines then use the base composition
+    /// (`skill-tooltips.md` §9.2) and progressions are read as not nested.
+    fn root_class(&self, did: Did) -> Option<u32> {
+        let _ = did;
+        None
+    }
+
+    /// `class` and its ancestors, nearest first (the class library's parent map). The default
+    /// knows no parents.
+    fn class_lineage(&self, class: u32) -> Vec<u32> {
+        vec![class]
+    }
+
+    /// The internal name (label) of `key` in the enum mapper of `pid` (and its base chain);
+    /// not the display text ([`TooltipData::enum_text`]). The default knows none.
+    fn enum_label(&self, pid: u32, key: u32) -> Option<String> {
+        let _ = (pid, key);
+        None
+    }
+
+    /// The property set named `label` in the `UNIQUEDB` DID map (`property-system.md` §8.1).
+    /// The default knows none.
+    fn unique(&self, label: &str) -> Option<Did> {
+        let _ = label;
+        None
+    }
+
+    /// Any property set by DID: an object record's set, or a bare property set (prefixes
+    /// 0x47, 0x78, 0x79). The default reads object records only.
+    fn property_set(&self, did: Did) -> Result<Option<Arc<PropertySet>>, String> {
+        self.record(did)
+    }
+
+    /// The dictionary's properties whose names start with `prefix`, as (PID, name), at most
+    /// [`MAX_PREFIX_MATCHES`]. The default knows none.
+    fn properties_with_prefix(&self, prefix: &str) -> Vec<(u32, String)> {
+        let _ = prefix;
+        Vec::new()
+    }
 }
+
+macro_rules! delegate_tooltip_data {
+    ($t:ty) => {
+        fn pid(&self, name: &str) -> Option<u32> {
+            (**self).pid(name)
+        }
+        fn property_name(&self, pid: u32) -> Option<String> {
+            (**self).property_name(pid)
+        }
+        fn property_type(&self, pid: u32) -> Option<PropertyType> {
+            (**self).property_type(pid)
+        }
+        fn default_value(&self, pid: u32) -> Option<PropertyValue> {
+            (**self).default_value(pid)
+        }
+        fn enum_text(&self, pid: u32, key: u32) -> Option<String> {
+            (**self).enum_text(pid, key)
+        }
+        fn enum_key(&self, pid: u32, name: &str) -> Option<u32> {
+            (**self).enum_key(pid, name)
+        }
+        fn record(&self, did: Did) -> Result<Option<Arc<PropertySet>>, String> {
+            (**self).record(did)
+        }
+        fn weenie(&self, label: &str) -> Option<Did> {
+            (**self).weenie(label)
+        }
+        fn layout(&self, did: Did) -> Result<Option<Arc<UiLayout>>, String> {
+            (**self).layout(did)
+        }
+        fn layout_by_label(&self, label: &str) -> Option<Did> {
+            (**self).layout_by_label(label)
+        }
+        fn ui_label(&self, which: UiEnum, key: u32) -> Option<String> {
+            (**self).ui_label(which, key)
+        }
+        fn ui_key(&self, which: UiEnum, name: &str) -> Option<u32> {
+            (**self).ui_key(which, name)
+        }
+        fn text_value(&self, info: &StringInfo) -> Result<Value, String> {
+            (**self).text_value(info)
+        }
+        fn render(&self, text: TextRef<'_>, values: &Values) -> TextResult {
+            (**self).render(text, values)
+        }
+        fn set_of(&self, item: Did) -> Option<Did> {
+            (**self).set_of(item)
+        }
+        fn root_class(&self, did: Did) -> Option<u32> {
+            (**self).root_class(did)
+        }
+        fn class_lineage(&self, class: u32) -> Vec<u32> {
+            (**self).class_lineage(class)
+        }
+        fn enum_label(&self, pid: u32, key: u32) -> Option<String> {
+            (**self).enum_label(pid, key)
+        }
+        fn unique(&self, label: &str) -> Option<Did> {
+            (**self).unique(label)
+        }
+        fn property_set(&self, did: Did) -> Result<Option<Arc<PropertySet>>, String> {
+            (**self).property_set(did)
+        }
+        fn properties_with_prefix(&self, prefix: &str) -> Vec<(u32, String)> {
+            (**self).properties_with_prefix(prefix)
+        }
+    };
+}
+
+/// A shared reference reads through to the data, so one [`InstallTooltipData`] can serve a
+/// tooltip engine and the combat data at once.
+impl<T: TooltipData + ?Sized> TooltipData for &T {
+    delegate_tooltip_data!(&T);
+}
+
+impl<T: TooltipData + ?Sized> TooltipData for Arc<T> {
+    delegate_tooltip_data!(Arc<T>);
+}
+
+/// Most matches [`TooltipData::properties_with_prefix`] returns.
+pub const MAX_PREFIX_MATCHES: usize = 256;
 
 /// Most entries kept in each of the per-record caches of [`InstallTooltipData`] before
 /// the cache is cleared (bounded memory over a pass over every item).
@@ -85,10 +207,14 @@ pub const MAX_CACHED: usize = 32_768;
 const UILAYOUT_LABEL: &str = "UILAYOUT";
 /// Root-map label of the enum-mapper DID map (`ui-layout.md` §3.3).
 const EMAPPER_LABEL: &str = "EMAPPER";
+/// Root-map label of the unique-object DID map (`property-system.md` §8.1).
+const UNIQUEDB_LABEL: &str = "UNIQUEDB";
 /// WEENIECONTENT label of the set directory (`items.md` §9.9).
 const SET_DIRECTORY_LABEL: &str = "GameSetDirectory";
 
 type LayoutSlot = Result<Option<Arc<UiLayout>>, String>;
+/// A cached object record: root class and property set.
+type ObjectSlot = (u32, Arc<PropertySet>);
 
 /// [`TooltipData`] over an install: the store's records and dictionary, the UI layouts and
 /// labels, and the strings of one locale.
@@ -101,7 +227,8 @@ pub struct InstallTooltipData<'a, S: RecordSource = InstallSource> {
     uilayout: Option<Arc<DataIdMap>>,
     named: NamedTables,
     layouts: Mutex<HashMap<Did, LayoutSlot>>,
-    records: Mutex<HashMap<Did, Option<Arc<PropertySet>>>>,
+    records: Mutex<HashMap<Did, Option<ObjectSlot>>>,
+    bare_sets: Mutex<HashMap<Did, Option<Arc<PropertySet>>>>,
     enum_texts: Mutex<HashMap<(u32, u32), Option<String>>>,
     sets: OnceLock<HashMap<Did, Did>>,
 }
@@ -158,6 +285,7 @@ impl<'a, S: RecordSource> InstallTooltipData<'a, S> {
             named,
             layouts: Mutex::new(HashMap::new()),
             records: Mutex::new(HashMap::new()),
+            bare_sets: Mutex::new(HashMap::new()),
             enum_texts: Mutex::new(HashMap::new()),
             sets: OnceLock::new(),
         })
@@ -195,6 +323,27 @@ impl<'a, S: RecordSource> InstallTooltipData<'a, S> {
             }
         }
         out
+    }
+
+    /// An object record's root class and property set, cached.
+    fn object(&self, did: Did) -> Result<Option<ObjectSlot>, String> {
+        if let Some(r) = lock(&self.records).get(&did) {
+            return Ok(r.clone());
+        }
+        if !tessera_formats::gameplay::common::is_object_did(did) {
+            return Ok(None);
+        }
+        let rec = self
+            .store
+            .object(did)
+            .map_err(|e| e.to_string())?
+            .map(|r| (r.root.root_class, Arc::new(r.properties)));
+        let mut cache = lock(&self.records);
+        if cache.len() >= MAX_CACHED {
+            cache.clear();
+        }
+        cache.insert(did, rec.clone());
+        Ok(rec)
     }
 
     fn table_did(&self, key: u32) -> Option<u32> {
@@ -283,23 +432,81 @@ impl<S: RecordSource> TooltipData for InstallTooltipData<'_, S> {
     }
 
     fn record(&self, did: Did) -> Result<Option<Arc<PropertySet>>, String> {
-        if let Some(r) = lock(&self.records).get(&did) {
-            return Ok(r.clone());
+        Ok(self.object(did)?.map(|(_, s)| s))
+    }
+
+    fn root_class(&self, did: Did) -> Option<u32> {
+        self.object(did).ok().flatten().map(|(c, _)| c)
+    }
+
+    fn class_lineage(&self, class: u32) -> Vec<u32> {
+        match self.store.class_library() {
+            Ok(lib) => {
+                use tessera_formats::gameplay::common::ClassParents;
+                lib.lineage(class).take(64).collect()
+            }
+            Err(_) => vec![class],
         }
-        if !tessera_formats::gameplay::common::is_object_did(did) {
+    }
+
+    fn enum_label(&self, pid: u32, key: u32) -> Option<String> {
+        let mapper = self.registry.enum_source(pid)?.did();
+        let label = self
+            .store
+            .object_store()
+            .game_data()
+            .enum_label(mapper, key)
+            .ok()?;
+        label.name.map(|n| n.to_string())
+    }
+
+    fn unique(&self, label: &str) -> Option<Did> {
+        self.store
+            .object_store()
+            .game_data()
+            .lookup_path(&[UNIQUEDB_LABEL, label])
+            .ok()
+            .flatten()
+            .filter(|d| !d.is_null())
+    }
+
+    fn property_set(&self, did: Did) -> Result<Option<Arc<PropertySet>>, String> {
+        if tessera_formats::gameplay::common::is_object_did(did) {
+            return self.record(did);
+        }
+        if let Some(s) = lock(&self.bare_sets).get(&did) {
+            return Ok(s.clone());
+        }
+        if !tessera_formats::is_property_set_did(did) {
             return Ok(None);
         }
-        let set = self
-            .store
-            .object(did)
-            .map_err(|e| e.to_string())?
-            .map(|r| Arc::new(r.properties));
-        let mut cache = lock(&self.records);
+        let set = match self.store.object_store().game_data().read(did) {
+            Ok(None) => None,
+            Ok(Some(bytes)) => Some(Arc::new(
+                tessera_formats::PropertySetRecord::parse_prefix(&bytes, self.registry.as_ref())
+                    .map_err(|e| e.to_string())?
+                    .0
+                    .set,
+            )),
+            Err(e) => return Err(e.to_string()),
+        };
+        let mut cache = lock(&self.bare_sets);
         if cache.len() >= MAX_CACHED {
             cache.clear();
         }
         cache.insert(did, set.clone());
         Ok(set)
+    }
+
+    fn properties_with_prefix(&self, prefix: &str) -> Vec<(u32, String)> {
+        self.registry
+            .iter()
+            .filter_map(|(d, n)| {
+                n.filter(|n| n.starts_with(prefix))
+                    .map(|n| (d.pid, n.to_owned()))
+            })
+            .take(MAX_PREFIX_MATCHES)
+            .collect()
     }
 
     fn weenie(&self, label: &str) -> Option<Did> {

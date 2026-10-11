@@ -1112,7 +1112,13 @@ fn q_modifier_policies() {
     check(&mut m, &[Ctrl], Up, &[ui.text_line_up]);
     m.deactivate(ui.text_entry);
     m.activate(ui.ui_dialog);
-    check(&mut m, &[Ctrl], Tab, &[]);
+    // Ctrl+Tab is not `focus_next` (exact policy); it is the global `target_nearest_player`
+    // of the P2 defaults (`keymap.md` §8.2). Plain Tab goes to the UI band first.
+    let nearest_player = m
+        .registry()
+        .action("target_nearest_player")
+        .expect("P2 action");
+    check(&mut m, &[Ctrl], Tab, &[nearest_player]);
     check(&mut m, &[], Tab, &[ui.focus_next]);
 }
 

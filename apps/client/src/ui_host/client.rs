@@ -442,6 +442,19 @@ impl ClientUi {
                 host.set_target(&mut rt.plugins, true);
             }
         }
+        // The combat widgets over the opened HUD (decision 0024 P2, `combat-ui.md`), built
+        // from the session's state; what was queued before is dropped, and the install's
+        // data, if already here, is in them (no rebuild for its arrival).
+        let _ = rt.p2.take_arrived();
+        let install = rt.p2.install().cloned();
+        match rt.world.as_mut() {
+            Some(w) => {
+                if host.attach_combat_to_world(w, install.as_ref(), Instant::now()) {
+                    walker.combat_mut().set_selection(None);
+                }
+            }
+            None => host.attach_combat(crate::combat::hud::floaty_settings(install.as_ref()), 0.0),
+        }
         // `[UI] ui_scale_global` reaches every native panel through the panels' scalers as
         // it opens (UiHost::native_scale; `tessera-ui` has no `UIScale_Global` setter).
         self.attached_walker = true;
@@ -630,11 +643,16 @@ impl ClientUi {
         let State::Ready(host) = &mut self.state else {
             return;
         };
-        if events.menu
-            && !screens
-            && let Some(o) = host.escape(&mut rt.plugins, true, false)
-        {
-            tracing::debug!(?o, "Escape");
+        if events.menu && !screens {
+            // TR5: a cancellable cast or a selection before the main menu.
+            match host.combat_escape() {
+                Some(a) => send_combat(host, rt, &[(crate::combat::CombatInput::Widget(a), None)]),
+                None => {
+                    if let Some(o) = host.escape(&mut rt.plugins, true, false) {
+                        tracing::debug!(?o, "Escape");
+                    }
+                }
+            }
         }
         if let Some(input) = walker.radar_input() {
             host.update_position(input, None);
@@ -652,6 +670,8 @@ impl ClientUi {
         // The character panels (decision 0024 P1): panels asked for on the command line,
         // the player-state changes of this frame, item interactions as session commands.
         character_frame(host, rt, &mut self.p1_open, shift);
+        // The combat widgets (decision 0024 P2): changes, clicks, keys, anchors.
+        combat_frame(host, rt, walker);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
         // The character screens before world entry (`--character-select`).
@@ -868,6 +888,103 @@ fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Pane
     for c in commands {
         if let Err(e) = world.send_command(now, c) {
             tracing::info!("item command not sent: {e}");
+        }
+    }
+}
+
+/// The combat frame (decision 0024 P2, after the character panels): the combat state's
+/// changes to the widgets, the world clicks the UI declined picked through the walker
+/// (`combat-ui.md` TR3), the commands of keys, clicks and widgets sent to the world
+/// session, the walker's selection cleared when the client cleared it locally (decision
+/// 0032 D2), and the floating elements anchored above the walker's figures (§6.4).
+fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
+    use crate::combat::{CombatChange, CombatInput};
+    use crate::ui_host::combat::WorldClick;
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let instant = Instant::now();
+    let now = world.combat_clock(instant);
+    // The install's data came after the widgets attached: rebuild them with it (CUI10,
+    // TR41).
+    if rt.p2.take_arrived()
+        && let Some(i) = rt.p2.install().cloned()
+    {
+        host.combat_install_arrived(world.combat_state(), &i, now);
+    }
+    // Changes dropped from the session's full queue: rebuild from the state.
+    if world.take_combat_overflow() {
+        let install = rt.p2.install().cloned();
+        host.combat_resync(world.combat_state(), install.as_deref(), now);
+        if world.combat_state().selection().is_none() {
+            walker.combat_mut().set_selection(None);
+        }
+    }
+    let changes = world.take_combat_changes();
+    if changes
+        .iter()
+        .any(|c| matches!(c, CombatChange::Selection { local: true, .. }))
+    {
+        walker.combat_mut().set_selection(None);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let px = |x: f64, y: f64| [x as f32, y as f32];
+    let mut extra = Vec::new();
+    for click in host.take_world_clicks() {
+        match click {
+            WorldClick::Select(x, y) => {
+                extra.push(CombatInput::PickEntity(walker.pick_entity(px(x, y))));
+            }
+            WorldClick::Use(x, y) => {
+                if let Some(e) = walker.pick_entity(px(x, y)) {
+                    extra.push(CombatInput::UseEntity(e));
+                }
+            }
+        }
+    }
+    let install = rt.p2.install().cloned();
+    let anchors = |e: u64| {
+        walker
+            .entity_anchor(tessera_net::EntityId(e))
+            .map(crate::combat::anchors::from_walker)
+    };
+    let commands = host.combat_frame(
+        world.combat_state(),
+        &changes,
+        extra,
+        install.as_deref(),
+        now,
+        &anchors,
+    );
+    for (c, slot) in commands {
+        if let Err(e) = world.send_command(instant, c) {
+            tracing::info!("combat command not sent: {e}");
+            if let Some(i) = slot {
+                host.combat_slot_error(i, now);
+            }
+        }
+    }
+}
+
+/// Sends the commands of combat inputs outside the combat frame (Escape, TR5).
+fn send_combat(
+    host: &mut UiHost,
+    rt: &mut Runtime,
+    inputs: &[(crate::combat::CombatInput, Option<i32>)],
+) {
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let instant = Instant::now();
+    for (i, slot) in inputs {
+        for c in crate::combat::commands::commands(*i, world.combat_state()) {
+            if let Err(e) = world.send_command(instant, c) {
+                tracing::info!("combat command not sent: {e}");
+                if let Some(n) = slot {
+                    let now = world.combat_clock(instant);
+                    host.combat_slot_error(*n, now);
+                }
+            }
         }
     }
 }

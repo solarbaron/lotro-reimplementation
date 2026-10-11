@@ -205,6 +205,12 @@ pub enum OwnerKind {
         /// The figure tag.
         tag: u64,
     },
+    /// The figure of a session entity (a scenario or test-server actor, the player), by its
+    /// network ID ([`super::session`]).
+    Session {
+        /// The network ID.
+        net: u64,
+    },
 }
 
 /// An effect owner a landblock scan found.

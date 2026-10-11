@@ -112,8 +112,9 @@ pub use error::{AnimError, Result};
 pub use figure::{BoundHeldClip, BoundShape, MAX_HELD_CLIPS, bind_shape, held_clip_fraction};
 pub use motion::{MotionDelta, RootMotionMode, motion_at, motion_between};
 pub use player::{
-    Animator, ClipSample, CrossFade, EvalScratch, Layer, LayerClip, LayerSnapshot, MAX_LAYER_CLIPS,
-    MIN_BONE_WEIGHT, Playback, Source, SpeedBlend, evaluate, quantise_weight,
+    Animator, BONE_OPACITY_BLEND, ClipSample, CrossFade, EvalScratch, Layer, LayerClip,
+    LayerSnapshot, MAX_LAYER_CLIPS, MIN_BONE_WEIGHT, OPACITY_MIX_IGNORED, Playback, Source,
+    SpeedBlend, evaluate, quantise_weight,
 };
 pub use scheduler::{
     AnimationScheduler, Collected, InstanceId, PoseOutput, SchedulerConfig, SchedulerStats,

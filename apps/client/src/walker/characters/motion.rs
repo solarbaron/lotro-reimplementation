@@ -111,6 +111,17 @@ pub fn make_animator(
     clips: &FigureClips,
     phase: f32,
 ) -> Option<(Animator, Locomotion)> {
+    make_animator_with_keys(skeleton, clips, phase).map(|(a, l, _)| (a, l))
+}
+
+/// [`make_animator`] with the data layer key of each animator layer (lowest first; the
+/// clips the scripts start, [`super::combat_anim`], are inserted by these keys).
+#[must_use]
+pub fn make_animator_with_keys(
+    skeleton: &Arc<Skeleton>,
+    clips: &FigureClips,
+    phase: f32,
+) -> Option<(Animator, Locomotion, Vec<u32>)> {
     let mut a = Animator::new(Arc::clone(skeleton));
     let mut any = false;
     let moves: Vec<_> = [&clips.walk, &clips.run]
@@ -244,7 +255,13 @@ pub fn make_animator(
     if phase.is_finite() && phase > 0.0 {
         let _ = a.advance(phase.min(600.0));
     }
-    Some((a, loco))
+    let mut keys = vec![0u32; a.layers().len()];
+    for ((key, _), &(index, _)) in order.iter().zip(&slots) {
+        if let Some(k) = keys.get_mut(index) {
+            *k = *key;
+        }
+    }
+    Some((a, loco, keys))
 }
 
 /// Sets the layers for ground speed `speed` and advances by `dt` seconds.
@@ -356,7 +373,13 @@ mod tests {
             run: Some(play(&skel, 20, 6.0)),
             held: Vec::new(),
         };
-        let (a, loco) = make_animator(&skel, &clips, 0.5).expect("animator");
+        let (a, loco, keys) = make_animator_with_keys(&skel, &clips, 0.5).expect("animator");
+        assert_eq!(
+            keys,
+            vec![10, 20, 30],
+            "the data layer of each animator layer"
+        );
+        assert_eq!(keys.len(), a.layers().len());
         // Idle 10, locomotion 20, idle 30 (faded out while moving).
         assert_eq!(loco.move_index, 1);
         assert_eq!(loco.above, vec![2]);

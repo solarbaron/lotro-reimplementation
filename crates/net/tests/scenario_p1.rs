@@ -805,18 +805,45 @@ fn o8_routing() {
             }),
         )
         .unwrap();
+    // Every other command reaches the server half, which refuses `UseSkill` (§9.7). The
+    // revision-5 part of O8 (`SelectTarget` answered locally by the test-server backend,
+    // nothing sent) needs the real route and mapper: `tests/remote_selection.rs`.
     assert!(matches!(
         r.session.send(
             now,
-            Command::Combat(tessera_net::CombatCommand::SelectTarget { target: None })
+            Command::Combat(tessera_net::CombatCommand::UseSkill {
+                what: tessera_net::domain::Ref::Literal("x".into()),
+                target: None,
+            })
         ),
         Err(NetError::InvalidCommand(_))
     ));
     let commands = r.log.lock().unwrap().commands.clone();
     assert_eq!(
         commands,
-        vec!["Connect", "EnterWorld", "Chat", "Teleport", "SelectTarget"]
+        vec!["Connect", "EnterWorld", "Chat", "Teleport", "UseSkill"]
     );
+}
+
+/// §14.9 O10–O12 (revision 5, decision 0032 D3): no Combat-group step, trigger or input form
+/// in an overlay file, refused at the statement's first token.
+#[test]
+fn o10_o12_combat_group_is_not_in_the_overlay_subset() {
+    let refused = |text: &str, line: u32, col: u32| {
+        let e = Scenario::parse(text.as_bytes())
+            .unwrap_or_else(|e| panic!("{text:?} does not parse: {e}"))
+            .check_overlay()
+            .unwrap_err();
+        assert_eq!(e.kind, ScenarioErrorKind::NotAllowedInOverlay, "{text:?}");
+        assert_eq!((e.line, e.column), (line, col), "{text:?}");
+    };
+    // O10: steps.
+    refused("tessera-scenario 1\nat 0s target player none\n", 2, 1);
+    refused("tessera-scenario 1\nat 0s vital player health 5/10\n", 2, 1);
+    // O11: a trigger on a Combat-group command.
+    refused("tessera-scenario 1\non target any\nend\n", 2, 1);
+    // O12: an input form.
+    refused("tessera-scenario 1\ninput\nat 1s target none\nend\n", 3, 1);
 }
 
 /// `Session::remote_backend` finds the test-server backend inside an overlay, where

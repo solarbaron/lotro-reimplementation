@@ -37,18 +37,20 @@
 //! | [`map`] | `UI_Map_GameMap`, the tile range, content layer, world → pixel | GP §8.4–§8.6 |
 //! | [`radar`] | the minimap | GP §8 |
 //! | [`worldmap`] | the world-map tree and node choice | GP §9 |
-//! | [`quickslot`] | quickslot bars | GP §10 |
+//! | [`quickslot`] | quickslot bars; skill displays, cooldowns, slot states, activation | GP §10, `combat-ui.md` §9 |
 //! | [`escape`] | Escape with the game UI attached | GP §16 |
 //! | [`chat`] | chat windows, tabs, logs, entry line, command line | `chat-window.md` |
 //! | [`charvocab`] | labels of the P1 types, element IDs, states, properties | naming notes |
-//! | [`examine`] | examination tooltips of items: build, assembly, placement, pins | `item-tooltips.md` |
+//! | [`examine`] | examination tooltips of items, skills and effects: build, assembly, placement, pins, live timer rows | `item-tooltips.md`, `skill-tooltips.md` |
 //! | [`items`] | item slots, bag lists, item drag and drop | `character-panels.md` §3.3, §4.1, §5, §6; `ui-behaviour.md` §7 |
 //! | [`avatar`] | viewports as external-content hosts, the paperdoll's turning | `render.md` §6.10, `character-panels.md` §3.2 |
 //! | [`creation`] | choice lists, steppers, sliders, swatches of the creation screens | `character-screens.md` §3–§5 |
+//! | [`combat`] | unit frames, cast bars, effect bars, floating text, selection display, combat state, defeat panel, fallback looks | `combat-ui.md` |
 
 pub mod avatar;
 pub mod charvocab;
 pub mod chat;
+pub mod combat;
 pub mod creation;
 pub mod data;
 pub mod dragbox;

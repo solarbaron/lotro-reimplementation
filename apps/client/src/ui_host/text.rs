@@ -281,6 +281,16 @@ fn push_markup(b: &mut CharListBuilder, text: &str, colour: u32, tag_colour: u32
     }
 }
 
+/// The pixel size a text asks the fallback font for: Tessera's own property
+/// `LookPids::text_px` of `tessera-ui`'s combat widgets (an Int; none in game data).
+fn fallback_px(props: &[(u32, PropertyValue)]) -> Option<u32> {
+    let pid = tessera_ui::game::combat::vocab::LookPids::default().text_px;
+    match get(props, pid)? {
+        PropertyValue::Int(px) => u32::try_from(*px).ok().filter(|p| *p > 0),
+        _ => None,
+    }
+}
+
 /// Shapes one request (module docs). `None` while a needed font is still loading, or when
 /// no font is available at all.
 pub(crate) fn shape(st: &mut EnvState, req: &TextRequest<'_>) -> Option<Arc<PreparedText>> {
@@ -301,7 +311,12 @@ pub(crate) fn shape(st: &mut EnvState, req: &TextRequest<'_>) -> Option<Arc<Prep
     };
     let normal = match normal {
         Some(f) => Some(f),
-        None if locale == 0 => st.fallback_font(),
+        None if locale == 0 => match fallback_px(props) {
+            // The combat widgets' fallback texts carry their pixel size (`combat-ui.md`
+            // §13; `tessera-ui` `LookPids::text_px`).
+            Some(px) => st.fallback_font_px(px),
+            None => st.fallback_font(),
+        },
         None => None,
     };
     let tag = if slots.tag != 0 && slots.tag != slots.normal {

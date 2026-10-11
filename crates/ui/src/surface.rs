@@ -605,6 +605,11 @@ impl Ui {
         r: &ImageRef,
         pending: &mut bool,
     ) -> Option<Arc<tessera_material::ui_image::UiImage>> {
+        if let ImageRef::File(path) = r
+            && path.starts_with(crate::game::combat::look::PROCEDURAL_PREFIX)
+        {
+            return self.procedural_image(path);
+        }
         match self.env.image(r) {
             ImageState::Ready(i) => Some(i),
             ImageState::Pending => {

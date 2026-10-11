@@ -639,6 +639,8 @@ npc_table! {
         text_tag_font = ("UICore_Text_tag_font", 0xFFFD_300E),
         /// `UICore_Text_tag_fonts`.
         text_tag_fonts = ("UICore_Text_tag_fonts", 0xFFFD_300F),
+        /// `UICore_Text_one_line` (`fonts.md` §7.3: wrapping off when true).
+        text_one_line = ("UICore_Text_one_line", 0xFFFD_3010),
     }
 }
 

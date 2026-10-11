@@ -431,6 +431,35 @@ fn wallet_catalog_and_view() {
     assert_eq!(census.wallet_no_small_icon, 1);
 }
 
+/// §9.4 OPEN (Tessera rule): a record currency without `PaperItem_Category` (not a wallet
+/// item) is listed under `Misc` with the literal refs, never under an untitled category.
+#[test]
+fn wallet_record_without_category_goes_under_misc() {
+    let mut m = install();
+    let cat = m.p("PaperItem_Category");
+    m.enum_texts.insert((cat, 3), "Festival".into());
+    m.enum_names.insert((cat, 3), "Festival".into());
+    m.enum_texts.insert((cat, 9), "Other".into());
+    m.enum_names.insert((cat, 9), "Misc".into());
+    let np = NpcPresenter::new(&m);
+    let p = pl(&m);
+    let amounts = [
+        (Currency::Item(RecordRef::Record(TOKEN)), 3),
+        (Currency::Item(RecordRef::Record(ITEM_B)), 4),
+        (Currency::Item(RecordRef::Literal("Shell".into())), 2),
+    ];
+    let v = np.wallet_view(&amounts, "", &p);
+    let titles: Vec<&str> = v.categories.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, ["Festival", "Other"]);
+    assert!(v.categories.iter().all(|c| c.key.is_some()));
+    let misc: Vec<String> = v.categories[1]
+        .entries
+        .iter()
+        .map(|e| e.name.as_ref().map(|n| n.plain_text()).unwrap_or_default())
+        .collect();
+    assert_eq!(misc, ["bread", "Shell"]);
+}
+
 // ---------------------------------------------------------------------------------------------
 // §5 Dialogue
 // ---------------------------------------------------------------------------------------------

@@ -727,6 +727,19 @@ pub(crate) fn commit_tree_rows(ui: &mut Ui, list: ElementKey, rows: &[TreeRow]) 
 /// truncated to fit (`fonts.md` §7.6) would report only the lines that fit, and a row fitted
 /// to that would cut its wrapped text.
 pub(crate) fn measure(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32, i32) {
+    match shaped_extent(ui, k, text, wrap) {
+        Some(e) => e,
+        None => {
+            let b = ui.layout_box(k).unwrap_or_default();
+            let d = ui.design_box(k).unwrap_or(b);
+            (d.w().max(0), d.h().max(0))
+        }
+    }
+}
+
+/// [`measure`] without the stand-in: `None` while the shaper cannot lay the text out yet
+/// (its fonts are still loading).
+fn shaped_extent(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> Option<(i32, i32)> {
     /// Height given to the shaper when measuring (well above any fitted text's bound).
     const MEASURE_HEIGHT: i32 = 1 << 16;
     let props = ui.properties(k);
@@ -737,13 +750,21 @@ pub(crate) fn measure(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32
         size: (b.w(), MEASURE_HEIGHT),
         wrap_width: Some(wrap.max(1)),
     };
-    match ui.env.shape_text(&req) {
-        Some(p) => (p.extent.0.clamp(0, wrap.max(1)), p.extent.1.max(0)),
-        None => {
-            let d = ui.design_box(k).unwrap_or(b);
-            (d.w().max(0), d.h().max(0))
-        }
+    ui.env
+        .shape_text(&req)
+        .map(|p| (p.extent.0.clamp(0, wrap.max(1)), p.extent.1.max(0)))
+}
+
+/// Whether text element `k`'s text can be measured now (an empty text always can): a row
+/// fitted while its fonts were loading took its designed height and is fitted again once
+/// they have arrived.
+pub(crate) fn text_ready(ui: &mut Ui, k: ElementKey) -> bool {
+    let text = ui.text_of(k);
+    if text.is_empty() {
+        return true;
     }
+    let w = ui.layout_box(k).map_or(1, |b| b.w());
+    shaped_extent(ui, k, &text, w).is_some()
 }
 
 /// Fits the height of text element `k` to its text at its own width (at least `min`
@@ -762,6 +783,101 @@ pub(crate) fn fit_height(ui: &mut Ui, k: ElementKey, min: i32, max: i32) -> (i32
     let h = h.clamp(min.max(0), max.max(min).max(0));
     ui.resize(k, b.w(), h);
     (h, cut)
+}
+
+/// Switches wrapping of text element `k` off (`one_line` true) or on
+/// (`UICore_Text_one_line`, `fonts.md` §7.3). With wrapping off, a text with
+/// `UICore_Text_truncate_text_to_fit` is cut on its one line with the suffix (§7.6).
+pub(crate) fn set_one_line(
+    ui: &mut Ui,
+    nv: &super::super::NpcVocab,
+    k: Option<ElementKey>,
+    on: bool,
+) {
+    if let Some(k) = k {
+        ui.set_property(k, nv.pids.text_one_line, PropertyValue::Bool(on));
+    }
+}
+
+/// Sizes `row` to `width` (keeping its height) and its text element `text`, when that is a
+/// descendant, so that the text ends at the row's right edge; the text wraps (wrapping on)
+/// and the row's height follows the wrapped text (`fit`: at least `min`, at most `max`
+/// pixels for the text). A row grows or shrinks by the text's change of height, so that the
+/// next row of a list starts below it.
+///
+/// Tessera rule (`npc-windows.md` §6.2 OPEN, `quest-journal.md` §4.7 OPEN): the texts of
+/// the objective block and of the details pane are as wide as their list and as tall as
+/// their wrapped text.
+pub(crate) fn fit_text_row(
+    ui: &mut Ui,
+    nv: &super::super::NpcVocab,
+    row: ElementKey,
+    text: ElementKey,
+    width: i32,
+    (min, max): (i32, i32),
+) {
+    let width = width.max(1);
+    if let Some(b) = ui.layout_box(row)
+        && b.w() != width
+    {
+        ui.resize(row, width, b.h().max(1));
+    }
+    set_one_line(ui, nv, Some(text), false);
+    if text == row {
+        fit_height(ui, row, min, max);
+        return;
+    }
+    // The text's left edge in the row (its boxes are relative to its parent).
+    let mut left = ui.layout_box(text).map_or(0, |b| b.l);
+    let mut cur = ui.parent(text);
+    let mut depth = 0;
+    while let Some(c) = cur {
+        if c == row || depth > MAX_TREE_DEPTH {
+            break;
+        }
+        left = left.saturating_add(ui.layout_box(c).map_or(0, |b| b.l));
+        cur = ui.parent(c);
+        depth += 1;
+    }
+    if let Some(tb) = ui.layout_box(text) {
+        let tw = width.saturating_sub(left.max(0)).max(1);
+        if tb.w() != tw {
+            ui.resize(text, tw, tb.h().max(1));
+        }
+    }
+    let before = ui.layout_box(text).map_or(0, |b| b.h());
+    let (h, _) = fit_height(ui, text, min, max);
+    let grow = h - before;
+    if grow != 0
+        && let Some(rb) = ui.layout_box(row)
+    {
+        ui.resize(row, rb.w(), rb.h().saturating_add(grow).max(1));
+        // A text anchored to the row's top and bottom followed the row; one anchored only
+        // at the top keeps the fitted height.
+        if let Some(b) = ui.layout_box(text)
+            && b.h() != h
+        {
+            ui.resize(text, b.w(), h);
+        }
+    }
+}
+
+/// Keeps root panel `root` on the screen (Tessera rule, `npc-windows.md` §4 OPEN): its
+/// displayed box is clamped into the screen as the move step of `ui-behaviour.md` §8.1
+/// step 3 clamps a dragged panel (left, then right; top, then bottom: a panel larger than
+/// the screen ends with its right and bottom edges on the screen's). The size is kept.
+pub fn keep_on_screen(ui: &mut Ui, root: ElementKey) {
+    let Some(lb) = ui.layout_box(root) else {
+        return;
+    };
+    let d = ui.displayed_box(root);
+    let (sw, sh) = ui.screen_size();
+    let x = d.l.max(0).min(sw.saturating_sub(d.w()));
+    let y = d.t.max(0).min(sh.saturating_sub(d.h()));
+    let (dx, dy) = (x - d.l, y - d.t);
+    if (dx, dy) != (0, 0) {
+        ui.move_to(root, lb.l.saturating_add(dx), lb.t.saturating_add(dy));
+    }
 }
 
 /// Most fonts a ladder keeps per element (Tessera bound; the install's ladders have 7).

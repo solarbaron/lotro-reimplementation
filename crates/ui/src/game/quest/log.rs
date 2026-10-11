@@ -557,6 +557,14 @@ impl QuestLogWindow {
         self.model.selected
     }
 
+    /// Fits the details pane's texts again once fonts that were loading when they were
+    /// fitted have arrived (call every frame; see `DetailsPane::refit_when_ready`).
+    pub fn refit_details(&mut self, ui: &mut Ui) {
+        if let Some(d) = self.details.as_mut() {
+            d.refit_when_ready(ui);
+        }
+    }
+
     /// Fills the details pane with the selected quest's details.
     pub fn show_details(
         &mut self,

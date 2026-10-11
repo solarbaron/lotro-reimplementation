@@ -8,8 +8,8 @@ use crate::ui::Ui;
 
 use super::super::examine::ExamTemplate;
 use super::super::npc::kit::{
-    FNode, FallbackArt, clear_rows, colours, commit_rows, find, fit_height, make_row, put_text,
-    text_part,
+    FNode, FallbackArt, clear_rows, colours, commit_rows, find, fit_height, fit_text_row, make_row,
+    put_text, text_part, text_ready,
 };
 use super::super::npc::offer::{GroupType, RewardRow, RewardRows, RowTemplates};
 use super::super::npcvocab::NpcVocab;
@@ -160,6 +160,9 @@ pub struct DetailsPane {
     /// The text rows with their text element, fitted to their text (again after a font
     /// change, [`Self::refit`]).
     fitted: Vec<(ElementKey, ElementKey)>,
+    /// Whether a text row was fitted while its fonts were still loading (it took its
+    /// designed height; [`Self::refit_when_ready`] fits it again once they have arrived).
+    unready: bool,
     templates: DetailsTemplates,
     art: FallbackArt,
     nv: NpcVocab,
@@ -180,6 +183,7 @@ impl DetailsPane {
             rows: Vec::new(),
             rewards: None,
             fitted: Vec::new(),
+            unready: false,
             templates,
             art: art.clone(),
             nv: nv.clone(),
@@ -306,7 +310,7 @@ impl DetailsPane {
                         }) else {
                             break;
                         };
-                        self.text_row(ui, k, Some(ids.objective), line);
+                        self.text_row(ui, k, Some(ids.objective), line, true);
                     }
                 }
                 DetailsSection::Label(t) => {
@@ -324,7 +328,7 @@ impl DetailsPane {
                     }) else {
                         break;
                     };
-                    self.text_row(ui, k, None, t);
+                    self.text_row(ui, k, None, t, false);
                 }
                 DetailsSection::Text(t) => {
                     let Some(k) = make_row(ui, self.pane, self.templates.text, || {
@@ -333,7 +337,7 @@ impl DetailsPane {
                     }) else {
                         break;
                     };
-                    self.text_row(ui, k, None, t);
+                    self.text_row(ui, k, None, t, true);
                 }
                 DetailsSection::Rewards(rows) => {
                     self.commit(ui, &mut committed);
@@ -345,6 +349,24 @@ impl DetailsPane {
             }
         }
         self.commit(ui, &mut committed);
+        self.unready = self.any_unready(ui);
+    }
+
+    fn any_unready(&self, ui: &mut Ui) -> bool {
+        self.fitted
+            .iter()
+            .any(|(k, t)| ui.exists(*k) && ui.exists(*t) && !text_ready(ui, *t))
+    }
+
+    /// Fits the text rows again once every text that was fitted while its fonts were
+    /// loading can be measured (the client calls this every frame; it does nothing
+    /// otherwise). Returns whether the rows were fitted again.
+    pub fn refit_when_ready(&mut self, ui: &mut Ui) -> bool {
+        if !self.unready || self.any_unready(ui) {
+            return false;
+        }
+        self.refit(ui);
+        true
     }
 
     /// Makes the rows made since `committed` entries of the pane (one layout).
@@ -356,12 +378,20 @@ impl DetailsPane {
         *committed = self.rows.len();
     }
 
-    fn text_row(&mut self, ui: &mut Ui, k: ElementKey, id: Option<u32>, text: &str) {
+    /// Adds a text row. With `wrap` (objective lines, the objective text, descriptions,
+    /// bestowal dialogue, repeat note) the text wraps at the pane's width and the row's
+    /// height follows it (Tessera rule, §4.7 OPEN); labels keep their template's text
+    /// properties.
+    fn text_row(&mut self, ui: &mut Ui, k: ElementKey, id: Option<u32>, text: &str, wrap: bool) {
         let w = self.width(ui);
         size_to_width(ui, k, w);
         let t = text_part(ui, k, id).unwrap_or(k);
         put_text(ui, Some(t), text);
-        fit_row(ui, k, t);
+        if wrap {
+            fit_text_row(ui, &self.nv, k, t, w, (16, MAX_TEXT_HEIGHT));
+        } else {
+            fit_row(ui, k, t);
+        }
         self.fitted.push((k, t));
         self.rows.push(k);
     }
@@ -373,6 +403,7 @@ impl DetailsPane {
         for (k, t) in self.fitted.clone() {
             fit_row(ui, k, t);
         }
+        self.unready = self.any_unready(ui);
         if ui.class(self.pane).is_some_and(crate::WidgetClass::is_list) {
             ui.list_layout(self.pane);
         }

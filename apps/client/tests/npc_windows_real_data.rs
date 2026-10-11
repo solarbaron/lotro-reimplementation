@@ -126,6 +126,20 @@ impl Pictures {
         wait_settled(rig);
         self.seq += 1;
         let name = format!("{:02}-{what}", self.seq);
+        {
+            // Windows open on the screen (`npc-windows.md` §4 OPEN, Tessera rule).
+            let ui = rig.host.ui();
+            let b = ui.displayed_box(root);
+            let (sw, sh) = ui.screen_size();
+            assert!(
+                b.l >= 0 && b.t >= 0 && b.l + b.w() <= sw && b.t + b.h() <= sh,
+                "{name}: the window is not on the {sw} x {sh} screen ({}, {}) {} x {}",
+                b.l,
+                b.t,
+                b.w(),
+                b.h()
+            );
+        }
         let (w, h, data) = {
             let mut ui = rig.host.ui_mut();
             capture(&mut ui, root).unwrap_or_else(|| panic!("{name}: the window has no surface"))

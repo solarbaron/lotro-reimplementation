@@ -36,6 +36,7 @@ use tessera_net::domain::Currency;
 use tessera_ui::game::examine::{ExamKey, ExamTooltips};
 use tessera_ui::game::npc::barter::{BarterWindow, page_buttons};
 use tessera_ui::game::npc::dialogue::{DialogueKind, DialogueWindow, centre_on};
+use tessera_ui::game::npc::keep_on_screen;
 use tessera_ui::game::npc::loot::{LootItem, LootWindow};
 use tessera_ui::game::npc::offer::{OfferWindow, RewardRow};
 use tessera_ui::game::npc::quantity::{
@@ -404,6 +405,9 @@ impl NpcUi {
         if let Some((layout, root)) = self.refs.window(kind) {
             match ui.open_panel(layout, root) {
                 Ok(k) => {
+                    // Tessera rule (`npc-windows.md` §4 OPEN): a window laid out off the
+                    // screen (the barter window on a 1,600-pixel screen) is moved onto it.
+                    keep_on_screen(ui, k);
                     let (a, b) = if kind == NpcWindowKind::Barter {
                         let pc = tessera_ui::game::find_below(ui, k, self.refs.nv.ids.barter_pages);
                         page_buttons(ui, &self.refs.nv, pc, &self.art)
@@ -439,7 +443,11 @@ impl NpcUi {
             NpcWindowKind::Loot => fallback::loot(ui, nv, art, texts).map(|k| (k, None, None)),
             NpcWindowKind::Wallet => fallback::wallet(ui, nv, art, texts),
         };
-        r.map_err(|e| format!("{}: {e}", kind.panel_name()))
+        r.map(|(k, a, b)| {
+            keep_on_screen(ui, k);
+            (k, a, b)
+        })
+        .map_err(|e| format!("{}: {e}", kind.panel_name()))
     }
 
     /// Opens window `kind` empty (`--open-panel`, §4 Tessera rule); the wallet window
@@ -779,6 +787,7 @@ impl NpcUi {
                 && ui.exists(old)
             {
                 centre_on(ui, root, old);
+                keep_on_screen(ui, root);
             }
             self.destroy(ui, id);
             let win = match &view {

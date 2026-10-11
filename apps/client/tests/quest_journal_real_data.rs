@@ -465,6 +465,22 @@ fn log_and_tracker_goldens_on_a_seeded_sample() {
         quests.tracker().map_or(0, |t| t.entries.len())
     );
     assert_eq!(quests.tracker().map(|t| t.entries.len()), Some(3));
+    // The client's frame loop: the quest windows run every frame, so texts fitted while
+    // their fonts were loading are fitted again once they arrive (§4.7 OPEN).
+    let start = Instant::now();
+    loop {
+        rig.frame();
+        {
+            let view = JournalView::new(&state, Some(&data));
+            let mut ui = rig.host.ui_mut();
+            quests.frame(&mut ui, &view, &[]);
+        }
+        if rig.host.settled() {
+            break;
+        }
+        assert!(start.elapsed() < SETTLE_LIMIT, "the UI did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
     pics.take(rig, log, "01-quest-log");
     // The tracker's list paints into its own surface (the box's holds only the title).
     let _ = tracker;

@@ -691,6 +691,10 @@ impl QuestUi {
                 self.refresh_details(ui, view, false);
             }
         }
+        // Texts fitted while their fonts were loading are fitted again once they arrive.
+        if let Some((_, w)) = self.log.as_mut() {
+            w.refit_details(ui);
+        }
         out
     }
 

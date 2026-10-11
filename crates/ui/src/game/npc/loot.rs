@@ -13,7 +13,7 @@ use super::super::{IconImage, set_icon, show};
 use super::coins::{CoinCounts, MoneyDisplay, MoneyOptions, fallback_display};
 use super::kit::{
     ClickKind, FNode, FallbackArt, Listen, click_of, colour_value, colours, commit_rows, find,
-    icon_part, make_row, put_text, row_of, text_part,
+    icon_part, make_row, put_text, row_of, set_one_line, text_part,
 };
 use super::{NpcAction, NpcLabel, NpcTexts, WindowId, label_text};
 
@@ -309,6 +309,9 @@ impl LootWindow {
             });
             let Some(r) = row else { break };
             let name = text_part(ui, r, Some(ids.item_name));
+            // Tessera rule (§8.2 OPEN): the name is one line, cut with the element's
+            // truncation suffix and tooltip (`fonts.md` §7.6) when longer.
+            set_one_line(ui, &self.nv, name, true);
             put_text(ui, name, &it.name);
             if let (Some(n), Some(c)) = (name, it.colour) {
                 ui.set_property(n, cp, colour_value(c));

@@ -237,6 +237,15 @@ has its own instance and the later one is drawn above.
 > on screen. The barter window's root likewise lands at x = −107 on that screen (design
 > position (10, 116), origin (323, 448)); how the original places it is not stated either.
 
+> **OPEN:** (implementer, `tessera-ui` and `apps/client`, 2026-10-11) Tessera rule until the
+> original's placement is known: every root of this catalogue, once opened (and again after
+> a replaced dialogue instance is centred on the old one, §5.1), is clamped into the screen
+> the way the move step of `ui-behaviour.md` §8.1 step 3 clamps a dragged panel: its
+> displayed box, left edge then right edge, top edge then bottom edge (a root larger than
+> the screen ends with its right and bottom edges on the screen's); its size is kept. The
+> barter window then opens at x = 0 on a 1,600-pixel screen. Saved locations are not read
+> by these windows yet.
+
 ---
 
 <a id="s5"></a>
@@ -352,6 +361,13 @@ table keyed by action when the window is built (BIN).
 > wired: `tessera-ui`'s list rows take no keyboard focus, so no row can have it. Enter on the
 > choice window goes to the rest of the UI as before. Which row has focus when the window opens
 > (none, or the first option)?
+
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) the table gives `ActionPickerMiscTemplate`
+> as "truncated with tooltip" but not whether its text wraps; on this install a long option
+> wrapped to a second line that the 33-pixel row clipped. Tessera rule until settled: an
+> option row's text element gets `UICore_Text_one_line` true, so a long option is one line
+> cut with the template's truncation suffix and its automatic tooltip (`fonts.md` §7.6,
+> `ui-behaviour.md` §10.2). The greeting row keeps wrapping.
 
 <a id="s5-4"></a>
 ### 5.4 NPC comment window (NW4)
@@ -496,6 +512,14 @@ hands it was not traced.
 > **Tessera rule:** the header, then one entry with `Quest_ObjectiveDescription` of the
 > objective whose `Quest_ObjectiveIndex` is lowest; no entry (and no header) when that
 > objective has no description or the quest is a literal ref. No token row.
+
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) how the auto-resizing objective list sizes
+> its entry is not stated; created from the template, `QuestObjectives_Objective` kept its
+> design width, wider than `Quest_ObjectivesRewardsList`, and its text ran past the pane's
+> right edge. Tessera rule until settled (as `quest-journal.md` §4.7 sizes the details pane's
+> elements): the entry is resized to the list's width (a text inside it to the list's width
+> less its left offset), wraps (`UICore_Text_one_line` false), and its height follows its
+> wrapped text (the row grows by the text's change of height).
 
 <a id="s6-3"></a>
 ### 6.3 Reward block (BIN, NW17)
@@ -831,6 +855,13 @@ refreshes the list; a change of the filter menu refreshes the list. A sale names
 > Without an install every backpack item is listed with worth 0 (no sale data to test).
 > Rule 4 (dropping a bag item on the window) is not wired yet. Please confirm.
 
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) rule 2 does not say what an entry's money
+> display shows for a worth of 0 (a literal item, which has no record, or an item without
+> sale data): `MoneyDisplay_MoneyTemplate` hides every zero coin, so the entry showed no value
+> at all. Tessera rule until settled: a literal item's worth is 0, and an entry with worth 0
+> shows the copper coin with count 0 (the §9.2 rule for an amount of 0 with `ForceShowAll`
+> and `SuppressLeadingZeroes`); any other worth uses the template's own options.
+
 <a id="s7-7"></a>
 ### 7.7 Barter window (NW6)
 
@@ -931,6 +962,12 @@ parts, the button `ExternalContainerButton` with another text) and
 - Background state: `container_corpse` when the source is an entity of kind creature,
   non-player or player; `container_chest` otherwise (object or no source).
 - The timer is hidden.
+
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) whether the medium item display's name
+> (165 × 32) wraps is not stated; on this install long names wrapped to two lines that filled
+> the row. Tessera rule until settled: a loot row's name element gets `UICore_Text_one_line`
+> true, so a long name is one line, cut with the element's truncation suffix and tooltip when
+> it has `UICore_Text_truncate_text_to_fit` (`fonts.md` §7.6), else clipped at its right edge.
 
 <a id="s8-3"></a>
 ### 8.3 Taking loot (BIN, NW13)
@@ -1132,6 +1169,11 @@ Opening: `TogglePaperItemPanel` (default B, NW10) and `Player_Wallet_Button`.
 > feed can be any item); `tessera-gamedata` lists it under a category row without a title.
 > `PaperItemEntry_Icon` takes one image: for an entry without `PaperItem_SmallIcon` the
 > client shows the item's `Icon_Layer_ImageDID` (not the composed layers) at 16 × 16.
+
+> **OPEN:** (implementer, `tessera-gamedata`, 2026-10-11) Tessera rule for the question above
+> until settled: a record ref without `PaperItem_Category` is listed under the category
+> `Misc`, with the literal refs (rule 3), so no category row is without a title. A record
+> that has a category keeps it, wallet item or not.
 
 > **OPEN:** (P3 exit verifier, 2026-10-11) on this install `PaperItemEntry_Total` is of the
 > game type `QuantityDisplay`, which no spec gives an engine class; built as the fallback Field

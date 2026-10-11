@@ -407,6 +407,14 @@ impl VendorWindow {
             );
             let mut m = m;
             if let Some(d) = m.as_mut() {
+                // Tessera rule (§7.6 OPEN): a worth of 0 (an item without sale data, a
+                // literal item) shows the copper coin with 0, as §9.2 shows an amount of 0
+                // with `ForceShowAll` and `SuppressLeadingZeroes`; any other worth uses the
+                // template's own options.
+                if s.worth.is_zero() {
+                    d.options.force_show_all = true;
+                    d.options.suppress_leading_zeroes = true;
+                }
                 d.set(ui, s.worth, false, texts);
             }
             let l = &mut self.lists[1];

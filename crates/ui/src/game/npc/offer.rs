@@ -18,7 +18,7 @@ use super::super::{IconImage, set_icon, set_image_ref, show};
 use super::coins::{CoinCounts, MoneyDisplay, MoneyOptions, fallback_display};
 use super::kit::{
     ClickKind, FNode, FallbackArt, Listen, adopt, clear_rows, click_of, colours, commit_rows, find,
-    fit_height, icon_part, instantiate, mark_row, put_text, row_from_template, row_of, text_part,
+    fit_text_row, icon_part, instantiate, mark_row, put_text, row_from_template, row_of, text_part,
 };
 use super::{NpcAction, NpcLabel, NpcTexts, WindowId, label_text};
 
@@ -334,6 +334,9 @@ fn amount_label(kind: AmountKind) -> &'static str {
 /// Width of a reward row (§6.3: text 319 at x 45).
 pub const REWARD_ROW_WIDTH: i32 = 364;
 
+/// Most height an objective entry takes (Tessera bound; the list scrolls).
+pub const MAX_OBJECTIVE_HEIGHT: i32 = 4096;
+
 /// Height of a reward row (Tessera: the 32-pixel icon with a 4-pixel margin).
 pub const REWARD_ROW_HEIGHT: i32 = 40;
 
@@ -474,9 +477,10 @@ impl RewardRows {
             let Some(k) = k else { break };
             let t = text_part(ui, k, Some(self.nv.ids.objective)).unwrap_or(k);
             put_text(ui, Some(t), line);
-            if t == k {
-                fit_height(ui, k, 16, 4096);
-            }
+            // Tessera rule (§6.2 OPEN): the entry is as wide as the list and as tall as its
+            // wrapped text (a template row keeps its design width otherwise, and its text
+            // runs past the pane's right edge).
+            fit_text_row(ui, &self.nv, k, t, w, (16, MAX_OBJECTIVE_HEIGHT));
             if adopt(ui, self.list, k) {
                 self.rows.push((k, None));
                 self.selectable.push(false);

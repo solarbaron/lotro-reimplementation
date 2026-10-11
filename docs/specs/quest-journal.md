@@ -437,6 +437,14 @@ for the conversation pane.
 > width (local golden of the quest log, 2026-10-11). Whether the original wraps these texts and
 > sizes each element to its text is an owner check (O119).
 
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) Tessera rule until O119 is answered: the
+> text elements of the progress lines, the objective text, the background description, the
+> bestowal dialogue, the objective descriptions and the repeat note are sized to the pane's
+> width (a text inside a template element to that width less its left offset), wrap
+> (`UICore_Text_one_line` false), and each element's height follows its wrapped text, so the
+> next element starts below it. Label elements (`QuestDisplay_QuestDescriptionLabel`, the
+> bestowal and objective labels) keep their template's text properties.
+
 > **OPEN:** (implementer, 2026-10-10) for an underway quest whose current objective gives no
 > line under §5.2 (no override, no shown event line), the §5.2 Tessera rule makes the
 > objective's `Quest_ObjectiveDescription` the progress text (item 2), and item 3 then shows

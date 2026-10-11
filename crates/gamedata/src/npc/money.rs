@@ -450,7 +450,13 @@ impl NpcPresenter<'_> {
             ),
             RecordRef::Record(did) => {
                 let set = self.data().record(*did).ok().flatten();
-                let key = set.as_ref().and_then(|s| s.enum_key(p.paper_category));
+                // A record without `PaperItem_Category` (a feed currency that is not a
+                // wallet item) goes under `Misc`, as a literal ref does (Tessera rule,
+                // `npc-windows.md` §9.4 OPEN).
+                let key = set
+                    .as_ref()
+                    .and_then(|s| s.enum_key(p.paper_category))
+                    .or_else(misc);
                 let name = set
                     .as_ref()
                     .and_then(|s| render_opt(self.data(), s.string_info(p.name), player));

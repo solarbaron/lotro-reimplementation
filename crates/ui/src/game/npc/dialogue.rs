@@ -14,7 +14,8 @@ use super::super::npcvocab::NpcVocab;
 use super::super::set_image_ref;
 use super::kit::{
     ClickKind, FNode, FallbackArt, FontLadder, Listen, OPTION_LABEL_ID, click_of, colours,
-    commit_rows, cut, find, fit_height, icon_part, make_row, put_text, row_of, text_part,
+    commit_rows, cut, find, fit_height, icon_part, make_row, put_text, row_of, set_one_line,
+    text_part,
 };
 use super::{NpcAction, NpcLabel, NpcTexts, WindowId, label_text};
 
@@ -320,6 +321,9 @@ impl DialogueWindow {
             // A fallback row's text is its Text child; a template row (a Button) shows its
             // own text.
             let label = text_part(ui, row, None);
+            // Tessera rule (§5.3 OPEN): an option row shows its text on one line, cut with
+            // the template's truncation suffix and tooltip (`fonts.md` §7.6) when longer.
+            set_one_line(ui, &self.nv, label, true);
             put_text(ui, label, &cut(&o.text));
             if let Some(img) = &o.icon
                 && let Some(ic) = icon_part(ui, row, Some(ids.action_icon))

@@ -46,7 +46,7 @@ pub mod vendor;
 pub mod wallet;
 
 pub use coins::{CoinCounts, CoinKind, MoneyDisplay, MoneyOptions};
-pub use kit::FallbackArt;
+pub use kit::{FallbackArt, keep_on_screen};
 
 /// A feed window (`scenario-feed.md` §5.6 `WindowId`).
 pub type WindowId = u32;

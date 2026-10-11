@@ -3,9 +3,13 @@
 //! §16.1): the combat layouts and vocabulary resolve; the floating-text settings and the
 //! avoidance tokens are found; the reference scenario of §17.1 plays headless with the
 //! install's panels and, at every checkpoint, the §14 elements are shown, read from the UI
-//! tree; every checkpoint is rendered and compared with a local golden in the user's cache
-//! (ARCHITECTURE §23.3: real-data goldens are never committed). The first run writes the
-//! goldens; later runs compare.
+//! tree; every checkpoint is rendered and compared with a local-only golden (decision 0031
+//! tier 2, `ui_common/goldens.rs`: `TESSERA_GOLDEN_DIR`, keyed by package, test binary,
+//! function and install version, never inside a work tree, never committed). A missing
+//! golden is written and reported `golden: blessed`; `TESSERA_GOLDEN_REQUIRE=1` makes it a
+//! failure, `TESSERA_GOLDEN_BLESS_LOCAL=1` rewrites existing ones; `TESSERA_BLESS` is not
+//! read. The GPU pictures are compared with the tolerance of the render crate's
+//! `golden.rs` (tier 1 for the same painter).
 //!
 //! Skipped (reported as passed) unless `TESSERA_GAME_DIR` is set. Run with
 //! `TESSERA_GAME_DIR=… cargo test --release -p tessera-client --test combat_ui_real_data
@@ -13,6 +17,8 @@
 
 #[path = "../../../crates/render/tests/support/golden.rs"]
 mod golden;
+#[path = "ui_common/goldens.rs"]
+mod goldens;
 #[path = "../../../crates/render/tests/support/gpu.rs"]
 mod gpu;
 
@@ -41,14 +47,27 @@ fn game_dir() -> Option<PathBuf> {
     }
 }
 
-/// The local golden folder in the user's cache (never in the repository).
-fn cache_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("tessera/goldens/combat_ui")
+/// Compares a GPU picture with its golden under the render crate's default tolerance.
+fn gpu_compare(want: &goldens::Rgba, got: &goldens::Rgba) -> (bool, String, goldens::Rgba) {
+    let image = |g: &goldens::Rgba| tessera_render::RgbaImage {
+        width: g.width,
+        height: g.height,
+        data: g.data.clone(),
+    };
+    let tol = golden::Tolerance::default();
+    let (c, diff) = golden::compare(&image(want), &image(got), tol);
+    (
+        c.passes(tol),
+        format!(
+            "{} outliers, {} strict mismatches of {} pixels, max difference {}",
+            c.outliers, c.strict_mismatches, c.pixels, c.max_diff
+        ),
+        goldens::Rgba {
+            width: diff.width,
+            height: diff.height,
+            data: diff.data,
+        },
+    )
 }
 
 fn ms(t: f64) -> u64 {
@@ -58,6 +77,15 @@ fn ms(t: f64) -> u64 {
 #[test]
 fn combat_screens_with_the_install() {
     let Some(dir) = game_dir() else { return };
+    // Decision 0031 tier 2: refuse a golden folder in a work tree before any work.
+    let golden_dir = goldens::golden_dir(
+        env!("CARGO_PKG_NAME"),
+        "combat_ui_real_data/combat_screens_with_the_install",
+        &goldens::install_version(&dir),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut flags = goldens::Flags::from_env();
+    flags.sheet = flags.sheet.map(|s| s.join("combat_ui_real_data"));
     let set = Arc::new(ArchiveSet::open(&dir, SetOptions::default()).expect("archive set"));
     let empty = tempfile::tempdir().expect("tempdir");
     let booted = UiBoot::spawn(set, dir.clone(), Some(empty.path().to_path_buf()))
@@ -148,11 +176,17 @@ fn combat_screens_with_the_install() {
     let mut missing = Vec::new();
     let mut images = Vec::new();
     let mut passed = 0;
+    let mut unsettled = Vec::new();
     let (outcome, _) = play(config, sc, None::<Vec<u8>>, &mut screens, |at, s| {
         let Some((t, elements)) = REFERENCE_CHECKPOINTS.iter().find(|(t, _)| ms(*t) == at) else {
             return;
         };
-        s.settle(renderer.as_deref_mut());
+        // A capture after the settle limit ran out is a failure (decision 0031).
+        let settled = s.settle(renderer.as_deref_mut());
+        if !settled {
+            unsettled.push(at);
+            return;
+        }
         for e in *elements {
             if s.is_shown(*e) {
                 passed += 1;
@@ -166,6 +200,10 @@ fn combat_screens_with_the_install() {
     })
     .expect("sandbox");
     assert_eq!(outcome.exit_code(), 0, "{outcome:?}");
+    assert!(
+        unsettled.is_empty(),
+        "the UI did not settle at {unsettled:?} ms; no picture is taken (decision 0031)"
+    );
     eprintln!(
         "checkpoints: {} elements shown, {} missing {missing:?}",
         passed,
@@ -173,16 +211,24 @@ fn combat_screens_with_the_install() {
     );
     assert!(missing.is_empty(), "elements not shown: {missing:?}");
 
-    // Local goldens: written on the first run, compared on later runs.
-    let cache = cache_dir();
-    std::fs::create_dir_all(&cache).expect("cache folder");
-    for (at, img) in &images {
-        let p = cache.join(format!("combat_ui_{at}.png"));
-        if p.exists() && !golden::blessing() {
-            golden::check(&p, img, golden::Tolerance::default());
-        } else {
-            golden::write_png(&p, img).expect("writes the local golden");
-            eprintln!("local golden written: {}", p.display());
+    // Local-only goldens (decision 0031 tier 2): blessed when missing, else compared.
+    let mut blessed = 0;
+    let mut matched = 0;
+    for (at, img) in images {
+        let name = format!("checkpoint-{at:05}ms");
+        let pic = goldens::Rgba {
+            width: img.width,
+            height: img.height,
+            data: img.data,
+        };
+        match goldens::check_with_compare(&golden_dir, &name, &pic, &flags, gpu_compare) {
+            Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
+            Ok(goldens::Outcome::Passed(_)) => matched += 1,
+            Err(e) => panic!("{e}"),
         }
     }
+    eprintln!(
+        "goldens in {}: {blessed} blessed, {matched} passed",
+        golden_dir.display()
+    );
 }

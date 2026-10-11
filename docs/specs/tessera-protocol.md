@@ -28,9 +28,10 @@ server (`tessera-server`). It is a design, not a description of anything observe
   world clock, and disconnect.
 - **Not related to any official protocol.** The protocol has no relation to, and no
   compatibility goal with, the network protocol, login, launcher or servers of the game
-  whose data files Tessera reads. Nothing here was derived from observing them; that work is
-  gated behind M8 ([decision 0004](../decisions/0004-server-strategy.md), `docs/LEGAL.md`
-  §9.3). The only links to the user's data are opaque record identifiers (DIDs) and enum
+  whose data files Tessera reads. Nothing here was derived from observing them; that work
+  belongs to M8 ([decision 0034](../decisions/0034-official-server-compatibility.md), formerly
+  gated by decision 0004; `docs/LEGAL.md` §9.3), and Tessera's protocol stays independent of
+  it. The only links to the user's data are opaque record identifiers (DIDs) and enum
   keys. The client resolves them against its **own** install (§7.4). The server never
   needs, stores or sends game data.
 - **Non-goals of v1:** the static world (each client renders it from its own install, §9.1),
@@ -2581,6 +2582,7 @@ them.
 | 2026-10-10 | §1, §8.3, §15, §17.1 (spec writer, design). §8.3 "Server relaxations": new paragraph "Bounds of the values in force" (a server never applies a window above 10 s or *S* above 100 m; it refuses or clamps; a window of 0 or a reserve that is 0, negative or not a number turns the relaxation off) and new paragraph "Changing the parameters during an epoch" (allowances and *C* capped at once by the new values, no refill at the change; an open window keeps the start of its epoch and takes the new length, 0 or a passed end closes it; a closed window never reopens). §15 invariant 8: with parameters changing within a stretch, the largest values in force bound it. Both implementer notes of §17.1 (2026-10-09 clamping, 2026-10-10 limit change, from the implementations in commits a692dce and e73f00d) answered: the implemented behaviour is adopted. New provenance row. No byte changes; minor version 0. Status Accepted → Revised, awaiting review |
 | 2026-10-10 | v1.1, minor version 1 (spec writer, design; decision 0025): §3 compatible flag bits with payload and the frozen `Hello`/`HelloAck` (round-2 OPEN answered), new §3.1 minor table; §5.3 `Equipped` bit 3 `slot`, `LookEntry`, `Look`; looks appended to `LoginOk`, `CharacterCreate`, `CharacterList`, `WorldEnter`, `EntityCreate`, `EntityAppearance`; `AppearanceSet` carries none; §7.4 slot, look and the receiver rule; §13.1 limits; §15 invariants 10–11; §16.8 vectors; Appendix A maps `CreateCharacter`, `LoginOk`, `CharacterList`, `CharacterCreateFailed` per `character-screens.md` §7.1.1 (Q11) and the overlay's `AppearanceSet`. v1.0 bytes unchanged. Status Accepted → Review |
 | 2026-10-10 | Independent review of v1.1 (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Non-blocking notes (a)–(c) in the review record |
+| 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md): §1 "Not related to any official protocol" says official-protocol work belongs to M8 (formerly gated by decision 0004) and that this protocol stays independent of it. No message, field or rule changed; version stays v1.1 |
 
 > **Answered (2026-10-09, spec writer; was OPEN, review, non-blocking, round 2):** the
 > 2026-10-07 review row is added and "Last updated" is current.

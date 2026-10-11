@@ -108,6 +108,7 @@ P19) describe that machine only; on another machine run `tools/dev-setup.sh` ins
 | P18 | Prior-art licenses and recommended uses (§9) | `research/resources.json` (all 98 entries `exists: true`, verified 2026-10-03) | Reported |
 | P19 | *Primary workstation only:* `/home` had ~20 GB free (96 % used) and a second disk (`~/nvme`, XFS with reflink) ~216 GB free. Other machines differ: put `$TESSERA_RE_DIR` (§11) and the build cache on whatever large private disk they have | `df -h`, observed 2026-10-03; reflink from `re-tooling.md` §0 | Confirmed (free space) / Reported (reflink) |
 | P20 | Analogue projects all ship per-format CLI tools early, use schema-driven codegen, gate real-data tests on an env var, and fuzz parsers | `analogues.md` §4 | Reported |
+| P21 | REA facts from the 2026-10-11 evaluation (rea-agents 6.4.0): licence, tool catalogue, no install hooks or network egress on the Ghidra path, npm signatures, per-session import and re-analysis, startup deadline, unpaged listings, state outside the repository (§5.1, §5.3, §5.4) | evaluation of 2026-10-11 in `~/nvme/rea-eval`, summarised in [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md) | Reported (until the decision-0033 pilot) |
 
 ---
 
@@ -130,6 +131,8 @@ These rules come from `CLAUDE.md` and the legal research. They decide which tool
 5. **Never against live servers with a modified client.** No debugger, injector or memory tool may
    touch a client connected to official servers. Doing so breaks the ToS and anti-cheat rules and
    is Tier X in our legal policy.
+   Decision 0034 (2026-10-11, M8 in scope) keeps this rule unchanged. Passive capture of the
+   owner's own traffic with the unmodified client is allowed for M8 (§7).
 6. **Outputs are prose specs.** The only thing a dirty-room tool produces for the project is a
    `docs/specs/*.md` page, written in our own words, with a provenance table.
 
@@ -281,6 +284,7 @@ material.
 | capa, Detect-It-Easy | identify compilers, packers and statically linked libraries | dirty | Apache-2.0; MIT | `uv tool install flare-capa`; DiE upstream | opt |
 | rizin / Cutter | lightweight alternative disassembler | dirty | LGPL-3.0 / GPL-3.0 | `dev-util/rizin`, `dev-util/cutter` | opt |
 | IDA Pro / Binary Ninja | commercial disassemblers; only if a researcher already owns one | dirty | proprietary | upstream | opt |
+| REA (rea-agents 6.4.0) | MCP/CLI front end to Ghidra headless: decompile, typed xrefs, call paths, value traces, Evidence records | dirty | MIT | pinned npm install into `$TESSERA_RE_DIR/tools/rea` with `--ignore-scripts` ([§5.4](#c-rea)) | gated, opt ([decision 0033](decisions/0033-rea-for-dirty-room-analysis.md)) |
 
 **Patch-diff source.** The launcher's `backup/` directory keeps previous copies of some binaries,
 but on 2026-10-03 it held only the 32-bit client and DLLs, with no `x64/` copy (P9). So we keep our
@@ -310,10 +314,54 @@ them can return decompiler output, so **none may be configured for a clean sessi
 | **jtang613/GhidrAssistMCP** | MIT | Ghidra 11.4+ (tested on 12.1) | in-Ghidra plugin on `127.0.0.1:8080` (`/mcp` streamable HTTP, `/sse`); headless through an `analyzeHeadless` pre-script | official Java MCP SDK; resources by URI; risky tools (scripts, file import, export) **off by default**; batch rename | building from source needs Java 25 (use the release zip) | good alternative if pyghidra-mcp's indexing gets in the way |
 | themixednuts/GhidraMCP | MIT | 0.9.0 pins **12.1.4**, newer than the installed 12.1.3 | in-Ghidra HTTP on 8080, no Python bridge | 14 consolidated tools, including Version-Tracking sessions and mapping a data type onto bytes (useful for checking a layout guess) | version lock; port clash with GhidrAssistMCP | consider after upgrading Ghidra |
 | LaurieWired/GhidraMCP | Apache-2.0 | 11.3.2 | plugin + Python bridge on 8080 | the original; simple | stale since 2025-06; no struct tools, no batch, no headless | **avoid** |
+| morluto/rea (`rea-agents` 6.4.0) | MIT | uses the local install through `GHIDRA_INSTALL_DIR` (accepts 12.1.3 through a shim, [§5.4](#c-rea)) | stdio MCP server or CLI; imports the target into a temporary project with `-readOnly -deleteProject` per session | decompile, typed xrefs, callers and callees, call paths, value traces across calls, function dossiers; Evidence records with the target's SHA-256 (P21) | many out-of-scope tools (capture, browser, Android, firmware, reconstruction); `rea setup` registers itself at user scope and installs a skill; very high release churn | **limited** ([decision 0033](decisions/0033-rea-for-dirty-room-analysis.md)): re-imports and re-analyses per session (~21 min or more), cannot open the shared project, unpaged listings; owner-started dedicated sessions only |
 
 Settings that apply to every server: bind to `127.0.0.1` only, keep script-execution tools
 disabled, and prefer read-only modes, because the job is extracting facts, not annotating a shared
-project.
+project. No server is ever registered at user, project (`.mcp.json`) or local scope; a dirty
+session attaches it with `--strict-mcp-config` (`CLEAN_ROOM.md` §7 rule 4).
+
+### 5.4 REA setup (decision 0033) {#c-rea}
+
+Added 2026-10-11 by [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md) (Proposed).
+While that record is Proposed, the only use is the owner's pilot (f). Everything below lives
+under `$TESSERA_RE_DIR` on the machine, is dirty, and is not carried by git.
+
+a. **Install.** `npm install --prefix $TESSERA_RE_DIR/tools/rea --ignore-scripts --no-fund
+   --no-audit rea-agents@6.4.0`, with the npm cache on the bulk drive
+   (`npm_config_cache=~/nvme/rea-eval/npm-cache`). Then check the package integrity
+   (`sha512-Vj1zWfSlna5bphGoaoI/TcVBuYvze9u+OyPC3Shz8YkBqaCTqB4COnnRoX7XDwMpwI24ZlFEel2yEj0k8LTWEQ==`),
+   run `npm audit signatures`, and keep the resulting lock as `package-lock.reviewed.json`
+   beside the install (SHA-256
+   `2dba038b1cbc097a3ff153f7346e09436e5233fad7b6dfd319807fb6ada1fa95`). No global install,
+   nothing on `PATH`; REA is called by absolute path only. Never run `install.sh`,
+   `npx rea-agents`, `rea setup`, `rea update` or `rea uninstall`, and never install the
+   `reverse-engineer-anything` skill. A version bump repeats this review and adds a row to
+   the decision's change log.
+b. **Ghidra shim** at `$TESSERA_RE_DIR/tools/ghidra-shim`: top-level symlinks to
+   `/usr/share/ghidra`, and `support/` as symlinks plus one executable copy of
+   `analyzeHeadless` (the Gentoo package ships it non-executable). The system install stays
+   untouched.
+c. **`mcp-rea.json`** beside the install starts `<install>/node_modules/.bin/rea --mcp` with
+   `HOME` and `TMPDIR` set to `$TESSERA_RE_DIR/work/rea-<key>/{home,tmp}` (no path element
+   starting with a dot, or REA falls back to `/tmp`), `REA_ANALYSIS_PROVIDER=ghidra`,
+   `GHIDRA_INSTALL_DIR` set to the shim, `JAVA_HOME` set to the resolved full JDK 21,
+   `REA_GHIDRA_STARTUP_TIMEOUT_MS=5400000` and `GHIDRA_HEADLESS_MAXMEM=10G`.
+d. **`settings-rea.json`** beside the install sets `permissions.allow` to the static native
+   tools listed in decision 0033 item 5 and `permissions.deny` to the rest of the 6.4.0
+   catalogue (generated from `tools/list`). Regenerate both lists on any version bump.
+e. **Start** the dedicated dirty session in a dirty worktree or scratch directory, with
+   `MCP_TOOL_TIMEOUT` set to match the startup deadline:
+   `claude --strict-mcp-config --mcp-config $TESSERA_RE_DIR/tools/rea/mcp-rea.json --settings $TESSERA_RE_DIR/tools/rea/settings-rea.json`.
+   Never start the milestone workflow or a clean agent from it. One REA session at a time; it
+   counts as one of the at most three heavy jobs for its whole life.
+f. **Pilot and cleanup.** The pilot runs in `$TESSERA_RE_DIR/work/rea-pilot` and records
+   `rea doctor --provider ghidra --format json` health with the shim, cold-start wall time,
+   peak RSS and temporary disk use, whether a saved analysis snapshot reopens in a new process
+   without re-analysis, and one in-scope benchmark question answered with both REA and
+   `analyzeHeadless`. After every session (pilot or not), delete `work/rea-<key>` and check
+   that `/tmp` holds no `rea-*` leftovers. If the decision is Rejected, delete
+   `$TESSERA_RE_DIR/tools/rea`, the shim and `~/nvme/rea-eval/prefix`.
 
 ---
 
@@ -379,9 +427,20 @@ There are two kinds of tool here.
 Tessera speaks **its own** protocol (`docs/specs/transport-design.md`) to the in-process sandbox
 and, from M7, to a project-owned test server. That is risk tier T2 in `docs/LEGAL.md` §8. Network
 tools therefore look at **our own** traffic. Observing official login or session traffic is
-behind the T4 gate (`docs/LEGAL.md` §9.3): until the gate passes, no spec about the official
-login, its encryption or key handling may be written, and captures from official servers are
-never committed anywhere (P16).
+M8 work. Since 2026-10-11 it is in scope by the owner's decision
+([decision 0034](decisions/0034-official-server-compatibility.md) §2, `docs/LEGAL.md` §9.3)
+on these terms:
+
+- only passive captures of the owner's own sessions of the **unmodified** client, on the
+  owner's machine;
+- no injection, debugger or memory reading on a client connected to official servers
+  (§2 rule 5);
+- decryption only by methods that need none of those tools;
+- captures stay under `$TESSERA_RE_DIR/captures/` and are never committed or attached
+  anywhere (P16);
+- specs receive field-level facts only: never key values, hostnames, account data or
+  other players' data;
+- never anything about anti-cheat or anti-tamper.
 
 ### 7.1 Table {#e-table}
 
@@ -428,9 +487,16 @@ the safe path the default one.
 
    Spec-writing sessions run from a separate checkout or from the lab directory (§11) with their
    own settings, so the deny list does not get in their way.
-3. **MCP servers.** Reverse-engineering MCP servers (the Ghidra servers in §5.3, and any ImHex,
-   RenderDoc, Frida or packet-capture servers) are configured **only** in the lab directory's own
-   `.mcp.json`, never in this repository. All of them can return dirty material.
+3. **MCP servers.** Reverse-engineering MCP servers (the Ghidra servers in §5.3, REA, and any
+   ImHex, RenderDoc, Frida or packet-capture servers) are never registered at user, project
+   (`.mcp.json`, in this repository or in the lab directory) or local scope. Each lives in a
+   per-session configuration file under `$TESSERA_RE_DIR/tools/<tool>/` (§11) that a dirty
+   session attaches with `claude --strict-mcp-config --mcp-config <file>` (§5.4,
+   `CLEAN_ROOM.md` §7 rule 4). All of them can return dirty material. `tools/dev-setup.sh`
+   fails on a decompiler registration at user or project scope and on any
+   `$TESSERA_RE_DIR/.mcp.json`; `tools/check-content.sh` fails on a committed one.
+   *(Changed 2026-10-11 by [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md):
+   the lab directory's own `.mcp.json` is no longer used.)*
 4. **LSP.** `rust-analyzer` (§3.1) gives clean sessions go-to-definition, diagnostics and
    references without reading whole files.
 5. **Hooks.** Recommended: a PreToolUse hook in clean sessions that refuses reads under
@@ -538,7 +604,7 @@ shell profile; it is never committed.
 | `$TESSERA_RE_DIR/captures/` | RenderDoc `.rdc`, traces, logs, any packet capture | dirty |
 | `$TESSERA_RE_DIR/ghidra/` | Ghidra projects, BSim databases, exports (gated, §5) | dirty |
 | `$TESSERA_RE_DIR/corpora/` | fuzz seeds harvested from real archives (never committed; `fuzz/corpus/` is git-ignored as well) | dirty |
-| `$TESSERA_RE_DIR/.mcp.json` | MCP configuration for dirty sessions (§8) | dirty |
+| `$TESSERA_RE_DIR/tools/<tool>/` | pinned dirty-tool installs (REA, §5.4) and their per-session MCP configuration and settings files (`mcp-<tool>.json`, `settings-<tool>.json`), attached with `--strict-mcp-config --mcp-config` (§8 item 3); never a `.mcp.json` here or in the lab directory's root | dirty |
 | `<repo>/target`, `<repo>/fuzz/target` | build output; move with a machine-local `.cargo/config.toml` (`TESSERA_TARGET_DIR=... tools/dev-setup.sh --fix`) when the repo's disk is small | clean |
 
 Nothing under `$TESSERA_RE_DIR/` is ever pushed, attached to an issue, or opened in a clean session.

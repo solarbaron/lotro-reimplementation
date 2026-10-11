@@ -54,6 +54,14 @@ the spec's implementer-notes section.
 - Test fixtures are synthetic (built by our own code) or original CC0 content. Real-data
   tests read `TESSERA_GAME_DIR`, skip when it is unset, and never write to the install.
 - No game data, fonts, keys, hostnames or tables from the client binary in the repository.
+- Official-server compatibility (M8, `docs/decisions/0034-official-server-compatibility.md`).
+  - No official hostname, endpoint, key, certificate or account data in code, tests,
+    fixtures or CI. Load them at runtime from the user's install as the spec says.
+  - No connection to an official server is possible before the user has accepted the G4
+    warning in the client's own interface.
+  - Tests and CI never connect to an official server.
+  - Extended scripts (M9) run on an official server only after the user's opt-in, and
+    automation never does.
 - Names: no LOTRO / Tolkien / Daybreak / Turbine marks in identifiers, crate names or UI
   strings (`docs/LEGAL.md` §10). Interoperability names that the format or plugin API
   require are listed in `tools/content-allowlist.txt` with a reason.

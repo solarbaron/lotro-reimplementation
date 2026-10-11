@@ -21,9 +21,18 @@ between the people who study the formats and the people who write the code.
 > Middle-earth Enterprises, LLC used under license. Requires a legally obtained installation
 > of the game; no game content is distributed.
 
-Tessera **does not connect to official game servers** and must not be used to do so. See
-[DISCLAIMER.md](DISCLAIMER.md) for the full disclaimer and [docs/LEGAL.md](docs/LEGAL.md)
-for the project's legal position.
+Tessera **does not connect to official game servers today**.
+
+- **The plan.** Official-server compatibility is planned (milestone M8). The project owner
+  decided on 2026-10-11 to pursue it without a legal review and without permission from
+  the rights holders
+  ([decision 0034](docs/decisions/0034-official-server-compatibility.md)).
+- **The risk.** Connecting a third-party client to the official service may breach
+  Daybreak's EULA and Terms of Service, and can cost you your account. Anyone who does so
+  bears that risk, and the client will make you accept a warning first.
+
+See [DISCLAIMER.md](DISCLAIMER.md) for the full disclaimer and
+[docs/LEGAL.md](docs/LEGAL.md) for the project's legal position.
 
 ---
 
@@ -121,7 +130,7 @@ independent review before they are Accepted.
 | Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | done (P1, merged): 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 1–4 pass |
 | NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs Accepted |
 | Combat presentation: selection and targeting keys, player and target frames, cast bars, effect bars, floating text, quickslot cooldowns, defeat panel (`tessera-ui` `game::combat`); skill and effect tooltips; combat animation and particles in the walker; plugin combat views; local selection on the test server | P2 exit phase: criteria 1–4 pass on Tessera's side; 20 / 20 elements shown at 11 checkpoints with and without the install; 33,601 skill and effect tooltips laid out, 12,617 categorised NoTooltip, 0 failures; 11,155 particle descriptors categorised; specs await independent review |
-| Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
+| Official-server compatibility | in scope (M8) by the owner's decision of 2026-10-11, without a legal review ([decision 0034](docs/decisions/0034-official-server-compatibility.md), [LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); not started, no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -295,14 +304,14 @@ plugin host on top of `crates/script`); see
 | Document | What it covers |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crate layers, data flow from install to frame, threading, DID routing, property and scripted-object systems, testing strategy |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M8: deliverables, specs, research tasks, exit criteria |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M9 and the parity track P0–P8: deliverables, specs, research tasks, exit criteria |
 | [docs/specs/](docs/specs/) | Clean-room format and protocol specifications, the only input for implementation |
-| [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, the official-server gate, naming and content rules |
+| [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, official-server compatibility and its conditions (G4, G5), naming and content rules |
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Testing Tessera on your own install: the walker, explorer and dattool, their options and controls, the keymap file, where files go, reporting problems |
-| [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
+| [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server strategy and official-server compatibility, Bevy, multi-device workflow) |
 | [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, required reading, commit rules |

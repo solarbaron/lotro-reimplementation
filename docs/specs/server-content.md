@@ -31,8 +31,10 @@ Tessera protocol, whoever runs it. It lets:
 
 The rules here are the project's position at tier **T2** of [LEGAL.md §8](../LEGAL.md#8-risk-tier-ladder):
 a project-defined protocol, a project-owned server, original or test content. Nothing here
-concerns the official servers or their protocol. That work is gated
-([decision 0004](../decisions/0004-server-strategy.md), LEGAL.md §9.3).
+concerns the official servers or their protocol. That work belongs to the client's M8
+([decision 0034](../decisions/0034-official-server-compatibility.md), formerly gated by
+[decision 0004](../decisions/0004-server-strategy.md); LEGAL.md §9.3); a Tessera server never
+takes part in it (O8).
 
 Keywords **MUST**, **MUST NOT**, **SHOULD**, **MAY** as in RFC 2119 and RFC 8174.
 
@@ -474,3 +476,4 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 | 2026-10-06 | First draft (M7). Derived from LEGAL.md §4, §5, §7, §8, §10–§12; confirmed for Tessera servers in LEGAL.md §11.1 pending the owner |
 | 2026-10-10 | Decision 0025 (spec writer, design): §1 C14–C15; §2 opaque references include slot keys and data property IDs, new term "look"; §4.1 relays looks and slots, R3 bound extended, new R7 (no class or nationality, look strings never text); §4.2 reasoning for looks and slots; §7 classes and nationalities stay out; §9.2 content holds no looks, a slot counts as a reference; §11 invariants 6–7; §12 counsel item extended. LEGAL.md §11.1 unchanged. Status stays Draft (owner); the revision awaits an independent review |
 | 2026-10-10 | Independent review of the decision-0025 revision (spec reviewer, Clean-Room-Role: review): passed (Reviewer row). Status stays Draft for the owner (LEGAL.md §11.1) |
+| 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md): the introduction says official-server work belongs to the client's M8 (formerly gated by decision 0004) and that a Tessera server never takes part in it (O8). No rule changed; status stays Draft for the owner |

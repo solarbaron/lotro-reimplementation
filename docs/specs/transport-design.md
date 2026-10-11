@@ -16,6 +16,10 @@
 > For Tessera's network use, its open items (§10) are answered by QUIC, and no TRD v2 is
 > planned. The facts below are unchanged.
 
+> **Status note (2026-10-11):** §1's last sentence now names the compatibility tier as M8
+> ([decision 0034](../decisions/0034-official-server-compatibility.md)) instead of "gated".
+> Policy wording only; no fact changed.
+
 ## 1. Purpose
 
 This document specifies a small, general-purpose transport that Tessera designed itself:
@@ -26,7 +30,7 @@ test server, tools, future backends) can share one tested reliability layer.
 It is **not** a description of any third-party or official protocol and has no
 compatibility goal. Whether Tessera's own multiplayer protocol (ROADMAP M7) uses it or
 something else, such as QUIC, is decided by that milestone's decision record. Nothing here
-relates to the gated compatibility tier (LEGAL.md §9.3).
+relates to the compatibility tier (M8, LEGAL.md §9.3, decision 0034).
 
 ## 2. Provenance
 

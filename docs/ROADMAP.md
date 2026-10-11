@@ -68,7 +68,7 @@ like "ARCH §8" refer to it.
 | Plugin system uses Lua 5.1 with apartments and `.plugin` XML descriptors | engine-client-re.md §5 | Reported |
 | Player music uses an ABC dialect with documented limits | engine-client-re.md §7 (Maestro test suite, MIT) | Reported |
 | No public, working server emulator exists; the official protocol descends from the AC lineage | research/notes/network.md §0 | Reported |
-| Risk tiers T0 format library, T1 offline engine, T2 own-server networked, T3 emulated gameplay, T4 official-server connectivity; the T4 gate G1–G5 | `docs/LEGAL.md` §8–§9 (from research/notes/legal.md §7) | Reported |
+| Risk tiers T0 format library, T1 offline engine, T2 own-server networked, T3 emulated gameplay, T4 official-server connectivity; the T4 conditions G1–G5 (G1, G2 set aside by decision 0034; G4, G5 binding) | `docs/LEGAL.md` §8–§9 (from research/notes/legal.md §7) | Reported |
 | Reimplementation practice: per-format CLIs first, gated real-data tests, golden images, fuzzing | research/notes/analogues.md §4 | Reported |
 
 ---
@@ -88,7 +88,7 @@ like "ARCH §8" refer to it.
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
 | **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata` (new, L3, P0); grows `net` (scenario feed, P0), `ui`, `plugins`, `wvm`, `client` |
-| **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
+| **M8** | Official-server compatibility, in scope by the owner's decision without a legal review ([0034](decisions/0034-official-server-compatibility.md)): official login and protocol specs, a compatibility backend, the G4 warning | T4 | a compatibility backend crate (Phase 2) |
 | **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
@@ -97,15 +97,18 @@ terrain), M2 (the material chain) and M4 (the walking avatar, setup collision vo
 and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
 M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it starts only
 after full parity with the original client and compatibility with the server (M8), or, if
-the M8 gate fails, after client parity with Tessera's own server.
+M8 stops on a rights holder's objection (LEGAL §9.4), after client parity with Tessera's own
+server. M8 is in scope since 2026-10-11 ([decision 0034](decisions/0034-official-server-compatibility.md))
+and may run beside the parity track whenever the owner schedules it; M9 stays last.
 
 **Parity track (P-track), accepted 2026-10-09:** milestones P0–P8 between M7 and M9
 ([decision 0024](decisions/0024-parity-track.md), [section](#p-track)). The owner chose the
 client half only: gameplay presentation from the user's install (creation screen,
 inventory, target frames, cast bars, quest log, vendors, social panels, maps, progression
-panels, client-run game code), driven by a scenario feed in the sandbox and, if the M8 gate
-passes, by M8 Phase 2. Tessera's own server keeps M7's scope; LEGAL.md §11.1 rule 5 is
-unchanged. M9 starts only after P8 and M8 (or its fallback).
+panels, client-run game code), driven by a scenario feed in the sandbox and, with M8
+(decision 0034), by an official server through M8 Phase 2. Tessera's own server keeps M7's
+scope; LEGAL.md §11.1 rule 5 is unchanged. M9 starts only after P8 and M8 (or, if M8 stops
+under LEGAL §9.4, after P8 and M7).
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -139,9 +142,11 @@ here.)
   exception needs a decision record (CLEAN_ROOM.md §4, method 4).
 - Invasive dynamic tools (injection, debuggers, memory reading) against the client; gated
   in `docs/TOOLING.md` §6.
-- Observing, capturing or describing the official login and session traffic. That is behind
-  the T4 gate (`docs/LEGAL.md` §9.3). M0–M7 never need it, because Tessera's network
-  protocol is its own (M7).
+- Observing, capturing or describing the official login and session traffic, outside M8.
+  M0–M7 and the P-track never need it, because Tessera's network protocol is its own (M7).
+  M8 does it within the scope of [decision 0034](decisions/0034-official-server-compatibility.md)
+  §2 (`docs/LEGAL.md` §9.3): passive captures of the owner's own sessions, dirty-room only,
+  never anti-cheat or anti-tamper.
 - Using any proprietary Turbine/Daybreak library (for example the circulating dat-export
   DLL), even as an oracle.
 
@@ -1331,56 +1336,105 @@ interpolation feel, interest distance, say range) tune defaults; no criterion wa
 ---
 
 <a id="m8"></a>
-## M8: GATED. Legal gate first, then a compatibility layer only if the gate passes
+## M8: Official-server compatibility (in scope by decision 0034)
 
-**Context.** The project owner's stated long-term goal is compatibility with the official
-servers. `docs/LEGAL.md` §8 rates official-server connectivity as tier **T4**, the
-highest-risk tier: it touches the EULA's protocol-emulation and unauthorised-connection
-clauses, the ToS ban on deciphering transmissions, DMCA §1201 theories that a recent case
-against an emulator of another game by the same rights holder accepted, and every user's
-account. `docs/LEGAL.md` §9.3 therefore gates it.
+**Goal:** a Tessera client that logs in to Daybreak's official servers with the user's own
+account and plays there, presenting the game through the client half that the parity track
+builds.
 
-M8 is split into a gate and a conditional build phase.
+**Context.** The project owner's stated goal is compatibility with the official servers.
+`docs/LEGAL.md` §8 rates official-server connectivity as tier **T4**, the highest-risk
+tier. It touches:
+- the EULA's protocol-emulation and unauthorised-connection clauses;
+- the ToS ban on deciphering transmissions;
+- DMCA §1201 theories that a recent case accepted against an emulator of another game by
+  the same rights holder;
+- every user's account.
+
+Until 2026-10-11 M8 was gated behind a written legal review (G1) and permission from the
+rights holders (G2). On 2026-10-11 the owner decided that M8 is **in scope now, without
+either** ([decision 0034](decisions/0034-official-server-compatibility.md),
+`docs/LEGAL.md` §9). No legal review exists and no permission has been given. The owner
+accepts the residual risks of LEGAL §9.2. M8 is no longer gated, and the milestone
+workflow runs it.
 
 <a id="m8-gate"></a>
-**Phase 1: the gate (allowed now)**
+**Conditions that bind every phase** (LEGAL §9.3, decision 0034 §1–§3):
 
-Work through conditions G1–G5 of `docs/LEGAL.md` §9.3 and record each in
-`docs/decisions/`:
+- **G4.** A ban-risk warning is shown before any connection to an official server is
+  possible. It states the terms of LEGAL §3 and that the project cannot protect the
+  account. It is accepted only by the user's explicit confirmation in the client's own
+  interface: no flag, variable, plugin, script or server can accept or skip it.
+- **G5.** The permanently forbidden list of LEGAL §8, as it stands there:
+  - shipping, mirroring or linking to client binaries, dat files, patches or old clients;
+  - modifying, patching, redirecting or injecting into the official client;
+  - embedding or publishing Daybreak keys or other secrets in the repository, releases or
+    documentation;
+  - committing packet captures from official servers;
+  - using leaked, NDA-covered or decompiled Turbine/SSG/Daybreak source code;
+  - monetisation of any kind beyond donations for infrastructure costs;
+  - bypassing account authentication, subscription checks, anti-cheat or any other access
+    control.
 
-- G1: a written legal review by a qualified IP lawyer of the specific design, covering at
-  least US and EU/UK law.
-- G2: a permission request to Daybreak Game Company LLC, and separately to Middle-earth
-  Enterprises for the marks, modelled on published precedents of written arrangements
-  with emulator projects (non-commercial, users bring their own client data, no assets
-  distributed, disclaimer).
-- G3: a maintainer decision record citing G1 and G2 and listing residual risks, accepted
-  by the project owner.
-- G4: the design of a user-facing warning about account risk, shown before any official
-  connection could be made.
-- G5: confirmation that the design obeys the permanently-forbidden list of
-  `docs/LEGAL.md` §8.
+  Key material is loaded at runtime from the user's own install only.
+- **Research scope.** Decision 0011 as amended by 0034 §2 sets it:
+  - Allowed: the official game protocol and the login flow, as far as interoperability needs
+    them.
+  - Excluded: anti-cheat, anti-tamper and code-signing checks, and no injection, debugger or
+    memory reading on a client connected to official servers.
+  - Captures stay in the dirty room and are reduced to field-level facts.
+- **No secrets in the repository.** No hostnames, endpoints, keys, certificates or account
+  data appear in the repository, specs, CI or releases. A spec states only where the client
+  finds them in the user's install at runtime. CI never connects to an official server.
+- **Stop conditions.**
+  - If the service can be used only by circumventing anti-cheat, anti-tamper or another
+    access control, M8 stops at that point and records why.
+  - On an explicit objection from Daybreak or MEE, M8 stops and the compatibility backend is
+    withdrawn (LEGAL §9.4).
+- **Extended scripts** come with M9, not here. On an official server they will need the
+  user's opt-in, and automation stays offline only (LEGAL §9.5).
 
-Before the gate passes, no spec about the official login, its encryption or key handling
-is written, and no code for it lands (`docs/LEGAL.md` §9.3).
+**Phase 1: specs and design**
 
-**Phase 2: build (only if G1–G5 are met)**
+- Dirty-room specs of the official login flow (the official launcher's part included) and of
+  the game protocol that the client half needs:
+  - framing, session set-up and encryption as used;
+  - where the key material and endpoints lie in the install;
+  - the messages behind the domain events and commands of `tessera_net::domain`.
+- A spec of the G4 warning: text, when it appears, how acceptance is stored and withdrawn.
+- A G5 review of the design by a session that wrote none of it.
 
-- Scope, methods and distribution exactly as the gate's decision record defines.
-- A compatibility backend implementing the `Backend` trait (ARCH §19.3), outside the
-  default workspace members, behind an explicit opt-in, not built by CI.
-- No hostnames, keys or tables from the official client in the repository, ever. Anything
-  of that kind is loaded at run time from the user's install, if the decision allows it
-  at all.
+**Phase 2: build**
 
-**If the gate fails** (G1 advises against it, or a rights holder objects), the project
-stays at T2 permanently, as `docs/LEGAL.md` §9.4 says. M1–M7 are useful on their own: an
-offline world explorer, a data-file toolkit, and a client for the project's own server.
+- A compatibility backend that implements the `Backend` trait (ARCH §19.3), in its own
+  crate, so that it can be withdrawn without restructuring the client. The plan decides where
+  it sits in the workspace and how it is built, under the CI rule above.
+- Login as the user with credentials the user enters, character selection, world entry,
+  movement, chat, and the gameplay events that drive the P-track windows.
+- The G4 warning in the client before the first connection.
 
-**Specs needed (Phase 2 only):** defined by the gate's decision record.
+**Specs needed:** the Phase 1 specs above, plus additions to `ARCHITECTURE.md` §19.
 
-**Exit criteria (Phase 1):** G1–G5 each recorded in `docs/decisions/` with an outcome, and
-a go/no-go decision accepted by the project owner.
+**RE tasks:**
+- method M4 on the client's protocol and login code;
+- passive capture of the owner's own sessions of the unmodified client (CLEAN_ROOM.md §4
+  M3);
+- REA only as decision 0033 and 0034 §2 item 5 allow (never in workflow runs).
+
+**Exit criteria**
+
+1. The specs of Phase 1 are Accepted after an independent review. They contain no key
+   values, certificates, hostnames, endpoints, account data or other player's data, and
+   they record which facts rest on BIN or capture provenance.
+2. No connection to an official server is possible before the G4 warning is accepted. A
+   synthetic test shows this.
+3. A G5 audit passes. `tools/check-content.sh` is clean, and no capture or secret is in the
+   repository or CI.
+4. Every parser of the official protocol has a fuzz target. Malformed or hostile input
+   cannot crash the client.
+5. The owner, with the owner's own account and at the owner's own risk, logs in, enters the
+   world, moves and chats. The P-track windows that the server drives show the server's
+   events. The owner records the result.
 
 ---
 
@@ -1914,15 +1968,20 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 ## M9: Extended scripting (after full parity)
 
 **Placement (owner, 2026-10-08).** Extended scripting is not a priority. It starts only after
-Tessera reaches full parity with the original client and compatibility with the server (M8).
-If the M8 gate fails, it starts after client parity with Tessera's own server (M7). It was
+Tessera reaches full parity with the original client and compatibility with the server (M8,
+in scope since 2026-10-11 by decision 0034). If M8 stops on a rights holder's objection
+(LEGAL §9.4), it starts after client parity with Tessera's own server (M7). It was
 planned earlier as M5.5, right after M5.
 
 **Plan.** [Decision 0017](decisions/0017-extended-scripting.md) holds the design: Lua 5.1
 "ext" apartments under `Ext`, modules granted by capability, a fail-closed backend gate,
 and slices 1a (core), 1b, 2 and 3. Its specs are written and Accepted: `ext-threat-model.md`,
-`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. Ext scripts never run against an
-official server (decision 0017 §4, LEGAL §9), whatever M8 decides.
+`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. On an official server, ext scripts
+run only after the user's explicit opt-in, off by default and at the user's own risk;
+automation (`input.drive` and every module that issues movement, input or game commands)
+stays offline only ([decision 0034](decisions/0034-official-server-compatibility.md) §4,
+LEGAL §9.5). M9 revises those specs and replaces 0017 §6.3's build-level exclusion with
+tests of the runtime gate and the opt-in.
 
 **What stays in place until then.** M5 already split `tessera-script` (a plugin-free Lua core)
 from `tessera-plugins` (decision 0023), as decision 0017 asked. M9 therefore does not redo

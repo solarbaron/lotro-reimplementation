@@ -13,7 +13,7 @@ The repo has two zones:
 
 | Zone | Paths | Who may read it |
 |------|-------|-----------------|
-| **Dirty room** (research) | `research/`, the research clones (`~/.cache/tessera/clones` or `$TESSERA_CLONES_DIR`), dirty scratch dirs (`~/.cache/tessera/scratch/*/dirty`, `$TESSERA_RE_DIR`), anything under a scratchpad `clones/` dir, game binaries, disassembly | Spec writers only |
+| **Dirty room** (research) | `research/`, the research clones (`~/.cache/tessera/clones` or `$TESSERA_CLONES_DIR`), dirty scratch dirs (`~/.cache/tessera/scratch/*/dirty`, `$TESSERA_RE_DIR`), `$TESSERA_RE_DIR/tools/` and `$TESSERA_RE_DIR/work/` (decompiler installs and project copies), `~/.rea`, `/tmp/rea-*`, anything under a scratchpad `clones/` dir, game binaries, disassembly | Spec writers only |
 | **Clean room** (implementation) | `crates/`, `apps/`, `fuzz/`, `tools/` | Implementers, working **only** from `docs/specs/` |
 
 - `docs/specs/*.md` is the **only** interface between the two. Specs are prose and tables of
@@ -123,7 +123,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   line (offline and with `--server`) or given as `tessera-client --command "<line>"` (old
   name `--music-command`); unknown commands post an error line and are never sent. Merged
   with M4.5 and M7 on main (2026-10-08). M5 (UI and plugins) is merged too (status below);
-  M8 is gated.
+  M8 is in scope since 2026-10-11 (decision 0034, below).
 - **Beyond the milestones (merged 2026-10-09):** the far view (`far-view.md`, `--far-view on`:
   far terrain, sprites and horizon beyond a 3 × 3 full-detail field; far entities, the
   normal-mapped template and flow-map far water still open) and the particle runtime
@@ -142,16 +142,17 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
   choices), owner item O15 (Dwarf brow colour).
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
-  client-side gameplay presentation from the install, fed by a sandbox scenario feed (and by
-  an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so
+  client-side gameplay presentation from the install, fed by a sandbox scenario feed (and,
+  with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
   criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 passes its criteria on
   branch `p2` (below, specs not yet Accepted); P3 runs in `wt-p3`, P4 in `wt-p4`.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
-  compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
-  stay Accepted; do not start it earlier.
+  compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
+  parity on the own server). Its specs stay Accepted (with decision 0034's amendment note);
+  do not start it earlier.
 - **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
@@ -250,6 +251,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   keys (owner); target portrait drawn as a white disc (E6); the voice-chat icon over the
   player name (§4.1 OPEN); main-thread record reads in combat cues (ARCH §21); U uses the
   nearest NPC, not the selection.
+- **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
+  registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
@@ -257,8 +260,30 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
-- **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
-  (`docs/decisions/0004-server-strategy.md`). Stop and ask the owner.
+- **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
+  (`docs/decisions/0034-official-server-compatibility.md`).
+  - **The decision.** No legal review and no permission from the rights holders exist. The
+    owner set those conditions (G1, G2) aside and accepts the residual risks of
+    `docs/LEGAL.md` §9.2. Decision 0034 supersedes the gate of decision 0004.
+  - **Still binding:**
+    - G4: a ban-risk warning that the user must accept in the client before any official
+      connection;
+    - G5: the forbidden list of LEGAL.md §8. No shipping, mirroring or linking to client
+      binaries, dat files, patches or old clients; no modified, patched, redirected or
+      injected official client; no Daybreak keys or other secrets in the repository,
+      releases or documentation (key material is loaded at runtime from the user's
+      install); no committed captures from official servers; no leaked, NDA-covered or
+      decompiled vendor source; no monetisation beyond donations for infrastructure costs;
+      no bypassing account authentication, subscription checks, anti-cheat or any other
+      access control.
+  - **Research.** M4 and passive observation of the owner's own sessions may cover the
+    official protocol and login flow (the client binary, and the launcher binary for its
+    part of the login flow), never anti-cheat, anti-tamper, code-signing checks or the
+    patcher's update function. Captures are dirty-only.
+  - **Extended scripts (M9).** They may run on an official server only after the user's
+    explicit opt-in, which is off by default. Automation (`input.drive` and any module that
+    issues movement, input or game commands) stays offline only, as maintainer policy.
+  - **Stop.** The project stops if Daybreak or MEE objects (LEGAL.md §9.4).
 
 ## Working across machines and sessions
 
@@ -267,7 +292,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `docs/decisions/` and progress here or in the roadmap, then commit and push.
 - Setup and hand-off steps: `docs/DEVELOPMENT.md`. Check a machine with `tools/dev-setup.sh`.
 - Continue the roadmap with the saved workflow `.claude/workflows/tessera-milestone.js`
-  (one milestone per run, then review, commit, push; it refuses M8). Dirty-room research
+  (one milestone per run, then review, commit, push; it runs M8 with the decision-0034 rules
+  in its prompts and always refuses M9, which comes after P8 and M8 and needs a change to
+  the script). Dirty-room research
   clones go in `${XDG_CACHE_HOME:-~/.cache}/tessera/clones` (`tools/fetch-research-clones.sh`
   or `tools/dev-setup.sh --fetch-research`), never inside the repo.
 - Machine-local, git-ignored: `.cargo/config.toml` (build cache location) and

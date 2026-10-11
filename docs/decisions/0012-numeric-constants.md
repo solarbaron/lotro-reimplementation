@@ -30,7 +30,7 @@ when all of these hold:
 - **Still forbidden in the repository:**
   - cryptographic or authentication keys, certificates and hostnames;
   - anything belonging to the network protocol, login, launcher or anti-tamper, which stays
-    gated by decision 0004;
+    gated by decision 0004 (amended 2026-10-11: see below);
   - bulk data tables. Game content stays in the user's install and is read at runtime, as the
     content rules already require.
 
@@ -41,3 +41,10 @@ when all of these hold:
   collision limits.
 - If a client update changes a constant, the spec records the new value with the build it was
   read from. Code that has to support several builds selects the value by build.
+
+## Amendment (2026-10-11, decision 0034)
+[Decision 0034](0034-official-server-compatibility.md) §2 item 4: numeric constants that
+define the official game protocol and login flow (message codes, sizes, algorithm
+constants) may be stated and used under the rules above. Keys, certificates and other
+secrets, hostnames and endpoints, and account data stay forbidden in the repository and are
+loaded at runtime from the user's install. Anti-cheat and anti-tamper stay excluded.

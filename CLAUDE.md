@@ -234,20 +234,22 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
   Open: text-fitting defects (`quest-journal.md` §4.7 OPEN), barter window off screen, no
   dialog-box or popup-menu widget, U and L are raw keys.
-- **P2 (targeting, skills and combat presentation; branch `p2` in worktree `wt-p2`, exit
+- **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
-  side; its specs await an independent review (not Accepted): `combat-ui.md`,
-  `skill-tooltips.md`, `combat-visuals.md` (Draft), the P2 revisions of `item-tooltips.md`,
-  `keymap.md`, `lua-plugin-api.md` §15.2, `script-table.md`, `particles.md`,
-  `particle-runtime.md`, `scenario-feed.md` rev 6 (Review) and decision 0032 (Proposed);
-  the code is re-checked against them before merge. Built: `tessera-gamedata` skill/effect
-  tooltips, census and `combat`; `tessera-ui` `game::combat`; `tessera-input` targeting and 72
-  quickslot actions; `tessera-plugins` §15.2 combat views; local `SelectTarget` in
-  `tessera-net`; walker `CombatLayer`, particle beams; client `combat` module and goldens.
-  Real data: 13,247 skills and 32,971 effects categorised (33,601 tooltips, 0 failures).
-  Open: `keymap.md` §8.2 defaults take five walker keys (owner); install-look defects (frame
-  name and level text, defeat panel's extra button); beam ribbons not drawn; main-thread
-  record reads in combat cues (ARCH §21).
+  side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
+  `combat-visuals.md`, the P2 revisions of `item-tooltips.md`, `keymap.md`,
+  `lua-plugin-api.md` §15.2, `script-table.md`, `particles.md`, `particle-runtime.md`,
+  `scenario-feed.md` rev 6 and decision 0032; the code was conformed to them. Built:
+  `tessera-gamedata` skill/effect tooltips, census and `combat`; `tessera-ui` `game::combat`;
+  `tessera-input` targeting and 72 quickslot actions; `tessera-plugins` §15.2 combat views;
+  local `SelectTarget` in `tessera-net`; walker `CombatLayer`, beam ribbons and heads; client
+  `combat` module and goldens. Merged with P3: quest state is a `PlayerState` field, one
+  per-frame list of in-world UI events feeds the NPC hub, quest hub and combat UI, selection
+  use goes through `npc::use_entity`. Real data: 13,247 skills and 32,971 effects
+  categorised (33,601 tooltips, 0 failures). Open: `keymap.md` §8.2 defaults take five walker
+  keys (owner); target portrait drawn as a white disc (E6); the voice-chat icon over the
+  player name (§4.1 OPEN); main-thread record reads in combat cues (ARCH §21); U uses the
+  nearest NPC, not the selection.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and

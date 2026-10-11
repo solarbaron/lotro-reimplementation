@@ -1734,13 +1734,13 @@ Owner observations in the original client: rows from O93
 <a id="p2-status"></a>
 **Status:** exit criteria 1–4 pass on Tessera's side (started 2026-10-10, branch `p2` in
 worktree `wt-p2`, off main 4ec1f4a; exit verification 2026-10-11 on the uncommitted tree).
-**Not mergeable as Accepted work yet:** the new specs `combat-ui.md`, `skill-tooltips.md` and
-`combat-visuals.md` are Draft, the P2 revisions of `item-tooltips.md`, `keymap.md`,
-`lua-plugin-api.md` §15.2, `script-table.md`, `particles.md` and `particle-runtime.md` are
-Revised, `scenario-feed.md` revision 6 is in Review and decision 0032 is Proposed. The
-deliverables ask for them Accepted before the build; an independent review (a session that
-wrote none of them) must accept them, after which the code is re-checked against the Accepted
-text. No criterion needs an observation in the original client; owner rows O93–O109 and
+**Specs Accepted (2026-10-11):** independent reviews accepted `combat-ui.md` (revision 2),
+`skill-tooltips.md`, `combat-visuals.md`, the P2 revisions of `item-tooltips.md`, `keymap.md`,
+`lua-plugin-api.md` §15.2, `script-table.md`, `particles.md` and `particle-runtime.md`,
+`scenario-feed.md` revision 6 and decision 0032. A clean conform pass then re-checked the code
+against the Accepted text (skill-item effect levels and vital keys, frame name and level text,
+the defeat panel's parts, beam ribbons and head entities drawn; install goldens under decision
+0031 tier 2), verified by a separate session. No criterion needs an observation in the original client; owner rows O93–O109 and
 O126–O129 ([owner-observations.md](checklists/owner-observations.md#p2-items)) block nothing
 until P8.
 

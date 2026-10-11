@@ -625,6 +625,20 @@ non-zero coin.
 > count text and an icon image the client supplies (16 × 16 until it is loaded), 2 pixels
 > apart and centred vertically. Please name the template's parts.
 
+> **Answered (note, 2026-10-10, [`npc-windows.md`](npc-windows.md) §9.2, OBS; no fact of this
+> spec changed):** `MoneyDisplay_ItemWorthTemplate` (215 × 24) has two parts: the label
+> `MoneyDisplay_WorthText` (the token 0x09607F15 text above, fits its text, left margin 4) and
+> the coin list `MoneyDisplay_ItemWorthDisplay` at (49, 2), based on
+> `MoneyDisplay_ExaminationTemplate`, which names its coin element by
+> `UIComponent_MoneyDisplay_CoinDisplay_ElementID` = `MoneyDisplay_ExaminationCoinTemplate`
+> (59 × 22): the count text `MoneyDisplay_Text` (37 × 16 at (0, 1), right-justified) and the icon
+> `MoneyDisplay_Icon` (32 × 22, in `MoneyDisplay_Icon_Holder` at (29, 0)), whose states `Gold`,
+> `Silver`, `Copper` show the images 0x41007E7B, 0x41007E7C, 0x41007E7D here. The display
+> builds exactly three coin elements (BIN, `npc-windows.md` §9.2). **Order caveat:** "stored
+> order" in the breakdown above is the order of the currency directory's **object form**
+> (gold, silver, copper); its property set stores silver, gold, copper, so a reader of the
+> property set sorts by `Currency_Value`, largest first (`npc-windows.md` §9.3).
+
 > **OPEN:** the default of the two money-display options for the worth row (whether a zero
 > silver coin shows between gold and copper). **Tessera rule:** zero coins are hidden.
 > Example: §14.4.
@@ -975,6 +989,11 @@ backend later: an instance's properties then fill the rows of §6 that records c
 > text), and the worth row's coins carry their count texts but no coin image (the coin
 > element of §6.11 is not named, see the OPEN there). Confirm or give the element.
 
+> **Answered in part (note, 2026-10-10, `npc-windows.md` §9.2):** the coin element and its
+> images are named in the answer under §6.11; the coin image is the state image of
+> `MoneyDisplay_Icon` (`Gold`, `Silver`, `Copper`). The literal item's tooltip element stays
+> as implemented.
+
 > **Answered (2026-10-10, [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D5):** `scenario-feed.md` §6.1 `item-property $item
 > PROPERTY=VALUE` emits `ItemProperty { item, property, value }` (§9.2 there; values
 > scripted, kinds and limits in §5.8 there). The rows of §6.5 (1–4) and the crafted rows read
@@ -1133,3 +1152,4 @@ O81 (comparison and pinning).
 | 2026-10-10 | Pointers only (no fact changed): the §11 OPEN on instance properties in scenarios and row Q16 point to their answer in decision 0025 (`scenario-feed.md` revision 4, `item-property`). |
 | 2026-10-10 | Implementer OPENs (no fact changed): §6.12 damage variables, §6.15 line-element link of list rows, §6.16 stat names and other effect lists, §6.17 cumulative tiers and set-level readings, §6.18 cooldown variable, §6.20 recognition and `IA_Label_Base`, §12 unnamed tooltips and which lookup misses are row failures. |
 | 2026-10-10 | Implementer OPENs from `crates/ui` (no fact changed): §5 text-row width, §6.11 parts of the worth template, §10 pin offset origin, close button and window size. |
+| 2026-10-10 | Notes only (no fact changed), for P3: §6.11 implementer OPEN answered (parts of the worth template, coin element and coin images, `npc-windows.md` §9.2) with the currency-order caveat (object form versus property set, `npc-windows.md` §9.3); §11 coin-image part of the implementer OPEN answered. |

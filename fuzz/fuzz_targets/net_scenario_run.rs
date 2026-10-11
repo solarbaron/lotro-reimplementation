@@ -156,6 +156,8 @@ impl SelectorResolver for Bytes<'_> {
         o
     }
 
+    // Every context answers from the bytes, `NpcAction` of `action(@Label)` texts (P3
+    // revision, `scenario-feed.md` §18.P3) included.
     fn enum_value(&mut self, _context: LabelContext, _label: &str) -> Option<u32> {
         if !self.install {
             return None;
@@ -234,8 +236,12 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let session = Session::new(backend);
-    let mut driver =
-        HeadlessDriver::new(session, resolved, Some(std::io::sink())).with_max_ticks(MAX_TICKS);
+    // The world-entry wait sleeps one tick of wall-clock time per poll up to the resolve
+    // timeout (10 s by default); the synthetic resolver answers at once, so a scenario that
+    // never enters the world is given up after one tick instead of stalling the fuzzer.
+    let mut driver = HeadlessDriver::new(session, resolved, Some(std::io::sink()))
+        .with_max_ticks(MAX_TICKS)
+        .with_resolve_timeout(std::time::Duration::ZERO);
     let outcome = driver.run_frames(|frame| {
         assert!(
             frame.events.len() <= MAX_EVENTS_PER_POLL,

@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
-| Last updated | 2026-10-09 |
+| Status | **Accepted** (2026-10-11: the P3 revision (§15.3 wallet views, provenance P84–P89, §18 checks 80–85, §19 lines) passed an independent review; implementers may build §15.3; see the review record for the non-blocking notes). Before it: **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
+| Last updated | 2026-10-11 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent), a different session from the writer |
-| Review record | **Re-review of the P1 revision and its review fixes (diff against `main`: header, P41, P81–P83, §15 enum paragraph and OPEN, §15.1, §18 lead-in and checks 66–69, §19, §20), 2026-10-09, independent review session that wrote no part of the revision or its fixes and did not do the first review: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping or behaviour; no code or pseudo-code (the argument lists in braces name event-table fields, as §9.3 does); API, mapper and property labels are interoperability identifiers; no game text (the literal item text is scenario input), assets, keys, hostnames or traffic; no closed gate touched (no M4 method used for this revision, no official-server traffic). Every Tessera rule of §15.1 is under P83 (**Tessera rule**, DEC); the API facts are P81 (Reported) and P82 (Reported + Confirmed). The four blocking items of the first review are answered: (1) §15 enum paragraph, P41, the §15 OPEN and its §19 line point to or follow P82; (2) the §15.1 OPEN is in §19; OPEN markers before §19 counted 56 on `main`, 57 after the P1 revision and 57 now, as the change log says; (3) P83 and the §18 lead-in for 66–69; (4) the two getter tables cover all 13 `Item` and 15 `ItemInfo` getters of §16 with present, absent and literal-item values. Spot-checks (read-only, 2026-10-09): mappers 0x230000EE (base 0x23000101), 0x230000FA, 0x230000FB and 0x23000067 decoded from the install: `ContainerSlot` keys 2–22 match API `Equipment` 1–21 (key 3 ↔ `Chest` 2, as check 68 uses), keys 23–25 are the FX slots, `ItemDurability` 1–7 and `ItemWearState` 1–4 match their keys and names, `ItemQuality` key 4 is `Uncommon` = 4 (check 69); Appendix A `ItemCategory`, `ItemDurability`, `ItemWearState` have `Undefined = 0` (the Absent columns); `scenario-feed.md` on branch `p0` has the `MoveItem` and `DestroyItem` answers of §7.6 and the `ItemQuantity`, `ItemCondition` events of §9.2 that checks 67 and the getter table cite; `character-panels.md` §4.3 rule 1 gives the *N* = *B* + 6 of check 66 and its rule 5 now agrees with the `SizeChanged` row; `icon-layers.md` §3.1 step 1 and `item-tooltips.md` §11 agree with the `GetIconImageID` and `GetWearState` rows. All agree. **Non-blocking notes:** (a) the §20 row on `character-panels.md` §8.1 is stale: that spec (9bced79) already reduced §8 to a pointer to §15.1 and states the `SizeChanged` rule in §4.3 rule 5, so its "Current text" no longer exists; mark it applied or drop it; (b) the new §20 lead-in parenthetical "on O4 (the `character-panels.md` row on Tessera rules, DEC)" reads as if O4 were its basis; reword; (c) P82 "name for name" is loose: the data names differ in form (`Pocket1`, `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`, `Mounted`) and the API has aliases (`Shield`, `Instrument`); say "slot for slot" or point to `character-panels.md` §8.2; (d) state the order of the two plugin events when one feed `ItemMoved` crosses containers (backpack `ItemRemoved` versus `ItemEquipped`, check 68 asserts none), and whether a move within `Equipment` between keys 2–22 gives `ItemUnequipped` then `ItemEquipped` or nothing; (e) `GetNameWithQuantity(q)` for infinite or very large *q* ("decimal integer part" is undefined for infinity); (f) check 67 continues the scenario of check 66 ("the slot-4 item", size 30); say so. Earlier: first review of the P1 revision, 2026-10-09: changes requested, four blocking items (§15 not reconciled with P82; §15.1 OPEN missing from §19; no Tessera-rule provenance row; incomplete getter coverage, absent-property and literal-item values) and notes (a)–(f), all answered by the review fixes of 2026-10-09. Before that: review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| Review record | **Review of the P3 revision (as committed in b62d0ae: header, P84–P89, §15.3, §18 lead-in and checks 80–85, §19 bullet and closing note, change log), 2026-10-11, independent review session that wrote no part of it: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping, sequence or behaviour; P85–P87 are prose facts (cases of the change handler, getter sources, value ranges) and do not follow the order or shape of a listing; no code or pseudo-code (the braces name event-table fields, as §9.3 does); API, property, label and event names are interoperability identifiers; no game text, assets, keys, hostnames or traffic; no closed gate (M4 under decision 0011 on the offline client only; build, question and reason stated in P85). Provenance: P84 Reported (S2/S3), P85–P87 BIN with build, question and why M1–M3 were not enough, P88 Confirmed by data, P89 Tessera rule (DEC 0024 P3); OPEN markers in §1–§18 count 65, as the closing note of §19 says (61 on `main`). Spot-checks (read-only, 2026-10-11): (1) P88 re-derived with an independent probe over the install: `PaperItemControl` resolves to 0x70024867; 167 + 443 entries, 610 distinct, none in both arrays; 51 entries with `PaperItemControl_BaseCap`/`CapDefault`, all in the free array, the histogram as stated, `TreatBaseCapAsHardCap` true in 4, `CapDefault` = `Inventory_MaxQuantity` in 42; all 610 have `Name`, a StringInfo `Description` and a non-zero `Icon_Layer_ImageDID`; 577 have `PaperItem_SmallIcon` (the 33 without in the free array); `Inventory_BindToAccount` true in 185 (59 + 126), its dictionary default false; the `Inventory_MaxQuantity` histogram of the 559 uncapped items as stated; the three coin objects of the currency directory are not wallet items. All agree. (2) P86 by bytecode (M1): class 3084 function 8 loads the item record (class 801) and reads PID 0x100038A7 (`Inventory_BindToAccount`) with default false. (3) P85 by a private copy of the analysis project (decision 0011, deleted after use): `GetWallet` creates the wallet once and keeps it; the fill appends only items with a non-zero quantity and fires `ItemAdded` with the new count; the change handler does nothing for an unlisted item with quantity 0, appends and fires `ItemAdded` for a new non-zero item, sets quantity then maximum (each event only on a difference) for a listed one, and for quantity 0 fires `ItemRemoved` with the 1-based position before moving the later entries down and releasing the object. All agree. Every §15.3 rule not under P84–P88 is under P89 except the one noted in (b). **Non-blocking notes:** (a) check 84: the third plugin's `GetWallet()` call must come after `ItemAdded` of A is delivered **and before** the `wallet "B" 7` step is applied, or `GetSize()` is 2 or 3; say so (or run that part with A alone); (b) the views-table rule that a non-finite `GetItem` argument or one outside the signed 32-bit range gives nil is a Tessera rule that P89's list does not name; add it to P89 (the client already behaves so, `crates/plugins/src/wallet.rs`, so no behaviour changes); (c) P85 and the second §15.3 OPEN: in this build only one of the two conditions is checked on every call; the other gates only the creation of the object, so once created the wallet is returned while the first condition holds; reword when the OPEN is next revised (Tessera never returns nil in the world, so no behaviour changes); (d) answer the implementer OPEN on the views outside the world and across sessions; the implemented behaviour it records is consistent with §15.3 and check 85. Earlier: **Re-review of the P1 revision and its review fixes (diff against `main`: header, P41, P81–P83, §15 enum paragraph and OPEN, §15.1, §18 lead-in and checks 66–69, §19, §20), 2026-10-09, independent review session that wrote no part of the revision or its fixes and did not do the first review: passed, Accepted.** Checked against CLEAN_ROOM.md §5.3: every new statement is a value, constraint, mapping or behaviour; no code or pseudo-code (the argument lists in braces name event-table fields, as §9.3 does); API, mapper and property labels are interoperability identifiers; no game text (the literal item text is scenario input), assets, keys, hostnames or traffic; no closed gate touched (no M4 method used for this revision, no official-server traffic). Every Tessera rule of §15.1 is under P83 (**Tessera rule**, DEC); the API facts are P81 (Reported) and P82 (Reported + Confirmed). The four blocking items of the first review are answered: (1) §15 enum paragraph, P41, the §15 OPEN and its §19 line point to or follow P82; (2) the §15.1 OPEN is in §19; OPEN markers before §19 counted 56 on `main`, 57 after the P1 revision and 57 now, as the change log says; (3) P83 and the §18 lead-in for 66–69; (4) the two getter tables cover all 13 `Item` and 15 `ItemInfo` getters of §16 with present, absent and literal-item values. Spot-checks (read-only, 2026-10-09): mappers 0x230000EE (base 0x23000101), 0x230000FA, 0x230000FB and 0x23000067 decoded from the install: `ContainerSlot` keys 2–22 match API `Equipment` 1–21 (key 3 ↔ `Chest` 2, as check 68 uses), keys 23–25 are the FX slots, `ItemDurability` 1–7 and `ItemWearState` 1–4 match their keys and names, `ItemQuality` key 4 is `Uncommon` = 4 (check 69); Appendix A `ItemCategory`, `ItemDurability`, `ItemWearState` have `Undefined = 0` (the Absent columns); `scenario-feed.md` on branch `p0` has the `MoveItem` and `DestroyItem` answers of §7.6 and the `ItemQuantity`, `ItemCondition` events of §9.2 that checks 67 and the getter table cite; `character-panels.md` §4.3 rule 1 gives the *N* = *B* + 6 of check 66 and its rule 5 now agrees with the `SizeChanged` row; `icon-layers.md` §3.1 step 1 and `item-tooltips.md` §11 agree with the `GetIconImageID` and `GetWearState` rows. All agree. **Non-blocking notes:** (a) the §20 row on `character-panels.md` §8.1 is stale: that spec (9bced79) already reduced §8 to a pointer to §15.1 and states the `SizeChanged` rule in §4.3 rule 5, so its "Current text" no longer exists; mark it applied or drop it; (b) the new §20 lead-in parenthetical "on O4 (the `character-panels.md` row on Tessera rules, DEC)" reads as if O4 were its basis; reword; (c) P82 "name for name" is loose: the data names differ in form (`Pocket1`, `Weapon_Primary`, `Weapon_Secondary`, `Weapon_Ranged`, `Mounted`) and the API has aliases (`Shield`, `Instrument`); say "slot for slot" or point to `character-panels.md` §8.2; (d) state the order of the two plugin events when one feed `ItemMoved` crosses containers (backpack `ItemRemoved` versus `ItemEquipped`, check 68 asserts none), and whether a move within `Equipment` between keys 2–22 gives `ItemUnequipped` then `ItemEquipped` or nothing; (e) `GetNameWithQuantity(q)` for infinite or very large *q* ("decimal integer part" is undefined for infinity); (f) check 67 continues the scenario of check 66 ("the slot-4 item", size 30); say so. Earlier: first review of the P1 revision, 2026-10-09: changes requested, four blocking items (§15 not reconciled with P82; §15.1 OPEN missing from §19; no Tessera-rule provenance row; incomplete getter coverage, absent-property and literal-item values) and notes (a)–(f), all answered by the review fixes of 2026-10-09. Before that: review of the decision-alignment revision and its two repairs, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
 | Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface), [`plugin-runtime.md`](plugin-runtime.md) (interpreter, limits, collector step). Tessera decisions that place this API in the client: [0014](../decisions/0014-ui-input-bridge.md) (input reaches the UI and plugins; frame-loop placement of all plugin code, D8) and [0015](../decisions/0015-ui-rendering.md) (how surfaces, nested surfaces, opacity, clipping and rotation are drawn) |
 
@@ -175,6 +175,12 @@ mark **Tessera rule** and need no observation.
 | P81 | `Backpack:GetSize()` returns the backpack's size; `Backpack:GetItem(index)` takes 1 … `GetSize()` and returns the item there or nil; `Equipment:GetItem(index)` takes a slot of the `Equipment` enumeration and returns nil for an empty slot; `Equipment:GetSize()` is the number of items that can be equipped; `LocalPlayer:GetBackpack()`, `GetEquipment()` return those objects; `ItemInfo` getters as listed in §16 | S2 (class and member pages of `Backpack`, `Equipment`, `LocalPlayer`, `ItemInfo`) | **Reported** |
 | P82 | The `Equipment` enumeration's values 1 … 21 equal the data's `ContainerSlot` keys 2 … 22 minus one, name for name (`Head` … `Class`, `Bridle` ↔ `Mounted`); the keys 23 … 25 (weapon FX slots) have no API value; `ItemDurability` 1–7 and `ItemWearState` 1–4 equal the keys and names of mappers 0x230000FA and 0x230000FB (§15.1) | S2/S3 (Appendix A values); O4-type observation 2026-10-09 of the `ContainerSlot` mapper 0x230000EE (`character-panels.md` OBS) | **Reported** (API values) + **Confirmed** (data keys and names) |
 | P83 | Inventory views in Tessera (§15.1): the getter-to-property mapping of `Item` and `ItemInfo`; one `Backpack` and one `Equipment` object per apartment, one `ItemInfo` per record DID per apartment; nil from `GetItem` for a non-integer or out-of-range index; `Equipment:GetSize()` = 21; `Backpack` and `Equipment` events derived from the feed's `ItemAdded`, `ItemMoved`, `ItemRemoved` and `ContainerSize`, moves between containers included; `SizeChanged` whenever *N* changes, also through an arriving item before the first `ContainerSize`; `GetMaxQuantity` = `GetMaxStackSize`; `IsMagic` false; `GetQualityImageID` 0; the `GetNameWithQuantity` form; the values for absent properties and for literal items | DEC ([0024](../decisions/0024-parity-track.md) P1); `character-panels.md` §4.3, §8, §9 | **Tessera rule** (no observation; the original's values are OPEN, §15.1) |
+| P84 | `LocalPlayer:GetWallet()` returns the player's wallet; `Wallet:GetSize()` is the number of items in it and `Wallet:GetItem(index)` takes an index in 1 … `GetSize()`; `Wallet` has the events `ItemAdded` and `ItemRemoved`; `WalletItem` has `GetName`, `GetDescription`, `GetImage`, `GetSmallImage` (return type not stated), `GetQuantity`, `GetMaxQuantity` (the most of the item the player can hold), `IsAccountItem` (the item is shared by all characters of the account) and the events `QuantityChanged`, `MaxQuantityChanged`; `FreePeopleAttributes:GetMoney()` is in copper | S2 (class and member pages of `Wallet`, `WalletItem`, `LocalPlayer`, `FreePeopleAttributes`); S3 (the dump lists the same members); usage counts in [`plugin-api-usage.md`](plugin-api-usage.md) §5.3 | **Reported** |
+| P85 | Wallet mechanics. `GetWallet()` creates the player's `Wallet` object on its first call and returns that object on every later call; it returns nil while either of two client feature conditions is false (not traced further). The wallet is an ordered list of entries, each holding a wallet item's DID, its quantity and its maximum quantity. When the object is created it is filled from the class library's list of the player's wallet items, in that list's order, taking only the items whose quantity is not 0; each one is appended and announced by `ItemAdded` on the new object before `GetWallet()` returns it. On a change of one item (DID, quantity, maximum): an item not in the list with quantity 0 gives nothing; an item not in the list with a non-zero quantity is appended as a new `WalletItem` and `ItemAdded { Index, Item }` fires with `Index` = the new list length; an item in the list with a non-zero quantity takes the new quantity, firing `QuantityChanged` when it differs, then the new maximum, firing `MaxQuantityChanged` when it differs; an item in the list with quantity 0 fires `ItemRemoved { Index, Item }` with its 1-based position, then leaves the list, the entries after it moving down one place without any event, and its object is released with its last quantity (an item that comes back later is a new object). `GetSize()` is the list length. `GetItem(i)` converts its argument by the Lua number conversion (a number, or a string that reads as one; anything else gives 0), truncates it toward zero to a 32-bit integer, and returns the entry at position *i* when 1 ≤ *i* ≤ `GetSize()`, nil otherwise | BIN, fifth pass (method M4, decision 0011): client 4906.0071.1794.4035, 2026-10-10, headless decompiler on a private copy of the shared analysis project (deleted after use), functions found from the event and method name strings; only function bodies of the plugin layer read, nothing of the network protocol, login, keys or launcher. **Question:** wallet indices and their stability, which items the wallet lists, event order and arguments, the getters' sources and value types. **Why M1–M3 were not enough:** S2 states only the index range and leaves two return types open, S3 has no wallet event capture, and the data files hold no behaviour | **Confirmed** 2026-10-10 (BIN only) |
+| P86 | `WalletItem` values. `GetQuantity()` and `GetMaxQuantity()` return the entry's quantity and maximum as numbers in 0 … 4,294,967,295 (unsigned 32-bit). `GetName()` is the text that a class-library name function (class 271 function 1 in this install) gives for the item's DID. `GetDescription()` is the item record's `Description`, rendered, when that property is a StringInfo, else the empty string. `GetImage()` is the record's `Icon_Layer_ImageDID` and `GetSmallImage()` its `PaperItem_SmallIcon`, each returned as a number (the DID as an unsigned 32-bit integer), 0 when the record lacks the property. `IsAccountItem()` is a boolean from class-library function 3084:8 (class 3084 function 8 in this install), which reads the item record's `Inventory_BindToAccount` with default false. `QuantityChanged` and `MaxQuantityChanged` carry an empty argument table. The wallet's item list comes from class-library function 3084:9 and each item's quantity and maximum from function 3084:1; the maximum is computed there from the wallet control record and the player's state (partly read: it selects between per-item cap structures and treats 9,999,999 as "no cap here"; not traced to the end) | BIN (same pass); for 3084:1, 3084:8 and 3084:9, the class library's code (record 0x56000000, method M1) disassembled with `tessera-dattool bytecode` ([`wlib-bytecode.md`](wlib-bytecode.md)) and a throwaway method-table probe, 2026-10-10 | **Confirmed** 2026-10-10 (BIN, bytecode); the maximum's rule **not established** (§15.3 OPEN) |
+| P87 | Money. `GetMoney()` returns a number in 0 … 4,294,967,295 (an unsigned 32-bit field of the attributes object). The event name `MoneyChanged` is defined twice in the client and fired, each time with an empty argument table, by the notification handlers of two attributes classes that `LocalPlayer:GetAttributes()` creates; by their sizes and member sets they are the free-people and the monster-player attributes. §16 lists no events for either class. The client's table of event names around `MoneyChanged` also holds stat event names (`BaseVitalityChanged` … `VocationChanged`) that §16 does not list | BIN (same pass: the two event-name objects, the firing helpers and the attributes constructor); S6 (published plugins set `MoneyChanged` handlers on `GetAttributes()`; facts only); O1-type reading of the literal string order (2026-10-10) | **Confirmed** 2026-10-10 (BIN: the event exists and has empty arguments) + **Reported** (which class is which; the other names) |
+| P88 | Wallet items of this install. The record `PaperItemControl` (WEENIECONTENT label; 0x70024867 here) lists 610 distinct items: 167 in `PaperItemControl_Free_PaperItemArray` and 443 in `PaperItemControl_PaperItemArray`, none in both. 51 entries, all in the first array, carry `PaperItemControl_BaseCap` with `PaperItemControl_CapDefault` (500 in 21; 999 in 6; 1,000 and 10,000 in 4 each; 750 in 3; 40, 50, 60 and 5,000 in 2 each; 9, 10, 15, 250 and 20,000 in 1 each) and `PaperItemControl_TreatBaseCapAsHardCap` (true in 4); for 42 of them `CapDefault` equals the item's `Inventory_MaxQuantity`. Over the item records (with inheritance): all 610 have `Name`, `Description` (a StringInfo) and a non-zero `Icon_Layer_ImageDID`; 577 have `PaperItem_SmallIcon` (all 33 without it are in the first array); `Inventory_BindToAccount` is true in 185 (59 of the first array, 126 of the second) and false in 425; `Inventory_MaxQuantity` of the 559 items without `CapDefault`: 999,999,999 in 389, 9,999,999 in 138, 100 in 9, 0, 30 and 9,999 in 5 each, 50 in 4, 500 in 3, 40 in 1. The coin objects of the three currency records (`Currency_ObjectDID`, `economy.md` §7) are not among the 610 | O4-type observation 2026-10-10 (read-only, M1, throwaway probe over `tessera-props`); agrees with `npc-windows.md` NW9 | **Confirmed** 2026-10-10 |
+| P89 | Wallet views in Tessera (§15.3): the session's wallet model (coin amount and an ordered entry list of the currencies with a non-zero amount) and its updates from the feed's `WalletChanged`; event derivation and queueing; one `Wallet` per apartment, always present in the world; no events for the entries present when `GetWallet()` is first called; one `WalletItem` per entry per apartment; the getters' values for record refs, absent properties and literal refs; `GetMaxQuantity` from `PaperItemControl_CapDefault`, else `Inventory_MaxQuantity`; `MaxQuantityChanged` never fired; `MoneyChanged` once per change of the coin amount; amounts above 4,294,967,295 returned unchanged; the wallet cleared on leaving the world | DEC ([0024](../decisions/0024-parity-track.md) P3); [`npc-windows.md`](npc-windows.md) §9.4, §9.6 | **Tessera rule** (no observation; the original's open values are in the §15.3 OPENs) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -3445,6 +3451,143 @@ therefore return the data keys unchanged.
 > `Equipment:GetItem` with an argument that is not a number (nil, a string): as implemented,
 > nil, like a non-integer.
 
+<a id="s15-3"></a>
+### 15.3 Wallet views in Tessera (decision 0024 P3)
+
+The views read the session's wallet model, the same model as the wallet window
+([`npc-windows.md`](npc-windows.md) §9.4, §9.6), which the scenario feed fills in the sandbox
+through `WalletChanged` (`scenario-feed.md` §5.5, §9.2) and a server backend would fill the
+same way. Every event below follows the delivery rule of the first paragraph of §15: queued,
+delivered in frame-loop step 7, getters returning the value at delivery.
+
+The facts about the original are P84 (S2), P85–P87 (BIN, with the class-library code for
+three functions) and P88 (the install's data). Everything marked **Tessera rule** is P89: it
+says how Tessera derives the API values from its own model, not how the original does.
+
+**What the original does (P85–P87).** The wallet is a list of the player's wallet items
+whose quantity is not 0. An item whose quantity becomes non-zero is appended at the end
+(`ItemAdded`, `Index` = the new `GetSize()`); an item whose quantity becomes 0 is announced
+by `ItemRemoved` with its position and then leaves the list, and every later entry moves
+down one place with no event of its own. Indices are therefore 1-based and stable while
+items are only added; a removal renumbers the entries after it. A change of a listed item
+fires `QuantityChanged` and then `MaxQuantityChanged`, each only when that value changed,
+both with an empty argument table; `ItemAdded` and `ItemRemoved` carry `Index` and `Item`
+(§9.3). An item that leaves and comes back is a new `WalletItem` object. `GetItem(i)`
+truncates *i* toward zero, so `GetItem(1.5)` is the first entry. Coins are not wallet items:
+the player's coin is `GetMoney()` on the attributes object, which fires `MoneyChanged` with
+an empty argument table.
+
+**§16 note (P87).** The §16 rows of `FreePeopleAttributes` and `MonsterPlayerAttributes` list
+no events; this build defines `MoneyChanged` for both. The rows are left as they are in this
+revision; read them with this note.
+
+**Wallet items and coin (P88, `economy.md` §6.1, §7).** The wallet items of an install are
+the items listed by the record `PaperItemControl` in its two item arrays (610 in this
+install); barter costs name them (`economy.md` §6.1 note, `npc-windows.md` §9.5). The three
+coin currencies of `economy.md` §7 (gold, silver, copper, values 100,000, 100 and 1 here) are
+never wallet items: their amount is the money of `GetMoney()`. The values of this install:
+
+| Getter | Source (P86) | This install (610 wallet items, P88) |
+|---|---|---|
+| `GetName()` | the item's name | all 610 have `Name` |
+| `GetDescription()` | `Description` (StringInfo), rendered | all 610 have it |
+| `GetImage()` | `Icon_Layer_ImageDID` | all 610 non-zero |
+| `GetSmallImage()` | `PaperItem_SmallIcon` | 577 non-zero, 33 give 0 |
+| `IsAccountItem()` | `Inventory_BindToAccount` (default false) | true for 185, false for 425 |
+| `GetMaxQuantity()` | computed by the class library (OPEN below) | Tessera rule below: `CapDefault` for 51 items, `Inventory_MaxQuantity` for 559 (999,999,999 for 389, 9,999,999 for 138) |
+
+**The session's wallet model (Tessera rule).** The model holds a coin amount *C* (0 before
+the first `WalletChanged { Coin }`) and an ordered entry list *E* of (currency ref, amount)
+with amount > 0, where a currency ref is the ref of a `Currency::Item` (a record or a literal
+string, `scenario-feed.md` §4.5). Each feed `WalletChanged` changes the model and queues at
+most one plugin event per apartment:
+
+| Feed event | Model change | Queued plugin event |
+|---|---|---|
+| `WalletChanged { Item(r), a }`, *r* not in *E*, *a* > 0 | append (*r*, *a*) to *E* | `Wallet.ItemAdded { Index = #*E*, Item }` |
+| `WalletChanged { Item(r), a }`, *r* in *E*, *a* > 0, *a* ≠ its amount | set the amount | `QuantityChanged {}` on that entry's `WalletItem` |
+| `WalletChanged { Item(r), a }`, *r* in *E* at position *k*, *a* = 0 | remove it; later entries move down one | `Wallet.ItemRemoved { Index = k, Item }` |
+| `WalletChanged { Item(r), a }`, *r* not in *E*, *a* = 0; or *a* equal to the amount held | none | none |
+| `WalletChanged { Coin, a }`, *a* ≠ *C* | *C* = *a* | `MoneyChanged {}` on the apartment's attributes object |
+| `WalletChanged { Coin, a }`, *a* = *C* | none | none |
+
+A ref is listed whatever record it names: a record that is not a wallet item of
+`PaperItemControl` and a literal ref are listed too, because the feed decides what the player
+holds (as the wallet window does, `npc-windows.md` §9.4 rule 3). Two refs are the same
+currency when they name the same record, or are equal literal strings. Amounts are the feed's
+(0 … 10^15) and are returned unchanged: a Lua number holds them exactly. The original's
+values stop at 4,294,967,295 (P86, P87); only a scenario above that can tell the difference.
+
+When the player leaves the world (a `Disconnected`, or a second `WorldEntered` that starts a
+new session model, as the inventory views treat it in the §15.1 OPEN on leaving the world),
+the entries leave from the last to the first, each with its `ItemRemoved` (indices #*E*,
+#*E* − 1, …, 1), then *C* becomes 0, with `MoneyChanged` when it was not 0.
+
+**Views (Tessera rule unless marked).**
+
+| View | Rule |
+|---|---|
+| `LocalPlayer:GetWallet()` | One `Wallet` object per apartment (§9.5 singletons), never nil while a character is in the world (the original's feature conditions, P85, are not modelled). The entries already in *E* when it is first called get no `ItemAdded` (the original fires them on the new object before returning it, where no handler can be set yet, P85). |
+| `Wallet:GetSize()` | #*E* (P85). |
+| `Wallet:GetItem(i)` | As P85: *i* converted as by Lua's number conversion (a number, or a string that reads as one; anything else 0), truncated toward zero; the entry at position *i* for 1 ≤ *i* ≤ #*E*, else nil. A value that is not finite or lies outside the 32-bit signed range gives nil. |
+| `Wallet.ItemAdded`, `ItemRemoved` | As the table above; `Index` 1-based (P85). No event for the other entries when a removal renumbers them. A wallet event is queued only for the apartments that hold their `Wallet` object (have called `GetWallet()`) when the change is made. |
+| `WalletItem` objects | One per entry per apartment, made when the entry enters *E* or when the apartment's `Wallet` is first built, kept while the entry is listed: `ItemAdded`'s `Item` is the object that `GetItem(Index)` returns, and fields or handlers set on it persist. After `ItemRemoved` the object answers its getters with its last values and receives no further events; a currency that comes back is a new object (P85). |
+| `FreePeopleAttributes:GetMoney()` | *C*. |
+| `FreePeopleAttributes:GetMoneyComponents()` | P39 applied to *C*: *C* mod 100, (*C* div 100) mod 1000, *C* div 100,000. For this install's currency values (1, 100, 100,000) it equals the split of `npc-windows.md` §9.3. |
+| `MoneyChanged` | Once per coin change, empty argument table (P87); queued only for the apartments that hold their attributes object (have called `GetAttributes()`) when the change is made. |
+| `MonsterPlayerAttributes` | The same money rules, if a scenario ever plays a monster player (P3 characters are free-people). |
+
+`WalletItem` getters ("record" = the record the ref names, read through its property set with
+inheritance; "absent" = the record lacks the property; a literal ref has no record):
+
+| Getter | Record ref | Absent | Literal ref |
+|---|---|---|---|
+| `GetName()` | rendered `Name` | empty string | the literal text |
+| `GetDescription()` | rendered `Description` (P86) | empty string | empty string |
+| `GetImage()` | `Icon_Layer_ImageDID` (P86) | 0 | 0 |
+| `GetSmallImage()` | `PaperItem_SmallIcon` (P86) | 0 | 0 |
+| `GetQuantity()` | the entry's amount | — | the same |
+| `GetMaxQuantity()` | `PaperItemControl_CapDefault` of the item's entry in `PaperItemControl` when that entry has one, else `Inventory_MaxQuantity` | 0 | 0 |
+| `IsAccountItem()` | `Inventory_BindToAccount` (P86) | false | false |
+| `QuantityChanged` | per the model table above; empty argument table | — | the same |
+| `MaxQuantityChanged` | never: the value is read from the data and does not change during a session | — | never |
+
+Image getters return the DID as a plain number, which plugins pass to `SetBackground`
+(§13.8); 0 means "no image".
+
+> **OPEN:** how the original computes `GetMaxQuantity()` and when it fires
+> `MaxQuantityChanged`. P86: the class library computes the maximum from the wallet control
+> record and the player's state; of the 51 entries with a `CapDefault`, 9 differ from the
+> item's `Inventory_MaxQuantity` (P88), so the data alone do not show which, if either, the
+> original returns. An owner
+> observation of a few wallet items' maxima in the original would settle the common case.
+> **Tessera rule:** the getter table above, and no `MaxQuantityChanged`.
+
+> **OPEN:** which two client feature conditions make the original's `GetWallet()` return
+> nil, and the order of the class library's wallet list that fills a new `Wallet` (the
+> original's indices for the items held at the first call). **Tessera rule:** never nil in
+> the world; the order in which the currencies reached a non-zero amount.
+
+> **OPEN:** what makes the original fire `MoneyChanged` (each change of the value, or each
+> update even when the value is unchanged), and which of the other `…Changed` names next to
+> it in the client (P87: base and current vitality, might, fate and will, the base
+> resistance and four resistances, destiny points, vocation) are events of
+> `FreePeopleAttributes` that §16 omits.
+> **Tessera rule:** one `MoneyChanged` per change of *C*; the stat events are outside P3.
+
+> **OPEN:** (implementer note, `crates/plugins/src/wallet.rs`, 2026-10-10) The views table
+> does not say what `GetWallet()`, `GetAttributes()` and the money getters do while no
+> character is in the world, nor whether an apartment's `Wallet` object outlives leaving the
+> world. As implemented: `GetWallet()` always returns the apartment's one `Wallet` object
+> (also outside the world, then empty), and the same object stays in use after a new
+> `WorldEntered`, the new session's entries arriving with `ItemAdded`; "held when the change
+> is made" is decided by comparing the model's change count at the apartment's first
+> `GetWallet()` (or `GetAttributes()`) call with the count each event carries, so the client
+> continues the change count and the entry IDs across world sessions (one counter for the
+> plugin manager's lifetime). If the alignment changes within a session, "the apartment's
+> attributes object" is the one `GetAttributes()` returns now: only it receives
+> `MoneyChanged` and answers the money getters; the other answers 0.
+
 ---
 
 ## 16. API inventory (client build 4906.0071.1794.4035)
@@ -3977,6 +4120,61 @@ original: the API facts P81 and P82 (1-based backpack indices, `Equipment` value
     `GetMaxStackSize()` is 1, and `GetItemInfo():GetNameWithQuantity(3)` is "3", a space and
     the literal text.
 
+Invariants 80–85 check §15.3 against a scenario feed (`scenario-feed.md`), not against the
+original: the API facts P85–P87 (append at the end, removal with renumbering, 1-based
+indices, the truncation of `GetItem`, empty argument tables, the `GetMoneyComponents` order
+of P39) and the Tessera rules P89 (the wallet model, `GetMaxQuantity`, object identity,
+which apartments receive events, leaving the world). Checks 80–82, 84 and 85 use literal
+currency refs and need no install; check 83 reads the install and skips without
+`TESSERA_GAME_DIR`. "A handler saw" means a test plugin's handler recorded the event.
+
+80. **Money (§15.3):** with a plugin that called `GetAttributes()` at load, before any
+    `wallet` step `GetMoney() == 0`; after `wallet coin 123456789`, `GetMoney() == 123456789`
+    and `GetMoneyComponents()` returns 89, 567, 1234; its `MoneyChanged` handler saw exactly
+    one event, whose argument table is empty (`next(args) == nil`). A second
+    `wallet coin 123456789` gives no event; `wallet coin 0` gives one `MoneyChanged`, after
+    which `GetMoney() == 0` and the components are 0, 0, 0. No `Wallet` event fires and
+    `GetWallet():GetSize()` stays 0.
+81. **Wallet list:** with a plugin that called `GetWallet()` at load, the steps
+    `wallet "A" 5`, `wallet "B" 7`, `wallet "C" 1`, one tick apart, give `ItemAdded` with
+    `Index` 1, 2, 3 in that order, each `Item` equal (`==`) to `GetItem(Index)` in its
+    handler; then `GetSize() == 3`, `GetItem(1):GetName() == "A"`,
+    `GetItem(1):GetQuantity() == 5`, `GetItem(0)`, `GetItem(4)`, `GetItem(-0.5)` and
+    `GetItem(nil)` are nil, `GetItem(1.9) == GetItem(1)` and `GetItem("2") == GetItem(2)`.
+    `wallet "B" 0` then gives `ItemRemoved` with `Index` 2 and `Item` the object of B; after
+    it `GetSize() == 2` and `GetItem(2)` is the same object as C's before. `wallet "B" 4` then
+    gives `ItemAdded` with `Index` 3 and an object that is not B's earlier one;
+    `GetItem(3):GetQuantity() == 4`, while B's earlier object still answers 7.
+82. **Quantities:** continuing check 81, `wallet "A" 9` gives one `QuantityChanged` on A's
+    object with an empty argument table, after which `GetQuantity() == 9`; a second
+    `wallet "A" 9`, `wallet "D" 0` (D never listed) and `wallet coin 10` give no `Wallet` or
+    `WalletItem` event; no `MaxQuantityChanged` fires in checks 80–85. A literal entry
+    answers `GetDescription() == ""`, `GetImage() == 0`, `GetSmallImage() == 0`,
+    `GetMaxQuantity() == 0` and `IsAccountItem() == false`.
+83. **Wallet item values (install):** the test reads `PaperItemControl` (WEENIECONTENT label)
+    at run time and takes three distinct items, each the lowest DID of its kind not yet
+    taken: (a) an item whose entry has a `PaperItemControl_CapDefault`, (b) an item with
+    `Inventory_BindToAccount` true and a `PaperItem_SmallIcon`, (c) an item without
+    `PaperItem_SmallIcon`; it writes a scenario
+    with a `did` selector of the three and one `wallet $w[i] 1` step each. Then for each,
+    `GetName()` and `GetDescription()` are the record's rendered `Name` and `Description`,
+    `type(GetImage()) == "number"` and `GetImage()` is the record's `Icon_Layer_ImageDID`,
+    `GetSmallImage()` is its `PaperItem_SmallIcon` (0 for (c)), `IsAccountItem()` is true for
+    (b), and `GetMaxQuantity()` is the `CapDefault` for (a) and the `Inventory_MaxQuantity`
+    for (b) and (c) when their entries have no `CapDefault`.
+84. **Objects and apartments:** two test plugins in different apartments, both calling
+    `GetWallet()` at load, each get the same object from every call in their own apartment and
+    different objects from each other, and both see the `ItemAdded` indices of check 81 in the
+    same order. A third plugin that first calls `GetWallet()` from a chat command issued after
+    the `ItemAdded` of A was delivered sees `GetSize() == 1`, `GetItem(1):GetName() == "A"`,
+    and no `ItemAdded` for A.
+85. **Order and leaving the world:** `wallet "A" 5` and then `wallet "A" 0` at the same tick
+    deliver `ItemAdded` and then `ItemRemoved`, both with `Index` 1 and the same `Item`; in
+    the `ItemAdded` handler `GetSize()` is already 0 (getters at delivery, §15). With A, B and
+    C listed (in that order) and coin 50, leaving the world (a `Disconnected` given to the
+    views' model by the test) gives `ItemRemoved` with `Index` 3, 2, 1 (C, B, A), then one
+    `MoneyChanged`, after which `GetSize() == 0` and `GetMoney() == 0`.
+
 ---
 
 ## 19. Open questions (summary)
@@ -4033,6 +4231,12 @@ All `> **OPEN:**` callouts above:
   `GetQualityImageID()` and `GetNameWithQuantity()` return, what its item getters return
   when the data lacks the property, and whether `ItemAdded`/`ItemRemoved` fire for moves
   between containers (§15.1).
+- Wallet and money (§15.3): how the original computes `WalletItem:GetMaxQuantity()` and
+  when it fires `MaxQuantityChanged`; the client feature conditions under which
+  `GetWallet()` returns nil, and the order of the list that fills a new `Wallet`; what
+  triggers `MoneyChanged`, and which stat `…Changed` events of `FreePeopleAttributes` §16
+  omits; (implementer note) the wallet and money views outside the world and the `Wallet`
+  object across leaving the world.
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -4067,6 +4271,13 @@ The P1 revision of 2026-10-09 (§15.1) and its review fixes of the same day narr
 callout on enums (`Equipment`, `ItemDurability` and `ItemWearState` answered by P82) and
 added one callout (§15.1: the original's values of four `ItemInfo` getters, of getters on
 absent properties, and events for moves between containers).
+
+The P3 revision of 2026-10-10 (§15.3) added three callouts, all in §15.3: the original's
+wallet maximum and `MaxQuantityChanged`; the `GetWallet()` conditions and the initial list
+order; the `MoneyChanged` trigger and the attributes events that §16 omits. It closed none.
+The clean-room implementation of the wallet views (`crates/plugins/src/wallet.rs`,
+2026-10-10) added a fourth callout in §15.3 (implementer note: the views outside the world,
+the `Wallet` object across leaving the world), so §1–§18 count 65 OPEN markers with it.
 
 ---
 
@@ -4233,3 +4444,4 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-06 | Second repair of the decision-alignment revision (spec writer, dirty room), answering the second review round; no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **§3.3 deferred work made consistent:** the at-least-one-item rule of 0014 D8 now carries its one exception, from 0015 §4.4: while the first `Plugins/` file index is not ready and the head of the queue is a load, that frame's deferred work stops at the load, no item runs and the items behind it wait, so queue order is kept; refreshed indexes never hold back a load; this is the rule of `plugin-runtime.md` §8.4 "Wait for the first file index", which §3.3 now cites. (2) **§18:** the lead-in to the Tessera-rule invariants reads 59–65 (invariant 65 is the §11.3 interim rule). (3) **§13.18 mode-1 row** (non-blocking): the reason why the children of a resized Stretch control are not laid out again is now `ui-behaviour.md` §9.2.1 (a Stretch element resize keeps the layout box), not `ui-layout.md` §8.4 step 1, which Tessera applies only under root-panel parents (`ui-layout.md` §8.4 scope OPEN); the behaviour is unchanged. **OPEN callouts:** count unchanged (no new or closed callout). **Implementers re-check:** deferred-work slicing while the first index is pending (§3.3). **Left for other owners:** decision 0014 D8 (locked) does not name the first-index exception to its at-least-one-item rule; it should, when 0014 is next revised, together with the skip set already listed. |
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting review): new §15.1 (inventory views: `GetBackpack`, `GetEquipment`, `Item`, `ItemInfo` over the session's inventory model and the scenario feed), provenance P81–P82 (API facts S2, the `Equipment` ↔ `ContainerSlot` key relation from the data), §18 checks 66–69 for decision 0024 P1 exit criterion 4. No other text changed; section numbers and anchors unchanged. Implementers re-check: the `Turbine.Gameplay` inventory views in `crates/plugins`. |
 | 2026-10-09 | Review fixes for the P1 revision (spec writer, dirty room; no new research; status stays **Revised**, awaiting re-review by a session other than the writer and the first reviewer). Blocking (1): §15 enum paragraph and P41 now point to P82 (`Equipment` value = `ContainerSlot` key − 1; `ItemDurability`, `ItemWearState` follow their data enums); the §15 enum OPEN and its §19 line narrowed to `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the stance enums. (2): the §15.1 OPEN is listed in §19, with a closing note. (3): new provenance row P83 (**Tessera rule**, DEC 0024 P1, `character-panels.md` §4.3, §8, §9) covering every Tessera rule of §15.1; §15.1 says which facts are P81/P82 and which P83; §18 has a lead-in for checks 66–69. (4): §15.1 rewritten with a containers table and two getter tables covering every `Item` and `ItemInfo` getter of §16, each with its value for a present property, an absent property and a literal item; `GetItemInfo()` identity (one object per record DID per apartment) stated; the §15.1 OPEN widened to the original's values for absent properties. Non-blocking: (a) the delivery rule points to §15's first paragraph; (b) note that `scenario-feed.md` links resolve after `p0` is merged; (c) and (e) a `SizeChanged` rule for growth before the first `ContainerSize`, and a §20 row asking `character-panels.md` §8.1 to align; (d) check 67 names the `MoveItem` and `DestroyItem` input lines with `defaults on`; (f) blank lines fixed. Checks 66, 67, 69 extended. OPEN count: 57 callout markers in §1–§18 before and after (one narrowed, one widened; none closed, none added). Section numbers and anchors unchanged. Implementers re-check: `Turbine.Gameplay` `Backpack`, `Equipment`, `Item`, `ItemInfo` in `crates/plugins`. |
+| 2026-10-10 | P3 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting independent review): new §15.3 (wallet views: `GetWallet`, `Wallet`, `WalletItem`, `GetMoney`, `GetMoneyComponents` and `MoneyChanged` over the session's wallet model, which the feed's `WalletChanged` fills; the install's wallet items and their values), provenance P84 (S2), P85–P87 (BIN fifth pass on build 4906.0071.1794.4035, 2026-10-10, method M4 under decision 0011, with the class library's code for three functions; question, method and reason in the rows), P88 (data, all 610 wallet items), P89 (Tessera rules, DEC 0024 P3); §18 lead-in and checks 80–85; §19 bullet and closing note. Numbering leaves §15.2 and checks 70–79 to the P2 revision. No other text changed: the §16 rows of `FreePeopleAttributes` and `MonsterPlayerAttributes`, which list no events, are read with the §15.3 note on `MoneyChanged` (P87). OPEN count: 61 callout markers in §1–§18 before, 64 after (three added in §15.3, none closed). Section numbers and existing anchors unchanged; one anchor added (`s15-3`). Implementers build: `Turbine.Gameplay` `Wallet`, `WalletItem`, `LocalPlayer:GetWallet()`, `FreePeopleAttributes:GetMoney()`, `GetMoneyComponents()` and `MoneyChanged` in `crates/plugins`, over a wallet source the client implements. |

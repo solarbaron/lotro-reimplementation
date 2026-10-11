@@ -41,6 +41,9 @@ tempfile = "3"
 # Real-data test of the element tree (tests/ui_real_data.rs): the archive set of the
 # user's install, read-only.
 tessera-dat.workspace = true
+# Committed synthetic goldens of the P3 windows (tests/p3_goldens.rs, decision 0031 tier 1):
+# PNG read and write. MIT OR Apache-2.0; already in the lock file through tessera-render.
+png = "0.18"
 
 # Painter micro-benchmark for the U1 probe gap (decision 0015 §6); a plain binary.
 [[bench]]

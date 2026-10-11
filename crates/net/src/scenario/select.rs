@@ -530,6 +530,10 @@ pub enum LabelContext {
     /// A key of the enum mapper the property dictionary names for the data property with
     /// this ID (type codes 8, 14, 18; `scenario-feed.md` §5.8).
     PropertyKey(u32),
+    /// An NPC action key: the label's key in the enum mapper the property dictionary names
+    /// for `ActionPickerUI_Action` (`scenario-feed.md` §8.6, P3 revision;
+    /// `npc-windows.md` §5.3).
+    NpcAction,
 }
 
 /// A data property as the resolver reports it (`scenario-feed.md` §8.6 `property`).

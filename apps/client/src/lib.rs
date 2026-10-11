@@ -27,6 +27,10 @@
 //! - [`character`]: characters, inventory and equipment (P1): the player's state from the
 //!   session, the character panel and bag windows, item tooltips, the plugin inventory
 //!   views.
+//! - [`npc`]: NPC windows (P3): using an NPC, dialogue, quest offers, vendors, barter,
+//!   loot, the wallet window and the plugin wallet views, fed by the session's events.
+//! - [`quests`]: the quest journal (P3): quest log, tracker, objective counters, quest
+//!   chat lines, quest markers and NPC indicators, fed by the session's events.
 
 pub mod app;
 pub mod audio;
@@ -38,9 +42,11 @@ pub mod data;
 pub mod headless;
 pub mod input;
 pub mod net;
+pub mod npc;
 pub mod panels;
 pub mod plugins;
 pub mod pre_world;
+pub mod quests;
 pub mod runtime;
 pub mod scenario;
 pub mod scene;

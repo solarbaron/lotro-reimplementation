@@ -28,6 +28,7 @@ impl Parser {
             }
             "chat" => &["channel", "text", "times"],
             "create-character" => &["name", "times"],
+            "buy-back" => &["entry", "times"],
             _ => &["times"],
         };
         let mut st = self.split(tokens, 2, keys)?;
@@ -209,6 +210,7 @@ impl Parser {
             }
             "delete-character" => (Pattern::DeleteCharacter(opt_name(self, st)?), 1),
             "close" => (Pattern::Close(self.window_kind(st.arg(0)?)?), 1),
+            "buy-back" => (Pattern::BuyBack(entry(self, st)?), 0),
             _ => return Err(self.unknown_word(word, col)),
         };
         st.no_more(max_pos)?;
@@ -549,6 +551,10 @@ impl Parser {
             }
             "delete-character" => (InputCmd::DeleteCharacter(name0(self, &st)?), 1),
             "close" => (InputCmd::Close(self.window_kind(st.arg(0)?)?), 1),
+            "buy-back" => {
+                let t = st.arg(0)?;
+                (InputCmd::BuyBack(self.u16_in(t, t.col, 1, 1024)?), 1)
+            }
             _ => return Err(self.unknown_word(word, wt.col)),
         };
         st.no_more(n)?;

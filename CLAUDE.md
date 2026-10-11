@@ -224,10 +224,33 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
   bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
   new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
+- **P3 (NPC windows: dialogue, quests, vendors and loot; branch `p3` in worktree `wt-p3`,
+  exit verification 2026-10-11 on the uncommitted tree)** (`docs/ROADMAP.md` P3 status):
+  criteria 1 and 2 pass on Tessera's side; to be committed and merged (P2 runs in parallel in
+  `wt-p2`: merge seams below). Not yet Accepted: `npc-windows.md`, `quest-journal.md`
+  (Review), `scenario-feed.md` §18.P3 rev 5 (Review), `lua-plugin-api.md` §15.3 (Revised);
+  decision 0031 (panel goldens: tier 1 committed synthetic, tier 2 local-only real data)
+  is Proposed. Built: `tessera-gamedata` `quest` and `npc`; `tessera-net` rev 5 (`action(…)`,
+  `rewards`/`QuestRewards`, `buyback`/`BuybackShown`/`BuyBack`); `tessera-ui`
+  `game::{npcvocab, npc, quest}` with 12 synthetic goldens; `tessera-plugins` `wallet`;
+  `tessera-client` `npc` (use on U, windows, wallet) and `quests` (log on L, tracker, chat
+  type 21, map markers, indicators, `--quest-icons`), scenarios `dialogue`, `vendor`, `loot`,
+  `quest-log` with logs. Criterion 1: 20,807 quest records, 15,400 log rows and details panes,
+  5,407 deeds in the tracker only, 0 failures. Criterion 2: 19 local goldens blessed, judged
+  and matched with `TESSERA_GOLDEN_REQUIRE=1` (install `3905db5e60168527`). Checks: fmt,
+  clippy `-D warnings` (workspace, `--all-features`, fuzz) clean; release tests with the
+  install 6,057 passed, 0 failed, 10 ignored; fuzz smoke 60 s clean; content, SPDX, server
+  deps, links clean. Open: text-fitting defects (option rows wrap, offer objective and
+  details texts cut at the pane width, `quest-journal.md` §4.7 OPEN), barter window off
+  screen at x = −107, no dialog-box or popup-menu widget (abandon on a second click,
+  tracker menu as a chat notice), U and L are raw keys; merge seams with P2: the
+  `NpcWindows` alias with `Deref` in `PlayerState` (becomes a `quests` field), UI events
+  taken from the character-screen collector (`ui_host` not changed), `npc::use_entity` for
+  P2's selection, the second `LocalPlayerSource` writer.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90). They do not block the
+  O88–O90, P3 items O110–O125). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

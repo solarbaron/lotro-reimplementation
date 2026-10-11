@@ -199,6 +199,45 @@ pub fn net_line(s: &crate::net::NetStatus) -> String {
     t
 }
 
+/// The camera and the entities' render-space positions for world-anchored overlays (the
+/// quest indicators over NPCs, `quest-journal.md` §8.2 OPEN; `crate::quests::indicators`).
+impl super::Walker {
+    /// The camera's view-projection for a frame of `aspect`, as [`super::Walker::draw`]
+    /// builds it; `None` before the walker is placed.
+    #[must_use]
+    pub fn view_proj(&self, aspect: f32) -> Option<tessera_render::glam::Mat4> {
+        use tessera_render::glam::Vec3;
+        let anchor = self.anchor?;
+        if !self.controls.placed() {
+            return None;
+        }
+        let (eye_w, dir) = self.view();
+        let eye = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
+        let camera = tessera_render::Camera {
+            eye,
+            target: eye + dir,
+            up: Vec3::Z,
+            projection: tessera_render::Perspective {
+                fov_y: super::FOV_Y,
+                near: super::NEAR,
+                far: self.far,
+            },
+        };
+        Some(camera.view_proj(aspect))
+    }
+
+    /// The render-space position of the session entity `id`, once the walker places it.
+    #[must_use]
+    pub fn entity_render_pos(
+        &self,
+        id: tessera_net::EntityId,
+    ) -> Option<tessera_render::glam::Vec3> {
+        let anchor = self.anchor?;
+        let (p, _) = self.characters.entity_pose(id)?;
+        anchor.to_render(&p)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

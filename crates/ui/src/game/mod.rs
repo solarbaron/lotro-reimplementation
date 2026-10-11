@@ -45,6 +45,9 @@
 //! | [`items`] | item slots, bag lists, item drag and drop | `character-panels.md` §3.3, §4.1, §5, §6; `ui-behaviour.md` §7 |
 //! | [`avatar`] | viewports as external-content hosts, the paperdoll's turning | `render.md` §6.10, `character-panels.md` §3.2 |
 //! | [`creation`] | choice lists, steppers, sliders, swatches of the creation screens | `character-screens.md` §3–§5 |
+//! | [`npcvocab`] | labels of the P3 types, element IDs, states, properties | naming notes |
+//! | [`npc`] | NPC windows: dialogue, quest offer, vendor, quantity, barter, loot, money, wallet | `npc-windows.md` §5–§9 |
+//! | [`quest`] | quest log, details pane, quest tracker, quest markers on the radar and world map | `quest-journal.md` §4–§8; GP §8.8, §9.3 |
 
 pub mod avatar;
 pub mod charvocab;
@@ -57,7 +60,10 @@ pub mod examine;
 pub mod hidewhen;
 pub mod items;
 pub mod map;
+pub mod npc;
+pub mod npcvocab;
 mod panels;
+pub mod quest;
 pub mod quickslot;
 pub mod radar;
 pub mod simple;
@@ -68,6 +74,7 @@ pub use charvocab::CharVocab;
 pub use data::{
     GameData, HideCondition, MapLookup, MapSource, NoShortcuts, SandboxData, Shortcut, Shortcuts,
 };
+pub use npcvocab::NpcVocab;
 pub use panels::{GameAction, GameLayouts, GamePanels};
 pub use vocab::GameVocab;
 

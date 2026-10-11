@@ -11,7 +11,8 @@ Tessera is not playable yet. The client is mainly an offline **world walker**: y
 fly over the world as an animated avatar, among the characters the data places, with no
 combat. It can also join Tessera's own test server (not the game's servers) and attach an
 early game UI with Lua plugins (§3.12), with character selection and creation screens, a
-character panel with bag windows, and item tooltips (§3.13). Scenario files (§3.11) script
+character panel with bag windows, and item tooltips (§3.13), and NPC windows, a quest log
+and tracker and the wallet (§3.14). Scenario files (§3.11) script
 gameplay events for testing; they play back what the file says and compute nothing.
 
 ---
@@ -515,6 +516,158 @@ Next to it, comparison tooltips show what you have equipped in the slots the ite
 `compare_equipped_items = false` in the `[UI]` section of Tessera's settings file turns them
 off. Ctrl+T pins the tooltip under the mouse, so it stays open; a pinned tooltip closes with
 its close button.
+
+<a id="npc-windows"></a>
+### 3.14 NPC windows, quests and the wallet
+
+These parts are early. The windows' layouts, texts and icons come from your install; which
+window opens, what it lists, prices, quantities, quest states and objective counts come from
+a scenario file (§3.11), because Tessera runs none of the game's rules: no dialogue tree, no
+quest logic, no prices and no loot tables. Without a scenario, using an NPC does nothing.
+The windows need the game UI (`--ui`, or an option that implies it, §3.12) and, in a
+windowed run, an install; without one they appear only in the tests. The test server sends
+none of them.
+
+**Using an NPC.** U uses the nearest entity in range that is not a player (an NPC, a
+creature or an object such as a chest): the client checks the distance (the NPC's use range, about 6 m when its record names none) and asks the
+session to use it; the scenario's `on use` block answers by opening a window. Out of range,
+or with nobody near, a short line in chat says so and nothing is sent. Selecting with the
+mouse (double-click, right click) comes with targeting (P2); until then U is the way. A
+scenario's `input` block can also send `use` (headless runs, or `--scenario-input`).
+
+| Key | What it does |
+|---|---|
+| U | Use the nearest non-player entity in range (NPC, creature or object) |
+| L | Quest log (open or close; not with Shift, Ctrl, Alt or Super held) |
+| Enter | In the active NPC window: Loot All in the loot window, OK in the quantity dialog |
+| Escape | Closes the active NPC window (asks the session, as the close button does) |
+| Alt, Shift, Tab, held | Buy modes in the vendor window (below) |
+
+U and L are fixed for now: they are not in the keymap file (§4.2), and neither works while
+you type in a text field.
+
+**Dialogue.** An NPC's page opens in one of three windows, as the page needs: a
+conversation (text and Continue), a choice (text and a list of options to click) or a short
+comment. Option texts are your own literals or install texts named by the scenario (a quest's
+objective or role line, a name, or, with `action(@Label)`, the install's own action labels). Continue, the close button and Escape ask the session to close the window;
+it closes when the session says so. Walking out of the NPC's use range, or the NPC
+disappearing, closes it too.
+
+**Quest offers.** The offer window shows the quest's name, the offer line, the objective and
+the rewards (amounts from the scenario's `rewards` step: coins, experience of several kinds,
+reputation, wallet items). Accept and Decline answer the offer. A selectable reward can be
+highlighted, but the choice is not sent yet.
+
+**Vendor and barter.** The vendor window has a buy page, a sell page and, once the session
+sends a buy-back list, a buy-back page. Prices show in coins, in red when you cannot afford
+them.
+
+- **Buy:** right-click or double-click an entry, or select it and press Buy. Hold Alt to
+  open the quantity dialog (presets, arrows, typing; the cost follows the quantity), Shift
+  to buy a full stack, Tab to buy what fills your partial stacks of that item; with no key
+  held you buy one.
+- **Sell:** the sell page lists the backpack items that can be sold, with the worth the
+  item's tooltip shows (the money you receive is whatever the session sends). Right-click,
+  double-click or Sell sells one entry; Sell All sells every entry. Dropping a bag item on
+  the window does not sell it yet.
+- **Buy back:** right-click, double-click or the buy-back button.
+- **Barter:** a vendor list whose entries cost items opens the barter window: each entry
+  shows what you get and up to three costs, the required quantity in red when you hold
+  fewer; Buy, a right click or a double click buys one. Pages hold 20 entries.
+
+Repair, the try-on and find-items buttons are hidden; sorting and filters are greyed out.
+
+**Loot.** The loot window lists what the session offers, with coins in the first row. Loot
+All (or Enter) asks for everything and closes the window once all is taken; right-click or
+double-click a row, or drag it out of the window, to take one entry.
+
+**The wallet.** Your coins show in gold, silver and copper (split with your install's coin
+values) in the vendor window and in the wallet window, which the wallet button of the
+character panel (C) opens. The wallet window lists the money first, then the other
+currencies by category, sorted by name, with a search field. Plugins see the same wallet
+through `GetWallet()` and `GetMoney()` and their change events, also in headless scenario
+runs with `--load-plugin` (§3.11).
+
+**Quest log and tracker.** L opens the quest log: quests grouped by category, the
+active/completed switch, the filter buttons, expand and collapse, and the details pane with
+the objective text, progress lines with their counters (for example 2/4) and the rewards
+the quest record names (amounts show only in the offer window). Below the list:
+
+- **Track** adds the selected quest to the quest tracker or takes it off (at most 10).
+- **Abandon** shows the confirmation text in chat; click it again for the same quest to
+  abandon it (selecting another quest or closing the log cancels). The session decides what
+  happens.
+- **History** shows the selected quest's details in history order; share and group finder
+  are greyed out.
+- The tracker check box shows or hides the tracker for this run (not saved yet).
+
+The tracker shows the tracked quests with their current objective and counters; clicking an
+entry opens the log at that quest. A right click lists the menu's items in chat (show in
+log, remove, remove all), but choosing one needs the popup menu, which is not built yet.
+
+**Quest lines in chat.** A new, completed or failed quest posts a line in the Quest chat
+type (shown in the first chat tab), and an objective update posts the install's update text
+when the quest's record has one. Lines that the game's servers would send (quest removed,
+experience earned and the like) are not made up; a scenario posts them with `system`.
+
+**Quest markers.** A scenario's `marker … quest=` lines put quest markers on the minimap
+(within its radius) and on the world map, with the label as tooltip; markers of another
+region than yours stay hidden until you enter it. An NPC whose scenario sets
+`@Quest_CurrentBestowRingDID` to a quest shows a small sign over its head (available,
+continue, in progress), standing in for the ring the original draws. `--quest-icons off`
+hides these signs (default on; not a saved setting yet).
+
+**Opening the windows empty.** `--open-panel` (§3.12) also takes `conversation`, `choice`,
+`npc-comment`, `vendor`, `vendor-quantity`, `barter`, `loot` and `wallet` (the wallet shows
+yours), and `quest-log` and `tracker`. They open as soon as you are in the world, for a look
+at the install's layouts.
+
+**The committed scenarios.** Four synthetic scenarios in `apps/client/tests/scenarios/`
+show the windows. Each plays without an install (the literal entries) and adds install
+records with one:
+
+| File | What it shows |
+|---|---|
+| `dialogue.scenario` | A choice page with your own and install-labelled options, a conversation page reached by an option, then (with an install) an NPC comment, a quest offer with reward amounts, and a choice page whose text is a quest's own line |
+| `vendor.scenario` | A buy list with prices and stock, the sell list from your bags, a buy-back page, a purchase of three, a sale and a buy-back that change the coins, then a barter list that costs a token |
+| `loot.scenario` | A creature's loot with coins and stacks: one entry taken, then Loot All; then a chest's loot of which the scenario takes one entry |
+| `quest-log.scenario` | Quests offered, accepted, counting up, tracked, completed, failed and abandoned, quest markers added, moved and removed, and an NPC's quest sign |
+
+```sh
+# Headless, no install: the events in the log, the same on every run.
+cargo run --release -p tessera-client -- --headless --no-data \
+    --scenario apps/client/tests/scenarios/vendor.scenario --scenario-log -
+# Windowed with your install: the windows on screen, the input block played for you.
+cargo run --release -p tessera-client -- --ui --scenario-input \
+    --scenario apps/client/tests/scenarios/dialogue.scenario
+```
+
+Without `--scenario-input`, walk to the NPC and press U yourself; the scenario's answers
+follow its `on` blocks, so the input block's own commands (`choose`, `buy`, `take-loot` and
+so on) are then yours to give in the windows.
+
+**Local golden images** ([decision 0031](decisions/0031-parity-panel-goldens.md), Proposed).
+Pictures of the windows filled from your install stay on your machine: they are written under
+`${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}`, one set per install
+version, and the tests refuse a directory inside any git work tree. The first run writes
+them and reports `golden: blessed PATH`; later runs compare and report `passed`.
+
+```sh
+export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"
+export TESSERA_GOLDEN_DIR="$HOME/.cache/tessera/my-goldens"   # outside every work tree
+cargo test --release -p tessera-client --test npc_windows_real_data -- --nocapture
+cargo test --release -p tessera-client --test quest_journal_real_data -- --nocapture
+# Look at the PNG files, then run again; a missing picture is now a failure:
+TESSERA_GOLDEN_REQUIRE=1 cargo test --release -p tessera-client \
+    --test npc_windows_real_data --test quest_journal_real_data -- --nocapture
+```
+
+`TESSERA_GOLDEN_BLESS_LOCAL=1` rewrites existing local pictures (it cannot be combined with
+`TESSERA_GOLDEN_REQUIRE`), and `TESSERA_SHEET_DIR=DIR` also copies every picture to DIR for
+viewing. On a mismatch the new picture and a difference picture are written next to the
+golden. `TESSERA_BLESS=1` belongs to the committed synthetic goldens only
+(`cargo test -p tessera-ui --test p3_goldens`, images in `crates/ui/tests/golden/`); it never
+touches the local ones. Never commit a local picture: it shows your install's text and art.
 
 ---
 

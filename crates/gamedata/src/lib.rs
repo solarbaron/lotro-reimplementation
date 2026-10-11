@@ -6,7 +6,8 @@
 //! creatures, quests, economy, map and progression records, and the resolution of
 //! scenario selectors (`docs/specs/scenario-feed.md` §8) against the user's install.
 //! The P1 models live in modules: item tooltips ([`tooltip`]), the creation screens'
-//! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]). Layer
+//! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]); the P3
+//! models are the quest journal ([`quest`]) and the NPC windows ([`npc`]). Layer
 //! L3; it depends on `tessera-formats`, `tessera-props`, `tessera-text` and
 //! `tessera-wstate` only.
 //!
@@ -24,6 +25,8 @@
 //! | [`tooltip`] | Item examination tooltip model (P1) | `item-tooltips.md` |
 //! | [`chargen`] | Selection and creation lists, names (P1) | `character-screens.md`, `player-character.md` |
 //! | [`inventory`] | The local player's inventory model (P1) | `character-panels.md`, `lua-plugin-api.md` §15.1 |
+//! | [`quest`] | Quest log, details, progress texts and counters, tracker, quest chat lines, NPC rings and markers, census (P3) | `quest-journal.md` |
+//! | [`npc`] | Dialogue, quest offers, vendor, barter and loot entries, coins, wallet, census (P3) | `npc-windows.md` |
 //!
 //! # Hostile input
 //!
@@ -54,8 +57,10 @@ mod error;
 mod filter;
 mod index;
 pub mod inventory;
+pub mod npc;
 mod order;
 mod query;
+pub mod quest;
 mod store;
 mod tables;
 pub mod tooltip;

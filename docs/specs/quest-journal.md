@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review (awaiting independent review) |
-| **Last updated** | 2026-10-10 |
+| **Status** | Revised (revision 1 answers review 1; awaiting re-review by an independent session) |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Review 1 (2026-10-11): a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of `npc-windows.md`, of the P3 notes in other specs or of the P3 code. Re-review pending (an independent session). |
-| **Review record** | **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
+| **Review record** | **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). **2026-10-11, revision 1** (spec writer, own read-only probes): B1–B3 answered (§9 census restated under §5.2 step 2.2 and its implementer OPEN answered; §7.2 billboard count scoped; new OBS row QJ25 for the §4.7 and §4.9 layout facts); review notes 3 and 4 applied. Status Revised. First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
 | **Implements into** | `crates/gamedata` (`quest` module: log entries, categories and order, title and level, display texts, objective text and counter values, reward rows shown, tracker entries, ring and marker choices, the per-record census of §9), `crates/ui` (game widgets and fallback widgets of the types named here: quest tree, quest display, quest objectives list, quest tracker, history window, map and radar quest notes), `apps/client` (the quest log and tracker panels, their commands to the session, `--open-panel` names, quest lines in chat, rings over NPCs in the walker, quest markers on the minimap and the world map) |
 | **Companion specs** | [`quests.md`](quests.md) (§2–§7 records, objectives, roles; §4.3 effective level; §9 rewards; §10 deeds; §11 arcs), [`npc-windows.md`](npc-windows.md) (§5.5 player variables, §6.2–§6.3 objective and reward blocks), [`scenario-feed.md`](scenario-feed.md) (revision 4 Accepted, revision 5 by the P3 NPC-window writer: §5.2, §6.3, §6.5, §7.6, §9.2, §9.4), [`string-table.md`](string-table.md) (§3.2 argument IDs, §7 rendering, §8.3 substitution, §9 StringInfo), [`ui-layout.md`](ui-layout.md) (§17 panels P9 and P11), [`game-panels.md`](game-panels.md) (§4 drag boxes, §6 `HideWhenField`, §8 radar, §9 world map), [`map-data.md`](map-data.md) (§4.8 note icon tables), [`chat-window.md`](chat-window.md) (§4.3, §5.1 chat types and lines), [`game-controls.md`](game-controls.md) (§7.5 consideration tables), [`script-table.md`](script-table.md) (§8.2 script-key lookup), [`particle-runtime.md`](particle-runtime.md) (effects started by script keys), [`property-system.md`](property-system.md) (§7 enum display texts) |
 
@@ -74,7 +74,7 @@ by label, and read every value at run time.
 | QJ4 | Entry row: title format with and without level, difficulty state, scope bits and the icons they show, timer (§4.4) | BIN (a); OBS (templates) | BIN 2026-10-10 |
 | QJ5 | Filter: a quest row is shown when its scope bits share a bit with the selected filter buttons, and its title matches the name filter (§4.5) | BIN (a) | BIN 2026-10-10 |
 | QJ6 | Header counts: the quest count text, the shown-count label and the task-limiter text with their tokens and argument IDs (§4.6) | BIN (d); OBS (tokens) | BIN 2026-10-10 |
-| QJ7 | Quest display: section order, the header (title, arc, category, group icon), objective block, objective text, background, repeat note, rewards (§4.7) | BIN (b); BC (class 287 functions 5, 7, 8, 16, 19, 92, 258) | BIN + Confirmed (bytecode) 2026-10-10 |
+| QJ7 | Quest display: section order, the header (title, arc, category, group icon), objective block, objective text, background, repeat note, rewards (§4.7); the layout facts of that section are QJ25 | BIN (b); BC (class 287 functions 5, 7, 8, 16, 19, 92, 258) | BIN + Confirmed (bytecode) 2026-10-10 |
 | QJ8 | Abandon and track button states and labels; the abandon confirmation texts (§4.8) | BIN (d); BC (class 287 function 1, class 1405 slots 9, 41, 101–105) | BIN + Confirmed (bytecode) 2026-10-10 |
 | QJ9 | Objective progress text: completed and failed words, objective-level override with objective counters, event lines per condition joined by line breaks and an alternative separator (§5.2) | BC (class 1753 slots 84, 97, 124; class 1398 slot 105) | Confirmed (bytecode) 2026-10-10 |
 | QJ10 | Event line: show flag, override, drama and tapped variants, per-type default text, counters, the deed counter suffix (§5.3) | BC (class 1418 slot 20, class 1423 slots 37, 40, 50, 51, 59, 73, 83, 94, 96, 97, 107) | Confirmed (bytecode) 2026-10-10 |
@@ -85,13 +85,14 @@ by label, and read every value at run time.
 | QJ15 | Tracker entry: template choice, name line, objective text, height budget per entry, ellipsis, timer, ready icon, lock and focus markers, points bar (§6.3) | BIN (c) | BIN 2026-10-10 |
 | QJ16 | Tracker button and context menu: items, their tokens and what they do (§6.6) | BIN (c); OBS (tokens) | BIN 2026-10-10 |
 | QJ17 | Quest state messages: new quest, new deed, completed, failed; hidden deeds silent; quest chat type (§7.1) | BC (class 1753 slots 82, 137; class 1398 slots 92, 124, 131); chat type mask from `chat-window.md` §4.1 | Confirmed (bytecode) 2026-10-10 |
-| QJ18 | Objective update messages from billboard texts (§7.2) | BC (class 1753 slot 91, class 1418 slots 39, 68, 74, class 1423 slots 94, 107, 50) | Confirmed (bytecode) 2026-10-10 |
+| QJ18 | Objective update messages from billboard texts (§7.2); the census of shown billboard overrides by scope (§7.2) | BC (class 1753 slot 91, class 1418 slots 39, 68, 74, class 1423 slots 94, 107, 50); OBS (every completion-condition event of the 20,807 quest records, compound members included) | Confirmed (bytecode) 2026-10-10; census Confirmed 2026-10-11 |
 | QJ19 | Rings over NPCs: the journal picks one quest per NPC from its role list, runs a ring script key on the NPC and stores the quest in `Quest_CurrentBestowRingDID`; the key by ring kind, scope, tier and monster play (§8.1) | BC (class 1753 slots 79, 85, 107, 145, the ring-key routine) | Confirmed (bytecode) 2026-10-10; the kind tests partly traced |
 | QJ20 | The 39 ring script keys are defined in script tables 0x0700000D (39 keys) and 0x070017E7 (35 keys), reached from 807 tables by includes; `Quest_Available` runs a scriptlet with a particle system (§8.1) | OBS (all 7,524 decoded script tables) | Confirmed 2026-10-10 |
 | QJ21 | Quest note images of the radar and map icon tables for the types `Quest`, `QuestSpecial`, `QuestFailer`; `RadarQuestObjective`; the map's quest-objective indicator properties (§8.3) | OBS | Confirmed 2026-10-10 |
-| QJ22 | Census of all 20,807 quest records for criterion 1 (§9) | OBS | Confirmed 2026-10-10 |
+| QJ22 | Census of all 20,807 quest records for criterion 1 (§9), with the objective and event figures counted under §5.2 step 2.2 (a compound event with `QuestEvent_CompoundProgressOverride` counts as one line, its members as none); the shown events without override of §5.3 and §14 Q1 | OBS | Confirmed 2026-10-10; event and objective figures recounted under §5.2 2026-10-11 |
 | QJ23 | Difficulty state of a quest title from the quest level and the player's level through the consideration control's quest tables (§4.4) | BC (class 260 function 2, class 1695 slots 85–86); `game-controls.md` §7.5 | Confirmed (bytecode, partial) 2026-10-10 |
 | QJ24 | Every rule marked **Tessera rule** | Design | Decision |
+| QJ25 | Layout facts of the details pane and the history window: `UILAYOUT` keys and layout DIDs of `questdisplay`, `questobjectives` and `questhistory`; the `questdisplay` template names, bases, rects, header-icon states, text colours, markup flags and font lists named in §4.7; `QuestObjectives_Root`, `QuestObjectives_Objective` (bullet image, markup, multi-line), `QuestObjectives_TokenDisplay` (medium item display); the `questhistory` root, widget and size, `QuestHistory_ListBox` widget, display type 2, `UI_QuestDisplay_ShowBestowalDialog` true and `UI_QuestDisplay_ShowRewards` false, and the title token (§4.7, §4.9) | OBS (the three layout records and the `UILAYOUT` map of the install) | Confirmed 2026-10-11 |
 
 ---
 
@@ -362,7 +363,7 @@ rows (not category rows).
 > the fields and a reader of the root object exists.
 
 <a id="s4-7"></a>
-### 4.7 Details pane (BIN, QJ7)
+### 4.7 Details pane (BIN, QJ7; layout facts Confirmed, QJ25)
 
 `SelectedQuestDisplay` (widget `QuestDisplay`) shows the selected quest. It builds a vertical
 list of elements created from the top-level templates of layout `questdisplay`
@@ -434,7 +435,7 @@ for the conversation pane.
 > description) are not stated to wrap or to grow with their text. With the template's text
 > properties as they are, Tessera draws a long `Quest_Description` on one line cut at the pane
 > width (local golden of the quest log, 2026-10-11). Whether the original wraps these texts and
-> sizes each element to its text is an owner check (O113).
+> sizes each element to its text is an owner check (O119).
 
 > **OPEN:** (implementer, 2026-10-10) for an underway quest whose current objective gives no
 > line under §5.2 (no override, no shown event line), the §5.2 Tessera rule makes the
@@ -478,7 +479,7 @@ track button's label is replaced by code as above.
 > `tessera-settings`), saved off the main thread (ARCH §21).
 
 <a id="s4-9"></a>
-### 4.9 History window
+### 4.9 History window (Confirmed, QJ25)
 
 Layout `questhistory` (key 0x1000006C → 0x22000044 here), root `QuestHistoryField`
 (widget `QuestHistory`, 448 × 475) with a `QuestDisplay` list (`QuestHistory_ListBox`,
@@ -565,8 +566,10 @@ For one event (class 1418 slot 20 over the compiled event, class 1423 and its su
 
 **Tessera rules:** steps 2.1 and 2.2 do not apply (no drama or tapped state in the feed). Step
 2.4 is not implemented in P3: an event without `QuestEvent_ProgressOverride` gives no line
-(OPEN, §14 Q1; census §9: 2,979 shown events here). Step 4 gives no line. Step 5 applies to
-deeds shown in the tracker (§6), with the counters of §5.4.
+(OPEN, §14 Q1; census §9: 1,636 events here reach this step with a true show flag, counted
+under §5.2 step 2.2; 2,979 when the members of compounds with an override are counted too).
+Step 4 gives no line. Step 5 applies to deeds shown in the tracker (§6), with the counters of
+§5.4.
 
 <a id="s5-4"></a>
 ### 5.4 Counter arguments (BC, QJ11; census QJ12)
@@ -771,8 +774,17 @@ type:
 **Tessera rule:** on each `QuestObjective` that changes `count` or `done` for the current or an
 earlier objective, post rule 1 for that objective, else rule 2 for the **first** event of the
 objective's completion conditions (walk order) that has a billboard override and a true show
-flag; nothing otherwise. Census: 21,645 completion-condition events here have a shown billboard
-override.
+flag; nothing otherwise.
+
+**Census (QJ18, 2026-10-11).** Completion-condition events (compound members included, the
+walk order of rule 2) with a `QuestEvent_BillboardProgressOverride` and
+`QuestEvent_ShowBillboardText` not false: 25,868 over every quest record (quests and deeds;
+deeds post these lines too, §7.1, §10); 23,207 over the 15,400 non-deed quests and 2,661 over
+the 5,407 deeds. Restricted to objectives without `Quest_ObjectiveBillboardOverride` (the
+objectives where rule 2 can apply): 23,092 in quests, 2,656 in deeds; 651 quest objectives and
+8 deed objectives have the objective-level billboard override (rule 1). Restricted to quest
+objectives without `Quest_ObjectiveProgressOverride` (the scope of §9's event figures): 21,645
+(the figure revision 0 gave without its scope).
 
 > **OPEN:** (Q5) whether these lines also appear on screen (centre-screen text) in the
 > original, and in which element; the posting routine also calls a native of package 345 that
@@ -935,25 +947,32 @@ Flags counted besides (none prevents showing; each has a rule above):
 | `LevelHidden` / `LevelFromPlayer` / `NoLevel` | §4.4: hidden 164; override property 2,168 (`Advancement_Level` and a skirmish level); neither override nor a stored level ≥ 1: 440; stored level 12,628 | — |
 | `NoDescription` | `Quest_Description` absent (160), empty (175) or failing (5): no background section | 340 |
 | `ObjectiveWithoutText` | an objective without (391) or with a failing (1) `Quest_ObjectiveDescription` | 327 |
-| `ObjectiveWithoutLines` | an objective for which §5.2 step 2 gives no line under the Tessera rules (4,209 of 43,319 objectives; 103 of them also without description, which show the objective-number line) | 3,467 |
+| `ObjectiveWithoutLines` | an objective for which §5.2 step 2 gives no line under the Tessera rules, counted as §5.2 step 2.2 states (a compound with `QuestEvent_CompoundProgressOverride` gives its one line, its members none): 1,493 of 43,319 objectives; 98 of them also without description, which show the objective-number line | 1,238 |
 | `UnsuppliedArgument` | a shown text uses an argument outside §5.4 and the player variables | 0 |
 
 Objectives of the 15,400 quests: 43,319; 2,054 have an objective-level progress override. In
-the other 41,265 objectives, the 57,068 completion-condition events give 44,702 event lines;
-182 have an override but `QuestEvent_ShowProgressText` false; 9,205 have neither override nor
-show flag; 2,979 have no override and a true show flag (the original's default text, §5.3 step
-2.4; OPEN Q1). Lines per objective: 0 for 4,209, 1 for 34,616, 2 for 2,999, 3 for 854, more
-for 641 (up to 53 objectives with 10 or more). The shown-category count: 424 distinct
-categories, of which 423 have a resolving display text.
+the other 41,265 objectives, counted under §5.2 step 2.2: the completion conditions hold 5,375
+compound events, of which 3,143 have `QuestEvent_CompoundProgressOverride` and give one line
+each (every one renders; their 7,099 members give none); the other 49,969 events (stand-alone
+events and the members of the 2,232 compounds without that override) give 44,572 event lines;
+165 have an override but `QuestEvent_ShowProgressText` false; 3,596 have no override and the
+show flag false; 1,636 have no override and a true show flag (the original's default text,
+§5.3 step 2.4; OPEN Q1). Lines in these objectives: 47,715 (44,572 + 3,143). Lines per
+objective over all 43,319 (an objective-level override counts as one line): 0 for 1,493, 1 for
+37,226, 2 for 3,041, 3 for 885, more for 674 (60 of them with 10 or more). The shown-category
+count: 424 distinct categories, of which 423 have a resolving display text.
 
-> **OPEN:** (implementer, 2026-10-10) the `ObjectiveWithoutLines` count above (4,209
-> objectives, 3,467 quests) and the event figures (57,068 events, 44,702 lines) count each
-> compound member's own line and never a compound's `QuestEvent_CompoundProgressOverride`. §5.2
-> step 2.2 makes a compound with that override contribute its one line instead of its members'
-> lines (3,143 compounds here have one). The `tessera-gamedata` census follows §5.2 and finds
-> 1,493 objectives in 1,238 quests without a line on this install; counting members as the
-> table does reproduces 57,068 / 44,702 / 4,209 exactly. Please confirm §5.2 step 2.2 and
-> restate the census row (or state that the census deliberately ignores compound overrides).
+Revision 0 of this section counted every compound member's own line and never a compound's
+override; those figures (57,068 events, 44,702 event lines, 182 / 9,205 / 2,979 by override and
+show flag, 4,209 objectives in 3,467 quests without a line) do not follow §5.2 and are not the
+census.
+
+> **Answered (was OPEN, implementer, 2026-10-10; revision 1, 2026-10-11):** §5.2 step 2.2
+> stands as written: a compound event with `QuestEvent_CompoundProgressOverride` contributes
+> that one line (with the event counters of its members, §5.4) instead of its members' lines,
+> and the census counts the same way. The `tessera-gamedata` figures (1,493 objectives in 1,238
+> quests) are the census; the row and figures above are restated to match (own recount over
+> every quest record, QJ22).
 
 **What "without failure" means (Tessera rule):** for every `Shown` record, the log row, the
 details pane and the tracker entry are created, every text of §4–§6 renders without a
@@ -1045,10 +1064,10 @@ After `quest $q[0] active` and `objective $q[0] 1 1/1 done`, the current objecti
 ---
 
 <a id="s13"></a>
-## 13. Owner checks (provisional numbers O118–O124)
+## 13. Owner checks (O118–O124)
 
-> **OPEN:** the owner rows are numbered provisionally after `npc-windows.md` (O110–O117); the
-> P3 close-out adds them to `docs/checklists/owner-observations.md`.
+The rows are O118–O124 of `docs/checklists/owner-observations.md` (numbered after
+`npc-windows.md`'s O110–O117).
 
 | Row | Check in the original client |
 |---|---|
@@ -1067,7 +1086,7 @@ After `quest $q[0] active` and `objective $q[0] 1 1/1 done`, the current objecti
 
 | # | Question | Section | Suggested method |
 |---|---|---|---|
-| Q1 | The per-type default text of an event without `QuestEvent_ProgressOverride` (slot 73 of each compiled event class; 2,979 shown events here) | §5.3 | BC (read the 38 slot-73 bodies and their `Quest` tokens); owner O119 |
+| Q1 | The per-type default text of an event without `QuestEvent_ProgressOverride` (slot 73 of each compiled event class; 1,636 shown events here under §5.2, §9) | §5.3 | BC (read the 38 slot-73 bodies and their `Quest` tokens); owner O119 |
 | Q2 | Per-event counts in the feed | §5.4 | feed revision; owner O119 |
 | Q3 | Who adds a new quest to the tracker (the three auto-add options) | §6.2 | BIN (option consumers); owner O120 |
 | Q4 | The tracker's entry order | §6.5 | BIN; owner O120 |
@@ -1099,6 +1118,7 @@ After `quest $q[0] active` and `objective $q[0] 1 1/1 done`, the current objecti
 |---|---|
 | 2026-10-10 | First version (Review), for decision 0024 P3. |
 | 2026-10-11 | Review 1 (spec reviewer, separate session): changes requested; record below. No normative text changed; status stays Review. |
+| 2026-10-11 | Revision 1 (spec writer), status Revised. **B1:** §9 `ObjectiveWithoutLines` row, event figures and lines-per-objective distribution recounted under §5.2 step 2.2 (1,493 objectives in 1,238 quests; 98 without description; 49,969 events and 3,143 compound overrides, 47,715 lines; 1,636 shown events without override); the §9 implementer OPEN answered (§5.2 step 2.2 stands); §5.3 and §14 Q1 use 1,636; QJ22 extended. No rule changed. **B2:** §7.2 census restated with its scopes (25,868 over quests and deeds, 23,207 quests, 2,661 deeds; 23,092 / 2,656 without an objective billboard override; 21,645 = quest objectives without an objective progress override); QJ18 extended. No rule changed. **B3:** new OBS row QJ25 for the layout facts of §4.7 and §4.9 (re-observed 2026-10-11, including the `UILAYOUT` keys); §4.7 and §4.9 headings cite it; QJ7 points to it. Review notes 3 (§4.7 OPEN cites O119, not O113) and 4 (§13's stale OPEN replaced by the row reference) applied. Notes 1, 2, 5, 6 and 7 remain for a later revision. Behaviour already implemented on branch `p3`: none of these changes alters it (`tessera-gamedata` already counts by §5.2; the other changes are census scope and provenance). |
 
 <a id="review-2026-10-11"></a>
 ## Review record (2026-10-11, review 1)

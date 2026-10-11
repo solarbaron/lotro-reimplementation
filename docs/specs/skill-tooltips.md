@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Draft (first version 2026-10-10); first independent review 2026-10-11: **changes requested**, not Accepted (see the review record) |
-| **Last updated** | 2026-10-11 |
+| **Status** | Revised (review fixes 2026-10-11 of §1, §3.2, §4.3, §6.1, §7.10, §9.4, §9.6, §9.8, §10.1, §12.3, §13, §16.3, §17; rows ST4, ST18, ST23–ST27). The first version (2026-10-10) was never Accepted, so in CLEAN_ROOM.md §5.2 terms this is **Review**: a separate session that wrote no part of it re-reviews it before it is Accepted |
+| **Last updated** | 2026-10-11 (review fixes) |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | First review, 2026-10-11 (independent review session that wrote no part of this spec or of the P2 notes in `item-tooltips.md`; whole spec as of 7b14f27): **changes requested**. Checked against CLEAN_ROOM.md §5.3: no code or pseudo-code (§6–§10 are plain steps; the §9.2 parenthesis on the "continuation test" is the closest to listing structure and is acceptable); no copied prose; no game text (formats by token and variable ID only; property, element, widget-type and mapper names are data identifiers needed for interoperability); BIN use is within decision 0011 (offline client UI and formatting only). Spot checks, read-only, with an independent probe over the install (M1) and the class library (bytecode): ST1 (13,247 skills; 5,201 with equal hover and one-click pairs naming 0x22000000 and one element; 8,046 without, exactly the `Skill_IsMonsterSkill` ones; no comparison pair or kind); ST2 (32,971 effects; 28,400 / 4,571; equal pairs); ST3 and §4.2 (`Skill_ExamineLayout` 38 entry templates in the stated order, `Effect_ExamineLayout` 4; frame 239 × 150, list box at (5, 5), widths 229 / 20, autofill); every token of §4.3, §7–§10 exists in the stated table with the stated variable IDs (SV9: all eight templates carry exactly 0x5A6195 and 0x744A2C9); ST11 count (9,143 effects with `Effect_Harmful` true); SV7 (547 stored false, none true; dictionary default true); ST17 and SV6 (1,262 kind-7 items, all naming a skill with a hover pair; kind 5: 1,557); ST18 (13 skill-item rows in the nine layouts, 14 in the two instrument layouts; 1,194 items name a skill, 691 / 226 / 48 / 110 / 119 by element, all with a hover pair; 110 `SkillItem` items name none); §11.1 icon presence (13,247 skills with `Skill_SmallIcon`; 22,804 effects with `Effect_Icon`, 10,167 without); ST4 (class 1079 reads `UI_Examination_Tooltip_For_SkillItem` and `Usage_SkillToExecute`, a missing or 0 skill yields none); the chance, duration, combat-only and procedural-flag literals in class-698 bodies and the modifier templates in a class-1341 body; BIN (b) against a private Ghidra copy: the duration formatter takes a single-precision value, computes the tenths in single precision with the constants 10.0 and 0.5 and the carry at 10, splits into 30-day units, days, hours, minutes and seconds, and picks the short or long `UI` template, as §10.1 states. **Blocking:** (1) §6.1 says every skill row except name, icon, description, minimum level and summon costs is filled by a child of class 1079; in the class library the recovery-time (1085), special-class (1086) and effect-list (1062) providers are not 1079 children. More importantly, the two skill-item effect rows (`SkillItem_EffectDisplay_Base`, `SkillItem_UserEffectDisplay_Base`) are not based on the skill rows (ST18, §12.3 say they are): they are their own templates of widget type `ExaminationSkillEffectList` (the §12.3 implementer OPEN), whose provider is class 1080, a 1079 child that hands the skill to a class-1062 object and, for skill-item rows, also writes `UI_Examination_SkillEffectLevel` (int, default −1) into the row data from a caller value that was not traced. Correct §6.1 and ST18, answer the §12.3 OPEN (widget type, provider, the lists of §9.6), and state which level skill-item effect lines use, or add an OPEN with a Tessera rule. A rule other than §9.8's viewer level would change implemented behaviour (`crates/gamedata` evaluates them at the viewer's level). (2) §16.3: "*s* = 1.55 … *t* = 6" contradicts §10.1 step 1 for any stored single-precision 1.55 (1.5499999523), which gives *t* = 5. The BIN check confirms the single-precision arithmetic (so does a double-precision recomputation). Use an exactly representable value (for example 1.75 → *t* = 8) or state *t* = 5, and close the implementer OPEN there. No change in implemented behaviour: the code already follows step 1. **Non-blocking notes:** (a) §13 implementer OPEN can be answered from the data: the `VitalType` mapper names key 1 `Health`, 2 `Power`, 3 `MountEndurance`, 4 `MountPower`. Answering it changes implemented behaviour (percentage costs gain lines once the feed reports maxima). (b) §9.4 step 4: the "Inferred" property is confirmed in bytecode. Class 1392's method at table slot 97 (function index 19) calls a class-1391 accessor that reads `PropertyMetaData_HideIdentityExaminationMod`. Replace "Inferred" and say that "function 97" is a slot number. (c) §10.1 step 3: in the client, *pad* reaches only the minutes and seconds numbers (the larger units are formatted without it, matching the name `AlwaysShowDoubleDigitMinSec`). No row in scope sets it. (d) §4.3 implementer OPEN: every non-format token of §7–§9 is in the `Examination` table and the §10.1 tokens in the `UI` table, as the implementation assumes; state it. (e) §9.6: the class-698 test (function 264) whose attribute is unknown needs an OPEN callout. (f) §3.2: the purpose codes are not given as numbers, so "codes other than these and 1" cannot be checked. (g) The spec was implemented while in Draft (CLEAN_ROOM.md §5.2: implementers do not build from Draft). It should have been moved to Review first. |
+| **Review record** | First review, 2026-10-11 (independent review session that wrote no part of this spec or of the P2 notes in `item-tooltips.md`; whole spec as of 7b14f27): **changes requested**. Checked against CLEAN_ROOM.md §5.3: no code or pseudo-code (§6–§10 are plain steps; the §9.2 parenthesis on the "continuation test" is the closest to listing structure and is acceptable); no copied prose; no game text (formats by token and variable ID only; property, element, widget-type and mapper names are data identifiers needed for interoperability); BIN use is within decision 0011 (offline client UI and formatting only). Spot checks, read-only, with an independent probe over the install (M1) and the class library (bytecode): ST1 (13,247 skills; 5,201 with equal hover and one-click pairs naming 0x22000000 and one element; 8,046 without, exactly the `Skill_IsMonsterSkill` ones; no comparison pair or kind); ST2 (32,971 effects; 28,400 / 4,571; equal pairs); ST3 and §4.2 (`Skill_ExamineLayout` 38 entry templates in the stated order, `Effect_ExamineLayout` 4; frame 239 × 150, list box at (5, 5), widths 229 / 20, autofill); every token of §4.3, §7–§10 exists in the stated table with the stated variable IDs (SV9: all eight templates carry exactly 0x5A6195 and 0x744A2C9); ST11 count (9,143 effects with `Effect_Harmful` true); SV7 (547 stored false, none true; dictionary default true); ST17 and SV6 (1,262 kind-7 items, all naming a skill with a hover pair; kind 5: 1,557); ST18 (13 skill-item rows in the nine layouts, 14 in the two instrument layouts; 1,194 items name a skill, 691 / 226 / 48 / 110 / 119 by element, all with a hover pair; 110 `SkillItem` items name none); §11.1 icon presence (13,247 skills with `Skill_SmallIcon`; 22,804 effects with `Effect_Icon`, 10,167 without); ST4 (class 1079 reads `UI_Examination_Tooltip_For_SkillItem` and `Usage_SkillToExecute`, a missing or 0 skill yields none); the chance, duration, combat-only and procedural-flag literals in class-698 bodies and the modifier templates in a class-1341 body; BIN (b) against a private Ghidra copy: the duration formatter takes a single-precision value, computes the tenths in single precision with the constants 10.0 and 0.5 and the carry at 10, splits into 30-day units, days, hours, minutes and seconds, and picks the short or long `UI` template, as §10.1 states. **Blocking:** (1) §6.1 says every skill row except name, icon, description, minimum level and summon costs is filled by a child of class 1079; in the class library the recovery-time (1085), special-class (1086) and effect-list (1062) providers are not 1079 children. More importantly, the two skill-item effect rows (`SkillItem_EffectDisplay_Base`, `SkillItem_UserEffectDisplay_Base`) are not based on the skill rows (ST18, §12.3 say they are): they are their own templates of widget type `ExaminationSkillEffectList` (the §12.3 implementer OPEN), whose provider is class 1080, a 1079 child that hands the skill to a class-1062 object and, for skill-item rows, also writes `UI_Examination_SkillEffectLevel` (int, default −1) into the row data from a caller value that was not traced. Correct §6.1 and ST18, answer the §12.3 OPEN (widget type, provider, the lists of §9.6), and state which level skill-item effect lines use, or add an OPEN with a Tessera rule. A rule other than §9.8's viewer level would change implemented behaviour (`crates/gamedata` evaluates them at the viewer's level). (2) §16.3: "*s* = 1.55 … *t* = 6" contradicts §10.1 step 1 for any stored single-precision 1.55 (1.5499999523), which gives *t* = 5. The BIN check confirms the single-precision arithmetic (so does a double-precision recomputation). Use an exactly representable value (for example 1.75 → *t* = 8) or state *t* = 5, and close the implementer OPEN there. No change in implemented behaviour: the code already follows step 1. **Non-blocking notes:** (a) §13 implementer OPEN can be answered from the data: the `VitalType` mapper names key 1 `Health`, 2 `Power`, 3 `MountEndurance`, 4 `MountPower`. Answering it changes implemented behaviour (percentage costs gain lines once the feed reports maxima). (b) §9.4 step 4: the "Inferred" property is confirmed in bytecode. Class 1392's method at table slot 97 (function index 19) calls a class-1391 accessor that reads `PropertyMetaData_HideIdentityExaminationMod`. Replace "Inferred" and say that "function 97" is a slot number. (c) §10.1 step 3: in the client, *pad* reaches only the minutes and seconds numbers (the larger units are formatted without it, matching the name `AlwaysShowDoubleDigitMinSec`). No row in scope sets it. (d) §4.3 implementer OPEN: every non-format token of §7–§9 is in the `Examination` table and the §10.1 tokens in the `UI` table, as the implementation assumes; state it. (e) §9.6: the class-698 test (function 264) whose attribute is unknown needs an OPEN callout. (f) §3.2: the purpose codes are not given as numbers, so "codes other than these and 1" cannot be checked. (g) The spec was implemented while in Draft (CLEAN_ROOM.md §5.2: implementers do not build from Draft). It should have been moved to Review first. **Review fixes 2026-10-11** (spec writer, dirty room; for a separate re-review): (1) §6.1 rewritten: the 1079 children are listed by class; the recovery-time (1085), special-class (1086) and effect-list (1062) providers, like the name, icon, generic and summon-cost ones, are direct children of the provider base 1097 and examine the examined object itself; row ST4 corrected, new row ST23. §12.3 and ST18 corrected: 12 skill-item rows are based on the skill row of the same name, `SkillItem_EffectDisplay_Base` and `SkillItem_UserEffectDisplay_Base` are their own templates of widget type `ExaminationSkillEffectList` (provider 1080); the §12.3 implementer OPEN is answered. The caller value was traced (row ST24): for a skill-item row class 1079 takes the item's skill level (`Usage_SkillLevel`, or a `SkillLevelCalculator` record, none here), else the viewer rule, and class 1080 writes it as `UI_Examination_SkillEffectLevel`, which class 1062's level helper reads first; §9.8 states both level rules, with an OPEN (Q12) and a Tessera rule for the record entries. (2) §16.3 uses *s* = 1.75 (*t* = 8) and says what a stored 1.55 gives; its implementer OPEN is closed. Non-blocking notes: (a) §7.10 and §13 name the `VitalType` keys (row ST25), the §13 implementer OPEN is closed; (b) §9.4 step 4 confirmed (slot 97, function index 19; slot 96 in the OPEN), row ST26; (c) §10.1 step 3: *pad* only for minutes and seconds; (d) §4.3 token OPEN closed with the table rule; (e) §9.6: the slot-264 test is true for the fellowship-wide effect class 724 only (row ST27), stated as a fact instead of an OPEN; (f) §3.2 no longer claims the untestable logging rule; (g) noted, status handled as above. |
 | **Implements into** | `crates/gamedata` (`tessera-gamedata`: the tooltip model of a skill or effect record, the effect-line model shared with items, §6–§10, and the census of §14), `crates/ui` (rows of the examination panel, the timer rows, §7, §8, §10), `apps/client` (hover over quickslot skills, skill lists and effect-bar icons, §12), `apps/explorer` (tooltip preview on the skill and effect cards), the real-data test of decision 0024 P2 exit criterion 2 (§14) |
 | **Companion specs** | [`item-tooltips.md`](item-tooltips.md) (examination tooltips: selection §3.3, frame and list box §4.1, assembly §5, generic rows §6.4, name colour §6.2, placement §9; its §6.16, §6.20 and §8.3 point here), [`combat-data.md`](combat-data.md) (skills §7, effects §6, modifier entries §5, progressions §4), [`misc-records.md`](misc-records.md) §13.1 (property metadata, percentage display), [`icon-layers.md`](icon-layers.md) (§3 composition, §5.1–§5.3 skill, effect and examination icons), [`string-table.md`](string-table.md) (StringInfo, variables, §9.4 numbers), [`property-system.md`](property-system.md) (types, enum mappers, bit ↔ key), [`ui-layout.md`](ui-layout.md), [`ui-behaviour.md`](ui-behaviour.md) §6 (tooltip timing), [`wlib-bytecode.md`](wlib-bytecode.md) (the class library's code), [`combat-ui.md`](combat-ui.md) (P2: quickslot bar §9, effect bars §8, which request these tooltips), [`scenario-feed.md`](scenario-feed.md) (Accepted, revision 4; §13 here) |
 
@@ -51,9 +51,9 @@ materials, summon costs) beyond what §7.12 says; the combat formulas behind dam
 
 | Key | Source |
 |---|---|
-| **OBS** | The user's install (Steam, client build 4906.0071.1794.4035), read-only, in place; archives unchanged since 2026-10-04. Read on 2026-10-10 with throwaway probes in the dirty scratch area built on the repository's own decoders: the examination layout 0x22000000 (dump of 2026-10-06, `item-tooltips.md` OBS) and the `text` layout 0x22000002; the dump of **every** object record with its property set made on 2026-10-07 (`combat-data.md` OBS3), filtered to all 13,247 skills, all 32,971 effects, all 5,211 property-metadata objects and all 151,230 items; the 80,750 distinct (table, token) pairs those records name for names, descriptions, modifier overrides and metadata names, each looked up in the English string tables (existence and emptiness only); the 0x41 directory (1,408,052 surfaces) for icon existence; the DID maps 0x28000004 (named string tables) and 0x28000001 (EMAPPER); the WEENIECONTENT map; the Examination (0x250001AF) and UI (0x250001BB) tables for **tokens and variable IDs only**. No game text is reproduced here. |
+| **OBS** | The user's install (Steam, client build 4906.0071.1794.4035), read-only, in place; archives unchanged since 2026-10-04. Read on 2026-10-10 with throwaway probes in the dirty scratch area built on the repository's own decoders: the examination layout 0x22000000 (dump of 2026-10-06, `item-tooltips.md` OBS) and the `text` layout 0x22000002; the dump of **every** object record with its property set made on 2026-10-07 (`combat-data.md` OBS3), filtered to all 13,247 skills, all 32,971 effects, all 5,211 property-metadata objects and all 151,230 items; the 80,750 distinct (table, token) pairs those records name for names, descriptions, modifier overrides and metadata names, each looked up in the English string tables (existence and emptiness only); the 0x41 directory (1,408,052 surfaces) for icon existence; the DID maps 0x28000004 (named string tables) and 0x28000001 (EMAPPER); the WEENIECONTENT map; the Examination (0x250001AF) and UI (0x250001BB) tables for **tokens and variable IDs only**. No game text is reproduced here. Read again 2026-10-11 (review fixes, same dumps): the skill-item row templates of 0x22000000 with their bases and properties; `Usage_SkillLevel` and `SkillLevelCalculator` over all object records; the `VitalType` mapper (0x23000003); the tokens of §7–§10 against the two tables. |
 | **OBS2** | Correlations between the compiled half and the property half (2026-10-10, same dump): for each attribute of the skill class's attribute list (`wlib.md` §8), the property whose value equals the attribute's in every skill; for the effect class's flags attribute, which property each tested bit follows. |
-| **BC** | The class library's code (record 0x56000000), read 2026-10-10 with a throwaway probe over `tessera-wvm` and `tessera-wstate` (body disassembly, method tables by function ID, `wlib-bytecode.md` §6.4). Data in the user's install (method M1). Classes read (indices of this install): the skill examination base 1079 and its children 1078 (damage), 1080 (skill effect lists), 1081 (skill generic rows), 1082 (materials), 1083 (max targets), 1084 (pips), 1087 (trait), 1088 (vital cost), 1841 (qualifier), 2290–2293 (gambits and pip costs), 2308 (spellcraft modifier), 2386 (max range), 2406 (casting time); the examination classes 1061 (effect description), 1062 (effect lists), 1064 (effect time), 1066 (generic), 1067 (icon), 1073 (name), 1085 (recovery time), 1086 (special class), 2015 (effect resistance); the effect base class 698 functions that build examination lines (slots 92, 104, 124, 127, 128, 131, 137, 138, 148, 149, 203, 210–213, 220, 221, 229, 230, 254, 283, 284), the property-modification class 734 (slots 220, 221, 307, 308, 316, 319, 320), the modifier classes 1340/1341 (functions 9, 12, 13, 20, 46–49 here), the property-metadata control class 1392, class 1046 (functions 44, 45, 56, 64: the item effect list), the skill class 827 accessors named in §7, the skill-display class 378 function 84, the induction class 1195 function 119. |
+| **BC** | The class library's code (record 0x56000000), read 2026-10-10 with a throwaway probe over `tessera-wvm` and `tessera-wstate` (body disassembly, method tables by function ID, `wlib-bytecode.md` §6.4). Data in the user's install (method M1). Classes read (indices of this install): the skill examination base 1079 and its children 1078 (damage), 1080 (skill effect lists), 1081 (skill generic rows), 1082 (materials), 1083 (max targets), 1084 (pips), 1087 (trait), 1088 (vital cost), 1841 (qualifier), 2290–2293 (gambits and pip costs), 2308 (spellcraft modifier), 2386 (max range), 2406 (casting time); the examination classes 1061 (effect description), 1062 (effect lists), 1064 (effect time), 1066 (generic), 1067 (icon), 1073 (name), 1085 (recovery time), 1086 (special class), 2015 (effect resistance); the effect base class 698 functions that build examination lines (slots 92, 104, 124, 127, 128, 131, 137, 138, 148, 149, 203, 210–213, 220, 221, 229, 230, 254, 283, 284), the property-modification class 734 (slots 220, 221, 307, 308, 316, 319, 320), the modifier classes 1340/1341 (functions 9, 12, 13, 20, 46–49 here), the property-metadata control class 1392, class 1046 (functions 44, 45, 56, 64: the item effect list), the skill class 827 accessors named in §7, the skill-display class 378 function 84, the induction class 1195 function 119. **Read again 2026-10-11** (review fixes, same probe): the parent of every provider class named here; the method tables of class 1079 (slots 2, 3, 4, 6, 10–15) and of each of its children; class 1080 (slots 8, 13, 14, 15); class 1062 (slots 3, 4, 8); class 1088 slot 13; the level helpers of class 378 (functions 204, 224, 286) and class 3697 function 2; the item-skill functions of class 461 (functions 8, 37); the calculator getters of class 3175 (functions 5, 9, 10); the mood helpers of classes 1354 and 1356 that the level helper calls; class 1392 slots 96 and 97 and the class-1391 accessor slot 97 calls; slot 264 in all 115 descendants of class 698. |
 | **BIN** | **M4 under the standing authorisation of decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), headless decompiler on a private copy of the shared analysis project (`~/tessera-re/work/p2-stt`, deleted after use), 2026-10-10, single functions located through the element factory's type registry (as `item-tooltips.md` BIN), the native-function registration pairing of `wlib-bytecode.md`'s BIN row, and instruction searches for property IDs as immediates. **Questions:** (a) what the native row widgets of the skill and effect examination types do with their row data (format, variable, state, visibility); (b) how the duration and timer texts are built; (c) how a modifier value and the chance are formatted as numbers; (d) how a bitfield value becomes the resistance text; (e) which skill icon a skill display shows and what it puts on its tooltip request; (f) what the client attaches to a skill-granting item's hover tooltip; (g) whether native code writes the recovery-time and effect-time row data. **Why M1–M3 were not enough:** the layouts and the class library show which rows exist and what data each provider writes, but not what the native widgets and formatting natives do with it; no published source describes the examination system; the running client is not available to this session (owner rows §17 cover the visual checks). Read: the fill routines of the widget types `ExaminationSkillMaxTargets`, `…CastingTime`, `…Damage`, `…VitalCost`, `…Pip`, `…RemovedGambits`, `…SpecialClass`, `…Trait`, `…Materials`, `…MaxRange`, `…Qualifier`, `…SpellcraftMod`, `ExaminationEffectResistance`, the recovery-time and effect-time timer fills; the duration formatter natives (packages 385 and 416), their shared inner formatter, unit and number helpers and two float constants; the timer widget's text routine; the kind-3 number argument native (package 199 function 8) and the StringInfo validity and emptiness natives (functions 25, 26); the bit-to-key list builder; the skill display's icon routine; the compare-kind routine for trait- and skill-granting items with the layout selector it calls. Nothing from network, login, launcher or anti-tamper code. |
 | **Design** | Tessera rules, marked **Tessera rule**: what Tessera does where the original's behaviour depends on server state, live actor state, or was not traced. Not claims about the original. |
 
@@ -62,7 +62,7 @@ materials, summon costs) beyond what §7.12 says; the combat formulas behind dam
 | ST1 | 5,201 skills name the hover and one-click pair (layout 0x22000000, element `Skill_ExamineLayout`); the other 8,046 name none and are exactly the skills with `Skill_IsMonsterSkill`; no skill names a comparison pair (§3.1) | OBS (all 13,247 skills) | Confirmed 2026-10-10 |
 | ST2 | 28,400 effects name the hover and one-click pair `Effect_ExamineLayout` of 0x22000000; 4,571 name none (§3.1) | OBS (all 32,971 effects) | Confirmed 2026-10-10 |
 | ST3 | Both elements are `Tooltip_New` frames with one `ExaminationListBox` (max width 229); `Skill_ExamineLayout` has 38 entry templates, `Effect_ExamineLayout` 4; their row templates, widget types, formats, colours and states (§4) | OBS | Confirmed 2026-10-10 |
-| ST4 | Skill row providers derive from class 1079, which finds the skill to examine: the examined record itself, or the item's `Usage_SkillToExecute` when the row has `UI_Examination_Tooltip_For_SkillItem` (§6.1) | BC (class 1079) | Confirmed (bytecode) 2026-10-10 |
+| ST4 | Providers that derive from class 1079 (1078, 1080–1084, 1087, 1088, 1841, 2290–2293, 2308, 2386, 2406) find the skill to examine: the examined record itself, or the item's `Usage_SkillToExecute` when the row has `UI_Examination_Tooltip_For_SkillItem` (§6.1) | BC (class 1079 and its children) | Confirmed (bytecode) 2026-10-10, list of children corrected 2026-10-11 |
 | ST5 | Content rules of the skill rows: sources, formats and variables, visibility (§7) | BC (classes of §7); BIN (a) | Confirmed (bytecode) + BIN |
 | ST6 | Name state `Skill_ColorName` for skills and `Effect_ColorName` for effects; name text `Skill_Name`, `Effect_Name` (§7.1, §8.1) | BC (class 1073; class 827 and 698 accessors); OBS (`ColorNameText` states) | Confirmed (bytecode) + Confirmed data |
 | ST7 | Examination icon: a skill's `Skill_SmallIcon`, an effect's `Effect_Icon`, never an item stack (§11.1) | BC (class 1067; skill attribute ↔ property correlation OBS2: the attribute read is equal to `Skill_SmallIcon` in 13,247 of 13,247 skills and to `Skill_Icon` in 13,008) | Confirmed (bytecode + OBS2) |
@@ -76,11 +76,16 @@ materials, summon costs) beyond what §7.12 says; the combat formulas behind dam
 | ST15 | Numbers in modifier and chance lines are kind-3 arguments with decimal places 3 and 0, radix 10, flags 2 (§9.4) | BC (literal operands); BIN (c); `string-table.md` §9.4.3 | Confirmed (bytecode) + BIN |
 | ST16 | Effect resistance text: the display text of the lowest set category bit in the ResistCategory mapper (EMAPPER key 0x1000000D); spellcraft with no decimals (§8.2) | BIN (a), (d); OBS (map entries) | BIN + Confirmed data |
 | ST17 | SkillGrantingItem comparison: the item record's `Item_GrantedSkill` names a skill whose **hover** tooltip is attached; TraitItem the same with `Item_GrantedTrait`; census 1,262 of 1,262 kind-7 items name a skill with a hover pair (§12.4) | BIN (f); OBS (all items) | BIN + Confirmed data |
-| ST18 | Skill-item rows: 13 row templates with `UI_Examination_Tooltip_For_SkillItem`, based on the skill rows, in nine item layouts (14 in the two instrument layouts); 1,194 items name a skill in `Usage_SkillToExecute`, all of it with a hover pair (§12.3) | OBS (layouts, all items) | Confirmed 2026-10-10 |
+| ST18 | Skill-item rows: in nine item layouts, 13 row templates with `UI_Examination_Tooltip_For_SkillItem`: 11 based on the skill row of the same name, plus `SkillItem_EffectDisplay_Base` and `SkillItem_UserEffectDisplay_Base`, which have no base element and widget type `ExaminationSkillEffectList`; the two instrument layouts add `SkillItem_VitalCost_Base` (based on `Skill_VitalCost_Base`); 1,194 items name a skill in `Usage_SkillToExecute`, every one with a hover pair (§12.3) | OBS (layouts, all items) | Confirmed 2026-10-10, row templates re-read 2026-10-11 |
 | ST19 | Recovery-time row: a timer showing the total recovery time or the counting remaining time, wrapped in one of two formats (§7.15) | BC (class 1085); BIN (a), (g) | Confirmed (bytecode) + BIN |
 | ST20 | Census of names, descriptions, icons and row sources over every skill and effect (§14) | OBS | Confirmed 2026-10-10 |
 | ST21 | The Tessera rules (record-based rows, viewer from the scenario feed, procedural-flag default, damage and class-mechanics rows empty in P2, effect-list header, evaluation levels) | Design | Decision |
 | ST22 | 29 effect classes replace the line composition of the effect base class; how the 28,400 effects with a tooltip split by the class whose composition they use (§9.2) | BC (method tables of every effect class); OBS (all effects) | Confirmed (bytecode) 2026-10-10 |
+| ST23 | The recovery-time (1085), special-class (1086), effect-list (1062), name (1073), icon (1067), generic (1066), effect (1061, 1064, 2015) and summon-cost (1950, 1951) providers are direct children of the provider base 1097, not of 1079. `ExaminationSkillEffectList` rows are filled by class 1080 (row-data struct `ExaminationElement_Skill_EffectList_Struct`), which creates a class-1062 object and hands it the skill *K* (§6.1, §12.3) | BC (class parents; class 1080) | Confirmed (bytecode) 2026-10-11 |
+| ST24 | Evaluation level of skill effect lists: the class-1062 helper (viewer's `Apparent_Level`, at least 1, plus a mood amount under a condition not traced; `UI_Examination_SkillEffectLevel` of the row set first; raised to `UI_SkillDisplay_SkillMinLevel`); for skill-item rows on the target entry, class 1079 takes the item's skill level (`SkillLevelCalculator` record, else `Usage_SkillLevel`) when ≥ 0, and class 1080 writes it as `UI_Examination_SkillEffectLevel`. Census: 1,098 of the 1,194 skill-naming items store `Usage_SkillLevel` (1–165), none names a calculator (§9.8) | BC (classes 1079, 1080, 1062, 378, 461, 3175, 3697); OBS (all object records) | Confirmed (bytecode) + Confirmed data 2026-10-11 |
+| ST25 | `VitalType` mapper keys: 1 `Health`, 2 `Power`, 3 `MountEndurance`, 4 `MountPower` (§7.10, §13) | OBS (mapper 0x23000003) | Confirmed 2026-10-11 |
+| ST26 | The identity-value test of a modifier line (§9.4 step 4) reads `PropertyMetaData_HideIdentityExaminationMod` (default false) through class 1392 slot 97 and a class-1391 accessor | BC (classes 1391, 1392) | Confirmed (bytecode) 2026-10-11 |
+| ST27 | The test that moves effect-carrying lines to the end of an effect list (§9.6) is slot 264 of the effect class: false in class 698, true in class 724 (fellowship-wide effects) and its descendants (none); no other of the 115 descendants of 698 overrides it | BC (all class-698 descendants) | Confirmed (bytecode) 2026-10-11 |
 
 ---
 
@@ -118,8 +123,8 @@ No skill or effect has `UI_Examination_Tooltip_Compare_Type`.
 
 The rule of `item-tooltips.md` §3.3 applies unchanged. The purpose codes the client's
 record selector uses are: comparison → the `…_Compare_…` pair, **hover** → `…_0Click_…`,
-one-click → `…_1Click_…` (BIN (f); any other code gives no pair, and codes other than
-these and 1 log an error). A skill or effect without the
+one-click → `…_1Click_…` (BIN (f)); any other purpose gives no pair. (The numeric purpose
+codes were not recorded; Tessera passes only these three purposes.) A skill or effect without the
 pair has **no tooltip**.
 
 The examined DID is the record named by the request (`UI_Examination_Tooltip_DID`, or
@@ -228,12 +233,16 @@ The rows `ExaminationSkillSpellcraftMod` (class 2308, format variable 0x5A6195) 
 `ExaminationPassiveEffectList` exist as widget types but no element of these two tooltips uses
 them.
 
-> **OPEN:** (implementer, 2026-10-10) the table of the tokens of §7–§9 that are not formats of
-> a row (the qualifier, maximum-target, casting-time, vital-cost, special-class, recovery wrap,
-> modifier-template, value-text, chance, combat-only and duration-line tokens): this section
-> names the `Examination` table for formats only. The implementation reads all of them from
-> the `Examination` table (key 0x10000053); the duration templates and number tokens of §10.1
-> from the `UI` table as stated there.
+**Token tables (answers the implementer question of 2026-10-10).** Every token of §7–§9 that is
+not a row format (the qualifier, maximum-target, casting-time, vital-cost, special-class,
+recovery wrap, damage, modifier-template, value-text, chance, combat-only and duration-line
+tokens) is an entry of the same `Examination` table, except the two travel-name tokens of §7.1,
+which are entries of the `Travel` table named there. The duration templates and number tokens of
+§10.1 are entries of the `UI` table (key 0x10000065). Checked for every token cited in §7–§10
+(OBS, 2026-10-11).
+
+The skill-item rows of the item layouts (two of them of widget type `ExaminationSkillEffectList`)
+are listed in §12.3.
 
 ---
 
@@ -251,19 +260,28 @@ separators between them (example §16.1).
 ## 6. The skill providers
 
 <a id="s6-1"></a>
-### 6.1 Which skill (BC, ST4)
+### 6.1 Which skill (BC, ST4, ST23)
 
-Every skill row except the name, icon, description, minimum-level and summon-cost rows is
-filled by a child of class 1079. Before filling, the provider finds the **skill** *K*:
+The providers of the skill tooltip fall into two groups (classes of this install):
+
+| Group | Classes (rows) | Skill examined |
+|---|---|---|
+| Children of the skill examination base 1079 | 1078 (damage), 1080 (`ExaminationSkillEffectList`, §12.3), 1081 (sphere and arc radius, resistance category, skill type), 1082 (materials), 1083 (maximum targets), 1084 (pips), 1087 (required trait), 1088 (vital cost), 1841 (qualifier), 2290–2293 (gambits, pip costs), 2308 (spellcraft modifier), 2386 (maximum range), 2406 (casting time) | *K* by the steps below |
+| Direct children of the provider base 1097 | 1062 (the effect-list rows of §4.3, widget type `ExaminationEffectList`), 1085 (recovery time), 1086 (special class), 1073 (name), 1067 (icon), 1066 (description, minimum level), 1950 and 1951 (summon costs), and the effect-row providers 1061, 1064, 2015 | the examined object itself |
+
+A child of class 1079 first finds the **skill** *K*:
 
 1. If the row template has `UI_Examination_Tooltip_For_SkillItem` true, the examined object
    is an item: *K* = the item's `Usage_SkillToExecute` (record path: from the item record's
    property set; live path: from the instance). No such property, or 0 → the row is empty.
 2. Otherwise *K* is the examined record (or live skill).
 
-Then the row is filled from *K*. The description row is a plain generic row (`item-tooltips.md`
-§6.4) on the examined object, so in an item tooltip it shows the **item's** `Description`
-row instead (the skill-item layouts have no `Skill_Description_Base`, §12.3).
+Then the row is filled from *K*. Only children of 1079 do step 1, and every skill-item row of
+§12.3 has a 1079 child as its provider (class 1080 for the two effect-list rows). The rows of
+the second group always examine the examined object: in an item tooltip that is the item, so
+none of them is used for skill-item rows. The description row is a plain generic row
+(`item-tooltips.md` §6.4) on the examined object, so in an item tooltip it shows the **item's**
+`Description` row instead (the skill-item layouts have no `Skill_Description_Base`, §12.3).
 
 <a id="s6-2"></a>
 ### 6.2 Record and live paths
@@ -397,12 +415,15 @@ The row data's StringInfo *S* is built by a skill function from the request's
 ### 7.10 Vital cost (BC class 1088; BIN (a))
 
 For each vital type *v* = 1, 2, 3, 4 (mapper `VitalType`, EMAPPER key 0x10000025, 0x23000003
-here), when *K* has a cost list:
+here; ST25: key 1 `Health` (morale), 2 `Power`, 3 `MountEndurance`, 4 `MountPower`; the labels
+are data identifiers), when *K* has a cost list:
 
 1. cost = round((*M*ᵥ × percentᵥ + pointsᵥ) × factorᵥ), where *M*ᵥ is the viewer's maximum of
    vital *v*, percentᵥ the skill's `Skill_Vital_Percent` for *v*, pointsᵥ its
    `Skill_Vital_Points` (or `Skill_Vital_Points_Progression` at the level) and factorᵥ a
-   multiplier from the viewer's modifiers (class-827 functions).
+   multiplier from the viewer's modifiers (class-827 functions). The level is the row level
+   *V*₀ of §9.8 (the provider calls the same class-378 helper with the row set and the local
+   player).
 2. cost ≤ 0 → no line for *v*.
 3. Line = token 0x078CA1B4 with 0x48484 = cost (integer) and 0x5AE85C = the display text of *v*.
 4. Lines are joined with token 0x05BA07CE (0x603E6F1 = text so far, 0x603E6F2 = the new
@@ -637,10 +658,11 @@ For one `Mod_Entry` (empty and field-less entries are skipped, `combat-data.md` 
 3. *P* = `Mod_Modified`. If *P* has **no property-metadata object** (`misc-records.md`
    §13.1), there is no line. *N* = its `PropertyMetaData_Name`; *pct* = its
    `PropertyMetaData_DisplayAsPercentage` (false when absent).
-4. If *O* is absent, a metadata field read by the property-metadata control (class 1392
-   function 97 here; Inferred: `PropertyMetaData_HideIdentityExaminationMod`, true in 5,210 of
-   5,211 objects) is true and the value equals the operator's identity value
-   (`combat-data.md` §5.3), there is no line.
+4. If *O* is absent, *P*'s `PropertyMetaData_HideIdentityExaminationMod` is true (false when
+   absent; true in 5,210 of 5,211 metadata objects; read by the property-metadata control,
+   class 1392 at method-table slot 97, function index 19 here, through a class-1391 accessor,
+   ST26) and the value equals the operator's identity value (`combat-data.md` §5.3), there is
+   no line.
 5. **Override line.** If *O* is present: the line is *O*, with its variables filled when it
    uses them: 0x5A6195 = the value text (*pct* off) and 0x06D04635 = the value text (*pct* on)
    (step 8). For an array value the override is used as is. The line is added only if *O*
@@ -676,7 +698,8 @@ For one `Mod_Entry` (empty and field-less entries are skipped, `combat-data.md` 
 9. The line gets the state of the effect (§9.3: 3 when harmful, else 1).
 
 > **OPEN:** which metadata condition selects 0 decimal places for float values (a
-> property-metadata function, class 1392 function 96 here, read only in part). **Tessera
+> property-metadata function, class 1392 at method-table slot 96, function index 17 here, read
+> only in part). **Tessera
 > rule:** 3 decimal places always.
 
 <a id="s9-5"></a>
@@ -710,9 +733,12 @@ An `ExaminationEffectList` row names `UI_Examination_Tooltip_SkillEffectTarget` 
 and `UI_Examination_Tooltip_EffectCategory` (a bit mask of effect categories). Each effect of
 the selected list contributes its lines in **definition** mode (§9.2) at its evaluation level
 (§9.8); the row's entries are those lines in order, except that a line which carries an
-effect DID (`UIComponent_EffectDID`, set only by class-specific lines, §9.2) whose effect passes
-a class-698 test (function 264 here; the attribute it reads was not identified) is moved after
-all other lines, keeping the order among the moved lines.
+effect DID (`UIComponent_EffectDID`, set only by class-specific lines, §9.2) whose effect is a
+**fellowship-wide effect** (class 724 here, `combat-data.md` §6.1; the test is the effect
+class's method-table slot 264, false in class 698 and true only in class 724, ST27) is moved
+after all other lines, keeping the order among the moved lines. A line whose effect DID names
+no effect is not moved. (In P2 no line carries an effect DID, because class-specific lines are
+not shown, §9.2.)
 
 **Skill lists** (target → the skill's effect references, `combat-data.md` §7.7–§7.8):
 
@@ -765,15 +791,64 @@ the item derives from `Item_DistributionType` (class 801 functions 421, 429).
 > empty template (no description, flag true, not harmful).
 
 <a id="s9-8"></a>
-### 9.8 Evaluation level
+### 9.8 Evaluation level (BC, ST24)
 
 For an effect reference with a spellcraft other than −1, *L* = that spellcraft truncated
-(`combat-data.md` C49); with −1, *L* = the level the list was given: for items the level of
-§9.7, for skills the viewer's level (a class-1062 helper of the viewer). A live applied effect
-uses its own spellcraft.
+(`combat-data.md` C49); with −1, *L* = the level the list was given:
 
-> **Tessera rule:** the viewer's level is the feed's player level (§13); the
-> `combat-data.md` §1 OPEN (Q9) on −1 is resolved this way for display only.
+- **Items:** the level of §9.7.
+- **Skills** (the effect-list rows of the skill tooltip, class 1062 directly): the **list
+  level** *V* that class 1062 computes from the row set (the property set the provider reads
+  `UI_Examination_Tooltip_For_SkillItem` from) and the viewer:
+  1. If the row set has `UI_Examination_SkillEffectLevel` (int), *V* = that value. Nothing
+     else is consulted.
+  2. Otherwise *B* = the larger of the viewer's `Apparent_Level` (class 3697 function 2;
+     `combat-data.md`: 1 when absent) and 1. When a condition on the viewer holds (two
+     natives, packages 223 and 85, not traced), an amount derived from the viewer's
+     `Mood_Level` (class 1356 and 1354 functions, not traced further) is added to *B*.
+  3. If the row set has `UI_SkillDisplay_SkillMinLevel` greater than *B*, *V* = that value;
+     otherwise *V* = *B*.
+- **Skill-item rows** (`ExaminationSkillEffectList`, class 1080, §12.3): before class 1080
+  hands *K* to its class-1062 object, the class-1079 part computes the **row level** and, for a
+  row with `UI_Examination_Tooltip_For_SkillItem`, class 1080 writes it into the row set as
+  `UI_Examination_SkillEffectLevel`, so step 1 above takes it. The row level is:
+  1. *V*₀ = the rule above **without** the minimum of 1 and the mood amount: the row set's
+     `UI_Examination_SkillEffectLevel` if present, else the viewer's `Apparent_Level`, raised to
+     the row set's `UI_SkillDisplay_SkillMinLevel` when that is greater (a class-378 helper;
+     class 1088 uses the same *V*₀ for §7.10).
+  2. For a skill-item row, the item's **skill level** *S*: if the item names a
+     `SkillLevelCalculator` record of class 3175 (or a descendant), *S* = the value that
+     record computes for the viewer (a float converted to an integer; −1 when the computation
+     fails; a class-3175 function, not traced); otherwise *S* = the item's `Usage_SkillLevel`
+     (int, −1 when absent).
+  3. Row level = *S* when *S* ≥ 0, else *V*₀. A row level of 0 leaves the row empty.
+
+  Census (ST24): of the 1,194 items that name a skill in `Usage_SkillToExecute`, 1,098 store
+  `Usage_SkillLevel` (values 1–165, 71 distinct, 111 of them 1); the other 96 (65 `SkillItem`,
+  8 `Jewelry`, 20 `Weapon`, 3 `Armor` hover elements) store none. No record of the install
+  names a `SkillLevelCalculator`, and no element of the examination layout sets
+  `UI_Examination_SkillEffectLevel`.
+
+A live applied effect uses its own spellcraft.
+
+**Provider entries.** The provider base has four fill entries (method-table slots 2, 3, 4 and 6
+here). Class 1080 writes the row level only on the entry that is handed the examined object as
+an examination target (an instance or a record; slot 3). On the record entries (slots 4 and 6)
+it hands *K* to class 1062 without a level, and for a skill class 1062 writes **no effect
+lines** there: it only asks the viewer's class (slot 436 here) for a list for that skill and
+returns a code that depends on whether the list has an entry passing an effect test. On slot 2
+class 1062 adds nothing. Effect lines of a skill, in a skill tooltip or a skill-item row, are
+therefore written only on the target entry, at the levels above.
+
+> **OPEN (Q12):** what the record entries' return code makes the client do, and which entry it
+> calls for which requester (part of Q1); the viewer function behind slot 436; the mood amount
+> and its condition. **Tessera rule (ST21):** skill-item effect lines use the row level of the
+> target entry: the item's `Usage_SkillLevel` when stored (≥ 0), else the viewer's level; `SkillLevelCalculator` records are not evaluated (an item naming one is
+> treated as if it stored no skill level and is reported by the census). The skill tooltip's
+> own lists use *V* with no mood amount. The viewer's `Apparent_Level` is the feed's player
+> level (§13); P2 requests set neither `UI_Examination_SkillEffectLevel` nor
+> `UI_SkillDisplay_SkillMinLevel` (§7.14). The `combat-data.md` §1 OPEN (Q9) on −1 is
+> resolved this way for display only.
 
 ---
 
@@ -798,8 +873,9 @@ after the first), *pad* (two-digit numbers), *zeros* (show a zero unit after a s
 3. Walk the units from the largest; *k* = units shown so far. A unit is **shown** when (*k* = 0,
    or *all*, or (*two* and *k* < 2)) and (*k* < 2 or *all*) and (its value > 0, or (*k* > 0 and
    *zeros*)). A shown unit's variable = the number text (UI token 0x093DD17F with 0x5A6195 =
-   the integer; with *pad* and a value ≤ 9, token 0x0871F54F); a unit not shown gets the empty
-   text.
+   the integer; for the minutes and seconds units only, with *pad* and a value ≤ 9, token
+   0x0871F54F: the larger units never use *pad*); a unit not shown gets the empty text. No
+   row in scope sets *pad*.
 4. Seconds with *tenths* and *t* ≥ 1: when the visibility test of step 3 (without the value
    test) passes, the seconds variable = UI token 0x0FF725B3 with 0x79842C3 = the seconds text
    and 0x58A38D3 = *t*; otherwise empty.
@@ -906,28 +982,38 @@ The effect tooltip has **no stack-count row**. The original does not show stacks
 > tooltip; `combat-ui.md` TR31 should be aligned at review.
 
 <a id="s12-3"></a>
-### 12.3 Skill items (ST18)
+### 12.3 Skill items (ST18, ST23, ST24)
 
 The item layouts `SkillItem`, `Armor`, `ArmorCompare`, `Jewelry`, `JewelryCompare`,
 `Weapon`, `WeaponCompare`, `Instrument` and `InstrumentCompare` (`_ExamineLayout`) contain 13
-skill rows marked `UI_Examination_Tooltip_For_SkillItem`: `SkillItem_EffectDisplay_Base`
-(target 3, header 0x0F345375), `SkillItem_UserEffectDisplay_Base` (target 1, header
-0x0F345375), and `SkillItem_` `ResistCategory`, `Damage`, `Qualifier`, `CastingTime`, `Pip`,
-`Trait`, `MaxRange`, `MaxTargets`, `SphereRadius`, `ArcRadius`, `Materials` (`_Base`), each
-based on the skill row of the same name; the two instrument layouts add
-`SkillItem_VitalCost_Base`. They show the rows of the skill named by the
-item's `Usage_SkillToExecute` (§6.1); this answers the "skill-item rows" of `item-tooltips.md`
-§6.20.
+row templates marked `UI_Examination_Tooltip_For_SkillItem` (true); the two instrument layouts
+add a 14th. All are top-level elements of the examination layout:
+
+| Row template | Widget type, base | Provider | Rule |
+|---|---|---|---|
+| `SkillItem_` `ResistCategory`, `Damage`, `Qualifier`, `CastingTime`, `Pip`, `Trait`, `MaxRange`, `MaxTargets`, `SphereRadius`, `ArcRadius`, `Materials` (`_Base`) | based on the skill row of the same name (`Skill_…_Base`, §4.3), whose widget type, format, colours and size they inherit; they add only the flag | the base row's provider (§4.3), a child of 1079 | the base row's rule, on *K* (§6.1) |
+| `SkillItem_VitalCost_Base` (instrument layouts only) | based on `Skill_VitalCost_Base` | 1088 | §7.10 on *K* |
+| `SkillItem_EffectDisplay_Base` | **own template** (no base element), widget type `ExaminationSkillEffectList`, 220 × 0; `UI_Examination_Tooltip_SkillEffectTarget` 3 (`Target`), `UI_Examination_Tooltip_EffectCategory` 0x10, header format 0x0F345375; entries `EffectListElement` | 1080 | below |
+| `SkillItem_UserEffectDisplay_Base` | **own template**, as above with target 1 (`User`), the same category and header; entries `UserEffectListElement` | 1080 | below |
+
+They show the rows of the skill *K* named by the item's `Usage_SkillToExecute` (§6.1); this
+answers the "skill-item rows" of `item-tooltips.md` §6.20.
+
+**`ExaminationSkillEffectList` rows** (answers the implementer question of 2026-10-10). The
+provider is class 1080, a child of 1079: it finds *K* by §6.1 (no *K* → empty row), writes the
+row level of §9.8 into the row set as `UI_Examination_SkillEffectLevel`, and hands *K* to a
+class-1062 object, which fills the row like an `ExaminationEffectList` row of the skill
+tooltip: the skill's list selected by the row's target (§9.6 table), effects of the row's
+category, each effect's lines in definition mode (§9.2) at the evaluation level of §9.8 (the
+row level for effects with spellcraft −1), the move rule and the header rule of §9.6. Each
+line is one entry of the row's entry element, so the line colours are those of
+`EffectListElement` for the target row and `UserEffectListElement` for the user row (§4.3 line
+elements, state by §9.3).
 
 Census: 1,194 items name a skill there (691 `SkillItem`, 226 `Jewelry`, 48 `Instrument`, 110
 `Weapon`, 119 `Armor` hover elements), every one a skill with a hover pair; the other 110
-`SkillItem` items name none, so their skill rows are empty.
-
-> **OPEN:** (implementer, 2026-10-10) the widget type of `SkillItem_EffectDisplay_Base` and
-> `SkillItem_UserEffectDisplay_Base` in the install's item layouts is
-> `ExaminationSkillEffectList`, which §4.3 does not list. The implementation treats it as
-> `ExaminationEffectList` (the skill's effect lists of §9.6, by the row's
-> `UI_Examination_Tooltip_SkillEffectTarget`) and gives it the `EffectListElement` line colours.
+`SkillItem` items name none, so their skill rows are empty. 1,098 of the 1,194 store
+`Usage_SkillLevel` (§9.8).
 
 <a id="s12-4"></a>
 ### 12.4 Skill- and trait-granting items (BIN (f); ST17)
@@ -958,11 +1044,10 @@ Census: 1,262 items have kind 7; all have `Item_GrantedSkill` naming a skill wit
 
 Server backends later supply the same live data; the rows then use it.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) the row "Player vitals (maxima) → *M*ᵥ
-> of §7.10" needs the `VitalType` key of the feed's `Health` and `Power` (`Vital::Health`,
-> `Vital::Power`); §7.10 names the mapper but not which of its keys 1–4 is morale and which
-> is power. Until a spec names them, the client gives the viewer no maximum vitals (*M*ᵥ = 0,
-> the "0 when unknown" of the §7.10 Tessera rule), so percentage costs show no line.
+**Vital keys** (answers the implementer question of `apps/client`, 2026-10-11; ST25). The
+feed's `Health` (morale) maximum is *M*₁ and its `Power` maximum *M*₂ of §7.10 (`VitalType`
+keys 1 and 2); keys 3 and 4 (`MountEndurance`, `MountPower`) have no feed value in P2 and stay
+0, so their percentage costs show no line.
 
 ---
 
@@ -1087,15 +1172,12 @@ and the extra lines.
 *s* = 95.0, short template: default timer (*two* on): units 1 minute, 35 seconds → both shown.
 *s* = 3,725.0: 1 hour, 2 minutes, 5 seconds → hours and minutes (two units). Full format: hours,
 minutes, seconds (all from the first non-zero). *s* = 3,600.0 full format: hours 1, minutes 0,
-seconds 0 → all three shown (*zeros*). Casting time *s* = 1.55 with tenths: *t* = ⌊0.55 × 10 +
-0.5⌋ = 6 → seconds text "1" with tenth 6 through 0x0FF725B3. *s* = 2.96: *t* = ⌊10.1⌋ = 10 → *t* =
-0, carry → 3 seconds, no tenths.
-
-> **OPEN:** (implementer, 2026-10-10) the casting-time example and step 1 of §10.1 disagree
-> for durations stored in single precision: the stored 1.55 is 1.5499999523, whose fraction
-> times 10.0 plus 0.5 is 5.9999995 in f32, so *t* = 5 by step 1, not 6. The implementation
-> follows step 1 on the stored value (the example holds for an exact 1.55). Which one the
-> original shows is an owner check (OS6).
+seconds 0 → all three shown (*zeros*). Casting time *s* = 1.75 (exact in single precision)
+with tenths: *t* = ⌊0.75 × 10.0 + 0.5⌋ = ⌊8.0⌋ = 8 → seconds text "1" with tenth 8 through
+0x0FF725B3. A stored 1.55 is the single-precision value 1.5499999523; its fraction times 10.0
+plus 0.5 is 5.9999995 in single precision, so *t* = 5 (step 1 works on the stored value, BIN
+(b); this answers the implementer question of 2026-10-10). *s* = 2.96 (stored 2.9600000381):
+*t* = ⌊10.1⌋ = 10 → *t* = 0, carry → 3 seconds, no tenths.
 
 <a id="s16-4"></a>
 ### 16.4 Resistance text
@@ -1121,13 +1203,14 @@ its display text. Spellcraft −3.0 → 0.
 | Q9 | Equipment-category and usage effects of items, level offset | §9.7 | BC |
 | Q10 | Stack count in the effect tooltip (`combat-ui.md` TR31) | §12.2 | owner (OS5) and `combat-ui.md` review |
 | Q11 | Class-specific line compositions of 29 effect classes | §9.2 | BC (each class's two list functions) |
+| Q12 | What the record entries' return code makes the client do and which entry each requester uses; the viewer function behind slot 436; the mood amount and its condition | §9.8 | BIN (examination assembler), BC (classes 1354, 1356), owner (OS7) |
 
 Owner checks (to be numbered from O93 in `docs/checklists/owner-observations.md` at
 close-out): **OS1** a skill tooltip with damage, effects and a cost (rows, order, colours);
 **OS2** an effect tooltip from the effect bar (resistance, lines, remaining time counting down,
 its format); **OS3** a stat line with a percentage and a decrease; **OS4** a skill-granting
 item's attached skill tooltip; **OS5** whether an effect tooltip shows a stack count; **OS6**
-the casting-time and recovery-time texts of a skill with tenths of a second.
+the casting-time and recovery-time texts of a skill with tenths of a second; **OS7** the effect lines of a skill item (for example a scroll or a jewel with a skill) whose stored skill level differs from the character's level: which level the numbers follow (§9.8, Q12).
 
 ---
 
@@ -1138,3 +1221,5 @@ the casting-time and recovery-time texts of a skill with tenths of a second.
 |---|---|
 | 2026-10-10 | First version (Draft), for decision 0024 P2. Provenance OBS (layouts, all skills, effects, metadata objects and items, string pairs, icon surfaces, DID maps), OBS2 (compiled-attribute correlations), BC (skill, effect and line providers, effect classes 698 and 734, modifier description, item effect list), BIN (native row widgets, duration and timer formatting, number arguments, resistance text, skill-display icon and tooltip override, compare kinds 5 and 7). Answers `item-tooltips.md` §6.16 OPEN (P2), the skill-item rows of §6.20 and the SkillGrantingItem row of §8.3. |
 | 2026-10-10 | Implementer OPENs from `crates/gamedata` (no fact changed): §4.3 token tables, §7.13 passive-skill traits, §7.15 sub-second recovery times, §9.2 compositions without class data, §9.7 place of usage effects and a missing template effect, §12.3 widget type `ExaminationSkillEffectList`, §16.3 single-precision casting time. |
+| 2026-10-11 | First independent review: changes requested (review record). |
+| 2026-10-11 | Review fixes (spec writer, dirty room). **Blocking 1:** §6.1 rewritten with the two provider groups (1079 children; 1062, 1085, 1086 and the other direct children of 1097), rows ST4 (corrected) and ST23 (new); §12.3 and ST18 corrected: two skill-item rows are own `ExaminationSkillEffectList` templates filled by class 1080, the §12.3 implementer OPEN is answered (provider, lists, entry elements and line colours); §9.8 states the traced level rules (row ST24): the skill tooltip's list level and, for skill-item rows, the item's `Usage_SkillLevel` (or a `SkillLevelCalculator`, none here) written as `UI_Examination_SkillEffectLevel`; new OPEN Q12 with a Tessera rule; §7.10 names the level it uses. **Blocking 2:** §16.3 uses *s* = 1.75 (*t* = 8) and states *t* = 5 for a stored 1.55; implementer OPEN closed. **Non-blocking:** `VitalType` keys in §7.10 and §13 (ST25), §13 implementer OPEN closed; §9.4 step 4 confirmed (ST26) and slot numbers named as slots; §10.1 *pad* only for minutes and seconds; §4.3 token-table OPEN closed; §9.6 move test identified (class 724, ST27); §3.2 logging claim removed. **Implemented behaviour that changes on branch `p2`:** (i) skill-item effect lines are evaluated at the item's `Usage_SkillLevel` when stored (1,098 of 1,194 items) instead of the viewer's level (§9.8); (ii) the client gives the viewer's `Health` and `Power` maxima to §7.10, so percentage vital costs gain lines (§13). Unchanged in behaviour: §6.1, §12.3 widget handling (the implementation already takes the line element from the row's entry template, so the user row gets `UserEffectListElement`), §16.3, §9.4, §9.6, §10.1 (*pad* is set by no row in scope). |

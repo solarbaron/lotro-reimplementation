@@ -2088,7 +2088,10 @@ their sizes always and their positions only when the original has no saved locat
 > page (§3.1), the friends and ignore pages filled from the scenario feed (§3.2–§3.6, §9 TR5,
 > TR6), the other pages empty (§9 TR8), and the input commands that open P8 at a page (§3.1,
 > §7.2). The fellowship display (`minifellow`), the invitation window (`fellowinvite`) and the
-> trade window (`securetrade`) are not P8; they are specified there (§4–§6).
+> trade window (`securetrade`) are not P8; they are specified there (§4–§6). For P4, the
+> voice elements `PlayerVoiceChat`, `PlayerVoiceChatSquelched` and `PlayerSendingData` are not
+> hidden by the layout but are hidden by Tessera (`social-panels.md` §4.3, TR14; the original
+> shows them only with voice chat).
 
 <a id="s17-5"></a>
 ### 17.5 Behaviour that is game code (OPEN)
@@ -2151,3 +2154,4 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-06 | **Fixes after the review of the decision-0014/0015 revision** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** explicit Tessera choice for question (1): the Stretch-parent test of step 1 applies only to root parents, so the children of a non-root Stretch surface are laid out by their edges; supporting data in new row U47 (a) (159 such children in the §17 panels, the readings differ only for P10's `Panel_Label_Title`, x 28 against 0); the OPEN now points to the matching `ui-behaviour.md` §9.2.1 OPEN. **§8.4:** new OPEN on the conflict between the Tile canvas of decision 0015 §2.1 (the layout box) and the BIN statement of `lua-plugin-api.md` §20 (the base image or a code-set size); §16 item 21. **§15:** the UB §9.2.1 row now reads "recorded in UB §9.2.1 OPEN; agreement". **§17.4:** the P5 row gets the external-content portrait note; the P4 and P5 rows say that the portraits also own CPU surfaces (`PlayerPortrait` mode 3; `OpponentPortrait` mode 1 with an own image and a mode-1 child; U47 (b)) and point to the new `ui-widgets.md` §12 OPEN and Tessera rule. **UL22 and the §17.2 note:** one definition of "surfaced ancestors" (ancestors with a non-zero resolved object mode, plus the root); counts re-checked, unchanged. §16 item 18 updated. |
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** one note that it is not known whether the flag by which an alpha-test meter asks for a surface (`ui-widgets.md` §4.5) is the "flagged by code" of §8.3 and §8.4 step 1, with the Tessera choice that it is not (the meter owns a surface but is laid out as a non-root element; no M5 panel affected); §16 item 18 extended to match. **§15:** new row recording the corrected citation in `lua-plugin-api.md` §13.18 (mode-1 row: the reason is UB §9.2.1, not §8.4 step 1), applied in the working-tree LPA, pending its review. |
 | 2026-10-11 | Note only (no fact changed), for P4: §17.4 points to `social-panels.md` for the Social panel P8 and the other social windows. Status unchanged. |
+| 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md`: the §17.4 P4 note adds the P4 voice elements that Tessera hides (`social-panels.md` TR14). Status unchanged. |

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft (2026-10-11). Review 1 (2026-10-11): **changes requested**; not Accepted. The spec writer revises (blocking items B1–B7 of the review record) and moves it to Review for a re-review |
+| **Status** | **Revised** (revision 1, 2026-10-11: answers review 1 items B1–B7 and notes (a)–(d); awaiting a re-review by a session that wrote no part of this spec). Review 1 (2026-10-11): changes requested. Code was built from the first version on branch `p4`; the change log's revision-1 row lists which answers change that behaviour |
 | **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer, an independent dirty-room session that wrote no part of this spec or of its P4 notes (review 1, 2026-10-11) |
@@ -50,7 +50,8 @@ action and every display maps to the scenario feed's Social commands and events.
 **Out of scope:** tells and chat channels (CW; P4's chat work), synchronised music
 (`instruments.md`), the kinship, raid, raid-lock, who and grouping pages beyond their
 structure (§3.6), the fellowship maker (looking-for-group tool, GC §8.4), ready checks, voice
-chat, pets, mail and auction.
+chat, pets, mail and auction. The **visibility** of the voice, ready-check and pet elements of
+the panels in scope is in scope (§4.2, TR14).
 
 ---
 
@@ -60,10 +61,11 @@ chat, pets, mail and auction.
 | Key | Source |
 |---|---|
 | **OBS** | The owner's install (Steam; archives and `x64/lotroclient64.exe` unchanged since 2026-10-04), read in place and read-only on 2026-10-11 with throwaway probes in the dirty scratch area: the 302 UI layout records (the dump of 2026-10-06, re-resolved with a probe that merges by UL §7: derived properties replace base properties by PID; the P8 instance count 881, text elements 61 and string references 185 reproduce UL §17.2); the layouts `social` (0x2200004E), `friends` (0x22000061), `ignore` (0x22000062), the friends-page base 0x2200009B, `grouping` (0x2200004F), `minifellow` (0x2200005C), `fellowinvite` (0x22000604), `securetrade` (0x22000024), `itemdisplay` (0x22000051), `toolbar` (0x22000033); the STRINGTABLE DID map 0x28000004 (179 keys) and the string tables it names below (every entry of `Commands`, `CommandHelp`, `Fellowship`, `Trade`, `UI_SecureTrade`, `UI_Friends`, `UI_Social`, `PlayerActionHandler` read; text compared, not reproduced); the enum mappers `UIElementID`, `UIStateID`, `UIElementType`, `InputActions` (0x230000AF, base 0x23000176), `UIScalingGroupType`; the four default key-map records 0x1D000000, 0x1D000001, 0x1D000004, 0x1D000009 (parsed by KM §12.9 with no bytes left over). |
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`), the shared auto-analysed Ghidra project (a private copy, headless, read-only), 2026-10-11. Only the routines that reference the element IDs, string tokens and event names below, and their direct callees, were read, by address range; no listing or decompiler output is kept. **Questions:** (q1) what the friends and ignore pages do on header, button, row and menu messages; which elements a friend row fills and from what; sort keys and default; (q2) how the fellowship panels are created, which members get a row, which template, which children are set from what, and how the leader marker is chosen; (q3) what the invitation window shows and what its buttons do; (q4) how the trade window is wired: sides, coin entries, item drops, the trade button, accept states, resets, closing, the request dialog; (q5) which input commands open which Social page; (q6) whether client code posts the fellowship, friends and trade notices or command names itself; (q7) the argument tables of `Party.MemberAdded`/`MemberRemoved` and the semantics of the `Party` getters (LPA §9.3 OPEN). **Why M1–M3 were not enough:** the layout data name elements, states and templates but not which code fills them, which rows are created, which states are chosen, or what the buttons send; the original client cannot be observed in this session; S2 and S3 document the plugin API only. The network protocol, login, keys, launcher and anti-tamper code were not read (decision 0004): where a routine hands an action to the session layer, only the fact that it does so is recorded. |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`), the shared auto-analysed Ghidra project (a private copy, headless, read-only), 2026-10-11. Only the routines that reference the element IDs, string tokens and event names below, and their direct callees, were read, by address range; no listing or decompiler output is kept. **Questions:** (q1) what the friends and ignore pages do on header, button, row and menu messages; which elements a friend row fills and from what; sort keys and default; (q2) how the fellowship panels are created, which members get a row, which template, which children are set from what, and how the leader marker is chosen; (q3) what the invitation window shows and what its buttons do; (q4) how the trade window is wired: sides, coin entries, item drops, the trade button, accept states, resets, closing, the request dialog; (q5) which input commands open which Social page; (q6) whether client code posts the fellowship, friends and trade notices or command names itself; (q7) the argument tables of `Party.MemberAdded`/`MemberRemoved` and the semantics of the `Party` getters (LPA §9.3 OPEN). **Why M1–M3 were not enough:** the layout data name elements, states and templates but not which code fills them, which rows are created, which states are chosen, or what the buttons send; the original client cannot be observed in this session; S2 and S3 document the plugin API only. The network protocol, login, keys, launcher and anti-tamper code were not read (decision 0004): where a routine hands an action to the session layer, only the fact that it does so is recorded. **Revision 1** (2026-10-11, same build, a private copy of the analysis project, headless, deleted after use; routines located by the element IDs and string tokens named below, read by address range): (q8) which of a fellowship row's status, voice and ready-check children the row-creation routine shows or hides, and from what; which of the player-vitals panel's voice elements its set-up and property handler show or hide; (q9) which `UI`-table entry and argument the fellowship row and the invitation row use for the level; how the row's vital displays and effect list are bound; (q10) which coin entry the trade's coin-commit handler clears and what it then sends. M1–M3 were not enough for the same reason as above: the layouts leave these elements visible and carry design-time texts. |
+| **OBS-R1** | Revision 1 probes, 2026-10-11, read-only: the layout records 0x2200005C, 0x22000033, 0x22000051, 0x22000024, 0x2200006C re-extracted from the install and byte-identical to the 2026-10-06 dump; resolved by UL §7; the string tables `UI`, `UI_Friends`, `Fellowship` re-read for the arguments each entry declares; the client executable searched for method-name strings (no game text read or kept). |
 | **S2** | The official Lua API reference (U25 pages in the research clone `lunarwtr_lotro-api-docs`), read for facts only (LPA key S2). |
 | **S3** | `lunarwtr_vscode-lotro-api`: `TurbineEventsDump.json` (event argument tables captured in game), read for facts only (LPA key S3). |
-| **DEC** | Accepted Tessera decisions [0024](../decisions/0024-parity-track.md) (parity track, P4), [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge), [0015](../decisions/0015-ui-rendering.md) (UI rendering), [0020](../decisions/0020-chat-command-routing.md) (one command dispatcher), and the Accepted SF. Statements taken from them are **Tessera rules**. |
+| **DEC** | Accepted Tessera decisions [0024](../decisions/0024-parity-track.md) (parity track, P4), [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge), [0015](../decisions/0015-ui-rendering.md) (UI rendering), [0020](../decisions/0020-chat-command-routing.md) (one command dispatcher), [0035](../decisions/0035-p4-social-on-test-server.md) (P4 social on the test server: `DisbandFellowship`, `FellowVitalChanged`, the remote backend at protocol minor 2), and the Accepted SF (with its "P4 social" revision). Statements taken from them are **Tessera rules**. |
 
 Marks: **Confirmed** = observed in the data for every record or element of the kind (OBS),
 with date; **BIN** = rests on the disassembly; **Probable** = supported by data or BIN with one
@@ -96,6 +98,15 @@ step not traced; **Reported** = third-party only; **Tessera rule** = Tessera's o
 | SP22 | `Party.MemberAdded` and `MemberRemoved` carry the field `Player` (the member), filled by the same routine as `AssistTargetAdded`/`Removed`; the field is absent when the member object is not available; `LeaderChanged` and `Player.PartyChanged` carry none (LPA §15.4) | BIN (q7); S3 (captures of `AssistTargetAdded` with `Player`, `AssistTargetRemoved`, `LeaderChanged`, `PartyChanged` without) | BIN |
 | SP23 | `Party` getters: `GetMember(i)` and `GetAssistTarget(i)` are 1-based and give nil outside 1 … count; the member list holds the local player as an entry; `GetLeader` and `GetMember` give the `LocalPlayer` instance for the player (LPA §15.4) | BIN (q7) | BIN |
 | SP24 | Everything marked **Tessera rule** in §3–§10 | DEC | Tessera rule |
+| SP25 | The status, voice and ready-check children of the member rows: rectangles, images and states; none of them, nor `FellowTemplateLeader`, carries `UICore_Element_hide`; `FellowTemplatePetVitals` and `FellowTemplateVolumeControl` do; `FellowTemplateAssistant` exists only in `FellowMicroTemplate` (§4.2) | OBS-R1 | Confirmed 2026-10-11 |
+| SP26 | At row creation the game code shows the voice button only when the member's group record has its voice flag set; shows the squelched marker only when voice is active and the button's squelch flag is set; hides the sending-data marker and the assistant marker; sets link-dead and defeated visibility each from a flag of the member's group record; gives the ready-check element no state (§4.2) | BIN (q8) | BIN |
+| SP27 | The player-vitals panel P4's `PlayerVoiceChat`, `PlayerVoiceChatSquelched`, `PlayerSendingData` are not hidden by the layout; the panel's set-up hides the sending-data and squelched elements; `PlayerAssistantIcon` is hidden by the layout and hidden again by a further handler of the panel; `PlayerVoiceChat` follows a boolean property of the player (PID 0x54A) when it changes, and the squelched element follows voice activity and the button's squelch flag (§4.2) | OBS-R1; BIN (q8) | Confirmed 2026-10-11 (layout); BIN (code) |
+| SP28 | Level texts: a fellowship row's level is (UI, 0x070F9F3C) with argument 0x7C83B5 = the level, at creation and on a level update; an invitation row's level is (UI, 0x038B9CDC) with argument 0x50AA9C; both entries declare exactly that one argument; the layouts' own entries of these texts (table 0x25033E35) are design-time texts (§4.2, §5.1) | BIN (q9; the first token is computed at start-up from a name string, the hash reproduced); OBS-R1 (declared arguments) | BIN; Confirmed 2026-10-11 (arguments) |
+| SP29 | The row's two `MultiVitalDisplay` elements name their meters through `UI_VitalDisplay_Array` (health: current, temporary, dread-clamp meters and a hidden text; power: current, temporary meters and a hidden text, then a `Wrath` pip entry whose replacement field is the power field); `FellowEffectDisplay` is an `EffectDisplayList` with 2 rows of at most 6 icons and `PlayerOnly` true in the layout; at creation the vital displays are bound to the member, and the effect list is bound to the member, or set player-only when the member is the local player (§4.2) | OBS-R1; BIN (q9) | Confirmed 2026-10-11 (layout); BIN (binding) |
+| SP30 | The medium item display: `ItemDisplay_Icon` (an `ItemIconDisplay`) holds the Text `ItemDisplay_QuantityOverlay` (hidden by the layout), which precedes the name Text `ItemDisplay_Name` in tree order; the name text's 33 colour states include the five `ItemQuality_*_ColorName` states and `Object_ColorName` (§6.2) | OBS-R1 | Confirmed 2026-10-11 |
+| SP31 | The coin entries of the own side are the Text elements `MoneyDisplay_Entry_GoldEntry`, `…SilverEntry`, `…CopperEntry` (editable, one line, at most 5 characters, no IME); the trade code names exactly these three IDs; `SelfTrade_TotalMoney` and `OtherTrade_MoneyDisplay` have no layout children and are horizontal one-row lists of three columns of `MoneyDisplay_CoinTemplate` of layout `moneydisplay` (0x2200006C), filled in reverse, `ForceShowAll` on both and `SuppressLeadingZeroes` on the peer's (§6.1, §6.3) | OBS-R1; BIN (q10) | Confirmed 2026-10-11 (layout); BIN (IDs used) |
+| SP32 | The coin-commit handler tests only the committed entry's text for a number and clears only that entry on each refusal; it posts its notices as chat type 1; in every case it then reads the three entries and sends the amounts present (§6.3) | BIN (q10) | BIN |
+| SP33 | The row-menu heading (UF, 0x019353F5) declares the argument 0xA2D94C5 (as the note question does); the out-of-range notices (FT, 0x0571E4C5) and (FT, 0x04CF6294) declare 0x4AA1147 (§3.5, §4.4) | OBS-R1 | Confirmed 2026-10-11 |
 
 ---
 
@@ -290,7 +301,8 @@ and focus on the field; its answer adds the entered name. **Note dialog:** a tex
 dialog with the question (UF, 0x0803A974) (argument 0xA2D94C5 = the friend's name) and the
 current note as default answer.
 
-**Row menu** (in this order): a heading (UF, 0x019353F5) with the friend's name; send tell
+**Row menu** (in this order): a heading (UF, 0x019353F5) with argument 0xA2D94C5 = the friend's
+name (SP33; the same argument as the note question); send tell
 (UF, 0x0743846D), enabled when online or away; invite to fellowship (UF, 0x04529325),
 enabled when the player is in no group or leads one that may grow and the friend is online
 or away; remove friend (UF, 0x033D8545); ignore (UF, 0x044B1505); edit note
@@ -300,10 +312,8 @@ or away; remove friend (UF, 0x033D8545); ignore (UF, 0x044B1505); edit note
 > **OPEN (Q10):** notes and auto-fellow have no field in the feed or protocol v1.1.
 > **Tessera rule:** §9 TR5 (ghosted).
 
-> **OPEN (implementation, P4 clean room, 2026-10-11):** the row menu's heading
-> (UF, 0x019353F5) is given "with the friend's name" but no argument ID. `tessera-ui`
-> (`game::social::friends`) passes the name as argument 0x52615 (the usual name argument);
-> please give the entry's argument ID.
+> **Answered (revision 1, 2026-10-11; was an implementer OPEN):** the heading's argument is
+> 0xA2D94C5, not 0x52615 (SP33). With 0x52615 the name is not substituted.
 
 <a id="s3-6"></a>
 ### 3.6 Ignore page (Confirmed, SP2; BIN, SP6)
@@ -402,42 +412,69 @@ group order (BIN; the option's identity not traced, Q4).
 
 A row is `FellowMiniTemplate` (0x10000436, 221 × 75, context menu on) or, in the compact form
 of a raid display, `FellowMicroTemplate` (0x10000446, 156 × 70, based on
-`ClassDisplay_RaidVitalBackTemplate`); both have the same child IDs. The game code fills them
-from the member's group record (BIN):
+`ClassDisplay_RaidVitalBackTemplate`); the micro template has the same child IDs and in
+addition `FellowTemplateAssistant` (0x10000447), which the mini template lacks (SP25). The game
+code fills them from the member's group record (BIN):
 
 | Child (ID) | Mini rect | Shows |
 |---|---|---|
-| `FellowTemplateNameText` (0x10000438) | (56, 2, 133 × 14) | the member's name |
+| `FellowTemplateNameText` (0x10000438) | (56, 2, 133 × 14) | the member's name (the layout's own entry, of table 0x25033E35, is a design-time text and is replaced) |
 | `FellowTemplateClassField` (0x10000439) | ClassDisplay (5, 3, 50 × 50) | class icon (22-entry table) |
-| `FellowTemplateLevelText` (0x10000440) | (12, 42, 32 × 19) | level, through a `UI`-table template with the level as argument |
-| `FellowTemplateVitalField` (0x10000437) | (3, −3, 170 × 80) | `VitalHealthField` (MultiVitalDisplay, (52, 25, 99 × 6)): morale meter with temporary-morale and dread overlays; `VitalPowerField` (MultiVitalDisplay, (51, 32, 99 × 6)): power meter, replaced by a pip display of type `Wrath` for that class resource; both bound to the member; their numeric texts hidden by the layout; `VitalHealthFieldBg` (200 × 80) takes the member's vital-display override state |
+| `FellowTemplateLevelText` (0x10000440) | (12, 42, 32 × 19) | the level: (UI, 0x070F9F3C) with argument 0x7C83B5 = the level, set at creation and again on each level update (SP28); the layout's own entry is a design-time text |
+| `FellowTemplateVitalField` (0x10000437) | (3, −3, 170 × 80) | `VitalHealthField` and `VitalPowerField` (`MultiVitalDisplay`, at (52, 25) and (51, 32), 99 × 6), both bound to the member at creation; `VitalHealthFieldBg` (200 × 80) takes the member's vital-display override state (below, SP29) |
 | `FellowTemplateLeader` (0x1000043A) | (39, 34, 16 × 16) | leader marker (§4.3) |
-| `FellowTemplateLinkDead` (0x1000043B) | (55, 20, 112 × 16), text (UI, 0x00B8F659) | shown while the member is link-dead |
-| `FellowTemplateDefeated` (0x100010C9) | (55, 20, 112 × 16), text (UI, 0x08FAF389) | shown while the member is defeated |
-| `FellowEffectDisplay` (0x1000043E) | (54, 37, 150 × 37); 2 rows × 6 columns of effect icons | the member's effects (player-only display for the local player) |
+| `FellowTemplateLinkDead` (0x1000043B) | (55, 20, 112 × 16), image, child text (UI, 0x00B8F659) | the member is link-dead |
+| `FellowTemplateDefeated` (0x100010C9) | (55, 20, 112 × 16), image, child text (UI, 0x08FAF389) | the member is defeated |
+| `FellowEffectDisplay` (0x1000043E) | (54, 37, 150 × 37); `EffectDisplayList`, 2 rows of at most 6 icons, `PlayerOnly` true in the layout | the member's effects: bound to the member at creation, or set player-only when the member is the local player (SP29) |
 | `FellowAssist` (0x1000043F) | Button (153, 21, 16 × 16), tooltip (UI, 0x0C110D2E) | assist the member |
+| `FellowTemplateVoiceChat` (0x1000043C) | Button (38, 0, 20 × 20), default image 0x41007DD0 | voice chat on |
+| `FellowTemplateVoiceChatSquelched` (0x100010CE) | Field (38, 0, 20 × 20), image 0x410202F4 | the member is squelched |
+| `FellowTemplateSendingData` (0x1000043D) | Field (38, 0, 20 × 20), image 0x41007DD1 | the member is speaking |
+| `FellowReadyCheckTemplate` (0x1000106A) | Field (150, −8, 64 × 67), no default image; states `PendingReadyCheck`, `Ready`, `NotReady` with images | ready check |
 | `FellowTemplatePetVitals` (0x10000441) | hidden by the layout | the member's pet |
-| `FellowTemplateVoiceChat`, `…Squelched`, `…SendingData`, `FellowTemplateVolumeControl`, `FellowReadyCheckTemplate`, `FellowTemplateAssistant` | — | voice chat, ready check, raid assistant: out of scope (§0) |
+| `FellowTemplateVolumeControl` (0x1000422B) | Scrollbar, hidden by the layout | voice volume |
+
+<a id="s4-2-1"></a>
+**Visibility of the status, voice and ready-check elements** (SP25, SP26). In the layout none
+of `FellowTemplateLeader`, `…LinkDead`, `…Defeated`, `…VoiceChat`, `…VoiceChatSquelched`,
+`…SendingData` or `FellowReadyCheckTemplate` is hidden; the first six carry images, so a row
+built from the layout alone shows all of them stacked. The game code decides:
+
+| Element | Original, at row creation (BIN) | Tessera (TR14) |
+|---|---|---|
+| `FellowTemplateLeader` | state by group kind; shown only on the leader's row (§4.3) | TR2 |
+| `FellowTemplateLinkDead` | shown or hidden from the member record's link-dead flag | hidden (TR3: link-dead is never reported) |
+| `FellowTemplateDefeated` | shown or hidden from another flag of the member record | shown while the member is defeated (TR3), else hidden |
+| `FellowTemplateVoiceChat` | shown only when the member record's voice flag is set | hidden |
+| `FellowTemplateVoiceChatSquelched` | shown only when voice is active and the voice button's squelch flag is set | hidden |
+| `FellowTemplateSendingData` | hidden | hidden |
+| `FellowTemplateAssistant` (micro only) | hidden | hidden (the micro template is not used, TR2) |
+| `FellowReadyCheckTemplate` | no state requested (no default image, so nothing is drawn) | no state requested |
+| `FellowTemplateVolumeControl` | shown only together with voice | hidden (as in the layout) |
+| `FellowTemplatePetVitals` | hidden by the layout | hidden |
+
+The vital displays and effect list (SP29) follow the game types `combat-ui.md` specifies
+(branch `p2`, Accepted: §4.3 for `MultiVitalDisplay` parts named through
+`UI_VitalDisplay_Array`, §8.1–§8.2 for `EffectDisplayList`). Until that spec reaches this
+branch, and after it for the member-specific parts, TR15 and TR16 are the rules. In this row:
+
+| Display | `UI_VitalDisplay_Array` entries (in order) |
+|---|---|
+| `VitalHealthField` | vital `Health`: meter `VitalCurrentHealthMeter` (0x10000460), temporary meter `VitalTemporaryHealthMeter` (0x10002CF3), clamped meter `VitalCurrentDreadMeter` (0x10000462), text `VitalCurrentHealthText` (0x10000463, hidden by the layout) |
+| `VitalPowerField` | vital `Power`: meter `VitalCurrentPowerMeter` (0x10000466), temporary meter `VitalTemporaryPowerMeter` (0x10002CF4), text `CurrentPowerText` (0x10000467, hidden); then a pip entry of type `Wrath`: field `RageMeter` (0x10003B77), meter `CurrentRageMeter` (0x10003B79), text `RageText` (hidden), replacement field `VitalPowerField` (the inner field of the same ID) |
+
+The other `Meter` elements below the displays (`VitalHealthBackground`, `VitalPowerBackground`,
+`VitalHealthParentField`) are background and grouping elements, not named by the array.
 
 Meter colours follow the meters' own states (`vitalmeter_green`, `_red`, `_yellow`, `_blue`,
-`_grey`, UW §4); the game code's choice among them is P2's (`combat-ui.md`, if written) and is
-not changed here.
+`_grey`, UW §4); the game code's choice among them is `combat-ui.md`'s and is not changed here.
 
-> **OPEN (implementation, P4 clean room, 2026-10-11):** (a) the `UI`-table template of
-> `FellowTemplateLevelText` (and of `FellowInvite_FellowLevel`, §5.1) is not named by token
-> or argument ID; `tessera-ui` (`game::social::fellowship`, `invite`) shows the level as a
-> plain number until it is. (b) `VitalHealthField` and `VitalPowerField` are
-> `MultiVitalDisplay` game types (GP §11 fallback); Tessera sets `UICore_Meter_position` on
-> every `Meter` below them to current ÷ max and draws no temporary-morale, dread or pip
-> overlay. Please confirm or give the children game code fills.
-
-> **OPEN (implementation, P4 clean room, 2026-10-11, review):** `FellowEffectDisplay`
-> (2 × 6 effect icons) is not filled. `tessera-ui` (`game::social::fellowship`) keeps each
-> member's effects from `EffectApplied`/`EffectRemoved` (TR3, `MemberRow::effects`) but
-> leaves the display as the layout has it: the spec does not say which children the game
-> code creates or fills (icon element, layout, order of the 12 places, what happens past
-> 12), nor which icon an effect record gives. Please give them, or point to the effect-icon
-> path of the combat UI to reuse.
+> **Answered (revision 1, 2026-10-11; were implementer OPENs):** (a) the level templates are
+> (UI, 0x070F9F3C)/0x7C83B5 for the fellowship row and (UI, 0x038B9CDC)/0x50AA9C for the
+> invitation row (SP28). (b) Setting `UICore_Meter_position` on every `Meter` below the vital
+> displays also fills the background, temporary, dread and wrath meters; only the array's
+> current meters take the value (TR15). (c) The effect list follows `combat-ui.md` §8 with the
+> row's own limits (TR16).
 
 <a id="s4-3"></a>
 ### 4.3 Who gets a row, order, limit, leader marker (BIN, SP11; Probable, SP12)
@@ -445,6 +482,15 @@ not changed here.
 - **The local player gets no row** (BIN): the member list routine skips the player's own
   character. The player's vitals are panel P4; its child `PlayerLeaderIcon` (0x10000B4E,
   hidden by the layout, image 0x41007DCE) is the player's leader marker.
+- **The player's own voice elements** (SP27): P4's `VitalsParent` also holds `PlayerVoiceChat`
+  (0x10000B50, image 0x41007DD0), `PlayerVoiceChatSquelched` (0x100010CF, image 0x410202F4)
+  and `PlayerSendingData` (0x10000B51, image 0x41007DD1), all three at (71, 11) 20 × 20 and
+  **not** hidden by the layout. The panel's set-up hides `PlayerSendingData` and
+  `PlayerVoiceChatSquelched` (`PlayerAssistantIcon`, 0x10000B4F, is hidden by the layout and
+  hidden again by a further handler of the panel); `PlayerVoiceChat` is shown
+  or hidden when the player's boolean property PID 0x54A changes, and the squelched element
+  then follows voice activity and the voice element's squelch flag (BIN). Tessera hides all
+  three (TR14).
 - **Leader marker** (BIN): on every row and on `PlayerLeaderIcon`, the game code requests
   state `raid` when the group is a raid, else `monsterplaygroup` when the player is a monster
   player (alignment 3), else `fellowship`; and shows the element only for the group's leader.
@@ -466,8 +512,8 @@ A row stays while the member is in the group, whether or not the member is in vi
 vitals come from the group record, not from a visible entity. A left click on a row targets
 the member; when the member's entity is not available the game code instead posts a notice
 from the `Fellowship` table: (FT, 0x04CF6294) when the member is link-dead, else
-(FT, 0x0571E4C5) (out of range), argument 0x4AA1147 = the member's name, and clears the
-target.
+(FT, 0x0571E4C5) (out of range), argument 0x4AA1147 = the member's name (SP33; not the usual
+name argument 0x52615), and clears the target.
 
 <a id="s4-5"></a>
 ### 4.5 Menu and assist (BIN, SP14)
@@ -545,7 +591,7 @@ saved, activatable, blocks clicks, auto-fade 0.1. Children:
 
 | Element | Rect | Content |
 |---|---|---|
-| `FellowInvite_TitleBar` / `_Label` | (57, −7, 240 × 45) / (0, 15, 240 × 20) | layout default title (UI, 0x03045B45) |
+| `FellowInvite_TitleBar` (0x100016A2) and its child Text `FellowInvite_TitleBar_Label` (0x100016A4) | (57, −7, 240 × 45) / (0, 15, 240 × 20) | the label holds the title; layout default (UI, 0x03045B45) |
 | `FellowInvite_InviteText` | (20, 38, 316 × 63) | the invitation text |
 | `FellowInvite_FellowList` (0x10001695) | ListBox (21, 104, 313 × 220) with `FellowInvite_Scrollbar` | one `FellowInvite_Fellow` row per member |
 | `FellowInvite_WarningText` (0x10002EA7) | (20, 328, 316 × 67) | a warning, when given |
@@ -556,12 +602,13 @@ saved, activatable, blocks clicks, auto-fade 0.1. Children:
 
 Row template `FellowInvite_Fellow` (0x10001696, top level of the same layout, 296 × 39):
 `FellowInvite_FellowClass` (ClassDisplay 25 × 25: class icon), `FellowInvite_FellowLevel`
-(level, through the `UI`-table level template), `FellowInvite_FellowName` (name),
-`FellowInvite_FellowArea` (the member's area name; cleared when unknown).
+(0x10001698: the level, (UI, 0x038B9CDC) with argument 0x50AA9C = the level, SP28),
+`FellowInvite_FellowName` (0x10001699: name), `FellowInvite_FellowArea` (0x1000169A: the
+member's area name; cleared when unknown). The layout's own entries of these three texts
+(table 0x25033E35) are design-time texts and are replaced (cleared when there is no value).
 
-> **OPEN (implementation, P4 clean room, 2026-10-11):** the title label is written
-> "`FellowInvite_TitleBar` / `_Label`"; `tessera-ui` looks it up by the label
-> `FellowInvite_TitleBar_Label`. Please confirm the full label.
+> **Answered (revision 1, 2026-10-11; was an implementer OPEN):** the title label is
+> `FellowInvite_TitleBar_Label` (0x100016A4), a child of `FellowInvite_TitleBar`.
 
 <a id="s5-2"></a>
 ### 5.2 Behaviour (BIN, SP15)
@@ -614,8 +661,8 @@ activates on show, activatable, blocks clicks, auto-fade 0.1. Title (UST, 0x0DB7
 
 | Side | Element | Children |
 |---|---|---|
-| own (left) | `SelfTrade_Field` (7, 39, 252 × 388) | label `SelfTrade_Label` (UST, 0x0D63B6DC); `SelfTrade_TotalMoneyField` (0, 20): text (UST, 0x02251404) and `SelfTrade_TotalMoney` (PlayerMoneyDisplay: the player's wallet, three coin columns, all shown); `SelfTrade_TradeField` (0, 48, 252 × 264; states `normal` image 0x41007F84, `highlight` image 0x41007F83): `SelfTrade_ItemList` (ListBox 226 × 222, one column, container, item display type Medium) with `SelfTrade_ItemList_SB`, and `SelfTrade_MoneyDisplayField` (44, 235): three coin entries; buttons `SelfTrade_TradeButton` (31, 316, 96 × 20; text (UST, 0x0A307BC4); boolean button) and `SelfTrade_CancelButton` (130, 316; (UST, 0x0190ED84)) |
-| peer (right) | `OtherTrade_Field` (258, 38, 252 × 388) | label `OtherTrade_Label` (no layout text); `OtherTrade_TradeField` (0, 48; the same two states and images): `OtherTrade_ItemList` (ListBox 228 × 225, one column, Medium) with its scroll bar, and `OtherTrade_MoneyDisplay` (MoneyDisplay (45, 236, 160 × 22): three coin columns, all shown, leading zeros suppressed) |
+| own (left) | `SelfTrade_Field` (7, 39, 252 × 388) | label `SelfTrade_Label` (UST, 0x0D63B6DC); `SelfTrade_TotalMoneyField` (0, 20): text (UST, 0x02251404) and `SelfTrade_TotalMoney` (0x10000581, PlayerMoneyDisplay (83, 5, 160 × 22): the player's money as coin elements, §6.3); `SelfTrade_TradeField` (0, 48, 252 × 264; states `normal` image 0x41007F84, `highlight` image 0x41007F83): `SelfTrade_ItemList` (ListBox 226 × 222, one column, container, item display type Medium) with `SelfTrade_ItemList_SB`, and `SelfTrade_MoneyDisplayField` (44, 235): three coin entries; buttons `SelfTrade_TradeButton` (31, 316, 96 × 20; text (UST, 0x0A307BC4); boolean button) and `SelfTrade_CancelButton` (130, 316; (UST, 0x0190ED84)) |
+| peer (right) | `OtherTrade_Field` (258, 38, 252 × 388) | label `OtherTrade_Label` (no layout text); `OtherTrade_TradeField` (0, 48; the same two states and images): `OtherTrade_ItemList` (ListBox 228 × 225, one column, Medium) with its scroll bar, and `OtherTrade_MoneyDisplay` (0x1000058B, MoneyDisplay (45, 236, 160 × 22): the peer's offered coin as coin elements, §6.3) |
 | both | `SecureTrade_WaitOverlay` (4, 85, 508 × 266; image 0x41007F82 and a dark colour layer; blocks clicks) | `SecureTrade_WaitOverlayText`: (UST, 0x07E3F5E4) |
 
 **Coin entries** (`MoneyDisplay_Entry_GoldField`, `…SilverField`, `…CopperField`, at
@@ -623,7 +670,28 @@ x = 0, 58, 111 in that order): each a field tagged `UI_SecureTrade_Currency_Type
 game object (0x70000218 gold, 0x70000219 silver, 0x7000021A copper here; EC §7: the
 `GoldCurrency`, `SilverCurrency`, `CopperCurrency` records), with an editable one-line text
 of at most 5 characters (no IME) and a label with a tooltip (UI, 0x0135BA5C),
-(UI, 0x01E4A5BC), (UI, 0x0BE07C7C).
+(UI, 0x01E4A5BC), (UI, 0x0BE07C7C). The editable texts are `MoneyDisplay_Entry_GoldEntry`
+(0x10000127), `MoneyDisplay_Entry_SilverEntry` (0x10000123) and `MoneyDisplay_Entry_CopperEntry`
+(0x1000011F); the labels carrying the tooltips are `…GoldLabel` (0x10000126), `…SilverLabel`
+(0x10000122), `…CopperLabel` (0x1000011E); each field also holds a background field. The trade
+code names exactly these three entry IDs (SP31).
+
+**Money displays** (SP31). `SelfTrade_TotalMoney` and `OtherTrade_MoneyDisplay` have no layout
+children and no text of their own: each is a horizontal list of one row and at most three
+columns (only visible items laid out, filled in reverse) whose coin element is
+`MoneyDisplay_CoinTemplate` (0x10000114) of layout `moneydisplay` (0x2200006C), with
+`UIComponent_MoneyDisplay_ForceShowAll` true on both and `…_SuppressLeadingZeroes` true on the
+peer's. They are the money display of `npc-windows.md` §9.2–§9.3 (Accepted on `main`; it
+reaches this branch with the merge of `main`), summarised here so that the trade window can be
+built on this branch: the display creates three coin elements from its template, with the
+icon (`MoneyDisplay_Icon`, inside `MoneyDisplay_Icon_Holder`) in states `Copper`, `Silver`,
+`Gold` in that order, appended, so that with the reverse fill they read gold, silver, copper
+from left to right; each coin's count is the text `MoneyDisplay_Text` (0x10000115), set through
+(UI, 0x07480C44) with argument 0x5242A9 = the count; the amount is split by `Currency_Value`
+largest first (EC §7, npc-windows §9.3); which coins are visible follows npc-windows §9.2's
+Tessera rule (with `ForceShowAll` every coin shows; with `SuppressLeadingZeroes` as well, a zero
+coin shows only after a larger non-zero coin, and an amount of 0 shows only the copper coin with
+0). Setting a display's own text shows nothing.
 
 <a id="s6-2"></a>
 ### 6.2 Item entries (Confirmed layout; BIN)
@@ -640,32 +708,44 @@ The number of entries per side is not limited by the data (Q8).
 > **OPEN (Q8):** the limit of entries per side (a server rule; no layout or client limit was
 > found). **Tessera rule:** the feed's limit of 32 entries per side (SF §6.3).
 
-> **OPEN (implementation, P4 clean room, 2026-10-11):** the element IDs of the parts the
-> trade window's code fills are not given: the medium item display's 165-pixel name text,
-> the editable text of each `MoneyDisplay_Entry_…Field`, and the children of
-> `PlayerMoneyDisplay` and `MoneyDisplay` (GP §11 OPEN). `tessera-ui` (`game::social::trade`)
-> takes the entry's first `Text` element as the name, its `ItemIconDisplay` (by type) as the
-> item slot (icon, quantity, examination tooltip), the first editable text below a coin
-> field as its entry, and sets the money displays' own text to the gold, silver and copper
-> amounts as numbers (leading zero denominations left out). Please give the IDs or confirm.
+**Parts of an entry** (SP30). In `ItemDisplay_MediumTemplate` the parts are found by ID, never
+by type order:
+
+| Part | Element (ID) | Content |
+|---|---|---|
+| icon | `ItemDisplay_Icon` (0x100000E4, `ItemIconDisplay`, 32 × 32, inside `ItemDisplay_ShortIcon` 0x100000F3) | the item's icon (IL), its examination tooltip (IT), CP §5 |
+| quantity | `ItemDisplay_QuantityOverlay` (0x100000E7, a Text inside the icon, hidden by the layout) | the stack quantity, by CP §5's Tessera rule (shown when greater than 1) |
+| name | `ItemDisplay_Name` (0x100000F5, Text at (35, 0) 165 × 32, left, centred vertically, truncated with (UI, 0x037DDBC3)) | the item's name |
+
+`ItemDisplay_QuantityOverlay` is a Text that comes **before** `ItemDisplay_Name` in tree order,
+so "the entry's first Text element" is the quantity overlay, not the name.
+
+> **Tessera rule (name colour):** the name text takes the state of `item-tooltips.md` §6.2 for
+> the item's `Item_Quality` (`ItemQuality_Legendary_ColorName` … `ItemQuality_Common_ColorName`;
+> any other value `Object_ColorName`); all six states exist on `ItemDisplay_Name` (SP30). Which
+> state the original's item display requests was not traced (Probable: the same mapping).
+
+> **Answered (revision 1, 2026-10-11; was an implementer OPEN, with GP §11's OPEN for these
+> two types):** name `ItemDisplay_Name` (0x100000F5); coin entries 0x10000127, 0x10000123,
+> 0x1000011F (§6.1); the money displays are coin-element lists (§6.1 "Money displays").
 
 <a id="s6-3"></a>
 ### 6.3 Coin (BIN, SP18)
 
 - The own wallet shows in `SelfTrade_TotalMoney`; the peer's offered coin in
-  `OtherTrade_MoneyDisplay` (set from the peer's offer; 0 at opening).
-- When a coin entry loses focus or receives Enter (BIN): the three texts are read; a text
-  that is not a number posts (UST, 0x085F80B9) and clears that entry; a total
-  (Σ entry × the currency's `Currency_Value`, EC §7; Probable for the arithmetic) above the
-  player's money posts (UST, 0x06195A09) and clears the entry; a non-zero total that a
-  further client check refuses posts that check's client message and clears the entry; in
-  every case the amounts then present are sent as the coin offer (per currency).
+  `OtherTrade_MoneyDisplay` (set from the peer's offer; 0 at opening); both by the money
+  display of §6.1.
+- When a coin entry loses focus or receives Enter (BIN, SP32), only **that** entry is tested
+  and cleared: its text not a number posts (UST, 0x085F80B9) and clears it; otherwise a total
+  of the three entries (Σ entry × the currency's `Currency_Value`, EC §7; Probable for the
+  arithmetic) above the player's money posts (UST, 0x06195A09) and clears it; otherwise a
+  non-zero total that a further client check refuses posts that check's client message and
+  clears it. The notices go to chat as type 1. In every case the handler then reads the three
+  entries and sends the amounts present as the coin offer (per currency), even when the other
+  two entries alone still exceed the player's money (the session decides).
 
-> **OPEN (implementation, P4 clean room, 2026-10-11, review):** "clears the entry" is read
-> as the entry that lost focus or received Enter. When the total of the other two entries
-> is still above the player's money after that, the amounts present are sent anyway (the
-> feed decides), as this section says; `tessera-ui` does that. Please confirm, or say
-> whether the original clears more entries or sends nothing in that case.
+> **Answered (revision 1, 2026-10-11; was an implementer OPEN):** the reading is right: only
+> the committed entry is cleared, and the amounts present are sent afterwards (SP32).
 
 <a id="s6-4"></a>
 ### 6.4 Accept states and resets (BIN, SP18)
@@ -793,6 +873,7 @@ There is no `AssistFellowOne`: member 1 is the player (Probable, Q6).
 | Fellowship: player menu dismiss; `/dismiss NAME` | `KickFromFellowship { name }` |
 | Fellowship: transfer leadership; `/promote NAME` | `SetFellowshipLeader { name }` |
 | Fellowship: leave; `/leave` | `LeaveFellowship` |
+| Fellowship: the disband names of §7.1 (TR11) | `DisbandFellowship` (decision 0035; SF "P4 social") |
 | Fellowship row click | `SelectTarget { target: Some(member entity) }` when the member's entity is known (§9 TR3), else the §4.4 notice |
 | `FellowAssist`, `AssistFellowN` | `SelectTarget { target }` with the member's last reported target (`TargetChanged`), if any |
 | `SelectFellowN` | `SelectTarget`: N = 1 the player, N ≥ 2 the (N − 1)-th row |
@@ -804,8 +885,8 @@ There is no `AssistFellowOne`: member 1 is the player (Probable, Q6).
 | Trade button on / off | `SetTradeReady { window, ready: true / false }` |
 | Trade Cancel, close button | `CloseWindow { window }` |
 
-> **OPEN (Q12):** SF §9.4 has no disband command; the disband names and the leader's
-> disband action have no command to send. **Tessera rule:** §9 TR11 (a refusal line).
+> **Answered (Q12, revision 1):** decision 0035 and SF "P4 social" (both Accepted) add the
+> command `DisbandFellowship`, answered only by scenario triggers; TR11 sends it.
 
 <a id="s8-2"></a>
 ### 8.2 Events → displays (Tessera rule)
@@ -820,7 +901,8 @@ There is no `AssistFellowOne`: member 1 is the player (Probable, Q6).
 | `TradeOffer { window, side, entries, coin }` | that side's list replaced by the entries, its coin display (peer) or entries' shown coin (own) set; then the §6.4 content-change reset |
 | `TradeReady { window, side, ready }` | that side's field `highlight` / `normal`; for `Own` also the trade button's highlight |
 | `WindowClosed { window }` of the trade window | the window hides |
-| `VitalChanged`, `LevelChanged`, `Defeated`, `Revived`, `EffectApplied`/`Removed`, `TargetChanged` of a member's entity | that member's row: meters, level, defeated field, effects, assist target |
+| `VitalChanged`, `LevelChanged`, `Defeated`, `Revived`, `EffectApplied`/`Removed`, `TargetChanged` of a member's entity | that member's row: meters (TR15), level, defeated field (TR14), effects (TR16), assist target |
+| `FellowVitalChanged { member, vital, current, max }` | the row of the member of that name, with or without an entity: its meter (TR3, TR15) |
 | `ChannelJoined`/`Left`, `ChatMessage` | chat (CW), not these panels |
 
 ---
@@ -843,14 +925,19 @@ These are Tessera's rules (DEC), not facts about the original.
   shows when the player leads; the marker state is `fellowship` (no raids or monster play in
   the sandbox). Panel 1 is shown while the list is non-empty and hidden otherwise; panels 2–4
   stay hidden.
-- **TR3 Member data.** A member with an `entity` takes name from the event, and level, morale,
-  power, defeat and effects from the last `LevelChanged`, `VitalChanged`, `Defeated`/`Revived`,
+- **TR3 Member data.** A member with an `entity` takes its name from the event, and level,
+  defeat and effects from the last `LevelChanged`, `Defeated`/`Revived` and
   `EffectApplied`/`EffectRemoved` the feed sent for that entity (kept after the entity
-  despawns, SF §5.4). Without an entity (or before any such event): meters empty, level
-  empty, no effects, class icon none. The class icon is shown only when an actor's class is
-  known to the client half (the feed's `CharacterInfo` gives one for the player only), so it is
-  normally empty. Link-dead is never shown. A click on a member without an entity, or whose
-  entity is despawned, posts (FT, 0x0571E4C5) as a local line of chat type 1 (Tessera's
+  despawns, SF §5.4). **Morale and power** of every member, with or without an entity, are per
+  vital the later of the member's last `FellowVitalChanged` (matched to the member by name,
+  ignoring case) and, for a member with an entity, that entity's last `VitalChanged`
+  (decision 0035; SF §6.7). Without any such event a meter shows nothing (position 0, TR15);
+  without a level the level text is empty; no effects. A member without an entity has no event
+  for level, defeat or effects (SF "P4 social" OPEN), so those stay empty. The class icon is
+  shown only when an actor's class is known to the client half (the feed's `CharacterInfo`
+  gives one for the player only), so it is normally empty. Link-dead is never shown. A click
+  on a member without an entity, or whose entity is despawned, posts (FT, 0x0571E4C5) with
+  argument 0x4AA1147 = the member's name (SP33) as a local line of chat type 1 (Tessera's
   choice; the original's chat type for it was not traced) and sends nothing.
 - **TR4 Derived notices.** The sandbox has no server to send §4.6's lines, so the client half
   derives them from consecutive `FellowshipChanged` events, comparing members by name, and
@@ -885,11 +972,20 @@ These are Tessera's rules (DEC), not facts about the original.
   the request dialog (the feed has no request event); the peer name is the name of the peer's
   entity as last spawned, else cleared. Own-side entries show `TradeOffer { side: Own }` content
   (the feed is the authority; a drop sends `OfferTrade` and shows nothing until the feed
-  answers). Literal refs (SF §5.2) show their text with a placeholder icon. Coin shown on the
-  own side is the last own `TradeOffer` coin, split into gold, silver and copper by
-  `Currency_Value` (EC §7), written into the three entries. The §6.4 content-change reset runs
-  on every `TradeOffer`. A drop of an item not in the player's backpack is refused locally with
-  a type 1 line in Tessera's own words. No item removal from an offer (Q11).
+  answers). Each entry's name goes into `ItemDisplay_Name` with the name-colour rule of §6.2,
+  its icon into `ItemDisplay_Icon`, its quantity into `ItemDisplay_QuantityOverlay` (§6.2).
+  **Literal entries** (SF §5.2): the literal text in `ItemDisplay_Name` in state
+  `Object_ColorName`; **no icon**, meaning that `ItemDisplay_Icon` draws no item image (the
+  "no icon" result of IL §3.1; the template's own art stays) and no stand-in image is drawn; the
+  quantity overlay is hidden; there is no examination tooltip (no item to examine). The coin:
+  `SelfTrade_TotalMoney` shows the player's money, the amount of the last
+  `WalletChanged { currency: coin }` (0 before any); `OtherTrade_MoneyDisplay` shows the last
+  peer `TradeOffer` coin (0 at opening); both by the money display of §6.1. The own side's
+  three entries (`MoneyDisplay_Entry_GoldEntry`, `…SilverEntry`, `…CopperEntry`) show the last
+  own `TradeOffer` coin, split by `Currency_Value` (EC §7) into gold, silver and copper, written
+  as plain integers (an entry with 0 left empty). The §6.4 content-change reset runs on every
+  `TradeOffer`. A drop of an item not in the player's backpack is refused locally with a type 1
+  line in Tessera's own words. No item removal from an offer (Q11).
 - **TR10 Ready state.** `TradeReady { side: Own, ready }` sets the button highlight to `ready`;
   clicking the button sends `SetTradeReady` with the new highlight and shows it at once
   (optimistic), a later `TradeReady` overriding it.
@@ -902,37 +998,67 @@ These are Tessera's rules (DEC), not facts about the original.
   tokens of §7.1. `list` prints the model: the empty line ((CT, 0x06577433) or
   (CT, 0x01785864)) or, for ignore, the header (CT, 0x043D716F) then one line per name; for
   friends one line per entry, the name followed by (US, 0x0BE609B3) or (US, 0x0F902393). The
-  disband names are registered and answer with a type 1 line in Tessera's words (no disband
-  command in SF §9.4, Q12). A name argument missing gives a type 1 line. All lines are
-  type 8 (lists) or type 1 (refusals).
-  > **OPEN (implementation, P4 client, 2026-10-11):** the disband names send
-  > `DisbandFellowship` (decision 0035 D4, `scenario-feed.md` §7.5, which answers Q12), not
-  > TR11's refusal line; the feed's triggers answer it. Please align TR11 with decision 0035.
+  disband names (0x0F8E33D4, 0x05B57444, read from the install, plus the Tessera name
+  `disband`) are registered and send `DisbandFellowship` (decision 0035; SF "P4 social"); the
+  feed's triggers answer it, and nothing is shown until they do. A name argument missing gives
+  a type 1 line. All lines are type 8 (lists) or type 1 (refusals).
 - **TR12 Keys.** The client maps `ToggleSocialPanel` and the five page commands to §3.1's
-  Tessera rule, `SelectFellowOne` … `Six` and `AssistFellowTwo` … `Six` to §8.1, with the
-  install's default bindings (KM §12.14 import).
-  > **OPEN (implementation, P4 client, 2026-10-11):** Tessera's own default key map binds
-  > `toggle_social` to O; `select_fellow_1` … `6` and `assist_fellow_2` … `6` stay unbound
-  > there because F3 is Tessera's debug key (a binding would conflict in the `global`
-  > context); the install's keys arrive through the key-map import (KM §12.14). Please
-  > confirm, or name the Tessera keys.
-- **TR13 Other backends.** On the test-server backend every Social command except `Chat` is
-  refused with `InvalidCommand` (SF §9.5); the panels stay empty; the buttons are not ghosted
-  for that reason (a refusal posts the session's error line). The sandbox without a scenario
-  accepts and ignores them (SF §9.5).
+  Tessera rule, `SelectFellowOne` … `Six` and `AssistFellowTwo` … `Six` to §8.1. Tessera's own
+  default key map binds `toggle_social` to O and leaves `select_fellow_1` … `6` and
+  `assist_fellow_2` … `6` unbound, because F3 is Tessera's debug key in the `global` context
+  and a binding there would conflict; the install's bindings (F1 … F6, Shift + F2 … F6,
+  SP20) arrive through the key-map import (KM §12.14) when the user imports them.
+- **TR13 Other backends.** On the test-server backend (SF §9.5, §9.8): at protocol minor 2 or
+  higher with `CHAT_CHANNELS`, `JoinChannel`, `LeaveChannel` and `Chat` on `Named` are
+  accepted; at every minor, `Chat` on `Fellowship` and every other Social command
+  (`AddFriend`, `RemoveFriend`, `Ignore`, `Unignore`, the fellowship commands,
+  `DisbandFellowship`, `AnswerInvite`, the trade commands) is refused with `InvalidCommand`,
+  so the panels of this spec stay empty there; the buttons are not ghosted for that reason
+  (a refusal posts the session's error line). The plain sandbox without a scenario accepts
+  and ignores them (SF §9.5, §9.8). Overlay runs keep their P1 subset (decision 0035 D3).
+- **TR14 Voice, status and ready-check elements.** Tessera has no voice chat and no ready
+  check. On every member row, `FellowTemplateVoiceChat`, `FellowTemplateVoiceChatSquelched`,
+  `FellowTemplateSendingData` and `FellowTemplateVolumeControl` are hidden, and so are, on
+  panel P4, `PlayerVoiceChat`, `PlayerVoiceChatSquelched`, `PlayerSendingData` and
+  `PlayerAssistantIcon`, whenever the row or the panel is built (§4.2, §4.3; the original shows
+  them only with voice active). `FellowReadyCheckTemplate` gets no state request.
+  `FellowTemplateLinkDead` is hidden; `FellowTemplateDefeated` is shown while the member is
+  defeated (TR3) and hidden otherwise; `FellowTemplateLeader` follows TR2.
+- **TR15 Member meters.** For a member's morale (TR3), the meter named by the `Health` entry
+  of `VitalHealthField`'s `UI_VitalDisplay_Array` (`VitalCurrentHealthMeter`) takes
+  `UICore_Meter_position` = current ÷ max clamped to [0, 1] (0 when max is 0); for power, the
+  `Power` entry's meter (`VitalCurrentPowerMeter`) likewise. The temporary and clamped (dread)
+  meters stay at position 0, the vital texts stay hidden, and every other `Meter` below the
+  displays (backgrounds, `VitalHealthParentField`) is left as the layout has it. The pip entry's
+  field `RageMeter` stays hidden and the power field shown: `Resource` vitals are not shown on
+  member rows in P4. This is the member form of `combat-ui.md` TR10; when `combat-ui.md` reaches
+  this branch, its §4.3 rules apply to these displays except where this rule differs.
+- **TR16 Member effects.** `FellowEffectDisplay` shows the member's effects (TR3) by
+  `combat-ui.md` §8.1–§8.2 and TR29–TR31 (branch `p2`, Accepted), with this list's own limits:
+  2 rows, at most 6 icons per row (`UIComponent_EffectDisplay_MaxIconColumns` 6), icon size the
+  list's `EffectDisplayList_EffectSize` (20 when absent, as here); further icons are kept but
+  not shown. Until `combat-ui.md` reaches this branch the display shows no icons (the effects
+  are kept), which is the interim Tessera rule.
+
+<a id="s9-1"></a>
+### 9.1 Interim client choices (Tessera rules)
+
+Answers to the implementer's engineering-choices OPEN (revision 1; they agree with what was
+built):
+
+- **(a)** The client has no engine text-input dialog (UB §5.5) or context-menu widget yet:
+  the add dialogs of §3.5 and §3.6 post a type 8 line naming `/friend add NAME` and
+  `/ignore add NAME`, and the row menus (§3.5, §3.6, §4.5) are not shown; the fellowship
+  commands `/dismiss`, `/promote`, `/leave` and the disband names are the player's way
+  meanwhile. When the widgets exist, §3.5, §3.6 and §4.5 apply as written.
+- **(b)** `--open-panel` takes `social`, `friends`, `fellowship` and `trade`: the first three
+  show P8 at its last, friends or grouping page; the fellowship display and the trade window
+  show only while the feed reports a fellowship or a trade (TR2, TR9).
+- **(c)** Escape hides P8 before the game-menu rule of GP §16 (P8 is an on-demand panel there).
+- **(d)** A trade drop offers the item's whole stack (§8.1 "the stack's quantity"), and only
+  from the backpack container (TR9).
 
 ---
-
-> **OPEN (implementation, P4 client, 2026-10-11; engineering choices):** (a) The client has no
-> engine text-input dialog (UB §5.5) or context-menu widget yet: the add dialogs of §3.5 and
-> §3.6 post a type 8 line naming `/friend add NAME` and `/ignore add NAME`, and a row menu
-> (§3.5, §3.6, §4.5) is kept for a later menu widget (the fellowship commands `/dismiss`,
-> `/promote`, `/leave` are the player's way meanwhile). (b) `--open-panel` takes `social`,
-> `friends`, `fellowship` and `trade`: the first three show P8 at its last, friends or
-> grouping page; the fellowship display and the trade window still show only while the feed
-> reports a fellowship or a trade (TR2, TR9). (c) Escape hides P8 before the game menu rule
-> (`game-panels.md` §16). (d) A trade drop takes the item's whole stack (TR9 "the stack's
-> quantity") and is offered only from the backpack container. Please confirm.
 
 <a id="s10"></a>
 ## 10. Plugin views
@@ -963,6 +1089,20 @@ LPA §15.4 (API facts SP22, SP23; Tessera rules there).
 - **SPI7** (Tessera) Two `FellowshipChanged` with the same member names, leader and order
   derive no notice and no plugin event.
 - **SPI8** (Tessera) After any `TradeOffer` both side fields are `normal`.
+- **SPI9** (data) In `FellowMiniTemplate` and `FellowMicroTemplate`, none of
+  `FellowTemplateVoiceChat`, `…VoiceChatSquelched`, `…SendingData`, `FellowTemplateLinkDead`,
+  `FellowTemplateDefeated`, `FellowTemplateLeader` carries `UICore_Element_hide`; in `toolbar`,
+  none of `PlayerVoiceChat`, `PlayerVoiceChatSquelched`, `PlayerSendingData` does.
+- **SPI10** (data) In `ItemDisplay_MediumTemplate`, `ItemDisplay_QuantityOverlay` precedes
+  `ItemDisplay_Name` in tree order, and both are Text elements.
+- **SPI11** (data) In `securetrade`, each `MoneyDisplay_Entry_…Field` holds exactly one editable
+  Text, with the IDs of §6.1; `SelfTrade_TotalMoney` and `OtherTrade_MoneyDisplay` have no
+  children and name `MoneyDisplay_CoinTemplate` of layout `moneydisplay`.
+- **SPI12** (data) (UI, 0x070F9F3C) declares exactly the argument 0x7C83B5; (UI, 0x038B9CDC) and
+  (UF, 0x06CDDF0C) exactly 0x50AA9C; (UF, 0x019353F5) and (UF, 0x0803A974) exactly 0xA2D94C5.
+- **SPI13** (Tessera) After any fellowship update, no member row and not panel P4 shows a voice,
+  squelched, sending-data or volume element (TR14), and only the current meters of a row's
+  vital displays have a non-zero position (TR15).
 
 ---
 
@@ -991,9 +1131,11 @@ Plugin events for the same run: LPA §15.4 example.
 
 Actor `$t` "Dara" (entity T). `trade $t` → `TradeShown { window 1, peer T }`: window opens, peer
 label (UST, 0x0CFA21C2) with "Dara", both fields `normal`, trade button ghosted (both empty).
-`trade-offer peer items="Rope" coin=1234567` → peer list one entry "Rope" (placeholder icon),
-peer coin display 12 gold, 345 silver, 67 copper (values 100,000 / 100 / 1, EC §7); reset; button not
-ghosted. Input `trade-ready on` sends `SetTradeReady { window 1, ready: true }`; the button
+`trade-offer peer items="Rope" coin=1234567` → peer list one entry "Rope" (a literal: name in
+`ItemDisplay_Name`, no icon, TR9), peer money display three coin elements reading 12 (gold),
+345 (silver), 67 (copper) from left to right (values 100,000 / 100 / 1, EC §7); reset; button
+not ghosted. Before that offer the peer display showed only the copper coin with 0
+(`SuppressLeadingZeroes`, §6.1). Input `trade-ready on` sends `SetTradeReady { window 1, ready: true }`; the button
 shows highlighted. `trade-ready own on` → own field `highlight`. `trade-ready peer on` → peer
 field `highlight`. `trade-offer peer items="Rope","Lamp"` → both fields `normal`, button not
 highlighted. `close trade` → `WindowClosed { window 1 }`: hidden.
@@ -1012,27 +1154,27 @@ A click on the Last-online header (new column, ascending): bo (offline) first, t
 
 | # | Section | Question | Tessera rule | Owner check |
 |---|---|---|---|---|
-| Q1 | §3.1 | Toggle semantics of the social commands on an open panel | §3.1 | O130 |
+| Q1 | §3.1 | Toggle semantics of the social commands on an open panel | §3.1 | O133 |
 | Q2 | §3.3 | The record test behind "known"; when the deleted colour is used | TR5 | — |
-| Q3 | §4.3 | Member order in the fellowship panel and in `Party:GetMember` | list order | O131 |
+| Q3 | §4.3 | Member order in the fellowship panel and in `Party:GetMember` | list order | O130 |
 | Q4 | §4.1 | The option that splits a raid over panels 2–4; when the micro template is used | not used | — |
-| Q5 | §7.1 | Which token of each pair is the fellowship command; sub-word tokens | TR11 | O132 |
-| Q6 | §7.2 | Whether `SelectFellowOne` targets the player and N maps to panel order | §8.1 | O133 |
-| Q7 | §3.6 | Initial ignore sort | TR6 | — |
-| Q8 | §6.2 | Entry limit per trade side | SF's 32 | O134 |
+| Q5 | §7.1 | Which token of each pair is the fellowship command; sub-word tokens | TR11 | O130 |
+| Q6 | §7.2 | Whether `SelectFellowOne` targets the player and N maps to panel order | §8.1 | O130 |
+| Q7 | §3.6 | Initial ignore sort | TR6 | O133 |
+| Q8 | §6.2 | Entry limit per trade side | SF's 32 | O132 |
 | Q9 | §6.6 | Texts of the client messages for refused drops | own words | — |
 | Q10 | §3.5 | Notes and auto-fellow in a future feed revision | ghosted | — |
-| Q11 | §6.6 | How an item is taken back out of an offer | none | O134 |
-| Q12 | §7.1 | A disband command in the feed | refused | — |
-| Q13 | §5.2 | Whether the invitation window closes on expiry by the session or a client path | no timeout | O135 |
-| Q14 | §4.6 | Whether the original also posts the TR4 lines when the change is the player's own action, and their order relative to the panel update | TR4 | O136 |
+| Q11 | §6.6 | How an item is taken back out of an offer | none | O132 |
+| Q12 | §7.1 | A disband command in the feed | **answered** (revision 1): `DisbandFellowship`, decision 0035 | — |
+| Q13 | §5.2 | Whether the invitation window closes on expiry by the session or a client path | no timeout | O131 |
+| Q14 | §4.6 | Whether the original also posts the TR4 lines when the change is the player's own action, and their order relative to the panel update | TR4 | O130 |
 
-Owner checks (to be added to `docs/checklists/owner-observations.md`, rows from O130):
-O130 press O and a page command on an open Social panel; O131 compare fellowship panel order
-with join order; O132 type the disband and promote names in a fellowship and in a raid; O133
-press F1 and F2 in a fellowship; O134 offer many items in one trade and try to take one back;
-O135 let a fellowship invitation lapse; O136 note the chat lines and their order on join,
-leader change, dismissal and disband.
+Owner checks are the rows O130–O133 of `docs/checklists/owner-observations.md`: O130 fellowship
+display (member order, leader marker, out-of-view rows, the lines on leader change, dismissal
+and disband, F1 and F2, the disband and promote names, whether voice icons show without voice
+chat), O131 invitation prompt (expiry), O132 trade window (entries per side, taking an item
+back, the coin displays), O133 Social panel (O and a page command on an open panel, sorting,
+the ignore page's default sort).
 
 ---
 
@@ -1046,7 +1188,10 @@ leader change, dismissal and disband.
 | CW §10 item 3 | TR11 registers further original names (friend, ignore, invite, leave, dismiss, promote, disband) under the same rules; CW's "no other original command name is registered" needs that exception at its next revision. |
 | KM §12.11 | Classes 11 and 15 gain Tessera uses for the commands of §7.2 (TR12). |
 | LPA §9.3 | `Party.MemberAdded`/`MemberRemoved` carry `Player` (SP22); applied in LPA. |
-| SF §6.4, §9.2 | No change. TR2 states how a list without the player is read; Q12 asks for a disband command; Q10 for notes. |
+| SF §6.4, §9.2 | No change. TR2 states how a list without the player is read; Q10 asks for notes. Q12 is answered by SF "P4 social" (`DisbandFellowship`); TR3 reads `FellowVitalChanged` as SF §6.7 asks (its "P4 social" OPEN item (2) is taken up here). |
+| GP §3, §11, §14 note | The P4 portrait's voice elements and the member rows' voice, status and ready-check elements are elements game code shows or hides (§4.2, §4.3, TR14); `MultiVitalDisplay` and `EffectDisplayList` on member rows follow TR15, TR16; `PlayerMoneyDisplay` and `MoneyDisplay` are coin-element lists (§6.1), not texts. Applied as a note in GP §14. |
+| `combat-ui.md` (branch `p2`) §4.1 OPEN | That OPEN leaves the player frame's voice elements at the layout's visibility; SP27 answers it (BIN: hidden at set-up or by a property the sandbox never sets); TR14 hides them. For that spec's owner at the merge. |
+| `npc-windows.md` §11 (on `main`) | Uses "placeholder icon" for literal entries without defining it; TR9's definition (no icon, no stand-in image) can serve there too. For that spec's owner. |
 
 ---
 
@@ -1056,3 +1201,4 @@ leader change, dismissal and disband.
 |---|---|
 | 2026-10-11 | First version (spec writer, dirty room; OBS and BIN on client 4906.0071.1794.4035) for decision 0024 P4: Social panel P8 pages, friends and ignore lists (rows, colours, sorting, buttons, dialogs, menus, notices), fellowship panels (four `FellowshipVitals` panels, member rows, leader marker, out-of-view rule, menu, rebuild, notices), invitation window, trade window (sides, entries, coin, accept states, opening, closing, notices), command names and key-map commands, mapping to SF §9.2/§9.4, Tessera rules TR1–TR13, invariants SPI1–SPI8, examples §12.1–§12.3, Q1–Q14, owner checks O130–O136. |
 | 2026-10-11 | Review 1 (spec reviewer, independent session): changes requested, blocking items B1–B7 and notes (a)–(d) in the header's review record. No text of the spec changed. |
+| 2026-10-11 | **Revision 1** (spec writer, dirty room; a session that did not do review 1), answering review 1. New provenance key OBS-R1 and BIN questions (q8)–(q10); new rows SP25–SP33; DEC adds decision 0035 and SF "P4 social". **B1:** §4.2 lists every row child with its visibility (new table "Visibility of the status, voice and ready-check elements", anchor `s4-2-1`), §4.3 the P4 portrait's voice elements (SP25–SP27); new TR14 hides the voice, squelched, sending-data and volume elements on rows and the three voice elements on P4; GP §14 note extended. **B2:** §6.1 gives the coin-entry IDs and the money displays as coin-element lists (summary of `npc-windows.md` §9.2–§9.3), §6.2 the parts of an entry by ID with a name-colour Tessera rule, TR9 defines a literal entry's "no icon" and the coin displays (SP30, SP31). **B3:** level templates in §4.2 and §5.1 (SP28). **B4:** §3.5 heading argument 0xA2D94C5 (SP33). **B5:** §5.1 full title label `FellowInvite_TitleBar_Label` (0x100016A4). **B6:** §4.2 names the vital-display parts and the effect list (SP29); new TR15 (meters) and TR16 (effects, pointing to `combat-ui.md` §8 on `p2`, interim: no icons); `FellowTemplatePetVitals` and `FellowTemplateVolumeControl` recorded as hidden by the layout; `FellowTemplateAssistant` exists only in the micro template (the earlier "same child IDs" corrected). **B7:** TR3 reads `FellowVitalChanged` (morale and power per vital, the later of it and the entity's `VitalChanged`), §8.1 adds `DisbandFellowship`, §8.2 adds `FellowVitalChanged`, Q12 answered, TR11 sends `DisbandFellowship`, TR13 follows SF §9.8 (remote backend at minor 2), §14 SF row. **Notes:** (a) TR12 and the engineering choices are Tessera rules (new §9.1, anchor `s9-1`); (b) §6.3 answered by BIN (SP32: only the committed entry is cleared, the amounts present are sent); (c) TR3 and §4.4 state argument 0x4AA1147; (d) status Revised. §11 adds SPI9–SPI13; §12.2 example updated; §13 owner column mapped to the existing rows O130–O133. **Changes to behaviour already built on `p4`:** (1) TR14: the voice, squelched and sending-data icons (the red and green icon) and the volume control are hidden on member rows and P4; (2) §6.2: the entry name goes into `ItemDisplay_Name`, not the first Text (the quantity overlay); (3) §6.1, TR9: `SelfTrade_TotalMoney` and `OtherTrade_MoneyDisplay` are filled with coin elements instead of their own text; (4) §6.2: the name colour follows the item's quality; (5) SP28: the level texts use the two `UI` templates instead of a plain number; (6) §3.5: the row-menu heading passes 0xA2D94C5; (7) TR15: only the current morale and power meters take the value (background, temporary, dread and wrath meters no longer). Unchanged: `DisbandFellowship`, `FellowVitalChanged`, TR12, TR13, §9.1, §6.3, the literal entry's icon, TR16's interim (no icons), argument 0x4AA1147, the coin-entry elements found (now named by ID). |

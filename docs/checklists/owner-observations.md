@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (P4 spec writer: items O130–O137 added, decision 0035); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -1594,7 +1594,10 @@ row stay, do its morale and power keep changing, what does a left click on it do
 and (d): which chat lines appear (by role, for example "X left", "the fellowship was
 disbanded"), in which order relative to the rows changing, and whether both "you dismissed"
 and "was dismissed" appear when you dismiss someone (Q14); whether the display hides after
-the disband.
+the disband. Also (added 2026-10-11, `social-panels.md` revision 1): with voice chat off,
+whether any voice icon shows on a member row or on your own portrait (Tessera hides them,
+TR14); what F1 and F2 select (Q6); what the two disband names and the two promote names do in
+a fellowship (Q5).
 
 <a id="o131"></a>
 ## O131. Fellowship invitation prompt (P4)
@@ -1627,7 +1630,9 @@ it on both sides until the trade completes. Try to take an offered item back.
 **Record:** how each side looks (own items left or right, coin fields); how the ready state
 shows on each side; what happens to both ready states when either side changes its offer;
 how many items a side can hold; whether and how an offered item can be removed; what happens
-at completion (window closes, lines by role, items moved to which bag slots).
+at completion (window closes, lines by role, items moved to which bag slots). Also (added
+2026-10-11, `social-panels.md` revision 1): how your money and the partner's coin are shown
+(coin images with counts; which coins show at 0), and the colour of the item names.
 
 <a id="o133"></a>
 ## O133. Social panel: friend and ignore lists (P4)
@@ -1641,7 +1646,8 @@ page, notices), Q1, Q2, Q7.
 **What to do:** open the Social panel on the friends page and on the ignore page; add and
 remove a friend and an ignored name; watch a friend log in and out; sort by each column.
 
-**Record:** columns and the default sort column and direction for each page; colours of
+**Record:** columns and the default sort column and direction for each page (Q7); what
+pressing O and a page command does while the panel is open at another page (Q1); colours of
 online and offline friends; what the add and remove dialogs ask; which lines a friend's login
 and logout give (by role); what `/friend list` and `/ignore list` print (by role, no names).
 

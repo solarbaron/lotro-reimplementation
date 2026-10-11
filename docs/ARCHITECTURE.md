@@ -1261,11 +1261,17 @@ sends: the scenario feed's are scripted, never derived (decision 0024 §2.4).
 | | `TradeReady` | event | One side's ready flag |
 | | `FriendList` / `IgnoreList` | event | The friends list with online flags / the ignore list |
 | | `PerformanceStarted` / `PerformanceStopped` | event | An entity starts (tune, delay) / stops a music performance |
+| | `PerformanceReady` | event | (P4) A fellowship member's part waits for a synchronised start (member, entity, tune) |
+| | `PerformanceSyncStart` | event | (P4) One synchronised start of every waiting part: who, the start time on the backend's base, the lead |
+| | `PerformanceWithdrawn` | event | (P4) A member's waiting part was withdrawn |
+| | `FellowVitalChanged` | event | (P4) A fellowship member's vital as the group reports it, with or without an entity |
 | | `JoinChannel` / `LeaveChannel` | command | Join / leave a named chat channel |
 | | `InviteToFellowship` / `KickFromFellowship` / `SetFellowshipLeader` | command | Fellowship management by name |
 | | `AnswerInvite` / `LeaveFellowship` | command | Accept or decline an invitation / leave the fellowship |
+| | `DisbandFellowship` | command | (P4) Disband the fellowship |
 | | `OpenTrade` / `OfferTrade` / `SetTradeReady` | command | Open a trade with an entity / offer an item or coin / set ready |
 | | `AddFriend` / `RemoveFriend` / `Ignore` / `Unignore` | command | Friends and ignore lists by name |
+| | `ReadyPerformance` / `StartPerformance` | command | (P4) The player's accepted `/play … sync` / `/playstart` |
 | World | `MarkerAdded` / `MarkerRemoved` | event | A map marker: location, label, icon, quest / its removal |
 | | `TravelShown` / `TravelStarted` | event | A travel window: destinations and costs / a journey starts |
 | | `MountChanged` | event | An entity mounts (which mount) or dismounts |
@@ -1312,12 +1318,43 @@ strings as text, and logs ignored entries at a bounded rate; without a slot the 
 back to the hand rule of `character-panels.md` §7. The client keeps at most 1,024 scripted
 properties per entity and per item.
 
+<a id="net-social"></a>
+**The Social group in the client (P4, decision 0024 §5 P4, [decision 0035](decisions/0035-p4-social-on-test-server.md)).**
+`tessera-client` hands every polled event, in arrival order, to the world session's
+`social::SocialState` (`apps/client/src/social/`): the pure models of `tessera-ui`
+(`game::chat::social` for the chat lines of `chat-window.md` §15.10, `game::social` for the
+fellowship, friends, ignore list, invitation and trade of `social-panels.md` §9) take the
+Social events, the member data of the Combat and Character groups (vitals, levels, defeat,
+effects, targets) and the spawns and despawns. `ChatMessage` lines on `Tell`, `Fellowship`
+and `Named` leave the state in the original's line forms with their chat-type masks
+(rendered from the install's string tables, session values inserted literally, CT12), after
+the ignore filter (CT8); the client derives the fellowship notices of TR4, the slot lines of
+CT5 and the friend notices of CT9 the same way. The social panels (`social::SocialUi` on the
+UI host) draw the models; their actions become the commands of `social-panels.md` §8.1. The
+command dispatcher's P4 built-ins (`tell`, `reply`, `retell`, `fellowship`, `join`, `part`,
+`channels`, `chsay`, `ch1` … `ch8`, `friend`, `ignore`, `invite`, `leave`, `dismiss`,
+`promote`, `disband`, under their Tessera names and the install's `Commands` names) act on
+the same state and send `Chat`, `JoinChannel`, `LeaveChannel` and the list and fellowship
+commands. The plugins' `Party` views get each member list (`set_fellowship`) and the members'
+values. The performance events go to the player music, which sends `ReadyPerformance` for an
+accepted `/play … sync` and `StartPerformance` for `/playstart` and starts the waiting parts
+only on the backend's `PerformanceSyncStart`; a backend that refuses `StartPerformance` (the
+test server) gets the local start of `instruments.md` §12 P4 Decision 3. A `PerformanceStarted`
+plays its tune solo-like at the processing time plus its delay (Decision 5). World entry and
+disconnection end the session's fellowship for the music (the members' waiting parts are
+withdrawn), and member characters that are neither listed, waiting nor performing are freed.
+Every command the player sends passes `World::send`, which notes `KickFromFellowship` and
+`LeaveFellowship` for TR4 (panels, dispatcher and the windowed input script alike); a panel
+command the session refuses posts a type 1 line (TR13). Without a game UI, session lines
+reach the plugins' `Received` with their mask's chat type (CT10), as the chat window passes
+them with one.
+
 <a id="net-backends"></a>
 ### 19.2 Backends
 
 | Backend | Status | Description |
 |---|---|---|
-| **Sandbox** | M0 skeleton, grows each milestone; scenario feed from P0 | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. From P0 it can also play a **scenario feed** ([`scenario-feed.md`](specs/scenario-feed.md), feature `scenario`, [0024](decisions/0024-parity-track.md) §4): a scenario file scripts actors, items, vitals, casts, effects, windows, quest states, markers, chat and the like as timed steps and as answers to client commands, and the sandbox emits them as the gameplay events of §19.1, the same events a server backend would send. The client parses the file and resolves its selectors against its own install through `tessera-gamedata` before the session starts, then hands the sandbox the resolved scenario (`SandboxConfig::scenario`) the way it hands over its `WorldSource`; `tessera-net` decodes no game data. It receives record IDs and table rows, optional locations and anchors, enum values resolved from labels, scripted values, literal text, and the display names of actors declared with `name(…)` (install text held in memory only, at most 64 bytes, sanitised), and it treats everything the resolver returns as untrusted (`scenario-feed.md` §3.3, §8.6). Values are scripted, never derived: the feed has no formula, table or behaviour taken from the game. A headless driver (`tessera_net::scenario::HeadlessDriver`) runs it on a virtual clock and writes a canonical event log that is the same on every run (§23). From P1 (decision 0025 D5) the plain sandbox (no scenario) also creates characters: a `CreateCharacter` with a valid, new name (fewer than 64 characters in the list) adds it and answers `CharacterInfo` with the command's body, class and look, and `EnterWorld` with that name uses the command's appearance as the player's; a taken name or a full list gives `CharacterRefused`. In memory only, for the sandbox's lifetime; `DeleteCharacter` stays accepted and ignored. Revision 4 of the feed adds `look` declarations (`look=` on `player`, `character` and `accept-character`), `remove-character`, `stat` and `item-property`, with values that are literal and bounded (`scenario-feed.md` §5.8, §9.5). |
+| **Sandbox** | M0 skeleton, grows each milestone; scenario feed from P0 | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. From P0 it can also play a **scenario feed** ([`scenario-feed.md`](specs/scenario-feed.md), feature `scenario`, [0024](decisions/0024-parity-track.md) §4): a scenario file scripts actors, items, vitals, casts, effects, windows, quest states, markers, chat and the like as timed steps and as answers to client commands, and the sandbox emits them as the gameplay events of §19.1, the same events a server backend would send. The client parses the file and resolves its selectors against its own install through `tessera-gamedata` before the session starts, then hands the sandbox the resolved scenario (`SandboxConfig::scenario`) the way it hands over its `WorldSource`; `tessera-net` decodes no game data. It receives record IDs and table rows, optional locations and anchors, enum values resolved from labels, scripted values, literal text, and the display names of actors declared with `name(…)` (install text held in memory only, at most 64 bytes, sanitised), and it treats everything the resolver returns as untrusted (`scenario-feed.md` §3.3, §8.6). Values are scripted, never derived: the feed has no formula, table or behaviour taken from the game. A headless driver (`tessera_net::scenario::HeadlessDriver`) runs it on a virtual clock and writes a canonical event log that is the same on every run (§23). From P1 (decision 0025 D5) the plain sandbox (no scenario) also creates characters: a `CreateCharacter` with a valid, new name (fewer than 64 characters in the list) adds it and answers `CharacterInfo` with the command's body, class and look, and `EnterWorld` with that name uses the command's appearance as the player's; a taken name or a full list gives `CharacterRefused`. In memory only, for the sandbox's lifetime; `DeleteCharacter` stays accepted and ignored. Its "P4 social" revision adds waiting parts and one synchronised start (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`) and the commands `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` (`scenario-feed.md` §6.7); the plain sandbox answers `StartPerformance` with one `PerformanceSyncStart` by the player, 700 ms ahead (§9.8). Revision 4 of the feed adds `look` declarations (`look=` on `player`, `character` and `accept-character`), `remove-character`, `stat` and `item-property`, with values that are literal and bounded (`scenario-feed.md` §5.8, §9.5). |
 | **Overlay** | P1 (`tessera_net::scenario::OverlayBackend`, [0025](decisions/0025-p1-character-look-on-test-server.md) D1, `scenario-feed.md` §12.5) | Wraps a test-server backend (`OverlayServer`: `RemoteBackend`, or a test double) and runs the scenario feed's Character and Inventory groups for the local player beside it; `tessera-client --scenario FILE --server CONNECT`. The file is checked against the overlay subset before anything connects. Inventory-group commands go to the feed, every other command to the server backend; each poll returns the server's events first, then the feed's. The feed's clock starts at the poll that delivers the server's `WorldEntered`. The player's worn look stays the server's: when the feed's equipment list changes and the server advertised `APPEARANCE_CHANGE`, the overlay sends `AppearanceSet` with the server's last appearance and the feed's equipment (at most one in flight, at least 250 ms apart, changes in between coalesced, 10 s answer timeout), and the server's `EntityAppearance` answer reaches the player and every observer as `AppearanceChanged`; without the capability it emits `AppearanceChanged` locally only. Nothing else of the feed leaves the client: bags, quantities, wallet, levels and stats are never sent. `Backend::as_any` exposes the overlay; `Session::remote_backend` finds the wrapped `RemoteBackend` either way. Lives in the client's process: `tessera-server` links neither it nor the feed (§23.5 unchanged). |
 | **Test server** | M7 (`tessera_net::remote::RemoteBackend`, feature `remote`, on by default) | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`, transport per [0030](decisions/0030-tessera-protocol-transport.md)), with its own handshake (QUIC v1 + TLS 1.3, the server's own Ed25519 key pinned by SHA-256 fingerprint or recorded in the client's `known_servers` file), its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. See below. |
 | **Compatibility** | M8, **gated** | See §19.3. |
@@ -1351,6 +1388,17 @@ above it work unchanged:
   creation the session cannot send, or one still unanswered when the connection ends, is
   answered locally with `CharacterRefused` (server error), so the screen's outstanding
   creation clears. `DeleteCharacter` and every other new command stay refused.
+- **Protocol 1.2 and named chat channels** (P4, [decision 0035](decisions/0035-p4-social-on-test-server.md)
+  D1, `scenario-feed.md` §9.8): the backend negotiates minor 2. With the server's
+  `CHAT_CHANNELS` (`RemoteBackend::has_chat_channels`), `JoinChannel` sends `ChannelJoin`,
+  `LeaveChannel` sends `ChannelLeave` and `Chat` on `Named` sends `ChatSend` with channel 6;
+  `ChannelJoined` and `ChannelLeft` from the server surface with the server's spelling of the
+  name, a `ChatMessage` on channel 6 as `ChatChannel::Named`, and `ChannelRefused` as a System
+  line in Tessera's words. Below minor 2 or without the capability the three are refused with
+  `NetError::InvalidCommand`, and the client's `join` says user chat is unavailable (CT11).
+  Tells are unchanged. Fellowship chat, the fellowship, trade, list and performance commands
+  stay refused at every minor (decision 0035 D2): the server learns nothing beyond who joined
+  which channel name and the chat it relays (LEGAL.md §11.1 rule 5).
 - **Statics are not replicated.** As in the sandbox, the client may hand the backend its own
   `WorldSource`; the backend streams the statics of the player's neighbourhood from the
   user's install with the sandbox's streaming code (`StaticSpawned`, `StaticsCleared`).
@@ -1501,6 +1549,11 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
    7) and are kept for the character panels. While the character screens are open the
    world session does not poll here: the screens poll it after step 7 (below) and hand the
    events back to it, so the entity table, chat and player state stay current.
+   From P4 every event also reaches the social state (§19.1, "The Social group in the
+   client"): the chat lines leave it in their P4 forms, the panels' models change, and the
+   performance events and the fellowship's member list are handed to the player music and
+   the plugins' party views; the player music's requests (`ReadyPerformance`,
+   `StartPerformance`) go to the session here.
 3. Simulation at fixed rates, interpolated for rendering (Decision, see "Simulation steps"
    below): the character controller (`tessera-physics`) on its own 1/60 s step; the other
    local simulation (free-fly controller, camera) on the 30 Hz tick.
@@ -1530,6 +1583,19 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
    2 polls again; their quit (Escape on the selection screen) ends the client. A creation
    whose look the session cannot carry is saved to Tessera's settings on a worker thread
    (a locked read-modify-write), never on the frame.
+   From P4, after the character panels, the social panels' frame (`social::SocialUi`): the
+   social input commands the UI declined in step 1 (`ToggleSocialPanel`, the five page
+   commands, `SelectFellowOne` … `Six`, `AssistFellowTwo` … `Six`), panels asked for with
+   `--open-panel social|friends|fellowship|trade`, and this frame's UI events (rows, buttons,
+   the invitation's answers, the trade window's button, coin entries and drops, item
+   tooltips of the trade lists) against the social state; the resulting session commands
+   are sent here, and every panel is refreshed when the state changed. The chat window takes
+   the tell targets (CT3), the instant-message lines of this frame's tells (CT6, its tab
+   created once the window is open when `GOP_FullIRCMode` is set) and the panels' lines.
+   Lines typed in the chat window run through the one command dispatcher (decision 0020) with
+   the world session, so player music, `--server` chat, tells and channel commands work there
+   as in the walker's overlay and `--command`; the chat window keeps no registry of its
+   own.
 8. UI: layout, paint damaged rectangles within the UI slice, build the composition list.
    Layout here changes no box that a hit test reads (0014 D8; paint and composition:
    [0015](decisions/0015-ui-rendering.md)).
@@ -1749,6 +1815,19 @@ tiers:
   `v11_looks` (an in-process `tessera-server`: looks stored and relayed, held-item slots,
   minor-0 observers, the hostile 1.1 vectors, and an overlay run whose equipment another
   client sees; skipped only where loopback UDP is unavailable).
+- **P4 synthetic tests** (no install, no GPU): `tessera-client` `social_chat_server`
+  (criterion 2: an in-process `tessera-server` at protocol minor 2, two clients whose lines
+  go in as the chat window's entry hands them to the command dispatcher: a tell, its reply,
+  a tell in the `Tell` mode, two joins of one named channel, a line on it, a part, and a line
+  the parted client no longer hears; skipped only where loopback UDP is unavailable) and
+  `social_music_sync` (criterion 3: the committed `music-sync` scenario on its virtual clock
+  with the player music on the offline engine and a synthetic instrument table; every
+  performance of both synchronised starts has its time-0, measured from the instruments'
+  schedule log, within 0.0001 s of *S*, `instruments.md` §8.9; and the player's
+  `/play … sync` and `/playstart` through the dispatcher and the plain sandbox, one start);
+  the client's unit tests of the social state, the dispatcher's P4 built-ins, the panels'
+  command and name rules and the party bridge; the committed scenarios `fellowship`,
+  `trade`, `friends` and `music-sync` with their logs.
 
 <a id="testing-real"></a>
 ### 23.2 Gated real-data tests (local and self-hosted only)
@@ -1785,6 +1864,14 @@ tiers:
   scenario equips a chest piece and a weapon; an in-process server relays an overlay
   client's equipment to an observer with the slot). Selectors in these tests use labels
   only (decision 0025 open item 1).
+- **P4** (decision 0024 §5 P4): `tessera-ui` `game_social_real_data` (the social
+  vocabulary by label, SPI1–SPI4); `tessera-client` `social_panels_real_data` (criterion 1:
+  the committed `fellowship`, `trade` and `friends` scenarios played headless against the
+  install with the client's social state, player state and game-UI host; at checkpoints the
+  rows, names, leader markers, the trade sides with the install's icons and their ready
+  states, the friends and ignore rows, and with a GPU the covered share of each panel's
+  rectangle: the invitation accepted with a click, the leader change, the removal and the
+  disbanding shown, the completed trade closed; pictures only to a private directory).
 
 <a id="testing-golden"></a>
 ### 23.3 Golden images

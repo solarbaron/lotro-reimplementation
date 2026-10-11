@@ -224,10 +224,34 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
   bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
   new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
+- **P4 (social panels; branch `p4` in worktree `wt-p4` off bb43e74, exit verification
+  2026-10-11 on the uncommitted tree)** (`docs/ROADMAP.md` P4 status): criteria 1–3 pass on
+  Tessera's side; to be committed and merged (P2 in `wt-p2` and P3, now on main, changed the
+  same shared files additively: merge seams in the P4 status). Not yet Accepted:
+  `social-panels.md` (Draft), `chat-window.md` rev 4, `abc-dialect.md`/`instruments.md` P4
+  (Revised), `tessera-protocol.md` v1.2, `test-server.md`, `scenario-feed.md` "P4 social"
+  (Review), `lua-plugin-api.md` §15.4; decision 0035 (social on the test server: named chat
+  channels only) is Proposed. Built: protocol minor 2 (named channels) in `tessera-protocol`,
+  `tessera-server` (channel registry), `tessera-loadtest` (hostile 1.2 cases);
+  `tessera-net` remote channels and the feed's P4 forms; `tessera-ui` `game::social` and
+  `game::chat::{social, im, notice}`; `tessera-plugins` `party`; `tessera-audio`
+  `instruments::sync` (synchronised start, §8.9 tolerance measurement); `tessera-client`
+  `social` (state, panels, party bridge), the P4 dispatcher built-ins, `/play … sync` and
+  `/playstart` through the session, scenarios `fellowship`, `trade`, `friends`,
+  `music-sync` with logs; fuzz `protocol_v12_message`, `server_v12_connection`,
+  `server_v12_world`, `net_social_channels`. The M5 `--ui` gap is closed: the chat window,
+  overlay and `--command` share the decision-0020 dispatcher. Checks: fmt, clippy
+  `-D warnings` (workspace, `--all-features`, fuzz) clean; release tests with the install
+  6,054 passed, 0 failed, 10 ignored; fuzz smoke 60 s clean (after a harness fix in
+  `server_v12_world`); content, SPDX, server deps, links clean. Open: the trade window draws
+  no entry names, literal icons or money displays (`social-panels.md` §6.2 OPEN), a state
+  icon on every fellowship row, loadtest chat bots do not join channels yet, no text-input
+  dialog or context menu, fellow select/assist keys unbound. Owner rows O130–O137 (O137: may
+  the own server relay a synchronised start as chat?).
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90). They do not block the
+  O88–O90, P4 items O130–O137). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

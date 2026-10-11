@@ -79,6 +79,14 @@ character panel with its paperdoll and the bag windows show scripted inventory, 
 151,230 item records gets its examination tooltip or a category, equipping changes the worn
 look, and plugins read `GetBackpack()` and `GetEquipment()`. Still open: the creation
 viewport's figure is not drawn, and colours and face layers of a look are not applied.
+**P4 (social panels) is in its exit phase** ([P4 status](docs/ROADMAP.md#p4-status)): scripted
+fellowships, trades and friend and ignore lists draw in the install's fellowship display,
+invitation prompt, trade window and Social panel, with leader changes, removals and the
+disbanding shown; tells, replies and named chat channels work on Tessera's own test server
+(protocol 1.2, chat only) from the chat window through the one command dispatcher; and a
+synchronised `/play … sync` with `/playstart` starts every waiting part within 0.0001 s.
+Still open: the trade window does not draw entry names or money displays, and the new specs
+await their independent reviews.
 
 | Area | State |
 |---|---|
@@ -104,6 +112,7 @@ viewport's figure is not drawn, and colours and face layers of a look are not ap
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
 | Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
+| Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | P4 exit phase: criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); trade-window names and money displays not drawn yet |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -2,9 +2,10 @@
 
 # 0035 — P4 on M7's server: named chat channels only; social panels and synchronised starts on the scenario feed
 
-**Status:** Proposed (spec writer, design, 2026-10-11). An independent review of this
-decision and of the P4 revisions of `tessera-protocol.md` (v1.2), `test-server.md` and
-`scenario-feed.md` ("P4 social") must follow before it is Accepted. The item under
+**Status:** Accepted (independent review 2026-10-11 by a Claude review session in the
+spec-reviewer role, Clean-Room-Role: review, that wrote no part of this decision, of the P4
+revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code;
+see [Review](#review)). Before: Proposed (spec writer, design, 2026-10-11). The item under
 [Open for the owner](#open-for-the-owner) stays open: this decision does not decide it.
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
@@ -178,3 +179,29 @@ view, synchronised start, player commands) and §14.12 (P4 hostile rows and remo
 1. **Decision 0024 open item 2** (unchanged): does relaying a synchronised `/play` start
    through M7's server count as chat under rule 5? Until answered, synchronised starts with
    other players exist only on the scenario feed (D2, D3). Owner row O137.
+
+## Review
+
+2026-10-11, spec reviewer (Clean-Room-Role: review), against LEGAL.md §11.1 rule 5,
+decision 0024 §2 and CLEAN_ROOM.md §5.3: **passed**.
+
+- **Rule 5.** D1 adds only chat to M7's server: tells unchanged, and named channels that are
+  sets of connections keyed by a player-chosen name. The server keeps no game state, judges
+  nothing, links no data crate (`tools/check-server-deps.sh` passes on branch `p4`) and
+  persists no channel. Fellowship chat, which would need a server-side group, stays off the
+  wire. Rules 1 and 2 are untouched: no game data and no new opaque reference travel.
+- **Decision 0024 §2.** Principle 2 (M7's server drives only other players, appearance, chat
+  and test actors), principle 3 (the server stays data-free and feed-free), principle 4 (the
+  feed only plays back scripted values: `at_ms` is tick time plus a written lead) and
+  principle 6 (a protocol minor only for something rule 5 allows) all hold. Open item 2
+  (synchronised `/play` relay) is left to the owner: v1.2 has no message, property or
+  capability for it, and the test-server backend refuses `ReadyPerformance` and
+  `StartPerformance` (D2).
+- **D3.** The overlay subset is unchanged, so decision 0025 D1's rule-5 reading still
+  holds.
+- **Agreement with the specs.** D1–D4 and the hostile-input table agree with
+  `tessera-protocol.md` v1.2 §3.1, §10.6, §13.1 and §14.8, `test-server.md` §4.6 and §9.1,
+  and `scenario-feed.md` §6.7, §9.8, §11.1 and §12.5.1, each Accepted in the same review
+  (records in those specs). The non-blocking notes there (the §10.6 Leave codes, the bot
+  minors of `test-server.md` §13.1, the wording of `scenario-feed.md` invariant 12) do not
+  touch this decision.

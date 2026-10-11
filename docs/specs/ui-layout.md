@@ -1657,6 +1657,19 @@ Confirmed on every record unless marked.
 > UL8 issue, and its lookups return the first stored entry until this is answered.
 - Resolution (§7) must detect cycles and missing bases without recursion limits being reached
   by hostile chains; a depth limit of 32 is ample (observed 3).
+
+> **OPEN:** (clean-room implementation, 2026-10-11) §4.7 bounds the nesting of one stored tree
+> and this section the length of one base chain, but a built tree can still be much deeper: a
+> based child whose base is the top-level element that contains it is re-created at every
+> level (§7.3 step 6 leaves it based, §9.2 step 1 resolves it again), and a creation can start
+> another one from a post-creation (§9.2 step 8: a Menu's popup, `ui-widgets.md` §11.2; list
+> templates, tree icons), from the bottom of such a deep build. Neither the depth of a built
+> tree nor the nesting of creations, nor whether the two add up, is stated. Engineering choice
+> (Tessera, hostile input, bounded stack): one outermost creation and every creation nested in
+> it share one build depth of 128 levels (`MAX_TREE_DEPTH`), with at most 16 nested creations
+> and 65,536 built elements; an element beyond the shared depth is not created (with its
+> subtree) and is counted as a refused creation. No layout in the install comes close (stored
+> nesting ≤ 7 below a top-level element, base chains ≤ 3). Confirm or give the client's rule.
 - Layout arithmetic (§8) must not overflow: use 64-bit intermediates or saturating 32-bit
   arithmetic; treat NaN from 0 ÷ 0 as 0 as the client does.
 
@@ -1911,6 +1924,9 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
     2026-10-07; never occurs in the install).
 23. Movie items while Tessera plays no video (§6.9; added by the clean-room implementation,
     2026-10-07; Tessera: done at once).
+24. The depth of a built tree (self-based children re-created at every level) and of
+    creations nested in post-creations, and whether they add up (§12.1; added by the
+    clean-room implementation, 2026-10-11; Tessera: one shared build depth of 128 levels).
 
 None of the owner-observation items O1–O17 concerns UI layouts.
 

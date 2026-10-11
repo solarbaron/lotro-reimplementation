@@ -556,3 +556,42 @@ fn a_destroyed_element_is_no_longer_registered_as_saved() {
     ui.destroy(k);
     assert!(!ui.is_saved_element(k));
 }
+
+// ----- nested creations share one build depth ----------------------------------------------
+
+/// Sixteen top-level Menus, each with a child based on its own top-level element (so the
+/// built tree repeats until the depth cap) and a popup naming the next Menu. Every deepest
+/// child's post-creation starts the next popup creation from the bottom of a deep build, so
+/// without a depth shared by nested creations the build recursion reached 16 × the tree
+/// depth cap and overflowed a 2 MiB thread stack.
+fn deep_nested_menus() -> Vec<tessera_formats::ui_layout::ElementDesc> {
+    let vv = v();
+    let pp = vv.pids;
+    (0..16u32)
+        .map(|i| {
+            let id = 0x1000_0000 + i;
+            let mut menu = typed(id, vv.types.menu, 0, 0, 80, 20);
+            menu = prop(menu, pp.menu_popup, en(0x1000_0000 + (i + 1) % 16));
+            menu = prop(menu, pp.menu_popup_layout, did(LAYOUT));
+            child(menu, based(0x2000_0000, id, LAYOUT, 0, 0, 10, 10))
+        })
+        .collect()
+}
+
+#[test]
+fn nested_creations_from_deep_trees_fit_a_two_mib_stack() {
+    let t = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| {
+            let mut ui = ui_one(LAYOUT, 1024, 768, deep_nested_menus(), 1024, 768);
+            // The panel itself is too deep to attach to the screen; it must fail cleanly.
+            let _ = ui.open_panel(Did(LAYOUT), 0x1000_0000);
+            assert!(ui.census().creation_refused >= 1);
+            assert!(ui.element_count() <= tessera_ui::MAX_BUILD_ELEMENTS + 2);
+            // Whatever stayed alive is walked without overflowing either.
+            frames(&mut ui, 2);
+            let _ = ui.hit_test(5, 5);
+        })
+        .unwrap();
+    t.join().unwrap();
+}

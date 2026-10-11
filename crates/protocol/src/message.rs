@@ -5,16 +5,16 @@
 use std::fmt;
 
 use crate::codes::{
-    AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
-    LoginFailedCode, TeleportRefusedCode,
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ChatRejectedCode,
+    EnterWorldFailedCode, LoginFailedCode, TeleportRefusedCode,
 };
 use crate::error::{ProtocolError, Result};
-use crate::limits::MINOR_LOOKS;
 use crate::limits::{
     MAX_ACCOUNT_LEN, MAX_CHARACTERS, MAX_CLOCK_RATE, MAX_DETAIL_TEXT_LEN, MAX_INTEREST_RADIUS,
     MAX_LONG_TEXT_LEN, MAX_MOTION_ENTRIES, MAX_NAME_LEN, MAX_PASSWORD_LEN, MAX_SOFTWARE_NAME_LEN,
     MAX_TEXT_LEN, MAX_TICK_RATE, MIN_MAX_ENTITIES, MIN_TICK_RATE,
 };
+use crate::limits::{MINOR_CHANNELS, MINOR_LOOKS};
 use crate::types::{
     Appearance, CharacterSummary, Destination, Location, Look, Motion, NAME_S2C, Pose, Vec3,
 };
@@ -119,7 +119,8 @@ impl Direction {
 
 macro_rules! message_types {
     ( $( $variant:ident = $code:expr, $dir:ident; )* ) => {
-        /// Every message type of v1.0 (§6.1).
+        /// Every message type of v1 up to minor 2 (§6.1). Types of a later minor
+        /// ([`MessageType::min_minor`]) are unknown at a lower negotiated minor.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[allow(missing_docs)]
         pub enum MessageType {
@@ -130,7 +131,8 @@ macro_rules! message_types {
             /// All message types, in code order.
             pub const ALL: &'static [MessageType] = &[ $( MessageType::$variant, )* ];
 
-            /// The type for a wire code, if v1.0 defines it.
+            /// The type for a wire code, if v1 defines it at any minor this crate implements
+            /// (check [`MessageType::min_minor`] against the negotiated minor).
             #[must_use]
             pub fn from_code(code: u16) -> Option<Self> {
                 match code {
@@ -187,6 +189,8 @@ message_types! {
     Ping = 0x0012, Both;
     Pong = 0x0013, Both;
     Disconnect = 0x0014, Both;
+    ChannelJoin = 0x0015, ClientToServer;
+    ChannelLeave = 0x0016, ClientToServer;
     WorldEnter = 0x0101, ServerToClient;
     LocationReport = 0x0102, ServerToClient;
     TeleportRefused = 0x0103, ServerToClient;
@@ -199,6 +203,9 @@ message_types! {
     ChatMessage = 0x0201, ServerToClient;
     ServerNotice = 0x0202, ServerToClient;
     ChatRejected = 0x0203, ServerToClient;
+    ChannelJoined = 0x0204, ServerToClient;
+    ChannelLeft = 0x0205, ServerToClient;
+    ChannelRefused = 0x0206, ServerToClient;
     MoveInput = 0x0301, ClientToServer;
     MotionBatch = 0x0302, ServerToClient;
     TimeRequest = 0x0303, ClientToServer;
@@ -206,6 +213,27 @@ message_types! {
 }
 
 impl MessageType {
+    /// The lowest negotiated minor version at which the type exists (§3.1): 2 for the
+    /// channel messages of v1.2, 0 for every other type. Below it the type is unknown, a
+    /// protocol violation (§3).
+    #[must_use]
+    pub fn min_minor(self) -> u16 {
+        match self {
+            Self::ChannelJoin
+            | Self::ChannelLeave
+            | Self::ChannelJoined
+            | Self::ChannelLeft
+            | Self::ChannelRefused => MINOR_CHANNELS,
+            _ => 0,
+        }
+    }
+
+    /// Whether the type exists at negotiated minor `minor`.
+    #[must_use]
+    pub fn exists_at(self, minor: u16) -> bool {
+        minor >= self.min_minor()
+    }
+
     /// The channel that carries it.
     #[must_use]
     pub fn channel(self) -> Channel {
@@ -237,6 +265,9 @@ const NAME0_S2C: TextRule = TextRule::sanitised("name", 0, MAX_NAME_LEN);
 const SENDER_S2C: TextRule = TextRule::sanitised("sender", 0, MAX_NAME_LEN);
 const PEER_S2C: TextRule = TextRule::sanitised("peer", 1, MAX_NAME_LEN);
 const TEXT_S2C: TextRule = TextRule::sanitised("text", 1, MAX_TEXT_LEN);
+const CHANNEL_C2S: TextRule = TextRule::raw("name", MAX_NAME_LEN);
+const CHANNEL_S2C: TextRule = TextRule::sanitised("name", 1, MAX_NAME_LEN);
+const CHANNEL_NAME_S2C: TextRule = TextRule::sanitised("channel_name", 1, MAX_NAME_LEN);
 
 // --- Message bodies ---
 
@@ -264,6 +295,10 @@ impl ServerCaps {
     pub const CHARACTER_CREATION: Self = Self(2);
     /// Bit 2: `AppearanceSet` accepted.
     pub const APPEARANCE_CHANGE: Self = Self(4);
+    /// Bit 3 (minor ≥ 2 only, 0 at minor 0 and 1): `ChannelJoin`, `ChannelLeave` and
+    /// `ChatSend` channel 6 accepted (§6.2.2, §10.6). A client at a lower negotiated minor
+    /// ignores the bit ([`ServerCaps::effective`]).
+    pub const CHAT_CHANNELS: Self = Self(8);
     /// No capabilities.
     pub const NONE: Self = Self(0);
 
@@ -271,6 +306,18 @@ impl ServerCaps {
     #[must_use]
     pub fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    /// The bits that mean something at negotiated minor `minor`: bit 3 (`CHAT_CHANNELS`) is
+    /// cleared below minor 2, the other bits are kept (unknown bits are ignored, never
+    /// rejected, §3). A server sends these in `HelloAck`; a client acts on these.
+    #[must_use]
+    pub fn effective(self, minor: u16) -> Self {
+        if minor >= MINOR_CHANNELS {
+            self
+        } else {
+            Self(self.0 & !Self::CHAT_CHANNELS.0)
+        }
     }
 }
 
@@ -390,7 +437,8 @@ pub struct TeleportRequest {
     pub destination: Destination,
 }
 
-/// A chat channel (§10.1). `Tell` carries the other party's name.
+/// A chat channel (§10.1). `Tell` carries the other party's name, `Named` (minor ≥ 2) the
+/// channel's name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ChatChannel {
     /// 1.
@@ -406,6 +454,13 @@ pub enum ChatChannel {
     },
     /// 5: server only.
     System,
+    /// 6 (minor ≥ 2): a named channel (§10.6). In `ChatSend` the name as the client typed it
+    /// (`NAME`, its content checked by the server); in `ChatMessage` the channel's name as
+    /// the server holds it.
+    Named {
+        /// The channel's name.
+        name: String,
+    },
 }
 
 impl ChatChannel {
@@ -418,6 +473,7 @@ impl ChatChannel {
             Self::Emote => 3,
             Self::Tell { .. } => 4,
             Self::System => 5,
+            Self::Named { .. } => 6,
         }
     }
 }
@@ -425,7 +481,7 @@ impl ChatChannel {
 /// `ChatSend` (0x000E, C→S, §6.2.14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatSend {
-    /// Say, Yell, Emote or Tell (System is a protocol violation).
+    /// Say, Yell, Emote, Tell or (minor ≥ 2) Named; System is a protocol violation.
     pub channel: ChatChannel,
     /// The line (`TEXT`; content checked by the server).
     pub text: String,
@@ -637,6 +693,55 @@ pub struct ServerNotice {
     pub text: String,
 }
 
+/// Why a membership ended (`ChannelLeft.reason`, minor ≥ 2, §6.4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChannelLeftReason {
+    /// 0: the answer to the player's `ChannelLeave`.
+    Left,
+    /// 1: the server ended the membership by its own policy (unsolicited).
+    Removed,
+}
+
+impl ChannelLeftReason {
+    /// The wire value.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Removed => 1,
+        }
+    }
+
+    /// The reason for a wire value; other values are a protocol violation.
+    pub fn from_u8(v: u8) -> Result<Self> {
+        match v {
+            0 => Ok(Self::Left),
+            1 => Ok(Self::Removed),
+            v => Err(enum_err("reason", v)),
+        }
+    }
+}
+
+/// `ChannelLeft` (0x0205, S→C, minor ≥ 2, §6.4.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelLeft {
+    /// The channel's name as the server holds it (`NAME`).
+    pub name: String,
+    /// Why.
+    pub reason: ChannelLeftReason,
+}
+
+/// `ChannelRefused` (0x0206, S→C, minor ≥ 2, §6.4.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelRefused {
+    /// Why (§14.8).
+    pub code: ChannelRefusedCode,
+    /// The requested name, sanitised (`NAME0`); empty when the request's name was empty.
+    pub name: String,
+    /// Detail (`TEXT0`(256)).
+    pub text: String,
+}
+
 /// `MoveInput` (0x0301, C→S datagram, §6.5.1).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MoveInput {
@@ -691,7 +796,7 @@ pub struct TimeReply {
     pub tick: u64,
 }
 
-/// Every message of v1.0.
+/// Every message of v1 up to minor 2.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(missing_docs)]
 pub enum Message {
@@ -722,6 +827,14 @@ pub enum Message {
         nonce: u64,
     },
     Disconnect(Disconnect),
+    /// Minor ≥ 2: join the channel `name` (`NAME`, as the player typed it; §6.2.20).
+    ChannelJoin {
+        name: String,
+    },
+    /// Minor ≥ 2: leave the channel `name` (§6.2.21).
+    ChannelLeave {
+        name: String,
+    },
     WorldEnter(WorldEnter),
     LocationReport(LocationReport),
     TeleportRefused(TeleportRefused),
@@ -734,6 +847,15 @@ pub enum Message {
     ChatMessage(ChatMessage),
     ServerNotice(ServerNotice),
     ChatRejected(Failure<ChatRejectedCode>),
+    /// Minor ≥ 2: the player is a member of the channel `name` (the server's spelling,
+    /// §6.4.4).
+    ChannelJoined {
+        name: String,
+    },
+    /// Minor ≥ 2 (§6.4.5).
+    ChannelLeft(ChannelLeft),
+    /// Minor ≥ 2 (§6.4.6).
+    ChannelRefused(ChannelRefused),
     MoveInput(MoveInput),
     MotionBatch(MotionBatch),
     /// *t*₀: the client's monotonic clock, µs.
@@ -769,6 +891,8 @@ impl Message {
             Self::Ping { .. } => T::Ping,
             Self::Pong { .. } => T::Pong,
             Self::Disconnect(_) => T::Disconnect,
+            Self::ChannelJoin { .. } => T::ChannelJoin,
+            Self::ChannelLeave { .. } => T::ChannelLeave,
             Self::WorldEnter(_) => T::WorldEnter,
             Self::LocationReport(_) => T::LocationReport,
             Self::TeleportRefused(_) => T::TeleportRefused,
@@ -781,6 +905,9 @@ impl Message {
             Self::ChatMessage(_) => T::ChatMessage,
             Self::ServerNotice(_) => T::ServerNotice,
             Self::ChatRejected(_) => T::ChatRejected,
+            Self::ChannelJoined { .. } => T::ChannelJoined,
+            Self::ChannelLeft(_) => T::ChannelLeft,
+            Self::ChannelRefused(_) => T::ChannelRefused,
             Self::MoveInput(_) => T::MoveInput,
             Self::MotionBatch(_) => T::MotionBatch,
             Self::TimeRequest { .. } => T::TimeRequest,
@@ -802,8 +929,13 @@ impl Message {
 
     /// Appends the message body in the layout of negotiated minor `minor` (§3.1): at minor
     /// 0 looks and slots are left off (the v1.0 bytes exactly, §15 invariant 10); at minor
-    /// ≥ 1 they are appended. On error `out` is left as it was.
+    /// ≥ 1 they are appended. A message type, or a chat channel value, of a later minor is
+    /// refused (§15 invariant 12). On error `out` is left as it was.
     pub fn encode_body_minor(&self, out: &mut Vec<u8>, minor: u16) -> Result<()> {
+        let ty = self.message_type();
+        if !ty.exists_at(minor) {
+            return Err(ProtocolError::UnknownMessageType(ty.code()));
+        }
         let start = out.len();
         let r = encode_body(self, &mut Writer::with_minor(out, minor));
         if r.is_err() {
@@ -819,8 +951,12 @@ impl Message {
     }
 
     /// Decodes a body of type `ty` strictly in the layout of negotiated minor `minor`
-    /// (§3.1). `Hello` and `HelloAck` are frozen and decode the same at every minor.
+    /// (§3.1). `Hello` and `HelloAck` are frozen and decode the same at every minor. A type
+    /// of a later minor is unknown (§3).
     pub fn decode_body_minor(ty: MessageType, body: &[u8], minor: u16) -> Result<Self> {
+        if !ty.exists_at(minor) {
+            return Err(ProtocolError::UnknownMessageType(ty.code()));
+        }
         let mut r = Reader::with_minor(body, minor);
         let m = decode_body(ty, &mut r)?;
         r.finish()?;
@@ -1132,6 +1268,13 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
                     w.u8(4);
                     w.str(PEER_C2S, peer)?;
                 }
+                ChatChannel::Named { name } => {
+                    if w.minor() < MINOR_CHANNELS {
+                        return Err(enum_err("channel", 6u8));
+                    }
+                    w.u8(6);
+                    w.str(CHANNEL_C2S, name)?;
+                }
                 other => w.u8(other.to_u8()),
             }
             w.str(TEXT_C2S, &c.text)?;
@@ -1146,6 +1289,19 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
         Message::Disconnect(d) => {
             w.u16(d.code.to_u16());
             w.str(DISCONNECT_TEXT, &d.text)?;
+        }
+        Message::ChannelJoin { name } | Message::ChannelLeave { name } => {
+            w.str(CHANNEL_C2S, name)?;
+        }
+        Message::ChannelJoined { name } => w.str(CHANNEL_S2C, name)?,
+        Message::ChannelLeft(l) => {
+            w.str(CHANNEL_S2C, &l.name)?;
+            w.u8(l.reason.to_u8());
+        }
+        Message::ChannelRefused(f) => {
+            w.u16(f.code.to_u16());
+            w.str(NAME0_S2C, &f.name)?;
+            w.str(DETAIL, &f.text)?;
         }
         Message::WorldEnter(e) => {
             w.u64(nonzero_u64("player", e.player)?);
@@ -1214,13 +1370,18 @@ fn encode_body(m: &Message, w: &mut Writer<'_>) -> Result<()> {
         }
         Message::ChatMessage(c) => {
             check_chat_message(c)?;
+            if matches!(c.channel, ChatChannel::Named { .. }) && w.minor() < MINOR_CHANNELS {
+                return Err(enum_err("channel", 6u8));
+            }
             w.u64(c.server_time);
             w.u8(c.channel.to_u8());
             w.u8(u8::from(c.echo));
             w.u64(c.sender_entity);
             w.str(SENDER_S2C, &c.sender)?;
-            if let ChatChannel::Tell { peer } = &c.channel {
-                w.str(PEER_S2C, peer)?;
+            match &c.channel {
+                ChatChannel::Tell { peer } => w.str(PEER_S2C, peer)?,
+                ChatChannel::Named { name } => w.str(CHANNEL_NAME_S2C, name)?,
+                _ => {}
             }
             w.str(TEXT_S2C, &c.text)?;
         }
@@ -1359,6 +1520,9 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
                 4 => ChatChannel::Tell {
                     peer: r.str(PEER_C2S)?,
                 },
+                6 if r.minor() >= MINOR_CHANNELS => ChatChannel::Named {
+                    name: r.str(CHANNEL_C2S)?,
+                },
                 v => return Err(enum_err("channel", v)),
             };
             Message::ChatSend(ChatSend {
@@ -1380,6 +1544,24 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
         T::Disconnect => Message::Disconnect(Disconnect {
             code: AppErrorCode::from_u16(r.u16()?),
             text: r.str(DISCONNECT_TEXT)?,
+        }),
+        T::ChannelJoin => Message::ChannelJoin {
+            name: r.str(CHANNEL_C2S)?,
+        },
+        T::ChannelLeave => Message::ChannelLeave {
+            name: r.str(CHANNEL_C2S)?,
+        },
+        T::ChannelJoined => Message::ChannelJoined {
+            name: r.str(CHANNEL_S2C)?,
+        },
+        T::ChannelLeft => Message::ChannelLeft(ChannelLeft {
+            name: r.str(CHANNEL_S2C)?,
+            reason: ChannelLeftReason::from_u8(r.u8()?)?,
+        }),
+        T::ChannelRefused => Message::ChannelRefused(ChannelRefused {
+            code: ChannelRefusedCode::from_u16(r.u16()?),
+            name: r.str(NAME0_S2C)?,
+            text: r.str(DETAIL)?,
         }),
         T::WorldEnter => Message::WorldEnter(WorldEnter {
             player: nonzero_u64("player", r.u64()?)?,
@@ -1454,7 +1636,8 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
         T::ChatMessage => {
             let server_time = r.u64()?;
             let ch = r.u8()?;
-            if !(1..=5).contains(&ch) {
+            let named = ch == 6 && r.minor() >= MINOR_CHANNELS;
+            if !(1..=5).contains(&ch) && !named {
                 return Err(enum_err("channel", ch));
             }
             let flags = r.u8()?;
@@ -1469,6 +1652,9 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
                 3 => ChatChannel::Emote,
                 4 => ChatChannel::Tell {
                     peer: r.str(PEER_S2C)?,
+                },
+                6 => ChatChannel::Named {
+                    name: r.str(CHANNEL_NAME_S2C)?,
                 },
                 _ => ChatChannel::System,
             };
@@ -1493,10 +1679,21 @@ fn decode_body(ty: MessageType, r: &mut Reader<'_>) -> Result<Message> {
             seconds: r.u16()?,
             text: r.str(TEXT_S2C)?,
         }),
-        T::ChatRejected => Message::ChatRejected(Failure {
-            code: ChatRejectedCode::from_u16(r.u16()?),
-            text: r.str(DETAIL)?,
-        }),
+        T::ChatRejected => {
+            let value = r.u16()?;
+            // Code 6 `NOT_JOINED` exists from minor 2 (§14.7); below it the value is
+            // undefined and shown as a generic failure (§13.1), so it stays `Other(6)`.
+            let code =
+                if value == ChatRejectedCode::NotJoined.to_u16() && r.minor() < MINOR_CHANNELS {
+                    ChatRejectedCode::Other(value)
+                } else {
+                    ChatRejectedCode::from_u16(value)
+                };
+            Message::ChatRejected(Failure {
+                code,
+                text: r.str(DETAIL)?,
+            })
+        }
         T::MoveInput => Message::MoveInput(MoveInput {
             seq: r.u32()?,
             epoch: r.u32()?,

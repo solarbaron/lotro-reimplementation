@@ -138,6 +138,14 @@ struct Cli {
     /// One appearance change per bot per interval (0 or off: none).
     #[arg(long, value_parser = interval)]
     appearance_interval: Option<Interval>,
+    /// Shared named channels the bots at protocol minor 2 join and speak on (0-16; the
+    /// chat scenario uses 3, the others 0).
+    #[arg(long)]
+    channels: Option<u8>,
+    /// A channel member leaves and re-joins its channel about this often (at least 15 s;
+    /// 0 or off: members stay).
+    #[arg(long, value_parser = interval)]
+    channel_cycle: Option<Interval>,
     /// Add hostile clients during the run.
     #[arg(long)]
     hostile: bool,
@@ -248,6 +256,12 @@ fn options(cli: &Cli) -> Result<RunOptions, LoadtestError> {
     }
     if let Some(Interval(v)) = cli.appearance_interval {
         b.appearance_interval = v;
+    }
+    if let Some(v) = cli.channels {
+        b.channels = v;
+    }
+    if let Some(Interval(v)) = cli.channel_cycle {
+        b.channel_cycle = v;
     }
     if cli.hostile {
         o.hostile = Some(HostileOptions {

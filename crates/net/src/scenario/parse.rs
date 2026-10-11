@@ -64,7 +64,14 @@ pub const MAX_OFFSET: f64 = 100_000.0;
 /// Largest title in bytes.
 pub const MAX_TITLE_BYTES: usize = 128;
 /// Largest tune name in bytes.
-pub const MAX_TUNE_BYTES: usize = 256;
+pub const MAX_TUNE_BYTES: usize = crate::domain::MAX_TUNE_LEN;
+/// Largest lead of a `perform-start` step in milliseconds (§6.7, "P4 social").
+pub const MAX_SYNC_LEAD_MS: u64 = 10_000;
+/// Default lead of a `perform-start` step and of the generic answer to `StartPerformance`
+/// in milliseconds (§6.7, §7.6).
+pub const DEFAULT_SYNC_LEAD_MS: u64 = crate::domain::DEFAULT_PERFORMANCE_LEAD_MS as u64;
+/// Most waiting parts (distinct members) the feed keeps (§5.7, §11.1).
+pub const MAX_WAITING_PARTS: usize = 64;
 
 pub(crate) type R<T> = Result<T, ScenarioError>;
 

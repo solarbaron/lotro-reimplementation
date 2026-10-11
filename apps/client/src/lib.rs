@@ -56,6 +56,7 @@ pub mod scenario;
 pub mod scene;
 pub mod screens;
 pub mod smoke;
+pub mod social;
 pub mod ui_host;
 pub mod wait;
 pub mod walk_path;

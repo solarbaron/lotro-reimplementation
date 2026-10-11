@@ -4,9 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04;
-last updated 2026-10-11 (decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added; O130–O137 belong to P4); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity);
-2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -120,6 +118,14 @@ marks the item **done** here.
 | [O127](#o127) | Effect visuals to their end; death pose, body fade and revive | `combat-visuals.md` §5, §7 | Look | open (P2) |
 | [O128](#o128) | Player and target frames as a whole: layout, name colour, level, morale and power, class resource, the target's effect icons | `combat-ui.md` §4, §5, §8 | Look, screenshots (private) | open (P2) |
 | [O129](#o129) | Quickslot bar and cast bars: cooldown sweep and timer, greyed and unavailable slots; cast, induction and channel bars with delay, interrupt and cancel | `combat-ui.md` §7, §9 | Look, private video | open (P2) |
+| [O130](#o130) | Fellowship display and vitals: leader marker, member out of view, removal and disband lines | `social-panels.md` §4, §9 TR2–TR4; `scenario-feed.md` §6.7 | Look, a group with other players | open (P4) |
+| [O131](#o131) | Fellowship invitation prompt: window, buttons, expiry | `social-panels.md` §5 | Look, an invitation from another player | open (P4) |
+| [O132](#o132) | Trade window: both sides, coin, ready states, completion | `social-panels.md` §6 | Look, a trade with another player | open (P4) |
+| [O133](#o133) | Social panel: friend and ignore lists | `social-panels.md` §3 | Look | open (P4) |
+| [O134](#o134) | Tells and the instant-message tab | `chat-window.md` §15.2–§15.5 | Look, tells with another player | open (P4) |
+| [O135](#o135) | Channel join and leave lines, channel slots and tabs | `chat-window.md` §15.6; `tessera-protocol.md` §10.6, §17 | Look | open (P4) |
+| [O136](#o136) | How aligned a synchronised fellowship start sounds | `instruments.md` §8.8–§8.9, Q10–Q13 | Listening, stopwatch, a group with other players | open (P4) |
+| [O137](#o137) | Owner question: may Tessera's own server relay a synchronised `/play` start as chat? | decision 0024 open item 2; decision 0035 D2 | Owner decision | open (P4) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -160,6 +166,11 @@ checks OS1–OS6 of `skill-tooltips.md` §17, O126–O127 looks at combat visual
 cast bars (P2 exit verification). O126–O129 are numbered after P3's O110–O125 (the P3 branch holds those). No P2
 exit criterion waits on them ([ROADMAP P2](../ROADMAP.md#p2)); they settle OPENs and Tessera
 rules of those specs and block nothing until P8 (decision 0024 §2.6).
+
+P4 items O130–O137 compare Tessera's social panels and chat with the original
+([ROADMAP P4](../ROADMAP.md#p4)); they block nothing until P8 (decision 0024 §2.6). They are
+numbered from O130 because other P milestones add items at the same time (P2 from O93, P3
+from O110). O137 is a decision, not an observation.
 
 ---
 
@@ -2272,3 +2283,166 @@ try a skill that is not usable yet (out of range or without power). A short priv
 looks when the skill cannot be used and when it becomes available again; the cast bar's fill
 direction for an induction and for a channel, how a delay shows, and what the bar shows on
 success, interrupt and cancel, and for how long.
+
+<a id="p4-items"></a>
+## Decision 0024 P4 items (social panels)
+
+These rows compare Tessera's P4 panels and chat with the original client. They block nothing
+until P8 (decision 0024 §2.6). Most need other players (a friend, a kin member or a public
+group). Describe what you see in your own words; never copy player names, chat text,
+channel names or other game text into this file: write "member 2", "the leader", "the
+channel I made", and name notices by their role ("someone left").
+
+<a id="o130"></a>
+## O130. Fellowship display and vitals (P4)
+
+**Spec:** `social-panels.md` §4.1–§4.6 (panels, rows, leader marker, member out of view,
+leader change, removal, disbanding) and §9 TR2–TR4 (Tessera's rules); `scenario-feed.md` §6.7
+(vitals of members without an entity).
+
+**Tessera's side:** a committed P4 fellowship scenario run with `tessera-client --scenario
+FILE` shows the rows, the leader marker, a member out of view with vitals, a leader change,
+a removal and a disband, with the lines Tessera derives (TR4).
+
+**What to do:** in a fellowship of three or more, watch the fellowship display while (a) the
+leader passes leadership, (b) a member leaves or is dismissed, (c) a member walks out of
+view (another area, far away), (d) the fellowship is disbanded.
+
+**Record:** where the leader marker sits (on the leader's row; on your own portrait when you
+lead); whether you get a row yourself; row order (join order or another); for (c): does the
+row stay, do its morale and power keep changing, what does a left click on it do; for (b)
+and (d): which chat lines appear (by role, for example "X left", "the fellowship was
+disbanded"), in which order relative to the rows changing, and whether both "you dismissed"
+and "was dismissed" appear when you dismiss someone (Q14); whether the display hides after
+the disband. Also (added 2026-10-11, `social-panels.md` revision 1): with voice chat off,
+whether any voice icon shows on a member row or on your own portrait (Tessera hides them,
+TR14); what F1 and F2 select (Q6); what the two disband names and the two promote names do in
+a fellowship (Q5).
+
+<a id="o131"></a>
+## O131. Fellowship invitation prompt (P4)
+
+**Spec:** `social-panels.md` §5 (window, behaviour, keys), Q13.
+
+**Tessera's side:** a scenario `invite` step shows the prompt (TR7); Accept and Decline send
+`AnswerInvite`.
+
+**What to do:** have another player invite you twice: accept once, decline once, and once
+let it wait without answering.
+
+**Record:** where the window opens; what it lists (inviter only, or the members); the
+buttons; whether Escape or the close button counts as decline; after how many seconds an
+unanswered invitation disappears, and which line appears then (by role).
+
+<a id="o132"></a>
+## O132. Trade window (P4)
+
+**Spec:** `social-panels.md` §6 (layout, item entries, coin, accept states and resets), Q8,
+Q9, Q11.
+
+**Tessera's side:** a committed P4 trade scenario shows both sides, coin and the ready
+states (TR9, TR10).
+
+**What to do:** open a trade with another player; put in two items and some coin; let the
+other side do the same; press the trade button on one side, then change an item, then press
+it on both sides until the trade completes. Try to take an offered item back.
+
+**Record:** how each side looks (own items left or right, coin fields); how the ready state
+shows on each side; what happens to both ready states when either side changes its offer;
+how many items a side can hold; whether and how an offered item can be removed; what happens
+at completion (window closes, lines by role, items moved to which bag slots). Also (added
+2026-10-11, `social-panels.md` revision 1): how your money and the partner's coin are shown
+(coin images with counts; which coins show at 0), and the colour of the item names.
+
+<a id="o133"></a>
+## O133. Social panel: friend and ignore lists (P4)
+
+**Spec:** `social-panels.md` §3.1–§3.8 (pages, rows, sorting, buttons and dialogs, ignore
+page, notices), Q1, Q2, Q7.
+
+**Tessera's side:** a scenario's `friends` and `ignore` steps fill the pages (TR5, TR6);
+`/friend` and `/ignore` with `add`, `remove`, `list` work in the chat line (TR11).
+
+**What to do:** open the Social panel on the friends page and on the ignore page; add and
+remove a friend and an ignored name; watch a friend log in and out; sort by each column.
+
+**Record:** columns and the default sort column and direction for each page (Q7); what
+pressing O and a page command does while the panel is open at another page (Q1); colours of
+online and offline friends; what the add and remove dialogs ask; which lines a friend's login
+and logout give (by role); what `/friend list` and `/ignore list` print (by role, no names).
+
+<a id="o134"></a>
+## O134. Tells and the instant-message tab (P4)
+
+**Spec:** `chat-window.md` §15.2–§15.5 (sending tells, tell lines, the instant-message tab and
+its sessions, refusals) and §15.10 CT1–CT4.
+
+**Tessera's side:** on a test server (`--server`) tells work between two Tessera clients;
+`tell`, `reply` and `retell` run in the chat window's dispatcher.
+
+**What to do:** exchange tells with another player; reply with the reply key and with the
+reply command; send a tell to a name that is offline and to one that does not exist; open
+and close the instant-message tab.
+
+**Record:** how your own tell and an incoming tell look (prefix form, colour, by role); when
+the instant-message tab appears (first incoming tell, first outgoing, never by default) and
+what its title shows; what Shift or Ctrl with the line-up key does in the entry; which line
+an offline or unknown recipient gives (by role); whether typing the tell command word and a
+space changes the entry's channel label (the spec says it does not, while the reply word and a
+space does, `chat-window.md` CW44); whether the instant-message tab's session list ever
+reorders its rows (the spec says it does not, §15.4 step 4).
+
+<a id="o135"></a>
+## O135. Channel join and leave lines, channel slots and tabs (P4)
+
+**Spec:** `chat-window.md` §15.6 (user chat channels) and §15.10 CT5; `tessera-protocol.md`
+§10.6 and the §17 OPEN on membership notices; `test-server.md` §9.1 (name rule).
+
+**Tessera's side:** on a test server at protocol 1.2 `join` and `part` create and leave named
+channels (decision 0035 D1); lines reach only members.
+
+**What to do:** join a channel of your own invention, write a line, have another player join
+and leave it, leave it yourself; try a long name (over 30 characters), a name with digits and
+one with punctuation; join more channels than the client allows.
+
+**Record:** the lines shown on join and leave (by role), and whether you see others join or
+leave; which slot number the channel takes and how a line in it is prefixed; whether a
+channel gets its own tab or filter; the longest name accepted and which characters are
+refused; the per-character limit and its refusal line (by role).
+
+<a id="o136"></a>
+## O136. Synchronised fellowship start (P4)
+
+**Spec:** `instruments.md` §8.8 (waiting part, start, notices, withdrawal), §8.9 (start
+tolerance) and Q10–Q13; `scenario-feed.md` §6.7.
+
+**Tessera's side:** a committed P4 scenario makes two members' parts wait and starts them
+together (`perform … sync`, `perform-start`); with your own `/play x sync` and `/playstart`
+your part joins (P4 exit criterion 3).
+
+**What to do:** in a fellowship of two or more players with instruments, each runs
+`/play <song> <part> sync` with parts of one song; then one member runs `/playstart`.
+Repeat with the starter having no part of their own, and once with one member leaving music
+mode before the start.
+
+**Record:** time from pressing Enter on `/playstart` to the first note (stopwatch, a few
+tries; compare with a solo `/play`); how aligned the parts sound to you (together, a slight
+flam, an audible offset; estimate in milliseconds if you can); whether the starter needs a
+part; whether a member who left music mode still starts (Q11, Q13); which lines appear (by
+role) for "ready" and "start".
+
+<a id="o137"></a>
+## O137. Owner question: synchronised-start relay on Tessera's own server (P4)
+
+**Spec:** [decision 0024](../decisions/0024-parity-track.md) open item 2;
+[decision 0035](../decisions/0035-p4-social-on-test-server.md) D2, D3; `instruments.md` Q14;
+LEGAL.md §11.1 rule 5.
+
+**Question:** does relaying a synchronised `/play` start (a member's "ready" with a tune name
+and a common start time, `instruments.md` §8.8) through Tessera's own server count as chat
+under rule 5? Until answered, synchronised starts with other players exist only on the
+scenario feed; protocol v1.2 carries no message for them.
+
+**Record:** yes or no, with any condition (for example "only between members of one named
+channel", or "only the start time, no tune name"), and the date. A yes leads to a later
+protocol minor; a no closes the question.

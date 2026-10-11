@@ -44,6 +44,15 @@ pub const MAX_PRICE_ITEMS: usize = 8;
 /// Largest quantity a command may name for an item or entry.
 pub const MAX_COMMAND_QUANTITY: u32 = 1_000_000_000;
 
+/// Largest byte length of a tune name in the synchronised-performance events and commands
+/// (`scenario-feed.md` §9.4, §9.5, "P4 social").
+pub const MAX_TUNE_LEN: usize = 256;
+
+/// Lead of a synchronised start when nothing names one, in milliseconds: the plain
+/// sandbox's answer to `StartPerformance` (`scenario-feed.md` §9.8) and the feed's
+/// `perform-start` default and generic answer (§6.7, §7.6).
+pub const DEFAULT_PERFORMANCE_LEAD_MS: u32 = 700;
+
 /// A record reference or a literal label.
 ///
 /// A literal stands in for a record when no install is available: the client half shows
@@ -931,6 +940,49 @@ pub enum SocialEvent {
         /// The performer.
         entity: EntityId,
     },
+    /// (P4 social, `scenario-feed.md` §6.7) A fellowship member's part is ready and waits
+    /// for a synchronised start; it replaces the member's earlier waiting part. A
+    /// `PerformanceReady` for the player acts as an accepted `/play … sync` of the player.
+    PerformanceReady {
+        /// The member's name.
+        member: String,
+        /// The member's entity, when it has one.
+        entity: Option<EntityId>,
+        /// The tune name (at most [`MAX_TUNE_LEN`] bytes).
+        tune: String,
+    },
+    /// (P4 social, §6.7) One synchronised start: every part waiting in the client at this
+    /// moment starts at one common time *S* (the processing time plus `lead_ms`; in a
+    /// headless run, `at_ms` on the virtual clock). The start tolerance is the one of
+    /// `instruments.md` §8.9.
+    PerformanceSyncStart {
+        /// Who started it, when named.
+        by: Option<String>,
+        /// The start time *S* in milliseconds on the backend's world-time base:
+        /// milliseconds since world entry in the plain sandbox, the virtual clock for the
+        /// feed. Backends do not share one epoch, so never compare it with a local clock;
+        /// a windowed client starts at its processing time plus `lead_ms` (§6.7).
+        at_ms: u64,
+        /// The lead between this event and the start, in milliseconds.
+        lead_ms: u32,
+    },
+    /// (P4 social, §6.7) A member's waiting part was withdrawn.
+    PerformanceWithdrawn {
+        /// The member's name.
+        member: String,
+    },
+    /// (P4 social, §6.7) A vital of a fellowship member as the group reports it, whether
+    /// or not the member has an entity (`social-panels.md` §4.4).
+    FellowVitalChanged {
+        /// The member's name.
+        member: String,
+        /// Which vital.
+        vital: Vital,
+        /// Current value.
+        current: f32,
+        /// Maximum value.
+        max: f32,
+    },
 }
 
 impl SocialEvent {
@@ -949,6 +1001,10 @@ impl SocialEvent {
             Self::IgnoreList { .. } => "IgnoreList",
             Self::PerformanceStarted { .. } => "PerformanceStarted",
             Self::PerformanceStopped { .. } => "PerformanceStopped",
+            Self::PerformanceReady { .. } => "PerformanceReady",
+            Self::PerformanceSyncStart { .. } => "PerformanceSyncStart",
+            Self::PerformanceWithdrawn { .. } => "PerformanceWithdrawn",
+            Self::FellowVitalChanged { .. } => "FellowVitalChanged",
         }
     }
 }
@@ -1443,6 +1499,17 @@ pub enum SocialCommand {
         /// The name.
         name: String,
     },
+    /// (P4 social, `scenario-feed.md` §6.7) The client accepted the player's `/play … sync`
+    /// of `tune`: the player's part waits for a synchronised start.
+    ReadyPerformance {
+        /// The tune name: 1–[`MAX_TUNE_LEN`] bytes, no control characters.
+        tune: String,
+    },
+    /// (P4 social, §6.7) `/playstart`: one synchronised start of every waiting part. A
+    /// backend that accepts it answers with [`SocialEvent::PerformanceSyncStart`].
+    StartPerformance,
+    /// (P4 social, `social-panels.md` Q12) Disband the fellowship.
+    DisbandFellowship,
 }
 
 impl SocialCommand {
@@ -1464,6 +1531,9 @@ impl SocialCommand {
             Self::RemoveFriend { .. } => "RemoveFriend",
             Self::Ignore { .. } => "Ignore",
             Self::Unignore { .. } => "Unignore",
+            Self::ReadyPerformance { .. } => "ReadyPerformance",
+            Self::StartPerformance => "StartPerformance",
+            Self::DisbandFellowship => "DisbandFellowship",
         }
     }
 }
@@ -1649,10 +1719,18 @@ impl SocialCommand {
                 Some(_) => quantity_ok(*quantity),
                 None => check(*quantity == 0, "trade quantity without an item must be 0"),
             },
+            Self::ReadyPerformance { tune } => check(
+                !tune.is_empty()
+                    && tune.len() <= MAX_TUNE_LEN
+                    && !tune.chars().any(char::is_control),
+                "tune name empty, too long or has control characters",
+            ),
             Self::AnswerInvite { .. }
             | Self::LeaveFellowship
             | Self::OpenTrade { .. }
-            | Self::SetTradeReady { .. } => Ok(()),
+            | Self::SetTradeReady { .. }
+            | Self::StartPerformance
+            | Self::DisbandFellowship => Ok(()),
         }
     }
 }
@@ -1878,6 +1956,15 @@ impl NpcEvent {
 }
 
 impl SocialEvent {
+    /// Whether every number is finite (`scenario-feed.md` §9.5: a non-finite
+    /// `FellowVitalChanged` value makes the event invalid).
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::FellowVitalChanged { current, max, .. } => current.is_finite() && max.is_finite(),
+            _ => true,
+        }
+    }
+
     pub(crate) fn clean(&mut self) -> bool {
         match self {
             Self::ChannelJoined { channel } | Self::ChannelLeft { channel } => {
@@ -1913,6 +2000,16 @@ impl SocialEvent {
                 changed
             }
             Self::PerformanceStarted { tune, .. } => clean_string(tune, MAX_CHAT_LEN),
+            Self::PerformanceReady { member, tune, .. } => {
+                clean_string(member, MAX_NAME_LEN) | clean_string(tune, MAX_TUNE_LEN)
+            }
+            Self::PerformanceSyncStart { by, .. } => {
+                by.as_mut().is_some_and(|b| clean_string(b, MAX_NAME_LEN))
+            }
+            Self::PerformanceWithdrawn { member } => clean_string(member, MAX_NAME_LEN),
+            Self::FellowVitalChanged { member, vital, .. } => {
+                clean_string(member, MAX_NAME_LEN) | clean_vital(vital)
+            }
             Self::TradeShown { .. } | Self::TradeReady { .. } | Self::PerformanceStopped { .. } => {
                 false
             }

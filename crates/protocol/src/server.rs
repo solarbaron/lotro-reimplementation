@@ -12,21 +12,22 @@ use std::time::Duration;
 
 use crate::client::{check_encodable, check_encodable_minor, floor_boundary};
 use crate::codes::{
-    AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode,
-    LoginFailedCode, TeleportRefusedCode,
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ChatRejectedCode,
+    EnterWorldFailedCode, LoginFailedCode, TeleportRefusedCode,
 };
 use crate::frame::{FrameDecoder, StreamKind, decode_datagram};
 use crate::limits::{
     CHARACTER_SELECT_IDLE, CLOSE_LINGER, CONTROL_RATE_WINDOW, DEFAULT_INTEREST_RADIUS,
     DEFAULT_SERVER_ENTITY_CAP, DEFAULT_SNAPSHOT_RATE, DEFAULT_TICK_RATE, HANDSHAKE_TIMEOUT,
     HELLO_TIMEOUT, LOGIN_TIMEOUT, MAX_CONTROL_PER_SECOND, MAX_DETAIL_TEXT_LEN, MAX_LOGIN_FAILURES,
-    MAX_LONG_TEXT_LEN, MAX_MOVE_INPUTS_PER_SECOND, MAX_PINGS_PER_SECOND,
-    MAX_TIME_REQUESTS_PER_SECOND, PROTOCOL_MINOR,
+    MAX_LONG_TEXT_LEN, MAX_MOVE_INPUTS_PER_SECOND, MAX_NAME_LEN, MAX_PINGS_PER_SECOND,
+    MAX_TIME_REQUESTS_PER_SECOND, MINOR_CHANNELS, PROTOCOL_MINOR,
 };
 use crate::message::{
-    Channel, CharacterCreate, CharacterList, ChatChannel, ChatSend, Credentials, Disconnect,
-    EmoteSet, Failure, Hello, HelloAck, LoginFailed, LoginOk, Message, MessageType, MoveInput,
-    ServerCaps, Side, TeleportRefused, TeleportRequest, WorldEnter,
+    Channel, ChannelLeft, ChannelLeftReason, ChannelRefused, CharacterCreate, CharacterList,
+    ChatChannel, ChatSend, Credentials, Disconnect, EmoteSet, Failure, Hello, HelloAck,
+    LoginFailed, LoginOk, Message, MessageType, MoveInput, ServerCaps, Side, TeleportRefused,
+    TeleportRequest, WorldEnter,
 };
 use crate::rate::{ChatLimiter, ChatVerdict, SlidingWindow};
 use crate::session::{
@@ -88,7 +89,8 @@ pub struct ServerParams {
     pub min_minor: u16,
     /// Highest minor version implemented.
     pub max_minor: u16,
-    /// Capability bits.
+    /// Capability bits. `CHAT_CHANNELS` is sent, and channel messages accepted, only on
+    /// connections at negotiated minor ≥ 2 ([`ServerCaps::effective`]).
     pub caps: ServerCaps,
     /// Simulation rate, Hz (30 in v1).
     pub tick_rate: u8,
@@ -154,8 +156,25 @@ pub enum ServerEvent {
         request_id: u32,
     },
     /// `ChatSend` within the rate limit, with valid `TEXT` and peer `NAME`. Deliver it, or
-    /// answer with [`ServerSession::reject_chat`].
+    /// answer with [`ServerSession::reject_chat`]. A `Named` line (minor ≥ 2, with
+    /// `CHAT_CHANNELS`) carries its channel name unchecked: the server's membership test
+    /// answers a name that breaks the `NAME` content rule with `NOT_JOINED` (§5.2, §10.6).
     Chat(ChatSend),
+    /// `ChannelJoin` (minor ≥ 2, InWorld, `CHAT_CHANNELS` advertised). The name is as the
+    /// client sent it (at most 64 bytes, content unchecked): the server applies the request
+    /// bucket of §10.6 and its own rules in its order. Answer exactly once, in the order of
+    /// the connection's chat and channel requests, with [`ServerSession::channel_joined`] or
+    /// [`ServerSession::refuse_channel`].
+    ChannelJoin {
+        /// The requested name.
+        name: String,
+    },
+    /// `ChannelLeave` (same conditions as [`ServerEvent::ChannelJoin`]). Answer with
+    /// [`ServerSession::channel_left`] (reason `LEFT`) or [`ServerSession::refuse_channel`].
+    ChannelLeave {
+        /// The requested name.
+        name: String,
+    },
     /// `EmoteSet`.
     Emote(EmoteSet),
     /// `StanceSet`.
@@ -640,7 +659,8 @@ impl ServerSession {
                         motd.truncate(floor_boundary(&motd, MAX_LONG_TEXT_LEN));
                         let ack = Message::HelloAck(HelloAck {
                             minor,
-                            server_caps: p.caps,
+                            // Bit 3 only at minor ≥ 2 (§6.2.2, §15 invariant 12).
+                            server_caps: p.caps.effective(minor),
                             tick_rate: p.tick_rate,
                             snapshot_rate: p.snapshot_rate,
                             interest_radius: p.interest_radius,
@@ -746,6 +766,9 @@ impl ServerSession {
                 if state != ServerState::InWorld {
                     return Err(self.unexpected(ty));
                 }
+                if matches!(c.channel, ChatChannel::Named { .. }) && !self.channels_allowed() {
+                    return Err(Violation::CapabilityMissing(ty));
+                }
                 match self.chat.check(now) {
                     ChatVerdict::Allowed => {}
                     ChatVerdict::RateLimited => {
@@ -769,6 +792,19 @@ impl ServerSession {
                     return Ok(self.reject_chat(code, "", now).ok().flatten());
                 }
                 Ok(Some(ServerEvent::Chat(c)))
+            }
+            Message::ChannelJoin { name } | Message::ChannelLeave { name } => {
+                if state != ServerState::InWorld {
+                    return Err(self.unexpected(ty));
+                }
+                if !self.channels_allowed() {
+                    return Err(Violation::CapabilityMissing(ty));
+                }
+                Ok(Some(if ty == MessageType::ChannelJoin {
+                    ServerEvent::ChannelJoin { name }
+                } else {
+                    ServerEvent::ChannelLeave { name }
+                }))
             }
             Message::EmoteSet(e) => {
                 if state != ServerState::InWorld {
@@ -833,6 +869,18 @@ impl ServerSession {
             }
             _ => Err(self.unexpected(ty)),
         }
+    }
+
+    /// Whether this connection may use named channels: negotiated minor ≥ 2 and
+    /// `CHAT_CHANNELS` advertised (§10.6).
+    #[must_use]
+    pub fn channels_allowed(&self) -> bool {
+        self.minor >= MINOR_CHANNELS
+            && self
+                .params
+                .caps
+                .effective(self.minor)
+                .contains(ServerCaps::CHAT_CHANNELS)
     }
 
     // --- answering ---
@@ -1009,6 +1057,15 @@ impl ServerSession {
         if self.state != ServerState::InWorld {
             return Err(UsageError::WrongState(self.state.name()));
         }
+        if code == ChatRejectedCode::NotJoined && self.minor < MINOR_CHANNELS {
+            // Code 6 exists from minor 2 (§15 invariant 12).
+            return Err(UsageError::Invalid(
+                crate::error::ProtocolError::InvalidEnum {
+                    field: "code",
+                    value: 6,
+                },
+            ));
+        }
         self.outbox.send(Message::ChatRejected(Failure {
             code,
             text: detail_text(detail),
@@ -1019,18 +1076,88 @@ impl ServerSession {
         Ok(None)
     }
 
+    /// Answers a [`ServerEvent::ChannelJoin`] with `ChannelJoined` (minor ≥ 2): the player
+    /// is a member of the channel `name`, the server's spelling (a `NAME`).
+    pub fn channel_joined(&mut self, name: String) -> Result<(), UsageError> {
+        self.require_channels()?;
+        self.send_channel_answer(Message::ChannelJoined { name })
+    }
+
+    /// Sends `ChannelLeft` (minor ≥ 2): with [`ChannelLeftReason::Left`] the answer to a
+    /// [`ServerEvent::ChannelLeave`], with [`ChannelLeftReason::Removed`] the server's own
+    /// decision (unsolicited; `tessera-server` v1 never sends it).
+    pub fn channel_left(
+        &mut self,
+        name: String,
+        reason: ChannelLeftReason,
+    ) -> Result<(), UsageError> {
+        self.require_channels()?;
+        self.send_channel_answer(Message::ChannelLeft(ChannelLeft { name, reason }))
+    }
+
+    /// Answers a [`ServerEvent::ChannelJoin`] or [`ServerEvent::ChannelLeave`] with
+    /// `ChannelRefused` (minor ≥ 2). `requested` is the request's name as received: it is
+    /// sanitised (§5.2) and cut to 64 bytes. A `RATE_LIMITED` refusal counts towards
+    /// `Disconnect(FLOODING)` with the chat rejections (§10.6); the close event is then
+    /// returned.
+    pub fn refuse_channel(
+        &mut self,
+        code: ChannelRefusedCode,
+        requested: &str,
+        detail: &str,
+        now: u64,
+    ) -> Result<Option<ServerEvent>, UsageError> {
+        self.require_channels()?;
+        let mut name = text::sanitise(requested).into_owned();
+        name.truncate(floor_boundary(&name, MAX_NAME_LEN));
+        self.send_channel_answer(Message::ChannelRefused(ChannelRefused {
+            code,
+            name,
+            text: detail_text(detail),
+        }))?;
+        if code == ChannelRefusedCode::RateLimited
+            && self.chat.record_rejection(now) == ChatVerdict::Flooding
+        {
+            return Ok(self.disconnect(AppErrorCode::Flooding, "", now));
+        }
+        Ok(None)
+    }
+
+    fn require_channels(&self) -> Result<(), UsageError> {
+        if self.state != ServerState::InWorld {
+            return Err(UsageError::WrongState(self.state.name()));
+        }
+        if !self.channels_allowed() {
+            return Err(UsageError::CapabilityMissing);
+        }
+        Ok(())
+    }
+
+    fn send_channel_answer(&mut self, msg: Message) -> Result<(), UsageError> {
+        check_encodable_minor(&msg, self.minor)?;
+        self.outbox.send(msg);
+        Ok(())
+    }
+
     /// Sends a server message the state allows: world-stream messages while InWorld,
     /// chat-stream messages after `LoginOk`, `MotionBatch` while InWorld, `Ping` after
-    /// `HelloAck` (at most one per second). Answers handled by the methods above are
-    /// refused here.
+    /// `HelloAck` (at most one per second). Answers handled by the methods above (the
+    /// channel answers included) are refused here.
     pub fn send(&mut self, msg: Message, now: u64) -> Result<(), UsageError> {
         let ty = msg.message_type();
         let allowed = match ty.channel() {
             Channel::World => self.state == ServerState::InWorld && ty != MessageType::WorldEnter,
-            Channel::Chat => matches!(
-                self.state,
-                ServerState::CharacterSelect | ServerState::InWorld
-            ),
+            Channel::Chat => {
+                matches!(
+                    self.state,
+                    ServerState::CharacterSelect | ServerState::InWorld
+                ) && !matches!(
+                    ty,
+                    MessageType::ChannelJoined
+                        | MessageType::ChannelLeft
+                        | MessageType::ChannelRefused
+                )
+            }
             Channel::Datagram => {
                 ty == MessageType::MotionBatch && self.state == ServerState::InWorld
             }

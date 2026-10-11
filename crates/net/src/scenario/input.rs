@@ -449,6 +449,11 @@ impl InputPlayer {
             }
             InputCmd::IgnorePlayer(n) => Command::Social(SocialCommand::Ignore { name: n.clone() }),
             InputCmd::Unignore(n) => Command::Social(SocialCommand::Unignore { name: n.clone() }),
+            InputCmd::PlaySync(tune) => {
+                Command::Social(SocialCommand::ReadyPerformance { tune: tune.clone() })
+            }
+            InputCmd::PlayStart => Command::Social(SocialCommand::StartPerformance),
+            InputCmd::Disband => Command::Social(SocialCommand::DisbandFellowship),
             InputCmd::ChooseTravel(e) => Command::World(WorldCommand::ChooseTravel {
                 window: self.window(WindowKind::Travel)?,
                 entry: *e,

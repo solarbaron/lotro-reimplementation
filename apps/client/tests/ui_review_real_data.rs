@@ -72,12 +72,16 @@ fn review_findings_on_the_install() {
             text: "review-welcome".into(),
             channel: tessera_net::ChatChannel::System,
             chat_type: 8,
+            shown: None,
+            im: None,
         },
         ChatLine {
             sender: "Npc".into(),
             text: "review-say".into(),
             channel: tessera_net::ChatChannel::Say,
             chat_type: 5,
+            shown: None,
+            im: None,
         },
     ]);
     for _ in 0..5 {

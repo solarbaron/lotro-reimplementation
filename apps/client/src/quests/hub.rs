@@ -301,6 +301,8 @@ impl QuestHub {
                 text,
                 channel: ChatChannel::System,
                 chat_type: QUEST_CHAT_TYPE,
+                shown: None,
+                im: None,
             }));
         }
         if !out.notices.is_empty() {

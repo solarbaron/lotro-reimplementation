@@ -19,6 +19,7 @@ use crate::combat::{self, ActorValues, CombatViewEvent};
 use crate::gameplay_enums as en;
 use crate::inventory::{self, InventoryViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
+use crate::party::{self, PartyViewEvent};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
 use crate::wallet::{self, WalletSource, WalletViewEvent};
@@ -138,6 +139,7 @@ pub enum LocalPlayerEvent {
     TargetChanged,
     ReadyStateChanged,
     IsLinkDeadChanged,
+    /// Derived by [`crate::PluginManager::set_fellowship`]; hosts do not raise it.
     PartyChanged,
     PetChanged,
     InCombatChanged,
@@ -184,6 +186,10 @@ pub enum GameplayEvent {
     Combat(CombatViewEvent),
     /// A change of the wallet or the coin amount (`lua-plugin-api.md` §15.3).
     Wallet(WalletViewEvent),
+    /// A member or leader change of the party (`lua-plugin-api.md` §15.4); the host derives
+    /// these in [`crate::PluginManager::set_fellowship`], and
+    /// [`crate::PluginManager::raise_gameplay_event`] ignores them.
+    Party(PartyViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -386,7 +392,10 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
                     .or_else(|| combat::player_values(&c).map(|v| v.name)),
                 _ => match combat::entity_values(lua, &c, &this)? {
                     Some(v) => Some(v.name),
-                    None => inventory::item_name(&c, lua, &this)?,
+                    None => match party::member_name(lua, &this)? {
+                        Some(name) => Some(name),
+                        None => inventory::item_name(&c, lua, &this)?,
+                    },
                 },
             })
         })?,
@@ -397,22 +406,68 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             Ok(view_of(lua, &this)? == Some(View::LocalPlayer))
         })?,
     )?;
-    // The combat source's values when it knows the player (§15.2: base maxima equal the
-    // maxima, temporary values 0), else the local-player source's.
-    let numeric: [(&'static str, NumberGetter, CombatGetter); 11] = [
-        ("GetLevel", |i| f64::from(i.level), |v| f64::from(v.level)),
-        ("GetMorale", |i| i.morale, |v| v.morale),
-        ("GetMaxMorale", |i| i.max_morale, |v| v.max_morale),
-        ("GetBaseMaxMorale", |i| i.base_max_morale, |v| v.max_morale),
-        ("GetTemporaryMorale", |i| i.temporary_morale, |_| 0.0),
-        ("GetMaxTemporaryMorale", |i| i.max_temporary_morale, |_| 0.0),
-        ("GetPower", |i| i.power, |v| v.power),
-        ("GetMaxPower", |i| i.max_power, |v| v.max_power),
-        ("GetBaseMaxPower", |i| i.base_max_power, |v| v.max_power),
-        ("GetTemporaryPower", |i| i.temporary_power, |_| 0.0),
-        ("GetMaxTemporaryPower", |i| i.max_temporary_power, |_| 0.0),
+    // The local player: the combat source's values when it knows the player (§15.2: base
+    // maxima equal the maxima, temporary values 0), else the local-player source's. Other
+    // actors: a combat entity's values (§15.2), or a party member's (§15.4).
+    let numeric: [(&'static str, NumberGetter, CombatGetter, party::ActorNumber); 11] = [
+        (
+            "GetLevel",
+            |i| f64::from(i.level),
+            |v| f64::from(v.level),
+            |i| f64::from(i.level),
+        ),
+        ("GetMorale", |i| i.morale, |v| v.morale, |i| i.morale),
+        (
+            "GetMaxMorale",
+            |i| i.max_morale,
+            |v| v.max_morale,
+            |i| i.max_morale,
+        ),
+        (
+            "GetBaseMaxMorale",
+            |i| i.base_max_morale,
+            |v| v.max_morale,
+            |i| i.base_max_morale,
+        ),
+        (
+            "GetTemporaryMorale",
+            |i| i.temporary_morale,
+            |_| 0.0,
+            |i| i.temporary_morale,
+        ),
+        (
+            "GetMaxTemporaryMorale",
+            |i| i.max_temporary_morale,
+            |_| 0.0,
+            |i| i.max_temporary_morale,
+        ),
+        ("GetPower", |i| i.power, |v| v.power, |i| i.power),
+        (
+            "GetMaxPower",
+            |i| i.max_power,
+            |v| v.max_power,
+            |i| i.max_power,
+        ),
+        (
+            "GetBaseMaxPower",
+            |i| i.base_max_power,
+            |v| v.max_power,
+            |i| i.base_max_power,
+        ),
+        (
+            "GetTemporaryPower",
+            |i| i.temporary_power,
+            |_| 0.0,
+            |i| i.temporary_power,
+        ),
+        (
+            "GetMaxTemporaryPower",
+            |i| i.max_temporary_power,
+            |_| 0.0,
+            |i| i.max_temporary_power,
+        ),
     ];
-    for (m, get, get_combat) in numeric {
+    for (m, get, get_combat, get_member) in numeric {
         let c = Arc::clone(ctx);
         actor.raw_set(
             m,
@@ -422,7 +477,12 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
                         Some(v) => get_combat(&v),
                         None => source(&c).map_or(0.0, |i| get(&i)),
                     },
-                    _ => combat::entity_values(lua, &c, &this)?.map_or(0.0, |v| get_combat(&v)),
+                    _ => match combat::entity_values(lua, &c, &this)? {
+                        Some(v) => get_combat(&v),
+                        None => {
+                            party::member_actor(&c, lua, &this)?.map_or(0.0, |i| get_member(&i))
+                        }
+                    },
                 })
             })?,
         )?;
@@ -458,7 +518,6 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         &player,
         "Player",
         &[
-            ("GetParty", Default_::Nil),
             ("GetPet", Default_::Nil),
             ("IsLinkDead", Default_::False),
             ("IsVoiceActive", Default_::False),
@@ -689,22 +748,28 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             skill_info: &skill_info,
         },
     )?;
-    let party = b.class(&gp, "Party", Some(&object), None)?;
-    stubs(
+    // Party views (§15.4, `party`).
+    let party_class = b.class(&gp, "Party", Some(&object), None)?;
+    let party_member = b.class(&gp, "PartyMember", Some(&player), None)?;
+    let c = Arc::clone(ctx);
+    party::install(
         lua,
-        &party,
-        "Party",
-        &[
-            ("GetAssistTarget", Default_::Nil),
-            ("GetAssistTargetCount", Default_::Zero),
-            ("GetLeader", Default_::Nil),
-            ("GetMember", Default_::Nil),
-            ("GetMemberCount", Default_::Zero),
-            ("IsAssistTarget", Default_::False),
-            ("IsMember", Default_::False),
-        ],
+        ctx,
+        &party::Classes {
+            player: &player,
+            party: &party_class,
+            party_member: &party_member,
+        },
+        Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::LocalPlayer))),
+        // The instance the plugin already holds, even while the source is cleared, so a
+        // party the plugin still reads stays consistent (§15.4).
+        Arc::new(
+            move |lua| match lua.named_registry_value::<Value>(LOCAL_PLAYER_KEY)? {
+                Value::Table(t) => Ok(Value::Table(t)),
+                _ => Ok(local_player_object(lua, &c)?.map_or(Value::Nil, Value::Table)),
+            },
+        ),
     )?;
-    b.class(&gp, "PartyMember", Some(&player), None)?;
     b.class(&gp, "Pet", Some(&actor), None)?;
     b.class(&gp, "Raid", Some(&object), None)?;
     let mount = b.class(&gp, "Mount", Some(&entity), None)?;
@@ -1037,7 +1102,8 @@ fn install_attribute_classes(
 }
 
 /// Deliver a queued gameplay event to the apartment: to its `LocalPlayer` instance, its
-/// backpack or equipment view, or an item's object, if a plugin asked for one.
+/// backpack, equipment or wallet view, an item's object or its `Party` object of the
+/// event's episode, if a plugin asked for one.
 pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent, seq: u64) {
     let e = match ev {
         GameplayEvent::LocalPlayer(e) => *e,
@@ -1057,6 +1123,10 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent, seq:
         }
         GameplayEvent::Wallet(w) => {
             wallet::deliver(ap, w, cached_view_of, attributes_view(&ap.ctx));
+            return;
+        }
+        GameplayEvent::Party(ev) => {
+            party::deliver(ap, ev);
             return;
         }
     };

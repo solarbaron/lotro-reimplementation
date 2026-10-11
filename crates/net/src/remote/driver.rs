@@ -11,13 +11,17 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use tessera_protocol::client::{ClientConfig, ClientEvent, ClientSession, ClientState, CloseCause};
-use tessera_protocol::codes::{AppErrorCode, CharacterCreateFailedCode, ClientFailure};
+use tessera_protocol::client::{
+    ChannelRequest, ClientConfig, ClientEvent, ClientSession, ClientState, CloseCause,
+};
+use tessera_protocol::codes::{
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ClientFailure,
+};
 use tessera_protocol::frame::StreamKind;
 use tessera_protocol::limits::{DEFAULT_TICK_RATE, STANDING_SPEED};
 use tessera_protocol::message::{
-    ChatChannel, ChatMessage, Credentials, EntityAppearance, EntityCreate, EntityUpdate,
-    LocationCause, LocationReport, MotionEntry, NoticeLevel, WorldClock, WorldEnter,
+    ChannelLeftReason, ChatChannel, ChatMessage, Credentials, EntityAppearance, EntityCreate,
+    EntityUpdate, LocationCause, LocationReport, MotionEntry, NoticeLevel, WorldClock, WorldEnter,
 };
 use tessera_protocol::movement::MoveScheduler;
 use tessera_protocol::session::{
@@ -77,6 +81,11 @@ pub(crate) enum Inbound {
     Clock(WorldClock),
     /// `ChatMessage`.
     Chat(Box<ChatMessage>),
+    /// Minor ≥ 2: `ChannelJoined`, the server's spelling of the channel.
+    ChannelJoined(String),
+    /// Minor ≥ 2: `ChannelLeft` for a channel the client held as joined; `removed` for
+    /// reason `REMOVED` (the server's own decision).
+    ChannelLeft { name: String, removed: bool },
     /// The fresh entries of a `MotionBatch`.
     Motion {
         server_time: u64,
@@ -109,6 +118,10 @@ pub(crate) enum NetCommand {
     Teleport(Destination),
     QueryLocation,
     Chat(ChatChannel, String),
+    /// Minor ≥ 2: `ChannelJoin` (`scenario-feed.md` §9.8).
+    JoinChannel(String),
+    /// Minor ≥ 2: `ChannelLeave`.
+    LeaveChannel(String),
     Emote {
         anim: u32,
         looping: bool,
@@ -138,6 +151,28 @@ pub(crate) struct MoveSlot {
     pub heading: f32,
     pub velocity: Vec3,
     pub motion: Motion,
+}
+
+/// Tessera's own words for a `ChannelRefused` code (`tessera-protocol.md` §14.8; unknown
+/// codes read as `SERVER_ERROR`).
+pub(crate) fn channel_refused_reason(code: ChannelRefusedCode) -> &'static str {
+    match code {
+        ChannelRefusedCode::RateLimited => "too many channel requests, try again shortly",
+        ChannelRefusedCode::InvalidName => "this name is not allowed for a channel",
+        ChannelRefusedCode::AlreadyJoined => "you are already in it",
+        ChannelRefusedCode::NotJoined => "you are not in it",
+        ChannelRefusedCode::TooManyChannels => "you are in as many channels as you can be",
+        ChannelRefusedCode::ServerLimit => "the server cannot open more channels",
+        ChannelRefusedCode::ChannelFull => "it is full",
+        ChannelRefusedCode::NotInWorld => "you are not in the world yet",
+        _ => "the server could not handle the request",
+    }
+}
+
+/// The System line for a channel request that failed: it names the channel.
+pub(crate) fn channel_failure_text(join: bool, name: &str, reason: &str) -> String {
+    let verb = if join { "join" } else { "leave" };
+    format!("Cannot {verb} the channel {name}: {reason}.")
 }
 
 /// The network side of one connection; see the module documentation.
@@ -324,6 +359,11 @@ impl Driver {
 
     pub(crate) fn command(&mut self, cmd: NetCommand, now: u64) {
         let creation = cmd.creation().is_some();
+        let channel_request = match &cmd {
+            NetCommand::JoinChannel(name) => Some((true, name.clone())),
+            NetCommand::LeaveChannel(name) => Some((false, name.clone())),
+            _ => None,
+        };
         let r = match cmd {
             NetCommand::EnterWorld(name) => self.session.enter_world(name, now),
             NetCommand::CreateCharacter {
@@ -336,6 +376,8 @@ impl Driver {
             NetCommand::Teleport(d) => self.session.teleport(d).map(|_| ()),
             NetCommand::QueryLocation => self.session.query_location().map(|_| ()),
             NetCommand::Chat(channel, text) => self.session.chat(channel, text),
+            NetCommand::JoinChannel(name) => self.session.join_channel(name),
+            NetCommand::LeaveChannel(name) => self.session.leave_channel(name),
             NetCommand::Emote { anim, looping } => self.session.emote(anim, looping),
             NetCommand::Stance(s) => self.session.stance(s),
             NetCommand::Appearance(a) => self.session.set_appearance(*a),
@@ -352,6 +394,14 @@ impl Driver {
                     code: CharacterCreateFailedCode::ServerError,
                     text: format!("not sent: {e}"),
                 });
+            }
+            if let Some((join, name)) = channel_request {
+                // No answer will come for a request that was not sent: say so once.
+                self.push(Inbound::System(channel_failure_text(
+                    join,
+                    &name,
+                    "the request could not be sent",
+                )));
             }
         }
         self.refresh_state();
@@ -528,6 +578,29 @@ impl Driver {
                     }
                 };
                 self.push(Inbound::System(text));
+            }
+            ClientEvent::ChannelJoined { name, .. } => self.push(Inbound::ChannelJoined(name)),
+            ClientEvent::ChannelLeft { left, .. } => self.push(Inbound::ChannelLeft {
+                name: left.name,
+                removed: left.reason == ChannelLeftReason::Removed,
+            }),
+            ClientEvent::ChannelRefused { refused, request } => {
+                // The server's text is logged only; the player reads Tessera's own words
+                // (tessera-protocol.md Appendix A).
+                tracing::debug!(
+                    code = refused.code.name(),
+                    text = %refused.text,
+                    "channel request refused"
+                );
+                let (join, name) = match request {
+                    ChannelRequest::Join(n) => (true, n),
+                    ChannelRequest::Leave(n) => (false, n),
+                };
+                self.push(Inbound::System(channel_failure_text(
+                    join,
+                    &name,
+                    channel_refused_reason(refused.code),
+                )));
             }
             ClientEvent::ChatRejected(f) => {
                 self.push(Inbound::System(with_detail(

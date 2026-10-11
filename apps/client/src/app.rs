@@ -405,9 +405,10 @@ impl App {
                 ui.after_update(walker, rt, &ev);
                 // The NPC windows (decision 0024 P3): after the frame's UI events.
                 let screens = ui.screens_open();
-                // The frame's UI events, taken once every frame: the NPC windows and the
-                // quest journal read the same list (the combat widgets have their own
-                // queue); the character screens own them while they are open.
+                // The frame's UI events, taken once every frame: the NPC windows, the
+                // quest journal and the social panels read the same list (the combat
+                // widgets have their own queue); the character screens own them while they
+                // are open.
                 let taken = ui
                     .host_mut()
                     .map(crate::ui_host::UiHost::take_game_events)
@@ -426,6 +427,9 @@ impl App {
                     let radar = walker.radar_input();
                     rt.quests
                         .frame(host, world, &rt.npc, events, radar.as_ref(), now);
+                    // The social panels (P4) read the same list.
+                    let data = rt.p1.data().cloned();
+                    crate::ui_host::client::social_frame(host, world, data.as_deref(), events);
                     // The indicators over ringed NPCs (§8.2), at the walker's positions.
                     let position = |id| walker.entity_render_pos(id);
                     rt.quests

@@ -11,6 +11,7 @@
 //! | Solo start 0.7 s after the command; synced start waits for `/playstart` | §8.5; `instruments.md` §12 OPEN (d) | [`PlayerMusic`] |
 //! | Errors and notices from the user's string tables, else Tessera's own text | `abc-dialect.md` §10.2–§10.4 | [`Messages`], [`fallback_error`], [`fallback_notice`] |
 //! | Instrument type from the equipped instrument item, or a debug choice | `instruments.md` §4.5, §12 | [`ItemFacts`], [`equipped_instrument`], [`resolve_instrument`] |
+//! | Synchronised start (P4): waiting parts of the player and the fellowship's members, one start for all, the player's `/play … sync` and `/playstart` through the session | `instruments.md` §8.8–§8.9, §12 P4 Decision; `scenario-feed.md` §6.7 | [`PlayerMusic::social_event`], [`PlayerMusic::take_requests`], [`MusicRequest`] |
 //!
 //! # Threads
 //!
@@ -42,6 +43,7 @@
 //! (`instruments.md` §10.5).
 
 pub mod command;
+pub mod sync;
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -71,6 +73,8 @@ use tessera_text::{
 };
 
 pub use self::command::{CommandError, MusicCommand, MusicWord, parse_args};
+use self::sync::{Members, Queued, SocialItem};
+pub use self::sync::{MusicRequest, StartClock};
 use super::backend::{self, BackendChoice, PrefsChoice, SettingsChoice};
 use super::loader::fetch;
 use super::scripts::{PROPERTY_DICTIONARY, ROOT_DID_MAP, mapper};
@@ -95,6 +99,8 @@ pub const MAX_PLAYLIST_PARTS: usize = 16;
 pub const SAMPLE_BUDGET: usize = 32 * 1024 * 1024;
 /// Most performances kept in [`PlayerMusic::schedule_log`].
 pub const MAX_SCHEDULE_LOG: usize = 16;
+/// Most synchronised starts kept for [`PlayerMusic::sync_starts`].
+pub const MAX_SYNC_STARTS: usize = 16;
 /// Most frames of offline-backend audio rendered per [`PlayerMusic::update`].
 pub const MAX_OFFLINE_FRAMES: usize = 48_000 / 4;
 /// `Item_EquipmentCategory` of an instrument item: the whole 64-bit value
@@ -763,6 +769,15 @@ fn decode_samples(
 struct SongJob {
     name: String,
     sync: bool,
+    /// (P4) The fellowship member whose part this is (`PerformanceReady`), or `None` for
+    /// the local player.
+    member: Option<(String, CharacterId)>,
+    /// (P4) The part came from the session (`PerformanceReady` for the player): it waits
+    /// without a `ReadyPerformance` request.
+    from_feed: bool,
+    /// (P4) A `PerformanceStarted`: a solo-like start this long after the result is
+    /// processed.
+    delay_ms: Option<u32>,
     instrument: Option<u32>,
     /// The accepted part, or the chat line of the refusal.
     result: Result<Arc<Performance>, String>,
@@ -836,8 +851,8 @@ pub struct PlayerMusic {
     pending_set: Option<Arc<ArchiveSet>>,
     boot: Option<Receiver<MusicData>>,
     data: Option<Arc<MusicData>>,
-    /// Commands not yet processed, in the order given.
-    queue: VecDeque<MusicCommand>,
+    /// Commands (and P4 session items) not yet processed, in the order given.
+    queue: VecDeque<Queued>,
     /// The background job of the command being processed.
     job: Option<Receiver<JobResult>>,
     engine: Option<AudioEngine>,
@@ -854,6 +869,24 @@ pub struct PlayerMusic {
     schedule: VecDeque<ScheduledPerformance>,
     offline: Option<(Instant, f64, Vec<f32>)>,
     stats: MusicStats,
+    /// (P4) The fellowship members' characters in the player.
+    members: Members,
+    /// (P4) The last fellowship list of the session: the members other than the player,
+    /// with their entities (empty without a fellowship).
+    fellows: Vec<(String, Option<tessera_net::EntityId>)>,
+    /// (P4) Requests for the world session ([`Self::take_requests`]).
+    requests: VecDeque<MusicRequest>,
+    /// (P4) The session answers `StartPerformance` with a synchronised start
+    /// (`scenario-feed.md` §6.7): `/playstart` then starts nothing locally.
+    session_starts: bool,
+    /// (P4) How the start time of a session's synchronised start is placed on the audio
+    /// clock.
+    clock: StartClock,
+    /// (P4) Entries of the instruments' schedule log kept (0: off).
+    schedule_capacity: usize,
+    /// (P4) The last synchronised starts (at most [`MAX_SYNC_STARTS`]), for the tolerance
+    /// check (`instruments.md` §8.9).
+    sync_starts: VecDeque<tessera_audio::instruments::SyncStart>,
 }
 
 impl std::fmt::Debug for PlayerMusic {
@@ -892,7 +925,93 @@ impl PlayerMusic {
             schedule: VecDeque::new(),
             offline: None,
             stats: MusicStats::default(),
+            members: Members::default(),
+            fellows: Vec::new(),
+            requests: VecDeque::new(),
+            session_starts: false,
+            clock: StartClock::Audio,
+            schedule_capacity: 0,
+            sync_starts: VecDeque::new(),
         }
+    }
+
+    /// Player music with start-up data already loaded (tools and tests: a synthetic
+    /// instrument table without an install).
+    #[must_use]
+    pub fn with_data(config: MusicConfig, data: MusicData) -> Self {
+        let mut m = Self::new(config);
+        m.data = Some(Arc::new(data));
+        m
+    }
+
+    /// Whether the world session answers `StartPerformance` with a synchronised start
+    /// (the sandbox and the scenario feed do; the test server does not,
+    /// `scenario-feed.md` §9.8). With it, `/playstart` asks the session for the start
+    /// ([`MusicRequest::Start`]) and starts nothing locally; without it, `/playstart` starts
+    /// the waiting parts locally (`instruments.md` §12 P4 Decision 3).
+    pub fn set_session_starts(&mut self, on: bool) {
+        self.session_starts = on;
+    }
+
+    /// How a session's synchronised start is placed on the audio clock ([`StartClock`]).
+    pub fn set_start_clock(&mut self, clock: StartClock) {
+        self.clock = clock;
+    }
+
+    /// Keeps the instruments' schedule log (at most `capacity` entries) from the next
+    /// performance on, for the start tolerance (`instruments.md` §8.9).
+    pub fn set_schedule_log(&mut self, capacity: usize) {
+        self.schedule_capacity = capacity;
+        if let Some(p) = self.player.as_mut() {
+            p.set_schedule_log(capacity);
+        }
+    }
+
+    /// The instruments' schedule log (empty when off or before the first performance).
+    #[must_use]
+    pub fn scheduled_events(&self) -> &[tessera_audio::instruments::ScheduledEvent] {
+        self.player
+            .as_ref()
+            .map_or(&[], tessera_audio::instruments::MusicPlayer::schedule_log)
+    }
+
+    /// The last synchronised starts (at most [`MAX_SYNC_STARTS`], oldest first): who
+    /// started and with which time-0.
+    pub fn sync_starts(&self) -> impl Iterator<Item = &tessera_audio::instruments::SyncStart> {
+        self.sync_starts.iter()
+    }
+
+    fn push_request(&mut self, r: MusicRequest) {
+        if self.requests.len() >= sync::MAX_SESSION_ITEMS {
+            self.requests.pop_front();
+        }
+        self.requests.push_back(r);
+    }
+
+    /// The requests for the world session since the last call, in order (`/play … sync`
+    /// accepted: `ReadyPerformance`; `/playstart`: `StartPerformance`).
+    pub fn take_requests(&mut self) -> Vec<MusicRequest> {
+        self.requests.drain(..).collect()
+    }
+
+    /// The session refused the `StartPerformance` of a `/playstart` (the test server,
+    /// decision 0035 D2): the waiting parts start locally (`instruments.md` §12 P4
+    /// Decision 3), behind the commands still queued.
+    pub fn start_refused(&mut self) {
+        self.push_queued(Queued::Social(SocialItem::LocalStart));
+    }
+
+    /// Starts the engine and the player now (tests and headless drivers that run the audio
+    /// clock in step with a virtual clock). Returns whether they run.
+    pub fn start_engine(&mut self) -> bool {
+        self.pump();
+        self.ensure_player()
+    }
+
+    /// The engine's audio clock, seconds, once it runs.
+    #[must_use]
+    pub fn audio_clock(&self) -> Option<f64> {
+        self.engine.as_ref().map(MusicPlayer::now)
     }
 
     /// Gives the archives. Start-up (the instrument table, the message table, the equipped
@@ -1038,8 +1157,43 @@ impl PlayerMusic {
             self.say("Music: busy; try again".into());
             return;
         }
-        self.queue.push_back(cmd);
+        self.queue.push_back(Queued::Command(cmd));
         self.pump();
+    }
+
+    /// Queues a session item behind the earlier work (never refused for a full queue: the
+    /// session's items are bounded by [`sync::MAX_SESSION_ITEMS`]).
+    fn push_queued(&mut self, q: Queued) {
+        self.load_now();
+        let session = self
+            .queue
+            .iter()
+            .filter(|x| matches!(x, Queued::Social(_)))
+            .count();
+        if matches!(q, Queued::Social(_)) && session >= sync::MAX_SESSION_ITEMS {
+            tracing::warn!("player music: too many session items waiting; one dropped");
+            return;
+        }
+        self.queue.push_back(q);
+        self.pump();
+    }
+
+    /// A performance or fellowship event of the world session (`scenario-feed.md` §6.7,
+    /// `instruments.md` §12 P4 Decision): a member's part made ready, read from the music
+    /// folders like a `/play`; a synchronised start; a withdrawn part; the fellowship's new
+    /// member list (absent members' parts withdrawn); a member's performance stopped.
+    /// `player` is the local character's name and entity: a `PerformanceReady` for the
+    /// player acts as an accepted `/play … sync` of the player. Items wait behind the
+    /// commands before them.
+    pub fn social_event(
+        &mut self,
+        ev: &tessera_net::Event,
+        player: &str,
+        player_entity: Option<tessera_net::EntityId>,
+    ) {
+        if let Some(item) = SocialItem::from_event(ev, player, player_entity) {
+            self.push_queued(Queued::Social(item));
+        }
     }
 
     /// Processes queued commands in order until one waits for start-up or a job.
@@ -1070,16 +1224,190 @@ impl PlayerMusic {
                     }
                 }
             }
-            let Some(cmd) = self.queue.pop_front() else {
+            let Some(q) = self.queue.pop_front() else {
                 return;
             };
-            self.dispatch(cmd);
+            match q {
+                Queued::Command(cmd) => self.dispatch(cmd),
+                Queued::Social(item) => self.social_item(item),
+            }
         }
+    }
+
+    fn social_item(&mut self, item: SocialItem) {
+        match item {
+            SocialItem::Ready {
+                member,
+                entity,
+                tune,
+            } => match member {
+                None => self.read_song(tune, None, true, None, true, None),
+                Some(name) => {
+                    let id = self.members.id_of(&name).or_else(|| {
+                        self.prune_members();
+                        self.members.id_of(&name)
+                    });
+                    match id {
+                        Some(id) => {
+                            // The entity of the event, else of the last fellowship list, so a
+                            // later `PerformanceStopped` finds the part (Decision 6).
+                            let entity = entity.or_else(|| {
+                                self.fellows
+                                    .iter()
+                                    .find(|(n, _)| n.to_lowercase() == name.to_lowercase())
+                                    .and_then(|(_, e)| *e)
+                            });
+                            if entity.is_some() {
+                                self.members.set_entity(&name, entity);
+                            }
+                            self.read_song(tune, None, true, Some((name, id)), true, None);
+                        }
+                        None => {
+                            tracing::warn!(
+                                "player music: too many members with parts; part refused"
+                            );
+                            self.say(format!(
+                                "Music: the part of {name} cannot wait (too many performers)"
+                            ));
+                        }
+                    }
+                }
+            },
+            SocialItem::Started {
+                performer,
+                tune,
+                delay_ms,
+            } => match performer {
+                None => self.read_song(tune, None, false, None, true, Some(delay_ms)),
+                Some(entity) => {
+                    let id = self.members.id_of_entity(entity).or_else(|| {
+                        self.prune_members();
+                        self.members.id_of_entity(entity)
+                    });
+                    match id {
+                        Some(id) => {
+                            let name = self.members.name_of(id).unwrap_or_default();
+                            self.read_song(
+                                tune,
+                                None,
+                                false,
+                                Some((name, id)),
+                                true,
+                                Some(delay_ms),
+                            );
+                        }
+                        None => {
+                            tracing::warn!(
+                                "player music: too many performers; performance refused"
+                            );
+                            self.say(
+                                "Music: a performance cannot start (too many performers)".into(),
+                            );
+                        }
+                    }
+                }
+            },
+            SocialItem::Start { lead_ms, at_ms } => self.session_start(lead_ms, at_ms),
+            SocialItem::LocalStart => self.play_start(),
+            SocialItem::Withdraw { member } => {
+                let id = match member {
+                    None => Some(LOCAL_PLAYER),
+                    Some(n) => self.members.find(&n),
+                };
+                if let Some(id) = id {
+                    self.sync.withdraw(id);
+                    if id == LOCAL_PLAYER {
+                        self.waiting_name = None;
+                    }
+                }
+            }
+            SocialItem::Fellowship { members } => {
+                for (n, e) in &members {
+                    self.members.set_entity(n, *e);
+                }
+                let present: Vec<CharacterId> = members
+                    .iter()
+                    .filter_map(|(n, _)| self.members.find(n))
+                    .collect();
+                let gone = self.sync.withdraw_absent_members(&present);
+                if !gone.is_empty() {
+                    tracing::debug!(
+                        withdrawn = gone.len(),
+                        "player music: members left; parts withdrawn"
+                    );
+                }
+                self.fellows = members;
+                self.prune_members();
+            }
+            SocialItem::Stopped { entity } => {
+                if let Some(id) = self.members.by_entity(entity)
+                    && let Some(player) = self.player.as_mut()
+                {
+                    self.sync.cancel(player, id);
+                }
+            }
+        }
+    }
+
+    /// Frees the member characters that are neither in the last fellowship list, nor
+    /// waiting, nor performing: [`sync::MAX_MEMBERS`] bounds the performers at one time,
+    /// not over the client's lifetime.
+    fn prune_members(&mut self) {
+        let fellows: HashSet<String> = self.fellows.iter().map(|(n, _)| n.to_lowercase()).collect();
+        let sync = &self.sync;
+        let player = self.player.as_ref();
+        let freed = self.members.retain(|name, id| {
+            fellows.contains(&name.to_lowercase())
+                || sync.is_waiting(id)
+                || player.is_some_and(|p| p.is_performing(id))
+        });
+        if let (Some(engine), Some(player)) = (self.engine.as_mut(), self.player.as_mut()) {
+            for id in &freed {
+                if player.has_character(*id) {
+                    player.remove_character(engine, *id);
+                }
+            }
+        }
+    }
+
+    /// The fellowship members' (and other performers') characters allocated now (at most
+    /// [`sync::MAX_MEMBERS`]).
+    #[must_use]
+    pub fn member_characters(&self) -> usize {
+        self.members.len()
+    }
+
+    /// The parts waiting for a synchronised start: the local player's and the members'.
+    #[must_use]
+    pub fn waiting_parts(&self) -> usize {
+        self.sync.len()
+    }
+
+    /// A synchronised start of the session (`scenario-feed.md` §6.7, `instruments.md`
+    /// §8.8.3, §12 P4 Decision 3–4): the start notice once, then every waiting part with the
+    /// one start time *S* of [`Self::set_start_clock`]'s rule.
+    fn session_start(&mut self, lead_ms: u32, at_ms: u64) {
+        let notice = notice_text(self.messages(), &Notice::SyncedStart);
+        self.say(notice);
+        if self.sync.is_empty() || !self.ensure_player() {
+            return;
+        }
+        let Some(engine) = self.engine.as_ref() else {
+            return;
+        };
+        let now = MusicPlayer::now(engine);
+        let start = self.clock.start_secs(now, lead_ms, at_ms);
+        self.start_waiting(start, now);
     }
 
     fn dispatch(&mut self, cmd: MusicCommand) {
         match cmd {
             MusicCommand::Play { name, part, sync } => self.start_play(name, part, sync),
+            MusicCommand::PlayStart if self.session_starts => {
+                // The session's start starts the waiting parts (`scenario-feed.md` §6.7):
+                // nothing starts here, so one `/playstart` gives one start.
+                self.push_request(MusicRequest::Start);
+            }
             MusicCommand::PlayStart => self.play_start(),
             MusicCommand::PlayList { filter } => self.start_list(filter),
             MusicCommand::Stop => self.stop(),
@@ -1168,8 +1496,30 @@ impl PlayerMusic {
     }
 
     fn start_play(&mut self, name: String, part: Option<i32>, sync: bool) {
+        self.read_song(name, part, sync, None, false, None);
+    }
+
+    /// Reads a song on a job: the local player's (`member` none) or a fellowship member's
+    /// part. `from_feed`: the part came from the session (no `ReadyPerformance` request).
+    /// `delay_ms`: a `PerformanceStarted`, started solo-like at the time its result is
+    /// processed plus the delay.
+    fn read_song(
+        &mut self,
+        name: String,
+        part: Option<i32>,
+        sync: bool,
+        member: Option<(String, CharacterId)>,
+        from_feed: bool,
+        delay_ms: Option<u32>,
+    ) {
         let folders = self.config.folders.clone();
-        let instrument = self.instrument();
+        // Only another performer's part falls back to the table's first instrument (their
+        // instruments are not in the session's events, `instruments.md` §12 P4 OPEN); the
+        // local player's own part needs an instrument (M6: otherwise nothing plays).
+        let instrument = match member {
+            Some(_) => self.instrument().or_else(|| self.any_instrument()),
+            None => self.instrument(),
+        };
         let data = self.data.clone();
         // Commands run one at a time, so nothing changes the bank before this job's result
         // is applied.
@@ -1201,6 +1551,9 @@ impl PlayerMusic {
             JobResult::Song(Box::new(SongJob {
                 name,
                 sync,
+                member,
+                from_feed,
+                delay_ms,
                 instrument,
                 result,
                 needed,
@@ -1228,20 +1581,29 @@ impl PlayerMusic {
     fn play_start(&mut self) {
         let notice = notice_text(self.messages(), &Notice::SyncedStart);
         self.say(notice);
-        if self.sync.is_empty() {
+        if self.sync.is_empty() || !self.ensure_player() {
             return;
         }
-        let waiting: Vec<_> = self.sync.waiting().to_vec();
-        if !self.ensure_player() {
-            return;
-        }
-        let (Some(engine), Some(player)) = (self.engine.as_mut(), self.player.as_mut()) else {
+        let Some(engine) = self.engine.as_ref() else {
             return;
         };
-        let start = SyncGroup::start_time(MusicPlayer::now(engine));
-        match self.sync.start(player, start) {
+        let now = MusicPlayer::now(engine);
+        self.start_waiting(SyncGroup::start_time(now), now);
+    }
+
+    /// Starts every waiting part with time-0 `start` (`instruments.md` §12 P4 Decision
+    /// 3–4), scheduled at audio-clock time `now`.
+    fn start_waiting(&mut self, start: f64, now: f64) {
+        let waiting: Vec<_> = self.sync.waiting().to_vec();
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
+        match self.sync.start_at(player, start, now) {
             Ok(s) => {
                 self.stats.synced_starts += s.characters.len() as u64;
+                for r in &s.refused {
+                    tracing::info!(character = %r.character, "player music: a waiting part did not fit the queue");
+                }
                 for w in waiting
                     .iter()
                     .filter(|w| s.characters.contains(&w.character))
@@ -1249,13 +1611,30 @@ impl PlayerMusic {
                     let name = if w.character == LOCAL_PLAYER {
                         self.waiting_name.take().unwrap_or_default()
                     } else {
-                        String::new()
+                        self.members.name_of(w.character).unwrap_or_default()
                     };
                     self.log_schedule(name, &w.performance, w.instrument, StartMode::Synced, start);
                 }
+                for r in &s.refused {
+                    let who = self.members.name_of(r.character).unwrap_or_default();
+                    self.say(format!(
+                        "Music: a waiting part ({who}) did not fit and does not play"
+                    ));
+                }
+                if self.sync_starts.len() >= MAX_SYNC_STARTS {
+                    self.sync_starts.pop_front();
+                }
+                self.sync_starts.push_back(s);
             }
             Err(e) => self.say(format!("Music: synchronised start refused: {e}")),
         }
+    }
+
+    /// The first instrument of the table (a member's part plays on it when the local
+    /// player has none: members' instruments are not in the session's events).
+    fn any_instrument(&self) -> Option<u32> {
+        let table = self.data.as_ref()?.table.as_ref().ok()?;
+        table.instruments().first().copied()
     }
 
     /// Starts the engine and the player (once the instrument table exists). The volumes
@@ -1285,6 +1664,9 @@ impl PlayerMusic {
         if let Err(e) = player.add_character(LOCAL_PLAYER, LivePosition::new([0.0; 3])) {
             tracing::warn!("player music: {e}");
             return false;
+        }
+        if self.schedule_capacity > 0 {
+            player.set_schedule_log(self.schedule_capacity);
         }
         self.engine = Some(engine);
         self.player = Some(player);
@@ -1355,7 +1737,18 @@ impl PlayerMusic {
             Ok(p) => p,
             Err(line) => {
                 self.stats.songs_refused += 1;
-                self.say(line);
+                match &job.member {
+                    // A member's part that cannot be read does not join (Tessera's own
+                    // line, `instruments.md` §12 P4 Decision 5).
+                    Some((member, _)) => {
+                        tracing::info!(member, tune = %job.name, "player music: member part refused: {line}");
+                        self.say(format!(
+                            "Music: the part {} of {member} cannot be played",
+                            job.name
+                        ));
+                    }
+                    None => self.say(line),
+                }
                 return;
             }
         };
@@ -1392,6 +1785,45 @@ impl PlayerMusic {
                 "Music: {dropped} instrument samples did not fit in memory; some notes are silent"
             ));
         }
+        if let Some((member, id)) = job.member {
+            // A fellowship member's part (`instruments.md` §12 P4 Decision 5).
+            if !self.ensure_player() {
+                return;
+            }
+            if let Some(p) = self.player.as_mut()
+                && !p.has_character(id)
+                && let Err(e) = p.add_character(id, LivePosition::new([0.0; 3]))
+            {
+                self.say(format!("Music: {e}"));
+                return;
+            }
+            if let Some(delay) = job.delay_ms {
+                // `PerformanceStarted` of another performer: S = t + delay.
+                let (Some(engine), Some(player)) = (self.engine.as_mut(), self.player.as_mut())
+                else {
+                    return;
+                };
+                let start = MusicPlayer::now(engine) + f64::from(delay) / 1e3;
+                match player.play(id, &perf, instrument, start) {
+                    Ok(_) => {
+                        self.stats.solo_starts += 1;
+                        self.log_schedule(job.name, &perf, instrument, StartMode::Solo, start);
+                    }
+                    Err(e) => self.say(format!("Music: the part of {member}: {e}")),
+                }
+                return;
+            }
+            match self.sync.register_member(id, Arc::clone(&perf), instrument) {
+                Ok(()) => {
+                    self.stats.synced_waits += 1;
+                    let n = sync::member_ready_notice(&member, &perf.title);
+                    let line = sync::render(self.messages(), &n);
+                    self.say(line);
+                }
+                Err(e) => self.say(format!("Music: {e}")),
+            }
+            return;
+        }
         if job.sync {
             match self
                 .sync
@@ -1400,6 +1832,16 @@ impl PlayerMusic {
                 Ok(()) => {
                     self.stats.synced_waits += 1;
                     tracing::info!(name = %job.name, "player music: waiting for /playstart");
+                    // The own ready notice (`instruments.md` §8.8.6, §12 P4 Decision 1) and,
+                    // for the player's own `/play … sync`, the session is told (§6.7).
+                    let n = sync::own_ready_notice(&perf.title);
+                    let line = sync::render(self.messages(), &n);
+                    self.say(line);
+                    if !job.from_feed {
+                        self.push_request(MusicRequest::Ready {
+                            tune: job.name.clone(),
+                        });
+                    }
                     self.waiting_name = Some(job.name);
                 }
                 Err(e) => self.say(format!("Music: {e}")),
@@ -1414,7 +1856,11 @@ impl PlayerMusic {
         let (Some(engine), Some(player)) = (self.engine.as_mut(), self.player.as_mut()) else {
             return;
         };
-        let start = MusicPlayer::now(engine) + SOLO_START_OFFSET;
+        // A `PerformanceStarted` for the player: S = t + its delay.
+        let start = MusicPlayer::now(engine)
+            + job
+                .delay_ms
+                .map_or(SOLO_START_OFFSET, |d| f64::from(d) / 1e3);
         match player.play(LOCAL_PLAYER, &perf, instrument, start) {
             Ok(_) => {
                 self.stats.solo_starts += 1;
@@ -2155,7 +2601,21 @@ mod tests {
         assert!(m.command("/play tune 2 sync"));
         assert!(m.command("/playstart"));
         assert!(m.wait_idle(WAIT));
-        assert_eq!(m.take_lines(), vec![fallback_notice(&Notice::SyncedStart)]);
+        // The own ready notice, then the start notice (`instruments.md` §8.8.6, §12 P4
+        // Decision 1, 3); without a session that starts parts, the start is local.
+        assert_eq!(
+            m.take_lines(),
+            vec![
+                sync::render(None, &sync::own_ready_notice("Second Part")),
+                fallback_notice(&Notice::SyncedStart)
+            ]
+        );
+        assert_eq!(
+            m.take_requests(),
+            vec![MusicRequest::Ready {
+                tune: "tune".into()
+            }]
+        );
         let s = m.stats();
         assert_eq!((s.synced_waits, s.synced_starts), (1, 1));
         assert!(!m.is_waiting() && m.is_performing());
@@ -2224,6 +2684,9 @@ mod tests {
         m.finish_song(SongJob {
             name: "tune".into(),
             sync: false,
+            member: None,
+            from_feed: false,
+            delay_ms: None,
             instrument: Some(4),
             result: Ok(Arc::new(
                 read_from_folders(&[d.path().to_path_buf()], "tune", PartRequest::Unspecified)

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use libfuzzer_sys::fuzz_target;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::scenario::{EmptyResolver, Scenario};
-use tessera_net::{ChatChannel, CombatCommand, Command, Event, Session};
+use tessera_net::{ChatChannel, CombatCommand, Command, Event, Session, SocialCommand};
 
 /// Frames (one tick each) of the bounded playback.
 const FRAMES: u32 = 200;
@@ -129,6 +129,15 @@ fuzz_target!(|data: &[u8]| {
         );
         if frame % 7 == 3 {
             let _ = session.send(now, Command::Combat(CombatCommand::CancelCast));
+            // The P4 social commands: a waiting part, a synchronised start, a disband.
+            let _ = session.send(
+                now,
+                Command::Social(SocialCommand::ReadyPerformance {
+                    tune: "Reel".into(),
+                }),
+            );
+            let _ = session.send(now, Command::Social(SocialCommand::StartPerformance));
+            let _ = session.send(now, Command::Social(SocialCommand::DisbandFellowship));
             let _ = session.send(
                 now,
                 Command::Chat {

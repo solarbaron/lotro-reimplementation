@@ -1028,3 +1028,99 @@ proptest! {
         }
     }
 }
+
+// --- minor 2 (v1.2): named chat channels ---
+
+/// A client-sent channel name: any UTF-8 of at most 64 bytes, control characters included
+/// (the server judges the content, §5.2).
+fn raw_name() -> impl Strategy<Value = String> {
+    "\\PC{0,30}|[\\x00-\\x1f a-z]{0,40}".prop_map(|s| {
+        let mut s: String = s;
+        while s.len() > 64 {
+            s.pop();
+        }
+        s
+    })
+}
+
+fn v12_messages() -> impl Strategy<Value = Message> {
+    prop_oneof![
+        raw_name().prop_map(|name| Message::ChannelJoin { name }),
+        raw_name().prop_map(|name| Message::ChannelLeave { name }),
+        text1(64).prop_map(|name| Message::ChannelJoined { name }),
+        (text1(64), any::<bool>()).prop_map(|(name, removed)| Message::ChannelLeft(ChannelLeft {
+            name,
+            reason: if removed {
+                ChannelLeftReason::Removed
+            } else {
+                ChannelLeftReason::Left
+            },
+        })),
+        (any::<u16>(), text(64), text(256)).prop_map(|(code, name, text)| {
+            Message::ChannelRefused(ChannelRefused {
+                code: ChannelRefusedCode::from_u16(code),
+                name,
+                text,
+            })
+        }),
+        (raw_name(), text1(200)).prop_map(|(name, text)| Message::ChatSend(ChatSend {
+            channel: ChatChannel::Named { name },
+            text,
+        })),
+        (
+            any::<u64>(),
+            any::<bool>(),
+            any::<u64>(),
+            text1(64),
+            text1(64),
+            text1(300)
+        )
+            .prop_map(|(server_time, echo, sender_entity, sender, name, text)| {
+                Message::ChatMessage(ChatMessage {
+                    server_time,
+                    channel: ChatChannel::Named { name },
+                    echo,
+                    sender_entity,
+                    sender,
+                    text,
+                })
+            }),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 1024, ..ProptestConfig::default() })]
+
+    /// Every v1.2 form round-trips at minor 2 and is never encoded below it (§15 invariants
+    /// 2 and 12).
+    #[test]
+    fn v12_messages_round_trip_only_at_minor_2(m in v12_messages()) {
+        prop_assert_eq!(&round_trip_at(&m, 2)?, &m);
+        for minor in [0, 1] {
+            prop_assert!(frame_to_vec_minor(&m, minor).is_err());
+        }
+    }
+
+    #[test]
+    fn v12_mutated_frames_never_panic(m in v12_messages(), flips in vec((any::<usize>(), any::<u8>()), 1..6)) {
+        let mut bytes = frame_to_vec_minor(&m, 2).unwrap();
+        for (i, b) in flips {
+            let n = bytes.len();
+            bytes[i % n] ^= b;
+        }
+        for minor in [0, 1, 2, 3] {
+            let mut d = FrameDecoder::with_minor(m.channel(), sender(&m), minor);
+            let mut input: &[u8] = &bytes;
+            while !input.is_empty() {
+                match d.push(&mut input) {
+                    Ok(Some(back)) => {
+                        // Whatever decodes re-encodes at that minor.
+                        prop_assert!(frame_to_vec_minor(&back, minor).is_ok());
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}

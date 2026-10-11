@@ -69,6 +69,7 @@ pub mod quest;
 pub mod quickslot;
 pub mod radar;
 pub mod simple;
+pub mod social;
 pub mod vocab;
 pub mod worldmap;
 

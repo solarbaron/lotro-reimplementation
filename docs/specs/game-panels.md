@@ -1176,6 +1176,28 @@ At no step does the client quit (GP15).
 | Decision 0015, Decision 1.7 "Clip" (last paragraph) and P1 checks 2 and 4 under §8 | The P1 marker is the only named nested entry of the M5 panels; a painter test finds rim pixels outside the viewport box "in the root canvas" (check 2); while turning, "the canvas above holds the same rim pixels at every angle" (check 4) | **Correction (data, G40, G41, UL §17.2):** P1 has 18 non-root surfaces at two levels; the rim owns a surface and its pixels are in its own canvas; the map and disc are in `GamePlay_Radar`'s canvas. The clip result is unchanged (root only). Check 4: the marker's canvas above is **empty** at every heading (the rim and everything after the marker in the radar's drawing order own surfaces); the 40 × 40 coverage region and the absence of damage while turning still hold. Test as in §8.7.2 "How P1 splits into surfaces". For the decision's next revision (the record is not edited here) |
 | `walker.md` §6 | Walker minimap: ±320 m, tiles of resident blocks | Agreement on the tiles and the layer; the native P1 panel shows a fixed 3 × 3 grid at 1.25 px per unit and is not the walker's debug minimap |
 
+> **Note (P4, 2026-10-11, [`social-panels.md`](social-panels.md); no fact of this spec
+> changed):** the four fellowship panels `FellowMiniPanel_1` … `_4` of layout `minifellow`
+> are drag-box frames (`HiddenDragBox`), so §4 applies to them unchanged (frame hidden in normal
+> play, `ToggleHiddenDragBoxes` edit mode); their list box, member rows and leader marker are
+> specified in `social-panels.md` §4. The player-vitals panel P4's `PlayerLeaderIcon` is
+> hidden by the layout and shown by game code only while the player leads a group
+> (`social-panels.md` §4.3); it is a further element that game code shows (§3). The game types
+> of these windows (`ListboxMouseInvisible`, `ClassDisplay`, `MultiVitalDisplay`,
+> `EffectDisplayList`, `PlayerMoneyDisplay`, `MoneyDisplay`) get §11's fallback with the data
+> and rules of `social-panels.md` §4.2 (TR15, TR16) and §6.1 (`PlayerMoneyDisplay` and
+> `MoneyDisplay` are lists of coin elements, never texts of their own).
+>
+> **Further elements that game code shows or hides (P4 revision 1, 2026-10-11; facts in
+> `social-panels.md` SP25–SP27, §4.2, §4.3; Tessera rule TR14):** on panel P4,
+> `PlayerVoiceChat`, `PlayerVoiceChatSquelched` and `PlayerSendingData` are not hidden by the
+> layout; the original's game code hides the sending-data and squelched elements at set-up
+> and shows `PlayerVoiceChat` only from a player property that reports voice chat. On each
+> fellowship member row, the voice button, squelched marker, sending-data marker, link-dead
+> and defeated fields are likewise not hidden by the layout and are shown by game code only
+> for the conditions given there. Tessera, which has no voice chat, hides all voice elements
+> (`social-panels.md` TR14); the §3 table is to be read with these rows added.
+
 ---
 
 <a id="s15"></a>
@@ -1256,3 +1278,5 @@ line must not label Escape "quit" then (IB, Cost).
 | 2026-10-06 | **Fixes after the review of Revision 3** (status stays Revised, review pending). **§16 rule 1:** the active panel is defined in UB §5.1 (activation), not UB §4.6; citation corrected. **§8.7.2:** new paragraph "How P1 splits into surfaces" (DEC: UR Decision 1.1, 1.7): `GamePlay_Radar` and 17 other non-root P1 elements own surfaces, so the disc and map are painted into the radar's canvas and the rim into its own; from the data (new row G40, OBS 2026-10-06, Confirmed) the disc and every map element come before every surface-owning element in drawing order, so none of their pixels goes to a canvas above and draw mode 5 keeps finding the disc's alpha; the rim's box extends 7 and 6 pixels past the root, which the root clip cuts; a replacement for decision 0015's P1 check 2. New invariant GP17; §14 row on decision 0015's "only nested entry" sentence and P1 check 2 (for the decision's next revision). No fact about the original is changed. |
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.7.2 "How P1 splits into surfaces":** the Test bullet now also corrects decision 0015's P1 check 4 (the marker's canvas above is empty at every heading and holds no rim pixels; the 40 × 40 coverage region and no damage while turning still hold); the Clip bullet states `GamePlay_Radar`'s offset (0, 33) in the root, the rim's root rows, and that the root's bottom cut removes no pixel. New provenance row G41 (Confirmed 2026-10-06, read-only probe of the resolved P1 tree). GP17 states that the rim's and the marker's canvases above are empty. §14 decision-0015 row extended to check 4. |
 | 2026-10-10 | Notes only (no fact changed), for P3: §8.8 and §9.3 point to `quest-journal.md` §8.3 for quest markers from the scenario feed and the quest-objective indicator properties. Status unchanged. |
+| 2026-10-11 | Note only (no fact changed), for P4: §14 points to `social-panels.md` for the fellowship panels (drag-box frames, §4 applies), `PlayerLeaderIcon` and the fallback of the social windows' game types. Status unchanged. |
+| 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md` (review 1 item B1): the §14 P4 note names the P4 voice elements and the member rows' status and voice elements that game code shows or hides, with the Tessera rule that hides the voice elements, and the coin-element lists of the two money-display types. Status unchanged. |

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | **Accepted** (P4 revision 2 re-reviewed 2026-10-11: CLEAN_ROOM.md §5.3 passed, every item; B1–B3 of the first review resolved). Revision 2: the script checks before `/play` (I58, I43, I54; §8.8.1, §8.8.2, §8.8.6, §8.8.7, Q12; P4 Decisions 2 and 8), the catch-up measured against *S* + *P* (§8.7 Consequences, §8.8.4, P4 Decision 4, IN22, §14.10), fed starts take *S* and *A* from the scenario feed (P4 Decision 3), answers to the P4 implementation OPENs, counts and figures (OBS-S, §8.9). Revision 1 (P4): additive sections on the synchronised fellowship start — §8.7 (performance stepper), §8.8 (synchronised group start), §8.9 (**start tolerance**), new Decisions in §12, examples §14.8–§14.11, invariants IN17–IN21, provenance BIN-S, OBS-S, PLG and rows I43–I57, §15 rows, Q10–Q14. Every section and anchor of the Accepted text is unchanged. Before: Accepted (re-review 2026-10-06, fourth round) |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review 2026-10-06 (fourth round): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent); the P4 revision was reviewed 2026-10-11 by a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of either spec, their revisions or the P4 code (changes requested); revision 2 was re-reviewed 2026-10-11 by a second such session that also wrote no part of the first review (passed) |
+| **Review record** | **Re-review 2026-10-11 of P4 revision 2** (commit 648a815; `git diff bb43e74..648a815` of `instruments.md` §1 rows BIN-S, OBS-S, I43–I58, §8.7–§8.9, §12 answers, P4 Decisions 1–8 and the answers to the P4 implementation OPENs, §13 IN17–IN22, §14.8–§14.11, §15, §16 Q10–Q14, and of `abc-dialect.md` §1 OBS-S, PV28–PV33, §8.5, §10.4, §11, §11.1, §16, §17), by a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of either spec, their revisions, the first review or the P4 code, against CLEAN_ROOM.md §5.3: **passed**, every item. Functional facts only; no code or pseudo-code (§8.7 and §12 Decision 4 are plain-word steps and conditions; no listing structure, no non-interoperability names; `Channeling_CurrentChannelingDID` and `Item_Music_Channeling_State` are property names of the data dictionary, needed to read the check); no game text (tokens, keys, argument IDs and PIDs only), keys, hostnames or traffic; every new fact has a row (I58 new, I43 and I54 revised) with its mark; invariants IN17–IN22 testable; unknowns are OPEN (Q10–Q14); decision 0004 kept, no closed gate. **First-review items.** B1 resolved (I58, I43, I54, §8.8.1 checks 1–3, §8.8.2, the §8.8.6 and §8.8.7 rows, Q12; §12 P4 Decision 2 states the group of one as a deliberate difference and Decision 8 treats the music-mode check as passed; `abc-dialect.md` PV28, PV33, §11 answers (1) and (f), §11.1 items 1 and 3 agree). B2 resolved (§8.7 Consequences, §8.8.4 and Decision 4 measure against *S* + *P* with *P* = 0; IN22, §14.10). B3 resolved (Decision 3 takes *S* and *A* of a delivered start from the event, as `scenario-feed.md` §6.7, Accepted, states; *t* + 0.7 only for a local start with a backend that refuses `StartPerformance`). N1–N3 and N5 taken up; N4 left (no effect on Tessera), acceptable. Revision 2 changes no implemented behaviour on branch p4: the catch-up of `tessera_audio::instruments` already compares with *S* + *P*, the client already places *S* from the feed, and Decisions 2 and 8 keep the client's command handling. **Own spot checks.** M1 (Tessera's `dattool`, read-only, own dirty scratch): record 0x56000000 holds 18 call sites of package-0x07DE natives (9 IDs) in 14 bodies; the helper the `/play` body calls after its usage check runs the music-mode check first (failure: key 0x10000335, end), then, only with the sync flag, the group check (failure: key 0x100003B0, end), then native 0x07DE0001; `/playstart` runs only the group check; the music-mode toggle command calls the same music-mode check; that check requires PID 0x10000BC3 of the player non-zero, an item found with argument 0x20040000, and the item's PID 0x10000BA1 equal to the player's value; dictionary 0x34000000 names the two PIDs as in I58; the own ready notice sets no argument on its empty-title branch (N2), the other-member notice sets name and title, both posted with output type 8; table 0x2500808A has 45 entries and contains neither key 0x10000335 nor 0x100003B0. M4 (own private project copy, decision 0011, build 4906.0071.1794.4035; question: does the catch-up compare *S* + *P* with *P* = 0 and always take the first event at or after *now* + 0.5, as IN22 states; why: BIN-S is its only source): the stepper tick, its catch-up and the finish agree with §8.7 steps 1–8 (catch-up constant 0.5 read from the executable's data; note-offs at *S* + *P* + *k*; events taken while *k* > 0 with zero-delta followers; *extra* = 0 and the tick ends if the end was taken; otherwise *A* − *ahead* below *A*, else *elapsed*; the next wake time); the synchronised-start entry and the music-end key agree with I45, I46, I52. §14.8–§14.10, including the **zG** case and the sample numbers of §14.9, recomputed: correct. **Non-blocking notes** (no change needed): (a) I58, §8.8.1: the instrument-item lookup of the music-mode check applies two successive checks to the item it finds, not one; "not traced further" covers it. (b) §8.7 State: the original's "not yet" wake time is the value 0, which the wait test always passes and which gives *elapsed* 0; equivalent to the text. Earlier: Review 2026-10-11 of the P4 revision (commit 7b55efa): **changes requested** (B1–B3, N1–N5), answered by revision 2 (change log). Earlier: Re-review 2026-10-06 (fourth round): **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (sound-info record 0x2A, §4.2, unless `sound.md` lands it first; the Sound node fields are already framed by `script-table.md` §5.3), `crates/audio` (`tessera-audio`, M6: instrument table built from the script data §5.7, playback queue and playing-note registry §8, voices with release fade §9, loudness §10), `apps/client` (music mode, `/play`), `apps/dattool` or `apps/explorer` (instrument table listing, audition of one note), `fuzz/` (the 0x2A decoder; the instrument-table builder fed with arbitrary script tables) |
 | **Companion specs** | [`abc-dialect.md`](abc-dialect.md) §7.11 (volume values), §8 (time line), §9 (note events, pitch slots). [`script-table.md`](script-table.md) §2 (table framing, per-script property sets), §4 (node frame, base block, ports), §5.3 (Sound node fields), §7.1 (Switch), §8.1–§8.2 (an entity's tables and their closure). [`records.md`](records.md) §2.1 (prefix 0x2A), §8 (DID maps), §9 (0x0A sound payloads). [`property-system.md`](property-system.md) §3–§5 (value types, property sets), §8 (enum mappers). [`sound.md`](sound.md) (in Review; normative for the generic sound engine): §4.1 and §4.3 (sound-info layout and flag bits), §6.1 (gain chain), §6.2 (distance law), §6.5 (ramp-out), §6.6 (voice limit), §6.7 (listener and panning), §6.8 (requests that are not played), §7 (channels and volume settings), §9.2 and §9.3 (Sound node start and node intensity). Points where the two specs disagree are listed in §10.1 and §15 and are open as Q8. [`keymap.md`](keymap.md) (live-play key actions). [`install-layout.md`](install-layout.md) §8.3 (`[Sound]` keys). [`appearance.md`](appearance.md) §5 (where instruments are held). |
 
@@ -26,6 +26,8 @@ the user's own data:
 - how written pitch relates to the samples (§7);
 - the playback queue: timing, late notes, the registry of sounding notes and the limit on
   simultaneous notes (§8);
+- the performance stepper, the synchronised fellowship start and the **start tolerance**
+  (§8.7–§8.9, revision 2026-10-11);
 - sustain, release and decay per instrument (§9), loudness and position (§10), and the
   note range per instrument (§11);
 - Tessera's design decisions (§12), invariants (§13), synthetic examples (§14),
@@ -75,6 +77,10 @@ Legend:
 | MA | Maestro / ABC Player (`github.com/NikolaiVChr/maestro`, MIT, clone at commit 0440b25), studied for facts only: its per-instrument notes on octave shift, sustain and sample length, and its note that one instrument plays effect sounds on its lowest notes. No code, names, tables or prose copied. |
 | ABC | [`abc-dialect.md`](abc-dialect.md) (pitch numbers 48–84, volume values, note events, pitch-slot table). |
 | ST | [`script-table.md`](script-table.md) (node framing, Switch semantics, entity tables and closures). |
+| BIN-S | Third M4 pass, same client build 4906.0071.1794.4035 (`lotro_live`), 2026-10-11, under [decision 0011](../decisions/0011-standing-m4-authorisation.md), for P4 (synchronised fellowship music). **Questions:** (12) what the client does with `/play … sync` and with a synchronised start: where the start time comes from and what the second start value means (`abc-dialect.md` §11 OPEN (3)); (13) how a started performance's events are handed on over time, including the 0.5 s constant of `abc-dialect.md` §8.5 OPEN; (14) which client paths withdraw a waiting synced part or end a running performance; (15) which notices the client module itself shows. **Why M1–M3 were not enough:** the archives hold the message entries and the game script that calls the client (OBS-S), but not the client's scheduling; published material gives only the command syntax and the fact that a group member starts the group (WEB, PLG); the owner has no second account and no recordings for an in-game trial (M3). **Read:** the player-music module's play entry and its synced branch, the synchronised-start entry, the start-of-performance function, the stepper and its catch-up and finish functions, the music-end key handler, the module's constructor (its subscriptions) and the handler that withdraws the waiting part, the registration of the music natives (package 0x07DE), and the module functions behind natives 0x07DE0004, 0x07DE0005, 0x07DE0006 and 0x07DE000A (queue insertions and the cancel). **Not examined** (decision 0004): the client-to-game-script posts the module makes and what the script does with them; the content, order and transport of the server notifications that the game script handles; the native that reads a time stamp from such a notification and whether it translates clocks; server behaviour. Nothing about network, login, keys, launcher or anti-tamper. |
+| OBS-S | User install, 2026-10-11: the class library's code block (record 0x56000000, [`wlib-bytecode.md`](wlib-bytecode.md)) read with Tessera's disassembler for every call site of the package-0x07DE natives (18 sites in 14 bodies; revision 2: was "12 sites"), the bodies around them and the bodies of the `/play` and `/playstart` commands, including the helper that the `/play` command calls with its words (its two checks, I58, I54) and the music-mode check it shares with the music-mode toggle command; string table 0x2500808A (`UI_Music`, all 45 entries: tokens and argument IDs only; revision 2: was "46"); the command-word table 0x250001AB (named key 0x10000007, label `Commands`) and the command-help table 0x250001AA (tokens only, meaning summarised, no text quoted). |
+| PLG | A published third-party plugin's localisation strings for its music helper (dirty-room plugin census of M5), read for usage only: it builds the fellowship command as `/play <file> sync <part>` (word before number) and starts with `/playstart`. No code or text copied. |
+| WEB | As in [`abc-dialect.md`](abc-dialect.md) §1: published usage guides (`/play <file> [part] sync`, `/playstart` by a fellowship member). |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -120,6 +126,22 @@ Legend:
 | I40 | Instrument requests pass the sound manager's gates: voice limit, master and channel volume ≤ 0.0002, positional source beyond `max_distance` or in an unloaded landblock; a refused request ends the Sound node at once (§9.1, §9.3) | SND §6.6, §6.8; BIN-R (the Sound start ends the node when the manager refuses) | Confirmed (BIN) |
 | I41 | Live-play keys: a press of a mapped action builds a note-on with velocity 90 and both flag bytes 0, a release builds a note-off; presses and releases are ignored while the local player has a song performance running; the handler and the local sequencer hand their events to a dispatch function instead of the queue (§5.1, §8.1) | BIN-R (live-play key handler, sequencer note emission) | Probable (event meanings inferred; the path after the dispatch was not followed, decision 0004) |
 | I42 | Over all 632,847 nodes of the 7,524 decodable script tables and 28,992 scriptlets, 7 nodes with variance 0 have a multiplier outside 0–1, none on an instrument path (§10.1) | OBS | Confirmed |
+| I43 | `/play … sync` that has passed the two script checks of §8.8.1 (I58, I54) reads and checks the part like a solo `/play`; on success the client keeps the performance as the local player's **single waiting part** (an earlier waiting part is discarded), starts nothing, shows no begin notice and posts a ready notification with the title to the game script; a refused or missing file leaves an earlier waiting part as it was (§8.8.1). A `/play … sync` stopped by a check reads nothing and leaves both slots as they were | BIN-S; OBS-S (the checks, revision 2) | Confirmed (BIN) (client); Confirmed (OBS) (checks) |
+| I44 | A waiting part is started only by the synchronised-start native 0x07DE0002, which the game script calls only from its handler of a server notification; `/playstart` sends a request without arguments and starts nothing locally (§8.8.2) | BIN-S (native registration, sole caller chain); OBS-S (every call site of 0x07DE0002; the `/playstart` body) | Confirmed (BIN + OBS) |
+| I45 | The start notification supplies two time values, the **start time** *S* and the **lead** *A*; the game script hands both to the client unchanged (typed as time stamps). A solo start uses *S* = *t* + 0.7 and *A* = 0.7 (§8.7, §8.8.3) | BIN-S (both entries and the shared start function); OBS-S (the handler's instructions) | Confirmed (BIN + OBS); what the server puts in them and any clock translation not examined |
+| I46 | The synchronised-start entry shows notice 0x012DD4A4 first, whether or not a part waits; then, if a part waits, starts it with (*S*, *A*) and empties the waiting slot (§8.8.3) | BIN-S | Confirmed (BIN) |
+| I47 | Starting any performance (solo or synchronised) first stops the local player's running performance through the stop path with time 0, then checks the new event list's consistency, then resets the stepper with position 0 (§8.7) | BIN-S | Confirmed (BIN); what the stop path does after its game-script post: Probable (the cancel of §8.5) |
+| I48 | Stepper: per update tick, finish when the end was taken; wait until the wake time; catch-up below 0.5 s ahead; budget *A* plus a correction; hand on events at *S* + position; next wake time (§8.7) | BIN-S | Confirmed (BIN) |
+| I49 | The stepper's events carry the absolute time *S* + position on the client clock and leave the module in one batch per tick through the dispatch of §5.1 (§8.7 step 7) | BIN-S | Confirmed (BIN) (times); path after the dispatch Probable (Q1) |
+| I50 | Notes of other characters enter the queue as timed note events through natives 0x07DE0004 (note-on with time and sequence), 0x07DE0005 (note-off), 0x07DE000A (a batch for one character); 0x07DE0006 is the cancel of §8.5 for one character. A listener does not read another member's file (§8.8.5) | BIN-S (the module functions behind the natives); OBS-S (their callers are game-script handlers of server notifications) | Confirmed (BIN) (what the natives do); Probable (that they carry other performers' notes, decision 0004) |
+| I51 | The waiting part is withdrawn only by a later successful `/play … sync` (replaced), by the synchronised start (consumed), by the module's handler of two notifications it subscribes to on the local player's object (numbers 0x1000018F and 0x10000143, meaning not traced), which also finishes the running performance at its horizon, and at teardown. The music-end key and a solo `/play` leave it waiting (§8.8.7) | BIN-S (every writer of the waiting slot) | Confirmed (BIN); triggers of the two notifications OPEN (Q11) |
+| I52 | Music-end key (action `MusicEndSong`, 0x100000EF): while a performance runs, it is finished at *S* + position (the stepper's horizon) and notice 0x0B87AC37 is shown; with no running performance the key does nothing (§8.7, §8.8.7) | BIN-S | Confirmed (BIN) |
+| I53 | Ready notices are shown by the game script, not by the client module: own part 0x0871DF57 (title, argument ID 0x00058427) or 0x02D8DC54 (empty title; no argument set); another member's part 0x03A91887 (name 0x05506DA2, title 0x00058427) or 0x0B630494 (name only) (§8.8.6) | OBS-S (selection by empty title, argument IDs; all four entries in table 0x2500808A) | Confirmed (OBS) (selection, arguments); triggers Probable |
+| I54 | Before sending, `/playstart` checks that an object of the local player is present (the same check guards the own ready notice); if it is absent the script shows the notice of key 0x100003B0 and sends nothing (§8.8.2). A `/play … sync` runs the **same** check, after the music-mode check of I58 and before native 0x07DE0001; if it fails, the script shows the same notice of key 0x100003B0 and does not call the native: no file is read, no part waits, no ready notice (§8.8.1; revision 2) | OBS-S | Confirmed (OBS) (check, order and key); meaning of the object Probable (group membership; Q12) |
+| I55 | The group: members of the starter's group (fellowship) whose clients hold a waiting part; any member may send the start, leader or not (§8.8.2) | OBS-S (help entries 0x02C008E3, 0x0FB49C73, meaning only; the script checks no leadership); WEB; PLG | Reported (who receives the start is server behaviour) |
+| I56 | Command layer of `/play`: part omitted → −1 ("none"); the words after the name are the sync word (entry 0x09657667 of the `Commands` table) and/or a number > 0, in either order; anything else shows the usage entry (`abc-dialect.md` §11) | OBS-S (the `/play` body) | Confirmed (OBS) |
+| I57 | Start tolerance 0.0001 s (§8.9) | Decision, from I18, I45–I50 | Decision |
+| I58 | Every `/play` (solo or `sync`), once its words have passed the usage check of `abc-dialect.md` §11, first passes the **music-mode check**; if it fails, the script shows the notice of key 0x10000335 and stops: native 0x07DE0001 is not called, no file is read, nothing starts or waits. The check passes when the local player's `Channeling_CurrentChannelingDID` (PID 0x10000BC3) is non-zero, the script finds the player's instrument item (an item lookup with argument 0x20040000, not traced further) and that item passes an item check, and the item's `Item_Music_Channeling_State` (PID 0x10000BA1) equals the player's current channelling DID. The music-mode toggle command uses the same check to choose between leaving and entering music mode (§8.8.1; revision 2) | OBS-S (the `/play` helper, the check body, the toggle command body; PIDs from dictionary 0x34000000) | Confirmed (OBS) (order, key, compared properties); meaning "in music mode" Probable (from the toggle); which notice key 0x10000335 resolves to not traced (Q12) |
 
 ---
 
@@ -815,6 +837,312 @@ in SND (its open question 5).
 > the instance count of the script-run check, or an owner test (a fast lute run of more than
 > 10 notes within one second; listen for dropped notes).
 
+<a id="s8-7"></a>
+### 8.7 Performance stepper (Confirmed (BIN), I45, I47–I49, I52; revision 2026-10-11)
+
+A started ABC performance of the local player (solo or synchronised) is not put into the
+queue in one piece. The client keeps **one** started performance and a **stepper** that hands
+its events on a little at a time, ahead of their due times. This section answers the OPEN of
+`abc-dialect.md` §8.5: its 0.5 s constant is the stepper's catch-up threshold (step 4).
+
+**State.** The event list of `abc-dialect.md` §9.4 (each event with its delta) and the index
+of the next event; the **start time** *S* and the **lead** *A* (seconds on the client clock);
+the **position** *P*, the sum of the deltas of the events taken so far; the **wake time** *W*
+("not yet" until the first tick); and the set of **held** note keys (note-ons taken whose
+note-off has not been taken).
+
+| Start | *S* | *A* |
+|---|---|---|
+| Solo `/play` (`abc-dialect.md` §8.5) | *t* + 0.7, *t* = the client clock of the frame in which the command is processed | 0.7 |
+| Synchronised start (§8.8.3) | from the start notification | from the start notification |
+
+**Starting a performance** (both kinds):
+
+1. If the local player has a running performance, it is stopped without finishing: the
+   stepper detaches, and the client posts its stop notification with time 0 (in the
+   original this leads to the cancel of §8.5, Probable: the path leaves the module, I47).
+   A synced `/play` alone does not do this; only a start does.
+2. The new event list is checked: every note-on names a key not held, every note-off a key
+   that is held, and the end comes with nothing held. Lists built by `abc-dialect.md` §9
+   always pass. A list that fails is not started (the old performance stays stopped).
+3. Index 0, *P* = 0, *W* = not yet, held set empty; *S* and *A* stored; the stepper is
+   attached to the client's update tick (as the queue is, I28).
+
+**On each update tick**, with *now* = the client clock as read for that frame (the queue of
+§8.3 reads the clock afresh instead; both are the same clock):
+
+1. **Finish.** If the end event has been taken, hand on a note-off at *S* + *P* for every
+   held key, detach and stop. (This happens on the tick after the end event is taken; events
+   already handed on still play.)
+2. **Wait.** If *W* is set and later than *now*, do nothing this tick.
+3. *ahead* = *S* + *P* − *now*; *elapsed* = *now* − *W*, or 0 before the first wake.
+4. **Catch-up.** If *ahead* < **0.5 s**: let *k* = 0.5 − *ahead*. Hand on a note-off at
+   *S* + *P* + *k* (that is, *now* + 0.5) for every held key. Then, while *k* > 0 and the end
+   has not been taken: take the next event, subtract its delta from *k*, add it to *P* and
+   update the held set **without handing the event on**; then take every following event
+   whose delta is 0 the same way. Set *extra* = 0. If the end has been taken, stop for this
+   tick. Effect: the part of the performance that lies before *now* + 0.5 — and the first
+   event at or after it, with its zero-delta followers — never sounds; the rest keeps its
+   times. *S* never changes.
+5. **Correction.** Otherwise *extra* = *A* − *ahead* if *ahead* < *A*, else *extra* =
+   *elapsed*.
+6. **Hand on.** Remember *P₀* = *P*. With *budget* = *A* + *extra*, while *budget* > 0 and the
+   end has not been taken: take the next event, subtract its delta from *budget*, add it to
+   *P*, and hand it on with time **S + P** (a note-on or note-off with the event's packed
+   note, held set updated; the end event hands on nothing); then take and hand on every
+   following event whose delta is 0 the same way.
+7. The events handed on in this tick leave the module as one batch through the dispatch of
+   §5.1 (Q1).
+8. *W* = *now* + (*P* − *P₀*) − *extra*.
+
+**Consequences.**
+
+- Every event handed on has a time at or after *now* + 0.5 of the tick that hands it on
+  (step 4 guarantees it, step 5 needs it), and normally about *A* or more ahead. A late tick
+  enlarges the next budget by *elapsed*, so the horizon is kept.
+- An event's time is always *S* plus its time-line offset (`abc-dialect.md` §8.4, summed as
+  deltas). The catch-up test of steps 3–4 compares *now* with *S* + *P*, the position reached
+  so far, **not** with the time of the next event: before any event is taken *P* = 0, so a
+  performance whose stepper first runs less than 0.5 s before *S* itself **loses its head**
+  (step 4) instead of starting late, and its time-0 stays *S*. The head is every event whose
+  time lies before *now* + 0.5 **and** the first event at or after *now* + 0.5 with its
+  zero-delta followers; since the first event is always taken once the test fires, a part
+  that begins with a rest loses its first note even when that note lies 0.5 s or more after
+  *now* (§14.10, revision 2).
+- The music-end key (`MusicEndSong`) finishes a running performance as in step 1 at once:
+  note-offs at *S* + *P*, the last handed-on position, and notice 0x0B87AC37. Notes already
+  handed on still sound, so the music stops at the stepper's horizon, up to about
+  *ahead* + *A* after the key (I52).
+- The two 0.5 s rules are separate: the queue's late drop (§8.3 step 2) tests each note-on
+  against the live clock when it is processed; the stepper's catch-up tests the performance
+  position against the frame clock before anything is handed on.
+
+<a id="s8-8"></a>
+### 8.8 Synchronised group start (revision 2026-10-11)
+
+How the original makes several players start their own parts together (`/play <song>
+[part] sync` on each member, then `/playstart` by any member). Client behaviour is
+Confirmed (BIN) or (OBS) as marked; everything between clients is server behaviour, which
+this spec does not describe (decision 0004) beyond what the client observably receives.
+
+<a id="s8-8-1"></a>
+#### 8.8.1 The waiting part (Confirmed (BIN), I43; checks Confirmed (OBS), I54, I58)
+
+**Checks before the client is called** (game script, revision 2). Once the command's words
+have passed the usage check of `abc-dialect.md` §11, the script runs, in this order:
+
+1. **Music-mode check** (every `/play`, solo or `sync`; I58): the local player must be in
+   music mode, that is, its current channelling DID (`Channeling_CurrentChannelingDID`) is
+   non-zero and equals the `Item_Music_Channeling_State` of the instrument item the script
+   finds for it. If not, the notice of key 0x10000335 is shown and the command ends.
+2. **Group check** (only with `sync`; I54): the same check as `/playstart`'s (§8.8.2). If it
+   fails, the notice of key 0x100003B0 is shown and the command ends.
+3. Native 0x07DE0001 is called with the name, the part and the sync flag.
+
+A command that ends at check 1 or 2 calls no client function: no file is read, no
+`abc-dialect.md` §10 message is shown, nothing starts, no part waits, no ready notice is
+shown, and the waiting part and the running performance stay as they were (§8.8.7). Both
+keys are shown through the script's general notice path, not as entries of table
+0x2500808A; what they resolve to was not traced (Q12).
+
+When both checks pass, `/play … sync` reads and checks the part exactly as a solo `/play`
+does (`abc-dialect.md` §3–§10). If it is refused or the file is missing, the message of
+`abc-dialect.md` §10 is shown and an earlier waiting part stays as it was. If it is accepted:
+
+- the performance becomes the local player's **waiting part**; there is one slot, so an
+  earlier waiting part is discarded (no message);
+- nothing starts and the running performance, if any, keeps playing;
+- no begin notice is shown (`abc-dialect.md` §10.4 rows 1–2 are for solo starts only);
+- the client posts a ready notification with the part's title to the game script, which
+  shows the own ready notice and tells the server (§8.8.6; the rest of that path is not
+  examined).
+
+A waiting part does not expire; it waits until one of the events of §8.8.7.
+
+<a id="s8-8-2"></a>
+#### 8.8.2 The group and the start request (I44, I54, I55)
+
+- **Who forms the group** (Reported): the members of the starter's group — a fellowship —
+  whose clients hold a waiting part. The client keeps no list of members and no state about
+  other members' parts; the group exists only on the server.
+- **Who may start** (Confirmed (OBS); Reported for the server side): any member. The
+  `/playstart` command takes no arguments (with arguments it shows its usage entry), checks
+  only that an object of the local player is present (Probable: membership of a group; Q12)
+  and then sends one request without arguments. `/playstart` runs no music-mode check (I58).
+  Leadership is not checked, and the starter
+  need not have a waiting part itself.
+- If the check fails, the script shows the notice of key 0x100003B0 (not an entry of table
+  0x2500808A; resolved by the script's general notice path, not traced) and sends nothing.
+- The **same check** guards `/play … sync` before the part is read (§8.8.1 check 2, I54) and
+  the own ready notice (§8.8.6). So in the original a player for whom it fails can neither
+  make a part wait nor send a start: both commands show the notice of key 0x100003B0.
+- `/playstart` starts nothing locally. The starter's own waiting part starts, like every
+  other member's, only when the start notification arrives (§8.8.3).
+
+> **OPEN:** (Q12) what the checked object is (fellowship, raid or any group) and which
+> notices keys 0x100003B0 and 0x10000335 resolve to. That `/play x sync` runs the same check
+> with the same key is answered (revision 2, M1 on record 0x56000000, I54). Suggested method:
+> owner test, `/playstart` outside any group and `/play x` outside music mode; M1 on the
+> script's general notice path.
+
+<a id="s8-8-3"></a>
+#### 8.8.3 The start and its time (Confirmed (BIN + OBS), I45, I46)
+
+Each client that receives the server's start notification hands two values to the client's
+synchronised-start entry (native 0x07DE0002): the **start time** *S* and the **lead** *A*,
+both as time stamps on the clock of §8.3 (the game script copies them unchanged). The entry:
+
+1. shows notice **0x012DD4A4** (always, also when nothing waits);
+2. if a part waits: starts it as in §8.7 ("Starting a performance") with this *S* and *A* —
+   which stops the local player's running performance first — and empties the waiting slot.
+
+So the common start time is chosen outside the client: every member's client is given the
+same *S* by the server, and the client computes nothing from its own clock. The lead *A*
+plays the role that 0.7 s plays for a solo start (the stepper's horizon); the solo start
+is the special case *S* = *t* + 0.7, *A* = 0.7 (§8.7). This answers `abc-dialect.md` §11
+OPEN (3) as far as the client goes.
+
+> **OPEN:** (Q10) the values the server gives: how far *S* lies after the `/playstart`
+> request, and *A*. Whether *S* is translated from a server clock to each client's clock is
+> inside the not-examined reading native (decision 0004). Suggested method: owner
+> observation with a stopwatch (time from pressing Enter on `/playstart` to the first note;
+> compare with a solo `/play`, 0.7 s).
+
+<a id="s8-8-4"></a>
+#### 8.8.4 Scheduling each member's part (Confirmed (BIN), I47–I49)
+
+Every member's client schedules **its own** waiting part with the common *S*: the stepper
+(§8.7) hands each event on with time *S* + offset, where the offset is the event's place on
+the time line of `abc-dialect.md` §8.4. With clocks that agree, every member's part therefore
+has the same time-0. A client that processes the start late does not shift its part: if its
+stepper's first tick comes less than 0.5 s before *S* + *P* — with *P* = 0 before any event
+is taken, that is less than 0.5 s before *S* itself, whatever the offset of the part's first
+note — the head is skipped (§8.7 steps 3–4; revision 2: was "before the part's next event"),
+and the remaining notes keep their times. A part that begins with a rest therefore loses its
+first note in that case (§14.10).
+
+<a id="s8-8-5"></a>
+#### 8.8.5 What a listener plays for other members (I50)
+
+A listener never reads another member's ABC file. Notes of other characters reach its queue
+as **timed note events** through natives that the game script calls when server
+notifications arrive (0x07DE0004 note-on, 0x07DE0005 note-off, 0x07DE000A a batch for one
+character, each with its time and sequence number; 0x07DE0006 cancels one character's
+music, §8.5). Each event is then processed by the queue rules of §8.2–§8.4: played when
+its time comes; a note-on that is 0.5 s or more late when processed is dropped; one that
+arrives less late plays at once (late). Since every performer hands events on at least
+0.5 s before their time (§8.7), events that cross the network in less than that arrive
+before they are due and sound at their own times, that is at *S* + offset on the
+listener's clock. That the events are other performers' notes and that their times are
+already on the listener's clock is Probable (the notification path is not examined).
+
+<a id="s8-8-6"></a>
+#### 8.8.6 Notices (I46, I52, I53)
+
+All entries are in the `UI_Music` table (key 0x10000069 → 0x2500808A, `abc-dialect.md`
+§10.3) unless stated. Argument IDs: title in ready notices **0x00058427** (not the 0x0058E905
+of the begin notice), member name **0x05506DA2**.
+
+| When | Shown by | Token | Arguments |
+|---|---|---|---|
+| Own synced part accepted, title not empty | game script, on the client's ready post, after the check of §8.8.2 (trigger Probable) | 0x0871DF57 | title |
+| Own synced part accepted, title empty | same | 0x02D8DC54 | none (no argument is set; revision 2) |
+| Another member's part is ready, title not empty | game script, on a server notification (trigger Probable) | 0x03A91887 | name, title |
+| Another member's part is ready, title empty | same | 0x0B630494 | name (title also set) |
+| `/play` (solo or `sync`) refused by the music-mode check (§8.8.1 check 1) | game script, before the client is called | key 0x10000335 (other path) | — |
+| `/play … sync` refused by the group check (§8.8.1 check 2) | game script, before the client is called | key 0x100003B0 (other path) | — |
+| `/playstart` refused by its check | game script | key 0x100003B0 (other path) | — |
+| A start notification is processed (every receiving client, with or without a waiting part) | client | 0x012DD4A4 | none |
+| Music-end key while a performance runs | client | 0x0B87AC37 | none |
+
+A synchronised start shows neither 0x00A19C55 nor 0x05D7A7A7 (`abc-dialect.md` §10.4).
+Client and script post the table entries above with chat output type 8, the type of the
+other player-music notices; the two keys marked "other path" go through the script's general
+notice path, whose output type was not traced.
+
+<a id="s8-8-7"></a>
+#### 8.8.7 Withdrawing a waiting part, ending a running one (Confirmed (BIN), I47, I51, I52)
+
+| Event | Waiting part | Running performance |
+|---|---|---|
+| `/play … sync` accepted | replaced by the new part | keeps playing |
+| `/play … sync` refused, file missing | kept | keeps playing |
+| `/play` (solo or `sync`) stopped by a script check (§8.8.1) | kept | keeps playing |
+| Solo `/play` accepted | **kept** | stopped (§8.7 start step 1); the new one starts |
+| Start notification | started and removed (kept nowhere) | stopped first if a part waits; untouched if none waits |
+| Music-end key | **kept** | finished at its horizon (§8.7), notice 0x0B87AC37 |
+| Either of the two subscribed notifications (0x1000018F, 0x10000143; Q11) | removed | finished at its horizon (no notice) |
+| Teardown of the music module | removed | — |
+
+There is no message when a waiting part is replaced or removed. Whether the server forgets a
+member's readiness on any of these is not known (Q13).
+
+> **OPEN:** (Q13) the server side of the group: whether a start reaches members without a
+> waiting part, and whether a member's readiness is forgotten when it withdraws, replaces its
+> part or leaves the group. Suggested method: owner observation with a second account.
+
+> **OPEN:** (Q11) which situations raise the two notifications that withdraw the waiting
+> part (expected: leaving music mode, or the instrument being unequipped). Suggested method:
+> owner test with a second member: `/play x sync`, then `/music off` (or unequip), then
+> `/playstart` by the other member; listen whether the part starts.
+
+<a id="s8-9"></a>
+### 8.9 Start tolerance (Decision, I57; revision 2026-10-11)
+
+> **Decision:** the **start tolerance** is **0.0001 s** (100 µs). On one listener's audio
+> clock:
+>
+> 1. the time-0 of any two performances started by one synchronised start differ by at most
+>    0.0001 s; and
+> 2. the time-0 of each such performance differs from the intended common start *S* by at
+>    most 0.0001 s.
+>
+> The **time-0** of a performance on a listener is, for each of its events that is played,
+> the time at which the listener schedules that event minus the event's offset on the
+> time line of `abc-dialect.md` §8.4. A performance meets the tolerance when every played
+> event does (time-0 is not taken from the first note alone, because the head of a late
+> part may be skipped, §8.7 step 4, and a part may begin with rests).
+
+**Why this value (provenance).** In the original every performance of one start is given
+the same *S* (§8.8.3) and every event is placed at exactly *S* + offset (§8.7 step 6,
+§8.8.5): by construction the time-0s are equal, not merely close. The only sub-millisecond
+quantity the original applies to event times is its ordering tolerance (§8.2, I18): times
+closer than 0.0001 s count as the same time. Tessera schedules on the audio clock with
+sample accuracy (§12), so its residual error is the rounding of a time to a sample (at most
+half a sample per time: 11.34 µs at 44,100 Hz, 10.42 µs at 48,000 Hz; a difference of two
+rounded times at most one sample, 22.68 µs at 44,100 Hz). 0.0001 s is the original's own
+"same time" and
+leaves more than four samples of margin at 44,100 Hz. A larger value would admit an error the
+original never makes; a smaller one would be tighter than the original's own notion of
+simultaneity.
+
+**Relation to the other two time constants.**
+
+- **0.0001 s ordering tolerance (§8.2).** Same value, different use: §8.2 decides the order
+  of events of the queue; §8.9 bounds where a performance's events are placed. Two
+  performances within the start tolerance are, for the queue, simultaneous wherever their
+  written times are equal, so the order of their events is the one the tie rule gives for
+  exact alignment.
+- **0.5 s late drop (§8.3) and catch-up (§8.7 step 4).** Neither is a tolerance on time-0.
+  Both remove notes and never move a performance: a part that starts late loses its head, an
+  event processed 0.5 s or more after its time is dropped, and the remaining events keep
+  *S* + offset. The tolerance therefore applies to every event that is scheduled; an event that
+  is processed after its time and played late (less than 0.5 s, §8.8.5) is outside the
+  synchronised behaviour and fails the tolerance. In Tessera's sandbox every member's part is
+  scheduled on the listener's own clock, so this must not happen, and it is a **requirement**
+  on the player (revision 2, answering the P4 implementation OPEN (e) of §12): every event of
+  a started part is handed to the audio scheduler before its time. A windowed client meets it
+  by updating the player every frame with the look-ahead of §12 answer (e) (0.1 s); a single
+  frame longer than the look-ahead may hand an event on late, which then plays late as in the
+  original's network case (a stall, not a tolerance failure of the start). A caller that
+  renders longer blocks, such as a headless run on a virtual clock (the check of P4 exit
+  criterion 3 below), hands events on as far ahead as its block, at most 0.5 s.
+
+**For P4 exit criterion 3** (a synchronised `/play` from a scenario starts within this
+tolerance): run the scenario on its virtual clock; for every performance started by the
+synchronised start and every note-on and note-off it schedules, |scheduled time − (*S* +
+offset)| ≤ 0.0001 s, with *S* the start time of §12 (P4 Decisions). Examples in §14.9–§14.10.
+
 ---
 
 <a id="s9"></a>
@@ -1121,6 +1449,165 @@ and map to key 0 elsewhere (§7.1), which no note switch has a case for. Within 
 > performer at the avatar and sharing the world-audio engine (§10.5) wait for an engine hand-off
 > in the walker.
 
+**Answers to the implementation OPEN above (revision 2026-10-11, BIN-S):**
+
+- **(b)** Original: starting a performance — a solo `/play` accepted, or a synchronised start
+  that finds a waiting part — stops the local player's running performance first (§8.7, I47).
+  A `/play … sync` does **not**: the running performance keeps playing until the start
+  (§8.8.7). Tessera's choice stands for solo `/play`; for `/play … sync` it must not cancel
+  the running performance.
+- **(c)** Original: the end of a performance hands on note-offs for the keys still held at
+  *S* + *P*, the end's own time (§8.7 step 1); with lists from `abc-dialect.md` §9 none are
+  held. Tessera's choice (note-offs at the end time) agrees.
+- **(d)** Answered by §8.8.3: the start time and the lead come from the start notification;
+  the client adds nothing. Superseded for Tessera by the P4 Decisions below: **one** *S*
+  shared by every waiting part, taken from the scenario feed's start when the session
+  delivers one, else *t* + 0.7 with *A* = 0.7 (P4 Decision 3, revision 2).
+- **(e)** Compatible with §8.7: the original hands events on at least 0.5 s early (normally
+  about *A* or more), so deciding at most 0.1 s early is within what the original allows.
+
+> **Decision (P4, 2026-10-11): synchronised start in Tessera.** Follow §8.7–§8.9:
+>
+> 1. **Waiting part.** One waiting part per character (the local player, and each fellowship
+>    member the scenario feed makes ready). An accepted `/play … sync` replaces the local
+>    player's waiting part and does not touch its running performance; the own ready notice
+>    of §8.8.6 is shown (0x0871DF57 or 0x02D8DC54). A refused one leaves the earlier part.
+> 2. **The group.** When the scenario feed reports a fellowship (`FellowshipChanged` with a
+>    non-empty member list, `scenario-feed.md`), the group is the local player plus the listed
+>    members, and its waiting parts are those of its members. Without a fellowship the group
+>    is the local player alone, as before (`abc-dialect.md` §11 (f)). This is a **deliberate
+>    difference** from the original (revision 2): there, `/play … sync` and `/playstart` both
+>    run the group check of §8.8.1–§8.8.2 (I54), and a player for whom it fails (Probable: one
+>    in no group, Q12) gets the notice of key 0x100003B0 from either command, with no file
+>    read, no part waiting, no ready notice and no request sent. Tessera keeps the group of one
+>    so that a player without a fellowship — the usual case in the sandbox, and the only case
+>    with Tessera's own server, which has no fellowships (decision 0035) — can still rehearse a
+>    synchronised part and its start; Tessera never shows the notice of key 0x100003B0.
+>    Following the original instead (refusing `/play … sync` and `/playstart` without a
+>    fellowship) would change the client's command handling and needs a new revision.
+> 3. **Start.** One start produces one start time *S* and one lead *A* (revision 2,
+>    reconciled with `scenario-feed.md` §6.7, which is normative for the feed's events):
+>    - **A start the session delivers** — the feed's `PerformanceSyncStart`, whether the feed
+>      attributes it to a member or sends it as the answer to the local `/playstart` (a
+>      backend that accepts `StartPerformance`: the feed and the plain sandbox) — takes its
+>      time from the event: *S* = the audio-clock time at which the client processes the event
+>      plus `lead_ms`; in a headless run whose audio clock runs in step with the feed's virtual
+>      clock, *S* = the audio-clock time of virtual time `at_ms`. *A* = `lead_ms` (*A* bounds
+>      nothing in Tessera's scheduling, Decision 4). With such a backend the local `/playstart`
+>      starts nothing itself, so one `/playstart` gives exactly one start.
+>    - **A local start** — `/playstart` with a backend that refuses `StartPerformance` (the
+>      test-server backend) — is Tessera's own: *S* = *t* + 0.7 and *A* = 0.7, *t* = the
+>      audio-clock time at which Tessera processes the command.
+>
+>    The feed's default lead (700 ms) gives the same values as a local start. The original's
+>    server values are unknown (Q10). The notice 0x012DD4A4 is shown once per start, also when
+>    nothing waits. Every waiting part of the group — the local one and every fed member's — is
+>    started with this same *S*; the local player's running performance is stopped first only
+>    if its own part waits. The waiting slots are emptied. Leadership plays no part.
+> 4. **Scheduling.** Every event of every started part is scheduled at *S* + offset on the
+>    listener's audio clock, within the start tolerance of §8.9. The head of a part is skipped
+>    by the rule of §8.7 steps 3–4 with *P* = 0 and *now* = the audio-clock time of the
+>    scheduling: when *S* − *now* < 0.5 s, every event before *now* + 0.5 and the first event
+>    at or after it, with its zero-delta followers, are not scheduled. The test compares with
+>    *S* itself, not with the time of the part's first note, so a part that begins with a rest
+>    loses its first note even when that note lies 0.5 s or more after *now* (revision 2: was
+>    "less than 0.5 s before *S* + (offset of its next event)"; §14.10). Nothing is shifted.
+>    The batching and horizon of the stepper need not be copied (§12 (e) stands).
+> 5. **Fed members.** A member's part is the tune named by the feed, read from the user's own
+>    music folder like a `PerformanceStarted` tune; when it is read and accepted, Tessera shows
+>    0x03A91887 (or 0x0B630494 for an empty title) with the member's name. A part that cannot
+>    be read or is refused shows Tessera's own log line and does not join. A
+>    `PerformanceStarted` outside a synchronised start keeps its meaning (*S* = *t* + its
+>    delay).
+> 6. **Withdrawal** as in §8.8.7, plus: a fed member's waiting part is removed when the feed's
+>    member list no longer contains that member, or when the feed stops that member's
+>    performance (`PerformanceStopped`) (Tessera's choice: the server side is not known, Q13).
+>    `/playstop` stays Tessera's own command (`abc-dialect.md` §11 (a)): it cancels the running
+>    performance and withdraws the local waiting part; a `MusicEndSong` key action, when bound,
+>    follows the original (finishes the running performance only, notice 0x0B87AC37, the part
+>    keeps waiting).
+> 7. **Tessera's own server** relays chat only (decision 0024, LEGAL.md §11.1 rule 5); whether a
+>    synchronised start may cross it is the owner's open question in decision 0024. Until it is
+>    answered, synchronised starts with other members exist only through the scenario feed.
+> 8. **Music-mode check** (revision 2). Tessera has no music mode yet: no channelling state and
+>    no music-mode toggle command, and the `MusicUI` input map is ignored (`keymap.md`). Until
+>    a spec adds music mode, check 1 of §8.8.1 counts as passed for every `/play`, the notice of
+>    key 0x10000335 is never shown, and the client choice (c) of the OPEN of 2026-10-07 above
+>    stands (with neither an instrument item nor a debug choice, `/play` reads and checks the
+>    song and nothing plays, with Tessera's own message). This is a deliberate difference: the
+>    original refuses such a `/play` before reading anything (I58). Once music mode exists,
+>    `/play` must run check 1 first, as in §8.8.1.
+
+> **OPEN (implementation, P4 client, 2026-10-11):** Decision 5 does not say which
+> instrument a fed member's part plays on (the feed's `PerformanceReady` carries none). The
+> client uses the local player's instrument type, else the first type of the instrument
+> table. It allots each member a character of its own in the player (by name, at most 64),
+> keeps the last 16 synchronised starts for the tolerance check, and places *S* on the audio
+> clock at the processing time plus `lead_ms` in a windowed run, and at `at_ms` on an audio
+> clock run in step with the virtual clock in the headless test (`scenario-feed.md` §6.7).
+
+> **OPEN (implementation, P4 audio, 2026-10-11):** `tessera_audio::instruments::SyncGroup`
+> had to choose where the P4 Decision is silent or reads two ways. Please confirm:
+> (a) **Decision 4 wording.** "less than 0.5 s before *S* + (offset of its next event)" and
+> §8.8.4 "before the part's next event" could be read as comparing with the first event's
+> offset; §8.7 step 3 compares with *S* + *P*, and *P* = 0 before any event is taken. Tessera
+> follows §8.7 (the rule Decision 4 names): a part beginning with a rest, scheduled 0.2 s
+> before *S*, loses its first note even when that note lies 0.7 s ahead (as **zG**: on G at
+> *S* + 0.5 is skipped). (b) A part whose whole event list falls to the catch-up (its end
+> taken) queues nothing, but the start still stops that performer's running performance
+> (§8.7 start step 1) and empties its waiting slot. (c) The note-offs of note-ons the
+> catch-up skipped are queued at their own times, as the original hands them on (§14.10:
+> they find no registry entry). (d) A start whose scheduling time is not known to the
+> caller skips nothing.
+> (e) **Update cadence.** §8.9's "that cannot happen" holds only while the player is updated
+> at least once per look-ahead (0.1 s) of rendered audio: an event whose time passes between
+> two updates is handed on late and fails the tolerance. A caller that renders longer blocks
+> (a headless scenario on a virtual clock) passes the block length
+> (`MusicPlayer::update_for`), which hands events on up to that far ahead, at most 0.5 s;
+> that takes the registry and instance-limit decisions up to 0.5 s early, beyond the 0.1 s
+> of answer (e) above. Please confirm 0.5 s is acceptable. (f) A part that does not fit
+> Tessera's own queue limits at the start (the original has none) is refused alone with
+> Tessera's own log line; its performer's running performance keeps playing, and its slot is
+> emptied like the others (Decision 3), so it cannot block later starts.
+
+**Answers to the P4 implementation OPENs above (revision 2, 2026-10-11):**
+
+- **P4 audio (a)** Tessera's reading is the right one. The catch-up compares *now* with
+  *S* + *P*, and *P* = 0 before any event is taken (§8.7 steps 3–4, confirmed by BIN-S and by
+  the independent review's own check). §8.7 Consequences, §8.8.4 and Decision 4 now say so;
+  the **zG** case is worked in §14.10 and stated as IN22.
+- **P4 audio (b)** Agrees with the original: the start stops the performer's running
+  performance (§8.7 start step 1) before the stepper runs, and the start empties the waiting
+  slot (§8.8.3 step 2); a list wholly taken by the catch-up hands on nothing (§8.7 step 4)
+  and is finished on the next tick with nothing held.
+- **P4 audio (c)** Agrees with the original: a note-on taken by the catch-up enters the held
+  set (§8.7 step 4), so its note-off, when it lies after the catch-up, is handed on at its own
+  time (step 6) and finds no registry entry (§8.4; off E in §14.10).
+- **P4 audio (d)** Not a fact of the original, whose starts always carry a time. Every start
+  of Decision 3 has a processing time; a start without one is outside this spec, and skipping
+  nothing for it is Tessera's own choice.
+- **P4 audio (e)** Accepted for callers that render blocks longer than the look-ahead (a
+  headless run on a virtual clock): they may hand events on up to 0.5 s early, no earlier
+  than the original's stepper hands events to its queue (§8.7), although the original's queue
+  then acts only at each event's time (§8.3). Registry and instance-limit decisions taken that
+  early can therefore differ from the original only when a cancel or a limit decision falls
+  inside the block; the tolerance check of §8.9 tests times only. A windowed
+  client keeps the 0.1 s of answer (e). §8.9 states the requirement.
+- **P4 audio (f)** Tessera's own choice (the original has no such limits); it agrees with
+  Decision 3, which empties every slot of the group.
+- **P4 client, start time.** Answered by Decision 3 (revision 2): the client's placement of
+  *S* (processing time plus `lead_ms` windowed, `at_ms` headless) is the specified one.
+  **Instrument of a fed member's part:** in the original another performer's notes carry
+  their instrument type in each event (§4.5, §8.8.5); the feed names none, so the client's
+  choice (the local player's type, else the first type of the table) is Tessera's own until
+  the feed carries one. The limits of 64 members and 16 remembered starts are Tessera's own.
+- **Client (c) of 2026-10-07** (what the original does for `/play` without an instrument):
+  the original's script refuses every `/play` outside music mode before reading, with the
+  notice of key 0x10000335 (§8.8.1 check 1, I58). Tessera keeps its choice (Decision 8).
+
+> **OPEN:** (Q14) owner decision on decision 0024, open item 2: may a synchronised start (the
+> ready and start notifications of §8.8) be relayed by Tessera's own server as chat?
+
 ---
 
 <a id="s13"></a>
@@ -1158,6 +1645,20 @@ and map to key 0 elsewhere (§7.1), which no note switch has a case for. Within 
   property set (§4.5).
 - **IN16** (synthetic): a packed note whose bits 8–23 are not zero is played, registered and
   turned off under the key in bits 0–7 (§5.1, §14.2).
+- **IN17** (synthetic, revision 2026-10-11): whatever the tick times, every event a started
+  performance hands on has the time *S* + its offset on the time line (§8.7 step 6).
+- **IN18** (synthetic): every event handed on has a time at or after *now* + 0.5 of the tick
+  that hands it on (§8.7).
+- **IN19** (synthetic): a character has at most one waiting part; an accepted `/play … sync`
+  replaces it; a start empties the slot (§8.8.1, §8.8.7).
+- **IN20** (synthetic): a start that finds no waiting part changes nothing but showing
+  0x012DD4A4; the running performance keeps playing (§8.8.3).
+- **IN21** (synthetic): skipping a late part's head (§8.7 step 4) never changes the times of
+  the events after it: every played event of every part of one start has time-0 *S*, within
+  the start tolerance of §8.9.
+- **IN22** (synthetic, revision 2): for a start processed at *now* with *S* − *now* < 0.5 s,
+  the first event of every part is never scheduled, whatever its offset (a part that begins
+  with a rest included); with *S* − *now* ≥ 0.5 s nothing is skipped (§8.7 steps 3–4, §14.10).
 
 ---
 
@@ -1245,6 +1746,95 @@ lasts 3 s. Notes 1–10 start; note 11 is registered but its run is refused beca
 instances of 0x10000BCE are active, so it makes no sound; its note-off removes the entry and
 stops nothing.
 
+The examples below (revision 2026-10-11) use one part, written **CDEF**: the reference header
+of `abc-dialect.md` §12 (unit 0.25 s) and the body `C D E F|`. Its events and offsets are:
+on C 0, off C and on D 0.25, off D and on E 0.5, off E and on F 0.75, off F 1.0, end 1.0
+(deltas 0, 0.25, 0, 0.25, 0, 0.25, 0, 0.25, 0).
+
+<a id="s14-8"></a>
+### 14.8 Stepper, solo start
+
+`/play` processed at *t* = 100.0: *S* = 100.7, *A* = 0.7.
+
+| Tick *now* | *ahead* | *extra* | Handed on | *W* after |
+|---|---|---|---|---|
+| 100.02 | 0.68 (≥ 0.5, < *A*) | 0.02 | on C 100.7; off C, on D 100.95; off D, on E 101.2; off E, on F 101.45 (budget 0.72 runs out after off E; its zero-delta follower on F goes with it) | 100.02 + 0.75 − 0.02 = 100.75 |
+| 100.76 | 100.7 + 0.75 − 100.76 = 0.69 | 0.01 | off F 101.7; the end is taken | 101.0 |
+| 100.78 | — | — | finish: nothing held, so nothing (step 1 comes before the wait) | — |
+
+Every handed-on time is *S* + offset (IN17) and at least *now* + 0.5 (IN18).
+
+<a id="s14-9"></a>
+### 14.9 Synchronised start on time, and the start tolerance
+
+Original: the start notification gives *S* = 10.0 and *A* = 0.7; the member's first stepper
+tick is at *now* = 7.0. *ahead* = 3.0 ≥ *A*, *extra* = 0 (first wake), budget 0.7: on C 10.0;
+off C, on D 10.25; off D, on E 10.5; off E, on F 10.75; *W* = 7.75. At 7.75: *ahead* 3.0,
+*extra* = *elapsed* = 0: off F 11.0 and the end. The part is on time and keeps a 3 s horizon.
+
+Tessera sandbox (§12 P4 Decision 3): the local player L waits with **CDEF**; fellowship member
+M waits with the part **zG**: reference header, body `z2 G2|` (a rest, then on G at offset
+0.5, off G and end at 1.0). The start is processed at *t* = 50.0, so *S* = 50.7 for both
+(a local start, or a fed start with `lead_ms` 700; revision 2).
+
+| Part | Event | Scheduled | Offset | Time-0 |
+|---|---|---|---|---|
+| L | on C | 50.7 | 0 | 50.7 |
+| L | off F | 51.7 | 1.0 | 50.7 |
+| M | on G | 51.2 | 0.5 | 50.7 |
+| M | off G | 51.7 | 1.0 | 50.7 |
+
+At 44,100 Hz the times are samples 2,235,870 (50.7 s), 2,257,920 (51.2 s) and 2,279,970
+(51.7 s), all exact. Differences: L–M 0, each part–*S* 0: within 0.0001 s, **pass**.
+
+Failing variants: (a) M is started with its own processing time instead of the common *S*,
+for example 50.016 + 0.7 = 50.716: M's time-0 50.716, 0.016 s from L and from *S* — **fail**
+(this is the error that one shared *S* prevents). (b) M's events are placed 0.00015 s late
+(51.20015 and 51.70015): time-0 50.70015 — **fail**. (c) M's events are placed 0.00004 s late:
+time-0 50.70004 — **pass**; at 44,100 Hz 51.20004 s rounds to sample 2,257,922, two samples
+(45.4 µs) after L's grid.
+
+<a id="s14-10"></a>
+### 14.10 Synchronised start processed late
+
+Original: *S* = 10.0, *A* = 0.7, **CDEF**, first stepper tick at *now* = 9.8. *ahead* = 0.2 <
+0.5, so *k* = 0.3; nothing is held, so no note-offs at 10.3. Catch-up takes, without handing
+on: on C (*k* 0.3, *P* 0); off C (*k* 0.05, *P* 0.25) with on D; off D (*k* −0.2, *P* 0.5) with
+on E; *k* ≤ 0 stops it. *extra* = 0, budget 0.7: off E 10.75 with on F 10.75; off F 11.0 and
+the end; *W* = 9.8 + 0.5 = 10.3. Only F sounds, at 10.75 = *S* + 0.75; E (offset 0.5) is
+skipped although 10.5 was 0.7 s ahead, because the catch-up also takes the first event at or
+after *now* + 0.5 − *S* = 0.3 (off D at 0.5) and its zero-delta follower. The off E handed on
+finds no registry entry and stops nothing (§8.4). Time-0 of every played event: 10.0 (IN21).
+
+A listener receiving the same performer's events late (§8.8.5): a note-on due at 10.25 that is
+processed at 10.80 is 0.55 s late and dropped; one due at 10.75 processed at 10.80 plays at
+10.80, 0.05 s late — outside the start tolerance; the original accepts this as a network
+effect, Tessera's sandbox never produces it.
+
+A part that begins with a rest (revision 2): *S* = 10.0, the part **zG** of §14.9 (on G at
+offset 0.5, off G and end at 1.0), first stepper tick at *now* = 9.8. *ahead* = *S* + *P* −
+*now* = 0.2 with *P* = 0 (not 0.7, the distance to the first note), so *k* = 0.3. The catch-up
+takes on G (*k* −0.2, *P* 0.5) and stops. *extra* = 0, budget 0.7: off G at 11.0 and the end.
+**Nothing sounds**, although on G at 10.5 was 0.7 s ahead of *now*; the off G finds no
+registry entry. With the first tick at *now* = 9.5 instead, *ahead* = 0.5 is not below 0.5,
+and on G is handed on at 10.5.
+
+<a id="s14-11"></a>
+### 14.11 Waiting part and running performance
+
+| Step | Action | Waiting part | Running | Notice |
+|---|---|---|---|---|
+| 1 | `/play a sync` (accepted, title "a") | a | — | 0x0871DF57 (own ready) |
+| 2 | `/play b` (solo, accepted) | a | b (*S* = *t* + 0.7) | 0x00A19C55 |
+| 3 | `/play c sync` (accepted) | c (a discarded) | b | 0x0871DF57 |
+| 4 | `/play d sync` (file missing) | c | b | file not found (`abc-dialect.md` §10.2) |
+| 5 | music-end key | c | b finished at its horizon | 0x0B87AC37 |
+| 6 | music-end key again | c | — (nothing runs) | none |
+| 7 | start notification (*S*, *A*) | — | c | 0x012DD4A4 |
+| 8 | second start notification | — | c keeps playing | 0x012DD4A4 |
+
+With a running b at step 7 (skip step 5), b is stopped first, then c starts.
+
 ---
 
 <a id="s15"></a>
@@ -1267,6 +1857,11 @@ stops nothing.
 | `ARCHITECTURE.md` §14 OPEN | Which sound records hold the instrument samples and how per-note pitch is derived | Answered by §4–§7 (neutral doc; its owner may update it). |
 | `research/notes/engine-client-re.md` §7 | "Notes: ABC `C,` to `c'` (MIDI 36–72 …)" | The client's own numbers are 48–84; 36–72 is the sounding range of the octave-0 instruments (§7.1, §7.4). |
 | `research/notes/data-semantics.md` §1 | 0x0700042F described as "Notes" | It is the shared sound-script table (292 scripts) that also holds the two music scripts (§4.1). |
+| `abc-dialect.md` §8.5 OPEN (revision 2026-10-11) | The 0.5 s constant of the performance stepper | It is the stepper's catch-up threshold (§8.7 step 4), a separate rule from the queue's late drop of §8.3. `abc-dialect.md` records the answer. |
+| `abc-dialect.md` §11 OPEN (3) | Source of the synced start time; meaning of the second start value | Both come with the server's start notification; the second value is the stepper's lead *A* (0.7 for a solo start) (§8.8.3). `abc-dialect.md` records the answer. |
+| `abc-dialect.md` §11 | "native 0x07DE0002 synced start" read as the `/playstart` command's call | 0x07DE0002 is called only by the game script's handler of the start notification; `/playstart` sends a request and calls no music native (I44). |
+| `scenario-feed.md` §16 OPEN (P4) | "The synchronised start tolerance of `PerformanceStarted` is taken from `instruments.md`" | The tolerance is §8.9: 0.0001 s on the listener's audio clock, for every scheduled event of every part of one start. A synchronised start needs the feed to make a member's part wait and to attribute a start to a member (§12 P4 Decision, items 2, 3, 5, 6); `PerformanceStarted` with a delay stays a solo-like start. For the `scenario-feed.md` owner to adopt. |
+| `scenario-feed.md` §16 OPEN (non-blocking, "P4 social"), reading (1) | With a backend that accepts `StartPerformance` the client starts only on the backend's `PerformanceSyncStart`, using its `lead_ms` as the lead | Agreed (revision 2): §12 P4 Decision 3 now takes *S* and *A* of every start the session delivers from the event, as §6.7 states, and keeps *S* = *t* + 0.7 only for a local start with a backend that refuses `StartPerformance`. Reading (2) is for `social-panels.md`. |
 
 ---
 
@@ -1286,6 +1881,11 @@ Each question has a `> **OPEN:**` callout at the place named in "Where".
 | Q7 | Which state sets the script-context flag that suppresses fire-and-forget sounds | §9.1 | M4 on the writers of that flag, with `sound.md` (SND §9.2 step 4, its question 8) |
 | Q8 | Cross-spec: whether the intensity factor is clamped when the variance is 0 (this spec: no; SND §9.3: yes) | §10.1 | Re-check by the `sound.md` writer; no effect on instruments (IN14) |
 | Q9 | What the separate voice pool of channel 5 (`QuantizedPlayerMusic`, flag 0x2) does to quantized notes | §10.4 | M4 on the voice-creation path, with `sound.md` (SND §7.2) |
+| Q10 | The start time and lead the server gives at a synchronised start (how far after the request; *A*); any clock translation | §8.8.3 | Owner observation with a stopwatch; the translation stays behind decision 0004 |
+| Q11 | Which situations raise the two notifications that withdraw a waiting part | §8.8.7 | Owner test with a second member (`/music off` or unequip between `/play x sync` and `/playstart`) |
+| Q12 | What the object checked by `/playstart`, `/play … sync` and the own ready notice is: fellowship, raid, or other group; which notices keys 0x100003B0 and 0x10000335 resolve to | §8.8.1, §8.8.2 | Partly answered (revision 2, M1): `/play … sync` runs the same check with the same key (I54); every `/play` first runs the music-mode check, key 0x10000335 (I58). Rest: owner test (`/playstart` outside any group, `/play x` outside music mode); M1 on the script's general notice path |
+| Q13 | Server side of the group: whether the start reaches members without a waiting part, whether readiness is forgotten when a member withdraws, leaves the group or replaces its part | §8.8.2, §8.8.7 | Owner observation with a second account (watch for 0x012DD4A4 on a member that did not `/play … sync`) |
+| Q14 | Whether a synchronised start may cross Tessera's own server (chat-only relay, LEGAL.md §11.1 rule 5) | §12 P4 Decision 7 | Owner decision (decision 0024, open item 2) |
 
 ---
 
@@ -1293,6 +1893,10 @@ Each question has a `> **OPEN:**` callout at the place named in "Where".
 
 | Date | Change |
 |---|---|
+| 2026-10-11 | Independent re-review of P4 revision 2 (spec reviewer, Clean-Room-Role: review): **passed**, every item of CLEAN_ROOM.md §5.3; status Revised → Accepted. B1–B3 resolved, own M1 checks of record 0x56000000, dictionary 0x34000000 and table 0x2500808A and an M4 check of the stepper and catch-up (decision 0011) agree; non-blocking notes (a), (b) in the review record. Header only, no content change. |
+| 2026-10-11 | Revision 2 of the P4 revision, answering the independent review (status stays Revised, awaiting re-review). **B1:** new I58 and §8.8.1 "Checks before the client is called" (M1 on record 0x56000000, OBS-S): every `/play` first passes the music-mode check (key 0x10000335), and `/play … sync` then the same group check as `/playstart` (key 0x100003B0); a stopped command reads nothing and changes no slot. I43, I54, §8.8.2, §8.8.6 (two rows), §8.8.7 (one row), Q12 and its callout revised; P4 Decision 2 restates its reason (a deliberate difference: Tessera keeps the group of one); new P4 Decision 8 (no music mode in Tessera yet: the check counts as passed). **B2:** §8.7 Consequences bullet 2, §8.8.4 and P4 Decision 4 measure the catch-up against *S* + *P* (*P* = 0 before any event), as §8.7 steps 3–4 do; new IN22 and a §14.10 example (a part beginning with a rest). **B3:** P4 Decision 3 takes *S* and *A* of a start the session delivers from `scenario-feed.md` §6.7 (`lead_ms`, `at_ms` headless) and keeps *t* + 0.7 for a local start with a backend that refuses `StartPerformance`; §12 answer (d) and a §15 row follow. Non-blocking: OBS-S counts (45 entries; 18 call sites in 14 bodies, N1), I53 and §8.8.6 own empty-title row (no argument set, N2), §8.9 sample figures (N3), §8.9 scheduling requirement and answers to the P4 implementation OPENs (a)–(f), the P4 client OPEN and client (c) of 2026-10-07 (N5). N4 not taken up (no effect on Tessera). No section number or anchor changed. |
+| 2026-10-11 | Independent review of the P4 revision (spec reviewer, Clean-Room-Role: review): changes requested, status stays Revised, not Accepted. Blocking B1 (script checks before `/play`, keys 0x10000335 and 0x100003B0), B2 (catch-up wording in `instruments.md` §8.7, §8.8.4, §12 Decision 4), B3 (`instruments.md` §12 Decision 3 against `scenario-feed.md` §6.7); non-blocking N1–N5. Header review record only, no content change. |
+| 2026-10-11 | Revision for P4, additive (status Revised). Third M4 pass (BIN-S) and the game script of the class library (OBS-S). New §8.7 (performance stepper: start, catch-up below 0.5 s, budget, wake time, finish; answers `abc-dialect.md` §8.5 OPEN), §8.8 (synchronised group start: waiting part, group and start request, the start time and lead from the start notification, scheduling, what listeners play, notices, withdrawal), §8.9 (**start tolerance** 0.0001 s, Decision, with its relation to the 0.0001 s ordering tolerance and the 0.5 s rules). §12: answers to the implementation OPEN (b), (c), (d), (e) and the P4 Decision for fellowships. §14.8–§14.11 examples, IN17–IN21, I43–I57, §15 rows, Q10–Q14. No earlier section or anchor changed. |
 | 2026-10-06 | Revision for the third-round re-review of 2026-10-06 (status stays Review). §4.4 and I26 corrected: the older copy 0x070017F9 does **not** name other sound infos for `Bagpipe`. Every one of its 2,120 Sound nodes names the same sound info as the matching case of 0x0700042F (335 distinct, all in the 746 instrument set), with the same channel, `FireAndForget`, `PitchVariance` and other fields, except `RampOutTime` 0 on the 222 `Bagpipe` nodes (0.2 in 0x0700042F). Added the path-intensity differences for `Flute`, `Lute`, `Theorbo`, `Bagpipe` and `Pibgorn` (1,110 Sound nodes), found by the same full comparison. Players are not affected (no avatar closure reaches 0x070017F9). |
 | 2026-10-06 | Revision for the re-review of 2026-10-05 (status stays Review). I31 and §6.3: script 0x1000274C of table 0x07000078 has two fire-and-forget Sound nodes on channel 1, naming 0x2A00A826 **and** 0x2A00A824 (was: one effect, 0x2A00A826); re-checked against every Sound node of all decodable tables and scriptlets. §4.2: the lead-in of the value table no longer calls 0x2A00A824 unused; it is unreferenced only by the two music scripts. §6.2: the 0x2A00A824 row names its one user. |
 | 2026-10-05 | Revision for the spec review of the same day (status stays Review). Second M4 pass (BIN-R). §5.1, §5.2, §8.4: one packed-note rule (key read from bits 0–7 everywhere, written as 24 bits; velocity above 127 dropped by the packers). §5.1: live-play handler facts (velocity 90, note-on at press, note-off at release; I41); UI option described instead of quoted. §9.1: rewritten; non-fire-and-forget sounds are subject to the sound-manager gates. §9.3: gate table for instrument notes. §10.1: the Sound node's own multiplier enters its volume (agrees with `sound.md`); clamp only when the variance is not 0 (disagrees with `sound.md` §9.3, Q8; census I42). §10.4: gain chain and channel-5 pool (Q9). §10.5: distance law only for flags 0x04/0x40, panning, reverb, camera listener. §4.2: flag 0x04 and fields `a`, `b` from `sound.md`; Q3 narrowed. §4.5: `PhysObj` copy and the no-`PhysObj` case; slot bits. §6.3: other users of instrument sound infos corrected (adds table 0x07000078). Callouts for Q1–Q9 at each unknown. Provenance rows I30–I42, tags BIN-R and SND; I14, I15, I22, I23, I29 revised. Invariants IN13–IN16; examples in §14.2 and §14.4; `sound.md` rows in §15; §12 live velocity 90 and the gate decision. |

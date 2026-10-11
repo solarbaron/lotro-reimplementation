@@ -68,6 +68,26 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_bag_5"),
         b("toggle_bag_6"),
         b("pin_tooltip"),
+        // P4 social panels (`social-panels.md` §7.2, §9 TR12): Tessera actions for the
+        // commands `ToggleSocialPanel`, the five page commands, `SelectFellowOne` … `Six`
+        // and `AssistFellowTwo` … `Six`.
+        b("toggle_social"),
+        b("toggle_social_grouping"),
+        b("toggle_social_friends"),
+        b("toggle_social_kinship"),
+        b("toggle_social_raid"),
+        b("toggle_social_raid_lock"),
+        b("select_fellow_1"),
+        b("select_fellow_2"),
+        b("select_fellow_3"),
+        b("select_fellow_4"),
+        b("select_fellow_5"),
+        b("select_fellow_6"),
+        b("assist_fellow_2"),
+        b("assist_fellow_3"),
+        b("assist_fellow_4"),
+        b("assist_fellow_5"),
+        b("assist_fellow_6"),
     ];
     // P2 targeting and quickslot actions (`keymap.md` §8.2): exact policy, no repeat.
     v.extend(crate::combat::TARGET_ACTIONS.iter().map(|r| b(r.1)));
@@ -203,6 +223,28 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_bag_5", vec![]),
         (GLOBAL, "toggle_bag_6", vec![]),
         (GLOBAL, "pin_tooltip", vec![D("Ctrl+T")]),
+        // P4 social panels: O opens the Social panel (the install's default, SP20). The
+        // page commands are unbound there too. The install binds `SelectFellowOne` … `Six`
+        // to F1 … F6 and `AssistFellowTwo` … `Six` to Shift+F2 … F6 (SP20); Tessera's own
+        // map leaves them unbound because F3 is its debug key, and the key-map import
+        // (`keymap.md` §12.14) brings the install's keys.
+        (GLOBAL, "toggle_social", vec![D("O")]),
+        (GLOBAL, "toggle_social_grouping", vec![]),
+        (GLOBAL, "toggle_social_friends", vec![]),
+        (GLOBAL, "toggle_social_kinship", vec![]),
+        (GLOBAL, "toggle_social_raid", vec![]),
+        (GLOBAL, "toggle_social_raid_lock", vec![]),
+        (GLOBAL, "select_fellow_1", vec![]),
+        (GLOBAL, "select_fellow_2", vec![]),
+        (GLOBAL, "select_fellow_3", vec![]),
+        (GLOBAL, "select_fellow_4", vec![]),
+        (GLOBAL, "select_fellow_5", vec![]),
+        (GLOBAL, "select_fellow_6", vec![]),
+        (GLOBAL, "assist_fellow_2", vec![]),
+        (GLOBAL, "assist_fellow_3", vec![]),
+        (GLOBAL, "assist_fellow_4", vec![]),
+        (GLOBAL, "assist_fellow_5", vec![]),
+        (GLOBAL, "assist_fellow_6", vec![]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,

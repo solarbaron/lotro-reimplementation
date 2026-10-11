@@ -6,7 +6,10 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use crate::limits::{CHAT_BUCKET_CAPACITY, CHAT_FLOOD_REJECTIONS, CHAT_FLOOD_WINDOW, CHAT_REFILL};
+use crate::limits::{
+    CHANNEL_BUCKET_CAPACITY, CHANNEL_REFILL, CHAT_BUCKET_CAPACITY, CHAT_FLOOD_REJECTIONS,
+    CHAT_FLOOD_WINDOW, CHAT_REFILL,
+};
 
 fn micros(d: Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
@@ -129,6 +132,14 @@ impl TokenBucket {
         self.refill_to(now);
         self.tokens
     }
+
+    /// The bucket that `ChannelJoin` and `ChannelLeave` of one connection share (minor ≥ 2,
+    /// §10.6): 5 tokens, one more every 6 s. A request with no token left is answered with
+    /// `ChannelRefused(RATE_LIMITED)`, which counts towards the chat flood rule.
+    #[must_use]
+    pub fn channel_requests() -> Self {
+        Self::new(CHANNEL_BUCKET_CAPACITY, CHANNEL_REFILL)
+    }
 }
 
 /// Outcome of a `ChatSend` against the chat limits.
@@ -204,6 +215,23 @@ mod tests {
         assert!(w.try_record(S + 1));
         assert!(!w.try_record(S + 1));
         assert_eq!(w.count(S + 10), 2);
+    }
+
+    #[test]
+    fn channel_bucket() {
+        let mut b = TokenBucket::channel_requests();
+        for _ in 0..5 {
+            assert!(b.try_take(0));
+        }
+        assert!(!b.try_take(0));
+        assert!(!b.try_take(6 * S - 1));
+        assert!(b.try_take(6 * S));
+        assert!(!b.try_take(6 * S));
+        // Sustained 10 per minute.
+        let mut b = TokenBucket::channel_requests();
+        for i in 0..100 {
+            assert!(b.try_take(i * 6 * S));
+        }
     }
 
     #[test]

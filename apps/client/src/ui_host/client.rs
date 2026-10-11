@@ -73,6 +73,9 @@ pub struct ClientUi {
     fell_back: bool,
     /// P1 panels asked for on the command line, opened once the player is in the world.
     p1_open: Vec<P1Panel>,
+    /// P4 social panels asked for on the command line (`--open-panel social|friends|
+    /// fellowship|trade`), handed to the social panels once the UI is attached.
+    social_open: Vec<crate::social::ui::SocialOpen>,
     /// `--character-select`: the character screens are still to open.
     want_screens: bool,
     /// The character screens before world entry, while open.
@@ -134,10 +137,15 @@ impl ClientUi {
             .iter()
             .filter_map(|n| parse_p1_panel(n))
             .collect();
+        let social_open: Vec<crate::social::ui::SocialOpen> = args
+            .open_panel
+            .iter()
+            .filter_map(|n| crate::social::ui::parse_open(n))
+            .collect();
         let panels: Vec<PanelId> = args
             .open_panel
             .iter()
-            .filter(|n| parse_p1_panel(n).is_none())
+            .filter(|n| parse_p1_panel(n).is_none() && crate::social::ui::parse_open(n).is_none())
             .filter_map(|n| {
                 let p = super::parse_panel(n);
                 if p.is_none() {
@@ -164,6 +172,7 @@ impl ClientUi {
             screen_request: None,
             fell_back: false,
             p1_open,
+            social_open,
             want_screens: args.character_select,
             pre_world: None,
             quit: false,
@@ -437,6 +446,9 @@ impl ClientUi {
         host.attach_mapper(mapper);
         // The plugins' local player carries the NPC windows' wallet views (P3).
         host.set_plugin_wallet(std::sync::Arc::clone(rt.npc.wallet()));
+        // The plugins' party views read their members' values from the runtime's party
+        // bridge (P4).
+        host.set_plugin_party(rt.party_actor_source());
         host.attach_plugins(&mut rt.plugins, &self.load);
         if self.options.hud {
             for (id, e) in host.open_hud(&mut rt.plugins) {
@@ -450,6 +462,12 @@ impl ClientUi {
             if id == PanelId::TargetVitals {
                 // Asked for by name: select a target so that P5 shows (§17.4).
                 host.set_target(&mut rt.plugins, true);
+            }
+        }
+        // The P4 social panels asked for by name.
+        if let Some(s) = host.social_mut() {
+            for o in std::mem::take(&mut self.social_open) {
+                s.request_open(o);
             }
         }
         // The combat widgets over the opened HUD (decision 0024 P2, `combat-ui.md`), built
@@ -900,6 +918,22 @@ fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Pane
             tracing::info!("item command not sent: {e}");
         }
     }
+}
+
+/// The social panels' frame (decision 0024 P4; after step 7, beside the NPC windows and
+/// the quest journal): the world session's social state drawn, the frame's UI events
+/// (`events`: the one list [`UiHost::take_game_events`] returns, empty while the character
+/// screens own them), the panels' actions sent to the session (`social-panels.md` §8.1).
+pub(crate) fn social_frame(
+    host: &mut UiHost,
+    world: &mut crate::net::World,
+    data: Option<&crate::character::CharacterData>,
+    events: &[tessera_ui::UiEvent],
+) {
+    let (social, player) = world.social_and_player();
+    let commands = host.social_frame(social, data, Some(player), events);
+    let refused = world.send_panel_commands(Instant::now(), commands);
+    host.post_session_lines(refused);
 }
 
 /// The combat frame (decision 0024 P2, after the character panels): the combat state's

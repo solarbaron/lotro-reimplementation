@@ -167,8 +167,15 @@ pub struct ChatLine {
     pub channel: ChatChannel,
     /// The line's chat type for the game UI's chat window (`chat-window.md` §2): 5 `Say`,
     /// 6 `Tell`, 8 `Log` for the session's system lines (`chat-window.md` §10 item 2), 4
-    /// `Standard` for the other channels.
+    /// `Standard` for the other channels; for a line with [`Self::shown`] the highest type
+    /// of its mask (§9 Q18 rule, §15.10 CT10).
     pub chat_type: u32,
+    /// (P4) The line as the chat window shows it: its 64-bit chat-type mask and its text in
+    /// the original's line form (`chat-window.md` §15.10 CT1, CT5, CT9, CT12; the derived
+    /// fellowship lines of `social-panels.md` §9 TR4). `None`: shown by §10 item 2.
+    pub shown: Option<(u64, String)>,
+    /// (P4) The instant-message line of a tell (CT6).
+    pub im: Option<tessera_ui::game::chat::social::ImLine>,
 }
 
 impl ChatLine {
@@ -190,6 +197,8 @@ impl ChatLine {
             } else {
                 chat_type
             },
+            shown: None,
+            im: None,
         }
     }
 
@@ -201,6 +210,34 @@ impl ChatLine {
             text: text.into(),
             channel: ChatChannel::System,
             chat_type: 8,
+            shown: None,
+            im: None,
+        }
+    }
+
+    /// A line the client derives from the session's events (a P4 notice: channel slots,
+    /// friend notices, fellowship notices), shown with `mask` (no sender).
+    #[must_use]
+    pub fn shown(mask: u64, text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            sender: String::new(),
+            text: text.clone(),
+            channel: ChatChannel::System,
+            chat_type: (64 - mask.leading_zeros()).max(1),
+            shown: Some((mask, text)),
+            im: None,
+        }
+    }
+
+    /// The text the chat shows: [`Self::shown`]'s, else the text (a system line) or
+    /// `Sender: text`.
+    #[must_use]
+    pub fn display_text(&self) -> String {
+        match &self.shown {
+            Some((_, t)) => t.clone(),
+            None if self.sender.is_empty() => self.text.clone(),
+            None => format!("{}: {}", self.sender, self.text),
         }
     }
 }
@@ -305,6 +342,14 @@ impl crate::walker::WalkerSession for World {
     fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
         self.look_data.clone()
     }
+
+    fn social_mut(&mut self) -> Option<&mut crate::social::SocialState> {
+        Some(&mut self.social)
+    }
+
+    fn send_command(&mut self, now: Instant, command: Command) -> Result<(), String> {
+        World::send_command(self, now, command).map_err(|e| e.to_string())
+    }
 }
 
 /// The client's view of the world source.
@@ -382,6 +427,9 @@ pub struct World {
     /// Someone else polls the session ([`World::apply_polled`]): [`World::update`] does
     /// not.
     external_poll: bool,
+    /// The player's social state (decision 0024 P4): chat lines in the original's forms,
+    /// fellowship, lists, invitation, trade, performance events for the player music.
+    social: crate::social::SocialState,
     /// The local player's combat state (decision 0024 P2, [`crate::combat`]).
     p2: crate::combat::CombatState,
     /// Its changes not yet taken ([`World::take_combat_changes`]), at most
@@ -574,12 +622,47 @@ impl World {
             p1_dropped: 0,
             manual_enter: false,
             external_poll: false,
+            social: crate::social::SocialState::new(true),
             p2: crate::combat::CombatState::new(),
             p2_changes: std::collections::VecDeque::new(),
             p2_overflowed: false,
             p2_events: std::collections::VecDeque::new(),
             p2_base: now,
         })
+    }
+
+    /// The player's social state (decision 0024 P4).
+    #[must_use]
+    pub fn social(&self) -> &crate::social::SocialState {
+        &self.social
+    }
+
+    /// The player's social state, mutably (the panels and the dispatcher's built-ins).
+    pub fn social_mut(&mut self) -> &mut crate::social::SocialState {
+        &mut self.social
+    }
+
+    /// The social state, mutably, with the local player's state (the trade window's drops
+    /// and tooltips read the player's items).
+    pub fn social_and_player(
+        &mut self,
+    ) -> (
+        &mut crate::social::SocialState,
+        &crate::character::PlayerState,
+    ) {
+        (&mut self.social, &self.p1)
+    }
+
+    /// Whether the backend offers user chat channels (`chat-window.md` §15.10 CT11): the
+    /// sandbox does (its scenario feed fills slots; without one it accepts and ignores the
+    /// channel commands); the test server from protocol minor 2 with `CHAT_CHANNELS`
+    /// (`scenario-feed.md` §9.8).
+    #[must_use]
+    pub fn offers_user_chat(&self) -> bool {
+        match self.remote_backend() {
+            Some(r) => r.has_chat_channels(),
+            None => true,
+        }
     }
 
     /// The local player's state (inventory, properties, header, look).
@@ -719,6 +802,27 @@ impl World {
         self.send(now, command)
     }
 
+    /// Sends the social panels' commands (`social-panels.md` §8.1); returns a type 1 line
+    /// (`That was refused: ` and the reason) for every command the session refuses, for
+    /// the chat window (TR13: a refusal posts the session's error line).
+    pub fn send_panel_commands(
+        &mut self,
+        now: Instant,
+        commands: impl IntoIterator<Item = Command>,
+    ) -> Vec<ChatLine> {
+        let mut lines = Vec::new();
+        for c in commands {
+            if let Err(e) = self.send(now, c) {
+                tracing::info!("social command not sent: {e}");
+                lines.push(ChatLine::shown(
+                    tessera_ui::game::chat::notice::ERROR,
+                    format!("{}{e}", crate::commands::social::REFUSED),
+                ));
+            }
+        }
+        lines
+    }
+
     /// The client enters the world itself (`true`: the character screens send
     /// `EnterWorld`; no automatic entry on `Connected`).
     pub fn set_manual_enter(&mut self, on: bool) {
@@ -824,16 +928,30 @@ impl World {
     }
 
     /// Sends `command`, writing it to the scenario log when the session accepts it.
+    /// Every command the player sends passes here (the panels, the dispatcher's built-ins,
+    /// the windowed input script): the social state notes the fellowship commands TR4
+    /// derives its lines from ([`crate::social::SocialState::note_command`]).
     fn send(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
+        let noted = matches!(
+            command,
+            Command::Social(
+                tessera_net::domain::SocialCommand::KickFromFellowship { .. }
+                    | tessera_net::domain::SocialCommand::LeaveFellowship
+            )
+        )
+        .then(|| command.clone());
         match &mut self.scenario_log {
             Some(log) if !log.is_closed() => {
                 let logged = command.clone();
                 self.session.send(now, command)?;
                 log.command(now, &logged);
-                Ok(())
             }
-            _ => self.session.send(now, command),
+            _ => self.session.send(now, command)?,
         }
+        if let Some(c) = noted {
+            self.social.note_command(&c);
+        }
+        Ok(())
     }
 
     /// The scenario's status when the sandbox plays one (`scenario-feed.md` §3.4).
@@ -1305,6 +1423,21 @@ impl World {
         if !changes.is_empty() {
             self.push_player_changes(changes);
         }
+        if matches!(ev, Event::WorldEntered { .. }) {
+            let on = self.offers_user_chat();
+            self.social.set_user_chat(on);
+        }
+        let lines = {
+            let entities = &self.entities;
+            self.social
+                .apply(ev, &|id| entities.get(&id).map(|e| e.name.clone()))
+        };
+        if let Some(coin) = self.p1.coin() {
+            self.social.set_wallet(coin);
+        }
+        for line in lines {
+            self.push_chat(line);
+        }
         if matches!(
             ev,
             Event::EntityCreated { .. }
@@ -1443,12 +1576,12 @@ impl World {
                 sender,
                 text,
             } => {
+                // The line itself went to the chat through the social state (CT1, CT8).
                 tracing::info!(
                     ?channel,
                     sender = sender.as_deref().unwrap_or("-"),
                     "net chat: {text}"
                 );
-                self.push_chat(ChatLine::from_channel(channel, sender.as_deref(), text));
             }
             Event::LocationReport {
                 id,
@@ -1652,6 +1785,67 @@ mod tests {
         world.set_collect_player_changes(true);
         world.push_player_changes(changes(2, 0));
         assert_eq!(world.take_player_changes().len(), 2);
+    }
+
+    /// Regression (P4 review, TR13): a panel command the session refuses posts a type 1
+    /// line instead of only a log entry.
+    #[test]
+    fn refused_panel_commands_post_a_type_1_line() {
+        use tessera_net::domain::SocialCommand;
+        let now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        // Not in the world yet: the session refuses.
+        let lines = world.send_panel_commands(
+            now,
+            [Command::Social(SocialCommand::AnswerInvite {
+                accept: true,
+            })],
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let (mask, text) = lines[0].shown.clone().expect("shown");
+        assert_eq!(mask, 0x1);
+        assert_eq!(lines[0].chat_type, 1);
+        assert!(text.starts_with(crate::commands::social::REFUSED), "{text}");
+    }
+
+    /// Regression (P4 review, TR4): a kick the world sends, whoever built it, is noted by
+    /// the social state, so the removal derives the dismissed line.
+    #[test]
+    fn a_sent_kick_derives_the_dismissed_line() {
+        use tessera_net::domain::{FellowMember, SocialCommand, SocialEvent};
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        for _ in 0..30 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        assert_eq!(world.state(), SessionState::InWorld);
+        let player = world.social().player().to_owned();
+        let member = |name: &str, leader: bool| FellowMember {
+            name: name.into(),
+            entity: None,
+            leader,
+        };
+        let changed = |members| Event::Social(SocialEvent::FellowshipChanged { members });
+        let _ = world.social_mut().apply(
+            &changed(vec![member(&player, true), member("Cael", false)]),
+            &|_| None,
+        );
+        let kick = Command::Social(SocialCommand::KickFromFellowship {
+            name: "Cael".into(),
+        });
+        world
+            .send_command(now, kick)
+            .expect("the plain sandbox accepts (and ignores) the kick");
+        let lines = world
+            .social_mut()
+            .apply(&changed(vec![member(&player, true)]), &|_| None);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.display_text().contains("was removed from the group")),
+            "{lines:?}"
+        );
     }
 
     #[test]

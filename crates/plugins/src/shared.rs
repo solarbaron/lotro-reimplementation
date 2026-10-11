@@ -188,13 +188,16 @@ impl SharedState {
         self.queue.push_back(Item::Chat { line, skip });
     }
 
-    /// Queue a gameplay event with its sequence number (see [`Shared::raise_gameplay`]).
-    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent, seq: u64) {
+    /// Queue a gameplay event with its sequence number (see [`Shared::raise_gameplay`]);
+    /// `false` when the queue was full and the event was dropped.
+    pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent, seq: u64) -> bool {
         if self.gameplay_queued < MAX_QUEUED_GAMEPLAY {
             self.gameplay_queued += 1;
             self.queue.push_back(Item::Gameplay(ev, seq));
+            true
         } else {
             self.dropped_gameplay += 1;
+            false
         }
     }
 
@@ -320,6 +323,10 @@ pub(crate) struct Shared {
     pub gameplay: Mutex<Option<Arc<dyn LocalPlayerSource>>>,
     /// The source of the inventory views (`lua-plugin-api.md` §15.1).
     pub inventory: Mutex<Option<Arc<dyn crate::inventory::InventorySource>>>,
+    /// The fellowship model of the party views (`lua-plugin-api.md` §15.4).
+    pub party: Mutex<crate::party::PartyModel>,
+    /// The source of party members' actor values (§15.4).
+    pub party_actors: Mutex<Option<Arc<dyn crate::party::PartyActorSource>>>,
     /// The source of the combat views (`lua-plugin-api.md` §15.2).
     pub combat: Mutex<Option<Arc<dyn crate::combat::CombatSource>>>,
     /// The subjects with a combat view object in some apartment (events of others are
@@ -336,18 +343,19 @@ impl Shared {
     /// Queue a gameplay event for step 7 with the next sequence number. Raised events are
     /// numbered even when the full queue drops them.
     /// A combat event whose subject has no view object in any apartment is not queued
-    /// (`lua-plugin-api.md` §15.2).
-    pub(crate) fn raise_gameplay(&self, state: &mut SharedState, ev: GameplayEvent) {
+    /// (`lua-plugin-api.md` §15.2). Returns `false` only when the full queue dropped the
+    /// event (the party views count those, §15.4).
+    pub(crate) fn raise_gameplay(&self, state: &mut SharedState, ev: GameplayEvent) -> bool {
         if let GameplayEvent::Combat(c) = &ev
             && !self.combat_watch.may_reach(c, || {
                 let src = lock(&self.combat).clone();
                 src.and_then(|s| s.player())
             })
         {
-            return;
+            return true;
         }
         let seq = self.gameplay_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        state.queue_gameplay(ev, seq);
+        state.queue_gameplay(ev, seq)
     }
 }
 

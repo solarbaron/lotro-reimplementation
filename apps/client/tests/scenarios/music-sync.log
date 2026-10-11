@@ -1,0 +1,22 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Evening reels"
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$brin kind=player name="Brin" at=3.000,0.000,0.000 facing=270.00
+0.000 FellowshipChanged members=[{name="Tamsin" entity=player leader=yes},{name="Brin" entity=$brin leader=no},{name="Cael" entity=none leader=no}]
+0.200 PerformanceReady member="Brin" entity=$brin tune="Lantern Reel"
+0.200 PerformanceReady member="Cael" entity=none tune="Lantern Reel"
+0.200 PerformanceReady member="Tamsin" entity=player tune="Lantern Reel"
+1.000 PerformanceWithdrawn member="Cael"
+1.000 PerformanceReady member="Cael" entity=none tune="Harbour Jig"
+1.500 PerformanceSyncStart by="Cael" at_ms=2500 lead_ms=1000
+3.000 > ReadyPerformance tune="Harbour Jig"
+3.500 > StartPerformance
+3.500 PerformanceSyncStart by="Tamsin" at_ms=4200 lead_ms=700
+3.500 ChatMessage channel=fellowship sender="Brin" text="From the top."
+3.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

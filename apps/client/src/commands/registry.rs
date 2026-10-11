@@ -33,13 +33,81 @@ pub enum Channel {
     Yell,
     /// Protocol channel 3.
     Emote,
-    /// Protocol channel 4: `tell <name> <text>`.
+    /// Protocol channel 4: `tell <name> <text>` (`chat-window.md` §15.10 CT4).
     Tell,
-    /// A `Tell` word whose target comes from a game callback (the reply and tell-again
-    /// words, `chat-window.md` §6.5): Tessera has no such target.
-    TellReply,
-    /// A channel the Tessera protocol does not carry (fellowship, raid, OOC, ...).
+    /// The reply word (`Commands` 0x0A48C3E9, CW43): a tell to the reply target (CT3, CT4).
+    Reply,
+    /// The retell word (`Commands` 0x048CE78C, CW43): a tell to the retell target.
+    Retell,
+    /// The fellowship channel (`Commands` 0x038453D4, CT7).
+    Fellowship,
+    /// User-channel slot 1–8 (`Commands` 0x08B3A4E1 … 0x08B3A4E8, CT5).
+    Slot(u8),
+    /// A channel the Tessera protocol does not carry (raid, OOC, ...).
     Unavailable,
+}
+
+/// A P4 social built-in that is not a channel of the mode table (`chat-window.md` §15.10
+/// CT2, CT5; `social-panels.md` §9 TR11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SocialWord {
+    /// `join` (`Commands` 0x03A7284C).
+    Join,
+    /// `part` (0x0DCD958C).
+    Part,
+    /// `channels` (0x0A55AF03).
+    Channels,
+    /// `chsay` (0x098B3A44).
+    ChSay,
+    /// `friend add|remove|list` (0x03D8B7E4).
+    Friend,
+    /// `ignore add|remove|list` (0x03FE1B25).
+    Ignore,
+    /// `invite NAME` (0x0F3108C5).
+    Invite,
+    /// `leave` (0x05A63F75).
+    Leave,
+    /// `dismiss NAME` (0x0F8F9533).
+    Dismiss,
+    /// `promote NAME` (0x094AD2D5, 0x03139345).
+    Promote,
+    /// `disband` (0x0F8E33D4, 0x05B57444).
+    Disband,
+}
+
+impl SocialWord {
+    /// Every word, in a fixed order.
+    pub const ALL: [Self; 11] = [
+        Self::Join,
+        Self::Part,
+        Self::Channels,
+        Self::ChSay,
+        Self::Friend,
+        Self::Ignore,
+        Self::Invite,
+        Self::Leave,
+        Self::Dismiss,
+        Self::Promote,
+        Self::Disband,
+    ];
+
+    /// The Tessera name (registered at start-up).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Join => "join",
+            Self::Part => "part",
+            Self::Channels => "channels",
+            Self::ChSay => "chsay",
+            Self::Friend => "friend",
+            Self::Ignore => "ignore",
+            Self::Invite => "invite",
+            Self::Leave => "leave",
+            Self::Dismiss => "dismiss",
+            Self::Promote => "promote",
+            Self::Disband => "disband",
+        }
+    }
 }
 
 /// A client built-in command.
@@ -53,6 +121,8 @@ pub enum Builtin {
     Plugins,
     /// A channel command.
     Channel(Channel),
+    /// A P4 social command.
+    Social(SocialWord),
 }
 
 /// What runs a command.

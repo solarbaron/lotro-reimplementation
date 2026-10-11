@@ -16,7 +16,7 @@ use tessera_text::{RenderOptions, Strings, Values};
 use tessera_ui::game::chat::ModeKind;
 
 use super::line::{self, DEFAULT_PREFIX};
-use super::registry::Channel;
+use super::registry::{Channel, SocialWord};
 
 /// STRINGTABLE key of the `CommandSetup` table (`chat-window.md` §7.2).
 pub const COMMAND_SETUP_KEY: u32 = 2;
@@ -37,16 +37,18 @@ pub const TOKEN_PLUGINS: u32 = 0x073F_0613;
 
 /// The 26 fixed rows of the channel-mode table (`chat-window.md` §6.5, §10 item 3): a
 /// `Commands` token, the row's chat type and word kind (what the chat window's modes use)
-/// and what its words do in Tessera (`Say` and `Tell` send, the reply and tell-again words
-/// need a target Tessera does not have, every other channel is not carried by the Tessera
-/// protocol). Neither variant group is read while Q12 (the game-state test that picks one)
-/// is open, so `IsCommand` answers false for their words (§10 item 3).
+/// and what its words do in Tessera (revision 4, §15.10 CT2: `Say`, `Tell`, reply, retell,
+/// fellowship and the eight user-channel slots run their handlers; every other channel is
+/// not carried by the Tessera protocol). The reply and retell rows follow the correction
+/// CW43 (0x0A48C3E9 is the reply word, 0x048CE78C the retell word). Neither variant group
+/// is read while Q12 (the game-state test that picks one) is open, so `IsCommand` answers
+/// false for their words (§10 item 3).
 pub const MODE_TABLE: [(u32, u32, ModeKind, Channel); 26] = [
     (0x04DA_4989, 5, ModeKind::Plain, Channel::Say),
     (0x0DA4_AC6C, 6, ModeKind::Plain, Channel::Tell),
-    (0x048C_E78C, 6, ModeKind::Reply, Channel::TellReply),
-    (0x0A48_C3E9, 6, ModeKind::TellAgain, Channel::TellReply),
-    (0x0384_53D4, 11, ModeKind::Plain, Channel::Unavailable),
+    (0x048C_E78C, 6, ModeKind::TellAgain, Channel::Retell),
+    (0x0A48_C3E9, 6, ModeKind::Reply, Channel::Reply),
+    (0x0384_53D4, 11, ModeKind::Plain, Channel::Fellowship),
     (0x07B5_3A04, 23, ModeKind::Plain, Channel::Unavailable),
     (0x06F0_47CE, 15, ModeKind::Plain, Channel::Unavailable),
     (0x0253_3A8E, 46, ModeKind::Plain, Channel::Unavailable),
@@ -57,17 +59,49 @@ pub const MODE_TABLE: [(u32, u32, ModeKind, Channel); 26] = [
     (0x040E_21EC, 19, ModeKind::Plain, Channel::Unavailable),
     (0x03AC_BD91, 9, ModeKind::Plain, Channel::Unavailable),
     (0x03AC_BD92, 10, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E1, 28, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E2, 29, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E3, 30, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E4, 31, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E5, 39, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E6, 40, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E7, 41, ModeKind::Plain, Channel::Unavailable),
-    (0x08B3_A4E8, 42, ModeKind::Plain, Channel::Unavailable),
+    (0x08B3_A4E1, 28, ModeKind::Plain, Channel::Slot(1)),
+    (0x08B3_A4E2, 29, ModeKind::Plain, Channel::Slot(2)),
+    (0x08B3_A4E3, 30, ModeKind::Plain, Channel::Slot(3)),
+    (0x08B3_A4E4, 31, ModeKind::Plain, Channel::Slot(4)),
+    (0x08B3_A4E5, 39, ModeKind::Plain, Channel::Slot(5)),
+    (0x08B3_A4E6, 40, ModeKind::Plain, Channel::Slot(6)),
+    (0x08B3_A4E7, 41, ModeKind::Plain, Channel::Slot(7)),
+    (0x08B3_A4E8, 42, ModeKind::Plain, Channel::Slot(8)),
     (0x0984_23C4, 38, ModeKind::Plain, Channel::Unavailable),
     (0x06E8_82B4, 44, ModeKind::Plain, Channel::Unavailable),
     (0x0538_82B4, 45, ModeKind::Plain, Channel::Unavailable),
+];
+
+/// The `Commands` entries of the P4 built-ins that are not mode-table rows
+/// (`chat-window.md` §15.10 CT2; `social-panels.md` §9 TR11): a token and its built-in.
+pub const SOCIAL_COMMANDS: [(u32, SocialWord); 11] = [
+    (0x03A7_284C, SocialWord::Join),
+    (0x0DCD_958C, SocialWord::Part),
+    (0x0A55_AF03, SocialWord::Channels),
+    (0x098B_3A44, SocialWord::ChSay),
+    (0x03D8_B7E4, SocialWord::Friend),
+    (0x03FE_1B25, SocialWord::Ignore),
+    (0x0F31_08C5, SocialWord::Invite),
+    (0x05A6_3F75, SocialWord::Leave),
+    (0x0F8F_9533, SocialWord::Dismiss),
+    (0x094A_D2D5, SocialWord::Promote),
+    (0x0313_9345, SocialWord::Promote),
+];
+
+/// The disband names (`social-panels.md` §7.1, TR11).
+pub const DISBAND_COMMANDS: [u32; 2] = [0x0F8E_33D4, 0x05B5_7444];
+
+/// The sub-word entries of `friend` and `ignore` (`social-panels.md` §7.1, TR11).
+pub const SUB_ADD: [u32; 3] = [0x07EB_EF14, 0x0B2A_C9B4, 0x0B53_0F84];
+/// The "remove" sub-word entries.
+pub const SUB_REMOVE: [u32; 3] = [0x070A_93F5, 0x0901_5875, 0x0B6B_9465];
+/// The "list" sub-word entries.
+pub const SUB_LIST: [u32; 5] = [
+    0x0531_B214,
+    0x02AD_D114,
+    0x06A8_8324,
+    0x0845_C0E4,
+    0x0EBF_BBD4,
 ];
 
 /// One mode-table row read from the install: its `Commands` entry (a name list), chat
@@ -107,6 +141,16 @@ pub struct CommandText {
     /// dispatcher registers their names as channel commands and the chat window takes its
     /// modes from them (`chat-window.md` §10 items 3 and 11).
     pub modes: Vec<ModeText>,
+    /// The name lists of the P4 built-ins that were read ([`SOCIAL_COMMANDS`] and the
+    /// disband entries), in table order.
+    pub social: Vec<(SocialWord, String)>,
+    /// The install's sub-words of `friend` and `ignore` (TR11): every name of the "add",
+    /// "remove" and "list" entries that were read.
+    pub sub_add: Vec<String>,
+    /// The "remove" sub-words.
+    pub sub_remove: Vec<String>,
+    /// The "list" sub-words.
+    pub sub_list: Vec<String>,
 }
 
 impl Default for CommandText {
@@ -119,6 +163,10 @@ impl Default for CommandText {
             help_names: None,
             plugins_names: None,
             modes: Vec::new(),
+            social: Vec::new(),
+            sub_add: Vec::new(),
+            sub_remove: Vec::new(),
+            sub_list: Vec::new(),
         }
     }
 }
@@ -151,6 +199,26 @@ impl CommandText {
                 })
             })
             .collect();
+        let mut social: Vec<(SocialWord, String)> = SOCIAL_COMMANDS
+            .iter()
+            .filter_map(|&(token, w)| entry(strings, commands, token).map(|n| (w, n)))
+            .collect();
+        social.extend(
+            DISBAND_COMMANDS
+                .iter()
+                .filter_map(|&t| entry(strings, commands, t).map(|n| (SocialWord::Disband, n))),
+        );
+        let words = |tokens: &[u32]| -> Vec<String> {
+            tokens
+                .iter()
+                .filter_map(|&t| entry(strings, commands, t))
+                .flat_map(|e| {
+                    super::registry::split_names(&e)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
         let text = Self {
             prefix: entry(strings, setup, TOKEN_PREFIX)
                 .unwrap_or_else(|| DEFAULT_PREFIX.to_owned()),
@@ -160,12 +228,17 @@ impl CommandText {
             help_names: entry(strings, commands, TOKEN_HELP),
             plugins_names: entry(strings, commands, TOKEN_PLUGINS),
             modes,
+            social,
+            sub_add: words(&SUB_ADD),
+            sub_remove: words(&SUB_REMOVE),
+            sub_list: words(&SUB_LIST),
         };
         if setup.is_some() && commands.is_some() {
             tracing::info!(
                 prefix_from_install = text.prefix != DEFAULT_PREFIX,
                 unknown_line = text.unknown_line.is_some(),
                 mode_rows = text.modes.len(),
+                social = text.social.len(),
                 "command words read"
             );
         } else {

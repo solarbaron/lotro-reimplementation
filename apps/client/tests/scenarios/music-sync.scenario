@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Synchronised music (docs/specs/scenario-feed.md §6.7; instruments.md §8.8–§8.9, §12 P4
+# Decision): parts of the player and two fellowship members wait, one is withdrawn and
+# replaced, one start starts them all at one time; then the player's own /play … sync and
+# /playstart (the generic answer). The tunes are looked up in the user's own music folder.
+# Synthetic: needs no install. Every name and text is invented for Tessera.
+tessera-scenario 1
+title "Evening reels"
+tick 100ms
+player "Tamsin"
+actor $brin kind=player name="Brin" pos=3,0,0 facing=270
+
+at 0s spawn $brin
++0s fellowship player $brin "Cael" leader=player
++0.2s perform $brin "Lantern Reel" sync
++0s perform "Cael" "Lantern Reel" sync
++0s perform player "Lantern Reel" sync
+at 1s perform-withdraw "Cael"
++0s perform "Cael" "Harbour Jig" sync
+at 1.5s perform-start by="Cael" lead=1s
+
+on play-start
++0s say $brin "From the top." channel=fellowship
+end
+
+input
+at 3s play-sync "Harbour Jig"
+at 3.5s play-start
+end

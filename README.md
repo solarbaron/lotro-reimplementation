@@ -101,8 +101,15 @@ player and target frames, cast bars, effect icons, floating combat text, quicksl
 and the defeat panel on screen (committed goldens without an install, local goldens with it);
 every one of 13,247 skill and 32,971 effect records gets its tooltip and icon or a category;
 combat scripts play their animations and particles on figures in the walker; actors on the
-test server can be selected and show a target frame. Its new specs still wait for an
-independent review before they are Accepted.
+test server can be selected and show a target frame. Its specs are Accepted.
+**P4 (social panels) is in its exit phase** ([P4 status](docs/ROADMAP.md#p4-status)): scripted
+fellowships, trades and friend and ignore lists draw in the install's fellowship display,
+invitation prompt, trade window and Social panel, with leader changes, removals and the
+disbanding shown; tells, replies and named chat channels work on Tessera's own test server
+(protocol 1.2, chat only) from the chat window through the one command dispatcher; and a
+synchronised `/play … sync` with `/playstart` starts every waiting part within 0.0001 s.
+Its specs are Accepted after independent reviews (2026-10-11) and the code is conformed to
+them; still open: effect icons on fellowship rows.
 
 | Area | State |
 |---|---|
@@ -130,6 +137,7 @@ independent review before they are Accepted.
 | Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | done (P1, merged): 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 1–4 pass |
 | NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs Accepted |
 | Combat presentation: selection and targeting keys, player and target frames, cast bars, effect bars, floating text, quickslot cooldowns, defeat panel (`tessera-ui` `game::combat`); skill and effect tooltips; combat animation and particles in the walker; plugin combat views; local selection on the test server | P2 exit phase: criteria 1–4 pass on Tessera's side; 20 / 20 elements shown at 11 checkpoints with and without the install; 33,601 skill and effect tooltips laid out, 12,617 categorised NoTooltip, 0 failures; 11,155 particle descriptors categorised; specs await independent review |
+| Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | done (P4, merged): criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); specs Accepted and code conformed (2026-10-11) |
 | Official-server compatibility | in scope (M8) by the owner's decision of 2026-10-11, without a legal review ([decision 0034](docs/decisions/0034-official-server-compatibility.md), [LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); not started, no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

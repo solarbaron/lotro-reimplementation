@@ -146,8 +146,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 passes its criteria on
-  branch `p2` (below, specs not yet Accepted); P3 runs in `wt-p3`, P4 in `wt-p4`.
+  criteria 1–4 pass). P1, P2, P3 and P4 are merged to main (2026-10-10 and 2026-10-11, below); P5 is
+  in progress on branch `p5`.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
@@ -251,12 +251,30 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   keys (owner); target portrait drawn as a white disc (E6); the voice-chat icon over the
   player name (§4.1 OPEN); main-thread record reads in combat cues (ARCH §21); U uses the
   nearest NPC, not the selection.
+- **P4 (social panels: fellowship, trade, friends and ignore lists, tells, named chat channels,
+  synchronised music; merged to main 2026-10-11, exit verification 2026-10-11)**
+  (`docs/ROADMAP.md` P4 status): criteria 1-3 pass on Tessera's side. Accepted after
+  independent review: `social-panels.md` (rev 1), `chat-window.md` rev 4, `abc-dialect.md`
+  and `instruments.md` P4, `tessera-protocol.md` v1.2 (minor 2), `test-server.md`,
+  `scenario-feed.md` rev 7, `lua-plugin-api.md` §15.4, decision 0035; the code was conformed
+  to them and verified (trade entry names, quality colours and coin displays; member-row
+  voice icons hidden; chat-window rev 4 fixes; loadtest bots on named channels; PartyMember
+  target and effects follow the member's entity). Built: protocol minor 2 in
+  `tessera-protocol`, `tessera-server` and `tessera-loadtest`; `tessera-net` remote channels
+  and the feed's P4 forms; `tessera-ui` `game::social` and `game::chat::{social, im,
+  notice}`; `tessera-plugins` `party`; `tessera-audio` `instruments::sync`; `tessera-client`
+  `social`, the P4 dispatcher built-ins and `/play ... sync`; scenarios `fellowship`,
+  `trade`, `friends`, `music-sync`. The M5 `--ui` gap is closed (chat window, overlay and
+  `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
+  synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
+  (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125). They do not block the
+  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137). They
+  do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

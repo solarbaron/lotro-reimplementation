@@ -76,7 +76,29 @@ pub struct ChatSetup {
     pub opacity: OpacityTable,
     /// `GOP_ChatOpacity` (§3.5; default 25).
     pub opacity_value: i32,
+    /// The instant-message tab (revision 4, §4.6, §15.10 CT6): its options and labels.
+    pub im: ImOptions,
 }
+
+/// The instant-message tab's options and labels (`chat-window.md` §4.6, §15.10 CT6).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ImOptions {
+    /// `GOP_FullIRCMode` of `GameplayOptionDefaults` (the tab is created when true).
+    pub full_irc: bool,
+    /// `GOP_AutoCreateIMSessions` (default true).
+    pub auto_create: bool,
+    /// The tab's label: *Chat*(0x0E3E83D5).
+    pub tab_label: String,
+    /// The generic row's label: *Chat*(0x0D93B0C5).
+    pub generic_label: String,
+    /// The property IDs of the tab's elements, by label.
+    pub pids: tessera_ui::game::chat::im::ImPids,
+}
+
+/// `Chat` token of the instant-message tab's label (§4.6).
+pub const TOKEN_IM_TAB: u32 = 0x0E3E_83D5;
+/// `Chat` token of the generic session row's label (§15.4).
+pub const TOKEN_IM_GENERIC: u32 = 0x0D93_B0C5;
 
 impl ChatSetup {
     /// The sandbox setup without install data (`ui-layout.md` §17.4 P2: one tab): window 1,
@@ -102,7 +124,45 @@ impl ChatSetup {
             modes: vec![(say, CHAT_SAY, ModeKind::Plain)],
             opacity: OpacityTable::default(),
             opacity_value: DEFAULT_OPACITY,
+            im: ImOptions {
+                auto_create: true,
+                ..ImOptions::default()
+            },
         }
+    }
+
+    /// Reads the instant-message options of `GameplayOptionDefaults` (`UNIQUEDB` key 0x68,
+    /// §4.6, CT6): `GOP_FullIRCMode` and `GOP_AutoCreateIMSessions` (booleans; a missing
+    /// one keeps the current value), and resolves the tab's property IDs with `pid`.
+    ///
+    /// # Errors
+    /// [`PanelsError::Record`] when the property set cannot be read.
+    pub fn load_im_options(
+        &mut self,
+        source: &dyn WorldSource,
+        schema: &(dyn PropertySchema + Send + Sync),
+        unique: &DataIdMap,
+        pid: &mut dyn FnMut(&str) -> Option<u32>,
+    ) -> Result<(), PanelsError> {
+        self.im.pids.resolve_with(pid);
+        let defaults = unique_set(source, schema, unique, GAMEPLAY_OPTION_DEFAULTS_KEY)?;
+        let flag = |name: &str, pid: &mut dyn FnMut(&str) -> Option<u32>| {
+            pid(name)
+                .and_then(|p| defaults.set.get(p))
+                .and_then(|v| match v {
+                    tessera_formats::PropertyValue::Bool(b) => Some(*b),
+                    tessera_formats::PropertyValue::Int(i) => Some(*i != 0),
+                    tessera_formats::PropertyValue::Enum(i) => Some(*i != 0),
+                    _ => None,
+                })
+        };
+        if let Some(b) = flag("GOP_FullIRCMode", pid) {
+            self.im.full_irc = b;
+        }
+        if let Some(b) = flag("GOP_AutoCreateIMSessions", pid) {
+            self.im.auto_create = b;
+        }
+        Ok(())
     }
 
     /// Replaces the configuration and the opacity table with the install's defaults
@@ -153,21 +213,31 @@ impl ChatSetup {
     /// read of the `CommandSetup` and `Commands` tables (§10 item 11,
     /// [`Self::apply_command_text`]), so it offers only mode words the registry holds.
     pub fn load_texts(&mut self, source: &dyn WorldSource, stringtable: &DataIdMap) -> usize {
-        let text = (|| {
+        let table = (|| {
             let did = stringtable.get(CHAT_TABLE_KEY)?.value;
             let bytes = source.read(did).ok()??;
-            let table = StringTable::parse_expecting(&bytes, did).ok()?;
-            table
-                .get(TOKEN_NO_REPLY_TARGET)
-                .map(tessera_formats::string_table::StringTableEntry::plain_text)
+            StringTable::parse_expecting(&bytes, did).ok()
         })();
-        match text.filter(|t| !t.is_empty()) {
-            Some(t) => {
-                self.texts.no_reply_target = t;
-                1
-            }
-            None => 0,
+        let Some(table) = table else { return 0 };
+        let text = |token: u32| {
+            table
+                .get(token)
+                .map(tessera_formats::string_table::StringTableEntry::plain_text)
+                .filter(|t| !t.is_empty())
+        };
+        let mut n = 0;
+        if let Some(t) = text(TOKEN_NO_REPLY_TARGET) {
+            self.texts.no_reply_target = t;
+            n += 1;
         }
+        // The instant-message tab's labels (revision 4, CT6).
+        if let Some(t) = text(TOKEN_IM_TAB) {
+            self.im.tab_label = t.trim().to_owned();
+        }
+        if let Some(t) = text(TOKEN_IM_GENERIC) {
+            self.im.generic_label = t.trim().to_owned();
+        }
+        n
     }
 
     /// Takes the command syntax and the mode table from the command dispatcher's read of
@@ -329,6 +399,68 @@ impl ChatPanel {
         self.chat.post_line(ui, mask, text)
     }
 
+    /// Posts a line with a 64-bit chat-type mask (revision 4: the P4 line forms,
+    /// §15.10 CT1–CT9) to the logs **without** queueing it for the plugins. Returns the
+    /// number of logs that took it.
+    pub fn show_mask(&mut self, ui: &mut Ui, mask: u64, text: &str) -> usize {
+        if mask == 0 {
+            return 0;
+        }
+        self.chat.post_line(ui, mask, text)
+    }
+
+    /// Creates the instant-message tab when `GOP_FullIRCMode` is true and the windows are
+    /// open (§4.6, CT6). Returns whether the tab exists afterwards.
+    pub fn ensure_im_tab(&mut self, ui: &mut Ui) -> bool {
+        if self.chat.im.is_some() {
+            return true;
+        }
+        if !self.setup.im.full_irc || !self.is_open(ui) {
+            return false;
+        }
+        self.chat.im_pids = self.setup.im.pids;
+        let label = if self.setup.im.tab_label.is_empty() {
+            "Conversations".to_owned()
+        } else {
+            self.setup.im.tab_label.clone()
+        };
+        let generic = if self.setup.im.generic_label.is_empty() {
+            "General".to_owned()
+        } else {
+            self.setup.im.generic_label.clone()
+        };
+        match self
+            .chat
+            .open_im_tab(ui, &label, &generic, self.setup.im.auto_create)
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::info!("instant-message tab not created: {e}");
+                // Do not try again every frame.
+                self.setup.im.full_irc = false;
+                false
+            }
+        }
+    }
+
+    /// Posts a line with a 64-bit mask to the logs and queues it for the plugins (a line
+    /// the social panels post, `social-panels.md` §9 TR3, TR9).
+    pub fn post_mask_line(&mut self, ui: &mut Ui, mask: u64, text: &str) -> usize {
+        if mask == 0 {
+            return 0;
+        }
+        self.post_mask(ui, mask, text)
+    }
+
+    /// Opens the entry in the `Tell` mode with `target` (`chat-window.md` §10 item 12; the
+    /// friends page's tell, `social-panels.md` §8.1), with the keyboard focus on it.
+    pub fn start_tell(&mut self, ui: &mut Ui, target: &str) {
+        if let Some(e) = self.chat.primary().and_then(|p| self.chat.windows[p].entry) {
+            ui.set_focus(Some(e));
+        }
+        self.chat.set_tell_mode(ui, target);
+    }
+
     /// Posts a Tessera system line (type 8 `Log`, §10 item 2).
     pub fn post_system(&mut self, ui: &mut Ui, text: &str) -> usize {
         self.post(ui, CHAT_LOG, text)
@@ -443,7 +575,7 @@ mod tests {
                     names: "again".into(),
                     chat_type: 6,
                     kind: ModeKind::TellAgain,
-                    channel: Channel::TellReply,
+                    channel: Channel::Retell,
                 },
                 ModeText {
                     names: "band;b".into(),

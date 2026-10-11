@@ -219,6 +219,37 @@ code_enum! {
         Muted = 4, "MUTED";
         /// The sender is not in the world.
         NotInWorld = 5, "NOT_IN_WORLD";
+        /// Minor ≥ 2: a `Named` line for a channel the sender is not a member of, that does
+        /// not exist, or whose name breaks the `NAME` content rule (§10.6). A server never
+        /// sends it at a lower minor; a receiver there shows it as a generic failure (the
+        /// decoder returns `Other(6)` below minor 2, whose `name()` is `"OTHER"`).
+        NotJoined = 6, "NOT_JOINED";
+    }
+}
+
+code_enum! {
+    /// `ChannelRefused` codes (minor ≥ 2, §14.8).
+    ChannelRefusedCode {
+        /// The channel-request bucket of §10.6 is empty.
+        RateLimited = 1, "RATE_LIMITED";
+        /// Empty, control characters, or the server's channel-name rule.
+        InvalidName = 2, "INVALID_NAME";
+        /// `ChannelJoin` for a channel the player is a member of.
+        AlreadyJoined = 3, "ALREADY_JOINED";
+        /// `ChannelLeave` for a channel the player is not a member of (or that does not
+        /// exist).
+        NotJoined = 4, "NOT_JOINED";
+        /// The player is a member of as many channels as the server allows per character.
+        TooManyChannels = 5, "TOO_MANY_CHANNELS";
+        /// The channel does not exist and the server holds as many channels as it allows.
+        ServerLimit = 6, "SERVER_LIMIT";
+        /// The channel has as many members as the server allows.
+        ChannelFull = 7, "CHANNEL_FULL";
+        /// The session is InWorld but the simulation has not yet placed, or has already
+        /// removed, the player.
+        NotInWorld = 8, "NOT_IN_WORLD";
+        /// Unexpected local failure.
+        ServerError = 9, "SERVER_ERROR";
     }
 }
 
@@ -271,7 +302,14 @@ mod tests {
             assert_eq!(AppErrorCode::from_u16(v).to_u16(), v);
             assert_eq!(LoginFailedCode::from_u16(v).to_u16(), v);
             assert_eq!(ChatRejectedCode::from_u16(v).to_u16(), v);
+            assert_eq!(ChannelRefusedCode::from_u16(v).to_u16(), v);
         }
+        assert_eq!(ChatRejectedCode::from_u16(6), ChatRejectedCode::NotJoined);
+        assert_eq!(ChannelRefusedCode::from_u16(9).name(), "SERVER_ERROR");
+        assert!(matches!(
+            ChannelRefusedCode::from_u16(10),
+            ChannelRefusedCode::Other(10)
+        ));
         assert_eq!(AppErrorCode::from_u16(0x0B), AppErrorCode::SlowConsumer);
         assert_eq!(
             AppErrorCode::from_u16(0x99).effective(),

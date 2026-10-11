@@ -692,11 +692,13 @@ fn tell_mode_hands_out_the_target() {
         &[
             ("S".into(), 5, ModeKind::Plain),
             ("t".into(), 6, ModeKind::Plain),
+            ("r".into(), 6, ModeKind::Reply),
         ],
         &chat.setup,
     );
     chat.command(&mut ui, "AcceptInput", false, false, &mut h);
-    type_text(&mut ui, &mut chat, "/t ");
+    // The reply word enters the `Tell` mode (a plain tell word switches nothing, CW44).
+    type_text(&mut ui, &mut chat, "/r ");
     assert_eq!(chat.mode, 6);
     chat.target = "Bram".into();
     type_text(&mut ui, &mut chat, "hi there");

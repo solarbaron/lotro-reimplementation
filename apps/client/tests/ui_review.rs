@@ -55,12 +55,16 @@ fn a_session_line_reaches_received_once() {
             text: "review-system".into(),
             channel: tessera_net::ChatChannel::System,
             chat_type: 8,
+            shown: None,
+            im: None,
         },
         tessera_client::net::ChatLine {
             sender: "Npc".into(),
             text: "review-say".into(),
             channel: tessera_net::ChatChannel::Say,
             chat_type: 5,
+            shown: None,
+            im: None,
         },
     ]);
     for _ in 0..5 {
@@ -116,6 +120,49 @@ fn a_plugin_error_is_an_error_line() {
             && errors.iter().any(|(t, _)| *t == 1),
         "plugin errors are chat type 1 `Error`: {errors:?}"
     );
+    plugins.shutdown();
+}
+
+/// Regression (P4 review, `chat-window.md` §15.10 CT10): without a game UI a session line
+/// reaches `Received` with the chat type of its mask and its shown text (a tell: type 6),
+/// not as a `Standard` line.
+#[test]
+fn without_a_ui_session_lines_keep_their_chat_type() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plugins_dir = dir.path().join("Plugins");
+    write_plugin(&plugins_dir, "Review", "Listener", Some("L"), LISTENER);
+    let mut plugins = tessera_client::plugins::Plugins::start(
+        &plugins_dir,
+        dir.path().join("data"),
+        &["Listener".to_owned()],
+    );
+    plugins.data_unavailable();
+    let said = |p: &tessera_client::plugins::Plugins, s: &str| {
+        p.host().chat_lines().iter().any(|l| l.contains(s))
+    };
+    assert!(pump_plugins_until(&mut plugins, 5000, |p| said(
+        p,
+        "listener: ready"
+    )));
+    let tell = tessera_client::net::ChatLine {
+        sender: "Bo".into(),
+        text: "plain".into(),
+        channel: tessera_net::ChatChannel::Tell { peer: "Bo".into() },
+        chat_type: 6,
+        shown: Some((0x20, "review-tell".into())),
+        im: None,
+    };
+    plugins.chat_line(&tell);
+    let fellowship = tessera_client::net::ChatLine::shown(0x400, "review-fellow");
+    plugins.chat_line(&fellowship);
+    pump_plugins_until(&mut plugins, 5000, |p| said(p, "got review-fellow"));
+    let lines = plugins.host().chat_lines();
+    let got: Vec<&str> = lines
+        .iter()
+        .map(String::as_str)
+        .filter(|t| t.starts_with("got review-"))
+        .collect();
+    assert_eq!(got, ["got review-tell 6 Bo", "got review-fellow 11 nil"]);
     plugins.shutdown();
 }
 

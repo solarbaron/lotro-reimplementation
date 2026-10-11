@@ -13,7 +13,8 @@ combat. It can also join Tessera's own test server (not the game's servers) and 
 early game UI with Lua plugins (§3.12), with character selection and creation screens, a
 character panel with bag windows, and item tooltips (§3.13), and NPC windows, a quest log
 and tracker and the wallet (§3.14), and it shows targeting, skills and combat as a session
-reports them (§3.15). Scenario files (§3.11) script gameplay events
+reports them (§3.15), and social panels, tells and chat channels, and synchronised music
+(§3.16). Scenario files (§3.11) script gameplay events
 for testing;
 they play back what the file says and compute nothing.
 
@@ -750,6 +751,68 @@ server (`--scenario … --server`) may not script combat steps (exit 3).
 in turn.
 Play it with `tessera-client --scenario apps/client/tests/scenarios/combat-ui.scenario`
 (windowed), or headless with `--headless` to check its log.
+
+<a id="social"></a>
+### 3.16 Social panels, chat channels and music together
+
+These parts are early. The panels and lines come from your install; who is in your
+fellowship, your friends and ignore lists, a trade and other players' music come from a
+scenario file (§3.11), because Tessera runs none of the game's rules. Without a scenario the
+panels stay empty. On a test server (`--server`) only chat goes through the server: tells and
+named chat channels; fellowships, trades, lists and synchronised music are not there (the
+server relays chat only).
+
+**Panels.** With the game UI attached (`--ui`):
+
+| Key or option | What it does |
+|---|---|
+| O (`toggle_social`) | The Social panel; it opens at the page it last showed (first time: the fellowship page) and closes when shown |
+| (none) `toggle_social_friends`, `toggle_social_grouping`, `toggle_social_kinship`, `toggle_social_raid`, `toggle_social_raid_lock` | The Social panel at that page; again on the same page closes it |
+| (none) `select_fellow_1` … `6`, `assist_fellow_2` … `6` | Target a fellowship member (1 is you, 2 the first row, …) / that member's target |
+| `--open-panel social`, `friends`, `fellowship`, `trade` | Open the Social panel (at its friends or fellowship page) at start; the fellowship display and the trade window show themselves while there is a fellowship or a trade |
+
+The friend and member keys are unbound in Tessera's own key map (F3 is its debug key);
+bind them in the keymap file (§4.2). Escape closes the Social panel.
+
+- **Friends and ignore lists** show the names in the lists the session gives you, online
+  friends in the online colour; level, class and area are unknown (shown as such). Click a
+  column header to sort, again to reverse. Add asks you to use `/friend add NAME` (Tessera
+  has no input dialog yet); Remove, Invite and Tell act on the selected friend; a double
+  click starts a tell.
+- **Fellowship display**: one row per member besides you, with morale, power and level where
+  the session gives them; the leader marker on the leader's row, or on your own vitals panel
+  when you lead. A leader change, a member leaving or being dismissed, and the disbanding
+  show at once, with lines in chat. Clicking a row targets the member.
+- **Invitation**: accept or decline; nothing happens until the session answers.
+- **Trade window**: both offers with the items' icons and tooltips, your coin in the gold,
+  silver and copper entries, the trade button to accept, Cancel to end it. Dropping an item
+  from your bags offers it.
+
+**Chat commands.** Typed in the chat window (with `--ui`), in the walker's chat line, or with
+`--command` (channel and chat commands such as `/tell`, `/join` or `/ch1` are never sent from
+a start-up line; the lists and fellowship requests do run). They work under Tessera's names
+below and under the names your install's language gives them.
+
+| Command | What it does |
+|---|---|
+| `/tell NAME TEXT`, `/reply TEXT`, `/retell TEXT` | A private message; reply to the last one you got; tell the last one you told again. Shift or Ctrl with Up and Down in the chat entry steps through recent senders or recipients |
+| `/join NAME`, `/part NAME`, `/channels` | Join or leave a named chat channel (8 slots), list your channels |
+| `/ch1 TEXT` … `/ch8 TEXT`, `/chsay NAME TEXT` | Speak on a channel by slot or by name |
+| `/fellowship TEXT` | Speak to your fellowship |
+| `/friend add NAME`, `/friend remove NAME`, `/friend list`, and the same with `/ignore` | Your lists; lines from ignored names are hidden |
+| `/invite NAME`, `/dismiss NAME`, `/promote NAME`, `/leave`, `/disband` | Fellowship requests |
+
+With the instant-message option of your install, the chat window has a tab with one
+conversation per partner. On a test server, named channels need a server that speaks
+protocol 1.2; an older one says user chat is not available.
+
+**Music together.** `/play SONG [PART] sync` gets your part ready without starting it (a ready
+line in chat); `/playstart` starts every waiting part of your fellowship at one common time:
+offline the session answers with the start; on a test server your own part starts locally.
+Members' parts come from a scenario (`perform … sync`), and their songs are read from your own
+music folders like yours. A synchronised start shows its line once, also when nothing waits.
+A scenario's `perform ENTITY "Tune"` without `sync` plays that tune after its delay. Your own
+`/play` still needs an instrument (equipped, or chosen with `/instrument`).
 
 ---
 

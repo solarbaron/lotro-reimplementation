@@ -1,0 +1,34 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Company of the lantern"
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$brin kind=player name="Brin" at=3.000,0.000,0.000 facing=270.00
+0.000 LevelChanged entity=$brin level=31
+0.000 EntitySpawned entity=$cael kind=player name="Cael" at=-3.000,1.000,0.000 facing=90.00
+0.000 LevelChanged entity=$cael level=29
+0.500 FellowshipInvite from="Brin"
+1.000 > AnswerInvite accept=yes
+1.200 FellowshipChanged members=[{name="Tamsin" entity=player leader=yes},{name="Brin" entity=$brin leader=no}]
+1.200 VitalChanged entity=$brin vital=health current=640 max=800
+1.200 VitalChanged entity=$brin vital=power current=210 max=400
+2.000 FellowshipChanged members=[{name="Tamsin" entity=player leader=yes},{name="Brin" entity=$brin leader=no},{name="Cael" entity=$cael leader=no},{name="Eda" entity=none leader=no}]
+2.000 VitalChanged entity=$cael vital=health current=350 max=700
+2.000 VitalChanged entity=$cael vital=power current=300 max=300
+2.000 FellowVitalChanged member="Eda" vital=health current=450 max=900
+2.000 FellowVitalChanged member="Eda" vital=power current=90 max=300
+2.300 ChatMessage channel=fellowship sender="Brin" text="Lanterns lit."
+3.000 > Chat channel=fellowship text="Glad to have you."
+3.000 ChatMessage channel=fellowship sender="Tamsin" text="Glad to have you."
+4.000 FellowshipChanged members=[{name="Tamsin" entity=player leader=no},{name="Brin" entity=$brin leader=yes},{name="Cael" entity=$cael leader=no},{name="Eda" entity=none leader=no}]
+4.000 ChatMessage channel=fellowship sender="Eda" text="Brin leads from here."
+4.500 VitalChanged entity=$brin vital=health current=800 max=800
+6.000 > KickFromFellowship name="Cael"
+6.200 FellowshipChanged members=[{name="Tamsin" entity=player leader=no},{name="Brin" entity=$brin leader=yes},{name="Eda" entity=none leader=no}]
+8.000 > DisbandFellowship
+8.200 FellowshipChanged members=[]
+8.200 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

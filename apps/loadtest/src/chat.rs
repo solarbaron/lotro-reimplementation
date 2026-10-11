@@ -4,7 +4,9 @@
 //! receive it (from the rules of `tessera-protocol.md` §10.1 at the moment it was sent),
 //! who may (near a range edge, or while moving between sessions or places), and checks every
 //! receipt: a line must reach each certain recipient within 2 s, exactly once, and in order
-//! with the speaker's other lines.
+//! with the speaker's other lines. A line on a named channel (protocol minor 2,
+//! `tessera-protocol.md` §10.6) must reach exactly the channel's members (`test-server.md`
+//! §14 invariant 15).
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -27,6 +29,16 @@ pub enum Kind {
     Yell,
     /// To one character (Tell).
     Tell,
+    /// To the members of the run's shared channel with this number (`Named`, minor 2).
+    Channel(u8),
+}
+
+impl Kind {
+    /// Whether delivery depends on the speaker's position (Say).
+    #[must_use]
+    pub fn positional(self) -> bool {
+        self == Self::Say
+    }
 }
 
 /// Counts of chat delivery problems and successes.
@@ -54,6 +66,8 @@ pub struct ChatCounts {
     pub unknown: u64,
     /// Lines the server rejected (`ChatRejected`); their recipients are not judged.
     pub rejected: u64,
+    /// Lines sent on named channels (included in `lines`).
+    pub channel_lines: u64,
 }
 
 /// One chat problem, for the report's episode list.
@@ -125,8 +139,17 @@ impl ChatLedger {
             Kind::Say => "say",
             Kind::Yell => "yell",
             Kind::Tell => "tell",
+            Kind::Channel(_) => "channel",
         };
         format!("lt{:08x} {speaker} {seq} {k} load test line", self.run)
+    }
+
+    /// The name of shared channel `k` of this run: letters, digits and single spaces, so
+    /// it meets the server's channel-name rule (`test-server.md` §9.1), and unique to the
+    /// run, so runs against one server never share a channel.
+    #[must_use]
+    pub fn channel_name(&self, k: u8) -> String {
+        format!("lt{:08x} ch{k}", self.run)
     }
 
     /// Parses a tag made by [`text`](Self::text) for this run.
@@ -154,6 +177,9 @@ impl ChatLedger {
         optional: Vec<usize>,
     ) {
         self.counts.lines += 1;
+        if matches!(kind, Kind::Channel(_)) {
+            self.counts.channel_lines += 1;
+        }
         self.lines.insert(
             (speaker, seq),
             Line {
@@ -238,14 +264,15 @@ impl ChatLedger {
         false
     }
 
-    /// Judges every line sent at least [`JUDGE_AFTER`] ago. `stable(bot, from, to,
-    /// positional)` says whether a recipient's situation held still from `from` to `to`
-    /// (in the world the whole time; for positional channels also no teleport), which
-    /// decides whether a certain recipient stays certain.
+    /// Judges every line sent at least [`JUDGE_AFTER`] ago. `stable(bot, from, to, kind)`
+    /// says whether a recipient's situation held still from `from` to `to` for a line of
+    /// `kind` (in the world the whole time; for Say also no teleport; for a channel no
+    /// join or leave of it in flight or answered), which decides whether a certain
+    /// recipient stays certain and whether an unlisted one may not receive the line.
     pub fn judge_due(
         &mut self,
         now: Instant,
-        stable: &dyn Fn(usize, Instant, Instant, bool) -> bool,
+        stable: &dyn Fn(usize, Instant, Instant, Kind) -> bool,
     ) {
         while let Some(&k) = self.order.front() {
             let due = self
@@ -261,13 +288,13 @@ impl ChatLedger {
     }
 
     /// Judges every open line now (end of run).
-    pub fn judge_all(&mut self, stable: &dyn Fn(usize, Instant, Instant, bool) -> bool) {
+    pub fn judge_all(&mut self, stable: &dyn Fn(usize, Instant, Instant, Kind) -> bool) {
         while let Some(k) = self.order.pop_front() {
             self.judge(k, stable);
         }
     }
 
-    fn judge(&mut self, key: (usize, u32), stable: &dyn Fn(usize, Instant, Instant, bool) -> bool) {
+    fn judge(&mut self, key: (usize, u32), stable: &dyn Fn(usize, Instant, Instant, Kind) -> bool) {
         let Some(line) = self.lines.remove(&key) else {
             return;
         };
@@ -276,7 +303,7 @@ impl ChatLedger {
             self.counts.optional_received += line.receipts.len() as u64;
             return;
         }
-        let positional = line.kind == Kind::Say;
+        let kind = line.kind;
         let window_end = line.sent + DELIVERY_LIMIT;
         let window_start = line
             .sent
@@ -288,7 +315,7 @@ impl ChatLedger {
         }
         for &r in &line.certain {
             let times = by.remove(&r).unwrap_or_default();
-            if !stable(r, window_start, window_end, positional) {
+            if !stable(r, window_start, window_end, kind) {
                 if !times.is_empty() {
                     self.counts.optional_received += 1;
                 }
@@ -323,7 +350,7 @@ impl ChatLedger {
         for &r in &line.optional {
             if let Some(times) = by.remove(&r) {
                 self.counts.optional_received += 1;
-                if times.len() > 1 && stable(r, window_start, window_end, positional) {
+                if times.len() > 1 && stable(r, window_start, window_end, kind) {
                     self.counts.duplicated += 1;
                     self.problem(
                         "duplicated",
@@ -340,7 +367,7 @@ impl ChatLedger {
         let mut rest: Vec<_> = by.into_iter().collect();
         rest.sort_by_key(|(r, _)| *r);
         for (r, times) in rest {
-            if stable(r, window_start, window_end, positional) {
+            if stable(r, window_start, window_end, kind) {
                 self.counts.unexpected += 1;
                 self.problem(
                     "unexpected",
@@ -374,7 +401,7 @@ impl ChatLedger {
 mod tests {
     use super::*;
 
-    fn always(_: usize, _: Instant, _: Instant, _: bool) -> bool {
+    fn always(_: usize, _: Instant, _: Instant, _: Kind) -> bool {
         true
     }
 
@@ -443,6 +470,34 @@ mod tests {
         assert_eq!(l.counts.unexpected, 0);
         assert_eq!(l.counts.optional_received, 1);
         assert!(!l.failed());
+    }
+
+    /// A channel line: members must receive it, and a bot whose membership held still
+    /// outside the channel must not; one with a request in flight is not judged.
+    #[test]
+    fn channel_lines_reach_exactly_the_members() {
+        let t0 = Instant::now();
+        let mut l = ChatLedger::new(4, t0);
+        let name = l.channel_name(2);
+        assert_eq!(name, "lt00000004 ch2");
+        l.sent(0, 0, Kind::Channel(2), t0, vec![0, 1], vec![2]);
+        let text = l.text(0, 0, Kind::Channel(2));
+        assert!(text.contains(" channel "));
+        for r in [0, 1, 2, 3, 4] {
+            l.received(r, &text, t0);
+        }
+        // Bot 3 held still outside the channel; bot 4 had a request in flight.
+        l.judge_all(&|bot, _, _, kind| {
+            assert_eq!(kind, Kind::Channel(2));
+            bot != 4
+        });
+        let c = &l.counts;
+        assert_eq!((c.lines, c.channel_lines), (1, 1));
+        assert_eq!((c.expected, c.delivered), (2, 2));
+        assert_eq!(c.unexpected, 1, "{c:?}");
+        assert_eq!(c.optional_received, 2, "{c:?}");
+        assert!(l.failed());
+        assert!(Kind::Say.positional() && !Kind::Channel(0).positional());
     }
 
     #[test]

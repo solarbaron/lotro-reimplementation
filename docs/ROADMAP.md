@@ -1962,6 +1962,160 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 | 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
 | 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). |
 
+<a id="p4"></a>
+### P4: Social panels
+
+**Goal:** the social presentation of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P4): the Social panel's friend and
+ignore lists, the fellowship display with shared vitals, the fellowship invitation prompt,
+the trade window, tells, the instant-message tab and user chat channels in the chat window,
+and synchronised fellowship music. Everything shown comes from the user's install; fellowship,
+trade, lists, member vitals and performances are scripted by the scenario feed, never
+derived. On M7's test server P4 adds only chat: tells as before and named chat channels with
+join, leave and relay ([decision 0035](decisions/0035-p4-social-on-test-server.md); LEGAL.md
+§11.1 rule 5). Builds on P1. Risk tier T1.
+
+<a id="p4-deliverables"></a>
+**Deliverables**
+
+- Specs: `social-panels.md` (new: Social panel, fellowship display, invitation prompt, trade
+  window, commands, Tessera rules for the sandbox); `chat-window.md` revision 4 (tells, the
+  instant-message tab, user channels, the fellowship channel, ignore filter, friend notices);
+  P4 revisions of `abc-dialect.md` and `instruments.md` (the synchronised start and its
+  tolerance), `lua-plugin-api.md` (§15.4 Party views), `game-controls.md`, `game-panels.md`
+  and `ui-layout.md`.
+- [Decision 0035](decisions/0035-p4-social-on-test-server.md) and the revisions it asks for:
+  `tessera-protocol.md` v1.2 (minor 2: named chat channels), `test-server.md` (channel
+  registry, `[chat]` channel keys, limits, logs), `scenario-feed.md` revision 7 ("P4 social": waiting
+  parts and one synchronised start, the player's `/play … sync` and `/playstart` as
+  commands, fellow vitals, the disband command, the remote backend at minor 2; the sections
+  that collided with P2's and P3's revisions are Vector H §14.12, hostile rows and backend cases §14.13 and the review record §18.5).
+- `tessera-protocol`: minor 2 (`ChannelJoin`, `ChannelLeave`, `ChannelJoined`, `ChannelLeft`,
+  `ChannelRefused`, channel value 6 `Named`, `CHAT_CHANNELS`, `NOT_JOINED`, the §16.9
+  vectors). `tessera-server`: the channel registry (created on first join, dropped when
+  empty), limits, relay to members only, logging. `tessera-loadtest`: `chat` bots on channels
+  and the hostile 1.2 cases.
+- `tessera-net`: the remote backend at protocol 1.2 (`JoinChannel`, `LeaveChannel`, `Chat` on
+  `Named`); the feed's P4 steps, events (`PerformanceReady`, `PerformanceSyncStart`,
+  `PerformanceWithdrawn`, `FellowVitalChanged`), commands (`ReadyPerformance`,
+  `StartPerformance`, `DisbandFellowship`), patterns, input forms and generic answers; the
+  plain sandbox's answer to `StartPerformance`; Vector H and the P4 cases.
+- `tessera-ui`: `game::social` (fellowship rows and vitals, leader marker, the invitation
+  prompt, the trade window with both sides, coin and ready states, the friend and ignore
+  lists) and the chat additions (instant-message tab, channel tabs and slots).
+  `tessera-plugins`: the `Party` and `PartyMember` views. `tessera-audio`: the synchronised
+  start (waiting parts, one common start time within the tolerance of `instruments.md` §8.9).
+- `tessera-client`: the social panels fed by the session; the chat window on the decision
+  0020 dispatcher with `--ui` (closing the M5 gap: one command registry for the chat line,
+  the M5 chat window and `--command`); tells, replies and channel commands; `/play … sync`
+  and `/playstart` through the session; committed synthetic scenarios (fellowship with
+  leader change, removal and disbanding; trade; friends and ignore lists; synchronised
+  start) with their logs.
+- `fuzz/`: the protocol and scenario targets cover the 1.2 messages and the P4 steps; the
+  server target covers channel requests.
+- Documentation: ARCH §19 (the P4 events and commands, the remote backend's channels), §23;
+  `docs/USER_GUIDE.md` (social panels, channels on a test server, synchronised music); at
+  close-out `CLAUDE.md` Current state.
+
+<a id="p4-specs"></a>
+**Specs needed:** [`social-panels.md`](specs/social-panels.md) (new);
+[`chat-window.md`](specs/chat-window.md) revision 4; [`abc-dialect.md`](specs/abc-dialect.md),
+[`instruments.md`](specs/instruments.md) (synchronised start, start tolerance);
+[`lua-plugin-api.md`](specs/lua-plugin-api.md) §15 (Party views, §15.4);
+[`scenario-feed.md`](specs/scenario-feed.md) (revision 7, "P4 social");
+[`tessera-protocol.md`](specs/tessera-protocol.md) v1.2;
+[`test-server.md`](specs/test-server.md) (channel registry);
+[`game-controls.md`](specs/game-controls.md), [`game-panels.md`](specs/game-panels.md),
+[`ui-layout.md`](specs/ui-layout.md); decision 0020 (one command dispatcher).
+
+**RE tasks:** M1 on the install's layouts and string tables of the Social panel, the
+fellowship display, the invitation and trade windows and the chat window's tabs; M2
+(published plugin API and usage guides, facts only); M4 under
+[decision 0011](decisions/0011-standing-m4-authorisation.md) for what the layouts do not say:
+how the client wires these panels, the chat window's tell, channel and instant-message paths,
+and the client's synchronised-start path of player music (recorded as BIN rows in
+`social-panels.md`, `chat-window.md`, `instruments.md`, `lua-plugin-api.md`). Never the
+network protocol, login, keys, launcher or anti-tamper (decision 0004): where client code
+hands an action to the session layer, only that fact is recorded. Decision 0035 and the
+protocol, server and feed revisions are Tessera's own design and need none.
+
+<a id="p4-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. Fellowship, trade and friends scenarios render; leader change, removal and disbanding
+   are shown.
+2. Tells and channel join and leave work on M7's server (chat, rule 5).
+3. A synchronised `/play` from a scenario starts within the tolerance of
+   `instruments.md`.
+
+Owner observations in the original client: O130–O137
+([owner-observations.md](checklists/owner-observations.md#p4-items)); they do not block the
+criteria. O137 is the owner's answer to decision 0024 open item 2 (synchronised-music relay
+on Tessera's own server), which decision 0035 leaves open.
+
+<a id="p4-status"></a>
+**Status:** exit criteria 1–3 pass on Tessera's side (started 2026-10-11, branch `p4` in
+worktree `wt-p4` off bb43e74; exit verification 2026-10-11 on the uncommitted tree); main
+(P2 with its code, P3, the creation-screen fixes) was merged into the branch on 2026-10-11.
+No criterion needs an observation in the original client; the owner rows O130–O137
+([owner-observations.md](checklists/owner-observations.md#p4-items)) block nothing, and
+O137 is the owner's answer to decision 0024 open item 2. The P4 specs are **Accepted** after
+independent reviews (2026-10-11): `social-panels.md`, `chat-window.md` revision 4, the P4
+revisions of `abc-dialect.md` and `instruments.md`, `tessera-protocol.md` v1.2,
+`test-server.md`, `scenario-feed.md` revision 7 (P4's revision was written unnumbered and is
+numbered 7 after P2's 6 and P3's 5; Vector H is §14.12, the hostile rows and backend cases
+§14.13, the review record §18.5, the invariants 12–13), the P4 §15.4 revision of
+`lua-plugin-api.md` and decision 0035. A clean conform pass then brought the code in line
+with the Accepted text (trade entry names in quality colours and the NPC windows' coin
+displays for wallet and peer coin; member-row voice icons hidden (TR14); chat-window
+revision 4 fixes; loadtest bots on named channels and hostile 1.2 cases in the world;
+PartyMember target and effects follow the member's entity), verified by a separate session
+with 11 local tier-2 goldens matched under load and on a quiet machine. Merged to main
+2026-10-11; the merge-commit checks are in CLAUDE.md. Open: member-row effect icons (TR16),
+no committed synthetic P4 goldens (decision 0031 tier 1), the Leave error code
+(`tessera-protocol.md` §10.6 OPEN).
+
+Checks (install present, `TESSERA_PERF` unset, machine shared with other builds):
+`cargo fmt --check` (workspace and `fuzz/`); clippy `-D warnings` (workspace `--all-targets`,
+also `--all-features`; `fuzz/` `--bins`); `cargo test --release --workspace --no-fail-fast`
+with the install: **6,054 passed, 0 failed, 10 ignored** (431 test binaries);
+`tools/check-content.sh` (1,851 files), `tools/check-spdx.sh` (1,745 files),
+`tools/check-server-deps.sh` and a link and anchor check of the 138 Markdown files outside
+`research/`: 0 errors. `tools/fuzz-smoke.sh -t 60` on the new and changed targets:
+`protocol_v12_message` (2,281,072 runs), `server_v12_connection` (460,245),
+`net_social_channels` (67,710), `net_scenario_parse` (556,161), `audio_instruments` (53,667):
+no crash; `server_v12_world` crashed on its own membership check (a `Named` line queued for a
+connection whose session had just ended it for flooding, a line that never reaches the wire);
+the verifier made the check apply to open connections only, the crash input then ran clean
+and a new 60 s run gave 76,731 runs, no crash. The committed scenarios (13, the four P4 ones
+included) replay their logs byte for byte.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** (visual defects open) | `tessera-client` `social_panels_real_data` (1 / 1, release, install): the committed `fellowship`, `trade` and `friends` scenarios play headless on their virtual clock, every event reaches the client's social and player state, and the game-UI host draws the panels from the install's layouts offscreen. Fellowship: the invitation shows at 0.9 s and hides after Accept; rows `Brin` (1.3 s, player leads), `Brin, Cael, Eda` (2.6 s), the leader change to Brin at 4.6 s (markers `[true, false, false]`, player no longer leads), the removal of Cael at 6.3 s (`Brin, Eda`), the disbanding at 8.2 s (panel hidden, 0 % covered); 9 fellowship lines of chat type 11, all 9 rendered from the install's tables, the kick giving the dismissed line. Trade: 2 then 3 peer entries (a literal and two items of the selector, both with the install's icons), 2 own entries after the drop, ready own then both, the window closed on completion (0 % covered). Friends: 4 rows, then 5 after `/friend`, ignore list 2 then 3, the ignored tell filtered. 16 pictures written to private scratch and viewed by the verifier (invitation, fellowship at five times, trade at six, friends at four): member rows with names, morale and power bars and levels, the leader marker moving to Brin, Cael's row gone, the panel gone after the disbanding; the trade window with both sides, the peer's item icons, the own coin (25 silver) and the highlighted Trade button; the Social panel's Friends page with online names green and offline yellow. The verifier fixed two defects seen in the pictures: an unknown level (Eda) and the invitation row's level and area showed the layout's own placeholder texts ("12", "123 / Menu option 2"); they are now empty (`tessera-ui` `game::social::{fellowship, invite}`, regression asserts in `crates/ui/tests/game_social.rs`, TR3 and TR7). Models and views: `tessera-ui` `game_social` 27 / 27, `game_chat_social` 17 / 17, `game_social_real_data` 1 / 1 (every label of the social layouts resolves on the install); `tessera-net` `scenario_p4` 13 / 13 (Vector H, the §14.13 hostile rows); `tessera-plugins` `party_views` 19 / 19 (`Party` and `PartyMember`, §18 checks 90–96). **Visual defects (open, not blocking):** (a) the trade window draws no entry names, no icon for literal entries, and neither the wallet (`SelfTrade_TotalMoney`) nor the peer's coin (`OtherTrade_MoneyDisplay`): the money displays are game-type elements whose own text is not drawn, and the name text and the displays' children are not given by the spec (`social-panels.md` §6.2 implementer OPEN, GP §11 OPEN; P3's money display widget on main may serve once merged); (b) a red and green state icon shows on every fellowship row and on the player portrait. |
+| 2 | **pass** | `tessera-client` `social_chat_server` (1 / 1): an in-process `tessera-server` at protocol 1.2 and two clients built from the client's own `net::World`, plugin host and game-UI host; every line enters as the M5 chat window's entry hands it over and runs through `UiHost::dispatch_entry_lines` (the decision 0020 dispatcher, closing the M5 `--ui` gap): `/tell`, the incoming tell, `/reply` to the reply target, a line in the Tell mode, `/join Lore` and `/join lore` (one channel, the server's spelling), `/ch1` heard by the other member in slot 1's form, `/part Lore` after which the other no longer hears the channel. Protocol and server: `tessera-protocol` `v12_channels` 13 / 13 (incl. code 6 below minor 2), `tessera-server` `channels` 9 / 9 and `channel_logs` 1 / 1, `tessera-loadtest` `v12_channels` 3 / 3 (tells and a channel between two clients while a minor-1 peer gets no 1.2 message; the hostile 1.2 cases end as specified, counts back at baseline), `tessera-net` `remote_channels` 3 / 3. The server learns only channel names and the chat it relays (decision 0035 D1, LEGAL.md §11.1 rule 5); `check-server-deps` passes. |
+| 3 | **pass** | `tessera-client` `social_music_sync` (7 / 7): the committed `music-sync` scenario plays headless with the audio clock stepped with the virtual clock; the time-0 of every part is read from the instruments' schedule log and checked against both rules of `instruments.md` §8.9 (0.0001 s). Scripted start at S = 2.500 s: three parts (the player's, Brin's, Cael's replacement after a withdrawal), 42 note events, spread 0 s, worst \|time-0 − S\| 0 s; the player's own `/play … sync` and `/playstart` (generic answer) at S = 4.200 s: 18 events, spread 8.9e-16 s, worst 8.9e-16 s. Also: the plain sandbox's answer to `/playstart` starts the part once, a refused start (test server) starts the waiting part locally once. `tessera-audio` `instruments_examples` (40) covers the head skip, refusal of parts that do not fit, non-finite times and long render blocks (`update_for`). |
+
+Remaining issues: the trade window's names, literal icons and money displays and the state
+icon of criterion 1's defects (a) and (b); `tessera-loadtest`'s `chat` bots do not join
+channels yet (`test-server.md` §13.1 and the §15.4 implementer OPEN; `tessera-net` now sends
+the channel commands, so this is unblocked), and its hostile mode still sends the 1.2
+vectors without logging in (§13.1 OPEN; the end-to-end test logs in); `test-server.md`
+§13.1 still says bots negotiate minor 1 (bots now offer 0, 1 and 2); `tessera-protocol.md`
+§10.6 lists no `NOT_IN_WORLD` for a leave while `test-server.md` §9.1 uses it (reviewer F2);
+the Social panel's Friends page grows a 1,024-row tree one row at a time (no batched tree
+add in `listbox.rs`); `PartyMember` actor values come from the client's member data; P2's actor
+views (`lua-plugin-api.md` §15.2) are now on main and the member getters should use them
+(§15.4 further rule 2); no engine text-input
+dialog or context menu (add dialogs post a command hint, `social-panels.md` implementer OPEN
+before §10); `select_fellow_1..6` and `assist_fellow_2..6` are unbound in the default key
+map (TR12 OPEN); the production headless run (`--headless --scenario`) makes no chat lines,
+since the driver's commands are in `tessera-net` (client review F3); the implementer OPENs
+of every P4 spec await the spec writer and the independent reviews. Merge seams with P2 and
+P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
+`tessera-net` domain groups, the client's `PlayerState`, UI host and runtime frame order,
+`ARCHITECTURE.md` §19 and §20, `scenario-feed.md` and the fuzz `Cargo.toml` and README.
+
 ---
 
 <a id="m9"></a>

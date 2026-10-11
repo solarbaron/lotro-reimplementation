@@ -19,15 +19,16 @@ use super::ast::{
 };
 use super::error::{RuntimeErrorKind as RK, ScenarioRuntimeError};
 use super::log::ACTOR_ID_BASE;
-use super::parse::HORIZON_MS;
+use super::parse::{DEFAULT_SYNC_LEAD_MS, HORIZON_MS, MAX_WAITING_PARTS};
 use super::resolve::ResolvedScenario;
 use super::verbs::MAX_FANOUT;
 use crate::domain::{
     CastOutcome, CharacterCommand, CharacterEvent, CombatCommand, CombatEvent, Container, Currency,
-    DialogueOption, EffectId, FellowMember, FriendEntry, InstanceEntry, InventoryCommand,
-    InventoryEvent, ItemId, ItemPlace, LootEntry, MarkerId, NpcCommand, NpcEvent, Price,
-    ProgressionCommand, ProgressionEvent, Ref, Shortcut, SocialCommand, SocialEvent, Text,
-    TradeEntry, TrainerEntry, TravelEntry, VendorEntry, Vital, WindowId, WorldCommand, WorldEvent,
+    DEFAULT_PERFORMANCE_LEAD_MS, DialogueOption, EffectId, FellowMember, FriendEntry,
+    InstanceEntry, InventoryCommand, InventoryEvent, ItemId, ItemPlace, LootEntry, MarkerId,
+    NpcCommand, NpcEvent, Price, ProgressionCommand, ProgressionEvent, Ref, Shortcut,
+    SocialCommand, SocialEvent, Text, TradeEntry, TrainerEntry, TravelEntry, VendorEntry, Vital,
+    WindowId, WorldCommand, WorldEvent,
 };
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, DisconnectReason, EntityId, Equipped, Location,
@@ -319,6 +320,9 @@ pub(crate) struct Feed {
     /// Steps known to skip on every run: an element of their entry list is missing, which
     /// resolution fixes for the whole run (no work is redone for them).
     static_skip: Vec<bool>,
+    /// (P4 social, §5.7) The waiting parts: member name → tune, at most
+    /// [`MAX_WAITING_PARTS`] entries.
+    waiting: BTreeMap<String, String>,
     /// The vendor window that last got a `BuybackShown`, with its buy-back entry count
     /// (P3 revision): what a `buy-back` pattern checks `BuyBack` against.
     buyback: Option<(WindowId, usize)>,
@@ -507,6 +511,10 @@ pub(crate) fn weight(e: &Event) -> u64 {
             SocialEvent::FriendList { entries } => entries.iter().map(|f| 1 + sw(&f.name)).sum(),
             SocialEvent::IgnoreList { names } => names.iter().map(|n| 1 + sw(n)).sum(),
             SocialEvent::PerformanceStarted { tune, .. } => sw(tune),
+            SocialEvent::PerformanceReady { member, tune, .. } => sw(member) + sw(tune),
+            SocialEvent::PerformanceSyncStart { by, .. } => by.as_deref().map_or(0, sw),
+            SocialEvent::PerformanceWithdrawn { member } => sw(member),
+            SocialEvent::FellowVitalChanged { member, vital, .. } => sw(member) + vw(vital),
             _ => 0,
         },
         Event::World(w) => match w {
@@ -718,6 +726,7 @@ impl Feed {
             line: 0,
             emitted_this_tick: false,
             static_skip: vec![false; sc.prog.steps.len()],
+            waiting: BTreeMap::new(),
             buyback: None,
             sc,
         }
@@ -1340,6 +1349,24 @@ impl Feed {
         }
     }
 
+    /// A member's name: the STRING, or the name of the player or actor (§6.7).
+    fn member_name(&self, m: &MemberArg) -> String {
+        match m {
+            MemberArg::Name(n) => n.clone(),
+            MemberArg::Entity(e) => self.name_of(*e),
+        }
+    }
+
+    /// Records `name`'s waiting part (§5.7), replacing an earlier one; `false` when it is a
+    /// new member and [`MAX_WAITING_PARTS`] members already wait.
+    fn set_waiting(&mut self, name: String, tune: String) -> bool {
+        if !self.waiting.contains_key(&name) && self.waiting.len() >= MAX_WAITING_PARTS {
+            return false;
+        }
+        self.waiting.insert(name, tune);
+        true
+    }
+
     fn window(&self, kind: WindowKind) -> Option<&Window> {
         self.windows[kind.index()].as_ref()
     }
@@ -1475,7 +1502,7 @@ impl Feed {
         let trigger = self.match_trigger(&cmd);
         self.line = 0;
         if self.sc.prog.defaults {
-            self.generic(&cmd)?;
+            self.generic(&cmd, t)?;
         }
         if let Some(i) = trigger {
             self.fire(i, t)?;
@@ -1710,6 +1737,11 @@ impl Feed {
             | (Pattern::Unignore, C::Social(SocialCommand::Unignore { .. }))
             | (Pattern::LeaveInstance, C::World(WorldCommand::LeaveInstance))
             | (Pattern::Dismount, C::World(WorldCommand::Dismount)) => true,
+            (Pattern::PlaySync(f), C::Social(SocialCommand::ReadyPerformance { tune })) => {
+                f.as_ref().is_none_or(|f| f == tune)
+            }
+            (Pattern::PlayStart, C::Social(SocialCommand::StartPerformance))
+            | (Pattern::Disband, C::Social(SocialCommand::DisbandFellowship)) => true,
             (Pattern::OpenTrade(f), C::Social(SocialCommand::OpenTrade { entity })) => {
                 f.is_none_or(|e| self.id(e) == Some(*entity))
             }
@@ -1759,8 +1791,26 @@ impl Feed {
     // --- Generic answers (§7.6) ------------------------------------------------------
 
     #[allow(clippy::too_many_lines)]
-    fn generic(&mut self, cmd: &Command) -> Rt<()> {
+    fn generic(&mut self, cmd: &Command, t: u64) -> Rt<()> {
         match cmd {
+            Command::Social(SocialCommand::StartPerformance) => {
+                // §6.7, §7.6: one start by the player with the default lead, then nothing
+                // waits any more.
+                let by = self.player.as_ref().map(|p| p.name.clone());
+                self.push(Event::Social(SocialEvent::PerformanceSyncStart {
+                    by,
+                    at_ms: t.saturating_add(DEFAULT_SYNC_LEAD_MS),
+                    lead_ms: DEFAULT_PERFORMANCE_LEAD_MS,
+                }))?;
+                self.waiting.clear();
+            }
+            Command::Social(SocialCommand::ReadyPerformance { tune }) => {
+                // No event; the player's part waits (§5.7). Beyond 64 members nothing is
+                // recorded (§11.1).
+                if let Some(name) = self.player.as_ref().map(|p| p.name.clone()) {
+                    self.set_waiting(name, tune.clone());
+                }
+            }
             Command::Combat(CombatCommand::SelectTarget { target }) => {
                 if let Some(pid) = self.player.as_ref().map(|p| p.id) {
                     self.push(Event::Combat(CombatEvent::TargetChanged {
@@ -2984,6 +3034,53 @@ impl Feed {
                 let id = need!(self.id(*e));
                 self.push(Event::Social(SocialEvent::PerformanceStopped {
                     entity: id,
+                }))?;
+            }
+            Verb::PerformSync { member, tune } => {
+                let (name, entity) = match member {
+                    MemberArg::Name(n) => (n.clone(), None),
+                    MemberArg::Entity(e) => (self.name_of(*e), Some(need!(self.id(*e)))),
+                };
+                // An empty member name, or a 65th distinct waiting member: skip (§6.7).
+                if name.is_empty() || !self.set_waiting(name.clone(), tune.clone()) {
+                    return self.skip();
+                }
+                self.push(Event::Social(SocialEvent::PerformanceReady {
+                    member: name,
+                    entity,
+                    tune: tune.clone(),
+                }))?;
+            }
+            Verb::PerformStart { by, lead } => {
+                let by = by.as_ref().map(|m| self.member_name(m));
+                self.push(Event::Social(SocialEvent::PerformanceSyncStart {
+                    by,
+                    at_ms: t.saturating_add(*lead),
+                    lead_ms: u32::try_from(*lead).unwrap_or(u32::MAX),
+                }))?;
+                self.waiting.clear();
+            }
+            Verb::PerformWithdraw(member) => {
+                let name = self.member_name(member);
+                if self.waiting.remove(&name).is_none() {
+                    return self.skip();
+                }
+                self.push(Event::Social(SocialEvent::PerformanceWithdrawn {
+                    member: name,
+                }))?;
+            }
+            Verb::FellowVital {
+                member,
+                vital,
+                current,
+                max,
+            } => {
+                let vital = need!(self.vital(vital));
+                self.push(Event::Social(SocialEvent::FellowVitalChanged {
+                    member: member.clone(),
+                    vital,
+                    current: *current,
+                    max: *max,
                 }))?;
             }
             Verb::Marker {

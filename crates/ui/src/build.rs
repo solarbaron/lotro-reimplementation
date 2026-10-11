@@ -54,16 +54,43 @@ impl Ui {
     /// Steps 1–6 of `ui-layout.md` §9.2 for one descriptor: resolve, apply the user skin,
     /// create through the factory, register, create the children (each with its
     /// post-creation before it is attached). Returns `None` when the element is not created.
+    ///
+    /// The depth bound is shared by nested creations: `build_depth` counts the build
+    /// levels open in this and every enclosing creation, so a creation started from the
+    /// post-creation of a deep element (a Menu's popup, a list template) only gets the
+    /// levels that are left, and the call stack stays within [`MAX_TREE_DEPTH`] build levels
+    /// however the creations nest.
     fn build_element(
         &mut self,
         desc: &ElementDesc,
         layout: (Did, (i32, i32)),
         path: &mut Vec<u32>,
-        depth: usize,
     ) -> Option<ElementKey> {
-        if depth > MAX_TREE_DEPTH || self.arena.len() >= MAX_ELEMENTS {
+        if self.arena.len() >= MAX_ELEMENTS {
             return None;
         }
+        if self.build_depth > MAX_TREE_DEPTH {
+            self.census.creation_refused += 1;
+            tracing::debug!(
+                element = desc.element_id,
+                depth = self.build_depth,
+                "element beyond the shared build depth not created"
+            );
+            return None;
+        }
+        self.build_depth += 1;
+        let k = self.build_element_level(desc, layout, path);
+        self.build_depth -= 1;
+        k
+    }
+
+    /// One level of [`Ui::build_element`], with the shared depth already counted.
+    fn build_element_level(
+        &mut self,
+        desc: &ElementDesc,
+        layout: (Did, (i32, i32)),
+        path: &mut Vec<u32>,
+    ) -> Option<ElementKey> {
         if self.build_budget == 0 {
             self.census.creation_refused += 1;
             return None;
@@ -110,7 +137,7 @@ impl Ui {
         // Step 6.
         path.push(element_id);
         for c in &children {
-            if let Some(ck) = self.build_element(c, layout, path, depth + 1) {
+            if let Some(ck) = self.build_element(c, layout, path) {
                 self.post_create(ck);
                 if self.attach_raw(ck, k).is_err() {
                     self.destroy(ck);
@@ -201,7 +228,7 @@ impl Ui {
         );
         let mut path = Vec::new();
         let k = self
-            .build_element(desc, (layout, size), &mut path, 0)
+            .build_element(desc, (layout, size), &mut path)
             .ok_or(UiError::NotCreated(element_id))?;
         // Step 7, then step 8 for a top-level element.
         if let Some(p) = parent
@@ -321,7 +348,7 @@ impl Ui {
         );
         let mut path = Vec::new();
         let k = self
-            .build_element(&l.elements[i], (layout, size), &mut path, 0)
+            .build_element(&l.elements[i], (layout, size), &mut path)
             .ok_or(UiError::NotCreated(element_id))?;
         self.post_create(k);
         let parent = if modal {

@@ -137,7 +137,8 @@ impl Scenario {
     }
 
     /// The labels written outside selectors (`class=`, `species=`, `sex=`, `slot=`,
-    /// `type=`, `nationality=`), as (line, option key, label) in line order. Lets a content check refuse
+    /// `type=`, `nationality=`, and `action` for the text function `action(@Label)`), as
+    /// (line, option key, label) in line order. Lets a content check refuse
     /// numeric enum values in committed scenarios (§13 rule 2) together with
     /// [`numeric_enum_values`](Self::numeric_enum_values).
     #[must_use]
@@ -199,22 +200,24 @@ impl Scenario {
     }
 
     /// Whether any enum position holds a number instead of a label (§13 rule 2): selector
-    /// value filters, and the `class=`, `species=`, `sex=`, `slot=` (of `equip`) and
-    /// `type=` options.
+    /// value filters, the `class=`, `species=`, `sex=`, `slot=` (of `equip`) and
+    /// `type=` options, and the text function `action(N)` (an NPC-action enum key, P3
+    /// revision) wherever a text stands.
     #[must_use]
     pub fn numeric_enum_values(&self) -> bool {
         use ast::{BodyArg, EnumArg, InputCmd, Verb};
         let num = |e: &Option<EnumArg>| matches!(e, Some(EnumArg::Value(_)));
         let p = &self.prog;
-        p.selectors.iter().any(|s| {
-            s.filters.iter().any(|f| match &f.value {
-                FilterValue::Alternatives(a) => a.iter().any(|x| matches!(x, Alt::Value(_))),
-                _ => false,
+        p.numeric_action
+            || p.selectors.iter().any(|s| {
+                s.filters.iter().any(|f| match &f.value {
+                    FilterValue::Alternatives(a) => a.iter().any(|x| matches!(x, Alt::Value(_))),
+                    _ => false,
+                })
             })
-        }) || p
-            .characters
-            .iter()
-            .any(|c| num(&c.class) || num(&c.species) || num(&c.sex))
+            || p.characters
+                .iter()
+                .any(|c| num(&c.class) || num(&c.species) || num(&c.sex))
             || p.actors.iter().any(|a| {
                 matches!(
                     a.body,

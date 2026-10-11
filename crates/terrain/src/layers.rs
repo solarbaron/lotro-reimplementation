@@ -1838,7 +1838,13 @@ mod tests {
             fn exit(&self, _: &tracing::span::Id) {}
         }
         let n = Arc::new(AtomicUsize::new(0));
-        let out = tracing::subscriber::with_default(Count(Arc::clone(&n)), f);
+        let out = tracing::subscriber::with_default(Count(Arc::clone(&n)), || {
+            // A callsite first hit on another test thread without a subscriber caches the
+            // interest "never"; rebuild it now that this thread's subscriber exists, or its
+            // warnings are lost when the tests run in parallel.
+            tracing::callsite::rebuild_interest_cache();
+            f()
+        });
         (n.load(AtomicOrdering::Relaxed), out)
     }
 }

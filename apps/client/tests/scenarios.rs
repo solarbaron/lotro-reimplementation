@@ -22,6 +22,10 @@ const GROUPS: [(&str, &str); 6] = [
     ("§6.6 progression and crafting", "progression"),
 ];
 
+/// The NPC-window and quest-journal scenarios of decision 0024 P3 (`npc-windows.md`,
+/// `quest-journal.md`; ROADMAP P3 deliverables), each with its committed log.
+const P3_SCENARIOS: [&str; 4] = ["dialogue", "vendor", "loot", "quest-log"];
+
 fn scenarios_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios")
 }
@@ -79,6 +83,10 @@ fn every_system_group_has_a_committed_scenario_with_a_log() {
     for (group, name) in GROUPS {
         let s = scenarios_dir().join(format!("{name}.scenario"));
         assert!(s.is_file(), "{group}: {} missing", s.display());
+    }
+    for name in P3_SCENARIOS {
+        let s = scenarios_dir().join(format!("{name}.scenario"));
+        assert!(s.is_file(), "P3: {} missing", s.display());
     }
     for s in committed() {
         // All committed scenarios are synthetic (they play without an install), so each

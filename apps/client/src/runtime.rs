@@ -102,6 +102,12 @@ pub struct Runtime {
     pub p1: crate::character::CharacterHub,
     /// Whether the P1 facts are loaded once the archives open (walker runs).
     load_p1: bool,
+    /// NPC windows (decision 0024 P3): their install names and facts, the plugin wallet
+    /// views' model, the windows on the game UI.
+    pub npc: crate::npc::NpcHub,
+    /// The quest journal (decision 0024 P3): the quest log, tracker, quest chat lines and
+    /// markers on the game UI.
+    pub quests: crate::quests::QuestHub,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
 }
@@ -318,6 +324,19 @@ impl Runtime {
             texture_settled: false,
             p1,
             load_p1: walker,
+            npc: crate::npc::NpcHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::npc::parse_npc_panel(n))
+                    .collect(),
+            ),
+            quests: crate::quests::QuestHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::quests::parse_journal_panel(n))
+                    .collect(),
+            )
+            .with_icons(args.quest_icons),
             character_select: args.character_select,
         })
     }
@@ -478,6 +497,7 @@ impl Runtime {
                 self.plugins.attach_data(Arc::clone(&set));
                 if self.load_p1 {
                     self.p1.start_loading(root.clone());
+                    self.npc.start_refs(Arc::clone(&set));
                 }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
@@ -525,9 +545,15 @@ impl Runtime {
             // re-read them now.
             self.p1.resync(w.player_state());
         }
+        self.npc.poll(self.p1.data());
         if let Some(world) = &mut self.world {
             world.update(now);
             let changes = world.take_player_changes();
+            self.npc.after_events(
+                &changes,
+                world.player_state().wallet(),
+                self.plugins.manager_mut(),
+            );
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
             for line in world.take_chat() {

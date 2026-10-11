@@ -507,6 +507,10 @@ impl InputPlayer {
             InputCmd::Close(kind) => Command::Npc(NpcCommand::CloseWindow {
                 window: self.window(*kind)?,
             }),
+            InputCmd::BuyBack(entry) => Command::Npc(NpcCommand::BuyBack {
+                window: self.window(WindowKind::Vendor)?,
+                entry: *entry,
+            }),
         })
     }
 }

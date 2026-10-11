@@ -97,6 +97,10 @@ pub enum Text {
         /// The objective index (`Quest_ObjectiveIndex`).
         objective: u16,
     },
+    /// The install's text for an NPC action: a key of the enum mapper the property
+    /// dictionary names for `ActionPickerUI_Action` (`docs/specs/npc-windows.md` §5.3;
+    /// `scenario-feed.md` §5.2, P3 revision).
+    Action(u32),
 }
 
 /// An inventory container.
@@ -277,6 +281,95 @@ pub struct LootEntry {
     pub what: Ref,
     /// How many.
     pub quantity: u32,
+}
+
+/// Most entries of one [`NpcEvent::QuestRewards`] (`scenario-feed.md` §9.2, P3 revision).
+pub const MAX_REWARD_ENTRIES: usize = 16;
+
+/// Largest coin, experience, glory or wallet reward amount (10^15).
+pub const MAX_REWARD_AMOUNT: i64 = 1_000_000_000_000_000;
+
+/// Largest class trait point reward (10^6).
+pub const MAX_REWARD_TRAIT_POINTS: i64 = 1_000_000;
+
+/// Largest reputation reward magnitude (10^12; the amount may be negative).
+pub const MAX_REWARD_REPUTATION: i64 = 1_000_000_000_000;
+
+/// The kind of a quest reward amount (`scenario-feed.md` §9.1, P3 revision;
+/// `npc-windows.md` §10.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RewardKind {
+    /// Coin, in units of the smallest denomination.
+    Coin,
+    /// Glory.
+    Glory,
+    /// Item experience.
+    ItemXp,
+    /// Craft experience.
+    CraftXp,
+    /// Mount experience.
+    MountXp,
+    /// Virtue experience.
+    VirtueXp,
+    /// Class trait points.
+    TraitPoints,
+    /// Reputation with a faction (the entry's `what`); may be negative.
+    Reputation,
+    /// An amount of a wallet item (the entry's `what`).
+    Wallet,
+}
+
+impl RewardKind {
+    /// The amounts a reward of this kind may carry (`scenario-feed.md` §6.3).
+    #[must_use]
+    pub fn amount_range(self) -> std::ops::RangeInclusive<i64> {
+        match self {
+            Self::TraitPoints => 0..=MAX_REWARD_TRAIT_POINTS,
+            Self::Reputation => -MAX_REWARD_REPUTATION..=MAX_REWARD_REPUTATION,
+            _ => 0..=MAX_REWARD_AMOUNT,
+        }
+    }
+
+    /// Whether an entry of this kind names what it rewards (a faction or a wallet item).
+    #[must_use]
+    pub fn has_what(self) -> bool {
+        matches!(self, Self::Reputation | Self::Wallet)
+    }
+}
+
+/// One reward amount of a quest offer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RewardEntry {
+    /// The kind of reward.
+    pub kind: RewardKind,
+    /// The amount, within [`RewardKind::amount_range`].
+    pub amount: i64,
+    /// The faction ([`RewardKind::Reputation`]) or wallet item ([`RewardKind::Wallet`]);
+    /// present exactly for those two kinds.
+    pub what: Option<Ref>,
+}
+
+impl RewardEntry {
+    /// Whether the amount lies in its kind's range and `what` is present exactly when the
+    /// kind names one.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.kind.amount_range().contains(&self.amount)
+            && self.what.is_some() == self.kind.has_what()
+    }
+}
+
+/// One entry of a vendor's buy-back page.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BuybackEntry {
+    /// The entry number (1-based).
+    pub entry: u16,
+    /// What can be bought back.
+    pub what: Ref,
+    /// How many.
+    pub quantity: u32,
+    /// Its price.
+    pub price: Price,
 }
 
 /// One member of a fellowship.
@@ -727,6 +820,20 @@ pub enum NpcEvent {
         /// The window.
         window: WindowId,
     },
+    /// Reward amounts of the open quest offer (P3 revision).
+    QuestRewards {
+        /// The quest-offer window.
+        window: WindowId,
+        /// 1..=[`MAX_REWARD_ENTRIES`] entries, in the world source's order.
+        entries: Vec<RewardEntry>,
+    },
+    /// The buy-back page of the open vendor window (P3 revision).
+    BuybackShown {
+        /// The vendor window.
+        window: WindowId,
+        /// The entries.
+        entries: Vec<BuybackEntry>,
+    },
 }
 
 impl NpcEvent {
@@ -743,6 +850,8 @@ impl NpcEvent {
             Self::LootShown { .. } => "LootShown",
             Self::LootTaken { .. } => "LootTaken",
             Self::WindowClosed { .. } => "WindowClosed",
+            Self::QuestRewards { .. } => "QuestRewards",
+            Self::BuybackShown { .. } => "BuybackShown",
         }
     }
 }
@@ -1227,6 +1336,13 @@ pub enum NpcCommand {
         /// The entry, `None` for all.
         entry: Option<u16>,
     },
+    /// Buy back an entry of the vendor window's buy-back page (P3 revision).
+    BuyBack {
+        /// The vendor window.
+        window: WindowId,
+        /// The buy-back entry number (1-based).
+        entry: u16,
+    },
 }
 
 impl NpcCommand {
@@ -1243,6 +1359,7 @@ impl NpcCommand {
             Self::Buy { .. } => "Buy",
             Self::Sell { .. } => "Sell",
             Self::TakeLoot { .. } => "TakeLoot",
+            Self::BuyBack { .. } => "BuyBack",
         }
     }
 }
@@ -1511,6 +1628,7 @@ impl NpcCommand {
             | Self::CloseWindow { .. }
             | Self::AnswerQuest { .. }
             | Self::TakeLoot { .. } => Ok(()),
+            Self::BuyBack { entry, .. } => check(*entry >= 1, "buy-back entry must be at least 1"),
         }
     }
 }
@@ -1729,6 +1847,32 @@ impl NpcEvent {
                 changed
             }
             Self::LootTaken { .. } | Self::WindowClosed { .. } => false,
+            Self::QuestRewards { entries, .. } => {
+                let mut changed = false;
+                for e in entries {
+                    changed |= clean_opt_ref(&mut e.what);
+                }
+                changed
+            }
+            Self::BuybackShown { entries, .. } => {
+                let mut changed = false;
+                for e in entries {
+                    changed |= clean_ref(&mut e.what) | clean_price(&mut e.price);
+                }
+                changed
+            }
+        }
+    }
+
+    /// Whether a `QuestRewards` has 1..=[`MAX_REWARD_ENTRIES`] valid entries
+    /// (`scenario-feed.md` §9.5, P3 revision; invalid events are dropped).
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::QuestRewards { entries, .. } => {
+                (1..=MAX_REWARD_ENTRIES).contains(&entries.len())
+                    && entries.iter().all(RewardEntry::is_valid)
+            }
+            _ => true,
         }
     }
 }

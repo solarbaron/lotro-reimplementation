@@ -555,3 +555,48 @@ impl WorldMapPanel {
         Some(g.to_pixel(global.0, global.1))
     }
 }
+
+/// Hooks for notes that game code places over the world map (P3 quest markers,
+/// `quest-journal.md` §8.3, `game-panels.md` §9.3 note).
+impl WorldMapPanel {
+    /// The element that draws the shown map: the dungeon map's element indoors, else the
+    /// shown node's active element.
+    #[must_use]
+    pub fn shown_element(&self) -> Option<ElementKey> {
+        self.dungeon
+            .as_ref()
+            .map(|d| d.element)
+            .or(self.shown.map(|(_, k)| k))
+    }
+
+    /// The pixel frame of the shown map: the node's `UI_Map_PixelWidth` ×
+    /// `UI_Map_PixelHeight` (1024 × 768 when they are absent or not positive), or the
+    /// dungeon image's size once known (1024 × 768 before).
+    #[must_use]
+    pub fn shown_frame(&self) -> Option<(i32, i32)> {
+        const FRAME: (i32, i32) = (1024, 768);
+        if let Some(d) = &self.dungeon {
+            return Some(d.size.map_or(FRAME, |(w, h)| {
+                (
+                    i32::try_from(w).unwrap_or(i32::MAX),
+                    i32::try_from(h).unwrap_or(i32::MAX),
+                )
+            }));
+        }
+        let (i, _) = self.shown?;
+        let n = self.tree.as_ref()?.nodes.get(i)?;
+        Some(if n.pixel_size.0 > 0 && n.pixel_size.1 > 0 {
+            n.pixel_size
+        } else {
+            FRAME
+        })
+    }
+
+    /// Draws the player marker in front of every other child of `MapBackground` again
+    /// (after game code added notes there).
+    pub fn raise_marker(&self, ui: &mut Ui) {
+        if let Some(m) = self.marker {
+            move_to_front(ui, m);
+        }
+    }
+}

@@ -32,8 +32,10 @@ use tessera_net::{Appearance, Body, EntityId, Event, PropertyValue};
 /// Most properties kept per entity and per item (decision 0025 D5: "the client keeps at
 /// most 1,024 properties per entity and per item and drops further ones with a warning").
 pub const MAX_PROPERTIES: usize = 1024;
-/// Most wallet currencies kept (Tessera bound; further currencies are dropped).
-pub const MAX_WALLET_ENTRIES: usize = 256;
+/// Most wallet currencies held at once (Tessera bound, above the 610 wallet items of the
+/// reference install; further currencies are dropped). A currency set to 0 is no longer
+/// held (coin excepted), so it does not count.
+pub const MAX_WALLET_ENTRIES: usize = 4096;
 /// Most character-list entries kept (Tessera bound; a character list is at most a few
 /// dozen entries).
 pub const MAX_CHARACTER_INFOS: usize = 1024;
@@ -75,6 +77,9 @@ pub enum PlayerChange {
     Appearance,
     /// The player left the world (or the session ended): everything was cleared.
     Reset,
+    /// The NPC windows changed, or a currency's amount did (decision 0024 P3;
+    /// [`crate::npc::state`]).
+    Npc(crate::npc::NpcChange),
 }
 
 /// The vitals the character sheet shows (`character-panels.md` §9).
@@ -121,6 +126,8 @@ pub struct PlayerState {
     wallet: Vec<(Currency, u64)>,
     appearance: Option<Appearance>,
     dropped_properties: u64,
+    /// The NPC windows (decision 0024 P3).
+    npc: crate::npc::NpcWindows,
 }
 
 fn vital_index(k: VitalKind) -> u8 {
@@ -261,6 +268,7 @@ impl PlayerState {
             wallet: Vec::new(),
             appearance: None,
             dropped_properties: 0,
+            npc: crate::npc::NpcWindows::new(),
         }
     }
 
@@ -450,8 +458,17 @@ impl PlayerState {
         self.dropped_properties
     }
 
+    /// The NPC windows (decision 0024 P3).
+    #[must_use]
+    pub fn npc(&self) -> &crate::npc::NpcWindows {
+        &self.npc
+    }
+
     /// Applies one session event; its changes are appended to `out`, in order.
     pub fn apply(&mut self, ev: &Event, out: &mut Vec<PlayerChange>) {
+        let mut npc = Vec::new();
+        self.npc.apply(ev, &mut npc);
+        out.extend(npc.into_iter().map(PlayerChange::Npc));
         match ev {
             Event::Connected { .. } => {
                 // A new session: the character list is about to be reported again.
@@ -558,9 +575,16 @@ impl PlayerState {
         match e {
             InventoryEvent::WalletChanged { currency, amount } => {
                 let full = self.wallet.len() >= MAX_WALLET_ENTRIES;
-                match self.wallet.iter_mut().find(|(c, _)| c == currency) {
-                    Some((_, a)) if *a == *amount => return,
-                    Some((_, a)) => *a = *amount,
+                // A wallet item set to 0 is no longer held (P3: the wallet window and the
+                // plugin wallet views list held currencies only); coin stays known at 0.
+                let gone = *amount == 0 && *currency != Currency::Coin;
+                match self.wallet.iter().position(|(c, _)| c == currency) {
+                    Some(i) if self.wallet[i].1 == *amount => return,
+                    Some(i) if gone => {
+                        self.wallet.remove(i);
+                    }
+                    Some(i) => self.wallet[i].1 = *amount,
+                    None if gone => return,
                     None if full => {
                         tracing::debug!("wallet holds {MAX_WALLET_ENTRIES} currencies; dropped");
                         return;
@@ -568,6 +592,10 @@ impl PlayerState {
                     None => self.wallet.push((currency.clone(), *amount)),
                 }
                 out.push(PlayerChange::Wallet);
+                out.push(PlayerChange::Npc(crate::npc::NpcChange::Wallet {
+                    currency: currency.clone(),
+                    amount: *amount,
+                }));
             }
             InventoryEvent::ItemProperty {
                 item,
@@ -805,6 +833,57 @@ mod tests {
             &mut out,
         );
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn wallet_drops_spent_currencies_and_keeps_room() {
+        let mut s = PlayerState::new(NO_INSTALL_BAGS);
+        entered(&mut s);
+        let mut out = Vec::new();
+        let set = |s: &mut PlayerState, name: &str, amount: u64, out: &mut Vec<PlayerChange>| {
+            s.apply(
+                &inv(InventoryEvent::WalletChanged {
+                    currency: Currency::Item(Ref::Literal(name.into())),
+                    amount,
+                }),
+                out,
+            );
+        };
+        // More currencies than the old bound of 256, each spent again.
+        for i in 0..300 {
+            set(&mut s, &format!("T{i}"), 1, &mut out);
+        }
+        assert_eq!(s.wallet().len(), 300);
+        for i in 0..300 {
+            set(&mut s, &format!("T{i}"), 0, &mut out);
+        }
+        assert!(s.wallet().is_empty(), "spent currencies are not held");
+        out.clear();
+        set(&mut s, "X", 5, &mut out);
+        assert_eq!(s.wallet(), &[(Currency::Item(Ref::Literal("X".into())), 5)]);
+        assert!(
+            out.contains(&PlayerChange::Npc(crate::npc::NpcChange::Wallet {
+                currency: Currency::Item(Ref::Literal("X".into())),
+                amount: 5,
+            }))
+        );
+        // Setting an unheld currency to 0 changes nothing; coin stays known at 0.
+        out.clear();
+        set(&mut s, "Y", 0, &mut out);
+        assert!(out.is_empty());
+        s.apply(
+            &inv(InventoryEvent::WalletChanged {
+                currency: Currency::Coin,
+                amount: 0,
+            }),
+            &mut out,
+        );
+        assert_eq!(s.coin(), Some(0));
+        // The bound still holds.
+        for i in 0..(MAX_WALLET_ENTRIES + 10) {
+            set(&mut s, &format!("B{i}"), 1, &mut out);
+        }
+        assert_eq!(s.wallet().len(), MAX_WALLET_ENTRIES);
     }
 
     #[test]

@@ -20,6 +20,7 @@ use crate::inventory::{self, InventoryViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
+use crate::wallet::{self, WalletSource, WalletViewEvent};
 
 /// Registry name of the apartment's `LocalPlayer` instance.
 const LOCAL_PLAYER_KEY: &str = "tessera.plugins.localplayer";
@@ -102,6 +103,14 @@ pub trait LocalPlayerSource: Send + Sync + 'static {
     /// The local character, or `None` while no character is in the world
     /// (`LocalPlayer.GetInstance()` then returns nil).
     fn local_player(&self) -> Option<LocalPlayerInfo>;
+
+    /// The source of the wallet and money views (`LocalPlayer:GetWallet()`, `Wallet`,
+    /// `WalletItem`, `GetMoney()`, `GetMoneyComponents()`; `lua-plugin-api.md` §15.3), or
+    /// `None` (the default): the wallet is then empty and the money 0. Changes are raised
+    /// with [`crate::PluginManager::raise_gameplay_event`] and [`GameplayEvent::Wallet`].
+    fn wallet(&self) -> Option<Arc<dyn WalletSource>> {
+        None
+    }
 }
 
 /// A `…Changed` event of the local player (`lua-plugin-api.md` §16, `Entity`, `Actor`,
@@ -165,6 +174,8 @@ pub enum GameplayEvent {
     LocalPlayer(LocalPlayerEvent),
     /// A change of the backpack, the equipment or an item (`lua-plugin-api.md` §15.1).
     Inventory(InventoryViewEvent),
+    /// A change of the wallet or the coin amount (`lua-plugin-api.md` §15.3).
+    Wallet(WalletViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -175,6 +186,10 @@ enum View {
     Backpack,
     /// The apartment's `LocalPlayer:GetEquipment()` object.
     Equipment,
+    /// The apartment's `LocalPlayer:GetWallet()` object.
+    Wallet,
+    /// The apartment's `LocalPlayer:GetAttributes()` object.
+    Attributes,
     Empty,
     /// A skill list of this many skills.
     SkillList(u32),
@@ -423,12 +438,6 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     let vault = b.class(&gp, "Vault", Some(&bank), None)?;
     let shared_storage = b.class(&gp, "SharedStorage", Some(&bank), None)?;
     let wallet = b.class(&gp, "Wallet", Some(&object), None)?;
-    stubs(
-        lua,
-        &wallet,
-        "Wallet",
-        &[("GetItem", Default_::Nil), ("GetSize", Default_::Zero)],
-    )?;
     let effect_list = b.class(&gp, "EffectList", Some(&object), None)?;
     stubs(
         lua,
@@ -537,19 +546,8 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         lua,
         &monster_player,
         "MonsterPlayerAttributes",
-        &[
-            ("GetDestinyPoints", Default_::Zero),
-            ("GetMoney", Default_::Zero),
-        ],
+        &[("GetDestinyPoints", Default_::Zero)],
     )?;
-    for cls in [&free_people, &monster_player] {
-        cls.raw_set(
-            "GetMoneyComponents",
-            api_fn(lua, "GetMoneyComponents", |_, _: MultiValue| {
-                Ok((0.0, 0.0, 0.0))
-            })?,
-        )?;
-    }
 
     // Items (§15.1, `inventory`), effects, party and the rest: tables with default
     // getters.
@@ -631,19 +629,25 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     )?;
     b.class(&gp, "CombatMount", Some(&mount), None)?;
     let wallet_item = b.class(&gp, "WalletItem", Some(&object), None)?;
-    stubs(
+    // Wallet, `WalletItem` and money (§15.3, `wallet`).
+    wallet::install(
         lua,
-        &wallet_item,
-        "WalletItem",
-        &[
-            ("GetDescription", Default_::Empty),
-            ("GetImage", Default_::Zero),
-            ("GetMaxQuantity", Default_::Zero),
-            ("GetName", Default_::Empty),
-            ("GetQuantity", Default_::Zero),
-            ("GetSmallImage", Default_::Zero),
-            ("IsAccountItem", Default_::False),
-        ],
+        ctx,
+        &wallet::Classes {
+            wallet: &wallet,
+            wallet_item: &wallet_item,
+            free_people: &free_people,
+            monster_player: &monster_player,
+        },
+        Arc::new(|lua, t| Ok(view_of(lua, t)? == Some(View::Wallet))),
+        {
+            let c = Arc::clone(ctx);
+            Arc::new(move |lua, t| {
+                Ok(view_of(lua, t)? == Some(View::Attributes)
+                    && cached_view_of(lua, attributes_view(&c))
+                        .is_some_and(|v| v.to_pointer() == t.to_pointer()))
+            })
+        },
     )?;
     for name in ["ProfessionInfo", "Recipe", "RecipeIngredient"] {
         b.class(&gp, name, Some(&object), None)?;
@@ -679,11 +683,14 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     local_player.raw_set(
         "GetAttributes",
         api_fn(lua, "GetAttributes", move |lua, _: MultiValue| {
-            if source(&c).is_some_and(|i| i.alignment == 2) {
-                cached_view(lua, "MonsterPlayerAttributes", &mp, View::Empty)
+            wallet::note_attributes(lua, &c)?;
+            let name = attributes_view(&c);
+            let class = if name == MONSTER_PLAYER_ATTRIBUTES {
+                &mp
             } else {
-                cached_view(lua, "FreePeopleAttributes", &fp, View::Empty)
-            }
+                &fp
+            };
+            cached_view(lua, name, class, View::Attributes)
         })?,
     )?;
     let views: [(&'static str, &'static str, Table, View); 6] = [
@@ -722,11 +729,12 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             })?,
         )?;
     }
-    let w = wallet.clone();
+    let (c, w) = (Arc::clone(ctx), wallet.clone());
     local_player.raw_set(
         "GetWallet",
         api_fn(lua, "GetWallet", move |lua, _: MultiValue| {
-            cached_view(lua, "Wallet", &w, View::Empty)
+            wallet::note_wallet(lua, &c)?;
+            cached_view(lua, "Wallet", &w, View::Wallet)
         })?,
     )?;
     local_player.raw_set(
@@ -783,9 +791,9 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
 }
 
 /// The getters of `FreePeopleAttributes` (§16): all numeric 0, the three `Can…` false,
-/// `GetProfessionInfo` nil.
+/// `GetProfessionInfo` nil (the money getters are the wallet views', §15.3).
 fn free_people_methods() -> Vec<(&'static str, Default_)> {
-    const ZERO: [&str; 52] = [
+    const ZERO: [&str; 51] = [
         "GetAgility",
         "GetArmor",
         "GetBaseAgility",
@@ -800,7 +808,6 @@ fn free_people_methods() -> Vec<(&'static str, Default_)> {
         "GetFate",
         "GetFearResistance",
         "GetMight",
-        "GetMoney",
         "GetPoisonResistance",
         "GetVitality",
         "GetVocation",
@@ -962,6 +969,10 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
             });
             return;
         }
+        GameplayEvent::Wallet(w) => {
+            wallet::deliver(ap, w, cached_view_of, attributes_view(&ap.ctx));
+            return;
+        }
     };
     let target = match ap.lua().named_registry_value::<Value>(LOCAL_PLAYER_KEY) {
         Ok(Value::Table(t)) => t,
@@ -970,5 +981,28 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
     match ap.lua().create_table() {
         Ok(args) => ap.fire_event(&target, e.name(), args, None),
         Err(err) => ap.report(None, "delivering a gameplay event", &err),
+    }
+}
+
+/// Cache names of the two attributes views.
+const FREE_PEOPLE_ATTRIBUTES: &str = "FreePeopleAttributes";
+const MONSTER_PLAYER_ATTRIBUTES: &str = "MonsterPlayerAttributes";
+
+/// The cache name of the attributes view `GetAttributes()` returns now: the monster
+/// player's for alignment 2, else the free people's.
+fn attributes_view(ctx: &ApartmentCtx) -> &'static str {
+    if source(ctx).is_some_and(|i| i.alignment == 2) {
+        MONSTER_PLAYER_ATTRIBUTES
+    } else {
+        FREE_PEOPLE_ATTRIBUTES
+    }
+}
+
+/// The apartment's cached view object `name`, if a plugin asked for it.
+fn cached_view_of(lua: &Lua, name: &str) -> Option<Table> {
+    let cache: Table = lua.named_registry_value(VIEWS_KEY).ok()?;
+    match cache.raw_get::<Value>(name).ok()? {
+        Value::Table(t) => Some(t),
+        _ => None,
     }
 }

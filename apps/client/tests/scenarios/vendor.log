@@ -1,0 +1,31 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Market stall"
+resolve $keeper line=13 family=creature requested=1 candidates=0 got=0 note=no-install
+resolve $wares line=14 family=item requested=6 candidates=0 got=0 note=no-install
+resolve $sold line=15 family=item requested=2 candidates=0 got=0 note=no-install
+resolve $tokens line=16 family=item requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$trader kind=non-player name="Trader" at=3.000,0.000,0.000 facing=270.00
+0.000 ItemAdded item=$knife what="Knife" at=backpack:0 quantity=1
+0.000 ItemAdded item=$rope what="Rope" at=backpack:1 quantity=3
+0.000 WalletChanged currency=coin amount=125000
+0.000 WalletChanged currency=item:"Guild token" amount=6
+0.500 > UseEntity entity=$trader
+0.500 VendorShown window=1 vendor=$trader entries=[{entry=1 what="Bread" price=coin:12 stock=5},{entry=2 what="Rope" price=coin:250 stock=5},{entry=3 what="Lamp oil" price=coin:100005 stock=5}]
+0.500 BuybackShown window=1 entries=[{entry=1 what="Lamp" quantity=2 price=coin:40},{entry=2 what="Tinderbox" quantity=2 price=coin:40}]
+1.000 > Buy window=1 entry=2 quantity=3
+1.000 WalletChanged currency=coin amount=123750
+1.500 > Sell window=1 item=$knife quantity=1
+1.500 ItemRemoved item=$knife
+1.500 WalletChanged currency=coin amount=123760
+2.000 > BuyBack window=1 entry=1
+2.000 WalletChanged currency=coin amount=123720
+3.000 > UseEntity entity=$trader
+3.000 VendorShown window=1 vendor=$trader entries=[{entry=1 what="Cloak" price=coin:0+"Guild token"*4 stock=none},{entry=2 what="Hood" price=coin:30+"Guild token"*4 stock=none}]
+3.000 end reason=complete skipped=6 input-skipped=0 dropped=0 spilled=0

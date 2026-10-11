@@ -22,7 +22,9 @@ use tessera_ui::game::npc::offer::{
     AmountKind, GroupType, OfferView, OfferWindow, RewardAmount, RewardRow, RowTemplates,
     reward_rows,
 };
-use tessera_ui::game::npc::quantity::{Confirm, QuantityModel};
+use tessera_ui::game::npc::quantity::{
+    Confirm, QuantityMemory, QuantityModel, VendorKey, read_number,
+};
 use tessera_ui::game::npc::vendor::{
     BuyDecision, BuyMode, BuyToggles, MAX_ENTRIES, SellItem, VendorItem, VendorOutcome, VendorPage,
     VendorTemplates, VendorWindow, buy_decision, fill_quantity,
@@ -632,20 +634,67 @@ fn example_13_2_buy_modes() {
     assert_eq!(fill_quantity(50, &[50, 60]), 1, "no partial stack");
     assert_eq!(fill_quantity(u32::MAX, &[0; 8]), u32::MAX, "saturates");
 
-    // The dialog with M = 50.
-    let mut q = QuantityModel::new(50);
+    // §13.2: the dialog with M = 50 opens showing 50 (no earlier purchase).
+    let mut mem = QuantityMemory::default();
+    let a = VendorKey::Entity(7);
+    let mut q = QuantityModel::with_quantity(50, mem.opening(a, 50));
+    assert_eq!(q.entry(), "50");
     q.half();
     assert_eq!(q.entry(), "25");
+    // Deleting both characters: empty, quantity and cost stay at 25, OK ghosted, OK and
+    // Enter do nothing.
+    q.type_text("2");
+    q.type_text("");
+    assert_eq!(q.entry(), "");
+    assert_eq!(
+        q.quantity(),
+        2,
+        "the last set quantity (after deleting one character)"
+    );
+    let mut q = QuantityModel::with_quantity(50, 25);
+    q.type_text("");
+    assert_eq!((q.entry(), q.quantity(), q.cost(10)), ("", 25, 250));
+    assert!(q.ok_ghosted(10, None));
+    assert_eq!(q.confirm(false), Confirm::Ignored);
+    assert_eq!(q.entry(), "", "still empty");
+    // Typing 8 → 8; typing 0 → 80 is set as 50 at once.
+    q.type_text("8");
+    assert_eq!(q.entry(), "8");
     q.type_text("80");
-    assert_eq!(q.quantity(), 50, "the cost shows the clamped quantity");
-    assert_eq!(q.confirm(), Confirm::Corrected);
     assert_eq!(q.entry(), "50");
-    assert_eq!(q.confirm(), Confirm::Buy(50));
+    assert_eq!(q.quantity(), 50);
+    assert_eq!(q.confirm(false), Confirm::Buy(50));
+    mem.remember(a, 50);
+    // Same vendor with M = 20 → 20 (50 remembered, at most M); another vendor → its M,
+    // and the remembered quantity is forgotten.
+    assert_eq!(mem.opening(a, 20), 20);
+    assert_eq!(mem.opening(a, 80), 50);
+    assert_eq!(mem.opening(VendorKey::Window(3), 30), 30);
+    assert_eq!(mem.last(), None);
+    assert_eq!(mem.opening(a, 80), 80);
+    // Typing `x` into an empty entry → 0 → set as 1.
+    q.type_text("");
+    q.type_text("x");
+    assert_eq!(q.entry(), "1");
+    // Coin 400, unit price 10: quantity 50 costs 500 → TooExpensive, OK ghosted, Enter does
+    // nothing; Half → 25, cost 250 → OK normal.
+    let mut q = QuantityModel::new(50);
+    assert!(q.too_expensive(10, Some(400)));
+    assert!(q.ok_ghosted(10, Some(400)));
+    assert_eq!(q.confirm(true), Confirm::Ignored);
+    q.half();
+    assert_eq!(q.cost(10), 250);
+    assert!(!q.too_expensive(10, Some(400)));
+    assert!(!q.ok_ghosted(10, Some(400)));
+    assert!(!q.too_expensive(10, None), "no coin yet: no comparison");
+    assert_eq!(q.confirm(false), Confirm::Buy(25));
 }
 
 #[test]
 fn quantity_dialog_rules() {
     let mut q = QuantityModel::new(5);
+    assert_eq!(q.entry(), "5", "opens with M");
+    q.one();
     assert_eq!(q.entry(), "1");
     q.decrease();
     assert_eq!(q.entry(), "1", "clamped at 1");
@@ -655,30 +704,65 @@ fn quantity_dialog_rules() {
     assert_eq!(q.entry(), "5", "clamped at M");
     q.half();
     assert_eq!(q.entry(), "2", "5 × 0.5 truncated");
-    q.one();
+    q.type_text("");
+    q.increase();
+    assert_eq!(q.entry(), "2", "an empty entry counts as 1");
+    q.type_text("");
+    q.decrease();
     assert_eq!(q.entry(), "1");
     q.type_text("abc");
-    q.increase();
-    assert_eq!(q.entry(), "2", "a non-numeric entry counts as 1");
+    assert_eq!(
+        q.entry(),
+        "1",
+        "a text that is not a number reads as 0, set as 1"
+    );
     q.type_text("0");
-    assert_eq!(q.confirm(), Confirm::Corrected);
     assert_eq!(q.entry(), "1");
+    q.type_text("04");
+    assert_eq!(q.entry(), "4", "leading zeros skipped");
     q.type_text("12345678");
-    assert_eq!(q.entry(), "12345", "at most five characters");
+    assert_eq!(q.entry(), "5", "at most five characters, clamped");
+    // Number reading (§7.5 rule 4).
+    for (t, v) in [
+        ("", 0),
+        ("0", 0),
+        ("007", 7),
+        ("12x9", 12),
+        ("0x1F", 0),
+        (" 5", 0),
+        ("-3", 0),
+        ("+3", 0),
+        ("x", 0),
+        ("99999", 99_999),
+        ("99999999999999999999999", u64::MAX),
+    ] {
+        assert_eq!(read_number(t), v, "{t:?}");
+    }
     assert_eq!(QuantityModel::new(1).clone().half_and_value(), 1);
-    // NWI8: no sequence of operations buys outside 1 … M.
+    assert_eq!(QuantityModel::with_quantity(7, 0).entry(), "1");
+    assert_eq!(QuantityModel::with_quantity(7, 99).entry(), "7");
+    // NWI8, NWI9: no sequence of inputs leaves another entry or buys outside 1 … M.
     let mut q = QuantityModel::new(7);
-    let ops = ["99999", "-3", "x", "", "7", "8", "00000", "3"];
+    let ops = [
+        "99999", "-3", "x", "", "7", "8", "00000", "3", "0", "", "01", "5a", "\u{663}",
+    ];
     for (i, t) in ops.iter().enumerate() {
         q.type_text(t);
+        let e = q.entry().to_string();
+        assert!(
+            e.is_empty()
+                || (!e.starts_with('0') && e.parse::<u32>().is_ok_and(|n| (1..=7).contains(&n))),
+            "{t:?} left {e:?}"
+        );
         if i % 2 == 0 {
             q.increase();
         }
-        if let Confirm::Buy(n) = q.confirm() {
-            assert!((1..=7).contains(&n));
-        }
-        if let Confirm::Buy(n) = q.confirm() {
-            assert!((1..=7).contains(&n));
+        for exp in [false, true] {
+            match q.confirm(exp) {
+                Confirm::Buy(n) => assert!((1..=7).contains(&n) && !exp),
+                Confirm::Ignored => assert!(exp || q.entry().is_empty()),
+                Confirm::Corrected => {}
+            }
         }
     }
     assert_eq!(QuantityModel::new(0).max(), 1, "M at least 1");
@@ -1357,63 +1441,165 @@ fn font_of(ui: &tessera_ui::Ui, k: ElementKey) -> Option<u32> {
     }
 }
 
+/// Whether `k` carries `UICore_Button_ghosted` true.
+fn ghosted(ui: &tessera_ui::Ui, k: ElementKey) -> bool {
+    let pid = ui.vocab().pids.button_ghosted;
+    matches!(
+        ui.property(k, pid),
+        Some(tessera_formats::property::PropertyValue::Bool(true))
+    )
+}
+
 #[test]
-fn quantity_enter_and_ok_read_the_typed_text() {
-    use tessera_ui::game::npc::quantity::{QuantityDialog, QuantityOutcome, QuantityRequest};
+fn quantity_dialog_typing_ok_and_memory() {
+    use tessera_ui::Command;
+    use tessera_ui::game::npc::quantity::{
+        QuantityDialog, QuantityMemory, QuantityOutcome, QuantityRequest, VendorKey,
+    };
     let mut ui = ui(1280, 960);
     let nv = nv();
     let a = art();
     let root = fallback::quantity(&mut ui, &nv, &a, &T).unwrap();
     let mut d = QuantityDialog::attach(&mut ui, &nv, root, &a);
+    let mut mem = QuantityMemory::default();
     let req = QuantityRequest {
         window: 1,
+        vendor: VendorKey::Entity(40),
         entry: 2,
         max: 50,
         unit_price: 10,
         coin_values: VALUES.to_vec(),
+        player_coin: None,
         name: "Bread".into(),
         icon: None,
     };
-    d.open(&mut ui, req.clone(), &T);
+    d.open(&mut ui, req.clone(), &mut mem, &T);
     let entry = d.entry.unwrap();
-    // §13.2: typing 80 then Enter clamps to 50 and stays open.
-    ui.set_text(entry, Some("80".into()));
-    assert_eq!(d.confirm(&mut ui, &T), None);
+    let ok = part(&ui, root, nv.ids.quantity_ok);
+    assert_eq!(ui.text_of(entry), "50", "opens with M");
+    assert!(!ghosted(&ui, ok));
+    ui.activate(root);
+    ui.set_focus(Some(entry));
+    // Typing goes through the UI's own text editing; every event reaches the dialog.
+    let pump = |ui: &mut tessera_ui::Ui, d: &mut QuantityDialog, mem: &mut QuantityMemory| {
+        let mut out = Vec::new();
+        for ev in ui.take_events() {
+            out.extend(d.handle_event(ui, &ev, &T, mem));
+        }
+        out
+    };
+    let backspace = |ui: &mut tessera_ui::Ui| {
+        assert!(ui.key_command(&Command::named("BackspaceKey"), true, 1.0));
+    };
+    // §13.2: Half → 25; deleting both characters → empty, cost stays 250, OK ghosted.
+    let half = part(&ui, root, nv.ids.quantity_half);
+    let half_ev = button(&ui, half);
+    let ok_ev = button(&ui, ok);
+    assert_eq!(d.handle_event(&mut ui, &half_ev, &T, &mut mem), None);
+    assert_eq!(ui.text_of(entry), "25");
+    backspace(&mut ui);
+    assert!(pump(&mut ui, &mut d, &mut mem).is_empty());
+    assert_eq!(ui.text_of(entry), "2", "a deletion re-reads the entry");
+    backspace(&mut ui);
+    assert!(pump(&mut ui, &mut d, &mut mem).is_empty());
+    assert_eq!(ui.text_of(entry), "");
+    assert_eq!(d.model.quantity(), 2);
+    assert_eq!(
+        d.cost(),
+        20,
+        "an empty entry keeps the quantity and the cost"
+    );
+    assert!(ghosted(&ui, ok), "OK ghosted while the entry is empty");
+    assert_eq!(d.confirm(&mut ui, &T, &mut mem), None, "Enter does nothing");
     assert!(d.open);
+    // Typing 8 → 8; typing 0 → 80 is set as 50 at once, the caret after it.
+    assert!(ui.text_input('8'));
+    pump(&mut ui, &mut d, &mut mem);
+    assert_eq!(ui.text_of(entry), "8");
+    assert!(!ghosted(&ui, ok));
+    assert!(ui.text_input('0'));
+    pump(&mut ui, &mut d, &mut mem);
     assert_eq!(ui.text_of(entry), "50");
-    // Typing 30 then Enter buys 30.
+    assert_eq!(d.cost(), 500);
+    // Typing 7 after it (the caret stands after the last character) gives 507, set as 50.
+    assert!(ui.text_input('7'));
+    pump(&mut ui, &mut d, &mut mem);
+    assert_eq!(ui.text_of(entry), "50");
+    // OK → Buy 50, the dialog closes and remembers the vendor and quantity.
+    assert_eq!(
+        d.handle_event(&mut ui, &ok_ev, &T, &mut mem),
+        Some(QuantityOutcome::Buy(NpcAction::Buy {
+            window: 1,
+            entry: 2,
+            quantity: 50
+        }))
+    );
+    assert!(!d.open);
+    assert_eq!(mem.last(), Some((VendorKey::Entity(40), 50)));
+    // Same vendor, M = 20 → 20; then Enter buys 20.
+    d.open(
+        &mut ui,
+        QuantityRequest {
+            max: 20,
+            ..req.clone()
+        },
+        &mut mem,
+        &T,
+    );
+    assert_eq!(ui.text_of(entry), "20");
+    assert_eq!(
+        d.confirm(&mut ui, &T, &mut mem),
+        Some(NpcAction::Buy {
+            window: 1,
+            entry: 2,
+            quantity: 20
+        })
+    );
+    // Same vendor again, M = 50 → 20 (remembered); closing keeps the memory.
+    d.open(&mut ui, req.clone(), &mut mem, &T);
+    assert_eq!(ui.text_of(entry), "20");
+    let cancel = part(&ui, root, nv.ids.quantity_cancel);
+    let cancel_ev = button(&ui, cancel);
+    assert_eq!(
+        d.handle_event(&mut ui, &cancel_ev, &T, &mut mem),
+        Some(QuantityOutcome::Closed)
+    );
+    assert!(!d.open);
+    assert_eq!(mem.last(), Some((VendorKey::Entity(40), 20)));
+    // Another vendor → its M.
+    d.open(
+        &mut ui,
+        QuantityRequest {
+            vendor: VendorKey::Window(9),
+            ..req.clone()
+        },
+        &mut mem,
+        &T,
+    );
+    assert_eq!(ui.text_of(entry), "50");
+    // Coin 400 at 10 each: 50 costs 500 → TooExpensive (the cost display's own switch), OK
+    // ghosted, Enter does nothing; Half → 250 → OK normal.
+    d.set_player_coin(&mut ui, Some(400), &T);
+    assert!(d.too_expensive());
+    assert!(d.cost.as_ref().is_some_and(|c| c.is_too_expensive()));
+    assert!(ghosted(&ui, ok));
+    assert_eq!(d.confirm(&mut ui, &T, &mut mem), None);
+    assert!(d.open);
+    assert_eq!(d.handle_event(&mut ui, &half_ev, &T, &mut mem), None);
+    assert!(!d.too_expensive());
+    assert!(d.cost.as_ref().is_some_and(|c| !c.is_too_expensive()));
+    assert!(!ghosted(&ui, ok));
+    // Enter reads text the dialog has not seen yet (set without an event).
     ui.set_text(entry, Some("30".into()));
     assert_eq!(
-        d.confirm(&mut ui, &T),
+        d.confirm(&mut ui, &T, &mut mem),
         Some(NpcAction::Buy {
             window: 1,
             entry: 2,
             quantity: 30
         })
     );
-    assert!(!d.open);
-    // Typing 7 then OK buys 7.
-    d.open(&mut ui, req.clone(), &T);
-    ui.set_text(entry, Some("7".into()));
-    let ok = part(&ui, root, nv.ids.quantity_ok);
-    let ev = button(&ui, ok);
-    assert_eq!(
-        d.handle_event(&mut ui, &ev, &T),
-        Some(QuantityOutcome::Buy(NpcAction::Buy {
-            window: 1,
-            entry: 2,
-            quantity: 7
-        }))
-    );
-    // The close button closes without buying, and says so.
-    d.open(&mut ui, req, &T);
-    let cancel = part(&ui, root, nv.ids.quantity_cancel);
-    let ev = button(&ui, cancel);
-    assert_eq!(
-        d.handle_event(&mut ui, &ev, &T),
-        Some(QuantityOutcome::Closed)
-    );
-    assert!(!d.open);
+    assert_eq!(mem.last(), Some((VendorKey::Window(9), 30)));
 }
 
 fn barter_entries(n: u16) -> Vec<BarterEntry> {

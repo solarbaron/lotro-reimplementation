@@ -149,7 +149,7 @@ pub enum RewardRow {
         /// A selectable reward.
         selectable: bool,
     },
-    /// A title, emote or virtue: a text row.
+    /// A title or emote: a text row.
     Text {
         /// The text.
         text: String,
@@ -181,8 +181,8 @@ impl RewardRow {
 }
 
 /// The position of an amount row in §6.3 step 1 (lower first); `None` for the virtue
-/// experience row, which Tessera places after the fixed virtues (the end of step 2, as
-/// `tessera-gamedata` does; `npc-windows.md` §10.3 OPEN).
+/// experience row, which is the last row of step 2 (after the fixed emote entries, before
+/// the selectable rewards; `npc-windows.md` §6.3, §10.3).
 fn amount_rank(a: &RewardAmount) -> Option<u8> {
     Some(match a.kind {
         AmountKind::Coin => 0,
@@ -221,7 +221,8 @@ fn amount_row(a: &RewardAmount) -> RewardRow {
 /// The reward block's rows (§6.3, §10.3): the amount rows in the order of step 1 (not
 /// the event's order; several reputation or wallet rows keep their relative order,
 /// positive reputation before negative), then the fixed rows as given (items, traits,
-/// titles, emotes, virtues), then the virtue experience row, then, when there are
+/// titles, emotes; fixed virtue entries get no row), then at most one virtue experience
+/// row (the first `VirtueXp` amount; NWI10), then, when there are
 /// selectable rewards, the selectable header and those rows; the rewards header on top
 /// when any row was added (step 4). At most [`MAX_REWARD_ROWS`] rows.
 #[must_use]
@@ -241,7 +242,7 @@ pub fn reward_rows(
     rows.extend(
         amounts
             .iter()
-            .filter(|a| a.kind == AmountKind::VirtueXp)
+            .find(|a| a.kind == AmountKind::VirtueXp)
             .map(amount_row),
     );
     if !selectable.is_empty() {

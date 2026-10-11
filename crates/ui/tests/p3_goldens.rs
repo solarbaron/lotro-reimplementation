@@ -24,7 +24,7 @@ use tessera_ui::game::npc::offer::{
     AmountKind, GroupType, OfferView, OfferWindow, RewardAmount, RewardRow, RowTemplates,
     reward_rows,
 };
-use tessera_ui::game::npc::quantity::{QuantityDialog, QuantityRequest};
+use tessera_ui::game::npc::quantity::{QuantityDialog, QuantityMemory, QuantityRequest, VendorKey};
 use tessera_ui::game::npc::vendor::{
     BuyToggles, SellItem, VendorItem, VendorPage, VendorTemplates, VendorWindow,
 };
@@ -311,22 +311,26 @@ fn quantity_dialog() {
     let a = art();
     let root = fallback::quantity(&mut ui, &nv, &a, &T).unwrap();
     let mut d = QuantityDialog::attach(&mut ui, &nv, root, &a);
+    let mut mem = QuantityMemory::default();
     d.open(
         &mut ui,
         QuantityRequest {
             window: 21,
+            vendor: VendorKey::Window(21),
             entry: 1,
             max: 50,
             unit_price: 25,
             coin_values: VALUES.to_vec(),
+            player_coin: None,
             name: "Bread".into(),
             icon: Some(item_icon(0)),
         },
+        &mut mem,
         &T,
     );
     let half = part(&ui, root, nv.ids.quantity_half);
     let ev = button(&ui, half);
-    assert_eq!(d.handle_event(&mut ui, &ev, &T), None);
+    assert_eq!(d.handle_event(&mut ui, &ev, &T, &mut mem), None);
     assert_eq!(d.model.entry(), "25");
     golden("quantity", &capture(&mut ui, root));
 }

@@ -455,13 +455,16 @@ fn p3_windows_on_the_install() {
         &mut i.ui,
         QuantityRequest {
             window: 4,
+            vendor: tessera_ui::game::npc::quantity::VendorKey::Window(4),
             entry: 1,
             max: 20,
             unit_price: 5,
             coin_values: vec![100_000, 100, 1],
+            player_coin: None,
             name: "N".into(),
             icon: None,
         },
+        &mut tessera_ui::game::npc::quantity::QuantityMemory::default(),
         &T,
     );
     println!(

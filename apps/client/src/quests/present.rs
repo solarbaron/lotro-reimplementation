@@ -514,10 +514,6 @@ impl<'a> JournalView<'a> {
                 text: plain(text.as_ref()),
                 selectable: *selectable,
             },
-            GRow::Virtue { label, increment } => RewardRow::Text {
-                text: format!("{} +{increment}", label.clone().unwrap_or_default()),
-                selectable: false,
-            },
             GRow::SelectableHeader => RewardRow::SelectableHeader,
         }
     }

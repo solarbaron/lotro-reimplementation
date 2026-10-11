@@ -789,6 +789,15 @@ was not read).
 > names one, else its `WindowId`; the remembered quantity lasts for the client session and is
 > not saved. After a rewrite (rule 4) the caret stands after the last character.
 
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-11) Tessera's text editing posts
+> `Text_character_input` only for inserted characters; deletions, cuts and pastes post
+> Tessera's own text-changed notification, which the dialog reads as well (rule 4, "deletions
+> included"). Both reach the dialog as game-code events after the frame's input step, so when
+> several edits land in one frame (a paste, or typing faster than the frame rate) the dialog
+> re-reads the entry once with all of them applied: `0` then `5` in one frame give 5, where a
+> re-read per character gives 15. Tessera choice until settled: one re-read per batch of
+> edits.
+
 <a id="s7-6"></a>
 ### 7.6 Selling (BIN, NW16)
 
@@ -1205,6 +1214,10 @@ Revision 5 is in `scenario-feed.md` §4.2, §5.2, §6.3, §7.5, §7.7, §8.6, §
 Rows of step 1 follow the order of §6.3 step 1, not the order of the event's entries; several
 `Reputation` or `Wallet` entries keep their relative order. The `VirtueXp` row is placed by
 §6.3 step 2 (revision 2 answers the implementer OPEN of 2026-10-10 on its position).
+
+> **OPEN:** (implementer, `tessera-gamedata` and `tessera-ui`, 2026-10-11) the `rewards` step
+> writes `virtue-xp` at most once, but the `QuestRewards` event does not forbid several
+> `VirtueXp` entries. Tessera choice: only the first is shown (NWI10, at most one row).
 
 ---
 

@@ -38,7 +38,9 @@ use tessera_ui::game::npc::barter::{BarterWindow, page_buttons};
 use tessera_ui::game::npc::dialogue::{DialogueKind, DialogueWindow, centre_on};
 use tessera_ui::game::npc::loot::{LootItem, LootWindow};
 use tessera_ui::game::npc::offer::{OfferWindow, RewardRow};
-use tessera_ui::game::npc::quantity::{QuantityDialog, QuantityOutcome, QuantityRequest};
+use tessera_ui::game::npc::quantity::{
+    QuantityDialog, QuantityMemory, QuantityOutcome, QuantityRequest, VendorKey,
+};
 use tessera_ui::game::npc::vendor::{BuyToggles, VendorOutcome, VendorPage, VendorWindow};
 use tessera_ui::game::npc::wallet::WalletWindow;
 use tessera_ui::game::npc::{FallbackArt, NpcAction, NpcTexts, NpcWindowKind, fallback};
@@ -158,6 +160,8 @@ pub struct NpcUi {
     had_data: bool,
     /// The icons of the choice rows' action templates (§5.3 rule 3), by template ID.
     action_icons: BTreeMap<u32, Option<tessera_ui::ImageRef>>,
+    /// The quantity dialog's last purchase (§7.5 rule 8; for the client session).
+    quantity_memory: QuantityMemory,
 }
 
 impl std::fmt::Debug for NpcUi {
@@ -211,6 +215,7 @@ impl NpcUi {
             failed: BTreeMap::new(),
             had_data: false,
             action_icons: BTreeMap::new(),
+            quantity_memory: QuantityMemory::default(),
         }
     }
 
@@ -368,7 +373,7 @@ impl NpcUi {
         };
         let texts = InstallTexts::new(data);
         let present = Present::new(data, state);
-        self.open_quantity(ui, window, entry, max, &present, &texts);
+        self.open_quantity(ui, window, entry, max, coin_of(state), &present, &texts);
         self.quantity_root(window).is_some()
     }
 
@@ -664,6 +669,7 @@ impl NpcUi {
         for o in self.windows.values_mut() {
             if let Win::Vendor {
                 win,
+                quantity,
                 sell_key,
                 coin: shown,
                 ..
@@ -673,6 +679,10 @@ impl NpcUi {
                     *shown = coin;
                     let c = coin.unwrap_or(0);
                     win.set_wallet(ui, c, present.coins(c), &texts);
+                    // §7.5 rules 5 and 7: the cost's `TooExpensive` and the OK state.
+                    if let Some((_, q)) = quantity.as_mut() {
+                        q.set_player_coin(ui, coin, &texts);
+                    }
                 }
                 if *sell_key != key {
                     *sell_key = key;
@@ -933,7 +943,7 @@ impl NpcUi {
                 Win::Loot { win, .. } => out.extend(win.handle_event(ui, ev)),
                 Win::Vendor { win, quantity, .. } => {
                     if let Some((_, q)) = quantity.as_mut() {
-                        match q.handle_event(ui, ev, &texts) {
+                        match q.handle_event(ui, ev, &texts, &mut self.quantity_memory) {
                             Some(QuantityOutcome::Buy(a)) => out.push(a),
                             Some(QuantityOutcome::Closed) => {}
                             None => {}
@@ -951,7 +961,7 @@ impl NpcUi {
         }
         if let Some((window, entry, max)) = open_quantity {
             let present = Present::new(data, state);
-            self.open_quantity(ui, window, entry, max, &present, &texts);
+            self.open_quantity(ui, window, entry, max, coin_of(state), &present, &texts);
         }
         for p in &mut self.panels {
             if let Some(w) = p.wallet.as_mut() {
@@ -995,12 +1005,15 @@ impl NpcUi {
     }
 
     /// Opens (or reuses) the quantity dialog of vendor window `window` for `entry` (§7.5).
+    /// An open dialog of another vendor window closes first without buying (rule 8).
+    #[allow(clippy::too_many_arguments)]
     fn open_quantity(
         &mut self,
         ui: &mut Ui,
         window: u32,
         entry: u16,
         max: u32,
+        coin: Option<u64>,
         present: &Present<'_>,
         texts: &dyn NpcTexts,
     ) {
@@ -1022,11 +1035,29 @@ impl NpcUi {
             None
         };
         let values = present.coin_values().to_vec();
-        let Some(Win::Vendor {
+        for (id, o) in &mut self.windows {
+            if *id != window
+                && let Win::Vendor {
+                    quantity: Some((_, q)),
+                    ..
+                } = o.win.as_mut()
+            {
+                q.cancel();
+            }
+        }
+        self.hide_closed_dialogs(ui);
+        let Some(o) = self.windows.get_mut(&window) else {
+            return;
+        };
+        // §7.5 Tessera rule: "the same vendor" is the window's entity, else its ID.
+        let vendor_key = o
+            .entity
+            .map_or(VendorKey::Window(window), |e| VendorKey::Entity(e.0));
+        let Win::Vendor {
             win: vendor,
             quantity,
             ..
-        }) = self.windows.get_mut(&window).map(|o| o.win.as_mut())
+        } = o.win.as_mut()
         else {
             return;
         };
@@ -1042,13 +1073,16 @@ impl NpcUi {
                 ui,
                 QuantityRequest {
                     window,
+                    vendor: vendor_key,
                     entry,
                     max,
                     unit_price: item.price,
                     coin_values: values,
+                    player_coin: coin,
                     name: item.name.clone(),
                     icon: item.icon.clone(),
                 },
+                &mut self.quantity_memory,
                 texts,
             );
             ui.activate(*k);
@@ -1309,7 +1343,9 @@ impl NpcUi {
                 {
                     match k {
                         NpcKey::Escape => q.cancel(),
-                        NpcKey::Accept => out.extend(q.confirm(ui, &texts)),
+                        NpcKey::Accept => {
+                            out.extend(q.confirm(ui, &texts, &mut self.quantity_memory));
+                        }
                     }
                 }
                 self.hide_closed_dialogs(ui);

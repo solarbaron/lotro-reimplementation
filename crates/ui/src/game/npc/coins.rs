@@ -313,6 +313,29 @@ impl MoneyDisplay {
         }
     }
 
+    /// Shows the cost `amount` (split by `values`, §9.3) and switches the display itself to
+    /// `TooExpensive` while the player's `coin` is below it, `normal` otherwise (`npc-windows.md`
+    /// §7.5 last paragraph; `coin` `None`, before any `WalletChanged { Coin }`: no comparison,
+    /// `normal`). Returns whether it is `TooExpensive`.
+    pub fn set_cost(
+        &mut self,
+        ui: &mut Ui,
+        amount: u64,
+        values: &[u64],
+        coin: Option<u64>,
+        texts: &dyn NpcTexts,
+    ) -> bool {
+        let too_expensive = coin.is_some_and(|c| c < amount);
+        self.set(ui, coin_counts(amount, values), too_expensive, texts);
+        too_expensive
+    }
+
+    /// Whether the display is in state `TooExpensive` (as last set).
+    #[must_use]
+    pub fn is_too_expensive(&self) -> bool {
+        self.shown.is_some_and(|(_, e)| e)
+    }
+
     /// The counts last shown.
     #[must_use]
     pub fn counts(&self) -> Option<CoinCounts> {

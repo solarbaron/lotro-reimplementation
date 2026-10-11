@@ -150,13 +150,6 @@ pub enum RewardRow {
         /// A selectable reward.
         selectable: bool,
     },
-    /// A virtue: the virtue property's label and the increment.
-    Virtue {
-        /// The label of the virtue's rank property.
-        label: Option<String>,
-        /// `QuestTreasure_Virtue_Increment`.
-        increment: i32,
-    },
     /// `QuestRewards_SelectableRewardsHeader`.
     SelectableHeader,
 }
@@ -324,12 +317,8 @@ fn treasure_parts(
             selectable: false,
         });
     }
-    for v in t.fixed_virtues() {
-        fixed.push(RewardRow::Virtue {
-            label: v.virtue.and_then(|pid| data.property_name(pid)),
-            increment: v.increment.unwrap_or(0),
-        });
-    }
+    // `QuestTreasure_FixedVirtueArray` entries get no row (§6.3 step 2: the original's
+    // list never reads that array; NWI10).
     let mut selectable: Vec<RewardRow> = t
         .selectable_items()
         .iter()
@@ -358,8 +347,8 @@ fn treasure_parts(
 impl NpcPresenter<'_> {
     /// The amount rows of `QuestRewards` (§6.3 step 1, §10.3): money, reputation (positive
     /// then negative), glory, item, craft and mount experience, wallet items, trait
-    /// points. Virtue experience is placed after the virtue rows of step 2 (see
-    /// [`NpcPresenter::reward_block`]).
+    /// points; and, apart, the virtue experience row (at most one: the first `VirtueXp`
+    /// entry), which is the last row of step 2 (see [`NpcPresenter::reward_block`]).
     fn amount_rows(
         &self,
         rewards: &[RewardIn],
@@ -424,17 +413,21 @@ impl NpcPresenter<'_> {
             amount: r.amount,
         }));
         let virtue = of(RewardKind::VirtueXp)
+            .next()
             .map(|r| RewardRow::Amount {
                 kind: RewardKind::VirtueXp,
                 amount: r.amount,
             })
+            .into_iter()
             .collect();
         (out, virtue)
     }
 
-    /// The reward block of a quest (§6.3): amount rows from the feed, the treasure
-    /// record's fixed rows, the virtue-experience row, the selectable rows; the header on
-    /// top when any row was added.
+    /// The reward block of a quest (§6.3): amount rows from the feed (step 1), the
+    /// treasure record's fixed entries (items, traits, titles, emotes; fixed virtue entries
+    /// get no row) and as the last row of step 2 the virtue experience row when the feed
+    /// supplies a `VirtueXp` amount, the selectable rows (step 3); the header on top when
+    /// any row was added (step 4).
     #[must_use]
     pub fn reward_block(
         &self,

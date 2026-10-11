@@ -56,6 +56,10 @@ fn install() -> Mem {
         "QuestTreasure_Item",
         "QuestTreasure_ItemQuantity",
         "QuestTreasure_FixedTitleArray",
+        "QuestTreasure_FixedVirtueArray",
+        "QuestTreasure_Virtue_Struct",
+        "QuestTreasure_Virtue",
+        "QuestTreasure_Virtue_Increment",
         "NPCComment_Title",
         "NPCComment_WindowLabel",
         "NPCComment_Content",
@@ -481,9 +485,20 @@ fn quest_with_roles(m: &mut Mem) {
         m.e("QuestTreasure_ItemStruct", ti),
     ];
     let title = vec![m.e("QuestTreasure_Title", PropertyValue::DidRef(TITLE))];
+    // Two fixed virtue entries (§13.4): they add no reward row.
+    let name_pid = m.p("Name");
+    let virtue = |m: &mut Mem, inc: i32| {
+        let s = st(vec![
+            m.e("QuestTreasure_Virtue", PropertyValue::PropertyId(name_pid)),
+            m.e("QuestTreasure_Virtue_Increment", PropertyValue::Int(inc)),
+        ]);
+        m.e("QuestTreasure_Virtue_Struct", s)
+    };
+    let virtues = vec![virtue(m, 1), virtue(m, 2)];
     let treasure = vec![
         m.e("QuestTreasure_FixedItemArray", arr(fixed)),
         m.e("QuestTreasure_FixedTitleArray", arr(title)),
+        m.e("QuestTreasure_FixedVirtueArray", arr(virtues)),
         m.e("QuestTreasure_SelectableItemArray", arr(sel)),
     ];
     m.put(TREASURE, treasure);
@@ -587,6 +602,52 @@ fn quest_offer_header_line_objective_and_rewards() {
             "item Apple true",
         ]
     );
+    // §13.4 with one more feed entry (`VirtueXp` 300; a second one is not shown, NWI10):
+    // the virtue experience row comes after the title and before the selectable header;
+    // the two fixed virtue entries add no row.
+    let mut more = rewards.to_vec();
+    for amount in [300, 7] {
+        more.push(RewardIn {
+            kind: RewardKind::VirtueXp,
+            amount,
+            what: None,
+        });
+    }
+    let v2 = np
+        .quest_offer(&RecordRef::Record(QUEST), Some(GIVER), &more, &p)
+        .expect("offer");
+    let mut want = kinds.clone();
+    let at = want.iter().position(|k| k == "selectable").expect("header");
+    want.insert(at, "VirtueXp 300".into());
+    let got: Vec<String> = v2
+        .rewards
+        .iter()
+        .map(|r| match r {
+            RewardRow::Header => "header".into(),
+            RewardRow::Money(c) => format!("money {}", c.amount),
+            RewardRow::Reputation { name, positive, .. } => format!(
+                "rep {} {positive}",
+                name.as_ref().map(|n| n.plain_text()).unwrap_or_default()
+            ),
+            RewardRow::Amount { kind, amount } => format!("{kind:?} {amount}"),
+            RewardRow::Item {
+                item, selectable, ..
+            } => format!(
+                "item {} {selectable}",
+                item.name
+                    .as_ref()
+                    .map(|n| n.plain_text())
+                    .unwrap_or_default()
+            ),
+            RewardRow::Title { text, .. } => format!(
+                "title {}",
+                text.as_ref().map(|n| n.plain_text()).unwrap_or_default()
+            ),
+            RewardRow::SelectableHeader => "selectable".into(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(got, want);
     // Rule 2: no giver → the first bestow role with a line.
     let v = np
         .quest_offer(&RecordRef::Record(QUEST), None, &[], &p)

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Review**, changes requested by review 1 (2026-10-11); not Accepted |
+| **Status** | **Revised** (revision 1, 2026-10-11: blocking item (1) of review 1, §5.2 census and TR13); not Accepted; awaits re-review by a session that wrote no part of it |
 | **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer, an independent session that wrote no part of this spec (review 1, 2026-10-11, changes requested) |
@@ -44,7 +44,7 @@ play and PvP frames.
 
 | Key | Source |
 |---|---|
-| **OBS** | The user's install, read-only, 2026-10-10 (archives unchanged since 2026-10-04): every UI layout record named here, decoded per `ui-layout.md` §4 with the throwaway decoder of the M5 dump (all 302 layout records, cached 2026-10-06; the layouts named here were re-read and agree); the DID maps `UILAYOUT`, `UNIQUEDB`, `WEENIECONTENT`, `STRINGTABLE`, `KEYMAP`, `FONT` (`records.md` §8); the enum mappers `UIStateID`, `UIElementMessage`, `UIElementID`, `InputActions` (0x230000AF and base 0x23000176), 0x23000064, 0x23000070, 0x2300002A, 0x230003A8; the property sets 0x78000004, 0x780029BA, 0x7800000D; the script table 0x07000000; the key-map records 0x1D000000, 0x1D000001, 0x1D000009 and the action-map record 0x51000000 (`keymap.md` §12.9–§12.10); a census over every property set of prefixes 0x47, 0x78 and 0x79 of `client_gamelogic.dat` and `client_general.dat` for `Selection_Script`, `MonsterLevel_ExaminationModStatType` and `NPC_HideLevelAndVitalText`; the string table 0x250001BB (the `UI` table) only to confirm that the tokens named here exist and to tell which token of a pair is which (no text is reproduced). Probes were throwaway scripts in the dirty scratch area. |
+| **OBS** | The user's install, read-only, 2026-10-10 (archives unchanged since 2026-10-04): every UI layout record named here, decoded per `ui-layout.md` §4 with the throwaway decoder of the M5 dump (all 302 layout records, cached 2026-10-06; the layouts named here were re-read and agree); the DID maps `UILAYOUT`, `UNIQUEDB`, `WEENIECONTENT`, `STRINGTABLE`, `KEYMAP`, `FONT` (`records.md` §8); the enum mappers `UIStateID`, `UIElementMessage`, `UIElementID`, `InputActions` (0x230000AF and base 0x23000176), 0x23000064, 0x23000070, 0x2300002A, 0x230003A8; the property sets 0x78000004, 0x780029BA, 0x7800000D; the script table 0x07000000; the key-map records 0x1D000000, 0x1D000001, 0x1D000009 and the action-map record 0x51000000 (`keymap.md` §12.9–§12.10); a census over every property set of prefixes 0x47, 0x78 and 0x79 of `client_gamelogic.dat` and `client_general.dat` for `Selection_Script`, `MonsterLevel_ExaminationModStatType` and `NPC_HideLevelAndVitalText`; for revision 1 (2026-10-11, archives unchanged) a fresh census of `MonsterLevel_ExaminationModStatType`, `NPC_HideLevelInDisplay` and `NPC_HideLevelAndVitalText` over all 40,643 0x47 entity descriptors (their embedded sets, `setup.md` §4), all 1,616 0x78 and all 383,332 0x79 sets (none failed to decode), every value walked at every depth and counted by prefix, depth and record, with the containing top-level property of each nested value and the `PhysObj` references of every 0x79 set to the 0x47 descriptors that store a hide property; the string table 0x250001BB (the `UI` table) only to confirm that the tokens named here exist and to tell which token of a pair is which (no text is reproduced). Probes were throwaway scripts in the dirty scratch area. |
 | **BC** | The class-library record 0x56000000 (`wlib.md`), searched as bytes for the tokens of §6.6 (M1; no bytecode was decoded into this spec). |
 | **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, read on 2026-10-10 with Ghidra (headless, on a private copy of the project's auto-analysed database, deleted after use). **Questions:** (a) how the floating-text system reads its settings and moves, scales, fades, stacks and removes a text; (b) which preference bits gate floating texts; (c) how the selection indicator chooses its state and placement; (d) how the target frame chooses between its vital and non-vital fields, its frame decoration, its health-meter colour and its level display; (e) how an effect icon is created, sized, ordered into rows, pulsed and given a border; (f) how the quickslot cooldown meter is started and ended; (g) how another entity's induction bar chooses its style; (h) how the toolbar shows the combat state; (i) where the four combat-related layout keys and the main element IDs are used. **Why M1–M3 were not enough:** the layout data gives elements, states and property values but not the rules that pick states, fill meters, order icons, move floating text or combine the settings; these rules exist only in code; black-box observation (M3) of the running client is not available to this session and could not show constants such as fade fractions, rise speeds or pulse lead times. **Read:** a scan of all instructions for the 32-bit IDs of the layouts, elements, states, properties and input actions named here (hits that turned out to be other enumerations with the same value were discarded after reading the routine); the floating-text settings reader, the text factory, the per-entity text list update, the anchor and distance-scale routine, the smoothing helpers it calls, the generic floating-text producers and the preference handler; the selection-indicator update; the target-frame update and its vital-colour and has-vitals helpers; the effect-icon creation, ordering and pulse routines and the effect-list set-up; the skill display's reset-timer start, end and goal handler; the induction-bar style setter; the toolbar combat-state handlers; the options panel's floating-text checkboxes. Nothing from network, login, launcher, keys or anti-tamper code was read (decision 0004). |
 | **Project** | Other Tessera specs and decisions, as cited (read 2026-10-10). |
@@ -77,6 +77,7 @@ play and PvP frames.
 | CU23 | Class-resource pip displays (`PipDisplay` types per `PipType`) (§4.4) | OBS | Confirmed 2026-10-10 |
 | CU24 | `UI_Selection_*` properties on `TargettingReticle` (§3.1) | OBS | Confirmed 2026-10-10 (values; use not traced) |
 | CU25 | Every TR rule and the fallback looks of §13 | Design | Decision |
+| CU26 | Where the three target-frame properties of §5.2 steps 3–4 are stored: by prefix (0x47, 0x78, 0x79), by depth (top level or nested in another property) and by value; the 0x79 sets whose `PhysObj` names a 0x47 descriptor that stores a hide property (§5.2 census) | OBS (revision 1 census) | Confirmed 2026-10-11 |
 
 ---
 
@@ -461,11 +462,28 @@ On a selection change and on changes of the target's watched properties, the cli
    shows it; hides it otherwise;
 6. points `OpponentEffectDisplay`'s `UIComponent_EffectDisplay_TargetIID` at the target (§8).
 
-Census (OBS, every 0x47, 0x78 and 0x79 property set): `MonsterLevel_ExaminationModStatType` is
-stored in 16,914 sets: 16,044 hold 5, 226 hold 0, 152 hold 9, 141 hold 8, 91 hold 12, 80 hold 7,
-40 hold 4, 38 hold 10, 33 hold 11, 23 hold 3, 22 hold 6, 16 hold 2, 1 holds 1, and one each holds
-42–48; no set stores 25–32 or 34–40. `NPC_HideLevelInDisplay` is stored (true) in 949 sets;
-`NPC_HideLevelAndVitalText` in none.
+Census (OBS, CU26; every 0x47 entity descriptor, 0x78 and 0x79 property set, at every depth;
+revision 1 restates the first version's paragraph, which added nested values to set counts and
+missed the 0x47 descriptors):
+
+| Property | Where stored | Count | Values |
+|---|---|---|---|
+| `MonsterLevel_ExaminationModStatType` | top level of a 0x79 set | 16,605 sets (one value each) | 5: 16,044; 9: 152; 8: 139; 12: 91; 10: 38; 11: 33; 7: 28; 3: 23; 6: 22; 4: 19; 2: 16 |
+| `MonsterLevel_ExaminationModStatType` | nested inside another top-level property of a 0x79 set (`SpeciesLevelLootTable` 264 values, `Mod_Array` 45) | 309 values in 68 sets; none of the 68 stores it at top level | 0: 226; 7: 52; 4: 21; 8: 2; 1: 1; 42–48: one each |
+| `MonsterLevel_ExaminationModStatType` | 0x47 or 0x78 | none | |
+| `NPC_HideLevelInDisplay` | top level of a 0x79 set; top level of a 0x47 descriptor | 949 sets; 1 descriptor (950 in total) | true in all |
+| `NPC_HideLevelAndVitalText` | top level of a 0x47 descriptor | 8 descriptors; no 0x78 or 0x79 set | true in all |
+
+So 16,605 sets carry a decoration key that step 3 can read; 16,914 (16,605 + 309) counts
+values, not sets. The values 0, 1 and 42–48 occur only nested, and no record stores 25–32 or
+34–40 anywhere; the `Scion_*` and `Rare_*` rows of the table above therefore select no frame from
+this install's templates. No hide property is nested anywhere.
+
+The 0x47 descriptors with a hide property are reached from templates through `PhysObj`
+(`creatures.md` §4.2): 12 0x79 sets name one of 7 of them (one descriptor is named by no 0x79
+set). 11 of the 12 sets name a descriptor that stores `NPC_HideLevelAndVitalText` and store
+`NPC_HideLevelInDisplay` (true) themselves; 1 set stores neither property and names the
+descriptor that stores both. These counts are observations of this install.
 
 > **TR12 (has vitals).** An entity has vitals for display when the session has reported at
 > least one `VitalChanged` with `vital = Health` for it. M7's test actors and scenario actors
@@ -474,6 +492,22 @@ stored in 16,914 sets: 16,044 hold 5, 226 hold 0, 152 hold 9, 141 hold 8, 91 hol
 > **TR13 (decoration).** The decoration key is read from the target's body record (the
 > `Body::Object` DID of `EntityCreated`, `scenario-feed.md` §5.4) when it has one; actors without
 > a body record take `monster_normal` (creatures and NPCs) or `normal` (players, other objects).
+> (Revision 1:) the body record is the game object that `Body::Object` names (prefix 0x70–0x77)
+> read through its property set (`property-system.md` §6.2, prefix 0x79). Steps 3 and 4 read
+> `MonsterLevel_ExaminationModStatType`, `NPC_HideLevelInDisplay` and
+> `NPC_HideLevelAndVitalText` at the **top level** of that set only. They do **not** read:
+> values nested inside other properties; the 0x47 entity descriptor that the set names in
+> `PhysObj`; or a `Body::Object` DID of any other prefix (a 0x47 descriptor included), which
+> counts as no body record. When one set stores both hide properties as true, the skull case of
+> step 4 applies. On this install the reading leaves one template showing its level although its
+> `PhysObj` descriptor stores both hide properties; the 11 others named in the census show the
+> skull from their own `NPC_HideLevelInDisplay`.
+
+> **OPEN:** (revision 1, 2026-10-11) how the original composes a live entity's properties from
+> its template, its 0x47 descriptor and server state, and so whether a descriptor's
+> `NPC_HideLevelAndVitalText` or `NPC_HideLevelInDisplay` reaches step 4, was not traced (BIN,
+> later; owner check of the one template above when the owner meets it). TR13 stays as written
+> until then.
 
 > **OPEN:** (implementer, 2026-10-10) TR13 does not say which state a player target with a body
 > record takes (§5.2 step 3 says "its vital-display-override state", which the feed does not
@@ -1486,6 +1520,7 @@ Creatures at 5 m (ID 7), 12 m (ID 4), 12 m (ID 9) and 60 m (ID 2), no selection:
 | E3 mini-vitals meter labels (implementer) | §3.5 | spec review |
 | Pip-list entry members (implementer) | §4.4 | spec review |
 | TR13 player targets with a body record (implementer) | §5.2 | spec review |
+| Whether a 0x47 descriptor's hide properties reach the target frame (TR13 reads the template only) | §5.2 | BIN (later) / owner |
 | TR14 objects with vitals (implementer) | §5.3 | spec review |
 | E7 health-meter label (implementer) | §5.7 | spec review |
 | Rise smoothing and release height (implementer) | §6.5 | spec review |
@@ -1506,3 +1541,4 @@ Creatures at 5 m (ID 7), 12 m (ID 4), 12 m (ID 9) and 60 m (ID 2), no selection:
 | 2026-10-10 | Implementer OPENs from `crates/ui` (no fact changed): §4.4 pip list members, §6.5 rise smoothing and release height, §8.2 row and icon arrangement, §13.7 fallback gaps. |
 | 2026-10-10 | Implementer OPENs from the `crates/ui` review fixes (no fact changed): §3.5 E3 mini-vitals meters, §5.7 E7 health meter, §8.2 empty first row and the same-ID rule against CUI7, §13.1 E7 without vitals; §19 lists every implementer OPEN. |
 | 2026-10-11 | Review 1 (independent spec reviewer): changes requested; status Draft → Review, not Accepted. No content change (header review record only). |
+| 2026-10-11 | Revision 1 (spec writer), blocking item (1) of review 1; status Review → Revised. §5.2 census restated from a fresh census (CU26, new; OBS row extended): `MonsterLevel_ExaminationModStatType` at top level in 16,605 0x79 sets, 309 further values nested in 68 other 0x79 sets (inside `SpeciesLevelLootTable` and `Mod_Array`; 0, 1 and 42–48 only there), none in 0x47 or 0x78; `NPC_HideLevelInDisplay` in 949 0x79 sets and 1 0x47 descriptor; `NPC_HideLevelAndVitalText` in 8 0x47 descriptors (the first version said none); the `PhysObj` links of 12 templates to those descriptors. TR13 now says what the body record is (the 0x70–0x77 game object through its 0x79 set), that steps 3–4 read the three properties at top level only, that 0x47 descriptors (named in `PhysObj` or given as the body) are not read, and that the skull case wins when one set stores both hide properties; new OPEN on how the original composes an entity's properties (§19). No implemented behaviour changes: this is what `tessera-gamedata` already does. Non-blocking review items (a)–(d) are not part of this revision. |
